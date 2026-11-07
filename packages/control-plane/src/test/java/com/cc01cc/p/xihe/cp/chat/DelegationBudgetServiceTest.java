@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.policy.DelegationPolicyValidator.DelegationLimits;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,6 +45,7 @@ class DelegationBudgetServiceTest {
 
     private SessionRepository sessions;
     private ChatRunRepository runs;
+    private SessionParticipantRepository participants;
     private AgentPrincipalService principals;
     private ConfigService config;
     private DelegationBudgetService budget;
@@ -51,6 +53,8 @@ class DelegationBudgetServiceTest {
     /** session id → session; spawn children are registered in {@link #childrenOf}. */
     private final Map<UUID, Session> byId = new HashMap<>();
     private final Map<UUID, List<Session>> childrenOf = new HashMap<>();
+    /** session id → PRIMARY participant principal (PLAN-0689 A7: no Session column any more). */
+    private final Map<UUID, UUID> principalOf = new HashMap<>();
     /** session id → has a non-terminal run. */
     private final Map<UUID, Boolean> inFlight = new HashMap<>();
 
@@ -60,9 +64,10 @@ class DelegationBudgetServiceTest {
     void setUp() {
         sessions = mock(SessionRepository.class);
         runs = mock(ChatRunRepository.class);
+        participants = mock(SessionParticipantRepository.class);
         principals = mock(AgentPrincipalService.class);
         config = mock(ConfigService.class);
-        budget = new DelegationBudgetService(sessions, runs, principals, config);
+        budget = new DelegationBudgetService(sessions, runs, principals, config, participants);
 
         when(sessions.findById(any())).thenAnswer(invocation ->
                 Optional.ofNullable(byId.get(invocation.getArgument(0))));
@@ -73,6 +78,8 @@ class DelegationBudgetServiceTest {
                         UUID.fromString(invocation.getArgument(0)), false));
         when(config.resolve(eq("agent-runtime"), anyString(), any(), any())).thenReturn(null);
         when(principals.readDelegationPolicy(anyString())).thenAnswer(invocation -> policy);
+        when(participants.primaryPrincipalId(any()))
+                .thenAnswer(invocation -> Optional.ofNullable(principalOf.get(invocation.getArgument(0))));
     }
 
     private Session session(UUID id, String kind, UUID spawnedFrom, String principalId) {
@@ -80,14 +87,17 @@ class DelegationBudgetServiceTest {
         session.setId(id);
         session.setKind(kind);
         session.setSpawnedFromSessionId(spawnedFrom);
-        session.setAgentPrincipalId(principalId);
+        if (principalId != null) {
+            principalOf.put(id, UUID.fromString(principalId));
+        }
         byId.put(id, session);
         return session;
     }
 
     private Session childOf(Session parent) {
+        UUID parentPrincipal = principalOf.get(parent.getId());
         Session child = session(UUID.randomUUID(), Session.KIND_SPAWN, parent.getId(),
-                parent.getAgentPrincipalId());
+                parentPrincipal == null ? null : parentPrincipal.toString());
         childrenOf.computeIfAbsent(parent.getId(), key -> new java.util.ArrayList<>()).add(child);
         return child;
     }
@@ -221,7 +231,6 @@ class DelegationBudgetServiceTest {
         policy("{\"maxCount\":8,\"maxDepth\":3}");
         Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
         Session parent = childOf(root);
-        parent.setAgentPrincipalId(OTHER_PRINCIPAL);
 
         assertEquals(new DelegationLimits(8, 3), budget.requireWithinBudget(parent, run(), "tc"));
     }

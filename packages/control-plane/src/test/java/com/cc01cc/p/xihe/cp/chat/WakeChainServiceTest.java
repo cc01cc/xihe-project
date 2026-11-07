@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
@@ -58,6 +59,7 @@ class WakeChainServiceTest {
 
     private SessionRepository sessions;
     private SessionParticipantService participantService;
+    private SessionParticipantRepository participantRepository;
     private WakeDispatchService dispatch;
     private EventStoreService eventStore;
     private ConfigService config;
@@ -74,6 +76,7 @@ class WakeChainServiceTest {
     void setUp() {
         sessions = mock(SessionRepository.class);
         participantService = mock(SessionParticipantService.class);
+        participantRepository = mock(SessionParticipantRepository.class);
         dispatch = mock(WakeDispatchService.class);
         eventStore = mock(EventStoreService.class);
         config = mock(ConfigService.class);
@@ -83,12 +86,11 @@ class WakeChainServiceTest {
                 .thenAnswer(invocation -> maxDepth);
         when(budget.maxSpawnDepth(any(), any(), any())).thenReturn(3);
         chain = new WakeChainService(sessions, participantService, dispatch, eventStore,
-                config, new ObjectMapper(), chatRuns, budget);
+                config, new ObjectMapper(), chatRuns, budget, participantRepository);
 
         Session session = mock(Session.class);
         when(session.getUserId()).thenReturn("owner-1");
         when(session.getWorkspaceId()).thenReturn("ws-1");
-        when(session.getAgentPrincipalId()).thenReturn(ROOT_PRINCIPAL);
         sessionById.put(SESSION_UUID, session);
         when(sessions.findById(any())).thenAnswer(invocation -> {
             UUID id = invocation.getArgument(0);
@@ -369,7 +371,6 @@ class WakeChainServiceTest {
         when(session.getKind()).thenReturn(Session.KIND_SPAWN);
         when(session.getSpawnedFromSessionId()).thenReturn(spawnedFromSession);
         when(session.getSpawnedFromRunId()).thenReturn(spawnedFromRun);
-        when(session.getAgentPrincipalId()).thenReturn(principal);
         return session;
     }
 

@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class DelegationChainWalkerTest {
 
     private SessionRepository sessions;
     private ChatRunRepository runs;
+    private SessionParticipantRepository participants;
     private DelegationChainWalker walker;
 
     // PLAN-0689 A3b: identity fixtures must be real UUID strings — the Run's stamp is a UUID
@@ -37,16 +39,21 @@ class DelegationChainWalkerTest {
 
     private final Map<UUID, Session> sessionById = new HashMap<>();
     private final Map<UUID, ChatRun> runById = new HashMap<>();
+    /** PLAN-0689 A7: the session-edge walk reads the PRIMARY participant, never a Session column. */
+    private final Map<UUID, UUID> principalOf = new HashMap<>();
 
     @BeforeEach
     void setUp() {
         sessions = mock(SessionRepository.class);
         runs = mock(ChatRunRepository.class);
-        walker = new DelegationChainWalker(sessions, runs);
+        participants = mock(SessionParticipantRepository.class);
+        walker = new DelegationChainWalker(sessions, runs, participants);
         when(sessions.findById(any()))
                 .thenAnswer(invocation -> Optional.ofNullable(sessionById.get(invocation.getArgument(0))));
         when(runs.findById(any()))
                 .thenAnswer(invocation -> Optional.ofNullable(runById.get(invocation.getArgument(0))));
+        when(participants.primaryPrincipalId(any()))
+                .thenAnswer(invocation -> Optional.ofNullable(principalOf.get(invocation.getArgument(0))));
     }
 
     private Session session(UUID id, String kind, UUID spawnedFromSession, UUID spawnedFromRun,
@@ -56,7 +63,9 @@ class DelegationChainWalkerTest {
         session.setKind(kind);
         session.setSpawnedFromSessionId(spawnedFromSession);
         session.setSpawnedFromRunId(spawnedFromRun);
-        session.setAgentPrincipalId(principalId);
+        if (principalId != null) {
+            principalOf.put(id, UUID.fromString(principalId));
+        }
         sessionById.put(id, session);
         return session;
     }
@@ -68,12 +77,11 @@ class DelegationChainWalkerTest {
         run.setOrigin(origin);
         run.setWaitingOnRunId(waitingOnRunId);
         run.setParentRunId(parentRunId);
-        // PLAN-0689 A3b: the walker now reads only the Run's own stamp. These fixtures carry the
-        // identity on the Session (the M2-era reading), so mirror it onto the Run to keep the
-        // expected principalPath unchanged while the product code stops falling back.
-        Session owning = sessionById.get(sessionId);
-        if (owning != null && owning.getAgentPrincipalId() != null) {
-            run.setAgentPrincipalId(UUID.fromString(owning.getAgentPrincipalId()));
+        // PLAN-0689 A3b: the run-edge walk reads only the Run's own stamp. These fixtures carry the
+        // identity on the session edge, so mirror it onto the Run to keep principalPath unchanged.
+        UUID owning = principalOf.get(sessionId);
+        if (owning != null) {
+            run.setAgentPrincipalId(owning);
         }
         runById.put(id, run);
         return run;

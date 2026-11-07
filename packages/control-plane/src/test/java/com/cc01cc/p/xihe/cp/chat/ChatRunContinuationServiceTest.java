@@ -306,7 +306,6 @@ class ChatRunContinuationServiceTest {
     void humanResponderContinuationCarriesNoPrincipal() {
         stubNewChildCreation();
         UUID sessionPrincipalId = UUID.randomUUID();
-        session.setAgentPrincipalId(sessionPrincipalId.toString());
         assertNull(source.getAgentPrincipalId(), "fixture: HUMAN responder source has NULL principal");
 
         ChatRunContinuationService.ContinuationResult result = service.continueRun(
@@ -325,7 +324,6 @@ class ChatRunContinuationServiceTest {
     void aStampedDerivedRunDoesNotLog() {
         stubNewChildCreation();
         source.setAgentPrincipalId(UUID.randomUUID());
-        session.setAgentPrincipalId(source.getAgentPrincipalId().toString());
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);

@@ -295,10 +295,10 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         ensureWorkspace();
         Session parent = new Session(workspaceId, userId, "Fork root parent");
         parent.setId(UUID.randomUUID());
-        parent.setAgentPrincipalId(principalId.toString());
         parent.setAgentPermissionsSnapshot(capNode());
         ChatBindingTestSupport.bindNewChatConnection(parent, providerConnectionRepository, apiRequestTemplates, userId);
         parent = sessionRepository.saveAndFlush(parent);
+        bindPrimaryParticipant(parent.getId().toString(), principalId.toString());
         String parentRunId = saveRun(parent, "running");
         Session forkChild = forkSession(parent.getId().toString(), parentRunId);
 
@@ -321,12 +321,12 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         ensureWorkspace();
         Session parent = new Session(workspaceId, userId, "Fork child delete source");
         parent.setId(UUID.randomUUID());
-        parent.setAgentPrincipalId(principalId.toString());
         parent.setAgentPermissionsSnapshot(capNode());
         parent.setModelProvider("openai");
         parent.setModelName("gpt-test");
         ChatBindingTestSupport.bind(parent, ChatBindingTestSupport.ensureChatConnection(providerConnectionRepository, "USER", userId, "fork-openai-" + UUID.randomUUID().toString().substring(0, 8), "openai"), apiRequestTemplates);
         parent = sessionRepository.saveAndFlush(parent);
+        bindPrimaryParticipant(parent.getId().toString(), principalId.toString());
         String sourceId = parent.getId().toString();
 
         String rootBranchId = branchPathService.ensureRootBranchId(sourceId);
@@ -440,10 +440,10 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         Session parentSession = new Session(workspaceId, userId,
                 "Fork propagation parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(capNode());
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
+        bindPrimaryParticipant(parentSession.getId().toString(), principalId.toString());
 
         String parentRunId = saveRun(parentSession, "running");
         String toolCallId = UUID.randomUUID().toString();
@@ -468,10 +468,11 @@ class ForkPropagationTest extends AbstractIntegrationTest {
         derived.setSpawnedFromSessionId(parentSessionId);
         derived.setSpawnedFromRunId(parentRunId);
         derived.setSpawnedAt(Instant.now());
-        derived.setAgentPrincipalId(principalId.toString());
         derived.setAgentPermissionsSnapshot(capNode());
         ChatBindingTestSupport.bindNewChatConnection(derived, providerConnectionRepository, apiRequestTemplates, userId);
-        return sessionRepository.saveAndFlush(derived);
+        Session saved = sessionRepository.saveAndFlush(derived);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private Session forkSession(String parentSessionId, String parentRunId) {
@@ -485,6 +486,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
                 runId, session.getId().toString(), userId, workspaceId,
                 "fork-propagation-submit-" + runId, "fork-propagation-hash-" + runId,
                 "provider", "model", "workspace", status));
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return runId;
     }
 

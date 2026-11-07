@@ -345,7 +345,6 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
     private Session createSession(String title, String kind, RunFixture parent) {
         Session session = new Session(workspaceId, userId, title);
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(permissionSnapshot.deepCopy());
         if (kind != null) {
             session.setKind(kind);
@@ -353,7 +352,9 @@ class TerminalTransactionCoreIntegrationTest extends AbstractIntegrationTest {
             session.setSpawnedFromRunId(parent.run().getId());
             session.setSpawnedAt(Instant.now());
         }
-        return sessionRepository.saveAndFlush(session);
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private ChatRunTerminalService.TerminalRequest request(RunFixture run, String status,

@@ -83,7 +83,6 @@ class WorkspaceSessionControllerHttpTest {
                 .thenAnswer(invocation -> {
                     Session session = new Session(invocation.getArgument(1), invocation.getArgument(0), "t");
                     session.setId(UUID.randomUUID());
-                    session.setAgentPrincipalId(invocation.getArgument(6));
                     return session;
                 });
 

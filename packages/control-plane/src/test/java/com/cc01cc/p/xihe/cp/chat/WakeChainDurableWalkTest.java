@@ -351,11 +351,12 @@ class WakeChainDurableWalkTest extends AbstractIntegrationTest {
     private Session newSession(String title) {
         Session session = new Session(workspaceId, userId, title + " " + UUID.randomUUID());
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository,
                 apiRequestTemplates, userId);
-        return sessionRepository.saveAndFlush(session);
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     /** A spawn child session: same principal as the parent (design §5.1), V40 provenance set. */
@@ -366,11 +367,12 @@ class WakeChainDurableWalkTest extends AbstractIntegrationTest {
         session.setSpawnedFromSessionId(parent.getId());
         session.setSpawnedFromRunId(spawnedFromRunId);
         session.setSpawnedAt(java.time.Instant.now());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository,
                 apiRequestTemplates, userId);
-        return sessionRepository.saveAndFlush(session);
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     /** Turns a plain saved run into a spawn row: parent on the waiting link, never parent_run_id. */
@@ -428,6 +430,7 @@ class WakeChainDurableWalkTest extends AbstractIntegrationTest {
                 runId, session.getId().toString(), userId, workspaceId,
                 "wake-chain-run-" + runId, "wake-chain-hash-" + runId,
                 "provider", "model", "workspace", status));
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return runId;
     }
 }

@@ -832,6 +832,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 requestId, "t26b-hash-" + runId,
                 "provider", "model", "workspace", "running");
         run = chatRunRepository.saveAndFlush(run);
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return new RunFixture(session, run);
     }
 
@@ -896,7 +897,6 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     private Session createSession(String title, String kind, RunFixture parent) {
         Session session = new Session(workspaceId, userId, title);
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(permissionSnapshot.deepCopy());
         if (kind != null) {
             session.setKind(kind);
@@ -906,7 +906,9 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         }
         ChatBindingTestSupport.bindNewChatConnection(
                 session, providerConnectionRepository, apiRequestTemplates, userId);
-        return sessionRepository.saveAndFlush(session);
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     /** Mirrors ChatSubmissionService.createSpawnAuthorizationBody for the MCP spawn path. */

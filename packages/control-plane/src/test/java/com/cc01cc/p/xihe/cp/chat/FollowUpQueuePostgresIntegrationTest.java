@@ -82,6 +82,9 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository;
+
+    @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
 
     @Autowired
@@ -919,9 +922,11 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         parent.setStatus("failed");
         chatRunRepository.saveAndFlush(parent);
 
-        Session session = sessionRepository.findById(UUID.fromString(fixture.sessionId())).orElseThrow();
-        session.setAgentPrincipalId(null);
-        sessionRepository.saveAndFlush(session);
+        // PLAN-0689 A7: the conversation identity is the PRIMARY participant row; revoking the
+        // binding means removing that row, not clearing a Session column.
+        sessionParticipantRepository
+                .findBySessionIdOrderByOrderIndexAsc(UUID.fromString(fixture.sessionId()))
+                .forEach(sessionParticipantRepository::delete);
 
         UUID rejectedChildId = UUID.randomUUID();
         CpApiException error = assertThrows(CpApiException.class, () -> queueService.admitHead(
@@ -1013,10 +1018,10 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
 
         Session session = new Session(workspaceId, userId, "Follow-up session");
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository, apiRequestTemplates, userId);
         Session persisted = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(persisted.getId().toString(), principal.getId().toString());
         return new Fixture(userId, workspaceId, persisted.getId().toString());
     }
 

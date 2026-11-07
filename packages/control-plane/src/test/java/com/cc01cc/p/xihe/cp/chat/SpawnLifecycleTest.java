@@ -340,6 +340,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
                 apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parent);
         String parentRunId = saveRun(parent, "running");
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = NULL WHERE id = CAST(? AS UUID)", parentRunId);
         String toolCallId = UUID.randomUUID().toString();
         SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, parent.getId().toString(),
                 parentRunId, workspaceId, userId, toolCallId, ChatSubmissionService.SPAWN_TOOL_NAME,
@@ -363,10 +364,10 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
         Session parentSession = new Session(workspaceId, userId,
                 "Spawn lifecycle parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(capNode());
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
+        bindPrimaryParticipant(parentSession.getId().toString(), principalId.toString());
 
         String parentRunId = saveRun(parentSession, "running");
         String toolCallId = UUID.randomUUID().toString();
@@ -393,6 +394,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
                 runId, session.getId().toString(), userId, workspaceId,
                 "spawn-lifecycle-submit-" + runId, "spawn-lifecycle-hash-" + runId,
                 "provider", "model", "workspace", status));
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return runId;
     }
 
