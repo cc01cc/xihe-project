@@ -7,14 +7,22 @@
 // whether something needs handling.
 //
 // Usage:
-//   node scripts/e2e-preflight.mjs [--ports=27000-28020[,A-B...]] [--logs=8] [--strict] [--ignore-build] [--self-pid=N]
+//   node scripts/e2e-preflight.mjs [--ports=27000-28020[,A-B...]] [--logs=8] [--strict] [--ignore-build] [--disk-only] [--self-pid=N]
 //
 //   --ports=A-B    replace the default e2e port block (repeat/comma-separate to
 //                  add more ranges). The five xihe dev ports are always checked.
 //   --logs=N       how many recent .local/dev entries to print (default 8).
 //   --strict       also fail (exit 1) on warnings, not only on blocking findings.
-//   --ignore-build skip section 3 (artifact freshness); used by the runner when
-//                  the CP jar will not be booted at all (--jar-mode=run).
+//   --ignore-build skip the CP **fat jar** check in section 3; used by the runner
+//                  when the jar will not be booted at all (see
+//                  scripts/lib/e2e-preflight-gate.mjs for the exact policy).
+//                  The Rust runtime check is NOT skipped: every host E2E run boots
+//                  the runtime, so its freshness must stay enforced in every mode
+//                  (scope `runtime-target`, always blocking when unknown).
+//   --disk-only    run ONLY section 4 (disk headroom) and exit with its verdict.
+//                  Used by `e2e-host.mjs --skip-preflight` so that skipping the
+//                  rest of the preflight can no longer silently skip the disk
+//                  gate (the run header records `diskGate: enforced|bypassed`).
 //   --self-pid=N[,M]  the caller's own runner pid(s); a newest-log pid file
 //                  matching one of them is the caller's own run (or the
 //                  persistent stack it reuses), not a concurrent one.
@@ -34,6 +42,17 @@
 //   3. build freshness  control-plane fat jar vs source mtime (the runner
 //                       boots any existing jar without a freshness check),
 //                       runtime debug binary vs source, cargo lock files.
+//                       The runtime binary is looked up in the target dir cargo
+//                       itself resolves (`.cargo/config.toml [build] target-dir`
+//                       / CARGO_TARGET_DIR) *including sibling stack dirs*
+//                       (`main`, `stack-N`) — never in the deprecated in-tree
+//                       `packages/runtime/target`. If that resolution fails the
+//                       check is UNVERIFIABLE and blocking (2026-11-08: the old
+//                       check read an obsolete binary for days).
+//                       Scope split: the jar finding is `build` (deferrable to the
+//                       runner's rebuild path, suppressed by --ignore-build); the
+//                       runtime finding is `runtime-target` (never suppressed — the
+//                       caller's gate refuses on it in every jar mode).
 //   4. disk headroom    H/C free space before a window (user thresholds,
 //                       2026-11-05 — do not change): H < 25% or C < 10% is
 //                       blocking, H < 30% is a warning only. An unsampled or
@@ -55,6 +74,7 @@ import {
   evaluateDisks,
   sampleDisksViaPsDrive,
 } from './lib/e2e-preflight-disk.mjs'
+import { inspectRuntimeBinaries, resolveRuntimeTargetDirs } from './lib/e2e-runtime-target.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 const isWindows = process.platform === 'win32'
@@ -107,6 +127,7 @@ let portsCustomized = false
 let logCount = 8
 let strict = false
 let ignoreBuild = false
+let diskOnly = false
 const selfPids = new Set()
 let ownRunId = ''
 const allowedPorts = new Set()
@@ -123,6 +144,8 @@ for (const arg of process.argv.slice(2)) {
     strict = true
   } else if (arg === '--ignore-build') {
     ignoreBuild = true
+  } else if (arg === '--disk-only') {
+    diskOnly = true
   } else if (arg.startsWith('--self-pid=')) {
     for (const part of arg.slice('--self-pid='.length).split(',')) {
       const pid = Number(part.trim())
@@ -158,7 +181,7 @@ if (!e2eRanges) e2eRanges = [E2E_DEFAULT_RANGE]
 
 function usage(message) {
   console.error(`e2e-preflight: ${message}`)
-  console.error('usage: node scripts/e2e-preflight.mjs [--ports=A-B[,A-B]] [--logs=N] [--strict] [--ignore-build] [--self-pid=N]')
+  console.error('usage: node scripts/e2e-preflight.mjs [--ports=A-B[,A-B]] [--logs=N] [--strict] [--ignore-build] [--disk-only] [--self-pid=N]')
   process.exit(2)
 }
 
@@ -180,12 +203,13 @@ function fmtSize(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KiB`
   return `${(bytes / 1024 / 1024).toFixed(1)}MiB`
 }
-function runCapture(program, args, timeoutMs = 20000) {
+function runCapture(program, args, timeoutMs = 20000, cwd = undefined) {
   const result = spawnSync(program, args, {
     encoding: 'utf8',
     timeout: timeoutMs,
     windowsHide: true,
     maxBuffer: 32 * 1024 * 1024,
+    ...(cwd ? { cwd } : {}),
   })
   if (result.error) return { ok: false, code: null, stdout: '', stderr: String(result.error.message ?? result.error) }
   return { ok: result.status === 0, code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
@@ -242,6 +266,17 @@ console.log(`e2e port block: ${e2eRanges.map(([a, b]) => `${a}-${b}`).join(', ')
 console.log(`dev ports (current ${currentStackId}): ${devPorts.filter((p) => p.name.startsWith(`dev-${currentStackId}-`)).map((p) => p.port).join(', ')}`)
 console.log(`stack slots checked: ${stackSlots.length ? `${stackSlots.length} (runtime ports blocking: ${devPorts.filter((p) => p.blocking).map((p) => p.port).join(', ')})` : 'fallback stack-1 only'}`)
 console.log('')
+
+// PLAN-0680 task-76 (defect 2): `--disk-only` exists so a caller that wants to skip
+// the rest of the preflight (e2e-host.mjs --skip-preflight) still gets the disk gate.
+// Before this flag the only way to skip was to skip *everything*, which is how a
+// 12%-free disk could open a window and leave no trace in the run header.
+if (diskOnly) {
+  const diskOnlyResult = runDiskGate()
+  // `--strict` means "warnings also fail", and that must not depend on which
+  // sections ran: escalate here instead of relying on the full run's tally.
+  process.exit(strict && diskOnlyResult.findings.length > 0 ? 1 : diskExitCode(diskOnlyResult))
+}
 
 // ---------------------------------------------------------------- 1. docker
 console.log('[1/5] docker residue')
@@ -350,9 +385,6 @@ console.log('')
 
 // ------------------------------------------------------------- 3. artifacts
 console.log('[3/5] build artifacts (source mtime vs artifact mtime)')
-if (ignoreBuild) {
-  console.log('  INFO  artifact freshness checks skipped (--ignore-build)')
-} else {
 const cpDir = join(projectDir, 'packages', 'control-plane')
 // PLAN-0656 R2: the runner builds and boots the CP jar from its OWN build dir
 // (XIHE_CP_TARGET_DIR, default C:/xihe-build/e2e) — never from the checkout
@@ -363,6 +395,9 @@ const e2eCpTargetDir =
     ? process.env.XIHE_CP_TARGET_DIR
     : 'C:/xihe-build/e2e'
 const cpTarget = e2eCpTargetDir
+if (ignoreBuild) {
+  console.log(`  INFO  CP artifact freshness skipped (--ignore-build): this run does not boot the jar it would check (dir ${e2eCpTargetDir})`)
+} else {
 let cpJar = null
 if (existsSync(cpTarget)) {
   for (const name of readdirSync(cpTarget)) {
@@ -385,9 +420,26 @@ if (!cpJar) {
     console.log(`  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) is newer than CP sources`)
   }
 }
+}
+// The Rust runtime is booted by EVERY host E2E run (whatever the CP jar mode is),
+// so this check is deliberately OUTSIDE the `--ignore-build` gate and uses its own
+// scope: a build-class deferral (`auto` rebuild / `use` / reuse) must not be able to
+// wave it through. Unknown freshness here is blocking ("未知不等于安全").
 const runtimeDir = join(projectDir, 'packages', 'runtime')
-const runtimeDebug = join(runtimeDir, 'target', 'debug', isWindows ? 'xihe-runtime.exe' : 'xihe-runtime')
-const runtimeRelease = join(runtimeDir, 'target', 'release', isWindows ? 'xihe-runtime.exe' : 'xihe-runtime')
+const runtimeBinaryName = isWindows ? 'xihe-runtime.exe' : 'xihe-runtime'
+// PLAN-0680 task-76 (defect 3): the freshness check used to read the in-tree
+// packages/runtime/target/{debug,release} — a deprecated layout whose binary is
+// days older than the one host E2E actually runs. Real runs use
+// `.tmp/cargo-target/{main,stack-2}/debug/xihe-runtime.exe`, i.e. whatever
+// `.cargo/config.toml [build] target-dir` (or CARGO_TARGET_DIR) resolves to, so
+// ask cargo itself (scripts/lib/e2e-runtime-target.mjs) instead of hard-coding.
+// Unresolvable ⇒ UNVERIFIABLE **and blocking**: an unknown binary freshness must
+// not open a window ("未知不等于安全", same rule as the disk gate).
+const runtimeTargets = resolveRuntimeTargetDirs({
+  projectRoot: projectDir,
+  env: process.env,
+  runCapture,
+})
 const runtimeSourceNewest = (() => {
   let newest = newestMtime(join(runtimeDir, 'src'))
   for (const extra of ['Cargo.toml', 'Cargo.lock']) {
@@ -399,22 +451,47 @@ const runtimeSourceNewest = (() => {
   }
   return newest
 })()
-if (existsSync(runtimeDebug)) {
-  const stat = statSync(runtimeDebug)
-  if (runtimeSourceNewest.mtimeMs > stat.mtimeMs) {
-    add('WARN', 'build', `runtime debug binary is older than runtime sources by ${fmtAge(runtimeSourceNewest.mtimeMs - stat.mtimeMs)}`, '`cargo run` will rebuild first (minutes); prebuild to keep the window short')
-    console.log(`  WARN  runtime debug binary (${fmtAge(now - stat.mtimeMs)} old) is stale vs ${runtimeSourceNewest.path} — cargo will rebuild it`)
-  } else {
-    console.log(`  OK    runtime debug binary (${fmtAge(now - stat.mtimeMs)} old) is newer than runtime sources`)
-  }
+const runtimeInspection = inspectRuntimeBinaries({
+  resolution: runtimeTargets,
+  binaryName: runtimeBinaryName,
+  sourceNewest: runtimeSourceNewest,
+})
+if (runtimeInspection.severity) add(runtimeInspection.severity, 'runtime-target', runtimeInspection.message, runtimeInspection.hint)
+if (runtimeInspection.status === 'unverifiable') {
+  console.log(`  FAIL  ${runtimeInspection.message}`)
+  console.log(`  INFO  not falling back to the deprecated in-tree ${runtimeInspection.legacyDir} (that is the bug this check fixes)`)
 } else {
-  console.log('  INFO  runtime debug binary missing — first `cargo run` will build it')
-}
-if (existsSync(runtimeRelease)) {
-  console.log(`  INFO  runtime release binary present (${fmtAge(now - statSync(runtimeRelease).mtimeMs)} old) — host E2E uses the debug binary`)
+  console.log(
+    `  INFO  cargo target dir (source: ${runtimeInspection.source}): ${runtimeInspection.targetDirs.map((entry) => `${entry.label}=${entry.dir}`).join(', ')}`,
+  )
+  if (runtimeInspection.legacyPresent) {
+    console.log(`  INFO  ignoring the deprecated in-tree runtime target (${runtimeInspection.legacyDir}) — real runs use the dirs above`)
+  }
+  if (runtimeInspection.status === 'missing') {
+    console.log(`  INFO  runtime debug binary missing in ${runtimeInspection.targetDirs.map((entry) => entry.dir).join(', ')} — first \`cargo run\` will build it`)
+  } else {
+    // Oldest-to-newest per stack, then judge the newest one: that is the binary a
+    // fresh `cargo run` in this checkout would reuse.
+    for (const binary of runtimeInspection.binaries) {
+      console.log(`  INFO  ${binary.label}: ${binary.path} (${fmtAge(now - binary.mtimeMs)} old)`)
+    }
+    const newest = runtimeInspection.newest
+    if (runtimeInspection.status === 'stale') {
+      console.log(`  WARN  newest runtime debug binary (${newest.label}, ${fmtAge(now - newest.mtimeMs)} old) is stale vs ${runtimeSourceNewest.path} — cargo will rebuild it`)
+    } else {
+      console.log(`  OK    newest runtime debug binary (${newest.label}, ${fmtAge(now - newest.mtimeMs)} old) is newer than runtime sources`)
+    }
+  }
+  for (const release of runtimeInspection.releases) {
+    console.log(`  INFO  runtime release binary present in ${release.label} (${fmtAge(now - release.mtimeMs)} old) — host E2E uses the debug binary`)
+  }
 }
 const lockHits = []
-for (const dir of [join(runtimeDir, 'target', 'debug'), join(runtimeDir, 'target', 'release'), cpTarget]) {
+const lockDirs = [
+  ...runtimeTargets.targetDirs.flatMap((target) => [join(target.dir, 'debug'), join(target.dir, 'release')]),
+  cpTarget,
+]
+for (const dir of lockDirs) {
   if (!existsSync(dir)) continue
   for (const name of readdirSync(dir)) {
     if (name === '.cargo-lock' || name === '.cargo-build-lock' || name === '.cargo-artifact-lock' || name.endsWith('.lock')) {
@@ -429,7 +506,6 @@ if (lockHits.length > 0) {
   }
   console.log(`  INFO  lock files present (${lockHits.length}): ${lockHits.map((h) => `${h.path.split(/[\\/]/).pop()}(${fmtAge(now - h.mtimeMs)})`).join(', ')} — cargo keeps these files; only recent mtime means an active build`)
 }
-}
 console.log('')
 
 // ------------------------------------------------------------------ 4. disk
@@ -437,31 +513,37 @@ console.log('')
 // on a full disk pollutes the tree — the failure then looks like a test red.
 // The sampler is injectable (scripts/lib/e2e-preflight-disk.mjs) so the
 // thresholds are unit-tested with fake samples, never by filling a real disk.
-console.log('[4/5] disk headroom (window admission)')
-const diskResult = evaluateDisks({
-  sampler: () => sampleDisksViaPsDrive({ runCapture }),
-  platform: process.platform,
-})
-// Machine-readable line for the next workflow (do not parse the prose below).
-console.log(`  disk  ${JSON.stringify(diskResult)}`)
-if (diskResult.skipped) {
-  console.log(`  SKIP  ${diskResult.reasons[0]}`)
-} else if (diskResult.unverifiable) {
-  console.log(`  FAIL  disk headroom UNVERIFIABLE — ${diskResult.reasons[0]}`)
-} else {
-  const describe = (drive) => `${drive.pctFree}% free (${drive.freeGB}/${drive.totalGB} GB)`
-  console.log(`  INFO  H ${describe(diskResult.detail.H)}, C ${describe(diskResult.detail.C)}`)
+// Kept as a function so `--disk-only` can run exactly this section and exit with
+// `diskExitCode`, printing the same machine-readable line as the full run.
+function runDiskGate() {
+  console.log('[4/5] disk headroom (window admission)')
+  const result = evaluateDisks({
+    sampler: () => sampleDisksViaPsDrive({ runCapture }),
+    platform: process.platform,
+  })
+  // Machine-readable line for the next workflow (do not parse the prose below).
+  console.log(`  disk  ${JSON.stringify(result)}`)
+  if (result.skipped) {
+    console.log(`  SKIP  ${result.reasons[0]}`)
+  } else if (result.unverifiable) {
+    console.log(`  FAIL  disk headroom UNVERIFIABLE — ${result.reasons[0]}`)
+  } else {
+    const describe = (drive) => `${drive.pctFree}% free (${drive.freeGB}/${drive.totalGB} GB)`
+    console.log(`  INFO  H ${describe(result.detail.H)}, C ${describe(result.detail.C)}`)
+  }
+  for (const finding of result.findings) {
+    add(finding.severity, 'disk', finding.message, finding.hint)
+    console.log(`  ${finding.severity}  ${finding.message}`)
+    if (finding.hint) console.log(`        hint: ${finding.hint}`)
+  }
+  if (result.ok && !result.skipped && result.findings.length === 0) {
+    console.log(`  OK    both drives above the blocking thresholds (H ${DISK_THRESHOLDS.hBlocksBelowPct}% / C ${DISK_THRESHOLDS.cBlocksBelowPct}%; H under ${DISK_THRESHOLDS.hWarnsBelowPct}% only warns)`)
+  }
+  if (diskExitCode(result) !== 0) console.log('  -> this blocks the window (preflight exit 1)')
+  console.log('')
+  return result
 }
-for (const finding of diskResult.findings) {
-  add(finding.severity, 'disk', finding.message, finding.hint)
-  console.log(`  ${finding.severity}  ${finding.message}`)
-  if (finding.hint) console.log(`        hint: ${finding.hint}`)
-}
-if (diskResult.ok && !diskResult.skipped && diskResult.findings.length === 0) {
-  console.log(`  OK    both drives above the blocking thresholds (H ${DISK_THRESHOLDS.hBlocksBelowPct}% / C ${DISK_THRESHOLDS.cBlocksBelowPct}%; H under ${DISK_THRESHOLDS.hWarnsBelowPct}% only warns)`)
-}
-if (diskExitCode(diskResult) !== 0) console.log('  -> this blocks the window (preflight exit 1)')
-console.log('')
+const diskResult = runDiskGate()
 
 // --------------------------------------------------------------- 5. digest
 console.log('[5/5] recent runs (.local/dev + Playwright last run)')
