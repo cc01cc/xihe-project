@@ -50,6 +50,15 @@ async function openConnectionForm(page: Page) {
     return modal;
 }
 
+/**
+ * BL-476 L1：模型发现字段已从原生 select 换成 reka `Select`（combobox + listbox），
+ * `selectOption` 不再适用 —— 改为「点触发器 → 点 portal 里的选项」。
+ */
+async function selectDiscovery(page: Page, value: "manual" | "curated" | "remote-models") {
+    await page.getByTestId("provider-connection-field-discovery").click();
+    await page.getByTestId(`provider-connection-discovery-option-${value}`).click();
+}
+
 async function createConnection(
     page: Page,
     options: { key: string; label: string; scope: "USER" | "WORKSPACE" },
@@ -61,7 +70,7 @@ async function createConnection(
     await modal
         .locator('input[name="provider-scope"][value="' + options.scope + '"]')
         .check({ force: true });
-    await modal.getByLabel("模型发现").selectOption("manual");
+    await selectDiscovery(page, "manual");
     await modal.getByLabel("模型列表").fill("test-model");
     await modal.getByRole("button", { name: "验证并保存" }).click();
     await expect(modal).toBeHidden({ timeout: 15000 });
@@ -170,7 +179,9 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
                 "readonly",
                 "",
             );
-            await expect(editModal.getByLabel("模型发现")).toHaveValue("manual");
+            await expect(
+                editModal.getByTestId("provider-connection-field-discovery"),
+            ).toContainText("手动输入模型");
             await expect(editModal.getByLabel("模型列表")).toHaveValue("test-model");
             await editModal.getByLabel("连接名称").fill("Primary Custom Renamed");
             await editModal.getByRole("button", { name: "验证并保存" }).click();
@@ -208,7 +219,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
             await duplicateModal.getByLabel("连接名称").fill("Duplicate");
             await duplicateModal.getByTestId("provider-connection-form-key").fill("primary");
             await duplicateModal.getByLabel("Base URL").fill("http://localhost:1/v1");
-            await duplicateModal.getByLabel("模型发现").selectOption("manual");
+            await selectDiscovery(page, "manual");
             await duplicateModal.getByLabel("模型列表").fill("test-model");
             await duplicateModal.getByRole("button", { name: "验证并保存" }).click();
             await expect(duplicateModal).toBeVisible();

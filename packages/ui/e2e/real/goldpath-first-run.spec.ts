@@ -378,16 +378,10 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
         .locator('input[type="url"]')
         .first()
         .fill(`http://127.0.0.1:${fakeLlmPort}/openai/v1`);
-    // 表单里有多个 select（第 1 个是 API Type），按带 `manual` 选项值定位，不依赖顺序。
-    for (const select of await form.locator("select").all()) {
-        const values = await select
-            .locator("option")
-            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
-        if (values.includes("manual")) {
-            await select.selectOption("manual");
-            break;
-        }
-    }
+    // BL-476 L1：模型发现已是 reka `Select`（combobox + listbox），表单里不再有带
+    // `manual` 选项的原生 select —— 点开触发器再点 portal 里的选项。
+    await page.getByTestId("provider-connection-field-discovery").click();
+    await page.getByTestId("provider-connection-discovery-option-manual").click();
     await form.locator("textarea").first().fill(FAKE_LLM_MODEL);
 
     const createResponse = page.waitForResponse(
@@ -1024,19 +1018,10 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
             .locator('input[type="url"]')
             .first()
             .fill(`http://127.0.0.1:${FAKE_LLM_PORT}/openai/v1`);
-        // 表单里有多个 select（第 1 个是 API Type `provider-connection-api-type`），发现方式是
-        // 带 `manual` 选项的那一个 —— 按选项值定位，不依赖顺序。
-        for (const select of await form.locator("select").all()) {
-            const values = await select
-                .locator("option")
-                .evaluateAll((options) =>
-                    options.map((option) => (option as HTMLOptionElement).value),
-                );
-            if (values.includes("manual")) {
-                await select.selectOption("manual");
-                break;
-            }
-        }
+        // BL-476 L1：模型发现已是 reka `Select`（combobox + listbox），表单里不再有带
+        // `manual` 选项的原生 select（API Type 仍是原生 select）。
+        await page.getByTestId("provider-connection-field-discovery").click();
+        await page.getByTestId("provider-connection-discovery-option-manual").click();
         await form.locator("textarea").first().fill(FAKE_LLM_MODEL);
 
         const createResponse = page.waitForResponse(

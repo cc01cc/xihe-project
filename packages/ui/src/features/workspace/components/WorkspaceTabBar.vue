@@ -3,6 +3,10 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
+// BL-476 L1 pilot: the hand-rolled `role="tablist"` markup is replaced by the
+// vendored reka `Tabs` primitives (see src/components/ui/VENDOR.md); reka owns
+// role/aria-selected/roving-focus, the bar keeps owning navigation + persistence.
+import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import {
     WORKSPACE_TAB_IDS,
     defaultOpenTabs,
@@ -156,10 +160,41 @@ watch(
     },
 );
 
+/**
+ * reka `TabsTrigger` selects on `mousedown` (not `click`), so a real mouse
+ * gesture reaches `selectTab` twice: once through the v-model setter and once
+ * through the click handler that keeps programmatic `.click()` (jsdom specs,
+ * Playwright `click()`) working. Collapse the pair into a single
+ * `router.push`; the guard resets when the route actually changes.
+ */
+const requestedPath = ref<string | null>(null);
+
+watch(
+    () => route.fullPath,
+    () => {
+        requestedPath.value = null;
+    },
+);
+
 function selectTab(tab: RouteTab): void {
     if (tab.id === activeId.value && route.fullPath === tab.path) return;
+    if (requestedPath.value === tab.path) return;
+    requestedPath.value = tab.path;
     void router.push(tab.path);
 }
+
+/**
+ * `Tabs` v-model bridge: reka emits `update:modelValue` on click / arrow keys,
+ * the setter only navigates — the route stays the single source of truth, so
+ * deep links, back/forward and bookmarks keep working exactly as before.
+ */
+const activeTab = computed<"chat" | WorkspaceTabId>({
+    get: () => activeId.value,
+    set: (id) => {
+        const tab = tabs.value.find((item) => item.id === id);
+        if (tab) selectTab(tab);
+    },
+});
 
 function closeTab(tab: RouteTab): void {
     if (!tab.closable) return;
@@ -176,42 +211,42 @@ function closeTab(tab: RouteTab): void {
         :aria-label="t('workspace.tabBarLabel')"
         class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-surface-content px-2"
     >
-        <div role="tablist" class="flex min-w-0 items-center gap-1">
-            <div
-                v-for="tab in tabs"
-                :key="tab.id"
-                class="group inline-flex shrink-0 items-center rounded-md"
-                :class="
-                    tab.id === activeId
-                        ? 'bg-brand/10 text-brand'
-                        : 'text-muted-foreground hover:bg-accent'
-                "
-            >
-                <button
-                    type="button"
-                    role="tab"
-                    :data-testid="tab.testid"
-                    :data-tab-id="tab.id"
-                    :aria-selected="tab.id === activeId"
-                    :title="tab.label"
-                    class="inline-flex max-w-52 items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    :class="tab.id === activeId ? 'font-medium' : ''"
-                    @click="selectTab(tab)"
+        <Tabs v-model="activeTab" class="min-w-0 flex-1">
+            <TabsList variant="line" class="p-0">
+                <div
+                    v-for="tab in tabs"
+                    :key="tab.id"
+                    class="group inline-flex shrink-0 items-center rounded-md"
+                    :class="
+                        tab.id === activeId
+                            ? 'bg-brand/10 text-brand'
+                            : 'text-muted-foreground hover:bg-accent'
+                    "
                 >
-                    <span class="truncate">{{ tab.label }}</span>
-                </button>
-                <button
-                    v-if="tab.closable"
-                    type="button"
-                    :data-testid="`workspace-tab-close-${tab.id}`"
-                    :aria-label="t('workspace.tabClose')"
-                    :title="t('workspace.tabClose')"
-                    class="mr-1 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    @click.stop="closeTab(tab)"
-                >
-                    <X class="size-3" aria-hidden="true" />
-                </button>
-            </div>
-        </div>
+                    <TabsTrigger
+                        :value="tab.id"
+                        :data-testid="tab.testid"
+                        :data-tab-id="tab.id"
+                        :title="tab.label"
+                        class="h-auto max-w-52 flex-none rounded-md px-2 py-1 text-xs after:hidden data-active:bg-transparent data-active:text-inherit dark:data-active:border-transparent dark:data-active:bg-transparent"
+                        :class="tab.id === activeId ? 'font-medium' : ''"
+                        @click="selectTab(tab)"
+                    >
+                        <span class="truncate">{{ tab.label }}</span>
+                    </TabsTrigger>
+                    <button
+                        v-if="tab.closable"
+                        type="button"
+                        :data-testid="`workspace-tab-close-${tab.id}`"
+                        :aria-label="t('workspace.tabClose')"
+                        :title="t('workspace.tabClose')"
+                        class="mr-1 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click.stop="closeTab(tab)"
+                    >
+                        <X class="size-3" aria-hidden="true" />
+                    </button>
+                </div>
+            </TabsList>
+        </Tabs>
     </nav>
 </template>

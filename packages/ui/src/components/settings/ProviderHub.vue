@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import ConnectionResourceLimits from "./ConnectionResourceLimits.vue";
+// BL-476 L1 pilot: the first native select element replaced by the vendored
+// reka-based `Select` (see src/components/ui/VENDOR.md). Keep this pilot small:
+// the remaining native selects stay untouched until the L2 batch.
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -46,6 +50,28 @@ const props = withDefaults(
 );
 
 const { t } = useI18n();
+
+/**
+ * BL-476 L1 pilot: options for the `Select` that replaced the native select
+ * bound to `form.modelDiscovery`. reka's `SelectValue` can only read
+ * labels from items that have been mounted (i.e. after the popup opened once),
+ * so the trigger renders its label from this same list through the
+ * `SelectValue` slot — one source for both the options and the closed state.
+ */
+const discoveryOptions = computed<
+    Array<{ value: ProviderDefinition["modelDiscovery"]; label: string }>
+>(() => [
+    { value: "remote-models", label: "Provider /models" },
+    { value: "litellm-catalog", label: "LiteLLM Catalog" },
+    { value: "curated", label: t("settings.providerHub.discoveryCurated") },
+    { value: "manual", label: t("settings.providerHub.discoveryManual") },
+]);
+
+const discoveryLabel = computed(
+    () =>
+        discoveryOptions.value.find((option) => option.value === form.modelDiscovery)?.label ??
+        form.modelDiscovery,
+);
 
 // PLAN-0523 T3.5: single-source connection list lives in the config store.
 const configStore = useConfigStore(),
@@ -2107,19 +2133,27 @@ onMounted(() => {
                         <span class="mb-1.5 block text-xs font-semibold">{{
                             t("settings.providerHub.fieldDiscovery")
                         }}</span>
-                        <select
-                            v-model="form.modelDiscovery"
-                            class="w-full rounded-md border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                        >
-                            <option value="remote-models">Provider /models</option>
-                            <option value="litellm-catalog">LiteLLM Catalog</option>
-                            <option value="curated">
-                                {{ t("settings.providerHub.discoveryCurated") }}
-                            </option>
-                            <option value="manual">
-                                {{ t("settings.providerHub.discoveryManual") }}
-                            </option>
-                        </select>
+                        <Select v-model="form.modelDiscovery">
+                            <SelectTrigger
+                                data-testid="provider-connection-field-discovery"
+                                class="mt-1 w-full"
+                                :aria-label="t('settings.providerHub.fieldDiscovery')"
+                            >
+                                <SelectValue>
+                                    <span class="truncate">{{ discoveryLabel }}</span>
+                                </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="option in discoveryOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                    :data-testid="`provider-connection-discovery-option-${option.value}`"
+                                >
+                                    {{ option.label }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                         <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
                             t("settings.providerHub.discoveryHint")
                         }}</span>

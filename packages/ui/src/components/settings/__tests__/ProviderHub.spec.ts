@@ -226,11 +226,12 @@ describe("ProviderHub master-detail", () => {
             .trigger("click");
         const modal = wrapper.get('[data-testid="provider-connection-modal"]');
         expect(modal.get<HTMLInputElement>('input[type="password"]').element.value).toBe("");
-        expect(
-            modal
-                .findAll<HTMLSelectElement>("select")
-                .find((item) => item.element.value === "curated")?.element.value,
-        ).toBe("curated");
+        // BL-476 L1 pilot: discovery is the vendored reka `Select` now, so the
+        // modal no longer holds a native <select>; the closed trigger must still
+        // surface the stored value instead of rendering empty.
+        expect(modal.get('[data-testid="provider-connection-field-discovery"]').text()).toContain(
+            i18n.global.t("settings.providerHub.discoveryCurated"),
+        );
         expect(
             modal.get('[data-testid="provider-connection-form-key"]').attributes("readonly"),
         ).toBeDefined();

@@ -141,11 +141,14 @@ test.describe("Provider protocol groups (PLAN-0364 M4, discovery modes per PLAN-
         // remote-models / litellm-catalog / curated / manual 四种（PLAN-0438），
         // 已退役的旧「精选模型」标签不得复现。
         await page.getByTestId("provider-picker-custom-openai-compatible").click();
-        const discoverySelect = page
+        // BL-476 L1：模型发现是 reka `Select`（combobox + listbox），选项只在弹层打开时挂载。
+        const discoveryTrigger = page
             .getByTestId("provider-connection-modal")
-            .locator("select")
-            .nth(1);
-        const optionText = (await discoverySelect.locator("option").allTextContents()).join(" | ");
+            .getByTestId("provider-connection-field-discovery");
+        await discoveryTrigger.click();
+        await expect(discoveryTrigger).toHaveAttribute("aria-expanded", "true");
+        const optionText = (await page.getByRole("option").allTextContents()).join(" | ");
+        await page.keyboard.press("Escape");
         expect(optionText).toContain("Provider /models");
         expect(optionText).toContain("LiteLLM Catalog");
         expect(optionText).toContain("手动输入模型");

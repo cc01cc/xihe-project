@@ -175,3 +175,29 @@ describe("WorkspaceTabBar storage hygiene (PLAN-0582 S3a audit P1-1)", () => {
         wrapper.unmount();
     });
 });
+
+describe("WorkspaceTabBar tab semantics (BL-476 L1 reka Tabs pilot)", () => {
+    it("renders the vendored Tabs list with roving focus instead of a hand-rolled tablist", async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+
+        // The `role="tablist"` markup is gone from the component: reka renders it
+        // (and owns aria-selected / the roving tabindex) while the bar keeps
+        // owning navigation and layout persistence.
+        const list = wrapper.get('[role="tablist"]');
+        expect(list.attributes("data-orientation")).toBe("horizontal");
+        // reka's tab stop sits on the list itself; Tab lands there and focus is
+        // forwarded to the selected tab, so the triggers themselves stay at -1.
+        expect(list.attributes("tabindex")).toBe("0");
+
+        const chat = wrapper.get('[data-testid="workspace-tab-chat"]');
+        expect(chat.attributes("role")).toBe("tab");
+        expect(chat.attributes("aria-selected")).toBe("true");
+        expect(chat.attributes("tabindex")).toBe("-1");
+        expect(
+            wrapper.get('[data-testid="workspace-toolbar-environment"]').attributes("tabindex"),
+        ).toBe("-1");
+
+        wrapper.unmount();
+    });
+});
