@@ -159,7 +159,7 @@ async fn test_config_client_fetch() {
 >
 > Historical wording: Uses Docker Compose to start partial module stacks (e.g., CP+Agent or CP+Runtime), verifying end-to-end communication through real HTTP ports.
 >
-> ⚠️ **The gap between this description and the task's current state awaits ruling Q-1107-38**: `mise run test:integration` still declares a `t3` dependency and its body will try `docker compose up`; commenting it out or removing it is a B-class change — this document only fixes the description and does not pre-empt the ruling.
+> ⚠️ **Documentation vs task state (settled: keep the task, fix only the docs)**: `mise run test:integration` still declares a `t3` dependency and its body will try `docker compose up`. The task is **neither commented out nor removed** — the lane is frozen and the task is kept so existing references and callers are not cut off (`test:integration:t2` remains the clean T2 entry point). Treat this document as authoritative: the T3 compose lane **must not be used for acceptance**; real-stack acceptance runs on the "Host lane" above. Removing the `t3` dependency would be a task-behavior change (B class) and needs its own ruling, not a docs-only edit.
 
 ```
 ┌──────────────┐     HTTP (real)        ┌──────────────┐
@@ -361,8 +361,9 @@ The Host fake-LLM matrix adds missing-credential, provider-401, multi-token succ
 ```bash
 # Full integration test (T3 = historical compose lane, service-containerization freeze 2026-10-07;
 # current acceptance runs on the host lane — see §2.3)
-# Note: the task still declares a t3 dependency and its body tries docker compose; commenting it out or
-# removing it awaits ruling Q-1107-38 — for T2 only, use test:integration:t2
+# Note: the task still declares a t3 dependency and its body tries docker compose — that is settled
+# current state (task kept, docs fixed), not an open question; for T2 only use test:integration:t2,
+# and run real-stack acceptance on the host lane (see §2.3)
 mise run test:integration
 
 # Run each module independently

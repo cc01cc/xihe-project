@@ -184,9 +184,10 @@ The root directory no longer uses pnpm workspace. `packages/ui/` is itself the p
 
 CP (Control Plane) supports two runtime modes:
 
-#### Mode A: Docker Compose Full Stack (Recommended for Integration Tests)
+#### Mode A: Docker Compose Full Stack (one-shot baseline — frozen since 2026-10-07; NOT the daily path)
 
 ```bash
+# [frozen 2026-10-07 — do not run; daily work uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
 docker compose up -d --build
 ```
 
@@ -384,8 +385,8 @@ Each module accesses CP ConfigService through local clients:
 Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require CP running at `localhost:8080`.
 
 ```bash
-# Method 1: Docker Compose (recommended)
-docker compose up -d --build
+# Method 1: Docker Compose (historical — compose lane frozen since 2026-10-07; not for acceptance)
+docker compose up -d --build   # [frozen — historical reference only, do not run]
 cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 
 # Method 2: Host stack
@@ -453,10 +454,10 @@ LangChain events are automatically mapped through the SSE adapter layer (`packag
 |--------|-----------|------------|-------------|
 | **UI Unit** | Vitest + @vue/test-utils | 206 | `cd packages/ui && pnpm vitest run` |
 | **UI E2E (Mock)** | Playwright + page.route() | 40 | `cd packages/ui && npx playwright test e2e/mock/` |
-| **UI E2E (Real)** | Playwright + real CP | 32 | `cd packages/ui && npx playwright test e2e/real/` (requires Docker Compose) |
+| **UI E2E (Real)** | Playwright + real CP | 32 | `cd packages/ui && npx playwright test e2e/real/` (host lane: `mise run test:e2e:host`; the compose lane is frozen) |
 | **CP** | JUnit 5 + Mockito + Testcontainers | 152 | `cd packages/control-plane && mvn test` |
 | **Agent Unit** | pytest + pytest-asyncio | 150 | `cd packages/agent && uv run pytest tests/unit/ -v` |
-| **Agent Integration** | pytest + httpx | — | `cd packages/agent && uv run pytest tests/integration/ -v` (requires Docker Compose) |
+| **Agent Integration** | pytest + httpx | — | `cd packages/agent && uv run pytest tests/integration/ -v` (requires a host CP — `XIHE_CP_PORT`, stack-1 default 12631; the compose lane is frozen) |
 | **Runtime** | cargo test | 176 | `cd packages/runtime && cargo test` |
 | **Cross-module E2E** | pytest + httpx | 32 | `uv run --directory packages/agent pytest tests/ -v` |
 
@@ -467,7 +468,7 @@ Test directories are named by **test pattern**, not by functional module:
 | Directory | Pattern | External Dependencies | Use Case |
 |-----------|---------|----------------------|----------|
 | `e2e/mock/` | 🔶 Mock | None | Quick verification of UI rendering and interaction logic |
-| `e2e/real/` | 🔵 Real | Docker Compose full stack | End-to-end flows, visual regression |
+| `e2e/real/` | 🔵 Real | Host stack (compose lane frozen) | End-to-end flows, visual regression |
 
 > Visual regression baselines (`*-snapshots/`) are tracked directly by git, updated via `--update-snapshots` and committed. Failed test artifacts are in `test-results/` (gitignored).
 | `tests/unit/` | ⚪ Unit | None | Pure logic, algorithms, component rendering |
@@ -590,9 +591,10 @@ mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME
 
 ## 5. Deployment
 
-### 5.1. Docker Compose (Recommended)
+### 5.1. Docker Compose (frozen 2026-10-07 — one-shot baseline, historical reference only)
 
 ```bash
+# [frozen 2026-10-07 — do not run; daily start uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
 # Build and start all 4 services
 docker compose up -d --build
 
