@@ -169,7 +169,8 @@ class SkillReadToolTest {
                 skillReadService,
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
                 mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class),
-                chatRunStatusReadService);
+                chatRunStatusReadService,
+                mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class));
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         // Route seeds: the tool map already knows both names, so no Runtime probe is attempted.

@@ -96,7 +96,12 @@ public class ToolFaceRegistry {
             // a bounded, named target. It goes into READ_TOOLS instead of getting a new atom: the
             // atom table already carries 17 entries, and adding one costs a seeder plus UI and CLI
             // word lists. Paying that for a read is not warranted (README D28-36).
-            "skill_read");
+            "skill_read",
+            // PLAN-0686 G8: the three read-only Git tools ride the same reasoning — they read a
+            // named target (status / diff / log of the workspace's own user repository), so they
+            // take the existing `read` atom and STRUCTURED shape instead of a new atom or
+            // `extraFaces` (spec/protocol/mcp.md §3.5).
+            "git_status", "git_diff", "git_log");
 
     private static final Set<String> WRITE_TOOLS = Set.of(
             "write_file", "edit_file", "delete_file", "delete_directory",

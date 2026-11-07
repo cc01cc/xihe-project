@@ -37,7 +37,7 @@ export const mockSessions: Session[] = [
         updatedAt: "2026-11-03T10:02:00Z",
         workspaceId: PREVIEW_WORKSPACE_ID,
         // PLAN-0689 D-54: simulates the Session PRIMARY participant projection (no longer a Session column).
-    agentPrincipalId: "7a10c3e0-0000-4000-8000-0000000000a1",
+        agentPrincipalId: "7a10c3e0-0000-4000-8000-0000000000a1",
         modelProvider: "anthropic",
         modelName: "claude-sonnet-4.5",
         providerConnectionId: "conn-anthropic",

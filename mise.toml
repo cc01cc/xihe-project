@@ -322,7 +322,7 @@ alias = "lint:runtime"
 
 [tasks."lint:links"]
 run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
-description = "Check documentation links (no escape from docs/)"
+description = "Check documentation links (no escape from docs/); skips and exits 0 when the ONE main checkout (and its scripts/check-doc-links.sh) is absent — same degradation as check:ports / check:standalone"
 alias = "lint:links"
 
 [tasks."perf:chat"]
@@ -350,7 +350,7 @@ alias = "format"
 # test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
 # （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
 depends = ["check:openapi", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
-description = "Run all quality gates — contract + lint + typecheck + build + test + e2e fixture self-tests (Docker auto-managed)"
+description = "Run all quality gates — check:openapi + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
 alias = "validate"
 
 [tasks."validate:full"]
@@ -569,4 +569,4 @@ alias = "pkg:installer"
 # 历史提交豁免：基线段 a632de77 之前不检查。手写提交前的本地校验走 scripts/hooks/commit-msg。
 [tasks."check:commit-msg"]
 run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce"
-description = "Report-only audit of commit messages (type/scope, display-width <=72 cols, Why/What/Verify body). Never fails; observe by commit count before enforcing"
+description = "Blocking commit-message gate (type/scope, display-width <=72 cols / merge <=100, empty line before body, PLAN-####/BL-###/D-### reference) over a632de77..HEAD; blocking is the script default and this task is a validate dependency (D-216) — pass --report-only for the old never-fails audit"

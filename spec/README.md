@@ -65,6 +65,7 @@ spec/
 | credential management | proposed | partial | Security（授权/审计）+ CP ConfigService（存储/密钥） | 0496 授权接入与 API、0497 交付通道、0498 UI、运维轮换 | A03-xihe | PLAN-0495；存储/生命周期/轮换已实现（M1–M3）；交付与用户 API 归 0496/0497，UI 归 0498；`security/credential-management.md` |
 | workspace / sandbox / checkpoint | proposed | partial | Workspace/Runtime owners | CP、Runtime、UI、Agent | A03-xihe | PLAN-0389 |
 | execution job / scope / durable continuation | proposed | partial | CP durable-record + Runtime Job owners | CP Job API/durable record、Runtime Job backend、UI、Agent | A03-xihe | PLAN-0390; backend adapters PLAN-0392–0395; Workspace release PLAN-0391 |
+| workspace / task board（G6） | active | unimplemented | CP 任务板 owner（PLAN-0686） | CP 任务板 API/durable record、UI 任务板与 SSE 订阅方、Security（`WORKSPACE_TASK_READ`/`WORKSPACE_TASK_WRITE` 原子与默认集） | A03-xihe | PLAN-0686；`workspace/task-semantics.md`；契约随 M0 T0.3 冻结，实现与 V134 建表待落（需 PLAN-0689 V133 先行） |
 | configuration / env | proposed | partial | CP ConfigService owner | CP、Agent、Runtime、UI、Audit | A03-xihe | PLAN-0389；以现行配置模型整合历史来源；env 危险默认清单见 `config-env-target.md` §6 |
 | telemetry reporting | proposed | partial | XH owner（接收端契约归 A11/TLM） | UI logger、CP、A11/TLM 接收端 | A03-xihe | PLAN-0522、PLAN-0527；上游接收契约为 A11 PLAN-0521；`security/telemetry-reporting.md` |
 | protocol | proposed | partial | 对应协议 owners | UI、CP、Agent、Runtime | A03-xihe | PLAN-0385；OpenAPI/inventory/schema 保持各自事实源 |

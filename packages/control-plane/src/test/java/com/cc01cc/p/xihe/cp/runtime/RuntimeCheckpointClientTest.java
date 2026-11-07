@@ -428,4 +428,84 @@ class RuntimeCheckpointClientTest {
         assertFalse(unavailable.isRepository());
         assertNotNull(unavailable.entries());
     }
+
+    /** PLAN-0686 G8 (T2.2 A): repeated {@code ?path=} on the wire, and "" is not null. */
+    @Test
+    void gitDiffSendsRepeatedPathsAndKeepsAnEmptyPatchAsEmptyString() throws IOException {
+        String url = startServer((method, path) -> new Stub(200,
+                "{\"isRepository\":true,\"patch\":\"\",\"truncated\":false,\"patchBytes\":0}"));
+        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
+
+        RuntimeCheckpointClient.GitDiffResult diff =
+                client.workspaceGitDiff("ws-1", List.of("src/a.rs", "docs/b.md"));
+
+        assertEquals(RuntimeCheckpointClient.Outcome.OK, diff.outcome());
+        assertTrue(diff.isRepository());
+        assertEquals("", diff.patch(), "an empty patch must stay an empty string, never null");
+        assertFalse(diff.truncated());
+        assertEquals(0, diff.patchBytes());
+        assertEquals("GET", lastMethod.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/git-diff", lastPath.get());
+        assertEquals("path=src%2Fa.rs&path=docs%2Fb.md", lastQuery.get());
+
+        server.stop(0);
+        String noPathsUrl = startServer((method, path) -> new Stub(200,
+                "{\"isRepository\":false,\"patch\":\"\",\"truncated\":false,\"patchBytes\":0}"));
+        RuntimeCheckpointClient.GitDiffResult noPaths =
+                new RuntimeCheckpointClient(noPathsUrl, "test-token")
+                        .workspaceGitDiff("ws-1", List.of());
+        assertNull(lastQuery.get(), "no paths means no query string at all");
+        assertFalse(noPaths.isRepository());
+        assertEquals("", noPaths.patch());
+
+        server.stop(0);
+        String unavailableUrl = startServer((method, path) -> new Stub(503,
+                "{\"code\":\"CHECKPOINT_UNAVAILABLE\",\"reason\":\"git_below_minimum\"}"));
+        RuntimeCheckpointClient.GitDiffResult unavailable =
+                new RuntimeCheckpointClient(unavailableUrl, "test-token")
+                        .workspaceGitDiff("ws-1", List.of("a.txt"));
+        assertEquals(RuntimeCheckpointClient.Outcome.UNAVAILABLE, unavailable.outcome());
+        assertEquals("git_below_minimum", unavailable.reason());
+        assertFalse(unavailable.isRepository(),
+                "a refused read must not claim a repository state either");
+    }
+
+    /** PLAN-0686 G8 (T2.2 B): limit/range/repeated path, plus the truncated window. */
+    @Test
+    void gitLogSendsLimitRangeAndPathsAndParsesEntries() throws IOException {
+        String url = startServer((method, path) -> new Stub(200,
+                "{\"isRepository\":true,\"truncated\":true,\"entries\":["
+                        + "{\"hash\":\"abc1234567890\",\"shortHash\":\"abc1234\","
+                        + "\"author\":\"drafter\",\"committedAt\":\"2026-11-07T08:00:00+08:00\","
+                        + "\"subject\":\"feat(cp): git_log\"},"
+                        + "{\"hash\":\"def4567890123\",\"shortHash\":\"def4567\","
+                        + "\"author\":\"lead\",\"committedAt\":\"2026-11-07T09:00:00+08:00\","
+                        + "\"subject\":\"\"}]}"));
+        RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
+
+        RuntimeCheckpointClient.GitLogResult log =
+                client.workspaceGitLog("ws-1", 5, List.of("src/main.rs"), "main..HEAD");
+
+        assertEquals(RuntimeCheckpointClient.Outcome.OK, log.outcome());
+        assertTrue(log.isRepository());
+        assertTrue(log.truncated(), "more matched than limit must stay visible");
+        assertEquals(2, log.entries().size());
+        assertEquals("abc1234567890", log.entries().get(0).hash());
+        assertEquals("abc1234", log.entries().get(0).shortHash());
+        assertEquals("drafter", log.entries().get(0).author());
+        assertEquals("2026-11-07T08:00:00+08:00", log.entries().get(0).committedAt());
+        assertEquals("feat(cp): git_log", log.entries().get(0).subject());
+        assertEquals("", log.entries().get(1).subject(), "a blank subject must not become null");
+        assertEquals("GET", lastMethod.get());
+        assertEquals("/internal/v1/runtime/workspaces/ws-1/git-log", lastPath.get());
+        assertEquals("limit=5&range=main..HEAD&path=src%2Fmain.rs", lastQuery.get());
+
+        server.stop(0);
+        String invalidUrl = startServer((method, path) -> new Stub(400,
+                "{\"code\":\"CHECKPOINT_INVALID_REQUEST\"}"));
+        assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST,
+                new RuntimeCheckpointClient(invalidUrl, "test-token")
+                        .workspaceGitLog("ws-1", 20, List.of(), null).outcome());
+        assertEquals("limit=20", lastQuery.get(), "the default window is still explicit");
+    }
 }

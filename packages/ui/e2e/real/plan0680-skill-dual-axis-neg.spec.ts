@@ -129,6 +129,13 @@ function latestSnapshot(sessionId: string): { id: string; status: string; items:
     return { id: row.id, status: row.status, items };
 }
 /** 严格轮询到终态（不用固定 sleep，见 packages/ui/AGENTS.md「新 E2E 禁止固定 sleep」）。 */
+/**
+ * 轮询到**快照真正落库且 run 成功**为止（D-76 ①）。
+ *
+ * 只有 `succeeded` 才算取到快照：`failed` / `cancelled` / `ambiguous` 时 CP 仍可能
+ * 产出一份 `items: []` 的快照，负向断言（"不含 W1 的东西"）会**全过**——这正是
+ * D-73 那种假绿的形状。故其它终态直接抛错，并把 `status` 带进错误消息。
+ */
 async function waitForSnapshot(sessionId: string): Promise<{
     id: string;
     status: string;
@@ -138,11 +145,18 @@ async function waitForSnapshot(sessionId: string): Promise<{
     let last = latestSnapshot(sessionId);
     while (Date.now() < deadline) {
         last = latestSnapshot(sessionId);
-        if (last.id && TERMINAL.test(last.status)) return last;
+        if (last.id && last.status === "succeeded") return last;
+        if (last.id && TERMINAL.test(last.status) && last.status !== "succeeded") {
+            throw new Error(
+                `快照等待失败：run 终态为 "${last.status}"（非 succeeded），` +
+                    `此时 items=${JSON.stringify(last.items)} 不足以支撑任何"不含"断言`,
+            );
+        }
         await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    expect(last.status, "run 应到终态（超时则窗口期查 Agent 是否卡住）").toMatch(TERMINAL);
-    return last;
+    throw new Error(
+        `快照等待超时：60s 内未到 succeeded，最后 status="${last.status}"（超时则窗口期查 Agent 是否卡住）`,
+    );
 }
 async function sendChat(
     request: APIRequestContext,
@@ -154,12 +168,17 @@ async function sendChat(
     const branchId = await getRootBranchId(request, sessionId, headers);
     // `openSessionSse(sessionId, token, extraHeaders)` 返回关闭函数，不是带 close() 的句柄
     const closeSse = await openSessionSse(sessionId, identity.accessToken);
-    const chat = await request.post(`${CP_URL}/api/v1/chat`, {
-        headers,
-        data: { sessionId, branchId, content, toolMode: "chat" },
-    });
-    expect(chat.status(), await chat.text()).toBe(202);
-    closeSse();
+    // D-76 ③：`:163` 的断言抛错时 `closeSse()` 原本不执行 ⇒ SSE 连接泄漏，后续 run 拿不到事件。
+    // 用 try/finally 保证任何路径都关掉。`toolMode` 值域见 D-73 注记（合法值只有 none/workspace）。
+    try {
+        const chat = await request.post(`${CP_URL}/api/v1/chat`, {
+            headers,
+            data: { sessionId, branchId, content, toolMode: "none" },
+        });
+        expect(chat.status(), await chat.text()).toBe(202);
+    } finally {
+        closeSse();
+    }
 }
 test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不出现在 W2 的 skills_snapshot", async ({
     request,
@@ -178,13 +197,13 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         w2.workspaceId,
     );
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
-            name: agentName("P0680NegW1", Date.now()),
-            actions: ["read"],
-        });
+        name: agentName("P0680NegW1", Date.now()),
+        actions: ["read"],
+    });
     const w2Principal = await provisionWorkspaceAgentPrincipal(request, w2, {
-            name: agentName("P0680NegW2", Date.now()),
-            actions: ["read"],
-        });
+        name: agentName("P0680NegW2", Date.now()),
+        actions: ["read"],
+    });
     // ① W1 导入一个 **workspace 作用域**私有技能定义（这是跨工作区隔离的被测对象）
     const nonce = Date.now().toString(36);
     const skillName = `p0680-neg-w1-${nonce}`;
@@ -195,10 +214,14 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
             skills: [
                 {
                     name: skillName,
+                    // D-76：`sourcePath` 是必填（`SkillImportValidator` 对空值直接
+                    // `SKILL_SOURCE_PATH_INVALID` ⇒ 200 + `rejected[]`，items 为空 ⇒
+                    // 后续"不含"断言全过 = 假绿）。与 tier spec 的 D-71 同源。
+                    sourcePath: `lab/${skillName}.md`,
                     description: "PLAN-0680 T3.2 跨工作区隔离探针（W1 私有）",
                     body: `# ${skillName}\n只应在 W1 生效，不得出现在 W2 注入。`,
                     trusted: false,
-                  },
+                },
             ],
         },
     });
@@ -206,12 +229,23 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         [200, 201],
         `W1 私有技能导入应 2xx，实际 ${imported.status()}：${await imported.text()}`,
     ).toContain(imported.status());
+    // 导入是**逐项 keep-going**（`SkillImportValidator:28`）：item 级问题不抛错，而是进
+    // `rejected[]` 并留 200。只断言 2xx 会把"一个都没进"当成功 ⇒ 必须同时守 rejected 空
+    // 与 results 计数（D-71 证据账里定下的强制形状）。
     const importedBody = (await imported.json()) as {
-        skills?: Array<{ id?: string }>;
-        ids?: string[];
-        id?: string;
+        results?: Array<{ skillId?: string; name?: string }>;
+        rejected?: Array<{ sourcePath?: string; code?: string; detail?: string }>;
     };
-    const w1SkillId = importedBody.skills?.[0]?.id ?? importedBody.ids?.[0] ?? importedBody.id;
+    expect(
+        importedBody.rejected ?? [],
+        `W1 私有技能导入不应有 rejected 行：${JSON.stringify(importedBody.rejected)}`,
+    ).toEqual([]);
+    const w1SkillIds = (importedBody.results ?? []).map((row) => row.skillId);
+    expect(
+        w1SkillIds.length,
+        `W1 私有技能导入应产生 1 条 results，实际 ${JSON.stringify(importedBody.results)}`,
+    ).toEqual(1);
+    const [w1SkillId] = w1SkillIds;
     expect(w1SkillId, "导入响应应带 skillId").toMatch(UUID);
     // ② 绑到 W1 的 principal（写入面成功，隔离要看运行期）
     const bound = await request.post(SKILL_BINDING_PATH(w1Principal, w1.workspaceId), {
@@ -224,12 +258,17 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     ).toContain(bound.status());
     // ③ W2 跑一次 chat
     const w2Session = await createSessionWithPrincipal(request, w2, {
-            principalId: w2Principal,
-            workspaceId: w2.workspaceId,
-            title: "PLAN-0680 T3.2 cross-workspace isolation",
-        });
+        principalId: w2Principal,
+        workspaceId: w2.workspaceId,
+        title: "PLAN-0680 T3.2 cross-workspace isolation",
+    });
     await sendChat(request, w2, w2Session, "PLAN-0680 T3.2 isolation probe");
     const w2Snap = await waitForSnapshot(w2Session);
+    // D-76 ①：负向断言必须建立在"run 真的成功过"之上。run 失败时 CP 仍会落一份
+    // `items: []` 的快照，下面三条"不含"会全过 —— 典型的 D-73 假绿形状。
+    expect(w2Snap.status, "T3.2a 要求 W2 的 run 成功，否则快照 items 为空、隔离断言无意义").toBe(
+        "succeeded",
+    );
     // ④ V3 注入半：W2 的快照既不含 W1 的 skillId、也不含其名字、更不该有 W1 workspace tier 行
     expect(
         w2Snap.items.some((item) => item.skillId === w1SkillId),
@@ -249,12 +288,14 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     ).toBe(false);
     // ⑤ 反向对照：W1 自己跑，同一 skill 必须出现——证明 ③④ 的「不出现」不是因为压根没生效
     const w1Session = await createSessionWithPrincipal(request, w1, {
-            principalId: w1Principal,
-            workspaceId: w1.workspaceId,
-            title: "PLAN-0680 T3.2 positive control",
-        });
+        principalId: w1Principal,
+        workspaceId: w1.workspaceId,
+        title: "PLAN-0680 T3.2 positive control",
+    });
     await sendChat(request, w1, w1Session, "PLAN-0680 T3.2 positive control");
     const w1Snap = await waitForSnapshot(w1Session);
+    // D-76 ①：正向对照同样要先坐实 run 成功，否则"W1 自己也不含"会被误读成隔离生效。
+    expect(w1Snap.status, "T3.2a 要求 W1 的 run 成功（正向对照前提）").toBe("succeeded");
     expect(
         w1Snap.items.some((item) => item.skillId === w1SkillId),
         `正向对照失败：W1 自己的快照里应含 ${w1SkillId}，否则 W2 的「不含」无意义`,
@@ -267,9 +308,9 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
     const w1 = await newIdentity(request, "p0680-404-w1");
     const w2 = await newIdentity(request, "p0680-404-w2");
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
-            name: agentName("P0680Neg404", Date.now()),
-            actions: ["read"],
-        });
+        name: agentName("P0680Neg404", Date.now()),
+        actions: ["read"],
+    });
     // W2 的私有定义
     const nonce = Date.now().toString(36);
     const imported = await request.post(`${CP_URL}/api/v1/skills/import`, {
@@ -279,6 +320,9 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
             skills: [
                 {
                     name: `p0680-404-w2-${nonce}`,
+                    // D-76：`sourcePath` 必填，漏传 ⇒ 200 + rejected[] ⇒ w2SkillId undefined，
+                    // 后面的 404 断言就变成"用 undefined 去绑，当然 404"的假绿。
+                    sourcePath: `lab/p0680-404-w2-${nonce}.md`,
                     description: "PLAN-0680 T3.2 404 探针（W2 私有）",
                     body: `# p0680-404-w2-${nonce}`,
                     trusted: false,
@@ -288,12 +332,35 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
     });
     expect([200, 201], await imported.text()).toContain(imported.status());
     const importedBody = (await imported.json()) as {
-        skills?: Array<{ id?: string }>;
-        ids?: string[];
-        id?: string;
+        results?: Array<{ skillId?: string; name?: string }>;
+        rejected?: Array<{ sourcePath?: string; code?: string; detail?: string }>;
     };
-    const w2SkillId = importedBody.skills?.[0]?.id ?? importedBody.ids?.[0] ?? importedBody.id;
+    expect(
+        importedBody.rejected ?? [],
+        `W2 私有技能导入不应有 rejected 行：${JSON.stringify(importedBody.rejected)}`,
+    ).toEqual([]);
+    const w2SkillIds = (importedBody.results ?? []).map((row) => row.skillId);
+    expect(
+        w2SkillIds.length,
+        `W2 私有技能导入应产生 1 条 results，实际 ${JSON.stringify(importedBody.results)}`,
+    ).toEqual(1);
+    const [w2SkillId] = w2SkillIds;
     expect(w2SkillId, "导入响应应带 skillId").toMatch(UUID);
+    // D-76 ②：先坐实"W2 自己看得见自己的技能"（正例），再断言跨工作区 404。
+    // 否则 404 与"技能根本没持久化/导入压根没进去"不可区分 —— 后者也会 404。
+    const w2Principal = await provisionWorkspaceAgentPrincipal(request, w2, {
+        name: agentName("P0680Neg404W2", Date.now()),
+        actions: ["read"],
+    });
+    const w2OwnBound = await request.post(SKILL_BINDING_PATH(w2Principal, w2.workspaceId), {
+        headers: headersOf(w2),
+        data: { skillId: w2SkillId },
+    });
+    expect(
+        [200, 201],
+        `正例失守：W2 绑自己的私有技能应 2xx（否则下面的 404 可能只是"技能不存在"），` +
+            `实际 ${w2OwnBound.status()}：${await w2OwnBound.text()}`,
+    ).toContain(w2OwnBound.status());
     // W1（在 W1 上下文里）去绑 W2 的私有定义 ⇒ 必须 404，不是 400
     const refused = await request.post(SKILL_BINDING_PATH(w1Principal, w1.workspaceId), {
         headers: headersOf(w1),
@@ -326,14 +393,11 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
  * 关闭条件：BL-354 关闭 + design/verify 写明 continuation 语义后，取消 fixme，
  * 按冻结语义补断言，并把 `verify.md:38` 的 V8 一并判过。
  */
-test.fixme(
-    "@host 0680-T3.2c J8 BL-354 continuation 场景快照语义（不可判定，待 BL-354 关闭）",
-    async () => {
-        // 意图（BL-354 关闭后照此实现）：
-        //   1. 绑定 skillA → 跑首轮 → 断快照含 skillA
-        //   2. 解绑 skillA → 在同一会话里发第二轮（continuation，不新建 session）
-        //   3. 断言：快照按冻结语义要么「少一项」（每轮重算）要么「保持原样」（沿用首轮）
-        //   4. 两种语义各写什么断言，等 design 裁定；现在写死任一种都会变成假绿
-        expect(true, "本用例当前不可判定，见上方注释与 BL-354").toBe(true);
-    },
-);
+test.fixme("@host 0680-T3.2c J8 BL-354 continuation 场景快照语义（不可判定，待 BL-354 关闭）", async () => {
+    // 意图（BL-354 关闭后照此实现）：
+    //   1. 绑定 skillA → 跑首轮 → 断快照含 skillA
+    //   2. 解绑 skillA → 在同一会话里发第二轮（continuation，不新建 session）
+    //   3. 断言：快照按冻结语义要么「少一项」（每轮重算）要么「保持原样」（沿用首轮）
+    //   4. 两种语义各写什么断言，等 design 裁定；现在写死任一种都会变成假绿
+    expect(true, "本用例当前不可判定，见上方注释与 BL-354").toBe(true);
+});

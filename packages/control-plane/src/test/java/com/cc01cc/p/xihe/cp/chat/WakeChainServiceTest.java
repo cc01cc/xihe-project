@@ -158,7 +158,7 @@ class WakeChainServiceTest {
         UUID principal = UUID.randomUUID();
         principalOf.put(id, principal);
         return new SessionParticipantService.ParticipantView(id, "AGENT", principal,
-                "MEMBER", 10, "MENTION", "ALWAYS", Instant.now(), null, name, null, null,
+                "MEMBER", 10, "MENTION", "ALWAYS", null, Instant.now(), null, name, null, null,
                 null, false, null, null);
     }
 
@@ -247,7 +247,7 @@ class WakeChainServiceTest {
         UUID humanId = UUID.randomUUID();
         when(participantService.list(any(), any(), any())).thenReturn(rosterOf(
                 new SessionParticipantService.ParticipantView(humanId, "HUMAN",
-                        UUID.randomUUID(), "MEMBER", 10, "MENTION", "ALWAYS", Instant.now(),
+                        UUID.randomUUID(), "MEMBER", 10, "MENTION", "ALWAYS", null, Instant.now(),
                         null, "Han", null, null, null, false, null, null)));
         stubChainRuns();
         chain.onAssistantContent(SESSION_ID, rootRun(), "@Han 看一下");

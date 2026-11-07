@@ -58,6 +58,7 @@ public class WakeDispatchService {
     private final SessionRepository sessionRepository;
     private final SessionParticipantService participantService;
     private final SessionWakeupService sessionWakeupService;
+    private final JudgeInputAssembler judgeInputAssembler;
     private final JudgeDecisionService judgeDecisionService;
     private final EventStoreService eventStoreService;
     private final ObjectMapper objectMapper;
@@ -76,6 +77,7 @@ public class WakeDispatchService {
                                SessionRepository sessionRepository,
                                SessionParticipantService participantService,
                                SessionWakeupService sessionWakeupService,
+                               JudgeInputAssembler judgeInputAssembler,
                                JudgeDecisionService judgeDecisionService,
                                EventStoreService eventStoreService,
                                ObjectMapper objectMapper,
@@ -85,6 +87,7 @@ public class WakeDispatchService {
         this.sessionRepository = sessionRepository;
         this.participantService = participantService;
         this.sessionWakeupService = sessionWakeupService;
+        this.judgeInputAssembler = judgeInputAssembler;
         this.judgeDecisionService = judgeDecisionService;
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
@@ -293,18 +296,26 @@ public class WakeDispatchService {
     private boolean judgeSaysSpeak(Session session, SessionParticipant participant,
                                    String triggerSource, String wakeRoundId) {
         try {
-            String inputWindow = "trigger=" + triggerSource + " round=" + wakeRoundId;
-            JudgeDecisionService.JudgeOutcome outcome = judgeDecisionService.decide(
-                    new JudgeDecisionService.JudgeInput(session.getId(), null, participant.getId(),
-                            wakeRoundId, triggerSource, inputWindow,
-                            "participant " + participant.getPrincipalId(), "bailian",
-                            "decision-model-preview",
-                            "Should this participant respond in wake round " + wakeRoundId + "?"));
+            // CP-2 (PLAN-0690 T1.2b): window / roster / duty / prompt come from the assembler,
+            // which also carries the configured cp.judge.* model identity (no literals here).
+            JudgeDecisionService.JudgeInput input =
+                    judgeInputAssembler.assemble(session, participant, triggerSource, wakeRoundId);
+            JudgeDecisionService.JudgeOutcome outcome = judgeDecisionService.decide(input);
             if (!outcome.answered() || outcome.verdictJson() == null) {
                 return false;
             }
             JsonNode verdict = objectMapper.readTree(outcome.verdictJson());
-            return verdict.path("speak").asBoolean(false);
+            JsonNode speak = verdict.get("speak");
+            if (speak == null || !speak.isBoolean()) {
+                // Unreachable for rows written after PLAN-0690 T1.2b (strict verdict), but never
+                // default a malformed answer to "do not speak" without a trace. The cause rides on
+                // the existing wake_judge_failed event as failureType=verdict_invalid (design §7:
+                // 零新事件名 — a second event here would split the failure family for log consumers).
+                logger.warn("[LIFECYCLE] service=cp event=wake_judge_failed participantId={} round={} "
+                        + "failureType={}", participant.getId(), wakeRoundId, "verdict_invalid");
+                return false;
+            }
+            return speak.booleanValue();
         } catch (UnexpectedRollbackException judgeTransactionBroken) {
             // T2.1: never turn a broken transaction into a successful judged_no. A judge write
             // that could not commit is a real dispatch failure; let the fan-out count it as dropped.

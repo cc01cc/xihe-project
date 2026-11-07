@@ -21,10 +21,10 @@ import java.util.UUID;
  * config-driven judge identity changes in one place for all three.</p>
  *
  * <p>Metering: the returned token counts are the provider's own numbers (possibly {@code null} — never
- * synthesized, PLAN-0416 T2.3) and the caller writes them into the structured log. The transport
- * additionally logs {@code judge_client_unwired} while the real client is not wired
- * ({@code JudgeModelClientUnavailableStub}); in that state this judge reports unavailable and no
- * candidate is written.</p>
+ * synthesized, PLAN-0416 T2.3) and the caller writes them into the structured log. The transport used
+ * to log {@code judge_client_unwired} while no real client was wired; that fail-closed stub has since
+ * been removed (PLAN-0690 T1.2b), so the only client bean is {@link AgentJudgeModelClient} and this
+ * judge reports unavailable when that client fails closed.</p>
  */
 @Component
 public class JudgeSeamPassiveMemoryJudge implements PassiveMemoryJudge {

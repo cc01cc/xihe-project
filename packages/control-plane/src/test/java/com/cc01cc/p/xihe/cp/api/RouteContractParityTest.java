@@ -103,7 +103,9 @@ class RouteContractParityTest extends AbstractIntegrationTest {
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/files/read", RUNTIME_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/files/stat", RUNTIME_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/files/write/{}", RUNTIME_SERVICE);
+        EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/git-diff", RUNTIME_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/git-facts", RUNTIME_SERVICE);
+        EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/git-log", RUNTIME_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/git-status", RUNTIME_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/jobs/cancel", RUNTIME_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/runtime/workspaces/{}/jobs/capabilities", RUNTIME_SERVICE);

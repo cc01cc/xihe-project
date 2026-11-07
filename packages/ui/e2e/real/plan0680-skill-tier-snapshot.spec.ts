@@ -18,6 +18,10 @@
  *      `XIHE_E2E_PG_DATABASE` / `XIHE_E2E_PG_USER`（读 `chat_runs` 用 psql 直连隔离库，
  *      与 `plan0678-skills-positive.spec.ts` 同口径）。
  *   2. CP `/actuator/health` == 200，Agent 已就绪（chat 会真派发到 fake provider）。
+ *      **CP 侧 readiness 由本 spec 自己等**（`waitForControlPlaneAgentReady`，见 ③ 处
+ *      注释）：CP 的 chat 准入读的是 `HealthMonitor` 缓存而不是实时探针，新栈首轮
+ *      窗口里 agent 已 ready 而缓存仍 `unknown` ⇒ `POST /api/v1/chat` 503
+ *      `AGENT_UNAVAILABLE`（r7 实证，属 spec 前置缺口，不是产品缺陷）。
  *   3. `ensureFakeUserProvider` 能在新注册身份上装好 fake provider（本 spec 自建身份，
  *      不依赖预置种子用户）。
  *   4. **【D-67 supersede】instance 作用域技能导入需要 instance admin**（`SkillImportService:80-92`
@@ -53,11 +57,20 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
-import { CP_URL, getRootBranchId } from "./helpers/journey";
+import { CP_URL, getRootBranchId, waitForControlPlaneAgentReady } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
 
 test.describe.configure({ retries: 0 });
+
+/**
+ * 超时预算（测试基础设施，不是断言放宽）：默认 30s 比本 spec 内部的两个等待预算
+ * 都小 —— ① CP readiness helper 自带 45s 轮询上限（`helpers/journey.ts:59`）；
+ * ② `waitForRun` 自带 60s 轮询上限（见其 deadline）。不抬高测试预算的话，冷启动慢
+ * 一轮就会以「Test timeout of 30000ms exceeded」收场，把 readiness/run 的真实
+ * 失败信息吞掉（r7 的 503 就是这样被误读成随机失败的）。
+ */
+test.setTimeout(120_000);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 /** chat run 终态（与 capacity/checkpoint 系列 spec 同一口径）。 */
@@ -163,6 +176,35 @@ async function escalateToInstanceAdmin(
     return { ...identity, accessToken };
 }
 
+/**
+ * 技能导入载荷的**单点构造器**（D-71）。
+ *
+ * 为什么要抽出来：本 spec 连踩 5 层夹具错（`definitionScope` / `trusted` /
+ * `agentName` 命名 / `results[].skillId` 取值 / **`sourcePath` 漏传**），全是
+ * 「载荷字段不全」同一病因。集中一处后「必填项」只有一份定义，字段再变只动这里。
+ *
+ * 必填项与行号以 `SkillImportValidator` 为准（packages/control-plane/…/skill/）：
+ *   - `name`        非 null 且匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` — `:33` / `:112`
+ *   - `sourcePath`  **必填非空**、≤512、须为安全相对路径 — `:134-145`
+ *   - `description` 必填非空、≤`Skill.MAX_DESCRIPTION_LENGTH` — `:171-177`
+ *   - `body`        必填非空、≤`Skill.MAX_BODY_BYTES` — `:194-200`
+ *   - `attachments` 可空；非空时 `sha256` 须 64 位小写 hex、`sizeBytes ≥ 0`、
+ *                   `path` 安全相对、`kind` 枚举 — `:208-229`
+ *   - 批量上限 `MAX_SKILLS_PER_REQUEST = 64` — `:41` / `:103-106`
+ *
+ * 注意：`trusted` 是**原语 boolean**（`SkillImportItem.boolean trusted`），
+ * `FAIL_ON_NULL_FOR_PRIMITIVES` 下省略即 400，故这里必须显式给 `false`。
+ */
+function buildSkillItem(nonce: string) {
+    return {
+        name: `p0680-tier-${nonce}`,
+        sourcePath: `lab/p0680-tier-${nonce}.md`,
+        description: "PLAN-0680 T3.1 快照 tier 探针",
+        body: `# p0680 tier probe ${nonce}\n用于验证 skills_snapshot.items[].tier 三字段。`,
+        trusted: false,
+    };
+}
+
 function headersOf(identity: Identity): Record<string, string> {
     return {
         Authorization: `Bearer ${identity.accessToken}`,
@@ -237,9 +279,14 @@ async function sendChat(
     const branchId = await getRootBranchId(request, sessionId, headers);
     // `openSessionSse(sessionId, token, extraHeaders)` 返回的是关闭函数，不是带 close() 的句柄
     const closeSse = await openSessionSse(sessionId, identity.accessToken);
+    // D-73：`toolMode` 的合法值域是 `{none, workspace}`（openapi.yaml ChatRequest.toolMode
+    // enum，CP `ChatController:551` 不复核、`:1531` 原样透传，Agent `api/chat.py:405-406`
+    // 对非值域直接 400 `INVALID_REQUEST` 且**不写日志**）。本 spec 验的是 agent principal
+    // 绑定的 skills_snapshot，与 workspace 工具无关 ⇒ 取 `none`：不初始化 MCP，链路最短、
+    // 变量最少。**不要**改成 `workspace`，那会把一条快照断言绑到工具面上。
     const chat = await request.post(`${CP_URL}/api/v1/chat`, {
         headers,
-        data: { sessionId, branchId, content, toolMode: "chat" },
+        data: { sessionId, branchId, content, toolMode: "none" },
     });
     expect(chat.status(), await chat.text()).toBe(202);
     closeSse();
@@ -280,26 +327,31 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         headers: headersOf(identity),
         data: {
             definitionScope: { type: "instance" },
-            skills: [
-                {
-                    name: `p0680-tier-${nonce}`,
-                    description: "PLAN-0680 T3.1 快照 tier 探针",
-                    body: `# p0680 tier probe ${nonce}\n用于验证 skills_snapshot.items[].tier 三字段。`,
-                    trusted: false,
-                  },
-            ],
+            skills: [buildSkillItem(nonce)],
         },
     });
     expect(
         [200, 201],
         `技能导入应 2xx，实际 ${imported.status()}：${await imported.text()}`,
     ).toContain(imported.status());
+    // 响应形状**照抄既有通过写法** `plan0678-skills-positive.spec.ts:219-232`：
+    // CP `SkillController.importResponse()` 的 wire 字段是 `results[].skillId`
+    //（`Outcome(UUID skillId, String name, String action, int version, …)`），
+    // 不是 `skills[].id` / `ids[]` / `id` —— 那是凭想象的猜测，实测 `undefined`。
     const importedBody = (await imported.json()) as {
-        skills?: Array<{ id?: string }>;
-        ids?: string[];
-        id?: string;
+        results?: Array<{ skillId: string; name?: string }>;
+        rejected?: Array<{ sourcePath?: string; code?: string; detail?: string }>;
     };
-    const skillId = importedBody.skills?.[0]?.id ?? importedBody.ids?.[0] ?? importedBody.id;
+    const skillIds = (importedBody.results ?? []).map((row) => row.skillId);
+    expect(
+        importedBody.rejected ?? [],
+        `导入不应有 rejected 行：${JSON.stringify(importedBody.rejected)}`,
+    ).toEqual([]);
+    expect(
+        skillIds.length,
+        `应导入 1 个技能，实际 results=${JSON.stringify(importedBody.results)}`,
+    ).toEqual(1);
+    const [skillId] = skillIds;
     expect(skillId, "导入响应应带 skillId").toMatch(UUID);
 
     // ② 绑到主体（workspace 上下文 ⇒ 服务端派生 workspace 档，body 只允许 skillId）
@@ -311,7 +363,8 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
     expect([200, 201], `主体技能绑定应 2xx，实际 ${bound.status()}：${boundText}`).toContain(
         bound.status(),
     );
-    const bindingId = (JSON.parse(boundText) as { id?: string; bindingId?: string }).id ??
+    const bindingId =
+        (JSON.parse(boundText) as { id?: string; bindingId?: string }).id ??
         (JSON.parse(boundText) as { bindingId?: string }).bindingId;
     expect(bindingId, "绑定响应应带 bindingId").toMatch(UUID);
 
@@ -321,23 +374,28 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         workspaceId: identity.workspaceId,
         title: "PLAN-0680 T3.1 tier snapshot",
     });
+    // **spec 前置缺口修复（r7 实证）**：r7 在 `POST /api/v1/chat` 直接吃 503
+    // `AGENT_UNAVAILABLE`（detail `Agent LLM readiness is unknown`）—— CP 的 chat
+    // 准入读的是 `HealthMonitor` 的**缓存**（`ChatController:635-639` →
+    // `isAgentLlmReady()`），缓存由 `HealthMonitor.pollHealth()` 每 10s 一轮刷新
+    // （`:47-51`，initialDelay 5s）。新栈首轮窗口里 Agent 已 ready 而 CP 缓存仍是
+    // `unknown` ⇒ chat 必被 503 拒。这不是产品缺陷，是 spec 少了 CP 侧等待。
+    // 复用既有 helper（`helpers/journey.ts:26`，与 `real-tool-roundtrip.spec.ts:75`
+    // 同口径），它轮询的正是 chat gate 读的那个 CP 状态（`agent=up/up/ready`），
+    // 不新造同义函数、不用固定 sleep。
+    await waitForControlPlaneAgentReady(request, headersOf(identity));
     await sendChat(request, identity, sessionId, "PLAN-0680 T3.1 tier probe run");
 
     const run = await waitForRun(sessionId);
     expect(run.status, "本条断言要求 run 成功，否则快照不产生").toBe("succeeded");
-    expect(
-        run.skillsSnapshot,
-        "skills_snapshot 不应是 {}（{} 只表示未捕获）",
-    ).not.toBe("{}");
+    expect(run.skillsSnapshot, "skills_snapshot 不应是 {}（{} 只表示未捕获）").not.toBe("{}");
 
     // ④ V2 核心：tier 三字段
     const items = snapshotItems(run.skillsSnapshot);
     const hit = items.find((item) => item.skillId === skillId);
     expect(hit, `快照 items 应含刚绑的 skill ${skillId}`).toBeDefined();
     expect(hit!.tier, "快照项应带 tier 对象").toBeDefined();
-    expect(hit!.tier!.subjectType, "tier.subjectType 应为 agent_principal").toBe(
-        "agent_principal",
-    );
+    expect(hit!.tier!.subjectType, "tier.subjectType 应为 agent_principal").toBe("agent_principal");
     expect(hit!.tier!.scopeType, "tier.scopeType 应为 workspace（服务端派生，非请求体）").toBe(
         "workspace",
     );
@@ -348,16 +406,20 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
     const countBeforeUnbind = items.length;
 
     // ⑤ 解绑 → 再跑 → 快照少一项（T3.1 的另一半）
-    const deleted = await request.delete(
-        `${SKILL_BINDING_PATH(principalId, identity.workspaceId)}/${String(bindingId)}`,
-        { headers: headersOf(identity) },
-    );
+    // 解绑面是 `DELETE /api/v1/skill-bindings/{bindingId}`（openapi.yaml:4529-4541
+    // ⇒ 204；CP `SkillBindingController.java:28` 映射集合 + `:61` `@DeleteMapping("/{bindingId}")`）。
+    // **不要**复用上面的 `SKILL_BINDING_PATH`：那是写入面
+    // `/api/v1/agent-principals/{pid}/skills`（只有 POST），且它已带 `?workspaceId=`，
+    // 再拼 `/{bindingId}` 会把 id 拼进 query 值 ⇒ 405 METHOD_NOT_ALLOWED。
+    // 该端点契约里没有 principalId / workspaceId 参数，授权按 binding 行自身 scope 判。
+    const deleted = await request.delete(`${CP_URL}/api/v1/skill-bindings/${String(bindingId)}`, {
+        headers: headersOf(identity),
+    });
     const deletedText = await deleted.text();
-    expect(
-        deleted.status(),
-        `解绑应 204，实际 ${deleted.status()}：${deletedText}`,
-    ).toBe(204);
+    expect(deleted.status(), `解绑应 204，实际 ${deleted.status()}：${deletedText}`).toBe(204);
 
+    // 第二次 send 不重复等 readiness：③ 处已确认 CP 缓存 `agent=up/up/ready`，
+    // 解绑只写绑定行，不改 Agent 的 LLM readiness（r7 失败点也只在首次 send）。
     await sendChat(request, identity, sessionId, "PLAN-0680 T3.1 tier probe run 2");
     const run2 = await waitForRun(sessionId);
     expect(run2.id, "第二次 run 应是新行").not.toBe(run.id);

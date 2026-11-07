@@ -184,9 +184,10 @@ The root directory no longer uses pnpm workspace. `packages/ui/` is itself the p
 
 CP (Control Plane) supports two runtime modes:
 
-#### Mode A: Docker Compose Full Stack (Recommended for Integration Tests)
+#### Mode A: Docker Compose Full Stack (one-shot baseline — frozen since 2026-10-07; NOT the daily path)
 
 ```bash
+# [frozen 2026-10-07 — do not run; daily work uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
 docker compose up -d --build
 ```
 
@@ -220,7 +221,7 @@ docker compose up -d postgres
 mvn spring-boot:run -f packages/control-plane/pom.xml
 ```
 
-**Note**: Under WSL2 mirror network mode, host connections to Docker PostgreSQL may fail password authentication. This is because the `bridge` network's port mapping causes NAT translation of the connection source address, and the `127.0.0.1/32 trust` rule in `pg_hba.conf` doesn't match. If you encounter this issue, use **Option B1 (H2)** or **Mode A (Full Docker Compose)**.
+**Note**: Under WSL2 mirror network mode, host connections to Docker PostgreSQL may fail password authentication. This is because the `bridge` network's port mapping causes NAT translation of the connection source address, and the `127.0.0.1/32 trust` rule in `pg_hba.conf` doesn't match. If you encounter this issue, use **Option B1 (H2)** or reach PostgreSQL on the host directly (`mise run dev:host` keeps only PostgreSQL in a container, so the host-side port is the one that matters). **Mode A (Full Docker Compose) is frozen since 2026-10-07** and stays historical reference only.
 
 `.env.dev` file records two database configurations (PostgreSQL is default, H2 is commented out). Uncomment to switch.
 
@@ -250,7 +251,7 @@ node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived 
 - **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (`mise.toml:401`: per stack × per port, derived fields, and `.env.dev` self-consistency); when ONE is absent that gate **skips explicitly** (not a failure), so a standalone clone stays usable.
 - **Single-clone self-check**: `mise run check:standalone` (`mise.toml:395`) exports a parent-less copy and verifies startup/self-check do not depend on the one root.
 - **OpenAPI contract gate (BL-162)**: `mise run check:openapi` validates `docs/api/openapi.yaml` (3.1 header, unique paths, path-parameter declarations, Problem Details, plus the frozen checkpoint-revert and session-read contract slices). It is a **dependency of `test:cp`**, so running the CP test suite checks the contract; PLAN closeout / wave acceptance must run it explicitly. A failure prints the parsed path count, the first failure and a fix hint (`docs/api/openapi.yaml` stays the single source of truth). It deliberately does **not** diff Spring routes against the contract — "route implemented but undocumented" is a known blind spot tracked as a separate BL.
-- **Commit-message gate (2026-11-06)**: `mise run check:commit-msg` **now blocks** and is a dependency of `mise run validate` (window: 32 commits since `a632de77`, 0% violations, D-216). Rules: first line `<type>(<scope>): <summary>`; **summary display width ≤72 columns (CJK counts as 2, ≈36 Han chars), merge ≤100**; non-merge commits must reference `PLAN-####`/`BL-###`/`D-###`. Shell script `scripts/check-commit-msg.mjs` (`--file` for hooks, `--range` for review, `--stats` for the window, `--enforce` to block); enable a local hook with `git config core.hooksPath scripts/hooks`. The flip to blocking is decided by **commit count** (30 commits since `a632de77`, 12 h cap; violation rate ≤10% with zero over-wide merges) — decision D-213.
+- **Commit-message gate (2026-11-06)**: `mise run check:commit-msg` **now blocks** and is a dependency of `mise run validate` (D-216 measured at the flip, 2026-11-06 02:02: 32 commits since `a632de77`, 0 violations). Rules: first line `<type>(<scope>): <summary>`; **summary display width ≤72 columns (CJK counts as 2, ≈36 Han chars), merge ≤100**; non-merge commits must reference `PLAN-####`/`BL-###`/`D-###`. Shell script `scripts/check-commit-msg.mjs` (`--file` for hooks, `--range` for review, `--stats` for the window, `--report-only` for the old never-fails audit; blocking is the default) — the `mise` task runs `--enforce` and gates `validate`; enable a local hook with `git config core.hooksPath scripts/hooks`. The flip to blocking is decided by **commit count** (D-213: **≥30 commits** since `a632de77`, 12 h cap, whichever first; violation rate ≤10% with zero over-wide merges). Two different numbers by nature: 30 is the criterion threshold, 32 is the sample measured at the flip.
 
 #### Detached full-stack supervisor (PLAN-0603)
 
@@ -381,11 +382,11 @@ Each module accesses CP ConfigService through local clients:
 
 ### 2.6. Integration Tests
 
-Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require CP running at `localhost:8080`.
+Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require a running CP. Read its port from `XIHE_CP_PORT` (stack-1 default `12631`; the `8080` in "Service ports" under §5.1 is the container-internal port, not the host port).
 
 ```bash
-# Method 1: Docker Compose (recommended)
-docker compose up -d --build
+# Method 1: Docker Compose (historical — compose lane frozen since 2026-10-07; not for acceptance)
+docker compose up -d --build   # [frozen — historical reference only, do not run]
 cd packages/agent && uv run pytest tests/test_agent_cp_integration.py -v
 
 # Method 2: Host stack
@@ -452,13 +453,39 @@ LangChain events are automatically mapped through the SSE adapter layer (`packag
 | Module | Framework | Test Count | Run Command |
 |--------|-----------|------------|-------------|
 | **UI Unit** | Vitest + @vue/test-utils | 206 | `cd packages/ui && pnpm vitest run` |
-| **UI E2E (Mock)** | Playwright + page.route() | 40 | `cd packages/ui && npx playwright test e2e/mock/` |
-| **UI E2E (Real)** | Playwright + real CP | 32 | `cd packages/ui && npx playwright test e2e/real/` (requires Docker Compose) |
-| **CP** | JUnit 5 + Mockito + Testcontainers | 152 | `cd packages/control-plane && mvn test` |
+| **UI E2E (Mock)** | Playwright + page.route() | 78 | `cd packages/ui && npx playwright test e2e/mock/` |
+| **UI E2E (Real)** | Playwright + real CP | 132 | `cd packages/ui && npx playwright test e2e/real/` (host lane: `mise run test:e2e:host`; the compose lane is frozen) |
+| **CP** | JUnit 5 + Mockito + Testcontainers | 3701 | `cd packages/control-plane && mvn test` |
 | **Agent Unit** | pytest + pytest-asyncio | 150 | `cd packages/agent && uv run pytest tests/unit/ -v` |
-| **Agent Integration** | pytest + httpx | — | `cd packages/agent && uv run pytest tests/integration/ -v` (requires Docker Compose) |
+| **Agent Integration** | pytest + httpx | — | `cd packages/agent && uv run pytest tests/integration/ -v` (requires a host CP — `XIHE_CP_PORT`, stack-1 default 12631; the compose lane is frozen) |
 | **Runtime** | cargo test | 176 | `cd packages/runtime && cargo test` |
-| **Cross-module E2E** | pytest + httpx | 32 | `uv run --directory packages/agent pytest tests/ -v` |
+| **Cross-module E2E** | pytest + httpx | 30 | `uv run --directory packages/agent pytest tests/ -v` |
+
+> **Counting basis (measured 2026-11-07)** — each "Test Count" cell uses exactly one of the three
+> definitions below; the units are **not** interchangeable, so do not compare the numbers across rows:
+>
+> - **Spec files** — `UI E2E (Mock)` / `UI E2E (Real)`: number of `packages/ui/e2e/<lane>/**/*.spec.ts`
+>   files (a file may hold many cases). Reproduce: `find packages/ui/e2e/real -name '*.spec.ts' | wc -l`
+>   ⇒ 132; same for `e2e/mock` ⇒ 78. The same lanes contain 342 / 269 `test()` cases — a different unit,
+>   deliberately not used here.
+> - **Surefire cases** — `CP`: sum of `tests=` in `packages/control-plane/target/surefire-reports/*.xml`
+>   from one full `mvn test`, i.e. the tail line `Tests run: 3701, Failures: 1, Errors: 0, Skipped: 2`
+>   (merge tree `918e175a`, 2026-11-07, ~14 min). Count is *cases executed*, not "green cases": the single
+>   failure is `MessagePaginationContractTest`, a **test-side flakiness** — the entity's `@PrePersist`
+>   (`Message.java:98-100`) unconditionally overwrites the fixture `createdAt` set at `saveMessage:309`, so
+>   ordering falls back to wall-clock microseconds and the string comparison in `assertAscending:355-364`
+>   inverts (`.319Z` vs `.319999Z`); 7 of 8 repeat runs are green, so it is not a regression — tracked as
+>   `BL-475`. The two previously registered baseline entries
+>   (`ContextProjectionServiceTest.legacyHashOnlyTombstoneStillReplays` / `CpArchitectureTest`) are green now,
+>   so `scripts/cp-known-baseline.json` currently lists no entries.
+>   (The `test:cp:baseline` gate is BL-368 — that ID names the *gate*, not this failure.)
+> - **pytest collection** — `Cross-module E2E`: collection count of the `integration`-marked cross-module
+>   tests: `uv run --directory packages/agent python -m pytest --collect-only -q -m integration` ⇒ 30
+>   collected. Context: the whole suite collects 1522, and the default `addopts = -m "not integration"`
+>   deselects 30 (⇒ 1492 collected) — the 30 counted here are exactly those deselected items.
+>
+> `UI Unit`, `Agent Unit` and `Runtime` still carry older counts (206 / 150 / 176) that were **not**
+> re-measured in this batch; treat them as indicative until they get the same treatment.
 
 ### 4.2. Test Directory Naming Convention
 
@@ -467,7 +494,7 @@ Test directories are named by **test pattern**, not by functional module:
 | Directory | Pattern | External Dependencies | Use Case |
 |-----------|---------|----------------------|----------|
 | `e2e/mock/` | 🔶 Mock | None | Quick verification of UI rendering and interaction logic |
-| `e2e/real/` | 🔵 Real | Docker Compose full stack | End-to-end flows, visual regression |
+| `e2e/real/` | 🔵 Real | Host stack (compose lane frozen) | End-to-end flows, visual regression |
 
 > Visual regression baselines (`*-snapshots/`) are tracked directly by git, updated via `--update-snapshots` and committed. Failed test artifacts are in `test-results/` (gitignored).
 | `tests/unit/` | ⚪ Unit | None | Pure logic, algorithms, component rendering |
@@ -483,10 +510,10 @@ Rules:
 ### 4.3. Running Tests
 
 ```bash
-# All module unit tests
+# All quality gates (check:openapi + check:commit-msg + lint + typecheck + build + test + e2e fixture self-tests + lint:links; no Docker step)
 mise run validate
 
-# All tests (including integration + E2E)
+# validate + test:runtime + test:integration (no E2E; the compose E2E lane is frozen)
 mise run validate:full
 
 # Individual module runs
@@ -510,8 +537,8 @@ CP integration tests support two modes:
 ### 4.5. Cross-module E2E Tests
 
 ```bash
-# Ensure Docker Compose is running
-docker compose up -d
+# Prereq: host stack up in another terminal — `mise run dev:host`
+# (Host stack / H2 is the current path. Full Docker Compose is frozen since 2026-10-07 — historical reference only.)
 
 # Cross-module tests (run within Agent)
 cd packages/agent
@@ -590,9 +617,12 @@ mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME
 
 ## 5. Deployment
 
-### 5.1. Docker Compose (Recommended)
+### 5.1. Docker Compose (frozen 2026-10-07 — one-shot baseline, historical reference only)
 
 ```bash
+# [frozen 2026-10-07 — do not run; daily start uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
+# Scope details: see the two banners in `docs/i18n/zh-Hans/DEV-002-developer-guide.md` "Mode B (Docker Compose)"
+# — workspace Docker backend freeze (PLAN-0618) / Compose topology limits.
 # Build and start all 4 services
 docker compose up -d --build
 

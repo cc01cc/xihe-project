@@ -67,7 +67,7 @@ class SessionParticipantWakeConfigTest {
 
     private SessionParticipantService.AddRequest scheduleRequest(Map<String, Object> config) {
         return new SessionParticipantService.AddRequest("HUMAN", HUMAN_ID.toString(), "MEMBER",
-                "SCHEDULE", "WHEN_MENTIONED", config);
+                "SCHEDULE", "WHEN_MENTIONED", config, null);
     }
 
     @Test
@@ -103,7 +103,7 @@ class SessionParticipantWakeConfigTest {
     void configOnNonSchedulePolicyIsRejected() {
         SessionParticipantService.AddRequest bad = new SessionParticipantService.AddRequest(
                 "HUMAN", HUMAN_ID.toString(), "MEMBER", "MENTION", "WHEN_MENTIONED",
-                Map.of("intervalSeconds", 300));
+                Map.of("intervalSeconds", 300), null);
         assertThrows(CpApiException.class,
                 () -> service.add(OWNER, WORKSPACE, SESSION_ID.toString(), bad));
     }
@@ -118,7 +118,7 @@ class SessionParticipantWakeConfigTest {
                 .thenReturn(Optional.of(row));
 
         service.update(OWNER, WORKSPACE, SESSION_ID.toString(), row.getId().toString(),
-                new SessionParticipantService.UpdateRequest(null, "MENTION", null, null, null));
+                new SessionParticipantService.UpdateRequest(null, "MENTION", null, null, null, null));
 
         assertEquals("MENTION", row.getWakePolicy());
         assertNull(row.getWakeConfig(), "非 SCHEDULE ⇒ config 显式清空，不残留旧调度参数");
@@ -133,7 +133,7 @@ class SessionParticipantWakeConfigTest {
 
         service.update(OWNER, WORKSPACE, SESSION_ID.toString(), row.getId().toString(),
                 new SessionParticipantService.UpdateRequest(null, null, null, null,
-                        Map.of("intervalSeconds", 600)));
+                        Map.of("intervalSeconds", 600), null));
 
         assertEquals(600, row.getWakeConfig().path("intervalSeconds").asInt(),
                 "config-only patch re-validates against the existing SCHEDULE policy");

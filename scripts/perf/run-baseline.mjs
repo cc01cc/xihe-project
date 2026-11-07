@@ -393,6 +393,7 @@ function teardown() {
  *   workspaces        id, name            (+ direct_attach requires host_path: ck_workspaces_direct_attach_path)
  *   agent_principals  id, name, created_by_user_id
  *   sessions          id, workspace_id, user_id
+ *                     (no agent_principal_id: V133 dropped it in 0689 A7, BL-473)
  *   branches          a branch row is REQUIRED: messages.branch_id is NOT NULL
  *   messages          id, session_id, role, content, branch_id
  *
@@ -426,10 +427,12 @@ BEGIN
   VALUES (ws, 'perf-ws', 'host_directory', 'direct_attach',
           'C:/xihe-build/perf/' || ws, 'windows-host', now(), now())
   ON CONFLICT (id) DO NOTHING;
+  -- BL-473: the principal row is roster data only (agent_principals 名册写入);
+  -- sessions no longer references it — V133 dropped sessions.agent_principal_id (0689 A7 主体解绑).
   INSERT INTO agent_principals (id, name, created_by_user_id)
   VALUES (pr, 'perf-principal', uid) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO sessions (id, workspace_id, user_id, title, agent_principal_id)
-  VALUES (sid, ws, uid, 'perf-session', pr) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO sessions (id, workspace_id, user_id, title)
+  VALUES (sid, ws, uid, 'perf-session') ON CONFLICT (id) DO NOTHING;
   INSERT INTO session_branches (id, session_id, created_at)
   SELECT br, sid, now()
   WHERE NOT EXISTS (SELECT 1 FROM session_branches WHERE session_id = sid);

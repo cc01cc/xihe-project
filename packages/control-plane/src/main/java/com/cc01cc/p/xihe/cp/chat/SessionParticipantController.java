@@ -74,7 +74,8 @@ public class SessionParticipantController {
                     workspaceId, sessionId, new SessionParticipantService.AddRequest(
                             text(body.get("principalKind")), text(body.get("principalId")),
                             text(body.get("role")), text(body.get("wakePolicy")),
-                            text(body.get("respondPolicy")), configMap(body.get("wakeConfig"))));
+                            text(body.get("respondPolicy")), configMap(body.get("wakeConfig")),
+                            stringList(body.get("deliveryDefaults"))));
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -139,7 +140,8 @@ public class SessionParticipantController {
                     new SessionParticipantService.UpdateRequest(text(body.get("role")),
                             text(body.get("wakePolicy")), text(body.get("respondPolicy")),
                             body.get("disabled") instanceof Boolean disabled ? disabled : null,
-                            configMap(body.get("wakeConfig"))));
+                            configMap(body.get("wakeConfig")),
+                            stringList(body.get("deliveryDefaults"))));
             return ResponseEntity.ok(updated);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -161,6 +163,28 @@ public class SessionParticipantController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    private static java.util.List<String> stringList(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof java.util.List<?> list)) {
+            throw invalidDeliveryDefaults();
+        }
+        java.util.List<String> strings = new java.util.ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof String string)) {
+                throw invalidDeliveryDefaults();
+            }
+            strings.add(string);
+        }
+        return strings;
+    }
+
+    private static CpApiException invalidDeliveryDefaults() {
+        return new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_DELIVERY_DEFAULTS_INVALID",
+                "deliveryDefaults must be an array of to/cc/mention_only values");
     }
 
     @SuppressWarnings("unchecked")
