@@ -34,12 +34,27 @@
 //   3. build freshness  control-plane fat jar vs source mtime (the runner
 //                       boots any existing jar without a freshness check),
 //                       runtime debug binary vs source, cargo lock files.
-//   4. run digest       recent .local/dev logs, live/stale runner pid files,
+//   4. disk headroom    H/C free space before a window (user thresholds,
+//                       2026-11-05 — do not change): H < 25% or C < 10% is
+//                       blocking, H < 30% is a warning only. An unsampled or
+//                       unparsable drive is UNVERIFIABLE and blocking: an
+//                       unknown disk state must not open a window. Non-Windows
+//                       platforms print `skipped` and never block.
+//                       Machine-readable line: `  disk  {"name":"disk",…}`
+//                       (see scripts/lib/e2e-preflight-disk.mjs).
+//   5. run digest       recent .local/dev logs, live/stale runner pid files,
 //                       Playwright .last-run.json and the newest JSON report.
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+
+import {
+  DISK_THRESHOLDS,
+  diskExitCode,
+  evaluateDisks,
+  sampleDisksViaPsDrive,
+} from './lib/e2e-preflight-disk.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 const isWindows = process.platform === 'win32'
@@ -97,7 +112,12 @@ let ownRunId = ''
 const allowedPorts = new Set()
 for (const arg of process.argv.slice(2)) {
   if (arg === '--help' || arg === '-h') {
-    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 34).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'))
+    // The header comment is the help text: print every leading `//` line up to
+    // the first blank one (a fixed slice silently truncates the help whenever a
+    // check is documented, which is how the disk gate would have gone unseen).
+    const header = readFileSync(new URL(import.meta.url), 'utf8').split('\n')
+    const headerEnd = header.findIndex((line, index) => index > 0 && line.trim() === '')
+    console.log(header.slice(1, headerEnd).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'))
     process.exit(0)
   } else if (arg === '--strict') {
     strict = true
@@ -224,7 +244,7 @@ console.log(`stack slots checked: ${stackSlots.length ? `${stackSlots.length} (r
 console.log('')
 
 // ---------------------------------------------------------------- 1. docker
-console.log('[1/4] docker residue')
+console.log('[1/5] docker residue')
 const dockerCmd = isWindows ? 'docker.exe' : 'docker'
 const dockerVersion = runCapture(dockerCmd, ['version', '--format', '{{.Server.Version}}'], 15000)
 if (!dockerVersion.ok) {
@@ -299,7 +319,7 @@ if (!dockerVersion.ok) {
 console.log('')
 
 // ----------------------------------------------------------------- 2. ports
-console.log('[2/4] listening ports')
+console.log('[2/5] listening ports')
 const listenFindings = queryListeners(e2eRanges, devPorts)
 if (listenFindings === null) {
   add('WARN', 'ports', 'could not query listeners; port conflicts were not verified')
@@ -329,7 +349,7 @@ if (listenFindings === null) {
 console.log('')
 
 // ------------------------------------------------------------- 3. artifacts
-console.log('[3/4] build artifacts (source mtime vs artifact mtime)')
+console.log('[3/5] build artifacts (source mtime vs artifact mtime)')
 if (ignoreBuild) {
   console.log('  INFO  artifact freshness checks skipped (--ignore-build)')
 } else {
@@ -412,8 +432,39 @@ if (lockHits.length > 0) {
 }
 console.log('')
 
-// --------------------------------------------------------------- 4. digest
-console.log('[4/4] recent runs (.local/dev + Playwright last run)')
+// ------------------------------------------------------------------ 4. disk
+// Window admission: the host lane writes tens of GB to H, and a run that dies
+// on a full disk pollutes the tree — the failure then looks like a test red.
+// The sampler is injectable (scripts/lib/e2e-preflight-disk.mjs) so the
+// thresholds are unit-tested with fake samples, never by filling a real disk.
+console.log('[4/5] disk headroom (window admission)')
+const diskResult = evaluateDisks({
+  sampler: () => sampleDisksViaPsDrive({ runCapture }),
+  platform: process.platform,
+})
+// Machine-readable line for the next workflow (do not parse the prose below).
+console.log(`  disk  ${JSON.stringify(diskResult)}`)
+if (diskResult.skipped) {
+  console.log(`  SKIP  ${diskResult.reasons[0]}`)
+} else if (diskResult.unverifiable) {
+  console.log(`  FAIL  disk headroom UNVERIFIABLE — ${diskResult.reasons[0]}`)
+} else {
+  const describe = (drive) => `${drive.pctFree}% free (${drive.freeGB}/${drive.totalGB} GB)`
+  console.log(`  INFO  H ${describe(diskResult.detail.H)}, C ${describe(diskResult.detail.C)}`)
+}
+for (const finding of diskResult.findings) {
+  add(finding.severity, 'disk', finding.message, finding.hint)
+  console.log(`  ${finding.severity}  ${finding.message}`)
+  if (finding.hint) console.log(`        hint: ${finding.hint}`)
+}
+if (diskResult.ok && !diskResult.skipped && diskResult.findings.length === 0) {
+  console.log(`  OK    both drives above the blocking thresholds (H ${DISK_THRESHOLDS.hBlocksBelowPct}% / C ${DISK_THRESHOLDS.cBlocksBelowPct}%; H under ${DISK_THRESHOLDS.hWarnsBelowPct}% only warns)`)
+}
+if (diskExitCode(diskResult) !== 0) console.log('  -> this blocks the window (preflight exit 1)')
+console.log('')
+
+// --------------------------------------------------------------- 5. digest
+console.log('[5/5] recent runs (.local/dev + Playwright last run)')
 const devDir = join(projectDir, '.local', 'dev')
 if (!existsSync(devDir)) {
   console.log('  INFO  .local/dev does not exist yet (no host runs recorded here)')
