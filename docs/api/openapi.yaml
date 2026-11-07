@@ -3875,6 +3875,50 @@ paths:
               schema: { type: object, required: [isRepository, entries], properties: { isRepository: { type: boolean }, entries: { type: array, items: { type: object, properties: { status: { type: string }, path: { type: string } } } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/git-diff:
+    get:
+      operationId: runtimeWorkspaceGitDiff
+      description: 'PLAN-0686 G8: read-only unified diff of uncommitted changes in the workspace user repository. The patch is bounded at 256 KiB and cut on a UTF-8 boundary; truncated=true means it was cut, never that the diff is complete. isRepository=false for non-Git workspaces; 503 when git is missing/below minimum.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string } }
+        - in: query
+          name: path
+          description: Workspace-relative path filter; repeat the parameter for several paths (comma-joined lists are not accepted). Omit for the whole work tree.
+          style: form
+          explode: true
+          schema: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Working-tree patch
+          content:
+            application/json:
+              schema: { type: object, required: [isRepository, patch, truncated, patchBytes], properties: { isRepository: { type: boolean }, patch: { type: string }, truncated: { type: boolean }, patchBytes: { type: integer } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /internal/v1/runtime/workspaces/{workspaceId}/git-log:
+    get:
+      operationId: runtimeWorkspaceGitLog
+      description: 'PLAN-0686 G8: read-only commit log of the workspace user repository, newest first. limit is the Runtime window (1..=200, default 20); range is an optional two-dot range; path filters may repeat. truncated=true only means more commits matched than limit. isRepository=false for non-Git workspaces; 503 when git is missing/below minimum.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { in: query, name: range, schema: { type: string }, description: 'Two-dot commit range, e.g. main..HEAD.' }
+        - in: query
+          name: path
+          description: Workspace-relative path filter; repeat the parameter for several paths (comma-joined lists are not accepted).
+          style: form
+          explode: true
+          schema: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Bounded commit window
+          content:
+            application/json:
+              schema: { type: object, required: [isRepository, entries, truncated], properties: { isRepository: { type: boolean }, truncated: { type: boolean }, entries: { type: array, items: { type: object, properties: { hash: { type: string }, shortHash: { type: string }, author: { type: string }, committedAt: { type: string }, subject: { type: string } } } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /internal/v1/runtime/workspaces/{workspaceId}/files/read:
     post:
       operationId: runtimeReadFile
