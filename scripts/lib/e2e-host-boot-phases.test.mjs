@@ -206,7 +206,11 @@ test('T7 行为级：--plan-only 出现在 runner 自己的 flag 表里（不会
 });
 
 test('T8 闸门自检：把 --plan-only 从真实 --help 里删掉 ⇒ 闸门红（不是 skip）；删无关 flag 不误伤', () => {
-  // 这条测的不是 runner，而是**闸门自己**：删掉接缝必须让套件变红。
+  // 边界（2026-11-08 裁定，写在这里防三个月后被误引）：**T8 验的是判据函数对「接缝消失」的
+  // 敏感度，不是 spawn 路径**；真实红由 T5/T6/T7 在 flag 缺席时触发（同一条 SEAM_MISSING）。
+  // 所以别把这条绿当成"runner 回归已被覆盖"的证据——同一个绿不等于同一个命题。
+  //
+  // 这条测的也不是 runner，而是**闸门自己**：删掉接缝必须让套件变红。
   // 它复用了 memo 化的那次真实 `--help`（零额外 spawn），在内存里做出"接缝被删掉"的回归形状。
   const help = assertPlanOnlyAvailable()
   const stdout = help.stdout ?? ''
