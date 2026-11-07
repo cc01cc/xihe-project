@@ -45,6 +45,7 @@ class WakeDispatchServiceTest {
     private SessionRepository sessions;
     private SessionParticipantService participantService;
     private SessionWakeupService wakeupService;
+    private JudgeInputAssembler judgeInputAssembler;
     private JudgeDecisionService judgeService;
     private EventStoreService eventStore;
     private ChatRunRepository chatRuns;
@@ -60,12 +61,13 @@ class WakeDispatchServiceTest {
         sessions = mock(SessionRepository.class);
         participantService = mock(SessionParticipantService.class);
         wakeupService = mock(SessionWakeupService.class);
+        judgeInputAssembler = mock(JudgeInputAssembler.class);
         judgeService = mock(JudgeDecisionService.class);
         eventStore = mock(EventStoreService.class);
         chatRuns = mock(ChatRunRepository.class);
         dbLockTimeout = mock(DbLockTimeout.class);
         service = new WakeDispatchService(participants, sessions, participantService, wakeupService,
-                judgeService, eventStore, new ObjectMapper(), chatRuns, dbLockTimeout);
+                judgeInputAssembler, judgeService, eventStore, new ObjectMapper(), chatRuns, dbLockTimeout);
 
         session = mock(Session.class);
         when(session.getUserId()).thenReturn("owner-1");
@@ -190,6 +192,7 @@ class WakeDispatchServiceTest {
     @Test
     void judgeVerdictFalseDoesNotSubmit() throws Exception {
         agent.setRespondPolicy(SessionParticipant.RESPOND_JUDGE);
+        stubJudgeInput();
         when(judgeService.decide(any())).thenReturn(
                 new JudgeDecisionService.JudgeOutcome(true, "{\"speak\":false}", "succeeded", null));
 
@@ -203,6 +206,7 @@ class WakeDispatchServiceTest {
     @Test
     void judgeVerdictTrueSubmitsWithAttribution() throws Exception {
         agent.setRespondPolicy(SessionParticipant.RESPOND_JUDGE);
+        stubJudgeInput();
         when(judgeService.decide(any())).thenReturn(
                 new JudgeDecisionService.JudgeOutcome(true, "{\"speak\":true}", "succeeded", null));
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
@@ -216,7 +220,23 @@ class WakeDispatchServiceTest {
         assertEquals("submitted", result.outcome());
         verify(wakeupService).wakeupAs(eq(SESSION_ID.toString()), eq("owner-1"), eq("ws-1"), anyString(),
                 eq(ROUND), eq(agent.getPrincipalId()), eq("mention"), isNull());
+        // CP-2 (PLAN-0690 T1.2b): the judge input is assembled, not inlined in the dispatch path.
+        verify(judgeInputAssembler).assemble(eq(session), eq(agent), eq("mention"), eq(ROUND),
+                eq("bailian"), eq("decision-model-preview"));
+        ArgumentCaptor<JudgeDecisionService.JudgeInput> judgeInput =
+                ArgumentCaptor.forClass(JudgeDecisionService.JudgeInput.class);
+        verify(judgeService).decide(judgeInput.capture());
+        assertEquals("(no messages yet)", judgeInput.getValue().inputWindow());
+        assertEquals("prompt-stub", judgeInput.getValue().prompt());
         assertAuditOutcome("submitted");
+    }
+
+    /** CP-2: the assembler owns window/roster/duty/prompt; this unit only checks the wiring. */
+    private void stubJudgeInput() {
+        when(judgeInputAssembler.assemble(any(), any(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new JudgeDecisionService.JudgeInput(SESSION_ID, null, PARTICIPANT_ID, ROUND,
+                        "mention", "(no messages yet)", "respondPolicy=JUDGE", "bailian",
+                        "decision-model-preview", "prompt-stub"));
     }
 
     /**

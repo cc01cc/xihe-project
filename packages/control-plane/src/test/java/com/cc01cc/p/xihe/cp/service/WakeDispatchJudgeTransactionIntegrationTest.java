@@ -253,8 +253,8 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
                 fixture.sessionId());
         String inputWindow = (String) decision.get("input_window");
         assertNotNull(inputWindow, "judge_decisions.input_window must be populated");
-        assertTrue(inputWindow.contains("round=wake:mention:t1.2"),
-                "the input window must name the judged round, got: " + inputWindow);
+        assertEquals(JudgeInputAssembler.EMPTY_WINDOW, inputWindow,
+                "CP-2 (T1.2b): the window is assembled session history, not the inline trigger=… round=… string");
         assertNull(decision.get("run_id"), "a judged_no wake has no run row");
         assertEquals("succeeded", decision.get("outcome"));
 
