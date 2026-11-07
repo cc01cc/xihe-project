@@ -17,7 +17,8 @@
  *      session（连带 root branch），再以 `run-baseline.mjs seed-runs --apply` 往自己的 session
  *      直灌 PG；不再依赖另一用户预置 fixture session（跨用户 403）。
  *   3. 路线 B（`XIHE_BL382_SESSION` 测既有预置会话）保留兼容，但不得与 `XIHE_BL382_SELF_SEED=1`
- *      同时使用；可选 `XIHE_BL382_OUT` 覆盖落盘路径。
+ *      同时使用；可选 `XIHE_BL382_OUT=<某文件>.json` 把**两份**口径 JSON 一起挪到该目录（同前缀，
+ *      见 `evidencePaths()`）—— 只有一份吃这个 env 时，同一轮测量的两口径会分落两处、事后对不上。
  *
  * 证据口径：JSON 的 `seededSession` / `selfSeeded` / `seed` 字段必须能区分「本身份自建回灌」与
  * 「外部预置会话」，否则测量对象归属不可复核。
@@ -119,6 +120,31 @@ function resolveEvidenceDir(): string {
         );
     }
     return path.join(planEvidence, "raw");
+}
+
+/**
+ * T1.2 双口径两份 JSON 的落盘路径（①初始窗口 / ②滚动回填）。
+ *
+ * `XIHE_BL382_OUT` 覆盖时**两份一起挪**（同目录 + 同前缀）：只有初始窗口吃这个 env 的旧写法，
+ * 会让同一轮测量的两口径分落两处，事后无法判定它们是否同一会话同一构建。
+ */
+function evidencePaths(evidenceDir: string, tier: Tier): { initial: string; backfill: string } {
+    const override = process.env.XIHE_BL382_OUT;
+    if (override) {
+        const resolved = path.resolve(override);
+        const stem = path
+            .basename(resolved)
+            .replace(/\.json$/i, "")
+            .replace(/-initial-window$/, "");
+        return {
+            initial: path.join(path.dirname(resolved), `${stem}-initial-window.json`),
+            backfill: path.join(path.dirname(resolved), `${stem}-backfill.json`),
+        };
+    }
+    return {
+        initial: path.join(evidenceDir, `bl382-${tier}-initial-window.json`),
+        backfill: path.join(evidenceDir, `bl382-${tier}-backfill.json`),
+    };
 }
 
 type VirtualizationSample = {
@@ -607,6 +633,8 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
         const evidenceDir = resolveEvidenceDir();
         mkdirSync(evidenceDir, { recursive: true });
         const caliber = worktreeCaliber();
+        /** 双口径两份 JSON 的落点（同一覆盖规则，见 evidencePaths）。 */
+        const paths = evidencePaths(evidenceDir, tier);
 
         // 真链路序（design §3 D2 前置，同 plan0670-m2d-smoke 组织）：建号 → direct_attach
         // workspace → fake provider → principal → 路径形式建 session。
@@ -670,7 +698,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
             const payload = {
                 generatedAt: new Date().toISOString(),
                 plan: "PLAN-0682",
-                task: "T1.1 initial-window sample",
+                task: "T1.2 dual-caliber #1: initial-window sample (store expected ≈50 = MESSAGE_PAGE_SIZE)",
                 tier,
                 seededSession,
                 selfSeeded: selfSeed,
@@ -692,12 +720,9 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                 metrics,
                 caliber: caliberFields,
             };
-            const outPath =
-                process.env.XIHE_BL382_OUT ??
-                path.join(evidenceDir, `bl382-${tier}-initial-window.json`);
-            writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+            writeFileSync(paths.initial, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
             console.log(`[BL-382 SAMPLE] ${JSON.stringify(metrics)}`);
-            console.log(`[BL-382 SAMPLE] evidence: ${outPath}`);
+            console.log(`[BL-382 SAMPLE] evidence: ${paths.initial}`);
 
             // ── T1.2 回填口径（task-51：页面侧事实 + store 硬探针，超时不得冒充耗尽）─────
             const viewportEl = page.getByTestId("message-scroller-viewport");
@@ -712,7 +737,9 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
             let exhaustedBy: BackfillSignal | null = null;
             let stallTerminated = false;
             let duplicateCursorRequests = 0;
-            let previousGrowth = await storeCount();
+            /** 双口径 #1 的终值快照：回填起点的 store/渲染事实，随回填 JSON 一起落盘。 */
+            const probeAtInitial = await storeProbe(page, targetSessionId);
+            let previousGrowth = probeAtInitial.storeMessages;
             let previousCursor = pages.samples.at(-1)?.nextCursor ?? null;
             let stallRounds = 0;
             /** store 首次到 500 上限的轮次（cap 只登记、不终止回填，见文件头 ⑥）。 */
@@ -867,7 +894,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
             const backfillPayload = {
                 generatedAt: new Date().toISOString(),
                 plan: "PLAN-0682",
-                task: "T1.2 backfill caliber (exhaustion/abort signals recorded, no threshold assertions)",
+                task: "T1.2 dual-caliber #2: rolling backfill (exhaustion/abort signals recorded, no threshold assertions)",
                 tier,
                 seededSession,
                 selfSeeded: selfSeed,
@@ -881,6 +908,16 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                     : null,
                 sessionId: targetSessionId,
                 probe: PROBE_CALIBER,
+                /** 双口径 #1（回填起点）事实：两口径对照要在同一份文件里可读，不必再 join 两份 JSON。 */
+                initial: {
+                    storeMessages: probeAtInitial.storeMessages,
+                    renderedRows: probeAtInitial.messageRows,
+                    renderedRowsAtStability: initialRows,
+                    foldedOlder: probeAtInitial.foldedOlder,
+                    runHeaders: probeAtInitial.runHeaders,
+                    virtualizationActive: probeAtInitial.virtualization.active,
+                    probeSource: probeAtInitial.source,
+                },
                 backfill: {
                     rounds: backfillPages.length,
                     maxRounds: MAX_BACKFILL_ROUNDS,
@@ -894,6 +931,8 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                     /** store 首次到 500 上限的轮次（cap 是设计上限，不是耗尽 ⇒ 回填继续）。 */
                     storeCapAtRound,
                     loadedMessages: finalProbe.storeMessages,
+                    /** 回填前后 store 条数差（cap 生效时它是 0/负，不能当"没加载"读）。 */
+                    loadedMessagesDelta: finalProbe.storeMessages - probeAtInitial.storeMessages,
                     foldedOlder: finalProbe.foldedOlder,
                     virtualizationActive: finalProbe.virtualization.active,
                     pages: backfillPages,
@@ -902,15 +941,14 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                 final: { raw: finalRaw, metrics: finalMetrics },
                 caliber: caliberFields,
             };
-            const backfillPath = path.join(evidenceDir, `bl382-${tier}-backfill.json`);
-            writeFileSync(backfillPath, `${JSON.stringify(backfillPayload, null, 2)}\n`, "utf8");
+            writeFileSync(paths.backfill, `${JSON.stringify(backfillPayload, null, 2)}\n`, "utf8");
             console.log(
                 `[BL-382 BACKFILL] rounds=${backfillPages.length} exhaustedBy=${exhaustedBy} ` +
                     `atRound=${exhaustedAtRound} stall=${stallTerminated} ` +
                     `duplicateCursorRequests=${duplicateCursorRequests}`,
             );
             console.log(`[BL-382 BACKFILL] final=${JSON.stringify(finalMetrics)}`);
-            console.log(`[BL-382 BACKFILL] evidence: ${backfillPath}`);
+            console.log(`[BL-382 BACKFILL] evidence: ${paths.backfill}`);
             // 通道不做阈值断言（决策 #4）；上面各结构门（可见/稳定/增长等待）已足够判定采样成立。
         } finally {
             pages.stop();
