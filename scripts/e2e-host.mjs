@@ -47,6 +47,11 @@ const e2eRunId = `host-${Date.now()}-${randomBytes(2).toString('hex')}`
 //       (BL-221 family; this was the sole reason the runner used to demand 12633 free).
 //   C2  XIHE_CP_TARGET_DIR default C:/xihe-build/e2e — without it the E2E mvn build
 //       overwrites the checkout target/classes a running dev CP is loading from.
+import {
+  formatTestCounts,
+  judgeTestCounts,
+  summarizePlaywrightReport,
+} from './lib/e2e-test-counts.mjs'
 import { cargoTargetBase } from './lib/stack-cargo-target.mjs'
 if (typeof process.env.CARGO_TARGET_DIR !== 'string' || process.env.CARGO_TARGET_DIR.trim() === '') {
   process.env.CARGO_TARGET_DIR = join(cargoTargetBase(projectDir), 'e2e')
@@ -95,13 +100,20 @@ const reportName = reportNameArg?.slice('--report-name='.length) ?? ''
 // by the Playwright CLI with a misleading "unknown option" error.
 const checkCli = process.argv.includes('--check-cli')
 const allowLlmModeOverride = process.argv.includes('--allow-llm-mode-override')
+// BL-421: a gated spec that self-skips still exits 0, so "green" could mean "ran nothing".
+// `--expect-tests=N` pins how many tests must actually execute this round, and a non-zero
+// skip count fails the run unless the caller says `--allow-skip` out loud.
+const allowSkip = process.argv.includes('--allow-skip')
+const expectTestsArg = process.argv.find((arg) => arg.startsWith('--expect-tests='))
+const expectTestsRaw = expectTestsArg?.slice('--expect-tests='.length) ?? ''
+const expectTests = expectTestsRaw === '' ? null : Number(expectTestsRaw)
 const onlyPatterns = process.argv
   .filter((arg) => arg.startsWith('--only='))
   .map((arg) => arg.slice('--only='.length))
 const RUNNER_ONLY_ARGS = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight',
-  '--validate-at-end', '--list-batches', '--help', '-h', '--check-cli', '--allow-llm-mode-override'])
+  '--validate-at-end', '--list-batches', '--help', '-h', '--check-cli', '--allow-llm-mode-override', '--allow-skip'])
 const RUNNER_ONLY_PREFIXES = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=',
-  '--first-run=', '--bootstrap-user=', '--registration-policy=', '--only=']
+  '--first-run=', '--bootstrap-user=', '--registration-policy=', '--only=', '--expect-tests=']
 /** Everything the runner passes through to Playwright (spec files, --grep, --retries, --reporter, …). */
 const playwrightPassthroughArgs = process.argv.slice(2).filter(
   (arg) => !RUNNER_ONLY_ARGS.has(arg) && !RUNNER_ONLY_PREFIXES.some((prefix) => arg.startsWith(prefix)),
@@ -120,6 +132,10 @@ const retriesArgValue = (() => {
 })()
 if (!['auto', 'use', 'rebuild', 'run', 'native'].includes(jarMode)) {
   console.error(`[e2e-host] invalid --jar-mode=${jarMode}; expected auto | use | rebuild | run | native`)
+  process.exit(2)
+}
+if (expectTests !== null && (!Number.isInteger(expectTests) || expectTests < 0)) {
+  console.error(`[e2e-host] invalid --expect-tests=${expectTestsRaw}; expected a non-negative integer`)
   process.exit(2)
 }
 const e2eBatchesFile = join(projectDir, 'scripts', 'e2e-batches.jsonc')
@@ -553,6 +569,10 @@ runner flags:
   --registration-policy=<p>  open | closed (default open); injected as XIHE_AUTH_REGISTRATION_POLICY (localMode still exempts the first account)
   --list-batches        list batch names, modes and spec counts, then exit
   --report-name=<file>  write the Playwright JSON report to .local/dev/<file> (adds the list,json reporter unless one is given)
+  --expect-tests=<n>    require exactly <n> tests to have EXECUTED this round (expected+flaky+unexpected);
+                        refuses to run if you also pass your own --reporter
+  --allow-skip          accept skipped tests (default: any skip fails the run — a gated spec that
+                        self-skips would otherwise look like a pass)
   --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run | native (fail-closed; enables the CP↔Runtime WebSocket channel)
   --skip-preflight      skip the read-only preflight (not recommended)
   --validate-at-end     run "mise run validate" once after the specs (batch closure; default off)
@@ -1817,7 +1837,17 @@ async function runPlaywright() {
     ? (isAbsolute(reportName) ? reportName : join(projectDir, '.local', 'dev', reportName))
     : ''
   const hasReporter = playwrightTestArgs.some((arg) => arg === '--reporter' || arg.startsWith('--reporter='))
-  if (reportPath && !hasReporter) playwrightTestArgs = ['--reporter=list,json', ...playwrightTestArgs]
+  // BL-421: the count assertions need a machine-readable reporter. When the caller brought its
+  // own `--reporter` we cannot inject `json` without dropping theirs, so the counts are simply
+  // not asserted for that run — but `--expect-tests` explicitly asked for them, so that
+  // combination is refused instead of quietly degrading to "no assertion at all".
+  const statsPath = hasReporter
+    ? ''
+    : (reportPath || join(projectDir, '.local', 'dev', `e2e-host-stats-${runIdForTests}.json`))
+  if (hasReporter && expectTests !== null) {
+    throw new Error('[e2e-host] --expect-tests needs the runner-owned JSON reporter; drop your --reporter or drop --expect-tests')
+  }
+  if (!hasReporter) playwrightTestArgs = ['--reporter=list,json', ...playwrightTestArgs]
   // PLAN-0631: 用户传的 --grep 必须与车道的 @host 门**合并成单个正则**，不能追加第二个
   // --grep —— Playwright 多只取最后一个，会**静默覆盖**用户的过滤（实测：`--grep S6`
   // 实际跑了全链 7 passed）。顺序无关：测试名里 S6 可能出现在 @host 前或后。
@@ -1904,7 +1934,7 @@ async function runPlaywright() {
   if (!playwrightCli) {
     throw new Error(`[e2e-host] playwright CLI not found (tried: ${cliCandidates.join(', ')})`)
   }
-  return run(nodeCommand, [
+  const result = await run(nodeCommand, [
     playwrightCli,
     'test',
     '--config',
@@ -2010,9 +2040,40 @@ async function runPlaywright() {
       ...(process.env.XIHE_ASK_USER_SUBMIT_TESTID
         ? { XIHE_ASK_USER_SUBMIT_TESTID: process.env.XIHE_ASK_USER_SUBMIT_TESTID }
         : {}),
-      ...(reportPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath } : {}),
+      ...(statsPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: statsPath } : {}),
     },
   })
+  await assertExecutedTestCounts(result, statsPath)
+  return result
+}
+
+/**
+ * BL-421: a gated spec that self-skips still lets `playwright test` exit 0, so a lane could
+ * report success while having executed nothing (the 0660 ask-user spec is exactly that shape:
+ * `test.skip(!ENABLED, …)` behind `XIHE_E2E_ASK_USER`). Read the runner-owned JSON report and
+ * make the numbers an explicit part of the verdict:
+ *   - always print `executed/skipped/flaky/unexpected` so "1 skipped" cannot hide behind exit 0;
+ *   - `--expect-tests=N` pins how many tests must have **executed** this round;
+ *   - any skip fails the run unless `--allow-skip` was passed.
+ * A missing/unparsable report is a hard error, never a pass: the whole point is that
+ * "no evidence of execution" must not read as "green".
+ */
+async function assertExecutedTestCounts(result, statsPath) {
+  if (!statsPath) return result
+  let report
+  try {
+    report = JSON.parse(await readFile(statsPath, 'utf8'))
+  } catch (error) {
+    const message = `[e2e-host] BL-421: cannot read the Playwright JSON report at ${statsPath} (${error instanceof Error ? error.message : String(error)}); refusing to treat exit=${result.code} as a pass`
+    console.error(message)
+    return { ...result, code: result.code === 0 ? 1 : result.code }
+  }
+  const summary = summarizePlaywrightReport(report)
+  console.log(`[e2e-host] ${formatTestCounts(summary)}`)
+  const { ok, problems } = judgeTestCounts({ stats: summary, expectTests, allowSkip })
+  if (ok) return result
+  for (const problem of problems) console.error(`[e2e-host] BL-421 FAIL: ${problem}`)
+  return { ...result, code: result.code === 0 ? 1 : result.code }
 }
 
 async function collectIsolatedResources(preserveRunDir = false) {
