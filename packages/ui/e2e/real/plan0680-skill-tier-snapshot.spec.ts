@@ -163,6 +163,35 @@ async function escalateToInstanceAdmin(
     return { ...identity, accessToken };
 }
 
+/**
+ * 技能导入载荷的**单点构造器**（D-71）。
+ *
+ * 为什么要抽出来：本 spec 连踩 5 层夹具错（`definitionScope` / `trusted` /
+ * `agentName` 命名 / `results[].skillId` 取值 / **`sourcePath` 漏传**），全是
+ * 「载荷字段不全」同一病因。集中一处后「必填项」只有一份定义，字段再变只动这里。
+ *
+ * 必填项与行号以 `SkillImportValidator` 为准（packages/control-plane/…/skill/）：
+ *   - `name`        非 null 且匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` — `:33` / `:112`
+ *   - `sourcePath`  **必填非空**、≤512、须为安全相对路径 — `:134-145`
+ *   - `description` 必填非空、≤`Skill.MAX_DESCRIPTION_LENGTH` — `:171-177`
+ *   - `body`        必填非空、≤`Skill.MAX_BODY_BYTES` — `:194-200`
+ *   - `attachments` 可空；非空时 `sha256` 须 64 位小写 hex、`sizeBytes ≥ 0`、
+ *                   `path` 安全相对、`kind` 枚举 — `:208-229`
+ *   - 批量上限 `MAX_SKILLS_PER_REQUEST = 64` — `:41` / `:103-106`
+ *
+ * 注意：`trusted` 是**原语 boolean**（`SkillImportItem.boolean trusted`），
+ * `FAIL_ON_NULL_FOR_PRIMITIVES` 下省略即 400，故这里必须显式给 `false`。
+ */
+function buildSkillItem(nonce: string) {
+    return {
+        name: `p0680-tier-${nonce}`,
+        sourcePath: `lab/p0680-tier-${nonce}.md`,
+        description: "PLAN-0680 T3.1 快照 tier 探针",
+        body: `# p0680 tier probe ${nonce}\n用于验证 skills_snapshot.items[].tier 三字段。`,
+        trusted: false,
+    };
+}
+
 function headersOf(identity: Identity): Record<string, string> {
     return {
         Authorization: `Bearer ${identity.accessToken}`,
@@ -280,14 +309,7 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         headers: headersOf(identity),
         data: {
             definitionScope: { type: "instance" },
-            skills: [
-                {
-                    name: `p0680-tier-${nonce}`,
-                    description: "PLAN-0680 T3.1 快照 tier 探针",
-                    body: `# p0680 tier probe ${nonce}\n用于验证 skills_snapshot.items[].tier 三字段。`,
-                    trusted: false,
-                  },
-            ],
+            skills: [buildSkillItem(nonce)],
         },
     });
     expect(
