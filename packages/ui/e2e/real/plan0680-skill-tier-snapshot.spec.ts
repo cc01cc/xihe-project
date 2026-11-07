@@ -387,10 +387,15 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
     const countBeforeUnbind = items.length;
 
     // ⑤ 解绑 → 再跑 → 快照少一项（T3.1 的另一半）
-    const deleted = await request.delete(
-        `${SKILL_BINDING_PATH(principalId, identity.workspaceId)}/${String(bindingId)}`,
-        { headers: headersOf(identity) },
-    );
+    // 解绑面是 `DELETE /api/v1/skill-bindings/{bindingId}`（openapi.yaml:4529-4541
+    // ⇒ 204；CP `SkillBindingController.java:28` 映射集合 + `:61` `@DeleteMapping("/{bindingId}")`）。
+    // **不要**复用上面的 `SKILL_BINDING_PATH`：那是写入面
+    // `/api/v1/agent-principals/{pid}/skills`（只有 POST），且它已带 `?workspaceId=`，
+    // 再拼 `/{bindingId}` 会把 id 拼进 query 值 ⇒ 405 METHOD_NOT_ALLOWED。
+    // 该端点契约里没有 principalId / workspaceId 参数，授权按 binding 行自身 scope 判。
+    const deleted = await request.delete(`${CP_URL}/api/v1/skill-bindings/${String(bindingId)}`, {
+        headers: headersOf(identity),
+    });
     const deletedText = await deleted.text();
     expect(
         deleted.status(),
