@@ -307,3 +307,28 @@ test('T14 fail-closed：退出码非 0 但解析不出任何 scope ⇒ 拒绝（
   assert.deepEqual(withScope.refusals, ['ports']);
   assert.match(withScope.reason, /non-self-healable/);
 });
+
+// 2026-11-08（缺陷 4）：产物**内容**核不了（`artifact-truth`）与"产物陈旧"（`build`）是两种事——
+// 前者重建一次也不会变绿，所以任何 mode 都不许把它当可自愈项延期。
+test('T15 artifact-truth 是"核不了"而不是"可自愈"：任何 jar 模式/任何延期设置下都必须拒绝', () => {
+  for (const jarMode of ['auto', 'use', 'rebuild', 'run', 'native']) {
+    for (const externalServer of [false, true]) {
+      for (const ignoreBuild of [false, true]) {
+        const decision = decidePreflightGate({
+          jarMode,
+          externalServer,
+          cpBootMode: 'jar',
+          ignoreBuild,
+          blockingScopes: ['artifact-truth'],
+        });
+        assert.equal(decision.verdict, 'refuse', `jarMode=${jarMode} external=${externalServer} ignoreBuild=${ignoreBuild} 必须拒绝`);
+        assert.deepEqual(decision.refusals, ['artifact-truth']);
+        assert.match(decision.reason, /non-self-healable/);
+      }
+    }
+  }
+  // 同一行里同时出现 build + artifact-truth 时，拒绝理由必须落在不可自愈的那条上。
+  const mixed = decidePreflightGate({ jarMode: 'auto', cpBootMode: 'jar', blockingScopes: ['build', 'artifact-truth'] });
+  assert.equal(mixed.verdict, 'refuse');
+  assert.deepEqual(mixed.refusals, ['artifact-truth']);
+});

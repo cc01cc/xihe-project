@@ -39,9 +39,16 @@
 //   2. port conflicts   listeners inside the e2e block and on every registered
 //                       XH stack slot (PLAN-0533); any stack's runtime port in
 //                       particular blocks `cargo run` for the host runtime.
-//   3. build freshness  control-plane fat jar vs source mtime (the runner
-//                       boots any existing jar without a freshness check),
+//   3. build freshness  control-plane fat jar vs **CP source content** (the
+//                       runner boots any existing jar without a freshness check),
 //                       runtime debug binary vs source, cargo lock files.
+//                       Content truth, not mtime (2026-11-08, task-84): the jar
+//                       lives outside git so its mtime is honest, but `git
+//                       checkout` rewrites tracked-file mtimes, which made the
+//                       same jar read red in one checkout and green in another.
+//                       Resources the jar stores verbatim are compared by sha256;
+//                       compiled sources by last-commit time; unknown is
+//                       UNVERIFIABLE and blocking (scripts/lib/e2e-build-artifact.mjs).
 //                       The runtime binary is looked up in the target dir cargo
 //                       itself resolves (`.cargo/config.toml [build] target-dir`
 //                       / CARGO_TARGET_DIR) *including sibling stack dirs*
@@ -49,10 +56,12 @@
 //                       `packages/runtime/target`. If that resolution fails the
 //                       check is UNVERIFIABLE and blocking (2026-11-08: the old
 //                       check read an obsolete binary for days).
-//                       Scope split: the jar finding is `build` (deferrable to the
-//                       runner's rebuild path, suppressed by --ignore-build); the
-//                       runtime finding is `runtime-target` (never suppressed — the
-//                       caller's gate refuses on it in every jar mode).
+//                       Scope split: a stale/resolved jar finding is `build`
+//                       (deferrable to the runner's rebuild path, suppressed by
+//                       --ignore-build); an unprovable jar is `artifact-truth`
+//                       and the runtime finding is `runtime-target` (both never
+//                       suppressed — the caller's gate refuses on them in every
+//                       jar mode).
 //   4. disk headroom    H/C free space before a window (user thresholds,
 //                       2026-11-05 — do not change): H < 25% or C < 10% is
 //                       blocking, H < 30% is a warning only. An unsampled or
@@ -68,6 +77,16 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import {
+  collectSourcesNewerThan,
+  decideArtifactFreshness,
+  listJarEntries,
+  readDirtyPaths,
+  readFileHash,
+  readJarEntryHash,
+  readPathCommit,
+} from './lib/e2e-build-artifact.mjs'
+import { readBuildInfo } from './lib/cp-build-info.mjs'
 import {
   DISK_THRESHOLDS,
   diskExitCode,
@@ -384,7 +403,7 @@ if (listenFindings === null) {
 console.log('')
 
 // ------------------------------------------------------------- 3. artifacts
-console.log('[3/5] build artifacts (source mtime vs artifact mtime)')
+console.log('[3/5] build artifacts (artifact content vs source truth; mtime is only the trigger)')
 const cpDir = join(projectDir, 'packages', 'control-plane')
 // PLAN-0656 R2: the runner builds and boots the CP jar from its OWN build dir
 // (XIHE_CP_TARGET_DIR, default C:/xihe-build/e2e) — never from the checkout
@@ -410,14 +429,89 @@ if (existsSync(cpTarget)) {
 if (!cpJar) {
   console.log(`  INFO  control-plane: no fat jar in the E2E build dir (${e2eCpTargetDir}) — the runner builds one on first boot (mvn package -Dxihe.target.dir=...; no stale-jar risk)`)
 } else {
-  const cpSource = newestMtime(join(cpDir, 'src', 'main'))
-  const pomStat = existsSync(join(cpDir, 'pom.xml')) ? statSync(join(cpDir, 'pom.xml')) : { mtimeMs: 0, path: null }
-  const newestSource = cpSource.mtimeMs > pomStat.mtimeMs ? cpSource : { path: join(cpDir, 'pom.xml'), mtimeMs: pomStat.mtimeMs }
-  if (newestSource.mtimeMs > cpJar.mtimeMs) {
-    add('FAIL', 'build', `CP jar is older than CP sources by ${fmtAge(newestSource.mtimeMs - cpJar.mtimeMs)}`, `runner boots any existing jar without a freshness check; rebuild: cd packages/control-plane && mvn -q -DskipTests -Dxihe.target.dir=${e2eCpTargetDir} package`)
-    console.log(`  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) is STALE vs ${newestSource.path} (${fmtAge(now - newestSource.mtimeMs)} old)`)
+  // BL-477 / task-84: `mtime` is the trigger, never the verdict. The jar sits outside git, so its
+  // own mtime is honest; tracked files are not — `git checkout` rewrites their mtime even when the
+  // content is byte-identical, which made one checkout red and another green over the same jar.
+  // Sources newer than the jar are therefore re-judged by content: sha256 for the resources the jar
+  // stores verbatim, last-commit time for compiled sources (immutable across checkouts). Nothing
+  // decidable ⇒ unverifiable ⇒ blocking.
+  const cpPrefix = 'packages/control-plane'
+  const sources = collectSourcesNewerThan({
+    root: join(cpDir, 'src', 'main'),
+    sinceMs: cpJar.mtimeMs,
+    prefix: `${cpPrefix}/src/main`,
+  })
+  const pomPath = join(cpDir, 'pom.xml')
+  if (existsSync(pomPath)) {
+    const pomStat = statSync(pomPath)
+    if (pomStat.mtimeMs > cpJar.mtimeMs) sources.push({ path: `${cpPrefix}/pom.xml`, absPath: pomPath, mtimeMs: pomStat.mtimeMs })
+  }
+  const dirtyPaths = readDirtyPaths({ projectDir })
+  const jarEntries = listJarEntries({ jarPath: cpJar.path })
+  const artifactVerdict = decideArtifactFreshness({
+    artifactTimeMs: cpJar.mtimeMs,
+    sources,
+    readEntryHash: (entry) => readJarEntryHash({ jarPath: cpJar.path, entry }),
+    readFileHash: (relPath) => readFileHash({ file: join(projectDir, relPath) }),
+    // "not in the jar at all" is stale; "could not list the jar" must stay unknown, not fresh.
+    hasEntry: (entry) => (jarEntries.ok ? jarEntries.entries.has(entry) : null),
+    // A dirty/untracked read failure must not silently turn into "clean": fail closed instead.
+    readCommitState: (relPath) =>
+      dirtyPaths.ok
+        ? readPathCommit({ projectDir, relPath, dirtyPaths: dirtyPaths.paths })
+        : { ok: false, state: 'clean', commit: null, commitTimeMs: null, error: `git status failed: ${dirtyPaths.error}` },
+  })
+  const stamp = readBuildInfo(cpTarget)
+  const shortSha = (sha) => String(sha ?? '').slice(0, 12)
+  if (stamp.info) {
+    const builtAtMs = Date.parse(stamp.info.builtAt)
+    const lag = Number.isFinite(builtAtMs) && builtAtMs < cpJar.mtimeMs ? `, stamped ${fmtAge(cpJar.mtimeMs - builtAtMs)} before the jar was repackaged (stamp under-reports the jar)` : ''
+    console.log(
+      `  INFO  CP jar provenance: build-info commit ${shortSha(stamp.info.commit)} builtAt ${stamp.info.builtAt || 'unknown'} dirty=${stamp.info.dirty}${lag} — provenance only, not the criterion`,
+    )
   } else {
-    console.log(`  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) is newer than CP sources`)
+    console.log(`  INFO  CP jar provenance: no build-info stamp in ${e2eCpTargetDir} — the artifact carries no input fingerprint`)
+  }
+  const evidenceCounts = { sha256: 0, membership: 0, 'commit-time': 0, mtime: 0 }
+  for (const entry of artifactVerdict.fresh) if (entry.evidence) evidenceCounts[entry.evidence] += 1
+  if (artifactVerdict.verdict === 'fresh') {
+    if (artifactVerdict.checked === 0) {
+      console.log(`  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): no CP source is newer than the jar`)
+    } else {
+      console.log(
+        `  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): ${artifactVerdict.checked} source(s) are newer by mtime but content-identical`
+          + ` (${evidenceCounts.sha256} by sha256, ${evidenceCounts['commit-time']} by last-commit time) — mtime was checkout noise`,
+      )
+      for (const entry of artifactVerdict.fresh.slice(0, 4)) console.log(`        ${entry.path}  ${entry.detail}`)
+    }
+  } else if (artifactVerdict.verdict === 'stale') {
+    add(
+      'FAIL',
+      'build',
+      `CP jar content is older than ${artifactVerdict.stale.length} CP source(s): ${artifactVerdict.stale[0].path} (${artifactVerdict.stale[0].reason})`,
+      `runner boots any existing jar without a freshness check; rebuild: cd packages/control-plane && mvn -q -DskipTests -Dxihe.target.dir=${e2eCpTargetDir} package`,
+    )
+    console.log(
+      `  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) does NOT contain the current CP sources (${artifactVerdict.stale.length} proven stale of ${artifactVerdict.checked} newer):`,
+    )
+    for (const entry of artifactVerdict.stale.slice(0, 10)) {
+      console.log(`        ${entry.path}  [${entry.evidence}] ${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''}`)
+    }
+    if (artifactVerdict.stale.length > 10) console.log(`        … and ${artifactVerdict.stale.length - 10} more`)
+  } else {
+    add(
+      'FAIL',
+      'artifact-truth',
+      `cannot prove the CP jar contains the current CP sources (${artifactVerdict.unverifiable.length} newer source(s) unverifiable): ${artifactVerdict.unverifiable[0].reason}`,
+      'the shared jar carries no input fingerprint, so a newer-than-jar source with no usable git/content evidence must block'
+        + ' (未知不等于安全); make it decidable by having the CP build write commit / sourceTreeSha256 / builtAt into'
+        + ' META-INF/build-info.properties at package time (see scripts/lib/e2e-build-artifact.mjs)',
+    )
+    console.log(
+      `  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) freshness is UNVERIFIABLE (${artifactVerdict.unverifiable.length} of ${artifactVerdict.checked} newer source(s)):`,
+    )
+    for (const entry of artifactVerdict.unverifiable.slice(0, 10)) console.log(`        ${entry.path}  ${entry.reason}`)
+    if (artifactVerdict.unverifiable.length > 10) console.log(`        … and ${artifactVerdict.unverifiable.length - 10} more`)
   }
 }
 }
