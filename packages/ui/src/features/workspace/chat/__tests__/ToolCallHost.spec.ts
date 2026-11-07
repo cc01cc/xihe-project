@@ -94,6 +94,14 @@ function routedTo(wrapper: ReturnType<typeof mountHost>, component: unknown): bo
     return wrapper.findComponent(component as never).exists();
 }
 
+function expectFallbackCard(wrapper: ReturnType<typeof mountHost>, label: string): void {
+    const card = wrapper.find('[data-testid="tool-card"]');
+    expect(card.exists(), label).toBe(true);
+    expect(card.text().trim(), label).not.toBe("");
+    expect(wrapper.find("[data-tool-card]").exists(), label).toBe(false);
+    expect(routedTo(wrapper, ToolCallCard), label).toBe(true);
+}
+
 describe("ToolCallHost dedicated card mapping", () => {
     it("routes execute_command to CommandToolCard and renders structured stdout", async () => {
         const wrapper = mountHost(
@@ -263,7 +271,15 @@ describe("ToolCallHost dedicated card mapping", () => {
 
 describe("ToolCallHost fallback gates", () => {
     it.each([
-        ["job tool name", { name: "start_background_process", arguments: "{}" }],
+        [
+            "job name start_background_process",
+            { name: "start_background_process", arguments: "{}" },
+        ],
+        ["job name get_background_process", { name: "get_background_process", arguments: "{}" }],
+        [
+            "job name cancel_background_process",
+            { name: "cancel_background_process", arguments: "{}" },
+        ],
         [
             "jobSummary",
             {
@@ -297,12 +313,8 @@ describe("ToolCallHost fallback gates", () => {
                 },
             },
         ],
-    ])("falls back to ToolCallCard for %s", (_label, overrides) => {
-        const wrapper = mountHost(makeToolCall(overrides));
-
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
-        expect(routedTo(wrapper, ToolCallCard)).toBe(true);
-        expect(wrapper.find('[data-testid="tool-card"]').exists()).toBe(true);
+    ])("falls back to ToolCallCard for %s", (label, overrides) => {
+        expectFallbackCard(mountHost(makeToolCall(overrides)), label);
     });
 
     it("does not fall back for an empty diagnostics bundle", () => {
@@ -327,8 +339,7 @@ describe("ToolCallHost fallback gates", () => {
             "exec_command",
         ]) {
             const wrapper = mountHost(makeToolCall({ name }));
-            expect(wrapper.find("[data-tool-card]").exists(), name).toBe(false);
-            expect(routedTo(wrapper, ToolCallCard), name).toBe(true);
+            expectFallbackCard(wrapper, name || "(empty name)");
         }
     });
 
@@ -347,8 +358,7 @@ describe("ToolCallHost fallback gates", () => {
             }),
         );
 
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
-        expect(routedTo(wrapper, ToolCallCard)).toBe(true);
+        expectFallbackCard(wrapper, "unparsable command arguments");
     });
 
     it("falls back for a non-array command args shape", () => {
@@ -366,7 +376,7 @@ describe("ToolCallHost fallback gates", () => {
             }),
         );
 
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
+        expectFallbackCard(wrapper, "non-array command args");
     });
 
     it("falls back for a malformed command result shape", () => {
@@ -379,8 +389,7 @@ describe("ToolCallHost fallback gates", () => {
             }),
         );
 
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
-        expect(routedTo(wrapper, ToolCallCard)).toBe(true);
+        expectFallbackCard(wrapper, "malformed command result");
     });
 
     it("falls back for a terminal result-less call without error", () => {
@@ -391,8 +400,7 @@ describe("ToolCallHost fallback gates", () => {
             }),
         );
 
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
-        expect(routedTo(wrapper, ToolCallCard)).toBe(true);
+        expectFallbackCard(wrapper, "terminal result-less call");
     });
 
     it("renders a dedicated card when error is present and the result is absent", async () => {
@@ -420,8 +428,7 @@ describe("ToolCallHost fallback gates", () => {
             }),
         );
 
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
-        expect(routedTo(wrapper, ToolCallCard)).toBe(true);
+        expectFallbackCard(wrapper, "malformed read_file_range result");
     });
 
     it("falls back for a non-string read_file result", () => {
@@ -433,7 +440,7 @@ describe("ToolCallHost fallback gates", () => {
             }),
         );
 
-        expect(wrapper.find("[data-tool-card]").exists()).toBe(false);
+        expectFallbackCard(wrapper, "non-string read_file result");
     });
 });
 
