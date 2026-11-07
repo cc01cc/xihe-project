@@ -117,16 +117,17 @@ class DomainSchemaMigrationTest {
                 "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
                         + "AND table_name = 'agent_principals' AND column_name = 'template_snapshot'"),
                 "legacy principals without a verifiable template source must allow a null snapshot");
-        assertEquals("YES", scalarString(
-                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
-                        + "AND table_name = 'sessions' AND column_name = 'agent_principal_id'"));
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'sessions' AND column_name = 'agent_principal_id'"),
+                "PLAN-0689 V133: session identity lives on session_participants.PRIMARY; the column is dropped");
         assertEquals("jsonb", scalarString(
                 "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
                         + "AND table_name = 'sessions' AND column_name = 'agent_permissions_snapshot'"));
-        assertEquals(1, scalarInt(
+        assertEquals(0, scalarInt(
                 "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_sessions_agent_principal' "
-                        + "AND contype = 'f' AND confdeltype = 'r'"),
-                "Session principal deletion must be restricted");
+                        + "AND contype = 'f'"),
+                "V133 dropped sessions.agent_principal_id FK (PLAN-0689 D-54)");
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM pg_constraint WHERE conname = 'pk_workspace_agents' AND contype = 'p'"),
                 "workspace agent binding must use its composite primary key");
@@ -1079,10 +1080,10 @@ class DomainSchemaMigrationTest {
     }
 
     /**
-     * PLAN-0407 V44 delta-only self-check: the three V42 structures delivered
-     * by PLAN-0374 must remain byte-for-byte intact after V44 (stable UUID
-     * principal key, restricted Session principal FK, dedicated Workspace
-     * binding table with its composite key and both foreign keys).
+     * PLAN-0407 V44 delta-only self-check: the V42 structures delivered by
+     * PLAN-0374 must remain byte-for-byte intact after V44 (stable UUID
+     * principal key, dedicated Workspace binding table with its composite key
+     * and both foreign keys). The Session principal FK is retired by V133.
      */
     private static void assertV42PrincipalStructuresIntact(Connection c) throws SQLException {
         assertEquals("uuid", scalarString(c,
@@ -1092,14 +1093,7 @@ class DomainSchemaMigrationTest {
         assertEquals(1, scalarInt(c,
                 "SELECT count(*) FROM pg_constraint WHERE conname = 'agent_principals_pkey' AND contype = 'p'"),
                 "V44 must not rebuild the agent_principals primary key");
-        assertEquals("YES", scalarString(c,
-                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
-                        + "AND table_name = 'sessions' AND column_name = 'agent_principal_id'"),
-                "V44 must not touch sessions.agent_principal_id");
-        assertEquals(1, scalarInt(c,
-                "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_sessions_agent_principal' "
-                        + "AND contype = 'f' AND confdeltype = 'r'"),
-                "V44 must keep the restricted sessions->agent_principals FK");
+        // PLAN-0689 V133 删除 sessions.agent_principal_id；该定点属性不再可断言
         assertEquals(1, scalarInt(c,
                 "SELECT count(*) FROM pg_constraint WHERE conname = 'pk_workspace_agents' AND contype = 'p'"),
                 "V44 must not rebuild the workspace_agents composite key");

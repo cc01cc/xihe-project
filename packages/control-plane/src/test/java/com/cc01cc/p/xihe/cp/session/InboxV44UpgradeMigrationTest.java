@@ -125,10 +125,7 @@ class InboxV44UpgradeMigrationTest {
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM information_schema.columns "
                             + "WHERE table_name = 'chat_runs' AND column_name = 'terminal_at'"),
                     "V44 chat_runs.terminal_at must survive V45");
-            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM pg_constraint "
-                            + "WHERE conname = 'fk_sessions_agent_principal' AND contype = 'f' "
-                            + "AND confdeltype = 'r'"),
-                    "the restricted sessions->agent_principals FK must survive V45");
+            // PLAN-0689 V133 删除 sessions.agent_principal_id；该定点属性不再可断言
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM pg_constraint "
                             + "WHERE conname = 'pk_workspace_agents' AND contype = 'p'"),
                     "the workspace_agents composite key must survive V45");
