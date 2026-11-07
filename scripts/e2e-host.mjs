@@ -11,6 +11,7 @@ import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead, writeBuildInfo } from './lib/cp-build-info.mjs'
 import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
+import { readSidecar, sha256File, writeSidecarForJar } from './lib/cp-jar-sidecar.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
 import {
   buildBlankDatabaseResetSql,
@@ -496,7 +497,35 @@ function resolveCpJarState(targetDir = join(projectDir, 'packages', 'control-pla
     const pomStat = statSync(pomPath)
     if (pomStat.mtimeMs > newestSource.mtimeMs) newestSource = { path: pomPath, mtimeMs: pomStat.mtimeMs }
   }
-  return { cpDir, jar, newestSource }
+  // BL-477 / task-90: identity comes from the sidecar when a producer wrote one. A jar whose bytes
+  // differ from the manifest that describes it is NOT "fresh because its mtime is new": the manifest
+  // only exists because some producer fingerprinted *that* artifact, so a mismatch means the jar was
+  // replaced behind it (hand-run `mvn package`, a copied jar). Hashing ~78 MB costs a few hundred ms
+  // and only happens when a sidecar exists; without one `identity` stays null and mtime decides.
+  let sidecar = { state: 'missing', file: null, data: null, identity: null, reason: 'no sidecar manifest' }
+  if (jar) {
+    const read = readSidecar({ jarPath: jar.path })
+    if (read.state === 'invalid') {
+      sidecar = { state: 'invalid', file: read.file, data: null, identity: false, reason: `the sidecar is unusable: ${read.error}` }
+    } else if (read.state === 'ok') {
+      const actual = sha256File(jar.path)
+      const identity = actual.ok ? actual.sha256 === read.data.jarSha256 && jar.name === read.data.jarName : null
+      sidecar = {
+        state: 'ok',
+        file: read.file,
+        data: read.data,
+        identity,
+        reason: identity === true
+          ? `the jar matches the manifest written for ${read.data.commit.slice(0, 12)}`
+          : identity === false
+            ? `the manifest describes ${read.data.jarName} (sha256 ${read.data.jarSha256.slice(0, 12)}…) but the jar on disk is ${jar.name}`
+            : `cannot hash the jar to check the manifest: ${actual.error}`,
+      }
+    } else {
+      sidecar = { state: 'missing', file: read.file, data: null, identity: null, reason: 'no sidecar manifest' }
+    }
+  }
+  return { cpDir, jar, newestSource, sidecar }
 }
 
 // R2 decision table (--jar-mode): auto = fresh jar, else build-then-use (a MISSING jar
@@ -527,17 +556,29 @@ async function resolveCpBootPlan() {
     }
   }
   const state = resolveCpJarState(e2eCpTargetDir)
-  const stale = state.jar ? state.newestSource.mtimeMs > state.jar.mtimeMs : false
+  // task-90: an artifact that is not the one its sidecar describes cannot be trusted on mtime alone,
+  // so it takes the same "build before boot" path as a stale jar (never booted silently).
+  const identityMismatch = state.sidecar.state === 'ok' && state.sidecar.identity === false
+  const staleByMtime = state.jar ? state.newestSource.mtimeMs > state.jar.mtimeMs : false
+  const stale = state.jar ? staleByMtime || identityMismatch : false
   const plan = decideCpBoot({ jarMode, hasJar: Boolean(state.jar), stale })
   if (plan.action === 'run') return { mode: 'run', jar: null, reason: plan.reason }
   if (plan.action === 'use') {
-    if (stale) console.warn(`[e2e-host] CP jar ${state.jar.name} is STALE but --jar-mode=use; booting it as-is`)
+    if (staleByMtime) console.warn(`[e2e-host] CP jar ${state.jar.name} is STALE but --jar-mode=use; booting it as-is`)
+    if (identityMismatch) {
+      console.warn(
+        `[e2e-host] CP jar ${state.jar.name} is NOT the artifact its sidecar describes (${state.sidecar.reason});`
+          + ' --jar-mode=use boots it anyway, and that mode skips the artifact section, so nothing later re-checks it',
+      )
+    }
     return { mode: 'jar', jar: state.jar, reason: plan.reason }
   }
   // plan.action === 'build-then-use': missing jar, stale jar, or a forced rebuild.
   if (!state.jar) {
     console.log('[e2e-host] no CP jar in the E2E build dir: building one once (mvn -q -DskipTests package) so later runs reuse it')
-  } else if (stale) {
+  } else if (identityMismatch) {
+    console.log(`[e2e-host] CP jar ${state.jar.name} is not the artifact its sidecar describes (${state.sidecar.reason}); rebuilding (mvn -q -DskipTests package)`)
+  } else if (staleByMtime) {
     console.log(`[e2e-host] CP jar ${state.jar.name} is stale vs ${state.newestSource.path} by ${fmtAge(state.newestSource.mtimeMs - state.jar.mtimeMs)}; rebuilding (mvn -q -DskipTests package)`)
   } else {
     console.log(`[e2e-host] --jar-mode=rebuild: rebuilding CP jar (mvn -q -DskipTests package)`)
@@ -561,6 +602,24 @@ async function resolveCpBootPlan() {
   } else {
     writeBuildInfo({ targetDir: e2eCpTargetDir, commit: head.commit, dirty: head.dirty })
     console.log(`[e2e-host] CP build-info stamped for ${head.commit} (dirty=${head.dirty})`)
+  }
+  // BL-477 / task-90: the fingerprint is written by the same code path that produced the jar and only
+  // *after* packaging finished — a manifest written any earlier would describe a jar that does not
+  // exist yet, and its `builtAt` would predate the artifact. It records the jar's own sha256, so a
+  // later reader can prove the manifest is about *this* file (unlike the in-jar build-info stamp,
+  // which the CP build reuses from an earlier generation).
+  const sidecarWrite = writeSidecarForJar({ projectDir, jarPath: after.jar.path, writtenBy: 'scripts/e2e-host.mjs' })
+  if (!sidecarWrite.ok) {
+    console.warn(`[e2e-host] CP jar rebuilt but its sidecar was NOT written (${sidecarWrite.error}); freshness will fall back to content evidence`)
+  } else {
+    const fingerprint = sidecarWrite.data
+    console.log(
+      `[e2e-host] CP jar sidecar written: ${sidecarWrite.file} (jar sha256 ${fingerprint.jarSha256.slice(0, 12)}…,`
+        + ` CP tree ${fingerprint.sourceTreeSha256.slice(0, 12)}…, commit ${fingerprint.commit.slice(0, 12)}, dirty=${fingerprint.dirty})`,
+    )
+    if (sidecarWrite.clockSkewMs > 0) {
+      console.warn(`[e2e-host] sidecar builtAt was clamped by ${sidecarWrite.clockSkewMs} ms: the system clock is behind the jar mtime`)
+    }
   }
   console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
   return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
