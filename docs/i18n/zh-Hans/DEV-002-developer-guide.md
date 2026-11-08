@@ -309,6 +309,8 @@ mise run dev:host
 # 以下为 Bash/Git Bash 示例（Windows 建议在 Git Bash 中执行）
 ```
 
+> 热循环口径（dev 通道「改一行 ≤30 s」、验证通道保持 per-sha 构建根、两条禁令）见 ONE 工作区 `internal/A03-xihe/docs/dev-hot-loop.md`——**跨仓路径，不入本文正文**。
+
 ```bash
 # 2.1 登录并提取 JWT accessToken；登录失败时后续请求会得到 401
 #   -sS：静默但保留错误输出；-X POST：登录接口；-H：JSON 头

@@ -42,6 +42,7 @@
 - **栈租约（PLAN-0694，运维口径）**：`dev-stack.mjs` 用 `.xihe-stacks/<n>/lease.json` 记录"这栈是谁起的"，`status` 对**每个**租约字段做独立事实交叉校验（pid 死活 / 端口是否在听 / `instanceId` / `cpVersion` / pid 漂移 / 可选 `phase`），失配进 `mismatch[]`、核不了记 `unverifiable`；**心跳超 TTL（10 min）单独记 `lease-cold`（输出字段 `lease.state` = `live`|`cold`），是信息项：不进 `mismatch`、不进 `reasons`、不改 verdict 与退出码** —— `cold` 只表示"这栈最近 10 分钟没人跑过一次 `status` 交叉核对"，不是故障（`verdict` 只由事实决定）。因此 `ok` 只在"事实全绿 + 所有字段都核得上（冷暖不计）"时为真；**升级前起的旧栈首次 `status` 会报 `verdict=ghost` + exit 1（不是故障）**，迁移 = `acquire --stack <n>` 认领或重启一次；`acquire`/`release`/`gc`/`status --all` 只读优先、`gc` 零 kill。改 `.xihe-stacks` 路径/端口/`heartbeatAt` 语义见 DEV-002 §4（`dev-stack` 状态与租约契约）。
 - 根 `README.md`（英文 GitHub 门面）与 `docs/i18n/zh-Hans/README.md`（中文文档页）独立维护；架构图、Quick Start 命令、端口和技术栈摘要同批同步，功能状态表仅在中文版维护。`scripts/sync-readmes.sh` 只管理包 README symlink，不管理根 README。
 - **CP 构建目录按栈隔离（BL-253 L3）**：每栈一个 `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]`（`XIHE_CP_BUILD_ROOT` 可改根），`.current` 记录该栈**最后一次启动**所用目录；`cpBuild.targetDirSource` = `pointer`/`newest`/`env`/`derived`（**新增字段，旧字段契约不变**）。保留只走显式清理 `mise run dev:host:cp-build:clean`（默认 dry-run，`-- --apply` 才删；每栈留最新 3 个 + 指针目标；绝不碰 legacy 目录）。回滚通道 = 显式 `XIHE_CP_TARGET_DIR`（优先级最高）。切布局后各栈**下次重启**首建约 60s，谁重启谁核 `verdict=fresh`+四端口。
+- **dev 热循环（试行，2026-11-08）**：「改一行多久看到效果」的能力分层、dev/验证两条通道与两条禁令（**dev 产物不得当验收证据 / 验证通道不得复用 dev 根**）见 ONE 工作区 `internal/A03-xihe/docs/dev-hot-loop.md`（**跨仓路径**，不入本仓正文）；试行 2 个工作日后由 Lead 复核持久化/修订/废弃。
 
 ## Architecture
 

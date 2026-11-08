@@ -141,6 +141,8 @@ cd packages/runtime && cargo fetch
 
 ### 2.3. Root Directory Tasks
 
+> Dev hot-loop policy (dev channel "edit → see effect ≤30 s", verification channel keeps per-sha build roots, two prohibitions) lives in the ONE workspace: `internal/A03-xihe/docs/dev-hot-loop.md` — a cross-repo path, not part of this repo's body.
+
 ```bash
 mise run dev:ui
 mise run build:ui
