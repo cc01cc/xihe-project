@@ -1,5 +1,7 @@
 <script setup lang="ts">
+const { t } = useI18n();
 import type { OpenFile } from "../../../types";
+import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
 
 defineProps<{
@@ -35,7 +37,7 @@ const emit = defineEmits<{
             <span class="truncate max-w-24">{{ file.name }}</span>
             <button
                 class="ml-1 p-0.5 rounded hover:bg-accent hover:text-foreground"
-                aria-label="Close tab"
+                :aria-label="t('common.closeTab')"
                 @click.stop="emit('close', file.path)"
             >
                 <X class="size-3" aria-hidden="true" />

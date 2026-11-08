@@ -20,7 +20,10 @@ const openModalStack: symbol[] = [];
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
 import { X } from "@lucide/vue";
 import { FocusScope } from "reka-ui";
+import { useI18n } from "vue-i18n";
 import { useScrollLock } from "@/composables/useScrollLock";
+
+const { t } = useI18n();
 
 const props = withDefaults(
     defineProps<{
@@ -164,7 +167,7 @@ function preventMountAutoFocus(event: Event) {
                             <button
                                 type="button"
                                 class="p-1 rounded hover:bg-accent"
-                                aria-label="Close"
+                                :aria-label="t('common.close')"
                                 @click="emit('close')"
                             >
                                 <X class="size-4" aria-hidden="true" />

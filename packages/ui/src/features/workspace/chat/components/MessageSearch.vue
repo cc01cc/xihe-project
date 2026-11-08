@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const { t } = useI18n();
+import { useI18n } from "vue-i18n";
 import { ref } from "vue";
 
 const model = defineModel<string>("modelValue", { required: true }),
@@ -19,7 +21,7 @@ void inputRef;
         />
         <button
             class="text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Close search"
+            :aria-label="t('common.closeSearch')"
             @click="emit('close')"
         >
             <svg

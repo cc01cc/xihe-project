@@ -1560,12 +1560,12 @@ onMounted(() => {
                                             :disabled="props.readonly || bindingBusy"
                                             @update:model-value="
                                                 (value) =>
-                                                saveBinding(
-                                                    model,
-                                                    value === '__inherit__'
-                                                        ? ''
-                                                        : String(value ?? ''),
-                                                )
+                                                    saveBinding(
+                                                        model,
+                                                        value === '__inherit__'
+                                                            ? ''
+                                                            : String(value ?? ''),
+                                                    )
                                             "
                                         >
                                             <SelectTrigger
@@ -1722,7 +1722,9 @@ onMounted(() => {
                                                 })
                                             "
                                         >
-                                            <SelectValue>{{ modelTemplateLabel(model) }}</SelectValue>
+                                            <SelectValue>{{
+                                                modelTemplateLabel(model)
+                                            }}</SelectValue>
                                         </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="__inherit__">{{
@@ -2026,7 +2028,7 @@ onMounted(() => {
                                 <SelectTrigger
                                     data-testid="provider-connection-api-type"
                                     class="mt-1 w-full text-sm"
-                                    aria-label="API Type"
+                                    :aria-label="t('common.apiType')"
                                 >
                                     <SelectValue />
                                 </SelectTrigger>

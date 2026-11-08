@@ -271,17 +271,13 @@ async function save(publish: boolean) {
             <Select v-model="selectedType">
                 <SelectTrigger
                     data-testid="api-request-type"
-                    aria-label="API Type"
+                    :aria-label="t('common.apiType')"
                     class="rounded-md border bg-background px-2 py-1 text-xs"
                 >
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                    <SelectItem
-                        v-for="type in types"
-                        :key="typeKey(type)"
-                        :value="typeKey(type)"
-                    >
+                    <SelectItem v-for="type in types" :key="typeKey(type)" :value="typeKey(type)">
                         {{ typeKey(type) }}
                     </SelectItem>
                 </SelectContent>
