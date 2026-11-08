@@ -2,7 +2,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
-import { selectByIndex, selectByLocator } from "../helpers/select";
+import { selectByLocator } from "../helpers/select";
 
 const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
     WORKSPACE_ID = "workspace-1";
@@ -436,7 +436,7 @@ test.describe("Policy management (desktop)", () => {
     });
 
     // PLAN-0707：同一 BaseModal 内 reka Select 阻塞；待事件序列排查（见 evidence/reka-dialog-select.md）。
-    test.fixme("approval classify-and-allow classifies first and hands back a once decision", async ({
+    test("approval classify-and-allow classifies first and hands back a once decision", async ({
         page,
     }) => {
         const state = installPolicyApi(page);
@@ -463,7 +463,7 @@ test.describe("Policy management (desktop)", () => {
         expect(calls).toHaveLength(0);
         expect(state.classifications).toHaveLength(0);
         await dialog.locator('[data-testid="approval-classify-action-class"]').fill("exec");
-        await selectByIndex(dialog.locator('[data-testid="approval-classify-shape"]'), 1);
+        await selectByLocator(dialog.locator('[data-testid="approval-classify-shape"]'), "解释器型");
         await dialog.locator('[data-testid="approval-classify-submit"]').click();
 
         await expect.poll(() => state.classifications.length).toBe(1);
