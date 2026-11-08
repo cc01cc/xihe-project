@@ -43,7 +43,10 @@ def _model_capabilities(_provider: str, model_id: str) -> dict[str, bool]:
     # The connection Catalog, rather than a provider allowlist, remains the
     # authority for which adapters are enabled; keep the conservative suffix
     # exclusions for endpoints that are clearly not chat models.
-    chat = not bool(re.search(r"(?:-|_)(?:asr|tts)$", model_id, re.IGNORECASE))
+    # BL-95 / PLAN-0718: match the asr/tts segment anywhere at the tail --
+    # plain -asr/-tts and variants such as -tts-voiceclone / -asr-realtime /
+    # _tts_v2. A plain -chat or a bare model id must stay chat-capable.
+    chat = not bool(re.search(r"(?:-|_)(?:asr|tts)(?:[-_].*)?$", model_id, re.IGNORECASE))
     return {"chat": chat}
 
 

@@ -295,6 +295,29 @@ def _run_scoped_catalog(model_ids, monkeypatch, model_discovery="remote-models",
     return asyncio.run(_run())
 
 
+@pytest.mark.parametrize(
+    ("model_id", "expected_chat"),
+    [
+        ("mimo-tts-voiceclone", False),
+        ("mimo-asr-realtime", False),
+        ("mimo_tts_v2", False),
+        ("mimo-v2.5-tts", False),
+        ("mimo-v2.5", True),
+        ("mimo-v2.5-chat", True),
+    ],
+)
+def test_chat_capability_matches_asr_tts_segment_variants(model_id, expected_chat):
+    """BL-95 / PLAN-0718: audio model suffixes must be excluded from chat candidates.
+
+    Covers the legacy -asr/-tts suffixes and the variants that used to leak
+    through (-tts-voiceclone, -asr-realtime, _tts_v2), plus the pure-id and
+    -chat negatives that must remain chat-capable.
+    """
+    from xihe_agent.llm.models import _model_capabilities
+
+    assert _model_capabilities("test", model_id)["chat"] is expected_chat
+
+
 def test_model_record_includes_litellm_metadata(monkeypatch):
     monkeypatch.setattr("xihe_agent.llm.models.litellm.get_model_info", lambda _m: {
         "mode": "chat",
