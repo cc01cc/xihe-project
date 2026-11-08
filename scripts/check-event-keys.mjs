@@ -29,6 +29,13 @@ export const DOMAINS = [
     "credential",
     "mcp",
     "export",
+    // PLAN-0715 / BL-459（2026-11-09）：以下为已上线 emitter 的合法新域；只扩白名单，不改 event 名。
+    "action",
+    "derived",
+    "model",
+    "plugin",
+    "provider",
+    "runtime",
 ];
 
 /** Frozen protocol names: never subject to the naming rule. */
@@ -94,6 +101,12 @@ export const PAST_VERBS = [
     "answered",
     "added",
     "revisioned",
+    // PLAN-0715 / BL-459：以下为既有合法事件名使用的终态词（未改任何 event 名）。
+    "resolved",
+    "limited",
+    "filtered",
+    "dropped",
+    "unreachable",
 ];
 
 const DOMAIN_RE = new RegExp(`^(${DOMAINS.join("|")})_([a-z0-9]+_)*([a-z0-9_]+)$`);
