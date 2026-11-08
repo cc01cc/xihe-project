@@ -51,7 +51,10 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
 
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
-        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
+        // PLAN-0699 M2：同一上限会在「壳级横幅」(AppLayout) 与「页面级横幅」
+        // (WorkspaceView，仅 disconnected/reconnecting 才渲染) 之外，还可能被两处壳挂载重复渲染；
+        // 断言只针对第一条可见横幅，避免 strict-mode 双元素误伤。
+        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]').first();
         await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toHaveAttribute("role", "status");
         await expect(notice).toContainText("停止刷新");
