@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PluginKvSchemaMigrationTest {
 
     static TestDatabaseProvider.DatabaseRef postgres =
-            TestDatabaseProvider.emptyDatabase("plugin_kv_schema");
+            TestDatabaseProvider.migratedDatabase("plugin_kv_schema");
 
     private static final String KV = "plugin_kv";
 

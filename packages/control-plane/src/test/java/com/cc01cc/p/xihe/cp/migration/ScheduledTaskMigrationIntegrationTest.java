@@ -23,8 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code agent_principal_id}（FK SET NULL + 部分索引 + 删除降级）同批断言。
  */
 class ScheduledTaskMigrationIntegrationTest {
-    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
-    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("scheduled_task");
+    /** PLAN-eff/task-13 M1（A1）/ task-18：库由 JVM 单例容器下发（模板克隆，HEAD schema）；本类 Flyway 到 HEAD 仅兜底。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.migratedDatabase("scheduled_task");
 
     private static Connection connection;
     private static UUID userId;

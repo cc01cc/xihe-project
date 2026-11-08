@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PluginSchemaMigrationTest {
 
     static TestDatabaseProvider.DatabaseRef postgres =
-            TestDatabaseProvider.emptyDatabase("plugin_schema");
+            TestDatabaseProvider.migratedDatabase("plugin_schema");
 
     private static final String TABLE = "plugins";
 

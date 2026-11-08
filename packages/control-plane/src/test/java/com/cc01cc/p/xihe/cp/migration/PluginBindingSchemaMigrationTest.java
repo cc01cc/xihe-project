@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PluginBindingSchemaMigrationTest {
 
     static TestDatabaseProvider.DatabaseRef postgres =
-            TestDatabaseProvider.emptyDatabase("plugin_binding_schema");
+            TestDatabaseProvider.migratedDatabase("plugin_binding_schema");
 
     private static final String BINDINGS = "plugin_bindings";
     private static final String ATTACHMENTS = "session_plugin_bindings";
