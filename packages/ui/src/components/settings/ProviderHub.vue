@@ -2134,7 +2134,7 @@ onMounted(() => {
                             required
                             maxlength="64"
                             pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-                            placeholder="default"
+                            :placeholder="t('settings.providerHub.defaultPlaceholder')"
                         />
                         <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
                             t("settings.providerHub.keyHint")

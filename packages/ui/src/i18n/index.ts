@@ -24,7 +24,18 @@ const messages = {
             loading: "加载中…",
             empty: "没有待你回答的问题",
         },
+        nav: {
+            open: "打开导航",
+        },
         files: {
+            newFile: "新建文件",
+            rename: "重命名",
+            move: "移动",
+            newDirectory: "新建文件夹",
+            titleFiles: "文件",
+            placeholderIndex: "如：index.ts",
+            placeholderSrcDocs: "如：src/docs",
+            placeholderAssets: "如：assets",
             fileTooLarge:
                 "文件超过 32 MiB 采集上限，为保护界面主线程内存不整读；建议下载后用外部程序打开（如 PDF 编辑器）",
             contentTruncated: "内容已被截断，仅显示文件部分内容",
@@ -863,6 +874,7 @@ const messages = {
             environmentState: "环境状态",
         },
         chat: {
+            titleChat: "对话",
             loadOlder: "加载更早的消息",
             loadingOlder: "正在加载更早的消息…",
             loadOlderFailed: "加载更早的消息失败",
@@ -1399,6 +1411,7 @@ const messages = {
             providerInstanceGoWorkspace: "前往工作区层新建连接",
             providerInstanceNoWorkspace: "未选择工作区，无法前往工作区层",
             providerHub: {
+                defaultPlaceholder: "如：default",
                 limitsTitle: "资源限额（并发 / 队列 / 配额）",
                 limitsHint:
                     "留空表示不限额；填写必须是正整数。超限时请求返回 429，并按 Retry-After 提示等待。",
@@ -2241,6 +2254,8 @@ const messages = {
             confirm: "确认",
             close: "关闭",
             passwordMismatch: "两次输入的密码不一致",
+            confirmDelete: "确认删除",
+            refresh: "刷新",
             agentTemplates: "智能体模板",
             apiType: "API 类型",
             messages: "消息",
@@ -2459,7 +2474,18 @@ const messages = {
             loading: "Loading…",
             empty: "No questions are waiting for you",
         },
+        nav: {
+            open: "Open navigation",
+        },
         files: {
+            newFile: "New file",
+            rename: "Rename",
+            move: "Move",
+            newDirectory: "New folder",
+            titleFiles: "Files",
+            placeholderIndex: "e.g. index.ts",
+            placeholderSrcDocs: "e.g. src/docs",
+            placeholderAssets: "e.g. assets",
             fileTooLarge:
                 "File exceeds the 32 MiB capture limit. To protect main-thread memory, it will not be read in full; download it and open it with an external program (such as a PDF editor).",
             contentTruncated: "Content truncated. Only part of the file is shown.",
@@ -3343,6 +3369,7 @@ const messages = {
             environmentState: "Environment",
         },
         chat: {
+            titleChat: "Chat",
             loadOlder: "Load earlier messages",
             loadingOlder: "Loading earlier messages…",
             loadOlderFailed: "Failed to load earlier messages",
@@ -3904,6 +3931,7 @@ const messages = {
             providerInstanceGoWorkspace: "Go to workspace layer to create a connection",
             providerInstanceNoWorkspace: "No workspace selected; cannot open the workspace layer",
             providerHub: {
+                defaultPlaceholder: "e.g. default",
                 limitsTitle: "Resource limits (concurrency / queue / budget)",
                 limitsHint:
                     "Leave a field empty for no limit; values must be positive integers. Exceeding a limit answers 429 with Retry-After.",
@@ -4793,6 +4821,8 @@ const messages = {
             confirm: "Confirm",
             close: "Close",
             passwordMismatch: "Passwords do not match",
+            confirmDelete: "Confirm delete",
+            refresh: "Refresh",
             agentTemplates: "Agent templates",
             apiType: "API Type",
             messages: "Messages",

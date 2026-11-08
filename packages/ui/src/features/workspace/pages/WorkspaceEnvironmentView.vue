@@ -8,7 +8,13 @@ import { logger } from "../../../lib/logger";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { toast } from "vue-sonner";
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import type {
     WorkspaceJob,
     WorkspaceJobCancelReason,
@@ -433,7 +439,7 @@ onBeforeUnmount(stopPolling);
             <div class="mb-5 flex justify-end">
                 <button
                     class="px-3 py-1.5 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
-                    title="Refresh"
+                    :title="t('common.refresh')"
                     @click="loadEnvironment()"
                 >
                     <RefreshCw class="mr-1 inline-block size-3.5" aria-hidden="true" />
@@ -670,8 +676,7 @@ onBeforeUnmount(stopPolling);
                                                 <SelectItem
                                                     v-if="hasLegacyExecutionMode"
                                                     :value="
-                                                        currentExecutionMode ||
-                                                        '__legacy_unknown__'
+                                                        currentExecutionMode || '__legacy_unknown__'
                                                     "
                                                     disabled
                                                     data-testid="workspace-execution-mode-legacy"
