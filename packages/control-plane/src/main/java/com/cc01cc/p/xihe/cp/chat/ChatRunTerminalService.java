@@ -257,7 +257,7 @@ public class ChatRunTerminalService {
         if (!sessionId.equals(UUID.fromString(run.getSessionId()))
                 || !sessionId.toString().equals(session.getId().toString())
                 || !session.getUserId().equals(run.getUserId())
-                || !session.getWorkspaceId().equals(run.getWorkspaceId())
+                || !java.util.Objects.equals(session.getWorkspaceId(), run.getWorkspaceId())
                 || (parentLink != null && (!parentLink.sessionId().equals(session.getSpawnedFromSessionId())
                         || !parentLink.runId().equals(session.getSpawnedFromRunId())))) {
             throw terminalInvariant("Run and Session ownership changed while acquiring terminal locks", runId);

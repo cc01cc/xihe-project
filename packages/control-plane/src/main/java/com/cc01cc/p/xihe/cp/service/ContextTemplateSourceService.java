@@ -58,9 +58,16 @@ public class ContextTemplateSourceService {
         if (run == null) {
             return Map.of();
         }
+        if (run.workspaceId() == null) {
+            // PLAN-0647 §2.4 (D-678): a workspace-less Run has no workspace_tree / agents_md_tree /
+            // agent_memory / skill_catalog source to resolve — all four are workspace-scoped and the
+            // design forbids them on the pure-chat path. The template components are simply absent.
+            logger.info("[INJECTION] service=cp event=workspace_less_sources_skipped runId={}", run.runId());
+            return Map.of();
+        }
         boolean validBinding = session != null && session.getId() != null
                 && run.sessionId().equals(session.getId().toString())
-                && run.workspaceId().equals(session.getWorkspaceId())
+                && java.util.Objects.equals(run.workspaceId(), session.getWorkspaceId())
                 && run.userId().equals(session.getUserId());
         JsonNode components = run.contextTemplateSnapshot() == null ? null
                 : run.contextTemplateSnapshot().path("template").path("components");
