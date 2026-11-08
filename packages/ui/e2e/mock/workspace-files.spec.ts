@@ -2,6 +2,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { expectTriggerLabel } from "../helpers/select";
 
 const TREE_ENTRIES = [
     { name: "src", type: "directory" },
@@ -164,7 +165,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         // Storage access, as the current page expresses it: the disclosed host directory.
         await expect(page.getByTestId("workspace-host-path")).toContainText("/mock/workspace-1");
         // Execution configuration is switchable for direct-attach and explains what the switch does.
-        await expect(page.getByTestId("workspace-execution-mode")).toHaveValue("windows-mxc");
+        await expectTriggerLabel(page, "workspace-execution-mode", "windows-mxc");
         await expect(page.getByTestId("workspace-execution-mode-hint")).not.toBeEmpty();
 
         // Refresh re-reads the projection (user-visible: same pill, one more request).

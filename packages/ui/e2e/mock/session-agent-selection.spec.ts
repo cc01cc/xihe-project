@@ -2,6 +2,7 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
+import { selectByIndex, selectByLocator } from "../helpers/select";
 
 // BL-318：`a failed agent list resets the loading state…` 故意桩 500（验失败态 + 重试恢复），
 // 逐条放行 `/workspaces/*/agents` 的失败信号。
@@ -43,7 +44,7 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     await expect(selector).toBeVisible();
     await expect(page.getByTestId("workspace-create-agent-session")).toBeDisabled();
 
-    await selector.selectOption("agent-1");
+    await selectByIndex(selector, 1);
     const createRequestPromise = page.waitForRequest(
         // PLAN-0608 C′: UI now posts to /api/v1/workspaces/{id}/sessions, so match
         // both surfaces by pathname instead of a legacy suffix.

@@ -6,6 +6,7 @@ import { openContextPanel } from "../helpers/context-panel";
 import path from "node:path";
 import fs from "node:fs";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { selectByLocator } from "../helpers/select";
 
 /**
  * PLAN-0414 V6 (binding selector half): real-browser verification that the
@@ -177,7 +178,7 @@ test.describe("Context templates (PLAN-0414)", () => {
         const select = page.getByTestId("session-context-template-select");
         await expect(select).toBeVisible();
 
-        await select.selectOption(`user:${TEMPLATE_ID}:1`);
+        await selectByLocator(select, "User Bound Template v1");
 
         // Network evidence: PATCH pins layer + template + revision, and carries
         // the connection revision the CP compares against.
@@ -195,7 +196,9 @@ test.describe("Context templates (PLAN-0414)", () => {
         // (instead of asserting within the default 5 s budget) is what keeps the summary assertion
         // below from racing the reload on a loaded lane.
         await expect(select).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
-        await expect(select).toHaveValue(`user:${TEMPLATE_ID}:1`, { timeout: LONG_TIMEOUT_MS });
+        await expect(select).toContainText("User Bound Template v1", {
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // Visible result: the summary reflects the pinned revision.
         await expect(page.getByTestId("session-context-template-current")).toContainText(
