@@ -134,3 +134,11 @@
 - 可选本地 hook（不改仓库）：`git config core.hooksPath scripts/hooks`（仓库内 `scripts/hooks/commit-msg` 已提供）。
 **合并前必跑 UI 单测**：`cd packages/ui && pnpm exec vitest run`（全量 ~150s）。`mise run validate` 的 `test` 依赖 `test:ui`，但 `validate` 极少真跑 ⇒ 单测红点会被当"存量基线"长期放过（2026-11-06 实测 develop 上 14 红/5 文件，见 `BL-357`）。合并前至少跑一次全量，红点逐条归类（规格落后产品 / 测试基建 / 产品回归）后再合。
 **合并分支前先校验分支自身**：`node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`。门禁只校验 develop 上的历史，**分支里的超宽/缺引用的提交要到合并后才被发现**（2026-11-06 实际发生过一次，已按 `scripts/commit-msg-allowlist.json` 显式豁免并留痕）。白名单只接受"已进 develop、不可改写"的既成事实，每条必须带 reason，禁止批量塞历史提交。
+## 测试与验证基座（2026-11-08 固化指针；正文以 SSOT 为准）
+
+- **验证分级**：L0 受影响子集（默认）/ L1 波次（里程碑打点）/ L2 全量（仅三触发点：PLAN verify 判定、跨层契约合并前、归档/发布前）；host E2E 与浏览器全套恒归 L2。
+- **候选与窗口**：`internal/A03-xihe/docs/l2-window-protocol.md` §19–§20（lane→候选树→develop 八步、I1–I5、窗口冻结 §20.6）。
+- **测试超时**：`internal/A03-xihe/docs/test-timeout-budget.md`（action/expect 10 s、test 30 s、boot 120 s；>10 s 必须 `timeout-exempt`；预算门 `mise run lint:e2e`）。
+- **测试成本/context 根因**：`internal/A03-xihe/docs/test-suite-cost.md` §1–§7；复用设计 `test-context-reuse-design.md`。
+- **dev 热循环与 lane 同步**：`internal/A03-xihe/docs/dev-hot-loop.md` §1–§11（develop 前进后 merge→分类→hot/mvn/restart）。
+- **团队角色/并行上限**：`internal/A03-xihe/docs/team-roster.md`（常驻 6、≤2 编译、测量值班 16:00–18:00）。
