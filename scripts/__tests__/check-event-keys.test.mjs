@@ -76,6 +76,31 @@ test("case 3: a new key outside the domain whitelist / without past participle i
     assert.match(namingRuleViolation("context_foo"), /过去分词/);
 });
 
+test("case 3b: newly whitelisted domains accept proper keys; unknown domain / non-participle stay RED", () => {
+    const ok = evaluateCatalog(
+        {
+            log: [
+                logEntry("plugin_tool_catalog_filtered"),
+                logEntry("provider_fingerprint_dropped"),
+                logEntry("runtime_git_log_unreachable"),
+            ],
+            sse: [],
+            agentEvent: [],
+        },
+        { baseline: EMPTY_BASELINE, semantics: NO_SEMANTICS },
+    );
+    assert.equal(ok.red.length, 0);
+
+    const bad = evaluateCatalog(
+        { log: [logEntry("billing_charge_failed"), logEntry("plugin_tool_catalog")], sse: [], agentEvent: [] },
+        { baseline: EMPTY_BASELINE, semantics: NO_SEMANTICS },
+    );
+    assert.equal(bad.red.length, 2);
+    assert.ok(bad.red.every((item) => item.rule === "new-key-naming"));
+    assert.match(namingRuleViolation("billing_charge_failed"), /domain/);
+    assert.match(namingRuleViolation("plugin_tool_catalog"), /过去分词/);
+});
+
 test("case 4: a dynamic event value is WARN-only, never a key/RED", () => {
     const fixture = mkdtempSync(path.join(os.tmpdir(), "event-keys-"));
     try {
