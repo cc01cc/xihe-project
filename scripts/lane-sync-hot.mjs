@@ -120,8 +120,12 @@ export function parsePorcelain(text) {
   const out = [];
   for (const line of String(text ?? "").split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const status = line.slice(0, 2).trim() || line.slice(0, 1);
-    const path = line.slice(3).trim();
+    // porcelain 是 "XY<space><path>"；首列可能是空格（" M path"），而调用方若先 trim() 就会吃掉
+    // 它（2026-11-08 实测：path 丢了第一个字符，脏文件清单显示成 "cripts/..."）⇒ 两种形态都接。
+    const m = line.match(/^(..)\s+(.*)$/) ?? line.match(/^([!?MARDUTC])\s+(.*)$/);
+    if (!m) continue;
+    const status = m[1].trim();
+    const path = m[2].trim();
     if (path) out.push({ status, path });
   }
   return out;
@@ -586,7 +590,8 @@ async function run(argv) {
     summary.branch = branch.out;
     log("branch=" + branch.out);
 
-    const dirty = parsePorcelain(gitOut(laneAbs, ["status", "--porcelain", "-uall"]));
+    // 传**未 trim** 的原始 stdout：首列空格属于 porcelain 语义（见 parsePorcelain 注释）
+    const dirty = parsePorcelain(runGit(laneAbs, ["status", "--porcelain", "-uall"]).stdout);
     summary.gates.clean = dirty.length === 0;
     if (dirty.length > 0) {
       throw new Refuse("E_DIRTY", "lane 工作树不干净（" + dirty.length + " 条），先提交/清理再同步", { dirty: dirty.slice(0, 50) });
@@ -631,8 +636,15 @@ async function run(argv) {
     log("plan: " + (plannedPlan.steps.length ? plannedPlan.steps.map((s) => s.label).join(" → ") : "无热编步骤") + (plannedPlan.manual.length ? " | 需人工: " + plannedPlan.manual.join(" ; ") : ""));
 
     if (opts.dryRun) {
-      const predicted = plannedClassification.cpAction === "restart" || !stackReady ? EXIT.FOLLOWUP : EXIT.OK;
-      log("dry-run: 未合并、未编译（--apply 才执行）；预计退出码=" + predicted + (stackReady ? "" : "（hot 前置未满足：lane 的栈没在跑，--apply 会合并后跳过 hot）"));
+      // 预计退出码只按「--apply 真会做什么」推：有热编步骤但栈没在跑 ⇒ 3；无需热编 ⇒ 0（不要用一个
+      // "没栈就 3" 的粗糙判据，否则 behind=0 的干净 lane 会被误报成"要人工动作"）。
+      const wouldHot = plannedPlan.steps.length > 0;
+      const manualKinds = plannedClassification.followups.some((f) => f.kind === "runtime" || f.kind === "agent");
+      const predicted = plannedClassification.cpAction === "restart" || (wouldHot && !stackReady) || manualKinds ? EXIT.FOLLOWUP : EXIT.OK;
+      log("dry-run: 未合并、未编译（--apply 才执行）；预计退出码=" + predicted
+        + (predicted === EXIT.FOLLOWUP
+          ? "（原因：" + [plannedClassification.cpAction === "restart" ? "需 restart" : null, wouldHot && !stackReady ? "有热编步骤但 lane 的栈没在跑" : null, manualKinds ? "runtime/agent 需人工重启" : null].filter(Boolean).join("；") + "）"
+          : "（无热编动作）"));
       return finish(EXIT.OK);
     }
 
