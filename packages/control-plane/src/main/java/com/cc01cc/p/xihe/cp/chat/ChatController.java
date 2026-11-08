@@ -431,7 +431,8 @@ public class ChatController {
     public SseEmitter events(@RequestParam(name = "sessionId") String sessionId,
                              @RequestParam(name = "asParticipantId", required = false) String asParticipantId,
                              @RequestHeader(name = "X-XH-SSE-Connection-Id", required = false)
-                             String connectionId) {
+                             String connectionId,
+                             @RequestHeader(name = "X-Workspace-Id", required = false) String workspaceHeader) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new com.cc01cc.p.xihe.cp.config.CpApiException(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
@@ -441,15 +442,23 @@ public class ChatController {
         if (userId == null) {
             throw CpApiException.workspaceContextRequired();
         }
-        // PLAN-0647 D-678/D-47-05: dispatch on the ROW's workspace. A request without a workspace
-        // header resolves an owner-only, workspace-less Session; a workspace Session without its
-        // context answers 400 WORKSPACE_CONTEXT_REQUIRED (never the interceptor fallback).
-        Session rowProbe = sessionService.requireOwnedSession(sessionId, userId);
-        if (rowProbe.getWorkspaceId() != null) {
-            if (workspaceId == null) {
+        // PLAN-0647 D-678/D-47-05: a request WITHOUT the header is the workspace-less intent; it must
+        // resolve an owner-only, workspace-less Session (a workspace Session answers 400 WORKSPACE_
+        // CONTEXT_REQUIRED instead of being adopted by the interceptor/token fallback). Requests
+        // WITH the header keep the byte-identical workspace path.
+        if (workspaceHeader == null) {
+            // Header-less: the ROW decides (D-47-05). A NULL workspace is the pure-chat scope; a
+            // workspace Session keeps its workspace from the token claim (the pre-D-678 behaviour).
+            Session rowProbe = sessionService.requireOwnedSession(sessionId, userId);
+            if (rowProbe.getWorkspaceId() == null) {
+                workspaceId = null;
+            } else if (workspaceId == null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_CONTEXT_REQUIRED",
                         "This Session belongs to a workspace; send X-Workspace-Id");
+            } else {
+                sessionService.requireCurrent(sessionId, userId, workspaceId);
             }
+        } else {
             sessionService.requireCurrent(sessionId, userId, workspaceId);
         }
         // PLAN-0623 M1b-③ / D23-08: a declared participant view must be one the caller is
@@ -480,6 +489,7 @@ public class ChatController {
     @PostMapping("/api/v1/chat")
     public ResponseEntity<Map<String, Object>> chat(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
+            @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader,
             @RequestBody Map<String, Object> request) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
@@ -582,14 +592,24 @@ public class ChatController {
         // workspace is refused here BEFORE any run is persisted: tools (toolMode != none),
         // attachments, TO/CC fan-out and participant views — explicit 400s, zero run rows.
         Session workspacelessSession = null;
-        Session rowProbe;
-        try {
-            rowProbe = sessionService.requireOwnedSession(sessionId, userId);
-        } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        if (workspaceHeader == null) {
+            Session rowProbe;
+            try {
+                rowProbe = sessionService.requireOwnedSession(sessionId, userId);
+            } catch (CpApiException e) {
+                return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
+            if (rowProbe.getWorkspaceId() == null) {
+                workspacelessSession = rowProbe;
+                // The token/tenant fallback must not leak into a workspace-less run.
+                workspaceId = null;
+            } else if (workspaceId == null) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                        "WORKSPACE_CONTEXT_REQUIRED",
+                        "This Session belongs to a workspace; send X-Workspace-Id");
+            }
         }
-        if (rowProbe.getWorkspaceId() == null) {
-            workspacelessSession = rowProbe;
+        if (workspacelessSession != null) {
             if (toolMode != null && !"none".equals(toolMode)) {
                 return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                         "WORKSPACE_LESS_TOOL_MODE_FORBIDDEN",
@@ -603,10 +623,6 @@ public class ChatController {
                         "WORKSPACE_LESS_FEATURE_FORBIDDEN",
                         "A workspace-less Session does not support attachments, TO/CC fan-out or participant views");
             }
-        } else if (workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "WORKSPACE_CONTEXT_REQUIRED",
-                    "This Session belongs to a workspace; send X-Workspace-Id");
         }
         String idempotencyKey = idempotencyHeader == null || idempotencyHeader.isBlank()
                 ? UUID.randomUUID().toString()
