@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { api } from "../../../composables/api";
+import { setSelectValue } from "../../../test-utils/select";
 import type * as apiModule from "../../../composables/api";
 import type {
     AuditEntry,
@@ -370,7 +371,7 @@ describe("AuditView audit read surface (PLAN-0466)", () => {
     it("applies the status and type filters to the list request", async () => {
         const wrapper = await mountOnly();
 
-        await wrapper.find('[data-testid="settings-audit-status"]').setValue("failed");
+        await setSelectValue(wrapper, '[data-testid="settings-audit-status"]', "failed");
         await flushPromises();
         expect(api.listAuditEntries).toHaveBeenLastCalledWith({
             status: "failed",
@@ -379,7 +380,7 @@ describe("AuditView audit read surface (PLAN-0466)", () => {
             size: 20,
         });
 
-        await wrapper.find('[data-testid="settings-audit-type"]').setValue("chat_run");
+        await setSelectValue(wrapper, '[data-testid="settings-audit-type"]', "chat_run");
         await flushPromises();
         expect(api.listAuditEntries).toHaveBeenLastCalledWith({
             status: "failed",

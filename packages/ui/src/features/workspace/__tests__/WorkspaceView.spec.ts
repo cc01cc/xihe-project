@@ -9,6 +9,7 @@ import WorkspaceAgentManagementDialog from "../components/WorkspaceAgentManageme
 import { useSessionStore } from "../../../stores/session";
 import { api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
+import { openSelect, selectItemValues, setSelectValue } from "../../../test-utils/select";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -381,7 +382,11 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="workspace-agent-principal-select"]').exists()).toBe(
             true,
         );
-        await wrapper.find('[data-testid="workspace-agent-principal-select"]').setValue("agent-1");
+        await setSelectValue(
+            wrapper,
+            '[data-testid="workspace-agent-principal-select"]',
+            "agent-1",
+        );
         await wrapper.find('[data-testid="workspace-create-agent-session"]').trigger("click");
         await flushPromises();
         expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true);
@@ -427,7 +432,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         // 2026-11-04 五裁（主体名规范）：名字只允许字母/中文/数字且不能以数字开头 ——
         // 原 "Template-backed" 带连字符，现在会被实时校验拦下（createBlocked ⇒ submit 不发）。
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("TemplateBacked");
-        await wrapper.find('[data-testid="agent-principal-template"]').setValue("template-1");
+        await setSelectValue(wrapper, '[data-testid="agent-principal-template"]', "template-1");
         expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain(
             "role-1",
         );
@@ -498,9 +503,9 @@ it("lists only bound and enabled agents in the session selector", async () => {
     await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
     await flushPromises();
 
-    const select = wrapper.find('[data-testid="workspace-agent-principal-select"]');
-    expect(select.exists()).toBe(true);
-    const options = select.findAll("option").map((option) => option.attributes("value"));
+    expect(wrapper.find('[data-testid="workspace-agent-principal-select"]').exists()).toBe(true);
+    await openSelect(wrapper, '[data-testid="workspace-agent-principal-select"]');
+    const options = selectItemValues(wrapper);
     expect(options).toContain("agent-bound");
     expect(options, "an unbound agent must not be selectable").not.toContain("agent-unbound");
     expect(options, "a disabled agent must not be selectable").not.toContain("agent-disabled");

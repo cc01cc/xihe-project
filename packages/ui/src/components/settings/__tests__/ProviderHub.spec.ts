@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { config, flushPromises, mount } from "@vue/test-utils";
 import ProviderHub from "../ProviderHub.vue";
+import { setSelectValue, setSelectWithin } from "../../../test-utils/select";
 import type {
     ApiTypePair,
     ProviderConnection,
@@ -153,13 +154,13 @@ describe("ProviderHub master-detail", () => {
             props: { scope: "WORKSPACE", workspaceId: "workspace-a" },
         });
         await flushPromises();
-        await wrapper
-            .get(
-                'select[aria-label="' +
-                    i18n.global.t("settings.providerHub.connDefaultTemplate") +
-                    '"]',
-            )
-            .setValue("instance:builtin:1");
+        await setSelectValue(
+            wrapper,
+            '[data-slot="select-trigger"][aria-label="' +
+                i18n.global.t("settings.providerHub.connDefaultTemplate") +
+                '"]',
+            "instance:builtin:1",
+        );
         await flushPromises();
         expect(readTemplateConfig).toHaveBeenCalledWith("workspace", "workspace-b");
         expect(request).toHaveBeenCalledWith(
@@ -195,7 +196,7 @@ describe("ProviderHub master-detail", () => {
         expect(detail.get('[data-testid="provider-connection-readonly-type"]').text()).toContain(
             "other-type@1",
         );
-        expect(detail.find("select").exists()).toBe(true);
+        expect(detail.find('[data-slot="select-trigger"]').exists()).toBe(true);
         expect(detail.text()).toContain("Configured · hidden");
         expect(wrapper.text()).not.toContain("个人连接对同一 Provider 优先");
         expect(wrapper.get('[data-testid="provider-master-detail"]').classes()).toContain("grid");
@@ -467,7 +468,7 @@ describe("ProviderHub master-detail", () => {
         expect(
             models.get('[data-testid="provider-model-detail-preserved-manual-model"]').exists(),
         ).toBe(true);
-        expect(models.find("select").exists()).toBe(true);
+        expect(models.find('[data-slot="select-trigger"]').exists()).toBe(true);
         wrapper.unmount();
     });
 });
@@ -493,7 +494,11 @@ describe("ProviderHub orphan template bindings (PLAN-0503)", () => {
             vi.mocked(request).mock.calls.filter(([, init]) => init?.method === "PUT"),
         ).toHaveLength(0);
 
-        await orphanSection.get("select").setValue("");
+        await setSelectWithin(
+            wrapper,
+            '[data-testid="provider-orphan-model-ghost-model"]',
+            "__inherit__",
+        );
         await flushPromises();
         const put = vi.mocked(request).mock.calls.find(([, init]) => init?.method === "PUT");
         expect(put).toBeTruthy();

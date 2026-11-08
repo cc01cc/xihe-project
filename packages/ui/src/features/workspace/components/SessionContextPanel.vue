@@ -4,6 +4,7 @@ import SessionPolicyControls from "../chat/components/SessionPolicyControls.vue"
 import SessionContextTemplate from "../chat/components/SessionContextTemplate.vue";
 import ContextSourcesU1 from "../chat/components/ContextSourcesU1.vue";
 import { useSessionBranches } from "../chat/composables/useSessionBranches";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
  * PLAN-0626 M2: the dock's `context` panel — the session-level settings that used to be
@@ -78,26 +79,33 @@ const { branchOptions, selectedBranchId, branchSelectionDisabled, selectBranch }
                 <span class="w-16 shrink-0 truncate text-muted-foreground">{{
                     t("chat.branchSelectorLabel")
                 }}</span>
-                <select
-                    :id="`session-branch-${sessionId}`"
-                    data-testid="session-branch-select"
-                    class="w-full min-w-0 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-                    :value="selectedBranchId"
+                <Select
+                    :model-value="selectedBranchId"
                     :disabled="branchSelectionDisabled"
-                    :aria-label="t('chat.branchSelectorLabel')"
-                    :title="
-                        branchOptions.find((branch) => branch.branchId === selectedBranchId)?.label
-                    "
-                    @change="selectBranch(($event.target as HTMLSelectElement).value)"
+                    @update:model-value="(value) => selectBranch(String(value ?? ''))"
                 >
-                    <option
-                        v-for="branch in branchOptions"
-                        :key="branch.branchId"
-                        :value="branch.branchId"
+                    <SelectTrigger
+                        :id="`session-branch-${sessionId}`"
+                        data-testid="session-branch-select"
+                        class="w-full min-w-0 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                        :aria-label="t('chat.branchSelectorLabel')"
+                        :title="
+                            branchOptions.find((branch) => branch.branchId === selectedBranchId)
+                                ?.label
+                        "
                     >
-                        {{ branch.label }}
-                    </option>
-                </select>
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem
+                            v-for="branch in branchOptions"
+                            :key="branch.branchId"
+                            :value="branch.branchId"
+                        >
+                            {{ branch.label }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
         </div>
     </section>

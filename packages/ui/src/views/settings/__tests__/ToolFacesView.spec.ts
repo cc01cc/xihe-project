@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
+import { setSelectValue } from "../../../test-utils/select";
 import { ApiError, api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import type { PolicyToolFaceView } from "../../../types";
@@ -166,9 +167,11 @@ describe("ToolFacesView", () => {
         await wrapper
             .find('[data-testid="settings-tool-face-classify-action-class-mcp__third_party__do"]')
             .setValue("exec");
-        await wrapper
-            .find('[data-testid="settings-tool-face-classify-shape-mcp__third_party__do"]')
-            .setValue("interpreter");
+        await setSelectValue(
+            wrapper,
+            '[data-testid="settings-tool-face-classify-shape-mcp__third_party__do"]',
+            "interpreter",
+        );
         await wrapper
             .find('[data-testid="settings-tool-face-classify-form-mcp__third_party__do"]')
             .trigger("submit");

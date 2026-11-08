@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { RefreshCw } from "@lucide/vue";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ProviderRequestFingerprintPanel from "./ProviderRequestFingerprintPanel.vue";
 import RunTraceTimeline from "./RunTraceTimeline.vue";
 import type {
@@ -207,8 +208,7 @@ watch(
     },
 );
 
-function selectTraceRun(event: Event): void {
-    const value = (event.target as HTMLSelectElement).value;
+function selectTraceRun(value: string): void {
     selectedTraceRunId.value = value || null;
 }
 
@@ -791,31 +791,36 @@ const connectionChipClass = computed(() => {
                 <section class="space-y-2" data-testid="monitor-run-trace">
                     <label class="block space-y-1 text-xs" for="monitor-trace-run-select">
                         <span class="font-medium">{{ t("monitor.trace.runLabel") }}</span>
-                        <select
-                            id="monitor-trace-run-select"
-                            class="w-full min-w-0 rounded border bg-background px-2 py-1.5 text-xs"
-                            :value="selectedTraceRunId ?? ''"
+                        <Select
+                            :model-value="selectedTraceRunId ?? ''"
                             :disabled="traceRunOptions.length === 0"
-                            :aria-label="t('monitor.trace.runLabel')"
-                            data-testid="monitor-trace-run-select"
-                            @change="selectTraceRun"
+                            @update:model-value="(value) => selectTraceRun(String(value ?? ''))"
                         >
-                            <option value="" disabled>
-                                {{ t("monitor.trace.runPlaceholder") }}
-                            </option>
-                            <option
-                                v-for="option in traceRunOptions"
-                                :key="option.runId"
-                                :value="option.runId"
+                            <SelectTrigger
+                                id="monitor-trace-run-select"
+                                class="w-full min-w-0 rounded border bg-background px-2 py-1.5 text-xs"
+                                :aria-label="t('monitor.trace.runLabel')"
+                                data-testid="monitor-trace-run-select"
                             >
-                                {{
-                                    t("monitor.trace.runOption", {
-                                        runId: runIdShort(option.runId),
-                                        label: option.label,
-                                    })
-                                }}
-                            </option>
-                        </select>
+                                <SelectValue
+                                    :placeholder="t('monitor.trace.runPlaceholder')"
+                                />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="option in traceRunOptions"
+                                    :key="option.runId"
+                                    :value="option.runId"
+                                >
+                                    {{
+                                        t("monitor.trace.runOption", {
+                                            runId: runIdShort(option.runId),
+                                            label: option.label,
+                                        })
+                                    }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                     </label>
                     <RunTraceTimeline
                         :trace="trace"

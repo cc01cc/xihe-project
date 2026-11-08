@@ -9,6 +9,13 @@ import {
     saveEmbeddingProfile,
     testEmbedding,
 } from "../../../services/embeddingProfile";
+import {
+    openSelectAt,
+    selectItemTexts,
+    selectItemValues,
+    selectValueAt,
+    setOnlySelectValue,
+} from "../../../test-utils/select";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderConnections:
@@ -90,9 +97,9 @@ describe("EmbeddingSettingsPanel", () => {
         } as never);
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
         await flushPromises();
-        const options = wrapper.findAll("select[data-testid='embedding-connection-select'] option");
-        expect(options).toHaveLength(2);
-        expect(options[1]?.text()).toContain("Embedding");
+        await openSelectAt(wrapper, 0);
+        expect(selectItemValues(wrapper)).toHaveLength(2);
+        expect(selectItemTexts(wrapper)[1]).toContain("Embedding");
     });
 
     it("saves the whole-unit profile for the selected connection", async () => {
@@ -104,7 +111,7 @@ describe("EmbeddingSettingsPanel", () => {
             props: { layer: "workspace", workspaceId: "ws-1" },
         });
         await flushPromises();
-        await wrapper.find("select[data-testid='embedding-connection-select']").setValue("embed-1");
+        await setOnlySelectValue(wrapper, "embed-1");
         await wrapper.find("button[data-testid='embedding-save']").trigger("click");
         await flushPromises();
         expect(mockedSave).toHaveBeenCalledWith(
@@ -134,12 +141,7 @@ describe("EmbeddingSettingsPanel", () => {
         });
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
         await flushPromises();
-        expect(
-            (
-                wrapper.find("select[data-testid='embedding-connection-select']")
-                    .element as HTMLSelectElement
-            ).value,
-        ).toBe("embed-1");
+        expect(selectValueAt(wrapper, 0)).toBe("embed-1");
         expect(wrapper.find("[data-testid='embedding-contract']").text()).toContain("768");
     });
 

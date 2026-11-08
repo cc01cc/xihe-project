@@ -13,6 +13,7 @@ import { logger } from "../../../lib/logger";
 import { usernameError } from "../../../lib/principalName";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
 import AlertDialogContent from "../../../components/ui/alert-dialog/AlertDialogContent.vue";
 import AlertDialogHeader from "../../../components/ui/alert-dialog/AlertDialogHeader.vue";
@@ -260,23 +261,35 @@ onMounted(() => {
                         </div>
                     </div>
                     <template v-if="!props.readonly">
-                        <select
-                            class="text-xs border rounded px-2 py-1 bg-background disabled:opacity-50"
-                            :data-testid="`ws-members-role-${member.userId}`"
-                            :value="member.role"
-                            :disabled="isRoleLocked(member) || roleBusyUserIds.has(member.userId)"
-                            @change="
-                                handleRoleChange(
-                                    member,
-                                    ($event.target as HTMLSelectElement)
-                                        .value as MemberAssignableRole,
-                                )
+                        <Select
+                            :model-value="member.role"
+                            :disabled="
+                                isRoleLocked(member) || roleBusyUserIds.has(member.userId)
+                            "
+                            @update:model-value="
+                                (value) =>
+                                    handleRoleChange(
+                                        member,
+                                        String(value) as MemberAssignableRole,
+                                    )
                             "
                         >
-                            <option v-for="role in ['EDITOR', 'VIEWER']" :key="role" :value="role">
-                                {{ roleLabel(role) }}
-                            </option>
-                        </select>
+                            <SelectTrigger
+                                class="text-xs border rounded px-2 py-1 bg-background disabled:opacity-50"
+                                :data-testid="`ws-members-role-${member.userId}`"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="role in ['EDITOR', 'VIEWER']"
+                                    :key="role"
+                                    :value="role"
+                                >
+                                    {{ roleLabel(role) }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                         <Button
                             variant="destructive"
                             size="sm"
@@ -316,15 +329,22 @@ onMounted(() => {
                     data-testid="ws-members-add-input"
                     @keyup.enter="() => void handleAdd()"
                 />
-                <select
-                    v-model="addRole"
-                    class="text-sm border rounded px-2 py-1 bg-background disabled:opacity-50"
-                    :disabled="!addFormInteractive"
-                    data-testid="ws-members-add-role"
-                >
-                    <option value="EDITOR">{{ t("workspace.membersRoleEditor") }}</option>
-                    <option value="VIEWER">{{ t("workspace.membersRoleViewer") }}</option>
-                </select>
+                <Select v-model="addRole" :disabled="!addFormInteractive">
+                    <SelectTrigger
+                        class="text-sm border rounded px-2 py-1 bg-background disabled:opacity-50"
+                        data-testid="ws-members-add-role"
+                    >
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="EDITOR">{{
+                            t("workspace.membersRoleEditor")
+                        }}</SelectItem>
+                        <SelectItem value="VIEWER">{{
+                            t("workspace.membersRoleViewer")
+                        }}</SelectItem>
+                    </SelectContent>
+                </Select>
                 <Button
                     :disabled="!addFormInteractive || adding || !addUsername || !!addUsernameError"
                     data-testid="ws-members-add-btn"

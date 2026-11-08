@@ -6,6 +6,7 @@ import ScheduledTaskCreateDialog from "../components/ScheduledTaskCreateDialog.v
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { i18n } from "../../../i18n";
+import { setSelectValue } from "../../../test-utils/select";
 import type { ScheduledTask, ScheduledTaskCreateRequest } from "../../../types";
 
 vi.mock("vue-sonner", () => ({
@@ -83,12 +84,8 @@ async function setBodyValue(selector: string, value: string) {
     await nextTick();
 }
 
-async function selectBodyValue(selector: string, value: string) {
-    const select = bodyEl<HTMLSelectElement>(selector);
-    expect(select).toBeTruthy();
-    select!.value = value;
-    select!.dispatchEvent(new Event("change", { bubbles: true }));
-    await nextTick();
+async function selectBodyValue(wrapper: VueWrapper, selector: string, value: string) {
+    await setSelectValue(wrapper, selector, value);
 }
 
 beforeEach(() => {
@@ -121,7 +118,7 @@ describe("ScheduledTaskCreateDialog", () => {
         mockedApi.createScheduledTask.mockResolvedValue(task() as never);
 
         const wrapper = await mountDialog();
-        await selectBodyValue('[data-testid="st-create-session"]', "session-1");
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
         await setBodyValue('[data-testid="st-create-cron-expr"]', "30 8 * * 1-5");
         await setBodyValue('[data-testid="st-create-timezone"]', "Asia/Shanghai");
         await setBodyValue('[data-testid="st-create-prompt"]', "Morning report");
@@ -141,8 +138,8 @@ describe("ScheduledTaskCreateDialog", () => {
     it("switches to delay mode and builds a future ISO instant", async () => {
         mockedApi.createScheduledTask.mockResolvedValue(task() as never);
 
-        await mountDialog();
-        await selectBodyValue('[data-testid="st-create-session"]', "session-1");
+        const wrapper = await mountDialog();
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
         await clickBody('[data-testid="st-create-mode-delay"]');
         await setBodyValue('[data-testid="st-create-delay-amount"]', "30");
         await setBodyValue('[data-testid="st-create-prompt"]', "Later report");
@@ -168,8 +165,8 @@ describe("ScheduledTaskCreateDialog", () => {
             }),
         );
 
-        await mountDialog();
-        await selectBodyValue('[data-testid="st-create-session"]', "session-1");
+        const wrapper = await mountDialog();
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
         await setBodyValue('[data-testid="st-create-cron-expr"]', "not a cron");
         await setBodyValue('[data-testid="st-create-prompt"]', "p");
         await clickBody('[data-testid="st-create-submit"]');
@@ -189,8 +186,8 @@ describe("ScheduledTaskCreateDialog", () => {
             }),
         );
 
-        await mountDialog();
-        await selectBodyValue('[data-testid="st-create-session"]', "session-1");
+        const wrapper = await mountDialog();
+        await selectBodyValue(wrapper, '[data-testid="st-create-session"]', "session-1");
         await setBodyValue('[data-testid="st-create-cron-expr"]', "0 9 * * *");
         await setBodyValue('[data-testid="st-create-prompt"]', "p");
         await clickBody('[data-testid="st-create-submit"]');
@@ -201,13 +198,10 @@ describe("ScheduledTaskCreateDialog", () => {
     });
 
     it("blocks a delay beyond the 7-day TTL before calling the API", async () => {
-        await mountDialog();
+        const wrapper = await mountDialog();
         await clickBody('[data-testid="st-create-mode-delay"]');
         await setBodyValue('[data-testid="st-create-delay-amount"]', "8");
-        await clickBody('[data-testid="st-create-delay-unit"]');
-        const unitSelect = bodyEl<HTMLSelectElement>('[data-testid="st-create-delay-unit"]');
-        unitSelect!.value = "days";
-        unitSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+        await setSelectValue(wrapper, '[data-testid="st-create-delay-unit"]', "days");
         await nextTick();
         await setBodyValue('[data-testid="st-create-prompt"]', "p");
         await clickBody('[data-testid="st-create-submit"]');

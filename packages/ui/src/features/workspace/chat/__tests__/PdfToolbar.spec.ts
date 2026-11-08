@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import PdfToolbar from "../components/PdfToolbar.vue";
+import {
+    openSelectAt,
+    selectItemTexts,
+    selectItemValues,
+    setOnlySelectValue,
+} from "../../../../test-utils/select";
 
 describe("PdfToolbar", () => {
     it("renders page counter", () => {
@@ -51,20 +57,20 @@ describe("PdfToolbar", () => {
         expect(wrapper.emitted("next")).toBeDefined();
     });
 
-    it("renders zoom select with 5 options", () => {
+    it("renders zoom select with 5 options", async () => {
         const wrapper = mount(PdfToolbar, {
-                props: { pageNum: 1, totalPages: 5, scale: 1.0 },
-            }),
-            options = wrapper.findAll("option");
-        expect(options.length).toBe(5);
-        expect(options[2].text()).toContain("100%");
+            props: { pageNum: 1, totalPages: 5, scale: 1.0 },
+        });
+        await openSelectAt(wrapper, 0);
+        expect(selectItemValues(wrapper)).toEqual(["0.5", "0.75", "1", "1.5", "2"]);
+        expect(selectItemTexts(wrapper)[2]).toContain("100%");
     });
 
     it("emits update:scale on zoom change", async () => {
         const wrapper = mount(PdfToolbar, {
             props: { pageNum: 1, totalPages: 5, scale: 1.0 },
         });
-        await wrapper.find("select").setValue(1.5);
+        await setOnlySelectValue(wrapper, "1.5");
         expect(wrapper.emitted("update:scale")).toBeDefined();
         expect(wrapper.emitted("update:scale")![0]).toEqual([1.5]);
     });

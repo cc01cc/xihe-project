@@ -6,6 +6,7 @@ import CredentialCreateDialog from "../CredentialCreateDialog.vue";
 import { api } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
 import { i18n } from "../../../../i18n";
+import { setSelectValue } from "../../../../test-utils/select";
 import type { CredentialCreateRequest } from "../../../../types";
 
 vi.mock("vue-sonner", () => ({
@@ -62,12 +63,8 @@ async function setBodyValue(selector: string, value: string) {
     await nextTick();
 }
 
-async function selectBodyValue(selector: string, value: string) {
-    const select = bodyEl<HTMLSelectElement>(selector);
-    expect(select).toBeTruthy();
-    select!.value = value;
-    select!.dispatchEvent(new Event("change", { bubbles: true }));
-    await nextTick();
+async function selectBodyValue(wrapper: VueWrapper, selector: string, value: string) {
+    await setSelectValue(wrapper, selector, value);
 }
 
 beforeEach(() => {
@@ -106,9 +103,9 @@ describe("CredentialCreateDialog (PLAN-0498 T1.2)", () => {
     it("switches to key_pair and collects both key fields", async () => {
         mockedApi.createCredential.mockResolvedValue({ id: "cred-2" } as never);
 
-        await mountDialog();
+        const wrapper = await mountDialog();
         await setBodyValue('[data-testid="credentials-create-label"]', "S3 pair");
-        await selectBodyValue('[data-testid="credentials-create-kind"]', "key_pair");
+        await selectBodyValue(wrapper, '[data-testid="credentials-create-kind"]', "key_pair");
         await setBodyValue('[data-testid="credentials-create-access-key"]', "AKIA-test");
         await setBodyValue('[data-testid="credentials-create-secret-key"]', "secret-test");
         await clickBody('[data-testid="credentials-create-submit"]');

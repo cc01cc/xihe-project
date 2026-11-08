@@ -16,6 +16,7 @@ import AgentRoleBindingsSection from "./AgentRoleBindingsSection.vue";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { LoaderCircle, X } from "@lucide/vue";
 
 /**
@@ -98,6 +99,13 @@ const effectiveSummary = computed(() =>
 function subjectLabel(subjectId: string): string {
     const known = subjectResults.value.find((user) => user.id === subjectId);
     return known ? known.username || known.email : subjectId;
+}
+function workspaceLabel(id: string): string {
+    return props.workspaces.find((workspace) => workspace.id === id)?.name ?? id;
+}
+function roleLabel(id: string): string {
+    const role = props.roles.find((candidate) => candidate.id === id);
+    return role ? role.displayName || role.name : id;
 }
 
 function syncRows(next: ApiBindingSet) {
@@ -227,35 +235,48 @@ defineExpose({ load });
         <div class="flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsScope") }}
-                <select
-                    v-model="scope"
-                    data-testid="role-bindings-scope"
-                    class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                <Select
+                    :model-value="scope"
+                    @update:model-value="(value) => (scope = String(value) as ApiBindingScope)"
                 >
-                    <option value="instance">{{ t("settings.rolesBindingsScopeInstance") }}</option>
-                    <option value="workspace">
-                        {{ t("settings.rolesBindingsScopeWorkspace") }}
-                    </option>
-                </select>
+                    <SelectTrigger
+                        data-testid="role-bindings-scope"
+                        class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                    >
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="instance">{{
+                            t("settings.rolesBindingsScopeInstance")
+                        }}</SelectItem>
+                        <SelectItem value="workspace">{{
+                            t("settings.rolesBindingsScopeWorkspace")
+                        }}</SelectItem>
+                    </SelectContent>
+                </Select>
             </label>
             <label
                 v-if="scope === 'workspace'"
                 class="flex flex-col gap-1 text-xs text-muted-foreground"
             >
                 {{ t("settings.rolesBindingsWorkspace") }}
-                <select
-                    v-model="scopeId"
-                    data-testid="role-bindings-workspace"
-                    class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
-                >
-                    <option
-                        v-for="workspace in workspaces"
-                        :key="workspace.id"
-                        :value="workspace.id"
+                <Select :model-value="scopeId" @update:model-value="(value) => (scopeId = String(value))">
+                    <SelectTrigger
+                        data-testid="role-bindings-workspace"
+                        class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
-                        {{ workspace.name }}
-                    </option>
-                </select>
+                        <SelectValue>{{ workspaceLabel(scopeId) }}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem
+                            v-for="workspace in workspaces"
+                            :key="workspace.id"
+                            :value="workspace.id"
+                        >
+                            {{ workspace.name }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
             </label>
             <Button
                 variant="outline"
@@ -268,16 +289,28 @@ defineExpose({ load });
             </Button>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsSubjectType") }}
-                <select
-                    v-model="subjectType"
-                    data-testid="role-bindings-subject-type"
-                    class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                <Select
+                    :model-value="subjectType"
+                    @update:model-value="
+                        (value) =>
+                            (subjectType = String(value) as 'user' | 'agent_principal')
+                    "
                 >
-                    <option value="user">{{ t("settings.rolesBindingsSubjectTypeUser") }}</option>
-                    <option value="agent_principal">
-                        {{ t("settings.rolesBindingsSubjectTypeAgent") }}
-                    </option>
-                </select>
+                    <SelectTrigger
+                        data-testid="role-bindings-subject-type"
+                        class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                    >
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="user">{{
+                            t("settings.rolesBindingsSubjectTypeUser")
+                        }}</SelectItem>
+                        <SelectItem value="agent_principal">{{
+                            t("settings.rolesBindingsSubjectTypeAgent")
+                        }}</SelectItem>
+                    </SelectContent>
+                </Select>
             </label>
         </div>
 
@@ -363,43 +396,68 @@ defineExpose({ load });
             </Button>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsSubject") }}
-                <select
-                    data-testid="role-bindings-subject"
-                    class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
-                    @change="
-                        selectedSubject =
-                            subjectResults.find(
-                                (user) => user.id === ($event.target as HTMLSelectElement).value,
-                            ) ?? null
+                <Select
+                    :model-value="selectedSubject?.id ?? ''"
+                    @update:model-value="
+                        (value) =>
+                            (selectedSubject =
+                                subjectResults.find((user) => user.id === String(value)) ?? null)
                     "
                 >
-                    <option value="">{{ t("settings.rolesBindingsSubjectPick") }}</option>
-                    <option v-for="user in subjectResults" :key="user.id" :value="user.id">
-                        {{ user.username || user.email }}
-                    </option>
-                </select>
+                    <SelectTrigger
+                        data-testid="role-bindings-subject"
+                        class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
+                    >
+                        <SelectValue>{{
+                            selectedSubject
+                                ? selectedSubject.username || selectedSubject.email
+                                : t("settings.rolesBindingsSubjectPick")
+                        }}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem
+                            v-for="user in subjectResults"
+                            :key="user.id"
+                            :value="user.id"
+                        >
+                            {{ user.username || user.email }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
             </label>
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsRole") }}
-                <select
-                    v-model="selectedRoleId"
-                    data-testid="role-bindings-role"
-                    class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
+                <Select
+                    :model-value="selectedRoleId"
+                    @update:model-value="(value) => (selectedRoleId = String(value))"
                 >
-                    <option value="">{{ t("settings.rolesBindingsRolePick") }}</option>
-                    <option
-                        v-for="role in roles"
-                        :key="role.id"
-                        :value="role.id"
-                        :disabled="!roleFitsScope(role)"
-                        :data-testid="`role-bindings-role-option-${role.name}`"
+                    <SelectTrigger
+                        data-testid="role-bindings-role"
+                        class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
                     >
-                        {{ role.displayName || role.name }}
-                        {{
-                            roleFitsScope(role) ? "" : t("settings.rolesBindingsRoleScopeMismatch")
-                        }}
-                    </option>
-                </select>
+                        <SelectValue>{{
+                            selectedRoleId
+                                ? roleLabel(selectedRoleId)
+                                : t("settings.rolesBindingsRolePick")
+                        }}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem
+                            v-for="role in roles"
+                            :key="role.id"
+                            :value="role.id"
+                            :disabled="!roleFitsScope(role)"
+                            :data-testid="`role-bindings-role-option-${role.name}`"
+                        >
+                            {{ role.displayName || role.name }}
+                            {{
+                                roleFitsScope(role)
+                                    ? ""
+                                    : t("settings.rolesBindingsRoleScopeMismatch")
+                            }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
             </label>
             <Button data-testid="role-bindings-add" @click="addRow">
                 {{ t("settings.rolesBindingsAdd") }}

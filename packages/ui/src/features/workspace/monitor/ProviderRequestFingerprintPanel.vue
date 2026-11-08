@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type {
     ProviderFingerprintAgainstOption,
     ProviderRequestFingerprintDiffView,
@@ -136,8 +137,8 @@ onBeforeUnmount(() => {
     generation++;
 });
 
-function selectAgainst(event: Event): void {
-    againstId.value = (event.target as HTMLSelectElement).value;
+function selectAgainst(value: string): void {
+    againstId.value = value;
 }
 
 function retry(): void {
@@ -149,18 +150,32 @@ function retry(): void {
     <div class="space-y-2" data-testid="provider-fingerprint">
         <div class="flex items-center justify-between gap-2">
             <span class="text-xs font-medium">{{ t("monitor.fingerprint.title") }}</span>
-            <select
-                class="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-[10px]"
-                :value="againstId"
-                :aria-label="t('monitor.fingerprint.againstLabel')"
-                data-testid="provider-fingerprint-against-select"
-                @change="selectAgainst"
+            <Select
+                :model-value="againstId || '__none__'"
+                @update:model-value="
+                    (value) => selectAgainst(value === '__none__' ? '' : String(value ?? ''))
+                "
             >
-                <option value="">{{ t("monitor.fingerprint.againstNone") }}</option>
-                <option v-for="option in againstOptions" :key="option.runId" :value="option.runId">
-                    {{ t("monitor.fingerprint.againstOption", { label: option.label }) }}
-                </option>
-            </select>
+                <SelectTrigger
+                    class="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-[10px]"
+                    :aria-label="t('monitor.fingerprint.againstLabel')"
+                    data-testid="provider-fingerprint-against-select"
+                >
+                    <SelectValue>{{ againstId ? t("monitor.fingerprint.againstOption", { label: againstOptions.find((option) => option.runId === againstId)?.label ?? againstId }) : t("monitor.fingerprint.againstNone") }}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="__none__">{{
+                        t("monitor.fingerprint.againstNone")
+                    }}</SelectItem>
+                    <SelectItem
+                        v-for="option in againstOptions"
+                        :key="option.runId"
+                        :value="option.runId"
+                    >
+                        {{ t("monitor.fingerprint.againstOption", { label: option.label }) }}
+                    </SelectItem>
+                </SelectContent>
+            </Select>
         </div>
 
         <p v-if="loading" class="py-1 text-center text-[10px] text-muted-foreground">

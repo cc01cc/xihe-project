@@ -6,6 +6,7 @@ import Panel from "../components/SessionContextTemplate.vue";
 import { request, type ApiSession } from "../../../../composables/api";
 import { listVisibleTemplates } from "../../../../services/apiRequestTemplates";
 import { listProviderConnections } from "../../../../services/providerConnectionService";
+import { setSelectValue } from "../../../../test-utils/select";
 
 const state = reactive({
     sessions: [
@@ -70,15 +71,22 @@ describe("Session template identity", () => {
             }),
         );
         await wrapper.setProps({ sessionId: "b" });
-        const select = wrapper.get('[data-testid="session-context-template-select"]');
-        expect(select.attributes("disabled")).toBeDefined();
-        await select.setValue("user:template:1");
+        expect(
+            wrapper.get('[data-testid="session-context-template-select"]').attributes("disabled"),
+        ).toBeDefined();
+        await setSelectValue(
+            wrapper,
+            '[data-testid="session-context-template-select"]',
+            "user:template:1",
+        );
         expect(
             vi.mocked(request).mock.calls.some(([, options]) => options?.method === "PATCH"),
         ).toBe(false);
         finish(session("b"));
         await flushPromises();
-        expect(select.attributes("disabled")).toBeUndefined();
+        expect(
+            wrapper.get('[data-testid="session-context-template-select"]').attributes("disabled"),
+        ).toBeUndefined();
         wrapper.unmount();
     });
 

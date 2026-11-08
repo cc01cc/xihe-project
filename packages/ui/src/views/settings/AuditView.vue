@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
 import { useAuditStore } from "../../stores/audit";
 import type {
@@ -229,6 +230,16 @@ async function applyFilter() {
     await loadEntries();
 }
 
+function setTypeFilter(value: string) {
+    typeFilter.value = (value === "__all__" ? "" : value) as typeof typeFilter.value;
+    void changeType();
+}
+
+function setStatusFilter(value: string) {
+    statusFilter.value = value === "__all__" ? "" : value;
+    void applyFilter();
+}
+
 async function changeType() {
     if (statusFilter.value && !allStatuses.value.includes(statusFilter.value)) {
         statusFilter.value = "";
@@ -267,35 +278,67 @@ onMounted(() => {
             <div class="flex flex-wrap items-center gap-3 text-sm">
                 <label class="flex items-center gap-2">
                     <span class="text-muted-foreground">{{ t("settings.auditKind") }}</span>
-                    <select
-                        v-model="typeFilter"
-                        data-testid="settings-audit-type"
-                        class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                        @change="changeType"
+                    <Select
+                        :model-value="typeFilter || '__all__'"
+                        @update:model-value="(value) => setTypeFilter(String(value ?? ''))"
                     >
-                        <option value="">{{ t("settings.auditAllTypes") }}</option>
-                        <option
-                            v-for="option in typeOptions"
-                            :key="option.value"
-                            :value="option.value"
+                        <SelectTrigger
+                            data-testid="settings-audit-type"
+                            class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                         >
-                            {{ t(option.label) }}
-                        </option>
-                    </select>
+                            <SelectValue>{{
+                                typeFilter
+                                    ? t(
+                                          typeOptions.find(
+                                              (option) => option.value === typeFilter,
+                                          )?.label ?? "",
+                                      )
+                                    : t("settings.auditAllTypes")
+                            }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__all__">{{
+                                t("settings.auditAllTypes")
+                            }}</SelectItem>
+                            <SelectItem
+                                v-for="option in typeOptions"
+                                :key="option.value"
+                                :value="option.value"
+                            >
+                                {{ t(option.label) }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </label>
                 <label class="flex items-center gap-2">
                     <span class="text-muted-foreground">{{ t("settings.auditStatus") }}</span>
-                    <select
-                        v-model="statusFilter"
-                        data-testid="settings-audit-status"
-                        class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                        @change="applyFilter"
+                    <Select
+                        :model-value="statusFilter || '__all__'"
+                        @update:model-value="(value) => setStatusFilter(String(value ?? ''))"
                     >
-                        <option value="">{{ t("settings.auditAllStatuses") }}</option>
-                        <option v-for="status in allStatuses" :key="status" :value="status">
-                            {{ statusLabel(status) }}
-                        </option>
-                    </select>
+                        <SelectTrigger
+                            data-testid="settings-audit-status"
+                            class="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        >
+                            <SelectValue>{{
+                                statusFilter
+                                    ? statusLabel(statusFilter)
+                                    : t("settings.auditAllStatuses")
+                            }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__all__">{{
+                                t("settings.auditAllStatuses")
+                            }}</SelectItem>
+                            <SelectItem
+                                v-for="status in allStatuses"
+                                :key="status"
+                                :value="status"
+                            >
+                                {{ statusLabel(status) }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </label>
             </div>
         </header>

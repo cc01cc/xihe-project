@@ -21,6 +21,13 @@ import { problemDetailText } from "../../../lib/errorMessages";
 import { type AgentSkillCandidate, selectSkillCandidates } from "./agentSkillCandidates";
 // 用户裁定（2026-11-03）：二态统一用项目 Switch（reka-ui），不混用 checkbox。
 import { Switch } from "../../../components/ui/switch";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../../components/ui/select";
 
 /**
  * PLAN-0626 M3 (D26-05): the workspace Agent management surface — the same body the old
@@ -108,6 +115,21 @@ const rbacState = ref<"idle" | "loading" | "ready" | "failed">("idle");
 const rbacError = ref("");
 const roleCandidates = ref<ApiRole[]>([]);
 const skillCandidates = ref<AgentSkillCandidate[]>([]);
+
+function roleChoiceLabel(): string {
+    const role = roleCandidates.value.find((candidate) => candidate.id === selectedRoleId.value);
+    return role ? role.displayName || role.name : t("workspace.agentRoleSelectPlaceholder");
+}
+
+function skillChoiceLabel(): string {
+    const skill = skillCandidates.value.find((candidate) => candidate.skillId === selectedSkillId.value);
+    return skill ? skill.name : t("workspace.agentSkillSelectPlaceholder");
+}
+
+function templateChoiceLabel(): string {
+    const item = templates.value.find((candidate) => candidate.template.id === templateId.value);
+    return item ? `${item.template.name} · ${item.layer}` : t("workspace.defaultAgentTemplate");
+}
 const selectedRoleId = ref("");
 const selectedSkillId = ref("");
 const rbacBusy = ref(false);
@@ -1075,20 +1097,32 @@ async function unbind(agent: WorkspaceAgentBinding) {
             </label>
             <label class="block space-y-1 text-sm">
                 <span>{{ t("workspace.agentTemplateChoice") }}</span>
-                <select
-                    v-model="templateId"
-                    data-testid="agent-principal-template"
-                    class="w-full rounded-md border bg-background px-3 py-2"
+                <Select
+                    :model-value="templateId || '__default__'"
+                    @update:model-value="
+                        (value) =>
+                            (templateId = value === '__default__' ? '' : String(value ?? ''))
+                    "
                 >
-                    <option value="">{{ t("workspace.defaultAgentTemplate") }}</option>
-                    <option
-                        v-for="item in templates"
-                        :key="`${item.layer}:${item.template.id}`"
-                        :value="item.template.id"
+                    <SelectTrigger
+                        data-testid="agent-principal-template"
+                        class="w-full rounded-md border bg-background px-3 py-2"
                     >
-                        {{ item.template.name }} · {{ item.layer }}
-                    </option>
-                </select>
+                        <SelectValue>{{ templateChoiceLabel() }}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="__default__">{{
+                            t("workspace.defaultAgentTemplate")
+                        }}</SelectItem>
+                        <SelectItem
+                            v-for="item in templates"
+                            :key="`${item.layer}:${item.template.id}`"
+                            :value="item.template.id"
+                        >
+                            {{ item.template.name }} · {{ item.layer }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
                 <span v-if="templateId" class="block text-xs text-muted-foreground">
                     {{
                         templates.find((item) => item.template.id === templateId)?.template
@@ -2019,22 +2053,28 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 v-if="canBindRbac === true"
                                 class="flex flex-wrap items-center gap-2"
                             >
-                                <select
-                                    v-model="selectedRoleId"
-                                    class="h-7 rounded-md border bg-background px-2 text-xs"
-                                    :data-testid="`agent-role-select-${agent.principalId}`"
+                                <Select
+                                    :model-value="selectedRoleId"
+                                    @update:model-value="
+                                        (value) => (selectedRoleId = String(value))
+                                    "
                                 >
-                                    <option value="">
-                                        {{ t("workspace.agentRoleSelectPlaceholder") }}
-                                    </option>
-                                    <option
-                                        v-for="role in roleCandidates"
-                                        :key="role.id"
-                                        :value="role.id"
+                                    <SelectTrigger
+                                        class="h-7 rounded-md border bg-background px-2 text-xs"
+                                        :data-testid="`agent-role-select-${agent.principalId}`"
                                     >
-                                        {{ role.displayName || role.name }}
-                                    </option>
-                                </select>
+                                        <SelectValue>{{ roleChoiceLabel() }}</SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem
+                                            v-for="role in roleCandidates"
+                                            :key="role.id"
+                                            :value="role.id"
+                                        >
+                                            {{ role.displayName || role.name }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
                                 <button
                                     type="button"
                                     class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
@@ -2170,22 +2210,28 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 v-if="canBindRbac === true"
                                 class="flex flex-wrap items-center gap-2"
                             >
-                                <select
-                                    v-model="selectedSkillId"
-                                    class="h-7 rounded-md border bg-background px-2 text-xs"
-                                    :data-testid="`agent-skill-select-${agent.principalId}`"
+                                <Select
+                                    :model-value="selectedSkillId"
+                                    @update:model-value="
+                                        (value) => (selectedSkillId = String(value))
+                                    "
                                 >
-                                    <option value="">
-                                        {{ t("workspace.agentSkillSelectPlaceholder") }}
-                                    </option>
-                                    <option
-                                        v-for="skill in skillCandidates"
-                                        :key="skill.skillId"
-                                        :value="skill.skillId"
+                                    <SelectTrigger
+                                        class="h-7 rounded-md border bg-background px-2 text-xs"
+                                        :data-testid="`agent-skill-select-${agent.principalId}`"
                                     >
-                                        {{ skill.name }}
-                                    </option>
-                                </select>
+                                        <SelectValue>{{ skillChoiceLabel() }}</SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem
+                                            v-for="skill in skillCandidates"
+                                            :key="skill.skillId"
+                                            :value="skill.skillId"
+                                        >
+                                            {{ skill.name }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
                                 <button
                                     type="button"
                                     class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 defineProps<{
     pageNum: number;
     totalPages: number;
@@ -29,16 +30,20 @@ const emit = defineEmits<{
         >
             ▶
         </button>
-        <select
-            :value="scale"
-            class="text-xs border rounded px-1 py-0.5"
-            @change="emit('update:scale', Number(($event.target as HTMLSelectElement).value))"
+        <Select
+            :model-value="String(scale)"
+            @update:model-value="(value) => emit('update:scale', Number(value))"
         >
-            <option :value="0.5">50%</option>
-            <option :value="0.75">75%</option>
-            <option :value="1.0">100%</option>
-            <option :value="1.5">150%</option>
-            <option :value="2.0">200%</option>
-        </select>
+            <SelectTrigger class="text-xs border rounded px-1 py-0.5">
+                <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+                <SelectItem value="0.5">50%</SelectItem>
+                <SelectItem value="0.75">75%</SelectItem>
+                <SelectItem value="1">100%</SelectItem>
+                <SelectItem value="1.5">150%</SelectItem>
+                <SelectItem value="2">200%</SelectItem>
+            </SelectContent>
+        </Select>
     </div>
 </template>

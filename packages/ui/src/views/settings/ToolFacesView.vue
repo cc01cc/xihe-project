@@ -8,6 +8,7 @@ import SettingsNav from "../../components/settings/SettingsNav.vue";
 import { ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { usePolicyAdminStore } from "../../stores/policyAdmin";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type {
     ApprovalPolicyShape,
     PolicyToolFaceQueryScope,
@@ -328,23 +329,33 @@ onMounted(() => {
                                 >
                                     {{ t("settings.toolFacesShape") }}
                                 </label>
-                                <select
-                                    :id="`tool-face-shape-${face.tool}`"
-                                    v-model="classifyShape"
-                                    :data-testid="`settings-tool-face-classify-shape-${face.tool}`"
-                                    class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                                <Select
+                                    :model-value="classifyShape"
                                     :disabled="policyAdmin.classifyingTool"
+                                    @update:model-value="
+                                        (value) =>
+                                            (classifyShape = String(value) as ApprovalPolicyShape)
+                                    "
                                 >
-                                    <option value="structured">
-                                        {{ t("chat.approvalShapeStructured") }}
-                                    </option>
-                                    <option value="interpreter">
-                                        {{ t("chat.approvalShapeInterpreter") }}
-                                    </option>
-                                    <option value="opaque">
-                                        {{ t("chat.approvalShapeOpaque") }}
-                                    </option>
-                                </select>
+                                    <SelectTrigger
+                                        :id="`tool-face-shape-${face.tool}`"
+                                        :data-testid="`settings-tool-face-classify-shape-${face.tool}`"
+                                        class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                                    >
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="structured">{{
+                                            t("chat.approvalShapeStructured")
+                                        }}</SelectItem>
+                                        <SelectItem value="interpreter">{{
+                                            t("chat.approvalShapeInterpreter")
+                                        }}</SelectItem>
+                                        <SelectItem value="opaque">{{
+                                            t("chat.approvalShapeOpaque")
+                                        }}</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
                         <p class="text-xs text-muted-foreground">

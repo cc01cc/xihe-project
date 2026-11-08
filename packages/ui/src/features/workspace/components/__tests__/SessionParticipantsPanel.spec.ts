@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../../i18n";
 import SessionParticipantsPanel from "../SessionParticipantsPanel.vue";
+import { selectModelValue, setSelectValue } from "../../../../test-utils/select";
 import { useUserQuestionsStore } from "../../stores/userQuestions";
 import type {
     ParticipantReadCursor,
@@ -352,9 +353,16 @@ describe("SessionParticipantsPanel T3.6/T3.7 and policy editing (PLAN-0623)", ()
         const wrapper = mountPanel();
         await flushPromises();
 
-        const select = wrapper.get('[data-testid="participant-wake-select-p-human"]');
-        expect(select.attributes("data-pending")).toBeUndefined();
-        await select.setValue("ALL_MESSAGES");
+        expect(
+            wrapper
+                .get('[data-testid="participant-wake-select-p-human"]')
+                .attributes("data-pending"),
+        ).toBeUndefined();
+        await setSelectValue(
+            wrapper,
+            '[data-testid="participant-wake-select-p-human"]',
+            "ALL_MESSAGES",
+        );
         await flushPromises();
 
         expect(apiUpdate).toHaveBeenCalledWith("session-1", "p-human", {
@@ -378,21 +386,20 @@ describe("SessionParticipantsPanel T3.6/T3.7 and policy editing (PLAN-0623)", ()
         const wrapper = mountPanel();
         await flushPromises();
 
-        await wrapper
-            .get('[data-testid="participant-wake-select-p-human"]')
-            .setValue("ALL_MESSAGES");
+        await setSelectValue(
+            wrapper,
+            '[data-testid="participant-wake-select-p-human"]',
+            "ALL_MESSAGES",
+        );
         await flushPromises();
 
         expect(wrapper.get('[data-testid="participants-error-detail"]').text()).toBe(
             i18n.global.t("workspace.participantPrimaryImmutable"),
         );
         // 旧值保留：props 没变，下拉仍回到原值。
-        expect(
-            (
-                wrapper.get('[data-testid="participant-wake-select-p-human"]')
-                    .element as HTMLSelectElement
-            ).value,
-        ).toBe("MENTION");
+        expect(selectModelValue(wrapper, '[data-testid="participant-wake-select-p-human"]')).toBe(
+            "MENTION",
+        );
     });
 
     it("never offers policy selects for the PRIMARY participant", async () => {

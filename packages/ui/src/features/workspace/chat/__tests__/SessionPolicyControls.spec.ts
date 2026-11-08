@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SessionPolicyControls from "../components/SessionPolicyControls.vue";
+import { selectCount, selectValueAt, setSelectValue } from "../../../../test-utils/select";
 import { i18n } from "../../../../i18n";
 import { ApiError, api } from "../../../../composables/api";
 import { useAuthStore } from "../../../../stores/auth";
@@ -51,7 +52,7 @@ describe("SessionPolicyControls", () => {
 
         expect(wrapper.findAll('[data-testid="session-policy-mode"]')).toHaveLength(1);
         expect(wrapper.get('[data-testid="session-policy-mode"]').element).toBeTruthy();
-        expect(wrapper.element.querySelectorAll("select")).toHaveLength(1);
+        expect(selectCount(wrapper)).toBe(1);
         expect(wrapper.text()).not.toContain("审批模式");
         wrapper.unmount();
     });
@@ -107,7 +108,7 @@ describe("SessionPolicyControls", () => {
         const wrapper = mountControls();
         await flushPromises();
 
-        await wrapper.get('[data-testid="session-policy-mode"]').setValue("auto");
+        await setSelectValue(wrapper, '[data-testid="session-policy-mode"]', "auto");
         await flushPromises();
 
         const error = wrapper.get('[data-testid="session-policy-mode-error"]');
@@ -158,15 +159,14 @@ describe("SessionPolicyControls read-only workspace (BL-311)", () => {
             "write entry point disabled before click",
         ).toBeDefined();
         // 状态仍可读：下拉值仍是服务端返回的 auto，旁边给出只读原因。
-        expect((select.element as HTMLSelectElement).value).toBe("auto");
+        expect(selectValueAt(wrapper, 0)).toBe("auto");
         expect(select.attributes("title")).toBe(i18n.global.t("workspace.viewerReadOnly"));
         expect(wrapper.get('[data-testid="session-policy-mode-readonly"]').text()).toBe(
             i18n.global.t("workspace.viewerReadOnly"),
         );
 
         // 改值也不产生写请求（后继若把 `disabled` 去掉，这里会变成红：见组件内的早退守卫）。
-        (select.element as HTMLSelectElement).value = "manual";
-        await select.trigger("change");
+        await setSelectValue(wrapper, '[data-testid="session-policy-mode"]', "manual");
         await flushPromises();
         expect(api.setPolicyMode, "read-only must not attempt a write").not.toHaveBeenCalled();
         wrapper.unmount();
@@ -208,7 +208,7 @@ describe("SessionPolicyControls read-only workspace (BL-311)", () => {
         expect(select.attributes("disabled")).toBeUndefined();
         expect(wrapper.find('[data-testid="session-policy-mode-readonly"]').exists()).toBe(false);
 
-        await select.setValue("auto");
+        await setSelectValue(wrapper, '[data-testid="session-policy-mode"]', "auto");
         await flushPromises();
         expect(api.setPolicyMode).toHaveBeenCalledWith(SESSION_ID, "auto");
         wrapper.unmount();

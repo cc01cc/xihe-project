@@ -198,6 +198,17 @@ function currentModelKey(model: string) {
     const ref = activeConnection.value && modelBindings.value[activeConnection.value.id]?.[model];
     return ref ? templateKey(ref) : "";
 }
+function templateLabelFor(key: string, fallback: string) {
+    if (!key) return fallback;
+    const item = activeTemplates.value.find((candidate) => templateKey(candidate) === key);
+    return item ? `${item.name} v${item.version}` : key;
+}
+const defaultTemplateLabel = computed(() =>
+    templateLabelFor(currentDefaultKey(), t("settings.providerHub.builtinTemplate")),
+);
+function modelTemplateLabel(model: string) {
+    return templateLabelFor(currentModelKey(model), t("settings.providerHub.inheritTemplate"));
+}
 async function saveBinding(model: string | null, value: string) {
     const connection = activeConnection.value;
     if (!connection || bindingBusy.value || props.readonly) return;
@@ -1376,26 +1387,36 @@ onMounted(() => {
                     <section v-if="activeConnection.operation === 'chat'" class="border-t pt-4">
                         <label class="block text-xs"
                             >{{ t("settings.providerHub.connDefaultTemplate") }}
-                            <select
-                                :value="currentDefaultKey()"
+                            <Select
+                                :model-value="currentDefaultKey() || '__builtin__'"
                                 :disabled="props.readonly || bindingBusy"
-                                class="mt-1 w-full rounded border bg-background p-2"
-                                :aria-label="t('settings.providerHub.connDefaultTemplate')"
-                                @change="
-                                    saveBinding(null, ($event.target as HTMLSelectElement).value)
+                                @update:model-value="
+                                    (value) =>
+                                        saveBinding(
+                                            null,
+                                            value === '__builtin__' ? '' : String(value ?? ''),
+                                        )
                                 "
                             >
-                                <option value="">
-                                    {{ t("settings.providerHub.builtinTemplate") }}
-                                </option>
-                                <option
-                                    v-for="item in activeTemplates"
-                                    :key="templateKey(item)"
-                                    :value="templateKey(item)"
+                                <SelectTrigger
+                                    class="mt-1 w-full"
+                                    :aria-label="t('settings.providerHub.connDefaultTemplate')"
                                 >
-                                    {{ item.name }} v{{ item.version }}
-                                </option>
-                            </select>
+                                    <SelectValue>{{ defaultTemplateLabel }}</SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="__builtin__">{{
+                                        t("settings.providerHub.builtinTemplate")
+                                    }}</SelectItem>
+                                    <SelectItem
+                                        v-for="item in activeTemplates"
+                                        :key="templateKey(item)"
+                                        :value="templateKey(item)"
+                                    >
+                                        {{ item.name }} v{{ item.version }}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
                         </label>
                     </section>
                     <section data-testid="provider-connection-models" class="border-t pt-4">
@@ -1534,33 +1555,44 @@ onMounted(() => {
                                         >
                                             {{ t("settings.providerHub.requestTemplate") }}
                                         </h6>
-                                        <select
-                                            :value="currentModelKey(model)"
+                                        <Select
+                                            :model-value="currentModelKey(model) || '__inherit__'"
                                             :disabled="props.readonly || bindingBusy"
-                                            class="w-full max-w-full rounded border bg-background p-1.5"
-                                            :aria-label="
-                                                t('settings.providerHub.modelTemplateAria', {
-                                                    model,
-                                                })
-                                            "
-                                            @change="
+                                            @update:model-value="
+                                                (value) =>
                                                 saveBinding(
                                                     model,
-                                                    ($event.target as HTMLSelectElement).value,
+                                                    value === '__inherit__'
+                                                        ? ''
+                                                        : String(value ?? ''),
                                                 )
                                             "
                                         >
-                                            <option value="">
-                                                {{ t("settings.providerHub.inheritTemplate") }}
-                                            </option>
-                                            <option
-                                                v-for="item in activeTemplates"
-                                                :key="templateKey(item)"
-                                                :value="templateKey(item)"
+                                            <SelectTrigger
+                                                class="w-full max-w-full"
+                                                :aria-label="
+                                                    t('settings.providerHub.modelTemplateAria', {
+                                                        model,
+                                                    })
+                                                "
                                             >
-                                                {{ item.name }} v{{ item.version }}
-                                            </option>
-                                        </select>
+                                                <SelectValue>{{
+                                                    modelTemplateLabel(model)
+                                                }}</SelectValue>
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="__inherit__">{{
+                                                    t("settings.providerHub.inheritTemplate")
+                                                }}</SelectItem>
+                                                <SelectItem
+                                                    v-for="item in activeTemplates"
+                                                    :key="templateKey(item)"
+                                                    :value="templateKey(item)"
+                                                >
+                                                    {{ item.name }} v{{ item.version }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                     </div>
                                     <div>
                                         <h6
@@ -1668,32 +1700,43 @@ onMounted(() => {
                                     class="flex flex-wrap justify-between gap-2 py-2 text-xs"
                                 >
                                     <span class="break-all">{{ model }}</span>
-                                    <select
+                                    <Select
                                         v-if="activeConnection.operation === 'chat'"
-                                        :value="currentModelKey(model)"
+                                        :model-value="currentModelKey(model) || '__inherit__'"
                                         :disabled="props.readonly || bindingBusy"
-                                        class="max-w-full rounded border bg-background p-1"
-                                        :aria-label="
-                                            t('settings.providerHub.modelTemplateAria', { model })
-                                        "
-                                        @change="
-                                            saveBinding(
-                                                model,
-                                                ($event.target as HTMLSelectElement).value,
-                                            )
+                                        @update:model-value="
+                                            (value) =>
+                                                saveBinding(
+                                                    model,
+                                                    value === '__inherit__'
+                                                        ? ''
+                                                        : String(value ?? ''),
+                                                )
                                         "
                                     >
-                                        <option value="">
-                                            {{ t("settings.providerHub.inheritTemplate") }}
-                                        </option>
-                                        <option
-                                            v-for="item in activeTemplates"
-                                            :key="templateKey(item)"
-                                            :value="templateKey(item)"
+                                        <SelectTrigger
+                                            class="max-w-full"
+                                            :aria-label="
+                                                t('settings.providerHub.modelTemplateAria', {
+                                                    model,
+                                                })
+                                            "
                                         >
-                                            {{ item.name }} v{{ item.version }}
-                                        </option>
-                                    </select>
+                                            <SelectValue>{{ modelTemplateLabel(model) }}</SelectValue>
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__inherit__">{{
+                                                t("settings.providerHub.inheritTemplate")
+                                            }}</SelectItem>
+                                            <SelectItem
+                                                v-for="item in activeTemplates"
+                                                :key="templateKey(item)"
+                                                :value="templateKey(item)"
+                                            >
+                                                {{ item.name }} v{{ item.version }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                     <span class="break-all text-amber-600">
                                         {{ orphanNotice }}
                                     </span>
@@ -1979,20 +2022,24 @@ onMounted(() => {
                         >
                         <label class="mt-3 block text-xs"
                             >API Type
-                            <select
-                                v-model="form.apiType"
-                                data-testid="provider-connection-api-type"
-                                class="mt-1 w-full rounded border bg-background p-2 text-sm"
-                                @change="previewTypeChange"
-                            >
-                                <option
-                                    v-for="pair in selectedProvider.supportedApiTypes"
-                                    :key="pair.apiTypeId + '@' + pair.version"
-                                    :value="pair.apiTypeId + '@' + pair.version"
+                            <Select v-model="form.apiType" @update:model-value="previewTypeChange">
+                                <SelectTrigger
+                                    data-testid="provider-connection-api-type"
+                                    class="mt-1 w-full text-sm"
+                                    aria-label="API Type"
                                 >
-                                    {{ pair.apiTypeId }}@{{ pair.version }}
-                                </option>
-                            </select>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem
+                                        v-for="pair in selectedProvider.supportedApiTypes"
+                                        :key="pair.apiTypeId + '@' + pair.version"
+                                        :value="pair.apiTypeId + '@' + pair.version"
+                                    >
+                                        {{ pair.apiTypeId }}@{{ pair.version }}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
                         </label>
                         <div
                             v-if="
@@ -2031,22 +2078,27 @@ onMounted(() => {
                             </p>
                             <label v-if="formOperation === 'chat'" class="block"
                                 >{{ t("settings.providerHub.newDefaultTemplate") }}
-                                <select
-                                    v-model="targetDefaultKey"
-                                    class="mt-1 w-full rounded border bg-background p-2"
-                                    :aria-label="t('settings.providerHub.newDefaultTemplate')"
-                                >
-                                    <option value="" disabled>
-                                        {{ t("settings.providerHub.chooseCompatible") }}
-                                    </option>
-                                    <option
-                                        v-for="item in formTemplates"
-                                        :key="templateKey(item)"
-                                        :value="templateKey(item)"
+                                <Select v-model="targetDefaultKey">
+                                    <SelectTrigger
+                                        class="mt-1 w-full"
+                                        :aria-label="t('settings.providerHub.newDefaultTemplate')"
                                     >
-                                        {{ item.name }} v{{ item.version }}
-                                    </option>
-                                </select>
+                                        <SelectValue
+                                            :placeholder="
+                                                t('settings.providerHub.chooseCompatible')
+                                            "
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem
+                                            v-for="item in formTemplates"
+                                            :key="templateKey(item)"
+                                            :value="templateKey(item)"
+                                        >
+                                            {{ item.name }} v{{ item.version }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </label>
                             <label class="flex items-center gap-2"
                                 ><input v-model="confirmedTypeChange" type="checkbox" />{{

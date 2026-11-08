@@ -4,6 +4,7 @@ import { Bot, Info, X } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AgentRoleBinding, WorkspaceAgentBinding } from "../../composables/api";
 import {
     mockAgentRoleBindings,
@@ -194,33 +195,72 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
             <div class="grid grid-cols-[1fr_1fr_auto] items-end gap-3">
                 <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                     选择智能体主体
-                    <select
-                        v-model="selectedAgentId"
-                        data-testid="preview-agent-role-bindings-agent"
-                        class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                    <Select
+                        :model-value="selectedAgentId || '__none__'"
+                        @update:model-value="
+                            (value) =>
+                                (selectedAgentId = value === '__none__' ? '' : String(value ?? ''))
+                        "
                     >
-                        <option value="">选择智能体主体</option>
-                        <option
-                            v-for="agent in agents"
-                            :key="agent.principalId"
-                            :value="agent.principalId"
+                        <SelectTrigger
+                            data-testid="preview-agent-role-bindings-agent"
+                            class="rounded border bg-background px-2 py-1 text-sm text-foreground"
                         >
-                            {{ agent.name }}
-                        </option>
-                    </select>
+                            <SelectValue>{{
+                                selectedAgentId
+                                    ? (agents.find(
+                                          (agent) => agent.principalId === selectedAgentId,
+                                      )?.name ?? selectedAgentId)
+                                    : "选择智能体主体"
+                            }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none__">选择智能体主体</SelectItem>
+                            <SelectItem
+                                v-for="agent in agents"
+                                :key="agent.principalId"
+                                :value="agent.principalId"
+                            >
+                                {{ agent.name }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </label>
                 <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                     角色
-                    <select
-                        v-model="selectedRoleId"
-                        data-testid="preview-agent-role-bindings-role"
-                        class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                    <Select
+                        :model-value="selectedRoleId || '__none__'"
+                        @update:model-value="
+                            (value) =>
+                                (selectedRoleId = value === '__none__' ? '' : String(value ?? ''))
+                        "
                     >
-                        <option value="">选择角色</option>
-                        <option v-for="role in availableRoles" :key="role.id" :value="role.id">
-                            {{ role.displayName || role.name }}
-                        </option>
-                    </select>
+                        <SelectTrigger
+                            data-testid="preview-agent-role-bindings-role"
+                            class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                        >
+                            <SelectValue>{{
+                                selectedRoleId
+                                    ? (availableRoles.find(
+                                          (role) => role.id === selectedRoleId,
+                                      )?.displayName ??
+                                      availableRoles.find((role) => role.id === selectedRoleId)
+                                          ?.name ??
+                                      selectedRoleId)
+                                    : "选择角色"
+                            }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none__">选择角色</SelectItem>
+                            <SelectItem
+                                v-for="role in availableRoles"
+                                :key="role.id"
+                                :value="role.id"
+                            >
+                                {{ role.displayName || role.name }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </label>
                 <div class="flex gap-2 pb-0.5">
                     <Button
