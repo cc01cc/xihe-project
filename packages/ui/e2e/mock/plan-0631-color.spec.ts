@@ -386,6 +386,20 @@ async function installPolicyModeRoute(page: Page): Promise<void> {
 /** 设置页：角色定义（含系统徽标 = secondary Badge、选中 tab、主按钮）。 */
 async function mockRolesApis(page: Page): Promise<void> {
     const atom = { name: "read", scopeClass: "both", capability: false, resource: "*" };
+    // D-713/B7：/settings/roles 直链会自己拉 /me/permissions（ensureSelfPermissions）；
+    // setupMockAuth 的 catch-all 对未桩端点回 200 {}，MANAGE_ROLES 原子缺失会 fail-closed。
+    await page.route("**/api/v1/me/permissions", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                instanceCapabilities: ["instance:admin"],
+                instancePermissions: [{ actionClass: "MANAGE_ROLES", resource: "*" }],
+                workspaces: [],
+            }),
+        });
+    });
     await page.route("**/api/v1/roles/catalog", async (route) => {
         await route.fulfill({
             status: 200,

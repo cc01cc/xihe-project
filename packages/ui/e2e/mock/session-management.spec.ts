@@ -130,9 +130,11 @@ test.describe("Session Management", () => {
 
         await page.locator("aside >> text=Beta").click();
 
-        await expect(page.locator("aside >> text=Beta").locator("xpath=..")).toHaveClass(
-            /bg-accent/,
-        );
+        // 行选中态在外层 [data-testid=session-item]（SessionItem.vue:96）；delegation badge
+        // 引入后 text 的父节点是内层 flex 行，旧的 xpath=.. 已漂移。
+        const betaRow = page.locator('[data-testid="session-item"]').filter({ hasText: "Beta" });
+        await expect(betaRow).toHaveClass(/bg-accent/);
+        await expect(betaRow).toHaveAttribute("aria-current", "page");
     });
 
     test("sidebar time group headers are visible", async ({ page }) => {
