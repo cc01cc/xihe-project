@@ -122,7 +122,11 @@ class JobTimeoutClampTest {
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
                 mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class),
                 mock(com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService.class),
-                mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class)
+                mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class),
+                new com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter(
+                        org.mockito.Mockito.mock(
+                                com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService.class),
+                        false)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

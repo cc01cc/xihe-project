@@ -177,6 +177,8 @@
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginRunSnapshotAdmissionTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginSessionAttachmentEventTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginSessionAttachmentFeatureOffTest.java	property-variant
+@TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginToolCatalogFeatureOffTest.java	property-variant
+@TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginToolCatalogTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/PluginUninstallRetentionTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/kv/AbstractPluginKvIntegrationTest.java	property-variant
 @TestPropertySource	com/cc01cc/p/xihe/cp/plugin/kv/PluginKvFeatureFlagTest.java	property-variant

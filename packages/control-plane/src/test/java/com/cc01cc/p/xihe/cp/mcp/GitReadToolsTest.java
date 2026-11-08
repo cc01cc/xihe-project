@@ -143,7 +143,11 @@ class GitReadToolsTest {
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
                 mock(DelegationBudgetService.class),
                 mock(ChatRunStatusReadService.class),
-                runtimeCheckpointClient);
+                runtimeCheckpointClient,
+                new com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter(
+                        org.mockito.Mockito.mock(
+                                com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService.class),
+                        false));
         // Unreachable by default: any accidental Runtime forward fails fast instead of hanging.
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://127.0.0.1:1");
 
