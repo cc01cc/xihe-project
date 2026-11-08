@@ -29,6 +29,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.cc01cc.p.xihe.cp.support.TestWorkspaceCleanup;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -150,13 +151,13 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         for (UUID additionalWorkspaceId : additionalWorkspaceIds) {
-            jdbcTemplate.update("DELETE FROM sessions WHERE workspace_id IS NOT DISTINCT FROM CAST(? AS UUID)",
-                    additionalWorkspaceId);
+            TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, additionalWorkspaceId.toString());
         }
         if (workspaceId != null) {
-            jdbcTemplate.update("DELETE FROM sessions WHERE workspace_id IS NOT DISTINCT FROM CAST(? AS UUID)",
-                    java.util.UUID.fromString(workspaceId));
+            // Child-first fixed order (PLAN-0710): MCP invocations before the session cascade, and
+            // the utility deletes chat_runs -> sessions with a 40P01 deadlock retry.
             SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
+            TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
         }
         if (principalId != null && workspaceId != null
                 && workspaceAgentRepository.existsById(

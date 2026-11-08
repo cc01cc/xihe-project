@@ -17,6 +17,7 @@ import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cc01cc.p.xihe.cp.support.TestWorkspaceCleanup;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -83,12 +84,10 @@ class TieredQueryIntegrationTest extends AbstractReusableIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         if (workspaceId != null) {
-            jdbcTemplate.update("DELETE FROM chat_runs WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
+                        TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
         }
         if (otherWorkspaceId != null) {
-            jdbcTemplate.update("DELETE FROM chat_runs WHERE CAST(workspace_id AS VARCHAR) = ?", otherWorkspaceId);
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", otherWorkspaceId);
+                        TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, otherWorkspaceId);
         }
         grantIds.forEach(id -> grantRepository.deleteById(id));
         grantIds.clear();

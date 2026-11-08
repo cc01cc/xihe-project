@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.support.TestWorkspaceCleanup;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -68,7 +69,7 @@ class ApprovalHistoryIntegrationTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanUp() {
         if (workspaceId != null) {
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
+            TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
             jdbcTemplate.update("DELETE FROM role_bindings WHERE scope_type = 'workspace'"
                     + " AND CAST(scope_id AS VARCHAR) = ?", workspaceId);
             if (workspaceRepository.findById(UUID.fromString(workspaceId)).isPresent()) {
