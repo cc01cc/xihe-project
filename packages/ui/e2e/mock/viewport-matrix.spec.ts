@@ -139,7 +139,7 @@ test.describe("PLAN-269 viewport matrix: mobile", () => {
         await expect(filesSheet).toBeVisible();
         await expect(filesSheet.getByTestId("workspace-empty-state")).toBeVisible();
         await expectPlatformScreenshot(filesSheet, "plan-269-viewport-mobile-files.png");
-        await page.getByRole("button", { name: /close/i }).last().click();
+        await page.getByRole("button", { name: /close|关闭/i }).last().click();
         await page.getByRole("button", { name: "Open chat" }).click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
         await expectNoHorizontalOverflow(page);

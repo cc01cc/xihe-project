@@ -4,6 +4,7 @@ import { nextTick } from "vue";
 import { toast } from "vue-sonner";
 import FileNodeMenu from "../components/FileNodeMenu.vue";
 import type { FileNode } from "../../../types";
+import { i18n } from "../../../i18n";
 
 // Singleton mock store: the component and the test must share the same vi.fn()
 // instances, otherwise stubbed resolutions never reach the component.
@@ -38,6 +39,7 @@ function mountMenu(node: FileNode) {
         props: { node },
         slots: { default: "<button>row</button>" },
         attachTo: document.body,
+        global: { plugins: [i18n] },
     });
 }
 
