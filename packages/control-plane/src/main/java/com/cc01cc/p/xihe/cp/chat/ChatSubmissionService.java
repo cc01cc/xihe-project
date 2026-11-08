@@ -84,6 +84,8 @@ public class ChatSubmissionService {
     private final SessionRunConcurrencyGate runConcurrencyGate;
     // PLAN-0691 T1.6b: the session plugin catalog frozen in the SAME admission transaction (V143).
     private final com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots;
+    // PLAN-0642 T2.1 (D42-03): runtime model resolution for an unbound Session.
+    private final ChatModelResolutionService modelResolution;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -107,7 +109,8 @@ public class ChatSubmissionService {
                                  DelegationBudgetService delegationBudgetService,
                                  com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots,
                                  SessionRunConcurrencyGate runConcurrencyGate,
-                                 com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots) {
+                                 com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots,
+                                 ChatModelResolutionService modelResolution) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -135,6 +138,7 @@ public class ChatSubmissionService {
         this.skillCatalogSnapshots = skillCatalogSnapshots;
         this.runConcurrencyGate = runConcurrencyGate;
         this.pluginCatalogSnapshots = pluginCatalogSnapshots;
+        this.modelResolution = modelResolution;
     }
 
     @Transactional
@@ -930,11 +934,30 @@ public class ChatSubmissionService {
                                 List<String> attachmentIds,
                                 boolean followUpAdmission, String messageVisibility, String deliveryJson) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId);
+        // Resolve the admission responder once: it is both the Run principal stamp and the PRIMARY
+        // Agent whose declared model intent feeds runtime resolution (D42-03 step 3).
+        SessionParticipantService.Responder admissionResponder = sessionParticipantService.responderFor(
+                parseUuidOrNull(sessionId, "run_principal_stamp"), null);
+        UUID admissionPrincipalId = admissionResponder != null
+                && SessionParticipant.KIND_AGENT.equals(admissionResponder.principalKind())
+                ? admissionResponder.principalId() : null;
         var requestSnapshot = apiRequestTemplates.admissionSnapshot(session);
-        provider = session.getModelProvider();
-        model = session.getModelName();
-        providerConnectionId = session.getProviderConnectionId();
-        connectionRevision = session.getConnectionRevision();
+        // PLAN-0642 D42-05/D42-08: the Session's model columns are an OPTIONAL override. A complete
+        // bundle wins (the admission revision gate above already validated it); otherwise the model
+        // identity is resolved at run time and written to chat_runs only — never back to the Session.
+        if (com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.isModelBindingComplete(session)) {
+            provider = session.getModelProvider();
+            model = session.getModelName();
+            providerConnectionId = session.getProviderConnectionId();
+            connectionRevision = session.getConnectionRevision();
+        } else {
+            ChatModelResolutionService.Resolution resolved = modelResolution.resolve(session,
+                    admissionPrincipalId == null ? null : admissionPrincipalId.toString());
+            provider = resolved.provider();
+            model = resolved.model();
+            providerConnectionId = resolved.providerConnectionId();
+            connectionRevision = resolved.connectionRevision();
+        }
         if (session.getDeleteRequestedAt() != null) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
                     "Session deletion is in progress");
@@ -971,11 +994,6 @@ public class ChatSubmissionService {
         // to agent_principals (V92), so it persists NULL and attribution falls back to nothing rather
         // than to a wrong actor (design §2.6). Resolved once so the skills capture and the stamp
         // cannot disagree.
-        SessionParticipantService.Responder admissionResponder = sessionParticipantService.responderFor(
-                parseUuidOrNull(sessionId, "run_principal_stamp"), null);
-        UUID admissionPrincipalId = admissionResponder != null
-                && SessionParticipant.KIND_AGENT.equals(admissionResponder.principalKind())
-                ? admissionResponder.principalId() : null;
         chatRun.setSkillsSnapshot(freezeSkillsListing(requestSnapshot, admissionPrincipalId, userId, workspaceId));
         // PLAN-0691 T1.6b (design S4 / D-62): freeze the Session's attached plugin catalog in the
         // SAME admission transaction, so an attach/detach that lands while this Run is in flight
