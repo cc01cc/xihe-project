@@ -6,8 +6,11 @@ import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import org.springframework.data.domain.Pageable;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +38,8 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ObjectMapper json;
     @Autowired private SessionRepository sessions;
+    @Autowired private ChatRunRepository chatRuns;
+    @Autowired private SessionBranchRepository branches;
     @Autowired private ProviderConnectionRepository providerConnections;
 
     private final HttpClient http = HttpClient.newBuilder()
@@ -118,6 +123,41 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
         assertEquals(workspaceId, sessions.findById(UUID.fromString(sessionId)).orElseThrow().getWorkspaceId());
     }
 
+    @Test
+    void workspaceLessChatDoorRejectsToolModeWithZeroRuns() {
+        String sessionId = createWorkspaceless();
+        String branchId = rootBranch(sessionId);
+        Reply reply = send(null, "POST", "/api/v1/chat",
+                """
+                {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"workspace"}"""
+                        .formatted(sessionId, branchId));
+        assertEquals(400, reply.status(), reply.body().toString());
+        assertEquals("WORKSPACE_LESS_TOOL_MODE_FORBIDDEN", reply.body().path("code").asText());
+        assertTrue(chatRuns.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId, Pageable.ofSize(10)).isEmpty(),
+                "the workspaceless tool-mode refusal must leave zero runs");
+    }
+
+    @Test
+    void workspaceLessChatDoorRejectsWorkspaceOnlyFeatures() {
+        String sessionId = createWorkspaceless();
+        String branchId = rootBranch(sessionId);
+        Reply attachments = send(null, "POST", "/api/v1/chat",
+                """
+                {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none",
+                "attachments":["%s"]}"""
+                        .formatted(sessionId, branchId, UUID.randomUUID()));
+        assertEquals(400, attachments.status(), attachments.body().toString());
+        assertEquals("WORKSPACE_LESS_FEATURE_FORBIDDEN", attachments.body().path("code").asText());
+        assertTrue(chatRuns.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId, Pageable.ofSize(10)).isEmpty());
+
+        Reply fanout = send(null, "POST", "/api/v1/chat",
+                """
+                {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none",
+                "toParticipantIds":["%s"]}"""
+                        .formatted(sessionId, branchId, UUID.randomUUID()));
+        assertEquals(400, fanout.status(), fanout.body().toString());
+        assertEquals("WORKSPACE_LESS_FEATURE_FORBIDDEN", fanout.body().path("code").asText());
+    }
     private String body(String workspaceIdValue) {
         String workspaceField = workspaceIdValue == null ? "" : ",\"workspaceId\":\"" + workspaceIdValue + "\"";
         return """
@@ -126,6 +166,16 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
                 .formatted(principalId, providerId, connectionId, workspaceField);
     }
 
+    private String createWorkspaceless() {
+        Reply created = send(null, "POST", "/api/v1/sessions", body(null));
+        assertEquals(201, created.status(), created.body().toString());
+        return created.body().path("id").asText();
+    }
+
+    private String rootBranch(String sessionId) {
+        return branches.findBySessionIdAndParentBranchIdIsNull(sessionId).orElseThrow()
+                .getId().toString();
+    }
     private AuthResponse register(String label) {
         var response = restTemplate.postForEntity(url("/api/v1/auth/register"),
                 new RegisterRequest(label + "-" + UUID.randomUUID() + "@test.com",

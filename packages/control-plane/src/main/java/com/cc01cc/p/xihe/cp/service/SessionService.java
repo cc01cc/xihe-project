@@ -136,6 +136,44 @@ public class SessionService {
                 title, modelProvider, modelName, providerConnectionId);
     }
 
+    /**
+     * PLAN-0647 D-47-05: resolve a Session by ROW ownership (id + user_id, archived excluded).
+     * The caller decides what the row's workspace means; this method never reads TenantContext.
+     */
+    @Transactional(readOnly = true)
+    public Session requireOwnedSession(String sessionId, String userId) {
+        UUID id;
+        try {
+            id = UUID.fromString(sessionId);
+        } catch (RuntimeException malformed) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
+        }
+        Session session = sessionRepository.findById(id)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
+                        "Session not found"));
+        if (userId == null || !userId.equals(session.getUserId()) || session.isArchived()) {
+            // No existence oracle for non-owners: the same 404 as a missing row.
+            throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
+        }
+        return session;
+    }
+
+    /**
+     * PLAN-0647 MVP (D-678/D-47-05): resolve a Session that lives outside any workspace.
+     *
+     * <p>A workspace Session answers 400 WORKSPACE_CONTEXT_REQUIRED instead of being adopted by
+     * the interceptor's ThreadLocal fallback.</p>
+     */
+    @Transactional(readOnly = true)
+    public Session requireOwnedWorkspaceLess(String sessionId, String userId) {
+        Session session = requireOwnedSession(sessionId, userId);
+        if (session.getWorkspaceId() != null) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_CONTEXT_REQUIRED",
+                    "This Session belongs to a workspace; send X-Workspace-Id");
+        }
+        return session;
+    }
+
     @Transactional
     public Session createAgentSession(String userId, String workspaceId, String title,
                                       String modelProvider, String modelName,
