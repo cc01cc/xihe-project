@@ -515,21 +515,87 @@ public class ApiRequestTemplateService {
         return byType;
     }
 
+    /**
+     * PLAN-0642 D42-05 / design §4.3: the model/connection bundle became <b>optional</b>.
+     *
+     * <ul>
+     *   <li><b>Mandatory</b>: the context-template triple (the run's template + skills snapshot must
+     *       be pinned). Missing ⇒ 409 {@code API_TYPE_REBIND_REQUIRED} with {@code reason=partial_binding}.</li>
+     *   <li><b>Bound</b>: all four model/connection columns present ⇒ today's revision check stays
+     *       fail-closed ({@code reason=connection_revision_changed}).</li>
+     *   <li><b>Partially set</b> ⇒ 409 {@code API_TYPE_REBIND_REQUIRED} ({@code reason=partial_binding});
+     *       a half-written bundle can never silently mean "unbound".</li>
+     *   <li><b>Unbound</b>: the four columns are all empty ⇒ the model identity is resolved at run
+     *       time by {@link com.cc01cc.p.xihe.cp.chat.ChatModelResolutionService}; admission only pins
+     *       the stored context-template ref ({@code source=pinned}).</li>
+     * </ul>
+     */
     public ObjectNode admissionSnapshot(Session session) {
         if (session.getContextTemplateLayer() == null || session.getContextTemplateId() == null
-                || session.getContextTemplateVersion() == null || session.getProviderConnectionId() == null) {
-            throw conflict("API_TYPE_REBIND_REQUIRED", "Explicit Session binding is required");
+                || session.getContextTemplateVersion() == null) {
+            throw rebindRequired("Explicit Session binding is required", "partial_binding");
         }
-        ProviderConnection connection = connections.findById(UUID.fromString(session.getProviderConnectionId())).orElseThrow();
-        requireVisible(connection, session.getUserId(), session.getWorkspaceId());
-        requireChat(connection);
-        if (!Long.valueOf(connection.getRevision()).equals(session.getConnectionRevision())) {
-            throw conflict("API_TYPE_REBIND_REQUIRED", "Connection changed; explicitly rebind the Session");
+        if (isModelBindingComplete(session)) {
+            ProviderConnection connection = connections.findById(UUID.fromString(session.getProviderConnectionId())).orElseThrow();
+            requireVisible(connection, session.getUserId(), session.getWorkspaceId());
+            requireChat(connection);
+            if (!Long.valueOf(connection.getRevision()).equals(session.getConnectionRevision())) {
+                throw rebindRequired("Connection changed; explicitly rebind the Session",
+                        "connection_revision_changed");
+            }
+            return resolve(connection, session.getModelName(), UUID.fromString(session.getUserId()),
+                    UUID.fromString(session.getWorkspaceId()), sessionTemplateRef(session));
         }
-        JsonNode ref = json.createObjectNode().put("layer", session.getContextTemplateLayer())
-                .put("templateId", session.getContextTemplateId().toString()).put("version", session.getContextTemplateVersion());
-        return resolve(connection, session.getModelName(), UUID.fromString(session.getUserId()),
-                UUID.fromString(session.getWorkspaceId()), ref);
+        if (isModelBindingPartial(session)) {
+            throw rebindRequired("Model/connection binding is incomplete; rebind or clear it",
+                    "partial_binding");
+        }
+        return pinnedSnapshot(session);
+    }
+
+    /** D42-05: the explicit model/connection bundle is complete only when all four columns are set. */
+    public static boolean isModelBindingComplete(Session session) {
+        return hasText(session.getModelProvider()) && hasText(session.getModelName())
+                && hasText(session.getProviderConnectionId()) && session.getConnectionRevision() != null;
+    }
+
+    /** D42-05: any-but-not-all four columns is a half-written bundle, never "unbound". */
+    public static boolean isModelBindingPartial(Session session) {
+        boolean any = hasText(session.getModelProvider()) || hasText(session.getModelName())
+                || hasText(session.getProviderConnectionId()) || session.getConnectionRevision() != null;
+        return any && !isModelBindingComplete(session);
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static CpApiException rebindRequired(String message, String reason) {
+        return conflict("API_TYPE_REBIND_REQUIRED", message).withExtra(Map.of("reason", reason));
+    }
+
+    private ObjectNode sessionTemplateRef(Session session) {
+        return json.createObjectNode().put("layer", session.getContextTemplateLayer())
+                .put("templateId", session.getContextTemplateId().toString())
+                .put("version", session.getContextTemplateVersion());
+    }
+
+    /**
+     * The unbound-Session snapshot: the context-template ref is already pinned on the Session, so
+     * resolve it directly (no connection is needed to read the stored pin) and merge the context
+     * components exactly like the bound path does.
+     */
+    private ObjectNode pinnedSnapshot(Session session) {
+        UUID user = UUID.fromString(session.getUserId());
+        UUID workspace = UUID.fromString(session.getWorkspaceId());
+        ObjectNode ref = sessionTemplateRef(session);
+        ObjectNode template = resolveRef(ref, user, workspace, "", json.createArrayNode());
+        mergeContextComponents(template, user, workspace);
+        ObjectNode snapshot = json.createObjectNode();
+        snapshot.setAll(ref.deepCopy());
+        snapshot.put("source", "pinned");
+        snapshot.set("template", template);
+        return snapshot;
     }
 
     public JsonNode pinnedTemplate(Session session) {
