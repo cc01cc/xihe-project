@@ -11,6 +11,17 @@
 //
 // 默认目标：**stack-2**（本仓把 stack-2 当 dev 栈；stack-1 留作证据栈，见 `task-223` 卡）。
 //
+// `--javac` 模式（task-229）**只服务 dev 通道**：它只做 `javac 改动文件` +（可选）touch trigger，
+// **不等价于 `mvn compile`** —— pom 里的 `<release>`/`-Werror`/其它 compiler 参数并未逐字对齐，
+// MapStruct 只通过 `-processorpath` 补了 `mapstruct-processor`。判据是"devtools 能正确重启"，
+// 不是"产物与 mvn 逐字相同"。验收/证据面一律走 `mvn`（本脚本保留 `mvn` 模式作为 fallback）。
+//
+// stack-2 的 dev 长期形态 = **trigger 模式**：用
+//   MAVEN_ARGS=-Dspring-boot.run.jvmArguments=-Dspring.devtools.restart.trigger-file=.reloadtrigger
+// 启动，并预置 `<classes>/.reloadtrigger`（触发文件必须在 classpath 上、属性值只能是纯文件名）。
+// **要回默认轮询**：不带 `MAVEN_ARGS` 重启一次即可
+//   node scripts/dev-stack.mjs stop --stack 2 --json ; node scripts/dev-stack.mjs start --stack 2
+//
 // 用法：
 //   node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [--once] [--dry-run] [--no-restart-hint]
 //   node scripts/dev-hot-cp.mjs --help
@@ -183,7 +194,9 @@ function tailForRestart(sinceMs) {
 // 而 devtools 只看 classes 目录 —— 直接用 javac 编改动文件即可：实测单文件 **0.98 s**，
 // devtools 侧看到的是 `Restarting due to 1 class path change (… modifications …)`，
 // 而不是"1243 deletions"式的整树重写。
-const pendingChanges = new Set(); // 绝对路径；只收 .java（资源变更走 mvn 回退）
+const pendingChanges = new Set(); // 绝对路径；只收 .java（单文件 javac 的输入）
+const pendingNonJava = new Set(); // 绝对路径；非 .java（资源/配置）变更 ⇒ 必须回退 mvn（javac 不处理资源）
+
 
 // Spring Boot 4.0 文档（devtools）：trigger file **必须在 classpath 上**，属性值是**纯文件名**（不含路径）。
 // ⇒ 传 .reloadtrigger 这类裸名时，落到 <targetDir>/classes/.reloadtrigger；传绝对路径会 warn（上次失败原因）。
@@ -283,24 +296,32 @@ function buildOnce() {
     // --once 没有 watch 事件 ⇒ 用 git 发现"已改的 src/main 下 .java"（只收工作树已存在文件）
     const status = spawnSync('git', ['-C', projectRoot, 'status', '--porcelain', '-uall'], { windowsHide: true, encoding: 'utf8' });
     for (const line of (status.stdout ?? '').split(/\r?\n/)) {
-      const m = line.match(/^[ MARD?]{1,2}\s+(packages\/control-plane\/src\/main\/.*\.java)$/);
-      if (m) pendingChanges.add(join(projectRoot, m[1]));
+      const m = line.match(/^[ MARD?]{1,2}\s+(packages\/control-plane\/src\/main\/[^ ]+)$/);
+      if (m) {
+        const rel = m[1];
+        if (rel.endsWith('.java')) pendingChanges.add(join(projectRoot, rel));
+        else pendingNonJava.add(join(projectRoot, rel));
+      }
     }
     if (pendingChanges.size > 0) console.log(`[hot-cp] --once：git 发现 ${pendingChanges.size} 个改动 .java`);
   }
   if (args.javac && pendingChanges.size > 0) {
     const files = [...pendingChanges];
     const missing = files.filter((f) => !existsSync(f));
-    const nonJava = files.filter((f) => !f.endsWith('.java'));
-    if (missing.length > 0 || nonJava.length > 0) {
-      console.warn(`[hot-cp] javac 模式不适用（删除 ${missing.length} / 非 .java ${nonJava.length}）⇒ 回退 mvn 整模块`);
+    if (pendingNonJava.size > 0) {
+      const names = [...pendingNonJava].map((p) => p.replace(`${projectRoot}\\`, '')).join(', ');
+      console.warn(`[hot-cp] 非 .java 变更 ${pendingNonJava.size} 个（${names}）⇒ 回退 mvn（javac 不处理资源/配置）`);
+    } else if (missing.length > 0) {
+      console.warn(`[hot-cp] 有 ${missing.length} 个改动文件已被删除 ⇒ 回退 mvn 整模块`);
     } else {
       const ok = buildJavacOnce(files);
       pendingChanges.clear();
+      pendingNonJava.clear();
       if (ok !== null) return ok;
     }
   }
   pendingChanges.clear();
+  pendingNonJava.clear();
   const startedAt = Date.now();
   console.log(`[hot-cp] running: mvn ${mvnArgs.join(' ')}  (cwd packages/control-plane)`);
   // Windows 上 `mvn` 是 .cmd，spawnSync 直接调用会 ENOENT（exit=null）⇒ 统一走 ComSpec /c。
@@ -401,6 +422,7 @@ try {
     if (!filename) return;
     const abs = join(watchRoot, filename);
     if (filename.endsWith('.java')) pendingChanges.add(abs);
+    else pendingNonJava.add(abs);
     schedule(`${event} ${filename}`);
   });
 } catch (error) {
