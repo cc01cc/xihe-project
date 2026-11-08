@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.CredentialEvent;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PLAN-0495 T1.1：credentials / credential_events repository 基础行为——
  * UUID 转换、rev/状态默认、软删过滤、owner 列表、revision 单调、事件时间序。
  */
-class CredentialRepositoryTest extends AbstractIntegrationTest {
+class CredentialRepositoryTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private CredentialRepository credentialRepository;

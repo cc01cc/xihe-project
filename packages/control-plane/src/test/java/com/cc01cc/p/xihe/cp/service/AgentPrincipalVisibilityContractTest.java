@@ -5,7 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -43,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * M1.1 baseline because the route, the {@code source} field or the disable authorization do not
  * exist yet.</p>
  */
-class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
+class AgentPrincipalVisibilityContractTest extends AbstractReusableIntegrationTest {
 
 
     @Autowired

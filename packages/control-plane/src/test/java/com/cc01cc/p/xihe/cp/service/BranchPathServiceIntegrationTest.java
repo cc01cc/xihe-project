@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -51,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * loop aborts when a copied correlation cannot resolve in the target Session;
  * a request-body {@code branch_id} override is rejected.
  */
-class BranchPathServiceIntegrationTest extends AbstractIntegrationTest {
+class BranchPathServiceIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private WorkspaceFixture workspaceFixture;

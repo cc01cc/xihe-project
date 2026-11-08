@@ -8,7 +8,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 
 import java.util.Map;
@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class AuthIntegrationTest extends AbstractIntegrationTest {
+class AuthIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.config.JwtTokenProvider jwtTokenProvider;

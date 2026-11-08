@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.repository;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** PostgreSQL-backed checks for the bounded Run Trace source queries. */
-class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractIntegrationTest {
+class RunTraceSourceRepositoryPostgresIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String ARGUMENT_MARKER = "trace-arguments-secret-marker";
     private static final String RESULT_MARKER = "trace-result-secret-marker";

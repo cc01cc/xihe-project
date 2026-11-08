@@ -66,6 +66,20 @@ public abstract class AbstractReusableIntegrationTest {
         com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.setCredentialService(credentialService);
     }
 
+    /**
+     * task-255 顺序对照实测的静态钩子修复：{@code RootBranchBinder.rootBranchResolver} 是 JVM
+     * 级单槽，任何**新的** Spring 上下文（含 per-class {@code @DirtiesContext} 的异步/SSE 类）
+     * 都会把解析器改挂到自己的 {@code BranchPathService}；那个上下文类末关闭后，解析器仍指向
+     * 已关闭上下文的 bean，随后复用类写 Session/Message/ChatRun 会
+     * {@code CannotGetJdbcConnectionException}。本方法在每个测试实例开始前把解析器重挂回本复用
+     * 上下文的 bean——即设计 §4.2 要求的 reset hook（否则复用类只能排在所有 per-class 类之前）。
+     */
+    @Autowired
+    void reRegisterRootBranchBinder(
+            com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService) {
+        com.cc01cc.p.xihe.cp.entity.RootBranchBinder.register(branchPathService::ensureRootBranchId);
+    }
+
     protected String baseUrl;
 
     protected RestTemplate restTemplate;

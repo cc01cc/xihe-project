@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,7 +44,7 @@ import org.springframework.web.client.RestTemplate;
  *   <li><b>plain user</b> — no binding at all.</li>
  * </ul>
  */
-class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
+class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String PASSWORD = "Roles-pass-1";
 
