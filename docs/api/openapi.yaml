@@ -4988,6 +4988,43 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/PluginRateLimited' }
 
+  /api/v1/conversation-threads:
+    post:
+      operationId: createConversationThread
+      description: 'PLAN-0646 MVP (D-671): create a conversation thread. scopeType is user|agent|workspace; workspace passes the DB CHECK but fails closed in the MVP (V4 deferred).'
+      parameters:
+        - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid }, description: 'PLAN-0559: workspace context of the request.' }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThreadCreateRequest' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThread' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope) or THREAD_WRITE_FORBIDDEN (scope not owned)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /api/v1/conversation-threads/{threadId}:
+    get:
+      operationId: readConversationThread
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThread' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { description: 'THREAD_NOT_FOUND (absent or not visible)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /api/v1/conversation-threads/{threadId}/sessions:
+    post:
+      operationId: attachConversationThreadSession
+      description: 'Owner-only attach; same thread again is an idempotent 200 (changed=false), a different thread overwrites without cascading.'
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThreadAttachRequest' } } } }
+      responses:
+        '200': { description: 'Idempotent attach', content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThreadAttachResult' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'THREAD_WRITE_FORBIDDEN (not the session owner) or THREAD_SCOPE_UNRESOLVED', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { description: 'THREAD_NOT_FOUND or SESSION_NOT_FOUND', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -5026,6 +5063,49 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ResourceExhaustedProblem' } } }
   schemas:
+    ConversationThreadCreateRequest:
+      type: object
+      required: [scopeType, scopeId]
+      additionalProperties: false
+      properties:
+        scopeType: { type: string, enum: [user, agent, workspace] }
+        scopeId: { type: string, format: uuid }
+        title: { type: string, maxLength: 255, nullable: true }
+    ConversationThreadAttachRequest:
+      type: object
+      required: [sessionId]
+      additionalProperties: false
+      properties:
+        sessionId: { type: string, format: uuid }
+    ConversationThreadSession:
+      type: object
+      required: [id, title, workspaceId, userId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string, nullable: true }
+        workspaceId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+    ConversationThread:
+      type: object
+      required: [id, scopeType, scopeId, createdByUserId, createdAt, updatedAt, sessions]
+      properties:
+        id: { type: string, format: uuid }
+        scopeType: { type: string, enum: [user, agent, workspace] }
+        scopeId: { type: string, format: uuid }
+        createdByUserId: { type: string, format: uuid }
+        title: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        sessions: { type: array, items: { $ref: '#/components/schemas/ConversationThreadSession' } }
+    ConversationThreadAttachResult:
+      allOf:
+        - { $ref: '#/components/schemas/ConversationThread' }
+        - type: object
+          required: [attachedSessionId, changed]
+          properties:
+            attachedSessionId: { type: string, format: uuid }
+            changed: { type: boolean }
     ContextFingerprintView:
       type: object
       description: |
