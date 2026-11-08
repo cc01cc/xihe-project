@@ -2,11 +2,21 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { defineComponent, nextTick } from "vue";
 import BaseModal from "../shared/BaseModal.vue";
+import { createI18n } from "vue-i18n";
 
 const mounted: VueWrapper[] = [];
+const i18n = createI18n({
+    legacy: false,
+    locale: "zh-CN",
+    messages: { "zh-CN": { common: { close: "关闭" } } },
+});
 
 function mountModal(options: Parameters<typeof mount>[1] = {}) {
-    const wrapper = mount(BaseModal, { attachTo: document.body, ...options });
+    const wrapper = mount(BaseModal, {
+        attachTo: document.body,
+        ...options,
+        global: { plugins: [i18n], ...(options.global ?? {}) },
+    });
     mounted.push(wrapper);
     return wrapper;
 }
@@ -42,7 +52,7 @@ describe("BaseModal", () => {
 
     it("renders close button with aria-label", () => {
         const wrapper = mountModal({ props: { show: true, title: "Test" } });
-        expect(wrapper.find('button[aria-label="Close"]').exists()).toBe(true);
+        expect(wrapper.find('button[aria-label="关闭"]').exists()).toBe(true);
     });
 
     it("exposes dialog semantics and names itself through the title heading", () => {
@@ -78,7 +88,7 @@ describe("BaseModal", () => {
             template:
                 '<div><BaseModal :show="true" title="First" /><BaseModal :show="true" title="Second" /></div>',
         });
-        mounted.push(mount(Both, { attachTo: document.body }));
+        mounted.push(mount(Both, { attachTo: document.body, global: { plugins: [i18n] } }));
         const ids = Array.from(
             document.querySelectorAll<HTMLElement>('[data-testid="modal-content"] h2'),
         ).map((heading) => heading.id);
@@ -109,7 +119,7 @@ describe("BaseModal", () => {
         await wrapper.setProps({ show: true });
         // The card does not steal focus on open; a keyboard user is already inside it.
         const closeButton = document.querySelector<HTMLButtonElement>(
-            '[data-testid="modal-content"] button[aria-label="Close"]',
+            '[data-testid="modal-content"] button[aria-label="关闭"]',
         );
         closeButton?.focus();
         expect(document.activeElement).toBe(closeButton);
