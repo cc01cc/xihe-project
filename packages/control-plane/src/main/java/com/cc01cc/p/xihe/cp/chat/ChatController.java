@@ -1765,7 +1765,7 @@ public class ChatController {
                             overflowRetried = true;
                             continue;
                         }
-                        String detail = safeErrorDetail(upstreamCode);
+                        String detail = ChatErrorDetails.safeErrorDetail(upstreamCode);
                         logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode={} upstreamStatus={} durationMs={}",
                                 requestId, sessionId, runId, upstreamCode, response.statusCode(), elapsedMs);
                         healthMonitor.getAgentBreaker().recordFailure();
@@ -1792,7 +1792,7 @@ public class ChatController {
                         logger.error("[LIFECYCLE] service=cp event=chat_run_failed requestId={} sessionId={} runId={} errorCode=CONTEXT_OVERFLOW reason=preflight_failed",
                                 requestId, sessionId, runId);
                         sendRunErrorAndDone(sessionId, requestId, runId, "CONTEXT_OVERFLOW",
-                                safeErrorDetail("CONTEXT_OVERFLOW"), "error", terminalSent);
+                                ChatErrorDetails.safeErrorDetail("CONTEXT_OVERFLOW"), "error", terminalSent);
                         return;
                     }
                     break;
@@ -2082,14 +2082,19 @@ public class ChatController {
                     runId, errorCode);
             return;
         }
-        sseManager.send(sessionId, "error", Map.of(
-                "code", errorCode,
-                "requestId", requestId,
-                "runId", runId,
-                "detail", detail,
-                "retryable", isRetryableError(errorCode),
-                "outcome", outcome,
-                "type", "error"), participantIdFor(runId));
+        // PLAN-0706: the detail key is OMITTED (never null) when CP has no localized copy; the UI
+        // renders humanizeErrorCode(code) instead of an English fallback sentence.
+        Map<String, Object> errorEvent = new java.util.LinkedHashMap<>();
+        errorEvent.put("code", errorCode);
+        errorEvent.put("requestId", requestId);
+        errorEvent.put("runId", runId);
+        if (detail != null && !detail.isBlank()) {
+            errorEvent.put("detail", detail);
+        }
+        errorEvent.put("retryable", isRetryableError(errorCode));
+        errorEvent.put("outcome", outcome);
+        errorEvent.put("type", "error");
+        sseManager.send(sessionId, "error", errorEvent, participantIdFor(runId));
         sseManager.send(sessionId, "done", Map.of(
                 "type", "done",
                 "requestId", requestId,
@@ -2170,43 +2175,6 @@ public class ChatController {
             case "RAG_PROFILE_UNAVAILABLE", "RAG_LEASE_INVALID", "RAG_LEASE_UNAVAILABLE",
                     "RAG_LEASE_MISMATCH", "RAG_QUERY_FAILED", "BASELINE_UNAUTHORIZED" -> code;
             default -> "AGENT_UNAVAILABLE";
-        };
-    }
-
-    private String safeErrorDetail(String code) {
-        return switch (code) {
-            case "LLM_NOT_CONFIGURED" -> "Provider credentials are not configured";
-            case "LLM_CREDENTIALS_INVALID" -> "Provider credentials were rejected";
-            case "LLM_PROVIDER_UNREACHABLE" -> "Provider is unreachable";
-            case "LLM_MODEL_UNAVAILABLE" -> "Selected model is unavailable";
-            case "LLM_REQUEST_REJECTED" -> "The provider rejected the request (message shape or parameters)";
-            case "LLM_TOOL_ROUTE_UNSUPPORTED" -> "The selected provider API type does not support tools";
-            case "AGENT_TIMEOUT" -> "Agent request timed out";
-            case "AGENT_CIRCUIT_OPEN" -> "Agent service is temporarily unavailable";
-            case "SSE_SUBSCRIPTION_REQUIRED" -> "An active SSE subscription is required";
-            case "CHAT_IN_PROGRESS" -> "A chat run is already active for this session";
-            case "IDEMPOTENCY_KEY_CONFLICT" -> "Idempotency-Key was already used for a different request";
-            case "APPROVAL_REJECTED" -> "The approval request was rejected";
-            case "APPROVAL_EXPIRED" -> "The approval request expired";
-            case "APPROVAL_EXECUTOR_UNSUPPORTED" -> "The selected agent executor does not support approval";
-            case "APPROVAL_DECISION_CONFLICT" -> "Approval request already has a different decision";
-            case "AGENT_EVENT_ID_MISMATCH" -> "Agent event does not match the active chat run";
-            // PLAN-0341 Q2 freeze (2026-09-17): second-overflow terminal copy.
-            case "CONTEXT_OVERFLOW" -> "上下文超限，已压缩并重试一次，仍超出限制";
-            // PLAN-0492: the exhausted dimension is carried in errorDetail.
-            case "RUN_BUDGET_EXHAUSTED" -> "本次运行已达到累计预算上限";
-            // PLAN-0493: tier-2 no-progress terminal (signal detail stays in
-            // errorDetail only — window internals never cross the wire).
-            case "RUN_NO_PROGRESS" -> "检测到重复或无进展动作，运行已停止";
-            // PLAN-0416 V12/V6: Agent-side fail-closed reasons (raised before any
-            // provider dispatch), kept distinct so the run terminal stays actionable.
-            case "RAG_PROFILE_UNAVAILABLE" -> "The Run embedding profile is unavailable";
-            case "RAG_LEASE_INVALID" -> "The embedding credential lease is invalid";
-            case "RAG_LEASE_UNAVAILABLE" -> "The embedding credential lease is unavailable";
-            case "RAG_LEASE_MISMATCH" -> "The embedding credential lease does not match this Run";
-            case "RAG_QUERY_FAILED" -> "The embedding provider rejected the RAG query";
-            case "BASELINE_UNAUTHORIZED" -> "Agent instructions baseline is missing or empty";
-            default -> "Agent service unavailable";
         };
     }
 

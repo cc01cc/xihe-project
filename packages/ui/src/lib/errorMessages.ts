@@ -98,6 +98,50 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
             return "生效的 LLM Provider 配置没有可用连接：请在设置中检查 Provider 与连接状态";
         case "UNMAPPED_ERROR":
             return "执行失败，后端未映射具体错误";
+        // PLAN-0706 / BL-152: codes whose CP used to ship an English `detail`; CP now emits only
+        // the stable code, so the UI owns the copy (code names are the CP names).
+        case "LLM_NOT_CONFIGURED":
+            return "模型凭据未配置，请在设置中检查 LLM Provider";
+        case "LLM_CREDENTIALS_INVALID":
+            return "模型凭据被拒绝，请在设置中重新填写密钥";
+        case "LLM_PROVIDER_UNREACHABLE":
+            return "模型提供方暂不可达，请稍后重试";
+        case "AGENT_CIRCUIT_OPEN":
+            return "Agent 服务暂不可用，请稍后重试";
+        case "IDEMPOTENCY_KEY_CONFLICT":
+            return "该请求已处理过（幂等键冲突），请刷新后重试";
+        case "APPROVAL_EXECUTOR_UNSUPPORTED":
+            return "当前 Agent 执行器不支持审批";
+        case "APPROVAL_DECISION_CONFLICT":
+            return "审批请求已有不同决定";
+        case "AGENT_EVENT_ID_MISMATCH":
+            return "Agent 事件与当前运行不匹配，请重试";
+        case "CONTEXT_OVERFLOW":
+            return "上下文超限，已压缩并重试一次，仍超出限制";
+        case "RUN_BUDGET_EXHAUSTED":
+            return "本次运行已达到累计预算上限";
+        case "RUN_NO_PROGRESS":
+            return "检测到重复或无进展动作，运行已停止";
+        case "RAG_PROFILE_UNAVAILABLE":
+            return "本次运行的 embedding 配置不可用";
+        case "RAG_LEASE_INVALID":
+            return "embedding 凭据租约无效";
+        case "RAG_LEASE_UNAVAILABLE":
+            return "embedding 凭据租约不可用";
+        case "RAG_LEASE_MISMATCH":
+            return "embedding 凭据租约与本次运行不匹配";
+        case "RAG_QUERY_FAILED":
+            return "向量检索提供方拒绝了查询，请稍后重试";
+        case "BASELINE_UNAUTHORIZED":
+            return "Agent 指令基线缺失，请联系管理员";
+        case "WORKSPACE_NOT_FOUND":
+            return "工作区不存在或已删除";
+        case "WORKSPACE_DESTROYING":
+            return "工作区正在销毁，暂不可用";
+        case "WORKSPACE_BUSY":
+            return "工作区繁忙，请稍后重试";
+        case "WORKSPACE_MATERIALIZATION_FAILED":
+            return "工作区初始化失败，请稍后重试";
         default:
             break;
     }
@@ -109,8 +153,9 @@ export function humanizeErrorCode(code: string | undefined | null, detail?: stri
     const mapped = mappedErrorCopy(code);
     if (mapped !== null) return mapped;
     const key = (code ?? "").trim();
-    // Prefer mapped Chinese; keep raw detail as secondary for debugging.
-    return detail ? `${key}: ${detail}` : key || "操作失败";
+    // PLAN-0706 / BL-152: never surface a raw (English) backend `detail` to the user. Unknown
+    // codes keep the code visible for support but the copy stays Chinese.
+    return key ? `操作失败，请稍后重试（${key}）` : "操作失败，请稍后重试";
 }
 
 export function chatErrorToastText(code: string | undefined, detail?: string | null): string {
