@@ -413,7 +413,13 @@ watch(isMobileViewport, (mobile) => {
                     <!-- PLAN-0676 T2：SSE 链路三态横幅（limit / disconnected / reconnecting）。
                        这是「事件流出问题但页面看起来正常」的唯一可见出口——t56 的 BL-335 只覆盖
                        了 limit 态，disconnected/reconnecting 之前完全不可见。 -->
+                    <!-- PLAN-0712 / BL-335 dedupe: pageNoticeState is undefined for `limit`
+                        (the shell AppLayout banner owns it); rendering the component with an
+                        undefined state would fall back to the module-level limit flag and
+                        duplicate the shell banner. Render page-level only for the other two
+                        states. -->
                     <SseSubscriberLimitNotice
+                        v-if="pageNoticeState"
                         :state="pageNoticeState"
                         :code="workspaceEvents.connectionErrorCode.value ?? undefined"
                         :workspace-name="auth.workspace?.name"
