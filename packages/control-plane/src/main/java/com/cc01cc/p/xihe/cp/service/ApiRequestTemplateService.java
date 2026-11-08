@@ -544,7 +544,8 @@ public class ApiRequestTemplateService {
                         "connection_revision_changed");
             }
             return resolve(connection, session.getModelName(), UUID.fromString(session.getUserId()),
-                    UUID.fromString(session.getWorkspaceId()), sessionTemplateRef(session));
+                    session.getWorkspaceId() == null ? null : UUID.fromString(session.getWorkspaceId()),
+                    sessionTemplateRef(session));
         }
         if (isModelBindingPartial(session)) {
             throw rebindRequired("Model/connection binding is incomplete; rebind or clear it",

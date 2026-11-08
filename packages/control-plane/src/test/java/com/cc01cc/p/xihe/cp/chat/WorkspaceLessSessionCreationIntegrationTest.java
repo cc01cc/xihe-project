@@ -6,9 +6,11 @@ import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.springframework.data.domain.Pageable;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,6 +24,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,6 +43,8 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
     @Autowired private SessionRepository sessions;
     @Autowired private ChatRunRepository chatRuns;
     @Autowired private SessionBranchRepository branches;
+    @Autowired private ChatSubmissionService chatSubmissionService;
+    @Autowired private ChatController chatController;
     @Autowired private ProviderConnectionRepository providerConnections;
 
     private final HttpClient http = HttpClient.newBuilder()
@@ -166,6 +171,30 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
                 .formatted(principalId, providerId, connectionId, workspaceField);
     }
 
+    @Test
+    void workspaceLessAdmissionPersistsARunWithNullWorkspaceAndAllowsNullSnapshot() {
+        String sessionId = createWorkspaceless();
+        String branchId = rootBranch(sessionId);
+        Session row = sessions.findById(UUID.fromString(sessionId)).orElseThrow();
+        assertNull(row.getAgentPermissionsSnapshot(), "D-686 keeps the snapshot null");
+        ProviderConnection connection = providerConnections.findById(UUID.fromString(connectionId)).orElseThrow();
+        ChatSubmissionService.Submission submission = chatSubmissionService.create(
+                UUID.randomUUID().toString(), sessionId, userId, null, branchId,
+                UUID.randomUUID().toString(), "a".repeat(64), providerId, "gpt-test", "none",
+                connectionId, connection.getRevision(), null, "req-wsless", "hi", null,
+                List.of(), null, null);
+        assertNull(submission.run().getWorkspaceId(),
+                "D-47-05: the run's workspace is the row's NULL, never the interceptor fallback");
+        assertEquals(1, chatRuns.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId, Pageable.ofSize(10)).size());
+    }
+
+    @Test
+    void workspaceLessLeaseCapIsAnExplicitEmptyArray() {
+        com.fasterxml.jackson.databind.JsonNode cap = chatController.leaseCapFor(
+                new SessionParticipantService.Responder(UUID.randomUUID(), "AGENT", UUID.randomUUID()), null);
+        assertTrue(cap.isArray(), "D-697: the cap is an array, not null");
+        assertEquals(0, cap.size(), "D-697: explicit zero capability (never uncapped)");
+    }
     private String createWorkspaceless() {
         Reply created = send(null, "POST", "/api/v1/sessions", body(null));
         assertEquals(201, created.status(), created.body().toString());

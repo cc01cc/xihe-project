@@ -894,8 +894,11 @@ public class ChatController {
             // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
             // message can never create two runs for the same participant.
             Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
-            wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                    content, roster, ccParticipantIds, toTargetIds);
+            if (workspaceId != null) {
+                // Pure-chat Sessions have no roster/cc/TO surface; fan-out requires a workspace tenant.
+                wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
+                        content, roster, ccParticipantIds, toTargetIds);
+            }
             handedOff = true;
             Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
                     userMessage.getId(), runId, null);
@@ -1427,6 +1430,13 @@ public class ChatController {
         if (responder == null || responder.principalId() == null) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_MISSING",
                     "Chat run has no Agent principal to bound the credential lease");
+        }
+        if (workspaceId == null) {
+            // PLAN-0647 D-697: pure-chat has no tool face, so the credential lease cap is an
+            // explicit EMPTY array (zero capability) — never null, which the lease contract reads as
+            // "uncapped". This is a DIFFERENT object from the authorization snapshot: the snapshot
+            // stays null (D-686, "not applicable"), the lease cap is [] (D-697, "zero grants").
+            return objectMapper.createArrayNode();
         }
         return participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId));
     }
