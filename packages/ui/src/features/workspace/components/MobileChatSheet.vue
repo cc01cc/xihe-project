@@ -109,7 +109,7 @@ defineExpose({ toggle });
         -->
             <SheetContent
                 side="bottom"
-                class="h-[75vh] max-h-[75vh] p-0 gap-0 data-[side=bottom]:h-[75vh]"
+                class="h-[min(75dvh,calc(100dvh-2rem))] max-h-[min(75dvh,calc(100dvh-2rem))] p-0 gap-0 data-[side=bottom]:h-[min(75dvh,calc(100dvh-2rem))]"
                 data-testid="mobile-chat-sheet"
                 @pointer-down-outside="onPointerDownOutside"
             >

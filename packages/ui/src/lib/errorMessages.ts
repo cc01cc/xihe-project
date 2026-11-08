@@ -152,6 +152,9 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
 export function humanizeErrorCode(code: string | undefined | null, detail?: string | null): string {
     const mapped = mappedErrorCopy(code);
     if (mapped !== null) return mapped;
+    // PLAN-0706: the raw backend detail is deliberately not surfaced (it may be English);
+    // keep the parameter for callers but make the intent explicit.
+    void detail;
     const key = (code ?? "").trim();
     // PLAN-0706 / BL-152: never surface a raw (English) backend `detail` to the user. Unknown
     // codes keep the code visible for support but the copy stays Chinese.

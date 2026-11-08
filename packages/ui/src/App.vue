@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { provide, onMounted } from "vue";
 import { useTheme } from "./composables/useTheme";
+import { useMobileSafeArea } from "./composables/useMobileSafeArea";
 import { ThemeInjectionKey } from "./types";
 import { useConfigStore } from "./stores/config";
 import { useAuthStore } from "./stores/auth";
@@ -10,6 +11,7 @@ import router from "./router";
 
 const theme = useTheme();
 provide(ThemeInjectionKey, theme);
+useMobileSafeArea();
 
 const authStore = useAuthStore(),
     configStore = useConfigStore(),

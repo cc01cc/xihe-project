@@ -1174,7 +1174,10 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
 
 <template>
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
-    <div class="min-w-0 border-t bg-background px-4 py-2" data-testid="chat-composer">
+    <div
+        class="min-w-0 border-t bg-background px-4 pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
+        data-testid="chat-composer"
+    >
         <div class="mx-auto w-full max-w-4xl space-y-1.5">
             <!--
                 D23-27 / PLAN-0630 M5b (D30-14)：`发送`栏（speak-as 升级版）——本次消息的主要响应者
