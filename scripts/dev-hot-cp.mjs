@@ -56,6 +56,8 @@ const HELP = `usage: node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [-
   --force           目标端口不在听时仍然编译（默认拒绝：没人重启时编译只会把 classes 改脏）
   --javac           单文件增量模式：用 javac 只编改动的 .java（弃 Maven 整模块 8–13 s，实测 0.98 s）
   --classpath-file F  配合 --javac：显式给依赖 classpath 文件（默认从运行中 CP JVM 的 java.class.path 推导）
+  --git-range A..B  配合 --once --javac：从该 git 区间发现改动（lane 合并后的改动在 commit 里、
+                    工作树是干净的，status 看不到 ⇒ 用区间；删除/非 java 仍回退 mvn）
   --trigger-file P  编译**成功后** touch 该文件（配合 spring.devtools.restart.trigger-file：
                     devtools 只在文件变化时重启 ⇒ 1 次干净重启、不会在编译中途重启）
   --i-understand-this-dirties-evidence
@@ -65,7 +67,7 @@ const HELP = `usage: node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [-
 判据：编译后 devtools 应在 CP 日志里打出 'Restarting' / 'Started ...'；本脚本编译结束时自动去
 日志尾部找一次并打印（找不到就打印 WARN 与日志路径）。`;
 
-const args = { stack: 2, debounce: 300, once: false, dryRun: false, restartHint: true, force: false, dirtiesEvidence: false, triggerFile: null, javac: false, classpathFile: null };
+const args = { stack: 2, debounce: 300, once: false, dryRun: false, restartHint: true, force: false, dirtiesEvidence: false, triggerFile: null, javac: false, classpathFile: null, gitRange: null };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i += 1) {
   const a = argv[i];
@@ -86,6 +88,8 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--trigger-file') args.triggerFile = argv[(i += 1)];
   else if (a === '--javac') args.javac = true;
   else if (a === '--classpath-file') args.classpathFile = argv[(i += 1)];
+  else if (a === '--git-range') args.gitRange = argv[(i += 1)];
+  else if (a.startsWith('--git-range=')) args.gitRange = a.slice('--git-range='.length);
   else {
     console.error(`unknown flag: ${a}\n\n${HELP}`);
     process.exit(2);
@@ -196,6 +200,7 @@ function tailForRestart(sinceMs) {
 // 而不是"1243 deletions"式的整树重写。
 const pendingChanges = new Set(); // 绝对路径；只收 .java（单文件 javac 的输入）
 const pendingNonJava = new Set(); // 绝对路径；非 .java（资源/配置）变更 ⇒ 必须回退 mvn（javac 不处理资源）
+const pendingDeleted = new Set(); // 仓库相对路径；删除（含 rename 旧路径）⇒ javac 不处理，回退 mvn（task-256 --git-range）
 
 
 // Spring Boot 4.0 文档（devtools）：trigger file **必须在 classpath 上**，属性值是**纯文件名**（不含路径）。
@@ -293,17 +298,53 @@ function buildJavacOnce(files) {
 function buildOnce() {
   // --javac：只编改动文件；新增/删除/非 .java 变更一律回退 mvn（避免"找不到符号/缺生成类"）
   if (args.javac && pendingChanges.size === 0 && args.once) {
-    // --once 没有 watch 事件 ⇒ 用 git 发现"已改的 src/main 下 .java"（只收工作树已存在文件）
-    const status = spawnSync('git', ['-C', projectRoot, 'status', '--porcelain', '-uall'], { windowsHide: true, encoding: 'utf8' });
-    for (const line of (status.stdout ?? '').split(/\r?\n/)) {
-      const m = line.match(/^[ MARD?]{1,2}\s+(packages\/control-plane\/src\/main\/[^ ]+)$/);
-      if (m) {
-        const rel = m[1];
-        if (rel.endsWith('.java')) pendingChanges.add(join(projectRoot, rel));
-        else pendingNonJava.add(join(projectRoot, rel));
+    const cpMainPrefix = 'packages/control-plane/src/main/';
+    const discover = (rel, status) => {
+      if (status === 'D') {
+        pendingDeleted.add(rel);
+        return;
       }
+      if (rel.endsWith('.java')) pendingChanges.add(join(projectRoot, rel));
+      else pendingNonJava.add(join(projectRoot, rel));
+    };
+    if (args.gitRange) {
+      // task-256：lane 同步后改动已在 merge commit 里、工作树是干净的 ⇒ status 看不到任何改动，
+      // 只会静默退回 mvn（整模块）。从区间发现才能吃到 javac 单文件 1.9–2.4 s 的收益。
+      const diff = spawnSync('git', ['-C', projectRoot, 'diff', '--name-status', '-z', args.gitRange], { windowsHide: true, encoding: 'utf8' });
+      if (diff.status !== 0) {
+        console.error(`[hot-cp] WARN: git diff --name-status ${args.gitRange} 失败（exit ${diff.status}）⇒ 回退 mvn`);
+      } else {
+        const parts = (diff.stdout ?? '').split('\u0000');
+        for (let i = 0; i < parts.length; ) {
+          const token = parts[i];
+          if (!token) { i += 1; continue; }
+          if ((token[0] === 'R' || token[0] === 'C') && parts[i + 1] !== undefined && parts[i + 2] !== undefined) {
+            if (parts[i + 1].startsWith(cpMainPrefix)) discover(parts[i + 1], 'D');
+            if (parts[i + 2].startsWith(cpMainPrefix)) discover(parts[i + 2], 'A');
+            i += 3;
+          } else {
+            const rel = parts[i + 1];
+            if (rel && rel.startsWith(cpMainPrefix)) discover(rel, token[0]);
+            i += 2;
+          }
+        }
+        if (pendingChanges.size > 0 || pendingDeleted.size > 0 || pendingNonJava.size > 0) {
+          console.log(`[hot-cp] --once --git-range ${args.gitRange}：发现 ${pendingChanges.size} 个改动 .java / ${pendingDeleted.size} 个删除 / ${pendingNonJava.size} 个非 java`);
+        }
+      }
+    } else {
+      // --once 没有 watch 事件 ⇒ 用 git 发现"已改的 src/main 下 .java"（只收工作树已存在文件）
+      const status = spawnSync('git', ['-C', projectRoot, 'status', '--porcelain', '-uall'], { windowsHide: true, encoding: 'utf8' });
+      for (const line of (status.stdout ?? '').split(/\r?\n/)) {
+        const m = line.match(/^[ MARD?]{1,2}\s+(packages\/control-plane\/src\/main\/[^ ]+)$/);
+        if (m) {
+          const rel = m[1];
+          if (rel.endsWith('.java')) pendingChanges.add(join(projectRoot, rel));
+          else pendingNonJava.add(join(projectRoot, rel));
+        }
+      }
+      if (pendingChanges.size > 0) console.log(`[hot-cp] --once：git 发现 ${pendingChanges.size} 个改动 .java`);
     }
-    if (pendingChanges.size > 0) console.log(`[hot-cp] --once：git 发现 ${pendingChanges.size} 个改动 .java`);
   }
   if (args.javac && pendingChanges.size > 0) {
     const files = [...pendingChanges];
@@ -311,17 +352,21 @@ function buildOnce() {
     if (pendingNonJava.size > 0) {
       const names = [...pendingNonJava].map((p) => p.replace(`${projectRoot}\\`, '')).join(', ');
       console.warn(`[hot-cp] 非 .java 变更 ${pendingNonJava.size} 个（${names}）⇒ 回退 mvn（javac 不处理资源/配置）`);
+    } else if (pendingDeleted.size > 0) {
+      console.warn(`[hot-cp] 有 ${pendingDeleted.size} 个删除（--git-range）⇒ 回退 mvn 整模块`);
     } else if (missing.length > 0) {
       console.warn(`[hot-cp] 有 ${missing.length} 个改动文件已被删除 ⇒ 回退 mvn 整模块`);
     } else {
       const ok = buildJavacOnce(files);
       pendingChanges.clear();
       pendingNonJava.clear();
+      pendingDeleted.clear();
       if (ok !== null) return ok;
     }
   }
   pendingChanges.clear();
   pendingNonJava.clear();
+  pendingDeleted.clear();
   const startedAt = Date.now();
   console.log(`[hot-cp] running: mvn ${mvnArgs.join(' ')}  (cwd packages/control-plane)`);
   // Windows 上 `mvn` 是 .cmd，spawnSync 直接调用会 ENOENT（exit=null）⇒ 统一走 ComSpec /c。
