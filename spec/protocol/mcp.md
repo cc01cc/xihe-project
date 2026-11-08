@@ -63,18 +63,32 @@ CP 在授权与派发前 MUST 把每个经其转发的工具名解析为 **tool 
 
 ### 3.2 门禁链（当前实现，逐条带锚点）
 
-`tools/call` 的 CP 侧顺序（`cp/mcp/McpProxyController.java`）：
+`tools/call` 的 CP 侧顺序（`cp/mcp/McpProxyController.java`）。**锚点约定**：本节行号以 HEAD `454666e6` 实测为准；行号会随代码移动，**检索时以 `类#方法` 为准**。
 
-1. **上下文加载**：`policy.loadContext(access.userId(), wsId, sessionId)`——一次加载同时供授权判定与工具面解析（`:936`；T1.15）。`userPrincipalOnly = !access.internalService()`（`:937`），即 CP 内部服务调用按「用户主体」口径求值。
-2. **硬保护 + grants 判定**：`policy.allowsByGrant(policyContext, toolName, rewrittenBody, sessionId, userId, wsId, userPrincipalOnly)`（`:938-939`）。内部三步（`PolicyEngine.java:48-69`）：
-   - ① `registry.faceOf(toolName)` → `actionClass`；`extraFaces` 非空时以该次 context 构建注册表（`:53-58`）；
-   - ② `HardGuard.checkWorkspaceResources` + `HardGuard.check`（L0，任何模式/规则不可覆盖）；命中即 `audit.record(..., "policy_hard_deny", ...)` 并拒绝（`:59-65`）；
-   - ③ `GrantAuthorizationService.allows(request)` / `allowsUserOnly(request)`——带作用域的 grants 一跳查表（`:66-68`；语义见 authorization.md §2 第 6 步）。服务为空、上下文为空或 `toolName` 为空时**直接拒绝**（`:50-52`）。
-3. **拒绝三件套（缺一即违约）**（`:938-947`）：① SSE `tool_exec_denied`，payload `{tool, reason: "authorization grant denied"}`（`:940`）；② `audit.record(sessionId, toolName, "authorization_grant_denied", "no matching grant or workspace membership")`（`:941`）；③ 编码 tool-result `TOOL_GRANT_DENIED`（`chat/ToolRefusalCodes.java:50`；`:946`）。**MUST NOT** 返回裸 403——MCP SDK 会把 HTTP 错误折成泛化文本并丢 `refusalCode`，模型无法分类拒绝（0649 follow-up，`:942-945`）。
-4. **策略 verdict**：`policy.evaluateVerdict(...)`（`:948-949`）→ `DENY`/`REQUIRE_APPROVAL`/`ALLOW`。`DENY` → SSE `tool_exec_denied` + `audit.record(..., "deny", reason)` + 同一 `TOOL_GRANT_DENIED` 编码结果（`:952-958`）；`REQUIRE_APPROVAL` → SSE `tool_exec_approval_required` + `audit.record(..., "approval_required", reason)` + 既有 approval 卡面（`:1000-1003`）；`ALLOW` → `audit.record(..., "request", rewritten)`（`:950`）后派发。
-5. **派发前快照**：`policy.faceOf(policyContext, toolName)`（`:1010`）→ `SafePolicySummary.buildSnapshot(verdict, face, policyContext, reusedSessionGrant)`（`:1012-1014`）。快照只挂**实际派发**的调用；deny / 未获批不落账本（`:1006-1008`）。
+**调用面分类闸（在授权判定之前）**：`McpProxyController#handleToolsCall`（`:906`）在 `loadContext`/`allowsByGrant` 之前先按「调用面」分流，命中即直接 403 `FORBIDDEN`、**不进入 grant/verdict 求值**。下面四个前置拒绝点按执行顺序排列：
 
-引擎内部另有 `policy_check`/`policy_verdict`（`PolicyEngine.java:216,249-250,276-277`）、`policy_hard_deny`（`:230`）、`policy_allowed_by_mode`（`:280`）。**制度拒（无 grant）不进 approval、不建 pending approval**（authorization.md §2 第 6 步已冻结）。
+| # | 触发条件 | 审计 `action` | 锚点（现 HEAD） |
+|---|---|---|---|
+| ① | `access == null`（无已认证调用方上下文） | `caller_context_rejected` | `:913-916` |
+| ② | 用户直连且工具不在 UI 工具路径（`!USER_WORKSPACE_FILE_TOOLS.contains(toolName)`，或携带 Agent 执行上下文头 `hasAgentExecutionContext(headers)`） | `caller_tool_denied`（detail `user caller is outside workspace UI tool path`） | `:917-921` |
+| ③ | Agent 调用缺 application Session（`internalService()` 且 `applicationSessionId()` 空） | `agent_session_required` | `:922-925` |
+| ④ | 用户直调 agent-only 工具（`spawn_agent`/`acquire_credential`/`skill_read`） | **无审计行**（现状缺口：三处直接 `return problem(...)`，未 `audit.record`；本文件只记录现状，不宣称已修） | `:939-961`（三条分支分别在 `:941`/`:948`/`:958`） |
+
+- 这四条**不属**第 3 步所说的「裸 403」：它们发生在**授权判定与 verdict 之前**，表达的是「这条调用面路径不给走」，而不是「有没有 grant」。`GitReadToolsTest#userCallerIsRefusedBeforeAnyRuntimeContact:213-221` 把 ② 钉成 L0 断言（403 `FORBIDDEN` + `caller_tool_denied` + 零 Runtime 接触），与本判据不冲突。
+- **用户直连 MCP 与 Agent-mediated 是不同授权路径**：用户直连只被放行 `USER_WORKSPACE_FILE_TOOLS` 白名单内的工具，过了 ② 才进入下文的 grant/verdict 链；Agent-mediated（CP 内部服务 + application Session）才走 grant/verdict 全链。两条路径被分类闸拒绝的成因不同，不得折算成同一条判据。
+
+过了分类闸才进入下列顺序（即 `loadContext` 之后）：
+
+1. **上下文加载**：`policy.loadContext(access.userId(), wsId, sessionId)`——一次加载同时供授权判定与工具面解析（`McpProxyController#handleToolsCall:1041`；T1.15）。`userPrincipalOnly = !access.internalService()`（`:1042`），即 CP 内部服务调用按「用户主体」口径求值。
+2. **硬保护 + grants 判定**：`policy.allowsByGrant(policyContext, toolName, rewrittenBody, sessionId, userId, wsId, userPrincipalOnly)`（`McpProxyController#handleToolsCall:1043-1044`）。内部三步（`PolicyEngine#allowsByGrant:48-69`）：
+   - ① `registry.faceOf(toolName)` → `actionClass`；`extraFaces` 非空时以该次 context 构建注册表（`PolicyEngine#allowsByGrant:53-58`）；
+   - ② `HardGuard.checkWorkspaceResources` + `HardGuard.check`（L0，任何模式/规则不可覆盖）；命中即 `audit.record(..., "policy_hard_deny", ...)` 并拒绝（`PolicyEngine#allowsByGrant:59-65`）；
+   - ③ `GrantAuthorizationService.allows(request)` / `allowsUserOnly(request)`——带作用域的 grants 一跳查表（`PolicyEngine#allowsByGrant:66-68`；语义见 authorization.md §2 第 6 步）。服务为空、上下文为空或 `toolName` 为空时**直接拒绝**（`PolicyEngine#allowsByGrant:50-52`）。
+3. **拒绝三件套（缺一即违约）**（`McpProxyController#handleToolsCall:1043-1052`，即授权判定块）：① SSE `tool_exec_denied`，payload `{tool, reason: "authorization grant denied"}`（`:1045`）；② `audit.record(sessionId, toolName, "authorization_grant_denied", "no matching grant or workspace membership")`（`:1046`）；③ 编码 tool-result `TOOL_GRANT_DENIED`（`chat/ToolRefusalCodes.java:50`；`:1051`）。**MUST NOT** 返回裸 403（**在授权判定与 verdict 拒绝路径上**；本节开头的调用面分类闸四个前置 403 不属本条）——MCP SDK 会把 HTTP 错误折成泛化文本并丢 `refusalCode`，模型无法分类拒绝（0649 follow-up，`:1047-1050`）。
+4. **策略 verdict**：`policy.evaluateVerdict(...)`（`McpProxyController#handleToolsCall:1053-1054` → `PolicyEngine#evaluateVerdict`）→ `DENY`/`REQUIRE_APPROVAL`/`ALLOW`。`DENY` → SSE `tool_exec_denied` + `audit.record(..., "deny", reason)` + 同一 `TOOL_GRANT_DENIED` 编码结果（`:1057-1063`）；`REQUIRE_APPROVAL` → SSE `tool_exec_approval_required` + `audit.record(..., "approval_required", reason)` + 既有 approval 卡面（`:1105-1108`）；`ALLOW` → `audit.record(..., "request", rewritten)`（`:1055`）后派发。
+5. **派发前快照**：`policy.faceOf(policyContext, toolName)`（`:1115`）→ `SafePolicySummary.buildSnapshot(verdict, face, policyContext, reusedSessionGrant)`（`SafePolicySummary#buildSnapshot:1117-1119`）。快照只挂**实际派发**的调用；deny / 未获批不落账本（`:1111-1113`）。
+
+引擎内部另有 `policy_check`/`policy_verdict`（`PolicyEngine#evaluateVerdict:216,249-250,276-277`）、`policy_hard_deny`（`:230`）、`policy_allowed_by_mode`（`:280`）。**制度拒（无 grant）不进 approval、不建 pending approval**（authorization.md §2 第 6 步已冻结）。
 
 MCP 侧审计动作（T2.3 读回契约，新增动作须同批改本节与 [`security/audit.md`](../security/audit.md)）：
 
@@ -121,7 +135,7 @@ MCP 侧审计动作（T2.3 读回契约，新增动作须同批改本节与 [`se
 |---|---|---|---|
 | P-a 只看 | 主体持有 `read`（`WS_VIEWER`+ 或实例 `read`），且为该 workspace 成员 | 真实 Agent run 调 `git_status`（并及 `git_diff`/`git_log`） | tool-result 成功且与工作树实际一致；审计流新增 `tool=git_status action=request`；**无** `authorization_grant_denied` |
 | P-b 只看 | 构造无 `read` 的主体（仅 `workspace:admin` 或空原子）且在该 workspace | 同一 run 调 `git_status` | 无副作用；返回编码 `TOOL_GRANT_DENIED` tool-result（**非裸 403**）；SSE `tool_exec_denied`；审计流新增 `action=authorization_grant_denied`、`detail=no matching grant or workspace membership`；**无** pending approval 行 |
-| P-c 未知工具 | 调用未登记工具名 | `tools/call` | `TOOL_GRANT_DENIED`；审计流有 `policy_hard_deny` 或 `authorization_grant_denied` |
+| P-c 未知工具 | 调用未登记工具名（此处「未登记」指 `ToolFaceRegistry` 无该工具面，**不是**工具目录里不存在；目录中不存在名字走 §2 的显式错误路径：实测 400 `UNKNOWN_TOOL` + 审计 `unknown_tool`，`McpProxyController#handleToolsCall:983-989`） | `tools/call` | `TOOL_GRANT_DENIED`；审计流有 `policy_hard_deny` 或 `authorization_grant_denied` |
 | P-d 目录基线 | 同 P-b 主体 | `tools/list` | 记录当前行为为基线（目录仍含三工具）；v1 不要求过滤，**不判失败** |
 | P-e 回归 | G8 合入后的 L1 波次 | checkpoint capture/restore；`git_diff`/`git_log` 与 CLI 对照 | checkpoint 链绿（V4）；读工具不改 index/refs（前后 `git status` 一致）；运行日志无 `ShadowGit` 路径命中 |
 
