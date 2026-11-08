@@ -146,6 +146,12 @@ final class CpModuleAssignment implements SliceAssignment {
                 || name.equals("BranchPathService") || name.equals("RootBranchBinder")) {
             return "chat";
         }
+        // PLAN-0646 MVP: the conversation-thread seam (entity/repository/service live in the mixed
+        // packages) belongs to the chat/session pipeline; its nested AttachResult is covered because
+        // the name is split at '$' above; without this ArchUnit aborts at import ("unassigned type").
+        if (name.startsWith("ConversationThread") || name.startsWith("ThreadAccess")) {
+            return "chat";
+        }
         throw new IllegalArgumentException("Unassigned mixed-package production type: " + type.getName());
     }
 
