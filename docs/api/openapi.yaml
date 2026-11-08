@@ -1342,6 +1342,13 @@ paths:
         the safe extension in `error.data`; a call without run context falls back to the legacy
         `application/problem+json` body (no extension — the Agent registers no waiter and fails
         closed).
+        `tools/list` item shape (PLAN-0691 T2.1): a plugin tool may carry the optional provenance
+        keys `pluginId`/`version`/`digest`; the item shape of existing (non-plugin) tools is
+        unchanged. When the request carries `X-Chat-Run-Id`, CP serves only plugin tools licensed
+        by that Run's frozen plugin snapshot (T1.6b `chat_runs.plugin_snapshot`) — an unlicensed
+        or unprovable plugin tool is dropped, non-plugin tools are never touched; without a run
+        identity the catalogue is returned unchanged. With `cp.plugin.enabled=false` (shipped
+        default, D-66) the plugin surface does not exist and this filter is a no-op.
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: MCP JSON-RPC response }

@@ -78,6 +78,8 @@ public class McpProxyController {
 
     private static final Logger logger = LoggerFactory.getLogger(McpProxyController.class);
     private final McpToolTimeoutService toolTimeoutService;
+    /** PLAN-0691 T2.1: run-snapshot licence filter for plugin tools in {@code tools/list}. */
+    private final com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter pluginToolCatalogFilter;
     private static final String CP_MCP_SERVER_ID = "__cp__";
     private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
     /** PLAN-0497 M0 冻结：CP-owned credential delivery tool（face=credential_use）。 */
@@ -245,7 +247,8 @@ public class McpProxyController {
             BuildVersion buildVersion,
             com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService,
             com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService,
-            RuntimeCheckpointClient runtimeCheckpointClient) {
+            RuntimeCheckpointClient runtimeCheckpointClient,
+            com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter pluginToolCatalogFilter) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -272,6 +275,7 @@ public class McpProxyController {
         this.buildVersion = buildVersion;
         this.delegationBudgetService = delegationBudgetService;
         this.runtimeCheckpointClient = runtimeCheckpointClient;
+        this.pluginToolCatalogFilter = pluginToolCatalogFilter;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -367,6 +371,14 @@ public class McpProxyController {
             // 未命中兜底共用**同一**合并例程（I1/I4：别名粘滞与 generation 只有一套实现）。
             MappingRefresh refresh =
                     refreshToolMapping(wsId, body, headers, sessionId, access, mapping, allTools);
+
+            // PLAN-0691 T2.1 (design S4 / D-62): serve only the plugin tools the Run was admitted
+            // with (chat_runs.plugin_snapshot via T1.6b); non-plugin items and their shape are
+            // untouched, provenance fields pass through verbatim. A tools/list without a run
+            // identity (workspace-scoped discovery) is a no-op, never a mass drop.
+            com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter.FilterResult pluginSelection =
+                    pluginToolCatalogFilter.apply(headers.getFirst("X-Chat-Run-Id"), allTools);
+            allTools = new ArrayList<>(pluginSelection.tools());
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("tools", allTools);
