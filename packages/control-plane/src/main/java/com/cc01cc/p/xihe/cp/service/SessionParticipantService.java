@@ -293,6 +293,8 @@ public class SessionParticipantService {
         // R7: every participant gets a cursor; history counts as read (same rule as the V92 backfill).
         cursorRepository.save(new SessionParticipantCursor(saved.getId(),
                 lastEventSequence(session.getId())));
+        // PLAN-0624 M2/BL-448: 参与者加入后立即同步 SCHEDULE 投影（同一事务；非 SCHEDULE 为 no-op）。
+        wakeScheduleProjectionService.syncParticipant(saved, session);
         return toView(saved, null, humanDisplayName(saved),
                 isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))), 0);
     }
@@ -378,6 +380,8 @@ public class SessionParticipantService {
             row.setDisabledAt(Boolean.TRUE.equals(request.disabled()) ? Instant.now() : null);
         }
         SessionParticipant saved = participantRepository.save(row);
+        // BL-448: 策略/配置/禁用或角色变更后同步投影；syncParticipant 自身幂等（非 SCHEDULE 即取消）。
+        wakeScheduleProjectionService.syncParticipant(saved, session);
         SessionParticipantCursor savedCursor = cursorRepository.findById(saved.getId()).orElse(null);
         long savedThreshold = savedCursor == null || savedCursor.getLastReadEventSeq() == null
                 ? 0L : savedCursor.getLastReadEventSeq();
