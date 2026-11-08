@@ -1307,7 +1307,7 @@ watch(
          it, so 100% would overflow the column by exactly that row and push the composer (and
          the dock's bottom edge) below the fold. `h-full` stays for hosts where the panel is
          the only child and the parent is not a flex container. -->
-    <div class="flex flex-col h-full min-h-0 flex-1 overflow-hidden">
+    <div class="flex flex-col h-full min-h-0 flex-1 overflow-hidden max-md:overflow-x-hidden max-md:overflow-y-auto max-md:scroll-pb-1">
         <SessionSettingsPanel
             :session-id="sessionId"
             :is-mobile="isMobile"
