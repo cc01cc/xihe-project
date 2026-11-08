@@ -530,7 +530,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await page.getByRole("button", { name: "Files" }).click();
         await expect(page.getByTestId("mobile-files-sheet")).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-mobile-files-sheet.png");
-        await page.getByRole("button", { name: /close/i }).last().click();
+        await page.getByRole("button", { name: /close|关闭/i }).last().click();
         await page.getByRole("button", { name: "Open chat" }).click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
 
