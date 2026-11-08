@@ -148,6 +148,13 @@ class ChatRunContinuationService {
         // `snapshotSource=inherited` records that provenance.
         child.setSkillsSnapshot(
                 com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService.inherited(source.getSkillsSnapshot()));
+        // PLAN-0691 T1.6b (design S4 / D-62): a continuation child continues the Run it continues,
+        // so it inherits the parent's frozen plugin catalog verbatim (D28-39 ② analogue: a binding
+        // attached while the parent ran must not appear mid-continuation). Admission-time capture is
+        // for the roots; the derived paths that re-resolve a capability set re-derive it there.
+        child.setPluginSnapshot(
+                com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService.inherited(
+                        source.getPluginSnapshot()));
         child.setProviderConnectionId(source.getProviderConnectionId());
         child.setConnectionRevision(source.getConnectionRevision());
         child.setContinuationSourceRunId(source.getId().toString());

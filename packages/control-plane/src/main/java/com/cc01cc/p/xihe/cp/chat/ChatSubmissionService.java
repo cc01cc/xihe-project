@@ -82,6 +82,8 @@ public class ChatSubmissionService {
     private final com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots;
     // PLAN-0645 D45-01: the Session's bounded-concurrency admission gate (replaces single-flight).
     private final SessionRunConcurrencyGate runConcurrencyGate;
+    // PLAN-0691 T1.6b: the session plugin catalog frozen in the SAME admission transaction (V143).
+    private final com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -104,7 +106,8 @@ public class ChatSubmissionService {
                                  com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
                                  DelegationBudgetService delegationBudgetService,
                                  com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots,
-                                 SessionRunConcurrencyGate runConcurrencyGate) {
+                                 SessionRunConcurrencyGate runConcurrencyGate,
+                                 com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService pluginCatalogSnapshots) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -131,6 +134,7 @@ public class ChatSubmissionService {
         this.toolCallSnapshotService = toolCallSnapshotService;
         this.skillCatalogSnapshots = skillCatalogSnapshots;
         this.runConcurrencyGate = runConcurrencyGate;
+        this.pluginCatalogSnapshots = pluginCatalogSnapshots;
     }
 
     @Transactional
@@ -973,6 +977,11 @@ public class ChatSubmissionService {
                 && SessionParticipant.KIND_AGENT.equals(admissionResponder.principalKind())
                 ? admissionResponder.principalId() : null;
         chatRun.setSkillsSnapshot(freezeSkillsListing(requestSnapshot, admissionPrincipalId, userId, workspaceId));
+        // PLAN-0691 T1.6b (design S4 / D-62): freeze the Session's attached plugin catalog in the
+        // SAME admission transaction, so an attach/detach that lands while this Run is in flight
+        // cannot change its tool face. The capture is plugin-feature-gated and never blocks a Run
+        // (it answers {} = "not captured" on the feature-off default or on a capture failure).
+        chatRun.setPluginSnapshot(pluginCatalogSnapshots.capture(session.getId()));
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
