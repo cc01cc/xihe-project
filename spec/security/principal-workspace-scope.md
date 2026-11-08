@@ -45,3 +45,5 @@ CP 当前仍使用 User JWT 作为 API caller 身份；Agent runtime 已有 stab
 - Tier-1 状态元数据：沿 provenance **单向向下** + 同 workspace **免 grant**，返回形状 `{sessionId, runId, state, at}`，**无内容字段**；反向、链外、跨 workspace 与 dangling/cyclic provenance 一律 403。
 - Tier-2 内容访问：先适用同一链规则，再经唯一评估内核 `GrantAuthorizationService.allows` 判定；无显式 grant 即 403；workspace 文件内容仍走既有 workspace 文件通道。
 - 内部路由 `GET /internal/v1/queries/tier1/status` 与 `GET /internal/v1/queries/tier2/access`（service Bearer）。评估内核唯一，PLAN-0408 消费本 API，不建第二套（PLAN-0407 spec/authorization-and-derivation.md §5 [d2]）。
+
+- **通信作用域与授权作用域分离（PLAN-0646 MVP, D-671）**：`conversation_threads.scope_type` 的 `user|agent|workspace` 是**通信寻址**，不是授权 scope；不新增授权原子、不进入 `role_bindings`/`grants`。MVP 只解析 `user`/`agent` 两档（按线/主体归属），`workspace` 档在服务层 fail-closed（`403 THREAD_SCOPE_UNRESOLVED`），能力受众（`workspace:message:receive`）与快照/审计审计面属 V4/V5，延后到全量 thread 语义。
