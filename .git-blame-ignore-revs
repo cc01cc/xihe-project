@@ -1,0 +1,8 @@
+# EOL-only 归一提交清单（BL-477）
+#
+# 本文件登记的提交只改行尾（CRLF→LF），不含任何语义改动，用于让 blame 跳过它们。
+# 启用：git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# 2026-11-08 BL-477 末批：54 个 blob 含 CR 的文件工作区归一为 LF
+#   CR 去 3954 个，总字节 451581→447627，LF 行数 8913 不变（纯行尾改动）
+668b1742867fe150c6bedddb898f74cd58eb407b
