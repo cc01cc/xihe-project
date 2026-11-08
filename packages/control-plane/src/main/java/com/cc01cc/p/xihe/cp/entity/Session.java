@@ -25,7 +25,7 @@ public class Session {
     @Column(name = "id", columnDefinition = "uuid")
     private UUID id;
 
-    @Column(name = "workspace_id", nullable = false, length = 36)
+    @Column(name = "workspace_id", nullable = true, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 
