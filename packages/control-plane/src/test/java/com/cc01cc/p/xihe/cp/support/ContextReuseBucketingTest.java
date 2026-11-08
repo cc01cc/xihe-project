@@ -37,6 +37,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>判定码推导是静态文本启发式（去注释 + 行首注解 + 并发/SSE 类型 + 类自己的 @SpringBootTest 参数变体）。
  * 它是 ratchet 不是证明：误判成 per-class 只损失时间；漏判方向由 R2 兜住（未迁移类必须在白名单显式登记）。
+ *
+ * <p><b>R4（task-29，context key 注解 ratchet）</b>：全测试树里会改 TestContext cache key 的 9 类注解
+ * （{@code @DirtiesContext} / {@code @DynamicPropertySource} / {@code @ActiveProfiles} /
+ * {@code @TestPropertySource} / {@code @MockitoBean} / {@code @MockitoSpyBean} / {@code @Import} /
+ * {@code @TestConfiguration} / {@code @SpringBootTest}）必须逐条登记在
+ * {@code context-reuse/context-cache-key-annotations.tsv}。基线由
+ * {@code node scripts/check-context-cache-key-annotations.mjs --write} 重算（禁止手抄），守卫用同一
+ * 口径重扫并双向比对：新增未登记 ⇒ 红（打印 annotation+file）；基线残留行 ⇒ 红（防腐化）；reasonCode
+ * 由注解类别推导，不接受自定义理由；行序必须稳定（annotation,file 升序），防止手插行。</p>
  */
 class ContextReuseBucketingTest {
 
@@ -48,6 +57,29 @@ class ContextReuseBucketingTest {
     static final Path TEST_SOURCES = Path.of("src/test/java");
 
     static final String WHITELIST_RESOURCE = "/context-reuse/per-class-whitelist.tsv";
+
+    /** task-29 R4：全测试树 context cache-key 注解基线（生成脚本产出，禁止手抄）。 */
+    static final String CONTEXT_KEY_RESOURCE = "/context-reuse/context-cache-key-annotations.tsv";
+
+    /**
+     * task-29：会改 Spring TestContext cache key 的 9 类注解 → 推导 reasonCode。
+     *
+     * <p>reasonCode 是**注解类别**的函数（不是人工理由）：这样基线行既不能编造解释，也不需要第二套
+     * 判定逻辑；九类之外出现的新注解类型必须先改这里（并用脚本重算基线），等于每次扩面都要过一道卡。</p>
+     */
+    static final Map<String, String> CONTEXT_KEY_ANNOTATIONS = new LinkedHashMap<>();
+
+    static {
+        CONTEXT_KEY_ANNOTATIONS.put("@SpringBootTest", "suite-context");
+        CONTEXT_KEY_ANNOTATIONS.put("@DirtiesContext", "isolation");
+        CONTEXT_KEY_ANNOTATIONS.put("@TestPropertySource", "property-variant");
+        CONTEXT_KEY_ANNOTATIONS.put("@DynamicPropertySource", "property-variant");
+        CONTEXT_KEY_ANNOTATIONS.put("@ActiveProfiles", "profile-variant");
+        CONTEXT_KEY_ANNOTATIONS.put("@MockitoBean", "bean-override");
+        CONTEXT_KEY_ANNOTATIONS.put("@MockitoSpyBean", "bean-override");
+        CONTEXT_KEY_ANNOTATIONS.put("@Import", "fixture-config");
+        CONTEXT_KEY_ANNOTATIONS.put("@TestConfiguration", "fixture-config");
+    }
 
     static final String BASE_PACKAGE = "com.cc01cc.p.xihe.cp.";
 
@@ -384,5 +416,144 @@ class ContextReuseBucketingTest {
         }
         assertFalse(known.isEmpty(), "判定码枚举不能为空");
         assertEquals(List.of(), unknown, "白名单出现枚举外的判定码：" + unknown);
+    }
+
+    // ------------------------------------------------- R4 (task-29 context-key ratchet)
+
+    record ContextKeyRow(String annotation, String relative, String reason) {
+    }
+
+    /** 基线解析结果：rows = 已登记行；problems = 列数/词汇/文件存在/重复/行序问题（自洽性用）。 */
+    record ContextKeyBaseline(Map<String, ContextKeyRow> rows, List<String> problems) {
+    }
+
+    /**
+     * R4（task-29）：全测试树里会改 TestContext cache key 的 9 类注解必须登记在基线 TSV 里。
+     *
+     * <p>双向比对：新增未登记 ⇒ 红（打印 annotation+file，照卡面要求）；基线残留行 ⇒ 红（防腐化，
+     * 基线只能随源码一起缩）；reasonCode 漂移 ⇒ 红（必须由注解类别推导）。重算基线：
+     * {@code node scripts/check-context-cache-key-annotations.mjs --write}。</p>
+     */
+    @Test
+    void contextCacheKeyAnnotationsAreRegisteredInBaseline() throws IOException {
+        ContextKeyBaseline baseline = loadContextKeyBaseline();
+        Map<String, ContextKeyRow> current = scanContextKeyAnnotations();
+        List<String> added = new ArrayList<>();
+        List<String> stale = new ArrayList<>();
+        List<String> drifted = new ArrayList<>();
+        for (Map.Entry<String, ContextKeyRow> entry : current.entrySet()) {
+            ContextKeyRow registered = baseline.rows().get(entry.getKey());
+            if (registered == null) {
+                added.add(entry.getValue().annotation() + "  " + entry.getValue().relative());
+            } else if (!registered.reason().equals(entry.getValue().reason())) {
+                drifted.add(entry.getValue().annotation() + "  " + entry.getValue().relative()
+                        + " 基线=" + registered.reason() + " 推导=" + entry.getValue().reason());
+            }
+        }
+        for (Map.Entry<String, ContextKeyRow> entry : baseline.rows().entrySet()) {
+            if (!current.containsKey(entry.getKey())) {
+                stale.add(entry.getValue().annotation() + "  " + entry.getValue().relative());
+            }
+        }
+        assertEquals(List.of(), added, "新增的 context-key 注解未登记基线（重算：node scripts/"
+                + "check-context-cache-key-annotations.mjs --write，禁止手抄）：" + added);
+        assertEquals(List.of(), stale, "基线行已无对应注解（防腐化：删除该行或用生成脚本重写）：" + stale);
+        assertEquals(List.of(), drifted, "基线 reasonCode 必须由注解类别推导：" + drifted);
+        assertFalse(current.isEmpty(), "扫描必须命中最少一条注解（否则 R4 口径失效）");
+        Map<String, Integer> counts = new TreeMap<>();
+        for (ContextKeyRow row : current.values()) {
+            counts.merge(row.annotation(), 1, Integer::sum);
+        }
+        System.out.println("[context-reuse] context-key R4：rows=" + current.size()
+                + " baseline=" + baseline.rows().size() + "；注解计数=" + counts);
+    }
+
+    /** R4 自洽性：基线表本身必须能读（3 列 / 9 类词汇 / 推导 reasonCode / 文件存在 / 无重复 / 行序稳定）。 */
+    @Test
+    void contextCacheKeyBaselineIsSelfConsistent() throws IOException {
+        ContextKeyBaseline baseline = loadContextKeyBaseline();
+        assertEquals(List.of(), baseline.problems(), "context-key 基线表不自洽（格式/词汇/文件/行序）："
+                + baseline.problems());
+        assertFalse(baseline.rows().isEmpty(), "空基线会让 R4 永远绿");
+        assertEquals(9, CONTEXT_KEY_ANNOTATIONS.size(), "task-29 固定 9 类注解；扩面必须先改守卫与生成脚本");
+        System.out.println("[context-reuse] context-key 基线自洽（" + baseline.rows().size()
+                + " 行，reasonCode 词汇=" + new LinkedHashSet<>(CONTEXT_KEY_ANNOTATIONS.values()) + "）");
+    }
+
+    private static Map<String, ContextKeyRow> scanContextKeyAnnotations() throws IOException {
+        assertTrue(Files.isDirectory(TEST_SOURCES),
+                "守卫必须在 packages/control-plane 目录下运行（src/test/java 缺失）");
+        Map<String, ContextKeyRow> rows = new LinkedHashMap<>();
+        try (Stream<Path> files = Files.walk(TEST_SOURCES)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java")).sorted().toList()) {
+                String relative = TEST_SOURCES.relativize(file).toString().replace('\\', '/');
+                String stripped = stripComments(Files.readString(file, StandardCharsets.UTF_8));
+                for (Map.Entry<String, String> annotation : CONTEXT_KEY_ANNOTATIONS.entrySet()) {
+                    Pattern pattern = Pattern.compile("^\\s*@(?:[A-Za-z_][A-Za-z0-9_.]*\\.)?"
+                            + annotation.getKey().substring(1) + "\\b", Pattern.MULTILINE);
+                    if (pattern.matcher(stripped).find()) {
+                        rows.put(annotation.getKey() + "\t" + relative,
+                                new ContextKeyRow(annotation.getKey(), relative, annotation.getValue()));
+                    }
+                }
+            }
+        }
+        return rows;
+    }
+
+    private static ContextKeyBaseline loadContextKeyBaseline() throws IOException {
+        try (InputStream stream = ContextReuseBucketingTest.class.getResourceAsStream(CONTEXT_KEY_RESOURCE)) {
+            assertNotNull(stream, "缺少 context-key 基线资源 " + CONTEXT_KEY_RESOURCE);
+            Map<String, ContextKeyRow> rows = new LinkedHashMap<>();
+            List<String> problems = new ArrayList<>();
+            List<String> lines;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                lines = reader.lines().toList();
+            }
+            String previousKey = null;
+            for (int index = 0; index < lines.size(); index++) {
+                String line = lines.get(index);
+                if (line.isBlank() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] columns = line.split("\t", -1);
+                if (columns.length != 3) {
+                    problems.add("line " + (index + 1)
+                            + " 必须 3 列（annotation TAB file TAB reasonCode）：" + line);
+                    continue;
+                }
+                String annotation = columns[0].trim();
+                String relative = columns[1].trim();
+                String reason = columns[2].trim();
+                String derived = CONTEXT_KEY_ANNOTATIONS.get(annotation);
+                if (derived == null) {
+                    problems.add("line " + (index + 1) + " 注解不在 9 类清单：" + annotation);
+                    continue;
+                }
+                if (!derived.equals(reason)) {
+                    problems.add("line " + (index + 1) + " reasonCode 必须=" + derived + "，实际=" + reason);
+                    continue;
+                }
+                if (!relative.endsWith(".java") || relative.contains("\\") || relative.contains("..")) {
+                    problems.add("line " + (index + 1) + " file 必须是 src/test/java 相对路径：" + relative);
+                    continue;
+                }
+                if (!Files.isRegularFile(TEST_SOURCES.resolve(relative))) {
+                    problems.add("line " + (index + 1) + " file 不存在（stale）：" + relative);
+                    continue;
+                }
+                String key = annotation + "\t" + relative;
+                if (rows.putIfAbsent(key, new ContextKeyRow(annotation, relative, reason)) != null) {
+                    problems.add("line " + (index + 1) + " 重复行：" + annotation + "  " + relative);
+                    continue;
+                }
+                if (previousKey != null && previousKey.compareTo(key) >= 0) {
+                    problems.add("line " + (index + 1) + " 行序必须稳定（annotation,file 升序），请用生成脚本重写");
+                }
+                previousKey = key;
+            }
+            return new ContextKeyBaseline(rows, problems);
+        }
     }
 }
