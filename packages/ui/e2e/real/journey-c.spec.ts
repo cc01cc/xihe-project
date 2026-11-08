@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
@@ -5,6 +6,7 @@ import { awaitLatestChatRunCompleted, ensureAgentWorkspaceBinding } from "./help
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 // e2e-host passes XIHE_WORKSPACE_HOST_ROOT to the runtime process but not to
@@ -27,7 +29,6 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/journey-
 // They self-skip under other modes.
 test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     // PLAN-290 constraint: the Agent keeps ONE MCP workspace binding per process
     // — every test must share a single registered user/workspace (journey-a did
@@ -77,7 +78,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
                     const value = await input.inputValue().catch(() => "");
                     return value === text && (await send.isEnabled().catch(() => false));
                 },
-                { timeout: 15000, intervals: [250, 500, 1000, 2000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1000, 2000] },
             )
             .toBe(true);
         // Explicit proof (review round-2 evidence): the async new-chat session switch must
@@ -114,12 +115,14 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         // The tree renders via the reka-ui Tree primitive (ARIA tree/treeitem),
         // not the legacy FileTreeNode div — select by role.
         const node = page.getByRole("treeitem", { name: imageName });
-        await expect(node, "image file appears in the tree").toBeVisible({ timeout: 30000 });
+        await expect(node, "image file appears in the tree").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await node.click();
 
         const preview = page.locator('[data-testid="workspace-image-preview"]');
         await expect(preview, "ImagePreview branch reachable via base64 read").toBeVisible({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -156,19 +159,21 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         seedPage(page, authToken, wsId);
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const chatInput = page.locator('[data-testid="chat-input"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
 
         await chatInput.fill(`XIHE-E2E-WRITE ${fileName} ${content}`);
         await page.locator('[data-testid="chat-send-button"]').click();
-        await expect(modal, "approval modal for large write_file").toBeVisible({ timeout: 120000 });
+        await expect(modal, "approval modal for large write_file").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "h2-modal-truncated.png"),
             fullPage: false,
         });
         await modal.locator('[data-testid="approval-approve"]').click();
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         const approvedPath = path.join(hostDir, fileName);
         await expect
@@ -180,7 +185,10 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
                         return "";
                     }
                 },
-                { message: `expected ${approvedPath} to contain the full content`, timeout: 30000 },
+                {
+                    message: `expected ${approvedPath} to contain the full content`,
+                    timeout: LONG_TIMEOUT_MS,
+                },
             )
             .toContain(content);
         await page.screenshot({
@@ -214,14 +222,16 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         seedPage(page, authToken, wsId);
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const chatInput = page.locator('[data-testid="chat-input"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
 
         // Wait for the previous test's run to fully finish server-side — its
         // LangGraph teardown races the next send with CHAT_IN_PROGRESS (409).
         await awaitLatestChatRunCompleted(request, headers);
         await sendChat(page, `XIHE-E2E-WRITE ${fileName} ${content}`);
-        await expect(modal, "approval modal before refresh").toBeVisible({ timeout: 120000 });
+        await expect(modal, "approval modal before refresh").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // C1: hard refresh kills the SSE. The pending approval must re-render
         // (SSE replay path) — history-loaded messages carry no runId, so the
@@ -232,7 +242,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
 
         // C2/C3: the pending approval is re-renderable and the decision lands.
         await expect(modal2, "pending approval re-rendered after refresh").toBeVisible({
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -240,7 +250,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
             fullPage: false,
         });
         await modal2.locator('[data-testid="approval-approve"]').click();
-        await expect(modal2).toBeHidden({ timeout: 20000 });
+        await expect(modal2).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(
                 async () => {
@@ -250,7 +260,7 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
                         return "";
                     }
                 },
-                { message: "post-recovery approve must land the file", timeout: 30000 },
+                { message: "post-recovery approve must land the file", timeout: LONG_TIMEOUT_MS },
             )
             .toContain(content);
     });
@@ -276,24 +286,24 @@ test.describe("@host Journey C — post-290 hash/preview/recovery", () => {
         seedPage(page, authToken, wsId);
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const chatInput = page.locator('[data-testid="chat-input"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
 
         await awaitLatestChatRunCompleted(request, headers);
         await sendChat(page, `XIHE-E2E-WRITE ${fileName} should never be written`);
-        await expect(modal).toBeVisible({ timeout: 120000 });
+        await expect(modal).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.reload({ waitUntil: "load" });
         const modal2 = page.locator('[data-testid="modal-content"]');
         await expect(modal2, "approval modal re-rendered after refresh").toBeVisible({
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await modal2.locator('[data-testid="approval-reject"]').click();
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         await expect(
             page.locator("text=APPROVAL_REJECTED").first(),
             "terminal APPROVAL_REJECTED visible",
         ).toBeVisible({
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",

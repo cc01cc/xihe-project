@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
@@ -12,6 +13,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
     EVIDENCE_DIR = evidenceDir("journey-d-circuit");
@@ -22,7 +24,7 @@ const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "";
 // assert the warn toast + toast computed style (low-disturbance banner).
 test.describe("@host Journey D — compaction circuit (U4)", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(180000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     test("V3/U4: residual above recovery band opens circuit toast", async ({ page, request }) => {
         test.skip(
@@ -85,7 +87,7 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
                     url.searchParams.get("sessionId") === sessionId
                 );
             },
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await sseReady;
@@ -100,7 +102,7 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
         );
 
         const circuitToast = page.getByText(/自动压缩已暂停|Auto-compaction paused/);
-        await expect(circuitToast.first()).toBeVisible({ timeout: 20000 });
+        await expect(circuitToast.first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const toastEl = circuitToast.first(),
             box = await toastEl.boundingBox();

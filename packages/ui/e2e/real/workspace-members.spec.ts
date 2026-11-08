@@ -1,8 +1,10 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 import { test, expect, type Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -100,9 +102,11 @@ test.describe("@host PLAN-0565 workspace members", () => {
             waitUntil: "load",
         });
 
-        await expect(page.getByTestId("ws-settings-members")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("ws-settings-members")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("ws-members-row").first()).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("ws-members-row")).toHaveCount(1);
         await expect(page.getByTestId("ws-members-panel")).toContainText(owner.username);
@@ -125,9 +129,11 @@ test.describe("@host PLAN-0565 workspace members", () => {
         // 这属于"还没就绪"：等 `toBeEnabled()` 是标准 readiness 纪律（无重试循环、无 waitForTimeout、
         // 不吞断言）。
         const addButton = page.getByTestId("ws-members-add-btn");
-        await expect(addButton).toBeEnabled({ timeout: 15000 });
+        await expect(addButton).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
         await addButton.click();
-        await expect(page.getByTestId("ws-members-row")).toHaveCount(2, { timeout: 15000 });
+        await expect(page.getByTestId("ws-members-row")).toHaveCount(2, {
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("ws-members-panel")).toContainText(editorTarget.username);
 
         // Ruling #6 copy over the real 404 USER_NOT_FOUND.
@@ -155,7 +161,9 @@ test.describe("@host PLAN-0565 workspace members", () => {
         await editorRow.locator('[data-testid^="ws-members-remove-"]').click();
         await expect(page.getByTestId("ws-members-remove-confirm")).toBeVisible();
         await page.getByTestId("ws-members-remove-btn").click();
-        await expect(page.getByTestId("ws-members-row")).toHaveCount(1, { timeout: 15000 });
+        await expect(page.getByTestId("ws-members-row")).toHaveCount(1, {
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // Browser consumer evidence: no JS errors across the whole journey.
         // "Failed to load resource" entries are the browser's automatic logs

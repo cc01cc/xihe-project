@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-339 · 深链预填（`?compose=<base64url(JSON)>`）的 mock E2E。
  *
@@ -11,6 +12,7 @@
  */
 import { expect, test } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl339-session";
 
@@ -45,7 +47,9 @@ test.describe("BL-339 深链预填", () => {
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?compose=${compose}`);
 
         const input = page.getByTestId("chat-input");
-        await expect(input).toHaveValue("来自托盘的预填内容：帮我核对这条绑定", { timeout: 15000 });
+        await expect(input).toHaveValue("来自托盘的预填内容：帮我核对这条绑定", {
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // 立刻清参：URL 不再携带 compose（刷新不会重复预填）。
         await expect.poll(() => new URL(page.url()).searchParams.has("compose")).toBe(false);
@@ -75,7 +79,7 @@ test.describe("BL-339 深链预填", () => {
             `/workspace/workspace-1/chat/${SESSION_ID}?compose=${encodeCompose({ to: ["x"] })}`,
         );
 
-        await expect(page.getByTestId("chat-input")).toHaveValue("", { timeout: 15000 });
+        await expect(page.getByTestId("chat-input")).toHaveValue("", { timeout: LONG_TIMEOUT_MS });
         await expect.poll(() => new URL(page.url()).searchParams.has("compose")).toBe(false);
         expect(chatRequests).toBe(0);
         expect(warnSpy.some((text) => text.includes("[compose-deeplink]"))).toBe(true);

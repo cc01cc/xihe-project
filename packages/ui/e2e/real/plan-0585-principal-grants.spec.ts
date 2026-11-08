@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0610 W5c — **retirement spec** (formerly the PLAN-0585 M2 acceptance for the grant page).
@@ -220,8 +222,8 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         seedContext(page, admin, true);
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
 
-        await expect(page).toHaveURL(/\/settings\/roles$/, { timeout: 20_000 });
-        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: 20_000 });
+        await expect(page).toHaveURL(/\/settings\/roles$/, { timeout: LONG_TIMEOUT_MS });
+        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // The retired page's own test ids must not exist any more.
         await expect(page.getByTestId("principal-grant-view")).toHaveCount(0);
         await expect(page.getByTestId("principal-grant-username")).toHaveCount(0);
@@ -245,12 +247,12 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
 
         await page.goto("/settings/config", { waitUntil: "load" });
         const rolesItem = page.getByTestId("settings-nav-settings-roles");
-        await expect(rolesItem).toBeVisible({ timeout: 20_000 });
+        await expect(rolesItem).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("settings-nav-settings-principal-grants")).toHaveCount(0);
 
         await rolesItem.click();
         await expect(page).toHaveURL(/\/settings\/roles$/);
-        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: 20_000 });
+        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(retiredCalls, "the UI must not call the retired grant surface").toEqual([]);
     });
 
@@ -260,8 +262,8 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         seedContext(page, admin, false);
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
 
-        await expect(page).toHaveURL(/\/settings\/roles$/, { timeout: 20_000 });
-        await expect(page.getByTestId("roles-forbidden")).toBeVisible({ timeout: 20_000 });
+        await expect(page).toHaveURL(/\/settings\/roles$/, { timeout: LONG_TIMEOUT_MS });
+        await expect(page.getByTestId("roles-forbidden")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             path: "test-results/plan-0610-w5c/02-non-admin-bookmark.png",
             fullPage: true,
@@ -275,7 +277,7 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         await page.getByTestId("workspace-toolbar-agents").click();
 
         const link = page.getByTestId("agent-grant-panel-link");
-        await expect(link).toBeVisible({ timeout: 20_000 });
+        await expect(link).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(link).toHaveAttribute("href", "/settings/roles");
         await page.screenshot({
             path: "test-results/plan-0610-w5c/03-f02-link.png",

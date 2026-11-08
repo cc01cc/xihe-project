@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +8,7 @@ import {
     registerAndCreateGuidanceSession,
 } from "./helpers/guidance-session";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0536: the one ordering PLAN-0530 V7a could not produce.
@@ -77,7 +79,7 @@ async function waitForReached(request: APIRequestContext, runId: string) {
                 return ((await response.json()) as { state: string }).state;
             },
             {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [50, 100, 250, 500],
                 message: "Guidance barrier never reached",
             },
@@ -103,13 +105,13 @@ test("@host Guidance race: a held POST returns the frozen 409 after a real cance
         !SERVICE_TOKEN || !E2E_RUN_ID,
         "requires the owned host run (service token + run id)",
     );
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const errors = collectPageErrors(page);
     const { authHeaders, runId } = await registerAndCreateGuidanceSession(page, request);
 
     const panel = page.locator('[data-testid="guidance-panel"]');
-    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     const input = page.locator('[data-testid="guidance-input"]');
     await expect(input).toBeVisible();
     await closeApprovalModal(page);
@@ -121,7 +123,7 @@ test("@host Guidance race: a held POST returns the frozen 409 after a real cance
             (response) =>
                 response.url().includes(`/api/v1/chat/runs/${runId}/guidance`) &&
                 response.request().method() === "POST",
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.locator('[data-testid="guidance-submit"]').click();
 
@@ -147,10 +149,10 @@ test("@host Guidance race: a held POST returns the frozen 409 after a real cance
 
     // V4: visible banner, no phantom list item, input no longer offered.
     const banner = page.locator('[data-testid="guidance-banner-error"]');
-    await expect(banner).toBeVisible({ timeout: 20_000 });
+    await expect(banner).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(banner).toContainText("Run 已结束或不再接受指导");
     await expect(page.locator('[data-testid="guidance-list"] li')).toHaveCount(0);
-    await expect(input).toBeHidden({ timeout: 20_000 });
+    await expect(input).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
     const snapshot = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}/guidance`, {
         headers: authHeaders,
@@ -183,10 +185,12 @@ test("@host Guidance race: an unreleased barrier fails explicitly and leaves no 
         !SERVICE_TOKEN || !E2E_RUN_ID,
         "requires the owned host run (service token + run id)",
     );
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const { runId } = await registerAndCreateGuidanceSession(page, request);
-    await expect(page.locator('[data-testid="guidance-panel"]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-testid="guidance-panel"]')).toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
     await closeApprovalModal(page);
 
     // A 1ms hold guarantees the timeout path without waiting on the test clock.
@@ -195,7 +199,7 @@ test("@host Guidance race: an unreleased barrier fails explicitly and leaves no 
         (response) =>
             response.url().includes(`/api/v1/chat/runs/${runId}/guidance`) &&
             response.request().method() === "POST",
-        { timeout: 60_000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
     await page.locator('[data-testid="guidance-input"]').fill("never released");
     await page.locator('[data-testid="guidance-submit"]').click();

@@ -1,9 +1,11 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { CP_URL } from "./journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./user-grants";
 
 import { AGENT_NAME_PATTERN } from "./agent-name";
+import { LONG_TIMEOUT_MS } from "../../timeouts";
 type AgentAuth = { accessToken: string; workspaceId: string };
 type ToolAction = "read" | "write";
 type PrincipalOptions = {
@@ -236,7 +238,7 @@ export async function openAgentSessionSelector(page: Page): Promise<void> {
         }
     }
     await expect(principalSelect, await describeSessionCreationState(page)).toBeVisible({
-        timeout: 30000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 

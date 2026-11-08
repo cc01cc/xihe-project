@@ -238,7 +238,7 @@ if (batchName) {
 }
 
 const workerCount = process.env.XIHE_E2E_WORKERS ?? '1'
-const readinessTimeoutMs = Number(process.env.XIHE_E2E_READY_TIMEOUT_MS ?? '180000')
+const readinessTimeoutMs = Number(process.env.XIHE_E2E_READY_TIMEOUT_MS ?? '120000')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const uvCommand = process.platform === 'win32' ? 'uv.exe' : 'uv'
 const nodeCommand = process.execPath
@@ -1025,7 +1025,7 @@ async function stopProcess(child) {
 // 规则：① 任一 runner-owned 子进程非零退出（非主动 teardown 期间）⇒ 先把整棵进程树收掉再 exit 1；
 // ② `cleanup()` 带 deadline，超时则强制杀树并 exit，绝不等待。
 const CLEANUP_TIMEOUT_MS = Number(process.env.XIHE_E2E_CLEANUP_TIMEOUT_MS ?? 30_000)
-const BOOT_TIMEOUT_MS = Number(process.env.XIHE_E2E_BOOT_TIMEOUT_MS ?? 300_000)
+const BOOT_TIMEOUT_MS = Number(process.env.XIHE_E2E_BOOT_TIMEOUT_MS ?? 120_000)
 
 /** 主动收尾期间不触发 fail-fast（teardown 杀进程会产生非零退出码，那是预期）。 */
 let shuttingDown = false

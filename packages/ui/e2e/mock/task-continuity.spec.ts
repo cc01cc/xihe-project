@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "task-continuity-session";
 
@@ -58,7 +59,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
 
         test("SSE token events stream correctly", async ({ page }) => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(() => {
                 (window as unknown as Record<string, unknown>).__pushTokenEvent!({
@@ -66,7 +67,9 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
                 });
             });
 
-            await expect(page.locator("text=Planning task")).toBeVisible({ timeout: 5000 });
+            await expect(page.locator("text=Planning task")).toBeVisible({
+                timeout: EXPECT_TIMEOUT_MS,
+            });
         });
     });
 
@@ -108,11 +111,11 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
             });
 
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Usage event should be processed (UI may or may not display it visibly)
             // The key assertion is that the stream completes without error
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         });
     });
 
@@ -135,7 +138,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
             });
 
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             const result = await page.evaluate(async () => {
                 const resp = await fetch("/internal/v1/context/test-session/compact", {
@@ -155,7 +158,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
     test.describe("TaskPlan event structure", () => {
         test("taskplan events have correct structure", async ({ page }) => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Verify event structure by examining the context
             const eventTypes = await page.evaluate(() => {

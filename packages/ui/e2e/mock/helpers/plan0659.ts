@@ -1,4 +1,6 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, type Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS } from "../../timeouts";
 
 /**
  * PLAN-0659 浏览器证据（mock 车道）的共用夹具。只做两件与**判据无关**的页面收拾：
@@ -29,6 +31,6 @@ export async function closeMonitorDockTab(page: Page): Promise<void> {
 export async function openMockSession(page: Page, sessionId: string): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${sessionId}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }

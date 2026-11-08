@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
@@ -12,6 +13,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0492 T0.3 calibration lane: drive representative prompts over the real
 // provider (host lane with XIHE_E2E_REAL_ROUTE=openai-compat) in three shapes:
@@ -75,7 +77,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -136,7 +138,7 @@ async function awaitApprovalGateOrTerminal(
                 if (TERMINAL.test(status)) return (gate = "terminal");
                 return (gate = "running");
             },
-            { timeout: 90_000, intervals: [1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
         )
         .toMatch(/pending|terminal/);
     return gate === "pending" ? "pending" : "terminal";
@@ -214,7 +216,6 @@ async function createPrincipal(
 
 test.describe("@host PLAN-0492 T0.3 token calibration", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(600000);
 
     test.skip(
         !process.env.XIHE_E2E_REAL_XIAOMI_KEY,

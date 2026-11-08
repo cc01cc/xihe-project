@@ -1,6 +1,8 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -56,7 +58,7 @@ for (const route of allRoutes) {
             route.useRegisteredWorkspace && registeredWorkspaceId
                 ? `/workspace/${registeredWorkspaceId}`
                 : route.path;
-        const resp = await page.goto(routePath, { waitUntil: "load", timeout: 15000 });
+        const resp = await page.goto(routePath, { waitUntil: "load", timeout: LONG_TIMEOUT_MS });
         expect(resp?.status()).toBe(200);
         await expect(page.locator("#app")).toBeVisible();
         if (route.useRegisteredWorkspace) {

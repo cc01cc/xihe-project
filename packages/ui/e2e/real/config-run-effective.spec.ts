@@ -1,4 +1,6 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -25,8 +27,6 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
         page,
         request,
     }) => {
-        test.setTimeout(240000);
-
         const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `p0504-${Date.now()}@test.com`,
@@ -79,11 +79,13 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
 
         // 1. Save the whole profile unit through the real settings UI.
         await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await page.getByTestId("config-tab-user").click();
 
         const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: 8000 });
+        await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.getByTestId("llm-profile-connection-select").selectOption(connection.id);
         await page.getByTestId("llm-profile-model-select").selectOption("__custom__");
         await page.getByTestId("llm-profile-model-custom").fill(uniqueModel);
@@ -104,7 +106,9 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
                 model: uniqueModel,
             }),
         );
-        await expect(page.getByText(/默认 LLM 配置已保存/)).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText(/默认 LLM 配置已保存/)).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await page.screenshot({
             scale: "css",
             path: test.info().outputPath("config-run-effective-saved.png"),
@@ -126,7 +130,7 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
                 }
             },
             uniqueModel,
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
 
         // 3. A session without a model binding: its first send resolves the
@@ -140,7 +144,7 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
             title: "P0504 profile default",
         });
         await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const marker = `p0504-${Date.now()}`;
         const [sendRequest] = await Promise.all([

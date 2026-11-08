@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0648 T1.1 @host — **DSH 工作流 1：Agent 编码会话**（读 → 写(审批) → 跑命令 → 收尾）。
  *
@@ -41,6 +42,7 @@ import {
 } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const NONCE = Date.now().toString(36);
 const CHAIN = "wf1-coding";
 const READ_TARGET = "README.md";
@@ -120,7 +122,6 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
     });
 
     test("读 → 写(审批通过) → 跑命令 → 收尾，全链用户可见", async ({ page, request }) => {
-        test.setTimeout(600_000);
         await openChat(page);
         const headers = ctx.headers;
 
@@ -160,7 +161,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
                             return "";
                         }
                     },
-                    { timeout: 60_000, intervals: [500, 1_000] },
+                    { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
                 )
                 .toContain(WRITE_CONTENT);
         }
@@ -185,7 +186,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
             .locator('[data-testid="checkpoint-dialog"], [data-testid^="checkpoint-"]')
             .first();
         await expect(checkpointEntry, "checkpoint 入口可见（捕获发生过）").toBeVisible({
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 });
@@ -202,11 +203,11 @@ async function openChat(page: Page): Promise<void> {
     await page.goto(chatUrl, { waitUntil: "load" });
     const input = page.locator('[data-testid="chat-input"]');
     try {
-        await expect(input, "chat input (first load)").toBeVisible({ timeout: 60_000 });
+        await expect(input, "chat input (first load)").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     } catch {
         await page.goto(chatUrl, { waitUntil: "load" });
         await expect(input, "chat input (after vite re-optimization reload)").toBeVisible({
-            timeout: 90_000,
+            timeout: LONG_TIMEOUT_MS,
         });
     }
 }
@@ -281,7 +282,9 @@ async function startRun(
         // pre-loop：产品自发的 turn1 run（若有）——6s 内等到即复用
         try {
             // 显式 truthy 语义（不依赖 bare poll 的隐式断言）：等到 runId 非空即停。
-            await expect.poll(() => runId, { timeout: 6_000, intervals: [250] }).not.toBe("");
+            await expect
+                .poll(() => runId, { timeout: EXPECT_TIMEOUT_MS, intervals: [250] })
+                .not.toBe("");
         } catch {
             /* 没有自发 run：走自己的发送循环 */
         }
@@ -303,7 +306,7 @@ async function startRun(
                         return body.status ?? "";
                     },
                     {
-                        timeout: 60_000,
+                        timeout: LONG_TIMEOUT_MS,
                         intervals: [500, 1_000],
                         message: `run ${id} must reach a terminal state`,
                     },
@@ -321,13 +324,13 @@ async function startRun(
 
         const input = page.locator('[data-testid="chat-input"]');
         const send = page.locator('[data-testid="chat-send-button"]');
-        await expect(input, "chat input").toBeVisible({ timeout: 30_000 });
+        await expect(input, "chat input").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // 窗口 6 定性：turn2 的发送按钮 32s 始终不亮、全程无 chat POST ⇒ 上一轮 run 尚未
         // 真正 terminal 时，产品自身的 run 守卫锁着 composer。先带 label 等真终态（30s，
         // 失败信息直接指名这一段）；循环里的 8s 只兜"点完又锁回去"的抖动。
         try {
             await logged("send-enabled-after-turn1", async () => {
-                await expect(send).toBeEnabled({ timeout: 30_000 });
+                await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
             });
         } catch {
             /* 进循环继续尝试；循环内每轮失败会打 attempt 日志 */
@@ -336,7 +339,7 @@ async function startRun(
             await input.click().catch(() => {});
             await input.fill(text).catch(() => {});
             try {
-                await expect(send).toBeEnabled({ timeout: 8_000 });
+                await expect(send).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
             } catch {
                 console.log(`[t1.1] attempt ${attempt + 1} send not enabled`);
                 continue;
@@ -345,7 +348,9 @@ async function startRun(
             // 用 watcher+poll 取代 waitForResponse：无论响应何时到都能收，且不与
             // 已被消费的 body 抢（窗口 4 "no response captured" 的根治）。
             try {
-                await expect.poll(() => runId, { timeout: 20_000, intervals: [250] }).not.toBe("");
+                await expect
+                    .poll(() => runId, { timeout: LONG_TIMEOUT_MS, intervals: [250] })
+                    .not.toBe("");
             } catch {
                 /* 本轮没等到：下一次重试 */
             }
@@ -368,9 +373,9 @@ async function approveCard(page: Page): Promise<void> {
     const card = page
         .locator('[data-testid="approval-approve"], [data-testid="approval-allow-session"]')
         .first();
-    await expect(card, "写文件必须弹审批卡片").toBeVisible({ timeout: 180_000 });
+    await expect(card, "写文件必须弹审批卡片").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await card.click();
-    await expect(card).toBeHidden({ timeout: 60_000 });
+    await expect(card).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 }
 
 /** 工作区文件树里出现该文件（先点刷新，避免等 watcher）。 */
@@ -378,11 +383,11 @@ async function expectFileInTree(page: Page, fileName: string): Promise<void> {
     const refresh = page.getByTestId("workspace-file-refresh");
     if (await refresh.isVisible().catch(() => false)) await refresh.click().catch(() => {});
     const tree = page.getByTestId("workspace-file-tree");
-    await expect(tree, "workspace file tree").toBeVisible({ timeout: 30_000 });
+    await expect(tree, "workspace file tree").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(
         tree.getByText(fileName, { exact: false }).first(),
         `文件 ${fileName}`,
-    ).toBeVisible({ timeout: 60_000 });
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 /** 第 N 轮之后必须有一条 assistant 气泡（用户可感知的"有回复"）。 */
@@ -395,7 +400,7 @@ async function expectAssistantMessage(page: Page, label: string): Promise<void> 
                     .last()
                     .innerText()
                     .catch(() => ""),
-            { message: label, timeout: 120_000, intervals: [500, 1_000] },
+            { message: label, timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
         )
         .toMatch(/\S/);
 }

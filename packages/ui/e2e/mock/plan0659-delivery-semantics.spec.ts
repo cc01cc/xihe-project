@@ -14,6 +14,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
 import { closeMonitorDockTab, openMockSession, stubDerivedState } from "./helpers/plan0659";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
@@ -77,14 +78,14 @@ test.describe("PLAN-0659 T1.3 — 投递语义", () => {
         // 抄送：展开并选 Viewer Three。
         await page.getByTestId("cc-expand").click();
         await expect(page.getByTestId("cc-bar"), "CC bar expanded").toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await page.getByTestId("cc-input").fill("Viewer");
         const ccMenu = page.getByTestId("cc-menu");
-        await expect(ccMenu, "CC typeahead opens").toBeVisible({ timeout: 10_000 });
+        await expect(ccMenu, "CC typeahead opens").toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await ccMenu.getByRole("option").first().click();
         await expect(page.getByTestId("cc-chip"), "one CC chip").toHaveCount(1, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("cc-chip").first()).toContainText("Viewer Three");
 
@@ -99,7 +100,9 @@ test.describe("PLAN-0659 T1.3 — 投递语义", () => {
         await page.getByTestId("chat-send-button").click();
 
         // wire 级：发送真的发生了，且投递语义（@ / cc / asParticipantId）在 body 里。
-        await expect.poll(() => Boolean(chatPost.current()), { timeout: 10_000 }).toBe(true);
+        await expect
+            .poll(() => Boolean(chatPost.current()), { timeout: EXPECT_TIMEOUT_MS })
+            .toBe(true);
         const payload = chatPost.current()!;
         expect(payload.sessionId).toBe(SESSION_ID);
         expect(payload.content).toContain("@Member Two");
@@ -112,7 +115,7 @@ test.describe("PLAN-0659 T1.3 — 投递语义", () => {
         );
 
         const delivery = page.getByTestId("message-delivery");
-        await expect(delivery, "投递行随消息渲染").toBeVisible({ timeout: 10_000 });
+        await expect(delivery, "投递行随消息渲染").toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         // 三态：发送 / 被 @（高亮 chip，带 hover 标题）/ 抄送。
         await expect(page.getByTestId("message-delivery-to")).toHaveText("发送→Owner One");

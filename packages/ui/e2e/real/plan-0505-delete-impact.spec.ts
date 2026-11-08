@@ -1,7 +1,9 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://127.0.0.1:${process.env.XIHE_CP_PORT || "12631"}`,
     PROVIDER_ID = "custom-openai-compatible",
@@ -133,7 +135,7 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
         page,
         request,
     }, testInfo) => {
-        test.setTimeout(180000);
+        test.setTimeout(TEST_TIMEOUT_MS);
 
         for (const viewport of VIEWPORTS) {
             await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -239,7 +241,7 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
             const article = page.locator(
                 `[data-testid="provider-connection-${PROVIDER_ID}"][data-connection-key="${CONNECTION_KEY}"]`,
             );
-            await expect(article).toBeVisible({ timeout: 15000 });
+            await expect(article).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await article.getByTestId(`provider-connection-delete-${id}`).click();
             const dialog = page.getByTestId("provider-delete-confirm-modal");
             await expect(dialog).toBeVisible();
@@ -297,7 +299,7 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
             await article.getByTestId(`provider-connection-delete-${id}`).click();
             await expect(dialog).toBeVisible();
             await page.getByTestId("provider-delete-confirm").click();
-            await expect(article).toHaveCount(0, { timeout: 15000 });
+            await expect(article).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
             await expect(page.getByTestId("provider-delete-confirm-modal")).not.toBeVisible();
 
             // V1 read-back: the connection and all three reference kinds are gone.

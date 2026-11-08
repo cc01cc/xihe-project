@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-328 / BL-332 / BL-333 / BL-335 真栈复核（`@host`）。
  *
@@ -16,6 +17,7 @@ import { expect, test } from "@playwright/test";
 
 import { CP_URL } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ retries: 0 });
 
@@ -58,7 +60,7 @@ test("@host BL-332 同 context 两页共享一条 workspace 上游 SSE", async (
     await pageA.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
     await expect(pageA.locator("body")).toBeVisible();
     await expect
-        .poll(() => upstream.length, { timeout: 30_000, intervals: [250, 500, 1_000] })
+        .poll(() => upstream.length, { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] })
         .toBeGreaterThan(0);
 
     const pageB = await context.newPage();
@@ -67,7 +69,7 @@ test("@host BL-332 同 context 两页共享一条 workspace 上游 SSE", async (
 
     // 两页都在线后，给 leader 选举 + 可能的多余连接留观察窗：只允许 1 条上游
     await expect
-        .poll(() => upstream.length, { timeout: 10_000, intervals: [500, 1_000, 2_000] })
+        .poll(() => upstream.length, { timeout: EXPECT_TIMEOUT_MS, intervals: [500, 1_000, 2_000] })
         .toBe(1);
 
     // 判据：#api 上游恰好 1 条，且两页都存在（不是只开了一页）
@@ -83,7 +85,6 @@ test("@host BL-335 第 9 条并发订阅触发上限横幅（9 个独立 context
     browser,
     request,
 }) => {
-    test.setTimeout(240_000);
     const nonce = Date.now().toString(36);
     const registered = await request.post(`${CP_URL}/api/v1/auth/register`, {
         data: {
@@ -130,7 +131,7 @@ test("@host BL-335 第 9 条并发订阅触发上限横幅（9 个独立 context
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
         // 每一页都等到自己的上游请求出现再继续 —— 避免并发导航 ERR_ABORTED（上一轮失败形态）
         await expect
-            .poll(() => upstream, { timeout: 45_000, intervals: [250, 500, 1_000] })
+            .poll(() => upstream, { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] })
             .toBeGreaterThan(0);
         contexts.push(context);
         pages.push(page);
@@ -147,7 +148,10 @@ test("@host BL-335 第 9 条并发订阅触发上限横幅（9 个独立 context
         '[data-testid="sse-subscriber-limit-notice"][data-state="limit"]',
     );
     await expect
-        .poll(() => limitNotice.count(), { timeout: 60_000, intervals: [500, 1_000, 2_000] })
+        .poll(() => limitNotice.count(), {
+            timeout: LONG_TIMEOUT_MS,
+            intervals: [500, 1_000, 2_000],
+        })
         .toBeGreaterThan(0);
     expect(
         limitResponses.length,

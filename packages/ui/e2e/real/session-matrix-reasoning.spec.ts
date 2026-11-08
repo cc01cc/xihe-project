@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R9 @host — reasoning（思考过程）三段同值矩阵。
  *
@@ -24,6 +25,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -178,7 +180,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         // reasoning 载体随 content 入库：等 assistant 消息出现并带齐标记。
         await expect
             .poll(() => assistantContentForRun(request, runId), {
-                timeout: 90_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000],
             })
             .toContain(REASONING_STEP_1);
@@ -225,7 +227,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         );
         await page.goto(workspaceChatPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 诊断（失败时能看到现场）：过程行数量 / 是否漏出原始标签。**只作日志**，不作断言 ——
@@ -240,7 +242,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         );
 
         await expect(reasoningRows.first(), "reasoning 过程行").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // PLAN-0659 T2.1 §2 · T1.2 渲染契约（real 链路，身份只认 data-*）：
         // ① 过程行带 `data-process-kind`；
@@ -274,7 +276,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         await expect(
             page.getByText(FINAL_TEXT, { exact: false }).first(),
             "正文结论可见",
-        ).toBeVisible({ timeout: 30_000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 展开：第二段（只在展开体里）出现 ⇒ 折叠/展开两态可区分（BL-231「展不开」若复现就在这失败）。
         await toggle.click();
@@ -320,16 +322,16 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         );
         await page.goto(workspaceChatPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.reload();
         await expect(page.getByTestId("chat-input"), "composer mounts after reload").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const reasoningRows = page.getByTestId("process-reasoning");
         await expect(reasoningRows.first(), "刷新后 reasoning 过程行仍在").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const toggle = reasoningRows.first().getByTestId("process-row-toggle");
         // 刷新后仍是折叠态（持久折叠 = mock M7 留给 R9 的判据）。
@@ -346,7 +348,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         await expect(
             reasoningRows.first().getByText(REASONING_STEP_2, { exact: false }),
             "展开体与 durable 读面第二行同值",
-        ).toBeVisible({ timeout: 10_000 });
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
     });
 
     /**
@@ -432,7 +434,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         expect(secondRunId, "第二个 runId").toBeTruthy();
         await expect
             .poll(() => assistantContentForRun(request, secondRunId), {
-                timeout: 90_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000],
             })
             .toContain(REASONING_STEP_1);
@@ -467,16 +469,16 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         );
         await page.goto(workspaceChatPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const reasoningRows = page.getByTestId("process-reasoning");
         await expect(reasoningRows, "两条消息各一条 reasoning 过程行").toHaveCount(2, {
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const actors = page.getByTestId("process-row-actor");
         await expect(actors, "混主体线程：每条过程行都带 actor 徽标").toHaveCount(2, {
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // 顺序 = 发言顺序：PRIMARY 的消息在前，第二个 agent 的在后。
         await expect(actors.nth(0)).toHaveAttribute(

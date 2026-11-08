@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R8 @host — 刷新恢复（BL-228 守护）· 多账户 / CC 语境。
  *
@@ -22,6 +23,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -113,7 +115,7 @@ async function loginMemberInBrowser(page: Page): Promise<void> {
         .locator("form")
         .first()
         .evaluate((form) => (form as HTMLFormElement).requestSubmit());
-    await page.waitForURL(/\/workspace/, { timeout: 30_000 });
+    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
 }
 test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
     test.beforeAll(async ({ request }) => {
@@ -217,24 +219,24 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
         seedOwnerPage(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const bubble = page.getByText(messageContent, { exact: true });
-        await expect(bubble, "首屏一条用户气泡").toHaveCount(1, { timeout: 30_000 });
+        await expect(bubble, "首屏一条用户气泡").toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
 
         await page.reload();
         await expect(page.getByTestId("chat-input"), "reload 后 composer").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(
             page.getByText(messageContent, { exact: true }),
             "刷新后仍**恰好一条**（BL-228：不重复不丢）",
-        ).toHaveCount(1, { timeout: 30_000 });
+        ).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
         // 刷新后不得残留流式态（发送按钮仍在 = 不在跑）。
         await expect(
             page.getByTestId("chat-send-button"),
             "回复已收尾，composer 可发送",
-        ).toBeVisible({ timeout: 30_000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // durable 三段同值里的另一段：该 run 已终态。
         await expect
@@ -250,7 +252,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
                     );
                     return TERMINAL.has(status);
                 },
-                { timeout: 90_000, intervals: [500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
             )
             .toBe(true);
     });
@@ -259,18 +261,18 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
         seedOwnerPage(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("cc-chip"), "刷新后草稿里的 cc chips 不复活").toHaveCount(0);
         await page.reload();
         await expect(page.getByTestId("chat-input"), "reload 后 composer").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("cc-chip"), "reload 后仍无 cc chips").toHaveCount(0);
         await expect(
             page.getByText(messageContent, { exact: true }),
             "CC 语境下消息仍恰好一条",
-        ).toHaveCount(1, { timeout: 30_000 });
+        ).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
     });
 
     // BL-237：会话读面 owner-only（`SessionService.requireCurrent` 按 session.user_id 过滤）⇒
@@ -279,15 +281,15 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
         await loginMemberInBrowser(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.reload();
         await expect(page.getByTestId("chat-input"), "reload 后 composer").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(
             page.getByText(messageContent, { exact: true }),
             "参与者在刷新后仍能看到同一条消息",
-        ).toHaveCount(1, { timeout: 30_000 });
+        ).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
     });
 });

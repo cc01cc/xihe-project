@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import {
     createSessionWithPrincipal,
@@ -7,6 +8,12 @@ import { generateE2EPassword } from "./helpers/password";
 import { ensureChatBinding, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
 import { bindSessionViaApi } from "./helpers/session-binding";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -48,7 +55,7 @@ async function sessionId(request: APIRequestContext, auth: Auth): Promise<string
                 id = body.sessions?.[0]?.id ?? "";
                 return id;
             },
-            { timeout: 10000 },
+            { timeout: ACTION_TIMEOUT_MS },
         )
         .not.toBe("");
     return id;
@@ -106,7 +113,7 @@ async function openChat(
     await page.goto(`/workspace/${auth.workspaceId}/chat/${chatSessionId}`, {
         waitUntil: "load",
     });
-    await expect(page.locator("textarea")).toBeVisible({ timeout: 20000 });
+    await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     return chatSessionId;
 }
 
@@ -123,7 +130,7 @@ async function openWorkspaceFromLanding(page: Page, auth: Auth): Promise<void> {
     await page.goto("/workspace", { waitUntil: "load" });
     // PLAN-0608 I6 / PLAN-0614: without a tab context the app shows the workspace picker.
     const pickerItem = page.locator('[data-testid^="workspace-picker-item-"]').first();
-    await pickerItem.waitFor({ state: "visible", timeout: 15000 });
+    await pickerItem.waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
     await pickerItem.click();
 }
 
@@ -148,11 +155,15 @@ test.describe("PLAN-247 Chat availability @host", () => {
             await textarea.fill(text);
             await page.keyboard.press("Enter");
 
-            await expect(page.getByText(/LLM_NOT_CONFIGURED/)).toBeVisible({ timeout: 10000 });
+            await expect(page.getByText(/LLM_NOT_CONFIGURED/)).toBeVisible({
+                timeout: EXPECT_TIMEOUT_MS,
+            });
             await expect(textarea).toHaveValue(text);
             const id = await sessionId(request, auth);
             await expect
-                .poll(async () => (await messages(request, auth, id)).length, { timeout: 5000 })
+                .poll(async () => (await messages(request, auth, id)).length, {
+                    timeout: EXPECT_TIMEOUT_MS,
+                })
                 .toBe(0);
             await expectNoHorizontalOverflow(page);
             await page.screenshot({
@@ -176,7 +187,9 @@ test.describe("PLAN-247 Chat availability @host", () => {
             await textarea.fill(text);
             await page.keyboard.press("Enter");
 
-            await expect(page.getByText(/LLM_CREDENTIALS_INVALID/)).toBeVisible({ timeout: 10000 });
+            await expect(page.getByText(/LLM_CREDENTIALS_INVALID/)).toBeVisible({
+                timeout: EXPECT_TIMEOUT_MS,
+            });
             await expect(textarea).toHaveValue(text);
             const id = await sessionId(request, auth),
                 stored = await messages(request, auth, id);
@@ -232,14 +245,16 @@ test.describe("PLAN-247 Chat availability @host", () => {
                         const body = await response.json();
                         return `${body.modelProvider ?? ""}/${body.modelName ?? ""}`;
                     },
-                    { timeout: 10000 },
+                    { timeout: ACTION_TIMEOUT_MS },
                 )
                 .toBe("deepseek/fake-deepseek");
 
             const text = `success-${Date.now()}`;
             await page.locator("textarea").fill(text);
             await page.keyboard.press("Enter");
-            await expect(page.getByText(text, { exact: true })).toBeVisible({ timeout: 10000 });
+            await expect(page.getByText(text, { exact: true })).toBeVisible({
+                timeout: EXPECT_TIMEOUT_MS,
+            });
             await expect
                 .poll(
                     async () => {
@@ -250,10 +265,10 @@ test.describe("PLAN-247 Chat availability @host", () => {
                                 message.content?.includes("deepseek fake"),
                         ).length;
                     },
-                    { timeout: 30000 },
+                    { timeout: LONG_TIMEOUT_MS },
                 )
                 .toBeGreaterThan(0);
-            await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 30000 });
+            await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
             expect(mcpRequests).toEqual([]);
             await expectNoHorizontalOverflow(page);
             await page.screenshot({
@@ -263,9 +278,11 @@ test.describe("PLAN-247 Chat availability @host", () => {
             });
 
             await page.reload({ waitUntil: "load" });
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
-            await expect(page.getByText(text, { exact: true })).toBeVisible({ timeout: 15000 });
-            await expect(page.getByText(/deepseek fake/)).toBeVisible({ timeout: 15000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+            await expect(page.getByText(text, { exact: true })).toBeVisible({
+                timeout: LONG_TIMEOUT_MS,
+            });
+            await expect(page.getByText(/deepseek fake/)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expectNoHorizontalOverflow(page);
         });
     }
@@ -292,7 +309,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
 
             // No Session yet: the workspace view must still offer both entry points to chat.
             await expect(page.getByTestId("workspace-create-session")).toBeVisible({
-                timeout: 15000,
+                timeout: LONG_TIMEOUT_MS,
             });
             await expect(page.getByTestId("sidebar-new-chat")).toBeVisible();
 
@@ -317,7 +334,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             page,
             request,
         }) => {
-            test.setTimeout(180000);
+            test.setTimeout(TEST_TIMEOUT_MS);
             // BL-148: the real lane has no fake-LLM fixture and no auto-created
             // Session. Provision the Agent principal + Session explicitly, open
             // the Chat route and bind the runner-provided real connection. The
@@ -341,7 +358,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             await ensureChatBinding(page, chatSessionId);
             // Re-enter the route so the store refetches the now-bound session.
             await page.reload({ waitUntil: "load" });
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 30000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
             // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API。
             const id = await sessionId(request, auth);
@@ -369,14 +386,16 @@ test.describe("PLAN-247 Chat availability @host", () => {
                         const body = await response.json();
                         return `${body.modelProvider ?? ""}/${body.modelName ?? ""}`;
                     },
-                    { timeout: 15000 },
+                    { timeout: LONG_TIMEOUT_MS },
                 )
                 .toBe("xiaomi/mimo-v2.6-flash");
 
             const text = `real-${Date.now()}`;
             await page.locator("textarea").fill(text);
             await page.keyboard.press("Enter");
-            await expect(page.getByText(text, { exact: true })).toBeVisible({ timeout: 15000 });
+            await expect(page.getByText(text, { exact: true })).toBeVisible({
+                timeout: LONG_TIMEOUT_MS,
+            });
             await expect
                 .poll(
                     async () => {
@@ -386,10 +405,10 @@ test.describe("PLAN-247 Chat availability @host", () => {
                                 message.role === "ASSISTANT" && (message.content?.length ?? 0) > 0,
                         ).length;
                     },
-                    { timeout: 120000 },
+                    { timeout: LONG_TIMEOUT_MS },
                 )
                 .toBeGreaterThan(0);
-            await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: 60000 });
+            await expect(page.getByText(/Thinking/)).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expectNoHorizontalOverflow(page);
             await page.screenshot({
                 scale: "css",
@@ -419,7 +438,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
                             (message: { runStatus?: string }) => message.runStatus === "ambiguous",
                         );
                     },
-                    { timeout: 30000 },
+                    { timeout: LONG_TIMEOUT_MS },
                 )
                 .toBe(true);
             await expectNoHorizontalOverflow(page);

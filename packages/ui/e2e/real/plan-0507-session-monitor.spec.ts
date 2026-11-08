@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
@@ -20,6 +21,7 @@ import {
     waitForControlPlaneAgentReady,
     type JourneyContext,
 } from "./helpers/journey";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const EVIDENCE_DIR = evidenceDir("plan-0507-session-monitor"),
     PANEL = '[data-testid="session-monitor-panel"]';
@@ -47,7 +49,6 @@ interface MonitorBody {
 //   node scripts/e2e-host.mjs --batch=session-monitor --retries=0
 test.describe("@host PLAN-0507 session monitor panel", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(300000);
 
     let ctx: JourneyContext,
         sessionId = "",
@@ -61,7 +62,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // instead of 180s. Keep this hook's own budget above it (90s) so a
         // describe-scope `test.setTimeout` still cannot mask the helper's
         // descriptive error with an opaque beforeAll timeout.
-        test.setTimeout(90000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         // Agent binds one workspace per process — register exactly once.
         ctx = await registerJourneyUser(request, "plan-0507-monitor");
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
@@ -165,7 +166,9 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
         // The Monitor is the default right-panel view on desktop.
         const panel = page.locator(PANEL);
-        await expect(panel, "monitor panel is the default view").toBeVisible({ timeout: 20000 });
+        await expect(panel, "monitor panel is the default view").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(panel.locator('[data-testid="monitor-activity-empty"]')).toBeVisible();
         await expect(panel.locator('[data-testid="monitor-history-empty"]')).toBeVisible();
         await expect(panel.locator('[data-testid="monitor-agent-global-tag"]')).toBeVisible();
@@ -206,14 +209,14 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
         await expect(panel, "panel shows the same run (short id)").toContainText(
             newest!.runId.slice(0, 8),
-            { timeout: 20000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(panel, "panel shows the outcome count chip").toContainText(
             `${outcomeKey} · ${outcomeCount}`,
-            { timeout: 20000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(panel, "readiness shows the explicit verify fact").toContainText("READY", {
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await capture(page, "desktop-monitor-history.png");
 
@@ -222,7 +225,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
         await expect(panel, "SSE-driven refresh bumps the history count").toContainText(
             `${outcomeKey} · 2`,
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
 
         // Toggle away and back.
@@ -244,9 +247,9 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         await ensureChatReady(page);
 
         const panel = page.locator(PANEL);
-        await expect(panel).toBeVisible({ timeout: 20000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel.locator('[data-testid="monitor-history-item"]').first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // The console must be clean up to this point; the intentional route
         // abort below logs net::ERR_FAILED by design, so the collector is
@@ -260,14 +263,14 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         await expect(
             page.locator('[data-testid="monitor-fetch-failed-banner"]'),
             "failure banner appears while the snapshot stays visible",
-        ).toBeVisible({ timeout: 15000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel.locator('[data-testid="monitor-history-item"]').first()).toBeVisible();
         await capture(page, "desktop-monitor-fetch-failed.png");
 
         await page.unroute(route);
         await page.locator('[data-testid="monitor-fetch-failed-banner"] button').click();
         await expect(page.locator('[data-testid="monitor-fetch-failed-banner"]')).toBeHidden({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 
@@ -286,16 +289,16 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
 
         const panel = page.locator(PANEL),
             chip = page.locator('[data-testid="monitor-connection-chip"]');
-        await expect(panel).toBeVisible({ timeout: 20000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(chip, "failed SSE connect flips the monitor to stale").toHaveText(/已断开/, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.locator('[data-testid="monitor-stale-banner"]')).toBeVisible();
         await capture(page, "desktop-monitor-stale.png");
 
         await page.unroute(route);
         await expect(chip, "transport reconnect restores live").toHaveText(/实时/, {
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 
@@ -311,19 +314,19 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // below the md breakpoint. Opening it selects the monitor tab by default
         // (`mobile-aux-tab-monitor`, aria-selected=true).
         const overflow = page.locator('[data-testid="workspace-toolbar-more-mobile"]');
-        await expect(overflow).toBeVisible({ timeout: 20000 });
+        await expect(overflow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await overflow.click();
         await page.locator('[data-testid="workspace-toolbar-more-monitor"]').click();
         const sheet = page.locator('[data-testid="mobile-changes-sheet"]');
-        await expect(sheet).toBeVisible({ timeout: 10000 });
+        await expect(sheet).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(
             sheet.locator('[data-testid="mobile-aux-tab-monitor"]'),
             "monitor tab is the default mobile aux tab",
         ).toHaveAttribute("aria-selected", "true");
         await expect(sheet.locator(PANEL), "monitor view inside the mobile sheet").toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect(sheet).toContainText("success", { timeout: 20000 });
+        await expect(sheet).toContainText("success", { timeout: LONG_TIMEOUT_MS });
         await capture(page, "mobile-monitor-sheet.png");
 
         await sheet.locator('[data-testid="mobile-aux-tab-changes"]').click();

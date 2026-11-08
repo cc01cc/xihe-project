@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -25,13 +26,13 @@ test.describe("Auth — Real Backend", () => {
 
     test("login page loads and shows form", async ({ page }) => {
         await page.goto("/login");
-        await expect(page.locator("h1")).toBeVisible({ timeout: 8000 });
+        await expect(page.locator("h1")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "real-login-page.png");
     });
 
     test("register page loads and shows form", async ({ page }) => {
         await page.goto("/register");
-        await expect(page.locator("h1")).toBeVisible({ timeout: 8000 });
+        await expect(page.locator("h1")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "real-register-page.png");
     });
 
@@ -50,7 +51,7 @@ test.describe("Auth — Real Backend", () => {
         await page.fill('input[name="email"]', email);
         await page.fill('input[type="password"]', SHARED_PASSWORD);
         await page.click('button[type="submit"]');
-        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
         await expect(page.locator("#app")).toBeAttached();
     });
 
@@ -87,7 +88,7 @@ test.describe("Auth — Real Backend", () => {
         await expect(page.locator('form[aria-busy="true"]')).toBeVisible();
         await expect(page.locator('input[name="email"]')).toBeDisabled();
         await expect(page.locator('input[name="password"]')).toBeDisabled();
-        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
         expect(loginRequests).toBe(1);
     });
 
@@ -104,7 +105,7 @@ test.describe("Auth — Real Backend", () => {
         await page.fill('input[name="email"]', email);
         await page.fill('input[type="password"]', SHARED_PASSWORD);
         await page.click('button[type="submit"]');
-        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
 
         let loginRequests = 0;
         page.on("request", (request) => {
@@ -113,14 +114,14 @@ test.describe("Auth — Real Backend", () => {
             }
         });
         await page.goto("/login");
-        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
         expect(loginRequests).toBe(0);
     });
 
     test("login page fits a 390x844 mobile viewport", async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.goto("/login");
-        await expect(page.locator("h1")).toBeVisible({ timeout: 8000 });
+        await expect(page.locator("h1")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const overflows = await page.evaluate(
             () => document.documentElement.scrollWidth > window.innerWidth,
         );

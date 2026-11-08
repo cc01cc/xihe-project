@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0641 T4.4 (design §6.3 row 4, B6=(a), contract F4): only a real nested repo or a
@@ -69,7 +71,7 @@ test.describe("PLAN-0641 T4.4 nested-repo declare entry (mock)", () => {
         await page.goto("/workspace/workspace-1");
 
         const panel = page.getByTestId("nested-repos-panel");
-        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel).toContainText("Undeclared nested git repositories");
 
         const rows = page.getByTestId("nested-repo-row");
@@ -107,10 +109,10 @@ test.describe("PLAN-0641 T4.4 nested-repo declare entry (mock)", () => {
 
         await rows.nth(0).getByTestId("nested-repo-declare-confirm").click();
         await expect(page.getByText("Declared as an independent root")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         expect(declareBody).toEqual({ path: "vendor/lib" });
         // Success refetches discovery and the declared repo drops out of the section.
-        await expect(panel).toHaveCount(0, { timeout: 15000 });
+        await expect(panel).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
     });
 });

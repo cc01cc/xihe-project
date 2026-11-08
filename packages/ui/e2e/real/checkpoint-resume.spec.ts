@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
@@ -16,6 +17,7 @@ import {
 } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 const AGENT_URL = `http://127.0.0.1:${process.env.XIHE_AGENT_PORT ?? "12632"}`;
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -45,7 +47,7 @@ function psql(sql: string): string {
             ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
             {
                 encoding: "utf8",
-                timeout: 15_000,
+                timeout: LONG_TIMEOUT_MS,
                 windowsHide: true,
                 stdio: ["ignore", "pipe", "ignore"],
             },
@@ -262,7 +264,7 @@ async function waitForAgentPause(
                 };
                 return body.enabled && body.paused && body.stage === stage ? "paused" : "waiting";
             },
-            { timeout: 90_000, intervals: [250, 500, 1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1000, 2000] },
         )
         .toBe("paused");
 }
@@ -292,7 +294,7 @@ async function waitForRunTerminal(
                 current = await runView(request, headers, runId);
                 return current.status;
             },
-            { timeout: 150_000, intervals: [500, 1000, 2000, 3000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000, 2000, 3000] },
         )
         .toMatch(/^(succeeded|partial|failed|cancelled|ambiguous)$/);
     return current;
@@ -313,7 +315,7 @@ async function submitMutationRun(
             content: `XIHE-E2E-RESUME-MUTATE ${tag}`,
             toolMode: "workspace",
         },
-        timeout: 30_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     expect(response.status(), `Chat admission failed: HTTP ${response.status()}`).toBe(202);
     const body = (await response.json()) as { runId?: string };
@@ -389,7 +391,6 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
     page,
     request,
 }) => {
-    test.setTimeout(600_000);
     // PLAN-0510: this probe only runs through the runner's dedicated resume lane
     // (the spec is passed explicitly and e2e-host.mjs derives
     // XIHE_E2E_LLM_MODE=checkpoint_resume). A directory-expanded batch cannot
@@ -464,7 +465,7 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
         await restartCpAndAgent(request, headers);
         await expect
             .poll(async () => runView(request, headers, beforeRunId), {
-                timeout: 45_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500, 1000, 2000],
             })
             .toMatchObject({ status: "ambiguous", errorCode: "CP_RESTARTED" });
@@ -519,7 +520,7 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
         await restartCpAndAgent(request, headers);
         await expect
             .poll(async () => runView(request, headers, afterRunId), {
-                timeout: 45_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500, 1000, 2000],
             })
             .toMatchObject({ status: "ambiguous", errorCode: "CP_RESTARTED" });
@@ -558,7 +559,7 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
                     await approvePending(request, headers, ambiguous.sessionId);
                     return await fakeMutationState();
                 },
-                { timeout: 120_000, intervals: [500, 1000, 2000, 3000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000, 2000, 3000] },
             )
             .toMatchObject({ mutationCount: 1, pendingResponses: 1 });
         closeSse?.();
@@ -566,7 +567,7 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
         await restartCpAndAgent(request, headers);
         await expect
             .poll(async () => runView(request, headers, ambiguousRunId), {
-                timeout: 45_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500, 1000, 2000],
             })
             .toMatchObject({ status: "ambiguous", errorCode: "CP_RESTARTED" });
@@ -583,7 +584,7 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
 
         await expect
             .poll(async () => (await fakeMutationState()).pendingResponses, {
-                timeout: 45_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000, 2000],
             })
             .toBe(0);

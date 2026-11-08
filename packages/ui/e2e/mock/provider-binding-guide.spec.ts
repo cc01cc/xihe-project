@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 /**
  * C1（2026-11-04 用户裁定）：会话 UI 不绑定模型 ⇒ 新建会话是裸会话，发送前必须被引导，
@@ -77,8 +78,10 @@ test.describe("C1: provider binding guide before send", () => {
         await expect(guide).toBeHidden();
 
         // 3) 被拦下的消息自动重发并上屏，回复到达。
-        await expect(page.locator("text=hello from c1")).toBeVisible({ timeout: 5000 });
-        await expect(page.locator("text=bound reply")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=hello from c1")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.locator("text=bound reply")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         expect(bindAttempts).toBe(2);
     });

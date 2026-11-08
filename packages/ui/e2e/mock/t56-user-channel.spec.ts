@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0660 T5.6 —— user-channel（`GET /api/v1/user-events`）+ 已读游标推进的**产品 UI 路径**
  * （mock lane：无栈、无 CP、无 docker、无真实后端）。
@@ -42,6 +43,7 @@ import type { MatrixParticipant } from "./helpers/session-matrix";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：用例 5 故意桩 `403 CURSOR_SELF_ONLY`（验"别人的游标不能推进"的本地化文案），
 // 逐条放行游标端点；本文件已有自己的 `expectNoPageFailures` 断言，公共门禁的 allow 也要同步。
@@ -298,12 +300,14 @@ async function pushUserChannelFrame(page: Page, name: string, payload: unknown):
 /** 进会话 → 打开 dock 的 `members` tab（工具条入口，桌面布局）。 */
 async function openMembersPanel(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("workspace-toolbar-members").click();
     await expect(page.getByTestId("dock-tab-members")).toHaveAttribute("aria-selected", "true", {
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
-    await expect(page.getByTestId("session-participants-panel")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("session-participants-panel")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 }
 
 test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路径", () => {
@@ -327,7 +331,9 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         await openMembersPanel(page);
 
         await expect
-            .poll(async () => (await readUserChannel(page)).requests.length, { timeout: 15_000 })
+            .poll(async () => (await readUserChannel(page)).requests.length, {
+                timeout: LONG_TIMEOUT_MS,
+            })
             .toBe(1);
         const channel = await readUserChannel(page);
         expect(channel.requests[0].url, "user channel wire path").toContain("/api/v1/user-events");
@@ -358,7 +364,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
 
         // 判据：徽标变成服务端的新值（hint 没接线时永远停在 3）。
         await expect(badge, "the hint must drive a roster re-read").toContainText("7", {
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         expect(
             state.participantsRequests,
@@ -401,7 +407,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
 
         const patchRequest = page.waitForRequest(
             (request) => request.method() === "PATCH" && request.url().includes("/cursor"),
-            { timeout: 15_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.getByTestId("participant-cursor-advance").click();
         const request = await patchRequest;
@@ -418,7 +424,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         await expect(
             page.getByTestId(`participant-mention-badge-${OWNER_PARTICIPANT_ID}`),
             "badge derives from the server cursor",
-        ).toHaveCount(0, { timeout: 15_000 });
+        ).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
         expect(
             state.participantsRequests,
             "adopting the PATCH response must not refetch the roster",
@@ -443,7 +449,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         // 可读文案（本地化，不是 CP 英文 detail）。
         await expect(page.getByTestId("participants-error-detail")).toContainText(
             /只能推进你自己的已读位置|only advance your own read position/i,
-            { timeout: 15_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         // 失败不改本地状态：徽标还是服务端的 3，也没多拉名单。
         await expect(badge).toContainText("3");
@@ -455,17 +461,19 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         await setupT56Lane(page);
         await openMembersPanel(page);
         await expect
-            .poll(async () => (await readUserChannel(page)).connections.length, { timeout: 15_000 })
+            .poll(async () => (await readUserChannel(page)).connections.length, {
+                timeout: LONG_TIMEOUT_MS,
+            })
             .toBe(1);
 
         // 开关成员面板不新建连接（订阅属于壳，不属于面板）。
         await page.getByTestId("workspace-toolbar-members").click();
         await expect(page.getByTestId("session-participants-panel")).toBeHidden({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("workspace-toolbar-members").click();
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         expect((await readUserChannel(page)).connections, "still exactly one").toHaveLength(1);
 
@@ -478,7 +486,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         // 关键是**离开了登录后的壳**（AppLayout 卸载）——所以断言"壳里的元素消失"而不是某个具体 URL。
         await expect(page, "left the authenticated shell").toHaveURL(
             /\/(login|onboarding|register)/,
-            { timeout: 15_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(
             page.getByTestId("workspace-toolbar-members"),
@@ -497,7 +505,7 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
                     const channel = await readUserChannel(page);
                     return channel.connections.length === 1 && channel.connections[0].aborted;
                 },
-                { timeout: 15_000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBe(true);
     });

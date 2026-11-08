@@ -38,6 +38,7 @@ import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { CP_URL } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
+import { TEST_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ retries: 0 });
 
@@ -312,7 +313,7 @@ test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspac
     page,
     request,
 }) => {
-    test.setTimeout(120_000); // 4 次整页加载 + dock 展开 + RBAC 面板加载，超默认 30s
+    test.setTimeout(TEST_TIMEOUT_MS); // 4 次整页加载 + dock 展开 + RBAC 面板加载，超默认 30s
     const identity = await newIdentity(request, "p0680-j9");
 
     // ── 前置数据（T3.3 补：r9 实证徽标未渲染的根因是没有任何绑定行）──

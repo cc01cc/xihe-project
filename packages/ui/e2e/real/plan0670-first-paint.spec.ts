@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -16,6 +17,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0670 M2d —— first-paint probe（Lead 2026-11-05 要求）：
@@ -50,7 +52,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 60_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -86,7 +88,7 @@ async function measureFirstPaint(
 ): Promise<{ firstPaintMs: number; rendered: number }> {
     const startedAt = Date.now();
     await page.goto(url);
-    await page.waitForSelector("[data-message-role]", { timeout: 120_000 });
+    await page.waitForSelector("[data-message-role]", { timeout: LONG_TIMEOUT_MS });
     const firstPaintMs = Date.now() - startedAt;
     const rendered = await page.locator("[data-message-role]").count();
     return { firstPaintMs, rendered };
@@ -95,7 +97,6 @@ async function measureFirstPaint(
 test.describe("@host PLAN-0670 M2d first-paint probe", () => {
     test("first message row appears in bounded time for 1k/5k/20k", async ({ page, request }) => {
         test.skip(!process.env.XIHE_E2E_PG_CONTAINER, "requires the isolated e2e-host stack");
-        test.setTimeout(600_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const ctx = await registerJourneyUser(request, "plan0670-firstpaint");
         const wsId = ctx.workspaceId;

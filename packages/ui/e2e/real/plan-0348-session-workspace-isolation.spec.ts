@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0588 V1 / T3.1 — two workspaces, one Agent process, each with its own
  * MCP tool context (supersedes PLAN-0348 V4's fail-closed expectation).
@@ -40,6 +41,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { bindToolCapableChat } from "./helpers/tool-capable-chat";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const AGENT_PORT = Number(process.env.XIHE_AGENT_PORT || "12632");
@@ -49,7 +51,6 @@ const AGENT_LOG = path.join(HOST_ROOT, "logs", "agent.log");
 const REBIND_REJECTION = "MCP workspace context cannot be reused across workspaces";
 
 test.describe.configure({ retries: 0 });
-test.setTimeout(240_000);
 
 test.skip(!RUN_ID, "requires an isolated host stack (scripts/e2e-host.mjs), never a dev stack");
 
@@ -158,7 +159,9 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
     );
     await sendChat(page, "XIHE-E2E-WRITE plan0588-a.txt hello-from-workspace-a");
     await expect
-        .poll(() => latestRunStatus(request, a.headers, a.workspaceId), { timeout: 90_000 })
+        .poll(() => latestRunStatus(request, a.headers, a.workspaceId), {
+            timeout: LONG_TIMEOUT_MS,
+        })
         .toMatch(/^(succeeded|failed|partial|cancelled|ambiguous|awaiting_approval)$/);
     const statusA = await latestRunStatus(request, a.headers, a.workspaceId);
     expect(statusA, "Workspace A must not fail").not.toBe("failed");
@@ -201,7 +204,9 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
         );
         await sendChat(pageB, "XIHE-E2E-WRITE plan0588-b.txt hello-from-workspace-b");
         await expect
-            .poll(() => latestRunStatus(request, b.headers, b.workspaceId), { timeout: 90_000 })
+            .poll(() => latestRunStatus(request, b.headers, b.workspaceId), {
+                timeout: LONG_TIMEOUT_MS,
+            })
             .toMatch(/^(succeeded|failed|partial|cancelled|ambiguous|awaiting_approval|none)$/);
         const statusB = await latestRunStatus(request, b.headers, b.workspaceId);
         // PLAN-0588: B no longer fails closed; it gets its own shard.

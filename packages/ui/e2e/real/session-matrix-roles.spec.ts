@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R3 @host — 三角色会话可见性（OWNER / MEMBER(EDITOR) / VIEWER 各登录断言）。
  *
@@ -24,6 +25,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -275,7 +277,7 @@ test.describe("@host PLAN-0658 R3 三角色会话可见性", () => {
         // 三个独立 browser context 串行登录 + 各自首次加载 SPA：冷栈上默认 30s 预算不够用
         // （实测 30.3s 打满在第一个 `page.goto(..., waitUntil: "load")`）。这里只放宽**用例超时**，
         // 不是放宽断言：下面所有可见性断言一字未改。
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const cases: Array<{ account: Account; role: string; label: string; visible: boolean }> = [
             { account: owner, role: "OWNER", label: "owner", visible: true },
             { account: editor, role: "EDITOR", label: "editor", visible: false },
@@ -290,11 +292,11 @@ test.describe("@host PLAN-0658 R3 三角色会话可见性", () => {
             await expect(
                 page.getByTestId("workspace-route-viewport"),
                 `${item.label} workspace route mounts`,
-            ).toBeVisible({ timeout: 30_000 });
+            ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             const bubble = page.getByText(messageContent, { exact: false });
             if (item.visible) {
                 await expect(bubble.first(), "OWNER 看到消息气泡").toBeVisible({
-                    timeout: 30_000,
+                    timeout: LONG_TIMEOUT_MS,
                 });
             } else {
                 await expect(bubble, `${item.label} 不得看到他人会话内容`).toHaveCount(0);

@@ -1,8 +1,10 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const HOST_ROOT = path.resolve(
@@ -12,7 +14,7 @@ const HOST_ROOT = path.resolve(
 );
 
 test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
-    test.setTimeout(90000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     test("workspace MCP config saves and reloads through the settings UI", async ({
         page,
@@ -88,8 +90,8 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
         await page.goto(`/workspace/${workspace.id}/settings?tab=mcp`, { waitUntil: "load" });
         expect((await loadConfigResponse).status()).toBe(200);
         const editor = page.getByTestId("mcp-config-textarea");
-        await expect(editor).toBeVisible({ timeout: 15000 });
-        await expect.poll(() => editor.inputValue(), { timeout: 15000 }).not.toBe("");
+        await expect(editor).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect.poll(() => editor.inputValue(), { timeout: LONG_TIMEOUT_MS }).not.toBe("");
 
         const config = JSON.parse(await editor.inputValue()) as {
             mcpServers: Record<string, unknown>;

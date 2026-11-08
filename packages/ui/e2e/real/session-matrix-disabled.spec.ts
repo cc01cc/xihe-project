@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R5 @host — 停用主体后的候选 / 成员行过滤（UI）。
  *
@@ -26,6 +27,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -218,12 +220,12 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
         seedOwnerPage(page);
         await page.goto(workspaceChatPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const field = page.getByTestId("speak-as-input");
         await expect(field, "「发送」栏渲染（capabilities.speakAs=true）").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // 候选面语义（`RecipientField.vue:50-74`）：`filtered` 会同时排除**已选中**和停用的项，
         // `open` 由 query 变化驱动。默认预选 PRIMARY ⇒ 先把它的 chip 移除，否则候选只剩空集
@@ -243,7 +245,7 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
             page.getByTestId("speak-as-menu"),
             "候选面打开（有 enabled 候选）",
         ).toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         // 选项的**每项唯一标识是 DOM `id`**（`RecipientField` 的 `optionId()`），
         // `data-testid` 对所有选项都是同一个 `speak-as-option`。
@@ -261,19 +263,19 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
         seedOwnerPage(page);
         await page.goto(workspaceChatPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 打开 dock 的「成员」页签（WorkspaceToolbar → dock tab）。
         await page.getByTestId("workspace-toolbar-members").click();
         await page.getByTestId("dock-tab-members").click();
         await expect(page.getByTestId("session-participants-panel"), "成员面板").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const disabledRow = page.getByTestId(`participant-row-${disabledParticipantId}`);
         await expect(disabledRow, "停用行仍在成员列表（不隐藏）").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(
             page.getByTestId(`participant-disabled-badge-${disabledParticipantId}`),

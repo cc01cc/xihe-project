@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M1：@ typeahead 键盘交互矩阵（mock lane，无栈）。
  *
@@ -13,13 +14,14 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
 async function openComposer(page: import("@playwright/test").Page): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -35,9 +37,13 @@ test.describe("会话矩阵 M1 — @ typeahead 键盘", () => {
         const input = page.getByTestId("chat-input");
         await input.fill("@");
         const menu = page.getByTestId("chat-input-trigger-menu");
-        await expect(menu, "mention listbox opens on @").toBeVisible({ timeout: 10_000 });
+        await expect(menu, "mention listbox opens on @").toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         const options = menu.getByRole("option");
-        await expect(options.first(), "at least one candidate").toBeVisible({ timeout: 10_000 });
+        await expect(options.first(), "at least one candidate").toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         expect(await options.count(), "roster yields multiple candidates").toBeGreaterThanOrEqual(
             2,
         );
@@ -53,9 +59,9 @@ test.describe("会话矩阵 M1 — @ typeahead 键盘", () => {
         const input = page.getByTestId("chat-input");
         await input.fill("@");
         const menu = page.getByTestId("chat-input-trigger-menu");
-        await expect(menu).toBeVisible({ timeout: 10_000 });
+        await expect(menu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const options = menu.getByRole("option");
-        await expect(options.first()).toBeVisible({ timeout: 10_000 });
+        await expect(options.first()).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const initialSelected = await options.evaluateAll((nodes) =>
             nodes.map((node) => node.getAttribute("aria-selected") === "true"),
         );
@@ -82,12 +88,12 @@ test.describe("会话矩阵 M1 — @ typeahead 键盘", () => {
         const input = page.getByTestId("chat-input");
         await input.fill("@");
         const menu = page.getByTestId("chat-input-trigger-menu");
-        await expect(menu).toBeVisible({ timeout: 10_000 });
+        await expect(menu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         // 导航到「Owner One」（成员组第一项）再 Enter。
         await menu.getByText("Owner One").click();
-        await expect(menu, "menu closes after pick").toBeHidden({ timeout: 10_000 });
+        await expect(menu, "menu closes after pick").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         await expect(input, "mention token inserted").toHaveValue(/@Owner One\s*/, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
     });
 
@@ -96,19 +102,25 @@ test.describe("会话矩阵 M1 — @ typeahead 键盘", () => {
         const input = page.getByTestId("chat-input");
         await input.fill("@");
         const menu = page.getByTestId("chat-input-trigger-menu");
-        await expect(menu).toBeVisible({ timeout: 10_000 });
+        await expect(menu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await input.press("Tab");
-        await expect(menu, "Tab closes the menu").toBeHidden({ timeout: 10_000 });
-        await expect(input, "Tab inserts the mention too").toHaveValue(/@\S+/, { timeout: 10_000 });
+        await expect(menu, "Tab closes the menu").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(input, "Tab inserts the mention too").toHaveValue(/@\S+/, {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
     });
 
     test("Esc 关闭候选面但保留草稿文本", async ({ page }) => {
         await openComposer(page);
         const input = page.getByTestId("chat-input");
         await input.fill("@");
-        await expect(page.getByTestId("chat-input-trigger-menu")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("chat-input-trigger-menu")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await input.press("Escape");
-        await expect(page.getByTestId("chat-input-trigger-menu")).toBeHidden({ timeout: 10_000 });
+        await expect(page.getByTestId("chat-input-trigger-menu")).toBeHidden({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(input, "draft survives Esc").toHaveValue("@");
     });
 
@@ -117,7 +129,7 @@ test.describe("会话矩阵 M1 — @ typeahead 键盘", () => {
         const input = page.getByTestId("chat-input");
         await input.fill("@member");
         const menu = page.getByTestId("chat-input-trigger-menu");
-        await expect(menu).toBeVisible({ timeout: 10_000 });
+        await expect(menu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(menu.getByText("Member Two"), "matched candidate").toBeVisible();
         await expect(menu.getByText("Agent Alpha"), "non-matching candidate filtered").toHaveCount(
             0,
@@ -131,23 +143,23 @@ test.describe("会话矩阵 M1 — @ typeahead 键盘", () => {
         await openComposer(page);
         const bar = page.getByTestId("speak-as-bar");
         await expect(bar, "TO bar renders when speakAs capability is true").toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         // 单选栏默认预选会话 PRIMARY（owner）：先确认基线是一枚 chip。
         const chips = page.getByTestId("speak-as-chip");
         await expect(chips, "PRIMARY participant preselected").toHaveCount(1, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(chips.first()).toContainText("Owner One");
         // 再选另一个本人拥有的 agent → 单选取而代之（不是再加一枚）。
         const field = page.getByTestId("speak-as-input");
         await field.fill("Agent Alpha");
         await expect(page.getByTestId("speak-as-menu"), "TO typeahead opens").toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await field.press("Enter");
         await expect(chips, "single mode keeps exactly one chip").toHaveCount(1, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(chips.first(), "new selection replaces the old one").toContainText(
             "Agent Alpha",

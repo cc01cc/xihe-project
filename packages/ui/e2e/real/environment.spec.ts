@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -45,12 +47,12 @@ test.describe("Workspace environment status", () => {
 
         await page.goto("/workspace", { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-environment")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("workspace-toolbar-environment").click();
         await page.waitForURL(
             (url) => url.pathname === `/workspace/${auth.workspaceId}/environment`,
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         expect((await environmentResponse).status()).toBe(200);
 
@@ -83,7 +85,7 @@ test.describe("Workspace environment status", () => {
                         )?.trim() ?? ""
                     );
                 },
-                { timeout: 60000, intervals: [1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1000] },
             )
             .toMatch(/ready|blocked/);
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
@@ -94,10 +96,10 @@ test.describe("Workspace environment status", () => {
 
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready", {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         await page.setViewportSize({ width: 390, height: 844 });

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-311 —— participant（VIEWER）能看见 policy/mode 写按钮、点击后才 403 `WORKSPACE_READ_ONLY`。
  *
@@ -22,6 +23,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const WORKSPACE_ID = "workspace-1";
 const SESSION_ID = "bl311-session";
@@ -118,7 +120,7 @@ async function setupPolicyLane(
 async function openPolicyPanel(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
     await openContextPanel(page);
-    await expect(page.getByTestId("session-policy-mode")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("session-policy-mode")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", () => {
@@ -210,7 +212,9 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
         // 改用"重新加载"这一产品级事实：**如果发过写请求**，服务端模式会变；现在重新拉投影后
         // 仍是 auto（写请求断言已为 0），两者互为印证。
         await page.reload();
-        await expect(page.getByTestId("session-settings-summary")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByTestId("session-settings-summary")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // 重载后 dock 的收起/展开与活动标签是**持久化**的（`xihe-layout-ws:<id>`），所以这里
         // 不能假设"面板一定没开、点一下摘要行就行"；`openContextPanel` 的幂等分支正好覆盖两种情况。
         await openContextPanel(page);
@@ -229,14 +233,14 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
         const writeRequest = page.waitForRequest(
             (request) =>
                 request.method() === "POST" && request.url().includes("/api/v1/policy/mode"),
-            { timeout: 15_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await select.selectOption("manual");
         await writeRequest;
 
         // 写成功 ⇒ 横幅消失、summary 变「手动审批」，写 body 只带 sessionId+mode。
         await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0, {
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("session-settings-summary-approval")).toContainText(
             /手动|manual/i,
@@ -258,7 +262,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
         // 安全动作：OWNER 一键关闭自动放行仍然生效。
         await close.click();
         await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0, {
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         expect(state.writeRequests).toHaveLength(1);
         expect(state.writeRequests[0].mode).toBe("manual");

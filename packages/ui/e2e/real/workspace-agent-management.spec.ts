@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,6 +11,7 @@ import {
     replaceWorkspaceRole,
     seedUserGrantPermissions,
 } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -29,7 +31,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 

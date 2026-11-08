@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 // PLAN-0590 — Agent run-config isolation across two workspaces in one process.
 //
 // Target invariant (default mode): a chat run in workspace B resolves config from
@@ -32,6 +33,7 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 /** A-only workspace-layer values; B's workspace layer stays empty. */
 const A_MAX_INPUT_TOKENS = 98765;
@@ -221,7 +223,9 @@ async function runPlainChat(
 ): Promise<PlainChatResult> {
     await seedPage(page, ctx);
     await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-    await page.locator('[data-testid="chat-input"]').waitFor({ state: "visible", timeout: 20000 });
+    await page
+        .locator('[data-testid="chat-input"]')
+        .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
     await ensureChatBinding(page, sessionId);
 
     // 1) read-only SSE subscription (page-side; only reads the event stream).
@@ -303,7 +307,6 @@ async function runPlainChat(
 
 test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one process)", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(300000);
 
     let wsA: JourneyContext, wsB: JourneyContext;
     let principalA = "",
@@ -312,7 +315,7 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         sessionB = "";
 
     test.beforeAll(async ({ request }) => {
-        test.setTimeout(180000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         wsA = await registerJourneyUser(request, "plan-0590-ws-a");
         wsB = await registerJourneyUser(request, "plan-0590-ws-b");
         expect(wsA.workspaceId).not.toBe(wsB.workspaceId);

@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -28,7 +29,9 @@ test.describe("Cross-Module — Workspace", () => {
 
         await page.goto(`/workspace/${workspaceId}`);
 
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({ timeout: 7000 });
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         expect(page.url()).toContain("/workspace");
     });
 
@@ -38,14 +41,16 @@ test.describe("Cross-Module — Workspace", () => {
 
         await page.goto(`/workspace/${workspaceId}`);
 
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({ timeout: 8000 });
-        await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("unauthenticated user is redirected to login", async ({ page }) => {
         const { workspaceId } = await registerUser("ws-anon");
         await page.goto(`/workspace/${workspaceId}`);
-        await page.waitForURL(/\/login/, { timeout: 5000 });
+        await page.waitForURL(/\/login/, { timeout: ACTION_TIMEOUT_MS });
         expect(page.url()).toContain("/login");
     });
 });

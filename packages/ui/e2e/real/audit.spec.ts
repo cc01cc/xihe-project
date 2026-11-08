@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
@@ -10,6 +11,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -125,7 +127,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
     page,
     request,
 }, testInfo) => {
-    test.setTimeout(180000);
+    test.setTimeout(TEST_TIMEOUT_MS);
     const auth = await register(request);
     const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
         name: "AuditReadFixture",
@@ -155,8 +157,10 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
 
     await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
     const textarea = page.locator("textarea");
-    await expect(textarea).toBeVisible({ timeout: 20000 });
-    await expect.poll(() => agentLlmReadiness(request, auth), { timeout: 60000 }).toBe("ready");
+    await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect
+        .poll(() => agentLlmReadiness(request, auth), { timeout: LONG_TIMEOUT_MS })
+        .toBe("ready");
 
     const chatResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
@@ -169,11 +173,13 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
     await sendChat(page, "今天天气怎么样？");
     await chatResponse;
 
-    await expect.poll(() => findSessionId(request, auth), { timeout: 20000 }).toBe(sessionId);
+    await expect
+        .poll(() => findSessionId(request, auth), { timeout: LONG_TIMEOUT_MS })
+        .toBe(sessionId);
 
     // 1) the chat run becomes a session-scoped `chat_run` entry of the audit view
     await expect
-        .poll(() => findChatRunEntry(request, auth, sessionId), { timeout: 60000 })
+        .poll(() => findChatRunEntry(request, auth, sessionId), { timeout: LONG_TIMEOUT_MS })
         .not.toBeNull();
     const entry = (await findChatRunEntry(request, auth, sessionId)) as AuditEntry;
     expect(entry.type).toBe("chat_run");
@@ -186,7 +192,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
                 const detail = await findEntryDetail(request, auth, entry);
                 return detail?.timeline.length ?? 0;
             },
-            { timeout: 90000, message: "chat_run_history must hold the terminal event" },
+            { timeout: LONG_TIMEOUT_MS, message: "chat_run_history must hold the terminal event" },
         )
         .toBeGreaterThan(0);
 
@@ -204,7 +210,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
     await listResponse;
 
     const entryRow = page.getByTestId(`settings-audit-entry-${entry.id}`);
-    await expect(entryRow).toBeVisible({ timeout: 20000 });
+    await expect(entryRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const filterResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
@@ -240,7 +246,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
 
     await expect(page.getByTestId("settings-audit-events")).toContainText(
         /terminal|cancel|recovery|restore/,
-        { timeout: 10000 },
+        { timeout: ACTION_TIMEOUT_MS },
     );
     // The detail pane labels the entry as a chat run while the list keeps its rows.
     await expect(page.getByText("对话运行").last()).toBeVisible();

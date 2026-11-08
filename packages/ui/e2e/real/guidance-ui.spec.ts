@@ -1,7 +1,14 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { CP_URL, registerAndCreateGuidanceSession } from "./helpers/guidance-session";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
@@ -27,13 +34,13 @@ async function registerAndCreateSession(
 
 test("@host Guidance UI entry submits and projects pending status", async ({ page, request }) => {
     test.skip(LLM_MODE !== "approval", "requires deterministic approval tool-call fixture");
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const { authHeaders, runId } = await registerAndCreateSession(page, request);
 
     // The GuidancePanel should now be visible (run is awaiting_approval).
     const panel = page.locator('[data-testid="guidance-panel"]');
-    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
     // Guidance input should be visible and enabled.
     const input = page.locator('[data-testid="guidance-input"]');
@@ -59,7 +66,7 @@ test("@host Guidance UI entry submits and projects pending status", async ({ pag
 
     // The list should show the pending item.
     const list = page.locator('[data-testid="guidance-list"]');
-    await expect(list).toBeVisible({ timeout: 5_000 });
+    await expect(list).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     const item = list.locator('[data-status="pending"]');
     await expect(item).toBeVisible();
     await expect(item).toContainText("After the approved deletion");
@@ -68,7 +75,7 @@ test("@host Guidance UI entry submits and projects pending status", async ({ pag
     await page.getByTestId("pending-approval-reopen-pill").click();
     const modal = page.locator('[data-testid="modal-content"]');
     await modal.locator('[data-testid="approval-approve"]').click();
-    await expect(modal).toBeHidden({ timeout: 20_000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
     // Poll for the consumed status via CP snapshot.
     let consumed = false;
@@ -94,15 +101,17 @@ test("@host Guidance UI entry submits and projects pending status", async ({ pag
     for (let round = 0; round < 4; round += 1) {
         const nextApproval = modal.locator('[data-testid="approval-reject"]');
         const visible = await nextApproval
-            .waitFor({ state: "visible", timeout: 10_000 })
+            .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS })
             .then(() => true)
             .catch(() => false);
         if (!visible) break;
         await nextApproval.click();
-        await expect(modal).toBeHidden({ timeout: 20_000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
     }
 
-    await expect(page.locator('[data-status="consumed"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-status="consumed"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect(page.locator('[data-status="consumed"]')).toContainText("已纳入下一轮");
 
     const consumedScreenshot = await captureEvidence(page, "guidance-ui-consumed.png");
@@ -114,12 +123,12 @@ test("@host Guidance UI hides input after cancel and an API rejection adds no ph
     request,
 }) => {
     test.skip(LLM_MODE !== "approval", "requires deterministic approval tool-call fixture");
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const { authHeaders, runId } = await registerAndCreateSession(page, request);
 
     const panel = page.locator('[data-testid="guidance-panel"]');
-    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
     // Dismiss the approval modal temporarily so the independent Guidance panel is reachable.
     await page
@@ -137,7 +146,7 @@ test("@host Guidance UI hides input after cancel and an API rejection adds no ph
         data: { reason: "test_cancel_for_rejection" },
     });
     expect(cancel.status(), await cancel.text()).toBe(200);
-    await expect(input).toBeHidden({ timeout: 20_000 });
+    await expect(input).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
     // V7b: a direct CP submission is rejected and the visible list gains no phantom item.
     const rejected = await request.post(`${CP_URL}/api/v1/chat/runs/${runId}/guidance`, {

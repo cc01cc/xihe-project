@@ -1,4 +1,5 @@
 import { type Page } from "@playwright/test";
+import { ACTION_TIMEOUT_MS } from "../../timeouts";
 
 /**
  * Workspace-first landing never auto-creates a Session (PLAN-0328 M3 T3.7).
@@ -18,7 +19,7 @@ export async function ensureWorkspaceChat(page: Page): Promise<void> {
 
     const pick = (locator: typeof textarea, tag: string) =>
         locator
-            .waitFor({ state: "visible", timeout: 10000 })
+            .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS })
             .then(() => tag)
             .catch(() => null);
     const ready = await Promise.race([
@@ -33,10 +34,10 @@ export async function ensureWorkspaceChat(page: Page): Promise<void> {
     } else if (ready === "fab") {
         await chatFab.click();
     } else {
-        await sidebarNew.waitFor({ state: "visible", timeout: 5000 });
+        await sidebarNew.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
         await sidebarNew.click();
     }
-    await textarea.waitFor({ state: "visible", timeout: 10000 });
+    await textarea.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
 }
 
 export async function gotoWorkspaceWithChat(page: Page): Promise<void> {

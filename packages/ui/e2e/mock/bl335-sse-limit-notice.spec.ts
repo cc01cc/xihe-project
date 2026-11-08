@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-335 · SSE 订阅上限（429）的 UI 提示：**先红**用例。
  *
@@ -15,6 +16,7 @@
  */
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // 这些 429 是本用例**故意**造出来的订阅上限，逐条放行。
 test.use({
@@ -50,7 +52,7 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
         const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
-        await expect(notice).toBeVisible({ timeout: 15000 });
+        await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toHaveAttribute("role", "status");
         await expect(notice).toContainText("停止刷新");
         await expect(notice).toContainText("标签页");
@@ -79,7 +81,7 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
         const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
-        await expect(notice).toBeVisible({ timeout: 15000 });
+        await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toContainText("停止刷新");
     });
 });

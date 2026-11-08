@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 // BL-328 家族：`expired decision` 用例**故意**让 decision 端点回 410（验"过期后卡片不关闭 + 可见错误"），
 // 逐条放行该端点与它的 logger 输出；其余通道不放行。
@@ -185,7 +186,9 @@ async function installPolicyModeRoute(page: Page) {
 
 async function openApprovalChat(page: Page) {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
-    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
 }
 
 async function pushApproval(page: Page, payload: Record<string, unknown>) {
@@ -228,7 +231,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator("text=delete file")).toBeVisible();
         await expect(dialog.locator("text=workspace/README.md")).toBeVisible();
         await expect(dialog.locator('[data-testid="approval-evidence-action-class"]')).toHaveText(
@@ -250,7 +253,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled();
         // CP ReusePolicy.allowedTiers: structured+delete is once-only, so no reuse tier is offered.
         await expect(dialog.locator('[data-testid="approval-allow-session"]')).toHaveCount(0);
@@ -269,7 +272,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, legacyEvent);
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled();
         // Absent shape evidence cannot derive a reuse ceiling, so only the once tier is offered.
         await expect(dialog.locator('[data-testid="approval-allow-session"]')).toHaveCount(0);
@@ -284,7 +287,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, { ...approvalEvent(REQUEST_ID), origin: "agent_relay" });
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveText("模型请求");
         await page.screenshot({
             path: `test-results/plan0371-approval-origin-agent-relay-${viewportTag(page)}.png`,
@@ -300,7 +303,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, { ...approvalEvent(REQUEST_ID), origin: "cp_gate" });
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveText("策略门禁");
         await page.screenshot({
             path: `test-results/plan0371-approval-origin-cp-gate-${viewportTag(page)}.png`,
@@ -313,7 +316,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, { ...approvalEvent(REQUEST_ID), origin: null });
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-origin"]')).toHaveCount(0);
         await page.screenshot({
             path: `test-results/plan0371-approval-origin-legacy-${viewportTag(page)}.png`,
@@ -334,14 +337,14 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, { ...approvalEvent(REQUEST_ID), state: "dispatch_unknown" });
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-retry-warning"]')).toContainText(
             "retry",
         );
         expect(calls).toHaveLength(0);
 
         await dialog.locator('[data-testid="approval-approve"]').click();
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toEqual([{ requestId: REQUEST_ID, body: { decision: "once" } }]);
     });
 
@@ -356,10 +359,10 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-approve"]').click();
 
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toHaveLength(1);
         expect(calls[0]).toEqual({ requestId: REQUEST_ID, body: { decision: "once" } });
     });
@@ -375,11 +378,11 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-feedback"]').fill("Not within this task");
         await dialog.locator('[data-testid="approval-reject"]').click();
 
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toHaveLength(1);
         expect(calls[0].body).toEqual({ decision: "reject", feedback: "Not within this task" });
     });
@@ -395,10 +398,10 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID, false, "structured", "write"));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-allow-session"]').click();
 
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toEqual([{ requestId: REQUEST_ID, body: { decision: "session" } }]);
     });
 
@@ -421,7 +424,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID, false, "structured", "write"));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-save-rule"]').click();
         await expect(dialog.locator('[data-testid="approval-save-confirm"]')).toBeVisible();
         await expect(page.locator('[data-testid="modal-content"]')).toHaveCount(1);
@@ -440,7 +443,7 @@ test.describe("Chat approval flow", () => {
         );
         await dialog.locator('[data-testid="approval-save-confirm-button"]').click();
 
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toEqual([
             {
                 requestId: REQUEST_ID,
@@ -454,7 +457,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID, false, "interpreter", "exec"));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-save-rule"]')).toHaveCount(0);
         // Interpreter keeps the session tier, so the reason line explains only the saved-rule ceiling.
         await expect(dialog.locator('[data-testid="approval-allow-session"]')).toBeEnabled();
@@ -477,7 +480,7 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID, false, "structured", "write"));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-save-rule"]').click();
         await dialog.locator('[data-testid="approval-rule-resource"]').fill("*");
         await expect(
@@ -508,7 +511,7 @@ test.describe("Chat approval flow", () => {
         await openApprovalChat(page);
 
         const banner = page.locator('[data-testid="global-pending-approval-banner"]');
-        await expect(banner).toBeVisible({ timeout: 5000 });
+        await expect(banner).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(banner).toContainText("2");
         await banner.locator('[data-testid="global-pending-approval-go-to"]').click();
 
@@ -573,11 +576,11 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const approveButton = dialog.locator('[data-testid="approval-approve"]');
         await approveButton.click();
         await expect(approveButton).toBeDisabled();
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toEqual([{ decision: "once" }]);
     });
 
@@ -593,11 +596,11 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-approve"]').click();
 
         await expect(dialog.locator('[data-testid="approval-error"]')).toBeVisible({
-            timeout: 5000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(dialog.locator('[data-testid="approval-error"]')).toContainText(
             "APPROVAL_EXPIRED",
@@ -616,12 +619,12 @@ test.describe("Chat approval flow", () => {
 
         await pushApproval(page, approvalEvent(REQUEST_ID));
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-approve"]').click();
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
         await pushApproval(page, approvalEvent(REQUEST_ID, true));
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("Escape dismisses locally with zero decisions and the reopen pill restores the modal", async ({
@@ -637,13 +640,13 @@ test.describe("Chat approval flow", () => {
         await pushApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.keyboard.press("Escape");
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toHaveLength(0);
 
         const pill = page.locator('[data-testid="pending-approval-reopen-pill"]');
-        await expect(pill).toBeVisible({ timeout: 5000 });
+        await expect(pill).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(pill).toHaveRole("button");
         const pillName =
             (await pill.getAttribute("aria-label")) ?? (await pill.textContent()) ?? "";
@@ -660,7 +663,10 @@ test.describe("Chat approval flow", () => {
                             document.activeElement?.tagName ??
                             "",
                     ),
-                { timeout: 5000, message: "Escape 后焦点应回到 pending-approval-reopen-pill" },
+                {
+                    timeout: ACTION_TIMEOUT_MS,
+                    message: "Escape 后焦点应回到 pending-approval-reopen-pill",
+                },
             )
             .toBe("pending-approval-reopen-pill");
 
@@ -676,14 +682,14 @@ test.describe("Chat approval flow", () => {
                             ? "composer"
                             : (active.getAttribute("data-testid") ?? active.tagName);
                     }),
-                { timeout: 5000, message: "pill 之后一个 Tab 应落在 composer 内" },
+                { timeout: ACTION_TIMEOUT_MS, message: "pill 之后一个 Tab 应落在 composer 内" },
             )
             .toBe("composer");
 
         // ③ 重开：键盘 Enter 触发 pill（而不是只点鼠标），焦点进入卡内首个可交互元素。
         await pill.focus();
         await page.keyboard.press("Enter");
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(pill).toHaveCount(0);
         await expect
             .poll(
@@ -693,12 +699,12 @@ test.describe("Chat approval flow", () => {
                             document.activeElement?.closest('[data-testid="modal-content"]') !==
                             null,
                     ),
-                { timeout: 5000, message: "重开后焦点应在审批卡内" },
+                { timeout: ACTION_TIMEOUT_MS, message: "重开后焦点应在审批卡内" },
             )
             .toBe(true);
 
         await dialog.locator('[data-testid="approval-reject"]').click();
-        await expect(dialog).toBeHidden({ timeout: 5000 });
+        await expect(dialog).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         expect(calls).toHaveLength(1);
         expect(calls[0]).toEqual({ requestId: REQUEST_ID, body: { decision: "reject" } });
     });
@@ -717,9 +723,11 @@ test.describe("Chat approval flow", () => {
         if ((await page.locator('[aria-label="Open chat"]:visible').count()) > 0) {
             await page.locator('[aria-label="Open chat"]:visible').click();
         }
-        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         const banner = page.locator('[data-testid="session-policy-auto-banner"]:visible');
-        await expect(banner).toBeVisible({ timeout: 5000 });
+        await expect(banner).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(banner.locator('[data-testid="session-policy-auto-close"]')).toBeVisible();
     });
 
@@ -739,11 +747,13 @@ test.describe("Chat approval flow", () => {
         await page.locator('[data-testid="chat-input"]').fill("run in session A");
         await page.locator('[data-testid="chat-send-button"]').click();
         await expect(page.locator('[data-testid="chat-stop-button"]')).toBeVisible({
-            timeout: 5000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await pushApproval(page, approvalEvent(REQUEST_ID));
         await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SECOND_SESSION_ID}`);
-        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.locator('[data-testid="chat-stop-button"]')).toBeHidden();
         expect(cancelCalls).toHaveLength(0);
     });

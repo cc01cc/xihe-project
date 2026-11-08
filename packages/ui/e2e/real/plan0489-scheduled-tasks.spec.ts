@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { CP_URL, evidenceDir, registerJourneyUser, type JourneyContext } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const EVIDENCE_DIR = evidenceDir("plan0489-scheduled-tasks");
 
@@ -23,7 +25,6 @@ const EVIDENCE_DIR = evidenceDir("plan0489-scheduled-tasks");
 //   node scripts/e2e-host.mjs e2e/real/plan0489-scheduled-tasks.spec.ts --llm-mode=mock
 test.describe("@host PLAN-0489 scheduled tasks", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     const STATUS_LABELS: Record<string, string> = {
         scheduled: "调度中",
@@ -63,7 +64,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         return execFileSync(
             process.platform === "win32" ? "docker.exe" : "docker",
             ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-            { encoding: "utf8", timeout: 15_000, windowsHide: true },
+            { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
         ).trim();
     }
 
@@ -123,7 +124,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
                                 ? "all-missed"
                                 : last;
                         },
-                        { timeout: 90000, intervals: [2000, 5000] },
+                        { timeout: LONG_TIMEOUT_MS, intervals: [2000, 5000] },
                     )
                     .toBe("all-missed");
                 return;
@@ -208,7 +209,9 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
             response.ok(),
             `scheduled task list ${response.status()} ${await response.text()}`,
         ).toBeTruthy();
-        await expect(page.getByTestId("scheduled-tasks-heading")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("scheduled-tasks-heading")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
     }
 
     test.beforeAll(async ({ request }) => {
@@ -257,12 +260,12 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
 
         const entry = page.locator('[data-testid="workspace-toolbar-scheduled-tasks"]');
-        await expect(entry).toBeVisible({ timeout: 20000 });
+        await expect(entry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(entry).toHaveAttribute("title", "定时任务");
         await entry.click();
         await page.waitForURL(
             (url) => url.pathname === `/workspace/${ctx.workspaceId}/scheduled-tasks`,
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         const list = await listLoaded;
         expect(list.ok(), `scheduled task list ${list.status()} ${await list.text()}`).toBeTruthy();
@@ -307,7 +310,9 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         await expect(dialog).toBeVisible();
 
         await page.getByTestId("st-create-cron-expr").fill("0 9 * * *");
-        await page.getByTestId("st-create-session").selectOption(sessionId, { timeout: 20000 });
+        await page
+            .getByTestId("st-create-session")
+            .selectOption(sessionId, { timeout: LONG_TIMEOUT_MS });
         await page.getByTestId("st-create-prompt").fill("PLAN-0489 cron wake prompt");
 
         const created = page.waitForResponse(
@@ -334,7 +339,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         expect(new Date(String(body.nextFireAt)).getTime()).toBeGreaterThan(Date.now());
 
         await expect(dialog).toBeHidden();
-        await expect(toastWith(page, "已创建")).toBeVisible({ timeout: 15000 });
+        await expect(toastWith(page, "已创建")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const cronRow = taskRow(page, "0 9 * * *");
         await expect(cronRow).toHaveCount(1);
@@ -360,7 +365,9 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         await page.getByTestId("st-create-mode-delay").click();
         await page.getByTestId("st-create-delay-amount").fill("1");
-        await page.getByTestId("st-create-session").selectOption(sessionId, { timeout: 20000 });
+        await page
+            .getByTestId("st-create-session")
+            .selectOption(sessionId, { timeout: LONG_TIMEOUT_MS });
         await page.getByTestId("st-create-prompt").fill("PLAN-0489 delay wake prompt");
 
         const created = page.waitForResponse(
@@ -386,7 +393,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         expect(body.expiresAt, "delay_once carries the 7d TTL").toBeTruthy();
 
         await expect(dialog).toBeHidden();
-        await expect(toastWith(page, "已创建")).toBeVisible({ timeout: 15000 });
+        await expect(toastWith(page, "已创建")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const delayRow = taskRow(page, "延迟一次");
         await expect(delayRow).toHaveCount(1);
@@ -407,7 +414,6 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         page,
         request,
     }) => {
-        test.setTimeout(360000);
         const armed = [delayTaskId, rerunTaskId, removeTaskId];
         await expectTasksMissed(request, armed);
 
@@ -449,7 +455,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         page,
         request,
     }) => {
-        test.setTimeout(180000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         await gotoListPage(page);
         const rerunRow = taskRow(page, "0 4 * * *");
         await expect(rerunRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
@@ -478,7 +484,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         });
         const response = await rerunResponse;
         expect(response.status(), await response.text()).toBe(200);
-        await expect(toastWith(page, "已补跑")).toBeVisible({ timeout: 15000 });
+        await expect(toastWith(page, "已补跑")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 分派在请求内同步 settle：cron 补跑成功 → scheduled（重算下次触发）；分派失败 → missed。
         // 失败信息取断言输出（Received = 最后观测状态）。
@@ -490,7 +496,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
                     settled = statuses[rerunTaskId] ?? "missing";
                     return settled;
                 },
-                { timeout: 90000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toMatch(/^(scheduled|missed)$/);
         await expect(rerunRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
@@ -550,7 +556,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         expect(new Date(String(body.nextFireAt)).getTime()).toBeGreaterThan(Date.now());
 
         await expect(dialog).toBeHidden();
-        await expect(toastWith(page, "已推迟")).toBeVisible({ timeout: 15000 });
+        await expect(toastWith(page, "已推迟")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(delayRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
             "调度中",
         );
@@ -589,7 +595,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         expect(body.status).toBe("cancelled");
 
         await expect(confirm).toBeHidden();
-        await expect(toastWith(page, "已移除")).toBeVisible({ timeout: 15000 });
+        await expect(toastWith(page, "已移除")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(removeRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
             "已取消",
         );
@@ -640,7 +646,9 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         // 5 字段但 day-of-week=8 非法：客户端只查字段数 → 由服务端 400 拒绝（真实错误链路）。
         await page.getByTestId("st-create-cron-expr").fill("0 9 * * 8");
-        await page.getByTestId("st-create-session").selectOption(sessionId, { timeout: 20000 });
+        await page
+            .getByTestId("st-create-session")
+            .selectOption(sessionId, { timeout: LONG_TIMEOUT_MS });
         await page.getByTestId("st-create-prompt").fill("PLAN-0489 invalid cron prompt");
 
         const rejected = page.waitForResponse(
@@ -655,7 +663,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         expect(problem.code).toBe("INVALID_CRON_EXPR");
 
         const fieldError = page.getByTestId("st-create-field-error");
-        await expect(fieldError).toBeVisible({ timeout: 15000 });
+        await expect(fieldError).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(fieldError).toContainText("cron 表达式无效");
         await expect(dialog).toBeVisible();
 
@@ -696,7 +704,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         ).toBeTruthy();
 
         const card = page.locator('[data-testid="scheduled-task-card"]').first();
-        await expect(card).toBeVisible({ timeout: 15000 });
+        await expect(card).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(card.locator('[data-testid="scheduled-task-status"]')).toBeVisible();
         await expect(card.locator('[data-testid="scheduled-task-creator-type"]')).toBeVisible();
         // 窄视口切换为堆叠卡片，桌面表格整体隐藏。

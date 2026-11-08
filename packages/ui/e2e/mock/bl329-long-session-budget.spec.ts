@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-329 · 长会话窗口化预算（把"人工测量过的数字"变成可回归的门）。
  *
@@ -24,6 +25,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
 import type { Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl329-long-session";
 const MESSAGE_COUNT = 2_000;
@@ -100,7 +102,7 @@ test.describe("BL-329 长会话窗口化预算", () => {
      * - long-task 采集用的是脚本滚动循环，**不含 wheel 事件处理成本**，因此是真实滚动的**下界**（结论偏乐观，勿当上限引用）。
      */
     test("2k 消息：渲染行 / DOM / heap / long task 都在预算内，往返后回收", async ({ page }) => {
-        test.setTimeout(120_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-329 长会话" }] });
         await stubSessionProjections(page, SESSION_ID);
@@ -108,7 +110,7 @@ test.describe("BL-329 长会话窗口化预算", () => {
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const atBottom = await measure(page);

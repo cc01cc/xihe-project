@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：`shows an error banner when layer config cannot be loaded` 用
 // `route.abort("connectionrefused")` **故意**制造网络失败（验"保存失败"横幅），逐条放行该信号。
@@ -137,7 +139,9 @@ test.describe("Config Settings (three layers)", () => {
 
         // The tabs render after `loadLayerDomains` settles; give that state wait a lane-sized
         // budget instead of the 5 s default (the element simply had not mounted yet under load).
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("config-tab-instance")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // PLAN-0560: the workspace layer moved to each workspace's settings page.
         await expect(page.getByTestId("config-tab-workspace")).toHaveCount(0);
         await expect(page.getByTestId("config-tab-user")).toBeVisible();

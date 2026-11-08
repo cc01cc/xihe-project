@@ -3,6 +3,7 @@ import { expect, test } from "./helpers/mock-test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0626 M3 (D26-05): Agent management moved from a modal into the dock's `agents`
@@ -222,7 +223,7 @@ test.describe("PLAN-0626 M3: workspace Agent management in the dock `agents` tab
                             : `not-persisted:${(parsed.dockTabs ?? []).join(",")}`;
                     }, WORKSPACE_ID),
                 {
-                    timeout: 5000,
+                    timeout: ACTION_TIMEOUT_MS,
                     message: "the `agents` tab must land in the existing dockTabs/activeDockTab",
                 },
             )

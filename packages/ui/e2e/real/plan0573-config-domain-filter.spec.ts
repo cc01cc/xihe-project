@@ -1,9 +1,11 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { collectPageErrors, actionableErrors } from "./helpers/console";
 import { ensureWorkspace } from "./helpers/workspace";
 import { generateE2EPassword } from "./helpers/password";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0573: the UI must not issue merged `GET /config/{domain}` requests for
 // domains CP rejects with 403 for non-admins (the strict console gate sees
@@ -67,7 +69,7 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
         page,
         request,
     }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `plan0573-${randomUUID()}@test.local`,
@@ -103,13 +105,13 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
 
         await injectSession(page, userAuth);
         await page.goto(`${UI_URL}/settings/config`);
-        await expect(page.getByTestId("config-tab-user")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("config-tab-user")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // Both config batches are issued synchronously (boot merged pull at App
         // mount, then the user-tab layer pull): llm-provider appears twice by
         // the time the settings page has rendered both surfaces.
         await expect
             .poll(() => configRequests.filter((d) => d === "llm-provider").length, {
-                timeout: 15000,
+                timeout: LONG_TIMEOUT_MS,
             })
             .toBeGreaterThanOrEqual(2);
 
@@ -133,7 +135,7 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
     });
 
     test("V2: admin boot still pulls logging and the instance tab renders it", async ({ page }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const configRequests: string[] = [],
             loggingResponses: number[] = [],
             errors = collectPageErrors(page);
@@ -150,16 +152,18 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
 
         // Admin bypass unchanged: the merged batch includes `logging` and lands 200.
         await expect
-            .poll(() => loggingResponses.length, { timeout: 15000 })
+            .poll(() => loggingResponses.length, { timeout: LONG_TIMEOUT_MS })
             .toBeGreaterThanOrEqual(1);
         expect(
             loggingResponses.filter((status) => status !== 200),
             "every admin logging read must succeed",
         ).toEqual([]);
         expect(configRequests, "admin boot must request the logging domain").toContain("logging");
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("config-tab-instance")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const loggingPanel = page.getByTestId("config-domain-logging");
-        await expect(loggingPanel).toBeVisible({ timeout: 15000 });
+        await expect(loggingPanel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         for (const domain of NON_ADMIN_MERGED_DOMAINS) {
             expect(configRequests, `admin batch missing ${domain}`).toContain(domain);
         }

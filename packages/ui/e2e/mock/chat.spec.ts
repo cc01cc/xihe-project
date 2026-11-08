@@ -1,7 +1,9 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 function markdownResponseTokens(): string[] {
     return [
@@ -32,7 +34,7 @@ test.describe("Chat", () => {
         await page.goto("/workspace/workspace-1/chat/test-session");
         // Explicit lane budget: the composer mounts after the session/branch projections resolve,
         // and the default 5 s expect timeout loses that race when the lane runs many browsers.
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "chat-empty.png");
     });
 
@@ -72,9 +74,11 @@ test.describe("Chat", () => {
 
         await page.goto("/workspace/workspace-1/chat/test-session");
         await messagesLoaded;
-        await expect(page.locator("text=What is TypeScript?")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=What is TypeScript?")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.locator("text=TypeScript is a typed superset of JavaScript")).toBeVisible(
-            { timeout: 10000 },
+            { timeout: ACTION_TIMEOUT_MS },
         );
         await expectPlatformScreenshot(page, "chat-with-messages.png");
     });
@@ -87,7 +91,7 @@ test.describe("Chat", () => {
         await newChatBtn.click();
 
         const sessionItem = page.locator('[class*="group"]').first();
-        await expect(sessionItem).toBeVisible({ timeout: 5000 });
+        await expect(sessionItem).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("shows sidebar with server sessions", async ({ page }) => {
@@ -100,9 +104,11 @@ test.describe("Chat", () => {
 
         await page.goto("/workspace/workspace-1/chat/sid-1");
 
-        await expect(page.locator("aside >> text=TypeScript Help")).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("aside >> text=TypeScript Help")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.locator("aside >> text=Rust Borrow Checker")).toBeVisible({
-            timeout: 5000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expectPlatformScreenshot(page, "chat-with-sessions.png");
     });
@@ -111,7 +117,7 @@ test.describe("Chat", () => {
         await setupMockSessions(page);
 
         await page.goto("/workspace");
-        await expect(page.locator("text=暂无对话")).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("text=暂无对话")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "chat-sidebar-empty.png");
     });
 
@@ -127,16 +133,20 @@ test.describe("Chat", () => {
         await textarea.fill("Show me markdown");
         await textarea.press("Enter");
 
-        await expect(page.locator("text=Show me markdown")).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("text=Show me markdown")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
-        await expect(page.locator("text=Here is a list:")).toBeVisible({ timeout: 10000 });
-        await expect(page.locator("text=first item")).toBeVisible({ timeout: 10000 });
-        await expect(page.locator("text=second item")).toBeVisible({ timeout: 10000 });
-        await expect(page.locator("text=const x = 1")).toBeVisible({ timeout: 10000 });
-        await expect(page.locator("text=const y = 2")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=Here is a list:")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.locator("text=first item")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(page.locator("text=second item")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(page.locator("text=const x = 1")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(page.locator("text=const y = 2")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         const codeBlock = page.locator('pre:has-text("const x = 1")').first();
-        await expect(codeBlock).toBeVisible({ timeout: 10000 });
+        await expect(codeBlock).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         await expectPlatformScreenshot(page, "chat-streaming-markdown.png");
     });
@@ -188,7 +198,7 @@ test.describe("Chat", () => {
         await page.goto("/workspace/workspace-1/chat/usage-session");
         await page.getByTestId("chat-input").fill("show usage");
         await page.getByTestId("chat-input").press("Enter");
-        await expect(page.getByText("in 120 · out 30")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText("in 120 · out 30")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(page.getByText("$0.012")).toBeVisible();
         await expect(page.getByText("real", { exact: true })).toBeVisible();
     });
@@ -211,13 +221,13 @@ test.describe("Chat", () => {
         const stopButton = page.locator(
             'button[aria-label="chat.stop"], button[aria-label="停止生成"]',
         );
-        await expect(stopButton).toBeVisible({ timeout: 5000 });
+        await expect(stopButton).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         await stopButton.click();
 
         await expect(
             page.locator('button[aria-label="chat.send"], button[aria-label="发送"]'),
-        ).toBeVisible({ timeout: 5000 });
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
     });
 
     test("shows a retryable stream error and recovers through retry", async ({ page }) => {
@@ -240,12 +250,16 @@ test.describe("Chat", () => {
         await textarea.fill("Try again");
         await textarea.press("Enter");
 
-        await expect(page.getByText("partial response")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText("partial response")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("message-error")).toContainText("PROVIDER_TEMPORARY");
         const retry = page.getByTestId("message-retry-button");
         await expect(retry).toBeVisible();
         await retry.click();
-        await expect(page.getByText("recovered response")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText("recovered response")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expectPlatformScreenshot(page, "chat-retry-recovered.png");
     });
 
@@ -362,6 +376,6 @@ test.describe("Chat", () => {
 
         await expect(
             page.locator('[data-slot="message-scroller-item"][data-scroll-anchor="true"]'),
-        ).toBeVisible({ timeout: 5000 });
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
     });
 });

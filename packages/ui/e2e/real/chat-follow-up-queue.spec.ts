@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
@@ -8,6 +9,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -159,7 +161,7 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     await expect(agentSelect).toBeVisible();
     await agentSelect.selectOption(principalId);
     await page.getByTestId("workspace-create-agent-session").click();
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const sessionResponse = await request.get(`${CP_URL}/api/v1/sessions`, { headers });
     expect(sessionResponse.ok(), await sessionResponse.text()).toBeTruthy();
@@ -183,7 +185,6 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     request,
 }) => {
     requireApprovalMode();
-    test.setTimeout(240_000);
     const pageErrors: Error[] = [],
         consoleErrorCount = { value: 0 },
         requestFailures: string[] = [];
@@ -231,10 +232,10 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     const parent = await submitChat(page, "please delete README.md");
     const approvalModal = page.locator('[data-testid="modal-backdrop"]:visible');
     const approval = approvalModal.getByTestId("approval-modal-content");
-    await expect(approval).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: 10_000 });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await approvalModal.getByRole("button", { name: "Close" }).click();
-    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
+    await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
     const followUpText = "After the first approval, summarize the result.";
     await page.getByTestId("chat-input").fill(followUpText);
@@ -266,8 +267,8 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     expect(queuedMessages.some((message) => message.content === followUpText)).toBe(false);
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
-    await expect(approval).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("follow-up-queue-item")).toContainText(followUpText);
     await approval.locator('[data-testid="approval-approve"]').click();
     // Assert the parent approval RESOLVED semantically instead of `toBeHidden`:
@@ -275,7 +276,9 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     // after the parent settles, and its own approval modal repopulates the same
     // `modal-content` container before any hidden frame renders, so a hidden-state
     // wait races the child modal (observed 2026-10-07 full run).
-    await expect(page.getByText("Approval received.").last()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Approval received.").last()).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect
         .poll(
             async () => {
@@ -289,7 +292,7 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
                     null
                 );
             },
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .not.toBeNull();
 
@@ -300,7 +303,7 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     expect(child?.childRunId).not.toBe(parent.runId);
     expect(child?.childMessageId).toBeTruthy();
     await expect
-        .poll(() => browserMessageIds.has(child!.childMessageId!), { timeout: 30_000 })
+        .poll(() => browserMessageIds.has(child!.childMessageId!), { timeout: LONG_TIMEOUT_MS })
         .toBe(true);
     await expect(page.getByText(followUpText, { exact: true }).last()).toBeVisible();
 
@@ -319,14 +322,14 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
                 const body = (await response.json()) as unknown;
                 return Array.isArray(body) ? body.length : 0;
             },
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBeGreaterThan(0);
-    await expect(approval).toBeVisible({ timeout: 60_000 });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await approvalModal.getByRole("button", { name: "Close" }).click();
-    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
+    await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
     const desktopReopen = page.getByTestId("pending-approval-reopen-pill");
-    await expect(desktopReopen).toBeVisible({ timeout: 20_000 });
+    await expect(desktopReopen).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const desktopAdmittedItem = page.getByTestId("follow-up-queue-item").first();
     // Admission clears the QueueItem payload copy; the admitted prompt is shown
     // in ChatRun's user Message above, while the queue row retains its state.
@@ -340,11 +343,11 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
         path: test.info().outputPath("follow-up-admitted-queue-desktop-1920x1080.png"),
     });
     await desktopReopen.click();
-    await expect(approval).toBeVisible({ timeout: 20_000 });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("approval-approve")).toBeInViewport();
     await expect(page.getByTestId("approval-reject")).toBeInViewport();
     await expect(page.getByTestId("modal-backdrop")).toHaveCSS("opacity", "1", {
-        timeout: 5_000,
+        timeout: ACTION_TIMEOUT_MS,
     });
     await expect(approval).toBeVisible();
     await page.mouse.move(0, 0);
@@ -372,11 +375,13 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
             async () =>
                 (await loadFollowUpSnapshot(request, session.sessionId, session.headers))
                     .outstandingCount,
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBe(0);
-    await expect(page.getByTestId("follow-up-queue")).toHaveCount(0, { timeout: 20_000 });
-    await expect(page.getByText("Approval received.").last()).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("follow-up-queue")).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
+    await expect(page.getByText("Approval received.").last()).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     const finalMessagesResponse = await request.get(
         `${CP_URL}/api/v1/sessions/${session.sessionId}/messages?branchId=${encodeURIComponent(session.branchId)}`,
         { headers: session.headers },
@@ -398,7 +403,6 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     request,
 }) => {
     requireApprovalMode();
-    test.setTimeout(240_000);
     const pageErrors: Error[] = [],
         consoleErrorCount = { value: 0 },
         requestFailures: string[] = [];
@@ -425,17 +429,17 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     // defaults to the Files pane; this is the same entry pattern the mock follow-up
     // spec uses at 390x844 (e2e/mock/follow-up-queue.spec.ts mobile tests).
     const openChat = page.getByRole("button", { name: "Open chat" });
-    await expect(openChat).toBeVisible({ timeout: 20_000 });
+    await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await openChat.click();
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const parent = await submitChat(page, "please delete README.md");
     const approvalModal = page.locator('[data-testid="modal-backdrop"]:visible');
     const approval = approvalModal.getByTestId("approval-modal-content");
-    await expect(approval).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: 10_000 });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await approvalModal.getByRole("button", { name: "Close" }).click();
-    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
+    await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
     const followUpText = "Mobile follow-up after parent approval.";
     await page.getByTestId("chat-input").fill(followUpText);
@@ -456,7 +460,9 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     await expect(queueItem.getByRole("button")).toBeVisible();
     // The enqueue success toast enters over the composer at the bottom; capture the
     // settled state after it auto-dismisses so the composer controls are unobscured.
-    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+        timeout: EXPECT_TIMEOUT_MS,
+    });
     // Clear hover state so no tooltip overlays the composer in the evidence shot.
     await page.mouse.move(0, 0);
     await page.screenshot({
@@ -467,15 +473,17 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     await page.reload({ waitUntil: "domcontentloaded" });
     // The mobile shell always lands on the Files pane after a reload (observed
     // 2026-10-07), so reopen chat unconditionally; click auto-waits for the toggle.
-    await page.getByRole("button", { name: "Open chat" }).click({ timeout: 15_000 });
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
-    await expect(approval).toBeVisible({ timeout: 60_000 });
+    await page.getByRole("button", { name: "Open chat" }).click({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("follow-up-queue-item").first()).toContainText(followUpText);
 
     await approval.locator('[data-testid="approval-approve"]').click();
     // Same semantic-resolution wait as the desktop flow: the child approval modal
     // may replace the parent's in the same container without a hidden frame.
-    await expect(page.getByText("Approval received.").last()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Approval received.").last()).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect
         .poll(
             async () => {
@@ -489,7 +497,7 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
                     null
                 );
             },
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .not.toBeNull();
 
@@ -505,7 +513,7 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
                 const body = (await response.json()) as unknown;
                 return Array.isArray(body) ? body.length : 0;
             },
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBeGreaterThan(0);
     // Hide the modal to capture the admitted queue state, then reopen it and prove
@@ -514,8 +522,8 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     if (await approvalModal.isVisible()) {
         await approvalModal.getByRole("button", { name: "Close" }).click();
     }
-    await expect(approvalModal).toBeHidden({ timeout: 10_000 });
-    await expect(mobileReopen).toBeVisible({ timeout: 20_000 });
+    await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
+    await expect(mobileReopen).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const mobileAdmittedItem = page.getByTestId("follow-up-queue-item").first();
     await expect(page.getByText(followUpText, { exact: true }).last()).toBeVisible();
     await expect(mobileAdmittedItem.getByTestId("follow-up-item-status")).toHaveAttribute(
@@ -527,11 +535,11 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
         path: test.info().outputPath("follow-up-admitted-queue-mobile-390x844.png"),
     });
     await mobileReopen.click();
-    await expect(approval).toBeVisible({ timeout: 20_000 });
+    await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("approval-approve")).toBeInViewport();
     await expect(page.getByTestId("approval-reject")).toBeInViewport();
     await expect(page.getByTestId("modal-backdrop")).toHaveCSS("opacity", "1", {
-        timeout: 5_000,
+        timeout: ACTION_TIMEOUT_MS,
     });
     await expect(approval).toBeVisible();
     await page.screenshot({
@@ -544,10 +552,10 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
             async () =>
                 (await loadFollowUpSnapshot(request, session.sessionId, session.headers))
                     .outstandingCount,
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBe(0);
-    await expect(page.getByTestId("follow-up-queue")).toHaveCount(0, { timeout: 20_000 });
+    await expect(page.getByTestId("follow-up-queue")).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
     expect(parent.runId).toBeTruthy();
     expect(pageErrors).toEqual([]);
     expect(consoleErrorCount.value).toBe(0);

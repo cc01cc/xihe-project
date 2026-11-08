@@ -1,5 +1,6 @@
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -25,7 +26,7 @@ test.describe("Cross-Module — Auth Guard", () => {
 
     test("unauthenticated user is redirected to login", async ({ page }) => {
         await page.goto("/workspace");
-        await page.waitForURL(/\/login/, { timeout: 5000 });
+        await page.waitForURL(/\/login/, { timeout: ACTION_TIMEOUT_MS });
         expect(page.url()).toContain("/login");
     });
 
@@ -46,7 +47,9 @@ test.describe("Cross-Module — Auth Guard", () => {
         }, accessToken);
 
         await page.goto("/chat/legacy-session");
-        await page.waitForURL(/\/workspace/, { timeout: 10000 });
-        await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({ timeout: 10000 });
+        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
+        await expect(page.locator('[data-testid="sidebar"]')).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
     });
 });

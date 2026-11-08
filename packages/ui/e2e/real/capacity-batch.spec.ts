@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * Capacity / sampling batch (PLAN-0546) — closes the sampling items that
  * PLAN-0588 / 0590 / 0583 handed off at archive time.
@@ -33,6 +34,7 @@ import {
 import { bindToolCapableChat } from "./helpers/tool-capable-chat";
 
 import { agentName } from "./helpers/agent-name";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const AGENT_PORT = Number(process.env.XIHE_AGENT_PORT || "12632");
 const AGENT_URL = `http://127.0.0.1:${AGENT_PORT}`;
@@ -49,7 +51,6 @@ const AGENT_LOG = path.resolve(
 const TERMINAL = /^(succeeded|failed|partial|cancelled|ambiguous|awaiting_approval)$/;
 
 test.describe.configure({ retries: 0, mode: "serial" });
-test.setTimeout(900_000);
 test.skip(!RUN_ID, "requires an isolated host stack (scripts/e2e-host.mjs)");
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -169,7 +170,9 @@ async function workspaceToolChat(
     const response = await chat;
     const body = await response.text();
     expect(response.ok, `chat ${response.status} ${body}`).toBe(true);
-    await expect.poll(() => latestRunStatus(request, ctx), { timeout: 120_000 }).toMatch(TERMINAL);
+    await expect
+        .poll(() => latestRunStatus(request, ctx), { timeout: LONG_TIMEOUT_MS })
+        .toMatch(TERMINAL);
     return latestRunStatus(request, ctx);
 }
 

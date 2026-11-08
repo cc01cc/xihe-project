@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect } from "@playwright/test";
 import {
     CP_URL,
@@ -13,6 +14,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { bindSessionViaApi } from "./helpers/session-binding";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
@@ -23,7 +25,7 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
         page,
         request,
     }) => {
-        test.setTimeout(120_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const ctx = await registerJourneyUser(request, "ModelSelection0438");
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
         await ensureAgentWorkspaceBinding(ctx.workspaceId);
@@ -39,7 +41,7 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
 
         seedPage(page, ctx);
         await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API。
         // 下面的断言（持久化的是真实 provider id `deepseek`，不是 catalog 键）保持不变。
@@ -68,7 +70,7 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
                     };
                     return `${body.modelProvider ?? ""}/${body.modelName ?? ""}`;
                 },
-                { timeout: 15000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBe("deepseek/fake-deepseek");
 
@@ -87,7 +89,9 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
         // End-to-end round trip through the selected model.
         const marker = `model-selection-${Date.now()}`;
         await sendChat(page, marker);
-        await expect(page.getByText(marker, { exact: true })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText(marker, { exact: true })).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         const headers = { ...ctx.headers, "X-Workspace-Id": ctx.workspaceId };
         const branchId = await getRootBranchId(request, sessionId, headers);
@@ -108,7 +112,7 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
                             message.role === "ASSISTANT" && (message.content?.length ?? 0) > 0,
                     ).length;
                 },
-                { timeout: 60000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBeGreaterThan(0);
 

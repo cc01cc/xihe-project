@@ -1,8 +1,10 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：本文件验的就是 MCP 侧错误码（503 运行时不可用 / 400 未知工具），逐条放行 `/api/v1/mcp`。
 test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/api/v1/mcp`] });
@@ -135,7 +137,7 @@ test("runtime unavailable shows runtime copy, not unknown-tool copy", async ({ p
     await setupPage(page, RUNTIME_UNAVAILABLE);
     await page.goto("/workspace/workspace-1");
 
-    await expect(page.getByText(/工作区运行时未就绪/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/工作区运行时未就绪/)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText(/工具不存在或未启用/)).toHaveCount(0);
     await expect(page.getByTestId("workspace-tree-error-message")).toBeVisible();
     expect(pageErrors).toEqual([]);
@@ -147,7 +149,7 @@ test("unknown tool shows the missing-tool copy", async ({ page }) => {
     await setupPage(page, UNKNOWN_TOOL);
     await page.goto("/workspace/workspace-1");
 
-    await expect(page.getByText(/工具不存在或未启用/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/工具不存在或未启用/)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText(/工作区运行时未就绪/)).toHaveCount(0);
     await expect(page.getByTestId("workspace-tree-error-message")).toBeVisible();
     expect(pageErrors).toEqual([]);
@@ -164,7 +166,7 @@ test.describe("mobile viewport", () => {
         await page.getByTestId("workspace-toolbar-files-mobile").click();
 
         const banner = page.getByTestId("mobile-files-sheet").getByText(/工作区运行时未就绪/);
-        await expect(banner).toBeVisible({ timeout: 15000 });
+        await expect(banner).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const box = await banner.boundingBox();
         expect(box?.width ?? 0).toBeLessThanOrEqual(390);
         expect(pageErrors).toEqual([]);

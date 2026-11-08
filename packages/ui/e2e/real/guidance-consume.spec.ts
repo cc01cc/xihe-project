@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
@@ -10,6 +11,7 @@ import {
 import type { JourneyContext } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
     LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -102,7 +104,7 @@ async function runSnapshot(
 
 test("@host guidance is consumed after an approved tool batch", async ({ page, request }) => {
     test.skip(LLM_MODE !== "approval", "requires deterministic approval tool-call fixture");
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword(),
         register = await request.post(`${CP_URL}/api/v1/auth/register`, {
@@ -139,7 +141,7 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
     await page.goto(`/workspace/${authBody.workspaceId}`, { waitUntil: "load" });
     await createWorkspaceSessionWithPrincipal(page, principalId);
     const textarea = page.locator("textarea");
-    await expect(textarea).toBeVisible({ timeout: 20_000 });
+    await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const sent = page.waitForResponse(
         (response) =>
             response.url().endsWith("/api/v1/chat") && response.request().method() === "POST",
@@ -155,7 +157,7 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
     // awaiting_approval, then approve: tool result completes and the next model
     // call must pre-inject and consume it.
     const modal = page.locator('[data-testid="modal-content"]');
-    await expect(modal).toBeVisible({ timeout: 60_000 });
+    await expect(modal).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(modal.locator("text=README.md")).toBeVisible();
     const guidance = await request.post(`${CP_URL}/api/v1/chat/runs/${runId}/guidance`, {
         headers: { ...authHeaders, "Idempotency-Key": `guidance-e2e-${randomUUID()}` },
@@ -164,7 +166,7 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
     expect(guidance.status(), await guidance.text()).toBe(201);
 
     await modal.locator('[data-testid="approval-approve"]').click();
-    await expect(modal).toBeHidden({ timeout: 20_000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
     let consumed: { id: string; sequence: number; status: string } | undefined;
     for (let poll = 0; poll < 120; poll += 1) {
@@ -180,7 +182,7 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
     // call. Reject it to terminalize the run and keep teardown deterministic.
     if (await modal.isVisible().catch(() => false)) {
         await modal.locator('[data-testid="approval-reject"]').click();
-        await expect(modal).toBeHidden({ timeout: 20_000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
     }
 
     const finalView = await runSnapshot(request, runId, authHeaders);

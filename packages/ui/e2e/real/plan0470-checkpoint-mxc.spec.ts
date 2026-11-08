@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -13,6 +14,7 @@ import {
 } from "./helpers/journey";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const HOST_ROOT = path.resolve(
@@ -64,15 +66,13 @@ async function findRunId(
                 runId = entry?.runId ?? entry?.id ?? "";
                 return runId ? "found" : "pending";
             },
-            { timeout: 60000, intervals: [500, 1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000, 2000] },
         )
         .toBe("found");
     return runId;
 }
 
 test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
-    test.setTimeout(240000);
-
     test("captures a ChatRun and previews/reverts files through the browser", async ({
         page,
         request,
@@ -182,7 +182,7 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
                         ? result.stdout.trim().split(/\r?\n/).filter(Boolean).length
                         : 0;
                 },
-                { timeout: 120000, intervals: [1000, 2000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
             )
             .toBeGreaterThan(0);
 
@@ -215,7 +215,7 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         await ensureChatBinding(page, sessionId);
         const input = page.locator('[data-testid="chat-input"]');
         const send = page.locator('[data-testid="chat-send-button"]');
-        await expect(input).toBeVisible({ timeout: 30000 });
+        await expect(input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const nonce = Date.now();
         const fileName = `plan0470-note-${nonce}.md`;
@@ -225,22 +225,22 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         const chatResponsePromise = page.waitForResponse(
             (response) =>
                 response.url().endsWith("/api/v1/chat") && response.request().method() === "POST",
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await send.click();
         const chatResponse = await chatResponsePromise;
         expect(chatResponse.ok(), `chat request returned ${chatResponse.status()}`).toBeTruthy();
 
         const approval = page.locator('[data-testid="modal-content"]');
-        await expect(approval).toBeVisible({ timeout: 120000 });
+        await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const runId = await findRunId(request, headers, workspace.id);
         await approval.locator('[data-testid="approval-approve"]').click();
-        await expect(approval).toBeHidden({ timeout: 30000 });
+        await expect(approval).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         const hostFile = path.join(hostPath, fileName);
         await expect
             .poll(() => (existsSync(hostFile) ? readFileSync(hostFile, "utf8") : ""), {
-                timeout: 60000,
+                timeout: LONG_TIMEOUT_MS,
             })
             .toContain(content);
         await expect
@@ -254,7 +254,7 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
                         ((await response.json()) as { status?: string }).status ?? "unknown",
                     );
                 },
-                { timeout: 180000, intervals: [1000, 2000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
             )
             .toBe("succeeded");
         await expect
@@ -265,7 +265,7 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
                     );
                     return checkpoint?.state ?? "missing";
                 },
-                { timeout: 120000, intervals: [1000, 2000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
             )
             .toBe("captured");
 
@@ -277,7 +277,7 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         expect(checkpoint?.changedFiles).toContainEqual({ path: fileName, status: "A" });
         const marker = page.locator('[data-testid="run-checkpoint-marker"]').last();
         await expect(marker).toHaveAttribute("data-checkpoint-kind", "captured", {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const extraName = `plan0470-extra-${nonce}.txt`;
@@ -289,8 +289,10 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         await expect(page.getByTestId("revert-preview-delete-count")).toHaveText("1");
         await expect(page.getByTestId("revert-preview-paths")).toContainText(extraName);
         await page.getByTestId("revert-preview-confirm").click();
-        await expect(page.getByTestId("revert-result-counts")).toBeVisible({ timeout: 60000 });
-        await expect.poll(() => existsSync(extraPath), { timeout: 30000 }).toBe(false);
+        await expect(page.getByTestId("revert-result-counts")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect.poll(() => existsSync(extraPath), { timeout: LONG_TIMEOUT_MS }).toBe(false);
         expect(readFileSync(hostFile, "utf8")).toContain(content);
 
         const reverted = (await getCheckpoints(request, headers, workspace.id)).find(

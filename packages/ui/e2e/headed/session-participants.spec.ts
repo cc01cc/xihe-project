@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,7 @@ import {
 import { prepareConnection } from "../../../../scripts/xihe-cli/prepare-agent-e2e-connection.mjs";
 
 import { agentName } from "../real/helpers/agent-name";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0623/runs", RUN_ID);
 const SHOTS_DIR = path.join(RUN_DIR, "shots");
@@ -257,7 +259,7 @@ async function loginViaForm(page: Page, identifier: string, password: string): P
     expect(response.status(), `login form must authenticate (${await response.text()})`).toBe(200);
     await expect
         .poll(() => page.evaluate(() => Boolean(localStorage.getItem("xihe-token"))), {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [250, 500],
         })
         .toBe(true);
@@ -547,7 +549,7 @@ function rowOf(id: string) {
     return `[data-testid="participant-row-${id}"]`;
 }
 
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+test.describe.configure({ mode: "serial", timeout: LONG_TIMEOUT_MS });
 
 test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     test.beforeAll(() => {
@@ -638,14 +640,16 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         ).not.toContain(workspaceId);
 
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // 前提：自建工作区里**没有会话**（否则面板走"有会话"分支，无会话空态断言不成立）。
         // `workspace-create-session` 只在空态渲染（WorkspaceView.vue 的 v-else 分支）。
         await expect(
             page.getByTestId("workspace-create-session"),
             "a freshly created workspace must start with no open session",
-        ).toBeVisible({ timeout: 45000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(
             await page.getByTestId("chat-input").count(),
             "a freshly created workspace must not render a chat composer",
@@ -666,12 +670,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await expect(
             page.getByTestId("session-participants-panel"),
             await participantsDiagnostics(page),
-        ).toBeVisible({ timeout: 20000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("dock-tab-members")).toHaveAttribute("aria-selected", "true");
 
         // 无会话：空态必须是"先选择一个会话"（不是"这个会话还没有参与者"）。
         const empty = page.getByTestId("participants-empty");
-        await expect(empty).toBeVisible({ timeout: 20000 });
+        await expect(empty).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(empty).toHaveText(/选择一个会话|Select a session/i);
         await shot(page, {
             id: "S1",
@@ -689,17 +693,21 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await ensureTwoMemberSession(request);
 
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
             await page.getByTestId("workspace-toolbar-members").click();
         }
         const panel = page.getByTestId("session-participants-panel");
-        await expect(panel, await participantsDiagnostics(page)).toBeVisible({ timeout: 20000 });
+        await expect(panel, await participantsDiagnostics(page)).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         const agentRow = page.locator(rowOf(agentRowParticipantId));
         const humanRow = page.locator(rowOf(humanParticipantId));
-        await expect(agentRow).toBeVisible({ timeout: 20000 });
-        await expect(humanRow).toBeVisible({ timeout: 20000 });
+        await expect(agentRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(humanRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 主体类型徽标 / 会话角色徽标（源码：ParticipantRow.vue 的 data-* 属性）
         await expect(
@@ -747,16 +755,18 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
             await page.getByTestId("workspace-toolbar-members").click();
         }
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const input = page.getByTestId("chat-input");
-        await expect(input).toBeVisible({ timeout: 45000 });
+        await expect(input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         let chatPosts = 0;
         page.on("request", (request) => {
@@ -807,12 +817,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         expect(listedBody.capabilities.speakAs, "owner must carry capabilities.speakAs").toBe(true);
 
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 入口：speakAs=true ⇒ 渲染；option 数 === 候选数。
         const bar = page.getByTestId("speak-as-bar");
         await expect(bar, "speak-as entry must render when the capability is on").toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const select = page.getByTestId("speak-as-select");
         const options = select.locator("option");
@@ -829,7 +839,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await page.getByTestId("chat-input").fill("headed speak-as probe");
         const chatRequest = page.waitForRequest(
             (req) => new URL(req.url()).pathname === "/api/v1/chat" && req.method() === "POST",
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.getByTestId("chat-send-button").click();
         const sent = await chatRequest;
@@ -851,13 +861,13 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 用既有提及按钮插入（格式已由 S3 验证），再补一段可辨识文本。
         await page.getByTestId("workspace-toolbar-members").click();
         await page
             .getByTestId("session-participants-panel")
-            .waitFor({ state: "visible", timeout: 20000 });
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
         await page.getByTestId(`participant-mention-${humanParticipantId}`).click();
         const input = page.getByTestId("chat-input");
         await expect(input).toHaveValue(
@@ -870,7 +880,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             (response) =>
                 new URL(response.url()).pathname === "/api/v1/chat" &&
                 response.request().method() === "POST",
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.getByTestId("chat-send-button").click();
         const answered = await chatResponse;
@@ -880,10 +890,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
         // 面板的数据在打开那一刻加载 —— 发送后先关再开，让它重新拉取拿到新游标。
         await page.getByTestId("workspace-toolbar-members").click();
-        await expect(page.getByTestId("session-participants-panel")).toBeHidden({ timeout: 20000 });
+        await expect(page.getByTestId("session-participants-panel")).toBeHidden({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("workspace-toolbar-members").click();
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 0624 的核心可见效果：服务端推进派生未读（notify 事件 − 读指针；V112 起无 mention_count 列）⇒ 未读徽标出现（只有 >0 才渲染）。
@@ -895,7 +907,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
                     if (count === 0) return { count, text: "" };
                     return { count, text: (await badge.textContent()) ?? "" };
                 },
-                { timeout: 30000, intervals: [500, 1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000] },
             )
             .toEqual({ count: 1, text: expect.stringMatching(/^@/) });
         const text = await badge.textContent();
@@ -920,12 +932,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await page.getByTestId("workspace-toolbar-members").click();
         await page
             .getByTestId("session-participants-panel")
-            .waitFor({ state: "visible", timeout: 20000 });
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
         await page.getByTestId(`participant-mention-${agentRowParticipantId}`).click();
         const input = page.getByTestId("chat-input");
         await expect(input).toHaveValue(
@@ -937,7 +949,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             (response) =>
                 new URL(response.url()).pathname === "/api/v1/chat" &&
                 response.request().method() === "POST",
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.getByTestId("chat-send-button").click();
         const answered = await chatResponse;
@@ -954,7 +966,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         );
         await expect
             .poll(async () => s7Reply.count(), {
-                timeout: 90000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [1000, 2000, 5000],
             })
             .toBeGreaterThanOrEqual(1);
@@ -974,17 +986,19 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
             await page.getByTestId("workspace-toolbar-members").click();
         }
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const remove = page.getByTestId(`participant-remove-${humanParticipantId}`);
-        await expect(remove).toBeVisible({ timeout: 20000 });
-        await expect(remove).toBeEnabled({ timeout: 20000 });
+        await expect(remove).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(remove).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
 
         const idle = (await remove.textContent()) ?? "";
         await remove.click();
@@ -1005,7 +1019,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await expect(
             page.getByTestId(`participant-disabled-badge-${humanParticipantId}`),
             "a soft-disabled participant must stay visible with its badge",
-        ).toBeVisible({ timeout: 20000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await shot(page, {
             id: "S4",
@@ -1032,17 +1046,17 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
         const input = page.getByTestId("chat-input");
         const menu = page.getByTestId("chat-input-trigger-menu");
-        await expect(input).toBeVisible({ timeout: 45000 });
+        await expect(input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // ① `@` 打开统一候选面（PLAN-0635 D35-01：单个 listbox），默认选中第一项。
         await input.click();
         await input.fill("@");
         await expect(menu, "@ opens the unified candidate surface").toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const options = menu.getByRole("option");
         await expect(options.first(), "at least one @ candidate").toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const optionCount = await options.count();
         await expect(options.first()).toHaveAttribute("aria-selected", "true");
@@ -1069,23 +1083,25 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
         // ③ Esc：只关候选面，草稿保留（不误发）。
         await input.press("Escape");
-        await expect(menu, "Escape closes the candidate surface").toBeHidden({ timeout: 10000 });
+        await expect(menu, "Escape closes the candidate surface").toBeHidden({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(input, "Escape keeps the draft").toHaveValue("@");
 
         // ④ Tab：选中插入（草稿变成 `@<displayName> `）。
         await input.fill("@");
-        await expect(menu).toBeVisible({ timeout: 20000 });
+        await expect(menu).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await input.press("Tab");
-        await expect(menu, "Tab closes the surface").toBeHidden({ timeout: 10000 });
+        await expect(menu, "Tab closes the surface").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         const afterTab = await input.inputValue();
         expect(afterTab.length, "Tab inserts the candidate").toBeGreaterThan(1);
         expect(afterTab.startsWith("@")).toBe(true);
 
         // ⑤ Enter：同样插入（清空重来，避免叠加）。
         await input.fill("@");
-        await expect(menu).toBeVisible({ timeout: 20000 });
+        await expect(menu).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await input.press("Enter");
-        await expect(menu, "Enter closes the surface").toBeHidden({ timeout: 10000 });
+        await expect(menu, "Enter closes the surface").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         const afterEnter = await input.inputValue();
         expect(afterEnter.length, "Enter inserts the candidate").toBeGreaterThan(1);
 
@@ -1093,7 +1109,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         const chatResponse = page.waitForResponse(
             (res) =>
                 new URL(res.url()).pathname === "/api/v1/chat" && res.request().method() === "POST",
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.getByTestId("chat-send-button").click();
         const sent = await chatResponse;

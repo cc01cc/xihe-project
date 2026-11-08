@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0680 T3.2 — 技能绑定双轴 **跨工作区负例**真栈 spec（`@host`）
  *
@@ -48,6 +49,7 @@ import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 test.describe.configure({ retries: 0 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const TERMINAL = /^(succeeded|failed|cancelled|ambiguous)$/u;
@@ -103,7 +105,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 interface SnapshotItem {

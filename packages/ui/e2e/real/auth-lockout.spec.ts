@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -74,9 +76,9 @@ test.describe("@host Auth lockout — Real Backend", () => {
                     ]);
                     return response.status();
                 },
-                { timeout: 20000, intervals: [1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1000] },
             )
             .toBe(200);
-        await page.waitForURL(/\/workspace/, { timeout: 10000 });
+        await page.waitForURL(/\/workspace/, { timeout: ACTION_TIMEOUT_MS });
     });
 });

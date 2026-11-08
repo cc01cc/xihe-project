@@ -1,8 +1,10 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { isolatedWorkspaceHostPath } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword(),
     CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
@@ -137,7 +139,7 @@ async function loginViaForm(page: Page, email: string): Promise<void> {
     await page.fill('input[name="identifier"]', email);
     await page.fill('input[type="password"]', SHARED_PASSWORD);
     await page.click('button[type="submit"]');
-    await page.waitForURL(/\/workspace/, { timeout: 15000 });
+    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
 }
 
 test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () => {
@@ -244,17 +246,19 @@ test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () =
         // 无错误态）。用户可点的「刷新文件树」是合法的真实动作，点击后树即加载 —— 这既让
         // 截图建立在真实加载链上，也把上述时序缺口留在证据里（见最终报告）。
         const refreshTree = page.getByTestId("workspace-file-refresh");
-        await expect(refreshTree).toBeVisible({ timeout: 15000 });
+        await expect(refreshTree).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await refreshTree.click();
 
         // 主根文件必须先可见 —— 这是树的基线渲染能力（也是截图的合格前提）。
         const alphaEntry = page.getByRole("button", { name: ALPHA_FILE, exact: true });
-        await expect(alphaEntry).toBeVisible({ timeout: 20000 });
+        await expect(alphaEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({ path: "test-results/plan0639-multi-root-tree.png" });
 
         // 动作后截图复核：打开主根文件，编辑器呈现内容。
         await alphaEntry.click();
-        await expect(page.locator("text=Alpha Root A").first()).toBeVisible({ timeout: 15000 });
+        await expect(page.locator("text=Alpha Root A").first()).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.screenshot({ path: "test-results/plan0639-multi-root-file-open.png" });
 
         // 分组根验收（design §5 候选①）：第二根的文件必须在树中可到达/可见。
@@ -264,6 +268,6 @@ test.describe("@host PLAN-0639 M1 — multi-root workspace (roots[] wire)", () =
             betaEntry,
             `second-root file ${BETA_FILE} must be reachable in the grouped file tree ` +
                 `(design.md §5 candidate ① 分组根); primary root file ${ALPHA_FILE} rendered fine`,
-        ).toBeVisible({ timeout: 15000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     });
 });

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-317 / D-198 —— 移动端成员面板（最小版）：390×844 从**溢出菜单**进 `members`、
  * 入口徽标 = 服务端未读和、三处命中区域 ≥44×44、写能力投影正确。
@@ -23,6 +24,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const WORKSPACE_ID = "workspace-1";
 const SESSION_ID = "bl317-session";
@@ -139,25 +141,31 @@ async function setupLane(
 async function openOverflowMenu(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
     const more = page.getByTestId("workspace-toolbar-more-mobile");
-    await expect(more).toBeVisible({ timeout: 15_000 });
+    await expect(more).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await more.click();
-    await expect(page.getByTestId("workspace-toolbar-more-menu")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("workspace-toolbar-more-menu")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 }
 
 /** 溢出菜单 → members → aux sheet 的 members 页（返回时面板已可见）。 */
 async function openMobileMembers(page: Page): Promise<void> {
     await openOverflowMenu(page);
     const entry = page.getByTestId("workspace-toolbar-more-members");
-    await expect(entry).toBeVisible({ timeout: 15_000 });
+    await expect(entry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await entry.click();
-    await expect(page.getByTestId("mobile-changes-sheet")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("mobile-changes-sheet")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect(page.getByTestId("mobile-aux-tab-members")).toHaveAttribute(
         "aria-selected",
         "true",
-        { timeout: 15_000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
-    await expect(page.getByTestId("session-participants-panel")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("participants-list")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("session-participants-panel")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("participants-list")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 /** 命中区域断言：`boundingBox()` 实测 ≥44×44（不靠肉眼、不靠 class 文本）。 */
@@ -200,7 +208,7 @@ test.describe("BL-317 移动端成员面板（390×844）", () => {
         // 徽标值 == mock 服务端 `readCursor.mentionCount` 之和（3），不是恒真断言。
         await expect(page.getByTestId("workspace-toolbar-more-members-badge")).toHaveText(
             `@${SERVER_MENTION_COUNT}`,
-            { timeout: 15_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         // 不只靠视觉：aria-label 里必须带出数量。
         await expect(page.getByTestId("workspace-toolbar-more-members")).toHaveAttribute(
@@ -210,7 +218,7 @@ test.describe("BL-317 移动端成员面板（390×844）", () => {
 
         await page.getByTestId("workspace-toolbar-more-members").click();
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 面板内徽标同样是服务端值（同一份 store）。
@@ -222,11 +230,11 @@ test.describe("BL-317 移动端成员面板（390×844）", () => {
         const advance = page.getByTestId("participant-cursor-advance");
         await expect(advance).toBeEnabled();
         await advance.click();
-        await expect.poll(() => state.cursorRequests.length, { timeout: 15_000 }).toBe(1);
+        await expect.poll(() => state.cursorRequests.length, { timeout: LONG_TIMEOUT_MS }).toBe(1);
         expect(state.cursorRequests[0]).toEqual({ lastReadEventSeq: CURSOR_ADVANCE_TO_LATEST });
         await expect(
             page.getByTestId(`participant-mention-badge-${OWNER_PARTICIPANT_ID}`),
-        ).toHaveCount(0, { timeout: 15_000 });
+        ).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
     });
 
     test("VIEWER：推进控件点击前即 disabled，点击不产生 PATCH", async ({ page }) => {
@@ -243,7 +251,9 @@ test.describe("BL-317 移动端成员面板（390×844）", () => {
         await expect(advance).toHaveAttribute("title", /只读|read-only/i);
 
         await advance.click({ force: true });
-        await expect.poll(() => state.cursorRequests.length, { timeout: 2_000 }).toBe(0);
+        await expect
+            .poll(() => state.cursorRequests.length, { timeout: EXPECT_TIMEOUT_MS })
+            .toBe(0);
     });
 
     test("三处命中区域 ≥44×44；390 无横向溢出且 sheet 滚到顶", async ({ page }) => {
@@ -253,7 +263,9 @@ test.describe("BL-317 移动端成员面板（390×844）", () => {
         await expectTouchTarget(page, "workspace-toolbar-more-members");
 
         await page.getByTestId("workspace-toolbar-more-members").click();
-        await expect(page.getByTestId("participants-list")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByTestId("participants-list")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // ② sheet 的三个 tab（逐个量，别只看 members）
         for (const tab of ["monitor", "changes", "members"]) {
@@ -298,7 +310,7 @@ test.describe("BL-317 移动端成员面板（390×844）", () => {
         );
         await page.getByTestId("mobile-aux-tab-members").click();
         await expect(page.getByTestId("session-participants-panel")).toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 });

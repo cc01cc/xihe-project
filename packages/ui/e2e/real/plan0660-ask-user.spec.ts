@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0660 T5.23 — ask_user 真栈浏览器验收（串行门控骨架）。
  *
@@ -72,6 +73,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /** 门控：只有窗口显式打开时才跑（默认 suite 里恒 skip，不计入假绿）。 */
 const ENABLED = process.env.XIHE_E2E_ASK_USER === "1";
@@ -133,7 +135,6 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
             !process.env.XIHE_FAKE_LLM_PORT,
             "requires the isolated host-E2E stack (scripts/e2e-host.mjs injects XIHE_FAKE_LLM_PORT)",
         );
-        test.setTimeout(900_000);
         mkdirSync(OUT, { recursive: true });
         const observed: Record<string, unknown> = {
             plan: "PLAN-0660",
@@ -177,7 +178,7 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
 
         await seedPage(page, ctx);
         await page.goto(workspaceChatPath(wsId, sessionId));
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await ensureChatReady(page);
 
         // V8 的「不刷新」判据：此后不再 reload/goto，主 frame 导航计数必须停在 1（初次 goto）。
@@ -200,18 +201,20 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
         await expect(
             sidebarEntry,
             `sidebar questions entry ${SIDEBAR_ENTRY_TESTID} must appear without reload`,
-        ).toBeVisible({ timeout: 180_000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId(SIDEBAR_BADGE_TESTID)).toHaveText(/^\d+$/);
 
         // 第二层：展开后卡片在列表里（卡片不在顶层，必须点开入口）。
         if ((await sidebarEntry.getAttribute("aria-expanded")) !== "true") {
             await sidebarEntry.click();
         }
-        await expect(page.getByTestId(SIDEBAR_LIST_TESTID)).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId(SIDEBAR_LIST_TESTID)).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         const card = page.getByTestId(CARD_TESTID);
         await expect(card, `ask card ${CARD_TESTID} must appear without reload`).toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // 两态（未刷新即 pending、且可提交）—— 用真实属性断言，别靠"看见输入框"推断。
         await expect(card).toHaveAttribute("data-state", "pending");
@@ -234,7 +237,7 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
                         ? "found"
                         : "missing";
                 },
-                { timeout: 60_000, intervals: [500, 1_000, 2_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000, 2_000] },
             )
             .toBe("found");
         const question = pendingList!.items.find((item) => item.sessionId === sessionId);
@@ -253,7 +256,9 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
         // 卡片与 CP 投影必须是同一行：`data-question-id` 等于刚才列表里拿到的那条。
         await expect(card).toHaveAttribute("data-question-id", questionId);
         const answerInput = page.getByTestId(ANSWER_INPUT_TESTID);
-        await expect(answerInput, "answer input inside the card").toBeVisible({ timeout: 30_000 });
+        await expect(answerInput, "answer input inside the card").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await answerInput.fill(ANSWER_TEXT);
         await page.getByTestId(ANSWER_SUBMIT_TESTID).click();
 
@@ -268,7 +273,7 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
                     if (!response.ok()) return `HTTP ${response.status()}`;
                     return ((await response.json()) as UserQuestionView).state;
                 },
-                { timeout: 60_000, intervals: [500, 1_000, 2_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000, 2_000] },
             )
             .toBe("answered");
         const settledResponse = await request.get(`${CP_URL}/api/v1/user-questions/${questionId}`, {
@@ -290,11 +295,11 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
             answerInput,
             "the answered card must no longer offer an editable input",
         ).toHaveCount(0, {
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(card, "the whole entry leaves the DOM once nothing is pending").toHaveCount(
             0,
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.screenshot({ path: join(OUT, "ask-entry-cleared.png"), scale: "css" });
 
@@ -314,7 +319,7 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @ho
             page.getByText("Answer received.").first(),
             "agent must continue after the answer",
         ).toBeVisible({
-            timeout: 180_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await awaitLatestChatRunCompleted(request, headers, wsId);
         steps["continued"] = true;
@@ -344,7 +349,7 @@ function psqlRow(questionId: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 

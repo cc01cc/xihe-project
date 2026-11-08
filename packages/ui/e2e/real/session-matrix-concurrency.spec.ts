@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R6 @host — 并发/排队（durable queue）矩阵。
  *
@@ -22,6 +23,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -177,7 +179,7 @@ test.describe("@host PLAN-0658 R6 并发排队（durable queue）", () => {
                     const status = await runStatus(request, slowRunId);
                     return status !== "" && !TERMINAL.has(status);
                 },
-                { timeout: 15_000, intervals: [200, 400] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [200, 400] },
             )
             .toBe(true);
 
@@ -241,7 +243,7 @@ test.describe("@host PLAN-0658 R6 并发排队（durable queue）", () => {
                     const runs = await sessionRuns(request);
                     return runs.length;
                 },
-                { timeout: 60_000, intervals: [500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
             )
             .toBe(2);
 

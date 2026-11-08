@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 // PLAN-0353 D1 (Q1-A): journey-b evidence — manual workspace mutations.
 // B1: human-readable error while Runtime is down, then recovery after restart;
 // B2: the user-direct UI mutation lands as a direct-user MCP invocation.
@@ -18,6 +19,7 @@ import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import path from "node:path";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const RUNTIME_PORT = Number(process.env.XIHE_RUNTIME_PORT || "12633");
@@ -118,7 +120,7 @@ async function killRuntime(): Promise<void> {
     await expect
         .poll(async () => fetchOk(`http://127.0.0.1:${RUNTIME_PORT}/health`), {
             message: "runtime /health must stop responding after the kill",
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [500, 1000, 2000],
         })
         .toBe(false);
@@ -204,7 +206,7 @@ async function ensureRuntimeUp(request: APIRequestContext): Promise<void> {
             },
             {
                 message: "CP→Runtime read_file must recover after restart",
-                timeout: 120000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [2000],
             },
         )
@@ -220,12 +222,12 @@ function dirButton(page: Page): Locator {
 async function ensureFileVisible(page: Page, fileName: string): Promise<Locator> {
     const file = page.getByRole("button", { name: fileName, exact: true });
     try {
-        await expect(file).toBeVisible({ timeout: 15000 });
+        await expect(file).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     } catch {
         // The refresh may have kept the directory expanded already (the store
         // keeps the parent path); only toggle when the node truly never appeared.
         await dirButton(page).click();
-        await expect(file).toBeVisible({ timeout: 15000 });
+        await expect(file).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     }
     return file;
 }
@@ -239,7 +241,7 @@ async function createFileThroughUi(
     await page.getByRole("button", { name: new RegExp(`${dirName}$`) }).click({ button: "right" });
     await page.getByRole("menuitem", { name: /^New File$/ }).click();
     const modal = page.getByTestId("modal-content");
-    await expect(modal).toBeVisible({ timeout: 8000 });
+    await expect(modal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await modal.getByRole("textbox").fill(fileName);
     await modal.getByRole("button", { name: "Create", exact: true }).click();
     return modal;
@@ -247,7 +249,6 @@ async function createFileThroughUi(
 
 test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(300000);
 
     test.beforeAll(async ({ request }) => {
         ctx = await registerJourneyUser(request, "JourneyB");
@@ -279,13 +280,13 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
     }) => {
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
-        await expect(dirButton(page)).toBeVisible({ timeout: 30000 });
+        await expect(dirButton(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const fileName = `journey-b-b2-${Date.now()}.md`;
         const modal = await createFileThroughUi(page, "journey-b", fileName);
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         await expect(await ensureFileVisible(page, fileName)).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // Audit view proves direct-user MCP provenance and visible history.
@@ -320,19 +321,21 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
                 },
                 {
                     message: "a write_file mcp_invocation audit entry must exist",
-                    timeout: 30000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [1000, 2000],
                 },
             )
             .toBe("ok");
 
         await page.goto("/settings/audit", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-audit-heading")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("settings-audit-heading")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const entryRow = page.getByTestId(`settings-audit-entry-${auditEntryId}`);
-        await expect(entryRow).toBeVisible({ timeout: 20000 });
+        await expect(entryRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await entryRow.click();
         await expect(page.getByTestId("settings-audit-items")).toContainText("write_file", {
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -350,7 +353,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         // right-click. The B1 assertion targets the mutation path's error copy.
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
-        await expect(dirButton(page)).toBeVisible({ timeout: 30000 });
+        await expect(dirButton(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         try {
             await killRuntime();
@@ -373,7 +376,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
             // The failed mutation replaces the tree panel with the humanized error and
             // a Retry affordance (the New File modal unmounts with the tree).
             await expect(page.getByText(HUMAN_RUNTIME_DOWN).first()).toBeVisible({
-                timeout: 30000,
+                timeout: LONG_TIMEOUT_MS,
             });
             await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
             await expect(
@@ -401,21 +404,21 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
 
         seedPage(page, ctx);
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
-        await expect(dirButton(page)).toBeVisible({ timeout: 30000 });
+        await expect(dirButton(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const fileName = `journey-b-b1-recover-${Date.now()}.md`;
         const modal = await createFileThroughUi(page, "journey-b", fileName);
-        await expect(modal).toBeHidden({ timeout: 30000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         const created = await ensureFileVisible(page, fileName);
-        await expect(created).toBeVisible({ timeout: 30000 });
+        await expect(created).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // Delete again through the context menu: the tree must reflect both mutations.
         await created.click({ button: "right" });
         await page.getByRole("menuitem", { name: /^Delete/ }).click();
         const deleteModal = page.getByTestId("modal-content");
-        await expect(deleteModal).toBeVisible({ timeout: 8000 });
+        await expect(deleteModal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await deleteModal.getByRole("button", { name: "Delete", exact: true }).click();
-        await expect(created).not.toBeVisible({ timeout: 20000 });
+        await expect(created).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: evidencePath("b1-recover.png"),

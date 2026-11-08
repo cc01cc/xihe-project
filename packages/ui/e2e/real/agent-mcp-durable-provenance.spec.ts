@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -13,6 +14,7 @@ import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { ensureWorkspace } from "./helpers/workspace";
 import { generateE2EPassword } from "./helpers/password";
 import { seedUserGrant } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ mode: "serial", retries: 0 });
 
@@ -26,7 +28,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -38,7 +40,6 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
         process.env.XIHE_E2E_LLM_MODE !== "write_file",
         "requires XIHE_E2E_LLM_MODE=write_file for one deterministic Runtime tool call",
     );
-    test.setTimeout(240_000);
 
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
     const registered = await request.post(`${CP_URL}/api/v1/auth/register`, {
@@ -144,7 +145,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     expect(((await sessionDetails.json()) as { agentPrincipalId: string }).agentPrincipalId).toBe(
         principalId,
     );
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const fileName = `t3-2-provenance-${Date.now().toString(36)}.txt`;
     const content = `durable Run and ToolCall verified ${randomUUID()}`;
@@ -161,7 +162,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     expect(runId).toBeTruthy();
 
     const approvalModal = page.getByTestId("modal-content");
-    await expect(approvalModal).toBeVisible({ timeout: 120_000 });
+    await expect(approvalModal).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(approvalModal).toContainText("write_file");
     await expect(approvalModal).toContainText(fileName);
     await page.screenshot({
@@ -169,7 +170,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
         path: testInfo.outputPath("mcp-durable-call-approval.png"),
     });
     await approvalModal.getByTestId("approval-approve").click();
-    await expect(approvalModal).toBeHidden({ timeout: 20_000 });
+    await expect(approvalModal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
     const runRoot = process.env.XIHE_E2E_RUN_ID;
     if (!runRoot) throw new Error("XIHE_E2E_RUN_ID is required for isolated file assertions");
@@ -189,11 +190,14 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
                     return "";
                 }
             },
-            { timeout: 90_000, message: `approved Runtime write did not land at ${hostFile}` },
+            {
+                timeout: LONG_TIMEOUT_MS,
+                message: `approved Runtime write did not land at ${hostFile}`,
+            },
         )
         .toBe(content);
     await expect(page.getByText(fileName, { exact: true }).first()).toBeVisible({
-        timeout: 30_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.screenshot({
         scale: "css",

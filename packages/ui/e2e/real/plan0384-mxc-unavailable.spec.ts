@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384-mxc-unavailable");
@@ -20,7 +22,7 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384
  */
 test.describe("@host PLAN-0384 MXC unavailable branch", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(180000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     let auth: string,
         seedWs = "",
@@ -165,7 +167,7 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
 
         // V2/V4: the MXC card is disabled and carries the real reason; the switch guidance is shown.
         const mxcCard = page.locator('[data-testid="workspace-execution-mode-mxc"]');
-        await expect(mxcCard).toBeDisabled({ timeout: 20000 });
+        await expect(mxcCard).toBeDisabled({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('[data-testid="workspace-execution-mxc-status"]')).toContainText(
             /不可用/,
         );
@@ -199,7 +201,7 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         expect(payload.executionMode).toBe("windows-host");
         expect(payload.hostPath).toBe(targetDir);
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeHidden({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",

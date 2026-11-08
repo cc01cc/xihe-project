@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0611 M2 — XH 新手 gold path（G1 首跑 / G2 到第一条回复 / G3 配模型 / G4 失败可读性目标态）。
  *
@@ -22,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const FIRST_RUN = process.env.XIHE_E2E_FIRST_RUN ?? "";
@@ -49,7 +51,7 @@ function accountGap(): string | null {
     return null;
 }
 
-test.describe.configure({ mode: "serial", timeout: 120_000 });
+test.describe.configure({ mode: "serial", timeout: LONG_TIMEOUT_MS });
 
 interface Identity {
     id: string;
@@ -121,18 +123,18 @@ async function settleIntoWorkspace(page: Page): Promise<string> {
                 async () => {
                     const path = new URL(page.url()).pathname;
                     if (/^\/workspace\/[0-9a-f-]{36}$/i.test(path)) return "entered";
-                    await item.click({ timeout: 5_000 }).catch(() => {});
+                    await item.click({ timeout: ACTION_TIMEOUT_MS }).catch(() => {});
                     return /^\/workspace\/[0-9a-f-]{36}$/i.test(new URL(page.url()).pathname)
                         ? "entered"
                         : "waiting";
                 },
-                { timeout: 60000, intervals: [500, 1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000] },
             )
             .toBe("entered");
     }
     await expect
         .poll(async () => new URL(page.url()).pathname, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [300, 600],
         })
         .toMatch(/^\/workspace\/[0-9a-f-]{36}$/i);
@@ -230,7 +232,7 @@ async function pollLanding(
     let observed: Landing = "none";
     await expect
         .poll(async () => (observed = await workspaceLanding(page)), {
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [250, 500],
         })
         .toMatch(new RegExp(`^(${allowed.join("|")})$`));
@@ -265,11 +267,15 @@ async function createWorkspaceViaDialog(
     await page
         .getByTestId(opener === "picker" ? "workspace-picker-create" : "workspace-toolbar-add")
         .click();
-    await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await page.getByTestId("workspace-storage-direct").click();
     await page.getByTestId("workspace-source-path").fill(hostDir);
     await page.getByTestId("workspace-source-read").click();
-    await expect(page.getByTestId("workspace-source-browser")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("workspace-source-browser")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await page.getByTestId("workspace-source-use").click();
 
     // 真实 preflight 决定哪个执行模式可用（MXC 可能不可用 ⇒ 退到 host + 风险确认）。
@@ -313,13 +319,17 @@ async function createWorkspaceViaDialog(
     expect(workspaceId, "created workspace id").toMatch(/^[0-9a-f-]{36}$/i);
 
     await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-    await expect(page.getByTestId("workspace-empty-state")).toBeVisible({ timeout: 45000 });
+    await expect(page.getByTestId("workspace-empty-state")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     return workspaceId;
 }
 
 /** 从空白起步首屏建"第一个工作区"（PLAN-0614 T3.4）。 */
 async function createFirstWorkspace(page: Page, request: APIRequestContext): Promise<string> {
-    await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     return createWorkspaceViaDialog(page, request, "picker");
 }
 
@@ -363,7 +373,9 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     await page.goto("/settings/config", { waitUntil: "load" });
     await page.getByTestId("config-tab-user").click();
     await page.getByTestId("provider-hub-connect").click();
-    await expect(page.getByTestId("provider-picker-modal")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("provider-picker-modal")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await page.getByTestId("provider-picker-search").fill("open");
     await page.locator('button[data-testid^="provider-picker-"]').first().click();
 
@@ -409,7 +421,7 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     //（原 ModelPopover 内部同一端点），连接就是刚创建并 verify 过的那条（按 id 取回
     // providerId/revision，绑定四件套必须齐全）。
     await page.goto(chatUrl, { waitUntil: "load" });
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const workspace = JSON.parse(
         await page.evaluate(() => sessionStorage.getItem("xihe-workspace") ?? "{}"),
     ) as { id?: string };
@@ -441,7 +453,7 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
 ): Promise<string> {
     await page.getByTestId("workspace-toolbar-agents").click();
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
     const agentName = `GoldPathAgent${randomUUID().slice(0, 8)}`;
     await page.getByTestId("agent-principal-name").fill(agentName);
@@ -476,11 +488,11 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     await expect(
         panel.getByText(agentName, { exact: false }).first(),
         "bound agent must be listed in the panel after bind",
-    ).toBeVisible({ timeout: 20_000 });
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(
         panel.getByText(principalId, { exact: false }).first(),
         "bound principal id must be listed in the panel",
-    ).toBeVisible({ timeout: 20_000 });
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     return principalId;
 }
 
@@ -518,12 +530,12 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
 
         await page.goto("/workspace", { waitUntil: "load" });
 
-        await expect(page).toHaveURL(/\/onboarding\?redirect=/i, { timeout: 45000 });
+        await expect(page).toHaveURL(/\/onboarding\?redirect=/i, { timeout: LONG_TIMEOUT_MS });
         await expect(page.getByRole("heading", { name: "开始使用" })).toBeVisible({
-            timeout: 45000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect(page.locator("#email")).toBeVisible({ timeout: 45000 });
-        await expect(page.locator("#name")).toBeVisible({ timeout: 45000 });
+        await expect(page.locator("#email")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(page.locator("#name")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator("#password")).toHaveCount(0);
         await expect(page.locator('form button[type="submit"]')).toBeDisabled();
 
@@ -539,7 +551,7 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         test.skip(before.initialized, "stack is not virgin; G1-b needs an empty database");
 
         await page.goto("/workspace", { waitUntil: "load" });
-        await expect(page).toHaveURL(/\/onboarding/i, { timeout: 45000 });
+        await expect(page).toHaveURL(/\/onboarding/i, { timeout: LONG_TIMEOUT_MS });
         await page.locator("#email").fill(`first-${Date.now()}@test.local`);
         await page.locator("#name").fill("First Account");
 
@@ -560,8 +572,12 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
 
         // PLAN-0614（空白起步）：注册**不再**建工作区 ⇒ 首屏是空态选择面，不是工作区视图。
         // 原断言（等 `workspace-empty-state` / 自动出现的 Default Workspace）是旧语义，必须换掉。
-        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 45000 });
-        await expect(page.getByTestId("workspace-picker-create")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("workspace-picker-create")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // 断言"确实没有工作区"：选择面里不该有任何条目（不是"列出了但没渲染"）。
         await expect(page.locator('[data-testid^="workspace-picker-item-"]')).toHaveCount(0);
         expect(await tokenOf(page)).toBeTruthy();
@@ -574,7 +590,9 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         expect(identity.isInstanceSuper, "localMode first account must hold SUPER_ADMIN").toBe(
             true,
         );
-        await expect(page.getByTestId("nav-rail-settings")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("nav-rail-settings")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
     });
 
     test("G1-b2 the empty state creates the first workspace and enters it", async ({
@@ -589,11 +607,15 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
 
         // 承接 G1-b：账号已注册但没有任何工作区。
         await page.goto("/workspace", { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // 点「创建你的第一个工作区」→ 对话框（direct_attach + source browser + preflight）。
         await page.getByTestId("workspace-picker-create").click();
-        await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("workspace-storage-direct").click();
         const hostDir = path.join(
             path.resolve(process.cwd(), "../../.tmp/e2e-host", process.env.XIHE_E2E_RUN_ID ?? ""),
@@ -602,7 +624,9 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         mkdirSync(hostDir, { recursive: true });
         await page.getByTestId("workspace-source-path").fill(hostDir);
         await page.getByTestId("workspace-source-read").click();
-        await expect(page.getByTestId("workspace-source-browser")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("workspace-source-browser")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await shot(page, "03-create-workspace-dialog");
         await page.getByTestId("workspace-source-use").click();
 
@@ -643,9 +667,11 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
 
         // 创建成功后选择面自动进入该工作区（PLAN-0614 M2 的 handleCreated）。
         await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}$`, "i"), {
-            timeout: 45000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect(page.getByTestId("workspace-empty-state")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-empty-state")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await shot(page, "04-workspace-view");
 
         // 移动 viewport 代表性截图（DEV-020）：同一 context 新页签共享 localStorage token。
@@ -656,7 +682,7 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
             // 窄屏下文件树不常驻，得先点工具栏的「Files」把面板打开 —— 正是移动用户的真实动作。
             await mobile.getByTestId("workspace-toolbar-files-mobile").click();
             await expect(mobile.getByTestId("workspace-empty-state")).toBeVisible({
-                timeout: 45000,
+                timeout: LONG_TIMEOUT_MS,
             });
             await shot(mobile, "07-mobile-workspace");
         } finally {
@@ -699,13 +725,13 @@ test.describe("@host gold path G1 — blank instance first run (localMode)", () 
         // (1) 登录态由守卫恢复：不再出现表单。
         await expect(page.locator("#identifier")).toHaveCount(0);
         await expect
-            .poll(() => tokenOf(page), { timeout: 45000, intervals: [250, 500] })
+            .poll(() => tokenOf(page), { timeout: LONG_TIMEOUT_MS, intervals: [250, 500] })
             .not.toBe("");
 
         // (2) 落点是工作区根路径或某个具体工作区。
         await expect
             .poll(async () => new URL(page.url()).pathname, {
-                timeout: 45000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500],
             })
             .toMatch(/^\/workspace(\/[0-9a-f-]{36})?$/i);
@@ -799,7 +825,9 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         const identity = await identityOf(page, request);
         // PLAN-0610：首用户 SUPER_ADMIN（不再断言 user.role === "ADMIN"）。
         expect(identity.isInstanceSuper).toBe(true);
-        await expect(page.getByTestId("nav-rail-settings")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("nav-rail-settings")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
     });
 
     test("G2-b the SUPER_ADMIN account needs no manual grant to manage agents", async ({
@@ -820,7 +848,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         const body = (await permissions.json()) as { instanceCapabilities?: string[] };
         expect(body.instanceCapabilities ?? []).toContain("instance:super");
 
-        await expect(page.getByTestId("nav-rail-admin")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("nav-rail-admin")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     });
 
     test("G2-c create and bind an Agent through the workspace dialog", async ({
@@ -831,7 +859,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
 
         await page.getByTestId("workspace-toolbar-agents").click();
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("agent-grant-panel-link")).toBeVisible();
 
@@ -875,7 +903,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
 
         await page.getByTestId("workspace-create-session").click();
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
-        await expect(principalSelect).toBeVisible({ timeout: 20000 });
+        await expect(principalSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const principalId = await principalSelect.locator("option").nth(1).getAttribute("value");
         expect(principalId, "a bound principal must be selectable").toBeTruthy();
         await principalSelect.selectOption(principalId!);
@@ -891,9 +919,9 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
 
         expect(created.status(), await created.text()).toBe(201);
         await expect(page).toHaveURL(/\/workspace\/[0-9a-f-]{36}\/chat\/[0-9a-f-]{36}/i, {
-            timeout: 45000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     });
 
     test("G2-e one message yields an assistant bubble, a terminal run, and survives reload", async ({
@@ -901,7 +929,6 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         request,
     }) => {
         // 本用例比其它 G2 步骤长（建工作区 + 建/绑 Agent + 建会话 + 聊天 + reload），单独放宽超时。
-        test.setTimeout(300_000);
         // 先进入默认工作区（拿到工作区工具条的入口），再从中新建 direct_attach 工作区。
         await openOrCreateWorkspace(page, request);
         // Lead 裁定 (b)：首条回复必须在 `direct_attach` 工作区里拿（BL-171：自动建的默认工作区是
@@ -912,7 +939,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
 
         await page.getByTestId("workspace-create-session").click();
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
-        await expect(principalSelect).toBeVisible({ timeout: 20000 });
+        await expect(principalSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const principalId = await principalSelect.locator("option").nth(1).getAttribute("value");
         expect(principalId, "the bound principal must be selectable").toBeTruthy();
         await principalSelect.selectOption(principalId!);
@@ -927,9 +954,9 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         const createdSession = await sessionResponse;
         expect(createdSession.status(), await createdSession.text()).toBe(201);
         await expect(page).toHaveURL(/\/workspace\/[0-9a-f-]{36}\/chat\/[0-9a-f-]{36}/i, {
-            timeout: 45000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(workspaceId).toMatch(/^[0-9a-f-]{36}$/i);
 
         // 显式绑定一条**工具可用**的连接再发消息：
@@ -942,7 +969,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         expect(chatSessionId, "the created session id").toMatch(/^[0-9a-f-]{36}$/i);
         await bindToolCapableFakeLlmConnection(page, chatSessionId);
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await page.getByTestId("chat-input").fill("你好，介绍一下这个工作区");
         const chatResponse = page.waitForResponse(
@@ -958,10 +985,10 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         );
 
         const assistant = page.locator('[data-slot="message"][data-align="start"]').last();
-        await expect(assistant).toBeVisible({ timeout: 60000 });
+        await expect(assistant).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => (await assistant.innerText()).trim().length, {
-                timeout: 60000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000],
             })
             .toBeGreaterThan(0);
@@ -973,7 +1000,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await page.reload({ waitUntil: "load" });
         await expect
             .poll(async () => page.locator('[data-slot="message"]').count(), {
-                timeout: 45000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000],
             })
             .toBeGreaterThanOrEqual(2);
@@ -1003,7 +1030,9 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
         // user / workspace 层渲染 ⇒ 新建连接必须切到「用户」层（PLAN-0554/0560 的分层面）。
         await page.getByTestId("config-tab-user").click();
         await page.getByTestId("provider-hub-connect").click();
-        await expect(page.getByTestId("provider-picker-modal")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("provider-picker-modal")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("provider-picker-search").fill("open");
         await page.locator('button[data-testid^="provider-picker-"]').first().click();
 
@@ -1046,7 +1075,7 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
         ).toBe("READY");
 
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByText(label).first()).toBeVisible({ timeout: 20000 });
+        await expect(page.getByText(label).first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     });
 
     // G3-b 已删除（2026-11-04 用户裁定移除 composer 模型选择器）：原断言"假模型可在选择器里
@@ -1065,12 +1094,12 @@ test.describe("@gap gold path G4 — failure readability (target state)", () => 
             "BL-152 未修：当前直出 `LLM_NOT_CONFIGURED: Agent LLM is not ready: missing_credentials`（英文技术码）",
         );
         await openOrCreateWorkspace(page, request);
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.getByTestId("chat-input").fill("配置缺失时我该看到什么？");
         await page.getByTestId("chat-send-button").click();
 
         const error = page.getByTestId("message-error");
-        await expect(error).toBeVisible({ timeout: 45000 });
+        await expect(error).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(error).not.toContainText(/_/);
         await expect(error.getByRole("button", { name: /去配置|配置模型|设置/ })).toBeVisible();
     });

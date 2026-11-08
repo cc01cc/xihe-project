@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0621 M0/M1 —— 有头浏览器真实场景走查（S1–S8）。
  *
@@ -21,6 +22,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { bindToolCapableChat } from "../real/helpers/tool-capable-chat";
 
 import { agentName } from "../real/helpers/agent-name";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-walkthrough/runs", RUN_ID);
@@ -101,7 +103,7 @@ async function loginViaForm(page: Page, identifier: string, password: string): P
     expect(response.status(), `login form must authenticate (${await response.text()})`).toBe(200);
     await expect
         .poll(() => page.evaluate(() => Boolean(localStorage.getItem("xihe-token"))), {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [250, 500],
         })
         .toBe(true);
@@ -172,7 +174,7 @@ async function landOnWorkspacePicker(page: Page): Promise<"picker-empty" | "pick
                     return "workspace";
                 return "unknown";
             },
-            { timeout: 45000, intervals: [250, 500, 1000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1000] },
         )
         .not.toBe("unknown");
     if (
@@ -209,7 +211,9 @@ async function createWorkspaceViaDialog(
     await page
         .getByTestId(opener === "picker" ? "workspace-picker-create" : "workspace-toolbar-add")
         .click();
-    await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 
     // S8 的 UI 侧观察点之一：冻结的 managed_import 卡片**可见**（解释原因），但**不是可点按钮**。
     const frozenCardVisible = await page
@@ -224,7 +228,9 @@ async function createWorkspaceViaDialog(
     await page.getByTestId("workspace-storage-direct").click();
     await page.getByTestId("workspace-source-path").fill(hostDir);
     await page.getByTestId("workspace-source-read").click();
-    await expect(page.getByTestId("workspace-source-browser")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("workspace-source-browser")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await page.getByTestId("workspace-source-use").click();
 
     const token = await tokenOf(page);
@@ -262,14 +268,16 @@ async function createWorkspaceViaDialog(
     expect(workspaceId).toMatch(/^[0-9a-f-]{36}$/i);
 
     await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-    await expect(page.getByTestId("workspace-empty-state")).toBeVisible({ timeout: 45000 });
+    await expect(page.getByTestId("workspace-empty-state")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     return { workspaceId, frozenCardVisible, executionMode };
 }
 
 async function createAndBindAgent(page: Page): Promise<string> {
     await page.getByTestId("workspace-toolbar-agents").click();
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page
         .getByTestId("agent-principal-name")
@@ -296,7 +304,7 @@ async function createAndBindAgent(page: Page): Promise<string> {
     // 绑定完成后对话框仍开着（modal backdrop 会挡住工具条按钮）——按 Esc 关闭并确认已消失。
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeHidden({
-        timeout: 15000,
+        timeout: LONG_TIMEOUT_MS,
     });
     return principalId;
 }
@@ -345,7 +353,6 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
     });
 
     test.beforeEach(async ({ page }) => {
-        test.setTimeout(300_000);
         attachPageDiagnostics(page);
     });
 
@@ -358,7 +365,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             "S1 未覆盖：本车道栈已 bootstrap（已有账号），观察不到空白实例首屏。复现需 `--first-run=local --bootstrap-user=none` 起独立栈。",
         );
         await page.goto("/", { waitUntil: "load" });
-        await expect(page).toHaveURL(/\/onboarding/, { timeout: 30000 });
+        await expect(page).toHaveURL(/\/onboarding/, { timeout: LONG_TIMEOUT_MS });
         await shot(page, "S1", "s1-onboarding", "首访落在 /onboarding");
     });
 
@@ -370,7 +377,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             "S2 未覆盖：本车道栈已 bootstrap（已有账号），注册第一个账号只能在空白实例上观察。",
         );
         await registerViaForm(page, `headed-first-${Date.now()}@test.local`, "Headed First");
-        await expect(page).toHaveURL(/\/workspace/, { timeout: 60000 });
+        await expect(page).toHaveURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
         const landing = await landOnWorkspacePicker(page);
         expect(landing).toBe("picker-empty");
         await shot(page, "S2", "s2-first-account-empty-picker", "首个账号注册后落到空态选择面");
@@ -382,7 +389,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await registerViaForm(page, email, "Headed Second");
         await expect
             .poll(() => page.evaluate(() => Boolean(localStorage.getItem("xihe-token"))), {
-                timeout: 60000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500],
             })
             .toBe(true);
@@ -422,7 +429,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
                 await page.locator('[data-testid^="workspace-picker-item-"]').first().click();
             }
             await expect(page.getByTestId("workspace-toolbar-add")).toBeVisible({
-                timeout: 30000,
+                timeout: LONG_TIMEOUT_MS,
             });
             created = await createWorkspaceViaDialog(page, request, "toolbar");
         }
@@ -450,7 +457,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await registerViaForm(page, fresh, "Headed Plain");
         await expect
             .poll(() => page.evaluate(() => Boolean(localStorage.getItem("xihe-token"))), {
-                timeout: 60000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500],
             })
             .toBe(true);
@@ -504,7 +511,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         expect(toolbarVisible, "the invited member must see the Agent toolbar").toBe(true);
         await page.getByTestId("workspace-toolbar-agents").click();
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
         await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(1);
@@ -542,14 +549,14 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
                 const items = page.locator('[data-testid^="workspace-picker-item-"]');
                 await items.first().click();
                 await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-                    timeout: 30000,
+                    timeout: LONG_TIMEOUT_MS,
                 });
                 workspaceId = page.url().match(/\/workspace\/([0-9a-f-]{36})/i)?.[1] ?? "";
             }
         } else if (landing === "picker") {
             await page.locator('[data-testid^="workspace-picker-item-"]').first().click();
             await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-                timeout: 30000,
+                timeout: LONG_TIMEOUT_MS,
             });
             workspaceId = page.url().match(/\/workspace\/([0-9a-f-]{36})/i)?.[1] ?? "";
         } else {
@@ -581,7 +588,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await page.reload({ waitUntil: "load" });
         await expect(
             page.getByTestId("chat-input").or(page.getByTestId("sidebar-new-chat")).first(),
-        ).toBeVisible({ timeout: 45000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         if (
             await page
                 .getByTestId("workspace-agent-principal-select")
@@ -590,12 +597,12 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         ) {
             await page.keyboard.press("Escape");
         }
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await shot(page, "S6b", "s6b-session-composer", "会话（自动开的对话）可用且 composer 可见");
 
         await bindToolCapableConnection(request, token, workspaceId, headedSessionId);
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 30000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // 2026-11-04 用户裁定移除 composer 模型选择器：不再断言模型选择器触发器可见。
 
         await page.getByTestId("chat-input").fill("你好，介绍一下这个工作区");
@@ -611,10 +618,10 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         );
 
         const assistant = page.locator('[data-slot="message"][data-align="start"]').last();
-        await expect(assistant).toBeVisible({ timeout: 60000 });
+        await expect(assistant).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => (await assistant.innerText()).trim().length, {
-                timeout: 60000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000],
             })
             .toBeGreaterThan(0);
@@ -629,10 +636,10 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         // S7（并入本用例）：刷新后会话与消息仍在、且不需要重新登录 —— **必须在同一个浏览器上下文里**
         // 才有意义（Playwright 每个 test 默认是新 context，单独跑 S7 等于换了浏览器，断言的是"新浏览器要登录"）。
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => page.locator('[data-slot="message"]').count(), {
-                timeout: 45000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000],
             })
             .toBeGreaterThanOrEqual(2);
@@ -666,9 +673,13 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         } else if (landing === "picker-empty") {
             await createWorkspaceViaDialog(page, request, "picker");
         }
-        await expect(page.getByTestId("workspace-toolbar-add")).toBeVisible({ timeout: 30000 });
+        await expect(page.getByTestId("workspace-toolbar-add")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("workspace-toolbar-add").click();
-        await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         expect(await page.getByTestId("workspace-storage-managed").count()).toBe(0);
         expect(await page.getByTestId("workspace-storage-managed-frozen").isVisible()).toBe(true);
         await shot(

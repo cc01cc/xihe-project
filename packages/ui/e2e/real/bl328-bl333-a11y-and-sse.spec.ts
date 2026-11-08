@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-328 真栈复核（`@host` + **approval 车道**）：`Escape` 本地关闭审批卡后，
  * 焦点必须落到 `pending-approval-reopen-pill`；点 pill 重开 ⇒ 卡恢复。
@@ -28,6 +29,7 @@ import {
     getRootBranchId,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ mode: "serial", retries: 0 });
 
@@ -147,7 +149,7 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     await expect(agentSelect).toBeVisible();
     await agentSelect.selectOption(principalId);
     await page.getByTestId("workspace-create-agent-session").click();
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const sessionResponse = await request.get(`${CP_URL}/api/v1/sessions`, { headers });
     expect(sessionResponse.ok(), await sessionResponse.text()).toBeTruthy();
@@ -181,14 +183,13 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     // 下一步（15–20 min）：用 `--llm-mode=mock` 下已验证的建会话（`ensureFakeUserProvider` +
     //    UI create-session，见 plan0678-skills-positive）先打通会话，再切 approval 车道跑同一段；
     //    或查 CP 侧 POST /sessions 在该车道的失败码（本轮日志无 2xx）。
-    test.setTimeout(240_000);
     const session = await bootstrapSession(request, page);
 
     const approval = page.getByTestId("approval-modal-content");
     await page.getByTestId("chat-input").fill("please delete README.md");
     await page.getByTestId("chat-send-button").click();
     try {
-        await expect(approval).toBeVisible({ timeout: 75_000 });
+        await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     } catch {
         test.skip(
             true,
@@ -198,10 +199,10 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
 
     // Escape ⇒ 本地关闭（不提交任何决定）
     await page.keyboard.press("Escape");
-    await expect(approval).toBeHidden({ timeout: 10_000 });
+    await expect(approval).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
     const pill = page.getByTestId("pending-approval-reopen-pill");
-    await expect(pill).toBeVisible({ timeout: 10_000 });
+    await expect(pill).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     // 判据 1：焦点落在 pill 上（BL-328 的正题）
     await expect
         .poll(
@@ -209,13 +210,13 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
                 page.evaluate(
                     () => (document.activeElement as HTMLElement | null)?.dataset.testid ?? "none",
                 ),
-            { timeout: 10_000, intervals: [100, 250, 500] },
+            { timeout: ACTION_TIMEOUT_MS, intervals: [100, 250, 500] },
         )
         .toBe("pending-approval-reopen-pill");
 
     // 判据 2：点 pill 重开，卡恢复且焦点回到卡内
     await pill.click();
-    await expect(approval).toBeVisible({ timeout: 10_000 });
+    await expect(approval).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     const focusInsideCard = await page.evaluate(() => {
         const active = document.activeElement as HTMLElement | null;
         const card = document.querySelector('[data-testid="approval-modal-content"]');
@@ -258,19 +259,18 @@ async function openApprovalOnBothPages(
     await pageB.goto(`/workspace/${session.workspaceId}/chat/${session.sessionId}`, {
         waitUntil: "domcontentloaded",
     });
-    await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 });
+    await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const approvalA = pageA.getByTestId("approval-modal-content");
     const approvalB = pageB.getByTestId("approval-modal-content");
     await pageA.getByTestId("chat-input").fill("please delete README.md");
     await pageA.getByTestId("chat-send-button").click();
-    await expect(approvalA).toBeVisible({ timeout: 75_000 });
-    await expect(approvalB).toBeVisible({ timeout: 30_000 });
+    await expect(approvalA).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(approvalB).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     return { context, pageA, pageB, session, approvalA, approvalB };
 }
 
 test("@host BL-333 A 页决定 ⇒ B 页卡片 1s 级消失且再点不发请求", async ({ browser, request }) => {
-    test.setTimeout(300_000);
     const { context, pageA, pageB, session, approvalA, approvalB } = await openApprovalOnBothPages(
         browser,
         request,
@@ -286,8 +286,8 @@ test("@host BL-333 A 页决定 ⇒ B 页卡片 1s 级消失且再点不发请求
 
     const decidedAt = Date.now();
     await pageA.getByTestId("approval-approve").click();
-    await expect(approvalA).toBeHidden({ timeout: 15_000 });
-    await expect(approvalB).toBeHidden({ timeout: 5_000 });
+    await expect(approvalA).toBeHidden({ timeout: LONG_TIMEOUT_MS });
+    await expect(approvalB).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
     const elapsed = Date.now() - decidedAt;
     expect(
         elapsed,
@@ -298,7 +298,9 @@ test("@host BL-333 A 页决定 ⇒ B 页卡片 1s 级消失且再点不发请求
     if (await pillB.isVisible().catch(() => false)) await pillB.click().catch(() => {});
     const approveB = pageB.getByTestId("approval-approve");
     if (await approveB.isVisible().catch(() => false)) await approveB.click().catch(() => {});
-    await expect.poll(() => bDecisions.length, { timeout: 2_000, intervals: [250, 500] }).toBe(0);
+    await expect
+        .poll(() => bDecisions.length, { timeout: EXPECT_TIMEOUT_MS, intervals: [250, 500] })
+        .toBe(0);
 
     console.log(
         `[bl333] OK session=${session.sessionId} bCardHiddenMs=${elapsed} bDecisionRequests=${bDecisions.length}`,
@@ -310,7 +312,6 @@ test("@host BL-333 判据③ 远端决定后他页 chat-input 草稿保留（草
     browser,
     request,
 }) => {
-    test.setTimeout(300_000);
     // ⚠️ 2026-11-06 23:5x 诊断修正：**原判断（"远端决定清空草稿"）是错的**。
     // 探针证据：B 页在审批卡已打开时 `fill()`，`inputValue()` 立刻为 ""（`fillSeries=["0ms=\"\"", …]`），
     // 且 value setter 探针捕获到 **0 次写入** ⇒ 草稿从未进入 DOM（该状态下 composer 不接受输入），
@@ -335,27 +336,29 @@ test("@host BL-333 判据③ 远端决定后他页 chat-input 草稿保留（草
     await pageB.goto(`/workspace/${session.workspaceId}/chat/${session.sessionId}`, {
         waitUntil: "domcontentloaded",
     });
-    await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 });
+    await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     // 正确时序：先在 B 页写草稿（此时无审批卡）
     const draft = `BL-360 draft ${Date.now().toString(36)}`;
     await pageB.getByTestId("chat-input").fill(draft);
-    await expect(pageB.getByTestId("chat-input")).toHaveValue(draft, { timeout: 5_000 });
+    await expect(pageB.getByTestId("chat-input")).toHaveValue(draft, {
+        timeout: EXPECT_TIMEOUT_MS,
+    });
 
     // 然后 A 页才发需要审批的消息 ⇒ 两页出现审批卡
     const approvalA = pageA.getByTestId("approval-modal-content");
     const approvalB = pageB.getByTestId("approval-modal-content");
     await pageA.getByTestId("chat-input").fill("please delete README.md");
     await pageA.getByTestId("chat-send-button").click();
-    await expect(approvalA).toBeVisible({ timeout: 75_000 });
-    await expect(approvalB).toBeVisible({ timeout: 30_000 });
+    await expect(approvalA).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+    await expect(approvalB).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const before = await pageB.evaluateHandle(() =>
         document.querySelector('[data-testid="chat-input"]'),
     );
     await pageA.getByTestId("approval-approve").click();
-    await expect(approvalA).toBeHidden({ timeout: 15_000 });
-    await expect(approvalB).toBeHidden({ timeout: 5_000 });
+    await expect(approvalA).toBeHidden({ timeout: LONG_TIMEOUT_MS });
+    await expect(approvalB).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
     const sameNode = await pageB.evaluate(
         (prev) => prev === document.querySelector('[data-testid="chat-input"]'),
         before,
@@ -368,6 +371,6 @@ test("@host BL-333 判据③ 远端决定后他页 chat-input 草稿保留（草
     await expect(
         pageB.getByTestId("chat-input"),
         "远端决定后他页 chat-input 草稿必须保留（BL-333 判据③，正确时序）",
-    ).toHaveValue(draft, { timeout: 10_000 });
+    ).toHaveValue(draft, { timeout: ACTION_TIMEOUT_MS });
     await context.close();
 });

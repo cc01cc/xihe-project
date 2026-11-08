@@ -1,7 +1,9 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { CP_URL, evidenceDir } from "./helpers/journey";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0581 T3.3 — 浏览器侧验收：管理员停用账号后，用户上下文的**下一请求** 401 →
 // 静默刷新失败 → 跳登录页，且 `xihe-token` / `xihe-refresh-token` / `xihe-user` 三键清空。
@@ -107,7 +109,6 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
         page,
         request,
     }) => {
-        test.setTimeout(240_000);
         const user = await registerUser(request, "p0581disabled");
         const token = await adminToken(request);
         const calls = trackApiCalls(page);
@@ -135,7 +136,7 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
         // ——原实现缺这一步，导致"没有下一请求却断言下一请求 401"。
         await page.reload();
 
-        await expect(page).toHaveURL(/\/login/, { timeout: 60_000 });
+        await expect(page).toHaveURL(/\/login/, { timeout: LONG_TIMEOUT_MS });
 
         const after = await authStorage(page);
         for (const key of AUTH_KEYS) {
@@ -170,7 +171,7 @@ test.describe("@host PLAN-0581 T3.3 — 停用账号的浏览器侧失效链路"
     });
 
     test("2. 反向对照：未被停用的用户同样动作保持登录", async ({ page, request }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const user = await registerUser(request, "p0581active");
 
         await loginThroughUi(page, user.email);

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0678 V3 技能正向（`@host`）：**instance 作用域导入 2 个技能 → 绑到主体 → 跑一次真 chat →
  * `chat_runs.skills_snapshot` 里必须冻结这 2 项**（含反向对照）。
@@ -40,6 +41,7 @@ import {
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ retries: 0 });
 
@@ -61,7 +63,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -270,7 +272,7 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
                 run = row;
                 return row && TERMINAL.test(row.status) ? row.status : "running";
             },
-            { timeout: 120_000, intervals: [500, 1_000, 2_000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000, 2_000] },
         )
         .toMatch(TERMINAL);
 
@@ -308,7 +310,7 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
                     ? row.status
                     : "running";
             },
-            { timeout: 120_000, intervals: [500, 1_000, 2_000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000, 2_000] },
         )
         .toMatch(TERMINAL);
     const snapshot2 = run2!.skillsSnapshot;

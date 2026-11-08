@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-341 · 三宽（1920/1440/1080）"无横向溢出"回归。
  *
@@ -14,6 +15,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
 import type { Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl341-session";
 const WIDTHS = [
@@ -97,7 +99,7 @@ async function openChat(page: Page): Promise<void> {
         });
     });
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-    await expect(page.locator("body")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator("body")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 for (const size of WIDTHS) {
@@ -124,10 +126,10 @@ for (const size of WIDTHS) {
 
             // 成员面板：桌面由 dock 的 members 标签承担（打开 → 断言 → 关闭）。
             const membersTab = page.locator('[data-testid="workspace-toolbar-members"]');
-            await expect(membersTab).toBeVisible({ timeout: 15000 });
+            await expect(membersTab).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await membersTab.click();
             const panel = page.locator('[data-testid="session-participants-panel"]');
-            await expect(panel).toBeVisible({ timeout: 15000 });
+            await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expectNoHorizontalOverflow(
                 page,
                 '[data-testid="session-participants-panel"]',

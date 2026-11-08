@@ -1,5 +1,6 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：`cancel mock returns 409 for terminal run` 故意桩 409（验取消终态 run 的降级路径），
 // 逐条放行 cancel 端点。
@@ -67,7 +68,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
 
         test("approval_request event triggers approval modal with tool info", async ({ page }) => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(
                 ({ requestId, runId, sessionId, workspaceId }) => {
@@ -91,14 +92,14 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
             );
 
             const dialog = page.locator('[data-testid="modal-content"]');
-            await expect(dialog).toBeVisible({ timeout: 5000 });
+            await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
             await expect(dialog.locator("text=write file")).toBeVisible();
             await expect(dialog.locator("text=src/main.rs")).toBeVisible();
         });
 
         test("approval modal shows approve and reject buttons", async ({ page }) => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(
                 ({ requestId, runId, sessionId, workspaceId }) => {
@@ -122,7 +123,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
             );
 
             const dialog = page.locator('[data-testid="modal-content"]');
-            await expect(dialog).toBeVisible({ timeout: 5000 });
+            await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
             await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled();
             await expect(dialog.locator('[data-testid="approval-reject"]')).toBeEnabled();
         });
@@ -131,7 +132,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
     test.describe("DiffViewer", () => {
         test("renders unified diff with changed files", async ({ page }) => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(() => {
                 const diffContainer = document.createElement("div");
@@ -172,7 +173,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
             });
 
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Verify route is registered by making a fetch from page context
             const result = await page.evaluate(async (runId) => {
@@ -203,7 +204,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
             });
 
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-            await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+            await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             const result = await page.evaluate(async (runId) => {
                 const resp = await fetch(`/api/v1/chat/runs/${runId}/cancel`, {

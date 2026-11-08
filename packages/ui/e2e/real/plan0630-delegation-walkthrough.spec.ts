@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -14,6 +15,7 @@ import {
 } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0630 T5.9 — headed real-stack walkthrough (V14):
@@ -51,7 +53,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -86,7 +88,7 @@ async function waitForIdleSession(
                 );
                 return active.length === 0 ? "idle" : String(active[0]?.status ?? "active");
             },
-            { timeout: 240_000, intervals: [1_000, 2_000, 3_000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1_000, 2_000, 3_000] },
         )
         .toBe("idle");
 }
@@ -100,11 +102,11 @@ async function sendMessage(page: Page, text: string): Promise<void> {
         if (await send.isEnabled().catch(() => false)) break;
         await page.waitForTimeout(1_000);
     }
-    await expect(send).toBeEnabled({ timeout: 20_000 });
+    await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
     await page
         .locator("[data-sonner-toast]")
         .first()
-        .waitFor({ state: "detached", timeout: 8_000 })
+        .waitFor({ state: "detached", timeout: ACTION_TIMEOUT_MS })
         .catch(() => {});
     await send.click();
     // composer/bubble 重写后 `data-align` 移到 Bubble 原语上，`[data-slot="message"]` 不再承载它；
@@ -115,7 +117,7 @@ async function sendMessage(page: Page, text: string): Promise<void> {
             .filter({ hasText: text.slice(0, 12) })
             .first(),
         "the user bubble appears after sending",
-    ).toBeVisible({ timeout: 30_000 });
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 async function ensureOpenAiCompatConnection(
@@ -193,7 +195,6 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             REAL_ROUTE !== "openai-compat",
             "requires XIHE_E2E_REAL_ROUTE=openai-compat (the runner imports the OpenAI-compatible provider config)",
         );
-        test.setTimeout(900_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const walkthrough: Record<string, unknown> = {
             plan: "PLAN-0630",
@@ -367,7 +368,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
 
         seedPage(page, ctx);
         await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
         /**
          * PLAN-0663: "no approval modal on screen" is a state over time — the modal is portal-rendered
@@ -400,7 +401,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             `请调用 spawn_agent 工具创建一个子 agent，prompt 参数填这句话：只回复标记 ${childMarker}。必须真的调用工具，不要只描述步骤。`,
         );
         await expect(modal, "the spawn gate shows the real approval modal").toBeVisible({
-            timeout: 180_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -413,13 +414,13 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         // 或与常驻 dock panel 的重渲染竞争，产生假红。改用本文件 :366-389 已定的可见性轮询：
         // 「absent 或 hidden」都算"不再显示"，只有仍然可见才红。
         await expectNoApprovalModal("the spawn approval modal must disappear after approving", {
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // 更强的收口：真正吃点击的是遮罩，遮罩必须消失；且 composer 必须重新可交互——
         // 若模态仍在拦截，下面的 click 会被 overlay 吞掉并超时（这是"不再拦截交互"的直接证据）。
         await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
         const composer = page.getByTestId("chat-input");
-        await composer.click({ timeout: 10_000 });
+        await composer.click({ timeout: ACTION_TIMEOUT_MS });
         await expect(composer).toBeEditable();
         await expect(composer).toBeFocused();
 
@@ -430,7 +431,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                     psql(
                         `SELECT id FROM sessions WHERE spawned_from_session_id = '${parentSessionId}'::uuid AND kind = 'spawn' ORDER BY created_at LIMIT 1`,
                     ),
-                { timeout: 240_000, intervals: [1_000, 2_000, 3_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1_000, 2_000, 3_000] },
             )
             .toMatch(UUID_PATTERN);
         childSessionId = requireUuid(
@@ -458,12 +459,12 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                     scalar(
                         `SELECT count(*) FROM audit_logs WHERE action = 'agent_spawn_created' AND resource_id = '${childSessionId}'`,
                     ),
-                { timeout: 60_000, intervals: [1_000, 2_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1_000, 2_000] },
             )
             .toBe(1);
         // Live (no reload): the derived-state badge names the spawned child.
         await expect(page.getByTestId("derived-active-child")).toContainText(childName, {
-            timeout: 120_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const step1Shot = path.join(EVIDENCE_DIR, "t5.9-step1-spawn.png");
         await page.screenshot({ scale: "css", path: step1Shot, fullPage: false });
@@ -507,11 +508,11 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         );
 
         await page.goto(workspaceChatPath(wsId, childSessionId), { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.getByTestId("workspace-toolbar-members").click();
         const primaryBadge = page.getByTestId(`participant-role-badge-${primaryParticipantId}`);
         await expect(primaryBadge, "the members dock shows the PRIMARY badge").toBeVisible({
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // BL-240: the badge renders the **localized role label** from
         // `workspace.participantRolePrimary` (zh「主智能体」/ en "Primary agent") and keeps the wire
@@ -547,7 +548,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                     scalar(
                         `SELECT count(*) FROM chat_runs WHERE session_id = '${childSessionId}'::uuid AND status = 'succeeded'`,
                     ),
-                { timeout: 240_000, intervals: [2_000, 3_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [2_000, 3_000] },
             )
             .toBeGreaterThan(0);
         // 同一处漂移：`data-align` 已移到 Bubble 原语，按消息行锚点 + 文本定位。
@@ -558,7 +559,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         await expect(
             interactiveReply,
             "the child answers the user in its own session",
-        ).toContainText(interactiveMarker, { timeout: 180_000 });
+        ).toContainText(interactiveMarker, { timeout: LONG_TIMEOUT_MS });
         const interactiveRunId = requireUuid(
             psql(
                 `SELECT id FROM chat_runs WHERE session_id = '${childSessionId}'::uuid ORDER BY created_at DESC LIMIT 1`,
@@ -582,7 +583,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         // second spawn is refused by the precheck — it must NOT open a second modal, and it must not
         // leave a pending approval row behind (that residue is what BL-240 hit).
         await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await waitForIdleSession(request, headers, parentSessionId);
         const spawnInvocationsBefore = scalar(
             `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
@@ -605,13 +606,13 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         // all. The `approvalSeen` branch only covers the (rare) snapshot where a slot is still free:
         // approval semantics are unchanged there, and the second call is still refused by the precheck.
         const approvalSeen = await modal
-            .waitFor({ state: "visible", timeout: 60_000 })
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS })
             .then(() => true)
             .catch(() => false);
         if (approvalSeen) {
             await modal.locator('[data-testid="approval-approve"]').click();
             await expectNoApprovalModal("the approval modal closes once the decision is accepted", {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
             });
         }
         await waitForIdleSession(request, headers, parentSessionId);
@@ -683,7 +684,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                 {
                     message:
                         "an over-budget spawn must not leave (or open) an approval modal on screen",
-                    timeout: 10_000,
+                    timeout: ACTION_TIMEOUT_MS,
                     intervals: [200, 400, 800],
                 },
             )
@@ -694,13 +695,15 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         // 原先只等 `chat-input` 就读 DOM ⇒ `conversationText=[]` 假红（截图证明拒绝当时已可见）。
         // 因此先等消息列表真正渲染，再展开工具卡；"拒绝可见"改用轮询断言（判据不降级）。
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
-        await expect(page.getByTestId("message-item").first()).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(page.getByTestId("message-item").first()).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const cardToggles = page.getByTestId("tool-card-toggle");
         await expect
             .poll(() => cardToggles.count(), {
                 message: "the reloaded conversation must render its tool cards",
-                timeout: 60_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000],
             })
             .toBeGreaterThanOrEqual(2);
@@ -721,7 +724,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             .poll(() => refusedToolCards.count(), {
                 message:
                     "both over-budget spawn attempts must render a failed/refused tool card (>=2)",
-                timeout: 60_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000],
             })
             .toBeGreaterThanOrEqual(2);
@@ -729,7 +732,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         await expect
             .poll(() => page.getByText("DELEGATION_LIMIT_EXCEEDED", { exact: false }).count(), {
                 message: "the refusal code must be visible in the rendered conversation",
-                timeout: 60_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000],
             })
             .toBeGreaterThan(0);

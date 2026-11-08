@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0635 M3: `/export` is a **real download** (`Response.blob()` → `URL.createObjectURL` →
@@ -165,7 +166,7 @@ test("`/export` downloads the artifact and takes the filename from Content-Dispo
 
     // Explicit short timeout: a missing download should read as "no download event", not as a
     // generic 30 s test timeout.
-    const downloadPromise = page.waitForEvent("download", { timeout: 10_000 });
+    const downloadPromise = page.waitForEvent("download", { timeout: ACTION_TIMEOUT_MS });
     await runExportCommand(page);
     const download = await downloadPromise;
 
@@ -194,7 +195,7 @@ test("`/export` falls back to `session-<sessionId>.md` when the response has no 
     });
     await branchesReady;
 
-    const downloadPromise = page.waitForEvent("download", { timeout: 10_000 });
+    const downloadPromise = page.waitForEvent("download", { timeout: ACTION_TIMEOUT_MS });
     await runExportCommand(page);
     const download = await downloadPromise;
 

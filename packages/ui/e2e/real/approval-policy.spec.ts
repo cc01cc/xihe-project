@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { openContextPanel } from "../helpers/context-panel";
@@ -6,6 +7,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0337 M1 真实链路验收（@host）：
@@ -145,7 +147,9 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
     expect(JSON.parse(saveRequest.postData() ?? "{}").mode).toBe("auto");
 
     // DB 往返：解析读回 auto。
-    await expect.poll(() => resolvedApprovalMode(request, auth), { timeout: 10000 }).toBe("auto");
+    await expect
+        .poll(() => resolvedApprovalMode(request, auth), { timeout: EXPECT_TIMEOUT_MS })
+        .toBe("auto");
 
     // 刷新后仍生效（页面从 DB 读回，而不是前端缓存）。
     await page.goto(`/workspace/${auth.workspaceId}/settings?tab=config`, { waitUntil: "load" });
@@ -156,7 +160,7 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
     // API read-back already reported "auto"). Keep the assertion, widen the wait.
     await expect(
         page.getByTestId("config-field-approval-policy-mode").locator("select"),
-    ).toHaveValue("auto", { timeout: 20000 });
+    ).toHaveValue("auto", { timeout: LONG_TIMEOUT_MS });
 
     await page.screenshot({
         scale: "css",
@@ -184,11 +188,13 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
 
     // 落库读回：模式来自 sessions.approval_mode（V24），非进程内存。
     await expect
-        .poll(() => readSessionMode(request, auth, sessionId), { timeout: 10000 })
+        .poll(() => readSessionMode(request, auth, sessionId), { timeout: EXPECT_TIMEOUT_MS })
         .toBe("auto");
 
     await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     // PLAN-0626 M2：模式选择器迁进右侧 dock 的 `context` 标签，聊天列摘要行只是入口；
     // 帮助器返回时面板已可见，不再需要点完再等。
     await openContextPanel(page);
@@ -203,11 +209,13 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
 
     await setSessionMode(request, auth, { sessionId, mode: "manual" });
     await expect
-        .poll(() => readSessionMode(request, auth, sessionId), { timeout: 10000 })
+        .poll(() => readSessionMode(request, auth, sessionId), { timeout: EXPECT_TIMEOUT_MS })
         .toBe("manual");
 
     await page.reload({ waitUntil: "load" });
-    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await openContextPanel(page);
     await expect(page.getByTestId("session-policy-mode")).toHaveValue("manual");
     await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0);

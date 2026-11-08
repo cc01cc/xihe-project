@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -6,6 +7,7 @@ import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0390-workspace-job");
@@ -20,7 +22,6 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0390
 //   node scripts/e2e-host-detached.mjs e2e/real/plan0390-workspace-job-start.spec.ts --llm-mode=mock
 test.describe("@host PLAN-0390 workspace job start", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
 
@@ -141,7 +142,10 @@ test.describe("@host PLAN-0390 workspace job start", () => {
                     nextOffset = Number(body.nextOffset ?? 0);
                     return String(body.data ?? "");
                 },
-                { timeout: 60000, message: "container stdout must reach the byte cursor" },
+                {
+                    timeout: LONG_TIMEOUT_MS,
+                    message: "container stdout must reach the byte cursor",
+                },
             )
             .toContain(marker);
 
@@ -157,9 +161,9 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         seedPage(page);
         await page.goto(`/workspace/${sharedWs}/environment`, { waitUntil: "load" });
         const panel = page.locator('[data-testid="workspace-jobs-panel"]');
-        await expect(panel).toBeVisible({ timeout: 30000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const secondary = page.locator('[data-testid="workspace-job-secondary"]').first();
-        await expect(secondary).toContainText("workspace", { timeout: 30000 });
+        await expect(secondary).toContainText("workspace", { timeout: LONG_TIMEOUT_MS });
         await expect(secondary).toContainText("docker");
         await expect(page.locator('[data-testid="workspace-job-start-hint"]')).toContainText(
             "CONTAINER_JOBS_SERVED_BY_DOCKER",
@@ -173,7 +177,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
         // 6) 整页刷新后 projection 仍在（durable 与 SSE/页面生命周期无关）
         await page.reload({ waitUntil: "load" });
         await expect(page.locator('[data-testid="workspace-jobs-panel"]')).toBeVisible({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.locator('[data-testid="workspace-job-secondary"]').first()).toContainText(
             "workspace",
@@ -188,7 +192,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
                     const rows = await listJobs(request);
                     return String(rows.find((job) => job.jobId === jobId)?.status ?? "missing");
                 },
-                { timeout: 60000, message: "durable Job must reach a terminal status" },
+                { timeout: LONG_TIMEOUT_MS, message: "durable Job must reach a terminal status" },
             )
             .toMatch(/cancelled|succeeded|failed/);
 
@@ -240,7 +244,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
                     return status === 200 ? String(body.data ?? "") : `http-${status}`;
                 },
                 {
-                    timeout: 60000,
+                    timeout: LONG_TIMEOUT_MS,
                     message: "job output must be readable before the sandbox is removed",
                 },
             )
@@ -265,7 +269,7 @@ test.describe("@host PLAN-0390 workspace job start", () => {
                         : `http-${status}-${String(body.code ?? "")}`;
                 },
                 {
-                    timeout: 90000,
+                    timeout: LONG_TIMEOUT_MS,
                     message: "missing job dir must settle to an explicit LOST problem",
                 },
             )
@@ -281,7 +285,10 @@ test.describe("@host PLAN-0390 workspace job start", () => {
                         ? "http-503-RUNTIME_ERROR"
                         : `http-${status}-${String(body.code ?? "")}`;
                 },
-                { timeout: 90000, message: "removed sandbox must surface an explicit failure" },
+                {
+                    timeout: LONG_TIMEOUT_MS,
+                    message: "removed sandbox must surface an explicit failure",
+                },
             )
             .toBe("http-503-RUNTIME_ERROR");
         void removed;

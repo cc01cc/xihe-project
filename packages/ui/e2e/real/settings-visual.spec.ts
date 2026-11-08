@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -33,7 +34,7 @@ test.beforeEach(async ({ page }) => {
 
 test("settings config page renders", async ({ page }) => {
     await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({
-        timeout: 8000,
+        timeout: ACTION_TIMEOUT_MS,
     });
     // PLAN-0307 T2.17: the three-layer settings page is verified with
     // action screenshots in the @host specs; mock `config-settings.spec.ts`

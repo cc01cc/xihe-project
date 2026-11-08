@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-349 回退护栏 / 冻结冒烟闸门（`@host`）。
  *
@@ -30,6 +31,7 @@ import { expect, test } from "@playwright/test";
 
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { CP_URL, registerJourneyUser } from "./helpers/journey";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ retries: 0 });
 
@@ -45,7 +47,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 

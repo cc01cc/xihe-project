@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0678 · UI 配置面与"注入实证"的对应关系（只覆盖**当前已存在**的 UI 面）。
  *
@@ -18,6 +19,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import type { Page } from "@playwright/test";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const TEMPLATES_PATH = "**/api/v1/config/api-request-templates*";
 
@@ -62,9 +64,9 @@ test.describe("PLAN-0678 UI 配置面", () => {
         await page.goto("/settings/config");
 
         const panel = page.locator('[data-testid="api-request-templates-panel"]');
-        await expect(panel).toBeVisible({ timeout: 20_000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel.locator('[data-testid="api-request-name"]')).toHaveValue("A 模板", {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         // 换一份响应（B），卸载旧路由后重新注册，再 reload：若页面显示 B ⇒ 值来自响应。
@@ -72,12 +74,12 @@ test.describe("PLAN-0678 UI 配置面", () => {
         await stubTemplates(page, "B 模板");
         await page.reload();
         await expect(page.locator('[data-testid="api-request-templates-panel"]')).toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(
             page.locator('[data-testid="api-request-name"]'),
             "reload 后模板名必须变成 B 模板（说明展示值来自 API，而不是硬编码/默认值）",
-        ).toHaveValue("B 模板", { timeout: 10_000 });
+        ).toHaveValue("B 模板", { timeout: ACTION_TIMEOUT_MS });
     });
 
     test("#2 模板调色板含 agent_memory / skill_catalog（当前唯一与 0678 相关的 UI 事实）", async ({
@@ -86,14 +88,14 @@ test.describe("PLAN-0678 UI 配置面", () => {
         await stubTemplates(page, "A 模板");
         await page.goto("/settings/config");
         await expect(page.locator('[data-testid="api-request-templates-panel"]')).toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         for (const block of ["agent_memory", "skill_catalog"] as const) {
             await expect(
                 page.getByRole("button", { name: block, exact: true }),
                 `调色板缺少 ${block}（ContextTemplatesPanel.vue:46-57 的 palette 常量应含它）`,
-            ).toBeVisible({ timeout: 10_000 });
+            ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
         }
     });
 });

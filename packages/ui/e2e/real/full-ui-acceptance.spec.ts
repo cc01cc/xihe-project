@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { expectPlatformScreenshot } from "../helpers/visual";
@@ -6,6 +7,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -93,7 +95,7 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await page.goto("/workspace");
 
         const session = page.getByTestId("session-item").first();
-        await expect(session).toBeVisible({ timeout: 15000 });
+        await expect(session).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await session.click({ button: "right" });
         await page.getByRole("button", { name: "重命名" }).click();
         const renameInput = session.locator("input");
@@ -101,7 +103,7 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await renameInput.press("Enter");
         await expect(
             page.getByTestId("session-item").filter({ hasText: "真实流程会话" }),
-        ).toBeVisible({ timeout: 10000 });
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
 
         await page
             .getByTestId("session-item")
@@ -113,7 +115,7 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await deleteDialog.getByRole("button", { name: "删除" }).click();
         await expect(
             page.getByTestId("session-item").filter({ hasText: "真实流程会话" }),
-        ).not.toBeVisible({ timeout: 10000 });
+        ).not.toBeVisible({ timeout: ACTION_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "plan-269-real-session-deleted-current.png");
     });
 
@@ -135,10 +137,10 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
 
         const file = page.getByRole("button", { name: "acceptance.md", exact: true });
-        await expect(file).toBeVisible({ timeout: 15000 });
+        await expect(file).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await file.click();
         await expect(page.getByText("Acceptance", { exact: false }).first()).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await page.getByRole("button", { name: "源码" }).click();
         const source = page.getByTestId("workspace-markdown-source");
@@ -160,11 +162,11 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await installAuth(page, auth);
         await page.goto(`/workspace/${auth.workspaceId}/environment`);
         await expect(page.getByTestId("workspace-environment-status")).toContainText("unbound", {
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("workspace-prepare-button").click();
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready", {
-            timeout: 90000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expectPlatformScreenshot(page, "plan-269-real-environment-ready-current.png");
     });
@@ -183,7 +185,7 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await expect(page.getByText("uploaded.md", { exact: true })).toBeVisible();
         await dialog.getByRole("button", { name: "导入" }).click();
         await expect(page.getByRole("button", { name: "uploaded.md", exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // Baseline `plan-269-real-workspace-uploaded-current.png` still captures the pre-W4
         // editor-first layout: refresh it in the baseline follow-up (snapshots are not updated in
@@ -195,8 +197,10 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
         await installAuth(page, auth);
         await page.goto("/settings/config");
         const hub = page.getByTestId("provider-hub");
-        await expect(hub).toBeVisible({ timeout: 15000 });
-        await expect(page.getByTestId("provider-hub-connect")).toBeEnabled({ timeout: 15000 });
+        await expect(hub).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(page.getByTestId("provider-hub-connect")).toBeEnabled({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("provider-hub-connect").click();
         await expect(page.getByTestId("provider-picker-modal")).toBeVisible();
         await expect(page.getByTestId("provider-picker-search")).toBeVisible();
@@ -231,7 +235,7 @@ test.describe("@host PLAN-269 full UI acceptance: real mobile flows", () => {
         const filesSheet = page.getByTestId("mobile-files-sheet");
         await expect(filesSheet).toBeVisible();
         await expect(filesSheet.getByTestId("workspace-empty-state")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(filesSheet.getByText("工作区暂无文件")).toBeVisible();
         await page.screenshot({

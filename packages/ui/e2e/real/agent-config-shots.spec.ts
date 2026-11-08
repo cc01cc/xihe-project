@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0667 M3 联调取证：真实 stack-1 上渲染「记忆 / 角色 / 技能」三块，出 zh/en 两张截图。
  *
@@ -7,6 +8,7 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const ENABLED = process.env.XIHE_E2E_AGENT_CONFIG === "1";
 const OUT = process.env.XIHE_AGENT_CONFIG_DIR ?? "";
@@ -55,15 +57,15 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
         );
         await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
         await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("workspace-toolbar-agents").click();
-        await expect(page.getByTestId("dock-tab-agents")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByTestId("dock-tab-agents")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const toggle = page.locator('[data-testid^="agent-roles-toggle-"]').first();
-        await expect(toggle).toBeVisible({ timeout: 20_000 });
+        await expect(toggle).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await toggle.click();
         await expect(page.locator('[data-testid="agent-roles-list"]').first()).toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
     }
 
@@ -84,13 +86,15 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
 
         await page.addInitScript(() => localStorage.setItem("xihe-language", "en-US"));
         await page.reload();
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("workspace-toolbar-agents").click();
         const toggle = page.locator('[data-testid^="agent-roles-toggle-"]').first();
-        await expect(toggle).toBeVisible({ timeout: 20_000 });
+        await expect(toggle).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await toggle.click();
         await expect(page.locator('[data-testid="agent-roles-list"]').first()).toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.locator('[data-testid^="agent-role-atoms-"]').first()).toContainText(
             "total",

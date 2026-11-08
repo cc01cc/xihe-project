@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * X 图文「真实数据」版（task-15 用户追加；mock 版定构图后一次性真实运行）。
  *
@@ -15,6 +16,7 @@
 import { test, expect } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const REAL = process.env.XIHE_E2E_DEMO_REAL === "1";
 const SHOT_DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";
@@ -81,9 +83,9 @@ async function waitTerminalCount(
 
 async function settle(page: import("@playwright/test").Page): Promise<void> {
     // idle 判据 = composer 回到「发送」按钮（流式态是 `chat-stop-button`）。
-    await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     // 真实链路首次发送可能触发 bind-defaults toast；等它自动消失（≤5s）再截。
-    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 25_000 });
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
     await page.waitForTimeout(500);
 }
 
@@ -100,23 +102,22 @@ async function pickCc(page: import("@playwright/test").Page, name: string): Prom
         await page.getByTestId("cc-expand").click();
     await page.getByTestId("cc-input").fill(name);
     const menu = page.getByTestId("cc-menu");
-    await expect(menu).toBeVisible({ timeout: 15_000 });
+    await expect(menu).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await menu.getByRole("option").first().click();
-    await expect(menu).toBeHidden({ timeout: 15_000 });
+    await expect(menu).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 }
 
 async function openMembersDock(page: import("@playwright/test").Page): Promise<void> {
     const toggle = page.getByTestId("workspace-toolbar-members");
     if ((await page.getByTestId("dock-tab-members").count()) === 0) await toggle.click();
-    await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
 test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
     test.skip(!REAL, "只有 XIHE_E2E_DEMO_REAL=1 时执行");
-    test.setTimeout(600_000);
 
     test.beforeAll(async ({ request }) => {
         mkdirSync(SHOT_DIR, { recursive: true });
@@ -176,7 +177,9 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
         console.log(
             `[real-demo] boot url=${page.url()} text=${JSON.stringify(bodyText)} html=${JSON.stringify(htmlText)} consoleErrors=${consoleErrors.length} all=${JSON.stringify(consoleErrors.slice(0, 3))}`,
         );
-        await expect(page.locator("textarea").first(), "composer").toBeVisible({ timeout: 60_000 });
+        await expect(page.locator("textarea").first(), "composer").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // 成员 dock 常开（多主体在席：2 人类 + 4 agent），CC 3 个；TO 保持默认 PRIMARY（单选）。
         await openMembersDock(page);
         await pickCc(page, "Planner");
@@ -215,7 +218,7 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
         // ③ 成员面板（dock 常开：真实运行 2 人类 + 4 agent）
         await openMembersDock(page);
         await expect(page.getByText("林小满", { exact: true }).first()).toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await page.waitForTimeout(400);
         await shot(page, "03-members-panel.png");
@@ -282,14 +285,18 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
             }, state.sessionId);
 
         await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
-        await expect(page.locator("textarea").first(), "composer").toBeVisible({ timeout: 60_000 });
+        await expect(page.locator("textarea").first(), "composer").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const runsBefore = await countRuns();
         await openMembersDock(page);
         await pickCc(page, "Planner");
         await pickCc(page, "Summarizer");
         await pickCc(page, "林小满");
         await page.locator("textarea").first().fill("@Planner 排期也一起看一眼。");
-        await expect(page.getByTestId("cc-bar")).toContainText("林小满", { timeout: 10_000 });
+        await expect(page.getByTestId("cc-bar")).toContainText("林小满", {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         // 取「更早、干净的那段真实对话」入镜（probe 往返 + run 头），滚到会话顶部；composer 固定底部。
         await page.mouse.move(700, 420);
         await page.mouse.wheel(0, -6000);

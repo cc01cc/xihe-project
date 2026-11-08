@@ -350,6 +350,11 @@ run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
 description = "Check documentation links (no escape from docs/); skips and exits 0 when the ONE main checkout (and its scripts/check-doc-links.sh) is absent — same degradation as check:ports / check:standalone"
 alias = "lint:links"
 
+[tasks."lint:e2e"]
+run = "node scripts/check-e2e-timeouts.mjs"
+description = "E2E timeout budget gate (task-252): action/assertion ≤10s, test ≤30s; >10s literals need // timeout-exempt: <reason> and may not exceed 60s. Budgets live in packages/ui/e2e/timeouts.ts and are env-overridable (E2E_*_TIMEOUT_MS)"
+alias = "lint:e2e"
+
 [tasks."perf:chat"]
 run = "node scripts/perf/chat-gate.mjs"
 description = "PLAN-0670 perf gate: one command boots the isolated perf stack, measures 1k/5k/20k, prints PASS/FAIL (p95/response bytes/heap peak/RSS growth) and always tears down; L2/release only, never stack-1/stack-2. Pass -- --dry-run / -- --self-check for a stack-free check, -- --with-ui for the WebUI stage"

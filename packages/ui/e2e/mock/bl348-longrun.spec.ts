@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-348 段 2（**临时探针，不提交**）：90 秒连续滚动下的 heap 时间序列。
  *
@@ -9,6 +10,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
 import type { CDPSession, Page } from "@playwright/test";
 import { writeFileSync } from "node:fs";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl348-longrun";
 const MESSAGE_COUNT = 2_000;
@@ -63,14 +65,13 @@ test.describe("BL-348 长跑探针", () => {
     // 90s 长跑会拖慢常规 e2e：默认 skip，需要时 `BL348_LONGRUN=1 pnpm exec playwright test …`。
     test.skip(!process.env.BL348_LONGRUN, "长跑探针默认跳过（设 BL348_LONGRUN=1 启用）");
     test("90s 连续滚动：每 15s 采 heap", async ({ page }) => {
-        test.setTimeout(240_000);
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-348 longrun" }] });
         await stubSessionProjections(page, SESSION_ID);
         await stubLongSession(page);
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.waitForTimeout(1000);
 

@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -28,6 +29,6 @@ test.describe("Message Search", () => {
         await page.reload();
         await page.waitForLoadState("load");
         // Chat page rendered
-        await expect(page.locator("#app")).toBeAttached({ timeout: 10000 });
+        await expect(page.locator("#app")).toBeAttached({ timeout: EXPECT_TIMEOUT_MS });
     });
 });

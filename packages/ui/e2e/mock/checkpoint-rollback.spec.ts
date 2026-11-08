@@ -1,6 +1,8 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -208,7 +210,7 @@ async function openChat(page: Page) {
     if ((page.viewportSize()?.width ?? 1920) < 768) {
         await page.getByRole("button", { name: "Open chat" }).click();
     }
-    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 test.describe("PLAN-0339 workspace slices", () => {
@@ -230,12 +232,16 @@ test.describe("PLAN-0339 workspace slices", () => {
             "captured",
         );
         await page.getByTestId("run-checkpoint-revert-entry").click();
-        await expect(page.getByTestId("checkpoint-dialog")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("checkpoint-dialog")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("revert-preview-type-conflict-count")).toHaveText("1");
         await expect(page.getByTestId("revert-preview-confirm")).toBeDisabled();
         await page.getByTestId("revert-preview-type-conflict-ack").check();
         await page.getByTestId("revert-preview-confirm").click();
-        await expect(page.getByTestId("revert-result-counts")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("revert-result-counts")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         expect(state.previewCalls).toBe(1);
         expect(state.executeBodies).toEqual([
             { sliceRef: SLICE_REF, acknowledgeTypeChanges: ["src/conflict.ts"] },
@@ -257,7 +263,9 @@ test.describe("PLAN-0339 workspace slices", () => {
 
     test("timeline and pending status remain separate views", async ({ page }) => {
         await page.goto(`/workspace/${WORKSPACE_ID}`);
-        await expect(page.getByTestId("workspace-conversation")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("workspace-conversation")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await page.getByTestId("workspace-toolbar-changes").click();
         const panel = page.getByTestId("workspace-changes-panel");
         await panel.getByTestId("workspace-checkpoint-select-checkpoint-b").click();
@@ -274,7 +282,7 @@ test.describe("PLAN-0339 workspace slices", () => {
     test("cleanup requires a second confirmation and canonical body", async ({ page }) => {
         await page.goto("/settings/data");
         await expect(page.getByTestId("settings-checkpoint-retention")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("settings-checkpoint-cleanup").click();
         await expect(page.getByTestId("settings-checkpoint-cleanup-confirm-box")).toBeVisible();
@@ -306,16 +314,20 @@ test.describe("PLAN-0339 workspace slices mobile", () => {
     test("preview is usable in the mobile sheet", async ({ page }) => {
         await openChat(page);
         await page.getByTestId("run-checkpoint-revert-entry").click();
-        await expect(page.getByTestId("checkpoint-dialog-mobile")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("checkpoint-dialog-mobile")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("revert-preview-cancel")).toBeFocused();
         await page.getByTestId("revert-preview-type-conflict-ack").check();
         await page.getByTestId("revert-preview-confirm").click();
-        await expect(page.getByTestId("revert-result-counts")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("revert-result-counts")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
     });
     test("cleanup confirmation remains reachable on mobile", async ({ page }) => {
         await page.goto("/settings/data");
         await expect(page.getByTestId("settings-checkpoint-retention")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("settings-checkpoint-cleanup").click();
         await expect(page.getByTestId("settings-checkpoint-cleanup-confirm-box")).toBeVisible();

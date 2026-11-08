@@ -1,9 +1,11 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0396-job-capability");
@@ -15,7 +17,6 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0396
 //   node scripts/e2e-host-detached.mjs e2e/real/plan0396-workspace-job-capability.spec.ts --llm-mode=mock
 test.describe("@host PLAN-0396 workspace job capability", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let sharedAuth: string,
         directWs = "",
@@ -90,7 +91,7 @@ test.describe("@host PLAN-0396 workspace job capability", () => {
         seedPage(page);
         await page.goto(`/workspace/${directWs}/environment`);
         const hint = page.locator('[data-testid="workspace-job-start-hint"]');
-        await expect(hint).toBeVisible({ timeout: 20000 });
+        await expect(hint).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(hint).toHaveAttribute("aria-disabled", "false");
         await expect(hint).toContainText("无隔离");
         await expect(hint).not.toContainText("尚无启动器");

@@ -1,6 +1,8 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
 import { getRootBranchId } from "./helpers/journey";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -60,7 +62,9 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         await page.keyboard.press("Enter");
 
         // User message must appear in the DOM immediately.
-        await expect(page.locator(`text=${testMessage}`)).toBeVisible({ timeout: 5000 });
+        await expect(page.locator(`text=${testMessage}`)).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         // The server is the canonical message source; localStorage is not used for
         // business messages anymore.
@@ -79,7 +83,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
                     sessionId = body.sessions?.[0]?.id ?? "";
                     return sessionId;
                 },
-                { timeout: 10000 },
+                { timeout: ACTION_TIMEOUT_MS },
             )
             .not.toBe("");
 
@@ -105,12 +109,12 @@ test.describe("Cross-Module — Full Chain Chat", () => {
                             message.role === "USER" && message.content === testMessage,
                     );
                 },
-                { timeout: 30000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBe(true);
 
         // The UI must not get stuck in the "Thinking" state when the backend fails.
-        await expect(page.locator("text=Thinking")).not.toBeVisible({ timeout: 30000 });
+        await expect(page.locator("text=Thinking")).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await expect
             .poll(
@@ -121,7 +125,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
                             message.role === "ASSISTANT" && Boolean(message.content?.trim()),
                     ).length;
                 },
-                { timeout: 30000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBeGreaterThan(0);
 
@@ -145,7 +149,9 @@ test.describe("Cross-Module — Full Chain Chat", () => {
 
         // PLAN-0560: MCP config lives on the workspace settings MCP tab.
         await page.goto(`/workspace/${auth.workspaceId}/settings?tab=mcp`);
-        await expect(page.locator("text=MCP 服务").first()).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=MCP 服务").first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.locator('[data-testid="mcp-config-textarea"]')).toBeVisible();
 
         const builtInTool = page.locator("text=read_file").first();
@@ -197,10 +203,12 @@ test.describe("Cross-Module — Full Chain Chat", () => {
 
         // Verify it appears in the UI (PLAN-0560: workspace settings MCP tab)
         await page.goto(`/workspace/${auth.workspaceId}/settings?tab=mcp`);
-        await expect(page.locator("text=MCP 服务").first()).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=MCP 服务").first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         const textarea = page.locator('[data-testid="mcp-config-textarea"]');
         await expect(textarea).toBeVisible();
-        await expect(textarea).toHaveValue(/test-echo/, { timeout: 10000 });
+        await expect(textarea).toHaveValue(/test-echo/, { timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("mcp config with invalid json shows error toast", async ({ page, request }) => {
@@ -310,15 +318,15 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         );
         await page.goto("/settings/config");
         const serverRow = page.locator(`[data-testid="remote-mcp-${serverId}"]`);
-        await expect(serverRow).toBeVisible({ timeout: 10000 });
+        await expect(serverRow).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const authorizeButton = serverRow.locator("button");
         await authorizeButton.click();
-        await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: 10000 });
-        await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: 10000 });
+        await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: ACTION_TIMEOUT_MS });
+        await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: EXPECT_TIMEOUT_MS });
 
         await authorizeButton.click();
-        await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: 10000 });
-        await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: 10000 });
+        await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: ACTION_TIMEOUT_MS });
+        await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("@host Runtime obtains a scoped token and calls the remote MCP", async ({ request }) => {
@@ -544,7 +552,7 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         const timeout = await request
             .post(endpoint, {
                 headers: sessionHeaders,
-                timeout: 500,
+                timeout: ACTION_TIMEOUT_MS,
                 data: {
                     jsonrpc: "2.0",
                     method: "tools/call",

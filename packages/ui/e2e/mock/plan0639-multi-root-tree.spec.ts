@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0639 M2 (design §5 candidate ①): the file tree renders one group per declared
@@ -49,7 +51,7 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
         await page.goto("/workspace/workspace-1");
 
         await expect(page.getByRole("button", { name: ALPHA_FILE, exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // No grouping chrome for the legacy single-root shape…
         await expect(page.getByTestId("workspace-tree-root-header")).toHaveCount(0);
@@ -81,7 +83,7 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
         // The primary root group auto-expands (its tree loads with the panel head),
         // so the primary file is visible without any selection…
         await expect(page.getByRole("button", { name: ALPHA_FILE, exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // …while the unselected secondary root keeps its files hidden.
         await expect(headers.nth(1)).toHaveAttribute("aria-expanded", "false");
@@ -91,7 +93,7 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
         await headers.nth(1).click();
         await expect(headers.nth(1)).toHaveAttribute("aria-expanded", "true");
         await expect(page.getByRole("button", { name: BETA_FILE, exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // Collapsing the group hides them again.

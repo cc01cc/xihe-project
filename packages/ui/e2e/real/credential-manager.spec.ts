@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0498 T4.1/T4.2/T4.3 —— 凭据管理器 UI 全链路（真实浏览器 + 真实 CP/Agent 进程）。
  *
@@ -33,6 +34,7 @@ import { seedUserGrant, seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
 
 import { agentName } from "./helpers/agent-name";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = evidenceDir("plan-0498-credential-manager");
@@ -65,7 +67,7 @@ function psql(sql: string): string {
             "-c",
             sql,
         ],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -148,7 +150,7 @@ async function createCredentialViaUi(
         await dialog.getByTestId("credentials-create-token").fill(options.token ?? "");
     }
     await dialog.getByTestId("credentials-create-submit").click();
-    await expect(dialog).toBeHidden({ timeout: 20000 });
+    await expect(dialog).toBeHidden({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("credentials-list")).toContainText(options.label);
 }
 
@@ -166,7 +168,6 @@ test("@host credential manager — UI registration, role block, binding, lease u
         "credential manager flow requires XIHE_E2E_LLM_MODE=credential_acquire",
     );
     test.skip(!PG_CONTAINER, "requires the isolated host stack (scripts/e2e-host.mjs)");
-    test.setTimeout(600000);
     mkdirSync(EVIDENCE_DIR, { recursive: true });
 
     const leaseSecret = `e2e-managed-lease-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -217,7 +218,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
 
     // --- T4.1 ① UI 登记：lease 档 + reveal 档 + key-pair 档各一 ---
     await page.goto("/settings/credentials", { waitUntil: "load" });
-    await expect(page.getByTestId("credentials-heading")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("credentials-heading")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await createCredentialViaUi(page, {
         label: "e2e-managed-lease",
         tier: "lease",
@@ -270,7 +271,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     // --- T4.1 ② 角色凭据区块（含 T4.2 天花板警告）---
     await page.goto("/settings/config", { waitUntil: "load" });
     const panel = page.getByTestId("agent-templates-panel");
-    await expect(panel).toBeVisible({ timeout: 20000 });
+    await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await panel.getByTestId("agent-role-name").fill("E2E Credential Role");
 
     const roleBlock = panel.getByTestId("credential-role-block");
@@ -283,7 +284,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(roleBlock.getByTestId("credential-role-attached")).toBeVisible();
     await panel.getByTestId("agent-role-save").click();
     const ceilingWarning = panel.getByTestId("agent-role-ceiling-warning");
-    await expect(ceilingWarning, "未覆盖凭据阻止保存").toBeVisible({ timeout: 20000 });
+    await expect(ceilingWarning, "未覆盖凭据阻止保存").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(ceilingWarning).toContainText(revealCredentialId!);
     await page.screenshot({
         scale: "css",
@@ -302,7 +303,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
             .locator('[data-testid^="agent-role-"]')
             .filter({ hasText: "E2E Credential Role" })
             .first(),
-    ).toContainText("credential_use", { timeout: 20000 });
+    ).toContainText("credential_use", { timeout: LONG_TIMEOUT_MS });
     await page.screenshot({
         scale: "css",
         path: path.join(EVIDENCE_DIR, "s3-role-block.png"),
@@ -386,7 +387,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     );
     await page.getByTestId("credential-bind-workspace").selectOption(wsId);
     await expect(page.getByTestId(`credential-bind-agent-${principalId}`)).toBeVisible({
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.getByTestId(`credential-bind-agent-${principalId}`).setChecked(true);
     await page.getByTestId(`credential-bind-agent-${secondPrincipalId}`).setChecked(true);
@@ -394,7 +395,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(
         page.locator(`[data-testid="credential-bind-bound"]`),
         "批量绑定后两个 principal 均有已绑定标记",
-    ).toHaveCount(2, { timeout: 20000 });
+    ).toHaveCount(2, { timeout: LONG_TIMEOUT_MS });
     await page.screenshot({
         scale: "css",
         path: path.join(EVIDENCE_DIR, "s4-bindings.png"),
@@ -406,7 +407,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await openCredentialDetail(page, leaseCredentialId!);
     await page.getByTestId("credentials-detail-delete").click();
     const referenceList = page.getByTestId("credentials-delete-references");
-    await expect(referenceList).toBeVisible({ timeout: 20000 });
+    await expect(referenceList).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(referenceList).toContainText(principalId);
     await expect(referenceList).toContainText(secondPrincipalId);
     await page.screenshot({
@@ -433,17 +434,23 @@ test("@host credential manager — UI registration, role block, binding, lease u
         "X-Workspace-Id": wsId,
     });
     await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-    await expect(page.getByTestId("workspace-create-session")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("workspace-create-session")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await createWorkspaceSessionWithPrincipal(page, principalId);
-    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     const modal = page.locator('[data-testid="modal-content"]');
 
     await sendChat(page, `XIHE-E2E-ACQUIRE ${leaseCredentialId}`);
-    await expect(modal, "approval modal for acquire_credential").toBeVisible({ timeout: 120000 });
+    await expect(modal, "approval modal for acquire_credential").toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect(modal).not.toContainText(leaseSecret);
     await modal.locator('[data-testid="approval-approve"]').click();
-    await expect(modal).toBeHidden({ timeout: 20000 });
-    await expect(page.locator("text=Acquired.").first()).toBeVisible({ timeout: 120000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.locator("text=Acquired.").first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await awaitLatestChatRunCompleted(request, authHeaders, wsId);
 
     // --- T4.1 ⑤ UI reveal：错误密码内联 → 正确密码一次性展示 ---
@@ -455,7 +462,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await revealDialog.getByTestId("credentials-reveal-password").fill("definitely-wrong-password");
     await revealDialog.getByTestId("credentials-reveal-submit").click();
     await expect(revealDialog.getByTestId("credentials-reveal-error")).toContainText("密码错误", {
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.screenshot({
         scale: "css",
@@ -464,14 +471,14 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await revealDialog.getByTestId("credentials-reveal-password").fill(password);
     await revealDialog.getByTestId("credentials-reveal-submit").click();
     await expect(revealDialog.getByTestId("credentials-reveal-value")).toContainText(revealSecret, {
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await expect(revealDialog.getByTestId("credentials-reveal-countdown")).toBeVisible();
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await revealDialog.getByTestId("credentials-reveal-copy").click();
     await expect
         .poll(() => page.evaluate(() => navigator.clipboard.readText()), {
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
             message: "复制按钮必须把明文写入剪贴板",
         })
         .toContain(revealSecret);
@@ -488,7 +495,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
         await revealDialog.getByTestId("credentials-reveal-password").fill(`wrong-${attempt}`);
         await revealDialog.getByTestId("credentials-reveal-submit").click();
         const error = revealDialog.getByTestId("credentials-reveal-error");
-        await expect(error).toBeVisible({ timeout: 20000 });
+        await expect(error).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         rateLimited = (await error.textContent())?.includes("过于频繁") ?? false;
     }
     expect(rateLimited, "5 次失败后必须进入限流态").toBe(true);
@@ -503,7 +510,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await openCredentialDetail(page, leaseCredentialId!);
     await page.getByTestId("credentials-tab-audit").click();
     const events = page.getByTestId("credential-audit-events");
-    await expect(events).toContainText("租约签发", { timeout: 20000 });
+    await expect(events).toContainText("租约签发", { timeout: LONG_TIMEOUT_MS });
     await expect(events).toContainText("租约兑换");
     await expect(events).not.toContainText(leaseSecret);
     await page.screenshot({
@@ -518,7 +525,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await page.getByTestId("credentials-tab-bindings").click();
     await page.getByTestId("credential-bind-workspace").selectOption(wsId);
     await expect(page.getByTestId(`credential-bind-agent-${principalId}`)).toBeVisible({
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.getByTestId(`credential-bind-agent-${principalId}`).setChecked(true);
     await page.getByTestId(`credential-bind-agent-${secondPrincipalId}`).setChecked(true);
@@ -526,7 +533,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(
         page.locator(`[data-testid="credential-bind-bound"]`),
         "批量解绑后两个 principal 的标记均消失",
-    ).toHaveCount(0, { timeout: 20000 });
+    ).toHaveCount(0, { timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("credentials-detail-close").click();
 
     // --- I5 / V2：durable 面零明文（含 reveal 明文）---

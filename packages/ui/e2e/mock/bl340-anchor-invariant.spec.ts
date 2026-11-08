@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-340 —— 上滚时窗口换页**不得**把滚动位置往下拽（闭环自激回归判据）。
  *
@@ -19,6 +20,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl340-anchor-session";
 const TOTAL = 240;
@@ -70,7 +72,7 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
         await page
             .locator('[data-testid="virtual-top-spacer"]')
             .first()
-            .waitFor({ timeout: 15_000 });
+            .waitFor({ timeout: LONG_TIMEOUT_MS });
 
         // 起点：贴底（与 BL-316 / BL-340 探针一致）。
         await page.evaluate(() => {
@@ -92,7 +94,7 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
                             ) <= 8
                         );
                     }),
-                { message: "起点应贴底", timeout: 5_000 },
+                { message: "起点应贴底", timeout: ACTION_TIMEOUT_MS },
             )
             .toBe(true);
 

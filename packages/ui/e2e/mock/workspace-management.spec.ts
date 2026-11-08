@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 let createPayload: Record<string, unknown> | null = null;
 
@@ -101,7 +103,9 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         });
 
         await page.goto("/workspace");
-        await expect(page.getByTestId("workspace-picker")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("workspace-picker")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("workspace-picker-empty")).toContainText("你还没有工作区");
         await page.getByTestId("workspace-picker-create").click();
 

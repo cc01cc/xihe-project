@@ -16,6 +16,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
 import { closeMonitorDockTab, openMockSession } from "./helpers/plan0659";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：本文件自建的 `sessions/{id}/delegation-usage` 桩是 **fail-closed** 的（只回答根会话，
 // 子会话故意 404 —— 子会话没有独立预算投影），逐条放行这两个子会话的 404。
@@ -144,14 +145,16 @@ test.describe("PLAN-0659 T1.4 — 委派 DAG", () => {
         const toggle = page.getByTestId("workspace-toolbar-delegation");
         await expect(toggle).toHaveAttribute("aria-pressed", "false");
         await toggle.click();
-        await expect(page.getByTestId("dock-tab-delegation")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("dock-tab-delegation")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(toggle).toHaveAttribute("aria-pressed", "true");
 
         const panel = page.getByTestId("delegation-dag");
-        await expect(panel).toBeVisible({ timeout: 10_000 });
+        await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         const nodes = page.getByTestId("delegation-node");
-        await expect(nodes, "root + 2 children").toHaveCount(3, { timeout: 10_000 });
+        await expect(nodes, "root + 2 children").toHaveCount(3, { timeout: EXPECT_TIMEOUT_MS });
         await expect(nodes.nth(0)).toHaveAttribute("data-session-id", SESSION_ID);
         await expect(nodes.nth(1)).toHaveAttribute("data-session-id", CHILD_A);
         await expect(nodes.nth(2)).toHaveAttribute("data-session-id", CHILD_B);

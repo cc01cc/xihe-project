@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -21,7 +22,7 @@ test.describe("Cross-Module — Knowledge Base RAG", () => {
 
         await page.goto("/settings/knowledge");
         await expect(page.getByRole("heading", { name: /知识库|Knowledge/i })).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         expect(page.url()).toContain("/settings/knowledge");
     });

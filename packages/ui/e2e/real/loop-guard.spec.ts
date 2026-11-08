@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { createHash } from "node:crypto";
@@ -7,6 +8,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // Passed runs recycle test-results (screenshots included), so evidence lands in
 // a persistent gitignored dir for the PLAN T3.2/T4.1 record.
@@ -207,7 +209,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
         page,
         request,
     }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
 
         auth = await registerUser(request);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
@@ -222,17 +224,19 @@ test.describe("@host PLAN-0493 loop guard", () => {
 
         await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         const textarea = page.locator("textarea");
-        await expect(textarea).toBeVisible({ timeout: 15000 });
+        await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // PLAN-0439 admission: bind the session before the first send (fake key).
         await ensureFakeChatBinding(request, sessionId);
 
         const firstMarker = `loop-first-${Date.now()}`;
         await textarea.fill(firstMarker);
         await page.keyboard.press("Enter");
-        await expect(page.getByText(firstMarker, { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText(firstMarker, { exact: true })).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         const banner = recoveryBanner(page);
-        await expect(banner).toBeVisible({ timeout: 60000 });
+        await expect(banner).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(banner).toContainText("检测到重复或无进展动作，运行已停止");
         await expect(banner).toContainText("接续本次会话");
         await page.screenshot({
@@ -246,16 +250,18 @@ test.describe("@host PLAN-0493 loop guard", () => {
 
         // Takeover entry: the same input starts a new run in the same session.
         const secondMarker = `loop-second-${Date.now()}`;
-        await expect(textarea).toBeEnabled({ timeout: 10000 });
+        await expect(textarea).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
         await textarea.fill(secondMarker);
         await page.keyboard.press("Enter");
-        await expect(page.getByText(secondMarker, { exact: true })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText(secondMarker, { exact: true })).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // Second stop converges the same way; the durable count doubles (2 more
         // executions), proving refusals never executed in either run.
         await expect(banner).toContainText("检测到重复或无进展动作，运行已停止", {
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect.poll(async () => forwardedGlobCalls(), { timeout: 30000 }).toBe(4);
+        await expect.poll(async () => forwardedGlobCalls(), { timeout: LONG_TIMEOUT_MS }).toBe(4);
         await page.screenshot({
             scale: "css",
             path: `${EVIDENCE_DIR}/loop-guard-takeover.png`,
@@ -264,7 +270,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
     });
 
     test("no-progress surface stays readable on a mobile viewport", async ({ page }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
 
         // Reuse the same user/workspace as the desktop pass (Agent single-workspace
         // MCP binding).
@@ -274,22 +280,24 @@ test.describe("@host PLAN-0493 loop guard", () => {
         // At 390px the app shell defaults to the Files pane; the chat composer is
         // reachable through the "Open chat" toggle (same entry as queue mobile spec).
         const openChat = page.getByRole("button", { name: "Open chat" });
-        await expect(openChat).toBeVisible({ timeout: 20000 });
+        await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openChat.click();
         const textarea = page.locator("textarea");
-        await expect(textarea).toBeVisible({ timeout: 15000 });
+        await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const marker = `loop-mobile-${Date.now()}`;
         await textarea.fill(marker);
         await page.keyboard.press("Enter");
-        await expect(page.getByText(marker, { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText(marker, { exact: true })).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         // The third run converges the same way; the session banner shows the
         // localized reason + takeover hint at the mobile viewport.
         const banner = recoveryBanner(page);
-        await expect(banner).toBeVisible({ timeout: 60000 });
+        await expect(banner).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(banner).toContainText("检测到重复或无进展动作，运行已停止");
         await expect(banner).toContainText("接续本次会话");
-        await expect.poll(async () => forwardedGlobCalls(), { timeout: 30000 }).toBe(6);
+        await expect.poll(async () => forwardedGlobCalls(), { timeout: LONG_TIMEOUT_MS }).toBe(6);
 
         const bannerBox = await banner.boundingBox();
         expect(bannerBox).not.toBeNull();

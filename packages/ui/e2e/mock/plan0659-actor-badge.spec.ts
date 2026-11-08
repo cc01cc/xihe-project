@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0659 T1.2：actor 徽标的**真浏览器证据**（mock 车道，无后端）。
  *
@@ -18,6 +19,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
 import { closeMonitorDockTab, openMockSession, stubDerivedState } from "./helpers/plan0659";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
@@ -26,7 +28,7 @@ async function speakAs(page: Page, name: string): Promise<void> {
     const field = page.getByTestId("speak-as-input");
     await field.fill(name);
     await expect(page.getByTestId("speak-as-menu"), `TO typeahead for "${name}"`).toBeVisible({
-        timeout: 10_000,
+        timeout: ACTION_TIMEOUT_MS,
     });
     await field.press("Enter");
     await expect(page.getByTestId("speak-as-chip").first()).toContainText(name);
@@ -65,7 +67,7 @@ test.describe("PLAN-0659 T1.2 — actor 徽标", () => {
             .locator('[data-testid="message-item"][data-message-role="assistant"]')
             .getByTestId("process-row-actor");
         await expect(assistantBadge.first(), "tool card carries the actor badge").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(assistantBadge.first()).toHaveAttribute("data-actor-kind", "AGENT");
         await expect(assistantBadge.first()).toHaveAttribute(
@@ -88,7 +90,7 @@ test.describe("PLAN-0659 T1.2 — actor 徽标", () => {
         await expect(
             page.getByTestId("message-responder").filter({ hasText: "Agent Beta" }),
             "second principal speaks in the same thread",
-        ).toBeVisible({ timeout: 15_000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 混主体线程里 1 号主体的过程行徽标仍在（不是只在「当前主体」上标）。
         await expect(assistantBadge.first()).toHaveAttribute(

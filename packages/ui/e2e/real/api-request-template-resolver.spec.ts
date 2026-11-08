@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
@@ -5,6 +6,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { ensureAgentWorkspaceBinding } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -46,7 +48,7 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             "requires XIHE_E2E_LLM_MODE=success (provider wire); current: " +
                 (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
         );
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `resolver-${randomUUID()}@test.local`,
@@ -183,7 +185,7 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             await input.fill("resolver matrix ping");
             await input.press("Enter");
             await expect(page.getByText("workspace-conn-served", { exact: true })).toBeVisible({
-                timeout: 30000,
+                timeout: LONG_TIMEOUT_MS,
             });
             expect(wsObserved).toHaveLength(1);
             expect(userObserved).toHaveLength(0);
