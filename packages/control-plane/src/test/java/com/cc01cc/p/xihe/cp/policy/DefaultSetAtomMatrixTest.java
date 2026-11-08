@@ -148,13 +148,21 @@ class DefaultSetAtomMatrixTest {
                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 // BL-345: the human ownership capability — an agent is a grantee, not an owner.
-                ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF);
+                ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
+                // PLAN-0691 T1.3: an agent may invoke a bound builtin plugin (PLUGIN_INVOKE, bindable)
+                // but may not install one (PLUGIN_MANAGE), bind one (PLUGIN_BIND) or touch the plugin
+                // data plane (PLUGIN_DATA) — the installed surface is instance administration.
+                ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
+                ToolFaceRegistry.ACTION_PLUGIN_BIND,
+                ToolFaceRegistry.ACTION_PLUGIN_DATA);
         Set<String> bindableByRuling = Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
-                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
+                // PLAN-0691 T1.3 / spec B-4: the one plugin atom an agent may hold.
+                ToolFaceRegistry.ACTION_PLUGIN_INVOKE);
 
         for (String atom : forbiddenByRuling) {
             assertFalse(PermissionAtomCatalog.canBindToAgentPrincipal(List.of(atom)),
@@ -165,7 +173,8 @@ class DefaultSetAtomMatrixTest {
                     "must be grantable to agent principals (workspace capability): " + atom);
         }
         // The aggregate is the single source of truth 0667 derives from.
-        assertEquals(18, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
-                "17 from the 2026-11-05 ruling + MEMORY_WRITE_SELF (BL-345, 2026-11-06)");
+        assertEquals(21, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+                "18 up to BL-345 (2026-11-06) + PLUGIN_MANAGE/PLUGIN_BIND/PLUGIN_DATA"
+                        + " (PLAN-0691 T1.3, 2026-11-08) = 21; PLUGIN_INVOKE stays bindable");
     }
 }

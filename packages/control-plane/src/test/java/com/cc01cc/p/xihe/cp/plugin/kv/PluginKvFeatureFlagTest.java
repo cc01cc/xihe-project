@@ -8,6 +8,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.TestPropertySource;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
@@ -31,7 +32,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  *
  * <p>No token is minted and no binding is seeded on purpose: the answer must not depend on credentials
  * at all, which is exactly what the assertions below check.
+ *
+ * <p>The flag is pinned here <b>explicitly</b>: the shared {@code test} profile runs the plugin surface
+ * enabled (see {@code application-test.properties}) so that contract parity is asserted against the
+ * real mapping; this class is the one place that must keep proving the shipped default. Inlined
+ * {@code @TestPropertySource} properties outrank both the profile file and any injected system
+ * property, and they are restated in full because a subclass declaration shadows the inherited one.
  */
+@TestPropertySource(properties = {
+        "XIHE_WORKSPACE_DOCKER_BACKEND=disabled",
+        "cp.plugin.enabled=false"})
 class PluginKvFeatureFlagTest extends AbstractIntegrationTest {
 
     private static final String KV_PATH = "/internal/v1/plugin-bindings/"

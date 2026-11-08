@@ -42,7 +42,7 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
     @Value("${spring.jpa.hibernate.ddl-auto}")
     private String ddlAuto;
 
-    /** spec §3.1: grants columns, the four-value source enum, the partial default index. */
+    /** spec §3.1: grants columns, the source enum (six values after PLAN-0691 V139), the indexes. */
     @Test
     void grantsColumnsSourceVocabularyAndDefaultIndexConformToSpec31() {
         for (String column : new String[]{"granter_type", "granter_id", "subject_type", "subject_id",
@@ -55,11 +55,16 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
                 "spec §3.1: permissions is a JSONB atom array");
         assertEquals("timestamp with time zone", columnInfo("grants", "created_at", "data_type"),
                 "spec §3.1: created_at is a timestamp column");
-        // PLAN-0610 V88 (round-2 R2-1): after the one-shot copy the allow-list is the five
-        // post-migration values; V87's widened union only existed for the migration window.
-        assertEquals(Set.of("role", "spawn", "template", "credential_binding", "agent_default"),
+        // PLAN-0610 V88 (round-2 R2-1) left the five post-migration values; V87's widened union only
+        // existed for the migration window. PLAN-0691 T1.3 widened the allow-list a second time in
+        // V139 with `plugin_binding` (the provenance source PluginBindingGrantWriter writes for a
+        // binding-scoped hold), so the constraint of record is now six values — exactly
+        // GrantSources.WRITABLE_SOURCES, compared element-wise by PluginBindingGrantSourceMigrationTest.
+        // The retired `default`/`direct` values remain excluded: they are not evaluation sources.
+        assertEquals(Set.of("role", "spawn", "template", "credential_binding", "agent_default",
+                        "plugin_binding"),
                 checkAllowedValues("ck_grants_source"),
-                "PLAN-0610 V88: role/spawn/template/credential_binding/agent_default");
+                "PLAN-0691 V139: GrantSources.WRITABLE_SOURCES — V88's five plus plugin_binding");
 
         // PLAN-0610 V88: the V38/V65 legacy fences are dropped once their rows are converted; the
         // V87 per-source successors below are the constraints of record.
