@@ -91,6 +91,108 @@ export async function registerJourneyUser(
     };
 }
 
+/**
+ * PLAN-0688 T2.2 (task-238): the host lane imports an **instance-level** fake LLM profile
+ * `{providerId:'openai', connectionKey:'default', model:'fake-openai'}`. Strict resolution
+ * (`ConfigService.resolveLlmProfile`, decision #4) looks the connection up in the *profile's*
+ * layer — for an instance profile that means **the consuming user's own USER-scoped**
+ * connection — so every journey user needs its own READY `connectionKey='default'` row or
+ * `POST /api/v1/sessions` answers `409 LLM_PROFILE_CONFLICT` (`tool-cards.spec.ts:173`).
+ *
+ * Idempotent: reuses an existing READY row, verifies a non-READY one, creates only when absent.
+ */
+export async function ensureUserDefaultConnection(
+    request: APIRequestContext,
+    ctx: JourneyContext,
+): Promise<void> {
+    const providerId = process.env.XIHE_E2E_DEFAULT_PROVIDER ?? "openai";
+    const connectionKey = "default";
+    const model = process.env.XIHE_E2E_FAKE_MODEL ?? "fake-openai";
+    const fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT ?? "12680";
+    const list = await request.get(`${CP_URL}/api/v1/provider-connections`, {
+        headers: ctx.headers,
+    });
+    expect(list.ok(), `list provider connections: ${list.status()} ${await list.text()}`).toBe(
+        true,
+    );
+    const rows =
+        (
+            (await list.json()) as {
+                connections?: Array<{
+                    id: string;
+                    providerId: string;
+                    connectionKey: string;
+                    status: string;
+                }>;
+            }
+        ).connections ?? [];
+    const existing = rows.find(
+        (row) => row.providerId === providerId && row.connectionKey === connectionKey,
+    );
+    let connectionId = existing?.id;
+    if (!connectionId) {
+        const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+            headers: ctx.headers,
+            data: {
+                providerId,
+                apiTypeId: "openai-chat-completions",
+                apiTypeVersion: 1,
+                apiKey: "sk-fake-openai-key",
+                connectionKey,
+                label: "e2e journey user default (fake LLM)",
+                scope: "USER",
+                modelDiscovery: "manual",
+                // The imported instance profile carries `model: 'mock'` for the mock lane and
+                // `model: 'fake-openai'` for the fake chain lane, so register both on the
+                // connection (CP rejects `POST /sessions` with "Model is not registered under
+                // this Connection" when the profile model is absent from `manualModels`).
+                manualModels: Array.from(new Set([model, "mock"])),
+                baseUrl: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
+            },
+        });
+        expect(
+            created.ok(),
+            `create provider connection: ${created.status()} ${await created.text()}`,
+        ).toBe(true);
+        connectionId = ((await created.json()) as { id: string }).id;
+    }
+    if (existing === undefined || existing.status !== "READY") {
+        const verified = await request.post(
+            `${CP_URL}/api/v1/provider-connections/${connectionId}/verify`,
+            { headers: ctx.headers },
+        );
+        expect(
+            verified.ok(),
+            `verify provider connection: ${verified.status()} ${await verified.text()}`,
+        ).toBe(true);
+        const body = (await verified.json()) as { connection?: { status?: string } };
+        expect(
+            body.connection?.status,
+            `provider connection verify body: ${JSON.stringify(body)}`,
+        ).toBe("READY");
+    }
+
+    // task-238 (root cause of the blocking modal): the workspace UI shows the PLAN-0555
+    // model-binding guide whenever the *user* has no explicit default model binding, even though
+    // an instance-scope profile exists. Write the user-scope profile pointing at this connection so
+    // the guide never opens (that is the root cause fix; a spec-side "close the dialog" fallback is
+    // deliberately not used because it would mask a missing onboarding step).
+    const profileWrite = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+        headers: ctx.headers,
+        data: {
+            profile: JSON.stringify({
+                providerId,
+                connectionKey,
+                model,
+            }),
+        },
+    });
+    expect(
+        profileWrite.status(),
+        `user llm profile write: ${profileWrite.status()} ${await profileWrite.text()}`,
+    ).toBe(200);
+}
+
 /** Resolve the server-created root path for API assertions; tests do not synthesize branch IDs. */
 export async function getRootBranchId(
     request: APIRequestContext,

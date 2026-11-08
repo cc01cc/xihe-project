@@ -35,8 +35,22 @@ export const MAX_ROUNDS_CEILING = 5;
 /** Rounds when the operator says nothing: one attempt + one in-process retry. */
 export const DEFAULT_ROUNDS = 2;
 
-/** Tables that must survive a `truncate` reset (schema state, not test data). */
-export const NEVER_TRUNCATE = Object.freeze(['flyway_schema_history']);
+/**
+ * Tables that must survive a `truncate` reset (schema state, not test data).
+ *
+ * task-238 B: the authorization surface is **boot state**, not test data — the CP seeds the
+ * SUPER_ADMIN binding + materialized `grants` at boot. A truncate reset that wipes them makes the
+ * next round's `POST /api/v1/config/import` fail with `403` (`AuthorizationDeniedException` on
+ * `holdsActionAtom('WRITE_INSTANCE_CONTENT')`), which is what broke the l2-functional retry.
+ * Keeping them also protects against `TRUNCATE … CASCADE` wiping them through an FK reference.
+ */
+export const NEVER_TRUNCATE = Object.freeze([
+    'flyway_schema_history',
+    'roles',
+    'role_permissions',
+    'role_bindings',
+    'grants',
+]);
 
 /** Reset strategies in the order the runner prefers them when timings tie. */
 export const ROUND_RESET_STRATEGIES = Object.freeze(['truncate', 'template', 'dump-restore']);

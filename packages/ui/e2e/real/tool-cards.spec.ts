@@ -21,7 +21,7 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { captureEvidence } from "../helpers/evidence";
 import {
     CP_URL,
-    ensureChatReady,
+    ensureUserDefaultConnection,
     getRootBranchId,
     registerJourneyUser,
     seedPage,
@@ -349,12 +349,28 @@ function fallbackSnapshot(): SeedSnapshot {
 async function openChatSurface(page: Page): Promise<void> {
     const input = page.locator('[data-testid="chat-input"]');
     if (await input.isVisible({ timeout: 2_000 }).catch(() => false)) return;
+    // Mobile viewport: the chat lives in a sheet that has to be opened explicitly.
     const openChat = page.getByRole("button", { name: "Open chat" });
     if (await openChat.isVisible({ timeout: 2_000 }).catch(() => false)) {
         await openChat.click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible({ timeout: 15_000 });
     }
-    await ensureChatReady(page);
+    // PLAN-0689 B3: do NOT fall back to `ensureChatReady` here — that helper clicks「新建对话」,
+    // which now opens the「选择智能体」dialog (a new conversation needs an explicit agent choice)
+    // and leaves a modal backdrop that swallows every later click (2026-11-08 e2e: 240 s click
+    // timeout on `tool-card-toggle`). This spec only visits sessions already created through
+    // `POST /api/v1/sessions`, so waiting for the rendered input is the correct path; if it never
+    // appears we fail loudly (URL + visible testids) instead of opening a picker.
+    if (!(await input.isVisible({ timeout: 15_000 }).catch(() => false))) {
+        const visibleTestIds = await page.evaluate(() =>
+            [...document.querySelectorAll<HTMLElement>("[data-testid]")]
+                .map((element) => element.dataset.testid ?? "")
+                .filter(Boolean),
+        );
+        throw new Error(
+            `chat input not visible on ${page.url()} after 15s; visible data-testid=${visibleTestIds.join(",")}`,
+        );
+    }
 }
 
 async function gotoSession(
@@ -523,6 +539,10 @@ async function runViewportCase(
 ): Promise<void> {
     if (options.captureRunning) resetAttentionFile();
     const ctx = await registerJourneyUser(request, options.label);
+    // task-238 A: the imported instance profile resolves to the *consuming user's own*
+    // USER+READY connection, so the journey user must own one before `POST /sessions`
+    // (otherwise 409 LLM_PROFILE_CONFLICT at the session creation below).
+    await ensureUserDefaultConnection(request, ctx);
     const headers = { ...ctx.headers, "X-Workspace-Id": ctx.workspaceId };
     const agentPrincipalId = await ensureAgentPrincipal(request, headers, ctx.workspaceId);
     const command = await createSession(

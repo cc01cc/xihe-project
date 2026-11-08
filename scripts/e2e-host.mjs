@@ -1350,6 +1350,11 @@ function splitPsqlLines(stdout) {
 
 /** Snapshot the protected table set once, after boot and before the first spec runs. */
 async function captureSeedTables() {
+  // task-238 B: `pg_stat_user_tables.n_live_tup` is filled asynchronously by the stats collector;
+  // a table the CP seeded seconds ago may still report 0 rows ⇒ it would be classified "not seed"
+  // and truncated by the next in-process reset, dropping the SUPER_ADMIN role bindings/grants and
+  // turning `/api/v1/config/import` into 403. ANALYZE forces the counters before we snapshot.
+  await psqlCapture(pgDatabase, 'ANALYZE');
   const rows = splitPsqlLines(await psqlCapture(pgDatabase, buildSeedTableQuery()));
   if (rows.length === 0) {
     console.warn('[e2e-host] round reset: seed-table snapshot is empty — in-process retry will refuse to truncate');
@@ -1884,7 +1889,10 @@ async function configureFakeLlm() {
       console.log('[e2e-host] first-run lane without --bootstrap-user=register: skipping llm-provider config (readiness stays not-ready)')
       return
     }
-    if (!goldpathAccount) await bootstrapFirstRunAccount()
+    // task-238 B: always re-register (fresh token) instead of reusing `goldpathAccount` from an
+    // earlier round — a cached token minted before the in-process reset can be stale against the
+    // reset DB, surfacing as `403` at the config import below.
+    await bootstrapFirstRunAccount()
   }
   let accessToken
   if (goldpathAccount) {
