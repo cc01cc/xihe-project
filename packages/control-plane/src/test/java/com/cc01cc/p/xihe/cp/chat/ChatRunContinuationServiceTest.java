@@ -339,6 +339,28 @@ class ChatRunContinuationServiceTest {
         }
     }
 
+    /** BL-354: a HUMAN-responder continuation keeps NULL by contract, but it must be visible. */
+    @Test
+    void humanResponderContinuationLogsRunPrincipalStampWarning() {
+        stubNewChildCreation();
+        assertNull(source.getAgentPrincipalId(), "fixture: HUMAN responder source has NULL principal");
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);
+        logger.addAppender(appender);
+        try {
+            service.continueRun(SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
+                    new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
+            assertTrue(
+                    appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                            .anyMatch(message -> message.contains("event=run_principal_stamp")
+                                    && message.contains("reason=derived_principal_null")),
+                    "a NULL continuation must emit the run_principal_stamp diagnostic");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
     private void stubNewChildCreation() {
         // PLAN-0645: the former "Session has no in-flight run" read is replaced by the gate's
         // requireSlot (a no-op on the mock), so there is no read-model stub left to set up here.
