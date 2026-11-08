@@ -361,8 +361,10 @@ class PluginBindingControllerTest extends AbstractH2Test {
         ResponseEntity<Map> reattached = exchange(actor, HttpMethod.POST,
                 "/api/v1/sessions/" + session + "/plugins", Map.of("bindingId", bindingId));
         assertEquals(HttpStatus.CREATED, reattached.getStatusCode());
-        assertEquals(2, reattached.getBody().get("revision"),
-                "re-attaching a detached pair is a new snapshot revision");
+        assertEquals(3, reattached.getBody().get("revision"),
+                "PLAN-0691 T1.6 semantics: revision = one per session-catalog change — attach=1,"
+                        + " detach bumps to 2, re-attach bumps to 3 (the idempotent second detach"
+                        + " above spent nothing)");
     }
 
     @Test

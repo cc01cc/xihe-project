@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization;
@@ -20,6 +21,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -68,6 +71,15 @@ public class PluginBindingService {
     private static final String ACTION_ATTACH = "plugin.binding.attach";
     private static final String ACTION_DETACH = "plugin.binding.detach";
 
+    /**
+     * PLAN-0691 T1.6: the coarse cause carried by the kind-only {@code plugin_binding} SSE event.
+     *
+     * <p>Diagnostic text only — consumers must not branch on it (the event's contract is "the
+     * attached set moved, re-read it"; per-binding payload fields are T1.6b).</p>
+     */
+    private static final String EVENT_REASON_ATTACH = "attach";
+    private static final String EVENT_REASON_DETACH = "detach";
+
     /** B-4: the only atom a builtin binding gets by default (spec/authz-plugin-atoms.md §1). */
     private static final String ATOM_INVOKE = "plugin:invoke";
 
@@ -81,12 +93,13 @@ public class PluginBindingService {
     private final AuthorizationGrantRepository grants;
     private final PluginBindingGrantWriter grantWriter;
     private final PluginIndexDdlExecutor indexDdl;
+    private final WorkspaceEventManager events;
 
     public PluginBindingService(PluginBindingRepository bindings,
             SessionPluginBindingRepository attachments, PluginRepository plugins,
             SessionRepository sessions, AuditLogger auditLogger,
             AuthorizationGrantRepository grants, PluginBindingGrantWriter grantWriter,
-            PluginIndexDdlExecutor indexDdl) {
+            PluginIndexDdlExecutor indexDdl, WorkspaceEventManager events) {
         this.bindings = bindings;
         this.attachments = attachments;
         this.plugins = plugins;
@@ -95,6 +108,7 @@ public class PluginBindingService {
         this.grants = grants;
         this.grantWriter = grantWriter;
         this.indexDdl = indexDdl;
+        this.events = events;
     }
 
     // ------------------------------------------------------------------ authorization gate
@@ -388,19 +402,24 @@ public class PluginBindingService {
                 attachments.findBySessionIdAndBindingId(session.getId(), binding.getId());
         SessionPluginBinding attachment;
         boolean created = false;
+        boolean catalogChanged;
         if (existing.isPresent() && existing.get().isActive()) {
             // Idempotent re-attach: the frozen snapshot of the running turn does not move, so no
-            // revision bump is spent on a repeated call.
+            // revision bump is spent on a repeated call — and, for the same reason, no catalog-change
+            // event is published (the session's catalogVersion did not move).
             attachment = existing.get();
+            catalogChanged = false;
         } else if (existing.isPresent()) {
             attachment = existing.get();
-            attachment.reattach(snapshot(binding));
+            attachment.reattach(snapshot(binding), nextCatalogRevision(session));
             attachments.save(attachment);
+            catalogChanged = true;
         } else {
             attachment = new SessionPluginBinding(session.getId(), binding.getId(),
-                    snapshot(binding));
+                    snapshot(binding), nextCatalogRevision(session));
             attachments.save(attachment);
             created = true;
+            catalogChanged = true;
         }
         audit(ACTION_ATTACH, actorUserId, binding.getWorkspaceId(), binding,
                 "session=" + session.getId() + " revision=" + attachment.getRevision()
@@ -408,6 +427,9 @@ public class PluginBindingService {
         int catalogVersion = attachments.maxRevision(session.getId());
         log.info("plugin binding attached binding={} session={} revision={} catalogVersion={}",
                 binding.getId(), session.getId(), attachment.getRevision(), catalogVersion);
+        if (catalogChanged) {
+            publishCatalogChanged(binding.getWorkspaceId(), EVENT_REASON_ATTACH);
+        }
         return new AttachResult(binding.getId(), attachment.getRevision(), catalogVersion, true);
     }
 
@@ -435,11 +457,56 @@ public class PluginBindingService {
             return;
         }
         SessionPluginBinding attachment = existing.get();
-        attachment.detach();
+        attachment.detach(nextCatalogRevision(session));
         attachments.save(attachment);
+        int catalogVersion = attachments.maxRevision(session.getId());
         audit(ACTION_DETACH, actorUserId, binding.getWorkspaceId(), binding,
-                "session=" + session.getId() + " revision=" + attachment.getRevision());
-        log.info("plugin binding detached binding={} session={}", binding.getId(), session.getId());
+                "session=" + session.getId() + " revision=" + attachment.getRevision()
+                        + " catalogVersion=" + catalogVersion);
+        log.info("plugin binding detached binding={} session={} revision={} catalogVersion={}",
+                binding.getId(), session.getId(), attachment.getRevision(), catalogVersion);
+        publishCatalogChanged(binding.getWorkspaceId(), EVENT_REASON_DETACH);
+    }
+
+    /**
+     * The next value of the session's catalog sequence (PLAN-0691 T1.6): one past the highest revision
+     * ever handed out for this session.
+     *
+     * <p>Read from the table rather than counted in memory: the high-water mark <b>is</b> the
+     * {@code catalogVersion} the API reports, so assigning a fresh row the same value twice (the
+     * pre-T1.6 skeleton did: every new attachment started at 1) would make {@code max(revision)} stand
+     * still while the attached set changed. A per-row {@code revision + 1} is also wrong for detach,
+     * because another attachment may already hold a higher value.</p>
+     */
+    private int nextCatalogRevision(Session session) {
+        return attachments.maxRevision(session.getId()) + 1;
+    }
+
+    /**
+     * PLAN-0691 T1.6: announce one session-catalog change on the workspace's SSE stream.
+     *
+     * <p><b>Commit first, push second.</b> The attach/detach methods are transactional, so publishing
+     * inline would let a rolled-back write announce a catalog that never moved (and a client would
+     * then re-read a set that does not include the announced change). The registration runs after
+     * commit, mirroring the workspace lifecycle's "commit then notify" ordering; when no transaction
+     * is active (a direct service call in a test) the publish happens immediately.</p>
+     *
+     * <p>The event is kind-only ({@code plugin_binding}) and announces the <i>session</i> change on
+     * the workspace stream; the per-binding payload is T1.6b's cross-wire decision, so nothing here
+     * pretends to carry {@code revision}/{@code catalogVersion} in the envelope.</p>
+     */
+    private void publishCatalogChanged(UUID workspaceId, String reason) {
+        Runnable publish = () -> events.publishPluginBindingChanged(workspaceId.toString(), reason);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publish.run();
+                }
+            });
+        } else {
+            publish.run();
+        }
     }
 
     // ------------------------------------------------------------------ grant resolution

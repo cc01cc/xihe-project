@@ -73,6 +73,29 @@ class WorkspaceEventManagerTest {
     }
 
     /**
+     * PLAN-0691 T1.6a: the attach/detach helper stays on the pinned kind and carries only the coarse
+     * cause ({@code reason}); consecutive catalog changes consume consecutive sequences. The 9-field
+     * envelope is deliberately untouched — per-binding payload fields are T1.6b's cross-wire decision.
+     */
+    @Test
+    void pluginBindingChangedHelperAnnouncesKindOnlyChangesInOrder() {
+        WorkspaceEvent attached = manager.publishPluginBindingChanged("ws-1", "attach");
+        WorkspaceEvent detached = manager.publishPluginBindingChanged("ws-1", "detach");
+
+        assertEquals(WorkspaceEventManager.KIND_PLUGIN_BINDING, attached.kind());
+        assertEquals("plugin_binding", attached.kind());
+        assertEquals("attach", attached.reason(),
+                "the cause is diagnostic text, not an authorization input");
+        assertEquals("control-plane", attached.source());
+        assertNull(attached.path(), "kind-only: the envelope has no per-binding payload");
+        assertNull(attached.changeType());
+        assertNull(attached.status());
+        assertEquals(1L, attached.sequence());
+        assertEquals("detach", detached.reason());
+        assertEquals(2L, detached.sequence(), "each catalog change consumes exactly one sequence");
+    }
+
+    /**
      * PLAN-0691 T1.6-C1：`plugin_binding` 是跨 lane 的 wire 字面量（UI 分支 + lane A 的
      * binding 端点共用）。这条测试同时钉死字面量与"白名单能收"两个事实——只钉字面量会漏掉
      * 白名单忘加，只钉白名单会漏掉改名。

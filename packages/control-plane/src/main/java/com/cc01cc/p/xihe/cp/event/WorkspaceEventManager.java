@@ -167,6 +167,24 @@ public class WorkspaceEventManager {
                 null, null, "control-plane", null, null);
     }
 
+    /**
+     * PLAN-0691 T1.6: announce that a session's attached-plugin catalog changed (attach / detach).
+     *
+     * <p><b>Kind-only, on purpose.</b> The 9-field envelope has no slot for
+     * {@code bindingId}/{@code action}/{@code revision}/{@code catalogVersion}, and the UI already
+     * consumes this event as "the attached set moved, re-read it" — it tracks only the sequence
+     * number and deliberately parses no body. Extending the envelope is T1.6b (a cross-wire change),
+     * so this helper carries the coarse cause in {@code reason} and nothing else.</p>
+     *
+     * <p>The reason is log/diagnostic text, never an authorization input: consumers must not branch
+     * on it.</p>
+     *
+     * @param reason {@code attach} or {@code detach}
+     */
+    public WorkspaceEvent publishPluginBindingChanged(String workspaceId, String reason) {
+        return publish(workspaceId, KIND_PLUGIN_BINDING, null, null, "control-plane", reason, null);
+    }
+
     public long currentSequence(String workspaceId) {
         WorkspaceChannel channel = channels.get(workspaceId);
         return channel == null ? 0L : channel.sequence.get();
