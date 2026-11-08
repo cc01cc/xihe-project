@@ -20,6 +20,7 @@ import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -61,6 +62,8 @@ class ChatModelResolutionMvpIntegrationTest extends AbstractIntegrationTest {
     private BranchPathService branchPathService;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private record Fixture(User user, Workspace workspace, AgentPrincipal principal,
                            ProviderConnection connection) {}
@@ -160,12 +163,19 @@ class ChatModelResolutionMvpIntegrationTest extends AbstractIntegrationTest {
         Fixture fixture = fixture("mvp-v2");
         Session bound = boundSession(fixture);
         submit(fixture, bound, "first");
+        long runsBeforeRefusal = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE session_id = CAST(? AS UUID)", Long.class,
+                bound.getId().toString());
         fixture.connection().setRevision(2L);
         providerConnectionRepository.saveAndFlush(fixture.connection());
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> submit(fixture, bound, "after revision drift"));
         assertEquals("API_TYPE_REBIND_REQUIRED", refused.getCode());
         assertEquals("connection_revision_changed", refused.getExtra().get("reason"));
+        assertEquals(runsBeforeRefusal, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE session_id = CAST(? AS UUID)", Long.class,
+                bound.getId().toString()),
+                "refusal happens before the Run row is written");
 
         Session unbound = unboundSession(fixture);
         com.cc01cc.p.xihe.cp.entity.ChatRun run = submit(fixture, unbound, "unbound after drift").run();
