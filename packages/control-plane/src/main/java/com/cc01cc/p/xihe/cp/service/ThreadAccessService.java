@@ -124,6 +124,21 @@ public class ThreadAccessService {
         return new AttachResult(thread, sessionId, changed);
     }
 
+    /**
+     * PLAN-0647 D-678 #3: the equivalent of the 0646 {@code requireWritable} name (deliberately not a
+     * missing capability — 0646 is already queued). Owner semantics are the SAME as {@code attach()}:
+     * only the thread's creator may write to it; everyone else gets {@code THREAD_WRITE_FORBIDDEN}.
+     * A non-readable thread stays 404/403 from {@link #requireReadable} so no oracle is added.
+     */
+    @Transactional(readOnly = true)
+    public ConversationThread assertWritable(UUID threadId, String principalId) {
+        ConversationThread thread = requireReadable(principalId, threadId);
+        if (!thread.getCreatedByUserId().equals(parseActor(principalId))) {
+            throw forbidden("Only the thread creator can write to it");
+        }
+        return thread;
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> view(ConversationThread thread) {
         Map<String, Object> body = new LinkedHashMap<>();
