@@ -12,7 +12,8 @@ import {
 describe("mappedErrorCopy", () => {
     it("returns dedicated copy only for codes it actually maps", () => {
         expect(mappedErrorCopy("AGENT_TIMEOUT")).toContain("超时");
-        expect(mappedErrorCopy("RUN_BUDGET_EXHAUSTED")).toBeNull();
+        // PLAN-0706: the code now has a dedicated mapping (CP keeps only the stable code for it).
+        expect(mappedErrorCopy("RUN_BUDGET_EXHAUSTED")).toContain("预算");
         expect(mappedErrorCopy("PROVIDER_TEMPORARY")).toBeNull();
         expect(mappedErrorCopy(undefined)).toBeNull();
     });
@@ -42,6 +43,37 @@ describe("humanizeErrorCode", () => {
         expect(humanizeErrorCode("SOMETHING", "boom")).toContain("SOMETHING");
         expect(chatErrorToastText("RUNTIME_ERROR")).toContain("RUNTIME_ERROR");
         expect(chatErrorToastText("RUNTIME_ERROR")).toContain("运行时");
+    });
+
+    it("maps the CP codes whose English detail was removed (PLAN-0706)", () => {
+        const cases: Record<string, string> = {
+            LLM_NOT_CONFIGURED: "凭据未配置",
+            LLM_CREDENTIALS_INVALID: "凭据被拒绝",
+            LLM_PROVIDER_UNREACHABLE: "暂不可达",
+            AGENT_CIRCUIT_OPEN: "暂不可用",
+            IDEMPOTENCY_KEY_CONFLICT: "幂等键冲突",
+            APPROVAL_EXECUTOR_UNSUPPORTED: "不支持审批",
+            APPROVAL_DECISION_CONFLICT: "不同决定",
+            AGENT_EVENT_ID_MISMATCH: "不匹配",
+            CONTEXT_OVERFLOW: "上下文超限",
+            RUN_BUDGET_EXHAUSTED: "累计预算上限",
+            RUN_NO_PROGRESS: "无进展",
+            RAG_PROFILE_UNAVAILABLE: "embedding 配置不可用",
+            RAG_LEASE_INVALID: "租约无效",
+            RAG_LEASE_UNAVAILABLE: "租约不可用",
+            RAG_LEASE_MISMATCH: "不匹配",
+            RAG_QUERY_FAILED: "拒绝了查询",
+            BASELINE_UNAUTHORIZED: "指令基线缺失",
+        };
+        for (const [code, copy] of Object.entries(cases)) {
+            expect(humanizeErrorCode(code), code).toContain(copy);
+        }
+    });
+
+    it("never surfaces an English backend detail for an unknown code", () => {
+        const copy = humanizeErrorCode("SOMETHING_NEW", "Provider credentials are not configured");
+        expect(copy).not.toContain("Provider credentials");
+        expect(copy).toContain("SOMETHING_NEW");
     });
 
     it("maps Workspace Job execution codes to stable UI copy", () => {
