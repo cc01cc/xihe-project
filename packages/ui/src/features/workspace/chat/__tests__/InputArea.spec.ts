@@ -149,6 +149,19 @@ describe("InputArea", () => {
         expect(wrapper.find('[data-testid="chat-queue-button"]').exists()).toBe(true);
     });
 
+    it("BL-391: failed/cancelled run (isStreaming=false) restores the send button", async () => {
+        const wrapper = mountInputArea({ isStreaming: true });
+        await wrapper.find('[data-testid="chat-input"]').setValue("retry after failure");
+        expect(wrapper.find('[data-testid="chat-stop-button"]').exists()).toBe(true);
+
+        await wrapper.setProps({ isStreaming: false });
+
+        expect(wrapper.find('[data-testid="chat-stop-button"]').exists()).toBe(false);
+        const send = wrapper.find('[data-testid="chat-send-button"]');
+        expect(send.exists()).toBe(true);
+        expect(send.attributes("disabled")).toBeUndefined();
+    });
+
     it("keeps the draft disabled when the Follow-up queue is full", async () => {
         const wrapper = mountInputArea({ queueMode: true, queueFull: true });
         await wrapper.find('[data-testid="chat-input"]').setValue("keep this draft");
