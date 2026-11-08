@@ -290,8 +290,10 @@ class DelegationBudgetServiceTest {
         DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
                 () -> budget.requireWithinBudget(root, run(), "tc"));
         assertEquals("DELEGATION_LIMIT_EXCEEDED", refused.getCode());
-        assertTrue(refused.getMessage().contains("delegationPolicy"),
-                "the refusal names the policy knob: " + refused.getMessage());
+        // PLAN-0708 / BL-516: the wire message is the stable code (the UI localizes it); the policy
+        // facts stay in the durable audit detail instead of an English sentence.
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", refused.getMessage(),
+                "the wire message must be the stable code: " + refused.getMessage());
         assertTrue(refused.auditDetail().contains("delegation_disabled"),
                 "the audit detail carries the dedicated reason: " + refused.auditDetail());
     }
