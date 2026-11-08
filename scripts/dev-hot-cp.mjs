@@ -24,9 +24,10 @@
 // 这是**预期**，热循环结束/重启栈时由 `stack-run.mjs cp` 按 HEAD 重新构建并重写戳。
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, watch } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync, watch } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:net';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { cpBuildRoot, readPointer, pointerPath } from './lib/cp-build-dir.mjs';
@@ -42,6 +43,8 @@ const HELP = `usage: node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [-
   --dry-run         只打印将要执行的命令与目标目录，不实际编译
   --no-restart-hint 不打印 devtools 日志提示
   --force           目标端口不在听时仍然编译（默认拒绝：没人重启时编译只会把 classes 改脏）
+  --javac           单文件增量模式：用 javac 只编改动的 .java（弃 Maven 整模块 8–13 s，实测 0.98 s）
+  --classpath-file F  配合 --javac：显式给依赖 classpath 文件（默认从运行中 CP JVM 的 java.class.path 推导）
   --trigger-file P  编译**成功后** touch 该文件（配合 spring.devtools.restart.trigger-file：
                     devtools 只在文件变化时重启 ⇒ 1 次干净重启、不会在编译中途重启）
   --i-understand-this-dirties-evidence
@@ -51,7 +54,7 @@ const HELP = `usage: node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [-
 判据：编译后 devtools 应在 CP 日志里打出 'Restarting' / 'Started ...'；本脚本编译结束时自动去
 日志尾部找一次并打印（找不到就打印 WARN 与日志路径）。`;
 
-const args = { stack: 2, debounce: 300, once: false, dryRun: false, restartHint: true, force: false, dirtiesEvidence: false, triggerFile: null };
+const args = { stack: 2, debounce: 300, once: false, dryRun: false, restartHint: true, force: false, dirtiesEvidence: false, triggerFile: null, javac: false, classpathFile: null };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i += 1) {
   const a = argv[i];
@@ -70,6 +73,8 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--force') args.force = true;
   else if (a === '--i-understand-this-dirties-evidence') args.dirtiesEvidence = true;
   else if (a === '--trigger-file') args.triggerFile = argv[(i += 1)];
+  else if (a === '--javac') args.javac = true;
+  else if (a === '--classpath-file') args.classpathFile = argv[(i += 1)];
   else {
     console.error(`unknown flag: ${a}\n\n${HELP}`);
     process.exit(2);
@@ -173,7 +178,129 @@ function tailForRestart(sinceMs) {
   }
 }
 
+// ---- --javac 单文件增量（task-229）----------------------------------------
+// 为什么：`mvn compile` 即使只改一个文件也要整模块重编（实测 8.79–16.40 s，Maven 底噪占 8–11 s），
+// 而 devtools 只看 classes 目录 —— 直接用 javac 编改动文件即可：实测单文件 **0.98 s**，
+// devtools 侧看到的是 `Restarting due to 1 class path change (… modifications …)`，
+// 而不是"1243 deletions"式的整树重写。
+const pendingChanges = new Set(); // 绝对路径；只收 .java（资源变更走 mvn 回退）
+
+// Spring Boot 4.0 文档（devtools）：trigger file **必须在 classpath 上**，属性值是**纯文件名**（不含路径）。
+// ⇒ 传 .reloadtrigger 这类裸名时，落到 <targetDir>/classes/.reloadtrigger；传绝对路径会 warn（上次失败原因）。
+function resolveTriggerPath() {
+  if (!args.triggerFile) return null;
+  const bare = !args.triggerFile.includes('/') && !args.triggerFile.includes('\\\\');
+  if (bare) return join(targetDir, 'classes', args.triggerFile);
+  console.warn(
+    '[hot-cp] WARN: --trigger-file 给了路径（' + args.triggerFile + '）；devtools 要求**触发文件在 classpath 上且属性值是纯文件名**，'
+    + '绝对路径不会被监听（task-229 实测 0 次重启即此因）。请改传 .reloadtrigger 这类裸名。',
+  );
+  return args.triggerFile;
+}
+const triggerPath = resolveTriggerPath();
+let depsClasspath = null;
+
+function resolveDepsClasspath() {
+  if (depsClasspath !== null) return depsClasspath;
+  if (args.classpathFile) {
+    depsClasspath = readFileSync(args.classpathFile, 'utf8').trim();
+    console.log(`[hot-cp] deps classpath: ${args.classpathFile} (${depsClasspath.split(';').length} 条)`);
+    return depsClasspath;
+  }
+  // 从**运行中 CP JVM** 的 java.class.path 推导：免 `mvn dependency:build-classpath`
+  // （该插件离线不可用：实测 PluginResolutionException）。第 1 条是 classes 目录，其余是依赖。
+  const list = spawnSync('jcmd', ['-l'], { windowsHide: true, encoding: 'utf8' });
+  const line = (list.stdout ?? '').split(/\r?\n/).find((l) => l.includes('com.cc01cc.p.xihe.cp.CpApplication'));
+  if (!line) return null;
+  const pid = line.trim().split(/\s+/)[0];
+  const props = spawnSync('jcmd', [pid, 'VM.system_properties'], { windowsHide: true, encoding: 'utf8' });
+  const raw = (props.stdout ?? '').split(/\r?\n/).find((l) => l.startsWith('java.class.path='));
+  if (!raw) return null;
+  // jcmd 输出的属性值会转义 `:` 与 `\`（`C\:\\path`）⇒ 先把 `\:`/`\\` 归一成 `:`/`\`，再按 `;` 切分。
+  // 不归一化的话 javac 会拿到 `C\:` 直接报非法路径（task-229 实测 exit=1 的原因）。
+  const entries = raw.slice('java.class.path='.length).replace(/\\([:\\])/g, '$1').split(';');
+  depsClasspath = entries.slice(1).join(';');
+  console.log(`[hot-cp] deps classpath: 从运行中 CP JVM(pid ${pid}) 推导，${entries.length - 1} 条依赖`);
+  return depsClasspath;
+}
+
+function resolveProcessorPath() {
+  // MapStruct annotationProcessorPaths（pom.xml:295-304）——取本机 m2 里最新的 mapstruct-processor jar
+  const dir = join(homedir(), '.m2', 'repository', 'org', 'mapstruct', 'mapstruct-processor');
+  try {
+    const versions = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    if (versions.length === 0) return null;
+    const version = versions.sort().at(-1);
+    const jar = join(dir, version, `mapstruct-processor-${version}.jar`);
+    return existsSync(jar) ? jar : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildJavacOnce(files) {
+  const startedAt = Date.now();
+  const deps = resolveDepsClasspath();
+  if (!deps) {
+    console.warn('[hot-cp] WARN: 拿不到依赖 classpath（jcmd 读不到运行中 CP / 未给 --classpath-file）⇒ 回退 mvn');
+    return null; // 交给 mvn 路径
+  }
+  const classesDir = join(targetDir, 'classes');
+  const processor = resolveProcessorPath();
+  const javacArgs = ['-d', classesDir, '-cp', `${classesDir};${deps}`, '-proc:full'];
+  if (processor) javacArgs.push('-processorpath', processor);
+  else console.warn('[hot-cp] WARN: 未找到 mapstruct-processor jar ⇒ 不加 -processorpath（MapStruct 生成类可能失败）');
+  javacArgs.push(...files);
+  console.log(`[hot-cp] javac: ${files.length} 个文件 → ${classesDir}`);
+  const result = spawnSync('javac', javacArgs, { windowsHide: true, stdio: 'inherit' });
+  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
+  if (result.status !== 0) {
+    const why = result.error ? `error=${result.error.message}` : `exit=${result.status ?? 'null'}`;
+    // 失败**不触发重启**（旧 classes 仍是可用版本）；下一次保存会重试
+    console.error(`[hot-cp] JAVAC FAILED (${why}) after ${elapsed}s —— 不 touch trigger、不动运行中的 CP`);
+    return false;
+  }
+  builds += 1;
+  console.log(`[hot-cp] JAVAC OK (#${builds}) in ${elapsed}s  (finishedAt=${new Date().toISOString()})`);
+  if (args.triggerFile) {
+    try {
+      mkdirSync(dirname(triggerPath), { recursive: true });
+      writeFileSync(triggerPath, `${new Date().toISOString()} javac#${builds}\n`);
+      console.log(`[hot-cp] trigger touched: ${triggerPath}`);
+    } catch (error) {
+      console.error(`[hot-cp] WARN: 无法写 trigger 文件 ${triggerPath}: ${error.message}`);
+    }
+  } else {
+    console.log('[hot-cp] 未配置 --trigger-file：保持 devtools 默认轮询（重启会落在编译中途，见 task-226）');
+  }
+  tailForRestart(startedAt);
+  return true;
+}
+
 function buildOnce() {
+  // --javac：只编改动文件；新增/删除/非 .java 变更一律回退 mvn（避免"找不到符号/缺生成类"）
+  if (args.javac && pendingChanges.size === 0 && args.once) {
+    // --once 没有 watch 事件 ⇒ 用 git 发现"已改的 src/main 下 .java"（只收工作树已存在文件）
+    const status = spawnSync('git', ['-C', projectRoot, 'status', '--porcelain', '-uall'], { windowsHide: true, encoding: 'utf8' });
+    for (const line of (status.stdout ?? '').split(/\r?\n/)) {
+      const m = line.match(/^[ MARD?]{1,2}\s+(packages\/control-plane\/src\/main\/.*\.java)$/);
+      if (m) pendingChanges.add(join(projectRoot, m[1]));
+    }
+    if (pendingChanges.size > 0) console.log(`[hot-cp] --once：git 发现 ${pendingChanges.size} 个改动 .java`);
+  }
+  if (args.javac && pendingChanges.size > 0) {
+    const files = [...pendingChanges];
+    const missing = files.filter((f) => !existsSync(f));
+    const nonJava = files.filter((f) => !f.endsWith('.java'));
+    if (missing.length > 0 || nonJava.length > 0) {
+      console.warn(`[hot-cp] javac 模式不适用（删除 ${missing.length} / 非 .java ${nonJava.length}）⇒ 回退 mvn 整模块`);
+    } else {
+      const ok = buildJavacOnce(files);
+      pendingChanges.clear();
+      if (ok !== null) return ok;
+    }
+  }
+  pendingChanges.clear();
   const startedAt = Date.now();
   console.log(`[hot-cp] running: mvn ${mvnArgs.join(' ')}  (cwd packages/control-plane)`);
   // Windows 上 `mvn` 是 .cmd，spawnSync 直接调用会 ENOENT（exit=null）⇒ 统一走 ComSpec /c。
@@ -196,11 +323,11 @@ function buildOnce() {
   console.log(`[hot-cp] BUILD OK (#${builds}) in ${elapsed}s  (finishedAt=${new Date().toISOString()})`);
   if (args.triggerFile) {
     try {
-      mkdirSync(dirname(args.triggerFile), { recursive: true });
-      writeFileSync(args.triggerFile, `${new Date().toISOString()} build#${builds}\n`);
-      console.log(`[hot-cp] trigger touched: ${args.triggerFile}（devtools restart.trigger-file 只会因此重启一次）`);
+      mkdirSync(dirname(triggerPath), { recursive: true });
+      writeFileSync(triggerPath, `${new Date().toISOString()} build#${builds}\n`);
+      console.log(`[hot-cp] trigger touched: ${triggerPath}（devtools restart.trigger-file 只会因此重启一次）`);
     } catch (error) {
-      console.error(`[hot-cp] WARN: 无法写 trigger 文件 ${args.triggerFile}: ${error.message}`);
+      console.error(`[hot-cp] WARN: 无法写 trigger 文件 ${triggerPath}: ${error.message}`);
     }
   }
   tailForRestart(startedAt);
@@ -272,6 +399,8 @@ let watcher;
 try {
   watcher = watch(watchRoot, { recursive: true }, (event, filename) => {
     if (!filename) return;
+    const abs = join(watchRoot, filename);
+    if (filename.endsWith('.java')) pendingChanges.add(abs);
     schedule(`${event} ${filename}`);
   });
 } catch (error) {
