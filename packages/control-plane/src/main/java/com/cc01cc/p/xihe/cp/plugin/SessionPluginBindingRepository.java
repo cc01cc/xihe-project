@@ -28,8 +28,15 @@ public interface SessionPluginBindingRepository
     long countByBindingId(UUID bindingId);
 
     /**
-     * T1.6 owns the real {@code catalogVersion} sequence; until it lands, the per-session counter is
-     * the highest revision ever handed out, which is monotonic and honest about being a skeleton.
+     * The session's <b>catalog version</b> (PLAN-0691 T1.6): the highest revision ever handed out for
+     * this session.
+     *
+     * <p>It is a sequence rather than a stored counter because {@code revision} already is one:
+     * every catalog change takes the next value of this high-water mark (fresh attach 1, detach 2,
+     * re-attach 3; a second binding attached into the same session takes 2) — see
+     * {@link SessionPluginBinding#detach} and {@code PluginBindingService#nextCatalogRevision}.
+     * The API exposes it as {@code PluginAttachResult.catalogVersion} and the SSE
+     * {@code plugin_binding} event announces that it moved; no second column, hence no migration.</p>
      */
     @Query("select coalesce(max(a.revision), 0) from SessionPluginBinding a"
             + " where a.sessionId = :sessionId")
