@@ -70,14 +70,19 @@ if (!oneRoot || !existsSync(join(oneRoot, "config", "ports.mjs"))) {
   const reason = `no ONE workspace (config/ports.mjs) found above ${projectRoot}`;
   const result = {
     ok: envPortDiffs.length === 0,
-    skipped: true,
-    reason: `${reason}; ONE parity comparison skipped (A03 runs standalone)`,
+    skipped: false,
+    mode: "standalone",
+    reason: `${reason}; ports mirror not applicable (standalone)`,
     envDevPortDiffs: envPortDiffs,
   };
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
-    console.log(`[ports-parity] SKIP: ${result.reason}`);
+    if (result.ok) {
+      console.log("[ports-parity] OK (standalone: no ONE workspace, ports mirror not applicable)");
+    } else {
+      console.log("[ports-parity] FAIL (standalone): .env.dev drift, see DIFF lines");
+    }
     for (const diff of envPortDiffs) console.log(`[ports-parity] DIFF: ${diff}`);
     console.log(`[ports-parity] env.dev self-consistency: ${envPortDiffs.length === 0 ? "ok" : "drift"}`);
   }

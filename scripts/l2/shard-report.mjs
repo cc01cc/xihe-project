@@ -14,8 +14,18 @@ const flag = (name, fallback) => {
   return index >= 0 ? argv[index + 1] : fallback;
 };
 
-const ROOT = resolve(flag('root', 'H:/zeogit/one/A03-xihe/.worktrees/plan-l2-phase3'));
-const LOG_DIR = resolve(flag('log-dir', 'H:/zeogit/one/.tmp/plan-l2-p3'));
+function readToplevel() {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd(), encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+const ROOT = resolve(flag('root') ?? readToplevel() ?? process.cwd());
+const LOG_DIR = resolve(
+  flag('log-dir') ?? process.env.XH_L2_OUT ?? join(process.cwd(), '.tmp', 'plan-l2-p3'),
+);
 const JSON_OUT = flag('json', null);
 const MODULE = join(ROOT, 'packages/control-plane');
 

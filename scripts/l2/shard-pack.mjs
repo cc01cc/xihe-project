@@ -32,7 +32,9 @@ const flag = (name) => {
 const PROFILE = flag('profile');
 const REPORT_DIR = flag('report-dir');
 const FROM_JSON = flag('from-json');
-const OUT_DIR = resolve(flag('out') ?? 'H:/zeogit/one/.tmp/plan-l2-p3');
+const OUT_DIR = resolve(
+  flag('out') ?? process.env.XH_L2_OUT ?? join(process.cwd(), '.tmp', 'plan-l2-p3'),
+);
 const TARGET_DELTA = Number(flag('target-delta') ?? 10);
 const asJson = argv.includes('--json');
 

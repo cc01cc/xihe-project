@@ -296,7 +296,7 @@ const SCOPES = {
         title: "端口双单源 parity（改端口表任一侧）",
         dir: "A03-xihe 根",
         cmd: "mise run check:ports",
-        verdict: "打印逐项比对结果 + exit 0（ONE 缺席时显式 skip 也算过）",
+        verdict: "打印逐项比对结果 + exit 0（无 ONE 时显式 standalone OK，不 skip）",
         evidence: "mise.toml:519（脚本 header 说明 skip 语义）",
       },
       {

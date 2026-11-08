@@ -10,7 +10,9 @@
  * 所有用例注入假的 `runCapture`/`readdir`，不跑 cargo、不读真实磁盘。
  */
 import assert from 'node:assert/strict';
+import { join, resolve, dirname } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   CARGO_METADATA_ARGS,
@@ -21,7 +23,16 @@ import {
   siblingStackTargetDirs,
 } from './e2e-runtime-target.mjs';
 
-const projectRoot = 'H:/zeogit/one/A03-xihe';
+const posix = (value) => value.replaceAll('\\', '/');
+const projectRoot = posix(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
+// Test fixtures only: derive every path from the checkout so no machine path is baked in.
+const workspaceRoot = posix(resolve(projectRoot, '..'));
+const cargoTargetRoot = posix(join(workspaceRoot, '.tmp', 'cargo-target'));
+const mainDir = posix(join(cargoTargetRoot, 'main'));
+const stack2Dir = posix(join(cargoTargetRoot, 'stack-2'));
+const sharedCargoTarget = posix(join(cargoTargetRoot, 'm3-a13'));
+const sharedCargoTargetEnv = sharedCargoTarget.replaceAll('/', '\\');
+const worktreeRoot = posix(join(workspaceRoot, 'A03-xihe', '.worktrees', 'm3-a13'));
 
 /** 造一个 `cargo metadata`（--no-deps）成功响应。 */
 function metadataOk(targetDirectory) {
@@ -55,7 +66,7 @@ test('T1 真实布局：cargo metadata 给出的 target 目录 + 兄弟栈目录
     cargoRoot,
     runCapture: (program, args, timeoutMs, cwd) => {
       calls.push({ program, args, timeoutMs, cwd });
-      return metadataOk('H:/zeogit/one/.tmp/cargo-target/main');
+      return metadataOk(mainDir);
     },
     readdir: () => dirEntries(['main', 'stack-2', 'm3-a13'], ['README.md']),
   });
@@ -67,10 +78,10 @@ test('T1 真实布局：cargo metadata 给出的 target 目录 + 兄弟栈目录
     result.targetDirs.map((entry) => entry.label),
     ['main', 'stack-2'],
   );
-  assert.equal(result.targetDirs[0].dir, 'H:/zeogit/one/.tmp/cargo-target/main');
-  assert.equal(result.targetDirs[1].dir, 'H:/zeogit/one/.tmp/cargo-target/stack-2');
+  assert.equal(result.targetDirs[0].dir, mainDir);
+  assert.equal(result.targetDirs[1].dir, stack2Dir);
   // 废弃的仓库内布局绝不参与判定，只作为"它不被采信"的说明字段带出来。
-  assert.equal(result.legacyDir, 'H:/zeogit/one/A03-xihe/packages/runtime/target');
+  assert.equal(result.legacyDir, `${projectRoot}/packages/runtime/target`);
   assert.equal(
     result.targetDirs.some((entry) => entry.dir.includes('/packages/runtime/target')),
     false,
@@ -89,7 +100,7 @@ test('T1b cwd 派生：packages/runtime 存在就用它，否则退回仓库根�
   const seen = [];
   const runCapture = (_program, _args, _timeoutMs, cwd) => {
     seen.push(cwd);
-    return metadataOk('H:/zeogit/one/.tmp/cargo-target/main');
+    return metadataOk(mainDir);
   };
   const withManifest = resolveRuntimeTargetDirs({
     projectRoot,
@@ -116,7 +127,7 @@ test('T2 CARGO_TARGET_DIR 优先于 config.toml：直接用它，不扫兄弟目
   let called = false;
   const result = resolveRuntimeTargetDirs({
     projectRoot,
-    env: { CARGO_TARGET_DIR: 'H:\\zeolib\\cargo-target\\m3-a13' },
+    env: { CARGO_TARGET_DIR: sharedCargoTargetEnv },
     runCapture: () => {
       called = true;
       return metadataOk('H:/ignored/target');
@@ -125,7 +136,7 @@ test('T2 CARGO_TARGET_DIR 优先于 config.toml：直接用它，不扫兄弟目
   });
   assert.equal(result.source, 'env');
   assert.equal(result.unverifiable, false);
-  assert.deepEqual(result.targetDirs.map((entry) => entry.dir), ['H:/zeolib/cargo-target/m3-a13']);
+  assert.deepEqual(result.targetDirs.map((entry) => entry.dir), [sharedCargoTarget]);
   assert.equal(result.targetDirs[0].label, 'm3-a13');
   assert.equal(called, false, 'env override must win without asking cargo');
 });
@@ -138,7 +149,7 @@ test('T3 相对 CARGO_TARGET_DIR 相对仓库根解析（cargo 的语义）', ()
     readdir: () => dirEntries([]),
   });
   assert.equal(result.source, 'env');
-  assert.equal(result.targetDirs[0].dir, 'H:/zeogit/one/.tmp/cargo-target/m3-a13');
+  assert.equal(result.targetDirs[0].dir, sharedCargoTarget);
 });
 
 test('T4 cargo metadata 失败 ⇒ unverifiable（阻塞），reason 带 cargo 自己的错误行', () => {
@@ -204,8 +215,8 @@ test('T8 兄弟目录扫描只认 main / stack-N，且主目录永远排第一',
 
 test('T9 废弃布局的路径可被显式点名（用于输出"它不被采信"的证据）', () => {
   assert.equal(
-    legacyRuntimeTargetDir('H:\\zeogit\\one\\A03-xihe\\.worktrees\\m3-a13'),
-    'H:/zeogit/one/A03-xihe/.worktrees/m3-a13/packages/runtime/target',
+    legacyRuntimeTargetDir(worktreeRoot.replaceAll('/', '\\')),
+    `${worktreeRoot}/packages/runtime/target`,
   );
 });
 
@@ -219,7 +230,7 @@ function resolutionFixture(dirs, extra = {}) {
     targetDirs: dirs.map((dir) => ({ dir, label: dir.split('/').pop() })),
     legacyDir: `${projectRoot}/packages/runtime/target`,
     unverifiable: false,
-    reason: '.cargo/config.toml [build] target-dir resolved by cargo: H:/zeogit/one/.tmp/cargo-target/main',
+    reason: `.cargo/config.toml [build] target-dir resolved by cargo: ${mainDir}`,
     ...extra,
   };
 }
@@ -232,8 +243,7 @@ function fakeFs(files) {
   };
 }
 
-const mainDir = 'H:/zeogit/one/.tmp/cargo-target/main';
-const stack2Dir = 'H:/zeogit/one/.tmp/cargo-target/stack-2';
+
 
 test('T10 解析不到 target 目录 ⇒ unverifiable + 阻塞（不许降级成 WARN），且绝不退回废弃布局', () => {
   const inspection = inspectRuntimeBinaries(

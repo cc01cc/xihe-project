@@ -12,8 +12,9 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const A03 = 'H:/zeogit/one/A03-xihe';
+const A03 = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const state = JSON.parse(readFileSync(`${A03}/.tmp/e2e-host/persistent-stack.json`, 'utf8'));
 const CP = `http://127.0.0.1:${state.ports.cp}`;
 const ADMIN_EMAIL = 'admin@xihe.local';

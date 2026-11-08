@@ -11,6 +11,7 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const argValue = (name, fallback = null) => {
     const index = process.argv.indexOf(`--${name}`);
@@ -19,7 +20,8 @@ const argValue = (name, fallback = null) => {
     return inline === undefined ? fallback : inline.slice(name.length + 3);
 };
 
-const DIST = resolve(argValue('dist', 'H:/zeogit/one/A03-xihe/packages/ui/dist'));
+const A03 = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const DIST = resolve(argValue('dist', join(A03, 'packages/ui/dist')));
 const CP = argValue('cp');
 const PORT = Number(argValue('port', '27511'));
 if (!CP) throw new Error('--cp http://127.0.0.1:<port> is required');

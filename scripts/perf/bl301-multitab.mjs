@@ -19,8 +19,9 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const A03 = 'H:/zeogit/one/A03-xihe';
+const A03 = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const requireUi = createRequire(`${A03}/packages/ui/package.json`);
 const { chromium } = requireUi('@playwright/test');
 
