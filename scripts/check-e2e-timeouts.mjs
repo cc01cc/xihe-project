@@ -18,13 +18,6 @@ const ACTION_CAP_MS = 10_000;
 const EXEMPT_CAP_MS = 60_000;
 const EXEMPT = /\/\/\s*timeout-exempt:\s*(.+)/;
 
-// task-252 (2026-11-08): these two files were frozen for the concurrent oxfmt lane (task-238) and
-// could not be rewritten in this card. They are skipped here on purpose and must be migrated in the
-// follow-up that lands oxfmt: remove this set and the gate will cover them again.
-const PENDING_OXFMT_FILES = new Set([
-    "packages/ui/e2e/real/tool-cards.spec.ts",
-    "packages/ui/e2e/real/helpers/journey.ts",
-]);
 
 function walk(dir) {
     const out = [];
@@ -38,14 +31,10 @@ function walk(dir) {
 
 const offenders = [];
 let literals = 0;
-let pending = 0;
 const files = walk(E2E_DIR);
 for (const file of files) {
     const rel = path.relative(ROOT, file).split(path.sep).join("/");
-    if (PENDING_OXFMT_FILES.has(rel)) {
-        pending++;
-        continue;
-    }
+
     const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
         for (const m of lines[i].matchAll(/(?:timeout:|test\.setTimeout\()\s*(\d[\d_]*)/g)) {
@@ -63,7 +52,7 @@ for (const file of files) {
     }
 }
 
-console.log(`[timeout-budget] scanned ${files.length} files, ${literals} literal budgets, ${pending} file(s) pending the oxfmt follow-up`);
+console.log(`[timeout-budget] scanned ${files.length} files, ${literals} literal budgets`);
 if (offenders.length) {
     console.error(`[timeout-budget] FAIL: ${offenders.length} over-budget literal(s)`);
     for (const line of offenders.slice(0, 200)) console.error(`  ${line}`);

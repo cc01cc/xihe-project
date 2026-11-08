@@ -149,10 +149,19 @@ const expectTests = expectTestsRaw === '' ? null : Number(expectTestsRaw)
 const onlyPatterns = process.argv
   .filter((arg) => arg.startsWith('--only='))
   .map((arg) => arg.slice('--only='.length))
+/**
+ * task-238: exact residual names the caller deliberately keeps (e.g. a failed round's Postgres
+ * volume for post-mortem). Forwarded verbatim to the preflight's audited `--allow-residual`;
+ * omitted ⇒ the default "residue blocks the run" behaviour is unchanged.
+ */
+const allowResidualArg = process.argv.find((arg) => arg.startsWith('--allow-residual='))
+const allowResidualNames = allowResidualArg
+  ? allowResidualArg.slice('--allow-residual='.length).split(',').map((name) => name.trim()).filter(Boolean)
+  : []
 const RUNNER_ONLY_ARGS = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight',
   '--validate-at-end', '--list-batches', '--help', '-h', '--check-cli', '--plan-only', '--allow-llm-mode-override', '--allow-skip'])
 const RUNNER_ONLY_PREFIXES = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=',
-  '--first-run=', '--bootstrap-user=', '--registration-policy=', '--only=', '--expect-tests=']
+  '--first-run=', '--bootstrap-user=', '--registration-policy=', '--only=', '--expect-tests=', '--allow-residual=']
 /** Everything the runner passes through to Playwright (spec files, --grep, --retries, --reporter, …). */
 const playwrightPassthroughArgs = process.argv.slice(2).filter(
   (arg) => !RUNNER_ONLY_ARGS.has(arg) && !RUNNER_ONLY_PREFIXES.some((prefix) => arg.startsWith(prefix)),
@@ -2639,7 +2648,7 @@ async function stopPersistentProcesses(state) {
 // left nothing behind but one console line. Now it skips only the non-disk
 // sections (`e2e-preflight.mjs --disk-only` still runs) and records the verdict,
 // so the run header can prove the disk was never silently ignored.
-async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids = [], cpBootPlan = null } = {}) {
+async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids = [], cpBootPlan = null, allowResidual = [] } = {}) {
   const policy = artifactGatePolicy({
     jarMode,
     externalServer,
@@ -2678,6 +2687,12 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
   if (policy.ignoreBuild) preflightArgs.push('--ignore-build')
   if (allowPorts.length > 0) preflightArgs.push(`--allow-ports=${allowPorts.join(',')}`)
   if (ownRunId) preflightArgs.push(`--own-run-id=${ownRunId}`)
+  if (allowResidual.length > 0) {
+    // task-238: audited exemption — the names are logged here and in the preflight output, so
+    // the run record proves which kept resources were deliberately tolerated.
+    console.log(`[e2e-host] preflight residual allowance (--allow-residual): ${allowResidual.join(', ')}`)
+    preflightArgs.push(`--allow-residual=${allowResidual.join(',')}`)
+  }
   const preflight = await runCapture(nodeCommand, preflightArgs)
   if (preflight.stdout) process.stdout.write(preflight.stdout)
   if (preflight.stderr) process.stderr.write(preflight.stderr)
@@ -2981,7 +2996,7 @@ async function main() {
     }
     return
   }
-  if (!(await runPreflightGate({ allowPorts: reuseOwnPorts, ownRunId: reuseOwnRunId, extraSelfPids: [reuseRunnerPid], cpBootPlan }))) {
+  if (!(await runPreflightGate({ allowPorts: reuseOwnPorts, ownRunId: reuseOwnRunId, extraSelfPids: [reuseRunnerPid], cpBootPlan, allowResidual: allowResidualNames }))) {
     process.exitCode = 1
     return
   }

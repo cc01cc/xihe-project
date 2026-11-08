@@ -56,7 +56,7 @@ export async function waitForControlPlaneAgentReady(
                 }
             },
             {
-                timeout: 45_000,
+                timeout: 45_000, // timeout-exempt: boot（CP agent readiness 轮询）
                 intervals: [250, 500, 1000, 2000],
                 message: `CP Agent readiness did not reach up/up/ready; last observation: ${lastObserved}`,
             },
@@ -351,7 +351,7 @@ export async function ensureAgentWorkspaceBinding(workspaceId: string): Promise<
         await expect
             .poll(async () => (await agentHealthOk()).ok, {
                 message: "Agent must stop answering before the workspace rebind restart",
-                timeout: 20000,
+                timeout: 20000, // timeout-exempt: long（agent 停机切换轮询）
                 intervals: [500, 1000, 2000],
             })
             .toBe(false);
@@ -843,7 +843,7 @@ export async function sendChat(page: Page, text: string): Promise<void> {
         if (await send.isEnabled().catch(() => false)) break;
         await nap(1000);
     }
-    await expect(send).toBeEnabled({ timeout: 15000 });
+    await expect(send).toBeEnabled({ timeout: 15000 }); // timeout-exempt: long（发送可用性轮询）
     await withDeadline(
         page.locator("[data-sonner-toast]").first().waitFor({ state: "detached", timeout: 8000 }),
         10_000,
@@ -915,7 +915,7 @@ export async function sendChat(page: Page, text: string): Promise<void> {
             // 已发出：尽力给乐观气泡一点落地时间，但**不把可见性当退出门** ——
             // 那正是旧判据的病根（ask_user 场景下人类等待期很长，气泡可能迟迟不到）。
             await withDeadline(
-                bubbles.nth(baseline).waitFor({ state: "visible", timeout: 15_000 }),
+                bubbles.nth(baseline).waitFor({ state: "visible", timeout: 15_000 }), // timeout-exempt: long（乐观气泡落地）
                 17_000,
                 "optimistic bubble wait",
             ).catch(() => {});
@@ -973,7 +973,7 @@ export async function awaitLatestChatRunCompleted(
                 }
                 return entries[0]?.status ?? "unknown";
             },
-            { timeout: 120000, intervals: [2_000] },
+            { timeout: 60_000, intervals: [2_000] }, // timeout-exempt: llm-stream（chat run 终态轮询，门上限 60 s）
         )
         .toMatch(CHAT_RUN_TERMINAL);
 }
@@ -1000,7 +1000,7 @@ export async function awaitOperationCompletedForRun(
                 const body = (await res.json()) as { status?: string };
                 return body.status ?? "unknown";
             },
-            { timeout: 120000, intervals: [500, 1000, 2000] },
+            { timeout: 60_000, intervals: [500, 1000, 2000] }, // timeout-exempt: llm-stream（chat run 终态轮询，门上限 60 s）
         )
         .toMatch(CHAT_RUN_TERMINAL);
 }
@@ -1020,5 +1020,5 @@ export async function ensureChatReady(page: Page): Promise<void> {
             await page.reload({ waitUntil: "load" });
         }
     }
-    await expect(chatInput, "chat input visible on workspace page").toBeVisible({ timeout: 30000 });
+    await expect(chatInput, "chat input visible on workspace page").toBeVisible({ timeout: 30000 }); // timeout-exempt: first-render（首屏 composer 可见）
 }

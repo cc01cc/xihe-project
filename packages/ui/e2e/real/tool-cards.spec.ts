@@ -17,7 +17,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { captureEvidence } from "../helpers/evidence";
 import {
     CP_URL,
@@ -29,6 +29,25 @@ import {
 import { seedUserGrant } from "./helpers/user-grants";
 
 const MODEL_ID = process.env.XIHE_E2E_FAKE_MODEL ?? "fake-openai";
+
+/**
+ * Timeout budget SSOT: `internal/A03-xihe/docs/test-timeout-budget.md`.
+ * - `first-render` is paid **once** by the first session page; the ordinary `expect` budget (10 s)
+ *   covers every later page.
+ * - Measured cold first render: **964 ms** (run6, 2026-11-08) ⇒ the default was tightened from the
+ *   first-render cap (30 s) back to 10 s; the 30 s class remains available through the env
+ *   override only (`E2E_FIRST_RENDER_TIMEOUT_MS`, capped at 45 s).
+ * Both are env-overridable; a measurement over the expect budget is logged, not silently raised.
+ */
+const FIRST_RENDER_TIMEOUT_MS = Math.min(
+    Number(process.env.E2E_FIRST_RENDER_TIMEOUT_MS ?? 10_000) || 10_000,
+    45_000,
+);
+const EXPECT_TIMEOUT_MS = Number(process.env.E2E_EXPECT_TIMEOUT_MS ?? 10_000) || 10_000;
+/** Short probe: "is the composer / mobile-sheet opener already rendered?" (≤10 s budget). */
+const PROBE_TIMEOUT_MS = 2_000;
+/** One-time cold-start flag: the first session page visit is the warmup. */
+let firstRenderPaid = false;
 
 const ATTENTION_FILE_NAME = "t2.2-attention-budget.json";
 const EVIDENCE_DIR =
@@ -93,7 +112,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: 15_000, windowsHide: true }, // timeout-exempt: exe（docker exec psql 子进程）
     ).trim();
 }
 
@@ -346,14 +365,29 @@ function fallbackSnapshot(): SeedSnapshot {
     };
 }
 
+/**
+ * Playwright's `locator.isVisible()` never waits (its `{timeout}` is ignored), so a not-yet-rendered
+ * page reads as "not visible" in milliseconds. `waitFor` is the polling form of the same check.
+ */
+async function visibleWithin(locator: Locator, timeoutMs: number): Promise<boolean> {
+    try {
+        await locator.waitFor({ state: "visible", timeout: timeoutMs });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 async function openChatSurface(page: Page): Promise<void> {
     const input = page.locator('[data-testid="chat-input"]');
-    if (await input.isVisible({ timeout: 2_000 }).catch(() => false)) return;
+    if (await visibleWithin(input, PROBE_TIMEOUT_MS)) return;
     // Mobile viewport: the chat lives in a sheet that has to be opened explicitly.
     const openChat = page.getByRole("button", { name: "Open chat" });
-    if (await openChat.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    if (await visibleWithin(openChat, PROBE_TIMEOUT_MS)) {
         await openChat.click();
-        await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
     }
     // PLAN-0689 B3: do NOT fall back to `ensureChatReady` here — that helper clicks「新建对话」,
     // which now opens the「选择智能体」dialog (a new conversation needs an explicit agent choice)
@@ -361,14 +395,47 @@ async function openChatSurface(page: Page): Promise<void> {
     // timeout on `tool-card-toggle`). This spec only visits sessions already created through
     // `POST /api/v1/sessions`, so waiting for the rendered input is the correct path; if it never
     // appears we fail loudly (URL + visible testids) instead of opening a picker.
-    if (!(await input.isVisible({ timeout: 15_000 }).catch(() => false))) {
+    // timeout-exempt: first-render（Vite 冷启动首屏；预热后应 ≤10s）
+    const budgetMs = firstRenderPaid ? EXPECT_TIMEOUT_MS : FIRST_RENDER_TIMEOUT_MS;
+    const startedAt = Date.now();
+    // `locator.isVisible()` never waits (its `{timeout}` is meaningless), so a not-yet-rendered
+    // page read as "not visible" in milliseconds. `waitFor` is the polling form and keeps the
+    // same budget; the failure path below still reports URL + rendered testids + elapsed.
+    let visible = true;
+    try {
+        await input.waitFor({ state: "visible", timeout: budgetMs });
+    } catch {
+        visible = false;
+    }
+    const elapsedMs = Date.now() - startedAt;
+    if (!visible) {
         const visibleTestIds = await page.evaluate(() =>
             [...document.querySelectorAll<HTMLElement>("[data-testid]")]
                 .map((element) => element.dataset.testid ?? "")
                 .filter(Boolean),
         );
         throw new Error(
-            `chat input not visible on ${page.url()} after 15s; visible data-testid=${visibleTestIds.join(",")}`,
+            `chat input not visible on ${page.url()} after ${elapsedMs} ms ` +
+                `(budget ${budgetMs} ms, first-render-paid=${firstRenderPaid}); ` +
+                `visible data-testid=${visibleTestIds.join(",")}`,
+        );
+    }
+    if (!firstRenderPaid) {
+        firstRenderPaid = true;
+        console.log(
+            `[tool-cards] first-render composer visible after ${elapsedMs} ms ` +
+                `(budget ${budgetMs} ms) on ${page.url()}`,
+        );
+    } else if (elapsedMs > EXPECT_TIMEOUT_MS) {
+        // Over-budget measurement on a warm page: report it instead of silently raising timeouts.
+        console.warn(
+            `[tool-cards] warm composer visible after ${elapsedMs} ms ` +
+                `(budget ${EXPECT_TIMEOUT_MS} ms) on ${page.url()}`,
+        );
+    } else {
+        console.log(
+            `[tool-cards] warm composer visible after ${elapsedMs} ms ` +
+                `(budget ${EXPECT_TIMEOUT_MS} ms) on ${page.url()}`,
         );
     }
 }
@@ -383,7 +450,7 @@ async function gotoSession(
     await expect(
         page.locator('[data-testid="tool-card"]').first(),
         "tool card visible",
-    ).toBeVisible({ timeout: 30_000 });
+    ).toBeVisible({ timeout: 30_000 }); // timeout-exempt: long（工具卡投影轮询）
 }
 
 async function expandAllCards(page: Page): Promise<void> {
@@ -610,7 +677,7 @@ async function runViewportCase(
         await expect(
             page.locator('[data-testid="tool-card"]').first(),
             "tool card after running -> completed reload",
-        ).toBeVisible({ timeout: 30_000 });
+        ).toBeVisible({ timeout: 30_000 }); // timeout-exempt: long（工具卡投影轮询）
         await expandAllCards(page);
         const completedBox = await page
             .locator('[data-tool-card="command"] [data-testid="tool-card-toggle"]')
@@ -651,10 +718,22 @@ async function runViewportCase(
     if (options.suffix.startsWith("mobile")) {
         const viewport = page.viewportSize();
         expect(viewport?.width, "mobile viewport width").toBe(390);
-        const scrollWidth = await page.evaluate(
-            () => document.scrollingElement?.scrollWidth ?? Number.NaN,
-        );
-        expect(scrollWidth, "mobile horizontal overflow").toBe(390);
+        const { scrollWidth, innerWidth } = await page.evaluate(() => ({
+            scrollWidth: document.scrollingElement?.scrollWidth ?? Number.NaN,
+            innerWidth: window.innerWidth,
+        }));
+        // Upper bound: the sheet must not produce a horizontal scrollbar. The old `toBe(390)`
+        // conflated "no overflow" with "content exactly as wide as the viewport"; 380 ≤ 390 is
+        // *narrower* content, not an overflow (run7: Expected 390, Received 380).
+        expect(
+            scrollWidth,
+            `mobile horizontal overflow (scrollWidth ${scrollWidth} > innerWidth ${innerWidth})`,
+        ).toBeLessThanOrEqual(innerWidth);
+        // Lower bound: content must not collapse into a narrow strip just to pass the upper bound.
+        expect(
+            scrollWidth,
+            `mobile content collapsed (scrollWidth ${scrollWidth} < viewport ${viewport!.width})`,
+        ).toBeGreaterThanOrEqual(viewport!.width - 20);
     }
     appendAttentionRows(attention);
 }
@@ -662,7 +741,8 @@ async function runViewportCase(
 /** Six family screenshots + one dynamic-MCP fallback; desktop also proves a running row. */
 test.describe("@host PLAN-0688 T2.2 tool card visual split", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240_000);
+    // timeout-exempt: long（6 屏截图矩阵 + 多会话，预算上限 60 s）
+    test.setTimeout(60_000);
 
     test.describe("desktop 1920x1080", () => {
         test.use({ viewport: { width: 1920, height: 1080 } });

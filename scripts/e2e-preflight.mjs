@@ -30,6 +30,11 @@
 //                  stack (reuse runs), not a leaked run.
 //   --own-run-id=ID    e2e-labelled sandboxes for this run id belong to the
 //                  caller's own persistent stack (reuse runs), not residue.
+//   --allow-residual=NAME[,NAME...]  exact xihe-e2e-* container/volume/network
+//                  names the caller deliberately keeps (e.g. a failed round's
+//                  Postgres volume preserved for post-mortem). Names are matched
+//                  exactly — no wildcards — printed as INFO and carried into the
+//                  run header; omitted ⇒ residue stays blocking (default).
 //
 // Exit codes: 0 = no blocking finding; 1 = needs handling; 2 = usage error.
 //
@@ -161,6 +166,7 @@ let diskOnly = false
 const selfPids = new Set()
 let ownRunId = ''
 const allowedPorts = new Set()
+const allowResidual = new Set()
 for (const arg of process.argv.slice(2)) {
   if (arg === '--help' || arg === '-h') {
     // The header comment is the help text: print every leading `//` line up to
@@ -191,6 +197,14 @@ for (const arg of process.argv.slice(2)) {
   } else if (arg.startsWith('--own-run-id=')) {
     ownRunId = arg.slice('--own-run-id='.length).trim()
     if (!ownRunId) usage(`invalid --own-run-id: ${arg}`)
+  } else if (arg.startsWith('--allow-residual=')) {
+    for (const part of arg.slice('--allow-residual='.length).split(',')) {
+      const name = part.trim()
+      // Exact names only: a wildcard/glob would silently widen the audit surface,
+      // which is the opposite of why this flag exists.
+      if (!name || /[*?]/.test(name)) usage(`invalid --allow-residual entry (exact names only, no wildcards): ${part}`)
+      allowResidual.add(name)
+    }
   } else if (arg.startsWith('--logs=')) {
     logCount = Number(arg.slice('--logs='.length))
     if (!Number.isInteger(logCount) || logCount < 1 || logCount > 50) usage(`invalid --logs: ${arg}`)
@@ -350,24 +364,42 @@ if (!dockerVersion.ok) {
   const ownComposeNetworks = ownComposePrefix ? allE2eNetworks.filter((n) => n.toLowerCase().startsWith(ownComposePrefix)) : []
   const residueVolumes = allE2eVolumes.filter((n) => !ownComposeVolumes.includes(n))
   const residueNetworks = allE2eNetworks.filter((n) => !ownComposeNetworks.includes(n))
-  if (residueContainers.length > 0) {
-    add('FAIL', 'docker', `${residueContainers.length} residual xihe-e2e-* container(s)`, 'belongs to another run (or an interrupted one); isolate e2e runs are serial by design. Reuse your own stack via XIHE_E2E_EXTERNAL_SERVER=1, or — only after confirming that run is not live — tear it down from its own worktree (node scripts/e2e-host.mjs --teardown)')
-    for (const item of residueContainers) console.log(`  FAIL  container ${item.name} (${item.status})${item.owner ? ` — run ${item.owner}` : ''}`)
+  // `--allow-residual` (task-238, audited exemption): a caller that deliberately keeps a
+  // failed round's container/volume/network (e.g. the Postgres volume for post-mortem) names
+  // it explicitly. Names are matched exactly, listed as INFO, and never broaden the default.
+  const allowedResidueContainers = residueContainers.filter((item) => allowResidual.has(item.name))
+  const blockingResidueContainers = residueContainers.filter((item) => !allowResidual.has(item.name))
+  const allowedResidueVolumes = residueVolumes.filter((name) => allowResidual.has(name))
+  const blockingResidueVolumes = residueVolumes.filter((name) => !allowResidual.has(name))
+  const allowedResidueNetworks = residueNetworks.filter((name) => allowResidual.has(name))
+  const blockingResidueNetworks = residueNetworks.filter((name) => !allowResidual.has(name))
+  for (const item of allowedResidueContainers) {
+    console.log(`  INFO  container ${item.name} (${item.status}) — allowed by --allow-residual (caller-declared, not a leak)`)
+  }
+  for (const name of allowedResidueVolumes) {
+    console.log(`  INFO  volume ${name} — allowed by --allow-residual (caller-declared, not a leak)`)
+  }
+  for (const name of allowedResidueNetworks) {
+    console.log(`  INFO  network ${name} — allowed by --allow-residual (caller-declared, not a leak)`)
+  }
+  if (blockingResidueContainers.length > 0) {
+    add('FAIL', 'docker', `${blockingResidueContainers.length} residual xihe-e2e-* container(s)`, 'belongs to another run (or an interrupted one); isolate e2e runs are serial by design. Reuse your own stack via XIHE_E2E_EXTERNAL_SERVER=1, or — only after confirming that run is not live — tear it down from its own worktree (node scripts/e2e-host.mjs --teardown); a deliberately kept resource must be named via --allow-residual')
+    for (const item of blockingResidueContainers) console.log(`  FAIL  container ${item.name} (${item.status})${item.owner ? ` — run ${item.owner}` : ''}`)
   }
   if (e2eSandboxes.length > 0) {
     add('FAIL', 'docker', `${e2eSandboxes.length} e2e-labelled sandbox container(s) (label xihe.e2e.run-id)`, 'leftover Sandbox from a failed run; remove after confirming no live run owns its run id')
     for (const item of e2eSandboxes) console.log(`  FAIL  sandbox ${item.name} (${item.status})${item.owner ? ` — run ${item.owner}` : ''}`)
   }
-  if (residueVolumes.length > 0) {
-    add('FAIL', 'docker', `${residueVolumes.length} residual e2e volume(s)`, residueVolumes.join(', '))
-    console.log(`  FAIL  volume ${residueVolumes.join(', ')}`)
+  if (blockingResidueVolumes.length > 0) {
+    add('FAIL', 'docker', `${blockingResidueVolumes.length} residual e2e volume(s)`, blockingResidueVolumes.join(', '))
+    console.log(`  FAIL  volume ${blockingResidueVolumes.join(', ')}`)
   }
-  if (residueNetworks.length > 0) {
-    add('FAIL', 'docker', `${residueNetworks.length} residual e2e network(s)`, residueNetworks.join(', '))
-    console.log(`  FAIL  network ${residueNetworks.join(', ')}`)
+  if (blockingResidueNetworks.length > 0) {
+    add('FAIL', 'docker', `${blockingResidueNetworks.length} residual e2e network(s)`, blockingResidueNetworks.join(', '))
+    console.log(`  FAIL  network ${blockingResidueNetworks.join(', ')}`)
   }
-  if (residueContainers.length === 0 && e2eSandboxes.length === 0 && residueVolumes.length === 0 && residueNetworks.length === 0) {
-    console.log('  OK    no residual xihe-e2e-* containers/volumes/networks, no e2e-labelled sandboxes')
+  if (blockingResidueContainers.length === 0 && e2eSandboxes.length === 0 && blockingResidueVolumes.length === 0 && blockingResidueNetworks.length === 0) {
+    console.log('  OK    no blocking residual xihe-e2e-* containers/volumes/networks, no e2e-labelled sandboxes')
   }
   for (const item of ownComposeContainers) {
     console.log(`  INFO  container ${item.name} (${item.status}) — this caller's own persistent stack; removed by --teardown`)
