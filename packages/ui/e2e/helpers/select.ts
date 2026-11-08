@@ -33,15 +33,7 @@ export function selectLabelFor(testId: string, value: string): string {
 /** 点 trigger 打开 popup，再点可见文案匹配的 option。 */
 export async function selectByLocator(trigger: Locator, label: string): Promise<void> {
     await trigger.click();
-    const page = trigger.page();
-    const option = page.getByRole("option", { name: label }).first();
-    try {
-        await option.waitFor({ state: "visible", timeout: 5_000 });
-        await option.click({ timeout: 5_000 });
-    } catch {
-        // reka 的 popup 在动画/浮层遮挡下偶发 actionability 超时；选项已可见时用 force 兜底。
-        await option.click({ force: true });
-    }
+    await trigger.page().getByRole("option", { name: label }).click();
 }
 
 /** DOM click 兜底：绕过 reka popup 的 actionability/浮层遮挡，直接触发 item 的 click。 */
