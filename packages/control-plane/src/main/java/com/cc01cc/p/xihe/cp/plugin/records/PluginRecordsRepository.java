@@ -139,6 +139,41 @@ public class PluginRecordsRepository {
                 String.class));
     }
 
+    /**
+     * PLAN-0691 T3.2 (DP-6a / LC-6): deletes one bounded batch of <b>orphaned</b> rows.
+     *
+     * <p><b>This table has one clock, not two.</b> V142 deliberately did not create the
+     * {@code orphaned_at} column that DP-6a's wording mentions: DP-2 does not list it, and the earlier
+     * ruling was to add no second clock before a writer exists. The grace period here therefore reads
+     * {@code updated_at} only, which is DP-6a's documented fallback made unconditional. That is the
+     * whole difference from {@code PluginKvRepository.deleteOrphanedBefore}, which combines
+     * {@code COALESCE(orphaned_at, updated_at)} because {@code plugin_kv} does have the column; both
+     * statements are otherwise the same rule — the row is orphaned when its {@code binding_id} is gone
+     * from {@code plugin_bindings} (DP-6a: no foreign key) and it is older than the cutoff.
+     *
+     * <p>{@code plugin_index_declarations} is <b>not</b> touched: DP-3/LC-6 keep the declared-index
+     * ledger forever, so uninstalling a plugin never erases the record that its indexes once existed.
+     *
+     * <p>Shape: {@code DELETE … WHERE ctid IN (SELECT … LIMIT ?)} — PostgreSQL has no
+     * {@code DELETE … LIMIT}, and {@code ctid} bounds the batch without a second pass. The statement
+     * runs through {@link #timed} like every other statement of this repository, so a batch can never
+     * outlive {@code cp.lock-timeout-ms} (QUOTA-13).
+     *
+     * @param cutoff rows strictly older than this instant are eligible
+     * @return rows actually deleted by this batch; {@code 0} means the table is clean
+     */
+    public int deleteOrphanedBefore(Instant cutoff, int limit) {
+        Integer deleted = timed(() -> jdbc.update(
+                "DELETE FROM plugin_records r WHERE r.ctid IN ("
+                        + " SELECT o.ctid FROM plugin_records o"
+                        + " WHERE NOT EXISTS (SELECT 1 FROM plugin_bindings b"
+                        + " WHERE b.id = o.binding_id)"
+                        + " AND o.updated_at < ?"
+                        + " LIMIT ?)",
+                OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC), limit));
+        return deleted == null ? 0 : deleted;
+    }
+
     private <T> T timed(java.util.function.Supplier<T> body) {
         return transactions.execute(status -> {
             // QUOTA-13 / §2.1 L58: the value is the existing cp.lock-timeout-ms, not a plugin env.

@@ -163,6 +163,43 @@ public class PluginKvRepository {
         return jdbc.query(sql.toString(), ROW_MAPPER, args.toArray());
     }
 
+    /**
+     * PLAN-0691 T3.2 (DP-6a / LC-6): deletes one bounded batch of <b>orphaned</b> rows.
+     *
+     * <p>Orphan means two things at once, and both are required: the {@code binding_id} is no longer
+     * present in {@code plugin_bindings} (there is no foreign key to lean on — DP-6a deliberately does
+     * not create one, so "the binding still exists" is an application-level fact), <b>and</b> the row
+     * is past its grace period. DP-6a names the clock as {@code orphaned_at} with an explicit
+     * fallback to {@code updated_at} "when it was never written"; since this repository still has no
+     * writer for {@code orphaned_at} (see the class note), the fallback is what actually decides today
+     * and the two clocks are combined in a single {@code COALESCE}.
+     *
+     * <p>{@code expires_at} is deliberately not part of the predicate. An expired row is already
+     * invisible to every reader (API-1) and its own reclamation is a separate concern; deleting it
+     * here would also remove the row that a fresh re-write of the same key bumps, which changes
+     * {@code version} after expiry. V141's "expired rows are recycled hourly" promise is therefore
+     * <b>not</b> fulfilled by this method; see {@code PluginDataRetentionService}.
+     *
+     * <p>Shape: {@code DELETE … WHERE ctid IN (SELECT … LIMIT ?)}. PostgreSQL has no
+     * {@code DELETE … LIMIT}, and the {@code ctid} rewrite bounds the batch without re-joining the
+     * target of the same statement. {@code idx_plugin_kv_orphaned_at} cannot serve this predicate
+     * while {@code orphaned_at} has no writer (the expression is {@code COALESCE}, not the bare
+     * column), so the bound comes from {@code limit} and not from that index.
+     *
+     * @param cutoff rows strictly older than this instant are eligible
+     * @return rows actually deleted by this batch; {@code 0} means the table is clean
+     */
+    public int deleteOrphanedBefore(Instant cutoff, int limit) {
+        return jdbc.update(
+                "DELETE FROM plugin_kv k WHERE k.ctid IN ("
+                        + " SELECT o.ctid FROM plugin_kv o"
+                        + " WHERE NOT EXISTS (SELECT 1 FROM plugin_bindings b"
+                        + " WHERE b.id = o.binding_id)"
+                        + " AND COALESCE(o.orphaned_at, o.updated_at) < ?"
+                        + " LIMIT ?)",
+                timestamp(cutoff), limit);
+    }
+
     /** {@code timestamptz} binding: PostgreSQL JDBC accepts {@code OffsetDateTime}, not {@code Instant}. */
     private static OffsetDateTime timestamp(Instant instant) {
         return instant == null ? null : OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
