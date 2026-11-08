@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import { ClipboardCopy, FilePlus, Trash2 } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
 import { toast } from "vue-sonner";
 import ConfirmModal from "../../../components/shared/ConfirmModal.vue";
+
+const { t } = useI18n();
 import BaseModal from "../../../components/shared/BaseModal.vue";
 
 const props = defineProps<{
@@ -111,7 +115,7 @@ async function confirmNewFile() {
     </div>
 
     <ConfirmModal
-        title="Confirm Delete"
+        :title="t('common.confirmDelete')"
         :description="`Delete &quot;${props.path}&quot;? This action cannot be undone.`"
         :show="showDeleteModal"
         :loading="deleteLoading"
@@ -125,7 +129,7 @@ async function confirmNewFile() {
     />
 
     <BaseModal
-        title="New File"
+        :title="t('files.newFile')"
         :show="showNewFileModal"
         @close="
             showNewFileModal = false;
@@ -136,7 +140,7 @@ async function confirmNewFile() {
         <input
             v-model="newFileName"
             class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background"
-            placeholder="e.g. index.ts"
+            :placeholder="t('files.placeholderIndex')"
             autofocus
             @keyup.enter="confirmNewFile"
         />

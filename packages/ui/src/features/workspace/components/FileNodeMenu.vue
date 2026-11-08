@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
+
 import { ref, computed } from "vue";
 import { useWorkspaceStore } from "../stores/workspace";
 import { toast } from "vue-sonner";
@@ -19,6 +21,8 @@ import {
     Pencil,
     Trash2,
 } from "@lucide/vue";
+
+const { t } = useI18n();
 import BaseModal from "../../../components/shared/BaseModal.vue";
 
 const props = defineProps<{
@@ -221,7 +225,7 @@ function copyPath() {
         </ContextMenuContent>
     </ContextMenu>
 
-    <BaseModal title="Rename" :show="showRenameModal" @close="showRenameModal = false">
+    <BaseModal :title="t('files.rename')" :show="showRenameModal" @close="showRenameModal = false">
         <label class="text-sm text-muted-foreground">New name:</label>
         <input
             v-model="nameInput"
@@ -246,14 +250,14 @@ function copyPath() {
         </div>
     </BaseModal>
 
-    <BaseModal title="Move" :show="showMoveModal" @close="showMoveModal = false">
+    <BaseModal :title="t('files.move')" :show="showMoveModal" @close="showMoveModal = false">
         <label class="text-sm text-muted-foreground"
             >Target directory (empty = workspace root):</label
         >
         <input
             v-model="moveTarget"
             class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background font-mono"
-            placeholder="e.g. src/docs"
+            :placeholder="t('files.placeholderSrcDocs')"
             @keyup.enter="() => void confirmMove()"
         />
         <p v-if="opError" class="text-xs text-destructive mt-1">{{ opError }}</p>
@@ -274,12 +278,16 @@ function copyPath() {
         </div>
     </BaseModal>
 
-    <BaseModal title="New File" :show="showNewFileModal" @close="showNewFileModal = false">
+    <BaseModal
+        :title="t('files.newFile')"
+        :show="showNewFileModal"
+        @close="showNewFileModal = false"
+    >
         <label class="text-sm text-muted-foreground">File name:</label>
         <input
             v-model="nameInput"
             class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background"
-            placeholder="e.g. index.ts"
+            :placeholder="t('files.placeholderIndex')"
             @keyup.enter="() => void confirmNewFile()"
         />
         <p v-if="opError" class="text-xs text-destructive mt-1">{{ opError }}</p>
@@ -300,12 +308,16 @@ function copyPath() {
         </div>
     </BaseModal>
 
-    <BaseModal title="New Directory" :show="showNewDirModal" @close="showNewDirModal = false">
+    <BaseModal
+        :title="t('files.newDirectory')"
+        :show="showNewDirModal"
+        @close="showNewDirModal = false"
+    >
         <label class="text-sm text-muted-foreground">Directory name:</label>
         <input
             v-model="nameInput"
             class="w-full mt-1 px-2 py-1 text-sm rounded border bg-background"
-            placeholder="e.g. assets"
+            :placeholder="t('files.placeholderAssets')"
             @keyup.enter="() => void confirmNewDir()"
         />
         <p v-if="opError" class="text-xs text-destructive mt-1">{{ opError }}</p>
@@ -326,7 +338,11 @@ function copyPath() {
         </div>
     </BaseModal>
 
-    <BaseModal title="Confirm Delete" :show="showDeleteModal" @close="showDeleteModal = false">
+    <BaseModal
+        :title="t('common.confirmDelete')"
+        :show="showDeleteModal"
+        @close="showDeleteModal = false"
+    >
         <p class="text-sm">Delete "{{ props.node.path }}"? This action cannot be undone.</p>
         <p v-if="opError" class="text-xs text-destructive mt-1">{{ opError }}</p>
         <div class="flex justify-end gap-2 mt-4">

@@ -1560,12 +1560,12 @@ onMounted(() => {
                                             :disabled="props.readonly || bindingBusy"
                                             @update:model-value="
                                                 (value) =>
-                                                saveBinding(
-                                                    model,
-                                                    value === '__inherit__'
-                                                        ? ''
-                                                        : String(value ?? ''),
-                                                )
+                                                    saveBinding(
+                                                        model,
+                                                        value === '__inherit__'
+                                                            ? ''
+                                                            : String(value ?? ''),
+                                                    )
                                             "
                                         >
                                             <SelectTrigger
@@ -1722,7 +1722,9 @@ onMounted(() => {
                                                 })
                                             "
                                         >
-                                            <SelectValue>{{ modelTemplateLabel(model) }}</SelectValue>
+                                            <SelectValue>{{
+                                                modelTemplateLabel(model)
+                                            }}</SelectValue>
                                         </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="__inherit__">{{
@@ -2132,7 +2134,7 @@ onMounted(() => {
                             required
                             maxlength="64"
                             pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-                            placeholder="default"
+                            :placeholder="t('settings.providerHub.defaultPlaceholder')"
                         />
                         <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
                             t("settings.providerHub.keyHint")
