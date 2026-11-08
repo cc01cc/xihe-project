@@ -230,6 +230,12 @@
     --card-foreground: #16181d;
     --popover: #ffffff;
     --popover-foreground: #16181d;
+    /* BL-518 / PLAN-0714：overlay 层级 token（改层级只改这里；组件只消费 var）。 */
+    --z-modal-backdrop: 60;
+    --z-popover: 70;
+    --z-select: 70;
+    /* vue-sonner 库内硬编码 999999999（lib/index.css:43）；此 token 仅用于文档对齐。 */
+    --z-toast: 999999999;
     /*
      * PLAN-0631 M0：accent 进 --primary。M2（B）：唯一强调色 #2450c8，
      * 白字压其上实测 6.87:1（WCAG AA✓）。--brand 保留为同源别名

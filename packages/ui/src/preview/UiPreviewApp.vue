@@ -8,6 +8,7 @@ import AgentPanelSection from "./sections/AgentPanelSection.vue";
 import ConfigSection from "./sections/ConfigSection.vue";
 import MemoryPanelSection from "./sections/MemoryPanelSection.vue";
 import MessagesSection from "./sections/MessagesSection.vue";
+import ModalOverlaySection from "./sections/ModalOverlaySection.vue";
 import ProviderFingerprintSection from "./sections/ProviderFingerprintSection.vue";
 import StatesSection from "./sections/StatesSection.vue";
 import WorkbenchSection from "./sections/WorkbenchSection.vue";
@@ -26,6 +27,7 @@ const blocks = [
     { id: "access", index: "06", label: "凭据 / 角色绑定" },
     { id: "states", index: "07", label: "四态样张" },
     { id: "provider-fingerprint", index: "08", label: "Provider 请求指纹" },
+    { id: "modal-overlay", index: "09", label: "Modal 内 Popover" },
 ];
 
 const { width } = useWindowSize();
@@ -83,6 +85,7 @@ const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
             <AccessSection />
             <StatesSection />
             <ProviderFingerprintSection />
+            <ModalOverlaySection />
         </main>
     </div>
 </template>

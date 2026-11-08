@@ -139,7 +139,7 @@ function preventMountAutoFocus(event: Event) {
             <div
                 v-if="show"
                 data-testid="modal-backdrop"
-                class="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center"
+                class="pointer-events-auto fixed inset-0 z-[var(--z-modal-backdrop)] flex items-center justify-center"
                 @click.self="emit('close')"
             >
                 <div data-testid="modal-overlay" class="fixed inset-0 bg-black/50" />
