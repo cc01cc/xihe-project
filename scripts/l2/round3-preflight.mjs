@@ -72,10 +72,11 @@ const ONE_ROOT = resolveOneRoot({
   envValue: process.env.XH_ONE_ROOT,
   root: ROOT_ARG_VALUE ?? process.cwd(),
 });
+const logOneRoot = JSON_MODE ? console.error : console.log;
 if (ONE_ROOT) {
-  console.log(`[one-root] using ${ONE_ROOT}`);
+  logOneRoot(`[one-root] using ${ONE_ROOT}`);
 } else {
-  console.log('[one-root] none detected (standalone: plan-drift will skip)');
+  logOneRoot('[one-root] none detected (standalone: plan-drift will skip)');
 }
 const RESERVED_PORTS = new Set([27339]); // netsh excludedportrange 实测占用（PID 4）
 // 2026-11-06 口径修正（Lead 裁定）：host E2E 的端口由 `27000 + hash(runId) % 1500` 派生，**永远落在
