@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { setSelectValueAt } from "../../../../test-utils/select";
 import { i18n } from "../../../../i18n";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
@@ -155,16 +156,16 @@ describe("WorkspaceMembersPanel", () => {
         expect(wrapper.text()).toContain("该用户已是工作区成员");
 
         apiMock.updateWorkspaceMemberRole.mockRejectedValue(new ApiError("LAST_OWNER"));
-        const editorRow = wrapper.findAll('[data-testid="ws-members-row"]')[1];
-        await editorRow.find("select").setValue("VIEWER");
+        await setSelectValueAt(wrapper, 1, "VIEWER");
         await flushPromises();
         expect(wrapper.text()).toContain("不能移除或降级唯一所有者");
     });
 
     it("locks owner-row role select and hides write affordances in readonly mode", async () => {
         const wrapper = await mountPanel();
-        const ownerRow = wrapper.findAll('[data-testid="ws-members-row"]')[0];
-        expect(ownerRow.find("select").attributes("disabled")).toBeDefined();
+        expect(
+            wrapper.findAll('[data-slot="select-trigger"]')[0]!.attributes("disabled"),
+        ).toBeDefined();
         wrapper.unmount();
 
         const readonlyWrapper = await mountPanel(true);

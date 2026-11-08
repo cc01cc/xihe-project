@@ -4,6 +4,7 @@ import { i18n } from "../../../../i18n";
 import { api } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
 import ProviderRequestFingerprintPanel from "../ProviderRequestFingerprintPanel.vue";
+import { setSelectValue } from "../../../../test-utils/select";
 import type {
     ProviderRequestFingerprintDiffView,
     ProviderRequestFingerprintView,
@@ -218,9 +219,11 @@ describe("ProviderRequestFingerprintPanel", () => {
         mountPanel();
         await flushPromises();
 
-        await wrapper
-            .find('[data-testid="provider-fingerprint-against-select"]')
-            .setValue(BASELINE_ID);
+        await setSelectValue(
+            wrapper,
+            '[data-testid="provider-fingerprint-against-select"]',
+            BASELINE_ID,
+        );
         await flushPromises();
 
         expect(getFingerprint).toHaveBeenLastCalledWith(RUN_ID, { against: BASELINE_ID });

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import { defineComponent, h } from "vue";
 import SessionContextPanel from "../SessionContextPanel.vue";
+import { setOnlySelectValue } from "../../../../test-utils/select";
 
 // Ids live in the hoisted block: the module factory below runs during the import phase,
 // i.e. before the module body's `const` declarations are initialised.
@@ -122,7 +123,7 @@ describe("SessionContextPanel (PLAN-0626 M2)", () => {
         const wrapper = mountPanel();
         await flushPromises();
 
-        await wrapper.get('[data-testid="session-branch-select"]').setValue(CHILD_BRANCH_ID);
+        await setOnlySelectValue(wrapper, CHILD_BRANCH_ID);
 
         expect(selectBranch).toHaveBeenCalledWith(SESSION_ID, CHILD_BRANCH_ID);
     });

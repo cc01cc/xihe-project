@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../i18n";
 import AgentTemplatesPanel from "../AgentTemplatesPanel.vue";
+import { setSelectValue } from "../../../test-utils/select";
 
 describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
     beforeEach(() => {
@@ -18,7 +19,7 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
 
         await wrapper.get('[data-testid="agent-role-name"]').setValue("Reader");
         await wrapper.get('[data-testid="agent-role-add-permission"]').trigger("click");
-        await wrapper.get('[data-testid="agent-role-action-0"]').setValue("read");
+        await setSelectValue(wrapper, '[data-testid="agent-role-action-0"]', "read");
         await wrapper.get('[data-testid="agent-role-resource-0"]').setValue("src/*");
         await wrapper.get('[data-testid="agent-role-form"]').trigger("submit");
         const roleSave = wrapper.emitted("save")?.at(-1)?.[0] as Record<string, string>;
@@ -55,8 +56,8 @@ describe("AgentTemplatesPanel (PLAN-0374 T3.3)", () => {
         await wrapper
             .get('[data-testid="agent-template-prompt"]')
             .setValue("Answer using project sources.");
-        await wrapper.get('[data-testid="agent-template-tool-mode"]').setValue("workspace");
-        await wrapper.get('[data-testid="agent-template-role"]').setValue(role.id);
+        await setSelectValue(wrapper, '[data-testid="agent-template-tool-mode"]', "workspace");
+        await setSelectValue(wrapper, '[data-testid="agent-template-role"]', role.id);
         await wrapper.get('[data-testid="agent-template-provider"]').setValue("openai");
         await wrapper.get('[data-testid="agent-template-model"]').setValue("gpt-example");
         await wrapper.get('[data-testid="agent-template-form"]').trigger("submit");

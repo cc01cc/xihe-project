@@ -9,6 +9,11 @@ import {
 } from "../../chat/transportLive";
 import { notifySessionConnection, notifySessionEvent } from "../../chat/sessionEvents";
 import SessionMonitorPanel from "../SessionMonitorPanel.vue";
+import {
+    openSelect,
+    selectItemValuesFor,
+    selectModelValue,
+} from "../../../../test-utils/select";
 import type {
     ProviderRequestFingerprintView,
     RunTraceResponse,
@@ -321,10 +326,7 @@ describe("SessionMonitorPanel", () => {
         const panel = mountPanel();
         await flushPromises();
 
-        expect(
-            (panel.get('[data-testid="monitor-trace-run-select"]').element as HTMLSelectElement)
-                .value,
-        ).toBe(RUN_ID);
+        expect(selectModelValue(panel, '[data-testid="monitor-trace-run-select"]')).toBe(RUN_ID);
         expect(getRunTrace).toHaveBeenNthCalledWith(1, RUN_ID, { limit: 100 });
         expect(panel.findAll('[data-testid="run-trace-event"]')).toHaveLength(1);
 
@@ -731,8 +733,11 @@ describe("SessionMonitorPanel", () => {
         });
 
         // The baseline picker offers the *other* turn, never the one being inspected.
-        const options = panel.findAll('[data-testid="provider-fingerprint-against-select"] option');
-        const values = options.map((option) => option.attributes("value"));
+        await openSelect(panel, '[data-testid="provider-fingerprint-against-select"]');
+        const values = selectItemValuesFor(
+            panel,
+            '[data-testid="provider-fingerprint-against-select"]',
+        ).map((value) => (value === "__none__" ? "" : value));
         expect(values).toEqual(["", SECOND_RUN_ID]);
     });
 });

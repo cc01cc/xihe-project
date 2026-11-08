@@ -4,6 +4,7 @@ import type { VueWrapper } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { i18n } from "../../../../i18n";
+import { openSelect, selectItemValuesFor, setSelectValue } from "../../../../test-utils/select";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 
@@ -1441,9 +1442,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         await wrapper.get(rolesToggle).trigger("click");
         await flushPromises();
 
-        await wrapper
-            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
-            .setValue("role-editor");
+        await setSelectValue(
+            wrapper,
+            `[data-testid="agent-role-select-${PRINCIPAL_ID}"]`,
+            "role-editor",
+        );
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
 
@@ -1471,9 +1474,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         expect(wrapper.get(`[data-testid="agent-role-cap-hint-${PRINCIPAL_ID}"]`).text()).toBe(
             i18n.global.t("workspace.agentRoleCapHint"),
         );
-        await wrapper
-            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
-            .setValue("role-editor");
+        await setSelectValue(
+            wrapper,
+            `[data-testid="agent-role-select-${PRINCIPAL_ID}"]`,
+            "role-editor",
+        );
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
 
@@ -1487,9 +1492,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         const wrapper = await mountOpenedPanel();
         await wrapper.get(rolesToggle).trigger("click");
         await flushPromises();
-        await wrapper
-            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
-            .setValue("role-editor");
+        await setSelectValue(
+            wrapper,
+            `[data-testid="agent-role-select-${PRINCIPAL_ID}"]`,
+            "role-editor",
+        );
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
         expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
@@ -1578,15 +1585,16 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         await flushPromises();
 
         expect(apiMock.getWorkspaceSkills).toHaveBeenCalledWith(WORKSPACE_ID);
-        const select = wrapper.get(`[data-testid="agent-skill-select-${PRINCIPAL_ID}"]`);
+        await openSelect(wrapper, `[data-testid="agent-skill-select-${PRINCIPAL_ID}"]`);
         expect(
-            select
-                .findAll("option")
-                .slice(1)
-                .map((option) => option.attributes("value")),
+            selectItemValuesFor(wrapper, `[data-testid="agent-skill-select-${PRINCIPAL_ID}"]`),
         ).toEqual(["skill-instance", "skill-dupe", "skill-workspace"]);
 
-        await select.setValue("skill-workspace");
+        await setSelectValue(
+            wrapper,
+            `[data-testid="agent-skill-select-${PRINCIPAL_ID}"]`,
+            "skill-workspace",
+        );
         await wrapper.get(`[data-testid="agent-skill-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
 

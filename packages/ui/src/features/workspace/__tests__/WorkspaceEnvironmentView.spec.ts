@@ -6,6 +6,13 @@ import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import { toast } from "vue-sonner";
+import {
+    openSelectAt,
+    selectItemComponents,
+    selectItemValues,
+    selectModelValue,
+    setSelectValue,
+} from "../../../test-utils/select";
 
 vi.mock("vue-router", () => ({
     useRoute: () => ({
@@ -372,12 +379,9 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
             storageMode: "direct_attach",
         } as never);
 
-        const wrapper = await mountView(),
-            select = wrapper.get('[data-testid="workspace-execution-mode"]');
-        expect(select.findAll("option").map((option) => option.attributes("value"))).toEqual([
-            "windows-mxc",
-            "windows-host",
-        ]);
+        const wrapper = await mountView();
+        await openSelectAt(wrapper, 0);
+        expect(selectItemValues(wrapper)).toEqual(["windows-mxc", "windows-host"]);
         expect(wrapper.find('[data-testid="workspace-execution-mode-fixed"]').exists()).toBe(false);
     });
 
@@ -393,15 +397,14 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
             } as never);
 
         const wrapper = await mountView();
-        await wrapper.get('[data-testid="workspace-execution-mode"]').setValue("windows-host");
+        await setSelectValue(wrapper, '[data-testid="workspace-execution-mode"]', "windows-host");
         await flushPromises();
 
         expect(mockedApi.updateWorkspaceExecutionMode).toHaveBeenCalledWith(
             "workspace-1",
             "windows-host",
         );
-        expect(wrapper.get('[data-testid="workspace-execution-mode"]').element).toHaveProperty(
-            "value",
+        expect(selectModelValue(wrapper, '[data-testid="workspace-execution-mode"]')).toBe(
             "windows-host",
         );
     });
@@ -412,16 +415,14 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
             storageMode: "direct_attach",
         } as never);
 
-        const wrapper = await mountView(),
-            select = wrapper.get('[data-testid="workspace-execution-mode"]'),
-            legacy = wrapper.get('[data-testid="workspace-execution-mode-legacy"]');
-        expect(select.findAll("option").map((option) => option.attributes("value"))).toEqual([
-            "docker",
-            "windows-mxc",
-            "windows-host",
-        ]);
-        expect(legacy.attributes("disabled")).toBeDefined();
-        expect(legacy.text()).toContain("历史配置");
+        const wrapper = await mountView();
+        await openSelectAt(wrapper, 0);
+        expect(selectItemValues(wrapper)).toEqual(["docker", "windows-mxc", "windows-host"]);
+        const legacy = selectItemComponents(wrapper).find(
+            (item) => item.attributes("data-testid") === "workspace-execution-mode-legacy",
+        );
+        expect(legacy?.props("disabled")).toBe(true);
+        expect(legacy?.text()).toContain("历史配置");
     });
 
     it("labels an empty direct-attach execution mode as unknown", async () => {
@@ -432,9 +433,11 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
         } as never);
 
         const wrapper = await mountView();
-        expect(wrapper.get('[data-testid="workspace-execution-mode-legacy"]').text()).toContain(
-            "未知",
+        await openSelectAt(wrapper, 0);
+        const legacy = selectItemComponents(wrapper).find(
+            (item) => item.attributes("data-testid") === "workspace-execution-mode-legacy",
         );
+        expect(legacy?.text()).toContain("未知");
     });
 
     it("rolls back and explains when an active job blocks the switch", async () => {
@@ -450,12 +453,13 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
             } as never),
         );
 
-        const wrapper = await mountView(),
-            select = wrapper.get('[data-testid="workspace-execution-mode"]');
-        await select.setValue("windows-host");
+        const wrapper = await mountView();
+        await setSelectValue(wrapper, '[data-testid="workspace-execution-mode"]', "windows-host");
         await flushPromises();
 
-        expect(select.element).toHaveProperty("value", "windows-mxc");
+        expect(selectModelValue(wrapper, '[data-testid="workspace-execution-mode"]')).toBe(
+            "windows-mxc",
+        );
         expect(toast.error).toHaveBeenCalledWith("有运行中的 Job，请先停止运行中的 Job 后重试");
     });
 });

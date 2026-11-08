@@ -4,6 +4,7 @@ import { i18n } from "../../../i18n";
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import AgentRoleBindingsSection from "../AgentRoleBindingsSection.vue";
+import { setSelectValue } from "../../../test-utils/select";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -118,7 +119,7 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
             false,
         );
 
-        await wrapper.find('[data-testid="agent-role-bindings-role"]').setValue("role-b");
+        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-b");
         await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
         await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
         await flushPromises();
@@ -159,7 +160,7 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         const wrapper = mountSection();
         await flushPromises();
 
-        await wrapper.find('[data-testid="agent-role-bindings-role"]').setValue("role-b");
+        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-b");
         await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
         await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
         await flushPromises();
@@ -181,7 +182,7 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         const wrapper = mountSection();
         await flushPromises();
 
-        await wrapper.find('[data-testid="agent-role-bindings-role"]').setValue("role-b");
+        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-b");
         await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
         await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
         await flushPromises();

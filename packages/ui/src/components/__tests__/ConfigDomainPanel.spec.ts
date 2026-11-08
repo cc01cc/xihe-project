@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import ConfigDomainPanel, { type DomainField } from "../settings/ConfigDomainPanel.vue";
 import { createI18n } from "vue-i18n";
+import { openSelectAt, selectCount, selectItemTexts, selectValueAt } from "../../test-utils/select";
 
 const i18n = createI18n({
     legacy: false,
@@ -70,9 +71,8 @@ describe("ConfigDomainPanel", () => {
         });
         await expandPanel(wrapper);
 
-        const inputs = wrapper.findAll("input"),
-            selects = wrapper.findAll("select");
-        expect(selects[0].element.value).toBe("deepseek");
+        const inputs = wrapper.findAll("input");
+        expect(selectValueAt(wrapper, 0)).toBe("deepseek");
         expect(inputs[0].element.value).toBe("sk-xxx");
         expect(inputs[1].element.value).toBe("gpt-4");
         expect(inputs[2].element.value).toBe("4096");
@@ -98,7 +98,7 @@ describe("ConfigDomainPanel", () => {
         await expandPanel(wrapper);
 
         expect(wrapper.find("input").exists()).toBe(false);
-        expect(wrapper.find("select").exists()).toBe(false);
+        expect(selectCount(wrapper)).toBe(0);
         const spans = wrapper.findAll(".flex-1.text-sm"),
             passwordSpan = spans.find((s) => s.text().includes("****"));
         expect(passwordSpan).toBeTruthy();
@@ -109,12 +109,9 @@ describe("ConfigDomainPanel", () => {
         const wrapper = mountPanel();
         await expandPanel(wrapper);
 
-        const select = wrapper.find("select");
-        expect(select.exists()).toBe(true);
-        const options = select.findAll("option");
-        expect(options).toHaveLength(2);
-        expect(options[0].text()).toBe("DeepSeek");
-        expect(options[1].text()).toBe("OpenAI");
+        expect(selectCount(wrapper)).toBe(1);
+        await openSelectAt(wrapper, 0);
+        expect(selectItemTexts(wrapper)).toEqual(["DeepSeek", "OpenAI"]);
     });
 
     it("TC6: save emits editing values", async () => {
