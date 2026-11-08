@@ -13,6 +13,8 @@ import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 import { readSidecar, sha256File, writeSidecarForJar } from './lib/cp-jar-sidecar.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
+import { ensureEnvFromUser } from './lib/user-env.mjs'
+import { CARGO_TARGET_ROOT_ENV } from './lib/stack-cargo-target.mjs'
 import {
   buildBlankDatabaseResetSql,
   buildDatabaseExistsQuery,
@@ -37,6 +39,17 @@ import {
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
+
+// task-237（坑 8 补充）：DSH 出的子进程/裸 node 环境里没有 User 级变量 ⇒ e2e 构建根会回落
+// <one>/.tmp/cargo-target/e2e（H 根已被 task-205 删除 ⇒ 重新长出 1.6–2.0 GB 的 e2e 键）。
+// 入口先用同源 helper 从 User 级补齐（写回 process.env），后续派生/起进程都吃这同一个值。
+const cargoRootWiring = ensureEnvFromUser(CARGO_TARGET_ROOT_ENV)
+if (cargoRootWiring.source === 'unset') {
+  console.warn(
+    `[e2e-host] WARN: ${CARGO_TARGET_ROOT_ENV} 未在 process env 或 User 级 env 中提供 ⇒ `
+    + 'e2e 的 CARGO_TARGET_DIR 会回落到 <one>/.tmp/cargo-target/e2e（要落共享根请设 User 级变量或用 mise run）',
+  )
+}
 const e2eRunId = `host-${Date.now()}-${randomBytes(2).toString('hex')}`
 
 // PLAN-0656 R2 (build isolation): the E2E stack builds with its OWN target
@@ -1005,6 +1018,70 @@ async function stopProcess(child) {
   }
 }
 
+// task-237: **失败即退，禁止 hang**。
+// 事故（两次同因）：native CP 因 PG 端口未就绪 `exited code=1` 后，父 `node e2e-host.mjs` 仍活、
+// fake server 子进程继续占端口 —— 原因是失败路径要等 `cleanup()`（compose down + 逐个 stop +
+// waitForChildExit），任何一步卡住就永远不退出。
+// 规则：① 任一 runner-owned 子进程非零退出（非主动 teardown 期间）⇒ 先把整棵进程树收掉再 exit 1；
+// ② `cleanup()` 带 deadline，超时则强制杀树并 exit，绝不等待。
+const CLEANUP_TIMEOUT_MS = Number(process.env.XIHE_E2E_CLEANUP_TIMEOUT_MS ?? 30_000)
+const BOOT_TIMEOUT_MS = Number(process.env.XIHE_E2E_BOOT_TIMEOUT_MS ?? 300_000)
+
+/** 主动收尾期间不触发 fail-fast（teardown 杀进程会产生非零退出码，那是预期）。 */
+let shuttingDown = false
+let aborted = false
+
+async function forceKillAllChildren(reason) {
+  for (const entry of dockerProcesses.slice().reverse()) {
+    const child = entry?.child
+    if (!child || child.exitCode !== null) continue
+    console.error(`[e2e-host] force-kill ${entry.name} (pid=${child.pid}) — ${reason}`)
+    try {
+      if (process.platform === 'win32') {
+        await run('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+      } else {
+        child.kill('SIGKILL')
+      }
+    } catch (error) {
+      console.error(`[e2e-host] force-kill ${entry.name} failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
+async function abortRun(reason, exitCode = 1) {
+  if (aborted) return
+  aborted = true
+  shuttingDown = true
+  console.error(`[e2e-host] ABORT (fail-fast): ${reason}`)
+  await forceKillAllChildren(reason)
+  // compose 容器交给下一次 preflight 的残留检查/--teardown 收（这里不再等，避免二次 hang）
+  console.error('[e2e-host] ABORT: exiting non-zero now (no teardown wait; residue is reported by the next preflight)')
+  process.exit(exitCode)
+}
+
+/** 带 deadline 的收尾：超时即强杀 + 退出，绝不 hang。 */
+async function cleanupWithDeadline(reason, exitCode) {
+  shuttingDown = true
+  let timer
+  try {
+    await Promise.race([
+      cleanup(),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`cleanup exceeded ${CLEANUP_TIMEOUT_MS}ms (${reason})`)),
+          CLEANUP_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } catch (error) {
+    console.error(`[e2e-host] cleanup problem: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  await forceKillAllChildren(reason)
+  process.exit(exitCode)
+}
+
 // PLAN-0369: specs may restart stack processes themselves (journey-b restarts
 // Runtime; `ensureAgentWorkspaceBinding` restarts Agent). Those detached
 // processes have no runner handle, so reap leftover listeners on the run's own
@@ -1072,9 +1149,16 @@ async function dockerCompose(args, options = {}) {
   const probe = await run('docker', ['compose', 'version'], { stdio: ['ignore', 'pipe', 'ignore'] })
   const usePlugin = probe.code === 0
   const cmd = usePlugin ? dockerCommand : 'docker-compose.exe'
+  // task-237: compose **v1**（docker-compose.exe）不支持 `up --wait`。以前把 `--wait` 照传给 v1，
+  // 结果"启动成功"其实只是容器创建完就返回 —— 这正给了 CP 一个"端口还没 publish 好"的窗口。
+  // v1 下去掉 `--wait`，就绪判定改由 waitForPostgresContainerHealthy() 的 docker inspect 轮询负责。
+  const adapted = usePlugin ? args : args.filter((arg) => arg !== '--wait')
+  if (!usePlugin && adapted.length !== args.length) {
+    console.log('[e2e-host] compose v1 (docker-compose.exe): dropped unsupported `--wait`; readiness uses docker inspect instead')
+  }
   const composeArgs = usePlugin
-    ? ['compose', '-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...args]
-    : ['-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...args]
+    ? ['compose', '-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...adapted]
+    : ['-p', pgProjectName, '-f', join(projectDir, 'docker-compose.yml'), ...adapted]
   return run(cmd, composeArgs, options)
 }
 
@@ -1085,6 +1169,7 @@ async function startIsolatedPostgres() {
     POSTGRES_USER: pgUser,
     POSTGRES_PASSWORD: pgPassword,
   }
+  const startedAtMs = Date.now()
   const result = await dockerCompose(['up', '-d', '--no-deps', '--wait', '--force-recreate', 'postgres'], {
     env,
     stdio: 'inherit',
@@ -1092,6 +1177,11 @@ async function startIsolatedPostgres() {
   if (result.code !== 0) {
     throw new Error(`isolated PostgreSQL failed to start (exit=${result.code})`)
   }
+  // task-237: `up` 返回 ≠ 这个**新**容器已经在 published 端口上服务。旧代码直接进 wire 探针，
+  // 探针可能命中"上一次运行的旧容器/正在 recreate 的瞬间"，于是 CP 拿到 Connection refused。
+  // 这里先按容器身份硬等：本项目的容器、running、health=healthy（若有 healthcheck）、
+  // 且 StartedAt 必须晚于本次 `up` 的开始。
+  await waitForPostgresContainerHealthy(startedAtMs)
 }
 
 async function migrateIsolatedSchema() {
@@ -1174,6 +1264,10 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
   nativeServiceChildren.set(name, child)
   child.once('exit', (code, signal) => {
     console.log(`[e2e-host] native ${name} exited code=${code ?? 'null'} signal=${signal ?? 'none'}`)
+    // task-237: 非零退出 = 本次运行已失败 ⇒ 立刻收树退出（原来只打印，随后卡在 cleanup 里不退出）
+    if (!shuttingDown && code !== null && code !== 0) {
+      void abortRun(`native ${name} exited code=${code} (signal=${signal ?? 'none'})`)
+    }
   })
   child.once('error', (error) => {
     console.error(`[e2e-host] native ${name} error: ${error.message}`)
@@ -1611,6 +1705,16 @@ async function closeCheckpointProbeControl() {
 
 async function launchUIVite() {
   console.log('[e2e-host] launching UI Vite')
+  // task-237（坑 8）：候选 worktree 可能从未 `pnpm install` —— 此时 Vite 启动只会抛
+  // "Cannot find module .../vite/bin/vite.js"，对操作者不可读、且发生在 boot 中段。
+  // 启动前预检 `node_modules/vite` 并给一条可直接照抄的修复命令。
+  const viteEntry = join(uiDir, 'node_modules', 'vite', 'bin', 'vite.js')
+  if (!existsSync(viteEntry)) {
+    throw new Error(
+      `UI dependencies are missing: ${viteEntry} not found (this worktree never ran pnpm install).\n`
+        + '  Fix: cd packages/ui && pnpm install --offline   (or: mise run setup:ui)',
+    )
+  }
   const child = spawnCommand(nodeCommand, [join(projectDir, 'scripts', 'dev-ui-host.mjs'), '--mode', 'dev', '--host', '127.0.0.1', '--port', uiPort, '--strictPort'], {
     cwd: uiDir,
     env: {
@@ -2330,6 +2434,45 @@ async function cleanup() {
 // ③3 (PLAN-294 review): a running dev runtime holds xihe-runtime.exe, so
 // `cargo run --bin xihe-runtime` fails with os error 5. Detect and say so —
 // this cost a debugging round trip in PLAN-294 M0.
+// task-237: `docker compose up -d` 返回只代表"容器已创建/已 recreate"，不代表 published 端口可用。
+// 两次事故（15:42 / 16:24，不同端口、同样 `Connection refused` → CP exit 1）都发生在 `up` 之后的
+// 几十毫秒窗口里。这里用 **容器身份** 硬等，避免把"上一次运行的旧容器 / recreate 中间态"当成就绪：
+//   ① 容器存在且 State.Status=running；
+//   ② 有 healthcheck 时 State.Health.Status 必须 healthy；
+//   ③ State.StartedAt 必须晚于本次 `up` 的开始（证明是本轮新起的实例）。
+async function waitForPostgresContainerHealthy(startedAtMs, timeoutMs = 60_000) {
+  const container = `${pgProjectName}-postgres-1`
+  const deadline = Date.now() + timeoutMs
+  let last = ''
+  while (Date.now() < deadline) {
+    const inspect = await runCapture('docker', [
+      'inspect', container,
+      '-f', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.StartedAt}}|{{.Id}}',
+    ])
+    if (inspect.code === 0) {
+      const [status, health, startedAt, id] = inspect.stdout.trim().split('|')
+      last = `status=${status} health=${health} startedAt=${startedAt}`
+      const startedAtDate = Date.parse(startedAt)
+      const freshInstance = Number.isFinite(startedAtDate) ? startedAtDate >= startedAtMs - 2_000 : true
+      if (status === 'running' && (health === 'healthy' || health === 'none') && freshInstance) {
+        console.log(`[e2e-host] PostgreSQL container ready (${last}, id=${(id ?? '').slice(0, 12)})`)
+        return
+      }
+      if (status === 'running' && (health === 'healthy' || health === 'none') && !freshInstance) {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        continue
+      }
+    } else {
+      last = `inspect exit=${inspect.code} ${inspect.stderr?.trim() ?? ''}`
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+  throw new Error(
+    `PostgreSQL container ${container} did not become ready within ${timeoutMs}ms (last: ${last}); `
+    + 'refusing to boot CP against an unpublishable/older container (task-237)',
+  )
+}
+
 async function waitPostgresReady() {
   const deadline = Date.now() + readinessTimeoutMs
   while (Date.now() < deadline) {
@@ -2385,8 +2528,8 @@ async function waitForPostgresWireReady() {
   while (Date.now() < deadline) {
     if (await probePostgresSslRequestOnce()) {
       consecutive += 1
-      if (consecutive >= 2) {
-        console.log('[e2e-host] PostgreSQL host port wire ready (SSLRequest probe x2)')
+      if (consecutive >= 3) {
+        console.log('[e2e-host] PostgreSQL host port wire ready (SSLRequest probe x3)')
         return
       }
     } else {
@@ -2498,6 +2641,29 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
     cpBootMode: cpBootPlan?.mode ?? (externalServer ? 'reuse' : 'jar'),
   })
   if (skipPreflight) return runSkipPreflightDiskGate(policy)
+  // task-237（坑 7）：共享 e2e 构建根里的**旧 jar** 会被只读 preflight 直接 refuse
+  // （"CP jar 过期"）。`--jar-mode=auto` 的自愈本该在 resolveCpBootPlan 里发生，但 reuse/外部栈
+  // 等入口走不到那段 ⇒ 这里在 preflight **之前**补一次同语义动作：stale jar ⇒ 重建；
+  // 重建失败 ⇒ 明确 fail-fast（不让它退化成"preflight 拒绝"这种看不出根因的失败）。
+  if ((jarMode === 'auto' || jarMode === 'rebuild') && !externalServer) {
+    const state = resolveCpJarState(e2eCpTargetDir)
+    const identityMismatch = state.sidecar?.state === 'ok' && state.sidecar.identity === false
+    const stale = Boolean(state.jar) && (state.newestSource.mtimeMs > state.jar.mtimeMs || identityMismatch)
+    if (stale) {
+      console.log(`[e2e-host] preflight 前自愈：CP jar ${state.jar.name} 过期 ⇒ 重建（与 --jar-mode=rebuild 同语义）`)
+      const rebuild = await run(mvnCommand, ['-q', '-DskipTests', ...e2eCpBuildArgs, 'package'], {
+        cwd: join(projectDir, 'packages', 'control-plane'),
+        stdio: 'inherit',
+      })
+      if (rebuild.code !== 0) {
+        console.error(`[e2e-host] FAIL-FAST: CP jar 重建失败 (exit=${rebuild.code})；拒绝继续（否则 preflight 只会报"过期"）`)
+        process.exit(1)
+      }
+      const head = gitHead({ cwd: projectDir })
+      if (head.commit) writeBuildInfo({ targetDir: e2eCpTargetDir, commit: head.commit, dirty: head.dirty })
+      console.log(`[e2e-host] preflight 前自愈完成：jar 已重建${head.commit ? ` 并盖章 ${head.commit.slice(0, 12)}` : ''}`)
+    }
+  }
   console.log(`[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs${policy.ignoreBuild ? ' --ignore-build' : ''}`)
   const selfPids = [process.pid, ...extraSelfPids.filter((pid) => Number.isInteger(pid) && pid > 0)]
   const preflightArgs = [join(projectDir, 'scripts', 'e2e-preflight.mjs'), `--self-pid=${selfPids.join(',')}`]
@@ -3016,7 +3182,16 @@ async function main() {
       })()]),
       launchUIVite(),
     ]
-    await Promise.all(bootTasks)
+    // task-237: boot 整体带 deadline —— 任何子任务卡住都要在有限时间内失败退出，而不是无限等。
+    await Promise.race([
+      Promise.all(bootTasks),
+      new Promise((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`stack boot exceeded ${BOOT_TIMEOUT_MS}ms (task-237 fail-fast)`)),
+          BOOT_TIMEOUT_MS,
+        ).unref?.()
+      }),
+    ])
     const bootElapsedMs = Date.now() - bootBegan
     stackBootElapsedMs = bootElapsedMs
     console.log(`[e2e-host] stack boot completed in ${(bootElapsedMs / 1000).toFixed(2)}s (baseline for the round-retry ratio)`)
@@ -3154,6 +3329,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 
 main().catch(async (error) => {
   console.error(`[e2e-host] ${error instanceof Error ? error.message : String(error)}`)
-  await cleanup()
-  process.exitCode = 1
+  // task-237: 以前这里是 `await cleanup()` 无上限 —— 任一步卡住（compose down / waitForChildExit）
+  // 就是"父进程永远活着、fake server 还占端口"。现在 cleanup 带 deadline，超时即强杀并 exit。
+  await cleanupWithDeadline('main() failed', 1)
 })
