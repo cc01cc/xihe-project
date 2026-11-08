@@ -258,7 +258,8 @@ function readBody(request) {
 }
 
 server.listen(port, "0.0.0.0", () => {
-    console.log(`[fake-mcp] listening on ${port}`);
+    // port 0（自测用）时真实端口只有 listen 后才知道；固定端口下输出与原值一致。
+    console.log(`[fake-mcp] listening on ${server.address().port}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

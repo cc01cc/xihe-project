@@ -690,7 +690,8 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-    console.log(`[fake-llm] ready port=${port} mode=${mode}`);
+    // port 0（自测用）时真实端口只有 listen 后才知道；固定端口下输出与原值一致。
+    console.log(`[fake-llm] ready port=${server.address().port} mode=${mode}`);
 });
 
 function shutdown() {
