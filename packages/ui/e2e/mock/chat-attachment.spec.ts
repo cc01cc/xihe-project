@@ -1,12 +1,29 @@
 import { expect, test } from "./helpers/mock-test";
 import { ChatPage } from "../page-objects/ChatPage";
-import { setupMockAuth } from "./helpers/auth";
+import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 const sessionId = "attachment-session";
 
 test.describe("Chat attachment persistence", () => {
     test("uploads attachment, merges with text, and persists after reload", async ({ page }) => {
         await setupMockAuth(page, { sse: { tokens: ["OK"] } });
+        // 会话必须在列表里，否则路由守卫回落到默认 Mock Session，发送面拿不到 attachment-session。
+        await setupMockSessions(page, {
+            sessions: [{ id: sessionId, title: "Attachment session" }],
+        });
+        // PLAN-0699 M2：发送走 POST /api/v1/chat（不是 /messages）；不桩则 catch-all 回 {}，
+        // 无 runId 的 202 体让乐观用户消息/流式回复都无法落位。补最小 202 契约。
+        await page.route("**/api/v1/chat", async (route) => {
+            await route.fulfill({
+                status: 202,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    status: "accepted",
+                    sessionId,
+                    runId: "run-attachment-1",
+                }),
+            });
+        });
 
         let messagesResponse: Array<Record<string, unknown>> = [];
 
@@ -83,6 +100,20 @@ test.describe("Chat attachment persistence", () => {
 
     test("sends a pure attachment message when no text is entered", async ({ page }) => {
         await setupMockAuth(page, { sse: { tokens: ["Received"] } });
+        await setupMockSessions(page, {
+            sessions: [{ id: sessionId, title: "Attachment session" }],
+        });
+        await page.route("**/api/v1/chat", async (route) => {
+            await route.fulfill({
+                status: 202,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    status: "accepted",
+                    sessionId,
+                    runId: "run-attachment-2",
+                }),
+            });
+        });
 
         await page.route(`**/api/v1/sessions/${sessionId}/attachments`, async (route) => {
             await route.fulfill({
