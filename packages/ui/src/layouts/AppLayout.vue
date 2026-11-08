@@ -234,7 +234,7 @@ onUnmounted(() => {
             v-if="!navOpen && isMobile"
             type="button"
             data-testid="mobile-sidebar-toggle"
-            aria-label="Open navigation"
+            :aria-label="t('common.openNavigation')"
             title="Open navigation"
             class="fixed right-3 top-3 z-30 inline-flex size-9 items-center justify-center rounded-md border bg-background/90 text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-accent"
             @click="navOpen = true"

@@ -4,7 +4,13 @@ import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
 import { api } from "../../composables/api";
 import CredentialRoleBlock from "./credentials/CredentialRoleBlock.vue";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 type Permission = { actionClass: string; resource?: string };
 type Role = { id: string; name: string; permissions: Permission[] };
@@ -398,11 +404,7 @@ function cancelRoleEdit() {
                             <SelectItem value="__none__">{{
                                 t("settings.agentTemplateNoRole")
                             }}</SelectItem>
-                            <SelectItem
-                                v-for="role in roles"
-                                :key="role.id"
-                                :value="role.id"
-                            >
+                            <SelectItem v-for="role in roles" :key="role.id" :value="role.id">
                                 {{ role.name }}
                             </SelectItem>
                         </SelectContent>
@@ -446,7 +448,7 @@ function cancelRoleEdit() {
             </div>
         </form>
 
-        <div class="space-y-2" aria-label="Agent templates">
+        <div class="space-y-2" :aria-label="t('common.agentTemplates')">
             <article
                 v-for="template in templates"
                 :key="template.id"

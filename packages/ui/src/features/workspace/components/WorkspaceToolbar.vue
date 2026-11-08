@@ -113,7 +113,7 @@ function overflowNav(navigate: () => void) {
         <button
             class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
             title="Files"
-            aria-label="Files"
+            :aria-label="t('common.files')"
             data-testid="workspace-toolbar-files-mobile"
             @click="emit('files')"
         >
