@@ -19,10 +19,12 @@ const server = createServer(async (request, response) => {
     }
 
     if (url.pathname === "/.well-known/openid-configuration") {
+        // port 0（自测用）时要用真实绑定端口，否则 discovery 会宣告 0 号端口。
+        const boundPort = server.address()?.port ?? port;
         return json(response, 200, {
-            authorization_endpoint: `http://127.0.0.1:${port}/authorize`,
-            token_endpoint: `http://127.0.0.1:${port}/token`,
-            revocation_endpoint: `http://127.0.0.1:${port}/revoke`,
+            authorization_endpoint: `http://127.0.0.1:${boundPort}/authorize`,
+            token_endpoint: `http://127.0.0.1:${boundPort}/token`,
+            revocation_endpoint: `http://127.0.0.1:${boundPort}/revoke`,
             code_challenge_methods_supported: ["S256"],
         });
     }
@@ -117,7 +119,8 @@ function readBody(request) {
 }
 
 server.listen(port, "0.0.0.0", () => {
-    console.log(`[fake-oauth] listening on ${port}`);
+    // port 0（自测用）时真实端口只有 listen 后才知道；固定端口下输出与原值一致。
+    console.log(`[fake-oauth] listening on ${server.address().port}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
