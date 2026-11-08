@@ -20,8 +20,8 @@ public final class SessionRequests {
 
     public record CreateSessionRequest(String title, String modelProvider, String modelName,
                                        String providerConnectionId, String agentPrincipalId,
-                                       String contextTemplateLayer, String contextTemplateId,
-                                       Integer contextTemplateVersion) {}
+                                       String workspaceId, String contextTemplateLayer,
+                                       String contextTemplateId, Integer contextTemplateVersion) {}
 
     /** PLAN-0608: shared request mapping for both creation surfaces. */
     public static SessionCreationService.Params paramsFrom(CreateSessionRequest request) {

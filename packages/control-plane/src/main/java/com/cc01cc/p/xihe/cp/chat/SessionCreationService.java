@@ -47,6 +47,18 @@ public class SessionCreationService {
      * @param headerWorkspaceId raw {@code X-Workspace-Id} header value, else null
      */
     public Session create(String userId, String pathWorkspaceId, String headerWorkspaceId, Params params) {
+        return create(userId, pathWorkspaceId, headerWorkspaceId, null, params);
+    }
+
+    /**
+     * PLAN-0647 MVP (D-678 #1): the body may carry an explicit {@code workspaceId}; when path,
+     * header <b>and</b> body all agree that no workspace is named, this creates a workspace-less
+     * session instead of falling back to the interceptor's "first active workspace" (D47-05).
+     *
+     * @param bodyWorkspaceId raw body {@code workspaceId} (absent and null are equivalent), else null
+     */
+    public Session create(String userId, String pathWorkspaceId, String headerWorkspaceId,
+                          String bodyWorkspaceId, Params params) {
         if (userId == null || userId.isBlank()) {
             throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
                     "Authentication required");
@@ -54,12 +66,35 @@ public class SessionCreationService {
         // Malformed explicit ids are a client error (400 INVALID_WORKSPACE_ID), never a 500.
         String pathWorkspace = TenantContext.normalizeWorkspaceId(pathWorkspaceId);
         String headerWorkspace = TenantContext.normalizeWorkspaceId(headerWorkspaceId);
+        String bodyWorkspace = TenantContext.normalizeWorkspaceId(bodyWorkspaceId);
 
-        int memberWorkspaceCount = (pathWorkspace == null && headerWorkspace == null)
+        if (pathWorkspace == null && headerWorkspace == null && bodyWorkspace == null) {
+            // PLAN-0647 D-678/D-687: genuinely no workspace — do not resolve the interceptor fallback.
+            Session session = sessionService.createAgentSession(userId, null,
+                    params == null ? null : params.title(),
+                    params == null ? null : params.modelProvider(),
+                    params == null ? null : params.modelName(),
+                    params == null ? null : params.providerConnectionId(),
+                    params == null ? null : params.agentPrincipalId(),
+                    params == null ? null : params.templateSelection());
+            logger.info("[LIFECYCLE] service=cp event=session_created sessionId={} workspaceId=null source=workspaceless",
+                    session.getId());
+            return session;
+        }
+
+        if ((bodyWorkspace != null && pathWorkspace != null
+                && !bodyWorkspace.equalsIgnoreCase(pathWorkspace))
+                || (bodyWorkspace != null && headerWorkspace != null
+                && !bodyWorkspace.equalsIgnoreCase(headerWorkspace))) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_CONTEXT_CONFLICT",
+                    "The body workspaceId conflicts with another workspace input; send only one of them");
+        }
+        String explicitWorkspace = bodyWorkspace != null ? bodyWorkspace : pathWorkspace;
+        int memberWorkspaceCount = (explicitWorkspace == null && headerWorkspace == null)
                 ? workspaceService.countActiveMemberWorkspaces(userId)
                 : -1;
         SessionWorkspaceResolver.Resolution resolution = SessionWorkspaceResolver.resolve(
-                pathWorkspace, headerWorkspace, memberWorkspaceCount,
+                explicitWorkspace, headerWorkspace, memberWorkspaceCount,
                 TenantContext.getWorkspaceId(), TenantContext.getWorkspaceSource());
 
         switch (resolution.outcome()) {
@@ -74,20 +109,16 @@ public class SessionCreationService {
         }
 
         String workspaceId = resolution.workspaceId();
-        if (pathWorkspace != null) {
-            // The header surface was already membership-checked by the interceptor;
-            // the path surface is new, so it is checked here with the same gate.
-            workspaceService.requireContextWorkspace(pathWorkspace, userId);
-            // PLAN-0608 C′ (review P1): the interceptor's role gate is graded on the
-            // *context* workspace, so a path-only request could create a session inside
-            // a workspace where the caller is only VIEWER. Enforce the write role on the
-            // workspace that actually owns this session.
-            String pathRole = workspaceService.resolveWorkspaceRole(pathWorkspace, userId);
+        if (explicitWorkspace != null) {
+            // The header surface was already membership-checked by the interceptor; the path/body
+            // surfaces are new, so they are checked here with the same gate + write role.
+            workspaceService.requireContextWorkspace(explicitWorkspace, userId);
+            String pathRole = workspaceService.resolveWorkspaceRole(explicitWorkspace, userId);
             if (!WorkspaceWriteGuard.allows(pathRole, WorkspaceWriteGuard.Requirement.WRITE)) {
                 throw new CpApiException(HttpStatus.FORBIDDEN, "WORKSPACE_READ_ONLY",
                         "Viewer cannot modify this workspace");
             }
-            workspaceId = pathWorkspace;
+            workspaceId = explicitWorkspace;
         }
 
         // PLAN-0618 M1 (BL-178): a session on the frozen docker backend is refused before any row is
@@ -104,6 +135,5 @@ public class SessionCreationService {
         logger.info("[LIFECYCLE] service=cp event=session_created sessionId={} workspaceId={} source={}",
                 session.getId(), workspaceId, resolution.source());
         return session;
-    }
-}
+    }}
 

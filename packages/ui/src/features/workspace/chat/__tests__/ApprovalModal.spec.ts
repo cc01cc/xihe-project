@@ -7,6 +7,7 @@ import ApprovalModal from "../components/ApprovalModal.vue";
 import { ApiError, api } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
 import type { ApprovalPolicyShape, ApprovalRequest } from "../../../../types";
+import { setSelectValue } from "../../../../test-utils/select";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -305,7 +306,7 @@ describe("ApprovalModal", () => {
         expect(wrapper.find('[data-testid="approval-save-confirm"]').exists()).toBe(true);
         expect(wrapper.findAll('[data-testid="modal-content"]')).toHaveLength(1);
 
-        await wrapper.find('[data-testid="approval-rule-layer"]').setValue("user");
+        await setSelectValue(wrapper, '[data-testid="approval-rule-layer"]', "user");
         await wrapper.find('[data-testid="approval-rule-resource"]').setValue("src/**/*.ts");
         expect(wrapper.find('[data-testid="approval-rule-preview"]').text()).toContain(
             "src/**/*.ts",
@@ -671,7 +672,7 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
             wrapper.find('[data-testid="approval-classify-submit"]').attributes("disabled"),
         ).toBeDefined();
         await wrapper.find('[data-testid="approval-classify-action-class"]').setValue("read");
-        await wrapper.find('[data-testid="approval-classify-shape"]').setValue("structured");
+        await setSelectValue(wrapper, '[data-testid="approval-classify-shape"]', "structured");
         await wrapper.find('[data-testid="approval-classify-submit"]').trigger("click");
         await flushPromises();
 

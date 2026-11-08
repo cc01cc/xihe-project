@@ -150,11 +150,12 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         for (UUID additionalWorkspaceId : additionalWorkspaceIds) {
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?",
-                    additionalWorkspaceId.toString());
+            jdbcTemplate.update("DELETE FROM sessions WHERE workspace_id IS NOT DISTINCT FROM CAST(? AS UUID)",
+                    additionalWorkspaceId);
         }
         if (workspaceId != null) {
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
+            jdbcTemplate.update("DELETE FROM sessions WHERE workspace_id IS NOT DISTINCT FROM CAST(? AS UUID)",
+                    java.util.UUID.fromString(workspaceId));
             SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
         }
         if (principalId != null && workspaceId != null

@@ -13,6 +13,7 @@ import {
 } from "../../services/apiRequestTemplates";
 import type { ApiInputType } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 const props = defineProps<{
     entries: Record<string, string>;
@@ -267,16 +268,24 @@ async function save(publish: boolean) {
             <h3 class="mr-auto text-sm font-semibold">
                 {{ t("settings.domainContextTemplates") }}
             </h3>
-            <select
-                v-model="selectedType"
-                data-testid="api-request-type"
-                aria-label="API Type"
-                class="rounded-md border bg-background px-2 py-1 text-xs"
-            >
-                <option v-for="type in types" :key="typeKey(type)" :value="typeKey(type)">
-                    {{ typeKey(type) }}
-                </option>
-            </select>
+            <Select v-model="selectedType">
+                <SelectTrigger
+                    data-testid="api-request-type"
+                    aria-label="API Type"
+                    class="rounded-md border bg-background px-2 py-1 text-xs"
+                >
+                    <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem
+                        v-for="type in types"
+                        :key="typeKey(type)"
+                        :value="typeKey(type)"
+                    >
+                        {{ typeKey(type) }}
+                    </SelectItem>
+                </SelectContent>
+            </Select>
             <button
                 v-if="!readonly"
                 type="button"
@@ -313,30 +322,39 @@ async function save(publish: boolean) {
             <div v-if="selected" class="min-w-0 space-y-3 p-4">
                 <div class="flex flex-wrap items-center gap-2 text-xs">
                     <span>{{ selected.apiTypeId }}@{{ selected.apiTypeVersion }}</span>
-                    <select
-                        :value="selected.version"
-                        :aria-label="t('settings.apiRequest.revisions')"
-                        class="rounded border bg-background px-2 py-1"
-                        @change="
-                            select(
-                                revisions.find(
-                                    (item) =>
-                                        item.version ===
-                                        Number(($event.target as HTMLSelectElement).value),
-                                ) ?? selected,
-                            )
+                    <Select
+                        :model-value="String(selected?.version ?? '')"
+                        @update:model-value="
+                            (value) => {
+                                const found = revisions.find(
+                                    (item) => item.version === Number(value),
+                                );
+                                if (found) select(found);
+                            }
                         "
                     >
-                        <option v-for="item in revisions" :key="item.version" :value="item.version">
-                            v{{ item.version }} · {{ item.status }}
-                        </option>
-                        <option
-                            v-if="!revisions.some((item) => item.version === selected?.version)"
-                            :value="selected.version"
+                        <SelectTrigger
+                            :aria-label="t('settings.apiRequest.revisions')"
+                            class="rounded border bg-background px-2 py-1"
                         >
-                            v{{ selected.version }} · draft
-                        </option>
-                    </select>
+                            <SelectValue>
+                                v{{ selected?.version }} ·
+                                {{
+                                    revisions.find((item) => item.version === selected?.version)
+                                        ?.status ?? "draft"
+                                }}
+                            </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem
+                                v-for="item in revisions"
+                                :key="item.version"
+                                :value="String(item.version)"
+                            >
+                                v{{ item.version }} · {{ item.status }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
                 <label class="block text-xs"
                     >{{ t("settings.apiRequest.name")

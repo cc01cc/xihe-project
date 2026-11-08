@@ -1120,6 +1120,30 @@ public class ChatSubmissionService {
     private Session bindOrValidateAgentSession(String sessionId, String userId, String workspaceId) {
         UUID sessionUuid = UUID.fromString(sessionId);
         dbLockTimeout.apply();
+        if (workspaceId == null) {
+            // PLAN-0647 D-678/D-686/D-697: a workspace-less (pure-chat) Session.
+            // The workspace binding gates below do not apply: there is no workspace to bind to, so
+            //   * the ROW's workspace must be NULL (never adopt a workspace Session), and
+            //   * the authorization snapshot is EXPECTED to be NULL (D-686: no tool face), which is
+            //     explicitly allowed here instead of falling into the "no bound identity" 403;
+            //   * no principal/workspace binding is resolved (D-47-04: owner-only, no workspace path).
+            // The run row keeps workspace_id = NULL; the PRIMARY participant is the only identity the
+            // admission needs (same invariant as the workspace path).
+            Session pureChat = sessionRepository.findByIdForUpdate(sessionUuid)
+                    .filter(candidate -> userId.equals(candidate.getUserId())
+                            && candidate.getWorkspaceId() == null
+                            && !candidate.isArchived())
+                    .orElseThrow(ChatSubmissionService::agentSessionForbidden);
+            entityManager.refresh(pureChat);
+            if (pureChat.getDeleteRequestedAt() != null) {
+                throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
+                        "Session is being deleted");
+            }
+            if (sessionParticipantService.responderFor(sessionUuid, null) == null) {
+                throw agentSessionForbidden();
+            }
+            return pureChat;
+        }
         Session session = sessionRepository.findByIdForUpdate(sessionUuid)
                 .filter(candidate -> userId.equals(candidate.getUserId())
                         && workspaceId.equals(candidate.getWorkspaceId())

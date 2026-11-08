@@ -5,6 +5,7 @@ import CredentialBindingsSection from "../CredentialBindingsSection.vue";
 import { api } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
 import { i18n } from "../../../../i18n";
+import { setSelectValue } from "../../../../test-utils/select";
 
 vi.mock("vue-sonner", () => ({
     toast: {
@@ -90,7 +91,7 @@ afterEach(() => {
 describe("CredentialBindingsSection (PLAN-0498 T2.2)", () => {
     it("lists workspace agents and marks the already bound principal", async () => {
         const wrapper = await mountSection();
-        await wrapper.get('[data-testid="credential-bind-workspace"]').setValue("ws-1");
+        await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
         await flushPromises();
 
         expect(mockedApi.getWorkspaceAgents).toHaveBeenCalledWith("ws-1");
@@ -100,7 +101,7 @@ describe("CredentialBindingsSection (PLAN-0498 T2.2)", () => {
 
     it("binds the selected principals all-or-nothing", async () => {
         const wrapper = await mountSection();
-        await wrapper.get('[data-testid="credential-bind-workspace"]').setValue("ws-1");
+        await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
         await flushPromises();
         await wrapper.get('[data-testid="credential-bind-agent-principal-free"]').setValue(true);
         await wrapper.get('[data-testid="credential-bind-apply"]').trigger("click");
@@ -115,7 +116,7 @@ describe("CredentialBindingsSection (PLAN-0498 T2.2)", () => {
 
     it("unbinds the selected principals", async () => {
         const wrapper = await mountSection();
-        await wrapper.get('[data-testid="credential-bind-workspace"]').setValue("ws-1");
+        await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
         await flushPromises();
         await wrapper.get('[data-testid="credential-bind-agent-principal-bound"]').setValue(true);
         await wrapper.get('[data-testid="credential-bind-remove"]').trigger("click");
@@ -129,7 +130,7 @@ describe("CredentialBindingsSection (PLAN-0498 T2.2)", () => {
 
     it("keeps the apply button disabled without a selection", async () => {
         const wrapper = await mountSection();
-        await wrapper.get('[data-testid="credential-bind-workspace"]').setValue("ws-1");
+        await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
         await flushPromises();
         await nextTick();
 
@@ -142,7 +143,7 @@ describe("CredentialBindingsSection (PLAN-0498 T2.2)", () => {
         mockedApi.bindCredential.mockRejectedValue(new Error("scope exceeded"));
 
         const wrapper = await mountSection();
-        await wrapper.get('[data-testid="credential-bind-workspace"]').setValue("ws-1");
+        await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
         await flushPromises();
         await wrapper.get('[data-testid="credential-bind-agent-principal-free"]').setValue(true);
         await wrapper.get('[data-testid="credential-bind-apply"]').trigger("click");

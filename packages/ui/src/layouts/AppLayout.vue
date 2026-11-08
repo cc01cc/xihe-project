@@ -180,7 +180,7 @@ const userChannel = createUserChannelSse({
     // BL-335：撞上 `429 USER_CHANNEL_FULL` 时通道自己停掉重连（上限是持续态），这里只负责
     // 把"该页数据已停止刷新"的指引交给壳级横幅。
     onSubscriberLimit: (code) => {
-        reportSseSubscriberLimit(code);
+        reportSseSubscriberLimit(code, "user-channel");
     },
 });
 
@@ -206,7 +206,7 @@ onUnmounted(() => {
     // 只清 timer 不够：store 是进程级单例，快速换账号时旧请求回来会写进新账号的列表。
     userQuestionsStore.dispose();
     // BL-335：壳卸载（登出/切账号）时清掉订阅上限状态，避免下一个人看到上一个会话的横幅。
-    clearSseSubscriberLimit();
+    clearSseSubscriberLimit(undefined, "user-channel");
     if (pendingPollTimer) {
         clearInterval(pendingPollTimer);
         pendingPollTimer = null;

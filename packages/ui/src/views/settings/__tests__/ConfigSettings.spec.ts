@@ -479,7 +479,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
                 '[data-testid="config-field-agent-runtime-providerRequestFingerprintEnabled"]',
             );
             expect(field.exists()).toBe(true);
-            expect(field.find("select").exists()).toBe(true);
+            expect(field.find('[data-slot="select-trigger"]').exists()).toBe(true);
         }
         wrapper.unmount();
     });

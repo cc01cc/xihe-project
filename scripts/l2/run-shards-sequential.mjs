@@ -68,7 +68,8 @@ function readToplevel() {
 }
 const ROOT_ARG = flag('root', null);
 const ROOT = resolve(ROOT_ARG ?? readToplevel() ?? process.cwd());
-const OUT = resolve(flag('out', 'H:/zeogit/one/.tmp/plan-l2-p3'));
+// Default output lives under the caller's cwd (one root in the normal flow); XH_L2_OUT overrides.
+const OUT = resolve(flag('out', process.env.XH_L2_OUT ?? join(process.cwd(), '.tmp', 'plan-l2-p3')));
 const TARGET_ROOT = resolve(flag('target-root', 'H:/zeotmp'));
 const RUN_TAG = flag('run-tag', `l2-${new Date().toISOString().replace(/[:.]/gu, '-')}`);
 const ALLOW_DIRTY = argv.includes('--allow-dirty');
@@ -78,8 +79,8 @@ const GUARD_CLASS = flag('guard-class', 'com/cc01cc/p/xihe/cp/service/AgentPrinc
 const MODULE = join(ROOT, 'packages/control-plane');
 const PYTHON = [
   join(ROOT, 'packages/agent/.venv/Scripts/python.exe'),
-  'H:/zeogit/one/A03-xihe/packages/agent/.venv/Scripts/python.exe',
-].find((candidate) => existsSync(candidate));
+  process.env.XH_PYTHON,
+].filter(Boolean).find((candidate) => existsSync(candidate));
 
 mkdirSync(OUT, { recursive: true });
 

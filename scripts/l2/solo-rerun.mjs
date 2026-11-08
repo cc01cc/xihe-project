@@ -38,7 +38,15 @@ const flags = (name) => {
   return values;
 };
 
-const ROOT = resolve(flag('root', 'H:/zeogit/one/A03-xihe'));
+function readToplevel() {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd(), encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+const ROOT = resolve(flag('root') ?? readToplevel() ?? process.cwd());
 const MODULE = join(ROOT, 'packages/control-plane');
 const TARGET_ROOT = resolve(flag('target-root', 'H:/zeotmp/l2-round3/solo'));
 const OUT_TSV = resolve(flag('out', join(TARGET_ROOT, 'solo-matrix.tsv')));

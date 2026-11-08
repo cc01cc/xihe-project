@@ -10,6 +10,7 @@ import { ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { usePolicyAdminStore, type PolicyRuleDraft } from "../../stores/policyAdmin";
 import type { ApprovalPolicyEffect, PolicyRuleLayer, PolicyRuleView } from "../../types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const { t } = useI18n(),
     authStore = useAuthStore(),
@@ -546,17 +547,32 @@ onMounted(() => {
                         <label for="policy-create-effect" class="text-sm font-medium">{{
                             t("settings.policyCreateEffect")
                         }}</label>
-                        <select
-                            id="policy-create-effect"
-                            v-model="createEffect"
-                            data-testid="settings-policy-create-effect"
-                            class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                        <Select
+                            :model-value="createEffect"
                             :disabled="policyAdmin.creatingRule"
+                            @update:model-value="
+                                (value) => (createEffect = String(value) as ApprovalPolicyEffect)
+                            "
                         >
-                            <option value="allow">{{ t("settings.policyEffectAllow") }}</option>
-                            <option value="ask">{{ t("settings.policyEffectAsk") }}</option>
-                            <option value="deny">{{ t("settings.policyEffectDeny") }}</option>
-                        </select>
+                            <SelectTrigger
+                                id="policy-create-effect"
+                                data-testid="settings-policy-create-effect"
+                                class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="allow">{{
+                                    t("settings.policyEffectAllow")
+                                }}</SelectItem>
+                                <SelectItem value="ask">{{
+                                    t("settings.policyEffectAsk")
+                                }}</SelectItem>
+                                <SelectItem value="deny">{{
+                                    t("settings.policyEffectDeny")
+                                }}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                     <div class="space-y-1.5">
                         <label for="policy-create-priority" class="text-sm font-medium">{{

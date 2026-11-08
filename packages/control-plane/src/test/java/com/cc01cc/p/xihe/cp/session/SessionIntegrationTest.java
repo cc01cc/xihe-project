@@ -292,6 +292,10 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         long before = sessionRepository.count();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
+        // PLAN-0647 D-678: a creation without X-Workspace-Id is workspace-less by contract (the
+        // token's workspace claim is no longer a fallback). This fixture asserts a workspace-bound
+        // principal, so it must send the workspace explicitly.
+        headers.set("X-Workspace-Id", workspaceId);
         headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
 
         ResponseEntity<Map> missingPrincipal = restTemplate.exchange(baseUrl + "/api/v1/sessions", HttpMethod.POST,

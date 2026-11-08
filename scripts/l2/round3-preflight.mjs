@@ -31,7 +31,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => {
@@ -43,8 +43,41 @@ const has = (name) => argv.includes(`--${name}`);
 const EXPECT_SHA = flag('expect-sha');
 const JSON_MODE = has('json');
 const TARGET_ROOT_HINT = flag('target-root', 'H:/zeotmp');
-// plan-status-drift.ps1 住在 **one 根**（不是 A03 根）；默认取 ROOT 的父目录，可用 --one-root 覆盖。
-const ONE_ROOT = resolve(flag('one-root') ?? join(resolve(flag('root') ?? process.cwd()), '..'));
+// plan-status-drift.ps1 住在 **one 根**（不是 A03 根）。
+// 解析顺序：--one-root 显式参数 > XH_ONE_ROOT 环境变量 > 向上探测含 AGENTS.md 的 one 目录 > null。
+// 显式/环境变量给出但目录无效 ⇒ 直接报错（不静默 fallback）；探测不到 ⇒ null（parent-less，plan-drift 明示 skip）。
+function resolveOneRoot({ explicit, envValue, root }) {
+  const candidate = explicit ?? envValue;
+  if (candidate) {
+    const resolved = resolve(candidate);
+    if (!existsSync(join(resolved, 'AGENTS.md'))) {
+      console.error(`[one-root] ERROR: ${resolved} has no AGENTS.md (pass a real one workspace)`);
+      process.exit(2);
+    }
+    return resolved;
+  }
+  let current = resolve(root);
+  for (let depth = 0; depth < 12; depth += 1) {
+    if (basename(current) === 'one' && existsSync(join(current, 'AGENTS.md'))) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+const ROOT_ARG_VALUE = flag('root');
+const ONE_ROOT = resolveOneRoot({
+  explicit: flag('one-root'),
+  envValue: process.env.XH_ONE_ROOT,
+  root: ROOT_ARG_VALUE ?? process.cwd(),
+});
+const logOneRoot = JSON_MODE ? console.error : console.log;
+if (ONE_ROOT) {
+  logOneRoot(`[one-root] using ${ONE_ROOT}`);
+} else {
+  logOneRoot('[one-root] none detected (standalone: plan-drift will skip)');
+}
 const RESERVED_PORTS = new Set([27339]); // netsh excludedportrange 实测占用（PID 4）
 // 2026-11-06 口径修正（Lead 裁定）：host E2E 的端口由 `27000 + hash(runId) % 1500` 派生，**永远落在
 // 27000–28511 段内**，所以"该段必须为空"不可能成立。默认把 e2e 占用降为 **WARN**（列出占用 project 与
@@ -180,11 +213,17 @@ let eventKeys = null;
 
 /* -------------------------------- 7. plan drift ------------------------------ */
 {
-  const res = run('pwsh scripts/plan-status-drift.ps1', { cwd: ONE_ROOT, timeout: 180_000 });
-  const match = /硬漂移\s*(\d+)/u.exec(res.out);
-  const hard = match ? Number(match[1]) : null;
-  const ok = hard === 0;
-  record('plan-drift', 'plan-drift', ok, hard === null ? `无法解析"硬漂移"计数（exit=${res.code}）` : `硬漂移 ${hard}（exit=${res.code}）`);
+  const driftScript = ONE_ROOT ? join(ONE_ROOT, 'scripts', 'plan-status-drift.ps1') : null;
+  if (!ONE_ROOT || !existsSync(driftScript)) {
+    const why = ONE_ROOT ? `${driftScript} missing` : 'no one root detected';
+    record('plan-drift', 'plan-drift', true, `skip (standalone: ${why})`, { blocking: false });
+  } else {
+    const res = run('pwsh scripts/plan-status-drift.ps1', { cwd: ONE_ROOT, timeout: 180_000 });
+    const match = /硬漂移\s*(\d+)/u.exec(res.out);
+    const hard = match ? Number(match[1]) : null;
+    const ok = hard === 0;
+    record('plan-drift', 'plan-drift', ok, hard === null ? `无法解析"硬漂移"计数（exit=${res.code}）` : `硬漂移 ${hard}（exit=${res.code}）`);
+  }
 }
 
 /* ----------------------------- 8. cache isolation ---------------------------- */

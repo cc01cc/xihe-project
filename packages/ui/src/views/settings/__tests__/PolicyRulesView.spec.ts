@@ -6,6 +6,7 @@ import { i18n } from "../../../i18n";
 import { ApiError, api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import type { PolicyRuleView } from "../../../types";
+import { setSelectValue } from "../../../test-utils/select";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -227,7 +228,7 @@ describe("PolicyRulesView", () => {
             .find('[data-testid="settings-policy-create-action-class"]')
             .setValue(" exec ");
         await wrapper.find('[data-testid="settings-policy-create-resource"]').setValue(" pnpm * ");
-        await wrapper.find('[data-testid="settings-policy-create-effect"]').setValue("ask");
+        await setSelectValue(wrapper, '[data-testid="settings-policy-create-effect"]', "ask");
         await wrapper.find('[data-testid="settings-policy-create-priority"]').setValue(2);
         await wrapper.find('[data-testid="settings-policy-create-locked"]').setValue(true);
         await wrapper.find('[data-testid="settings-policy-create"]').trigger("submit");

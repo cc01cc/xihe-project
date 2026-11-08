@@ -6,6 +6,7 @@ import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import RolesView from "../RolesView.vue";
 import { roleErrorKey, roleErrorMessage } from "../../../components/settings/roleErrorMessages";
+import { openSelect, selectItemComponents, setSelectValue } from "../../../test-utils/select";
 
 vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -37,8 +38,12 @@ vi.mock("../../../composables/api", async (importOriginal) => {
  * mock so a case can prove it no longer opens the page on its own.
  */
 const authState = vi.hoisted(() => ({ isAdmin: true, canManageRoles: true }));
+const authEnsureSelfPermissions = vi.hoisted(() =>
+    vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
+);
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({
+        ensureSelfPermissions: authEnsureSelfPermissions,
         get isAdmin() {
             return authState.isAdmin;
         },
@@ -140,6 +145,7 @@ beforeEach(() => {
     authState.isAdmin = true;
     authState.canManageRoles = true;
     vi.clearAllMocks();
+    authEnsureSelfPermissions.mockClear();
     mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
     mockedApi.listRoles.mockResolvedValue([SYSTEM_ROLE, role()]);
     mockedApi.listWorkspaces.mockResolvedValue([]);
@@ -157,6 +163,13 @@ afterEach(() => {
 });
 
 describe("RolesView access control", () => {
+    it("D-713/B7: direct mount asks auth for self permissions before rendering the page", async () => {
+        // Direct route frames may arrive before SettingsNav mounted; the page must not 403 on
+        // an unknown projection just because the nav did not fetch it first.
+        await mountView();
+        expect(authEnsureSelfPermissions).toHaveBeenCalledTimes(1);
+    });
+
     it("renders the forbidden view for a non-administrator and issues no request", async () => {
         authState.isAdmin = false;
         authState.canManageRoles = false;
@@ -397,16 +410,8 @@ describe("RoleBindingsPanel", () => {
                 document.body.querySelector('[data-testid="role-bindings-subject"]'),
             ).toBeTruthy(),
         );
-        const subjectSelect = (await bodyEl(
-            '[data-testid="role-bindings-subject"]',
-        )) as HTMLSelectElement;
-        subjectSelect.value = "user-2";
-        subjectSelect.dispatchEvent(new Event("change", { bubbles: true }));
-        const roleSelect = (await bodyEl(
-            '[data-testid="role-bindings-role"]',
-        )) as HTMLSelectElement;
-        roleSelect.value = "role-1";
-        roleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        await setSelectValue(wrapper, '[data-testid="role-bindings-subject"]', "user-2");
+        await setSelectValue(wrapper, '[data-testid="role-bindings-role"]', "role-1");
         await clickBody('[data-testid="role-bindings-add"]');
 
         await clickBody('[data-testid="role-bindings-save"]');
@@ -459,24 +464,23 @@ describe("RoleBindingsPanel", () => {
         ]);
         const wrapper = await openBindings();
 
-        const scopeSelect = (await bodyEl(
-            '[data-testid="role-bindings-scope"]',
-        )) as HTMLSelectElement;
-        scopeSelect.value = "workspace";
-        scopeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        await setSelectValue(wrapper, '[data-testid="role-bindings-scope"]', "workspace");
         await flushPromises();
 
         await vi.waitFor(() =>
             expect(mockedApi.getBindings).toHaveBeenCalledWith("workspace", "ws-1"),
         );
-        const instanceOnlyOption = wrapper.get(
-            '[data-testid="role-bindings-role-option-INSTANCE_ONLY"]',
+        await openSelect(wrapper, '[data-testid="role-bindings-role"]');
+        const roleItems = selectItemComponents(wrapper);
+        const instanceOnly = roleItems.find(
+            (item) => item.attributes("data-testid") === "role-bindings-role-option-INSTANCE_ONLY",
         );
-        expect(instanceOnlyOption.attributes("disabled")).toBeDefined();
+        expect(instanceOnly?.props("disabled")).toBe(true);
         // A role whose atoms are all `both` stays selectable.
-        expect(
-            wrapper.get('[data-testid="role-bindings-role-option-AUDITOR"]').attributes("disabled"),
-        ).toBeUndefined();
+        const auditor = roleItems.find(
+            (item) => item.attributes("data-testid") === "role-bindings-role-option-AUDITOR",
+        );
+        expect(auditor?.props("disabled")).toBeFalsy();
     });
 
     it("switches to the agent-principal subject and renders the isolated agent section", async () => {
@@ -489,11 +493,11 @@ describe("RoleBindingsPanel", () => {
         mockedApi.getAgentRoles.mockResolvedValue([]);
         const wrapper = await openBindings();
 
-        const subjectType = (await bodyEl(
+        await setSelectValue(
+            wrapper,
             '[data-testid="role-bindings-subject-type"]',
-        )) as HTMLSelectElement;
-        subjectType.value = "agent_principal";
-        subjectType.dispatchEvent(new Event("change", { bubbles: true }));
+            "agent_principal",
+        );
         await flushPromises();
 
         expect(wrapper.find('[data-testid="agent-role-bindings-section"]').exists()).toBe(true);

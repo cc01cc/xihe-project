@@ -11,6 +11,7 @@ import {
 import { roleErrorMessage } from "./roleErrorMessages";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { LoaderCircle, X } from "@lucide/vue";
 /** T5.2: agent role bindings live here so RoleBindingsPanel stays small. CP owns the gate;
  * ROLE_BINDING_EXCEEDS_CAP's detail is surfaced by roleErrorMessage (BL-288). */
@@ -205,17 +206,38 @@ watch(selectedPrincipalId, (next, previous) => {
 
         <label class="flex flex-col gap-1 text-xs text-muted-foreground">
             {{ t("settings.rolesBindingsAgentPick") }}
-            <select
-                v-model="selectedPrincipalId"
-                data-testid="agent-role-bindings-agent"
-                class="min-w-64 rounded border bg-background px-2 py-1 text-sm text-foreground"
+            <Select
+                :model-value="selectedPrincipalId || '__none__'"
                 :disabled="loading || agents.length === 0"
+                @update:model-value="
+                    (value) =>
+                        (selectedPrincipalId = value === '__none__' ? '' : String(value ?? ''))
+                "
             >
-                <option value="">{{ t("settings.rolesBindingsAgentPick") }}</option>
-                <option v-for="agent in agents" :key="agent.principalId" :value="agent.principalId">
-                    {{ agent.name }}
-                </option>
-            </select>
+                <SelectTrigger
+                    data-testid="agent-role-bindings-agent"
+                    class="min-w-64 rounded border bg-background px-2 py-1 text-sm text-foreground"
+                >
+                    <SelectValue>{{
+                        selectedPrincipalId
+                            ? (agents.find((agent) => agent.principalId === selectedPrincipalId)
+                                  ?.name ?? selectedPrincipalId)
+                            : t("settings.rolesBindingsAgentPick")
+                    }}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="__none__">{{
+                        t("settings.rolesBindingsAgentPick")
+                    }}</SelectItem>
+                    <SelectItem
+                        v-for="agent in agents"
+                        :key="agent.principalId"
+                        :value="agent.principalId"
+                    >
+                        {{ agent.name }}
+                    </SelectItem>
+                </SelectContent>
+            </Select>
         </label>
 
         <p
@@ -267,16 +289,41 @@ watch(selectedPrincipalId, (next, previous) => {
         <div class="flex flex-wrap items-end gap-2">
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsRole") }}
-                <select
-                    v-model="selectedRoleId"
-                    data-testid="agent-role-bindings-role"
-                    class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
+                <Select
+                    :model-value="selectedRoleId || '__none__'"
+                    @update:model-value="
+                        (value) =>
+                            (selectedRoleId = value === '__none__' ? '' : String(value ?? ''))
+                    "
                 >
-                    <option value="">{{ t("settings.rolesBindingsRolePick") }}</option>
-                    <option v-for="role in availableRoles" :key="role.id" :value="role.id">
-                        {{ role.displayName || role.name }}
-                    </option>
-                </select>
+                    <SelectTrigger
+                        data-testid="agent-role-bindings-role"
+                        class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
+                    >
+                        <SelectValue>{{
+                            selectedRoleId
+                                ? (availableRoles.find(
+                                      (role) => role.id === selectedRoleId,
+                                  )?.displayName ??
+                                  availableRoles.find((role) => role.id === selectedRoleId)
+                                      ?.name ??
+                                  selectedRoleId)
+                                : t("settings.rolesBindingsRolePick")
+                        }}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="__none__">{{
+                            t("settings.rolesBindingsRolePick")
+                        }}</SelectItem>
+                        <SelectItem
+                            v-for="role in availableRoles"
+                            :key="role.id"
+                            :value="role.id"
+                        >
+                            {{ role.displayName || role.name }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
             </label>
             <Button
                 variant="outline"

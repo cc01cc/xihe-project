@@ -11,6 +11,7 @@ import DialogDescription from "../../ui/dialog/DialogDescription.vue";
 import DialogFooter from "../../ui/dialog/DialogFooter.vue";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../ui/select";
 import { api, ApiError, type ApiWorkspace } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useCredentialsStore } from "../../../stores/credentials";
@@ -164,29 +165,55 @@ async function submit() {
                         <label class="text-sm font-medium" for="credential-kind">{{
                             t("credentials.kind")
                         }}</label>
-                        <select
-                            id="credential-kind"
-                            v-model="kind"
-                            data-testid="credentials-create-kind"
-                            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        <Select
+                            :model-value="kind"
+                            @update:model-value="
+                                (value) => (kind = String(value) as CredentialKind)
+                            "
                         >
-                            <option value="token">{{ t("credentials.kindToken") }}</option>
-                            <option value="key_pair">{{ t("credentials.kindKeyPair") }}</option>
-                        </select>
+                            <SelectTrigger
+                                id="credential-kind"
+                                data-testid="credentials-create-kind"
+                                class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="token">{{
+                                    t("credentials.kindToken")
+                                }}</SelectItem>
+                                <SelectItem value="key_pair">{{
+                                    t("credentials.kindKeyPair")
+                                }}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                     <div class="space-y-1.5">
                         <label class="text-sm font-medium" for="credential-tier">{{
                             t("credentials.tier")
                         }}</label>
-                        <select
-                            id="credential-tier"
-                            v-model="deliveryTier"
-                            data-testid="credentials-create-tier"
-                            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        <Select
+                            :model-value="deliveryTier"
+                            @update:model-value="
+                                (value) => (deliveryTier = String(value) as CredentialDeliveryTier)
+                            "
                         >
-                            <option value="lease">{{ t("credentials.tierLease") }}</option>
-                            <option value="reveal">{{ t("credentials.tierReveal") }}</option>
-                        </select>
+                            <SelectTrigger
+                                id="credential-tier"
+                                data-testid="credentials-create-tier"
+                                class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="lease">{{
+                                    t("credentials.tierLease")
+                                }}</SelectItem>
+                                <SelectItem value="reveal">{{
+                                    t("credentials.tierReveal")
+                                }}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                 </div>
                 <p
@@ -205,32 +232,59 @@ async function submit() {
                         <label class="text-sm font-medium" for="credential-owner">{{
                             t("credentials.owner")
                         }}</label>
-                        <select
-                            id="credential-owner"
-                            v-model="ownerType"
-                            data-testid="credentials-create-owner"
-                            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        <Select
+                            :model-value="ownerType"
+                            @update:model-value="
+                                (value) => (ownerType = String(value) as CredentialOwnerType)
+                            "
                         >
-                            <option value="USER">{{ t("credentials.ownerUser") }}</option>
-                            <option value="WORKSPACE">{{ t("credentials.ownerWorkspace") }}</option>
-                        </select>
+                            <SelectTrigger
+                                id="credential-owner"
+                                data-testid="credentials-create-owner"
+                                class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                            >
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="USER">{{
+                                    t("credentials.ownerUser")
+                                }}</SelectItem>
+                                <SelectItem value="WORKSPACE">{{
+                                    t("credentials.ownerWorkspace")
+                                }}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                     <div v-if="ownerType === 'WORKSPACE'" class="space-y-1.5">
                         <label class="text-sm font-medium" for="credential-workspace">{{
                             t("credentials.ownerWorkspaceSelect")
                         }}</label>
-                        <select
-                            id="credential-workspace"
-                            v-model="workspaceId"
-                            data-testid="credentials-create-workspace"
-                            class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                        <Select
+                            :model-value="workspaceId"
                             :disabled="workspacesLoading"
+                            @update:model-value="(value) => (workspaceId = String(value))"
                         >
-                            <option value="">—</option>
-                            <option v-for="ws in workspaces" :key="ws.id" :value="ws.id">
-                                {{ ws.name }}
-                            </option>
-                        </select>
+                            <SelectTrigger
+                                id="credential-workspace"
+                                data-testid="credentials-create-workspace"
+                                class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                            >
+                                <SelectValue
+                                    :placeholder="
+                                        workspaces.find((ws) => ws.id === workspaceId)?.name ?? '—'
+                                    "
+                                />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="ws in workspaces"
+                                    :key="ws.id"
+                                    :value="ws.id"
+                                >
+                                    {{ ws.name }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                 </div>
 

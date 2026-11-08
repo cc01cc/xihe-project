@@ -13,6 +13,20 @@
 
 合计 **25** 个文件。同一批要替换的原生 `<select>` 全仓基线见 §7。
 
+## 1.1 PLAN-0697 第二批（task-77：vendor 6 族，不接线业务页）
+
+| 组件目录 | 上游名 | 本地文件数 | 接线情况 |
+| ---- | ---- | ---- | ---- |
+| `dropdown-menu/` | `dropdown-menu` | 15 | **仅收录、未接线**（PLAN-0697 口径：只 vendor，不接业务页） |
+| `combobox/` | `combobox` | 12 | **仅收录、未接线**（依赖 `input-group`，见下） |
+| `toggle/` | `toggle` | 2 | **仅收录、未接线**（PLAN-0697 口径：只 vendor，不接业务页） |
+| `slider/` | `slider` | 2 | **仅收录、未接线**（PLAN-0697 口径：只 vendor，不接业务页） |
+| `accordion/` | `accordion` | 5 | **仅收录、未接线**（PLAN-0697 口径：只 vendor，不接业务页） |
+| `hover-card/` | `hover-card` | 4 | **仅收录、未接线**（PLAN-0697 口径：只 vendor，不接业务页） |
+| `input-group/` | `input-group` | 7 | **仅收录、未接线**（combobox 的 registryDependency；其 deps=`button`/`input`/`textarea` 均已在仓） |
+
+合计 **47** 个文件（6 族 40 + `input-group` 传递依赖 7）；本批不接线业务页。
+
 ## 2. 上游来源与版本
 
 - 注册表端点：`https://shadcn-vue.com/r/styles/reka-nova/<name>.json`
@@ -20,7 +34,7 @@
 - 上游仓库：[`unovue/shadcn-vue`](https://github.com/unovue/shadcn-vue)，默认分支 `dev`
 - 取件时上游 HEAD：`d1bf1b3a2d1a824b19f32d7253a28a43797b8253`（2026-11-03T09:14:04Z）
 - 许可证：MIT
-- 取件时间：2026-11-08
+- 取件时间：2026-11-08；第二批（PLAN-0697，6 族）取件时间 2026-11-09，快照在 `one/.local/evidence/plan-0697/registry/`。
 - 原始 JSON 快照（不入库，保留在 lane 证据目录 `one/.local/evidence/bl-476-l1/registry/`）：
 
 | 快照 | 大小 | SHA256[0:16] |
@@ -28,6 +42,13 @@
 | `select.reka-nova.json` | 12662 B | `DFDAA7621E5969F1` |
 | `tabs.reka-nova.json` | 6132 B | `617CCB1930B23053` |
 | `popover.reka-nova.json` | 5348 B | `5C0DD4C5783DDD24` |
+| `toggle.reka-nova.json` | 2913 B | `896C875877BC3AAB` |
+| `dropdown-menu.reka-nova.json` | 16582 B | `EF4EF416D50ABE38` |
+| `combobox.reka-nova.json` | 12047 B | `FBE5E77D4DBEE65A` |
+| `slider.reka-nova.json` | 2698 B | `8342C7FF50661A1E` |
+| `accordion.reka-nova.json` | 5107 B | `D98414F53C97F469` |
+| `hover-card.reka-nova.json` | 3178 B | `0DF83C4F6F8C0DC8` |
+| `input-group.reka-nova.json` | 8016 B | `128D4C1D4A279152` |
 
 - 取件脚本：`one/.local/evidence/bl-476-l1/vendor.mjs`（读快照 → 去掉 `styles/reka-nova/ui/` 路径前缀 → 重写 `cn` import → 写入本目录）
 
@@ -44,6 +65,7 @@ install 当前冻结（BL-478 前置），由 Lead 在 UI 单测基线转绿后�
 ## 4. 本地改动清单（重取上游时必须重做）
 
 1. `from 'cn'` → `from "@/lib/utils"`：注册表把 `cn` 当外部包名，本仓库没有该包。
+1b. 跨族 import `@/styles/reka-nova/ui/<name>` → `@/components/ui/<name>`：注册表按上游站点根写路径，本仓组件在 `src/components/ui/`。本批命中 5 处（`input-group` 3 文件 × button/input/textarea、`combobox/ComboboxInput.vue` × input-group）。
 2. `oxfmt` 统一格式化（4 空格缩进、`printWidth: 100`、双引号、分号）——只动空白与引号，无逻辑改动。
 3. 原样保留的**惰性类名**：`cn-menu-target`、`cn-menu-translucent`、`cn-font-heading`、`cn-tabs`、`cn-card`
    在本仓库 `src/styles/` 下没有定义（`rg` 为空），属上游其他 style 的残留产物。保留是为了与上游 diff 可读，
@@ -93,6 +115,88 @@ install 当前冻结（BL-478 前置），由 Lead 在 UI 单测基线转绿后�
 | `PopoverHeader.vue` | 331 B | `4543B4FB028C` |
 | `PopoverTitle.vue` | 328 B | `49D1F9231117` |
 | `PopoverTrigger.vue` | 307 B | `E92974A7B74A` |
+
+`dropdown-menu/`（15）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `DropdownMenu.vue` | 509 B | `136AA4B6AD8F` |
+| `DropdownMenuCheckboxItem.vue` | 1680 B | `18CC3D19531C` |
+| `DropdownMenuContent.vue` | 1768 B | `E28F4509970C` |
+| `DropdownMenuGroup.vue` | 326 B | `2A9FF6231CB4` |
+| `DropdownMenuItem.vue` | 1664 B | `FE07D66B8690` |
+| `DropdownMenuLabel.vue` | 848 B | `DED59F0DB162` |
+| `DropdownMenuRadioGroup.vue` | 525 B | `E19600C78D23` |
+| `DropdownMenuRadioItem.vue` | 1654 B | `1FC12C87B314` |
+| `DropdownMenuSeparator.vue` | 630 B | `775F53972A38` |
+| `DropdownMenuShortcut.vue` | 509 B | `AF21D9A3B0E1` |
+| `DropdownMenuSub.vue` | 506 B | `92BD6FDE209B` |
+| `DropdownMenuSubContent.vue` | 1439 B | `174665E584A3` |
+| `DropdownMenuSubTrigger.vue` | 1318 B | `C0B7BA16B480` |
+| `DropdownMenuTrigger.vue` | 412 B | `79A70E1F6A44` |
+| `index.ts` | 1113 B | `BC31C0DA4040` |
+
+`combobox/`（12）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `Combobox.vue` | 476 B | `D4C9C2D719AA` |
+| `ComboboxAnchor.vue` | 623 B | `4E56F9709786` |
+| `ComboboxEmpty.vue` | 765 B | `3D2703DDE915` |
+| `ComboboxGroup.vue` | 813 B | `2E4EBC304289` |
+| `ComboboxInput.vue` | 1240 B | `4258F1C4EC96` |
+| `ComboboxItem.vue` | 1190 B | `958E47A295FC` |
+| `ComboboxItemIndicator.vue` | 840 B | `20547108044D` |
+| `ComboboxList.vue` | 1911 B | `9870B22C2EFE` |
+| `ComboboxSeparator.vue` | 631 B | `BD24717F6241` |
+| `ComboboxTrigger.vue` | 713 B | `8131A76F3E18` |
+| `ComboboxViewport.vue` | 881 B | `F22BCE0426B6` |
+| `index.ts` | 769 B | `BC84D5266474` |
+
+`toggle/`（2）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `index.ts` | 1578 B | `2BF8C2D648EA` |
+| `Toggle.vue` | 1087 B | `7CD67E888DD1` |
+
+`slider/`（2）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `index.ts` | 50 B | `C94ACAE44CF7` |
+| `Slider.vue` | 2342 B | `FCBDD169A0FB` |
+
+`accordion/`（5）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `Accordion.vue` | 792 B | `C057F080BE80` |
+| `AccordionContent.vue` | 949 B | `6AE9B14D5483` |
+| `AccordionItem.vue` | 719 B | `338219AD2587` |
+| `AccordionTrigger.vue` | 1825 B | `0090B92C91C6` |
+| `index.ts` | 260 B | `C080FE8A6F4F` |
+
+`hover-card/`（4）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `HoverCard.vue` | 485 B | `6F7FBDEDAECE` |
+| `HoverCardContent.vue` | 1474 B | `9A2F28FC9F7D` |
+| `HoverCardTrigger.vue` | 320 B | `554B85D7AC2D` |
+| `index.ts` | 196 B | `1C4223AD6386` |
+
+`input-group/`（7）
+
+| 文件 | 大小 | SHA256[0:12] |
+| ---- | ---- | ---- |
+| `index.ts` | 2397 B | `D3B5BD733B08` |
+| `InputGroup.vue` | 1519 B | `7B5F8BD53450` |
+| `InputGroupAddon.vue` | 1074 B | `E9B7DDF82CB5` |
+| `InputGroupButton.vue` | 563 B | `B5C686BCF651` |
+| `InputGroupInput.vue` | 595 B | `1B0D23DBC98F` |
+| `InputGroupText.vue` | 475 B | `DD0C38B72008` |
+| `InputGroupTextarea.vue` | 621 B | `5DBCFF160BF0` |
 
 ## 6. 接线时的行为陷阱（reka-ui 2.10.5 实测）
 

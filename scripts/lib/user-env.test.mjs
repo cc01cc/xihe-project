@@ -3,12 +3,14 @@
  * 不碰真实注册表：`exec` 全部注入；process.env 改动都在 try/finally 里还原。
  */
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 
 import { ensureEnvFromUser, readUserEnv } from './user-env.mjs';
 
 const NAME = 'XH_CARGO_TARGET_ROOT';
-const USER_VALUE = 'G:\\zeolib\\cargo-target';
+const USER_VALUE = join(tmpdir(), 'cargo-target');
 const REG_OK = `\r\nHKEY_CURRENT_USER\\Environment\r\n    ${NAME}    REG_SZ    ${USER_VALUE}\r\n\r\n`;
 let savedProcessValue;
 let savedExisted;

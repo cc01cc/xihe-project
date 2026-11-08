@@ -14,6 +14,7 @@ import {
 import { useConfigStore } from "../../stores/config";
 import type { ProviderConnection } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const props = defineProps<{
     layer: "user" | "workspace";
@@ -153,24 +154,35 @@ onMounted(load);
                     <label class="text-xs text-muted-foreground">
                         {{ t("settings.embeddingConnection") }}
                     </label>
-                    <select
-                        v-model="selectedConnectionId"
-                        data-testid="embedding-connection-select"
-                        class="w-full border rounded px-2 py-1.5 text-sm bg-background disabled:opacity-60"
+                    <Select
+                        :model-value="selectedConnectionId || '__none__'"
                         :disabled="readonly"
+                        @update:model-value="
+                            (value) =>
+                                (selectedConnectionId =
+                                    value === '__none__' ? '' : String(value ?? ''))
+                        "
                     >
-                        <option value="">
-                            {{ t("settings.embeddingConnectionNone") }}
-                        </option>
-                        <option
-                            v-for="connection in candidateConnections"
-                            :key="connection.id"
-                            :value="connection.id"
+                        <SelectTrigger
+                            data-testid="embedding-connection-select"
+                            class="w-full border rounded px-2 py-1.5 text-sm bg-background disabled:opacity-60"
                         >
-                            {{ connection.label || connection.connectionKey }}
-                            ({{ connection.scope === "USER" ? "个人" : "工作区" }})
-                        </option>
-                    </select>
+                            <SelectValue :placeholder="t('settings.embeddingConnectionNone')" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none__">{{
+                                t("settings.embeddingConnectionNone")
+                            }}</SelectItem>
+                            <SelectItem
+                                v-for="connection in candidateConnections"
+                                :key="connection.id"
+                                :value="connection.id"
+                            >
+                                {{ connection.label || connection.connectionKey }}
+                                ({{ connection.scope === "USER" ? "个人" : "工作区" }})
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                     <p
                         v-if="candidateConnections.length === 0"
                         class="text-xs text-muted-foreground"

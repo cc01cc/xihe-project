@@ -86,13 +86,8 @@ public class McpSessionStatusController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP session query failed");
         }
-        String detail = switch (code) {
-            case "WORKSPACE_NOT_FOUND" -> "Workspace not found in Runtime";
-            case "WORKSPACE_DESTROYING" -> "Workspace is being destroyed";
-            case "WORKSPACE_BUSY" -> "Workspace is busy";
-            default -> "Workspace materialization failed";
-        };
-        return ProblemDetailsHandler.problemResponse(mapped, code, detail);
+        // PLAN-0706 / BL-152: code only — the UI maps it; CP does not ship an English sentence.
+        return ProblemDetailsHandler.problemResponse(mapped, code, null);
     }
 
     /** 显式键名映射（唯一一次）；值域保持 Runtime 小写字面量，不重命名大小写。 */

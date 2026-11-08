@@ -4,9 +4,12 @@
 #   mockito-bean | test-configuration | docker-frozen | async-sse | before-all | nested
 #   test-listeners | boot-test-variant | chat-run-dispatch（仅 §4.1 已批准的 17 类）
 # 列：FQCN <TAB> 判定码(逗号分隔) <TAB> 判定说明
-# 计数：per-class=73 / reusable=72（71 迁移类 + R-D 快照种子夹具 ReuseSnapshotSeedFixtureTest）/ 合计=145
+# 计数：per-class=76 / reusable=72（71 迁移类 + R-D 快照种子夹具 ReuseSnapshotSeedFixtureTest）/ 合计=148
 # 判定码计数：active-profiles=2 | async-sse=28 | before-all=9 | chat-run-dispatch=17 | docker-frozen=2 | dynamic-property-source=17 | mockito-bean=18 | test-configuration=1 | test-property-source=13（含 0691 T1.6b PluginRunSnapshotAdmissionTest）
 # 注意：docker-frozen 2 类在默认 surefire 配置下不执行，因此实际 per-class context = 70 - 2 = 68。
+com.cc01cc.p.xihe.cp.chat.WorkspaceLessChatRunWorkspaceParityTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0647 V8 parity）
+com.cc01cc.p.xihe.cp.chat.WorkspaceLessForbiddenNegativeTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0705 BL-513 负向 10 项）
+com.cc01cc.p.xihe.cp.chat.WorkspaceLessSessionCreationIntegrationTest		继承 AbstractIntegrationTest 的 RANDOM_PORT/@DirtiesContext 上下文；无自有 context key 注解（PLAN-0647 M3 创建）
 com.cc01cc.p.xihe.cp.auth.AuthLockoutAccountIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.auth.AuthLockoutIpIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
 com.cc01cc.p.xihe.cp.auth.AuthLockoutSpoofIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）

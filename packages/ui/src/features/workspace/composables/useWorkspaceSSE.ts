@@ -147,7 +147,7 @@ export function useWorkspaceSSE(
                                 error instanceof Error ? error.message : String(error);
                             if (error instanceof ApiError) {
                                 connectionErrorCode.value = error.problem.code ?? null;
-                                reportSseSubscriberLimit(error.problem.code);
+                                reportSseSubscriberLimit(error.problem.code, key);
                             }
                             throw error;
                         }
@@ -156,7 +156,7 @@ export function useWorkspaceSSE(
                     connectionError.value = null;
                     connectionErrorCode.value = null;
                     // BL-335：重新连上 ⇒ 之前的订阅上限提示作废（否则横幅会一直挂着）。
-                    clearSseSubscriberLimit();
+                    clearSseSubscriberLimit(undefined, key);
                 },
                 onmessage: async (message) => {
                     if (activeWorkspaceId !== id) return;
@@ -189,7 +189,7 @@ export function useWorkspaceSSE(
                     connectionError.value = error.message;
                     if (error instanceof ApiError) {
                         connectionErrorCode.value = error.problem.code ?? null;
-                        reportSseSubscriberLimit(error.problem.code);
+                        reportSseSubscriberLimit(error.problem.code, key);
                     }
                 },
                 onclose: () => {
@@ -204,7 +204,7 @@ export function useWorkspaceSSE(
                 // BL-335：把 problem code 留住（原来只存 message，429 的具体码被丢掉）。
                 if (error instanceof ApiError) {
                     connectionErrorCode.value = error.problem.code ?? null;
-                    reportSseSubscriberLimit(error.problem.code);
+                    reportSseSubscriberLimit(error.problem.code, key);
                 }
             });
         return {

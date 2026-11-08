@@ -26,14 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * task-11（task-255 全量分桶）静态守卫：把 145 个 AbstractIntegrationTest 体系类锁进两个互斥且穷尽的桶——
+ * task-11（task-255 全量分桶）静态守卫：把 148 个 AbstractIntegrationTest 体系类锁进两个互斥且穷尽的桶——
  * reusable（AbstractReusableIntegrationTest，共享 1 个上下文）与 per-class（白名单
  * context-reuse/per-class-whitelist.tsv，保持原基类/原 context key）。
  *
  * <p>三道锁：(R1) reusable 类不得带 per-class 标记，@DynamicPropertySource/@TestPropertySource/
  * @ActiveProfiles/@DirtiesContext/mockito bean override 属 context key 本体**无逃生口**；@BeforeAll/@AfterAll/
  * @Nested/@Async 等可选标记只允许带 // context-reuse-ok: <理由> 且逐条打印（预算 10）。
- * (R2/R3) 白名单与复用桶互斥且穷尽 145 类；白名单判定码与源码推导严格一致、类必须存在（stale/漂移即红）。
+ * (R2/R3) 白名单与复用桶互斥且穷尽 148 类；白名单判定码与源码推导严格一致、类必须存在（stale/漂移即红）。
  *
  * <p>判定码推导是静态文本启发式（去注释 + 行首注解 + 并发/SSE 类型 + 类自己的 @SpringBootTest 参数变体）。
  * 它是 ratchet 不是证明：误判成 per-class 只损失时间；漏判方向由 R2 兜住（未迁移类必须在白名单显式登记）。
@@ -221,11 +221,11 @@ class ContextReuseBucketingTest {
                 problems.add("白名单条目对应类不存在（stale）：" + fqcn);
             }
         }
-        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 145 类：" + problems);
-        assertEquals(73, whitelist.size(), "per-class 白名单 = 73（51 flagged + 5 @MockitoSpyBean + 17 §4.1 async-chat + 1 0691 T1.6b + 1 0646 MVP + 1 0642 MVP，去重）");
-        assertEquals(73, perClass, "per-class 类数必须等于白名单条目数");
+        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 148 类：" + problems);
+        assertEquals(76, whitelist.size(), "per-class 白名单 = 76（51 flagged + 5 @MockitoSpyBean + 17 §4.1 async-chat + 1 0691 T1.6b + 1 0646 MVP + 1 0642 MVP + 2 0647 3.1/3.2 + 1 0705，去重）");
+        assertEquals(76, perClass, "per-class 类数必须等于白名单条目数");
         assertEquals(72, reusable, "reusable 桶 = 72（71 迁移类 + R-D 快照种子夹具 1 类）");
-        assertEquals(145, classes.size(), "145 = 73 per-class + 72 reusable");
+        assertEquals(148, classes.size(), "148 = 76 per-class + 72 reusable");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {

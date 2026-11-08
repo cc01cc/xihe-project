@@ -38,6 +38,9 @@ vi.mock("../../../composables/api", async (importOriginal) => {
 const authState = vi.hoisted(() => ({ isAdmin: true }));
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({
+        // D-713/B7: RolesView now asks auth for its own permission projection on mount (direct
+        // route may mount before SettingsNav). The mock must expose the real store API.
+        ensureSelfPermissions: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
         get isAdmin() {
             return authState.isAdmin;
         },

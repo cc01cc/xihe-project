@@ -16,6 +16,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -504,6 +505,41 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 "durable value and the relayed SSE value must be the same object");
     }
 
+    /**
+     * PLAN-0647 MVP (D-678/D-686/D-697): the pure-chat chain — a workspace-less Session admits a
+     * Run with workspace_id = NULL, dispatches to the Agent and keeps the authorization snapshot null.
+     * (H2 lane: the SSE manager is mocked; the CP→Agent dispatch is the assertion here.)
+     */
+    @Test
+    void workspaceLessChatPersistsNullWorkspaceRunAndDispatchesToAgent() {
+        String sessionId = UUID.randomUUID().toString();
+        Session session = new Session(null, userId, "pure chat");
+        session.setId(UUID.fromString(sessionId));
+        session.setAgentPermissionsSnapshot(null);
+        com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.bindNewChatConnection(
+                session, providerConnectionRepository, apiRequestTemplates, userId);
+        sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(sessionId, principalId);
+
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: done\ndata: {\"content\":\"ok\"}\n\n")));
+
+        ResponseEntity<Map> accepted = restTemplate.exchange(url("/api/v1/chat"), HttpMethod.POST,
+                entityWithAuth(Map.of("sessionId", sessionId,
+                        "branchId", branchPathService.ensureRootBranchId(sessionId),
+                        "content", "pure chat"), token), Map.class);
+        assertEquals(HttpStatus.ACCEPTED, accepted.getStatusCode(), String.valueOf(accepted.getBody()));
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            var runs = chatRunRepository.findBySessionIdOrderByCreatedAtDescIdDesc(
+                    sessionId, org.springframework.data.domain.Pageable.ofSize(10));
+            assertFalse(runs.isEmpty(), "the pure-chat Run must be persisted");
+            assertNull(runs.getFirst().getWorkspaceId(),
+                    "D-47-05: the Run's workspace is the Session's NULL, never a fallback");
+            wireMock.verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat")));
+        });
+    }
     private void createAgentSession(String sessionId, String title) {
         Session session = new Session(workspaceId, userId, title);
         session.setId(UUID.fromString(sessionId));

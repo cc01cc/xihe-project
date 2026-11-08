@@ -9,6 +9,7 @@ import DialogHeader from "../../../../components/ui/dialog/DialogHeader.vue";
 import DialogTitle from "../../../../components/ui/dialog/DialogTitle.vue";
 import { Button } from "../../../../components/ui/button";
 import { Textarea } from "../../../../components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** One delegable (bound, enabled) workspace agent principal. */
 export interface DelegationPrincipal {
@@ -99,24 +100,34 @@ function submit() {
                     <label for="delegation-principal" class="text-sm font-medium">
                         {{ t("chat.delegation.principalLabel") }}
                     </label>
-                    <select
-                        id="delegation-principal"
-                        v-model="selectedPrincipalId"
-                        data-testid="delegation-principal-select"
-                        class="h-8 rounded-lg border border-input bg-action px-2.5 text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
-                        @change="onPrincipalChange"
+                    <Select
+                        :model-value="selectedPrincipalId"
+                        @update:model-value="
+                            (value) => {
+                                selectedPrincipalId = String(value ?? '');
+                                onPrincipalChange();
+                            }
+                        "
                     >
-                        <option value="" disabled>
-                            {{ t("chat.delegation.principalPlaceholder") }}
-                        </option>
-                        <option
-                            v-for="principal in visiblePrincipals"
-                            :key="principal.principalId"
-                            :value="principal.principalId"
+                        <SelectTrigger
+                            id="delegation-principal"
+                            data-testid="delegation-principal-select"
+                            class="h-8 rounded-lg border border-input bg-action px-2.5 text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
                         >
-                            {{ principal.name }}
-                        </option>
-                    </select>
+                            <SelectValue
+                                :placeholder="t('chat.delegation.principalPlaceholder')"
+                            />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem
+                                v-for="principal in visiblePrincipals"
+                                :key="principal.principalId"
+                                :value="principal.principalId"
+                            >
+                                {{ principal.name }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 <div class="grid gap-1.5">

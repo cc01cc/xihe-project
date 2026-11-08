@@ -1,4 +1,4 @@
-import { expect, test } from "./helpers/mock-test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
@@ -15,12 +15,29 @@ import { EXPECT_TIMEOUT_MS } from "../timeouts";
  */
 const SESSION_ID = "c1-provider-binding-guide";
 
+// 第一次 bind-defaults 的 400 是**故意**造出的引导路径；page-failures 门禁只放行这一条。
+test.use({
+    mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`bind-defaults`],
+});
+
 test.describe("C1: provider binding guide before send", () => {
     test("guides an unbound session, auto-binds on retry, then the message goes through", async ({
         page,
     }) => {
         await setupMockAuth(page, { sse: { tokens: ["bound reply"] } });
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "C1 guide" }] });
+        // 绑成功后重发走 POST /api/v1/chat（catch-all {} 无 runId）；补 202 最小契约。
+        await page.route("**/api/v1/chat", async (route) => {
+            await route.fulfill({
+                status: 202,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    status: "accepted",
+                    sessionId: SESSION_ID,
+                    runId: "run-c1-guide",
+                }),
+            });
+        });
 
         let bindAttempts = 0;
         await page.route(`**/api/v1/sessions/${SESSION_ID}/bind-defaults`, async (route) => {
@@ -49,6 +66,9 @@ test.describe("C1: provider binding guide before send", () => {
                     id: SESSION_ID,
                     title: "C1 guide",
                     workspaceId: "workspace-1",
+                    // normalizeSession 的 detail 契约要求 archived 为 boolean；缺字段会被判成
+                    // InvalidSessionProjectionError → onBlocked(BIND_FAILED)，toast 永远不会出现。
+                    archived: false,
                     agentPrincipalId: "00000000-0000-4000-8000-0000000000a1",
                     modelProvider: "deepseek",
                     modelName: "deepseek-flash",
