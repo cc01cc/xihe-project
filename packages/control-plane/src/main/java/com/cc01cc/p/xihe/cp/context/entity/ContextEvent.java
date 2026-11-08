@@ -33,7 +33,7 @@ public class ContextEvent implements org.springframework.data.domain.Persistable
     @Convert(converter = UuidStringConverter.class)
     private String sessionId;
 
-    @Column(name = "workspace_id", nullable = false, length = 36)
+    @Column(name = "workspace_id", nullable = true, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String workspaceId;
 

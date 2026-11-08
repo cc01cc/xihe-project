@@ -13,10 +13,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1415,6 +1417,44 @@ class DomainSchemaMigrationTest {
         assertEquals(1, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
                         + "'::uuid AND parent_run_id = '" + parentRunId + "'::uuid"),
                 "a rejected self-reference must leave the row untouched");
+    }
+
+    /**
+     * PLAN-0647 MVP (D-678, V145): exactly four tenant columns become nullable; the five fail-closed
+     * tables keep NOT NULL. V2: the migration carries no INSERT/UPDATE/DELETE and writes no NULL rows.
+     */
+    @Test
+    void v145WorkspaceLessSessionsDropNotNullOnExactlyFourTables() throws Exception {
+        for (String table : List.of("sessions", "chat_runs", "context_events", "context_projections")) {
+            assertEquals("YES", scalarString("SELECT is_nullable FROM information_schema.columns "
+                    + "WHERE table_schema = 'public' AND table_name = '" + table
+                    + "' AND column_name = 'workspace_id'"),
+                    table + ".workspace_id must be nullable after V145");
+            assertEquals(0, scalarInt("SELECT count(*) FROM " + table + " WHERE workspace_id IS NULL"),
+                    table + ": the migration must not write NULL rows (zero backfill)");
+        }
+        for (String table : List.of("run_checkpoints", "agent_graph_checkpoint_lineages",
+                "approval_requests", "context_source_hashes")) {
+            assertEquals("NO", scalarString("SELECT is_nullable FROM information_schema.columns "
+                    + "WHERE table_schema = 'public' AND table_name = '" + table
+                    + "' AND column_name = 'workspace_id'"),
+                    table + ".workspace_id must stay NOT NULL (fail-closed boundary, design §2.4)");
+        }
+        // verify V1 pins agent_memories(V99:29), but V107 dropped that column (principal-scoped memories).
+        // The column being absent is strictly stronger than NOT NULL; assert the current shape explicitly.
+        assertEquals(0, scalarInt("SELECT count(*) FROM information_schema.columns "
+                + "WHERE table_schema = 'public' AND table_name = 'agent_memories' "
+                + "AND column_name = 'workspace_id'"),
+                "V107 dropped agent_memories.workspace_id; a pure-chat session must never reach memory writes");
+        String index = scalarString("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+                + "AND indexname = 'idx_sessions_user_active_no_workspace'");
+        assertTrue(index.contains("workspace_id IS NULL"),
+                "D47-08: the pure-chat list index must be partial: " + index);
+        String sql = java.nio.file.Files.readString(java.nio.file.Path.of(
+                "src/main/resources/db/migration/V145__plan0647_workspaceless_sessions.sql"));
+        String withoutComments = sql.replaceAll("(?m)^\\s*--.*$", "");
+        assertFalse(java.util.regex.Pattern.compile("\\b(UPDATE|INSERT|DELETE)\\b")
+                .matcher(withoutComments).find(), "V2: the migration file must not contain DML");
     }
 
     /**
