@@ -2,6 +2,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
+import { selectByDomClick, selectByLocator } from "../helpers/select";
 
 const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
     WORKSPACE_ID = "workspace-1";
@@ -413,9 +414,10 @@ test.describe("Policy management (desktop)", () => {
         await page
             .getByTestId(`settings-tool-face-classify-action-class-${UNCLASSIFIED_TOOL}`)
             .fill("exec");
-        await page
-            .getByTestId(`settings-tool-face-classify-shape-${UNCLASSIFIED_TOOL}`)
-            .selectOption("interpreter");
+        await selectByLocator(
+            page.getByTestId(`settings-tool-face-classify-shape-${UNCLASSIFIED_TOOL}`),
+            "解释器型",
+        );
         await page.getByTestId(`settings-tool-face-classify-submit-${UNCLASSIFIED_TOOL}`).click();
 
         await expect.poll(() => state.classifications.length).toBe(1);
@@ -460,7 +462,10 @@ test.describe("Policy management (desktop)", () => {
         expect(calls).toHaveLength(0);
         expect(state.classifications).toHaveLength(0);
         await dialog.locator('[data-testid="approval-classify-action-class"]').fill("exec");
-        await dialog.locator('[data-testid="approval-classify-shape"]').selectOption("interpreter");
+        await selectByDomClick(
+            dialog.locator('[data-testid="approval-classify-shape"]'),
+            "解释器型",
+        );
         await dialog.locator('[data-testid="approval-classify-submit"]').click();
 
         await expect.poll(() => state.classifications.length).toBe(1);
