@@ -60,6 +60,24 @@
           `target-b/`. An explicit `-Dxihe.target.dir` wins over the suffix (it is the absolute form).
         -->
         <xihe.target.dir>${project.basedir}/target${xihe.build.suffix}</xihe.target.dir>
+        <!--
+          task-243: surefire fork count for `mvn test` (multi-core execution).
+
+          Why: the default of one fork uses one core of the 32-core host for the 15-minute full run.
+          User ruling 2026-11-08: multi-core execution is allowed; the default here is 2 so a plain
+          `mvn test` overlaps two class groups without requiring a new command. Override per run with
+          `-Dxihe.test.forkCount=1` (serial) or `=4` (data-only experiment, not a default).
+
+          Measurement-window rule: any run whose wall-clock / peak-RSS numbers are quoted as evidence
+          (measurement classes, L2 comparisons) MUST pass `-Dxihe.test.forkCount=1`. Fork count changes
+          the GC and memory numbers, so a 2-fork run is not comparable to the historical 1-fork baselines
+          (see `test-suite-cost.md` P5 and the l2-window protocol).
+
+          `reuseForks=true`: `forkCount` is a reuse pool size, so each fork survives across classes
+          (no JVM restart per class) instead of `forkCount` sequential single-use forks. JUnit `parallel`
+          is deliberately NOT enabled here (P7 deferred: per-test parallelism needs isolation work).
+        -->
+        <xihe.test.forkCount>2</xihe.test.forkCount>
     </properties>
     
     <dependencies>
@@ -288,6 +306,12 @@
                          the tree; -Dgroups=docker-frozen restores them. Inventory:
                          plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md -->
                     <excludedGroups>${docker.frozen.excludedGroups}</excludedGroups>
+                    <!-- task-243: two forked JVMs by default (override per run; measurement windows
+                         must pass -Dxihe.test.forkCount=1 — see the property comment above).
+                         Each fork owns its own Spring context and Testcontainers PG, so a 2-fork
+                         run has two PG containers; test classes themselves stay sequential. -->
+                    <forkCount>${xihe.test.forkCount}</forkCount>
+                    <reuseForks>true</reuseForks>
                 </configuration>
             </plugin>
             <plugin>
@@ -341,6 +365,11 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <reportsDirectory>${project.build.directory}/surefire-reports-shard-a</reportsDirectory>
+                            <!-- task-243: the 2-shard lane is already parallel at the *process* level
+                                 (two Maven runs), and its 301–343 s measurement was taken with one
+                                 fork per shard. Pinning 1 keeps that baseline comparable and avoids
+                                 4 PGs (2 shards × 2 forks) on this host. -->
+                            <forkCount>1</forkCount>
                             <includes>
                                 <include>**/chat/**/*Test.java</include>
                                 <include>**/auth/**/*Test.java</include>
@@ -369,6 +398,9 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <reportsDirectory>${project.build.directory}/surefire-reports-shard-b</reportsDirectory>
+                            <!-- task-243: same pin as shard A — the shard lane's measured baseline is
+                                 one fork per process (see the default surefire comment above). -->
+                            <forkCount>1</forkCount>
                             <includes>
                                 <include>**/Test*.java</include>
                                 <include>**/*Test.java</include>
