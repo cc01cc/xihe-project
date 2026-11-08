@@ -493,6 +493,8 @@ LangChain events are automatically mapped through the SSE adapter layer (`packag
 > `UI Unit`, `Agent Unit` and `Runtime` still carry older counts (206 / 150 / 176) that were **not**
 > re-measured in this batch; treat them as indicative until they get the same treatment.
 
+- **DEV-only preview page**: with the UI dev server running, open `/preview.html` (Vite multi-entry; not a product route or build entry). Its **Modal + Popover** block is the manual regression surface for overlay stacking — BaseModal backdrop vs Popover/Select z-index (PLAN-0714 / BL-518). The page calls no `/api/v1/**`; everything is mock data.
+
 ### 4.2. Test Directory Naming Convention
 
 Test directories are named by **test pattern**, not by functional module:
