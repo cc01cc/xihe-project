@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -55,7 +55,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       promise of the retirement.</li>
  * </ol>
  */
-class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
+class AgentPrincipalRoleBindingIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private AgentPrincipalService agentPrincipalService;

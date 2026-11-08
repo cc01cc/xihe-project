@@ -11,7 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class MessageControllerIntegrationTest extends AbstractIntegrationTest {
+class MessageControllerIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private UserRepository userRepository;

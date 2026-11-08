@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.CredentialRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * PLAN-0577: the chat binding fixture must stay idempotent for the same
  * business key without collapsing different keys onto one label.
  */
-class ChatBindingTestSupportTest extends AbstractIntegrationTest {
+class ChatBindingTestSupportTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private ProviderConnectionRepository connections;

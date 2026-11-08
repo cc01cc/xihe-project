@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -60,7 +60,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Codes that must not leak existence (unknown vs cross-Session/cross-Workspace)
  * are asserted equal.
  */
-class BranchFailClosedMatrixIntegrationTest extends AbstractIntegrationTest {
+class BranchFailClosedMatrixIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private WorkspaceFixture workspaceFixture;

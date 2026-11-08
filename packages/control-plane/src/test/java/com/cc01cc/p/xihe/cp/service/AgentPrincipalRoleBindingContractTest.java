@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
@@ -51,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and still leave the agent unauthorized for its next session (the failure mode PLAN-0660 hit from
  * the other side).</p>
  */
-class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
+class AgentPrincipalRoleBindingContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

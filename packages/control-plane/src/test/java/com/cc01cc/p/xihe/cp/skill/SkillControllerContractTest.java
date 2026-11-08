@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.skill;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       same reason.</li>
  * </ul>
  */
-class SkillControllerContractTest extends AbstractIntegrationTest {
+class SkillControllerContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private WorkspaceFixture workspaceFixture;

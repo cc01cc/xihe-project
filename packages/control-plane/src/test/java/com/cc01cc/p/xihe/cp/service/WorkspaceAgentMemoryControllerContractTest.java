@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * dedupe/dedupe-conflict 201/409 pair, and the archive ruling of 2026-11-03 expressed as
  * {@code DELETE → status=retired|all}.</p>
  */
-class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest {
+class WorkspaceAgentMemoryControllerContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

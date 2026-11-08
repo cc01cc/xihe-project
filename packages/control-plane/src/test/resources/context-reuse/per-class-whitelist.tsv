@@ -1,0 +1,79 @@
+# context-reuse per-class whitelist — task-255（PLAN-0682 / task-11）
+# 判定码枚举（守卫 ContextReuseBucketingTest 从源码推导并与本清单逐条严格比对；漂移即红）：
+#   dynamic-property-source | test-property-source | active-profiles | dirties-context
+#   mockito-bean | test-configuration | docker-frozen | async-sse | before-all | nested
+#   test-listeners | boot-test-variant | chat-run-dispatch（仅 §4.1 已批准的 17 类）
+# 列：FQCN <TAB> 判定码(逗号分隔) <TAB> 判定说明
+# 计数：per-class=70 / reusable=72（71 迁移类 + R-D 快照种子夹具 ReuseSnapshotSeedFixtureTest）/ 合计=142
+# 判定码计数：active-profiles=2 | async-sse=28 | before-all=9 | chat-run-dispatch=17 | docker-frozen=2 | dynamic-property-source=17 | mockito-bean=18 | test-configuration=1 | test-property-source=12
+# 注意：docker-frozen 2 类在默认 surefire 配置下不执行，因此实际 per-class context = 70 - 2 = 68。
+com.cc01cc.p.xihe.cp.auth.AuthLockoutAccountIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.auth.AuthLockoutIpIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.auth.AuthLockoutSpoofIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.auth.AuthRegisterLimitIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.auth.GrantDefaultBootstrapIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.auth.RegistrationPolicyIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.chat.AgentSpawnPrincipalContractTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ApprovalHistoryIntegrationTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.chat.ApprovalIntegrationTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.ChatAdmissionGovernorHttpTest	dynamic-property-source,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.ChatIntegrationTest	dynamic-property-source,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.ChatRunContextTruncationIntegrationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceConcurrencyIntegrationTest	dynamic-property-source,async-sse	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceHttpIntegrationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceRecoveryIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.ChatRunGuidanceServiceIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.ChatRunLeaseIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ChatRunTransportLifecycleIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ChatSubmissionServiceIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.DelegationBudgetSpawnIntegrationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.DelegationChainWalkIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.DelegationTimeoutPropagationIntegrationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.E2eGuidanceBarrierAbsentOutsideE2eProfileTest	dynamic-property-source,active-profiles	自带 @DynamicPropertySource（context key 唯一）；自带 @ActiveProfiles（context key 唯一）
+com.cc01cc.p.xihe.cp.chat.E2eGuidanceBarrierHttpIntegrationTest	dynamic-property-source,active-profiles,async-sse	自带 @DynamicPropertySource（context key 唯一）；自带 @ActiveProfiles（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.FollowUpQueuePostgresIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.ForkPropagationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.RunTraceControllerIntegrationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SessionForkFailureInjectionIntegrationTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.SessionForkIntegrationTest	dynamic-property-source,mockito-bean,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.SessionParticipantHttpTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SessionPrimaryParticipantTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SkillSnapshotFreezeIntegrationTest	mockito-bean,chat-run-dispatch	Boot4 bean override：@MockitoBean/@MockitoSpyBean；design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SkillSnapshotPrincipalContrastTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SpawnCancelSerializationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.SpawnLifecycleTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.chat.SseMultiTabIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.SseParticipantDispatchTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.TerminalInboxAtomicityIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.TerminalTransactionCoreIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.chat.UserQuestionControllerIntegrationTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.chat.UserQuestionServiceIntegrationTest	dynamic-property-source,async-sse,before-all	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.context.BranchConcurrencyIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.context.ContextEventReadContractIntegrationTest	dynamic-property-source	自带 @DynamicPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.context.ContextLockTimeoutIntegrationTest	dynamic-property-source,async-sse	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.context.EventStoreServiceIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.files.ChatAttachmentIntegrationTest	dynamic-property-source	自带 @DynamicPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.files.SessionForkRecoveryServiceIntegrationTest	dynamic-property-source,mockito-bean,before-all	自带 @DynamicPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.mcp.CredentialToolAcquisitionContractTest	dynamic-property-source,before-all	自带 @DynamicPropertySource（context key 唯一）；@BeforeAll/@AfterAll 静态夹具
+com.cc01cc.p.xihe.cp.mcp.McpInvocationIntegrationTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.migration.StateEnumConformanceTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.oauth.OAuthBrokerLockTimeoutIntegrationTest	dynamic-property-source,async-sse	自带 @DynamicPropertySource（context key 唯一）；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.operation.CapabilityEnvelopeRefusalTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.operation.WorkspaceJobCancelIntegrationTest	mockito-bean,docker-frozen	Boot4 bean override：@MockitoBean/@MockitoSpyBean；@Tag(docker-frozen)，默认被 excludedGroups 排除
+com.cc01cc.p.xihe.cp.operation.WorkspaceJobOutputIntegrationTest	mockito-bean,docker-frozen	Boot4 bean override：@MockitoBean/@MockitoSpyBean；@Tag(docker-frozen)，默认被 excludedGroups 排除
+com.cc01cc.p.xihe.cp.operation.WorkspaceJobStartIntegrationTest	mockito-bean,async-sse	Boot4 bean override：@MockitoBean/@MockitoSpyBean；异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.plugin.kv.AbstractPluginKvIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.plugin.kv.PluginKvFeatureFlagTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.plugin.PluginRecordsIndexWiringTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.plugin.PluginUninstallRetentionTest	dynamic-property-source,test-property-source	自带 @DynamicPropertySource（context key 唯一）；自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.plugin.records.AbstractPluginRecordsIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.policy.RoleUpdateBindingConcurrencyMatrixTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.policy.RoleUpdateBindingRaceTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.provider.ApiRequestTemplateHttpIntegrationTest	test-property-source	自带 @TestPropertySource（context key 唯一）
+com.cc01cc.p.xihe.cp.provider.ProviderConnectionHttpIntegrationTest	test-property-source,mockito-bean	自带 @TestPropertySource（context key 唯一）；Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.service.AgentPrincipalVisibilityContractTest	chat-run-dispatch	design §4.1：提交/派发 async chat run（跨类串行已实测串扰）
+com.cc01cc.p.xihe.cp.service.InstanceOwnershipIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.service.InstanceOwnerTransferAtomicityTest	mockito-bean	Boot4 bean override：@MockitoBean/@MockitoSpyBean
+com.cc01cc.p.xihe.cp.service.UserAdminIntegrationTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.service.WorkspaceMemberControllerContractTest	async-sse	异步/SSE/并发（executor/latch/SSE 类型）
+com.cc01cc.p.xihe.cp.session.SessionIntegrationTest	test-configuration,async-sse	@Import/@TestConfiguration/@ContextConfiguration；异步/SSE/并发（executor/latch/SSE 类型）

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * materialized grants (the same rows the production evaluation reads), not a mocked authority.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class ToolFaceAdminAtomScopeIntegrationTest extends AbstractIntegrationTest {
+class ToolFaceAdminAtomScopeIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -44,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * scope + agent-forbidden hard gate on the structural default binding.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class SetWorkspaceCapGateIntegrationTest extends AbstractIntegrationTest {
+class SetWorkspaceCapGateIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;

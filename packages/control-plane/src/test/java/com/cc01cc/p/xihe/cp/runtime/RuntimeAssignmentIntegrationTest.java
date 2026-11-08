@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.runtime;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-class RuntimeExecutionSpecIntegrationTest extends AbstractIntegrationTest {
+class RuntimeExecutionSpecIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private WorkspaceExecutionSpecService executionSpecService;

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * never pin, and the v1 write surface refuses passive origins / oversized or blank content. Audit
  * assertions double as the "no raw memory content in durable audit" check.</p>
  */
-class AgentMemoryServiceTest extends AbstractIntegrationTest {
+class AgentMemoryServiceTest extends AbstractReusableIntegrationTest {
 
     @Autowired private AgentMemoryService memoryService;
     @Autowired private AgentMemoryRepository memories;

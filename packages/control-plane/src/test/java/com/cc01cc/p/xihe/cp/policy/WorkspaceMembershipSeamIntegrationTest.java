@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,7 +42,7 @@ import org.springframework.web.client.RestTemplate;
  *       the control that proves the counter could have moved at all.</li>
  * </ol>
  */
-class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
+class WorkspaceMembershipSeamIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String PASSWORD = "Seam-pass-1";
 

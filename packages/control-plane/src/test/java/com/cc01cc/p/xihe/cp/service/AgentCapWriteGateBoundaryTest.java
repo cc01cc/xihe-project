@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
@@ -62,7 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the guard's bypass) turns these tests red — the refusal disappears or the atom lands in the role /
  * in the principal's grants.</p>
  */
-class AgentCapWriteGateBoundaryTest extends AbstractIntegrationTest {
+class AgentCapWriteGateBoundaryTest extends AbstractReusableIntegrationTest {
 
     private static final String READ = ToolFaceRegistry.ACTION_READ;
     private static final String WRITE = ToolFaceRegistry.ACTION_WRITE;

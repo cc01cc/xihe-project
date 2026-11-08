@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * c) a non-PRIMARY AGENT participant yields that AGENT's cap;
  * d) the responder==null default path keeps the frozen 0622 C3 snapshot field-for-field.
  */
-class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
+class ChatResponderCapLeaseTest extends AbstractReusableIntegrationTest {
 
     @Autowired private ChatController controller;
     @Autowired private SessionParticipantService sessionParticipantService;

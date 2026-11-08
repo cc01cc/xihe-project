@@ -4,7 +4,7 @@ import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
 import java.util.UUID;
@@ -33,7 +33,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * existing {@code 403 WORKSPACE_FORBIDDEN} code, and the domain validation still
  * answers first.
  */
-class D9MembershipIntegrationTest extends AbstractIntegrationTest {
+class D9MembershipIntegrationTest extends AbstractReusableIntegrationTest {
 
     @org.springframework.beans.factory.annotation.Autowired
     private WorkspaceFixture workspaceFixture;

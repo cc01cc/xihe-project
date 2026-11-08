@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -61,7 +61,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PLAN-0409 — this PLAN does not build it). Every isolation assertion runs in
  * BOTH directions: A's facts never appear on B's path and vice versa.
  */
-class BranchContextIsolationIntegrationTest extends AbstractIntegrationTest {
+class BranchContextIsolationIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private WorkspaceFixture workspaceFixture;

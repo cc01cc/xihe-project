@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
@@ -58,7 +58,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       asserted at the same layer the session actually reads.</li>
  * </ul>
  */
-class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
+class AgentPrincipalSkillBindingContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

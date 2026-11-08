@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.credentials;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * sanitized responses, list with reference counts, delete with the reference
  * report, batch bindings all-or-nothing, precheck and 401/403/400 edges.
  */
-class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
+class CredentialControllerIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

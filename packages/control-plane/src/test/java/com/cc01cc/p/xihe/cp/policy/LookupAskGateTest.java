@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * counter-proof stays in {@code HardGuardTest#blocksCriticalPathDeletion} — HardGuard is outside
  * the T2.8 retirement scope (design #21).
  */
-class LookupAskGateTest extends AbstractIntegrationTest {
+class LookupAskGateTest extends AbstractReusableIntegrationTest {
 
     @org.springframework.beans.factory.annotation.Autowired
     private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.plugin;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       and ledger rows are untouched.</li>
  * </ul>
  */
-class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
+class PluginRecordsIndexExecutorTest extends AbstractReusableIntegrationTest {
 
     private static final String COLLECTION = "contacts";
 

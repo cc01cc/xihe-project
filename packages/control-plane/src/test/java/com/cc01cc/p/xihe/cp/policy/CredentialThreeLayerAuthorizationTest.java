@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -44,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and pass when all three carry it. Spawn child caps come from the D-49 active-binding
  * gate ({@code resolveCapFor}), never from a now-dropped Session identity column.
  */
-class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
+class CredentialThreeLayerAuthorizationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private GrantAuthorizationService grantAuthorizationService;
     @Autowired private AgentPrincipalService agentPrincipalService;

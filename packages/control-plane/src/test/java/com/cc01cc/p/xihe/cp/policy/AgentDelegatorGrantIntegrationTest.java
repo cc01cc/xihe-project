@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ② 工作区绑定自带 narrowing cap（{@code AGENT_PERMISSION_SCOPE_EXCEEDED} 保证 cap ⊆ 主体也 ⊆
  * 操作者），cap 为空即"该工作区内不给任何动作"——所以委派要同时有角色与含该原子的 cap。</p>
  */
-class AgentDelegatorGrantIntegrationTest extends AbstractIntegrationTest {
+class AgentDelegatorGrantIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String SPAWN_AGENT = ToolFaceRegistry.ACTION_SPAWN_AGENT;
     private static final String SPAWN_ATOM_JSON = """

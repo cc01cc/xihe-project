@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuditLog;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -55,7 +55,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
+class AgentTemplateSnapshotIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String INSTANCE_PROMPT = "decoy-instance-layer-prompt-0374";
     private static final String WORKSPACE_PROMPT = "decoy-workspace-layer-prompt-0374";

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * role <b>definitions</b> are any-scope, <b>bindings</b> are target-scope (instance ⊇ workspace).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
+class GrantabilityGuardIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;

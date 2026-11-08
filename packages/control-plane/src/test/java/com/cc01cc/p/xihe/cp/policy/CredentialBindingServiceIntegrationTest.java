@@ -3,7 +3,7 @@ import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * operator ceiling and the existence check; unbind removes them; bindings apply to
  * new sessions only (existing snapshots stay frozen).
  */
-class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
+class CredentialBindingServiceIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private CredentialBindingService credentialBindingService;
     @Autowired private CredentialService credentialService;

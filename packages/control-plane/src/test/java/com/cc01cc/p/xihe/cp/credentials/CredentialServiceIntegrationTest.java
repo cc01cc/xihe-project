@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.entity.CredentialEvent;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 作用域；每次变更落 credential_events（永不落值）与 AuditLogger；明文与后缀
  * 扫描断言（DB 非密文列 + 审计流）。
  */
-class CredentialServiceIntegrationTest extends AbstractIntegrationTest {
+class CredentialServiceIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private CredentialService credentialService;

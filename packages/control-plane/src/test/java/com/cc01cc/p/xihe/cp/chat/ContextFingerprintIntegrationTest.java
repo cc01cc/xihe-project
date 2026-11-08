@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * write-once, that the stored document is small enough for the design estimate, and that the read
  * envelope names absence instead of faking a state.
  */
-class ContextFingerprintIntegrationTest extends AbstractIntegrationTest {
+class ContextFingerprintIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

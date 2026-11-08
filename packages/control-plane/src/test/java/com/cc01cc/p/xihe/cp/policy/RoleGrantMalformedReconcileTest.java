@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the runner-DB shape — so the repair rewrites {@code network} onto its own key.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class RoleGrantMalformedReconcileTest extends AbstractIntegrationTest {
+class RoleGrantMalformedReconcileTest extends AbstractReusableIntegrationTest {
 
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private RoleGrantMaterializer materializer;

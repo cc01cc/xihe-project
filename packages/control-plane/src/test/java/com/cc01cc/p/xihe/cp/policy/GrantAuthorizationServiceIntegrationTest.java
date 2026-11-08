@@ -3,7 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
+class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private GrantAuthorizationService grantAuthorizationService;

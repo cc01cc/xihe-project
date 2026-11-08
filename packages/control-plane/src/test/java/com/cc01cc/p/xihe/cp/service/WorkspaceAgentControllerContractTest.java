@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
+class WorkspaceAgentControllerContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

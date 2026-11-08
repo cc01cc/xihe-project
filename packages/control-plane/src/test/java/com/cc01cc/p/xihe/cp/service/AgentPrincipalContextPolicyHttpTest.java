@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -65,7 +65,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The hooks document has its own class ({@link AgentPrincipalHooksHttpTest}); this one owns the
  * context-policy document and the interplay of the two on the shared PATCH.</p>
  */
-class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
+class AgentPrincipalContextPolicyHttpTest extends AbstractReusableIntegrationTest {
 
     private static final String HOOKS_JSON =
             "{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}";

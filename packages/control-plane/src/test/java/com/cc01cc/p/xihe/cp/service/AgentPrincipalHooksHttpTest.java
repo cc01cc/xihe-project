@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -62,7 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * assertion here goes through {@code restTemplate} against the running CP and, where the walkthrough
  * asserted a database value, reads the row back.</p>
  */
-class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
+class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
 
     private static final String HOOKS_JSON =
             "{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}";

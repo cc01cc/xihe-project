@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.session;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** PLAN-0408 T2.2/T2.3 real HTTP projection and user-boundary coverage. */
-class SessionDerivedStateIntegrationTest extends AbstractIntegrationTest {
+class SessionDerivedStateIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository users;
     @Autowired private WorkspaceRepository workspaces;

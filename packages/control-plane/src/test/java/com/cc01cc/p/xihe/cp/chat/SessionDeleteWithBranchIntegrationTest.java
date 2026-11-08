@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Root-only sessions never hit it (root anchor columns are NULL), which is why
  * the existing suites stayed green.
  */
-class SessionDeleteWithBranchIntegrationTest extends AbstractIntegrationTest {
+class SessionDeleteWithBranchIntegrationTest extends AbstractReusableIntegrationTest {
 
     private String authToken;
     private String userId;

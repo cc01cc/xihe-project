@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -61,7 +61,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * is paired with an assertion that the other two layers still contain the atom, so no assertion is
  * vacuous.</p>
  */
-class GrantIntersectionThreeWayTest extends AbstractIntegrationTest {
+class GrantIntersectionThreeWayTest extends AbstractReusableIntegrationTest {
 
     private static final String READ = ToolFaceRegistry.ACTION_READ;
     private static final String WRITE = ToolFaceRegistry.ACTION_WRITE;

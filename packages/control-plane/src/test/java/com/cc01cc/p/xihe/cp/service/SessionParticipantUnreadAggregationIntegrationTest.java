@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>a payload whose {@code participantId} is not a UUID is skipped, never guessed.</li>
  * </ul>
  */
-class SessionParticipantUnreadAggregationIntegrationTest extends AbstractIntegrationTest {
+class SessionParticipantUnreadAggregationIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private SessionRepository sessions;

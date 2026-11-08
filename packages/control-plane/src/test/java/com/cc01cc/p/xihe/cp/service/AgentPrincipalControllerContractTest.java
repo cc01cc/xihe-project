@@ -1,7 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
+class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private AgentPrincipalRepository principalRepository;

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * source of truth (D30-01). M3 extends this class with the durable depth walk; the column pins are
  * its fixture.</p>
  */
-class WakeChainDurableWalkTest extends AbstractIntegrationTest {
+class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private SessionWakeupService sessionWakeupService;

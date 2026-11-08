@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * runtime path (value write + lock row + advisory lock) must work on real PG,
  * which the H2 create-drop suite cannot prove.
  */
-class ConfigLockMigrationIntegrationTest extends AbstractIntegrationTest {
+class ConfigLockMigrationIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbc;
