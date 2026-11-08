@@ -8,6 +8,7 @@ import { logger } from "../../../lib/logger";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { toast } from "vue-sonner";
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type {
     WorkspaceJob,
     WorkspaceJobCancelReason,
@@ -314,11 +315,10 @@ async function loadEnvironment() {
     }
 }
 
-async function handleExecutionModeChange(event: Event) {
+async function handleExecutionModeChange(value: string) {
     const id = workspaceId.value;
     if (!id || !environment.value) return;
-    const nextMode = (event.target as HTMLSelectElement)
-        .value as typeof selectedExecutionMode.value;
+    const nextMode = value as typeof selectedExecutionMode.value;
     if (nextMode === environment.value.executionMode) return;
     changingExecutionMode.value = true;
     try {
@@ -642,32 +642,41 @@ onBeforeUnmount(stopPolling);
                                 <div class="flex items-start justify-between gap-4">
                                     <dt class="shrink-0 text-muted-foreground">执行模式</dt>
                                     <dd v-if="isDirectAttachStorage" class="min-w-0 text-right">
-                                        <select
-                                            v-model="selectedExecutionMode"
-                                            class="rounded border bg-background px-2 py-1 text-xs"
+                                        <Select
+                                            :model-value="selectedExecutionMode"
                                             :disabled="changingExecutionMode"
-                                            aria-describedby="workspace-execution-mode-hint"
-                                            data-testid="workspace-execution-mode"
-                                            @change="handleExecutionModeChange"
+                                            @update:model-value="
+                                                (value) =>
+                                                    handleExecutionModeChange(String(value ?? ''))
+                                            "
                                         >
-                                            <option
-                                                v-if="hasLegacyExecutionMode"
-                                                :value="currentExecutionMode"
-                                                disabled
-                                                data-testid="workspace-execution-mode-legacy"
+                                            <SelectTrigger
+                                                class="rounded border bg-background px-2 py-1 text-xs"
+                                                aria-describedby="workspace-execution-mode-hint"
+                                                data-testid="workspace-execution-mode"
                                             >
-                                                {{ currentExecutionMode || "未知" }}（{{
-                                                    t("workspace.executionModeLegacy")
-                                                }}）
-                                            </option>
-                                            <option
-                                                v-for="mode in DIRECT_ATTACH_EXECUTION_MODES"
-                                                :key="mode"
-                                                :value="mode"
-                                            >
-                                                {{ mode }}
-                                            </option>
-                                        </select>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem
+                                                    v-if="hasLegacyExecutionMode"
+                                                    :value="currentExecutionMode"
+                                                    disabled
+                                                    data-testid="workspace-execution-mode-legacy"
+                                                >
+                                                    {{ currentExecutionMode || "未知" }}（{{
+                                                        t("workspace.executionModeLegacy")
+                                                    }}）
+                                                </SelectItem>
+                                                <SelectItem
+                                                    v-for="mode in DIRECT_ATTACH_EXECUTION_MODES"
+                                                    :key="mode"
+                                                    :value="mode"
+                                                >
+                                                    {{ mode }}
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
                                         <p
                                             id="workspace-execution-mode-hint"
                                             class="mt-1 text-left text-xs text-muted-foreground"

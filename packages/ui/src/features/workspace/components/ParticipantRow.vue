@@ -15,6 +15,7 @@ import { computed, ref, watch } from "vue";
 import { Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { participantDisplayName, participantInitials } from "./participantInitials";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import type {
     ParticipantRespondPolicy,
     ParticipantWakePolicy,
@@ -252,51 +253,64 @@ function requestAdvance(): void {
                     <span :data-testid="`participant-wake-indicator-${participant.participantId}`">
                         {{ t("workspace.participantWakeLabel") }}:
                     </span>
-                    <select
+                    <Select
                         v-if="canManage && participant.role !== 'PRIMARY'"
-                        class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
-                        :data-testid="`participant-wake-select-${participant.participantId}`"
-                        :value="participant.wakePolicy"
+                        :model-value="participant.wakePolicy"
                         :disabled="saving"
-                        @change="
-                            emitWake(
-                                ($event.target as HTMLSelectElement).value as ParticipantWakePolicy,
-                            )
+                        @update:model-value="
+                            (value) => emitWake(String(value) as ParticipantWakePolicy)
                         "
                     >
-                        <option value="ALL_MESSAGES">
-                            {{ t("workspace.participantWakeAllMessages") }}
-                        </option>
-                        <option value="MENTION">{{ t("workspace.participantWakeMention") }}</option>
-                    </select>
+                        <SelectTrigger
+                            class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                            :data-testid="`participant-wake-select-${participant.participantId}`"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="ALL_MESSAGES">{{
+                                t("workspace.participantWakeAllMessages")
+                            }}</SelectItem>
+                            <SelectItem value="MENTION">{{
+                                t("workspace.participantWakeMention")
+                            }}</SelectItem>
+                        </SelectContent>
+                    </Select>
                     <span v-else>{{ wakeLabel }}</span>
                     <span
                         :data-testid="`participant-respond-indicator-${participant.participantId}`"
                     >
                         {{ t("workspace.participantRespondLabel") }}:
                     </span>
-                    <select
+                    <Select
                         v-if="canManage && participant.role !== 'PRIMARY'"
-                        class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
-                        :data-testid="`participant-respond-select-${participant.participantId}`"
-                        :value="participant.respondPolicy"
+                        :model-value="participant.respondPolicy"
                         :disabled="saving"
-                        @change="
-                            emitRespond(
-                                ($event.target as HTMLSelectElement)
-                                    .value as ParticipantRespondPolicy,
-                            )
+                        @update:model-value="
+                            (value) => emitRespond(String(value) as ParticipantRespondPolicy)
                         "
                     >
-                        <option value="ALWAYS">
-                            {{ t("workspace.participantRespondAlways") }}
-                        </option>
-                        <option value="WHEN_MENTIONED">
-                            {{ t("workspace.participantRespondWhenMentioned") }}
-                        </option>
-                        <option value="JUDGE">{{ t("workspace.participantRespondJudge") }}</option>
-                        <option value="MUTED">{{ t("workspace.participantRespondMuted") }}</option>
-                    </select>
+                        <SelectTrigger
+                            class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                            :data-testid="`participant-respond-select-${participant.participantId}`"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="ALWAYS">{{
+                                t("workspace.participantRespondAlways")
+                            }}</SelectItem>
+                            <SelectItem value="WHEN_MENTIONED">{{
+                                t("workspace.participantRespondWhenMentioned")
+                            }}</SelectItem>
+                            <SelectItem value="JUDGE">{{
+                                t("workspace.participantRespondJudge")
+                            }}</SelectItem>
+                            <SelectItem value="MUTED">{{
+                                t("workspace.participantRespondMuted")
+                            }}</SelectItem>
+                        </SelectContent>
+                    </Select>
                     <span v-else>{{ respondLabel }}</span>
                 </p>
                 <!-- M1a：仅 AGENT 有模型意图（契约字段，缺失不猜）。 -->

@@ -13,6 +13,7 @@ import {
 } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { credentialErrorText } from "./errorText";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const props = defineProps<{
     credentialId: string;
@@ -135,17 +136,30 @@ void loadWorkspaces();
             <label class="text-xs text-muted-foreground" for="credential-bind-workspace">{{
                 t("credentials.bindWorkspace")
             }}</label>
-            <select
-                id="credential-bind-workspace"
-                v-model="workspaceId"
-                data-testid="credential-bind-workspace"
-                class="rounded-md border border-border bg-background px-2 py-1 text-xs"
+            <Select
+                :model-value="workspaceId || '__none__'"
+                @update:model-value="
+                    (value) => (workspaceId = value === '__none__' ? '' : String(value ?? ''))
+                "
             >
-                <option value="">—</option>
-                <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">
-                    {{ workspace.name }}
-                </option>
-            </select>
+                <SelectTrigger
+                    id="credential-bind-workspace"
+                    data-testid="credential-bind-workspace"
+                    class="rounded-md border border-border bg-background px-2 py-1 text-xs"
+                >
+                    <SelectValue :placeholder="'—'" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="__none__">—</SelectItem>
+                    <SelectItem
+                        v-for="workspace in workspaces"
+                        :key="workspace.id"
+                        :value="workspace.id"
+                    >
+                        {{ workspace.name }}
+                    </SelectItem>
+                </SelectContent>
+            </Select>
         </div>
 
         <div v-if="loadingAgents" class="text-xs text-muted-foreground">

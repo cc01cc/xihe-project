@@ -11,6 +11,7 @@ import {
 } from "../../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 const props = defineProps<{
     sessionId: string;
     /**
@@ -126,10 +127,8 @@ watch(
     },
     { immediate: true },
 );
-async function handleChange(event: Event) {
-    const option = options.value.find(
-        (item) => optionKey(item) === (event.target as HTMLSelectElement).value,
-    );
+async function handleChange(selectedKey: string) {
+    const option = options.value.find((item) => optionKey(item) === selectedKey);
     const sessionId = props.sessionId;
     const currentGeneration = generation;
     const revision = session.value?.connectionRevision;
@@ -179,29 +178,41 @@ async function handleChange(event: Event) {
 <template>
     <!-- `summary-only` = a data adapter for the chat summary row: resolve + emit only. -->
     <div v-if="!summaryOnly" class="min-w-0" data-testid="session-context-template">
-        <select
-            :id="`session-context-template-${sessionId}`"
-            data-testid="session-context-template-select"
-            class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-            :value="current ? optionKey(current) : ''"
+        <Select
+            :model-value="current ? optionKey(current) : ''"
             :disabled="loading || busy || options.length === 0"
-            :aria-label="t('chat.contextTemplateLabel')"
-            :title="currentLabel ?? t('sessionSettings.templateUnbound')"
-            @change="handleChange"
+            @update:model-value="(value) => handleChange(String(value ?? ''))"
         >
-            <option v-if="!current" value="" disabled>
-                {{ t("sessionSettings.templateSelectPlaceholder") }}
-            </option>
-            <option
-                v-if="current && !findOption(current.layer, current.templateId, current.version)"
-                :value="optionKey(current)"
+            <SelectTrigger
+                :id="`session-context-template-${sessionId}`"
+                data-testid="session-context-template-select"
+                class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                :aria-label="t('chat.contextTemplateLabel')"
+                :title="currentLabel ?? t('sessionSettings.templateUnbound')"
             >
-                {{ current.name }} v{{ current.version }}
-            </option>
-            <option v-for="option in options" :key="optionKey(option)" :value="optionKey(option)">
-                {{ option.name }} v{{ option.version }}
-            </option>
-        </select>
+                <SelectValue
+                    :placeholder="t('sessionSettings.templateSelectPlaceholder')"
+                />
+            </SelectTrigger>
+            <SelectContent>
+                <SelectItem
+                    v-if="
+                        current &&
+                        !findOption(current.layer, current.templateId, current.version)
+                    "
+                    :value="optionKey(current)"
+                >
+                    {{ current.name }} v{{ current.version }}
+                </SelectItem>
+                <SelectItem
+                    v-for="option in options"
+                    :key="optionKey(option)"
+                    :value="optionKey(option)"
+                >
+                    {{ option.name }} v{{ option.version }}
+                </SelectItem>
+            </SelectContent>
+        </Select>
         <p
             v-if="error"
             data-testid="session-context-template-error"

@@ -15,6 +15,7 @@ import type {
     ApprovalRequestOrigin,
 } from "../../../../types";
 import { Bot, LoaderCircle, ShieldAlert, ShieldCheck } from "@lucide/vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const props = withDefaults(
     defineProps<{
@@ -864,21 +865,33 @@ onBeforeUnmount(() => {
                             <label for="approval-classify-shape" class="text-sm font-medium">{{
                                 t("chat.approvalClassifyShape")
                             }}</label>
-                            <select
-                                id="approval-classify-shape"
-                                v-model="classifyShape"
-                                data-testid="approval-classify-shape"
-                                class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                            <Select
+                                :model-value="classifyShape"
                                 :disabled="busy || submitted || classifySubmitting"
+                                @update:model-value="
+                                    (value) =>
+                                        (classifyShape = String(value) as ApprovalPolicyShape)
+                                "
                             >
-                                <option value="structured">
-                                    {{ t("chat.approvalShapeStructured") }}
-                                </option>
-                                <option value="interpreter">
-                                    {{ t("chat.approvalShapeInterpreter") }}
-                                </option>
-                                <option value="opaque">{{ t("chat.approvalShapeOpaque") }}</option>
-                            </select>
+                                <SelectTrigger
+                                    id="approval-classify-shape"
+                                    data-testid="approval-classify-shape"
+                                    class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="structured">{{
+                                        t("chat.approvalShapeStructured")
+                                    }}</SelectItem>
+                                    <SelectItem value="interpreter">{{
+                                        t("chat.approvalShapeInterpreter")
+                                    }}</SelectItem>
+                                    <SelectItem value="opaque">{{
+                                        t("chat.approvalShapeOpaque")
+                                    }}</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
 
                         <p
@@ -954,18 +967,30 @@ onBeforeUnmount(() => {
                             <label for="approval-rule-layer" class="text-sm font-medium">{{
                                 t("chat.approvalRuleLayer")
                             }}</label>
-                            <select
-                                id="approval-rule-layer"
-                                v-model="savedLayer"
-                                data-testid="approval-rule-layer"
-                                class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                            <Select
+                                :model-value="savedLayer"
                                 :disabled="busy || submitted"
+                                @update:model-value="
+                                    (value) =>
+                                        (savedLayer = String(value) as 'workspace' | 'user')
+                                "
                             >
-                                <option value="workspace">
-                                    {{ t("chat.approvalLayerWorkspace") }}
-                                </option>
-                                <option value="user">{{ t("chat.approvalLayerUser") }}</option>
-                            </select>
+                                <SelectTrigger
+                                    id="approval-rule-layer"
+                                    data-testid="approval-rule-layer"
+                                    class="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="workspace">{{
+                                        t("chat.approvalLayerWorkspace")
+                                    }}</SelectItem>
+                                    <SelectItem value="user">{{
+                                        t("chat.approvalLayerUser")
+                                    }}</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
 
                         <div class="space-y-1.5">

@@ -5,7 +5,7 @@ import type { SessionParticipantView } from "../../../../types/participant";
 
 /**
  * Composer recipient field (2026-11-04 用户裁定): **input + typeahead popover** instead of a
- * native `<select>`.
+ * native select control.
  *
  * - 打字即过滤候选；↑↓ 选择、Enter 确认、Tab 补全、Esc 关闭（键盘与 aria 合同与输入框内的
  *   `@`/`/` 候选面一致：同一个 `role="listbox"` + `aria-activedescendant` 形态）。

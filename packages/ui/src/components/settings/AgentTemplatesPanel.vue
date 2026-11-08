@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
 import { api } from "../../composables/api";
 import CredentialRoleBlock from "./credentials/CredentialRoleBlock.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Permission = { actionClass: string; resource?: string };
 type Role = { id: string; name: string; permissions: Permission[] };
@@ -357,27 +358,55 @@ function cancelRoleEdit() {
             <div class="grid gap-3 sm:grid-cols-2">
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("settings.agentTemplateToolMode") }}</span>
-                    <select
-                        v-model="toolMode"
-                        data-testid="agent-template-tool-mode"
-                        class="w-full rounded-md border bg-background px-3 py-2"
+                    <Select
+                        :model-value="toolMode"
+                        @update:model-value="
+                            (value) => (toolMode = String(value) as 'none' | 'workspace')
+                        "
                     >
-                        <option value="none">none</option>
-                        <option value="workspace">workspace</option>
-                    </select>
+                        <SelectTrigger
+                            data-testid="agent-template-tool-mode"
+                            class="w-full rounded-md border bg-background px-3 py-2"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="none">none</SelectItem>
+                            <SelectItem value="workspace">workspace</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </label>
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("settings.agentTemplateRole") }}</span>
-                    <select
-                        v-model="roleId"
-                        data-testid="agent-template-role"
-                        class="w-full rounded-md border bg-background px-3 py-2"
+                    <Select
+                        :model-value="roleId || '__none__'"
+                        @update:model-value="
+                            (value) => (roleId = value === '__none__' ? '' : String(value ?? ''))
+                        "
                     >
-                        <option value="">{{ t("settings.agentTemplateNoRole") }}</option>
-                        <option v-for="role in roles" :key="role.id" :value="role.id">
-                            {{ role.name }}
-                        </option>
-                    </select>
+                        <SelectTrigger
+                            data-testid="agent-template-role"
+                            class="w-full rounded-md border bg-background px-3 py-2"
+                        >
+                            <SelectValue>{{
+                                roleId
+                                    ? (roles.find((role) => role.id === roleId)?.name ?? roleId)
+                                    : t("settings.agentTemplateNoRole")
+                            }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none__">{{
+                                t("settings.agentTemplateNoRole")
+                            }}</SelectItem>
+                            <SelectItem
+                                v-for="role in roles"
+                                :key="role.id"
+                                :value="role.id"
+                            >
+                                {{ role.name }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </label>
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("settings.agentTemplateProvider") }}</span>
@@ -495,15 +524,19 @@ function cancelRoleEdit() {
                     :key="index"
                     class="grid grid-cols-[1fr_1fr_auto] gap-2"
                 >
-                    <select
-                        v-model="permission.actionClass"
-                        :data-testid="`agent-role-action-${index}`"
-                        class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs"
-                    >
-                        <option v-for="action in actions" :key="action" :value="action">
-                            {{ action }}
-                        </option>
-                    </select>
+                    <Select v-model="permission.actionClass">
+                        <SelectTrigger
+                            :data-testid="`agent-role-action-${index}`"
+                            class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem v-for="action in actions" :key="action" :value="action">
+                                {{ action }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                     <input
                         v-model="permission.resource"
                         :aria-label="`${t('settings.agentRoleResource')} ${index + 1}`"

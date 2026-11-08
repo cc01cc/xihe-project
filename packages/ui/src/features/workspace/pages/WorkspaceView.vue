@@ -25,6 +25,7 @@ import ChatPanel from "../chat/components/ChatPanel.vue";
 import SseSubscriberLimitNotice from "../components/SseSubscriberLimitNotice.vue";
 import { workspaceChatPath } from "../../../lib/routes";
 import BaseModal from "../../../components/shared/BaseModal.vue";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const route = useRoute(),
     router = useRouter(),
@@ -577,22 +578,29 @@ watch(isMobileViewport, (mobile) => {
                 <label for="workspace-agent-principal" class="block text-sm text-foreground">
                     {{ t("workspace.chooseAgentLabel") }}
                 </label>
-                <select
-                    id="workspace-agent-principal"
-                    v-model="selectedAgentPrincipalId"
-                    data-testid="workspace-agent-principal-select"
-                    class="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                >
-                    <option value="" disabled>{{ t("workspace.chooseAgentPlaceholder") }}</option>
-                    <option
-                        v-for="agent in boundWorkspaceAgents"
-                        :key="agent.principalId"
-                        :value="agent.principalId"
+                <Select v-model="selectedAgentPrincipalId">
+                    <SelectTrigger
+                        id="workspace-agent-principal"
+                        data-testid="workspace-agent-principal-select"
+                        class="w-full rounded-md border bg-background px-3 py-2 text-sm"
                     >
-                        {{ agent.name
-                        }}<template v-if="agent.templateName"> · {{ agent.templateName }}</template>
-                    </option>
-                </select>
+                        <SelectValue
+                            :placeholder="t('workspace.chooseAgentPlaceholder')"
+                        />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem
+                            v-for="agent in boundWorkspaceAgents"
+                            :key="agent.principalId"
+                            :value="agent.principalId"
+                        >
+                            {{ agent.name
+                            }}<template v-if="agent.templateName"
+                                > · {{ agent.templateName }}</template
+                            >
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
                 <div class="flex justify-end gap-2">
                     <button
                         type="button"

@@ -14,6 +14,7 @@ import DialogDescription from "../../../components/ui/dialog/DialogDescription.v
 import DialogFooter from "../../../components/ui/dialog/DialogFooter.vue";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
 import { LoaderCircle } from "@lucide/vue";
 import type { ScheduledTaskCreateRequest, ScheduledTaskTargetKind } from "../../../types";
@@ -270,21 +271,25 @@ function handleOpenChange(open: boolean) {
                                 class="w-28"
                                 data-testid="st-create-delay-amount"
                             />
-                            <select
-                                v-model="delayUnit"
-                                class="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                data-testid="st-create-delay-unit"
-                            >
-                                <option value="minutes">
-                                    {{ t("workspace.scheduledTasks.delayUnitMinutes") }}
-                                </option>
-                                <option value="hours">
-                                    {{ t("workspace.scheduledTasks.delayUnitHours") }}
-                                </option>
-                                <option value="days">
-                                    {{ t("workspace.scheduledTasks.delayUnitDays") }}
-                                </option>
-                            </select>
+                            <Select v-model="delayUnit">
+                                <SelectTrigger
+                                    class="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    data-testid="st-create-delay-unit"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="minutes">{{
+                                        t("workspace.scheduledTasks.delayUnitMinutes")
+                                    }}</SelectItem>
+                                    <SelectItem value="hours">{{
+                                        t("workspace.scheduledTasks.delayUnitHours")
+                                    }}</SelectItem>
+                                    <SelectItem value="days">{{
+                                        t("workspace.scheduledTasks.delayUnitDays")
+                                    }}</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                         <p class="text-xs text-muted-foreground">
                             {{ t("workspace.scheduledTasks.delayHint") }}
@@ -296,19 +301,23 @@ function handleOpenChange(open: boolean) {
                     <label class="text-sm font-medium" for="st-target-kind">
                         {{ t("workspace.scheduledTasks.targetLabel") }}
                     </label>
-                    <select
-                        id="st-target-kind"
-                        v-model="targetKind"
-                        class="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        data-testid="st-create-target-kind"
-                    >
-                        <option value="session_wakeup">
-                            {{ t("workspace.scheduledTasks.targetSessionOption") }}
-                        </option>
-                        <option value="job_dispatch">
-                            {{ t("workspace.scheduledTasks.targetJobOption") }}
-                        </option>
-                    </select>
+                    <Select v-model="targetKind">
+                        <SelectTrigger
+                            id="st-target-kind"
+                            class="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            data-testid="st-create-target-kind"
+                        >
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="session_wakeup">{{
+                                t("workspace.scheduledTasks.targetSessionOption")
+                            }}</SelectItem>
+                            <SelectItem value="job_dispatch">{{
+                                t("workspace.scheduledTasks.targetJobOption")
+                            }}</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 <template v-if="targetKind === 'session_wakeup'">
@@ -316,23 +325,28 @@ function handleOpenChange(open: boolean) {
                         <label class="text-sm font-medium" for="st-session">
                             {{ t("workspace.scheduledTasks.sessionSelectLabel") }}
                         </label>
-                        <select
-                            id="st-session"
-                            v-model="targetSessionId"
-                            class="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            data-testid="st-create-session"
-                        >
-                            <option value="" disabled>
-                                {{ t("workspace.scheduledTasks.sessionPlaceholder") }}
-                            </option>
-                            <option
-                                v-for="session in sessions"
-                                :key="session.id"
-                                :value="session.id"
+                        <Select v-model="targetSessionId">
+                            <SelectTrigger
+                                id="st-session"
+                                class="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                data-testid="st-create-session"
                             >
-                                {{ session.title }}
-                            </option>
-                        </select>
+                                <SelectValue
+                                    :placeholder="
+                                        t('workspace.scheduledTasks.sessionPlaceholder')
+                                    "
+                                />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="session in sessions"
+                                    :key="session.id"
+                                    :value="session.id"
+                                >
+                                    {{ session.title }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                         <p
                             v-if="sessions.length === 0"
                             class="text-xs text-muted-foreground"

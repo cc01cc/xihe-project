@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ConfigKeyMeta } from "../../stores/config";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 const { t } = useI18n();
 
@@ -317,31 +318,50 @@ function handleReset(key: string) {
                         class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         :placeholder="t('settings.customPlaceholder')"
                     />
-                    <select
+                    <Select
                         v-else
-                        :value="editing[field.key]"
-                        :data-testid="`config-select-${domain}-${field.key}`"
+                        :model-value="
+                            field.allowCustom && !editing[field.key]
+                                ? '__unset__'
+                                : editing[field.key]
+                        "
                         :disabled="!isWritable(field.key)"
-                        class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
-                        @change="onSelectChange(field, ($event.target as HTMLSelectElement).value)"
+                        @update:model-value="
+                            (value) =>
+                                onSelectChange(
+                                    field,
+                                    value === '__unset__' ? '' : String(value ?? ''),
+                                )
+                        "
                     >
-                        <option v-if="field.allowCustom" value="">
-                            {{ t("settings.notSet") }}
-                        </option>
-                        <option v-if="isDrifted(field)" :value="editing[field.key]">
-                            {{ t("settings.driftedOption", { value: editing[field.key] }) }}
-                        </option>
-                        <option
-                            v-for="opt in fieldCandidates(field)"
-                            :key="opt.value"
-                            :value="opt.value"
+                        <SelectTrigger
+                            :data-testid="`config-select-${domain}-${field.key}`"
+                            class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         >
-                            {{ opt.label }}
-                        </option>
-                        <option v-if="field.allowCustom" :value="CUSTOM_OPTION">
-                            {{ t("settings.customOption") }}
-                        </option>
-                    </select>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem v-if="field.allowCustom" value="__unset__">{{
+                                t("settings.notSet")
+                            }}</SelectItem>
+                            <SelectItem
+                                v-if="isDrifted(field)"
+                                :value="editing[field.key]"
+                            >
+                                {{ t("settings.driftedOption", { value: editing[field.key] }) }}
+                            </SelectItem>
+                            <SelectItem
+                                v-for="opt in fieldCandidates(field)"
+                                :key="opt.value"
+                                :value="opt.value"
+                            >
+                                {{ opt.label }}
+                            </SelectItem>
+                            <SelectItem v-if="field.allowCustom" :value="CUSTOM_OPTION">
+                                {{ t("settings.customOption") }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </template>
 
                 <textarea

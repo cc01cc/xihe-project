@@ -6,6 +6,7 @@ import { usePolicyStore } from "../../../../stores/policy";
 import { useAuthStore } from "../../../../stores/auth";
 import { logger } from "../../../../lib/logger";
 import type { SessionPolicyMode } from "../../../../types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const props = defineProps<{
     sessionId: string;
@@ -78,8 +79,7 @@ async function changeMode(nextMode: SessionPolicyMode) {
     }
 }
 
-function handleModeChange(event: Event) {
-    const value = (event.target as HTMLSelectElement).value;
+function handleModeChange(value: string) {
     if (isPolicyMode(value)) void changeMode(value);
 }
 
@@ -101,21 +101,30 @@ function retry() {
             用 disabled（而不是不渲染）是项目既有纪律 —— 无权限时**点击前**就给出不可用状态与原因，
             而不是让用户点了才收 403（同 `ParticipantRow` 的 U2/F-01 形状）。
         -->
-        <select
-            :id="`session-policy-mode-${sessionId}`"
-            data-testid="session-policy-mode"
-            class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-            :value="mode ?? ''"
+        <Select
+            :model-value="mode ?? ''"
             :disabled="!mode || busy || readOnly"
-            :aria-label="t('chat.approvalModeLabel')"
-            :title="readOnly ? t('workspace.viewerReadOnly') : modeLabel"
-            @change="handleModeChange"
+            @update:model-value="(value) => handleModeChange(String(value ?? ''))"
         >
-            <option value="" disabled>{{ t("chat.approvalModeUnavailable") }}</option>
-            <option v-for="policyMode in policyModes" :key="policyMode" :value="policyMode">
-                {{ t(modeLabelKeys[policyMode]) }}
-            </option>
-        </select>
+            <SelectTrigger
+                :id="`session-policy-mode-${sessionId}`"
+                data-testid="session-policy-mode"
+                class="w-full min-w-40 max-w-44 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+                :aria-label="t('chat.approvalModeLabel')"
+                :title="readOnly ? t('workspace.viewerReadOnly') : modeLabel"
+            >
+                <SelectValue :placeholder="t('chat.approvalModeUnavailable')" />
+            </SelectTrigger>
+            <SelectContent>
+                <SelectItem
+                    v-for="policyMode in policyModes"
+                    :key="policyMode"
+                    :value="policyMode"
+                >
+                    {{ t(modeLabelKeys[policyMode]) }}
+                </SelectItem>
+            </SelectContent>
+        </Select>
         <!-- 只读原因的可见说明：只靠 `title` 会让禁用看起来像"坏了"。复用既有中英文案。 -->
         <p
             v-if="readOnly"

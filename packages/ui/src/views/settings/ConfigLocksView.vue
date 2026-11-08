@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { ApiError, request } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { INSTANCE_DOMAINS, type ConfigDomain } from "../../stores/config";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
  * PLAN-0556: the admin-only lock page. Ordinary config pages only render the
@@ -191,14 +192,20 @@ watch(domain, () => {
                 <label class="text-xs text-muted-foreground" for="config-lock-domain">
                     {{ t("settings.configLockDomain") }}
                 </label>
-                <select
-                    id="config-lock-domain"
-                    v-model="domain"
-                    data-testid="config-lock-domain"
-                    class="rounded border bg-background px-2 py-1 text-sm"
-                >
-                    <option v-for="item in domains" :key="item" :value="item">{{ item }}</option>
-                </select>
+                <Select v-model="domain">
+                    <SelectTrigger
+                        id="config-lock-domain"
+                        data-testid="config-lock-domain"
+                        class="rounded border bg-background px-2 py-1 text-sm"
+                    >
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem v-for="item in domains" :key="item" :value="item">
+                            {{ item }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
                 <span class="text-xs text-muted-foreground">
                     {{ t("settings.configLockCount", { count: lockedCount }) }}
                 </span>
