@@ -1,5 +1,10 @@
 import { flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    __resetSseSubscriberLimitForTests,
+    reportSseSubscriberLimit,
+    useSseSubscriberLimit,
+} from "../composables/sseSubscriberLimit";
 import { chatTransport } from "@/services/chatTransport";
 import {
     PLUGIN_BINDING_EVENT_KIND,
@@ -37,6 +42,22 @@ function options(extra: Partial<WorkspaceSSEOptions> = {}): WorkspaceSSEOptions 
 describe("useWorkspaceSSE", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        __resetSseSubscriberLimitForTests();
+    });
+
+    it("BL-335: reconnecting one workspace must not clear another channel's subscriber limit", async () => {
+        // 模拟"另一个工作区通道"已撞上订阅上限；同一 code 由壳级横幅聚合展示。
+        reportSseSubscriberLimit("WORKSPACE_EVENT_SUBSCRIBERS_LIMIT", "workspace:ws-2");
+        reportSseSubscriberLimit("WORKSPACE_EVENT_SUBSCRIBERS_LIMIT", "workspace:ws-1");
+        useWorkspaceSSE("ws-1", options());
+        await flushPromises();
+        const sent = vi.mocked(chatTransport.sendMessages).mock.calls[0]![1];
+        await sent.onopen?.({ ok: true } as unknown as Response);
+
+        // 本通道 open 成功只能清掉它自己的上限，别的通道仍应继续显示横幅。
+        expect(useSseSubscriberLimit("workspace:ws-2").isActive.value).toBe(true);
+        expect(useSseSubscriberLimit("workspace:ws-1").isActive.value).toBe(false);
+        expect(useSseSubscriberLimit().isActive.value).toBe(true);
     });
 
     it("subscribes with an isolated workspace key and forwards valid events", async () => {
