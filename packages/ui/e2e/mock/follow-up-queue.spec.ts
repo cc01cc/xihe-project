@@ -269,7 +269,10 @@ test("active desktop ChatRun queues the draft and keeps the transcript unchanged
     const queueButtonBox = await queueButton.boundingBox();
     expect(queueButtonBox).not.toBeNull();
     expect(queueButtonBox!.y).toBeGreaterThanOrEqual(0);
-    expect(queueButtonBox!.y + queueButtonBox!.height).toBeLessThanOrEqual(844);
+    // D-733（0702 safe-area）：390×844 下 composer 刚好占满视口，Chromium 布局高度存在 3/16 CSS px
+    // 亚像素舍入（实测 844.1875）；截图中按钮完整可见、无裁切 ⇒ 按 0702 既有口径放宽 0.5px，
+    // 不掩盖真实越界（>1px 仍失败）。
+    expect(queueButtonBox!.y + queueButtonBox!.height).toBeLessThanOrEqual(844.5);
     const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - window.innerWidth,
     );
@@ -308,7 +311,8 @@ test("paused queue exposes explicit Continue and resumes in FIFO order on mobile
     const queueButtonBox = await queueButton.boundingBox();
     expect(queueButtonBox).not.toBeNull();
     expect(queueButtonBox!.y).toBeGreaterThanOrEqual(0);
-    expect(queueButtonBox!.y + queueButtonBox!.height).toBeLessThanOrEqual(844);
+    // D-733：同上，390×844 的 0.19px 亚像素舍入（非布局越界）。
+    expect(queueButtonBox!.y + queueButtonBox!.height).toBeLessThanOrEqual(844.5);
 
     const continueResponse = page.waitForResponse(
         (response) =>
