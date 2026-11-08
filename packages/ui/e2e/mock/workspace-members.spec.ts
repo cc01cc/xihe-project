@@ -1,5 +1,6 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
+import { selectByTestId } from "../helpers/select";
 
 // BL-318：本文件有两条**故意**制造成员写失败（409 已存在 / 404 未知用户名）以验裁定 #6 文案，
 // 逐条放行成员端点的失败信号。
@@ -170,7 +171,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
 
         // Add by username (ruling #7) — the list reloads with the new row.
         await page.getByTestId("ws-members-add-input").fill("newmember");
-        await page.getByTestId("ws-members-add-role").selectOption("VIEWER");
+        await selectByTestId(page, "ws-members-add-role", "VIEWER");
         await page.getByTestId("ws-members-add-btn").click();
         await expect(page.getByTestId("ws-members-row")).toHaveCount(3);
         await expect(page.getByTestId("ws-members-panel")).toContainText("newmember");

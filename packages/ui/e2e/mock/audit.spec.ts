@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { selectByTestId } from "../helpers/select";
 
 // BL-318：本文件有**故意**桩 503 的用例（`renders a recoverable API error` 验审计后端不可用时的降级
 // 横幅），逐条放行该端点的失败信号；其它端点不放行（allow 按来源加，不整体跳过判据）。
@@ -331,7 +332,7 @@ test.describe("Audit read view (PLAN-0466)", () => {
             fullPage: true,
         });
 
-        await page.getByTestId("settings-audit-status").selectOption("failed");
+        await selectByTestId(page, "settings-audit-status", "failed");
         await expect(page.getByTestId("settings-audit-entry-inv-failed-1")).toBeVisible();
         const filteredRequest = requests.listRequests.at(-1);
         expect(filteredRequest).toBeDefined();
@@ -350,7 +351,7 @@ test.describe("Audit read view (PLAN-0466)", () => {
         const requests = await installAuditRoutes(page, "normal");
         await page.goto("/settings/audit");
 
-        await page.getByTestId("settings-audit-type").selectOption("chat_run");
+        await selectByTestId(page, "settings-audit-type", "chat_run");
         await expect(page.getByTestId("settings-audit-entry-run-a1")).toBeVisible();
         const filteredRequest = requests.listRequests.at(-1);
         expect(filteredRequest).toBeDefined();

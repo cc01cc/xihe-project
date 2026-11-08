@@ -2,6 +2,7 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 
 // BL-318：`shows an error banner when layer config cannot be loaded` 用
 // `route.abort("connectionrefused")` **故意**制造网络失败（验"保存失败"横幅），逐条放行该信号。
@@ -187,10 +188,7 @@ test.describe("Config Settings (three layers)", () => {
         const instanceDomain = page.getByTestId("config-domain-approval-policy");
         await expect(instanceDomain).toBeVisible();
         await instanceDomain.locator("button").first().click();
-        const instanceSelect = page
-            .getByTestId("config-field-approval-policy-mode")
-            .locator("select");
-        await expect(instanceSelect).toHaveValue("manual");
+        await expectTriggerLabel(page, "config-select-approval-policy-mode", "manual");
 
         // PLAN-0560: workspace override lives on the workspace settings page.
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
@@ -199,9 +197,11 @@ test.describe("Config Settings (three layers)", () => {
         await expect(domain).toBeVisible();
         await domain.locator("button").first().click();
 
-        const modeSelect = page.getByTestId("config-field-approval-policy-mode").locator("select");
-        await expect(modeSelect).toHaveValue("manual");
-        await expect(modeSelect.locator("option")).toHaveCount(2);
+        const modeSelect = page.getByTestId("config-select-approval-policy-mode");
+        await expect(modeSelect).toContainText("手动审批");
+        await modeSelect.click();
+        await expect(page.getByRole("option")).toHaveCount(2);
+        await page.keyboard.press("Escape");
 
         // user 层仍不可写（显式例外）
         await page.goto("/settings/config", { waitUntil: "load" });
@@ -214,10 +214,7 @@ test.describe("Config Settings (three layers)", () => {
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
         await page.getByTestId("config-domain-approval-policy").locator("button").first().click();
-        await page
-            .getByTestId("config-field-approval-policy-mode")
-            .locator("select")
-            .selectOption("auto");
+        await selectByTestId(page, "config-select-approval-policy-mode", "auto");
 
         const [request] = await Promise.all([
             page.waitForRequest(
@@ -264,10 +261,7 @@ test.describe("Config Settings (three layers)", () => {
 
         await expect(page.getByTestId("config-domain-logging")).toBeVisible();
         await page.getByTestId("config-domain-logging").locator("button").first().click();
-        await page
-            .getByTestId("config-field-logging-levelCp")
-            .locator("select")
-            .selectOption("ERROR");
+        await selectByTestId(page, "config-select-logging-levelCp", "ERROR");
 
         const [request] = await Promise.all([
             page.waitForRequest(
