@@ -183,7 +183,7 @@ class PluginRecordsIndexWiringTest extends AbstractIntegrationTest {
         ArrayNode collections = manifest.putObject("storage").putArray("collections");
         ObjectNode contacts = collections.addObject();
         contacts.put("name", COLLECTION);
-        contacts.putArray("fields").add("email");
+        contacts.putArray("fields").addObject().put("name", "email").put("type", "string");
         ObjectNode declared = contacts.putArray("indexes").addObject();
         declared.put("name", DECLARED_INDEX);
         declared.putArray("fields").add("email");

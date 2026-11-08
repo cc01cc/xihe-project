@@ -57,19 +57,20 @@ public final class PluginIndexNaming {
 
     /**
      * Whether a declaration may reach {@code CREATE INDEX}: name, collection and every field must be
-     * manifest-legal, and at least one field must be declared.
+     * manifest-legal — the field name and its frozen type (an undefined type has no expression to
+     * build) — and at least one field must be declared.
      */
     public static boolean isDeclarable(PluginIndexDeclaration declaration) {
         if (declaration == null || !isSafeSegment(declaration.collection())
                 || !isSafeSegment(declaration.name())) {
             return false;
         }
-        List<String> fields = declaration.fields();
+        List<PluginIndexDeclaration.DeclaredField> fields = declaration.fields();
         if (fields.isEmpty() || fields.size() > 4) {
             return false;
         }
-        for (String field : fields) {
-            if (!isSafeSegment(field)) {
+        for (PluginIndexDeclaration.DeclaredField field : fields) {
+            if (!isSafeSegment(field.name())) {
                 return false;
             }
         }

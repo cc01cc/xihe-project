@@ -40,6 +40,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       never answer 412 even when the client sends {@code If-Match}.</li>
  *   <li><b>E11 audit</b> — SEC-3 records refusals as well as successes, so both a 200 and a 403 leave a
  *       row in {@code audit_logs} with the binding as resource id.</li>
+ *   <li><b>E12 date write form</b> — a declared {@code date} is only the canonical fixed-width UTC
+ *       instant; every other shape is 400 {@code INVALID_REQUEST} and no row is written. Excludes:
+ *       anything about the date index itself (creating and using it is proven on real PG 17 in
+ *       {@code PluginRecordsIndexExecutorTest}).</li>
  * </ul>
  *
  * <p><b>Known gap, stated rather than hidden</b>: the seeded manifest declares a unique index, but the
@@ -291,6 +295,43 @@ class PluginRecordsApiTest extends AbstractPluginRecordsIntegrationTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("INVALID_REQUEST", code(response));
         assertEquals(0, storedRows(binding, "notes"));
+    }
+
+    /**
+     * E12 (date lane, direction B): a declared {@code date} is stored only as the normalized
+     * fixed-width UTC instant {@code 2026-11-08T13:40:00Z}. Every other shape is refused 400
+     * {@code INVALID_REQUEST} naming the field, and no row is written — the value is never normalized,
+     * because the stored bytes are the index key ({@code date} is indexed as plain text and only this
+     * form orders lexicographically exactly like it orders chronologically).
+     */
+    @Test
+    void dateValueIsAcceptedOnlyAsTheCanonicalFixedWidthUtcInstant() {
+        SeededBinding binding = seedEnabledBinding();
+        String token = token(binding);
+        ResponseEntity<String> accepted = put(recordsPath(binding, "notes/when-ok"), token,
+                body("{\"when\":\"2026-11-08T13:40:00Z\"}"));
+        assertEquals(HttpStatus.OK, accepted.getStatusCode(), accepted.getBody());
+        assertEquals("2026-11-08T13:40:00Z",
+                json(get(recordsPath(binding, "notes/when-ok"), token)).get("doc").get("when").asText(),
+                "the canonical value must be stored exactly as sent, not rewritten");
+
+        for (String value : List.of(
+                "2026-11-08T13:40:00+08:00",
+                "2026-11-08T13:40:00+0800",
+                "2026-11-08T13:40:00.123Z",
+                "2026-11-08T13:40:00.123456Z",
+                "2026-11-08 13:40:00Z",
+                "2026-11-08",
+                "2026-11-08T13:40:00z",
+                "2026-11-08T13:40:00")) {
+            ResponseEntity<String> refused = put(recordsPath(binding, "notes/when-bad"), token,
+                    body("{\"when\":\"" + value + "\"}"));
+            assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(), value);
+            assertEquals("INVALID_REQUEST", code(refused), value);
+            assertTrue(json(refused).get("detail").asText().contains("when"), value);
+        }
+        assertEquals(1, storedRows(binding, "notes"),
+                "only the accepted document may exist: a refused write is not a row");
     }
 
     // ---------------------------------------------------------------- E10: no CAS

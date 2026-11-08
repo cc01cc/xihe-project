@@ -113,15 +113,16 @@ class PluginRecordsIndexNamingTest {
     @Test
     void onlyADeclarableShapeMayReachTheExecutor() {
         assertTrue(PluginIndexNaming.isDeclarable(
-                new PluginIndexDeclaration("contacts", "by_email", List.of("email"), false)));
+                new PluginIndexDeclaration("contacts", "by_email", List.of(field("email")), false)));
         assertFalse(PluginIndexNaming.isDeclarable(
                         new PluginIndexDeclaration("contacts", "by_email", List.of(), false)),
                 "an index with no fields is not installable");
         assertFalse(PluginIndexNaming.isDeclarable(new PluginIndexDeclaration("contacts",
-                        "by_email", List.of("a", "b", "c", "d", "e"), false)),
+                        "by_email", List.of(field("a"), field("b"), field("c"), field("d"),
+                                field("e")), false)),
                 "QUOTA-8 caps an index at 4 fields");
         assertFalse(PluginIndexNaming.isDeclarable(new PluginIndexDeclaration("contacts",
-                        "by_email", List.of("Email"), false)),
+                        "by_email", List.of(field("Email")), false)),
                 "a non-grammar field name must be refused");
     }
 
@@ -132,14 +133,14 @@ class PluginRecordsIndexNamingTest {
         ArrayNode collections = manifest.putObject("storage").putArray("collections");
         ObjectNode contacts = collections.addObject();
         contacts.put("name", "contacts");
-        contacts.putArray("fields").add("email");
+        contacts.putArray("fields").addObject().put("name", "email").put("type", "date");
         ObjectNode byEmail = contacts.putArray("indexes").addObject();
         byEmail.put("name", "by_email");
         byEmail.putArray("fields").add("email");
         byEmail.put("unique", true);
         ObjectNode notes = collections.addObject();
         notes.put("name", "notes");
-        notes.putArray("fields").add("title");
+        notes.putArray("fields").addObject().put("name", "title").put("type", "string");
         notes.putArray("indexes");
 
         List<PluginIndexDeclaration> declarations = PluginIndexDeclaration.from(manifest);
@@ -148,9 +149,18 @@ class PluginRecordsIndexNamingTest {
         PluginIndexDeclaration declaration = declarations.get(0);
         assertEquals("contacts", declaration.collection());
         assertEquals("by_email", declaration.name());
-        assertEquals(List.of("email"), declaration.fields());
+        assertEquals(List.of("email"), declaration.fieldNames(),
+                "the ledger stores field names only (DP-3)");
+        assertEquals(List.of(new PluginIndexDeclaration.DeclaredField("email", "date")),
+                declaration.fields(),
+                "the type comes from the collection's declaration, not from the index");
         assertTrue(declaration.unique(), "the unique flag must survive the projection");
         assertEquals(List.of(), PluginIndexDeclaration.from(mapper.createObjectNode()),
                 "a manifest without storage declares no indexes");
+    }
+
+    /** PLAN-0691 §5.2: this test exercises identifiers, so every fixture field is declared text. */
+    private static PluginIndexDeclaration.DeclaredField field(String name) {
+        return new PluginIndexDeclaration.DeclaredField(name, "string");
     }
 }

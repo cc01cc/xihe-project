@@ -208,6 +208,62 @@ class PluginRecordsServiceTest {
                         MAPPER3.readTree(DOC_JSON)));
     }
 
+    /**
+     * The write half of the date lane (task-203, direction B): a {@code date} is stored as a normalized
+     * fixed-width UTC instant because that is the only text form whose lexicographic order is its
+     * chronological order — which is what lets the index stay a plain text expression (a
+     * {@code timestamptz} cast is impossible: {@code timestamptz_in} is {@code STABLE} and PostgreSQL
+     * refuses it in an index expression).
+     */
+    @Test
+    void aDateFieldIsStoredOnlyAsTheCanonicalFixedWidthUtcInstant() {
+        authorize();
+        assertEquals("id-1", service.write(claims(BINDING), BINDING, COLLECTION, "id-1",
+                MAPPER3.readTree("{\"when\":\"2026-11-08T13:40:00Z\"}")).id(),
+                "the canonical instant must be accepted unchanged");
+        // A declared field is optional: absent and explicitly-null are not values to judge.
+        assertEquals("id-1", service.write(claims(BINDING), BINDING, COLLECTION, "id-1",
+                MAPPER3.readTree("{\"status\":\"live\"}")).id(),
+                "a document without the date field is legal");
+        assertEquals("id-1", service.write(claims(BINDING), BINDING, COLLECTION, "id-1",
+                MAPPER3.readTree("{\"when\":null}")).id(), "an explicit null is not a malformed date");
+    }
+
+    /**
+     * Every non-canonical shape (2026-11-08 ruling): an offset with or without a colon, a fraction,
+     * a space separator, a bare date, a lowercase {@code z}, and a naive local time. All refused with
+     * 400 {@code INVALID_REQUEST} and <b>never normalized</b> — the row is not written, so the stored
+     * bytes are always the caller's own canonical string.
+     */
+    @Test
+    void everyNonCanonicalDateFormIsRefusedWithoutRewriting() {
+        authorize();
+        List<String> refused = List.of(
+                "2026-11-08T13:40:00+08:00",
+                "2026-11-08T13:40:00+0800",
+                "2026-11-08T13:40:00.123Z",
+                "2026-11-08T13:40:00.123456Z",
+                "2026-11-08 13:40:00Z",
+                "2026-11-08",
+                "2026-11-08T13:40:00z",
+                "2026-11-08T13:40:00");
+        for (String value : refused) {
+            CpApiException refusal = assertProblem(HttpStatus.BAD_REQUEST,
+                    PluginRecordsService.CODE_INVALID_REQUEST,
+                    () -> service.write(claims(BINDING), BINDING, COLLECTION, "id-1",
+                            MAPPER3.readTree("{\"when\":\"" + value + "\"}")));
+            assertTrue(refusal.getMessage().contains("'when'"),
+                    "the refusal must name the field: " + refusal.getMessage());
+        }
+        verify(repository, never()).upsert(any(), any(), any(), any());
+        assertProblem(HttpStatus.BAD_REQUEST, PluginRecordsService.CODE_INVALID_REQUEST,
+                () -> service.write(claims(BINDING), BINDING, COLLECTION, "id-1",
+                        MAPPER3.readTree("{\"when\":1720000000}")));
+        // Every refusal is audited (SEC-3), one row per rejected write: 8 malformed strings + 1 number.
+        verify(auditLogger, times(9)).recordDurableChange(any(), any(), eq("plugin.data.write"),
+                eq("plugin_record"), eq(BINDING.toString()), contains("denied:INVALID_REQUEST"));
+    }
+
     /** S10 (Lead ruling 2026-11-08, 403-before-400): a cursor from another binding is refused as a
      * <b>security</b> decision even when its version is also unknown.
      */
@@ -341,7 +397,8 @@ class PluginRecordsServiceTest {
                     {"storage":{"collections":[{
                       "name":"notes",
                       "docBytesMax":%d,
-                      "fields":["status","n"],
+                      "fields":[{"name":"status","type":"string"},{"name":"n","type":"number"},
+                                {"name":"when","type":"date"}],
                       "indexes":[{"name":"uniq_status","fields":["status"],"unique":true}]
                     }]}}""".formatted(docBytesMax));
         } catch (Exception e) {

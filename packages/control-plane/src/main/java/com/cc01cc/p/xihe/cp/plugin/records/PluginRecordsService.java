@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * PLAN-0691 T2.3: the records data plane's application service (spec/data-plane.md §2 QUOTA, §4 API,
@@ -78,6 +79,19 @@ public class PluginRecordsService {
     public static final String ACTION_DELETE = "plugin.data.delete";
 
     private static final String RESOURCE_TYPE = "plugin_record";
+
+    /**
+     * The frozen {@code date} type's storage form: a normalized fixed-width UTC instant
+     * ({@code 2026-11-08T13:40:00Z}, exactly 20 characters). It is the only text form whose
+     * lexicographic order equals its chronological order, which is what lets {@code date} be indexed
+     * as plain text. Anything else — an offset, a fraction, a space separator, a bare date, a
+     * lowercase {@code z}, or a naive local time — is refused rather than normalized.
+     */
+    static final Pattern NORMALIZED_UTC_INSTANT = Pattern.compile(
+            "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+
+    /** The one frozen field type whose stored form the write path constrains (see the method below). */
+    private static final String DATE_TYPE = "date";
 
     private final PluginRecordsRepository repository;
     private final PluginRecordsLimits limits;
@@ -179,6 +193,7 @@ public class PluginRecordsService {
                 }
                 String docJson = serialise(doc);
                 requireWithinDocBytes(declared, docJson);
+                requireNormalizedDates(declared, doc);
                 String targetId = id == null ? mintId() : id;
                 trail.documentId(targetId);
                 if (id == null) {
@@ -329,6 +344,48 @@ public class PluginRecordsService {
             throw new CpApiException(HttpStatus.CONTENT_TOO_LARGE, CODE_VALUE_TOO_LARGE,
                     "document is " + bytes + " bytes; collection '" + declared.name()
                             + "' allows " + ceiling + " (QUOTA-7)");
+        }
+    }
+
+    /**
+     * The write half of the {@code date} lane (DP-2), and the reason the index can stay a plain text
+     * expression: a declared {@code date} must be the normalized fixed-width UTC instant
+     * {@code 2026-11-08T13:40:00Z} (see {@link #NORMALIZED_UTC_INSTANT}). Only that 20-character form
+     * orders lexicographically exactly like it orders chronologically, so {@code (doc ->> 'f')} is a
+     * correct index key for the type. Casting the document text to {@code timestamptz} instead is
+     * impossible: {@code timestamptz_in} is {@code STABLE}, so PostgreSQL refuses the whole
+     * {@code CREATE INDEX} ({@code functions in index expression must be marked IMMUTABLE}, measured
+     * on PG 17).
+     *
+     * <p>Refused, never rewritten: accepting {@code +08:00}, a fraction, a space separator, a bare date
+     * or a naive local time and "normalizing" it here would make the stored bytes differ from the
+     * caller's value and — worse — turn the index key into something the writer guessed. The refusal
+     * happens before the row is written (and before the repository call), so a malformed value can
+     * never enter the table an index scans.</p>
+     *
+     * <p>Only declared top-level fields are inspected, because only they can become an index
+     * expression: an absent field or an explicit {@code null} is allowed (a declared field is optional),
+     * and a declared {@code date} carrying a non-string value is refused like a malformed string.</p>
+     */
+    private void requireNormalizedDates(PluginRecordSchema.Collection declared, JsonNode doc) {
+        for (String field : declared.fields()) {
+            if (!DATE_TYPE.equals(declared.typeOf(field))) {
+                continue;
+            }
+            JsonNode value = doc.path(field);
+            if (value.isMissingNode() || value.isNull()) {
+                continue;
+            }
+            if (value.isTextual() && NORMALIZED_UTC_INSTANT.matcher(value.asText()).matches()) {
+                continue;
+            }
+            // The refused value's text is not echoed: an error detail is durable (audit trail) and the
+            // document body is caller data. Its shape is enough to act on.
+            throw invalidRequest("declared date field '" + field + "' must be a normalized UTC"
+                    + " instant 2026-11-08T13:40:00Z (20 characters, no offset, no fraction,"
+                    + " trailing Z); got " + (value.isTextual()
+                            ? "a string of " + value.asText().length() + " characters"
+                            : "a JSON " + value.getNodeType()));
         }
     }
 

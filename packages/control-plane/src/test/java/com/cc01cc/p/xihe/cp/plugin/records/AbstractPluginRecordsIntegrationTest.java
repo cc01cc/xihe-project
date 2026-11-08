@@ -28,8 +28,9 @@ import java.util.UUID;
  *
  * <p>Seeding is SQL, not the product's install/bind services: those are another lane's entry points and
  * not part of this task. The manifest written here is exactly the document shape
- * {@code spec/manifest.schema.json} validates: {@code storage.collections[].fields} is a list of field
- * <b>names</b>, which is why the query whitelist is name-only and range comparisons are textual.
+ * {@code spec/manifest.schema.json} validates: {@code storage.collections[].fields} is a list of
+ * {@code {name, type}} objects, so the query whitelist is name-only while the write path can constrain
+ * the one type whose stored form matters ({@code date}, canonical fixed-width UTC text).
  */
 @TestPropertySource(properties = {
         "cp.plugin.enabled=true",
@@ -61,9 +62,11 @@ public abstract class AbstractPluginRecordsIntegrationTest extends AbstractInteg
      */
     protected static final String MANIFEST = """
             {"storage":{"collections":[
-              {"name":"notes","docBytesMax":4096,"fields":["status","name","n"],
+              {"name":"notes","docBytesMax":4096,
+               "fields":[{"name":"status","type":"string"},{"name":"name","type":"string"},
+                         {"name":"n","type":"number"},{"name":"when","type":"date"}],
                "indexes":[{"name":"uniq_status","fields":["status"],"unique":true}]},
-              {"name":"tags","fields":["label"]}
+              {"name":"tags","fields":[{"name":"label","type":"string"}]}
             ]}}""";
 
     @BeforeEach

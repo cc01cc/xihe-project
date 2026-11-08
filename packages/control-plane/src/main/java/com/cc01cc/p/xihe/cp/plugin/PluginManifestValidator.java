@@ -353,9 +353,12 @@ public final class PluginManifestValidator {
                 throw invalid("storage.collections names must be unique: " + name);
             }
             integer(collection, "docBytesMax", 1, 1_048_576, 262_144);
-            List<String> fields = stringList(collection.get("fields"), path + ".fields", 1, 8,
-                    ATOM_NAME_PATTERN);
-            totalIndexes += validateIndexes(collection.get("indexes"), path, name, fields);
+            List<PluginIndexDeclaration.DeclaredField> fields = declaredFields(collection, path);
+            List<String> fieldNames = new ArrayList<>(fields.size());
+            for (PluginIndexDeclaration.DeclaredField field : fields) {
+                fieldNames.add(field.name());
+            }
+            totalIndexes += validateIndexes(collection.get("indexes"), path, name, fieldNames);
         }
         if (totalIndexes > MAX_INDEXES_PER_PLUGIN) {
             throw invalid("declared indexes exceed " + MAX_INDEXES_PER_PLUGIN + " per plugin");
@@ -402,6 +405,51 @@ public final class PluginManifestValidator {
             }
         }
         return indexes.size();
+    }
+
+    /**
+     * PLAN-0691 §5.2: {@code storage.collections[].fields[]} is an <b>object</b> array of
+     * {@code {name, type}}, and {@code type} is one of the four frozen types (string/number/boolean/
+     * date). The type is validated here, with the field name and its position in the message, rather
+     * than being discovered at DDL time: a manifest that asks for {@code text} or {@code datetime}
+     * must be a 422 naming the field, not a {@code CREATE INDEX} that silently orders lexicographically
+     * (spec/data-plane.md DP-2, {@code "10" < "9"}).
+     */
+    private static List<PluginIndexDeclaration.DeclaredField> declaredFields(JsonNode collection,
+            String path) {
+        JsonNode fields = collection.get("fields");
+        String label = path + ".fields";
+        if (fields == null || !fields.isArray()) {
+            throw invalid(label + " must be an array");
+        }
+        if (fields.size() < 1 || fields.size() > 8) {
+            throw invalid(label + " allows 1 to 8 entries");
+        }
+        List<PluginIndexDeclaration.DeclaredField> declared = new ArrayList<>();
+        Set<String> names = new HashSet<>();
+        for (int i = 0; i < fields.size(); i++) {
+            JsonNode field = fields.get(i);
+            String fieldPath = label + "[" + i + "]";
+            if (!field.isObject()) {
+                throw invalid(fieldPath + " must be an object with name and type");
+            }
+            requireObject(field, fieldPath, Set.of("name", "type"), Set.of("name", "type"));
+            String name = requireValue(field.get("name"), fieldPath + ".name", 1, 32,
+                    ATOM_NAME_PATTERN);
+            if (!names.add(name)) {
+                throw invalid(fieldPath + ".name is declared twice in " + label + ": " + name);
+            }
+            JsonNode type = field.get("type");
+            if (type == null || !type.isTextual()
+                    || !PluginIndexDeclaration.FIELD_TYPES.contains(type.asText())) {
+                throw invalid(fieldPath + ".type must be one of string/number/boolean/date"
+                        + " (field " + name + "): "
+                        + (type == null ? "missing" : type.isTextual() ? type.asText()
+                                : type.toString()));
+            }
+            declared.add(new PluginIndexDeclaration.DeclaredField(name, type.asText()));
+        }
+        return declared;
     }
 
     private static void validateBlobs(JsonNode blobs) {

@@ -19,7 +19,10 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * PLAN-0691 T2.2: creates and drops the physical indexes a plugin manifest declares, and keeps
@@ -191,20 +194,121 @@ public class PluginIndexDdlExecutor {
 
     private void createIndex(UUID bindingId, PluginIndexDeclaration declaration, String name) {
         Existing existing = findExisting(bindingId, declaration);
-        if (existing != null && existing.matches(declaration)) {
+        if (existing != null && existing.matches(declaration)
+                && physicalExpressionMatches(name, declaration)) {
             // Same identity, same definition, already applied: a retried install must not rebuild the
             // index (that is the replayable half of "install is idempotent").
             return;
         }
         if (existing != null) {
-            // Same identity, different definition (an upgrade changed fields/unique). CREATE INDEX IF
-            // NOT EXISTS would silently keep the stale index, so the rebuild is explicit.
+            // Same identity, different definition: an upgrade changed the fields, the uniqueness, or a
+            // field's type. DP-3 keeps field types in the manifest only, so a type change cannot be
+            // seen in the ledger — the physical index definition is the evidence. CREATE INDEX IF NOT
+            // EXISTS would silently keep the stale cast, so the rebuild is explicit. Only the cast
+            // types can differ physically; a string⇄date swap reaches the early return above because
+            // its definition is identical (ruling C1: no rebuild, no rename).
             jdbc.execute("DROP INDEX IF EXISTS " + name);
         }
         jdbc.execute(createStatement(bindingId, declaration, name));
     }
 
-    private String createStatement(UUID bindingId, PluginIndexDeclaration declaration,
+    /**
+     * Whether the physical index under {@code name} still carries, <b>per field</b>, the cast that
+     * field's declared type asks for.
+     *
+     * <p>The ledger stores field <b>names only</b> (DP-3: the manifest is the single source of field
+     * types), so "did an upgrade change a type" cannot be answered from the ledger. The index
+     * definition can answer it for the <b>cast</b> types: PostgreSQL prints the cast we emitted
+     * ({@code ::numeric}, {@code ::boolean}) right after each {@code (doc ->> 'f'::text)} element.
+     * Comparing the <i>set</i> of casts would be too weak: an upgrade that swaps two fields' types
+     * leaves the same set behind while each element carries the other field's cast, so the stale
+     * ordering would survive silently. Every field is therefore checked on its own — its element must
+     * exist, and the first {@code ::} after it (if any) must be exactly its declared cast, absent for
+     * {@code string} and {@code date}.</p>
+     *
+     * <p>Because {@code date} keeps the plain text expression (see {@link #columnExpression}), a
+     * {@code string}↔{@code date} swap produces a <b>physically identical</b> index: same element,
+     * same order, no cast — measured on PG 17 as byte-identical {@code indexdef}. Ruling C1
+     * (2026-11-08) therefore says that swap needs <b>no</b> rebuild and no rename: there is nothing
+     * physical to change, the type's only effect is the write-side form check (which re-reads the
+     * persisted manifest on every write), and adding a declaration snapshot to detect it would cost a
+     * migration while breaking the ledger-only name recomputation that uninstall relies on. What
+     * changes across that swap is the set of values the write path accepts: after
+     * {@code string→date}, existing un-normalized values no longer satisfy the new invariant, so an
+     * upgrade over data that is not already canonical must be refused, never silently re-normalized.</p>
+     *
+     * <p>A missing index, or an element absent from the definition, counts as "does not match": the
+     * ledger says applied but the physical object cannot be the declared one, and rebuilding is
+     * idempotent anyway.</p>
+     */
+    private boolean physicalExpressionMatches(String name, PluginIndexDeclaration declaration) {
+        List<String> definitions = jdbc.query("SELECT indexdef FROM pg_indexes WHERE indexname = ?",
+                (rs, index) -> rs.getString(1), name);
+        return !definitions.isEmpty() && physicalCastsMatch(definitions.get(0), declaration);
+    }
+
+    /** The per-field half of {@link #physicalExpressionMatches}; static so the rule is testable. */
+    static boolean physicalCastsMatch(String definition, PluginIndexDeclaration declaration) {
+        String text = definition == null ? "" : definition;
+        for (PluginIndexDeclaration.DeclaredField field : declaration.fields()) {
+            Matcher element = Pattern.compile(
+                    "\\(\\s*doc\\s*->>\\s*'" + Pattern.quote(field.name()) + "'::text\\s*\\)")
+                    .matcher(text);
+            if (!element.find()) {
+                return false;
+            }
+            if (!Objects.equals(followingCast(text, element.end()), castMarker(field.type()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The cast printed immediately after one field element, or {@code null} when the element is not
+     * followed by a cast. PostgreSQL deparses our emitted {@code ((doc ->> 'f')::numeric)} as
+     * {@code (((doc ->> 'f'::text))::numeric)}, so only whitespace and closing parentheses separate the
+     * element from its cast.
+     */
+    private static String followingCast(String text, int from) {
+        int i = from;
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (c == ' ' || c == ')') {
+                i++;
+                continue;
+            }
+            if (c == ':' && i + 1 < text.length() && text.charAt(i + 1) == ':') {
+                int end = i + 2;
+                while (end < text.length() && Character.isLetter(text.charAt(end))) {
+                    end++;
+                }
+                String marker = text.substring(i + 2, end);
+                return "timestamp".equals(marker) ? "timestamptz" : marker;
+            }
+            break;
+        }
+        return null;
+    }
+
+    /** The cast suffix a frozen type adds to {@code (doc ->> 'field')}; {@code null} for text. */
+    private static String castMarker(String type) {
+        return switch (type) {
+            case "string", "date" -> null;
+            case "number" -> "numeric";
+            case "boolean" -> "boolean";
+            default -> throw new IllegalArgumentException("undeclared plugin field type: " + type);
+        };
+    }
+
+    /**
+     * The exact {@code CREATE INDEX} text for one declaration. Static and package-private so
+     * {@code PluginRecordsIndexCastTest} can assert it <b>character for character</b> against the forms
+     * frozen in spec/data-plane.md (including the date lane's uncrasted text form); a database
+     * round-trip would only show PostgreSQL's re-printed definition, not the statement the executor
+     * sent.
+     */
+    static String createStatement(UUID bindingId, PluginIndexDeclaration declaration,
             String name) {
         StringBuilder sql = new StringBuilder("CREATE ");
         if (declaration.unique()) {
@@ -217,12 +321,45 @@ public class PluginIndexDdlExecutor {
             if (i > 0) {
                 sql.append(", ");
             }
-            // DP-2: the declared field is a scalar expression over the document, not a generated
-            // column; the field name was validated against the manifest grammar above.
-            sql.append("((doc->>'").append(declaration.fields().get(i)).append("'))");
+            sql.append(columnExpression(declaration.fields().get(i)));
         }
         sql.append(") WHERE ").append(predicate(bindingId.toString(), declaration.collection()));
         return sql.toString();
+    }
+
+    /**
+     * DP-2/§5.3: the declared field is a scalar expression over the document, not a generated
+     * column, and the field's frozen type selects the expression — {@code string} and {@code date} ⇒
+     * {@code (doc ->> 'f')}, {@code number} ⇒ {@code ((doc ->> 'f')::numeric)}, {@code boolean} ⇒
+     * {@code ((doc ->> 'f')::boolean)}. The forms in {@code data-plane.md} are the <b>elements</b> of
+     * the column list: the executor wraps them in the list parentheses, so a single string field
+     * becomes {@code ON plugin_records ((doc ->> 'email'))} — verbatim the §6.3 unique sample. The
+     * extra parenthesis around a cast is load-bearing: PostgreSQL's {@code index_elem} grammar is
+     * {@code '(' a_expr ')'}, so {@code (doc ->> 'f')::numeric} is a syntax error ("at or near ::"),
+     * while {@code ((doc ->> 'f')::numeric)} is accepted.
+     *
+     * <p>{@code date} is <b>not</b> cast: casting a document text to {@code timestamptz} needs
+     * {@code timestamptz_in}, which is {@code STABLE}, so PostgreSQL refuses it outright
+     * ({@code functions in index expression must be marked IMMUTABLE}, measured on PG 17) — the type
+     * therefore stores a normalized fixed-width UTC instant ({@code 2026-11-08T13:40:00Z}, 20 chars)
+     * and is ordered by plain text, where lexicographic order equals chronological order. The write
+     * path enforces that normalization ({@code PluginRecordsService}), so an un-normalized value can
+     * never reach this index. Without a cast {@code ->>} yields text and compares
+     * lexicographically ({@code "10" < "9"}), which is the ordering the contract forbids for
+     * {@code number}/{@code boolean} — that is why those two keep their cast.</p>
+     *
+     * <p>The field name was validated against the manifest grammar and the type against the frozen
+     * vocabulary before this point, so no manifest-supplied value reaches the statement unvalidated.</p>
+     */
+    static String columnExpression(PluginIndexDeclaration.DeclaredField field) {
+        String doc = "(doc ->> '" + field.name() + "')";
+        return switch (field.type()) {
+            case "string", "date" -> doc;
+            case "number" -> "(" + doc + "::numeric)";
+            case "boolean" -> "(" + doc + "::boolean)";
+            default -> throw new IllegalArgumentException(
+                    "undeclared plugin field type: " + field.type());
+        };
     }
 
     private void markApplied(UUID bindingId, PluginIndexDeclaration declaration) {
@@ -254,7 +391,7 @@ public class PluginIndexDdlExecutor {
         statement.setString(2, declaration.collection());
         statement.setString(3, declaration.name());
         statement.setArray(4, statement.getConnection().createArrayOf("text",
-                declaration.fields().toArray(new String[0])));
+                declaration.fieldNames().toArray(new String[0])));
         statement.setBoolean(5, declaration.unique());
     }
 
@@ -339,12 +476,18 @@ public class PluginIndexDdlExecutor {
         return value.length() > MAX_ERROR_LENGTH ? value.substring(0, MAX_ERROR_LENGTH) : value;
     }
 
-    /** One ledger row, read back to decide between "already applied" and "rebuild". */
+    /**
+     * One ledger row, read back to decide between "already applied" and "rebuild".
+     *
+     * <p>{@code fields} is the ledger's own name list; the <b>types</b> are not stored there (DP-3),
+     * which is why the definition comparison in {@link #physicalExpressionMatches} is needed before
+     * an install may skip the rebuild.</p>
+     */
     private record Existing(List<String> fields, boolean unique, String state) {
 
         boolean matches(PluginIndexDeclaration declaration) {
             return "applied".equals(state) && unique == declaration.unique()
-                    && fields.equals(declaration.fields());
+                    && fields.equals(declaration.fieldNames());
         }
     }
 }

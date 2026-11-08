@@ -63,7 +63,7 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
     void applyCreatesAPartialExpressionIndexAndMarksTheLedgerApplied() {
         UUID bindingId = UUID.randomUUID();
         List<PluginIndexDeclaration> declarations = List.of(
-                new PluginIndexDeclaration(COLLECTION, "by_email", List.of("email"), true));
+                new PluginIndexDeclaration(COLLECTION, "by_email", List.of(field("email")), true));
 
         List<String> created = inTransaction(
                 () -> executor.applyForBinding(bindingId, declarations, null, null));
@@ -102,7 +102,8 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
     void thePhysicalNameIsRecomputableFromTheLedgerRowAlone() {
         UUID bindingId = UUID.randomUUID();
         inTransaction(() -> executor.applyForBinding(bindingId,
-                List.of(new PluginIndexDeclaration(COLLECTION, "by_phone", List.of("phone"), false)),
+                List.of(new PluginIndexDeclaration(COLLECTION, "by_phone", List.of(field("phone")),
+                        false)),
                 null, null));
 
         Map<String, Object> row = ledgerRow(bindingId, COLLECTION, "by_phone");
@@ -124,12 +125,12 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
         UUID bindingId = UUID.randomUUID();
         String name = inTransaction(() -> executor.applyForBinding(bindingId,
                 List.of(new PluginIndexDeclaration(COLLECTION, "by_contact",
-                        List.of("email"), false)), null, null)).get(0);
+                        List.of(field("email")), false)), null, null)).get(0);
         assertTrue(compact(indexDefinition(name)).contains("doc->>'email'"));
 
         inTransaction(() -> executor.applyForBinding(bindingId,
                 List.of(new PluginIndexDeclaration(COLLECTION, "by_contact",
-                        List.of("phone"), false)), null, null));
+                        List.of(field("phone")), false)), null, null));
 
         String rebuilt = compact(indexDefinition(name));
         assertTrue(rebuilt.contains("doc->>'phone'"),
@@ -146,12 +147,181 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
     }
 
     /**
-     * A declaration the manifest grammar refuses must be rejected <b>before</b> any DDL (an identifier
-     * cannot be a bind parameter), leave no index, and be durably audited. It gets <b>no ledger row</b>:
-     * it never reached DDL, so it has no physical identity, and the ledger's {@code fields} CHECK
-     * (cardinality 1..4) could not even store this zero-field declaration — which is exactly why the
-     * audit row, not the ledger, is the durable record of a refusal.
+     * DP-3 keeps field <b>types</b> in the manifest only (the ledger stores names), so an upgrade that
+     * keeps a declaration's name, fields and uniqueness but changes one field's type is invisible to
+     * the ledger. The cast is the physical evidence: a {@code number} declaration must not silently
+     * keep the {@code text} expression, or the index would order {@code "10" < "9"}.
      */
+    @Test
+    void aChangedFieldTypeRebuildsTheIndexWithTheNewCast() {
+        UUID bindingId = UUID.randomUUID();
+        List<PluginIndexDeclaration> textVersion = List.of(new PluginIndexDeclaration(COLLECTION,
+                "by_age", List.of(new PluginIndexDeclaration.DeclaredField("age", "string")),
+                false));
+        String name = inTransaction(() -> executor.applyForBinding(bindingId, textVersion, null,
+                null)).get(0);
+        assertFalse(compact(indexDefinition(name)).contains("::numeric"),
+                "a string declaration must not produce a numeric cast: " + indexDefinition(name));
+
+        List<PluginIndexDeclaration> numberVersion = List.of(new PluginIndexDeclaration(COLLECTION,
+                "by_age", List.of(new PluginIndexDeclaration.DeclaredField("age", "number")),
+                false));
+        inTransaction(() -> executor.applyForBinding(bindingId, numberVersion, null, null));
+
+        String rebuilt = compact(indexDefinition(name));
+        assertTrue(rebuilt.contains("::numeric"),
+                "the type change must replace the text expression in place: " + rebuilt);
+        assertEquals(1, indexCount(bindingId),
+                "the rebuild must not leave two indexes for one declaration");
+        assertEquals(List.of("age"), jdbc.query("SELECT fields FROM plugin_index_declarations"
+                        + " WHERE binding_id = ? AND collection = ? AND index_name = ?",
+                (rs, rowNumber) -> List.of((String[]) rs.getArray(1).getArray()),
+                bindingId, COLLECTION, "by_age").get(0),
+                "the ledger keeps the names only (DP-3), unchanged by the type change");
+    }
+
+    /**
+     * Two fields <b>trading</b> types keeps the ledger, the field names and the multiset of casts
+     * identical — only which field carries which cast changes. A comparison over the set of casts
+     * would accept the stale index; the executor compares per field, so this must rebuild.
+     */
+    @Test
+    void aSwapOfTwoFieldTypesRebuildsTheIndexInsteadOfKeepingTheStaleCasts() {
+        UUID bindingId = UUID.randomUUID();
+        List<PluginIndexDeclaration> before = List.of(new PluginIndexDeclaration(COLLECTION,
+                "by_pair",
+                List.of(new PluginIndexDeclaration.DeclaredField("tag", "string"),
+                        new PluginIndexDeclaration.DeclaredField("score", "number")),
+                false));
+        String name = inTransaction(() -> executor.applyForBinding(bindingId, before, null, null))
+                .get(0);
+        assertTrue(compact(indexDefinition(name)).contains("::numeric"),
+                "the numeric cast belongs to score in the first definition: "
+                        + indexDefinition(name));
+
+        List<PluginIndexDeclaration> swapped = List.of(new PluginIndexDeclaration(COLLECTION,
+                "by_pair",
+                List.of(new PluginIndexDeclaration.DeclaredField("tag", "number"),
+                        new PluginIndexDeclaration.DeclaredField("score", "string")),
+                false));
+        inTransaction(() -> executor.applyForBinding(bindingId, swapped, null, null));
+
+        String rebuilt = compact(indexDefinition(name));
+        assertTrue(rebuilt.contains("'tag'::text))::numeric"),
+                "tag must carry the numeric cast after the swap: " + rebuilt);
+        assertFalse(rebuilt.contains("'score'::text))::"),
+                "score must be plain text after the swap, not the stale numeric: " + rebuilt);
+        assertEquals(1, indexCount(bindingId),
+                "the rebuild must not leave two indexes for one declaration");
+        assertEquals(List.of("tag", "score"), jdbc.query("SELECT fields FROM"
+                        + " plugin_index_declarations WHERE binding_id = ? AND collection = ?"
+                        + " AND index_name = ?",
+                (rs, rowNumber) -> List.of((String[]) rs.getArray(1).getArray()),
+                bindingId, COLLECTION, "by_pair").get(0),
+                "the ledger stores names only (DP-3), so the swap is invisible to it");
+    }
+
+    /**
+     * The {@code date} lane (task-203, direction B) on a real server, because the whole reason it is
+     * "no cast" is a server refusal: casting the document text to {@code timestamptz} needs
+     * {@code timestamptz_in}, which is {@code STABLE}, and PostgreSQL answers
+     * {@code functions in index expression must be marked IMMUTABLE} instead of creating the index.
+     *
+     * <p>So this asserts more than "the index exists": the definition carries no cast, and the index
+     * actually answers a range query ({@code EXPLAIN} under {@code enable_seqscan=off}, so the plan is
+     * about usability rather than about how small the test table is). The ordering assertion is the
+     * contract's premise, measured: the canonical fixed-width form orders identically as text and as
+     * {@code timestamptz} — which is exactly why the write path insists on that form.</p>
+     */
+    @Test
+    void aDateDeclarationBuildsAnIndexAPlainTextRangeQueryCanUse() {
+        UUID bindingId = UUID.randomUUID();
+        String name = inTransaction(() -> executor.applyForBinding(bindingId,
+                List.of(new PluginIndexDeclaration("events", "by_when",
+                        List.of(new PluginIndexDeclaration.DeclaredField("when", "date")), false)),
+                null, null)).get(0);
+
+        String definition = compact(indexDefinition(name));
+        assertNotNull(definition, "the date index must exist on the real server");
+        assertTrue(definition.contains("doc->>'when'"),
+                "the date index is the plain text extraction: " + definition);
+        assertFalse(definition.contains("'when'::text))::"),
+                "lane B: no cast after the element — the server refuses timestamptz_in in an index"
+                        + " expression: " + definition);
+
+        for (String value : List.of("2026-01-02T00:00:00Z", "2026-01-10T00:00:00Z",
+                "2025-12-31T23:59:59Z", "2026-11-08T13:40:00Z")) {
+            jdbc.update("INSERT INTO plugin_records (binding_id, collection, id, doc)"
+                    + " VALUES (?, 'events', ?, '{\"when\":\"" + value + "\"}'::jsonb)",
+                    bindingId, "e-" + value);
+        }
+
+        List<String> plan = inTransaction(() -> {
+            jdbc.execute("SET LOCAL enable_seqscan = off");
+            return jdbc.query("EXPLAIN SELECT id FROM plugin_records WHERE binding_id = ?"
+                    + " AND collection = 'events' AND (doc ->> 'when') >= ?",
+                    (rs, rowNumber) -> rs.getString(1), bindingId, "2026-01-01T00:00:00Z");
+        });
+        assertTrue(plan.stream().anyMatch(line -> line.contains(name)),
+                "the date index must be usable for a range query, plan was: " + plan);
+
+        // Lexicographic == chronological for the canonical form: the same rows come back in the same
+        // order whether they are sorted as text or as timestamptz.
+        List<String> sortedAsText = jdbc.query("SELECT doc ->> 'when' FROM plugin_records"
+                + " WHERE binding_id = ? AND collection = 'events' ORDER BY (doc ->> 'when')",
+                (rs, rowNumber) -> rs.getString(1), bindingId);
+        List<String> sortedAsInstant = jdbc.query("SELECT doc ->> 'when' FROM plugin_records"
+                + " WHERE binding_id = ? AND collection = 'events'"
+                + " ORDER BY (doc ->> 'when')::timestamptz",
+                (rs, rowNumber) -> rs.getString(1), bindingId);
+        assertEquals(sortedAsInstant, sortedAsText,
+                "the fixed-width UTC form is the premise of indexing date as text");
+        assertEquals(List.of("2025-12-31T23:59:59Z", "2026-01-02T00:00:00Z",
+                "2026-01-10T00:00:00Z", "2026-11-08T13:40:00Z"), sortedAsText,
+                "measured order of the four canonical instants");
+        assertEquals(1, indexCount(bindingId));
+    }
+
+    /**
+     * <b>Regression evidence for ruling C1 (2026-11-08)</b>: this test does not detect a swap, it
+     * proves that a swap needs no detection. Because {@code date} is the same text expression as
+     * {@code string}, swapping the two types leaves the physical definition <b>byte for byte</b>
+     * identical, so there is no index (and no name) to rebuild — rebuilding would be an invalid
+     * action over an identical object. The type's only effect is the write-side form check, which
+     * re-reads the persisted manifest on every write; the upgrade caveat is that after
+     * {@code string→date} existing un-normalized values no longer satisfy the new invariant, so data
+     * that is not already canonical must block the upgrade rather than be re-normalized.
+     */
+    @Test
+    void aStringToDateSwapLeavesTheSamePhysicalDefinition() {
+        UUID bindingId = UUID.randomUUID();
+        List<PluginIndexDeclaration> before = List.of(new PluginIndexDeclaration(COLLECTION,
+                "by_pair", List.of(
+                        new PluginIndexDeclaration.DeclaredField("tag", "string"),
+                        new PluginIndexDeclaration.DeclaredField("score", "date")), false));
+        String name = inTransaction(() -> executor.applyForBinding(bindingId, before, null, null))
+                .get(0);
+        String definitionBefore = compact(indexDefinition(name));
+
+        List<PluginIndexDeclaration> swapped = List.of(new PluginIndexDeclaration(COLLECTION,
+                "by_pair", List.of(
+                        new PluginIndexDeclaration.DeclaredField("tag", "date"),
+                        new PluginIndexDeclaration.DeclaredField("score", "string")), false));
+        inTransaction(() -> executor.applyForBinding(bindingId, swapped, null, null));
+
+        assertEquals(definitionBefore, compact(indexDefinition(name)),
+                "string⇄date swap: the physical definition cannot change, both elements are text");
+        assertEquals(1, indexCount(bindingId),
+                "no second index is created for the same declaration identity");
+        assertEquals(List.of("tag", "score"), jdbc.query("SELECT fields FROM"
+                        + " plugin_index_declarations WHERE binding_id = ? AND collection = ?"
+                        + " AND index_name = ?",
+                (rs, rowNumber) -> List.of((String[]) rs.getArray(1).getArray()),
+                bindingId, COLLECTION, "by_pair").get(0),
+                "the ledger (names only, DP-3) is unchanged by the swap");
+    }
+
+
     @Test
     void anIllegalDeclarationIsRefusedBeforeAnyDdlWithoutALedgerRow() {
         UUID bindingId = UUID.randomUUID();
@@ -197,7 +367,7 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
                 jdbc.update("INSERT INTO plugin_records (binding_id, collection, id, doc)"
                         + " VALUES (?, ?, 'tx-marker', '{}'::jsonb)", bindingId, COLLECTION);
                 return executor.applyForBinding(bindingId, List.of(new PluginIndexDeclaration(
-                        COLLECTION, "by_email", List.of("email"), true)), null, null);
+                        COLLECTION, "by_email", List.of(field("email")), true)), null, null);
             });
         });
 
@@ -236,8 +406,8 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
         UUID bindingId = UUID.randomUUID();
         UUID otherBinding = UUID.randomUUID();
         List<PluginIndexDeclaration> declarations = List.of(
-                new PluginIndexDeclaration(COLLECTION, "by_email", List.of("email"), false),
-                new PluginIndexDeclaration("notes", "by_title", List.of("title"), false));
+                new PluginIndexDeclaration(COLLECTION, "by_email", List.of(field("email")), false),
+                new PluginIndexDeclaration("notes", "by_title", List.of(field("title")), false));
         inTransaction(() -> executor.applyForBinding(bindingId, declarations, null, null));
         inTransaction(() -> executor.applyForBinding(otherBinding, declarations, null, null));
         assertEquals(2, indexCount(bindingId));
@@ -300,6 +470,11 @@ class PluginRecordsIndexExecutorTest extends AbstractIntegrationTest {
                         + " AND index_name = ?", bindingId, collection, indexName);
         assertFalse(rows.isEmpty(), "expected a ledger row for " + collection + "/" + indexName);
         return rows.get(0);
+    }
+
+    /** PLAN-0691 §5.2: declared fields carry a type; these tests exercise identifiers, not casts. */
+    private static PluginIndexDeclaration.DeclaredField field(String name) {
+        return new PluginIndexDeclaration.DeclaredField(name, "string");
     }
 
     private int auditRows(UUID bindingId, String detailFragment) {

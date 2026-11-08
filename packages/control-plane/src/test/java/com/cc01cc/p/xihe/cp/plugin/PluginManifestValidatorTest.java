@@ -162,6 +162,78 @@ class PluginManifestValidatorTest {
 
     // ------------------------------------------------------------------ fixtures
 
+    /**
+     * task-172 / PLAN-0691 §5.2: {@code storage.collections[].fields[]} carries
+     * {@code {name, type}}, and the type reaches the index declaration from the collection — never
+     * from the index (DP-3: the ledger keeps names, the manifest is the single type source).
+     */
+    @Test
+    void collectionFieldsAcceptExactlyTheFourFrozenScalarTypes() throws Exception {
+        ObjectNode node = minimal("official.kv-selftest", "1.0.0", "builtin");
+        ObjectNode collection = storageCollection(node);
+        ArrayNode fields = collection.putArray("fields");
+        for (String type : List.of("string", "number", "boolean", "date")) {
+            fields.addObject().put("name", "f_" + type).put("type", type);
+        }
+        collection.putArray("indexes").addObject().put("name", "by_kind")
+                .putArray("fields").add("f_date");
+        node.put("digest", PluginManifestValidator.computeDigest(node));
+
+        PluginManifest manifest = PluginManifestValidator.validate(bytes(node), "builtin");
+
+        List<PluginIndexDeclaration> declarations = PluginIndexDeclaration.from(manifest.raw());
+        assertEquals(1, declarations.size());
+        assertEquals(List.of(new PluginIndexDeclaration.DeclaredField("f_date", "date")),
+                declarations.get(0).fields(),
+                "the index's string field reference resolves to the declared type");
+    }
+
+    /** A type outside the frozen four has no cast, so it must be a 422 naming field and position. */
+    @Test
+    void aFieldTypeOutsideTheFrozenFourIsRefusedWithItsNameAndPosition() throws Exception {
+        ObjectNode node = minimal("official.kv-selftest", "1.0.0", "builtin");
+        ObjectNode collection = storageCollection(node);
+        ArrayNode fields = collection.putArray("fields");
+        fields.addObject().put("name", "status").put("type", "string");
+        fields.addObject().put("name", "created_at").put("type", "text");
+        node.put("digest", PluginManifestValidator.computeDigest(node));
+
+        CpApiException failure = assertThrows(CpApiException.class,
+                () -> PluginManifestValidator.validate(bytes(node), "builtin"));
+
+        assertEquals(PluginManifestValidator.ERROR_CODE, failure.getCode());
+        String detail = failure.getMessage();
+        assertTrue(detail.contains("storage.collections[0].fields[1].type"),
+                "the position of the refused declaration must be in the error: " + detail);
+        assertTrue(detail.contains("created_at"),
+                "the field name must be in the error: " + detail);
+        assertTrue(detail.contains("text"), "and the refused value: " + detail);
+    }
+
+    /** The pre-§5.2 string form is not silently upgraded: it is refused, not guessed. */
+    @Test
+    void thePreTypeStringArrayFieldFormIsNoLongerAccepted() throws Exception {
+        ObjectNode node = minimal("official.kv-selftest", "1.0.0", "builtin");
+        ObjectNode collection = storageCollection(node);
+        collection.putArray("fields").add("status");
+        node.put("digest", PluginManifestValidator.computeDigest(node));
+
+        CpApiException failure = assertThrows(CpApiException.class,
+                () -> PluginManifestValidator.validate(bytes(node), "builtin"));
+
+        String detail = failure.getMessage();
+        assertTrue(detail.contains("storage.collections[0].fields[0]"),
+                "the error must point at the first field entry: " + detail);
+        assertTrue(detail.contains("must be an object with name and type"),
+                "and must not invent a type for a bare string: " + detail);
+    }
+
+    /** {@code {"storage":{"collections":[{name, fields}]}}}, the shape task-172 validates. */
+    private static ObjectNode storageCollection(ObjectNode manifest) {
+        return manifest.putObject("storage").putArray("collections").addObject().put("name",
+                "notes");
+    }
+
     static ObjectNode minimal(String id, String version, String source) {
         ObjectNode node = MAPPER.createObjectNode();
         node.put("manifestVersion", "1");

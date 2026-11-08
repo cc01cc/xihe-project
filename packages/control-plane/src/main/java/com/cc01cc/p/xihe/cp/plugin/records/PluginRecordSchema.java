@@ -39,21 +39,33 @@ public record PluginRecordSchema(Map<String, Collection> collections) {
      *
      * @param name        manifest collection name (schema pattern {@code ^[a-z][a-z0-9_]{0,31}$})
      * @param fields      declared field names — the complete filter/sort whitelist
+     * @param types       declared field type per name (the frozen four; absent for an unknown field)
      * @param docBytesMax per-collection document ceiling declared by the manifest, or {@code null}
      *                    when it does not declare one (then the CP ceiling QUOTA-7 applies)
      * @param indexes     declared indexes, carried for the write path's unique-conflict reporting
      */
-    public record Collection(String name, Set<String> fields, Integer docBytesMax,
-            List<Index> indexes) {
+    public record Collection(String name, Set<String> fields, Map<String, String> types,
+            Integer docBytesMax, List<Index> indexes) {
 
         public Collection {
             fields = fields == null ? Set.of() : Set.copyOf(fields);
+            types = types == null ? Map.of() : Map.copyOf(types);
             indexes = indexes == null ? List.of() : List.copyOf(indexes);
+        }
+
+        /** Name-only construction for callers that have no manifest behind them (query tests). */
+        public Collection(String name, Set<String> fields, Integer docBytesMax, List<Index> indexes) {
+            this(name, fields, Map.of(), docBytesMax, indexes);
         }
 
         /** True when {@code field} is declared, i.e. usable in a filter or as the sort key. */
         public boolean declares(String field) {
             return field != null && fields.contains(field);
+        }
+
+        /** The declared type of {@code field}, or {@code null} when the field is not declared. */
+        public String typeOf(String field) {
+            return field == null ? null : types.get(field);
         }
     }
 
@@ -83,10 +95,20 @@ public record PluginRecordSchema(Map<String, Collection> collections) {
                 continue;
             }
             Set<String> fields = new LinkedHashSet<>();
+            Map<String, String> types = new LinkedHashMap<>();
             for (JsonNode field : node.path("fields")) {
-                String value = field.asText("");
+                // PLAN-0691 §5.2: a declared field is {name, type}, not a bare string. The query
+                // whitelist only needs the name, but the write path needs the type too: a declared
+                // `date` must be rejected unless it is a normalized fixed-width UTC instant (the
+                // index orders that type as text). asText() on the object form returns "" and would
+                // silently declare nothing — every write would then be rejected as "undeclared field".
+                String value = field.path("name").asText("");
                 if (!value.isEmpty()) {
                     fields.add(value);
+                    String type = field.path("type").asText("");
+                    if (!type.isEmpty()) {
+                        types.put(value, type);
+                    }
                 }
             }
             JsonNode declaredBytes = node.path("docBytesMax");
@@ -100,7 +122,7 @@ public record PluginRecordSchema(Map<String, Collection> collections) {
                 indexes.add(new Index(index.path("name").asText(""), indexFields,
                         index.path("unique").asBoolean(false)));
             }
-            collections.put(name, new Collection(name, fields, docBytesMax, indexes));
+            collections.put(name, new Collection(name, fields, types, docBytesMax, indexes));
         }
         return new PluginRecordSchema(collections);
     }
