@@ -83,7 +83,7 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
 
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
-        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
+        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]').first();
         await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toContainText("停止刷新");
     });

@@ -61,8 +61,13 @@ export async function selectByText(trigger: Locator, text: string | RegExp): Pro
 /** 键盘选择：`index` 为 option 顺序（0 起）；用于 reka popup 被动画/浮层干扰的弹窗内下拉。 */
 export async function selectByIndex(trigger: Locator, index: number): Promise<void> {
     await trigger.click();
-    for (let i = 0; i < index; i += 1) await trigger.press("ArrowDown");
-    await trigger.press("Enter");
+    const page = trigger.page();
+    // 弹窗内 Select（BaseModal focus trap）不能用鼠标点 portal 里的 option：会被 outside-click
+    // 先关闭 popup。键盘事件走 listbox focus，不受 focus trap 影响。
+    await page.getByRole("listbox").waitFor({ state: "visible", timeout: 2_000 }).catch(() => {});
+    // index = 从当前高亮项往下按几次；1 = 选中下一项（弹窗内 Select 的常用场景）。
+    for (let i = 0; i < index; i += 1) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
 }
 
 /** testid 在 trigger 上时的快捷方式；value 走集中映射。 */
