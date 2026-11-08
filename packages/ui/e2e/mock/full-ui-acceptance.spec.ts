@@ -565,11 +565,34 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
             );
         });
         await page.route("**/api/v1/mcp", async (route) => {
-            const body = route.request().postDataJSON() as { params?: { name?: string } };
-            const result =
-                body.params?.name === "read_file"
-                    ? { content: [{ type: "text", text: pdfBase64 }] }
-                    : { content: [{ type: "text", text: JSON.stringify({ entries: [] }) }] };
+            const body = route.request().postDataJSON() as {
+                params?: { name?: string; arguments?: { offset?: number } };
+            };
+            const name = body.params?.name;
+            let result: { content: Array<{ type: string; text: string }> };
+            if (name === "read_file_range") {
+                // PLAN-0699 M2：PDF 走 binary-safe 预览；预览循环按 offset 递增，
+                // 首段返回 base64、后续返回空串让其收敛（文本预览路径，不置 is_binary）。
+                const offset = body.params?.arguments?.offset ?? 1;
+                result = {
+                    content: [
+                        {
+                            type: "text",
+                            text: JSON.stringify({
+                                content: offset > 1 ? "" : pdfBase64,
+                                total_lines: 0,
+                                is_binary: false,
+                            }),
+                        },
+                    ],
+                };
+            } else if (name === "read_file") {
+                result = { content: [{ type: "text", text: pdfBase64 }] };
+            } else {
+                result = {
+                    content: [{ type: "text", text: JSON.stringify({ entries: [] }) }],
+                };
+            }
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
