@@ -278,7 +278,11 @@ class ContextEventReadContractIntegrationTest extends AbstractIntegrationTest {
             python = agentRoot.resolve(System.getProperty("os.name").startsWith("Windows")
                     ? ".venv/Scripts/python.exe" : ".venv/bin/python").toString();
         }
-        assertTrue(Files.isRegularFile(Path.of(python)), "configured Python interpreter is required");
+        assertTrue(Files.isRegularFile(Path.of(python)), "configured Python interpreter is required;"
+                + " pass -Dxihe.context.python=<path to a Python 3.12 with httpx> (a main checkout's"
+                + " packages/agent/.venv/Scripts/python.exe works) or set PLAN0470_AGENT_PYTHON —"
+                + " DEV-021/CP AGENTS: this test fails rather than skips when the dependency is"
+                + " missing, so a green full run proves the real consumer");
         Path stdout = tempDir.resolve(mode + "-" + UUID.randomUUID() + ".stdout");
         Path stderr = tempDir.resolve(mode + "-" + UUID.randomUUID() + ".stderr");
         var builder = new ProcessBuilder(python, "-B", "tests/integration/context_event_read_probe.py")

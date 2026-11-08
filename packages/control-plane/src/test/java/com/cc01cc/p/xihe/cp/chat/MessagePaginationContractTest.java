@@ -353,12 +353,20 @@ class MessagePaginationContractTest extends AbstractIntegrationTest {
         return HttpStatus.valueOf(response.getStatusCode().value());
     }
 
+    /**
+     * The wire form is ISO-8601 with <b>variable precision</b>: {@code ...160Z} is 160 ms and
+     * {@code ...160999Z} is 160.999 ms. Comparing those strings lexicographically inverts a
+     * <i>correct</i> order, because {@code '9' < 'Z'} makes {@code "160999Z"} sort before
+     * {@code "160Z"} while the instants compare the other way — the exact pair the L1 verifier saw.
+     * Parsing first keeps the assertion strict (equal instants are allowed, a decreasing one fails);
+     * this is not a tolerance that could hide a real disorder.
+     */
     private void assertAscending(List<Map<String, Object>> messages) {
-        String previous = null;
+        Instant previous = null;
         for (Map<String, Object> message : messages) {
-            String current = String.valueOf(message.get("createdAt"));
+            Instant current = Instant.parse(String.valueOf(message.get("createdAt")));
             if (previous != null) {
-                assertTrue(current.compareTo(previous) >= 0, "messages must be ascending: "
+                assertTrue(!current.isBefore(previous), "messages must be ascending: "
                         + previous + " -> " + current);
             }
             previous = current;

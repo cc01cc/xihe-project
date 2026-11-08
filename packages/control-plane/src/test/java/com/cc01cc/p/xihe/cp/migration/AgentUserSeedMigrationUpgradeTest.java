@@ -34,7 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Fresh side: the migrated catalog seeds are exactly right and the sibling seeded agent roles carry
  * no agent-forbidden atom. Upgrade side: the measured 40-row legacy shape (agent seed binding to
  * USER with the materialized CREATE_OWN_AGENT grant) is rebind-in-place by V127 — 40 → 40, seeds
- * preserved, the forbidden atom stripped, five atoms present, and human USER grants untouched.
+ * preserved, the forbidden atom stripped, six atoms present (PLAN-0691 T1.3 added
+ * PLUGIN_INVOKE to the base set), and human USER grants untouched.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
@@ -75,15 +76,24 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
 
     @Test
     void freshCatalogSeedsAreExactAndSiblingAgentRolesAreClean() {
-        assertEquals(5, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
-                "AGENT_USER seeds exactly the five base atoms");
+        // Design change, not drift: PLAN-0691 T1.3 (V137) added PLUGIN_INVOKE to
+        // SystemAccessRoleCatalog.BASE_ATOMS (spec/authz-plugin-atoms.md B-4: invoking an
+        // already-bound BUILTIN plugin is part of the base set of every non-viewer role), so
+        // AGENT_USER — whose seed *is* BASE_ATOMS — went from five atoms to six. The expectation
+        // moves with the single source; the atom is seed data, not a role special case.
+        assertEquals(6, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).size(),
+                "AGENT_USER seeds exactly the six base atoms (PLAN-0691 T1.3 added PLUGIN_INVOKE:"
+                        + " 5 -> 6)");
         assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
                         .filter(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())).count(),
                 "the agent-forbidden atom is never part of AGENT_USER");
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default:
-        // 5 base + CREATE_OWN_AGENT + SELF = 7. Not a regression — the atom is agent-forbidden only.
-        assertEquals(7, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
-                "human USER keeps its registration atoms + the V129 SELF atom (5 base + CREATE_OWN_AGENT + SELF)");
+        // base + CREATE_OWN_AGENT + SELF. The base set is six atoms since PLAN-0691 T1.3 added
+        // PLUGIN_INVOKE (V137), so 6 + 2 = 8 — the same design change as AGENT_USER's 5 -> 6, not a
+        // regression: the SELF atom is agent-forbidden only.
+        assertEquals(8, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
+                "human USER keeps its registration atoms + the V129 SELF atom (6 base"
+                        + " + CREATE_OWN_AGENT + SELF)");
         assertTrue(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
                         .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
                 "the human USER seed is untouched");
@@ -143,10 +153,11 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
         assertEquals(0, forbiddenGrantCount(agentIds),
                 "the agent-forbidden grant is stripped");
         for (UUID agentId : agentIds) {
-            assertEquals(5, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
+            assertEquals(6, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
                             + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
                             + " AND source='role' AND scope_type='instance'", Integer.class,
-                    agentId.toString()), "each agent materializes exactly AGENT_USER's five atoms");
+                    agentId.toString()), "each agent materializes exactly AGENT_USER's six atoms"
+                    + " (PLAN-0691 T1.3 added PLUGIN_INVOKE to the base set: 5 -> 6)");
         }
         // BL-367 处置③: no upgraded agent may hold any AGENT_FORBIDDEN_ATOMS atom. This is the
         // structural guard against a future migration re-materializing SELF (or another forbidden atom).

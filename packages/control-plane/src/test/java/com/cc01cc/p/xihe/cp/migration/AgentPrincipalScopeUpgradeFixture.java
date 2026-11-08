@@ -101,12 +101,19 @@ public final class AgentPrincipalScopeUpgradeFixture {
         insertTierPrincipal(connection, INSTANCE_PRINCIPAL_ID, "v19 instance-tier-agent", "INSTANCE", null);
 
         insertWorkspaceBinding(connection, PERSONAL_PRINCIPAL_ID, "[]");
+        // PLAN-0691 T1.3 (V137) added PLUGIN_INVOKE to the base set of every non-viewer role and
+        // deliberately did NOT backfill existing grants ("existing bindings keep the atoms they were
+        // materialized with until they are re-bound"). The fixture therefore seeds the workspace
+        // agent's cap snapshot and role set from the *current* base set: the upgrade-behaviour tests
+        // assert what a re-bound agent may do, and an agent still holding the pre-V137 snapshot is
+        // (correctly) refused by the cap gate — that refusal has its own coverage elsewhere.
         insertWorkspaceBinding(connection, WORKSPACE_PRINCIPAL_ID,
                 "[{\"actionClass\": \"read\"}, {\"actionClass\": \"write\"},"
                         + " {\"actionClass\": \"delete\"}, {\"actionClass\": \"exec\"},"
                         + " {\"actionClass\": \"MANAGE_PROVIDER_CONNECTIONS\"},"
                         + " {\"actionClass\": \"MANAGE_WORKSPACE_POLICY\"},"
-                        + " {\"actionClass\": \"USE_WORKSPACE_RUNTIME\"}]");
+                        + " {\"actionClass\": \"USE_WORKSPACE_RUNTIME\"},"
+                        + " {\"actionClass\": \"PLUGIN_INVOKE\"}]");
         insertWorkspaceBinding(connection, INSTANCE_PRINCIPAL_ID, "[{\"actionClass\": \"write\"}]");
 
         insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
@@ -119,7 +126,7 @@ public final class AgentPrincipalScopeUpgradeFixture {
 
         insertGrant(connection, PERSONAL_PRINCIPAL_ID, "read", "instance", null, "template");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
-                "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME"}) {
+                "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE"}) {
             // `role` is the authoritative source (2026-11-04 ruling). Seeding it keeps the fixture
             // deterministic even after another test triggers the role materializer: a principal with
             // role rows no longer falls back to its legacy template snapshot.
@@ -139,7 +146,7 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', 'V19_LEGACY_WORKSPACE',"
                 + " 'V19 legacy workspace', 'fixture-only pre-upgrade workspace role', FALSE)");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
-                "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME"}) {
+                "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME", "PLUGIN_INVOKE"}) {
             execute(connection, "INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
                     + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', '" + atom + "', '*')");
         }
