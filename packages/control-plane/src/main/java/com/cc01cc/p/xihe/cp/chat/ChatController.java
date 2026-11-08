@@ -438,20 +438,38 @@ public class ChatController {
         }
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
+        if (userId == null) {
             throw CpApiException.workspaceContextRequired();
         }
-        sessionService.requireCurrent(sessionId, userId, workspaceId);
+        // PLAN-0647 D-678/D-47-05: dispatch on the ROW's workspace. A request without a workspace
+        // header resolves an owner-only, workspace-less Session; a workspace Session without its
+        // context answers 400 WORKSPACE_CONTEXT_REQUIRED (never the interceptor fallback).
+        Session rowProbe = sessionService.requireOwnedSession(sessionId, userId);
+        if (rowProbe.getWorkspaceId() != null) {
+            if (workspaceId == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_CONTEXT_REQUIRED",
+                        "This Session belongs to a workspace; send X-Workspace-Id");
+            }
+            sessionService.requireCurrent(sessionId, userId, workspaceId);
+        }
         // PLAN-0623 M1b-③ / D23-08: a declared participant view must be one the caller is
         // authorised to act for — same gate as chat --as; undeclared = observer (full stream).
         String declaredView = asParticipantId == null || asParticipantId.isBlank() ? null : asParticipantId;
         if (declaredView != null) {
+            if (workspaceId == null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_LESS_FEATURE_FORBIDDEN",
+                        "Participant views require a workspace context");
+            }
             sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, declaredView);
         }
         SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView, connectionId);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
-        for (Map<String, Object> approval : approvalService.replayPending(sessionId, userId, workspaceId)) {
-            sseManager.send(sessionId, "approval_request", approval);
+        if (workspaceId != null) {
+            // Approvals are workspace-scoped (approval_requests.workspace_id NOT NULL); a pure-chat
+            // session can never own one, so the replay is skipped rather than passed a null tenant.
+            for (Map<String, Object> approval : approvalService.replayPending(sessionId, userId, workspaceId)) {
+                sseManager.send(sessionId, "approval_request", approval);
+            }
         }
         logger.info("[LIFECYCLE] service=cp event=chat_sse_connected requestId={} sessionId={} workspaceId={} connectionGeneration={} outcome=ok",
                 currentRequestId(), sessionId, workspaceId, sseManager.connectionGeneration(sessionId));
@@ -465,7 +483,7 @@ public class ChatController {
             @RequestBody Map<String, Object> request) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
+        if (userId == null) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
         String sessionId = (String) request.get("sessionId");
@@ -557,6 +575,39 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", perCallTimeouts.error());
         }
+
+        // PLAN-0647 D-678/D-697: the pure-chat (workspace-less) door. The decision uses the ROW
+        // (D-47-05), never the interceptor fallback: a workspace Session without a workspace context
+        // is a 400; a workspace-less Session needs no workspace. Every surface that requires a
+        // workspace is refused here BEFORE any run is persisted: tools (toolMode != none),
+        // attachments, TO/CC fan-out and participant views — explicit 400s, zero run rows.
+        Session workspacelessSession = null;
+        Session rowProbe;
+        try {
+            rowProbe = sessionService.requireOwnedSession(sessionId, userId);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+        if (rowProbe.getWorkspaceId() == null) {
+            workspacelessSession = rowProbe;
+            if (toolMode != null && !"none".equals(toolMode)) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                        "WORKSPACE_LESS_TOOL_MODE_FORBIDDEN",
+                        "A workspace-less Session only supports toolMode=none");
+            }
+            if (!toParticipantIds.isEmpty()
+                    || (ccParticipantIds != null && !ccParticipantIds.isEmpty())
+                    || (asParticipantId != null && !asParticipantId.isBlank())
+                    || !extractAttachmentIds(request).isEmpty()) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                        "WORKSPACE_LESS_FEATURE_FORBIDDEN",
+                        "A workspace-less Session does not support attachments, TO/CC fan-out or participant views");
+            }
+        } else if (workspaceId == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                    "WORKSPACE_CONTEXT_REQUIRED",
+                    "This Session belongs to a workspace; send X-Workspace-Id");
+        }
         String idempotencyKey = idempotencyHeader == null || idempotencyHeader.isBlank()
                 ? UUID.randomUUID().toString()
                 : idempotencyHeader.trim();
@@ -565,14 +616,16 @@ public class ChatController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Idempotency-Key exceeds 128 characters");
         }
 
-        try {
-            sessionService.requireWorkspace(userId, workspaceId);
-            // PLAN-0618 M1 (BL-178): the frozen docker backend is refused here — before the SSE and
-            // circuit-breaker checks — so the client sees the contract's 503 BACKEND_DISABLED instead
-            // of a raw Runtime transport error.
-            sessionService.requireBackendUsableWorkspace(workspaceId);
-        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        if (workspaceId != null && workspacelessSession == null) {
+            try {
+                sessionService.requireWorkspace(userId, workspaceId);
+                // PLAN-0618 M1 (BL-178): the frozen docker backend is refused here — before the SSE and
+                // circuit-breaker checks — so the client sees the contract's 503 BACKEND_DISABLED instead
+                // of a raw Runtime transport error.
+                sessionService.requireBackendUsableWorkspace(workspaceId);
+            } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+                return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
         }
 
         // PLAN-0623 D23-08: `asParticipantId` lets the conversation owner speak *as* an added
@@ -642,10 +695,18 @@ public class ChatController {
 
         Session session;
         try {
-            session = sessionService.requireCurrent(sessionId, userId, workspaceId);
+            // D-47-05: the ROW decides. A workspace-less Session uses the row probe (the request may
+            // still carry a token/header workspace claim — it must not be adopted); a workspace
+            // Session keeps the byte-identical requireCurrent path.
+            session = workspacelessSession != null
+                    ? workspacelessSession
+                    : sessionService.requireCurrent(sessionId, userId, workspaceId);
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+        // From here on, the effective tenant is the ROW's workspace (null for pure chat): lease
+        // cap（D-697 []）、Agent payload、wake/mention、run.workspace_id all follow this value.
+        workspaceId = session.getWorkspaceId();
         if (session.getDeleteRequestedAt() != null) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "SESSION_DELETING", "Session deletion is in progress");
@@ -660,8 +721,10 @@ public class ChatController {
         List<String> attachmentIds = extractAttachmentIds(request);
         List<AttachmentInfo> attachmentInfos;
         try {
-            attachmentInfos = chatAttachmentService.resolveForChatSubmission(
-                    attachmentIds, sessionId, workspaceId, userId, session.getUserId());
+            attachmentInfos = attachmentIds.isEmpty()
+                    ? List.of()
+                    : chatAttachmentService.resolveForChatSubmission(
+                            attachmentIds, sessionId, workspaceId, userId, session.getUserId());
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -785,7 +848,9 @@ public class ChatController {
             // user Message stays in the conversation, but the PRIMARY must not answer: the Run is
             // terminalized with an explicit outcome instead of being dispatched, so "who replied"
             // stays observable (a silent non-dispatch would look like a stuck Run).
-            List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
+            List<MentionParser.RosterEntry> roster = workspaceId == null
+                    ? List.of()
+                    : mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
             // PLAN-0665 M1: an explicit TO selection outranks the mention suppression — the caller
             // named exactly who should answer, so the first target always owns this run.
@@ -835,8 +900,11 @@ public class ChatController {
             // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
             // message can never create two runs for the same participant.
             Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
-            wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                    content, roster, ccParticipantIds, toTargetIds);
+            if (workspaceId != null) {
+                // Pure-chat Sessions have no roster/cc/TO surface; fan-out requires a workspace tenant.
+                wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
+                        content, roster, ccParticipantIds, toTargetIds);
+            }
             handedOff = true;
             Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
                     userMessage.getId(), runId, null);
@@ -1369,6 +1437,13 @@ public class ChatController {
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_MISSING",
                     "Chat run has no Agent principal to bound the credential lease");
         }
+        if (workspaceId == null) {
+            // PLAN-0647 D-697: pure-chat has no tool face, so the credential lease cap is an
+            // explicit EMPTY array (zero capability) — never null, which the lease contract reads as
+            // "uncapped". This is a DIFFERENT object from the authorization snapshot: the snapshot
+            // stays null (D-686, "not applicable"), the lease cap is [] (D-697, "zero grants").
+            return objectMapper.createArrayNode();
+        }
         return participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId));
     }
 
@@ -1430,7 +1505,9 @@ public class ChatController {
                 try {
                     // PLAN-0410 T2.2: the gate resolves THIS Run's branch path —
                     // sibling Run usage/summary/circuit never drive the decision.
-                    if (continuationContext == null && contextService.shouldAutoCompact(sessionId, runId)) {
+                    if (workspaceId != null && continuationContext == null
+                            && contextService.shouldAutoCompact(sessionId, runId)) {
+                        // Auto-compaction is a workspace-context feature; pure chat has no workspace projection.
                         contextService.compact(sessionId, workspaceId, userId, null, "auto", runId);
                         logger.info("[LIFECYCLE] service=cp event=chat_pre_run_compaction sessionId={} runId={}", sessionId, runId);
                     }
@@ -1447,7 +1524,9 @@ public class ChatController {
                 // PLAN-0340/0415: the source policy is fixed by the admission
                 // template. per_chat_run refreshes each turn; per_session pins
                 // the first successful source snapshot for this Session.
-                if (continuationContext == null) {
+                if (workspaceId != null && continuationContext == null) {
+                    // Pure chat has no workspace file/context sources; the whole refresh chain is
+                    // workspace-scoped (ContextTemplateSourceService resolves workspace roots).
                     try {
                         String sourceStatus = contextSourceRefreshService.refreshForRun(
                                 sessionId, workspaceId, userId, refreshRootAgentsMd);
@@ -1541,7 +1620,9 @@ public class ChatController {
                 // when present, the CP-selected model instructions cross to Agent.
                 // The existing AgentChatIntegrationTest security contract keeps
                 // principal IDs and permission snapshots strictly CP-local.
-                Session boundSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
+                Session boundSession = workspaceId == null
+                        ? sessionService.requireOwnedSession(sessionId, userId)
+                        : sessionService.requireCurrent(sessionId, userId, workspaceId);
                 // PLAN-0689 A4 (T1.4 / design §2): the run's own stamp is the only execution
                 // identity. A Session with no binding is legal (dev data / HUMAN-only sessions)
                 // and must not fail the dispatch here.
@@ -1575,9 +1656,10 @@ public class ChatController {
                 Map<String, Map<String, String>> userOverrides = configService.overrides(
                         "user", AGENT_RUN_OVERRIDE_DOMAINS,
                         uuidOrNull(userId), uuidOrNull(workspaceId));
-                Map<String, Map<String, String>> workspaceOverrides = configService.overrides(
-                        "workspace", AGENT_RUN_OVERRIDE_DOMAINS,
-                        uuidOrNull(userId), uuidOrNull(workspaceId));
+                Map<String, Map<String, String>> workspaceOverrides = workspaceId == null
+                        ? Map.of()
+                        : configService.overrides("workspace", AGENT_RUN_OVERRIDE_DOMAINS,
+                                uuidOrNull(userId), uuidOrNull(workspaceId));
                 if (!userOverrides.isEmpty()) {
                     agentRequest.put("userOverrides", userOverrides);
                 }
@@ -1586,7 +1668,11 @@ public class ChatController {
                 }
                 // PLAN-0308 M1（spec S2.1）：CP 计算好的等待值随 run 下发（Agent 只消费）；
                 // per-call 原始值（T1.9）同批下发，供 Agent 随工具调用附带入站头。
-                agentRequest.putAll(mcpToolTimeoutService.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
+                // Pure chat has no MCP tool face; the timeout payload is workspace-scoped (cache key
+                // is the workspace id) and is therefore omitted rather than resolved with null.
+                if (workspaceId != null) {
+                    agentRequest.putAll(mcpToolTimeoutService.toolTimeoutPayload(workspaceId, userId, toolTimeouts));
+                }
                 if (!attachments.isEmpty()) {
                     List<Map<String, Object>> agentAttachments = new ArrayList<>();
                     for (com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo info : attachments) {
@@ -1600,7 +1686,9 @@ public class ChatController {
                     agentRequest.put("attachments", agentAttachments);
                 }
                 // PLAN-0635 M2: additive, optional — absent when the message mentions no path.
-                attachPathMentions(agentRequest, sessionId, userId, workspaceId, content);
+                if (workspaceId != null) {
+                    attachPathMentions(agentRequest, sessionId, userId, workspaceId, content);
+                }
 
                 String agentRequestBody = objectMapper.writeValueAsString(agentRequest);
 
@@ -1628,8 +1716,11 @@ public class ChatController {
                         .header("X-Request-Id", requestId)
                         .header("X-Chat-Run-Id", runId)
                         .header("X-User-Id", userId)
-                        .header("X-Workspace-Id", workspaceId)
                         .header("X-Session-Id", sessionId);
+                    if (workspaceId != null) {
+                        // PLAN-0647: the header is omitted (not null) for a workspace-less Run.
+                        dispatchBuilder.header("X-Workspace-Id", workspaceId);
+                    }
                     if (overflowRetried) {
                         dispatchBuilder.header("X-Overflow-Retry", "1");
                     }

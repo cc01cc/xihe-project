@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.service.ThreadAccessService;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,6 +47,7 @@ class ConversationThreadMvpIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionRepository sessions;
     @Autowired private ConversationThreadRepository threads;
     @Autowired private AgentPrincipalRepository principals;
+    @Autowired private ThreadAccessService threadAccessService;
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5)).build();
@@ -164,6 +168,17 @@ class ConversationThreadMvpIntegrationTest extends AbstractIntegrationTest {
         assertEquals("THREAD_WRITE_FORBIDDEN", foreignAttach.body().path("code").asText());
     }
 
+    @Test
+    void assertWritableUsesCreatorOnlyOwnerSemantics() {
+        String threadId = createThread(ownerToken, "user", ownerId);
+        UUID id = UUID.fromString(threadId);
+        assertEquals(threadId, threadAccessService.assertWritable(id, ownerId).getId().toString(),
+                "the creator may write (owner semantics identical to attach())");
+        CpApiException otherWrite = assertThrows(CpApiException.class,
+                () -> threadAccessService.assertWritable(id, otherId));
+        assertEquals("THREAD_NOT_FOUND", otherWrite.getCode(),
+                "a non-readable thread is 404 (no existence oracle), not 403");
+    }
     private String createThread(String token, String scopeType, String scopeId) {
         Reply reply = send(token, "POST", "/api/v1/conversation-threads",
                 """

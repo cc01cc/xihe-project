@@ -214,6 +214,7 @@ public class SessionController {
             @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
         try {
             Session session = sessionCreationService.create(TenantContext.getUserId(), null, workspaceHeader,
+                    request == null ? null : request.workspaceId(),
                     SessionRequests.paramsFrom(request));
             return ResponseEntity.status(HttpStatus.CREATED).body(view(session));
         } catch (CpApiException e) {
