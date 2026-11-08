@@ -4711,6 +4711,276 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+
+  # --- PLAN-0691 T1.1: plugin catalog + lifecycle (D-66 flag-gated) ---
+  /api/v1/plugins:
+    get:
+      operationId: listPlugins
+      summary: List installed plugins (PLAN-0691 T1.1)
+      description: 'Catalog read face: one PluginView per installed plugin, current version only. `source` and `state` are exact-match filters applied in the service — a value that matches nothing is a 200 with an empty list, never a 400, and an unknown value is not rejected either. D-66: every plugin route exists only while `cp.plugin.enabled=true`; with the flag off these paths answer 404 as if the build had no plugin feature (never 400). Authorization in T1.1 is authentication-only (`isAuthenticated()`); the `plugin:manage` atom lands with T1.3, so today every authenticated caller sees the same catalog.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: source, required: false, schema: { type: string, enum: [builtin, third-party] }, description: 'Plugin source: builtin = packaged under plugins/official, third-party = plugins/local' }
+        - { in: query, name: state, required: false, schema: { type: string, enum: [enabled, disabled] }, description: 'Lifecycle state of the current version' }
+      responses:
+        '200': { description: 'Installed plugins', content: { application/json: { schema: { $ref: '#/components/schemas/PluginListResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugins/{pluginId}:
+    get:
+      operationId: getPlugin
+      summary: Get one installed plugin (PLAN-0691 T1.1)
+      description: 'Current version of one plugin, projected from the stored manifest (the raw jsonb manifest never surfaces on the wire). `digest` content-addresses the installed package, and a workspace binding is pinned to its (pluginId, digest) pair. An id that is not installed answers 404 PLUGIN_NOT_FOUND.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: pluginId, required: true, schema: { type: string } }
+      responses:
+        '200': { description: PluginView, content: { application/json: { schema: { $ref: '#/components/schemas/PluginView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: uninstallPlugin
+      summary: Uninstall a plugin (PLAN-0691 T1.1)
+      description: 'Deletes every stored version of the plugin. Refuses while any workspace binding still references it: 409 PLUGIN_CONFLICT names the binding count and requires deleting those bindings first (D-65 3 — no silent cascade, no tombstone state). Not installed answers 404 PLUGIN_NOT_FOUND. Success is 204 with no body, and the removal is audited as `plugin.uninstall`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: pluginId, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Uninstalled }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugins/install:
+    post:
+      operationId: installPlugin
+      summary: Install a plugin package (PLAN-0691 T1.1)
+      description: 'Resolves `packagePath` under the plugin package root (`cp.plugin.package-root`, default `plugins`; the path must stay inside it), validates `manifest.json` and stores the version row. The installed version becomes current but stays `disabled` — install never auto-enables in T1.1. Conflicts: the same digest again is 409 PLUGIN_DIGEST_EXISTS; installing a second version of an already installed plugin is 409 PLUGIN_CONFLICT, because install must not replace a version (upgrade is the only replacement path). A blank packagePath is 400 INVALID_REQUEST; a path outside the root, a missing directory or manifest, an unreadable manifest and every manifest validation failure are 422 PLUGIN_MANIFEST_INVALID. Audited as `plugin.install`.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginPackageRequest' } } }
+      responses:
+        '201': { description: 'Installed (PluginView, state=disabled)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugins/{pluginId}/upgrade:
+    post:
+      operationId: upgradePlugin
+      summary: Upgrade a plugin to a newer version (PLAN-0691 T1.1)
+      description: 'Installs a newer version of the same plugin and makes it current; the previous version row stays in the catalog (so bindings pinned to the old digest are not rewritten). The package must name the same plugin id as the route, keep the installed source, and carry a strictly newer version — all three answer 422 PLUGIN_MANIFEST_INVALID, the same code package validation uses, so a client cannot distinguish them from a malformed package. Unknown plugin: 404 PLUGIN_NOT_FOUND. Same digest again: 409 PLUGIN_DIGEST_EXISTS. Blank packagePath: 400 INVALID_REQUEST. Audited as `plugin.upgrade`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: pluginId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginPackageRequest' } } }
+      responses:
+        '200': { description: 'Upgraded (PluginView of the new current version)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugins/{pluginId}/enable:
+    post:
+      operationId: enablePlugin
+      summary: Enable a plugin (PLAN-0691 T1.1)
+      description: 'Flips the current version to `enabled`. This is the plugin-level switch only: whether a workspace or session may actually invoke the plugin is decided by its binding (`state` plus `grantedAtoms`), so enabling a plugin widens no binding. Unknown plugin: 404 PLUGIN_NOT_FOUND. Idempotent — enabling an already enabled plugin answers 200 with the same view. Audited as `plugin.enable`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: pluginId, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'Enabled (PluginView)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugins/{pluginId}/disable:
+    post:
+      operationId: disablePlugin
+      summary: Disable a plugin (PLAN-0691 T1.1)
+      description: 'Flips the current version to `disabled`. Existing bindings keep their rows, but a disabled plugin cannot be invoked (the binding side reports 409 while attaching one, and the data plane refuses its tokens), so this is the kill switch for a suspect package. Unknown plugin: 404 PLUGIN_NOT_FOUND. Idempotent. Audited as `plugin.disable`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: pluginId, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'Disabled (PluginView)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  # --- PLAN-0691 T1.5: plugin data plane (kv + records), binding-scoped token only (SEC-1) ---
+  /internal/v1/plugin-bindings/{bindingId}/kv/{namespace}:
+    get:
+      operationId: listPluginKv
+      summary: List a plugin KV namespace (PLAN-0691 T1.5 API-4)
+      description: 'Prefix listing with an opaque cursor — `nextCursor` is the last key of this page and must be passed back verbatim; it is null on the last page. `limit` defaults to 200 and must be 1..200 (400 INVALID_REQUEST otherwise); an unparsable cursor is also 400 INVALID_REQUEST, because the cursor is only ever produced here. Credential (SEC-1): this data plane accepts exactly one token — the binding-scoped plugin token (`Authorization: Bearer`, TTL 300 s) — and every request re-reads the live binding row before touching data, so a token minted for another binding or another plugin version is 403 PLUGIN_GRANT_DENIED, a binding that is not `enabled` (or whose plugin version was uninstalled) is 403 PLUGIN_BINDING_INACTIVE, and the global internal service token is refused on the same check. Missing token: 401 AUTHORIZATION_REQUIRED. D-66: with `cp.plugin.enabled=false` this path answers 404.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: namespace, required: true, schema: { type: string, maxLength: 64 } }
+        - { in: query, name: prefix, required: false, schema: { type: string }, description: 'Only keys starting with this prefix are listed' }
+        - { in: query, name: cursor, required: false, schema: { type: string }, description: 'Opaque nextCursor of the previous page; clients must not parse it' }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 200 }, description: 'Page size, default 200' }
+      responses:
+        '200': { description: 'One page of items', content: { application/json: { schema: { $ref: '#/components/schemas/PluginKvPage' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+  /internal/v1/plugin-bindings/{bindingId}/kv/{namespace}/{key}:
+    get:
+      operationId: readPluginKv
+      summary: Read one plugin KV key (PLAN-0691 T1.5 API-1)
+      description: 'Returns the stored item with its current `version` and `expiresAt` (null when the key was written without a TTL). An expired row is reported as absent (404 PLUGIN_NOT_FOUND) — expiry is evaluated on read, so a caller cannot observe a stale value. Credential and binding checks are the ones documented on the namespace listing (SEC-1/SEC-2): 403 PLUGIN_GRANT_DENIED or 403 PLUGIN_BINDING_INACTIVE before any data statement runs, 401 AUTHORIZATION_REQUIRED without a token. `namespace` is capped at 64 characters and `key` at 256 (400 INVALID_REQUEST).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: namespace, required: true, schema: { type: string, maxLength: 64 } }
+        - { in: path, name: key, required: true, schema: { type: string, maxLength: 256 } }
+      responses:
+        '200': { description: 'One item', content: { application/json: { schema: { $ref: '#/components/schemas/PluginKvItem' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+    put:
+      operationId: writePluginKv
+      summary: Write one plugin KV key with CAS (PLAN-0691 T1.5 API-2/API-9)
+      description: 'Create-or-overwrite reported as 200 with the stored item, so the next CAS can reuse the returned `version`; there is deliberately no create/update split and therefore no 201. Preconditions (API-9): a brand-new key may omit them; overwriting an existing key without one is 412 PLUGIN_PRECONDITION_REQUIRED; a stale version is 412 PLUGIN_PRECONDITION_FAILED; `If-Match: *` forces an overwrite. The header `If-Match` and the body `ifMatch` may each carry the version but must agree when both are present (400 INVALID_REQUEST), and `If-Match: *` cannot be combined with a body `ifMatch` (400 INVALID_REQUEST). `value` is required and stored verbatim as JSON (400 INVALID_REQUEST when absent); more than 262144 UTF-8 bytes is 413 PLUGIN_VALUE_TOO_LARGE. `ttlSeconds` absent means no expiry, 0 or negative is 400 INVALID_REQUEST, and more than 7776000 s (90 days) is 429 PLUGIN_KV_QUOTA_EXCEEDED. A create race that still cannot be resolved is 409 CONCURRENT_MODIFICATION.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: namespace, required: true, schema: { type: string, maxLength: 64 } }
+        - { in: path, name: key, required: true, schema: { type: string, maxLength: 256 } }
+        - { in: header, name: If-Match, required: false, schema: { type: string }, description: 'Expected `version` as a bare number (surrounding quotes tolerated), or `*` to force the overwrite' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginKvPutRequest' } } }
+      responses:
+        '200': { description: 'Stored item (new version, expiresAt)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginKvItem' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+    delete:
+      operationId: deletePluginKv
+      summary: Delete one plugin KV key (PLAN-0691 T1.5 API-3/API-9)
+      description: '204 with no body. Optional `If-Match` guards the delete: a stale version is 412 PLUGIN_PRECONDITION_FAILED (also when the row changes between the read and the delete), and deleting a key that does not exist answers 404 PLUGIN_NOT_FOUND rather than a success. Credential and binding checks follow the namespace listing (SEC-1/SEC-2).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: namespace, required: true, schema: { type: string, maxLength: 64 } }
+        - { in: path, name: key, required: true, schema: { type: string, maxLength: 256 } }
+        - { in: header, name: If-Match, required: false, schema: { type: string }, description: 'Expected `version` as a bare number; omit to delete unconditionally' }
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+  /internal/v1/plugin-bindings/{bindingId}/records/{collection}:
+    get:
+      operationId: listPluginRecords
+      summary: Query one plugin records collection (PLAN-0691 T1.5 API-6/API-12)
+      description: 'Pages one manifest-declared collection. `filter` uses the declarative syntax `op(field,literal)` joined by `and`; `sort` is `<field>:<asc|desc>`; `limit` is 1..200 and defaults to 200; `cursor` is the previous page `nextCursor` and is bound to this binding, collection and sort order. Anything the compiler rejects — an undeclared field, an unknown operator, a cursor from another binding, collection or sort — is 400 INVALID_FILTER, except a cursor issued for another binding, which is 403 PLUGIN_GRANT_DENIED because the binding check is the security decision and runs first. A collection the manifest does not declare is 404 PLUGIN_NOT_FOUND. The global service token is refused here exactly like on the KV surface (SEC-1).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: collection, required: true, schema: { type: string } }
+        - { in: query, name: filter, required: false, schema: { type: string }, description: 'Declarative filter, e.g. `eq(status,"open") and gt(score,3)`' }
+        - { in: query, name: sort, required: false, schema: { type: string }, description: '`<field>:<asc|desc>`; defaults to the collection declaration' }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 200 }, description: 'Page size, default 200' }
+        - { in: query, name: cursor, required: false, schema: { type: string }, description: 'Opaque nextCursor of the previous page' }
+      responses:
+        '200': { description: 'One page of records', content: { application/json: { schema: { $ref: '#/components/schemas/PluginRecordPage' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+    post:
+      operationId: createPluginRecord
+      summary: Create one plugin record (PLAN-0691 T1.5 API-5)
+      description: 'CP mints the record id and answers 201 with the stored item. The body wraps the document as `{doc: {...}}` so the document has a name on the wire; `doc` must be a JSON object (400 INVALID_REQUEST otherwise) and is stored verbatim. A document over 1048576 bytes is 413 PLUGIN_VALUE_TOO_LARGE; a collection already holding 200000 records is 429 PLUGIN_RECORDS_QUOTA_EXCEEDED. The records surface has no conditional writes by design — no If-Match, never a 412 (API-9). A collection the manifest does not declare is 404 PLUGIN_NOT_FOUND.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: collection, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginRecordWriteRequest' } } }
+      responses:
+        '201': { description: 'Created record (id minted by CP)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginRecordItem' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+  /internal/v1/plugin-bindings/{bindingId}/records/{collection}/{id}:
+    get:
+      operationId: readPluginRecord
+      summary: Read one plugin record (PLAN-0691 T1.5 API-6)
+      description: 'Returns the record with its `version` and `updatedAt`. Absent record or undeclared collection: 404 PLUGIN_NOT_FOUND. Credential and binding checks follow the KV surface (SEC-1/SEC-2): 403 PLUGIN_GRANT_DENIED or 403 PLUGIN_BINDING_INACTIVE before any data statement runs.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: collection, required: true, schema: { type: string } }
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'One record', content: { application/json: { schema: { $ref: '#/components/schemas/PluginRecordItem' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+    put:
+      operationId: upsertPluginRecord
+      summary: Upsert one plugin record (PLAN-0691 T1.5 API-5/API-10)
+      description: 'Upserts the record and increments `version` (API-10), answering 200 with the stored item. The body is the same `{doc: {...}}` wrapper as create, and `doc` must be a JSON object (400 INVALID_REQUEST). Unlike KV there is no If-Match and no 412: last write wins by design (API-9). Document size 413 PLUGIN_VALUE_TOO_LARGE; a concurrent conflict on the same key is 409 PLUGIN_RECORD_CONFLICT. Undeclared collection: 404 PLUGIN_NOT_FOUND.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: collection, required: true, schema: { type: string } }
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginRecordWriteRequest' } } }
+      responses:
+        '200': { description: 'Stored record (new version)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginRecordItem' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+    delete:
+      operationId: deletePluginRecord
+      summary: Delete one plugin record (PLAN-0691 T1.5 API-7)
+      description: '204 with no body. Removing a record that does not exist is 404 PLUGIN_NOT_FOUND rather than a silent success; there is no conditional delete (never a 412). Credential and binding checks follow the KV surface (SEC-1/SEC-2).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: collection, required: true, schema: { type: string } }
+        - { in: path, name: id, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/PluginRateLimited' }
+
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -4720,6 +4990,13 @@ components:
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
     Problem:
       description: RFC 9457 Problem Details
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+    PluginRateLimited:
+      description: '429 from the plugin data plane (PLAN-0691 T1.5). PLUGIN_RATE_LIMITED means a per-binding limit refused the call (the binding rate/burst/concurrency governor, or on the records face a statement that exceeded the plugin statement timeout QUOTA-13), and it carries Retry-After; PLUGIN_KV_QUOTA_EXCEEDED and PLUGIN_RECORDS_QUOTA_EXCEEDED mean the binding is at its key, TTL or document budget. The backend is healthy — the caller is over a per-binding limit, so it is never a 503.'
+      headers:
+        Retry-After:
+          description: Seconds before the caller should retry (set on PLUGIN_RATE_LIMITED)
+          schema: { type: integer, minimum: 1 }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
     RateLimited:
       description: AUTH_RATE_LIMITED — too many attempts; retry after the header delay
@@ -7535,5 +7812,94 @@ components:
         revision: { type: integer, minimum: 1, readOnly: true }
         catalogVersion: { type: integer, minimum: 0, readOnly: true }
         effectiveNextTurn: { type: boolean, readOnly: true, description: 'The next turn of the session sees this attachment' }
+    # --- PLAN-0691 T1.1: plugin catalog views ---
+    PluginActionView:
+      type: object
+      description: 'One action declared by the installed manifest, projected for the catalog. `actionClass` and `resourceType` are manifest vocabulary; T1.1 does not interpret them.'
+      required: [name, actionClass]
+      properties:
+        name: { type: string }
+        title: { type: [string, 'null'], description: 'Manifest title; null when the manifest omits it' }
+        actionClass: { type: string }
+        resourceType: { type: [string, 'null'], description: 'Manifest resource type; null when the manifest omits it' }
+    PluginLimits:
+      type: object
+      description: 'Effective execution limits: manifest values, with the defaults 5000 ms and 4 concurrent calls applied when the manifest omits them.'
+      required: [timeoutMs, maxConcurrency]
+      properties:
+        timeoutMs: { type: integer, minimum: 1 }
+        maxConcurrency: { type: integer, minimum: 1 }
+    PluginView:
+      type: object
+      description: 'One installed plugin version. The jsonb manifest never surfaces: actions, requestedAtoms and limits are the only projections. `digest` content-addresses the package, so bindings are pinned to a (pluginId, digest) pair. `state` is the plugin-level lifecycle switch and is independent of PluginBindingView.state.'
+      required: [pluginId, version, digest, source, state, manifestVersion, actions, requestedAtoms, limits, createdAt, updatedAt]
+      properties:
+        pluginId: { type: string }
+        version: { type: string }
+        digest: { type: string, description: 'Content address of the installed package as written by the manifest' }
+        source: { type: string, enum: [builtin, third-party] }
+        state: { type: string, enum: [enabled, disabled] }
+        manifestVersion: { type: string, description: 'Manifest schema version declared by the package; a string, never a number' }
+        actions: { type: array, items: { $ref: '#/components/schemas/PluginActionView' } }
+        requestedAtoms: { type: array, items: { type: string }, description: 'Atoms the manifest asks for; the binding decides which are granted' }
+        limits: { $ref: '#/components/schemas/PluginLimits' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PluginListResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PluginView' } }
+    PluginPackageRequest:
+      type: object
+      description: 'Install and upgrade take the same body (B-3). `packagePath` is a directory under the plugin package root; blank is 400 INVALID_REQUEST and anything that does not resolve to a readable manifest is 422 PLUGIN_MANIFEST_INVALID.'
+      required: [packagePath]
+      properties:
+        packagePath: { type: string, description: 'e.g. `official/<pluginId>` or `local/<pluginId>`; a leading `plugins/` prefix is accepted and stripped' }
+    # --- PLAN-0691 T1.5: plugin KV + records wire shapes ---
+    PluginKvItem:
+      type: object
+      description: 'One KV entry. `value` is the stored JSON document returned verbatim; `expiresAt` is null when the key was written without a TTL, and an expired row is already reported as 404.'
+      required: [key, value, version]
+      properties:
+        key: { type: string }
+        value: { description: 'Any JSON value; stored verbatim and returned unchanged' }
+        version: { type: integer, minimum: 1, description: 'CAS version; send it as `If-Match` on the next write or delete' }
+        expiresAt: { type: [string, 'null'], format: date-time }
+    PluginKvPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PluginKvItem' } }
+        nextCursor: { type: [string, 'null'], description: 'Opaque cursor for the next page; null on the last page' }
+    PluginKvPutRequest:
+      type: object
+      description: 'API-2 body. The precondition may arrive as the `If-Match` header or as `ifMatch` here — when both are present they must agree, and `If-Match: *` cannot be combined with `ifMatch`.'
+      required: [value]
+      properties:
+        value: { description: 'Any JSON value; required, stored verbatim, at most 262144 UTF-8 bytes' }
+        ttlSeconds: { type: [integer, 'null'], minimum: 1, maximum: 7776000, description: 'Expiry in seconds; absent or null means no expiry, 0 or negative is a request error' }
+        ifMatch: { type: [integer, 'null'], minimum: 1, description: 'Expected stored version (alternative to the If-Match header)' }
+    PluginRecordItem:
+      type: object
+      description: 'One records document. `doc` is the stored JSON object; `version` increments on every upsert (API-10) and is informational only, because the records surface has no conditional writes.'
+      required: [id, doc, version, updatedAt]
+      properties:
+        id: { type: string, description: 'Record id; minted by CP on create, echoed on upsert' }
+        doc: { type: object, additionalProperties: true, description: 'The stored document, returned verbatim' }
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+    PluginRecordPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PluginRecordItem' } }
+        nextCursor: { type: [string, 'null'], description: 'Opaque cursor for the next page; null on the last page' }
+    PluginRecordWriteRequest:
+      type: object
+      description: 'API-5 body: the wrapper gives the document a name on the wire. `doc` must be a JSON object — an array or a scalar is 400 INVALID_REQUEST.'
+      required: [doc]
+      properties:
+        doc: { type: object, additionalProperties: true, description: 'The record document; stored verbatim as jsonb, at most 1048576 bytes' }
 
 
