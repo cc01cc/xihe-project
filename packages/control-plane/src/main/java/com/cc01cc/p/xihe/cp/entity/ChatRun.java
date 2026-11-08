@@ -97,6 +97,24 @@ public class ChatRun {
     private JsonNode skillsSnapshot = JsonNodeFactory.instance.objectNode();
 
     /**
+     * PLAN-0691 T1.6b (V143, design S4 / D-62): the session plugin catalog frozen when this run was
+     * admitted.
+     *
+     * <p>Same shape discipline as {@link #skillsSnapshot}: an empty object means <b>not captured</b>
+     * (plugin feature off, or a run created before T1.6b), never "this run has no plugins" — the
+     * latter is {@code {"catalogVersion":0,"items":[]}}. Attach/detach takes effect next turn
+     * (D-62), so the set this run was admitted with is the set its tool face keeps; the T2.1
+     * {@code /api/v1/mcp} {@code tools/list} filter reads this column rather than the live
+     * attachment rows, which is why capture and the Run insert share one admission transaction.</p>
+     *
+     * <p>Written once at admission; a continuation child inherits the parent document verbatim
+     * (same "a binding added while the parent ran must not appear here" rule as D28-39 ②).</p>
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "plugin_snapshot", nullable = false, columnDefinition = "jsonb")
+    private JsonNode pluginSnapshot = JsonNodeFactory.instance.objectNode();
+
+    /**
      * PLAN-0666 M1b (BL-269): layered context fingerprint of the FIRST dispatch.
      *
      * <p>Nullable on purpose: rows written before the plan and runs that never dispatched have no
@@ -232,6 +250,7 @@ public class ChatRun {
     protected void onCreate() {
         ensureContextTemplateSnapshot();
         ensureSkillsSnapshot();
+        ensurePluginSnapshot();
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
@@ -246,6 +265,7 @@ public class ChatRun {
         // (column is NOT NULL DEFAULT '{}'; merge copies detached nulls).
         ensureContextTemplateSnapshot();
         ensureSkillsSnapshot();
+        ensurePluginSnapshot();
         updatedAt = Instant.now();
     }
 
@@ -258,6 +278,12 @@ public class ChatRun {
     private void ensureSkillsSnapshot() {
         if (skillsSnapshot == null) {
             skillsSnapshot = JsonNodeFactory.instance.objectNode();
+        }
+    }
+
+    private void ensurePluginSnapshot() {
+        if (pluginSnapshot == null) {
+            pluginSnapshot = JsonNodeFactory.instance.objectNode();
         }
     }
 
@@ -297,6 +323,11 @@ public class ChatRun {
     public void setSkillsSnapshot(JsonNode skillsSnapshot) {
         this.skillsSnapshot = skillsSnapshot == null
                 ? JsonNodeFactory.instance.objectNode() : skillsSnapshot.deepCopy();
+    }
+    public JsonNode getPluginSnapshot() { return pluginSnapshot; }
+    public void setPluginSnapshot(JsonNode pluginSnapshot) {
+        this.pluginSnapshot = pluginSnapshot == null
+                ? JsonNodeFactory.instance.objectNode() : pluginSnapshot.deepCopy();
     }
     public JsonNode getContextFingerprint() { return contextFingerprint; }
     public void setContextFingerprint(JsonNode contextFingerprint) {
