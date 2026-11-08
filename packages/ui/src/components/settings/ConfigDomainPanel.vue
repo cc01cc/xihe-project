@@ -345,13 +345,15 @@ function handleReset(key: string) {
                                 t("settings.notSet")
                             }}</SelectItem>
                             <SelectItem
-                                v-if="isDrifted(field)"
+                                v-if="isDrifted(field) && editing[field.key] !== ''"
                                 :value="editing[field.key]"
                             >
                                 {{ t("settings.driftedOption", { value: editing[field.key] }) }}
                             </SelectItem>
                             <SelectItem
-                                v-for="opt in fieldCandidates(field)"
+                                v-for="opt in fieldCandidates(field).filter(
+                                    (candidate) => candidate.value !== '',
+                                )"
                                 :key="opt.value"
                                 :value="opt.value"
                             >

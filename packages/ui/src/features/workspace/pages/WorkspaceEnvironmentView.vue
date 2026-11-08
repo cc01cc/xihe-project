@@ -643,11 +643,20 @@ onBeforeUnmount(stopPolling);
                                     <dt class="shrink-0 text-muted-foreground">执行模式</dt>
                                     <dd v-if="isDirectAttachStorage" class="min-w-0 text-right">
                                         <Select
-                                            :model-value="selectedExecutionMode"
+                                            :model-value="
+                                                selectedExecutionMode ||
+                                                (hasLegacyExecutionMode ? '__legacy_unknown__' : '')
+                                            "
                                             :disabled="changingExecutionMode"
                                             @update:model-value="
                                                 (value) =>
-                                                    handleExecutionModeChange(String(value ?? ''))
+                                                    handleExecutionModeChange(
+                                                        String(
+                                                            value === '__legacy_unknown__'
+                                                                ? ''
+                                                                : (value ?? ''),
+                                                        ),
+                                                    )
                                             "
                                         >
                                             <SelectTrigger
@@ -660,7 +669,10 @@ onBeforeUnmount(stopPolling);
                                             <SelectContent>
                                                 <SelectItem
                                                     v-if="hasLegacyExecutionMode"
-                                                    :value="currentExecutionMode"
+                                                    :value="
+                                                        currentExecutionMode ||
+                                                        '__legacy_unknown__'
+                                                    "
                                                     disabled
                                                     data-testid="workspace-execution-mode-legacy"
                                                 >
