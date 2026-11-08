@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
     api,
@@ -153,10 +153,22 @@ function atomSummary(role: ApiRole): string {
 }
 
 onMounted(() => {
-    if (!canManageRoles.value) return;
-    void loadAll();
-    void loadWorkspaces();
+    // D-713/B7: the page is direct-linkable (/settings/roles), so it cannot rely on SettingsNav
+    // having loaded the projection first. ensureSelfPermissions is idempotent (cached promise),
+    // hence calling it here is cheap when the nav already did; the watch below loads the page
+    // once the atom turns allowed (initial frame may be "unknown" = false).
+    void auth.ensureSelfPermissions();
 });
+
+watch(
+    canManageRoles,
+    (allowed) => {
+        if (!allowed) return;
+        void loadAll();
+        void loadWorkspaces();
+    },
+    { immediate: true },
+);
 </script>
 
 <template>
