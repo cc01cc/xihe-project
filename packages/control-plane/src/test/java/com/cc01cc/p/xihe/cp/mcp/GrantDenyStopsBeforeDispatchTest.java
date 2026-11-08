@@ -99,7 +99,11 @@ class GrantDenyStopsBeforeDispatchTest {
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
                 mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class),
                 mock(com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService.class),
-                mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class));
+                mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class),
+                new com.cc01cc.p.xihe.cp.plugin.PluginToolCatalogFilter(
+                        org.mockito.Mockito.mock(
+                                com.cc01cc.p.xihe.cp.plugin.PluginRunCatalogSnapshotService.class),
+                        false));
 
         runtimeStub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);
