@@ -184,6 +184,8 @@ mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); eac
 
 Strategy: DEV-020/021/022/023. Environment cleanup and host-run requirements: [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md).
 
+Cargo tasks in this repo run through `scripts/cargo-run.mjs`, so with `XH_CARGO_TARGET_ROOT` set they build on that root instead of the H: volume; bare `cargo` and the IDE still follow `.cargo/config.toml` (see DEV-002 §6).
+
 Reference scale (2026-11-02): Control Plane **2654** tests and UI **1256** unit tests run on every milestone gate; a full Control Plane L2 pass takes **~5 min** in a 2-shard split (single-process baseline was 598 s).
 
 ## 6. Documentation

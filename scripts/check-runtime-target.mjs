@@ -4,7 +4,7 @@
 // 退出码：0 = 正常/观察，1 = 越过强制线（in-tree >=20G 或 H 余量 <5G），2 = 检查不完整（无法读取 H 余量/扫描失败）。
 // 零依赖，Node 24+；只读 fs 统计，不枚举删除、不调用 cargo。
 import { existsSync, readdirSync, readFileSync, statSync, statfsSync } from 'node:fs';
-import { join, dirname, relative, resolve } from 'node:path';
+import { join, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -15,6 +15,10 @@ const WARN_BYTES = 15 * GB;
 const FORCE_BYTES = 20 * GB;
 const FREE_FORCE_BYTES = 5 * GB;
 const JSON_MODE = process.argv.includes('--json');
+// task-80: the per-stack cargo target family may live on another volume. This check must
+// look at THAT root — a check that measures a directory nobody builds into reports green
+// about nothing. Unset => the pre-080 `<one>/.tmp/cargo-target` derivation, unchanged.
+const CARGO_TARGET_ROOT_ENV = 'XH_CARGO_TARGET_ROOT';
 
 // Runtime 自身 crate 与 XS（xingshu）独有 crate：作为归属的一级证据（fingerprint 目录名去 hash）。
 const XH_CRATE_PREFIXES = ['xihe-runtime', 'xihe-container-runtime', 'xihe-stdio-fixture'];
@@ -122,14 +126,36 @@ function detectOwner(dir) {
 }
 
 // one/.tmp/cargo-target：从当前仓库根向上找到包含 .tmp/cargo-target 的 workspace 根（2026-11-01 起构建输出统一落 .tmp）。
-function findExternalRoot() {
+// task-80: `XH_CARGO_TARGET_ROOT` wins over the walk-up derivation. A set-but-unusable
+// value is a hard failure: reporting on a directory nobody builds into is the exact
+// "green about nothing" failure this script exists to prevent.
+function configuredExternalRoot() {
+  const raw = typeof process.env[CARGO_TARGET_ROOT_ENV] === 'string' ? process.env[CARGO_TARGET_ROOT_ENV].trim() : '';
+  if (raw === '') return null;
+  if (!isAbsolute(raw)) {
+    console.error(`error: ${CARGO_TARGET_ROOT_ENV} must be an absolute path (got "${raw}")`);
+    process.exit(2);
+  }
+  const resolved = resolve(raw);
+  if (!existsSync(resolved)) {
+    console.error(
+      `error: ${CARGO_TARGET_ROOT_ENV}=${resolved} does not exist; refusing to report on a directory that no build writes to`,
+    );
+    process.exit(2);
+  }
+  return resolved;
+}
+
+function deriveExternalRoot() {
   const override = process.env.CARGO_TARGET_DIR;
   if (override) {
+    // Pre-080 this used the regex `\.[\\/]tmp[\\/]cargo-target…`, which expects ".<sep>tmp"
+    // while real paths are "<sep>.tmp" — it never matched, so a CARGO_TARGET_DIR pointing
+    // outside the walk-up tree was silently ignored. Fixed while adding the root variable
+    // (task-80); behavior only changes when CARGO_TARGET_DIR really points at such a root.
     const resolved = resolve(override);
-    if (/\.[\\/]tmp[\\/]cargo-target[\\/][^\\/]+$/.test(resolved)) {
-      return join(resolved, '..', '..');
-    }
-    if (/\.[\\/]tmp[\\/]cargo-target$/.test(resolved)) return resolved;
+    const matched = /[\\/]\.tmp[\\/]cargo-target(?:[\\/][^\\/]+)?$/.test(resolved);
+    if (matched) return /[\\/]\.tmp[\\/]cargo-target$/.test(resolved) ? resolved : join(resolved, '..');
   }
   let current = root;
   for (let depth = 0; depth < 4; depth += 1) {
@@ -144,6 +170,72 @@ function findExternalRoot() {
     current = parent;
   }
   return null;
+}
+
+function findExternalRoot() {
+  return configuredExternalRoot() ?? deriveExternalRoot();
+}
+
+// task-80: after the target family moved volumes the stacks keep running from an already
+// deleted image, and `<root>/main/debug/xihe-runtime.exe` only reappears on the next build
+// or restart. That absence is EXPECTED, so it must never read as FAIL/gate-block. Classify
+// explicitly (present / migrated-away / unverifiable) and never let it touch `verdict`.
+function probeRuntimeBinary() {
+  const raw = typeof process.env[CARGO_TARGET_ROOT_ENV] === 'string' ? process.env[CARGO_TARGET_ROOT_ENV].trim() : '';
+  // A linked worktree namespaces its keys under <root>/<worktree-dir>/ (see
+  // stack-cargo-target.mjs), so probe that layout too when this checkout is one.
+  let laneName = null;
+  try {
+    if (statSync(join(root, '.git')).isFile()) laneName = root.split(/[\\/]/).pop();
+  } catch (error) {
+    laneName = null;
+  }
+  const roots = [];
+  if (raw !== '') roots.push({ root: resolve(raw), source: 'env' });
+  const derived = deriveExternalRoot();
+  if (derived) roots.push({ root: derived, source: 'derived' });
+  const candidates = [];
+  for (const entry of roots) {
+    candidates.push({ bin: join(entry.root, 'main', 'debug', 'xihe-runtime.exe'), root: entry.root, rootSource: entry.source });
+    if (laneName) {
+      candidates.push({
+        bin: join(entry.root, laneName, 'main', 'debug', 'xihe-runtime.exe'),
+        root: entry.root,
+        rootSource: entry.source,
+      });
+    }
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate.bin)) {
+      return {
+        path: candidate.bin,
+        root: candidate.root,
+        rootSource: candidate.rootSource,
+        exists: true,
+        classification: 'present',
+        note: 'default-stack runtime binary present; not a freshness assertion',
+      };
+    }
+  }
+  const configured = candidates.find((c) => c.rootSource === 'env');
+  if (configured) {
+    return {
+      path: configured.bin,
+      root: configured.root,
+      rootSource: 'env',
+      exists: false,
+      classification: 'migrated-away',
+      note: `${CARGO_TARGET_ROOT_ENV} is set and that root has no default-stack runtime binary yet: normal state right after the target family moved volumes (and after a clean); it comes back on the next build or stack restart. NOT a failure, never gate-blocking.`,
+    };
+  }
+  return {
+    path: candidates.length ? candidates[0].bin : null,
+    root: candidates.length ? candidates[0].root : null,
+    rootSource: candidates.length ? candidates[0].rootSource : null,
+    exists: false,
+    classification: 'unverifiable',
+    note: 'no runtime binary at any known root and no configured root: cannot tell "never built" from "moved without configuration"; not gate-blocking.',
+  };
 }
 
 // 2026-11-01 用户裁定：构建输出统一落 one/.tmp（cargo-target / venvs），.local 只放运行产物与证据。
@@ -211,7 +303,10 @@ function scanCargoTargetDir(externalRoot) {
   const stats = dirStats(resolved, true);
   const debug = profileStats(join(resolved, 'debug'));
   const release = profileStats(join(resolved, 'release'));
-  const insideExternalRoot = Boolean(externalRoot) && /[\\/]\.tmp[\\/]cargo-target[\\/]/.test(resolved);
+  // Prefix check instead of a `.tmp/cargo-target` regex: with XH_CARGO_TARGET_ROOT the
+  // root can be any absolute path, but "is this inside the shared root?" stays answerable.
+  const normalizedRoot = externalRoot ? resolve(externalRoot) : null;
+  const insideExternalRoot = Boolean(normalizedRoot) && (resolved === normalizedRoot || resolved.startsWith(normalizedRoot + sep));
   return {
     set: true,
     path: resolved,
@@ -221,7 +316,7 @@ function scanCargoTargetDir(externalRoot) {
     debugBytes: debug.bytes,
     releaseBytes: release.bytes,
     insideExternalRoot,
-    name: insideExternalRoot ? resolved.split(/[\\/]/).pop() : null,
+    name: insideExternalRoot ? relative(normalizedRoot, resolved).split(sep)[0] : null,
   };
 }
 
@@ -266,6 +361,7 @@ if (JSON_MODE || verdict !== 'UNKNOWN') {
     process.exit(2);
   }
 }
+const runtimeBinary = probeRuntimeBinary();
 
 if (JSON_MODE) {
   const payload = {
@@ -290,9 +386,11 @@ if (JSON_MODE) {
       releaseBytes,
     },
     cargoTargetDir,
+    runtimeBinary,
     externalRoot: {
       path: externalRoot.path,
       exists: externalRoot.exists,
+      source: typeof process.env[CARGO_TARGET_ROOT_ENV] === 'string' && process.env[CARGO_TARGET_ROOT_ENV].trim() !== '' ? 'env' : 'derived',
       totalBytes: externalRoot.totalBytes ?? 0,
       totalFiles: externalRoot.totalFiles ?? 0,
       dirs: externalRoot.dirs ?? [],
@@ -322,9 +420,20 @@ if (JSON_MODE) {
   } else {
     console.log('current CARGO_TARGET_DIR: <unset>');
   }
+  console.log(
+    `default-stack runtime binary: ${runtimeBinary.path ?? '<unknown>'} classification=${runtimeBinary.classification} ` +
+      `(rootSource=${runtimeBinary.rootSource ?? 'none'}; informational only, never blocks)`,
+  );
+  if (!runtimeBinary.exists && runtimeBinary.classification !== 'present') {
+    console.log(`  note: ${runtimeBinary.note}`);
+  }
   if (externalRoot.exists) {
+    const rootSource =
+      typeof process.env[CARGO_TARGET_ROOT_ENV] === 'string' && process.env[CARGO_TARGET_ROOT_ENV].trim() !== ''
+        ? ` via ${CARGO_TARGET_ROOT_ENV}`
+        : ' (derived: workspace .tmp/cargo-target)';
     console.log(
-      `shared external root: ${externalRoot.path} total=${fmt(externalRoot.totalBytes)} files=${externalRoot.totalFiles} dirs=${externalRoot.dirs.length}`,
+      `shared external root: ${externalRoot.path}${rootSource} total=${fmt(externalRoot.totalBytes)} files=${externalRoot.totalFiles} dirs=${externalRoot.dirs.length}`,
     );
     console.log('  (owner is evidence-based: fingerprint local crate > dep-info source path > unknown; not compared to Runtime water lines)');
     for (const dir of externalRoot.dirs) {
