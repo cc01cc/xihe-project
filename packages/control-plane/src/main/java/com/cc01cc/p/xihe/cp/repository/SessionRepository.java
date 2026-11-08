@@ -55,4 +55,7 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     List<Session> findBySpawnedFromRunIdAndKind(UUID spawnedFromRunId, String kind);
 
     List<Session> findBySpawnedFromSessionIdAndKind(UUID spawnedFromSessionId, String kind);
+
+    /** PLAN-0646 MVP: the thread's sessions, oldest first (bounded by the caller's page). */
+    List<Session> findByConversationThreadIdOrderByCreatedAtAsc(UUID conversationThreadId);
 }
