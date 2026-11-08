@@ -46,6 +46,14 @@ public class Session {
     @Column(name = "context_template_version")
     private Integer contextTemplateVersion;
 
+    /**
+     * PLAN-0646 MVP (D-671): the conversation thread this Session belongs to. Nullable on purpose —
+     * existing Sessions keep today's behaviour (V1/V6); thread-scoped sessions are attached through
+     * {@code POST /api/v1/conversation-threads/{id}/sessions}.
+     */
+    @Column(name = "conversation_thread_id", columnDefinition = "uuid")
+    private UUID conversationThreadId;
+
     @Column(length = 255)
     private String title;
 
@@ -151,6 +159,9 @@ public class Session {
     public void setContextTemplateId(UUID contextTemplateId) { this.contextTemplateId = contextTemplateId; }
     public Integer getContextTemplateVersion() { return contextTemplateVersion; }
     public void setContextTemplateVersion(Integer contextTemplateVersion) { this.contextTemplateVersion = contextTemplateVersion; }
+
+    public UUID getConversationThreadId() { return conversationThreadId; }
+    public void setConversationThreadId(UUID conversationThreadId) { this.conversationThreadId = conversationThreadId; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

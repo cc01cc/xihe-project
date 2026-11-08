@@ -1456,4 +1456,59 @@ class DomainSchemaMigrationTest {
         assertFalse(java.util.regex.Pattern.compile("\\b(UPDATE|INSERT|DELETE)\\b")
                 .matcher(withoutComments).find(), "V2: the migration file must not contain DML");
     }
+
+    /**
+     * PLAN-0646 MVP (D-671) V1/V6: conversation_threads shape + nullable session link + existing rows unchanged.
+     */
+    @Test
+    void v144ConversationThreadShapeAndNullableSessionLink() throws SQLException {
+        assertEquals(1, scalarInt("SELECT count(*) FROM information_schema.tables "
+                + "WHERE table_schema = 'public' AND table_name = 'conversation_threads'"),
+                "V144 must create the thread container");
+        assertEquals("NO", scalarString("SELECT is_nullable FROM information_schema.columns "
+                + "WHERE table_schema = 'public' AND table_name = 'conversation_threads' "
+                + "AND column_name = 'scope_type'"), "scope_type is mandatory");
+        assertEquals("NO", scalarString("SELECT is_nullable FROM information_schema.columns "
+                + "WHERE table_schema = 'public' AND table_name = 'conversation_threads' "
+                + "AND column_name = 'scope_id'"), "scope_id is mandatory");
+        String check = scalarString("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                + "WHERE conrelid = 'conversation_threads'::regclass AND contype = 'c'");
+        assertTrue(check.contains("'user'") && check.contains("'agent'") && check.contains("'workspace'"),
+                "scope_type must admit the frozen third-level triple: " + check);
+        assertEquals("YES", scalarString("SELECT is_nullable FROM information_schema.columns "
+                + "WHERE table_schema = 'public' AND table_name = 'sessions' "
+                + "AND column_name = 'conversation_thread_id'"),
+                "MVP keeps the session link nullable so existing sessions keep today's behaviour (V1/V6)");
+        assertEquals("uuid", scalarString("SELECT data_type FROM information_schema.columns "
+                + "WHERE table_schema = 'public' AND table_name = 'sessions' "
+                + "AND column_name = 'conversation_thread_id'"));
+        assertEquals(0, scalarInt("SELECT count(*) FROM sessions WHERE conversation_thread_id IS NOT NULL"),
+                "migration must not attach any existing session to a thread");
+        String threadFk = scalarString("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                + "WHERE conname = 'fk_sessions_conversation_thread'");
+        assertTrue(threadFk.contains("ON DELETE SET NULL"), "thread FK must SET NULL: " + threadFk);
+        String threadIndex = scalarString("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+                + "AND indexname = 'idx_sessions_conversation_thread'");
+        assertTrue(threadIndex.contains("conversation_thread_id IS NOT NULL"),
+                "the session link index stays partial (no empty rows): " + threadIndex);
+
+        UUID user = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + user
+                + "'::uuid, 'v144-" + user + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
+        int before = scalarInt("SELECT count(*) FROM conversation_threads");
+        SQLException badScope = assertThrows(SQLException.class, () -> executeUpdate(
+                "INSERT INTO conversation_threads (id, scope_type, scope_id, created_by_user_id, created_at, updated_at) "
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, 'team', '" + user + "'::uuid, '" + user
+                        + "'::uuid, now(), now())"));
+        assertTrue(hasCauseMessage(badScope, "conversation_threads_scope_type_check"),
+                "a fourth scope value must be rejected by the DB CHECK: " + badScope.getMessage());
+        assertEquals(before, scalarInt("SELECT count(*) FROM conversation_threads"),
+                "a rejected scope value must not write a row");
+
+        UUID threadId = UUID.randomUUID();
+        executeUpdate("INSERT INTO conversation_threads (id, scope_type, scope_id, created_by_user_id, created_at, updated_at) "
+                + "VALUES ('" + threadId + "'::uuid, 'user', '" + user + "'::uuid, '" + user
+                + "'::uuid, now(), now())");
+        assertEquals(1, scalarInt("SELECT count(*) FROM conversation_threads WHERE id = '" + threadId + "'::uuid"));
+    }
 }
