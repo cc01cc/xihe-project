@@ -106,3 +106,5 @@ packages/ui/usage-line-*.png
 
 # DSH watchdog 命令监管日志（Temp/xh-series-runs），由对话式监管产生，非构建产物
 /Temp/
+# PLAN-0702 运行时截图（正式副本在 one/plans/archive/PLAN-0702-XH-ux-dark-safearea/evidence/screenshots）
+packages/ui/e2e/evidence/0702/
