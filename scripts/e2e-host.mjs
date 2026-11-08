@@ -14,6 +14,7 @@ import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 import { readSidecar, sha256File, writeSidecarForJar } from './lib/cp-jar-sidecar.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
 import { ensureEnvFromUser } from './lib/user-env.mjs'
+import { classifyChildExit } from './lib/e2e-child-exit.mjs'
 import { CARGO_TARGET_ROOT_ENV } from './lib/stack-cargo-target.mjs'
 import {
   AUTHORIZATION_SURFACE_TABLES,
@@ -1045,6 +1046,8 @@ const BOOT_TIMEOUT_MS = Number(process.env.XIHE_E2E_BOOT_TIMEOUT_MS ?? 120_000)
 /** 主动收尾期间不触发 fail-fast（teardown 杀进程会产生非零退出码，那是预期）。 */
 let shuttingDown = false
 let aborted = false
+/** task-257: oot -> 	ests -> cleanup; only boot/tests exits stay fail-fast. */
+let lifecyclePhase = 'boot'
 
 async function forceKillAllChildren(reason) {
   for (const entry of dockerProcesses.slice().reverse()) {
@@ -1279,9 +1282,15 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
   nativeServiceChildren.set(name, child)
   child.once('exit', (code, signal) => {
     console.log(`[e2e-host] native ${name} exited code=${code ?? 'null'} signal=${signal ?? 'none'}`)
-    // task-237: 非零退出 = 本次运行已失败 ⇒ 立刻收树退出（原来只打印，随后卡在 cleanup 里不退出）
-    if (!shuttingDown && code !== null && code !== 0) {
+    // task-237 fail-fast for a real crash; task-257: a nonzero exit during the cleanup window is
+    // expected (the runner terminates its own services) and must not turn a green suite into exit=1.
+    const disposition = classifyChildExit({ code, signal, shuttingDown, phase: lifecyclePhase })
+    if (disposition === 'fail') {
       void abortRun(`native ${name} exited code=${code} (signal=${signal ?? 'none'})`)
+    } else if (disposition === 'warn') {
+      console.warn(
+        `[e2e-host] native ${name} exited code=${code ?? 'null'} during ${lifecyclePhase} (expected shutdown; not fatal)`,
+      )
     }
   })
   child.once('error', (error) => {
@@ -2474,6 +2483,9 @@ async function collectIsolatedResources(preserveRunDir = false) {
 async function cleanup() {
   if (cleaned) return teardownResult
   cleaned = true
+  // task-257: shutdown window — child exits here are expected terminations, not run failures.
+  shuttingDown = true
+  lifecyclePhase = 'cleanup'
   // PLAN-294 appendix G-1: a failed run without --keep used to delete its
   // own logs with teardown, forcing a full rerun just to read an exception.
   // Preserve the run directory when the tests failed (recycled later by
@@ -3344,7 +3356,8 @@ async function main() {
     if (retryPolicy.rounds > 1) {
       console.log(`[e2e-host] round ${round}/${retryPolicy.rounds}: XIHE_E2E_RUN_ID=${runIdForTests}`)
     }
-    result = await runPlaywright()
+    lifecyclePhase = 'tests'
+  result = await runPlaywright()
     if (result.code === 0) break
     if (round < retryPolicy.rounds) {
       console.warn(`[e2e-host] round ${round}/${retryPolicy.rounds} failed (exit=${result.code}); resetting state and retrying in-process`)
