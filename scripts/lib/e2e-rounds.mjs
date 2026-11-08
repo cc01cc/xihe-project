@@ -38,18 +38,27 @@ export const DEFAULT_ROUNDS = 2;
 /**
  * Tables that must survive a `truncate` reset (schema state, not test data).
  *
- * task-238 B: the authorization surface is **boot state**, not test data — the CP seeds the
+ * task-238/247: the authorization surface is **boot state**, not test data — the CP seeds the
  * SUPER_ADMIN binding + materialized `grants` at boot. A truncate reset that wipes them makes the
  * next round's `POST /api/v1/config/import` fail with `403` (`AuthorizationDeniedException` on
- * `holdsActionAtom('WRITE_INSTANCE_CONTENT')`), which is what broke the l2-functional retry.
- * Keeping them also protects against `TRUNCATE … CASCADE` wiping them through an FK reference.
+ * `holdsActionAtom('WRITE_INSTANCE_CONTENT')`). Keeping the whole family (including `users`, which
+ * every later request authenticates against) also protects against `TRUNCATE … CASCADE` wiping it
+ * through an FK reference.
+ *
+ * task-247: `pg_constraint` is consulted separately (see `keepTablesReferencedByKept`) so the list
+ * cannot be defeated by a new FK from a kept table into a truncated one.
  */
-export const NEVER_TRUNCATE = Object.freeze([
-    'flyway_schema_history',
+export const AUTHORIZATION_SURFACE_TABLES = Object.freeze([
+    'users',
     'roles',
     'role_permissions',
     'role_bindings',
     'grants',
+]);
+
+export const NEVER_TRUNCATE = Object.freeze([
+    'flyway_schema_history',
+    ...AUTHORIZATION_SURFACE_TABLES,
 ]);
 
 /** Reset strategies in the order the runner prefers them when timings tie. */
@@ -156,18 +165,103 @@ export function buildDatabaseTablesQuery() {
 }
 
 /**
- * Which tables are already populated **before any spec runs** — i.e. what the CP/PG seeded itself
- * (owner account, roles, bindings, imported config rows…).
+ * Deterministic boot-seed detection (task-247).
  *
- * Why this exists instead of a hardcoded keep list: the truncate strategy must delete round-1 test
- * data without deleting the rows the stack needs to stay usable (delete `users` and every later
- * request 401s; delete the imported `llm-provider` config and the Agent turns not-ready). A
- * hand-written keep list rots with every migration; asking PostgreSQL what was already non-empty
- * right after boot is self-correcting.
+ * `pg_stat_user_tables.n_live_tup` is filled asynchronously by the stats collector, so a table the
+ * CP seeded seconds ago can still report 0 rows — which classified `grants`/`role_bindings` as "not
+ * seed" and let the retry truncate the authorization surface (the `403` root cause). `count(*)` per
+ * table inside **one** statement removes the dependency on statistics freshness and on `ANALYZE`.
+ *
+ * @param {string[]} tables every `public` table name (from `buildDatabaseTablesQuery()`)
+ * @returns {string} one `SELECT … UNION ALL …` statement; psql prints `name|count` rows in `-A -t` mode
  */
-export function buildSeedTableQuery() {
-    return "SELECT relname FROM pg_stat_user_tables "
-        + "WHERE schemaname = 'public' AND n_live_tup > 0 ORDER BY relname";
+export function buildSeedCountQuery(tables) {
+    if (!Array.isArray(tables) || tables.length === 0) {
+        throw new TypeError('buildSeedCountQuery: tables must be a non-empty array');
+    }
+    return tables
+        .map((name) => {
+            const table = requireIdentifier(name, 'table');
+            return `SELECT '${table}' AS table_name, count(*)::bigint AS row_count FROM ${quoteIdentifier(table)}`;
+        })
+        .join(' UNION ALL ');
+}
+
+/**
+ * Parse `buildSeedCountQuery()` output (`-A -t` psql, one row per line as `table|count`).
+ *
+ * @param {string} stdout
+ * @returns {{table: string, rowCount: number}[]}
+ */
+export function parseSeedCounts(stdout) {
+    if (typeof stdout !== 'string') throw new TypeError('parseSeedCounts: stdout must be a string');
+    const rows = [];
+    for (const line of stdout.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) continue;
+        const match = /^([A-Za-z_][A-Za-z0-9_]*)\|(\d+)$/.exec(trimmed);
+        if (!match) throw new TypeError(`parseSeedCounts: unexpected row ${JSON.stringify(trimmed)}`);
+        rows.push({ table: match[1], rowCount: Number(match[2]) });
+    }
+    return rows;
+}
+
+/** Tables whose `count(*)` was already non-zero right after boot (the protected seed set). */
+export function seedTablesFromCounts(rows) {
+    if (!Array.isArray(rows)) throw new TypeError('seedTablesFromCounts: rows must be an array');
+    return rows.filter((row) => row.rowCount > 0).map((row) => row.table);
+}
+
+/**
+ * Foreign-key snapshot (`pg_constraint`, direction preserved): `TRUNCATE … CASCADE` follows an FK
+ * **from** the referencing table **to** the referenced one, so a kept table pointing at a truncated
+ * table would be truncated as well. The runner captures this at boot and extends the keep list
+ * instead of trusting the static `NEVER_TRUNCATE` alone.
+ */
+export function buildForeignKeySnapshotQuery() {
+    return "SELECT c.conrelid::regclass::text || '|' || c.confrelid::regclass::text "
+        + "FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
+        + "WHERE c.contype = 'f' AND n.nspname = 'public' ORDER BY 1";
+}
+
+/**
+ * Parse `buildForeignKeySnapshotQuery()` output (`from_table|to_table` per line). `regclass` text
+ * may carry a schema prefix; only bare names are returned (the runner only acts on `public`).
+ */
+export function parseForeignKeySnapshot(stdout) {
+    if (typeof stdout !== 'string') throw new TypeError('parseForeignKeySnapshot: stdout must be a string');
+    const rows = [];
+    for (const line of stdout.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) continue;
+        const [from, to] = trimmed.split('|');
+        if (!from || !to) throw new TypeError(`parseForeignKeySnapshot: unexpected row ${JSON.stringify(trimmed)}`);
+        rows.push({ from: from.replace(/^public\./, ''), to: to.replace(/^public\./, '') });
+    }
+    return rows;
+}
+
+/**
+ * Keep-list additions required by FK direction: every table a kept table references must also be
+ * kept, otherwise `CASCADE` would truncate the kept table through that reference.
+ *
+ * @param {object} options
+ * @param {string[]} options.truncate candidate truncate list (computed before this call)
+ * @param {string[]} options.kept     tables already protected
+ * @param {{from: string, to: string}[]} options.foreignKeys snapshot rows
+ * @returns {string[]} extra tables to keep
+ */
+export function keepTablesReferencedByKept({ truncate, kept, foreignKeys } = {}) {
+    if (!Array.isArray(truncate) || !Array.isArray(kept) || !Array.isArray(foreignKeys)) {
+        throw new TypeError('keepTablesReferencedByKept: truncate/kept/foreignKeys must be arrays');
+    }
+    const keptSet = new Set(kept);
+    const truncateSet = new Set(truncate);
+    const extra = [];
+    for (const { from, to } of foreignKeys) {
+        if (keptSet.has(from) && truncateSet.has(to)) extra.push(to);
+    }
+    return [...new Set(extra)];
 }
 
 /**

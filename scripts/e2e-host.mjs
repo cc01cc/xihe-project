@@ -16,16 +16,22 @@ import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs
 import { ensureEnvFromUser } from './lib/user-env.mjs'
 import { CARGO_TARGET_ROOT_ENV } from './lib/stack-cargo-target.mjs'
 import {
+  AUTHORIZATION_SURFACE_TABLES,
   buildBlankDatabaseResetSql,
   buildDatabaseExistsQuery,
   buildDatabaseTablesQuery,
   buildDumpRestoreCommands,
-  buildSeedTableQuery,
+  buildForeignKeySnapshotQuery,
+  buildSeedCountQuery,
   buildTemplateResetSql,
   buildTruncateSql,
   chooseRoundResetStrategy,
   decideRetryRounds,
+  keepTablesReferencedByKept,
+  parseForeignKeySnapshot,
+  parseSeedCounts,
   roundRunId,
+  seedTablesFromCounts,
   selectTablesToTruncate,
 } from './lib/e2e-rounds.mjs'
 import {
@@ -1358,32 +1364,78 @@ function splitPsqlLines(stdout) {
 }
 
 /** Snapshot the protected table set once, after boot and before the first spec runs. */
+/** task-247: `pg_constraint` snapshot (direction preserved) used to extend the keep list. */
+let foreignKeySnapshot = null;
+
 async function captureSeedTables() {
-  // task-238 B: `pg_stat_user_tables.n_live_tup` is filled asynchronously by the stats collector;
-  // a table the CP seeded seconds ago may still report 0 rows ⇒ it would be classified "not seed"
-  // and truncated by the next in-process reset, dropping the SUPER_ADMIN role bindings/grants and
-  // turning `/api/v1/config/import` into 403. ANALYZE forces the counters before we snapshot.
-  await psqlCapture(pgDatabase, 'ANALYZE');
-  const rows = splitPsqlLines(await psqlCapture(pgDatabase, buildSeedTableQuery()));
+  // task-247: deterministic `count(*)` per table instead of `pg_stat_user_tables.n_live_tup`.
+  // The stats collector is asynchronous, so a table the CP seeded seconds ago could still read 0
+  // and be classified "test data" ⇒ truncated on the retry, dropping the authorization surface
+  // (`grants`/`role_bindings`) and turning `/api/v1/config/import` into 403. `count(*)` also makes
+  // the snapshot independent of `ANALYZE` timing.
+  const tables = splitPsqlLines(await psqlCapture(pgDatabase, buildDatabaseTablesQuery()));
+  const counts = parseSeedCounts(await psqlCapture(pgDatabase, buildSeedCountQuery(tables)));
+  foreignKeySnapshot = parseForeignKeySnapshot(
+    await psqlCapture(pgDatabase, buildForeignKeySnapshotQuery()),
+  );
+  const rows = seedTablesFromCounts(counts);
+  const authCounts = counts
+    .filter((entry) => AUTHORIZATION_SURFACE_TABLES.includes(entry.table))
+    .map((entry) => `${entry.table}=${entry.rowCount}`)
+    .join(', ');
   if (rows.length === 0) {
     console.warn('[e2e-host] round reset: seed-table snapshot is empty — in-process retry will refuse to truncate');
   } else {
-    console.log(`[e2e-host] round reset: protecting ${rows.length} seeded table(s)`);
+    console.log(
+      `[e2e-host] round reset: protecting ${rows.length} seeded table(s) (deterministic count(*)): ${rows.join(', ')}`,
+    );
   }
+  console.log(`[e2e-host] round reset: auth surface at boot: ${authCounts}`);
+  console.log(
+    `[e2e-host] round reset: pg_constraint snapshot ${foreignKeySnapshot.length} FK edge(s)`,
+  );
   return rows;
 }
 
 async function runDatabaseReset({ strategy, round }) {
   if (strategy === 'truncate') {
     const tables = splitPsqlLines(await psqlCapture(pgDatabase, buildDatabaseTablesQuery()));
-    const plan = selectTablesToTruncate({ tables, seedTables: seedTablesSnapshot ?? [] });
+    let plan = selectTablesToTruncate({ tables, seedTables: seedTablesSnapshot ?? [] });
     if (plan.refused) throw new Error(plan.refused);
+    // task-247: `TRUNCATE … CASCADE` follows FKs from a referencing table to the referenced one.
+    // A kept table that points at a to-be-truncated table would be truncated through it, so the
+    // keep list is extended from the `pg_constraint` snapshot instead of trusting the static list.
+    const referencedByKept = keepTablesReferencedByKept({
+      truncate: plan.truncate,
+      kept: plan.kept,
+      foreignKeys: foreignKeySnapshot ?? [],
+    });
+    if (referencedByKept.length > 0) {
+      console.log(
+        `[e2e-host] round reset: keeping ${referencedByKept.length} table(s) referenced by kept tables (pg_constraint): ${referencedByKept.join(', ')}`,
+      );
+      plan = selectTablesToTruncate({
+        tables,
+        seedTables: [...(seedTablesSnapshot ?? []), ...referencedByKept],
+      });
+      if (plan.refused) throw new Error(plan.refused);
+    }
     if (plan.truncate.length === 0) {
       console.warn('[e2e-host] round reset: no test-data tables to truncate (fresh database?)');
       return;
     }
+    const authTables = [...AUTHORIZATION_SURFACE_TABLES].filter((name) => tables.includes(name));
+    const authBefore = parseSeedCounts(await psqlCapture(pgDatabase, buildSeedCountQuery(authTables)));
+    console.log(`[e2e-host] round reset: truncated ${plan.truncate.length} table(s): ${plan.truncate.join(', ')}`);
+    console.log(`[e2e-host] round reset: kept ${plan.kept.length} table(s): ${plan.kept.join(', ')}`);
+    console.log(
+      `[e2e-host] round reset: auth surface before: ${authBefore.map((entry) => `${entry.table}=${entry.rowCount}`).join(', ')}`,
+    );
     await psqlCapture(pgDatabase, buildTruncateSql({ tables: plan.truncate }));
-    console.log(`[e2e-host] round reset: truncated ${plan.truncate.length} table(s), kept ${plan.kept.length} seeded`);
+    const authAfter = parseSeedCounts(await psqlCapture(pgDatabase, buildSeedCountQuery(authTables)));
+    console.log(
+      `[e2e-host] round reset: auth surface after: ${authAfter.map((entry) => `${entry.table}=${entry.rowCount}`).join(', ')}`,
+    );
     return;
   }
   // `template` and `dump-restore` drop the database, so the services must be out of the way first.

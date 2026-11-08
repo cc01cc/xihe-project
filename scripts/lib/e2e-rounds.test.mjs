@@ -15,18 +15,24 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+    AUTHORIZATION_SURFACE_TABLES,
     DEFAULT_ROUNDS,
     MAX_ROUNDS_CEILING,
     NEVER_TRUNCATE,
     ROUND_RESET_STRATEGIES,
     buildDatabaseTablesQuery,
     buildDumpRestoreCommands,
-    buildSeedTableQuery,
+    buildForeignKeySnapshotQuery,
+    buildSeedCountQuery,
     buildTemplateResetSql,
     buildTruncateSql,
     chooseRoundResetStrategy,
     decideRetryRounds,
+    keepTablesReferencedByKept,
+    parseForeignKeySnapshot,
+    parseSeedCounts,
     roundRunId,
+    seedTablesFromCounts,
     selectTablesToTruncate,
 } from './e2e-rounds.mjs';
 
@@ -169,11 +175,20 @@ test('the table-introspection query stays scoped to the public schema', () => {
     assert.ok(!/TRUNCATE|DROP/i.test(query), 'introspection must be read-only');
 });
 
-test('the seed snapshot is what protects the owner account and the imported config', () => {
-    const seedQuery = buildSeedTableQuery();
-    assert.match(seedQuery, /pg_stat_user_tables/);
-    assert.match(seedQuery, /n_live_tup > 0/);
-    assert.ok(!/TRUNCATE|DROP|DELETE/i.test(seedQuery), 'introspection must be read-only');
+test('the seed snapshot is deterministic count(*) — not the async stats collector', () => {
+    const tables = ['users', 'role_bindings', 'config_values', 'sessions'];
+    const seedQuery = buildSeedCountQuery(tables);
+    assert.match(seedQuery, /count\(\*\)/);
+    assert.match(seedQuery, /UNION ALL/);
+    for (const table of tables) assert.match(seedQuery, new RegExp(`'${table}'`));
+    assert.ok(!/pg_stat_user_tables|n_live_tup/.test(seedQuery), 'must not depend on stats freshness');
+    assert.ok(!/TRUNCATE|DROP|DELETE|UPDATE/i.test(seedQuery), 'introspection must be read-only');
+    assert.throws(() => buildSeedCountQuery([]), TypeError);
+    assert.throws(() => buildSeedCountQuery(['users; DROP TABLE grants']), TypeError);
+
+    const rows = parseSeedCounts('users|1\nrole_bindings|3\nsessions|0\n');
+    assert.deepEqual(seedTablesFromCounts(rows), ['users', 'role_bindings']);
+    assert.throws(() => parseSeedCounts('not a count row'), TypeError);
 
     const all = ['users', 'role_bindings', 'config_values', 'sessions', 'chat_runs', 'flyway_schema_history'];
     const plan = selectTablesToTruncate({
@@ -183,6 +198,45 @@ test('the seed snapshot is what protects the owner account and the imported conf
     assert.deepEqual(plan.truncate, ['sessions', 'chat_runs']);
     assert.deepEqual(plan.kept, ['users', 'role_bindings', 'config_values', 'flyway_schema_history']);
     assert.equal(plan.refused, '');
+});
+
+test('the authorization surface is never truncated (users + roles + grants)', () => {
+    for (const table of AUTHORIZATION_SURFACE_TABLES) {
+        assert.ok(NEVER_TRUNCATE.includes(table), `${table} must survive a truncate reset`);
+    }
+    const plan = selectTablesToTruncate({
+        tables: ['users', 'grants', 'sessions'],
+        seedTables: ['sessions'],
+    });
+    assert.deepEqual(plan.truncate, []);
+    assert.ok(plan.kept.includes('users') && plan.kept.includes('grants'));
+});
+
+test('pg_constraint direction keeps any table a kept table references', () => {
+    const fkQuery = buildForeignKeySnapshotQuery();
+    assert.match(fkQuery, /pg_constraint/);
+    assert.match(fkQuery, /conrelid/);
+    assert.match(fkQuery, /confrelid/);
+    assert.ok(!/TRUNCATE|DROP|DELETE/i.test(fkQuery), 'introspection must be read-only');
+
+    const edges = parseForeignKeySnapshot('role_bindings|roles\nsessions|users\npublic.session_branches|public.sessions\n');
+    assert.deepEqual(edges, [
+        { from: 'role_bindings', to: 'roles' },
+        { from: 'sessions', to: 'users' },
+        { from: 'session_branches', to: 'sessions' },
+    ]);
+    assert.throws(() => parseForeignKeySnapshot('only-one-part'), TypeError);
+
+    // `grants` is kept and references `roles`; `roles` is therefore not truncatable via CASCADE.
+    const extra = keepTablesReferencedByKept({
+        truncate: ['roles', 'sessions'],
+        kept: ['grants'],
+        foreignKeys: [
+            { from: 'grants', to: 'roles' },
+            { from: 'sessions', to: 'users' },
+        ],
+    });
+    assert.deepEqual(extra, ['roles']);
 });
 
 test('an empty seed snapshot refuses the reset instead of deleting the owner account', () => {
