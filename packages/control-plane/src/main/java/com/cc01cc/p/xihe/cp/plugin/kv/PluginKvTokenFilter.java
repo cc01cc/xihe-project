@@ -23,7 +23,8 @@ import java.util.List;
  * <p>SEC-1 requires that a binding token is the <em>only</em> accepted credential on this surface and
  * that the global {@code ROLE_INTERNAL_SERVICE} token is rejected with 403. That is enforced in two
  * halves: this filter turns a valid binding token into the {@value #AUTHORITY} authority, and
- * {@code SecurityConfig} requires that authority on exactly {@link #KV_PATH_PATTERN}. The internal
+ * {@code SecurityConfig} requires that authority on exactly {@link #KV_PATH_PATTERN} and
+ * {@link #RECORDS_PATH_PATTERN}. The internal
  * service token authenticates through {@code InternalTokenFilter} with a different authority, so it
  * ends up authenticated-but-forbidden (403), not unauthenticated (401) — the distinction SEC-1 asks
  * for.
@@ -47,6 +48,16 @@ public class PluginKvTokenFilter extends OncePerRequestFilter {
     public static final String KV_PATH_PATTERN = "/internal/v1/plugin-bindings/*/kv/**";
 
     /**
+     * Security-matcher pattern for the records data plane (PLAN-0691 T2.3), registered next to
+     * {@link #KV_PATH_PATTERN}.
+     *
+     * <p>The same filter and the same authority serve both surfaces on purpose: they share one
+     * credential (SEC-1's binding-scoped token, TTL 300s) and one claim shape, so a second filter would
+     * only duplicate the verification and risk the two surfaces drifting apart.
+     */
+    public static final String RECORDS_PATH_PATTERN = "/internal/v1/plugin-bindings/*/records/**";
+
+    /**
      * Request attribute through which the controller reads the verified claims.
      *
      * <p>A literal (not {@code getClass().getName() + …}) because {@code @RequestAttribute} needs a
@@ -57,6 +68,7 @@ public class PluginKvTokenFilter extends OncePerRequestFilter {
 
     private static final String PATH_PREFIX = "/internal/v1/plugin-bindings/";
     private static final String KV_SEGMENT = "/kv/";
+    private static final String RECORDS_SEGMENT = "/records/";
     private static final String BEARER = "Bearer ";
 
     private static final Logger logger = LoggerFactory.getLogger(PluginKvTokenFilter.class);
@@ -71,7 +83,8 @@ public class PluginKvTokenFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String path = request.getRequestURI();
-        if (!path.startsWith(PATH_PREFIX) || !path.contains(KV_SEGMENT)) {
+        if (!path.startsWith(PATH_PREFIX)
+                || !(path.contains(KV_SEGMENT) || path.contains(RECORDS_SEGMENT))) {
             filterChain.doFilter(request, response);
             return;
         }

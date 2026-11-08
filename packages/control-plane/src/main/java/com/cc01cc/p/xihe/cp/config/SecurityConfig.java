@@ -105,7 +105,10 @@ public class SecurityConfig {
                 // a binding-scoped token minted by PluginKvTokenService. It is deliberately registered
                 // *before* the /internal/v1/** role rule: SEC-1 says the global ROLE_INTERNAL_SERVICE
                 // token is 403 on this surface, which only holds if this matcher wins first.
-                .requestMatchers(PluginKvTokenFilter.KV_PATH_PATTERN)
+                // PLAN-0691 T2.3 adds the records data plane (API-5..API-7): same credential, same
+                // authority, so it belongs on the same rule rather than a second one that could drift.
+                .requestMatchers(PluginKvTokenFilter.KV_PATH_PATTERN,
+                        PluginKvTokenFilter.RECORDS_PATH_PATTERN)
                     .access((authentication, context) -> pluginKvDataPlane(authentication.get()))
                 // Service authentication is not user authorization: the service role is unchanged
                 // (ROLE_INTERNAL_SERVICE) and the nine internal @PreAuthorize expressions depend

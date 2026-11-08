@@ -19,6 +19,11 @@ import java.util.UUID;
  * @param digest    manifest digest of that binding, cross-checked the same way
  * @param scope     granted scope string as issued (recorded, not this task's enforcement surface)
  * @param expiresAt token expiry ({@code exp}); issued TTL is 300 s (SEC-1)
+ *
+ * <p>Public since T2.3: the records data plane is the second consumer of the same credential (SEC-1
+ * defines one token for the whole plugin data plane), so the claim record is shared rather than
+ * duplicated per surface.
  */
-record PluginKvClaims(UUID bindingId, String pluginId, String digest, String scope, Instant expiresAt) {
+public record PluginKvClaims(UUID bindingId, String pluginId, String digest, String scope,
+        Instant expiresAt) {
 }
