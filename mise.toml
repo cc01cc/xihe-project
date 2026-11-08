@@ -193,10 +193,18 @@ alias = "gate:agent-quality"
 
 [tasks."test:cp"]
 depends = ["check:openapi"]
-run = "mvn test"
-description = "Run the control plane test suite (contract gate check:openapi runs first)"
+run = "node ../../scripts/cp-test-run.mjs"
+description = "Run the control plane test suite (check:openapi first; zero-execution guard on success)"
 dir = "packages/control-plane"
 alias = "test:cp"
+
+# BL-461 / PLAN-0727: read the surefire reports from the most recent run and fail when
+# Maven executed zero tests. Run from packages/control-plane; pass --reports for external
+# -Dxihe.target.dir layouts. test:cp already calls this after a successful mvn run.
+[tasks."test:cp:executed"]
+run = "node ../../scripts/check-test-executed.mjs"
+dir = "packages/control-plane"
+description = "Fail (exit 1) when the latest surefire reports show zero executed tests (BL-461)"
 
 # BL-368 (2026-11-06；2026-11-08 更正口径)：当前基线 0 条（scripts/cp-known-baseline.json 的 entries 为空）。
 # 此前本行写"2 条已登记基线"，与事实不符——那是立项时的数字，条目现已清零。CP 全量现存预存红（最近记录
