@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R1 @host — 多人类账户矩阵（**从未真栈验过**的最高价值场景）。
  *
@@ -45,6 +46,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -134,7 +136,7 @@ async function loginMemberInBrowser(page: Page): Promise<void> {
         .locator("form")
         .first()
         .evaluate((form) => (form as HTMLFormElement).requestSubmit());
-    await page.waitForURL(/\/workspace/, { timeout: 30_000 });
+    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
 }
 
 /** 以某账户身份访问 owner 的 workspace（跨工作区成员需要显式上下文头）。 */
@@ -299,7 +301,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
                         ? "visible"
                         : "not-yet";
                 },
-                { timeout: 30_000, intervals: [500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
             )
             .toBe("visible");
     });
@@ -380,7 +382,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
 
         await expect
             .poll(() => memberMentionCount(request), {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000],
             })
             .toBeGreaterThan(before);
@@ -402,7 +404,10 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         // 旁听语义（PLAN-0630 D30-14）：通知信号推进派生未读（`wake_dispatch` notify；V112 起无
         // `mention_count` 列），但不额外起 run。
         await expect
-            .poll(() => memberMentionCount(request), { timeout: 30_000, intervals: [500, 1_000] })
+            .poll(() => memberMentionCount(request), {
+                timeout: LONG_TIMEOUT_MS,
+                intervals: [500, 1_000],
+            })
             .toBeGreaterThan(before);
     });
 
@@ -446,11 +451,11 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         await loginMemberInBrowser(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "member composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(
             page.getByText(`R1 互见 ${NONCE}`, { exact: true }),
             "message bubble visible to the second human",
-        ).toBeVisible({ timeout: 30_000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     });
 });

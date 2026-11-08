@@ -1,7 +1,14 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 const SESSION_ID = "liveness-session";
 
@@ -79,12 +86,14 @@ async function push(page: Page, name: string, data: unknown) {
 
 async function startRun(page: Page) {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-    await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await page.locator("textarea").fill("run a long task");
     await page.locator("textarea").press("Enter");
-    await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
     await push(page, "token", { content: "working" });
-    await expect(page.locator("text=working")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=working")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 const evidenceDir = resolve(process.cwd(), "../../../.local/plan-0323");
@@ -118,7 +127,7 @@ test.describe("SSE liveness timer (S-1)", () => {
         await page.clock.fastForward(31_000);
 
         const banner = messageError(page);
-        await expect(banner).toBeVisible({ timeout: 5000 });
+        await expect(banner).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(banner).toContainText("AGENT_TIMEOUT");
         // BL-328 家族（toast 竞争）：同一时刻可能还有**另一条不同来源**的 toast（provider 自动绑定
         // 成功，`chat.providerAutoBound`）。两条语义不同、共用同一个 sonner 容器且没有去重键 ⇒
@@ -135,11 +144,11 @@ test.describe("SSE liveness timer (S-1)", () => {
 
     test("silence before the first token also reports AGENT_TIMEOUT", async ({ page }) => {
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.locator("textarea").fill("quick question");
         await page.locator("textarea").press("Enter");
         await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         await page.clock.fastForward(31_000);
@@ -148,7 +157,7 @@ test.describe("SSE liveness timer (S-1)", () => {
         // BL-328 家族：按 `data-type="error"` 锁定（见上一条用例的说明）。
         const toast = page.locator("[data-sonner-toast]").filter({ hasText: "AGENT_TIMEOUT" });
         await expect(toast).toHaveCount(1);
-        await expect(toast).toContainText("AGENT_TIMEOUT", { timeout: 5000 });
+        await expect(toast).toContainText("AGENT_TIMEOUT", { timeout: EXPECT_TIMEOUT_MS });
         // Let enter animations settle under the fake clock before capturing evidence.
         await page.clock.fastForward(500);
         await page.screenshot({ path: resolve(evidenceDir, "s1-liveness-pre-content.png") });
@@ -165,19 +174,19 @@ test.describe("SSE liveness timer (S-1, real time)", () => {
     test("pre-content silence shows a visible AGENT_TIMEOUT toast in real time", async ({
         page,
     }) => {
-        test.setTimeout(90_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.locator("textarea").fill("quick question");
         await page.locator("textarea").press("Enter");
         await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         // BL-328 家族：先按**文案**锁定目标 toast（同一时刻可能还有 provider 自动绑定那条），
         // 再等它出现——顺序不能反：此时 30s 静默还没到，先断数量必然数到 0。
         const toast = page.locator("[data-sonner-toast]").filter({ hasText: "AGENT_TIMEOUT" });
-        await expect(toast).toContainText("AGENT_TIMEOUT", { timeout: 40_000 });
+        await expect(toast).toContainText("AGENT_TIMEOUT", { timeout: LONG_TIMEOUT_MS });
         await expect(toast).toHaveCount(1);
         // PLAN-0325: the toast must be actually visible inside the viewport
         // (the pre-fix defect placed it below the fold: rect.y == viewport height).

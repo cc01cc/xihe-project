@@ -1,7 +1,9 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { createHash, randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0504 supersedes the PLAN-0503 defaultProvider/defaultModel UI: the
 // llm-provider default identity is the whole `profile` unit edited by the
@@ -138,7 +140,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         page,
         request,
     }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         // Instance layer skips the connection check (decision #11): a pattern
         // profile pointing at a connection that does not exist here is legal.
         const seeded = await request.put(`${CP_URL}/api/v1/config/instance/llm-provider`, {
@@ -171,7 +173,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         // V4: the stored connection is no longer visible — the panel keeps the
         // value visible, labels it and never silently rewrites it.
         const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue("__stored__");
         await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible();
         await expect(page.getByTestId("llm-profile-connection-drift-option")).toContainText(
@@ -185,7 +187,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         const domainPanel = page.getByTestId("config-domain-llm-provider");
         await domainPanel.locator("button").first().click();
         const providerSelect = page.getByTestId("config-select-llm-provider-imageProvider");
-        await expect(providerSelect).toBeVisible({ timeout: 15000 });
+        await expect(providerSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const optionValues = await providerSelect
             .locator("option")
             .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
@@ -216,7 +218,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         // Reload + API read-back: the value survived without any other write.
         await page.reload();
         await expect(page.getByTestId("llm-profile-model-select")).toHaveValue(DRIFT_MODEL, {
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const readBack = await request.get(
             `${CP_URL}/api/v1/config/llm-provider?layer=instance&includeMeta=true`,
@@ -230,7 +232,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.reload();
         await expect(page.getByTestId("llm-profile-connection-drift")).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -243,7 +245,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         page,
         request,
     }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const connectionKey = `profile-${randomUUID().slice(0, 8)}`;
         const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
             headers: { Authorization: `Bearer ${userAuth.accessToken}` },
@@ -279,7 +281,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await page.goto(`${UI_URL}/settings/config`);
         await page.getByTestId("config-tab-user").click();
         const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // V4: the connection selector lists visible chat-ready connections.
         const connectionSelect = page.getByTestId("llm-profile-connection-select");
@@ -291,7 +293,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
 
         // V3: ready + chat only (the -asr catalog entry is filtered out).
         const modelSelect = page.getByTestId("llm-profile-model-select");
-        await expect(modelSelect.locator("option")).toHaveCount(3, { timeout: 15000 });
+        await expect(modelSelect.locator("option")).toHaveCount(3, { timeout: LONG_TIMEOUT_MS });
         const optionValues = await modelSelect
             .locator("option")
             .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
@@ -320,13 +322,13 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await page.getByTestId("config-tab-user").click();
         await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue(
             userConnectionId,
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(page.getByTestId("llm-profile-model-select")).toHaveValue("fake-openai");
     });
 
     test("V5: a hand-written model saves through the real PUT", async ({ page, request }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         expect(userConnectionId).not.toBe("");
         const manualModel = `manual-model-0504-${randomUUID().slice(0, 6)}`;
 
@@ -334,7 +336,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await page.goto(`${UI_URL}/settings/config`);
         await page.getByTestId("config-tab-user").click();
         const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await page.getByTestId("llm-profile-connection-select").selectOption(userConnectionId);
         await page.getByTestId("llm-profile-model-select").selectOption("__custom__");
@@ -363,7 +365,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         page,
         request,
     }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const registration = await request.post(`${CP_URL}/api/v1/auth/register`, {
             data: {
                 email: `plan0504-noconn-${randomUUID()}@test.local`,
@@ -378,7 +380,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await page.goto(`${UI_URL}/settings/config`);
         await page.getByTestId("config-tab-user").click();
         const panel = page.getByTestId("llm-provider-profile");
-        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // V7: with no profile the panel prompts for an explicit selection and
         // offers no implicit fallback model.
@@ -403,7 +405,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         page,
         request,
     }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         expect(userConnectionId).not.toBe("");
         const builtinId = nameUuidFromBytes("api-request-templates:openai-chat-completions@1");
         const seeded = await request.put(`${CP_URL}/api/v1/config/user/api-request-templates`, {
@@ -423,7 +425,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await page.getByTestId("config-tab-user").click();
 
         const orphanRow = page.getByTestId("provider-orphan-model-ghost-model");
-        await expect(orphanRow).toBeVisible({ timeout: 15000 });
+        await expect(orphanRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("provider-orphan-bindings")).toContainText(
             "已绑定但当前不可用",
         );

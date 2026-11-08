@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0680 T3.1 — 技能绑定双轴 **快照 tier 成功链**真栈 spec（`@host`）
  *
@@ -60,6 +61,7 @@ import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId, waitForControlPlaneAgentReady } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ retries: 0 });
 
@@ -70,7 +72,7 @@ test.describe.configure({ retries: 0 });
  * 一轮就会以「Test timeout of 30000ms exceeded」收场，把 readiness/run 的真实
  * 失败信息吞掉（r7 的 503 就是这样被误读成随机失败的）。
  */
-test.setTimeout(120_000);
+test.setTimeout(TEST_TIMEOUT_MS);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 /** chat run 终态（与 capacity/checkpoint 系列 spec 同一口径）。 */
@@ -229,7 +231,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 

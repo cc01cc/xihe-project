@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-348 heap 口径通道的**采样夹具**（由 `scripts/l2/heap-sample.mjs` 驱动，也可单独跑）。
  *
@@ -14,6 +15,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
 import type { CDPSession, Page } from "@playwright/test";
 import { writeFileSync } from "node:fs";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl348-heap-sample";
 const PROTOCOL = (() => {
@@ -102,7 +104,7 @@ test.describe("BL-348 heap 口径通道", () => {
     test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
 
     test("2k/5k 消息：CDP 采样 5 次并写 JSON", async ({ page }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         await setupMockAuth(page);
         await setupMockSessions(page, {
             sessions: [{ id: SESSION_ID, title: "BL-348 heap sample" }],
@@ -112,7 +114,7 @@ test.describe("BL-348 heap 口径通道", () => {
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // 采样窗口前静置（禁止采样期间有滚动/输入产生的临时对象）
         await page.waitForTimeout(PROTOCOL.settleBeforeSampleMs);

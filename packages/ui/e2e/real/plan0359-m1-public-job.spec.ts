@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || "12633"}`;
@@ -13,7 +15,6 @@ const M3_EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0
 
 test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     async function register(request: APIRequestContext, tag: string) {
         const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -182,7 +183,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         return execFileSync(
             process.platform === "win32" ? "docker.exe" : "docker",
             ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-            { encoding: "utf8", timeout: 15_000, windowsHide: true },
+            { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
         ).trim();
     }
 
@@ -241,7 +242,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
                     return jobs.find((job) => String(job.jobId) === jobId)?.status;
                 },
-                { timeout: 30000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toMatch(/running|pending/);
 
@@ -264,7 +265,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
                     return jobs.find((job) => String(job.jobId) === jobId)?.status;
                 },
-                { timeout: 30000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBe("cancelled");
 
@@ -272,7 +273,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         await page.goto(`/workspace/${workspace.workspaceId}/environment`);
         await expect(page.locator('[data-testid="workspace-job-status"]').first()).toContainText(
             /取消|cancel/i,
-            { timeout: 20000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.screenshot({
             scale: "css",
@@ -318,7 +319,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                         );
                         return mxcStatus;
                     },
-                    { timeout: 30000 },
+                    { timeout: LONG_TIMEOUT_MS },
                 )
                 .toMatch(/running|completed|failed|interrupted/);
 
@@ -347,7 +348,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                                 );
                                 return jobs.find((job) => String(job.jobId) === jobId)?.status;
                             },
-                            { timeout: 30000 },
+                            { timeout: LONG_TIMEOUT_MS },
                         )
                         .toBe("cancelled");
                 }
@@ -416,7 +417,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                         );
                         return jobs.find((job) => String(job.jobId) === jobId)?.status;
                     },
-                    { timeout: 20000, intervals: [250, 500, 1000] },
+                    { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1000] },
                 )
                 .toBe("running");
             return jobId;
@@ -471,7 +472,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                     const jobs = await listJobs(request, workspace.token, workspace.workspaceId);
                     return jobs.find((job) => String(job.jobId) === cancelJobId)?.status;
                 },
-                { timeout: 30000, intervals: [250, 500, 1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1000] },
             )
             .toBe("cancelled");
 
@@ -479,7 +480,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
         await page.goto(`/workspace/${workspace.workspaceId}/environment`, { waitUntil: "load" });
         await expect(page.locator('[data-testid="workspace-job-status"]').first()).toContainText(
             /取消|cancel/i,
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.screenshot({
             scale: "css",
@@ -570,7 +571,7 @@ test.describe("@host PLAN-0359 M1 public Workspace Job", () => {
                     );
                     return finalStatus;
                 },
-                { timeout: 30000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toMatch(/running|failed|interrupted|cancelled|orphaned/);
         if (finalStatus === "running") {

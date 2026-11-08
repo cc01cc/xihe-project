@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
 import { createDirectAttachWorkspace, ensureWorkspace } from "./helpers/workspace";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect, type APIRequestContext } from "@playwright/test";
@@ -245,13 +247,15 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
 
         const fileEntry = page.locator("text=e2e-note.md").first();
         try {
-            await expect(fileEntry).toBeVisible({ timeout: 15000 });
+            await expect(fileEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         } catch {
             throw new Error(`seeded file not visible; mcp responses: ${mcpBodies.join(" || ")}`);
         }
         await fileEntry.click();
 
-        await expect(page.locator("text=E2E Note").first()).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=E2E Note").first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         const overflow = await page.evaluate(() => {
             const doc = document.scrollingElement;
             return doc ? doc.scrollWidth - doc.clientWidth : 0;
@@ -265,17 +269,17 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
     }) => {
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const fileEntry = page.locator("text=e2e-note.md").first();
-        await expect(fileEntry).toBeVisible({ timeout: 15000 });
+        await expect(fileEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await fileEntry.click({ button: "right" });
         const deleteItem = page
             .getByRole("menuitem", { name: /^Delete…$|^Delete$|^删除…$|^删除$/ })
             .first();
-        await expect(deleteItem).toBeVisible({ timeout: 8000 });
+        await expect(deleteItem).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await deleteItem.click();
 
         const dialog = page.locator('[data-testid="modal-backdrop"]').first();
-        await expect(dialog).toBeVisible({ timeout: 8000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const destructiveBtn = dialog
             .locator("button")
             .filter({ hasText: /delete|删除|confirm|确认/i })
@@ -296,7 +300,7 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
     test("renames, duplicates, moves and deletes a file through the UI", async ({ page }) => {
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const original = page.getByRole("button", { name: "mutation.md", exact: true });
-        await expect(original).toBeVisible({ timeout: 15000 });
+        await expect(original).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await original.click({ button: "right" });
         await page.getByRole("menuitem", { name: /^Rename$/ }).click();
@@ -305,7 +309,7 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         await renameModal.getByRole("textbox").fill("renamed.md");
         await renameModal.getByRole("button", { name: "Rename", exact: true }).click();
         await expect(page.getByRole("button", { name: "renamed.md", exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(original).not.toBeVisible();
 
@@ -313,7 +317,7 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         await renamed.click({ button: "right" });
         await page.getByRole("menuitem", { name: /^Duplicate$/ }).click();
         const duplicate = page.getByRole("button", { name: "renamed-copy.md", exact: true });
-        await expect(duplicate).toBeVisible({ timeout: 15000 });
+        await expect(duplicate).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await duplicate.click({ button: "right" });
         await page.getByRole("menuitem", { name: /^Move to/ }).click();
@@ -321,11 +325,11 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         await expect(moveModal).toBeVisible();
         await moveModal.getByRole("textbox").fill("archive");
         await moveModal.getByRole("button", { name: "Move", exact: true }).click();
-        await expect(duplicate).not.toBeVisible({ timeout: 15000 });
+        await expect(duplicate).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const archive = page.getByRole("button", { name: /archive$/ });
         const moved = page.getByRole("button", { name: "renamed-copy.md", exact: true });
-        await expect(moved).toBeVisible({ timeout: 15000 });
+        await expect(moved).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await archive.click();
         await expect(moved).not.toBeVisible();
         await archive.click();
@@ -336,11 +340,11 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         const deleteModal = page.getByTestId("modal-content");
         await expect(deleteModal).toContainText("archive/renamed-copy.md");
         await deleteModal.getByRole("button", { name: "Delete", exact: true }).click();
-        await expect(moved).not.toBeVisible({ timeout: 15000 });
+        await expect(moved).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await page.reload({ waitUntil: "load" });
         await expect(page.getByRole("button", { name: "renamed.md", exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByRole("button", { name: /archive$/ }).click();
         await expect(
@@ -420,9 +424,9 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         // Toolbar is only a *ready* signal; the pass condition is the real empty-state
         // marker rendered by FileTreePanel.vue ("工作区暂无文件").
         await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
-        await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "workspace-empty-state.png");
     });
 });

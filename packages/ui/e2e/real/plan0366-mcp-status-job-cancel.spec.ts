@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -9,6 +10,7 @@ import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -31,7 +33,6 @@ const STDIO_FIXTURE_SCRIPT = readFileSync(
 
 test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(360000);
 
     // PLAN-290 约束：Agent 每进程只绑定一个 workspace，全部用例共享同一注册用户/工作区。
     let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
@@ -160,7 +161,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         };
         const init = await request.post(`${CP_URL}/api/v1/mcp`, {
             headers: mcpHeaders,
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
             data: {
                 jsonrpc: "2.0",
                 method: "initialize",
@@ -175,7 +176,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         expect(init.status(), `initialize failed: ${init.status()}`).toBe(200);
         const list = await request.post(`${CP_URL}/api/v1/mcp`, {
             headers: mcpHeaders,
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
             data: { jsonrpc: "2.0", method: "tools/list", id: 2, params: {} },
         });
         expect(list.status(), `tools/list failed: ${list.status()} ${await list.text()}`).toBe(200);
@@ -219,7 +220,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
                     return runId ? "found" : "missing";
                 },
                 {
-                    timeout: 120000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [1000, 2000],
                     message: "chat run id appears in the messages DTO",
                 },
@@ -238,7 +239,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
                     return status;
                 },
                 {
-                    timeout: 120000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [500, 1000, 2000],
                     message: "chat run settles without being cancelled",
                 },
@@ -260,7 +261,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         return execFileSync(
             process.platform === "win32" ? "docker.exe" : "docker",
             ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-            { encoding: "utf8", timeout: 15_000, windowsHide: true },
+            { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
         ).trim();
     }
 
@@ -316,13 +317,13 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
                     return "waiting";
                 },
                 {
-                    timeout: 180000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [1000, 2000],
                     message: `approvals until: ${doneText}`,
                 },
             )
             .toBe("done");
-        await expect(page.getByText(doneText)).toBeVisible({ timeout: 60000 });
+        await expect(page.getByText(doneText)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     }
 
     test("S1: stdio status badges (ready/failed/no-session) are visible in the settings page", async ({
@@ -365,7 +366,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
                         .join(",");
                 },
                 {
-                    timeout: 120000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [2000],
                     message: "stdio sessions settle to ready/restarting",
                 },
@@ -407,19 +408,19 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         seedPage(page, sharedAuth, sharedWs);
         await page.goto(`/workspace/${sharedWs}/settings?tab=mcp`, { waitUntil: "load" });
         const panel = page.locator('[data-testid="mcp-servers-panel"]');
-        await expect(panel).toBeVisible({ timeout: 20000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const rows = panel.locator('[data-testid="mcp-server-row"]');
-        await expect(rows).toHaveCount(3, { timeout: 30000 });
+        await expect(rows).toHaveCount(3, { timeout: LONG_TIMEOUT_MS });
 
         const readyRow = rows.filter({ hasText: "e2e-stdio" });
         await expect(readyRow.locator('[data-testid="mcp-server-badge"]')).toHaveText(
             /可用|Ready/,
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         const brokenRow = rows.filter({ hasText: "e2e-broken" });
         await expect(brokenRow.locator('[data-testid="mcp-server-badge"]')).toHaveText(
             /重启中|Restarting/,
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(brokenRow.locator('[data-testid="mcp-server-reason"]')).not.toBeEmpty();
         const idleRow = rows.filter({ hasText: "e2e-idle" });
@@ -472,7 +473,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         });
 
         const chatInput = page.locator('[data-testid="chat-input"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await chatInput.fill("XIHE-E2E-JOB-CANCEL start two jobs");
         await page.locator('[data-testid="chat-send-button"]').click();
@@ -496,7 +497,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         const toggles = page
             .locator('[data-testid="tool-card-toggle"]')
             .filter({ hasText: "start_background_process" });
-        await expect(toggles.first()).toBeVisible({ timeout: 60000 });
+        await expect(toggles.first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const toggleCount = await toggles.count();
         for (let i = 0; i < toggleCount; i += 1) {
             await toggles.nth(i).click();
@@ -508,10 +509,10 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         const cardA = jobCards.filter({ hasText: targetJobId }).last();
         const cardB = jobCards.filter({ hasText: controlJobId }).last();
         await expect(cardA.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(cardB.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -525,7 +526,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await cardA.locator('[data-testid="job-cancel-confirm"]').click();
         const cancelResponse = await page.waitForResponse(
             (res) => res.url().includes("/cancel") && res.request().method() === "POST",
-            { timeout: 60000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         expect(cancelResponse.status(), `cancel failed: ${await cancelResponse.text()}`).toBe(200);
         const cancelBody = (await cancelResponse.json()) as {
@@ -539,7 +540,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
 
         // 可见结果：A 卡已取消；B 卡仍运行（同 run 其他 job 不受影响）
         await expect(cardA.locator('[data-testid="job-status"]')).toHaveText(/已取消|Cancelled/, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(cardA.locator('[data-testid="job-cancel-success"]')).toBeVisible();
         await expect(cardB.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/);
@@ -584,7 +585,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await cardB.locator('[data-testid="job-cancel-button"]').click();
         await cardB.locator('[data-testid="job-cancel-confirm"]').click();
         await expect(cardB.locator('[data-testid="job-cancel-error"]')).toHaveText(/取消未确认/, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(cardB.locator('[data-testid="job-status"]')).toHaveText(/运行中|Running/);
         await expect(cardB.locator('[data-testid="job-cancel-button"]')).toBeEnabled();
@@ -642,7 +643,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         await chatInput.fill("continue after cancel");
         await page.locator('[data-testid="chat-send-button"]').click();
         await expect(page.getByText("Session continues after cancel.")).toBeVisible({
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -13,6 +14,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0339 T0.4 — workspace checkpoint slice restore, real host stack.
@@ -168,16 +170,16 @@ async function sendChat(
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
     await input.fill(text);
-    await expect(send).toBeEnabled({ timeout: 15000 });
+    await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
     const response = page.waitForResponse(
         (item) => item.url().endsWith("/api/v1/chat") && item.request().method() === "POST",
-        { timeout: 30000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
     await send.click();
     const chatResponse = await response;
     expect(chatResponse.ok(), `chat request failed with ${chatResponse.status()}`).toBeTruthy();
     await expect(page.locator('[data-slot="message"][data-align="end"]').first()).toBeVisible({
-        timeout: 30000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -185,7 +187,7 @@ async function openWorkspace(page: Page, token: string, wsId: string): Promise<v
     seedPage(page, token, wsId);
     await page.goto(`/workspace/${wsId}/chat/${rollbackSessionId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
-        timeout: 30000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -217,7 +219,7 @@ async function awaitPreviousRunSettled(
                 if (entries.length === 0) return "settled";
                 return TERMINAL_RUN_PATTERN.test(entries[0]?.status ?? "") ? "settled" : "pending";
             },
-            { timeout: 120000, intervals: [2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [2000] },
         )
         .toBe("settled");
 }
@@ -246,7 +248,7 @@ async function currentRunId(
                 runId = current;
                 return "found";
             },
-            { timeout: 60000, intervals: [1000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1000] },
         )
         .toBe("found");
     return runId;
@@ -264,7 +266,7 @@ async function awaitChatRunTerminal(
                 const body = (await res.json()) as { status?: string };
                 return body.status ?? "unknown";
             },
-            { timeout: 180000, intervals: [2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [2000] },
         )
         .toMatch(TERMINAL_RUN_PATTERN);
     const res = await request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, { headers });
@@ -315,7 +317,7 @@ async function awaitCheckpointCaptured(
                 view = rows.find((row) => row.sourceRunId === runId);
                 return view?.state ?? "missing";
             },
-            { timeout: 120000, intervals: [1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
         )
         .toBe("captured");
     if (!view) throw new Error(`checkpoint never became readable for run ${runId}`);
@@ -362,13 +364,13 @@ async function beginApprovalRun(
     await awaitPreviousRunSettled(request, headers, workspaceId);
     const modal = page.locator('[data-testid="modal-content"]');
     await sendChat(page, request, headers, markerText);
-    await expect(modal, "approval modal").toBeVisible({ timeout: 120000 });
+    await expect(modal, "approval modal").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     return modal;
 }
 
 async function approveModal(modal: Locator): Promise<void> {
     await modal.locator('[data-testid="approval-approve"]').click();
-    await expect(modal).toBeHidden({ timeout: 30000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 }
 
 /** Poll the host file until the approved run's write is visible (or the writer times out). */
@@ -382,7 +384,10 @@ async function awaitHostFile(hostFile: string, expected: string): Promise<void> 
                     return "";
                 }
             },
-            { message: `expected ${hostFile} to contain the approved content`, timeout: 60000 },
+            {
+                message: `expected ${hostFile} to contain the approved content`,
+                timeout: LONG_TIMEOUT_MS,
+            },
         )
         .toContain(expected);
 }
@@ -446,7 +451,9 @@ async function revertThroughUi(
         }
     });
     const marker = latestMarker(page);
-    await expect(marker).toHaveAttribute("data-checkpoint-kind", "captured", { timeout: 30000 });
+    await expect(marker).toHaveAttribute("data-checkpoint-kind", "captured", {
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect(marker.getByTestId("run-checkpoint-summary")).toContainText(
         String(flow.view.changedCount),
     );
@@ -456,7 +463,7 @@ async function revertThroughUi(
 
     await marker.getByTestId("run-checkpoint-revert-entry").click();
     const dialog = page.getByTestId("checkpoint-dialog");
-    await expect(dialog).toBeVisible({ timeout: 15000 });
+    await expect(dialog).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("revert-preview-delete-count")).toHaveText(
         String(flow.view.changedCount),
     );
@@ -468,7 +475,9 @@ async function revertThroughUi(
     await expect(page.getByTestId("revert-preview-confirm")).toBeEnabled();
 
     await page.getByTestId("revert-preview-confirm").click();
-    await expect(page.getByTestId("revert-result-counts")).toBeVisible({ timeout: 60000 });
+    await expect(page.getByTestId("revert-result-counts")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect(page.getByTestId("revert-result-group-deleted")).toContainText(extraFileName);
     await expect(page.getByTestId("revert-result-ref")).toContainText(flow.view.sliceRef ?? "");
     await page.getByTestId("revert-result-dismiss").click();
@@ -478,7 +487,7 @@ async function revertThroughUi(
         page
             .locator('[data-testid="run-checkpoint-marker"][data-checkpoint-kind="captured"]')
             .last(),
-    ).toBeVisible({ timeout: 15000 });
+    ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("run-checkpoint-reverted").last()).toContainText(
         "已恢复到该切片",
     );
@@ -489,7 +498,6 @@ async function revertThroughUi(
 
 test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let sharedAuth: string,
         sharedWs: string,
@@ -548,7 +556,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         await expect
             .poll(() => listSliceRefs(sharedWs).length, {
                 message: "C0 baseline slice ref must appear before rollback scenarios",
-                timeout: 180000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [1000, 2000, 3000],
             })
             .toBeGreaterThan(0);
@@ -596,7 +604,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
 
         // Restoring the captured slice preserves its original file; the extra file created
         // immediately before the dialog was deleted by revertThroughUi.
-        await expect.poll(() => existsSync(flow.hostFile), { timeout: 30000 }).toBe(true);
+        await expect.poll(() => existsSync(flow.hostFile), { timeout: LONG_TIMEOUT_MS }).toBe(true);
         const after = await checkpointView(request, sharedHeaders, sharedWs, flow.runId);
         expect(after.revert?.state).toBe("rolled_back");
         expect(after.revert?.counts?.deleted).toBe(1);
@@ -612,7 +620,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         // The second preview is legitimate (read-only) and still carries paths/counts only.
         expect(apiPreview.status).toBe(200);
         expect(JSON.stringify(apiPreview.body)).not.toContain(content);
-        await expect.poll(() => previewBodies.length, { timeout: 15000 }).toBeGreaterThan(0);
+        await expect
+            .poll(() => previewBodies.length, { timeout: LONG_TIMEOUT_MS })
+            .toBeGreaterThan(0);
         expect(
             previewBodies.join("\n"),
             "preview payloads carry no raw file contents",
@@ -664,7 +674,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         expect(revert.status).toBe(200);
         expect(revert.body.counts.deleted).toBe(1);
         expect(revert.body.counts.failed).toBe(0);
-        await expect.poll(() => existsSync(hostFile), { timeout: 30000 }).toBe(false);
+        await expect.poll(() => existsSync(hostFile), { timeout: LONG_TIMEOUT_MS }).toBe(false);
     });
 
     // S3 ─ post-slice edits ────────────────────────────────────────────────────
@@ -700,22 +710,24 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         await expect(codeToggle).toHaveAttribute("aria-pressed", "true");
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         const fileButton = page.getByRole("button", { name: fileName, exact: true });
-        await expect(fileButton).toBeVisible({ timeout: 30000 });
+        await expect(fileButton).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await fileButton.click();
         await page.getByRole("button", { name: "源码" }).click();
         await page.getByTestId("workspace-markdown-source").fill(userContent);
         await page.getByRole("button", { name: "保存", exact: true }).click();
         await expect(page.getByRole("button", { name: "已保存", exact: true })).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // Preview via the timeline entry: the post-slice edit is listed as a restore action.
         const marker = latestMarker(page);
         await expect(marker).toHaveAttribute("data-checkpoint-kind", "captured", {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await marker.getByTestId("run-checkpoint-revert-entry").click();
-        await expect(page.getByTestId("checkpoint-dialog")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("checkpoint-dialog")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("revert-preview-type-conflict-count")).toHaveText("0");
         await expect(page.getByTestId("revert-preview-restore-count")).toHaveText("1");
         await expect(page.getByTestId("revert-preview-paths")).toContainText(fileName);
@@ -727,7 +739,9 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         const confirm = page.getByTestId("revert-preview-confirm");
         await expect(confirm).toBeEnabled();
         await confirm.click();
-        await expect(page.getByTestId("revert-result-counts")).toBeVisible({ timeout: 60000 });
+        await expect(page.getByTestId("revert-result-counts")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("revert-result-group-restored")).toContainText(fileName);
         await page.getByTestId("revert-result-dismiss").click();
 
@@ -772,7 +786,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
 
         const { previewBodies } = await revertThroughUi(page, flow, hostDir);
         expect(previewBodies.join("\n")).not.toContain(content);
-        await expect.poll(() => existsSync(flow.hostFile), { timeout: 30000 }).toBe(true);
+        await expect.poll(() => existsSync(flow.hostFile), { timeout: LONG_TIMEOUT_MS }).toBe(true);
         const after = await checkpointView(request, sharedHeaders, sharedWs, flow.runId);
         expect(after.revert?.state).toBe("rolled_back");
     });
@@ -816,7 +830,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         const marker = page
             .locator('[data-testid="run-checkpoint-marker"][data-checkpoint-kind="degraded"]')
             .last();
-        await expect(marker).toBeVisible({ timeout: 30000 });
+        await expect(marker).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(marker.getByTestId("run-checkpoint-unavailable")).toBeVisible();
         await expect(page.getByTestId("run-checkpoint-revert-entry")).toHaveCount(0);
     });
@@ -951,7 +965,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         await panel.getByTestId(`workspace-checkpoint-select-${flow.view.id}`).click();
         await expect(panel.getByTestId("workspace-checkpoint-timeline")).toContainText(
             String(flow.view.changedCount),
-            { timeout: 30000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         const runList = panel.getByTestId("workspace-checkpoint-files");
         await expect(runList).toContainText(runFile);

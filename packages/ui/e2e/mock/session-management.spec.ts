@@ -2,6 +2,7 @@ import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 /**
  * P-class fix coverage: the desktop navigation panel used to be a one-way door.
@@ -116,7 +117,9 @@ test.describe("Session Management", () => {
     test("sidebar lists all seeded sessions", async ({ page }) => {
         await page.goto("/workspace/workspace-1/chat/sid-1");
 
-        await expect(page.locator("aside >> text=Alpha")).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("aside >> text=Alpha")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.locator("aside >> text=Beta")).toBeVisible();
         await expect(page.locator("aside >> text=Gamma")).toBeVisible();
         await expectPlatformScreenshot(page, "session-list-all.png");
@@ -135,7 +138,9 @@ test.describe("Session Management", () => {
     test("sidebar time group headers are visible", async ({ page }) => {
         await page.goto("/workspace/workspace-1/chat/sid-1");
 
-        await expect(page.locator("aside >> text=今天").first()).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("aside >> text=今天").first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expectPlatformScreenshot(page, "session-time-groups.png");
     });
 

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -14,6 +15,7 @@ import {
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0630 M5b (D30-14) / T5b.4 — real-stack browser walkthrough of the composer
@@ -56,7 +58,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -177,7 +179,6 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             REAL_ROUTE !== "openai-compat",
             "requires XIHE_E2E_REAL_ROUTE=openai-compat (runner imports the OpenAI-compatible provider config)",
         );
-        test.setTimeout(600_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
 
         const sessionRuns: Array<{ runId: string; status: string; principalId: string | null }> =
@@ -328,25 +329,25 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         if (
             !(await page
                 .getByTestId("chat-input")
-                .isVisible({ timeout: 15_000 })
+                .isVisible({ timeout: LONG_TIMEOUT_MS })
                 .catch(() => false))
         ) {
             await page.reload({ waitUntil: "load" });
         }
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // ── Step 1: to/cc bar initial state (to = A PRIMARY, cc empty, then add B) ──
         // 现行 composer 用 RecipientField 的 chip 字段（不是 <select>）：`speak-as-chip` 带
         // `data-participant-id`，`cc-input` 输入成员名后 Enter 落 chip。断言语义不变。
         const speakAsChip = page.getByTestId("speak-as-chip");
-        await expect(speakAsChip).toBeVisible({ timeout: 30_000 });
+        await expect(speakAsChip).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(speakAsChip, "to defaults to the PRIMARY participant A").toHaveAttribute(
             "data-participant-id",
             participantAId,
-            { timeout: 30_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         const ccBar = page.getByTestId("cc-bar");
-        await expect(ccBar).toBeVisible({ timeout: 30_000 });
+        await expect(ccBar).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("cc-chip")).toHaveCount(0);
         await page.getByTestId("cc-input").fill(displayB);
         await page.getByTestId("cc-input").press("Enter");
@@ -363,10 +364,10 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         const submissionsBefore = chatSubmissions.length;
         await input.click();
         await input.fill(`只回复这个标记，不要输出任何其他内容，也不要调用任何工具：${markerA}`);
-        await expect(send).toBeEnabled({ timeout: 20_000 });
+        await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
         await send.click();
         await expect
-            .poll(() => chatSubmissions.length, { timeout: 30_000 })
+            .poll(() => chatSubmissions.length, { timeout: LONG_TIMEOUT_MS })
             .toBeGreaterThan(submissionsBefore);
         const firstSubmission = chatSubmissions.at(-1)!;
         expect(firstSubmission.cc ?? [], "the POST body carries B in cc").toContain(participantBId);
@@ -378,7 +379,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
                     scalar(
                         `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid AND status IN ('succeeded','failed','partial','cancelled','ambiguous')`,
                     ),
-                { timeout: 240_000, intervals: [2_000, 3_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [2_000, 3_000] },
             )
             .toBeGreaterThan(0);
         // A is the responder: the run carries A as its responder (R1 run-level responder) or leaves the
@@ -451,10 +452,10 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             page.getByTestId("cc-chip").filter({ hasText: displayB }),
             "the @mention auto-adds B to the cc chips",
         ).toBeVisible();
-        await expect(send).toBeEnabled({ timeout: 20_000 });
+        await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
         await send.click();
         await expect
-            .poll(() => chatSubmissions.length, { timeout: 30_000 })
+            .poll(() => chatSubmissions.length, { timeout: LONG_TIMEOUT_MS })
             .toBeGreaterThan(submissionsBeforeMention);
         const mentionSubmission = chatSubmissions.at(-1)!;
         expect(mentionSubmission.cc ?? [], "the mention submission still cc's B").toContain(
@@ -470,7 +471,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
                     psql(
                         `SELECT payload->>'runId' FROM context_events WHERE session_id = '${sessionId}'::uuid AND event_type = 'wake_dispatch' AND payload->>'triggerSource' = 'mention' AND payload->>'participantId' = '${participantBId}' ORDER BY created_at DESC LIMIT 1`,
                     ),
-                { timeout: 120_000, intervals: [1_000, 2_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1_000, 2_000] },
             )
             .toMatch(UUID_PATTERN);
         mentionRunId = requireUuid(
@@ -481,7 +482,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         );
         await expect
             .poll(() => psql(`SELECT status FROM chat_runs WHERE id = '${mentionRunId}'::uuid`), {
-                timeout: 240_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [2_000, 3_000],
             })
             .toMatch(/^(succeeded|partial|failed|cancelled|ambiguous)$/);
@@ -493,7 +494,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
                 .filter({ hasText: markerB })
                 .last(),
             "B's own reply carries the requested marker",
-        ).toBeVisible({ timeout: 180_000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const step3Shot = path.join(EVIDENCE_DIR, "t5b.4-step3-b-mention-response.png");
         await page.screenshot({ scale: "css", path: step3Shot, fullPage: false });
 

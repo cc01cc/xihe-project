@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
@@ -15,8 +16,9 @@ import {
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
 import { bindToolCapableChat } from "./helpers/tool-capable-chat";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
-test.describe.configure({ mode: "serial", retries: 0, timeout: 90000 });
+test.describe.configure({ mode: "serial", retries: 0, timeout: LONG_TIMEOUT_MS });
 
 /**
  * PLAN-0626 M2: the branch selector moved out of the chat column's accordion into
@@ -32,7 +34,9 @@ test.describe.configure({ mode: "serial", retries: 0, timeout: 90000 });
  */
 async function expandSessionSettings(page: Page): Promise<void> {
     await openContextPanel(page);
-    await expect(page.getByTestId("session-branch-select")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("session-branch-select")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 }
 
 test.describe("@host Session branch path", () => {
@@ -160,7 +164,7 @@ test.describe("@host Session branch path", () => {
         });
         await page
             .locator('[data-testid="chat-input"]')
-            .waitFor({ state: "visible", timeout: 30000 });
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
 
         // PLAN-0591 capability gate: bind the tool-capable `openai` row instead
         // of the default `custom-openai-compatible` fixture (capability.tools =
@@ -205,7 +209,7 @@ test.describe("@host Session branch path", () => {
         const rootChat = (await rootChatResponse.json()) as { runId?: string };
         if (!rootChat.runId) throw new Error("Root Chat response did not contain runId");
         await expect(page.locator('[data-slot="message"][data-align="start"]').last()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await awaitOperationCompletedForRun(request, workspaceHeaders, rootChat.runId);
 
@@ -350,7 +354,7 @@ test.describe("@host Session branch path", () => {
             .toBe(`/workspace/${journey.workspaceId}/chat/${childId}`);
         await page
             .locator('[data-testid="chat-input"]')
-            .waitFor({ state: "visible", timeout: 30000 });
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
 
         const childBranchId = await getRootBranchId(request, childId, workspaceHeaders);
         const childBranchSelect = page.getByTestId("session-branch-select");
@@ -573,7 +577,7 @@ test.describe("@host Session branch path", () => {
         });
         await page
             .locator('[data-testid="chat-input"]')
-            .waitFor({ state: "visible", timeout: 30000 });
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
 
         // PLAN-0591 capability gate: same tool-capable binding as the first
         // case (see bindToolCapableChat in helpers/tool-capable-chat.ts).
@@ -669,7 +673,7 @@ test.describe("@host Session branch path", () => {
         // is covered by the first test in this file).
         await page
             .locator('[data-testid="chat-input"]')
-            .waitFor({ state: "visible", timeout: 30000 });
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS });
         const childFirstRound = `child-first-round-after-compact-${Date.now()}`;
         await runChatRound(childFirstRound);
         await expect(page.locator('[data-slot="message"][data-align="end"]').last()).toContainText(
@@ -737,7 +741,7 @@ function readSessionSnapshot(sessionId: string): {
     const output = execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
     if (!output)
         throw new Error(`Session ${sessionId} was not found in the isolated PostgreSQL fixture`);

@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const TREE_ENTRIES = [
     { name: "src", type: "directory" },
@@ -79,7 +81,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
             localStorage.setItem("xihe-mock-filetree", JSON.stringify(tree));
         });
         await page.goto("/workspace/workspace-1");
-        await expect(page.getByText("notes.md")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByText("notes.md")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const search = page.getByPlaceholder("过滤文件树");
         await search.fill("note");
@@ -101,7 +103,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         });
         await page.goto("/workspace/workspace-1");
         const fileEntry = page.getByRole("button", { name: "notes.md", exact: true });
-        await expect(fileEntry).toBeVisible({ timeout: 15000 });
+        await expect(fileEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await fileEntry.click({ button: "right" });
         const deleteItem = page
             .getByRole("menuitem", { name: /^Delete…$|^Delete$|^删除…$|^删除$/ })
@@ -124,7 +126,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         });
         await page.goto("/workspace/workspace-1");
         await expect(page.getByText(/暂无|empty|no files/i).first()).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 
@@ -226,7 +228,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         // `blocked` on its own (the prepare card disappears with it).
         await expect(page.getByTestId("workspace-environment-status")).toContainText(
             "materializing",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         expect(environmentCalls).toBeGreaterThan(1);
     });

@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { SERVER_START_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./timeouts";
 
 const UI_PORT = process.env.XIHE_UI_PORT || "12630",
     externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === "1";
@@ -16,7 +17,7 @@ const viewport = (() => {
 export default defineConfig({
     testDir: "..",
     testMatch: ["e2e/mock/*.spec.ts", "e2e/real/*.spec.ts", "e2e/headed/*.spec.ts"],
-    timeout: 30000,
+    timeout: TEST_TIMEOUT_MS,
     retries: 1,
     use: {
         baseURL: `http://localhost:${UI_PORT}`,
@@ -46,7 +47,7 @@ export default defineConfig({
         : {
               command: "pnpm dev",
               port: Number(UI_PORT),
-              timeout: 120000,
+              timeout: SERVER_START_TIMEOUT_MS,
               // 2026-10-31 用户批准：多车道并行时禁止复用既有 dev server。
               // 复用会让测试跑在「别人 worktree 的代码」上却报本车道的结果（假绿）；
               // 端口被占时应显式失败并换一个已登记 stack 端口，而不是静默复用。

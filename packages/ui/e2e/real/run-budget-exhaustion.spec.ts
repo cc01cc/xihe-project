@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { createHash } from "node:crypto";
@@ -5,6 +6,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -70,15 +72,17 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
 
     async function tightenTokenBudget(page: Page): Promise<void> {
         await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await page.getByTestId("config-tab-user").click();
         const panel = page.getByTestId("config-domain-agent-runtime");
-        await expect(panel).toBeVisible({ timeout: 8000 });
+        await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await panel.locator(":scope > button").click();
         const tokenInput = panel
             .getByTestId("config-field-agent-runtime-runMaxTokens")
             .locator("input");
-        await expect(tokenInput).toBeVisible({ timeout: 8000 });
+        await expect(tokenInput).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await tokenInput.fill("1");
         const [saveResponse] = await Promise.all([
             page.waitForResponse(
@@ -89,14 +93,14 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
             panel.getByRole("button", { name: "保存", exact: true }).click(),
         ]);
         expect(saveResponse.status()).toBe(200);
-        await expect(page.getByText(/已保存/)).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText(/已保存/)).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     }
 
     test("exhausted run shows the localized token reason and stays resumable", async ({
         page,
         request,
     }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
 
         auth = await registerUser(request);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
@@ -115,14 +119,16 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         // 2. First run exhausts the token budget.
         await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         const textarea = page.locator("textarea");
-        await expect(textarea).toBeVisible({ timeout: 15000 });
+        await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const firstMarker = `budget-first-${Date.now()}`;
         await textarea.fill(firstMarker);
         await page.keyboard.press("Enter");
-        await expect(page.getByText(firstMarker, { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText(firstMarker, { exact: true })).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         const error = page.locator('[data-testid="message-error"]');
-        await expect(error).toHaveCount(1, { timeout: 30000 });
+        await expect(error).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
         await expect(error).toContainText("RUN_BUDGET_EXHAUSTED");
         await expect(error).toContainText("budgetDimension=tokens");
         await expect(error).toContainText("本次运行已达到 Token 上限");
@@ -138,11 +144,13 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
 
         // 3. Takeover entry: the same input starts a new run in the same session.
         const secondMarker = `budget-second-${Date.now()}`;
-        await expect(textarea).toBeEnabled({ timeout: 10000 });
+        await expect(textarea).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
         await textarea.fill(secondMarker);
         await page.keyboard.press("Enter");
-        await expect(page.getByText(secondMarker, { exact: true })).toBeVisible({ timeout: 15000 });
-        await expect(error).toHaveCount(2, { timeout: 30000 });
+        await expect(page.getByText(secondMarker, { exact: true })).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect(error).toHaveCount(2, { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: test.info().outputPath("run-budget-exhausted-takeover.png"),
@@ -151,7 +159,7 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
     });
 
     test("exhaustion surface stays readable on a mobile viewport", async ({ page }) => {
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
 
         // Reuse the same user/workspace as the desktop pass (Agent single-workspace
         // MCP binding); the token budget is already 1 from the first pass.
@@ -161,19 +169,21 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
         // At 390px the app shell defaults to the Files pane; the chat composer is
         // reachable through the "Open chat" toggle (same entry as the queue mobile spec).
         const openChat = page.getByRole("button", { name: "Open chat" });
-        await expect(openChat).toBeVisible({ timeout: 20000 });
+        await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openChat.click();
         const textarea = page.locator("textarea");
-        await expect(textarea).toBeVisible({ timeout: 15000 });
+        await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const marker = `budget-mobile-${Date.now()}`;
         await textarea.fill(marker);
         await page.keyboard.press("Enter");
-        await expect(page.getByText(marker, { exact: true })).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText(marker, { exact: true })).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         // The session already carries the two desktop-run errors; this mobile run
         // adds the third block (fresh render at the mobile viewport).
         const error = page.locator('[data-testid="message-error"]');
-        await expect(error).toHaveCount(3, { timeout: 30000 });
+        await expect(error).toHaveCount(3, { timeout: LONG_TIMEOUT_MS });
         const latest = error.last();
         await expect(latest).toContainText("本次运行已达到 Token 上限");
         const hint = page.locator('[data-testid="message-budget-exhausted-hint"]').last();

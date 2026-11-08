@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0660 T5.6 浏览器证据：@ 提及产生未读徽标 ⇒ 推进游标（PATCH cursor）后徽标消失。
  *
@@ -8,6 +9,7 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const ENABLED = process.env.XIHE_E2E_MENTION_CURSOR === "1";
 const OUT = process.env.XIHE_MENTION_CURSOR_DIR ?? "";
@@ -34,7 +36,7 @@ async function openMembers(page: import("@playwright/test").Page): Promise<void>
     if (!(await tab.isVisible().catch(() => false))) {
         await page.getByTestId("workspace-toolbar-members").click();
     }
-    await expect(tab).toBeVisible({ timeout: 15_000 });
+    await expect(tab).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
@@ -73,13 +75,17 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
             { id: state.workspaceId, name: "产品交付线" },
         );
         await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
-        await expect(page.locator("textarea").first(), "composer").toBeVisible({ timeout: 60_000 });
+        await expect(page.locator("textarea").first(), "composer").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // 1) 以 Reviewer 身份 @本人（按 echo displayName=username 寻址）→ 产生 notify，
         // 未读徽标 +1；本证据唯一一条真实消息。
         await page.locator("textarea").first().fill(`@${state.username} T5.6 游标证据，请忽略`);
         await page.getByTestId("chat-send-button").click();
-        await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: 180_000 });
+        await expect(page.getByTestId("chat-send-button")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.waitForTimeout(1500);
 
         // 2) 找到本人（HUMAN 参与者，echo displayName = 账号 username）并确认徽标存在
@@ -106,7 +112,7 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
 
         await openMembers(page);
         const badge = page.locator(`[data-testid="participant-mention-badge-${me.participantId}"]`);
-        await expect(badge, "推游标前本人应有未读徽标").toBeVisible({ timeout: 30_000 });
+        await expect(badge, "推游标前本人应有未读徽标").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const beforeText = await badge.textContent();
         await page.screenshot({ path: join(OUT, "mention-badge-before.png"), scale: "css" });
         console.log(`[mention-cursor] before text=${JSON.stringify(beforeText)}`);
@@ -120,16 +126,20 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
                 await expand.click();
             }
         }
-        await expect(advance, "本人行应有「标记已读」按钮").toBeVisible({ timeout: 15_000 });
+        await expect(advance, "本人行应有「标记已读」按钮").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await advance.click();
         console.log("[mention-cursor] advance clicked via UI");
         await expect(badge, "点击「标记已读」后本人徽标应立即消失").toHaveCount(0, {
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 4) 刷新后徽标消失
         await page.reload();
-        await expect(page.locator("textarea").first(), "composer").toBeVisible({ timeout: 60_000 });
+        await expect(page.locator("textarea").first(), "composer").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await openMembers(page);
         await page.waitForTimeout(600);
         await expect(badge, "推进游标后本人徽标应消失").toHaveCount(0);

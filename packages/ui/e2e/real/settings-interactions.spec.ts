@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -33,16 +34,16 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
         await registerAndLogin(page, request, "save-toast");
         await page.goto("/settings/config", { waitUntil: "load" });
         await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         await page.getByTestId("config-tab-user").click();
         const profilePanel = page.getByTestId("config-domain-agent-profile");
-        await expect(profilePanel).toBeVisible({ timeout: 8000 });
+        await expect(profilePanel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await profilePanel.locator(":scope > button").click();
 
         const editInput = profilePanel.locator('input[type="text"]').first();
-        await expect(editInput).toBeVisible({ timeout: 8000 });
+        await expect(editInput).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await editInput.fill(`e2e-${Date.now()}`);
 
         const saveBtn = profilePanel.getByRole("button", { name: "保存", exact: true });
@@ -50,7 +51,7 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
         await saveBtn.click();
 
         const toast = page.locator("[data-sonner-toast]").first();
-        await expect(toast).toBeVisible({ timeout: 8000 });
+        await expect(toast).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
         const saveBox = await saveBtn.boundingBox(),
             toastBox = await toast.boundingBox();

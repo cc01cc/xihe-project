@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
@@ -15,6 +16,7 @@ import {
 import { test, expect } from "@playwright/test";
 
 import { agentName } from "./helpers/agent-name";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const HOST_ROOT =
@@ -28,7 +30,6 @@ const HOST_ROOT =
 // workspace chat on the same Agent.
 test.describe("@host Journey A — AI write_file approve/reject", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     test("A1/A2/A3: create file via write_file — approve lands FS; reject leaves FS unchanged", async ({
         page,
@@ -89,10 +90,12 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             rejectFile = `journey-a-reject-${Date.now()}.md`;
 
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-create-session")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("workspace-create-session")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const sessionId = await createWorkspaceSessionWithPrincipal(page, principalId),
             chatInput = page.locator('[data-testid="chat-input"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page).toHaveURL(new RegExp(`/workspace/${wsId}/chat/${sessionId}$`));
         const modal = page.locator('[data-testid="modal-content"]');
 
@@ -100,16 +103,18 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         // The deterministic write_file fixture triggers on the XIHE-E2E-WRITE
         // marker (real-model runs keep the natural-language prompt shape).
         await sendChat(page, `XIHE-E2E-WRITE ${approveFile} ${approveContent}`);
-        await expect(modal, "approval modal for write_file").toBeVisible({ timeout: 120000 });
+        await expect(modal, "approval modal for write_file").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // Path preview should appear; avoid asserting secret material.
-        await expect(modal).toContainText(approveFile, { timeout: 10000 });
+        await expect(modal).toContainText(approveFile, { timeout: EXPECT_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: testInfo.outputPath("journey-a-approve-modal.png"),
             fullPage: false,
         });
         await modal.locator('[data-testid="approval-approve"]').click();
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         // FS readback (A2 hard assert) — path normalization: workspace-relative file
         const approvedPath = path.join(hostDir, approveFile);
@@ -124,14 +129,14 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
                 },
                 {
                     message: `expected ${approvedPath} to contain approve content`,
-                    timeout: 20000,
+                    timeout: LONG_TIMEOUT_MS,
                 },
             )
             .toContain(approveContent);
         await expect(
             page.getByRole("treeitem", { name: approveFile, exact: true }),
             "Workspace Chat write_file result appears in the file tree without a page reload",
-        ).toBeVisible({ timeout: 20000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: testInfo.outputPath("journey-a-after-approve.png"),
@@ -158,7 +163,7 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
                     writeInvocationId = entry?.id ?? "";
                     return writeInvocationId;
                 },
-                { timeout: 30000, intervals: [500, 1000, 2000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000, 2000] },
             )
             .not.toBe("");
         const detailRes = await request.get(
@@ -177,13 +182,15 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
 
         // --- A3: reject write_file → APPROVAL_REJECTED; no new file ---
         await sendChat(page, `XIHE-E2E-WRITE ${rejectFile} # should not exist`);
-        await expect(modal, "approval modal for reject case").toBeVisible({ timeout: 120000 });
+        await expect(modal, "approval modal for reject case").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await modal.locator('[data-testid="approval-reject"]').click();
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         await expect(
             page.locator("text=APPROVAL_REJECTED").first(),
             "terminal APPROVAL_REJECTED visible",
-        ).toBeVisible({ timeout: 60000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: testInfo.outputPath("journey-a-after-reject.png"),
@@ -262,17 +269,17 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         await createWorkspaceSessionWithPrincipal(page, principalId);
         const textarea = page.locator("textarea");
-        await expect(textarea).toBeVisible({ timeout: 20000 });
+        await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]'),
             expFile = `journey-a-exp-${Date.now()}.md`;
 
         await textarea.fill(`请创建文件 ${expFile} 内容 # exp，然后确认。`);
         await textarea.press("Enter");
-        await expect(modal).toBeVisible({ timeout: 90000 });
+        await expect(modal).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // Do not click; wait past agent TTL (env should be ~5s)
         await page.waitForTimeout(8000);
         await page.reload({ waitUntil: "load" });
-        await expect(textarea).toBeVisible({ timeout: 20000 });
+        await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.waitForTimeout(2000);
         // No ghost pending modal after expire + reload
         await expect(modal).toBeHidden();

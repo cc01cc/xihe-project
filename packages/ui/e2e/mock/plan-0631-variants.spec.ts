@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0631 M2：视觉语言（**默认 = B 密集**；A 克制 / C 现状+ 只是 opt-in 覆盖）的
  * **真实截图 + 质量门**。
@@ -40,6 +41,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { openContextPanel } from "../helpers/context-panel";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -638,9 +640,9 @@ test.describe("PLAN-0631 M2 visual variants", () => {
                 waitUntil: "load",
             });
             // 就绪用事件而不是时钟：composer 只在会话/分支投影落地后挂载。
-            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-                timeout: 20000,
+                timeout: LONG_TIMEOUT_MS,
             });
             // 真实输入（让发送按钮可用），再真实点击打开 dock 的 context 标签。
             await page.getByTestId("chat-input").fill(DRAFT);
@@ -733,7 +735,9 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             await mockConfigApis(page);
 
             await page.goto(`/settings/config?variant=${variant.param}`, { waitUntil: "load" });
-            await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 20000 });
+            await expect(page.getByTestId("config-tab-instance")).toBeVisible({
+                timeout: LONG_TIMEOUT_MS,
+            });
             // 展开两个域，让表单与列表同时出现在一屏里（同一数据，默认态与 A/C 都展开同样的域）。
             const fields: Record<string, string> = {
                 rag: "config-field-rag-chunkSize",
@@ -741,7 +745,9 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             };
             for (const domain of ["rag", "logging"]) {
                 await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
-                await expect(page.getByTestId(fields[domain])).toBeVisible({ timeout: 15000 });
+                await expect(page.getByTestId(fields[domain])).toBeVisible({
+                    timeout: LONG_TIMEOUT_MS,
+                });
             }
             // 点击域会把页面滚到被点元素；默认与 A/C 的密度不同 ⇒ 落点不同 ⇒ 截图不可比。
             // 统一回到顶部（全局路由由 `main` 自身滚动），让三张图从同一个位置开始。
@@ -800,10 +806,10 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         await mockSessionProjections(page, SESSION_ID);
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // 正文档必须真的渲染出来再量（消息投影是异步的，composer 先挂载）。
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("chat-input").fill(DRAFT);
         await openContextPanel(page);
@@ -897,14 +903,18 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         await mockConfigApis(page);
 
         await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("config-tab-instance")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const fields: Record<string, string> = {
             rag: "config-field-rag-chunkSize",
             logging: "config-field-logging-logLevel",
         };
         for (const domain of ["rag", "logging"]) {
             await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
-            await expect(page.getByTestId(fields[domain])).toBeVisible({ timeout: 15000 });
+            await expect(page.getByTestId(fields[domain])).toBeVisible({
+                timeout: LONG_TIMEOUT_MS,
+            });
         }
         await page.evaluate(() => {
             document.scrollingElement?.scrollTo(0, 0);
@@ -963,14 +973,14 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         await mockSessionProjections(page, SESSION_ID);
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 模拟对比期残留：旧版把 C 的选择写进了 localStorage。
         await page.evaluate(() => localStorage.setItem("xihe-visual-variant", "c"));
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const stored = await page.evaluate(() => localStorage.getItem("xihe-visual-variant"));
@@ -991,9 +1001,9 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?variant=b`, {
             waitUntil: "load",
         });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const alias = await measure(
             page,

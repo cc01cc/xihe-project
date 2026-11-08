@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M3：TO（发送）栏单选主体矩阵（mock lane，无栈）。
  *
@@ -13,13 +14,14 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
 async function openComposer(page: Page): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -33,10 +35,10 @@ test.describe("会话矩阵 M3 — TO 单选主体", () => {
     test("TO 候选只列 selfOwned 且未停用的参与者", async ({ page }) => {
         await openComposer(page);
         const field = page.getByTestId("speak-as-input");
-        await expect(field, "TO field renders").toBeVisible({ timeout: 10_000 });
+        await expect(field, "TO field renders").toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await field.fill("A");
         const menu = page.getByTestId("speak-as-menu");
-        await expect(menu, "TO typeahead opens").toBeVisible({ timeout: 10_000 });
+        await expect(menu, "TO typeahead opens").toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         // selfOwned 的 agent 在列；其他人类账户与停用主体都不在列。
         await expect(menu.getByText("Agent Alpha"), "owned agent offered").toBeVisible();
         await expect(menu.getByText("Agent Beta"), "owned agent offered").toBeVisible();
@@ -50,13 +52,15 @@ test.describe("会话矩阵 M3 — TO 单选主体", () => {
     test("默认预选 PRIMARY，单选取而代之", async ({ page }) => {
         await openComposer(page);
         const chips = page.getByTestId("speak-as-chip");
-        await expect(chips, "PRIMARY preselected").toHaveCount(1, { timeout: 10_000 });
+        await expect(chips, "PRIMARY preselected").toHaveCount(1, { timeout: EXPECT_TIMEOUT_MS });
         await expect(chips.first()).toContainText("Owner One");
         const field = page.getByTestId("speak-as-input");
         await field.fill("Agent Beta");
-        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await field.press("Enter");
-        await expect(chips, "single select keeps one chip").toHaveCount(1, { timeout: 10_000 });
+        await expect(chips, "single select keeps one chip").toHaveCount(1, {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(chips.first()).toContainText("Agent Beta");
     });
 
@@ -64,9 +68,9 @@ test.describe("会话矩阵 M3 — TO 单选主体", () => {
         await openComposer(page);
         const field = page.getByTestId("speak-as-input");
         await field.fill("Agent");
-        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await field.press("Escape");
-        await expect(page.getByTestId("speak-as-menu")).toBeHidden({ timeout: 10_000 });
+        await expect(page.getByTestId("speak-as-menu")).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         await expect(page.getByTestId("speak-as-chip"), "no accidental commit").toHaveCount(1);
     });
 });

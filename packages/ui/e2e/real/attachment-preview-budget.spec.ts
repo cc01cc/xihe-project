@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0683（BL-381）—— 附件预览三态预算 E5/E6 真栈 spec（**A 路线**：真上传 + fixture-only 换字节）。
  *
@@ -56,6 +57,7 @@ import {
     waitForControlPlaneAgentReady,
     type JourneyContext,
 } from "./helpers/journey";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // ---------------------------------------------------------------------------
 // 常量：预算口径与夹具尺寸
@@ -302,7 +304,7 @@ function psql(sql: string): string {
             "-c",
             sql,
         ],
-        { encoding: "utf8", timeout: 180_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     );
     return String(output).trim();
 }
@@ -468,7 +470,7 @@ async function waitForMessageCountStable(page: Page): Promise<number> {
                 previous = count;
                 return stable;
             },
-            { timeout: 120_000, intervals: [200, 300, 500] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [200, 300, 500] },
         )
         .toBe(true);
     return bubbles.count();
@@ -518,7 +520,7 @@ async function prepareFixture(request: APIRequestContext, page: Page): Promise<v
     await page.goto(`${UI_URL}${workspaceChatPath(workspaceId, sessionId)}`);
     // 新会话 messages 为空时 ChatPanel 不挂 MessageList（`v-if="messages.length > 0"`），
     // 空态只有欢迎语 + composer ⇒ 就绪探针只能用 composer；首条消息落库后 message-list 才出现。
-    await expect(chat.input).toBeVisible({ timeout: 90_000 });
+    await expect(chat.input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const csvBuffer = buildOriginalCsv();
     const pngBuffer = Buffer.from(PNG_1X1_BASE64, "base64");
@@ -526,19 +528,21 @@ async function prepareFixture(request: APIRequestContext, page: Page): Promise<v
         (response) =>
             response.request().method() === "POST" &&
             new URL(response.url()).pathname === `/api/v1/sessions/${sessionId}/attachments`,
-        { timeout: 120_000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
     const chatPromise = page.waitForResponse(
         (response) =>
             response.request().method() === "POST" &&
             new URL(response.url()).pathname === "/api/v1/chat",
-        { timeout: 120_000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
     await chat.attachFiles([
         { name: CSV_NAME, mimeType: "text/csv", buffer: csvBuffer },
         { name: PNG_NAME, mimeType: "image/png", buffer: pngBuffer },
     ]);
-    await expect(page.getByTestId("selected-attachment")).toHaveCount(2, { timeout: 30_000 });
+    await expect(page.getByTestId("selected-attachment")).toHaveCount(2, {
+        timeout: LONG_TIMEOUT_MS,
+    });
     await sendChat(page, "PLAN-0683 fixture-only：附件预览预算夹具");
 
     const uploadResponse = await uploadPromise;
@@ -691,7 +695,6 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
     test.describe.configure({ mode: "serial", retries: 0 });
 
     test.beforeAll(async ({ browser, request }) => {
-        test.setTimeout(900_000);
         if (!HAS_STACK) return;
         evidence.startedAt = new Date().toISOString();
         const directory = resolveEvidenceDir();
@@ -730,20 +733,19 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
 
     test("E6 @host 未打开态零内容请求：首屏外图片滚动入视口才请求", async ({ page }) => {
         test.skip(!HAS_STACK, SKIP_REASON);
-        test.setTimeout(900_000);
         const state = requireFixture();
         const journey = requireJourney();
         const records = watchFileRequests(page);
         const chat = new ChatPage(page);
         seedPage(page, journey);
         await chat.goto(state.sessionId, state.workspaceId);
-        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: 90_000 });
+        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const messageCount = await waitForMessageCountStable(page);
 
         const csvCard = page.locator('[data-testid="message-attachment"]', { hasText: CSV_NAME });
         const pngCard = page.locator('[data-testid="message-attachment"]', { hasText: PNG_NAME });
-        await expect(csvCard).toBeVisible({ timeout: 90_000 });
-        await expect(pngCard).toBeVisible({ timeout: 90_000 });
+        await expect(csvCard).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(pngCard).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 几何：底部锚定 + 夹具在初始视口之外（上方）≥ 2 个滚动容器高度。
         const initialScroll = await scrollSnapshot(page);
@@ -796,7 +798,7 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
         // 滚动到图片卡片进入视口 → 懒加载触发一次内容请求（本栈上是 401，属 BL-443）。
         const pngResponsePromise = page.waitForResponse(
             (response) => response.url().includes(state.pngFileId),
-            { timeout: 60_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await pngCard.scrollIntoViewIfNeeded();
         const pngResponse = await pngResponsePromise;
@@ -840,18 +842,17 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
 
     test("E5 @host 预算内预览 + 显式继续：两段 206 字节精确", async ({ page }) => {
         test.skip(!HAS_STACK, SKIP_REASON);
-        test.setTimeout(900_000);
         const state = requireFixture();
         const journey = requireJourney();
         const records = watchFileRequests(page);
         const chat = new ChatPage(page);
         seedPage(page, journey);
         await chat.goto(state.sessionId, state.workspaceId);
-        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: 90_000 });
+        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await waitForMessageCountStable(page);
 
         const csvCard = page.locator('[data-testid="message-attachment"]', { hasText: CSV_NAME });
-        await expect(csvCard).toBeVisible({ timeout: 90_000 });
+        await expect(csvCard).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const csvMatches = (record: FileWireRecord) => record.url.includes(state.csvFileId);
         const initialCsvContentRequests = records.filter(csvMatches).length;
         await expectNoFileRequests(records, csvMatches, 2_000, "点击前 CSV 附件不应有内容请求");
@@ -860,7 +861,7 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
         const trigger = csvCard.getByTestId("message-attachment-preview-trigger");
         const previewResponsePromise = page.waitForResponse(
             (response) => response.url().includes(state.csvFileId),
-            { timeout: 120_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await trigger.click();
         const previewResponse = await previewResponsePromise;
@@ -892,10 +893,10 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
 
         // 预览态 UI：截断提示 + 双入口。
         const dialog = page.getByTestId("attachment-preview-dialog");
-        await expect(dialog).toBeVisible({ timeout: 60_000 });
+        await expect(dialog).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("attachment-preview-error")).toHaveCount(0);
         await expect(page.getByTestId("attachment-preview-truncated")).toBeVisible({
-            timeout: 180_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const loadRestEntry = page.getByTestId("attachment-preview-load-rest");
         const downloadEntry = page.getByTestId("attachment-preview-download");
@@ -912,7 +913,7 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
         // 第二段：显式「继续加载」才发 Range bytes=<budget>-。
         const remainderResponsePromise = page.waitForResponse(
             (response) => response.url().includes(state.csvFileId),
-            { timeout: 180_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await loadRestEntry.click();
         const remainderResponse = await remainderResponsePromise;
@@ -929,7 +930,7 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
         const remainderBody = await remainderResponse.body();
 
         await expect(page.getByTestId("attachment-preview-truncated")).toHaveCount(0, {
-            timeout: 240_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const footer = dialog.locator('[data-slot="dialog-footer"]');
         await expect(footer).toBeVisible();

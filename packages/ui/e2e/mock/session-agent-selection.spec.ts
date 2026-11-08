@@ -1,6 +1,7 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 // BL-318：`a failed agent list resets the loading state…` 故意桩 500（验失败态 + 重试恢复），
 // 逐条放行 `/workspaces/*/agents` 的失败信号。
@@ -407,7 +408,7 @@ async function openAgentsPanel(page: Page): Promise<void> {
     await page.goto("/workspace/workspace-1");
     await page.getByTestId("workspace-toolbar-agents").click();
     await expect(page.getByRole("heading", { name: "已绑定智能体" })).toBeVisible({
-        timeout: 10000,
+        timeout: ACTION_TIMEOUT_MS,
     });
 }
 
@@ -448,7 +449,7 @@ test("a failed agent list resets the loading state, names the failure, and retry
 
     // Failure is a terminal state: the spinner must not survive it, and the reason must be visible
     // (a stuck "正在加载智能体…" is exactly what hid this outcome before).
-    await expect(page.getByTestId("agent-error")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("agent-error")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await expect(page.getByTestId("agent-error")).toContainText("agents unavailable");
     await expect(page.getByText("正在加载智能体…")).toHaveCount(0);
     await expect(page.getByTestId("workspace-agent-refresh")).toBeEnabled();

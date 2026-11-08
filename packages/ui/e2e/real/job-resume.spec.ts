@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { seedUserGrant } from "./helpers/user-grants";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -22,7 +24,7 @@ function waitForChatEventStream(page: Page, sessionId: string) {
                 response.status() === 200
             );
         },
-        { timeout: 30000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
 }
 
@@ -41,7 +43,7 @@ async function waitForControlPlaneAgentReady(
                 const agent = body.services?.find((service) => service.key === "agent");
                 return agent ? `${agent.status}/${agent.llmReady}` : "agent-status-missing";
             },
-            { timeout: 30000, intervals: [250, 500, 1000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1000] },
         )
         .toBe("up/ready");
 }
@@ -56,7 +58,6 @@ async function waitForControlPlaneAgentReady(
 //   node scripts/e2e-host.mjs --retries=0 e2e/real/job-resume.spec.ts --llm-mode=job
 test.describe("@host PLAN-0344 durable job resume", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     // PLAN-290 约束：Agent 每进程只绑定一个 workspace，测试共享同一注册用户/工作区。
     let sharedAuth: string, sharedWs: string, sharedHeaders: Record<string, string>;
@@ -163,7 +164,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         const chatInput = page.locator('[data-testid="chat-input"]');
         const modal = page.locator('[data-testid="modal-content"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const submission = page.waitForResponse((response) => {
             const url = new URL(response.url());
@@ -176,7 +177,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         const runId = ((await submitResponse.json()) as { runId: string }).runId;
 
         await expect(modal, "the fake job tool must reach its user approval gate").toBeVisible({
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("chat-stop-button")).toBeVisible();
         await page.getByTestId("modal-content").getByRole("button", { name: "Close" }).click();
@@ -195,7 +196,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         expect(response.status()).toBe(200);
         expect(await response.json()).toMatchObject({ status: "cancel_accepted", runId });
 
-        await expect(modal).toBeHidden({ timeout: 15000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("pending-approval-reopen-pill")).toHaveCount(0);
         await expect(page.getByTestId("session-pending-badge")).toHaveCount(0);
         await expect(page.getByTestId("chat-send-button")).toBeVisible();
@@ -211,7 +212,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
                     const body = (await result.json()) as { status: string };
                     return body.status;
                 },
-                { timeout: 15000, intervals: [200, 500, 1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [200, 500, 1000] },
             )
             .toBe("cancelled");
         const finalRun = await page.request.get(`${CP_URL}/api/v1/chat/runs/${runId}`, {
@@ -247,7 +248,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         expect((await eventStream).status()).toBe(200);
 
         const chatInput = page.locator('[data-testid="chat-input"]');
-        await expect(chatInput).toBeVisible({ timeout: 20000 });
+        await expect(chatInput).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
 
         await chatInput.fill("XIHE-E2E-JOB start the durable job");
@@ -255,13 +256,15 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         // start_background_process 走审批门禁（REQUIRE_APPROVAL）
         await expect(modal, "approval modal for start_background_process").toBeVisible({
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await modal.locator('[data-testid="approval-approve"]').click();
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         // follow-up 流结束（run 收尾）后再刷新，避免半态
-        await expect(page.getByText("Background job started.")).toBeVisible({ timeout: 60000 });
+        await expect(page.getByText("Background job started.")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "job-started-live.png"),
@@ -307,15 +310,15 @@ test.describe("@host PLAN-0344 durable job resume", () => {
             .filter({ hasText: "start_background_process" })
             .first();
         await expect(card, "job card restored from jobSummary after reload").toBeVisible({
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await card.click();
 
         const panel = page.locator('[data-testid="job-output-panel"]');
-        await expect(panel).toBeVisible({ timeout: 20000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await panel.locator('[data-testid="job-output-load"]').click();
         const output = panel.locator('[data-testid="job-output-data"]');
-        await expect(output).toContainText("job-line-1", { timeout: 30000 });
+        await expect(output).toContainText("job-line-1", { timeout: LONG_TIMEOUT_MS });
         await expect(output).toContainText("job-line-2");
         await page.screenshot({
             scale: "css",
@@ -345,7 +348,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
                     });
                     return res.status();
                 },
-                { timeout: 90000, message: "job-output denies with 404 after destroy" },
+                { timeout: LONG_TIMEOUT_MS, message: "job-output denies with 404 after destroy" },
             )
             .toBe(404);
         const deniedBody = (await (
@@ -360,7 +363,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
         // UI 层显式提示（不刷新，保持 DOM 在场）
         await panel.locator('[data-testid="job-output-load"]').click();
         const error = panel.locator('[data-testid="job-output-error"]');
-        await expect(error).toBeVisible({ timeout: 30000 });
+        await expect(error).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(error).toContainText(/not found|未找到|不存在/i);
         await page.screenshot({
             scale: "css",

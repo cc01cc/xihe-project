@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -14,6 +15,7 @@ import {
 } from "./helpers/journey";
 import { workspaceChatPath } from "../../src/lib/routes";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fakeLlmUrl = new URL(CP_URL);
@@ -44,7 +46,7 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -120,7 +122,7 @@ async function sendSpawnMessage(page: Page, text: string): Promise<void> {
         await input.fill(text);
         const ready = await expect
             .poll(() => send.isEnabled().catch(() => false), {
-                timeout: 3_000,
+                timeout: ACTION_TIMEOUT_MS,
                 intervals: [200, 400, 800],
             })
             .toBe(true)
@@ -128,7 +130,7 @@ async function sendSpawnMessage(page: Page, text: string): Promise<void> {
             .catch(() => false);
         if (ready) break;
     }
-    await expect(send).toBeEnabled({ timeout: 15_000 });
+    await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
     await send.click();
 }
 
@@ -202,7 +204,6 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     page,
     request,
 }) => {
-    test.setTimeout(240_000);
     const pageErrors: string[] = [],
         consoleErrors: string[] = [],
         apiFailures: string[] = [];
@@ -398,7 +399,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                 return false;
             }
         },
-        { timeout: 30_000 },
+        { timeout: LONG_TIMEOUT_MS },
     );
     await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
     const workspaceFileToolRequest = await workspaceFileToolRequestPromise,
@@ -415,7 +416,9 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     expect(workspaceFileRequestHeaders["x-operation-id"]).toBeUndefined();
     expect(workspaceFileResponseHeaders["x-request-id"]).toBeTruthy();
     expect(await workspaceFileToolResponse!.json()).toHaveProperty("result");
-    await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({ timeout: 30_000 });
+    await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await expect
         .poll(
             async () =>
@@ -423,7 +426,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     .getByTestId("workspace-empty-state")
                     .isVisible()
                     .catch(() => false)) || (await page.getByRole("treeitem").count()) > 0,
-            { timeout: 30_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBeTruthy();
     const emptyStateVisible = await page.getByTestId("workspace-empty-state").isVisible();
@@ -475,7 +478,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         contentType: "image/png",
     });
     const createSession = page.getByTestId("workspace-create-session");
-    await expect(createSession).toBeVisible({ timeout: 30_000 });
+    await expect(createSession).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await createSession.click();
     const principalPicker = page.getByTestId("workspace-agent-principal-select");
     await expect(principalPicker).toBeVisible();
@@ -499,7 +502,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                 derivedStateResponses.some(
                     (item) => item.status === 200 && item.body.sessionId === parentSessionId,
                 ),
-            { timeout: 30_000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBeTruthy();
 
@@ -522,10 +525,10 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         await sendSpawnMessage(page, `XIHE-E2E-SPAWN ${token}`);
         const approvalModal = page.locator('[data-testid="modal-content"]');
         await expect(approvalModal, "spawn must use the existing MCP approval gate").toBeVisible({
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await approvalModal.locator('[data-testid="approval-approve"]').click();
-        await expect(approvalModal).toBeHidden({ timeout: 20_000 });
+        await expect(approvalModal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         await expect
             .poll(
@@ -536,7 +539,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     if (!stateResponse.ok()) return -1;
                     return ((await stateResponse.json()) as { pending: number }).pending;
                 },
-                { timeout: 60_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBe(1);
 
@@ -569,7 +572,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     childSessionId = observed.childSessionId;
                     return observed.runId;
                 },
-                { timeout: 60_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .not.toBe("");
         childRunId = requireUuid(childRunId);
@@ -603,7 +606,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                         ? childRun.waitingOnRunId
                         : "";
                 },
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBe(parentRunId);
 
@@ -620,12 +623,12 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         // session-runs endpoint (refresh-recovery network + DOM evidence).
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("derived-active-child")).toContainText(childName, {
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         // Diagnostic first: did the browser call the new endpoint at all?
         await expect
             .poll(() => chatSessionRequests.length, {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500, 1_000],
             })
             .toBeGreaterThan(0);
@@ -637,7 +640,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         ).toBeTruthy();
         await expect
             .poll(() => sessionRunsResponses.length, {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [250, 500, 1_000],
             })
             .toBeGreaterThan(0);
@@ -713,7 +716,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
 
         const parentAssistant = page.locator('[data-slot="message"][data-align="start"]').last();
         await expect(parentAssistant).toContainText("SPAWN_PARENT_DONE child dispatched", {
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const parentRunStatus = queryIsolatedPostgres(
             `SELECT status FROM chat_runs WHERE id = '${parentRunId}'::uuid`,
@@ -732,7 +735,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     queryIsolatedPostgres(
                         `SELECT status FROM chat_runs WHERE id = '${childRunId}'::uuid`,
                     ),
-                { timeout: 60_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBe("succeeded");
         await expect
@@ -748,7 +751,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                                         notice.runId === childRunId && notice.state === "success",
                                 ),
                         ),
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBeTruthy();
         await expect(page.getByTestId("derived-terminal-notice")).toContainText(childName);
@@ -777,7 +780,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                                     (notice) => notice.runId === childRunId,
                                 ),
                         ),
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBeTruthy();
 
@@ -796,7 +799,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                                     (notice) => notice.runId === childRunId,
                                 ),
                         ),
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBeTruthy();
 
@@ -817,7 +820,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                         null
                     );
                 },
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBe(null);
 
@@ -865,7 +868,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     scalarCount(
                         `SELECT count(*) FROM chat_runs WHERE session_id = '${parentSessionId}'::uuid`,
                     ),
-                { timeout: 30_000, intervals: [100, 250, 500] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [100, 250, 500] },
             )
             .toBe(parentRunsBeforeClaim + 1);
 
@@ -879,7 +882,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                 `SELECT injected_run_id FROM inbox WHERE id = '${pendingInboxId}'::uuid`,
             );
         await expect
-            .poll(claimedRunId, { timeout: 30_000, intervals: [100, 250, 500] })
+            .poll(claimedRunId, { timeout: LONG_TIMEOUT_MS, intervals: [100, 250, 500] })
             .toBe(claimRunId);
         expect((claimBody as { branchId?: string }).branchId).toBeTruthy();
 
@@ -914,7 +917,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                     queryIsolatedPostgres(
                         `SELECT status FROM chat_runs WHERE id = '${claimRunId}'::uuid`,
                     ),
-                { timeout: 30_000, intervals: [250, 500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [250, 500, 1_000] },
             )
             .toBe("succeeded");
         await expect(page.getByText("SPAWN_CHILD_READY", { exact: true })).toBeVisible();
@@ -1009,12 +1012,14 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             (response) =>
                 response.request().method() === "GET" &&
                 new URL(response.url()).pathname === childDelegationUsagePath,
-            { timeout: 30_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.goto(workspaceChatPath(workspaceId, childSessionId), { waitUntil: "load" });
         await expect(page).toHaveURL(workspaceChatPath(workspaceId, childSessionId));
         await expect(page.getByTestId("chat-input")).toBeVisible();
-        await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({ timeout: 30_000 });
+        await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const delegationUsageResponse = await expectedDelegationUsage409;
         expect(delegationUsageResponse.status(), "the budget view fails closed").toBe(409);
         const delegationUsageProblem = (await delegationUsageResponse.json()) as {
@@ -1027,7 +1032,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         expect(delegationUsageProblem.detail ?? "").toMatch(/Delegation ancestor is missing/i);
         // UI 降级可见性：子会话行照常渲染（delegated 徽标在），但预算 chip 不得出现。
         await expect(page.getByTestId("session-delegated-badge").first()).toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("session-delegation-chip")).toHaveCount(0);
         const childAfterDeleteScreenshotPath = test

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -16,6 +17,7 @@ import {
     getRootBranchId,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // Chat is an explicitly deterministic wire fixture; embedding uses the actual
 // DashScope service and PostgreSQL. Neither is advertised as a real chat model.
@@ -23,7 +25,7 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const MODEL = "tongyi-embedding-vision-flash-2026-03-06";
 const WIRE_CREDENTIAL = "fake-context-wire-credential";
 const BASELINE_TEXT = "Use only the Workspace tools provided by CP.";
-const expect = playwrightExpect.configure({ timeout: 30000 });
+const expect = playwrightExpect.configure({ timeout: LONG_TIMEOUT_MS });
 type Auth = { accessToken: string; workspaceId: string };
 type Fixture = {
     auth: Auth;
@@ -212,7 +214,7 @@ async function expectPersistedRun(
                 const body = await response.json();
                 return body.runs?.[0]?.status;
             },
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .toBe(status);
 }
@@ -278,7 +280,7 @@ function psqlScalar(sql: string): number {
             "-d",
             database,
         ],
-        { input: sql, encoding: "utf8", timeout: 20000, windowsHide: true },
+        { input: sql, encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     );
     const value = Number(output.trim());
     if (!Number.isFinite(value)) throw new Error(`unexpected psql scalar output: ${output.trim()}`);
@@ -343,7 +345,7 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
         process.env.XIHE_E2E_LLM_MODE !== "success",
         "requires the isolated e2e-host success profile",
     );
-    test.setTimeout(180000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     for (const slot of ["retrieval disabled", "$${xh.rag_context}"]) {
         test(`disabled retrieval preserves literal data: ${slot}`, async ({ page, request }) => {
@@ -405,7 +407,7 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             const sessionId = await publishAndOpen(page, request, fixture, "${xh.rag_context}");
             await send(page, "provider rejection query");
             await expect(page.getByText(/RAG_QUERY_FAILED/).first()).toBeVisible({
-                timeout: 45000,
+                timeout: LONG_TIMEOUT_MS,
             });
             await expectPersistedRun(request, fixture, sessionId, "failed");
             expect(fixture.observed).toHaveLength(0);
@@ -448,7 +450,7 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
                     "-c",
                     `UPDATE agent_principals SET template_snapshot = template_snapshot - 'systemPrompt' WHERE id = '${fixture.principalId}'::uuid`,
                 ],
-                { timeout: 15000, windowsHide: true, stdio: "pipe" },
+                { timeout: LONG_TIMEOUT_MS, windowsHide: true, stdio: "pipe" },
             );
             await send(page, "unauthorized baseline query");
             await expect(page.getByText(/BASELINE_UNAUTHORIZED/).first()).toBeVisible();
@@ -634,7 +636,7 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
             const scanner = execFileSync(
                 process.execPath,
                 [path.resolve(process.cwd(), "../../scripts/scan-log-secrets.mjs"), runLogsDir()],
-                { encoding: "utf8", timeout: 30000, windowsHide: true },
+                { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
             );
             expect(scanner).toContain("clean");
         } finally {

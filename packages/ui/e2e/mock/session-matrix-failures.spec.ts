@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M6：失败终态渲染矩阵（mock lane，无栈）。
  *
@@ -11,13 +12,14 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockProviderBinding } from "./helpers/session-matrix";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
 async function openAndSend(page: import("@playwright/test").Page): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
-    await expect(input, "composer mounts").toBeVisible({ timeout: 15_000 });
+    await expect(input, "composer mounts").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await input.fill("触发一次失败");
     await page.getByTestId("chat-send-button").click();
 }
@@ -40,10 +42,10 @@ test.describe("会话矩阵 M6 — 失败终态", () => {
         await setupMockProviderBinding(page, SESSION_ID);
         await openAndSend(page);
         await expect(page.getByText("部分答复"), "partial content streamed").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const banner = page.getByTestId("message-error");
-        await expect(banner, "error banner renders").toBeVisible({ timeout: 15_000 });
+        await expect(banner, "error banner renders").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(banner, "error code visible").toContainText("PROVIDER_TEMPORARY");
         // 重试入口存在即通过；「点击后恢复」的断言与 chat.spec:223 同源红（BL-234 已挂账，
         // 属 mock 侧 retry 链路问题，非本矩阵引入）——恢复路径由 real-lane R7 覆盖。
@@ -68,7 +70,7 @@ test.describe("会话矩阵 M6 — 失败终态", () => {
         await setupMockProviderBinding(page, SESSION_ID);
         await openAndSend(page);
         const banner = page.getByTestId("message-error");
-        await expect(banner, "error banner renders").toBeVisible({ timeout: 15_000 });
+        await expect(banner, "error banner renders").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(banner).toContainText("PROVIDER_PERMANENT");
         await expect(
             page.getByTestId("message-retry-button"),

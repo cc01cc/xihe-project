@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M4：工作区三角色渲染矩阵（mock lane，无栈）。
  *
@@ -12,13 +13,14 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const WORKSPACE_ID = "workspace-1";
 
 async function openSettings(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/settings`);
     await expect(page.getByTestId("workspace-settings-page"), "settings page mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -30,7 +32,7 @@ test.describe("会话矩阵 M4 — 三角色渲染", () => {
         await expect(
             page.getByTestId("ws-settings-tab-members"),
             "members tab visible for OWNER",
-        ).toBeVisible({ timeout: 10_000 });
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
         await expect(
             page.getByTestId("ws-settings-edit"),
             "manage block visible for OWNER",
@@ -58,7 +60,7 @@ test.describe("会话矩阵 M4 — 三角色渲染", () => {
         });
         await page.goto(`/workspace/${WORKSPACE_ID}/chat/viewer-session`);
         await expect(page.getByTestId("chat-input"), "composer available for VIEWER").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 });

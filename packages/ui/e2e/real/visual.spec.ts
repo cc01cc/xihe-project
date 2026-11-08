@@ -1,5 +1,6 @@
 import { test, chromium } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 const UI_PORT = process.env.XIHE_UI_PORT || "12630";
 
@@ -11,7 +12,7 @@ test("register page 2x visual snapshot", async () => {
     });
     const page = await ctx.newPage();
     await page.goto(`http://localhost:${UI_PORT}/register`, { waitUntil: "load" });
-    await page.waitForSelector("h1", { timeout: 10000 });
+    await page.waitForSelector("h1", { timeout: ACTION_TIMEOUT_MS });
     const dpr = await page.evaluate(() => window.devicePixelRatio);
     // eslint-disable-next-line no-console
     console.log("DPR:", dpr);

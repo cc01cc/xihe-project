@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 import { test, expect } from "@playwright/test";
@@ -14,6 +15,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { openContextPanel } from "../helpers/context-panel";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || "12633"}`;
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "dev-token-not-secure";
@@ -25,7 +27,7 @@ const EVIDENCE_DIR = evidenceDir("plan-0340-context-sources");
  */
 test.describe("@host PLAN-0340 U1/U2 context sources", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(180000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     let sharedAuth: string, sharedWs: string;
 
@@ -78,7 +80,7 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
         // U1 toggle only exists once the panel is open (summary row = entry point).
         await openContextPanel(page);
         const toggle = page.locator('[data-testid="u1-toggle"]');
-        await expect(toggle, "U1 toggle visible").toBeVisible({ timeout: 15000 });
+        await expect(toggle, "U1 toggle visible").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "u1-toggle.png"),

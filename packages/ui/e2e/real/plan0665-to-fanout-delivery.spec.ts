@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -17,6 +18,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0665 M2 —— TO 多目标 fan-out 的**真栈演示**（BL-239 可视闭环的判据脚本）。
@@ -132,7 +134,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -178,7 +180,7 @@ async function awaitIdle(
                 );
                 return active.length === 0 ? "idle" : String(active[0]?.status ?? "active");
             },
-            { timeout: 300_000, intervals: [1_000, 2_000, 3_000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1_000, 2_000, 3_000] },
         )
         .toBe("idle");
 }
@@ -186,7 +188,7 @@ async function awaitIdle(
 async function selectToTargets(page: Page, names: string[]): Promise<void> {
     const input = page.getByTestId("to-targets-input");
     await expect(input, "the TO multi-select must render for an AGENT session").toBeVisible({
-        timeout: 30_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     for (const name of names) {
         await input.click();
@@ -202,7 +204,7 @@ async function selectToTargets(page: Page, names: string[]): Promise<void> {
         }
         await expect(
             page.locator('[data-testid="to-targets-chip"]').filter({ hasText: name }).first(),
-        ).toBeVisible({ timeout: 10_000 });
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
     }
     await input.press("Escape");
 }
@@ -218,7 +220,6 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
             !process.env.XIHE_E2E_PG_CONTAINER,
             "requires the isolated host-E2E stack (scripts/e2e-host.mjs)",
         );
-        test.setTimeout(900_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const observed: Record<string, unknown> = {
             plan: "PLAN-0665",
@@ -269,7 +270,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
         // 从 UI 打开该会话（seedPage 写入 token/workspace；路由与产品入口一致）。
         await seedPage(page, ctx);
         await page.goto(workspaceChatPath(wsId, sessionId));
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await ensureChatReady(page);
 
         const roster = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
@@ -298,7 +299,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
         // ── UI 判据 1/2：两个 run 分组 + 消息头 `发送→A、B` 徽标（单一消息头列出两个目标）──
         await expect
             .poll(async () => page.locator('[data-testid="run-header"]').count(), {
-                timeout: 60_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000, 2_000],
             })
             .toBeGreaterThanOrEqual(2);
@@ -314,7 +315,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
         expect(await badges.count(), "exactly one user message header carries the delivery").toBe(
             1,
         );
-        await expect(badges.first()).toBeVisible({ timeout: 30_000 });
+        await expect(badges.first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const badgeTexts = await badges.allTextContents();
         steps["badges"] = badgeTexts;
         for (const name of targetNames) {
@@ -355,15 +356,15 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
 
         // ── UI 判据 3：刷新后徽标仍在（BL-239 可视闭环）──
         await page.reload();
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => page.locator('[data-testid="run-header"]').count(), {
-                timeout: 60_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1_000, 2_000],
             })
             .toBeGreaterThanOrEqual(2);
         const afterReload = page.locator('[data-testid="message-delivery-to"]');
-        await expect(afterReload.first()).toBeVisible({ timeout: 60_000 });
+        await expect(afterReload.first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const afterReloadTexts = await afterReload.allTextContents();
         steps["badgesAfterReload"] = afterReloadTexts;
         for (const name of targetNames) {

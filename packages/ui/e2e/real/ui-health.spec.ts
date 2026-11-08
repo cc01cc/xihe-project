@@ -1,6 +1,8 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
 import { startRequestTracker, waitForPageErrorWindow } from "./helpers/ui-stability";
 import { ensureWorkspace } from "./helpers/workspace";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -132,13 +134,13 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
             // requests already in flight during `goto` are tracked; dispose afterwards.
             const requestTracker = startRequestTracker(page);
             try {
-                const resp = await page.goto(path, { waitUntil: "load", timeout: 15000 });
+                const resp = await page.goto(path, { waitUntil: "load", timeout: LONG_TIMEOUT_MS });
                 expect(resp?.status()).toBe(200);
                 if (p.keySelector) {
                     await page
                         .locator(p.keySelector)
                         .first()
-                        .waitFor({ state: "visible", timeout: 10000 });
+                        .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
                 }
                 await requestTracker.waitForQuiescence();
                 // Evidence for review round-2 P1: the tracker must have observed the
@@ -181,7 +183,7 @@ test.describe("UI Health — Console, Overflow, Hit-Test", () => {
     test("chat key controls are clickable via elementFromPoint hit-test", async ({ page }) => {
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
         await page.goto("/workspace", { waitUntil: "load" });
-        await page.locator("textarea").waitFor({ state: "visible", timeout: 10000 });
+        await page.locator("textarea").waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
 
         const targets = [
             { name: "send textarea", locator: page.locator("textarea") },

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -7,6 +8,12 @@ import {
     createWorkspaceSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -41,7 +48,7 @@ async function waitForSseSessionId(trace: SseTrace): Promise<string> {
                 id = match ? decodeURIComponent(match[1]) : "";
                 return id;
             },
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         )
         .not.toBe("");
     return id;
@@ -135,7 +142,7 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         page,
         request,
     }) => {
-        test.setTimeout(60000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const auth = await register(request, "v5-active-delete");
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
             name: "V5ActiveDeleteFixture",
@@ -144,11 +151,13 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         await openChat(page, auth, principalId);
         const sessionId = await waitForSseSessionId(trace);
 
-        await expect.poll(() => eventsFor(trace, sessionId).length, { timeout: 10000 }).toBe(1);
+        await expect
+            .poll(() => eventsFor(trace, sessionId).length, { timeout: EXPECT_TIMEOUT_MS })
+            .toBe(1);
         await expect
             .poll(
                 () => trace.responses.some((r) => r.url.includes(sessionId) && r.status === 200),
-                { timeout: 10000 },
+                { timeout: ACTION_TIMEOUT_MS },
             )
             .toBe(true);
 
@@ -160,14 +169,16 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         await deleteDialog.getByRole("button", { name: /删除|Delete/ }).click();
 
         await expect
-            .poll(async () => sessionExists(request, auth, sessionId), { timeout: 10000 })
+            .poll(async () => sessionExists(request, auth, sessionId), {
+                timeout: EXPECT_TIMEOUT_MS,
+            })
             .toBe(false);
         await expect
             .poll(
                 () =>
                     trace.finished.some((url) => url.includes(sessionId)) ||
                     trace.failed.some((url) => url.includes(sessionId)),
-                { timeout: 10000 },
+                { timeout: ACTION_TIMEOUT_MS },
             )
             .toBe(true);
         await expectStableCount(() => eventsFor(trace, sessionId).length, 1, 2000);
@@ -185,7 +196,7 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         page,
         request,
     }) => {
-        test.setTimeout(60000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const auth = await register(request, "v5-passive-close");
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
             name: "V5PassiveCloseFixture",
@@ -194,11 +205,13 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         await openChat(page, auth, principalId);
         const sessionId = await waitForSseSessionId(trace);
 
-        await expect.poll(() => eventsFor(trace, sessionId).length, { timeout: 10000 }).toBe(1);
+        await expect
+            .poll(() => eventsFor(trace, sessionId).length, { timeout: EXPECT_TIMEOUT_MS })
+            .toBe(1);
         await expect
             .poll(
                 () => trace.responses.some((r) => r.url.includes(sessionId) && r.status === 200),
-                { timeout: 10000 },
+                { timeout: ACTION_TIMEOUT_MS },
             )
             .toBe(true);
 
@@ -207,28 +220,32 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         });
         expect(deleted.ok()).toBe(true);
 
-        await expect.poll(() => eventsFor(trace, sessionId).length, { timeout: 10000 }).toBe(2);
+        await expect
+            .poll(() => eventsFor(trace, sessionId).length, { timeout: EXPECT_TIMEOUT_MS })
+            .toBe(2);
         await expect
             .poll(
                 () =>
                     trace.responses
                         .filter((r) => r.url.includes(sessionId))
                         .some((r) => r.status === 404),
-                { timeout: 10000 },
+                { timeout: ACTION_TIMEOUT_MS },
             )
             .toBe(true);
         await expectStableCount(() => eventsFor(trace, sessionId).length, 2, 2500);
         await expect
             .poll(
                 () => trace.consoleLines.filter((line) => line.includes("chat_sse_error")).length,
-                { timeout: 10000 },
+                { timeout: ACTION_TIMEOUT_MS },
             )
             .toBeGreaterThan(0);
         const reconnects = trace.consoleLines.filter((line) =>
             line.includes("chat_sse_reconnect_scheduled"),
         );
         expect(reconnects.length).toBe(1);
-        await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("chat-send-button")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("chat-stop-button")).toHaveCount(0);
         await page.screenshot({
             scale: "css",

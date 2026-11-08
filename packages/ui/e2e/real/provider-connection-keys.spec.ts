@@ -1,7 +1,9 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
@@ -42,7 +44,7 @@ async function installAuth(page: Page, auth: Auth) {
 
 async function openConnectionForm(page: Page) {
     const hub = page.getByTestId("provider-hub");
-    await expect(hub).toBeVisible({ timeout: 15000 });
+    await expect(hub).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await page.getByTestId("provider-hub-connect").click();
     await page.getByTestId(`provider-picker-${PROVIDER_ID}`).click();
     const modal = page.getByTestId("provider-connection-modal");
@@ -73,7 +75,7 @@ async function createConnection(
     await selectDiscovery(page, "manual");
     await modal.getByLabel("模型列表").fill("test-model");
     await modal.getByRole("button", { name: "验证并保存" }).click();
-    await expect(modal).toBeHidden({ timeout: 15000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 }
 
 function connectionArticle(page: Page, key: string) {
@@ -133,7 +135,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
     // PLAN-0505 follow-up (P-3): cold-stack create+verify roundtrips can take
     // ~24s on the first attempt; the default 30s test timeout flakes. The
     // flow itself is bounded by per-step waits, so this only widens the headroom.
-    test.setTimeout(90000);
+    test.setTimeout(TEST_TIMEOUT_MS);
     test("creates, reads, updates and scopes keyed connections without secret readback", async ({
         page,
         request,
@@ -185,7 +187,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
             await expect(editModal.getByLabel("模型列表")).toHaveValue("test-model");
             await editModal.getByLabel("连接名称").fill("Primary Custom Renamed");
             await editModal.getByRole("button", { name: "验证并保存" }).click();
-            await expect(editModal).toBeHidden({ timeout: 15000 });
+            await expect(editModal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
             await expect(connectionArticle(page, "primary")).toContainText(
                 "Primary Custom Renamed",
             );
@@ -226,7 +228,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
             await expect(
                 page.getByText(/already exists|保存失败|已存在|CONFLICT|冲突/i).first(),
             ).toBeVisible({
-                timeout: 10000,
+                timeout: ACTION_TIMEOUT_MS,
             });
             await duplicateModal.getByRole("button", { name: "取消" }).click();
 

@@ -1,8 +1,10 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { CP_URL, evidenceDir } from "./helpers/journey";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0651 T4.2 — the settings nav decides from the `MANAGE_ROLES` **action atom**, not from
 // `isInstanceAdmin` (Lead ruling ①, 2026-11-06). This spec walks the real stack and checks the
@@ -53,7 +55,7 @@ async function loginThroughUi(page: Page, email: string, password: string): Prom
     await page.fill('input[name="password"]', password);
     await page.press('input[name="password"]', "Enter");
     await page.waitForFunction(() => Boolean(localStorage.getItem("xihe-token")), null, {
-        timeout: 30_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -67,7 +69,7 @@ async function openSettings(page: Page): Promise<PermissionsBody> {
             (candidate) =>
                 new URL(candidate.url()).pathname === "/api/v1/me/permissions" &&
                 candidate.request().method() === "GET",
-            { timeout: 30_000 },
+            { timeout: LONG_TIMEOUT_MS },
         ),
         page.goto(SETTINGS_PATH),
     ]);
@@ -147,7 +149,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
     test("instance admin holds MANAGE_ROLES ⇒ roles + config-locks tabs visible", async ({
         page,
     }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         await loginThroughUi(page, ADMIN_EMAIL, ADMIN_PASSWORD);
         const body = await openSettings(page);
         console.log(`[plan-0651] admin instancePermissions=${instanceAtoms(body).join(",")}`);
@@ -162,7 +164,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         page,
         request,
     }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const user = await registerPlainUser(request);
         await loginThroughUi(page, user.email, user.password);
         const body = await openSettings(page);
@@ -181,7 +183,7 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         page,
         request,
     }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const headers = await adminHeaders(request);
         // Role names are constrained by V87 `ck_roles_name_format` (^[A-Z][A-Z0-9_]{1,63}$).
         const created = await request.post(`${CP_URL}/api/v1/roles`, {

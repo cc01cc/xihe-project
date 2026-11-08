@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 R2 @host — TO（发送 / speak-as）wire 面矩阵。
  *
@@ -27,6 +28,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -298,7 +300,7 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
                     const view = await runView(request, accepted.runId!);
                     return TERMINAL.has(String(view.status ?? ""));
                 },
-                { timeout: 60_000, intervals: [500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
             )
             .toBe(true);
     });
@@ -319,7 +321,7 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
                     const view = await runView(request, accepted.runId!);
                     return TERMINAL.has(String(view.status ?? ""));
                 },
-                { timeout: 60_000, intervals: [500, 1_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1_000] },
             )
             .toBe(true);
     });
@@ -373,20 +375,20 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
         );
         await page.goto(workspaceChatPath(workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 「发送」栏：先移除默认预选（PRIMARY 已选 ⇒ 候选里不会再出现），再挑 extra agent。
         const field = page.getByTestId("speak-as-input");
         await expect(field, "capabilities.speakAs=true ⇒ 发送栏渲染").toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const chipRemove = page.getByTestId("speak-as-chip-remove");
         if ((await chipRemove.count()) > 0) await chipRemove.first().click();
         await field.click();
         await field.pressSequentially(extraAgentDisplayName.slice(0, 6));
         await expect(page.getByTestId("speak-as-menu"), "候选面打开").toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         const option = page.locator(`#speak-as-option-${extraAgentParticipantId}`);
         await expect(option, "目标 agent 在候选里").toHaveCount(1);
@@ -400,7 +402,7 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
         await page.getByTestId("chat-input").fill(content);
         await page.getByTestId("chat-send-button").click();
         await expect(page.getByText(content, { exact: true }), "用户气泡出现").toBeVisible({
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 投递行三态：只有 TO（发送），没有 @、没有抄送。

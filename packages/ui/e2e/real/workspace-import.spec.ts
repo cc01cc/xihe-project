@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import fs from "node:fs";
@@ -6,6 +7,7 @@ import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -17,7 +19,6 @@ interface ImportUser {
 
 test.describe("@host Workspace import", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let sourceDir = "",
         oversizedFile = "";
@@ -112,7 +113,7 @@ test.describe("@host Workspace import", () => {
         // teardown; only the test-created temp source trees need explicit removal here.
         // PLAN-0586: 90 s budget (formerly 180 s) keeps ~3x headroom over the measured
         // ~31 s concurrent teardown while staying far below the old serial worst case.
-        test.setTimeout(90000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         if (sourceDir) fs.rmSync(sourceDir, { recursive: true, force: true });
         for (const dir of bulkDirs) fs.rmSync(dir, { recursive: true, force: true });
         // PLAN-0586: CP workspace DELETE takes ~11 s each here (active-job/cleanup gate),
@@ -153,8 +154,10 @@ test.describe("@host Workspace import", () => {
         const user = await registerUser(request, "basic");
         seedPage(page, user);
         const dialog = await startImportFrom(page, user, sourceDir);
-        await expect(dialog.getByRole("button", { name: /src/ })).toBeVisible({ timeout: 10000 });
-        await expect(dialog).toBeHidden({ timeout: 60000 });
+        await expect(dialog.getByRole("button", { name: /src/ })).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(dialog).toBeHidden({ timeout: LONG_TIMEOUT_MS });
     });
 
     test("copies the source tree into the managed workspace", async ({ page, request }) => {
@@ -167,12 +170,14 @@ test.describe("@host Workspace import", () => {
         const user = await registerUser(request, "copy");
         seedPage(page, user);
         const dialog = await startImportFrom(page, user, sourceDir);
-        await expect(dialog.getByRole("button", { name: /src/ })).toBeVisible({ timeout: 10000 });
-        await expect(dialog).toBeHidden({ timeout: 60000 });
+        await expect(dialog.getByRole("button", { name: /src/ })).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(dialog).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         // PLAN-0384 V5: durable completion must correspond to real copied files.
         const copied = path.join(hostRoot(), user.wsId, "src", "imported.md");
-        await expect.poll(() => fs.existsSync(copied), { timeout: 30000 }).toBe(true);
+        await expect.poll(() => fs.existsSync(copied), { timeout: LONG_TIMEOUT_MS }).toBe(true);
         expect(fs.readFileSync(copied, "utf8")).toContain("Imported");
         expect(fs.existsSync(path.join(hostRoot(), user.wsId, "node_modules"))).toBe(false);
     });
@@ -192,22 +197,22 @@ test.describe("@host Workspace import", () => {
 
         await startImportFrom(page, user, bulkDir);
         await expect(page.getByTestId("workspace-import-status")).toContainText("进行中", {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // Disconnect (reload) mid-import; the durable record must restore the in-flight import.
         await page.reload({ waitUntil: "load" });
         await page.getByTestId("workspace-toolbar-import-source").click();
         await expect(page.getByTestId("workspace-import-recovered")).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("workspace-import-status")).toContainText("进行中");
 
         // The resumed import reaches durable completion (the dialog closes on completion).
-        await expect(page.getByRole("dialog")).toBeHidden({ timeout: 120000 });
+        await expect(page.getByRole("dialog")).toBeHidden({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(() => fs.existsSync(path.join(hostRoot(), user.wsId, "file-0.txt")), {
-                timeout: 30000,
+                timeout: LONG_TIMEOUT_MS,
             })
             .toBe(true);
     });
@@ -228,7 +233,9 @@ test.describe("@host Workspace import", () => {
         }
 
         await startImportFrom(page, user, bulkDir);
-        await expect(page.getByTestId("workspace-import-cancel")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("workspace-import-cancel")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("workspace-import-cancel").click();
 
         // PLAN-0384 V5: cancellation is reflected in the dialog and the durable record.
@@ -238,7 +245,7 @@ test.describe("@host Workspace import", () => {
         // on a clean rerun. Keep the assertion unchanged, only widen the headroom
         // so machine load does not turn it into a false red (no retry, no weaken).
         await expect(page.getByTestId("workspace-import-status")).toContainText("已取消", {
-            timeout: 60000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("workspace-import-cancel")).toBeHidden();
     });
@@ -253,7 +260,7 @@ test.describe("@host Workspace import", () => {
 
         // PLAN-0384 V5: the failure is visible in the UI (durable status carries the reason).
         await expect(page.getByTestId("workspace-import-status")).toContainText(/导入失败/, {
-            timeout: 45000,
+            timeout: LONG_TIMEOUT_MS,
         });
     });
 

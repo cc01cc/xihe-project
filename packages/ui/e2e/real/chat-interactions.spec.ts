@@ -1,5 +1,12 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -48,7 +55,7 @@ test.describe("Chat — Interaction & UI States", () => {
     test("scroll-up reveals back-to-bottom anchor and click returns to bottom", async ({
         page,
     }) => {
-        test.setTimeout(90000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const textarea = page.locator("textarea"),
             scroller = page.locator('[data-testid="message-scroller-viewport"]');
         const anchorBtn = page.locator('[data-testid="message-scroller-button"]');
@@ -57,22 +64,24 @@ test.describe("Chat — Interaction & UI States", () => {
             await textarea.fill(`scroll probe message ${i}`);
             await page.keyboard.press("Enter");
             await expect
-                .poll(() => scroller.locator("[data-message-id]").count(), { timeout: 10000 })
+                .poll(() => scroller.locator("[data-message-id]").count(), {
+                    timeout: EXPECT_TIMEOUT_MS,
+                })
                 .toBeGreaterThan(i);
         }
 
         await expect
             .poll(() => scroller.evaluate((el) => el.scrollHeight > el.clientHeight), {
-                timeout: 10000,
+                timeout: ACTION_TIMEOUT_MS,
             })
             .toBe(true);
 
         await scroller.hover();
         await page.mouse.wheel(0, -1500);
         await expect
-            .poll(() => anchorBtn.getAttribute("data-active"), { timeout: 5000 })
+            .poll(() => anchorBtn.getAttribute("data-active"), { timeout: EXPECT_TIMEOUT_MS })
             .toBe("true");
-        await expect(anchorBtn).toBeVisible({ timeout: 5000 });
+        await expect(anchorBtn).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.waitForTimeout(500);
         await expectPlatformScreenshot(page, "chat-scroll-anchor.png");
 
@@ -116,15 +125,19 @@ test.describe("Chat — Session sidebar interaction", () => {
             .locator("button")
             .filter({ hasText: /new|新建/i })
             .first();
-        await expect(newBtn).toBeVisible({ timeout: 8000 });
+        await expect(newBtn).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const items = page.locator('[data-testid="sidebar"] [data-testid="session-item"]');
 
         // Sequence the clicks on explicit readiness: a fixed sleep could hit the
         // store's create single-flight and return the same Session twice.
         await newBtn.click();
-        await expect.poll(() => items.count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+        await expect
+            .poll(() => items.count(), { timeout: LONG_TIMEOUT_MS })
+            .toBeGreaterThanOrEqual(1);
         await newBtn.click();
-        await expect.poll(() => items.count(), { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+        await expect
+            .poll(() => items.count(), { timeout: LONG_TIMEOUT_MS })
+            .toBeGreaterThanOrEqual(2);
 
         const boxes = await items.evaluateAll((els) =>
             els.slice(0, 2).map((el) => el.getBoundingClientRect().toJSON()),

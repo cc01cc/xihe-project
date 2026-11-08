@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-229：带工具的 run 结束后 composer 必须回到发送键（mock lane，无栈）。
  *
@@ -19,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { installContextEventStream, pushContextEvent } from "./helpers/context-events";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session",
     /** CP 盖章的 ChatRun id：token/done 与 tool 事件的 camel `runId` 都是它。 */
@@ -50,12 +52,12 @@ async function prepare(page: Page): Promise<void> {
     await installContextEventStream(page);
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.getByTestId("chat-input").fill("跑个命令再总结");
     await page.getByTestId("chat-send-button").click();
     await expect(page.getByText("跑个命令再总结"), "user bubble rendered").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -73,7 +75,7 @@ test.describe("BL-229 带工具 run 的 composer 解锁", () => {
             toolCallId: AGENT_TOOL_RUN_ID,
         });
         await expect(page.getByTestId("tool-card-toggle").first(), "tool card renders").toBeVisible(
-            { timeout: 15_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(page.getByTestId("chat-stop-button"), "run is active").toBeVisible();
 
@@ -89,14 +91,14 @@ test.describe("BL-229 带工具 run 的 composer 解锁", () => {
             runId: RUN_ID,
         });
         await expect(page.getByText("命令跑完了"), "reply text rendered").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         await pushContextEvent(page, "done", { outcome: "success", runId: RUN_ID });
 
         // ① composer 解锁（BL-229 的主症状：孤儿活 scope ⇒ 停在停止键）
         await expect(page.getByTestId("chat-send-button"), "send button is back").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("chat-stop-button"), "stop button is gone").toHaveCount(0);
         // 「可用」= 草稿非空时发送键 enabled（空输入框按产品规则本来就 disabled，见

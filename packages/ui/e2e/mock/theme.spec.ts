@@ -1,6 +1,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 test.describe("Theme Switching", () => {
     test.beforeEach(async ({ page }) => {
@@ -22,7 +23,7 @@ test.describe("Theme Switching", () => {
 
     test("default theme is light", async ({ page }) => {
         await page.goto("/workspace/workspace-1/chat/test-session");
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(page.locator("html")).not.toHaveClass(/dark/);
         await expectPlatformScreenshot(page, "theme-default-light.png");
     });

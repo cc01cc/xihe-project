@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-340 判 2 · 滚动跟随语义（两条独立不变量，各自独立断言）。
  *
@@ -21,6 +22,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
 import type { Page } from "@playwright/test";
 import { ChatPage } from "../page-objects/ChatPage";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl340-follow-session";
 const TOTAL = 120;
@@ -166,7 +168,7 @@ test.describe("BL-340 判 2：滚动跟随语义", () => {
         await installChatSsePush(page);
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-scroller-viewport"]').first()).toBeVisible(
-            { timeout: 20_000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
     });
 
@@ -183,7 +185,9 @@ test.describe("BL-340 判 2：滚动跟随语义", () => {
             PUSHED_TEXT,
         );
         // 推帧真的落地了吗（否则可能是 payload 被静默忽略，而不是 scroller 的问题）。
-        await expect(page.getByText(PUSHED_TEXT).first()).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByText(PUSHED_TEXT).first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         const after = await readStableScroll(page);
         expect(
@@ -211,7 +215,9 @@ test.describe("BL-340 判 2：滚动跟随语义", () => {
             (text) => (window as unknown as { __pushToken: (t: string) => void }).__pushToken(text),
             PUSHED_TEXT,
         );
-        await expect(page.getByText(PUSHED_TEXT).first()).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByText(PUSHED_TEXT).first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         const after = await readStableScroll(page);
         const drifted = Math.abs(Math.round(after.scrollTop) - startTop);
@@ -236,7 +242,9 @@ test.describe("BL-340 判 2：滚动跟随语义", () => {
             (text) => (window as unknown as { __pushToken: (t: string) => void }).__pushToken(text),
             PUSHED_TEXT,
         );
-        await expect(page.getByText(PUSHED_TEXT).first()).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByText(PUSHED_TEXT).first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         const after = await readStableScroll(page);
         expect(
             Math.round(after.scrollTop),

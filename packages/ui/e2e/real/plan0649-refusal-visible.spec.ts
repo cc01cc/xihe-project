@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -15,6 +16,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0649 T4.1/T4.2 — headed real-stack walkthrough (V1 + V2).
@@ -71,7 +73,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -199,7 +201,6 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             REAL_ROUTE !== "openai-compat",
             "requires XIHE_E2E_REAL_ROUTE=openai-compat (the runner imports the OpenAI-compatible provider config)",
         );
-        test.setTimeout(900_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const observed: Record<string, unknown> = {
             plan: "PLAN-0649",
@@ -385,7 +386,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         // ── Step 1: one run, two spawn_agent calls, the second refused by the budget ──
         seedPage(page, ctx);
         await page.goto(`/workspace/${wsId}/chat/${sessionId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const modal = page.locator('[data-testid="modal-content"]');
         // sendChat (shared helper) asserts on an optimistic DOM bubble; after the 0645 SSE M2
         // merge that bubble no longer renders within its 3s window, so its retry loop re-clicks a
@@ -397,7 +398,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             "请连续调用 spawn_agent 工具两次（必须两次都用工具调用，不要等第一次完成）：第一次 prompt 填「回复标记 REFUSAL-ONE」，第二次 prompt 填「回复标记 REFUSAL-TWO」。两次之间不要等待，也不要只调用一次。";
         await composer.click().catch(() => {});
         await composer.fill(promptText);
-        await expect(sendButton).toBeEnabled({ timeout: 15_000 });
+        await expect(sendButton).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
         await sendButton.click();
         await expect
             .poll(
@@ -405,11 +406,11 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
                     scalar(
                         `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid`,
                     ),
-                { timeout: 60_000, intervals: [1_000, 2_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [1_000, 2_000] },
             )
             .toBeGreaterThan(0);
         const approvalSeen = await modal
-            .waitFor({ state: "visible", timeout: 180_000 })
+            .waitFor({ state: "visible", timeout: LONG_TIMEOUT_MS })
             .then(() => true)
             .catch(() => false);
         if (approvalSeen) {
@@ -431,7 +432,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
                     scalar(
                         `SELECT count(*) FROM context_events WHERE session_id = '${sessionId}'::uuid AND event_type = 'tool.result' AND payload ->> 'refusalCode' = '${REFUSAL_CODE}'`,
                     ),
-                { timeout: 240_000, intervals: [2_000, 3_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [2_000, 3_000] },
             )
             .toBeGreaterThan(0);
         const durablePayloadJson = psql(
@@ -462,7 +463,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
                     const cards = await readToolCalls(request, headers, sessionId, branchId);
                     return cards.filter((card) => card.refusalCode === REFUSAL_CODE).length;
                 },
-                { timeout: 120_000, intervals: [2_000, 3_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [2_000, 3_000] },
             )
             .toBeGreaterThan(0);
         const cardsBeforeReload = await readToolCalls(request, headers, sessionId, branchId);
@@ -479,7 +480,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         const cardCount = await expandAllToolCards(page);
         const refusalBlock = page.getByTestId("tool-refusal").first();
         await expect(refusalBlock, "the refusal block is rendered on the tool card").toBeVisible({
-            timeout: 60_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("tool-refusal-code").first()).toHaveText(REFUSAL_CODE);
         const liveShot = path.join(EVIDENCE_DIR, "refusal-card-live.png");
@@ -487,7 +488,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
 
         // ── Step 5: V2 — reload and require the same three carriers to still agree ──
         await page.reload({ waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // After a full reload the workspace view may land on the session list; reopen the
         // conversation from the sidebar so the historical messages (and their tool cards)
         // render from the durable DTO — the carrier under test is the snapshot, not the router.
@@ -500,7 +501,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
                 .catch(() => {});
             await expect
                 .poll(() => page.locator("[data-testid='message-item']").count(), {
-                    timeout: 30_000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [1_000, 2_000],
                 })
                 .toBeGreaterThan(0);
@@ -508,7 +509,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         const reloadedCardCount = await expandAllToolCards(page);
         await expect(page.getByTestId("tool-refusal").first(), {
             message: "the refusal block survives a full reload (durable snapshot rendering)",
-        }).toBeVisible({ timeout: 60_000 });
+        }).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("tool-refusal-code").first()).toHaveText(REFUSAL_CODE);
         const cardsAfterReload = await readToolCalls(request, headers, sessionId, branchId);
         const reloadedRefused = cardsAfterReload.find((card) => card.refusalCode === REFUSAL_CODE);

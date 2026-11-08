@@ -1,4 +1,5 @@
 import { generateE2EPassword } from "./helpers/password";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -39,7 +40,7 @@ test.describe("PdfViewer — Real Backend", () => {
     test("chat page loads with auth", async ({ page }) => {
         await page.goto("/workspace");
         await page.waitForLoadState("load");
-        await expect(page.locator("#app")).toBeAttached({ timeout: 10000 });
+        await expect(page.locator("#app")).toBeAttached({ timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("PdfViewer renders page controls with sample PDF", async ({ page }) => {

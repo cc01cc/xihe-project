@@ -1,6 +1,8 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const UI_URL = `http://localhost:${process.env.XIHE_UI_PORT || "12630"}`;
@@ -76,7 +78,7 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
             "requires XIHE_E2E_LLM_MODE=success; current: " +
                 (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
         );
-        test.setTimeout(120000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const connectionKey = `embed-${randomUUID().slice(0, 8)}`;
         const created = await createConnection(request, connectionKey);
         expect(created.status).toBe(201);
@@ -99,9 +101,11 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
         await page.goto(`${UI_URL}/settings/config`);
 
         const panel = page.getByTestId("embedding-settings");
-        await expect(panel).toBeVisible({ timeout: 15000 });
+        await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const select = panel.getByTestId("embedding-connection-select");
-        await expect(select).toContainText(`E2E embedding ${connectionKey}`, { timeout: 15000 });
+        await expect(select).toContainText(`E2E embedding ${connectionKey}`, {
+            timeout: LONG_TIMEOUT_MS,
+        });
         await select.selectOption(connectionId);
 
         // Fixed V1 model/dimension contract is displayed, never editable.
@@ -118,14 +122,14 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
         await expect(reloaded.getByTestId("embedding-connection-select")).toHaveValue(
             connectionId,
             {
-                timeout: 15000,
+                timeout: LONG_TIMEOUT_MS,
             },
         );
 
         // Sanitized test action: a stable status/code only, never the credential.
         await reloaded.getByTestId("embedding-test").click();
         const result = reloaded.getByTestId("embedding-test-result");
-        await expect(result).toBeVisible({ timeout: 30000 });
+        await expect(result).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const resultText = (await result.textContent()) ?? "";
         expect(resultText).toMatch(/ok|EMBEDDING_PROVIDER_|API_TYPE_|PROVIDER_CREDENTIAL_/i);
         expect(resultText).not.toContain("sk-e2e");
@@ -133,7 +137,9 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
         // Mobile viewport keeps the panel usable.
         await page.setViewportSize({ width: 390, height: 844 });
         await page.reload();
-        await expect(page.getByTestId("embedding-settings")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("embedding-settings")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("embedding-contract")).toContainText("768");
     });
 
@@ -158,7 +164,7 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
             "requires XIHE_E2E_LLM_MODE=success; current: " +
                 (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
         );
-        test.setTimeout(90000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const connectionKey = `embed-${randomUUID().slice(0, 8)}`;
         const created = await createConnection(request, connectionKey);
         expect(created.status).toBe(201);

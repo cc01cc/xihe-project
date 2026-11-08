@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "budget-exhausted-session";
 
@@ -33,12 +34,12 @@ test.describe("Run budget exhaustion surface", () => {
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         const input = page.locator('[data-testid="chat-input"]');
-        await expect(input).toBeVisible({ timeout: 5000 });
+        await expect(input).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await input.fill("keep looping until the budget stops you");
         await input.press("Enter");
 
         const error = page.locator('[data-testid="message-error"]');
-        await expect(error).toBeVisible({ timeout: 5000 });
+        await expect(error).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(error).toContainText("RUN_BUDGET_EXHAUSTED");
         await expect(error).toContainText("budgetDimension=turns");
         await expect(error).toContainText("本次运行已达到轮数上限");
@@ -52,9 +53,13 @@ test.describe("Run budget exhaustion surface", () => {
         await expect(input).toBeEnabled();
         await input.fill("resume after the budget");
         await input.press("Enter");
-        await expect(page.locator("text=resume after the budget")).toBeVisible({ timeout: 5000 });
+        await expect(page.locator("text=resume after the budget")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         // 渲染器用的是单字符省略号 U+2026（`…`），不是 ASCII `...`；断言必须对齐真实渲染文本。
-        await expect(page.locator("text=Working on it…").first()).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("text=Working on it…").first()).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         await page.screenshot({ path: "test-results/run-budget-exhausted.png", fullPage: true });
     });
@@ -85,12 +90,12 @@ test.describe("Run budget exhaustion surface", () => {
             await page.getByRole("button", { name: "Open chat" }).click();
         }
         const input = page.locator('[data-testid="chat-input"]');
-        await expect(input).toBeVisible({ timeout: 5000 });
+        await expect(input).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await input.fill("long running task");
         await input.press("Enter");
 
         const error = page.locator('[data-testid="message-error"]');
-        await expect(error).toBeVisible({ timeout: 5000 });
+        await expect(error).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(error).toContainText("本次运行已达到累计耗时上限");
         const hint = page.locator('[data-testid="message-budget-exhausted-hint"]');
         await expect(hint).toBeVisible();

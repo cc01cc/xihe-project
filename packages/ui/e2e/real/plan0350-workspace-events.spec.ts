@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0350-workspace-events");
@@ -15,7 +17,6 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0350
 // 跑法：node scripts/e2e-host-detached.mjs e2e/real/plan0350-workspace-events.spec.ts --llm-mode=mock
 test.describe("@host PLAN-0350 workspace file events", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let ownerAuth: string,
         otherAuth: string,
@@ -188,7 +189,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         await page.goto(`/workspace/${wsId}/environment`, { waitUntil: "domcontentloaded" });
         await startSubscriber(page, wsId);
         await expect
-            .poll(async () => (await readSubscriber(page)).status, { timeout: 20000 })
+            .poll(async () => (await readSubscriber(page)).status, { timeout: LONG_TIMEOUT_MS })
             .toBe(200);
 
         // Ensure the workspace (installs the Runtime host watcher) before the external write.
@@ -204,7 +205,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         writeFileSync(path.join(hostPath, fileName), "# live\n");
 
         await expect
-            .poll(async () => (await readSubscriber(page)).events, { timeout: 30000 })
+            .poll(async () => (await readSubscriber(page)).events, { timeout: LONG_TIMEOUT_MS })
             .toContain("file_changed");
         const events = (await readSubscriber(page)).events;
         expect(events).toContain(fileName);
@@ -225,16 +226,16 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         seedPage(page);
         await page.goto(`/workspace/${wsId}`, { waitUntil: "load" });
         await expect(page.locator('[data-testid="workspace-event-status"]')).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByText("seed.md", { exact: true }).first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const liveName = `ui-live-${Date.now()}.md`;
         writeFileSync(path.join(hostPath, liveName), "# ui live\n");
         await expect(page.getByText(liveName, { exact: true }).first()).toBeVisible({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.screenshot({
             scale: "css",
@@ -273,7 +274,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
         await page.goto(`/workspace/${wsId}/environment`, { waitUntil: "domcontentloaded" });
         await startSubscriber(page, delWs);
         await expect
-            .poll(async () => (await readSubscriber(page)).status, { timeout: 20000 })
+            .poll(async () => (await readSubscriber(page)).status, { timeout: LONG_TIMEOUT_MS })
             .toBe(200);
 
         const deleted = await request.delete(`${CP_URL}/api/v1/workspaces/${delWs}`, {
@@ -283,7 +284,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
 
         // V6: the deletion closes the live subscription (the reader reaches EOF).
         await expect
-            .poll(async () => (await readSubscriber(page)).state, { timeout: 30000 })
+            .poll(async () => (await readSubscriber(page)).state, { timeout: LONG_TIMEOUT_MS })
             .toBe("closed");
     });
 });

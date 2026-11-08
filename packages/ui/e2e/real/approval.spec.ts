@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
 import { seedUserGrant } from "./helpers/user-grants";
@@ -9,6 +10,7 @@ import {
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -107,7 +109,7 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     request,
 }) => {
     test.skip(LLM_MODE !== "approval", "approval dialog flow requires XIHE_E2E_LLM_MODE=approval");
-    test.setTimeout(180000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
     const reg = await request.post(`${CP_URL}/api/v1/auth/register`, {
@@ -159,34 +161,38 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     await agentSelect.selectOption({ index: 1 });
     await page.getByTestId("workspace-create-agent-session").click();
     const textarea = page.locator("textarea");
-    await expect(textarea).toBeVisible({ timeout: 20000 });
+    await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const modal = page.locator('[data-testid="modal-content"]');
 
     // Phase 1 — approve: modal shows action/details, decision lands, agent answers.
     const approvedRunId = await submitChat(page, "please delete README.md");
-    await expect(modal).toBeVisible({ timeout: 60000 });
+    await expect(modal).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(modal.locator("text=delete file")).toBeVisible();
     await expect(modal.locator("text=README.md")).toBeVisible();
     await expectPlatformScreenshot(page, "approval-real-modal.png", {
         mask: [page.locator("time"), page.getByTestId("workspace-active-agent")],
     });
     await modal.locator('[data-testid="approval-approve"]').click();
-    await expect(modal).toBeHidden({ timeout: 20000 });
-    await expect(page.locator("text=Approval received.").first()).toBeVisible({ timeout: 60000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.locator("text=Approval received.").first()).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 
     // Phase 2 — reject: terminal APPROVAL_REJECTED error is visible.
-    await expect(textarea).toBeVisible({ timeout: 20000 });
+    await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const rejectedRunId = await submitChat(page, "please delete README.md again");
     expect(rejectedRunId).not.toBe(approvedRunId);
-    await expect(modal).toBeVisible({ timeout: 60000 });
+    await expect(modal).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await modal.locator('[data-testid="approval-reject"]').click();
-    await expect(modal).toBeHidden({ timeout: 20000 });
-    await expect(page.locator("text=APPROVAL_REJECTED").first()).toBeVisible({ timeout: 60000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
+    await expect(page.locator("text=APPROVAL_REJECTED").first()).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 
     // Phase 3 — persistence: reload restores history, no stale approval modal,
     // and the session transcript keeps user + assistant messages.
     await page.reload({ waitUntil: "load" });
-    await expect(page.locator("textarea")).toBeVisible({ timeout: 20000 });
+    await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.locator('[data-testid="modal-content"]')).toBeHidden();
 
     const sessionsRes = await request.get(`${CP_URL}/api/v1/sessions`, { headers: authHeaders });

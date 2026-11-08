@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M5：并发（运行中再发送）排队矩阵（mock lane，无栈）。
  *
@@ -13,6 +14,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockProviderBinding } from "./helpers/session-matrix";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
@@ -57,16 +59,16 @@ test("运行中再发送：排队 affordance + follow-ups wire（不产生第二
 
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
-    await expect(input, "composer mounts").toBeVisible({ timeout: 15_000 });
+    await expect(input, "composer mounts").toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     // 第一条：常规发送，SSE holdOpen 让 run 保持进行中。
     await input.fill("第一条任务");
     await page.getByTestId("chat-send-button").click();
     await expect(page.getByTestId("chat-stop-button"), "run is active").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await expect(page.getByTestId("chat-queue-button"), "queue affordance appears").toBeVisible({
-        timeout: 10_000,
+        timeout: ACTION_TIMEOUT_MS,
     });
 
     // 第二条：排队（wire 断言：follow-ups POST，content 正确，且没有第二个 /chat）。

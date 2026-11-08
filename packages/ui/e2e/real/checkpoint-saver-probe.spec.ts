@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
@@ -8,6 +9,7 @@ import {
 } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 const AGENT_URL = `http://127.0.0.1:${process.env.XIHE_AGENT_PORT ?? "12632"}`,
     SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "",
     CREDENTIAL_CANARY_BYTES_HEX = Buffer.from(
@@ -85,7 +87,7 @@ function checkpointCanaryAbsentFromDurableBlobs(lineageId: string): {
                 ],
                 {
                     encoding: "utf8",
-                    timeout: 15_000,
+                    timeout: LONG_TIMEOUT_MS,
                     windowsHide: true,
                     stdio: ["ignore", "pipe", "ignore"],
                 },
@@ -130,7 +132,7 @@ async function restartServiceAndRecover(
             "Content-Type": "application/json",
         },
         data: { ...requestBody, operation: "recover" },
-        timeout: 30_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     expect(recovered.status(), "the durable lineage must recover after process restart").toBe(200);
     return (await recovered.json()) as SaverProbeResult;
@@ -178,7 +180,7 @@ function checkpointRowsAfterSessionDelete(lineageId: string): {
                 ],
                 {
                     encoding: "utf8",
-                    timeout: 15_000,
+                    timeout: LONG_TIMEOUT_MS,
                     windowsHide: true,
                     stdio: ["ignore", "pipe", "ignore"],
                 },
@@ -203,8 +205,6 @@ function checkpointRowsAfterSessionDelete(lineageId: string): {
 test("@host PLAN-0510 T0.5 — Agent BaseCheckpointSaver persists through CP", async ({
     request,
 }) => {
-    test.setTimeout(240_000);
-
     // PLAN-0510 T0.5: this probe only runs in the runner's dedicated saver-probe
     // lane (the spec is passed explicitly, so e2e-host.mjs wires the probe
     // control server + Agent profile). In a directory-expanded batch the flag is

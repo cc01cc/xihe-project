@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
@@ -5,6 +6,7 @@ import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384-add-workspace");
@@ -15,7 +17,6 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0384
 // 跑法：node scripts/e2e-host-detached.mjs e2e/real/plan0384-workspace-add.spec.ts --llm-mode=mock
 test.describe("@host PLAN-0384 workspace add flow", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let sharedAuth: string,
         seedWs = "",
@@ -246,7 +247,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
 
         // V8: the new workspace is selected and its environment becomes readable.
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeHidden({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.goto(`/workspace/${seedWs}/environment`);
         await expect(page.locator('[data-testid="workspace-environment-heading"]')).toBeVisible();
@@ -317,9 +318,9 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         seedPage(page);
         await page.goto(`/workspace/${wsId}/environment`);
         const select = page.locator('[data-testid="workspace-execution-mode"]');
-        await expect(select).toBeVisible({ timeout: 20000 });
+        await expect(select).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await select.selectOption("windows-host");
-        await expect(select).toHaveValue("windows-host", { timeout: 20000 });
+        await expect(select).toHaveValue("windows-host", { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "execution-mode-switch.png"),
@@ -455,11 +456,11 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         seedPage(page);
         await page.goto(`/workspace/${seedWs}/environment`);
         await expect(page.locator('[data-testid="workspace-environment-heading"]')).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.reload();
         await expect(page.locator('[data-testid="workspace-environment-heading"]')).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const missing = await request.post(`${CP_URL}/api/v1/workspaces`, {
@@ -490,7 +491,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         await page.locator('[data-testid="workspace-toolbar-files-mobile"]').click();
         await page.locator('[data-testid="mobile-workspace-add"]').click();
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.locator('[data-testid="workspace-storage-direct"]').click();
         await page.screenshot({

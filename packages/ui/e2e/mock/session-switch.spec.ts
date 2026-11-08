@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 test.describe("Session switch between chat and workspace", () => {
     const sessionId = "switch-session",
@@ -27,18 +28,26 @@ test.describe("Session switch between chat and workspace", () => {
 
     test("chat and workspace share the same session messages", async ({ page }) => {
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`);
-        await expect(page.locator(`text=${userMessage}`)).toBeVisible({ timeout: 5000 });
+        await expect(page.locator(`text=${userMessage}`)).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         await page.getByTestId("sidebar-workspace").click();
         await page.waitForURL(`**/workspace/${workspaceId}`);
-        await expect(page.locator(`text=${userMessage}`)).toBeVisible({ timeout: 5000 });
+        await expect(page.locator(`text=${userMessage}`)).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         // PLAN-0582 S3a: the "switch to chat" toolbar button became the chat tab
         // of the middle route tab bar (pure route projection).
-        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         await page.getByTestId("workspace-tab-chat").click();
         await page.waitForURL(`**/workspace/${workspaceId}/chat/${sessionId}`);
-        await expect(page.locator(`text=${userMessage}`)).toBeVisible({ timeout: 5000 });
+        await expect(page.locator(`text=${userMessage}`)).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
     });
 
     test("navigation panel session tree switches session", async ({ page }) => {
@@ -50,7 +59,9 @@ test.describe("Session switch between chat and workspace", () => {
         });
 
         await page.goto(`/workspace/${workspaceId}`);
-        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         // PLAN-0582 S1: the toolbar <select> is gone; the navigation panel is the
         // single session switcher.
@@ -61,7 +72,9 @@ test.describe("Session switch between chat and workspace", () => {
             .filter({ hasText: "Other Session" })
             .click();
         await page.waitForURL(`**/workspace/${workspaceId}/chat/other-session`);
-        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 5000 });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
     });
 
     test("workspace routes keep sessions isolated and resubscribe workspace events", async ({
@@ -114,9 +127,9 @@ test.describe("Session switch between chat and workspace", () => {
         );
         await page.goto(`/workspace/${firstWorkspace}/chat/${firstSession}`);
         await firstHistory;
-        await expect(page.getByText(firstMessage)).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText(firstMessage)).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.goto(`/workspace/${secondWorkspace}/chat/${secondSession}`);
-        await expect(page.getByText(secondMessage)).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText(secondMessage)).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(page.getByText(firstMessage)).toHaveCount(0);
         expect(
             workspaceEvents.some((url) => url.includes(`/workspaces/${firstWorkspace}/events`)),
@@ -174,7 +187,9 @@ test.describe("Session switch between chat and workspace", () => {
         const input = page.locator('[data-testid="chat-input"]');
         await input.fill("start a long run");
         await page.locator('button[aria-label="chat.send"], button[aria-label="发送"]').click();
-        await expect(page.getByText("start a long run")).toBeVisible({ timeout: 5000 });
+        await expect(page.getByText("start a long run")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         await page.goto(`/workspace/${secondWorkspace}/chat/${secondSession}`);
         const returnedHistory = page.waitForResponse((response) =>
@@ -183,7 +198,9 @@ test.describe("Session switch between chat and workspace", () => {
         await page.goto(`/workspace/${firstWorkspace}/chat/${firstSession}`);
         await returnedHistory;
         expect(historyReads).toBeGreaterThanOrEqual(2);
-        await expect(page.getByText("replayed response")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText("replayed response")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible();
     });
 });

@@ -1,5 +1,6 @@
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -77,11 +78,11 @@ test.describe("Mobile Viewport (390x844)", () => {
         // PLAN-0560: workspace MCP section lives on the workspace settings MCP tab.
         await page.goto(`/workspace/${authWorkspaceId}/settings?tab=mcp`, { waitUntil: "load" });
         await expect(page.locator('[data-testid="workspace-settings-page"]')).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await page
             .locator('[data-testid="mcp-config-textarea"]')
-            .waitFor({ state: "visible", timeout: 10000 });
+            .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
         await assertNoHorizontalOverflow(page);
         await page.screenshot({
             scale: "css",
@@ -94,14 +95,16 @@ test.describe("Mobile Viewport (390x844)", () => {
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
         await page.goto("/workspace", { waitUntil: "load" });
         const fab = page.getByRole("button", { name: "Open chat" });
-        await expect(fab).toBeVisible({ timeout: 10000 });
+        await expect(fab).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         expect(await page.locator('[role="dialog"]').count()).toBe(0);
 
         await fab.click();
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 10000 });
+        await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.keyboard.press("Escape");
         await expect
-            .poll(async () => page.locator('[role="dialog"]').count(), { timeout: 5000 })
+            .poll(async () => page.locator('[role="dialog"]').count(), {
+                timeout: EXPECT_TIMEOUT_MS,
+            })
             .toBe(0);
     });
 });

@@ -1,9 +1,11 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { openContextPanel } from "../helpers/context-panel";
 import path from "node:path";
 import fs from "node:fs";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0414 V6 (binding selector half): real-browser verification that the
@@ -163,7 +165,7 @@ test.describe("Context templates (PLAN-0414)", () => {
         const settingsSummary = page.getByTestId("session-settings-summary");
         await expect(settingsSummary.getByTestId("session-settings-risk-template")).toContainText(
             "模板未绑定",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(page.getByTestId("session-settings-expanded")).toBeHidden();
         await shoot(page, "04-chat-binding-default.png");
@@ -192,16 +194,16 @@ test.describe("Context templates (PLAN-0414)", () => {
         // template catalog before it can show the pinned revision. Waiting for that settled state
         // (instead of asserting within the default 5 s budget) is what keeps the summary assertion
         // below from racing the reload on a loaded lane.
-        await expect(select).toBeEnabled({ timeout: 15000 });
-        await expect(select).toHaveValue(`user:${TEMPLATE_ID}:1`, { timeout: 15000 });
+        await expect(select).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
+        await expect(select).toHaveValue(`user:${TEMPLATE_ID}:1`, { timeout: LONG_TIMEOUT_MS });
 
         // Visible result: the summary reflects the pinned revision.
         await expect(page.getByTestId("session-context-template-current")).toContainText(
             "User Bound Template v1",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(page.getByTestId("session-settings-risk-template")).toHaveCount(0, {
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await shoot(page, "05-chat-binding-user-template.png");
     });

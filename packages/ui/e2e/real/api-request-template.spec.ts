@@ -1,9 +1,11 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 let auth: { accessToken: string; workspaceId: string };
@@ -43,7 +45,7 @@ for (const wire of cases) {
                 "requires XIHE_E2E_LLM_MODE=success (provider wire); current: " +
                     (process.env.XIHE_E2E_LLM_MODE ?? "mock"),
             );
-            test.setTimeout(60000);
+            test.setTimeout(TEST_TIMEOUT_MS);
             const observed: Record<string, unknown>[] = [];
             const paths: string[] = [];
             const provider = createServer(async (incoming, response) => {
@@ -279,7 +281,7 @@ for (const wire of cases) {
                 await expect(
                     page.getByText("template-wire-confirmed", { exact: true }),
                 ).toBeVisible({
-                    timeout: 30000,
+                    timeout: LONG_TIMEOUT_MS,
                 });
                 expect(observed).toHaveLength(1);
                 expect(paths).toEqual([wire.path]);
@@ -330,7 +332,7 @@ test("@host PLAN-0642 saving a draft is confirmed only after the real write and 
     page,
     request,
 }) => {
-    test.setTimeout(45000);
+    test.setTimeout(TEST_TIMEOUT_MS);
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "X-Workspace-Id": auth.workspaceId,

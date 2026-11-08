@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0659 T1.1：run 分组渲染的**真浏览器证据**（mock lane：无后端，Playwright 自起 Vite
  * dev server，路由拦截见 `helpers/auth.ts` / `helpers/session-matrix.ts`）。
@@ -19,6 +20,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 const SINGLE_RUN_SESSION_ID = "single-run-session";
@@ -110,7 +112,7 @@ async function setupRunsRoute(
 async function openSession(page: Page, sessionId: string): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${sessionId}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -194,7 +196,9 @@ test.describe("PLAN-0659 T1.1 — run 分组渲染", () => {
         await closeMonitorDockTab(page);
 
         const headers = page.getByTestId("run-header");
-        await expect(headers, "two runs ⇒ two run headers").toHaveCount(2, { timeout: 15_000 });
+        await expect(headers, "two runs ⇒ two run headers").toHaveCount(2, {
+            timeout: LONG_TIMEOUT_MS,
+        });
         // 身份一律全文 runId（短码只用于展示）。
         await expect(headers.nth(0)).toHaveAttribute("data-run-id", RUN_A);
         await expect(headers.nth(1)).toHaveAttribute("data-run-id", RUN_B);
@@ -241,7 +245,7 @@ test.describe("PLAN-0659 T1.1 — run 分组渲染", () => {
         await openSession(page, SINGLE_RUN_SESSION_ID);
         await closeMonitorDockTab(page);
 
-        await expect(page.getByTestId("message-item")).toHaveCount(2, { timeout: 15_000 });
+        await expect(page.getByTestId("message-item")).toHaveCount(2, { timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("run-header"), "单 run 不增噪音").toHaveCount(0);
         await expect(page.getByTestId("run-group-body").first()).not.toHaveClass(/border-l/);
 

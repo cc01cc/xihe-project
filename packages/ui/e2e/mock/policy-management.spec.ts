@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
     WORKSPACE_ID = "workspace-1";
@@ -341,7 +342,9 @@ test.describe("Policy management (desktop)", () => {
         await page.goto("/settings/policy");
 
         await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("config-tab-user")).toBeVisible();
         // Retirement, stated as behaviour: the old URL must not read or write any policy surface.
         expect(state.policyRequests).toEqual([]);
@@ -354,7 +357,9 @@ test.describe("Policy management (desktop)", () => {
         await page.goto("/settings/policy");
 
         await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         // Capability gating still holds on the page the redirect lands on: instance-layer tab and
         // the instance import/export block stay admin-only.
         await expect(page.getByTestId("config-tab-user")).toBeVisible();
@@ -394,7 +399,7 @@ test.describe("Policy management (desktop)", () => {
         await page.goto("/settings/tool-faces");
 
         await expect(page.getByTestId("settings-tool-faces-heading")).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("settings-tool-face-source-read_file")).toContainText("内置");
         await expect(
@@ -436,11 +441,13 @@ test.describe("Policy management (desktop)", () => {
         const calls = installDecisionRoute(page);
 
         await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
-        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await pushApproval(page, unclassifiedApprovalEvent());
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-unclassified-notice"]')).toContainText(
             "未分类",
         );
@@ -484,7 +491,9 @@ test.describe("Policy management (mobile)", () => {
 
         // Same retirement as the desktop cases, at 390 px: the old URL resolves to config.
         await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         // `/settings/tool-faces` is the policy surface that survived the retirement; the
         // unclassified-tool affordance must stay reachable and readable on a small viewport.
@@ -502,11 +511,13 @@ test.describe("Policy management (mobile)", () => {
 
         await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
         await page.getByRole("button", { name: "Open chat" }).click();
-        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await pushApproval(page, unclassifiedApprovalEvent());
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 5000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-classify-entry"]').click();
         const actionClass = dialog.locator('[data-testid="approval-classify-action-class"]');
         await expect(actionClass).toBeVisible();

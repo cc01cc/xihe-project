@@ -1,6 +1,8 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { test, expect, type APIRequestContext, type Page, type Request } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { replaceWorkspaceRole } from "./helpers/user-grants";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -25,7 +27,7 @@ async function login(page: Page, email: string, password: string) {
     await page.fill('input[name="email"]', email);
     await page.fill('input[type="password"]', password);
     await page.click('button[type="submit"]');
-    await page.waitForURL(/\/workspace/, { timeout: 15000 });
+    await page.waitForURL(/\/workspace/, { timeout: LONG_TIMEOUT_MS });
 }
 
 function workspaceHeaders(page: Page): string[] {
@@ -159,7 +161,7 @@ test.describe("PLAN-0559 workspace tabs", () => {
 
         // Logout in one tab terminates the other tab through BroadcastChannel.
         await page.getByRole("button", { name: /退出登录|Log out/ }).click();
-        await expect(pageB).toHaveURL(/\/login/, { timeout: 5000 });
+        await expect(pageB).toHaveURL(/\/login/, { timeout: EXPECT_TIMEOUT_MS });
         await pageB.close();
     });
 

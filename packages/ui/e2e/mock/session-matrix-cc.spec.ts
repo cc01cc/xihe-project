@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M2：抄送（CC）交互矩阵（mock lane，无栈）。
  *
@@ -12,13 +13,14 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
 async function openComposer(page: import("@playwright/test").Page): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -28,7 +30,9 @@ async function expandCc(page: import("@playwright/test").Page): Promise<void> {
     if (await expand.isVisible().catch(() => false)) {
         await expand.click();
     }
-    await expect(page.getByTestId("cc-bar"), "CC bar expanded").toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("cc-bar"), "CC bar expanded").toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
 }
 
 /** 在抄送输入框里选一个候选（点菜单项，避开键盘焦点竞争）。 */
@@ -36,9 +40,11 @@ async function pickCc(page: import("@playwright/test").Page, query: string): Pro
     const field = page.getByTestId("cc-input");
     await field.fill(query);
     const menu = page.getByTestId("cc-menu");
-    await expect(menu, `CC typeahead opens for "${query}"`).toBeVisible({ timeout: 10_000 });
+    await expect(menu, `CC typeahead opens for "${query}"`).toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
     await menu.getByRole("option").first().click();
-    await expect(menu, "CC menu closes after pick").toBeHidden({ timeout: 10_000 });
+    await expect(menu, "CC menu closes after pick").toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 test.describe("会话矩阵 M2 — 抄送交互", () => {
@@ -60,18 +66,18 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         await expandCc(page);
         await pickCc(page, "Member");
         await expect(page.getByTestId("cc-chip"), "first CC chip").toHaveCount(1, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("cc-chip").first()).toContainText("Member Two");
         await pickCc(page, "Viewer");
         await expect(page.getByTestId("cc-chip"), "multi-select appends a second chip").toHaveCount(
             2,
-            { timeout: 10_000 },
+            { timeout: ACTION_TIMEOUT_MS },
         );
         // 移除第一枚：多选不会因移除而清空其余。
         await page.getByTestId("cc-chip-remove").first().click();
         await expect(page.getByTestId("cc-chip"), "one chip removed").toHaveCount(1, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("cc-chip").first()).toContainText("Viewer Three");
     });
@@ -82,14 +88,16 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         const field = page.getByTestId("cc-input");
         await field.fill("Retired");
         await expect(page.getByTestId("cc-empty"), "no candidate for a disabled agent").toBeVisible(
-            { timeout: 10_000 },
+            { timeout: ACTION_TIMEOUT_MS },
         );
         await expect(page.getByTestId("cc-menu")).toHaveCount(0);
         // 打开全量候选（清空过滤）也绝不能出现停用行。
         await field.fill("");
         await field.fill("A");
         const menu = page.getByTestId("cc-menu");
-        await expect(menu, "candidates render for a live query").toBeVisible({ timeout: 10_000 });
+        await expect(menu, "candidates render for a live query").toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(menu.getByText("Agent Retired")).toHaveCount(0);
     });
 
@@ -98,7 +106,7 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         // 先把「发送」栏切到 Agent Alpha（默认是 owner）。
         const toField = page.getByTestId("speak-as-input");
         await toField.fill("Agent Alpha");
-        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await toField.press("Enter");
         await expect(page.getByTestId("speak-as-chip").first()).toContainText("Agent Alpha");
         // 抄送候选里不应再出现 Agent Alpha。
@@ -106,7 +114,7 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         const ccField = page.getByTestId("cc-input");
         await ccField.fill("Alpha");
         await expect(page.getByTestId("cc-empty"), "TO selection excluded from CC").toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
     });
 
@@ -116,32 +124,32 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         // 从 @ 候选面点选「Member Two」，草稿里出现完整 @ 名 → 自动进抄送。
         await input.fill("@Member");
         const mentionMenu = page.getByTestId("chat-input-trigger-menu");
-        await expect(mentionMenu).toBeVisible({ timeout: 10_000 });
+        await expect(mentionMenu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await mentionMenu.getByText("Member Two").click();
         await expect(page.getByTestId("cc-chip"), "@ mention auto-added to CC").toHaveCount(1, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("cc-chip").first()).toContainText("Member Two");
         // 手动移除：同一个 @ 还在草稿里 → 不再自动加回（ccSuppressed）。
         await page.getByTestId("cc-chip-remove").first().click();
         await expect(page.getByTestId("cc-chip"), "manually removed").toHaveCount(0, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await input.press("End");
         await input.type(" 补充");
         await expect(
             page.getByTestId("cc-chip"),
             "suppressed @ must not auto-re-add while the draft keeps it",
-        ).toHaveCount(0, { timeout: 5_000 });
+        ).toHaveCount(0, { timeout: ACTION_TIMEOUT_MS });
         // 清空草稿（@ 消失）→ 再重新点名 → 自动加回。
         await input.fill("");
         await input.fill("@Member");
-        await expect(mentionMenu).toBeVisible({ timeout: 10_000 });
+        await expect(mentionMenu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await mentionMenu.getByText("Member Two").click();
         await expect(
             page.getByTestId("cc-chip"),
             "suppression resets once the @ left the draft",
-        ).toHaveCount(1, { timeout: 10_000 });
+        ).toHaveCount(1, { timeout: ACTION_TIMEOUT_MS });
     });
 
     test("无客户端上限：连续三枚 chip 不报错", async ({ page }) => {
@@ -152,13 +160,13 @@ test.describe("会话矩阵 M2 — 抄送交互", () => {
         // 第三人：owner 默认在「发送」栏（被互斥排除），把发送栏换掉后再选 owner 进 CC。
         const toField = page.getByTestId("speak-as-input");
         await toField.fill("Agent Beta");
-        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await toField.press("Enter");
         await pickCc(page, "Owner");
         await expect(page.getByTestId("cc-chip"), "three chips allowed client-side").toHaveCount(
             3,
             {
-                timeout: 10_000,
+                timeout: ACTION_TIMEOUT_MS,
             },
         );
     });

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-316 —— 窗口化渲染（PLAN-0670 M2d.2）**在产品浏览器里真的生效**。
  *
@@ -18,6 +19,7 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "bl316-virtual-session";
 /** `DEFAULT_VIRTUAL_MIN_ROWS` = 150，必须显著越过阈值才谈得上"窗口化生效"。 */
@@ -67,7 +69,7 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
     test("renders a bounded window instead of the whole transcript", async ({ page }) => {
         const chat = new ChatPage(page);
         await chat.goto(SESSION_ID);
-        await expect(chat.scrollerViewport).toBeVisible({ timeout: 15_000 });
+        await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         /**
          * 窗口化的**产品可见**标志：占位 spacer 只在 `virtualizationActive` 时渲染
@@ -76,12 +78,14 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
          */
         const topSpacer = page.locator('[data-testid="virtual-top-spacer"]');
         const bottomSpacer = page.locator('[data-testid="virtual-bottom-spacer"]');
-        await expect(topSpacer).toHaveCount(1, { timeout: 15_000 });
-        await expect(bottomSpacer).toHaveCount(1, { timeout: 15_000 });
+        await expect(topSpacer).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
+        await expect(bottomSpacer).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
 
         const rows = page.locator('[data-testid="run-group-body"]');
         // 已渲染行数：必须远小于总条数（全量渲染时这里就是 240）。
-        await expect.poll(async () => rows.count(), { timeout: 15_000 }).toBeLessThan(TOTAL / 4);
+        await expect
+            .poll(async () => rows.count(), { timeout: LONG_TIMEOUT_MS })
+            .toBeLessThan(TOTAL / 4);
 
         // 会话默认贴底（`default-scroll-position="last-anchor"`）：窗口里是最后几行，
         // 最早那些行**不应**存在于 DOM 里 —— 这是"窗口真的在切"的直接证据。
@@ -111,9 +115,9 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
     test("keeps user scroll position while the window swaps pages", async ({ page }) => {
         const chat = new ChatPage(page);
         await chat.goto(SESSION_ID);
-        await expect(chat.scrollerViewport).toBeVisible({ timeout: 15_000 });
+        await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('[data-testid="virtual-top-spacer"]')).toHaveCount(1, {
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const STEP_PX = 2_000;
@@ -151,7 +155,7 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
 
         // 3) 到顶后窗口换成最早的行，末尾行退出窗口，且仍是有界窗口。
         await expect(page.getByText("bl316-row-0", { exact: true })).toHaveCount(1, {
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByText(`bl316-row-${TOTAL - 1}`, { exact: true })).toHaveCount(0);
         const renderedRows = await page.locator('[data-testid="run-group-body"]').count();
@@ -171,7 +175,7 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
                     ),
                 {
                     message: "到顶后 scrollTop 不得回弹",
-                    timeout: 3_000,
+                    timeout: ACTION_TIMEOUT_MS,
                     intervals: [200, 200, 200, 200, 200],
                 },
             )

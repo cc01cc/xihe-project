@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0550 BL-119 (@host, isolated stack): a real Run whose shadow objects are
  * unavailable must surface `GIT_FAILED` through Runtime → CP durable row → UI.
@@ -27,6 +28,7 @@ import {
 } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 const HOST_ROOT =
@@ -36,7 +38,6 @@ const TERMINAL = /^(succeeded|failed|partial|ambiguous|cancelled)$/;
 
 test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
     test.describe.configure({ mode: "serial", retries: 0 });
-    test.setTimeout(300000);
 
     let ctx: JourneyContext;
     let sessionId = "";
@@ -92,7 +93,7 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
         const objects = path.join(shadowDir, "objects");
         await expect
             .poll(() => existsSync(objects), {
-                timeout: 180000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [1000, 2000, 3000],
                 message: "shadow objects must exist after materialize",
             })
@@ -114,8 +115,10 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
             expect(row.unrollableReason).toBe("GIT_FAILED");
 
             const marker = page.locator('[data-testid="run-checkpoint-marker"]').last();
-            await expect(marker).toBeVisible({ timeout: 30000 });
-            await expect(marker).toContainText(/git 操作失败|Git failed/i, { timeout: 30000 });
+            await expect(marker).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+            await expect(marker).toContainText(/git 操作失败|Git failed/i, {
+                timeout: LONG_TIMEOUT_MS,
+            });
             await page.screenshot({
                 scale: "css",
                 path: path.join(
@@ -142,7 +145,9 @@ async function startRun(
 ): Promise<string> {
     seedPage(page, ctx);
     await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await ensureChatBinding(page, sessionId);
     await waitForControlPlaneAgentReady(request, ctx.headers);
 
@@ -152,7 +157,7 @@ async function startRun(
         await input.click().catch(() => {});
         await input.fill(text).catch(() => {});
         try {
-            await expect(send).toBeEnabled({ timeout: 8000 });
+            await expect(send).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
         } catch {
             continue;
         }
@@ -161,7 +166,7 @@ async function startRun(
                 (response) =>
                     response.url().endsWith("/api/v1/chat") &&
                     response.request().method() === "POST",
-                { timeout: 20000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .catch(() => null);
         await send.click().catch(() => {});

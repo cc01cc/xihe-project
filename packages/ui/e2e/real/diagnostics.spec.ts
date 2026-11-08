@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0342 T2.2 — diagnostics feedback Host E2E (@host).
  *
@@ -24,6 +25,7 @@ import {
     seedPage,
     type JourneyContext,
 } from "./helpers/journey";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
     EVIDENCE_DIR = evidenceDir("diagnostics");
@@ -69,7 +71,7 @@ async function awaitPreviousRunSettled(
                 const body = (await res.json()) as { entries?: Array<{ status?: string }> };
                 return body.entries?.[0]?.status ?? "none";
             },
-            { timeout: 180000, intervals: [1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
         )
         .toMatch(TERMINAL_CHAT_RUN_OR_NONE);
 }
@@ -81,7 +83,7 @@ async function awaitRunTerminal(
 ): Promise<string> {
     await expect
         .poll(() => runStatus(request, headers, runId), {
-            timeout: 180000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [1000, 2000],
         })
         .toMatch(TERMINAL_RUN_PATTERN);
@@ -96,19 +98,19 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
     seedPage(page, ctx);
     await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
-        timeout: 30000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
 async function startRun(scope: Page | Locator, text: string): Promise<string> {
     const input = scope.locator('[data-testid="chat-input"]'),
         send = scope.locator('[data-testid="chat-send-button"]');
-    await expect(input).toBeVisible({ timeout: 30000 });
+    await expect(input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     for (let attempt = 0; attempt < 4; attempt += 1) {
         await input.click().catch(() => {});
         await input.fill(text).catch(() => {});
         try {
-            await expect(send).toBeEnabled({ timeout: 8000 });
+            await expect(send).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
         } catch {
             continue;
         }
@@ -119,7 +121,7 @@ async function startRun(scope: Page | Locator, text: string): Promise<string> {
                 (response) =>
                     response.url().endsWith("/api/v1/chat") &&
                     response.request().method() === "POST",
-                { timeout: 20000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .catch(() => null);
         await send.click().catch(() => {});
@@ -159,15 +161,15 @@ async function approveCardIfShown(
                 }
                 return false;
             },
-            { timeout: 60_000, intervals: [500, 1000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000] },
         )
         .toBe(true)
         .then(() => true)
         .catch(() => false);
     if (!appeared) return false;
 
-    await card.click({ timeout: 15_000 });
-    await expect(card).toBeHidden({ timeout: 60_000 });
+    await card.click({ timeout: LONG_TIMEOUT_MS });
+    await expect(card).toBeHidden({ timeout: LONG_TIMEOUT_MS });
     return true;
 }
 
@@ -176,9 +178,9 @@ async function ensureChatSheetOpen(page: Page): Promise<void> {
     const root = page.getByTestId("mobile-chat-sheet");
     if (await root.isVisible().catch(() => false)) return;
     const openChat = page.getByRole("button", { name: /open chat/i });
-    await expect(openChat).toBeVisible({ timeout: 15_000 });
+    await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await openChat.click();
-    await expect(root).toBeVisible({ timeout: 15_000 });
+    await expect(root).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 async function sendCommand(
@@ -206,8 +208,6 @@ function diagnosticsBlocks(scope: Page | Locator) {
 test.describe.configure({ mode: "serial" });
 
 test.describe("@host diagnostics feedback", () => {
-    test.setTimeout(420_000);
-
     let ctx: JourneyContext;
     test.beforeAll(async ({ request }) => {
         ctx = await registerJourneyUser(request, "diag");
@@ -229,7 +229,9 @@ test.describe("@host diagnostics feedback", () => {
         void runId;
 
         const block = diagnosticsBlocks(page).last();
-        await expect(block, "structured diagnostics block").toBeVisible({ timeout: 30000 });
+        await expect(block, "structured diagnostics block").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(block.locator('[data-testid="diagnostic-item-0"]')).toContainText(
             "src/main.rs:12:5",
         );
@@ -245,7 +247,7 @@ test.describe("@host diagnostics feedback", () => {
         await expect(
             page.locator('[data-slot="message"][data-align="start"]').last(),
             "assistant follow-up reflecting model visibility",
-        ).toContainText("DIAG-VISIBLE", { timeout: 30000 });
+        ).toContainText("DIAG-VISIBLE", { timeout: LONG_TIMEOUT_MS });
 
         // Decision #7: raw fallback is collapsed while diagnostics are shown.
         const toggle = page.locator('[data-testid="raw-output-toggle"]').last();
@@ -298,7 +300,10 @@ test.describe("@host diagnostics feedback", () => {
 
         const repeatRun = await sendCommand(request, ctx, page, failCommand("src/main.rs:12:5"));
         await expect
-            .poll(() => diagnosticsBlocks(page).count(), { timeout: 30000, intervals: [500, 1000] })
+            .poll(() => diagnosticsBlocks(page).count(), {
+                timeout: LONG_TIMEOUT_MS,
+                intervals: [500, 1000],
+            })
             .toBe(afterFirst);
 
         const successRun = await sendCommand(request, ctx, page, "XIHE-E2E-EXEC echo ok");
@@ -311,7 +316,10 @@ test.describe("@host diagnostics feedback", () => {
             failCommand("src/main.rs:12:5"),
         );
         await expect
-            .poll(() => diagnosticsBlocks(page).count(), { timeout: 30000, intervals: [500, 1000] })
+            .poll(() => diagnosticsBlocks(page).count(), {
+                timeout: LONG_TIMEOUT_MS,
+                intervals: [500, 1000],
+            })
             .toBe(afterFirst + 1);
         await expect(diagnosticsBlocks(page).last()).toContainText("src/main.rs:12:5");
 
@@ -339,12 +347,14 @@ test.describe("@host diagnostics feedback", () => {
 
         // Mobile composes inside a sheet (viewport-matrix convention).
         const openChat = page.getByRole("button", { name: /open chat/i });
-        if (await openChat.isVisible({ timeout: 10000 }).catch(() => false)) {
+        if (await openChat.isVisible({ timeout: ACTION_TIMEOUT_MS }).catch(() => false)) {
             await openChat.click();
         }
         const root = page.getByTestId("mobile-chat-sheet");
-        await expect(root).toBeVisible({ timeout: 15000 });
-        await expect(root.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 15000 });
+        await expect(root).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(root.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         // No-column variant + distinct identity so dedup does not suppress it.
         // reopenChat: the pending-approval modal dismisses the sheet (pre-existing
@@ -354,7 +364,7 @@ test.describe("@host diagnostics feedback", () => {
         });
         await ensureChatSheetOpen(page);
         const block = diagnosticsBlocks(root).last();
-        await expect(block).toBeVisible({ timeout: 30000 });
+        await expect(block).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(block).toContainText("tests/test_a.py:7");
 
         const overflow = await page.evaluate(

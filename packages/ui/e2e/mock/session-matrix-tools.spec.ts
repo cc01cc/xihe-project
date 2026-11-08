@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M8：工具与命令过程渲染矩阵（mock lane，无栈）。
  *
@@ -16,6 +17,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { installContextEventStream, pushContextEvent } from "./helpers/context-events";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
@@ -27,12 +29,12 @@ async function prepare(page: Page, title: string): Promise<void> {
     await installContextEventStream(page);
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.getByTestId("chat-input").fill("跑个命令");
     await page.getByTestId("chat-send-button").click();
     await expect(page.getByText("跑个命令"), "user bubble rendered").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -45,19 +47,21 @@ test.describe("会话矩阵 M8 — 工具与命令过程", () => {
             arguments: { command: "dir" },
         });
         const card = page.getByTestId("tool-card-toggle").first();
-        await expect(card, "tool card renders").toBeVisible({ timeout: 15_000 });
+        await expect(card, "tool card renders").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(card, "tool name on the header").toContainText("execute_command");
         await expect(card, "running status label").toContainText("执行中");
         await pushContextEvent(page, "tool_result", {
             toolCallId: "tc-1",
             result: "file1.txt\nfile2.txt",
         });
-        await expect(card, "completed status label").toContainText("已完成", { timeout: 10_000 });
+        await expect(card, "completed status label").toContainText("已完成", {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await card.click();
         await expect(
             page.getByTestId("raw-arguments").first(),
             "command args rendered",
-        ).toContainText("dir", { timeout: 10_000 });
+        ).toContainText("dir", { timeout: ACTION_TIMEOUT_MS });
         await expect(page.getByTestId("raw-result").first(), "stdout rendered").toContainText(
             "file1.txt",
         );
@@ -75,10 +79,12 @@ test.describe("会话矩阵 M8 — 工具与命令过程", () => {
             result: "Tool error: command exited with code 1",
         });
         const card = page.getByTestId("tool-card-toggle").first();
-        await expect(card, "failed status label").toContainText("执行失败", { timeout: 15_000 });
+        await expect(card, "failed status label").toContainText("执行失败", {
+            timeout: LONG_TIMEOUT_MS,
+        });
         await card.click();
         await expect(page.getByTestId("raw-result").first()).toContainText("Tool error", {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
     });
 
@@ -95,10 +101,10 @@ test.describe("会话矩阵 M8 — 工具与命令过程", () => {
             refusalCode: "TOOL_GRANT_DENIED",
         });
         const card = page.getByTestId("tool-card-toggle").first();
-        await expect(card, "refusal card renders").toBeVisible({ timeout: 15_000 });
+        await expect(card, "refusal card renders").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await card.click();
         await expect(page.getByTestId("tool-refusal"), "refusal block visible").toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("tool-refusal-code"), "refusal code rendered").toHaveText(
             "TOOL_GRANT_DENIED",
@@ -115,13 +121,13 @@ test.describe("会话矩阵 M8 — 工具与命令过程", () => {
         });
         await pushContextEvent(page, "tool_result", { toolCallId: "tc-long", result: longOutput });
         const card = page.getByTestId("tool-card-toggle").first();
-        await expect(card, "card renders").toBeVisible({ timeout: 15_000 });
+        await expect(card, "card renders").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await card.click();
         await expect(page.getByTestId("raw-result").first()).toContainText("BEGIN-OF-LONG-OUTPUT", {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByText(/Output truncated \(\d+ chars total\)/)).toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
     });
 
@@ -140,7 +146,7 @@ test.describe("会话矩阵 M8 — 工具与命令过程", () => {
         });
         await pushContextEvent(page, "tool_result", { toolCallId: "tc-b", result: "a.txt" });
         const cards = page.getByTestId("tool-card-toggle");
-        await expect(cards, "two tool cards").toHaveCount(2, { timeout: 15_000 });
+        await expect(cards, "two tool cards").toHaveCount(2, { timeout: LONG_TIMEOUT_MS });
         await expect(cards.nth(0), "first call first").toContainText("read_file");
         await expect(cards.nth(1), "second call second").toContainText("exec_command");
     });

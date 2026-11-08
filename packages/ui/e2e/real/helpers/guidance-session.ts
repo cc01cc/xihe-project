@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./password";
 import { ensureWorkspace } from "./workspace";
@@ -9,6 +10,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./journey";
 import type { JourneyContext } from "./journey";
+import { LONG_TIMEOUT_MS } from "../../timeouts";
 
 /**
  * PLAN-0530/0536 shared Host fixture: register a user, create an approval-mode
@@ -70,7 +72,7 @@ export async function registerAndCreateGuidanceSession(
     await ensureChatBinding(page, sessionId);
 
     const textarea = page.locator("textarea");
-    await expect(textarea).toBeVisible({ timeout: 20_000 });
+    await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     const sent = page.waitForResponse(
         (response) =>
             response.url().endsWith("/api/v1/chat") && response.request().method() === "POST",
@@ -83,7 +85,9 @@ export async function registerAndCreateGuidanceSession(
     expect(runId).toBeTruthy();
 
     // The approval modal only renders once CP reports awaiting_approval.
-    await expect(page.locator('[data-testid="modal-content"]')).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="modal-content"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
 
     return { authHeaders, workspaceId: authBody.workspaceId, sessionId, runId };
 }

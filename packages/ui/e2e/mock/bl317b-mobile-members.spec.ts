@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * BL-317b · 移动端成员面板改版（IM 调研 §1/§3/§4 的落地验收）。
  *
@@ -14,6 +15,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const SESSION_ID = "bl317b-session";
@@ -90,14 +92,14 @@ async function openChat(page: import("@playwright/test").Page, mobile = true) {
     if (mobile) {
         // 390 下聊天在 `MobileChatSheet` 里（底栏文件树默认在前）—— 成员入口就在它的头里。
         await expect(page.locator('[data-testid="workspace-toolbar-more-mobile"]')).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByRole("button", { name: "Open chat" }).click();
         await expect(page.locator('[data-testid="mobile-chat-sheet"]')).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.locator('[data-testid="members-entry-mobile"]')).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
     }
 }
@@ -140,7 +142,7 @@ test.describe("BL-317b 移动端成员面板", () => {
         await page.locator('[data-testid="members-entry-mobile"]').click();
 
         const sheet = page.locator('[data-testid="mobile-members-sheet"]');
-        await expect(sheet).toBeVisible({ timeout: 5000 });
+        await expect(sheet).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(sheet).toHaveAttribute("role", "dialog");
         await expect(sheet).toHaveAttribute("aria-modal", "true");
         // 正文复用既有面板（不是第二套实现）。
@@ -188,7 +190,7 @@ test.describe("BL-317b 移动端成员面板", () => {
         const entry = page.locator('[data-testid="members-entry-mobile"]');
         await entry.click();
         await expect(page.locator('[data-testid="mobile-members-sheet"]')).toBeVisible({
-            timeout: 5000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         await page.keyboard.press("Escape");
@@ -199,7 +201,7 @@ test.describe("BL-317b 移动端成员面板", () => {
             .poll(
                 async () =>
                     page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? ""),
-                { timeout: 5000, message: "关闭成员 sheet 后焦点应回到触发按钮" },
+                { timeout: ACTION_TIMEOUT_MS, message: "关闭成员 sheet 后焦点应回到触发按钮" },
             )
             .toBe("members-entry-mobile");
     });

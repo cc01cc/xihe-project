@@ -1,5 +1,6 @@
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
@@ -32,13 +33,13 @@ test.describe("Chat — Real Backend", () => {
     });
 
     test("chat page renders with sidebar and input area", async ({ page }) => {
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 8000 });
+        await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "real-chat-page.png");
     });
 
     test("creates new session and shows in sidebar", async ({ page }) => {
         const sidebar = page.locator("aside").first();
-        await expect(sidebar).toBeVisible({ timeout: 8000 });
+        await expect(sidebar).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         // New session button
         const newBtn = page
             .locator("button")

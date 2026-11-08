@@ -1,7 +1,9 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0602 runtime language switch — the 7-item checklist from
@@ -124,7 +126,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await seedContext(page, user);
         await page.goto("/settings/config", { waitUntil: "load" });
         await expect(page.getByTestId("settings-language-switcher")).toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // Item 1: no persisted value → zh-CN on <html lang>, Chinese copy, nothing in storage.
@@ -140,11 +142,11 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         // Item 5: English → back to Chinese restores all three sinks.
         await page.getByTestId("settings-language-en-US").click();
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await page.getByTestId("settings-language-zh-CN").click();
         await expect(page.getByTestId("settings-config-heading")).toHaveText(ZH_HEADING, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         expect(await htmlLang(page)).toBe("zh-CN");
         expect(await persistedLanguage(page)).toBe("zh-CN");
@@ -161,13 +163,13 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await seedContext(page, user);
         await page.goto("/settings/config", { waitUntil: "load" });
         await expect(page.getByTestId("settings-language-switcher")).toBeVisible({
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         await page.getByTestId("settings-language-en-US").click();
 
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByTestId("settings-language-en-US")).toHaveAttribute(
             "aria-pressed",
@@ -191,7 +193,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await page.goto("/settings/config", { waitUntil: "load" });
         await page.getByTestId("settings-language-en-US").click();
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         // Anti-flash proof: the static attribute is zh-CN, so the parser sets it for an instant; what
@@ -224,7 +226,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         });
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const trace = await page.evaluate(
                 () =>
@@ -266,7 +268,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await page.goto("/settings/config", { waitUntil: "load" });
         await page.getByTestId("settings-language-en-US").click();
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
 
         const secondTab = await context.newPage();
@@ -277,7 +279,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
             },
         );
         await expect(secondTab.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         expect(await htmlLang(secondTab)).toBe("en-US");
         await secondTab.close();
@@ -293,7 +295,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await page.reload({ waitUntil: "load" });
 
         await expect(page.getByTestId("settings-config-heading")).toHaveText(ZH_HEADING, {
-            timeout: 20_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         expect(await htmlLang(page)).toBe("zh-CN");
         expect(await persistedLanguage(page), "invalid value must be rewritten to zh-CN").toBe(
@@ -316,12 +318,12 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
                 const doc = document.documentElement;
                 return doc.scrollWidth > doc.clientWidth + 1;
             });
-        await expect(switcher).toBeVisible({ timeout: 20_000 });
+        await expect(switcher).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(overflow, "no horizontal overflow at 390px").toBe(false);
 
         await page.getByTestId("settings-language-en-US").click();
         await expect(page.getByTestId("settings-config-heading")).toHaveText(EN_HEADING, {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         expect(await htmlLang(page)).toBe("en-US");
         await page.screenshot({

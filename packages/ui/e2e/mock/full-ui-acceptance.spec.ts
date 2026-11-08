@@ -1,9 +1,16 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 // BL-318：`invalid login keeps the form and renders a user-safe error` 故意桩 401 登录（验错误文案），
 // 逐条放行登录端点与该行 logger 输出；其它通道不放行。
@@ -163,7 +170,7 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
 
         for (const [index, route] of routes.entries()) {
             await page.goto(route.path, { waitUntil: "load" });
-            await expect(route.marker).toBeVisible({ timeout: 10000 });
+            await expect(route.marker).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
             expect(page.url()).toContain(route.path);
             await expectPlatformScreenshot(page, `plan-269-route-${index + 1}.png`);
         }
@@ -348,7 +355,7 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
 
         await page.goto("/settings/config");
         const hub = page.getByTestId("provider-hub");
-        await expect(hub).toBeVisible({ timeout: 10000 });
+        await expect(hub).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.getByTestId("provider-hub-connect").click();
         await expect(page.getByTestId("provider-picker-modal")).toBeVisible();
         await page.getByTestId("provider-picker-search").fill("OpenAI");
@@ -359,16 +366,18 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await form.locator("input").nth(0).fill("Test OpenAI");
         await form.locator('input[type="password"]').fill("sk-test-key");
         await form.getByRole("button", { name: "验证并保存" }).click();
-        await expect(form).toBeHidden({ timeout: 10000 });
+        await expect(form).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
         // The label now renders both on the connection card and in the layer
         // default row, so scope the assertion to the created connection card.
         const connectionCard = hub.getByTestId("provider-connection-openai");
-        await expect(connectionCard.getByText("Test OpenAI")).toBeVisible({ timeout: 10000 });
+        await expect(connectionCard.getByText("Test OpenAI")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(connectionCard.getByText("已连接")).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-provider-connected.png");
 
         await connectionCard.getByRole("button", { name: "验证", exact: true }).click();
-        await expect(hub.getByText("刚刚验证")).toBeVisible({ timeout: 10000 });
+        await expect(hub.getByText("刚刚验证")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         // PLAN-0505: the delete button opens the impact confirm dialog instead
         // of the old window.confirm; cancel first (zero mutations), then confirm.
         await hub.getByRole("button", { name: "删除" }).click();
@@ -379,7 +388,7 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await hub.getByRole("button", { name: "删除" }).click();
         await expect(confirmModal).toBeVisible();
         await page.getByTestId("provider-delete-confirm").click();
-        await expect(hub.getByText("尚未新建连接")).toBeVisible({ timeout: 10000 });
+        await expect(hub.getByText("尚未新建连接")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     });
 
     test("MCP JSON validation and Data import preview are recoverable", async ({ page }) => {
@@ -437,7 +446,7 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             buffer: Buffer.from("# Guide"),
         });
         await page.getByRole("button", { name: "上传" }).click();
-        await expect(page.getByText("guide.md")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByText("guide.md")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "plan-269-knowledge-uploaded.png");
     });
 });
@@ -483,7 +492,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await expect(file).toBeVisible();
         await file.click();
         await expect(page.getByText("README", { exact: false }).first()).toBeVisible({
-            timeout: 10000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await page.getByRole("button", { name: "源码" }).click();
         const editor = page.getByTestId("workspace-markdown-source");
@@ -497,7 +506,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
     });
 
     test("mobile workspace exposes Files and Chat Sheets without overflow", async ({ page }) => {
-        test.setTimeout(45000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         await page.setViewportSize({ width: 390, height: 844 });
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
@@ -574,7 +583,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
         await page.getByRole("button", { name: "sample.pdf", exact: true }).click();
         try {
-            await expect(page.locator("canvas").first()).toBeVisible({ timeout: 15000 });
+            await expect(page.locator("canvas").first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         } catch (cause) {
             throw new Error(
                 `${cause instanceof Error ? cause.message : String(cause)}; pageErrors=${JSON.stringify(pageErrors)}; consoleErrors=${JSON.stringify(consoleErrors)}`,
@@ -692,7 +701,9 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await page.goto("/workspace/workspace-1/chat/session-1");
         await expect(page.locator("textarea")).toBeVisible();
         await page.getByTitle("截取屏幕").click();
-        await expect(page.getByTestId("selected-attachment")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("selected-attachment")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expectPlatformScreenshot(page, "plan-269-screen-capture-attachment.png");
     });
 });

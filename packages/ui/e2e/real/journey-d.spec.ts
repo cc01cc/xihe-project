@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
@@ -17,6 +18,7 @@ import {
     seedPage,
     sendChat,
 } from "./helpers/journey";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
     REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
@@ -41,7 +43,6 @@ const EVIDENCE_DIR = evidenceDir("journey-d");
 // so D1 FAILS with "no prior markers" until M1 wires the pipeline.
 test.describe("@host Journey D — context pipeline", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     // Agent keeps ONE MCP workspace binding per process — share a single
     // registered user/workspace across the describe (journey-a/b/c pattern).
@@ -81,7 +82,7 @@ test.describe("@host Journey D — context pipeline", () => {
         // race CP readiness on cold starts).
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const chatInput = page.locator('[data-testid="chat-input"]');
-        if (!(await chatInput.isVisible({ timeout: 10000 }).catch(() => false))) {
+        if (!(await chatInput.isVisible({ timeout: ACTION_TIMEOUT_MS }).catch(() => false))) {
             const newChat = page.getByRole("button", { name: "新建对话" }).first();
             if (await newChat.isVisible().catch(() => false)) {
                 await newChat.click();
@@ -90,7 +91,7 @@ test.describe("@host Journey D — context pipeline", () => {
             }
         }
         await expect(chatInput, "chat input visible on workspace page").toBeVisible({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const lastAssistant = page.locator('[data-slot="message"][data-align="start"]').last();
 
@@ -100,7 +101,7 @@ test.describe("@host Journey D — context pipeline", () => {
         await expect(
             lastAssistant,
             "turn-1 reply echoes the fake LLM marker envelope",
-        ).toContainText("XIHE-HIST-SEEN: none", { timeout: 120000 });
+        ).toContainText("XIHE-HIST-SEEN: none", { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-turn1.png"),
@@ -118,14 +119,14 @@ test.describe("@host Journey D — context pipeline", () => {
         const reply = lastAssistant;
         await expect(reply, "turn-2 reply echoes the fake LLM marker envelope").toContainText(
             `XIHE-HIST-CURRENT: ${marker2}`,
-            { timeout: 120000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
 
         // THE PIN: turn-1's marker must appear in the provider-visible history.
         await expect(
             reply,
             "turn-2 request must carry turn-1 marker (conversation memory)",
-        ).toContainText(`XIHE-HIST-SEEN: ${marker1}`, { timeout: 30000 });
+        ).toContainText(`XIHE-HIST-SEEN: ${marker1}`, { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-turn2-memory.png"),
@@ -181,7 +182,7 @@ test.describe("@host Journey D — context pipeline", () => {
         await ensureChatBinding(page, realSessionId);
         await page.reload({ waitUntil: "load" });
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // Pin the session binding to the native route explicitly (chat-availability
@@ -199,7 +200,7 @@ test.describe("@host Journey D — context pipeline", () => {
                     sessionId = body.sessions?.[0]?.id ?? "";
                     return sessionId;
                 },
-                { timeout: 30000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .not.toBe("");
         await bindSessionViaApi(request, CP_URL, headers, sessionId, "xiaomi", "mimo-v2.6-flash");
@@ -216,7 +217,7 @@ test.describe("@host Journey D — context pipeline", () => {
                     };
                     return `${body.modelProvider ?? ""}/${body.modelName ?? ""}`;
                 },
-                { timeout: 15000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBe("xiaomi/mimo-v2.6-flash");
 
@@ -231,7 +232,7 @@ test.describe("@host Journey D — context pipeline", () => {
         await expect(
             page.getByText(/LLM_TOOL_ROUTE_UNSUPPORTED/).first(),
             "explicit route-unsupported error visible in the UI",
-        ).toBeVisible({ timeout: 120000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "d1-real-native-boundary.png"),
@@ -257,7 +258,7 @@ test.describe("@host Journey D — context pipeline", () => {
                     );
                     return failed ? "failed" : "pending";
                 },
-                { timeout: 120000, intervals: [2_000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [2_000] },
             )
             .toBe("failed");
         const runRes = await request.get(
@@ -353,7 +354,7 @@ test.describe("@host Journey D — context pipeline", () => {
         // Turn 1: plant marker A, wait for the run to finish server-side.
         await sendChat(page, `Plant marker XIHE-E2E-HIST ${markerA} now.`);
         await expect(lastAssistant).toContainText(`XIHE-HIST-CURRENT: ${markerA}`, {
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await awaitLatestChatRunCompleted(page.request, sharedHeaders);
 
@@ -379,11 +380,13 @@ test.describe("@host Journey D — context pipeline", () => {
         // full history.
         await sendChat(page, `Now plant marker XIHE-E2E-HIST ${markerB}. What markers exist?`);
         const reply = lastAssistant;
-        await expect(reply).toContainText(`XIHE-HIST-CURRENT: ${markerB}`, { timeout: 120000 });
+        await expect(reply).toContainText(`XIHE-HIST-CURRENT: ${markerB}`, {
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(
             reply,
             "post-compaction turn must still see pre-compaction marker (summary + kept tail)",
-        ).toContainText(markerA, { timeout: 30000 });
+        ).toContainText(markerA, { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "d2-post-compaction-memory.png"),

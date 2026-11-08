@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0337 T1.3 / V5 —— 审批疲劳消除（grant 复用）与 `auto` 免批的常驻 host 回归。
  *
@@ -39,6 +40,7 @@ import {
     seedPage,
     type JourneyContext,
 } from "./helpers/journey";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "",
     LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "";
@@ -180,7 +182,7 @@ async function awaitSessionIdle(
 ): Promise<void> {
     await expect
         .poll(() => latestChatRunStatus(request, headers), {
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [1000, 2000],
             message: "上一轮 ChatRun 未在超时内 terminal",
         })
@@ -207,7 +209,7 @@ async function sendMarkerTurn(
     const modal = page
         .locator('[data-testid="approval-approve"], [data-testid="approval-allow-session"]')
         .first();
-    await expect(input).toBeVisible({ timeout: 30000 });
+    await expect(input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
     const marker = `XIHE-E2E-WRITE ${turn.path} ${turn.content}`;
     let runId = "";
@@ -216,11 +218,11 @@ async function sendMarkerTurn(
         const posted = page.waitForResponse(
             (response) =>
                 response.url().endsWith("/api/v1/chat") && response.request().method() === "POST",
-            { timeout: 20000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await input.click();
         await input.fill(marker);
-        await expect(send).toBeEnabled({ timeout: 15000 });
+        await expect(send).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
         await send.click();
         try {
             const response = await posted;
@@ -243,7 +245,7 @@ async function sendMarkerTurn(
                       );
                 return observed;
             },
-            { timeout: 180000, intervals: [500, 1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000, 2000] },
         )
         .not.toBe("pending");
 
@@ -259,11 +261,14 @@ async function sendMarkerTurn(
         } else {
             await tierButton.click();
         }
-        await expect(modal).toBeHidden({ timeout: 30000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
     }
 
     await expect
-        .poll(() => runStatus(request, headers, runId), { timeout: 180000, intervals: [500, 1000] })
+        .poll(() => runStatus(request, headers, runId), {
+            timeout: LONG_TIMEOUT_MS,
+            intervals: [500, 1000],
+        })
         .toMatch(TERMINAL_RUN_STATES);
 
     return {
@@ -278,8 +283,6 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
     page,
     request,
 }) => {
-    test.setTimeout(900000);
-
     let ctx: JourneyContext, sessionId: string;
     const phaseTurns: Record<"A" | "B" | "C", PhaseTurn[]> = { A: [], B: [], C: [] };
 
@@ -308,7 +311,9 @@ test("@host 审批复用护栏：once 对照组 3/3、session 复用 1 行 + gra
         expect(sessionId).not.toBe("");
         seedPage(page, ctx);
         await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
-        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 30000 });
+        await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
     });
 
     await test.step("A 对照组（once）：3 次同参数调用 → 3 张卡 / 3 行", async () => {

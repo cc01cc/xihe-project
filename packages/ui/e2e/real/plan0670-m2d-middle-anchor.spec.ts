@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -16,6 +17,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0670 M2d —— **中间位置 prepend 锚定** e2e（Lead 2026-11-05 要求补的诚实边界）。
@@ -59,7 +61,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 30_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -124,7 +126,7 @@ async function wheelToMiddle(page: Page): Promise<ScrollMetrics> {
     await page.mouse.wheel(0, 200_000);
     await expect
         .poll(async () => (await metrics(page)).maxScroll - (await metrics(page)).scrollTop, {
-            timeout: 30_000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [100, 200, 500],
         })
         .toBeLessThan(8);
@@ -192,7 +194,6 @@ test.describe("@host PLAN-0670 M2d middle-anchor prepend", () => {
         request,
     }) => {
         test.skip(!process.env.XIHE_E2E_PG_CONTAINER, "requires the isolated e2e-host stack");
-        test.setTimeout(600_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
 
         const ctx = await registerJourneyUser(request, "plan0670-middle-anchor");
@@ -216,10 +217,10 @@ test.describe("@host PLAN-0670 M2d middle-anchor prepend", () => {
 
         await seedPage(page, ctx);
         await page.goto(workspaceChatPath(wsId, sessionId));
-        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => await page.locator("[data-message-role]").count(), {
-                timeout: 120_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000, 2000],
             })
             .toBeGreaterThan(0);
@@ -250,13 +251,13 @@ test.describe("@host PLAN-0670 M2d middle-anchor prepend", () => {
         });
         await expect
             .poll(async () => await page.locator("[data-message-role]").count(), {
-                timeout: 120_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000, 2000],
             })
             .toBeGreaterThan(firstPage);
         await expect
             .poll(async () => await anchorTop(page, before!.id), {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [100, 200, 500],
             })
             .not.toBeNull();

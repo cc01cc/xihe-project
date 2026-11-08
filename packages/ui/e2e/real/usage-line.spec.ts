@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 // PLAN-0343 U1/V6: run-terminal usage line in the session header.
 // Flow: register → workspace page → deterministic write_file chat (approve) →
 // run reaches done → the header usage line must show tokens, a mapped cost
@@ -12,6 +13,7 @@ import {
     awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
 } from "./helpers/journey";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
@@ -27,13 +29,12 @@ function queryIsolatedPostgres(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", user, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
 test.describe("@host PLAN-0343 — usage line in session header", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(240000);
 
     let ctx: { authToken: string; workspaceId: string; headers: Record<string, string> };
 
@@ -72,16 +73,18 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
         await chatInput.click();
         await chatInput.pressSequentially(markerText, { delay: 5 });
         await expect(page.locator('[data-testid="chat-send-button"]')).toBeEnabled({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.locator('[data-testid="chat-send-button"]').click();
         await expect(page.locator('[data-slot="message"][data-align="end"]').first()).toBeVisible({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const modal = page.locator('[data-testid="modal-content"]');
-        await expect(modal, "approval modal for write_file").toBeVisible({ timeout: 120000 });
+        await expect(modal, "approval modal for write_file").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await modal.locator('[data-testid="approval-approve"]').click();
-        await expect(modal).toBeHidden({ timeout: 20000 });
+        await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
         // Wait for the run to reach a terminal state server-side (usage arrives
         // once per run, before done).
@@ -94,7 +97,7 @@ test.describe("@host PLAN-0343 — usage line in session header", () => {
             .filter({ hasText: /in \d+ · out \d+/ })
             .first();
         await expect(usageLine, "workspace usage line must appear after done").toBeVisible({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const lineText = (await usageLine.textContent()) ?? "";

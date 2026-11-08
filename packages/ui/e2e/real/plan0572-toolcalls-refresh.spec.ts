@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -14,6 +15,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const MODEL_ID = process.env.XIHE_E2E_FAKE_MODEL ?? "fake-openai";
@@ -21,8 +23,6 @@ const EVIDENCE_DIR = evidenceDir("plan-0572");
 
 /** PLAN-0572: a persisted tool card must come back after a full page reload. */
 test.describe("@host PLAN-0572 tool card refresh", () => {
-    test.setTimeout(240000);
-
     test("read_file tool card survives refresh on desktop and mobile", async ({
         page,
         request,
@@ -101,12 +101,12 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
             .locator('[data-testid="tool-card-toggle"]')
             .filter({ hasText: "read_file" })
             .last();
-        await expect(liveCard, "live tool card").toBeVisible({ timeout: 120000 });
+        await expect(liveCard, "live tool card").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(
             page.getByText("Read completed.").last(),
             "assistant terminal text",
         ).toBeVisible({
-            timeout: 120000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await awaitLatestChatRunCompleted(request, headers, wsId);
 
@@ -114,11 +114,11 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
         const liveDetails = liveCard.locator("xpath=..");
         await expect(liveDetails.locator('[data-testid="raw-arguments"]')).toContainText(
             "README.md",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(liveDetails.locator('[data-testid="raw-result"]')).toContainText(
             "Tool result withheld",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.screenshot({
             scale: "css",
@@ -131,16 +131,18 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
             .locator('[data-testid="tool-card-toggle"]')
             .filter({ hasText: "read_file" })
             .last();
-        await expect(reloadedCard, "tool card after refresh").toBeVisible({ timeout: 30000 });
+        await expect(reloadedCard, "tool card after refresh").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await reloadedCard.click();
         const reloadedDetails = reloadedCard.locator("xpath=..");
         await expect(reloadedDetails.locator('[data-testid="raw-arguments"]')).toContainText(
             "README.md",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await expect(reloadedDetails.locator('[data-testid="raw-result"]')).toContainText(
             "Tool result withheld",
-            { timeout: 15000 },
+            { timeout: LONG_TIMEOUT_MS },
         );
         await page.screenshot({
             scale: "css",
@@ -152,22 +154,24 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
         await page.reload({ waitUntil: "load" });
         const openChat = page.getByRole("button", { name: "Open chat" });
         const mobileSheet = page.getByTestId("mobile-chat-sheet");
-        await expect(openChat, "mobile chat FAB").toBeVisible({ timeout: 15000 });
+        await expect(openChat, "mobile chat FAB").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         for (let attempt = 0; attempt < 5; attempt++) {
             await openChat.click({ force: true }).catch(() => {});
             if (await mobileSheet.isVisible().catch(() => false)) break;
             await page.waitForTimeout(500);
         }
-        await expect(mobileSheet, "mobile chat sheet").toBeVisible({ timeout: 15000 });
+        await expect(mobileSheet, "mobile chat sheet").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         const mobileCard = page
             .locator('[data-testid="tool-card-toggle"]')
             .filter({ hasText: "read_file" })
             .last();
-        await expect(mobileCard, "tool card after mobile refresh").toBeVisible({ timeout: 30000 });
+        await expect(mobileCard, "tool card after mobile refresh").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await mobileCard.click();
         await expect(
             mobileCard.locator("xpath=..").locator('[data-testid="raw-arguments"]'),
-        ).toContainText("README.md", { timeout: 15000 });
+        ).toContainText("README.md", { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "tool-card-refreshed-mobile.png"),

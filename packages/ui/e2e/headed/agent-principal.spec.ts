@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0622 M4（T4.1）—— 有头走查：PERSONAL agent 建/绑/禁用 + 429 提示（S1–S4）。
  *
@@ -21,6 +22,7 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { createWorkspaceSessionWithPrincipal } from "../real/helpers/agent-principal";
 import { ensureWorkspace } from "../real/helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0622-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0622/runs", RUN_ID);
@@ -264,7 +266,7 @@ async function loginViaForm(page: Page, identifier: string, password: string): P
     expect(response.status(), `login form must authenticate (${await response.text()})`).toBe(200);
     await expect
         .poll(() => page.evaluate(() => Boolean(localStorage.getItem("xihe-token"))), {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [250, 500],
         })
         .toBe(true);
@@ -273,11 +275,11 @@ async function loginViaForm(page: Page, identifier: string, password: string): P
 async function openAgentDialog(page: Page): Promise<void> {
     await page.getByTestId("workspace-toolbar-agents").click();
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-        timeout: 20000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+test.describe.configure({ mode: "serial", timeout: LONG_TIMEOUT_MS });
 
 test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提示", () => {
     test.beforeAll(() => {
@@ -358,7 +360,9 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         const token = await tokenOf(page);
         workspaceId = await ensureWorkspace(request, token);
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await openAgentDialog(page);
 
         await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
@@ -391,7 +395,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         // 要等 S2 的绑定动作之后才出现。这里断言「创建结果对用户可见」，并显式断言它**不在**
         // 已绑定区 —— "创建不自动绑定"是预期行为，不是"看不见"。
         const unboundSection = page.getByTestId("unbound-agent-principal");
-        await expect(unboundSection).toBeVisible({ timeout: 20000 });
+        await expect(unboundSection).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(unboundSection).toContainText(principalId);
         await expect(page.getByTestId(`workspace-agent-${principalId}`)).toHaveCount(0);
         expect(await page.locator("[data-agent-scope]").count()).toBe(0);
@@ -409,7 +413,9 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         expect(principalId, "S2 depends on S1").not.toBe("");
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await openAgentDialog(page);
 
         // 真实 UI 操作序列：面板列表里**每一行**都有绑定入口（`agent-bind-row-<id>`）。
@@ -434,7 +440,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             // （`workspace-agent-<id>` 是已绑定行；S1 已把"创建后落在 unbound 区"作为预期断言，
             // 这条把「绑定后可见」补成硬断言，不再只靠截图）。
             await expect(page.getByTestId(`workspace-agent-${principalId}`)).toBeVisible({
-                timeout: 15_000,
+                timeout: LONG_TIMEOUT_MS,
             });
         } else {
             recordNotCovered(
@@ -452,7 +458,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
 
         await page.keyboard.press("Escape");
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeHidden({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         try {
@@ -470,7 +476,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             await expect(
                 forbiddenHint,
                 `session creation with PERSONAL agent failed: ${String(error)}`,
-            ).toBeVisible({ timeout: 20000 });
+            ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             recordNotCovered(
                 "S2-session",
                 "无 MANAGE_WORKSPACE_AGENTS：会话创建被拒，但 UI 显示 agent-bind-forbidden-hint（可操作文案）",
@@ -490,7 +496,9 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         expect(principalId, "S3 depends on S1").not.toBe("");
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await openAgentDialog(page);
 
         // 真实 UI 的"两次确认"是**同一个按钮点两次**（第一次进入确认态、按钮文案变成确认文案；
@@ -508,11 +516,11 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await expect(
             disableButton,
             "first click must switch the button into confirm state",
-        ).not.toHaveText(idleLabel, { timeout: 15000 });
+        ).not.toHaveText(idleLabel, { timeout: LONG_TIMEOUT_MS });
         await expect(
             disableButton,
             "the confirm state must read as an explicit confirmation",
-        ).toHaveText(/再次点击|确认|Confirm/i, { timeout: 15000 });
+        ).toHaveText(/再次点击|确认|Confirm/i, { timeout: LONG_TIMEOUT_MS });
         const disableResponse = page.waitForResponse(
             (response) =>
                 new URL(response.url()).pathname ===
@@ -524,7 +532,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         expect([200, 204], await disabled.text()).toContain(disabled.status());
 
         const disabledBadge = page.getByTestId(`agent-disabled-badge-${principalId}`);
-        await expect(disabledBadge).toBeVisible({ timeout: 20000 });
+        await expect(disabledBadge).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await shot(page, {
             id: "S3a",
             name: "s3a-agent-disabled-badge",
@@ -545,7 +553,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             const button = page.getByTestId(testId);
             const label = (await button.textContent()) ?? "";
             await button.click();
-            await expect(button).not.toHaveText(label, { timeout: 15000 });
+            await expect(button).not.toHaveText(label, { timeout: LONG_TIMEOUT_MS });
             const response = page.waitForResponse(
                 (candidate) =>
                     new URL(candidate.url()).pathname ===
@@ -556,13 +564,13 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             const answered = await response;
             expect([200, 204], await answered.text()).toContain(answered.status());
             await expect(page.getByTestId(`agent-disabled-badge-${otherId}`)).toBeVisible({
-                timeout: 20000,
+                timeout: LONG_TIMEOUT_MS,
             });
         }
 
         await page.keyboard.press("Escape");
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeHidden({
-            timeout: 15000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         // 工作区此刻已**没有可用 agent**（唯一绑定的那个刚被禁用），所以正确的 UX 不是弹出选择器，
@@ -571,7 +579,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         const unavailableHint = page.getByTestId("workspace-agent-unavailable-hint");
         await expect(unavailableHint, "the UI must explain why no Agent is selectable").toBeVisible(
             {
-                timeout: 20000,
+                timeout: LONG_TIMEOUT_MS,
             },
         );
         await expect(unavailableHint).toHaveText(/禁用|disabled/i);
@@ -628,7 +636,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         ) {
             await page.keyboard.press("Escape");
         }
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const chatResponse = page.waitForResponse(
             (response) =>
@@ -646,8 +654,8 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
                 .last()
                 .textContent()
                 .catch(() => "");
-        await expect(exhausted).toBeVisible({ timeout: 30000 });
-        await expect(hint).toBeVisible({ timeout: 20000 });
+        await expect(exhausted).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(hint).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // hint 的**语义**是"告诉用户在哪里换连接、换完可以再试"，不是某个固定短语。
         // 真实文案（i18n `chat.resourceExhaustedHint`）：「也可以在上方模型/连接选择器里换一个连接后再试。」
@@ -667,7 +675,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         // 准入 429 没有 run，但 `message-retry-button` 的条件是 `error && retryable`
         //（`MessageItem.vue` 的 canRetry），与 run 无关 ⇒ 这条断言不是放宽：它必须存在。
         const retryButton = page.getByTestId("message-retry-button");
-        await expect(retryButton).toBeVisible({ timeout: 20000 });
+        await expect(retryButton).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // 存在 ≠ 文案对：真机截图抓到过按钮直接回显 i18n key（`chat.retry`）。
         await expect(retryButton, "a raw i18n key must never reach the user").not.toHaveText(
             /^[a-z]+\.[a-zA-Z]+$/,

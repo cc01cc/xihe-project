@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -15,6 +16,7 @@ import {
 } from "./helpers/journey";
 import { bindSessionViaApi } from "./helpers/session-binding";
 import { seedUserGrant } from "./helpers/user-grants";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0372 (BL-28) decision #B: real-lane workspace tool round-trip over the
 // OpenAI-compatible MiMo connection. The runner imports the OpenAI-compatible
@@ -189,7 +191,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                     };
                     return `${body.modelProvider ?? ""}/${body.modelName ?? ""}`;
                 },
-                { timeout: 15000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .toBe(`openai/${MODEL_ID}`);
 
@@ -236,7 +238,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                     fullPage: false,
                 });
                 await modal.locator('[data-testid="approval-approve"]').click();
-                await expect(modal).toBeHidden({ timeout: 20000 });
+                await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
             }
             try {
                 await expect

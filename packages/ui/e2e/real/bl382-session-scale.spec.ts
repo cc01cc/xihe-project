@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0682 (BL-382) —— 会话规模测量 spec（真栈 · T1.1 采样夹具 + T1.2 双口径骨架）。
  *
@@ -56,6 +57,7 @@ import {
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { registerJourneyUser, seedPage, waitForControlPlaneAgentReady } from "./helpers/journey";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const TIERS = { "1k": 1_000, "5k": 5_000, "20k": 20_000 } as const;
 type Tier = keyof typeof TIERS;
@@ -629,7 +631,6 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
         );
         if (!tier) throw new Error("unreachable: test.skip handled missing XIHE_BL382_TIER");
         // 回填轮次随档位增长（20k≈400 页），实跑预算 T1.3 试跑后再收敛。
-        test.setTimeout(1_200_000);
         const evidenceDir = resolveEvidenceDir();
         mkdirSync(evidenceDir, { recursive: true });
         const caliber = worktreeCaliber();
@@ -680,7 +681,9 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
         try {
             await seedPage(page, ctx);
             await page.goto(workspaceChatPath(wsId, targetSessionId));
-            await expect(page.getByTestId("message-list")).toBeVisible({ timeout: 60_000 });
+            await expect(page.getByTestId("message-list")).toBeVisible({
+                timeout: LONG_TIMEOUT_MS,
+            });
             const initialRows = await waitForMessageCountStable(page);
             await installLongTaskObserver(page);
             const initialTasks = await drainLongTasks(page);
@@ -751,7 +754,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                 await page.mouse.wheel(0, -100_000);
                 await expect
                     .poll(async () => await viewportEl.evaluate((el) => el.scrollTop), {
-                        timeout: 30_000,
+                        timeout: LONG_TIMEOUT_MS,
                         intervals: [200, 500, 1000],
                     })
                     .toBe(0);
@@ -773,7 +776,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                 try {
                     await expect
                         .poll(() => pages.samples.length, {
-                            timeout: 10_000,
+                            timeout: ACTION_TIMEOUT_MS,
                             intervals: [100, 250],
                         })
                         .toBeGreaterThan(samplesBefore);
@@ -790,7 +793,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                             .poll(
                                 () => pageSample.count !== null || pageSample.truncated !== null,
                                 {
-                                    timeout: 10_000,
+                                    timeout: ACTION_TIMEOUT_MS,
                                     intervals: [100, 250],
                                 },
                             )
@@ -824,7 +827,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                 if (!atCap) {
                     try {
                         await expect
-                            .poll(storeCount, { timeout: 20_000, intervals: [500, 1000] })
+                            .poll(storeCount, { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000] })
                             .toBeGreaterThan(previousGrowth);
                         grew = true;
                     } catch {

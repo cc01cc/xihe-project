@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
@@ -10,6 +11,7 @@ import {
 } from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0493 T0.2 loop/no-progress observation lane: drive repeat-prone prompts
 // over the real provider and record the RAW tool-call sequences the model
@@ -208,7 +210,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 15_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -275,7 +277,7 @@ async function driveRun(
                 const status = await runStatus(request, headers, runId);
                 return TERMINAL.test(status) ? status : "running";
             },
-            { timeout: 180_000, intervals: [1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
         )
         .not.toBe("running");
     const status = await runStatus(request, headers, runId);
@@ -342,7 +344,6 @@ function analyze(label: string, rows: InvocationRow[]) {
 
 test.describe("@host PLAN-0493 T0.2 loop observation", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(900_000);
 
     test.skip(
         !process.env.XIHE_E2E_REAL_XIAOMI_KEY,

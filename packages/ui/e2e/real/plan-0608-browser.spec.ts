@@ -5,6 +5,7 @@ import { CP_URL, evidenceDir } from "./helpers/journey";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { TEST_TIMEOUT_MS } from "../timeouts";
 // PLAN-0608 M3 — C′ 会话归属的**浏览器侧**证据。
 // 判据映射（编号以 `plans/PLAN-0608-XH-session-workspace-ownership/verify.md` V10 原文为准）：
 //   test 1 → V2 硬断言（必修 4）：登录后「未导航前」tab 上下文不存在/未选择
@@ -163,7 +164,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         page,
         request,
     }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const { b } = await buildTwoWorkspaceFixture(request);
         const calls = trackSessionCalls(page);
 
@@ -188,7 +189,6 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         page,
         request,
     }) => {
-        test.setTimeout(240_000);
         const { b, targetWs, principalId } = await buildTwoWorkspaceFixture(request);
         const calls = trackSessionCalls(page);
 
@@ -230,7 +230,6 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         context,
         request,
     }) => {
-        test.setTimeout(240_000);
         const { b, targetWs } = await buildTwoWorkspaceFixture(request);
 
         await loginThroughUi(page, b.email);
@@ -265,7 +264,6 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         browser,
         request,
     }) => {
-        test.setTimeout(300_000);
         const owner = await registerAccount(request, "p0608a0");
         const workspaceA = owner.workspaceId;
         const b = await registerAccount(request, "p0608bb");
@@ -333,7 +331,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
     // 判据取自 `verify.md` V1/V3/V4 原文，不新增判据。
 
     test("5. [V3 单成员零回归] 三种调用形态均 201 且落在唯一 ws", async ({ request }) => {
-        test.setTimeout(120_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const solo = await registerAccount(request, "p0608solo");
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
@@ -384,7 +382,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
     test("6. [V4 无输入确定性] 多成员连发 3 次都是 409 且行数不变；零成员按 V4 降级", async ({
         request,
     }) => {
-        test.setTimeout(120_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const { b, fallback } = await buildTwoWorkspaceFixture(request);
         const headers = { Authorization: `Bearer ${b.accessToken}` };
 
@@ -429,7 +427,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
     });
 
     test("7. [V1 列表隔离] 同一 ws 内 B/C 的会话列表互不包含对方", async ({ request }) => {
-        test.setTimeout(180_000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         const owner = await registerAccount(request, "p0608v1a");
         const workspaceA = owner.workspaceId;
         const b = await registerAccount(request, "p0608v1b");

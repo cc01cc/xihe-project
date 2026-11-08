@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0338 M1 (T1.1–T1.3) @host matrix — Run checkpoint **slice model** on the
  * isolated real stack (native CP/Agent/Runtime + Docker Sandbox + fake LLM).
@@ -61,6 +62,7 @@ import {
 } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
     RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
@@ -265,7 +267,7 @@ async function awaitPreviousRunSettled(
                 if (entries.length === 0) return "settled";
                 return TERMINAL_RUN_PATTERN.test(entries[0]?.status ?? "") ? "settled" : "pending";
             },
-            { timeout: 120000, intervals: [1000, 2000] },
+            { timeout: LONG_TIMEOUT_MS, intervals: [1000, 2000] },
         )
         .toBe("settled");
 }
@@ -277,7 +279,7 @@ async function awaitRunTerminal(
 ): Promise<string> {
     await expect
         .poll(() => runStatus(request, headers, runId), {
-            timeout: 180000,
+            timeout: LONG_TIMEOUT_MS,
             intervals: [1000, 2000],
         })
         .toMatch(TERMINAL_RUN_PATTERN);
@@ -401,7 +403,7 @@ async function openWorkspace(page: Page, ctx: JourneyContext): Promise<void> {
         waitUntil: "load",
     });
     await expect(page.locator('[data-testid="chat-input"]'), "workspace chat input").toBeVisible({
-        timeout: 30000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -428,12 +430,12 @@ async function startRun(
     if (checkpointSessionId) await ensureChatBinding(page, checkpointSessionId);
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
-    await expect(input).toBeVisible({ timeout: 30000 });
+    await expect(input).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     for (let attempt = 0; attempt < 4; attempt += 1) {
         await input.click().catch(() => {});
         await input.fill(text).catch(() => {});
         try {
-            await expect(send).toBeEnabled({ timeout: 8000 });
+            await expect(send).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
         } catch {
             continue;
         }
@@ -442,7 +444,7 @@ async function startRun(
                 (response) =>
                     response.url().endsWith("/api/v1/chat") &&
                     response.request().method() === "POST",
-                { timeout: 20000 },
+                { timeout: LONG_TIMEOUT_MS },
             )
             .catch(() => null);
         await send.click().catch(() => {});
@@ -459,9 +461,9 @@ async function approveCard(page: Page): Promise<void> {
     const card = page
         .locator('[data-testid="approval-approve"], [data-testid="approval-allow-session"]')
         .first();
-    await expect(card, "approval card").toBeVisible({ timeout: 180000 });
+    await expect(card, "approval card").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await card.click();
-    await expect(card).toBeHidden({ timeout: 60000 });
+    await expect(card).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 }
 
 /** Poll the host file until the approved tool write lands (or time out). */
@@ -488,7 +490,6 @@ async function awaitHostFile(filePath: string, expected: string, timeoutMs = 600
 
 test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () => {
     test.describe.configure({ mode: "serial", retries: 0 });
-    test.setTimeout(300000);
 
     let ctx: JourneyContext, hostDir: string;
 
@@ -535,7 +536,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await expect
             .poll(() => listSliceRefs(ctx.workspaceId).length, {
                 message: "C0 baseline slice ref must appear after materialize",
-                timeout: 180000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [1000, 2000, 3000],
             })
             .toBeGreaterThan(0);
@@ -1076,7 +1077,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await expect
             .poll(() => listSliceRefs(ctx.workspaceId).length, {
                 message: "cleanup must remove all shadow slice refs",
-                timeout: 60000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [1000, 2000, 3000],
             })
             .toBe(0);
@@ -1089,7 +1090,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         await expect
             .poll(() => listSliceRefs(ctx.workspaceId).length, {
                 message: "materialize must bootstrap a fresh C0 slice after cleanup",
-                timeout: 180000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [1000, 2000, 3000],
             })
             .toBeGreaterThan(0);

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -16,6 +17,7 @@ import {
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { workspaceChatPath } from "../../src/lib/routes";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0670 M2d —— 三项交互 smoke（真栈，e2e-host `--llm-mode=success`）：
@@ -48,7 +50,7 @@ function psql(sql: string): string {
     return execFileSync(
         process.platform === "win32" ? "docker.exe" : "docker",
         ["exec", container, "psql", "-X", "-A", "-t", "-U", dbUser, "-d", database, "-c", sql],
-        { encoding: "utf8", timeout: 30_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -101,7 +103,6 @@ test.describe("@host PLAN-0670 M2d interaction smoke", () => {
         request,
     }) => {
         test.skip(!process.env.XIHE_E2E_PG_CONTAINER, "requires the isolated e2e-host stack");
-        test.setTimeout(600_000);
         mkdirSync(EVIDENCE_DIR, { recursive: true });
         const observed: Record<string, unknown> = { plan: "PLAN-0670", task: "M2d smoke" };
         const persist = (): void => {
@@ -133,10 +134,10 @@ test.describe("@host PLAN-0670 M2d interaction smoke", () => {
 
         await seedPage(page, ctx);
         await page.goto(workspaceChatPath(wsId, sessionId));
-        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("message-list")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(async () => await messageCount(page), {
-                timeout: 120_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000, 2000],
             })
             .toBeGreaterThan(0);
@@ -152,16 +153,16 @@ test.describe("@host PLAN-0670 M2d interaction smoke", () => {
         await page.mouse.wheel(0, -100_000);
         await expect
             .poll(async () => await viewport.evaluate((element) => element.scrollTop), {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [200, 500, 1000],
             })
             .toBe(0);
         const loadOlder = page.getByTestId("load-older-messages");
-        await expect(loadOlder).toBeVisible({ timeout: 30_000 });
+        await expect(loadOlder).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await loadOlder.click();
         await expect
             .poll(async () => await messageCount(page), {
-                timeout: 120_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000, 2000],
             })
             .toBeGreaterThan(firstPage);
@@ -183,7 +184,7 @@ test.describe("@host PLAN-0670 M2d interaction smoke", () => {
         await page.getByTestId("chat-send-button").click();
         await expect
             .poll(async () => await messageCount(page), {
-                timeout: 180_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [500, 1000, 2000],
             })
             .toBeGreaterThan(beforeSend);
@@ -202,11 +203,11 @@ test.describe("@host PLAN-0670 M2d interaction smoke", () => {
         // ③ 搜索定位：搜索态关闭窗口化，过滤 + 回顶行为不变。
         await page.getByTestId("message-search-toggle").click();
         const searchInput = page.getByPlaceholder(/搜索消息/);
-        await expect(searchInput).toBeVisible({ timeout: 10_000 });
+        await expect(searchInput).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await searchInput.fill(SEED_MARKER);
         await expect
             .poll(async () => await messageCount(page), {
-                timeout: 30_000,
+                timeout: LONG_TIMEOUT_MS,
                 intervals: [200, 500, 1000],
             })
             .toBe(1);

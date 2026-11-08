@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0658 M7：思考过程（reasoning）渲染矩阵（mock lane，无栈）。
  *
@@ -22,6 +23,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { installContextEventStream, pushContextEvent } from "./helpers/context-events";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
@@ -33,12 +35,12 @@ async function prepare(page: Page, title: string): Promise<void> {
     await installContextEventStream(page);
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
     await page.getByTestId("chat-input").fill("带思考的一轮");
     await page.getByTestId("chat-send-button").click();
     await expect(page.getByText("带思考的一轮"), "user bubble rendered").toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -52,7 +54,7 @@ test.describe("会话矩阵 M7 — 思考过程", () => {
         await prepare(page, "Matrix M7");
         await pushContextEvent(page, "token", { content: "思考一", hint: "reasoning" });
         const row = reasoningRow(page);
-        await expect(row, "reasoning 过程行渲染").toBeVisible({ timeout: 15_000 });
+        await expect(row, "reasoning 过程行渲染").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // 折叠行只显示首行摘要（正文只在展开体里）。
         await expect(row.getByTestId("process-row-summary")).toContainText("思考一");
         const toggle = row.getByTestId("process-row-toggle");
@@ -63,7 +65,7 @@ test.describe("会话矩阵 M7 — 思考过程", () => {
         await toggle.click();
         await expect(toggle, "展开").toHaveAttribute("aria-expanded", "true");
         await expect(row, "两段 reasoning 按序追加").toContainText("思考一思考二", {
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         // 再收起：展开体消失，摘要仍在。
         await toggle.click();
@@ -72,7 +74,9 @@ test.describe("会话矩阵 M7 — 思考过程", () => {
 
         // 答复正文到达（文本 token 与 reasoning 同属一条消息，渲染重排后不断言旧节点）。
         await pushContextEvent(page, "token", { content: "答复正文" });
-        await expect(page.getByText("答复正文"), "answer renders").toBeVisible({ timeout: 10_000 });
+        await expect(page.getByText("答复正文"), "answer renders").toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         // 收尾：done 只结束生命周期（完成后的持久折叠态由 real-lane R9 覆盖）。
         await pushContextEvent(page, "done", {});
     });
@@ -81,7 +85,7 @@ test.describe("会话矩阵 M7 — 思考过程", () => {
         await prepare(page, "Matrix M7 no thinking");
         await pushContextEvent(page, "token", { content: "纯文本答复" });
         await expect(page.getByText("纯文本答复"), "answer renders").toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("process-reasoning"), "no empty reasoning row").toHaveCount(
             0,
@@ -93,7 +97,7 @@ test.describe("会话矩阵 M7 — 思考过程", () => {
         await prepare(page, "Matrix M7 streaming");
         await pushContextEvent(page, "token", { content: "思考中…", hint: "reasoning" });
         const row = reasoningRow(page);
-        await expect(row, "reasoning 过程行在流式期可见").toBeVisible({ timeout: 15_000 });
+        await expect(row, "reasoning 过程行在流式期可见").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(row.getByTestId("process-row-toggle"), "流式期仍折叠").toHaveAttribute(
             "aria-expanded",
             "false",

@@ -1,5 +1,7 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 interface Route {
     path: string;
@@ -268,14 +270,14 @@ for (const route of allRoutes) {
             });
         });
 
-        const resp = await page.goto(route.path, { waitUntil: "load", timeout: 15000 });
+        const resp = await page.goto(route.path, { waitUntil: "load", timeout: LONG_TIMEOUT_MS });
         expect(resp?.status()).toBe(200);
         await expect(page.locator("#app")).toBeVisible();
         if (route.name === "workspace-chat-session") {
             // Readiness, not a clock: the chat surface mounts its composer only after the session
             // projection has been applied, and the assertions below must cover the projections
             // resolving — the `{}` catch-all used to fail *after* this test had already passed.
-            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
+            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         }
 
         await expectPlatformScreenshot(page, route.name + ".png");

@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0631 色彩方案质量门。**默认 = C2′（C2 弱化描边版，用户 2026-11-03 圈选定案）**，
  * C1/C3 仅 `?color=c1|c3` opt-in 对比用。用户三条反馈（本次需求）：
@@ -45,6 +46,7 @@ import {
     probe,
     probeActive,
 } from "../helpers/color";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -447,9 +449,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?color=${item.param}`, {
                 waitUntil: "load",
             });
-            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-                timeout: 20000,
+                timeout: LONG_TIMEOUT_MS,
             });
             await page.getByTestId("chat-input").fill(DRAFT);
 
@@ -599,7 +601,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?color=${item.param}`, {
                 waitUntil: "load",
             });
-            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await page.evaluate((payload) => {
                 const push = (window as unknown as Record<string, unknown>).__pushApprovalEvent as (
                     event: unknown,
@@ -608,7 +610,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             }, approvalEvent(REQUEST_ID));
 
             const dialog = page.locator('[data-testid="modal-content"]');
-            await expect(dialog).toBeVisible({ timeout: 10000 });
+            await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
             await expect(dialog.locator('[data-testid="approval-approve"]')).toBeVisible();
             await expect(dialog.locator('[data-testid="approval-reject"]')).toBeVisible();
 
@@ -674,9 +676,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             await mockRolesApis(page);
 
             await page.goto(`/settings/roles?color=${item.param}`, { waitUntil: "load" });
-            await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: 20000 });
+            await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
             await expect(page.getByTestId("role-system-badge").first()).toBeVisible({
-                timeout: 20000,
+                timeout: LONG_TIMEOUT_MS,
             });
 
             const shot = await shoot(page, `${item.id}-settings.png`);
@@ -736,9 +738,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         await mockSessionProjections(page, SESSION_ID);
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await page.getByTestId("chat-input").fill(DRAFT);
 
@@ -899,7 +901,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         await installApprovalSSE(page);
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.evaluate((payload) => {
             const push = (window as unknown as Record<string, unknown>).__pushApprovalEvent as (
                 event: unknown,
@@ -908,7 +910,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         }, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
-        await expect(dialog).toBeVisible({ timeout: 10000 });
+        await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expect(dialog.locator('[data-testid="approval-approve"]')).toBeVisible();
         await expect(dialog.locator('[data-testid="approval-reject"]')).toBeVisible();
 
@@ -973,9 +975,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         await mockRolesApis(page);
 
         await page.goto("/settings/roles", { waitUntil: "load" });
-        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("role-system-badge").first()).toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
 
         const shot = await shoot(page, "default2-settings.png");
@@ -1043,7 +1045,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         });
 
         await page.goto("/workspace", { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
 
         const shot = await shoot(page, "default2-picker.png");
 

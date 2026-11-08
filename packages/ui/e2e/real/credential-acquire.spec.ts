@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * PLAN-0497 T2.2 —— acquire_credential 真实链路（CP + Agent 进程）。
  *
@@ -32,6 +33,7 @@ import {
 import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
 import { seedUserGrant } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
@@ -68,7 +70,7 @@ function psql(sql: string): string {
             "-c",
             sql,
         ],
-        { encoding: "utf8", timeout: 20_000, windowsHide: true },
+        { encoding: "utf8", timeout: LONG_TIMEOUT_MS, windowsHide: true },
     ).trim();
 }
 
@@ -184,7 +186,6 @@ test("@host credential acquisition — manual ask, delivery, memory-only value",
         "credential acquisition flow requires XIHE_E2E_LLM_MODE=credential_acquire",
     );
     test.skip(!PG_CONTAINER, "requires the isolated host stack (scripts/e2e-host.mjs)");
-    test.setTimeout(300000);
 
     const deliveredSecret = `e2e-acquire-secret-${Date.now()}-${randomUUID().slice(0, 8)}`;
 
@@ -274,21 +275,27 @@ test("@host credential acquisition — manual ask, delivery, memory-only value",
     });
 
     await page.goto("/workspace/" + wsId, { waitUntil: "load" });
-    await expect(page.getByTestId("workspace-create-session")).toBeVisible({ timeout: 20000 });
+    await expect(page.getByTestId("workspace-create-session")).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     await createWorkspaceSessionWithPrincipal(page, principalId);
-    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     const modal = page.locator('[data-testid="modal-content"]');
 
     // The fake LLM issues acquire_credential for the id embedded in the marker.
     await sendChat(page, `XIHE-E2E-ACQUIRE ${credentialId}`);
-    await expect(modal, "approval modal for acquire_credential").toBeVisible({ timeout: 120000 });
+    await expect(modal, "approval modal for acquire_credential").toBeVisible({
+        timeout: LONG_TIMEOUT_MS,
+    });
     // The approval payload must never carry the delivered value.
     await expect(modal).not.toContainText(deliveredSecret);
     await modal.locator('[data-testid="approval-approve"]').click();
-    await expect(modal).toBeHidden({ timeout: 20000 });
+    await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 
     // Delivery happened in-memory: the run answers without echoing the value.
-    await expect(page.locator("text=Acquired.").first()).toBeVisible({ timeout: 120000 });
+    await expect(page.locator("text=Acquired.").first()).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await awaitLatestChatRunCompleted(request, authHeaders, wsId);
 
     // --- I5: no durable surface may carry the plaintext ---

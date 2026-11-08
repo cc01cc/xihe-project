@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, type APIRequestContext, type Page, type Response } from "@playwright/test";
@@ -18,6 +19,7 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 import type { RunTraceEvent, RunTraceResponse } from "../../src/types";
+import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const REAL_ROUTE = process.env.XIHE_E2E_REAL_ROUTE ?? "native";
 const REAL_MODEL =
@@ -283,7 +285,6 @@ function assertSafeTrace(
 
 test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
     test.describe.configure({ mode: "serial", retries: 0 });
-    test.setTimeout(300000);
 
     test.skip(
         (process.env.XIHE_E2E_LLM_MODE ?? "mock") !== "real",
@@ -511,7 +512,10 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
             .poll(
                 () =>
                     (traceResponses.get(runId) ?? []).some((response) => response.status() === 200),
-                { timeout: 30000, message: "the browser must load this Run's trace API response" },
+                {
+                    timeout: LONG_TIMEOUT_MS,
+                    message: "the browser must load this Run's trace API response",
+                },
             )
             .toBe(true);
         return (traceResponses.get(runId) ?? [])
@@ -551,7 +555,7 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
                     }
                 },
                 {
-                    timeout: 90_000,
+                    timeout: LONG_TIMEOUT_MS,
                     intervals: [1000, 2000],
                     message: `CP Agent circuit did not clear before the browser Chat; last observation: ${lastObserved}`,
                 },
@@ -573,11 +577,13 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
         // 绑定改走产品 PATCH API（bindRealProvider 内部就是这个端点），do not call sendChat().
         await bindRealProvider(request, sessionId, ctx);
         await expect
-            .poll(() => sessionModel(request), { timeout: 15000 })
+            .poll(() => sessionModel(request), { timeout: LONG_TIMEOUT_MS })
             .toBe(`${REAL_PROVIDER}/${REAL_MODEL}`);
 
         const panel = page.locator(PANEL);
-        await expect(panel, "Monitor is visible beside the chat").toBeVisible({ timeout: 20000 });
+        await expect(panel, "Monitor is visible beside the chat").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const promptMarker = `RUN-TRACE-PRIVACY-${Date.now().toString(36)}`;
         const prompt = `请简短回答“运行记录已创建”。验收标记 ${promptMarker}`;
         const chatPostPromise = page.waitForResponse((response) => {
@@ -589,7 +595,9 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
             );
         });
         await page.getByTestId("chat-input").fill(prompt);
-        await expect(page.getByTestId("chat-send-button")).toBeEnabled({ timeout: 15000 });
+        await expect(page.getByTestId("chat-send-button")).toBeEnabled({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("chat-send-button").click();
         const chatPost = await chatPostPromise;
         const chatBody = (await chatPost.json()) as { runId?: string };
@@ -606,12 +614,12 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
 
         const runSelect = page.getByTestId("monitor-trace-run-select");
         await expect(runSelect.locator(`option[value="${runId}"]`)).toBeAttached({
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await runSelect.selectOption(runId);
         await expect
             .poll(() => page.getByTestId("run-trace-event").count(), {
-                timeout: 30000,
+                timeout: LONG_TIMEOUT_MS,
                 message: "the selected completed Run must refresh its trace events",
             })
             .toBeGreaterThan(0);
@@ -622,7 +630,9 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
 
         const timeline = page.getByTestId("run-trace-timeline");
         await expect(timeline).toBeVisible();
-        await expect(page.getByTestId("run-trace-events")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("run-trace-events")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const firstEventIds = await page
             .getByTestId("run-trace-event")
             .evaluateAll((items) => items.map((item) => item.getAttribute("data-event-id")));
@@ -634,15 +644,17 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
         });
         await page.reload({ waitUntil: "load" });
         await expect(page.locator(PANEL), "Monitor remounts after refresh").toBeVisible({
-            timeout: 20000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("monitor-trace-run-select")).toHaveValue(runId, {
-            timeout: 30000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const refreshedTraceResponse = await refreshedTracePromise;
         const refreshedTrace = (await refreshedTraceResponse.json()) as TraceResponse;
         assertSafeTrace(refreshedTrace, runId, promptMarker, prompt);
-        await expect(page.getByTestId("run-trace-events")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("run-trace-events")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         const refreshedEventIds = await page
             .getByTestId("run-trace-event")
             .evaluateAll((items) => items.map((item) => item.getAttribute("data-event-id")));

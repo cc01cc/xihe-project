@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
@@ -20,6 +21,7 @@ import {
     sendChat,
     type JourneyContext,
 } from "./helpers/journey";
+import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const EVIDENCE_DIR = evidenceDir("plan-0508-transport-telemetry"),
     PANEL = '[data-testid="session-monitor-panel"]',
@@ -58,7 +60,6 @@ interface AttemptsBody {
 //   node scripts/e2e-host.mjs --batch=transport --retries=0
 test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(300000);
 
     let ctx: JourneyContext,
         sessionId = "",
@@ -74,7 +75,7 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         // readiness budget (fast-fail on terminal `llmReady` states, 500ms poll)
         // instead of 180s. Keep this hook's budget above it (90s) so the helper's
         // descriptive error is still not masked by an opaque beforeAll timeout.
-        test.setTimeout(90000);
+        test.setTimeout(TEST_TIMEOUT_MS);
         ctx = await registerJourneyUser(request, "plan-0508-transport");
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
@@ -182,7 +183,7 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         await assertAgentLlmReady();
 
         const panel = page.locator(PANEL);
-        await expect(panel, "monitor panel visible").toBeVisible({ timeout: 20000 });
+        await expect(panel, "monitor panel visible").toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await sendChat(page, "transport normal probe");
         await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
@@ -233,7 +234,7 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         await expect(
             panel.locator('[data-testid="monitor-transport-attempt"]').first(),
             "transport attempt row rendered from the durable read",
-        ).toBeVisible({ timeout: 25000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel).toContainText("success");
         await expect(panel.locator('[data-testid="monitor-transport-metrics"]')).toContainText(
             "未知",
@@ -290,15 +291,15 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
                         row.chunkCount === null
                     );
                 },
-                { timeout: 30000, intervals: [500, 1000] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [500, 1000] },
             )
             .toBe(true);
 
         // SSE-driven: the panel shows the in-flight attempt without a reload.
         await expect(
             panel.locator('[data-testid="monitor-transport-attempt"]').first(),
-        ).toBeVisible({ timeout: 25000 });
-        await expect(panel, "running chip").toContainText("进行中", { timeout: 25000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(panel, "running chip").toContainText("进行中", { timeout: LONG_TIMEOUT_MS });
         await capture(page, "desktop-transport-running.png");
 
         await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
@@ -347,7 +348,7 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
                     runId = run.runId;
                     return true;
                 },
-                { timeout: 30000, intervals: [300, 800] },
+                { timeout: LONG_TIMEOUT_MS, intervals: [300, 800] },
             )
             .toBe(true);
         await awaitOperationCompletedForRun(request, ctx.headers, runId);
@@ -377,17 +378,17 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         const panel = page.locator(PANEL);
         await expect(
             panel.locator('[data-testid="monitor-transport-attempt"]').first(),
-        ).toBeVisible({ timeout: 25000 });
+        ).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(panel, "panel renders the safe error code").toContainText(failureCode);
         await capture(page, "desktop-transport-failure.png");
 
         // Refresh: the durable projection restores the state without any live SSE.
         await page.reload({ waitUntil: "load" });
-        await expect(page.locator(PANEL)).toBeVisible({ timeout: 25000 });
+        await expect(page.locator(PANEL)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(
             page.locator(PANEL),
             "after refresh the failure attempt renders from the durable read",
-        ).toContainText(failureCode, { timeout: 25000 });
+        ).toContainText(failureCode, { timeout: LONG_TIMEOUT_MS });
         await capture(page, "desktop-transport-refresh.png");
     });
 });

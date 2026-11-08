@@ -50,7 +50,6 @@ test.describe.serial("@host PLAN-0504 profile reaches the Agent process", () => 
     test("instance profile flows into the Agent snapshot; clearing fails closed", async ({
         request,
     }) => {
-        test.setTimeout(240000);
         const password = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
         expect(password, "XIHE_E2E_ADMIN_PASSWORD must be provided by e2e-host").not.toBe("");
         const login = await request.post(`${CP_URL}/api/v1/auth/login`, {

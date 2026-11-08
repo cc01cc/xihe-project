@@ -1,3 +1,4 @@
+// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
  * X 展示级截图（PLAN-0659 / task-15）：TO/CC 多主体能力。
  *
@@ -17,6 +18,12 @@ import { expect, test } from "./helpers/mock-test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    TEST_TIMEOUT_MS,
+} from "../timeouts";
 
 const DEMO = process.env.XIHE_E2E_DEMO === "1";
 const SHOT_DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";
@@ -425,7 +432,7 @@ async function stubDelegation(page: Page): Promise<void> {
 async function openSession(page: Page): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
-        timeout: 20_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -433,13 +440,15 @@ async function openSession(page: Page): Promise<void> {
 async function settle(page: Page): Promise<void> {
     // 流式态 composer 的按钮 testid 是 `chat-stop-button`，终态才回到 `chat-send-button`。
     await expect(page.getByTestId("chat-stop-button"), "run 已终态").toHaveCount(0, {
-        timeout: 25_000,
+        timeout: LONG_TIMEOUT_MS,
     });
-    await expect(page.getByTestId("chat-send-button")).toHaveCount(1, { timeout: 25_000 });
+    await expect(page.getByTestId("chat-send-button")).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
     await expect(page.locator("[data-sonner-toast]"), "toast 已消失").toHaveCount(0, {
-        timeout: 20_000,
+        timeout: LONG_TIMEOUT_MS,
     });
-    await expect(page.getByText("执行中"), "工具卡不再执行中").toHaveCount(0, { timeout: 20_000 });
+    await expect(page.getByText("执行中"), "工具卡不再执行中").toHaveCount(0, {
+        timeout: LONG_TIMEOUT_MS,
+    });
     const closePanel = page.getByRole("button", { name: "关闭此面板" });
     if ((await closePanel.count()) > 0) await closePanel.first().click();
     const overflow = await page.evaluate(() => ({
@@ -475,7 +484,7 @@ async function shot(page: Page, name: string): Promise<void> {
 async function pickTo(page: Page, name: string): Promise<void> {
     const field = page.getByTestId("speak-as-input");
     await field.fill(name);
-    await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await field.press("Enter");
     await expect(page.getByTestId("speak-as-chip").first()).toContainText(name);
 }
@@ -485,9 +494,9 @@ async function pickCc(page: Page, name: string): Promise<void> {
     if ((await bar.count()) === 0) await page.getByTestId("cc-expand").click();
     await page.getByTestId("cc-input").fill(name);
     const menu = page.getByTestId("cc-menu");
-    await expect(menu).toBeVisible({ timeout: 10_000 });
+    await expect(menu).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await menu.getByRole("option").first().click();
-    await expect(menu).toBeHidden({ timeout: 10_000 });
+    await expect(menu).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 /** A 方案：会话成员面板常开（多主体在席）。 */
@@ -495,9 +504,9 @@ async function openMembersDock(page: Page): Promise<void> {
     if ((await page.getByTestId("dock-tab-members").count()) === 0) {
         await page.getByTestId("workspace-toolbar-members").click();
     }
-    await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({
-        timeout: 15_000,
+        timeout: LONG_TIMEOUT_MS,
     });
 }
 
@@ -506,7 +515,7 @@ test.use({ locale: "zh-CN" });
 
 test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () => {
     test.skip(!DEMO, "只有 XIHE_E2E_DEMO=1 时才出演示图");
-    test.setTimeout(180_000);
+    test.setTimeout(TEST_TIMEOUT_MS);
 
     test.beforeAll(() => {
         if (!SHOT_DIR) throw new Error("XIHE_E2E_DEMO_DIR must be set");
@@ -527,7 +536,9 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
     test("①②③④ 投递 + 成员面板 + run 分组", async ({ page }) => {
         await openSession(page);
         // 等布局种子生效：文件树收起、右栏关闭。
-        await expect(page.getByTestId("workspace-tree-expand")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("workspace-tree-expand")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
         // A 方案（用户裁定）：成员面板常开 = 多主体在席；TO 单选（发送）、CC 3 个。
         await openMembersDock(page);
@@ -545,12 +556,14 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
         await shot(page, "01-to-cc-chips.png");
 
         await page.getByTestId("chat-send-button").click();
-        await expect(page.getByTestId("message-delivery")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByTestId("message-delivery")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("message-delivery-to")).toContainText("发送→Reviewer");
         await expect(page.getByTestId("message-delivery-mention")).toContainText("@Planner");
         // 等 run 1 终态：完整回复 + 工具卡完成 + toast 消失 + 右栏关闭。
         await expect(page.getByText("这两处需与 Planner 确认。", { exact: false })).toBeVisible({
-            timeout: 25_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         await settle(page);
 
@@ -561,14 +574,18 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
 
         // ③ 成员面板（A 方案：2 人类 + 4 agent 同框）
         await openMembersDock(page);
-        await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: 10_000 });
+        await expect(page.getByTestId("dock-tab-members")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByText("Summarizer", { exact: true }).first()).toBeVisible({
-            timeout: 10_000,
+            timeout: ACTION_TIMEOUT_MS,
         });
-        await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
+        await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await page.waitForTimeout(400);
         await shot(page, "03-members-panel.png");
 
@@ -587,11 +604,11 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
         await page.getByTestId("chat-input").fill("排期按契约确认后的节奏排，别再顺延。");
         await page.getByTestId("chat-send-button").click();
         await expect(page.getByText("另留 2 天缓冲", { exact: false })).toBeVisible({
-            timeout: 25_000,
+            timeout: LONG_TIMEOUT_MS,
         });
-        await expect(page.getByTestId("run-header")).toHaveCount(2, { timeout: 20_000 });
+        await expect(page.getByTestId("run-header")).toHaveCount(2, { timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("process-row-actor").first()).toBeVisible({
-            timeout: 15_000,
+            timeout: LONG_TIMEOUT_MS,
         });
         const actors = await page.getByTestId("process-row-actor").count();
         const responders = await page.getByTestId("message-responder").count();
@@ -628,10 +645,18 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
         await stubDelegation(page);
         await openSession(page);
         await page.getByTestId("workspace-toolbar-delegation").click();
-        await expect(page.getByTestId("dock-tab-delegation")).toBeVisible({ timeout: 10_000 });
-        await expect(page.getByTestId("delegation-dag")).toBeVisible({ timeout: 10_000 });
-        await expect(page.getByTestId("delegation-node")).toHaveCount(3, { timeout: 15_000 });
-        await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
+        await expect(page.getByTestId("dock-tab-delegation")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("delegation-dag")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("delegation-node")).toHaveCount(3, {
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         // PLAN-0659 T1.4 缺陷修复回归：480px 右栏下 DAG 画布不得出现横向滚动
         // （`(maxDepth+1)×COL_W` + 内边距 ≤ 可用宽度；DOM 实测，不靠肉眼）。
         const dagScroll = await page
