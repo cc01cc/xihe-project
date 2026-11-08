@@ -51,7 +51,8 @@ import net from 'node:net';
 import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cargoTargetForStack } from './lib/stack-cargo-target.mjs';
+import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from './lib/stack-cargo-target.mjs';
+import { ensureEnvFromUser } from './lib/user-env.mjs';
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
 import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
 import {
@@ -68,6 +69,11 @@ import {
 } from './lib/stack-lease.mjs';
 import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
+
+// task-234 B：DSH 子 shell 不继承 User 级 env ⇒ 直启时 process.env 里没有
+// `XH_CARGO_TARGET_ROOT`，cargo 会回落 `<one>/.tmp/cargo-target` 使单根不变量失效。
+// 这里在**任何派生/起进程之前**兜底读一次 HKCU\Environment（fail-open：读不到就保持原行为）。
+ensureEnvFromUser(CARGO_TARGET_ROOT_ENV);
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptProjectRoot = resolve(dirname(scriptPath), '..');
@@ -1214,6 +1220,13 @@ async function gc() {
 /* ----------------------------------------------------------------- main */
 
 try {
+  // task-234 A：注入失败时只提示正确启动方式（不改语义）。B 已尝试 User 级兜底，走到这里仍为空 ⇒ 真没有可用的根。
+  if (!process.env[CARGO_TARGET_ROOT_ENV]) {
+    console.warn(
+      `[dev-stack] WARN: ${CARGO_TARGET_ROOT_ENV} 未注入（当前 shell 不继承 User 级 env，且 User 级也未配置）；` +
+        `cargo 会回落 <one>/.tmp/cargo-target。请用 \`mise run dev:stack -- --stack ${args.stack ?? process.env.XIHE_STACK_ID ?? '1'}\` 启动。`,
+    );
+  }
   if (args.action === 'start') await start();
   else if (args.action === 'status') {
     if (args.all) await statusAll();

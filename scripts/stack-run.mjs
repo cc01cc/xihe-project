@@ -28,12 +28,16 @@ import {
 } from "./lib/cp-build-info.mjs";
 import { cpBuildRoot, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
-import { cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
+import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
+import { ensureEnvFromUser } from "./lib/user-env.mjs";
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
 import { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } from "./lib/stack-ports.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..");
+// task-234 B：直启路径（不经 mise）时 process env 缺 `XH_CARGO_TARGET_ROOT` ⇒ 兜底读 User 级 env，
+// 否则下游 cargoTargetForStack 会回落 `<one>/.tmp/cargo-target`（fail-open：读不到保持原行为）。
+ensureEnvFromUser(CARGO_TARGET_ROOT_ENV);
 
 function readStackArg(args) {
   const inline = args.find((arg) => arg.startsWith("--stack="));
