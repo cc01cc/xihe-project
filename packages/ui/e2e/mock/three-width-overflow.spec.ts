@@ -32,7 +32,7 @@ async function expectNoHorizontalOverflow(
 ): Promise<void> {
     // 用 `page.evaluate(selector)` 而不是 `locator.evaluate`：后者会等 locator 可见/唯一，
     // 面板还没挂载时会一直等到测试超时（首版就是这么红的）。
-    const metrics = await page.evaluate((sel) => {
+    const readMetrics = async () => page.evaluate((sel) => {
         const el = sel === "html" ? document.documentElement : document.querySelector(sel);
         if (!el) return null;
         let widest = { tag: "", cls: "", width: 0 };
@@ -49,8 +49,17 @@ async function expectNoHorizontalOverflow(
         return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, widest };
     }, selector);
 
+    let metrics = (await readMetrics())!;
     expect(metrics, `${label}：找不到 ${selector}`).not.toBeNull();
     if (!metrics) return;
+    // dock/成员面板挂载有一两帧过渡态（W-20 的 1920 偶发）；先给 3s 收敛窗口再判定，
+    // 永久溢出仍会在超时后失败（不是放宽阈值，只去掉瞬态采样）。
+    const deadline = Date.now() + 3_000;
+    while (metrics.scrollWidth > metrics.clientWidth + 1 && Date.now() < deadline) {
+        await page.waitForTimeout(100);
+        const next = await readMetrics();
+        if (next) metrics = next;
+    }
     // 报告用：三宽 × 三处的实测数字（scrollWidth/clientWidth）。
     console.log(`[BL-341] ${label}: ${metrics.scrollWidth}/${metrics.clientWidth}`);
     expect
