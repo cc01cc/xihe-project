@@ -68,8 +68,7 @@ public class DelegationRefusedException extends CpApiException {
     public static DelegationRefusedException disabled(DelegationAuditContext context, String phase,
                                                       int depth, int maxDepth) {
         return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
-                "delegation is disabled by this principal's delegationPolicy (maxCount=0)"
-                        + " — 该委派策略已禁用委派",
+                ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
                 context.toAuditDetail("delegation_disabled", phase, depth, maxDepth, 0, 0));
     }
     /**
@@ -89,13 +88,10 @@ public class DelegationRefusedException extends CpApiException {
     public static DelegationRefusedException refused(String reason, DelegationAuditContext context,
                                                     String phase, int depth, int maxDepth, int current,
                                                     int maxCount) {
-        String detail = switch (reason) {
-            case "depth_exceeded" -> "Delegation depth limit exceeded (depth " + depth + " > maxDepth " + maxDepth + ")";
-            case "count_exceeded" -> "Delegation count limit exceeded (in flight " + current
-                    + " >= maxCount " + maxCount + ")";
-            default -> "Delegation refused: " + reason;
-        };
-        return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED, detail,
+        // PLAN-0708 / BL-516: the wire message is the stable code (UI localizes it); the rich
+        // reason/depth/count facts stay in the durable audit detail only.
+        return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
+                ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
                 context.toAuditDetail(reason, phase, depth, maxDepth, current, maxCount));
     }
 
@@ -109,7 +105,7 @@ public class DelegationRefusedException extends CpApiException {
     public static DelegationRefusedException policyInvalid(String reason, DelegationAuditContext context,
                                                            String phase, String detail) {
         return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_POLICY_INVALID,
-                "Delegation policy is invalid (" + reason + "): " + detail,
+                ToolRefusalCodes.DELEGATION_POLICY_INVALID,
                 context.toAuditDetail(reason, phase, -1, -1, -1, -1));
     }
 

@@ -131,14 +131,7 @@ public class ModelsProxyController {
         extra.put("reason", reason);
         extra.put("retryable", retryable);
         return ProblemDetailsHandler.problemResponse(
-                HttpStatus.SERVICE_UNAVAILABLE, AGENT_UNAVAILABLE_CODE, dependencyDetail(reason), extra);
+                HttpStatus.SERVICE_UNAVAILABLE, AGENT_UNAVAILABLE_CODE, null, extra);
     }
 
-    private static String dependencyDetail(String reason) {
-        return switch (reason) {
-            case "timeout" -> "Agent service did not respond in time; retry shortly";
-            case "auth_failed" -> "Internal service credential was rejected by the agent; contact the administrator";
-            default -> "Agent service is unavailable; retry after the service starts";
-        };
-    }
 }

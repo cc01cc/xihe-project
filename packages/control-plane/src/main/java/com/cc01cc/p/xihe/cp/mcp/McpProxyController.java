@@ -717,7 +717,7 @@ public class McpProxyController {
                 dependency,
                 reason,
                 retryable,
-                dependencyDetail(dependency, reason),
+                null,
                 upstreamStatus);
     }
 
@@ -770,16 +770,6 @@ public class McpProxyController {
         };
     }
 
-    private static String dependencyDetail(String dependency, String reason) {
-        return switch (reason) {
-            case "timeout" -> ("runtime".equals(dependency) ? "Workspace runtime" : "Agent service")
-                    + " did not respond in time; retry shortly";
-            case "auth_failed" -> "Internal service credential was rejected by the " + dependency
-                    + "; contact the administrator";
-            default -> ("runtime".equals(dependency) ? "Workspace runtime" : "Agent service")
-                    + " is unavailable; retry after the service starts";
-        };
-    }
 
     /**
      * PLAN-0630 M4 T4.1: the description carries two stable phrases (frozen wording, mirrored by
