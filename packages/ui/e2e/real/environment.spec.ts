@@ -77,7 +77,7 @@ test.describe("Workspace environment status", () => {
                                     `/api/v1/workspaces/${encodeURIComponent(auth.workspaceId)}/environment`,
                                 ) && r.request().method() === "GET",
                     );
-                    await page.getByTitle("Refresh").click();
+                    await page.getByTitle(/刷新|Refresh/i).click();
                     await response;
                     return (
                         (
