@@ -32,8 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * other (PLAN-0408 tasks T1.1 "V45 migration evidence separation").
  */
 class InboxFreshMigrationTest {
-    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
-    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("inbox_fresh_mi");
+    /** PLAN-eff/task-13 M1（A1）/ task-28：库由 JVM 单例容器下发（模板克隆，HEAD schema）；本类 Flyway 到 HEAD 仅兜底。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.migratedDatabase("inbox_fresh_mi");
 
     @Test
     void freshChainAppliesV45AndCreatesTheFrozenInboxShape() throws SQLException {

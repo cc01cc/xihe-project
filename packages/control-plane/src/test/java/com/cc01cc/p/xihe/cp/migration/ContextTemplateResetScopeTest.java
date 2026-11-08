@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  */
 class ContextTemplateResetScopeTest {
     /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    // empty-db-required: 主库需 Flyway target(57) 中间态并 seed V57-era 行；快照克隆已在 HEAD(v142)
     static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("context_templa");
 
     // Parent identities are shared; scoped values are seeded only in the source DB.

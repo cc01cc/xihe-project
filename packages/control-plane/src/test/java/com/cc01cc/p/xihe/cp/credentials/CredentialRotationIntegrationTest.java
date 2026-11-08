@@ -57,8 +57,8 @@ class CredentialRotationIntegrationTest {
             "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] KEY_V2 =
             "fedcba9876543210fedcba9876543210".getBytes(StandardCharsets.US_ASCII);
-    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
-    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("credential_rot");
+    /** PLAN-eff/task-13 M1（A1）/ task-28：库由 JVM 单例容器下发（模板克隆，HEAD schema）；本类 Flyway 到 HEAD 仅兜底。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.migratedDatabase("credential_rot");
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {

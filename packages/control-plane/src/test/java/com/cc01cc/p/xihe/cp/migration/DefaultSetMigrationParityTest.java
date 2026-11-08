@@ -44,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DefaultSetMigrationParityTest {
 
     /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类自行 Flyway 到 head。 */
+    // empty-db-required: 本类断言要求 Flyway-only 库；快照克隆含启动期 seed（admin/SUPER_ADMIN/instance_owner）会污染 catalog 对比
     static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("defaultsetpar");
 
     private static Connection connection;

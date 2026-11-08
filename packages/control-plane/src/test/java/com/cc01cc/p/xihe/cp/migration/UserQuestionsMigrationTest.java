@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class UserQuestionsMigrationTest {
 
     /** PLAN-eff/task-13 M1 (A1): the empty database comes from the JVM singleton container. */
-    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("user_questions");
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.migratedDatabase("user_questions");
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID WORKSPACE_ID = UUID.randomUUID();

@@ -23,8 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * event_type）、三条索引与 events→credentials FK（ON DELETE CASCADE）断言。
  */
 class CredentialMigrationIntegrationTest {
-    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
-    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("credential_mig");
+    /** PLAN-eff/task-13 M1（A1）/ task-28：库由 JVM 单例容器下发（模板克隆，HEAD schema）；本类 Flyway 到 HEAD 仅兜底。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.migratedDatabase("credential_mig");
 
     private static Connection connection;
 

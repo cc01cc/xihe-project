@@ -69,6 +69,7 @@ class V114V115SeedIdempotencyAndParityTest {
 
     @BeforeAll
     static void migrateToHead() throws SQLException {
+        // empty-db-required: 本类依赖「fresh Flyway-only 库无 role_bindings」前提（快照克隆带 SUPER_ADMIN binding）
         postgres = TestDatabaseProvider.emptyDatabase("plan0651_t2_2_b3");
         Flyway.configure()
                 .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
