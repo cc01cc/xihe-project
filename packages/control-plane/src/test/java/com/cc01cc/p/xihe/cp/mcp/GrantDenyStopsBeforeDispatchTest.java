@@ -171,8 +171,14 @@ class GrantDenyStopsBeforeDispatchTest {
         verify(approvalService, never()).recordGatePending(anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(Instant.class));
         verify(sseEmitterManager, never()).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+        // spec/protocol/mcp.md §3.4 ①: a deny that leaves no trace on the session stream is the
+        // same failure shape as a silent allow. Assert the event AND its {tool, reason} payload —
+        // "never approval_required" only proves the call did not take the approval path.
+        verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_denied"),
+                eq(Map.of("tool", "write_file", "reason", "authorization grant denied")));
+        // §3.4 ② + the "grant 未命中" audit-table row: the detail is a literal string, not any().
         verify(auditLogger).record(eq("sess-1"), eq("write_file"),
-                eq("authorization_grant_denied"), any());
+                eq("authorization_grant_denied"), eq("no matching grant or workspace membership"));
     }
 
     private static Object accessContext(String wsId, String userId, String sessionId) throws Exception {

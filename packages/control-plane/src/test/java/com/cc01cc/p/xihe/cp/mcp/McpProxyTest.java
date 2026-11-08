@@ -1056,8 +1056,15 @@ class McpProxyTest {
                 anyString(), any(), any(), any());
         verify(approvalService, never()).recordGatePending(any(), any(), any(), any(), any(), any(), any());
         verify(sseEmitterManager, never()).send(eq("sess-1"), eq("tool_exec_approval_required"), any());
+        // spec/protocol/mcp.md §3.4 ①: the deny is announced on the session stream, with the
+        // {tool, reason} payload as part of the contract. "never approval_required" alone cannot
+        // tell "denied" from "no SSE at all", so the positive half is pinned with its literals.
+        verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_denied"),
+                eq(Map.of("tool", "write_file", "reason", "authorization grant denied")));
+        // §3.4 ② + the "grant 未命中" row of the audit table: the detail is a literal, not
+        // "some string" — a reader of the ledger uses it to tell this refusal from a policy deny.
         verify(auditLogger).record(eq("sess-1"), eq("write_file"),
-                eq("authorization_grant_denied"), any());
+                eq("authorization_grant_denied"), eq("no matching grant or workspace membership"));
     }
 
     @Test

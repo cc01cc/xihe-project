@@ -30,6 +30,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +44,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -75,6 +77,8 @@ class GitReadToolsTest {
     private RequestRewriter requestRewriter;
     private PolicyEngine policyEngine;
     private AuditLogger audit;
+    private ApprovalService approvalService;
+    private SseEmitterManager sseEmitterManager;
     private McpToolTimeoutService toolTimeoutService;
     private RuntimeCheckpointClient runtimeCheckpointClient;
     private McpProxyController controller;
@@ -121,9 +125,11 @@ class GitReadToolsTest {
                         LineageInvocationService.DecisionKind.NOT_LINEAGED, null));
         runtimeCheckpointClient = mock(RuntimeCheckpointClient.class);
 
+        approvalService = mock(ApprovalService.class);
+        sseEmitterManager = mock(SseEmitterManager.class);
         controller = new McpProxyController(
-                requestRewriter, policyEngine, audit, mock(ApprovalService.class), MAPPER,
-                mock(SseEmitterManager.class),
+                requestRewriter, policyEngine, audit, approvalService, MAPPER,
+                sseEmitterManager,
                 new McpProxyCatalogService(mock(McpStdioServerRepository.class),
                         mock(McpServerRepository.class), mock(McpToolAliasRepository.class)),
                 mock(WorkspaceService.class), sessionService,
@@ -217,6 +223,48 @@ class GitReadToolsTest {
         JsonNode problem = MAPPER.readTree(response.getBody());
         assertEquals("FORBIDDEN", problem.path("code").asText());
         verify(audit).record(eq(SESSION_ID), eq("git_diff"), eq("caller_tool_denied"), anyString());
+        verifyNoInteractions(runtimeCheckpointClient);
+    }
+
+    // ---------------------------------------------------------------- authorization deny
+
+    /**
+     * spec/protocol/mcp.md §3.4 (拒绝三件套) + the P-b row of the verification table: a caller
+     * whose grant resolution misses gets all three signals — SSE {@code tool_exec_denied} with its
+     * literal {@code {tool, reason}} payload, the literal {@code authorization_grant_denied} audit
+     * row, and the coded {@code TOOL_GRANT_DENIED} tool-result — plus no approval row and no
+     * Runtime contact.
+     *
+     * <p>The Git tools ride the READ face, so their deny is evaluated on the same authorization
+     * branch as any other tool ({@code McpProxyController#handleToolsCall:1043-1052}). What this
+     * case adds over the "never {@code tool_exec_approval_required}" assertions elsewhere is the
+     * positive half: "denied" must be observable, not merely "not approval-pending".</p>
+     */
+    @Test
+    void grantDeniedGitCallIsAnnouncedWithLiteralPayloadAndAuditDetail() throws Exception {
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), eq("git_status"), anyString(),
+                eq(SESSION_ID), eq(USER_ID), eq(WS), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(false);
+
+        ResponseEntity<String> response = handleAs(gitBody("git_status", "{}"),
+                internalAccessContext());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        JsonNode result = MAPPER.readTree(response.getBody()).path("result");
+        assertTrue(result.path("isError").asBoolean(),
+                "a denied call is still an error tool-result: " + response.getBody());
+        assertEquals("TOOL_GRANT_DENIED", result.path("structuredContent").path("code").asText());
+        assertEquals("Tool error: TOOL_GRANT_DENIED",
+                result.path("content").get(0).path("text").asText());
+
+        // §3.4 ① — the event and its payload, not just "some SSE".
+        verify(sseEmitterManager).send(eq(SESSION_ID), eq("tool_exec_denied"),
+                eq(Map.of("tool", "git_status", "reason", "authorization grant denied")));
+        // §3.4 ② — the audit detail is the frozen literal, not any().
+        verify(audit).record(eq(SESSION_ID), eq("git_status"), eq("authorization_grant_denied"),
+                eq("no matching grant or workspace membership"));
+        verify(approvalService, never()).recordGatePending(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(Instant.class));
         verifyNoInteractions(runtimeCheckpointClient);
     }
 
