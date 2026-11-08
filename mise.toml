@@ -371,6 +371,11 @@ description = "Run UI type check (vue-tsc)"
 dir = "packages/ui"
 alias = "typecheck:ui"
 
+[tasks."check:types"]
+run = "pnpm --dir packages/ui run typecheck && pnpm --dir packages/ui run typecheck:e2e"
+description = "D-727: TypeScript gates — UI vue-tsc + e2e spec typecheck (fail-fast; run in every verify window, ~20–40 s)"
+alias = "check:types"
+
 [tasks.format]
 run = "node scripts/mise/run-posix.mjs scripts/mise/format.sh"
 description = "Format code across modules"
