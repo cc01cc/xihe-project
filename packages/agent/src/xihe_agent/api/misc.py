@@ -23,7 +23,7 @@ from xihe_agent.app_state import (
     run_config_resolver,
     user_question_tool,
 )
-from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
+from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot, snapshot_metrics
 from xihe_agent.llm.base import LLMConfig, parse_model_params
 from xihe_agent.llm.summarize import summarize_with_llm
 from xihe_agent.version import agent_version, build_commit
@@ -272,6 +272,9 @@ async def health():
         "configStateLoads": config_state_view["loads"],
         "configRevision": _runtime_config_revision,
         "configSync": config_client.last_sync_report,
+        # PLAN-0701/BL-158: process-lifetime snapshot counters (counts only, no tenant ids;
+        # this route is unauthenticated and must never trigger a config load).
+        "snapshotMetrics": snapshot_metrics(),
         "llm": llm_status,
         "cpUrl": CP_URL,
         # PLAN-0588 spec §4.1: counts only — never workspace ids, and never a
