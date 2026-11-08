@@ -2291,6 +2291,9 @@ const messages = {
             submit: "创建并进入",
             creating: "创建中…",
             failed: "创建失败，请重试",
+            emailRequired: "请填写邮箱",
+            emailInvalid: "邮箱格式不正确",
+            passwordRequired: "请填写密码",
         },
         credentials: {
             title: "凭据",
@@ -4832,6 +4835,9 @@ const messages = {
             submit: "Create and enter",
             creating: "Creating…",
             failed: "Creation failed, please retry",
+            emailRequired: "Email is required",
+            emailInvalid: "Enter a valid email address",
+            passwordRequired: "Password is required",
         },
         credentials: {
             title: "Credentials",

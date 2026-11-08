@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { api } from "../../composables/api";
@@ -16,7 +16,24 @@ const email = ref(""),
     password = ref(""),
     localMode = ref(false),
     errorMsg = ref<string | null>(null),
-    loading = ref(false);
+    loading = ref(false),
+    emailTouched = ref(false),
+    passwordTouched = ref(false);
+
+/** Client-side mirror of the CP's email shape; the server stays the authority (400). */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const emailError = computed(() => {
+    if (!emailTouched.value) return null;
+    const value = email.value.trim();
+    if (!value) return t("onboarding.emailRequired");
+    return EMAIL_PATTERN.test(value) ? null : t("onboarding.emailInvalid");
+});
+
+const passwordError = computed(() => {
+    if (localMode.value || !passwordTouched.value || password.value) return null;
+    return t("onboarding.passwordRequired");
+});
 
 onMounted(async () => {
     try {
@@ -28,13 +45,20 @@ onMounted(async () => {
 });
 
 const canSubmit = () =>
-    Boolean(email.value) && (localMode.value || Boolean(password.value)) && !loading.value;
+    Boolean(email.value.trim()) &&
+    EMAIL_PATTERN.test(email.value.trim()) &&
+    (localMode.value || Boolean(password.value)) &&
+    !loading.value;
 
 async function handleSubmit() {
+    // The submit button stays clickable when the form is incomplete so the inline errors can
+    // explain what is missing (BL-151: a disabled button plus zero feedback was the bug).
+    emailTouched.value = true;
+    passwordTouched.value = !localMode.value;
     if (!canSubmit()) return;
     loading.value = true;
     errorMsg.value = null;
-    const ok = await auth.register(email.value, password.value, name.value);
+    const ok = await auth.register(email.value.trim(), password.value, name.value);
     loading.value = false;
     if (ok) {
         router.push((route.query.redirect as string) || "/workspace");
@@ -61,11 +85,21 @@ async function handleSubmit() {
                     <input
                         id="email"
                         v-model="email"
-                        type="text"
+                        type="email"
+                        inputmode="email"
                         name="email"
                         autocomplete="email"
+                        @blur="emailTouched = true"
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
                     />
+                    <p
+                        v-if="emailError"
+                        role="alert"
+                        data-testid="onboarding-email-error"
+                        class="mt-1 text-sm text-destructive"
+                    >
+                        {{ emailError }}
+                    </p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium mb-1" for="name">{{
@@ -91,7 +125,16 @@ async function handleSubmit() {
                         name="password"
                         autocomplete="new-password"
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        @blur="passwordTouched = true"
                     />
+                    <p
+                        v-if="passwordError"
+                        role="alert"
+                        data-testid="onboarding-password-error"
+                        class="mt-1 text-sm text-destructive"
+                    >
+                        {{ passwordError }}
+                    </p>
                 </div>
                 <p v-else class="text-sm text-muted-foreground">{{ t("onboarding.localHint") }}</p>
 
@@ -103,7 +146,7 @@ async function handleSubmit() {
                             ? 'bg-action hover:bg-action/90'
                             : 'bg-muted-foreground/30 text-muted-foreground'
                     "
-                    :disabled="!canSubmit()"
+                    :disabled="loading"
                 >
                     {{ loading ? t("onboarding.creating") : t("onboarding.submit") }}
                 </button>
