@@ -8,6 +8,7 @@ import {
     MessageScrollerProvider,
     MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { i18n } from "../../i18n";
 
 const TestApp = {
     components: {
@@ -44,7 +45,7 @@ const TestApp = {
 
 describe("MessageScrollerProvider", () => {
     it("renders nested message scroller components", async () => {
-        const wrapper = mount(TestApp, { props: { itemCount: 3 } });
+        const wrapper = mount(TestApp, { props: { itemCount: 3 }, global: { plugins: [i18n] } });
 
         await nextTick();
 
@@ -54,7 +55,7 @@ describe("MessageScrollerProvider", () => {
     });
 
     it("registers message items with data-message-id", async () => {
-        const wrapper = mount(TestApp, { props: { itemCount: 2 } });
+        const wrapper = mount(TestApp, { props: { itemCount: 2 }, global: { plugins: [i18n] } });
 
         await nextTick();
 

@@ -1,7 +1,9 @@
 <script setup lang="ts">
+const { t } = useI18n();
 import { ref } from "vue";
 import { Check, LoaderCircle, Upload, X } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useI18n } from "vue-i18n";
 import { formatFileSize } from "../../../lib/fileSize";
 
 const ws = useWorkspaceStore(),
@@ -113,7 +115,7 @@ function handleCancel() {
                         />
                         <button
                             class="p-0.5 hover:text-destructive"
-                            aria-label="Remove file"
+                            :aria-label="t('common.removeFile')"
                             @click="removeItem(i)"
                         >
                             <X class="size-3" aria-hidden="true" />

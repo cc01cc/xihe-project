@@ -2028,7 +2028,7 @@ onMounted(() => {
                                 <SelectTrigger
                                     data-testid="provider-connection-api-type"
                                     class="mt-1 w-full text-sm"
-                                    aria-label="API Type"
+                                    :aria-label="t('common.apiType')"
                                 >
                                     <SelectValue />
                                 </SelectTrigger>

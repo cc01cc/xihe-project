@@ -1,6 +1,8 @@
 <script setup lang="ts">
+const { t } = useI18n();
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { USER_SCROLL_KEYS, type MessageScrollerViewportProps } from "@/lib/messageScrollerTypes";
+import { useI18n } from "vue-i18n";
 import { useMessageScrollerContext } from "@/composables/messageScroller";
 
 const props = withDefaults(defineProps<MessageScrollerViewportProps>(), {
@@ -79,7 +81,7 @@ onUnmounted(() => {
         data-slot="message-scroller-viewport"
         data-testid="message-scroller-viewport"
         role="region"
-        aria-label="Messages"
+        :aria-label="t('common.messages')"
         tabindex="0"
         class="min-h-0 min-w-0 w-full flex-1 [scrollbar-gutter:stable] scroll-fade-b overflow-y-auto overscroll-contain contain-content"
         @scroll="handleScroll"

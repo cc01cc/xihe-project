@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import ConfirmModal from "../shared/ConfirmModal.vue";
+import { i18n } from "../../i18n";
 
 describe("ConfirmModal", () => {
     beforeEach(() => vi.useFakeTimers());
@@ -8,6 +9,7 @@ describe("ConfirmModal", () => {
 
     it("renders title and description", () => {
         const wrapper = mount(ConfirmModal, {
+            global: { plugins: [i18n] },
             props: { show: true, title: "Delete?", description: "This cannot be undone" },
         });
         expect(wrapper.text()).toContain("Delete?");
@@ -16,6 +18,7 @@ describe("ConfirmModal", () => {
 
     it("emits confirm on confirm button click", async () => {
         const wrapper = mount(ConfirmModal, {
+                global: { plugins: [i18n] },
                 props: { show: true, title: "Confirm" },
             }),
             confirmBtn = wrapper.findAll("button").filter((b) => b.text().includes("Confirm"));
@@ -25,6 +28,7 @@ describe("ConfirmModal", () => {
 
     it("emits cancel on cancel button click", async () => {
         const wrapper = mount(ConfirmModal, {
+                global: { plugins: [i18n] },
                 props: { show: true, title: "Confirm" },
             }),
             cancelBtn = wrapper.findAll("button").filter((b) => b.text().includes("Cancel"));
@@ -34,6 +38,7 @@ describe("ConfirmModal", () => {
 
     it("auto-closes after 1.5s on confirm", async () => {
         const wrapper = mount(ConfirmModal, {
+                global: { plugins: [i18n] },
                 props: { show: true, title: "Confirm" },
             }),
             confirmBtn = wrapper.findAll("button").filter((b) => b.text().includes("Confirm"));
@@ -45,6 +50,7 @@ describe("ConfirmModal", () => {
 
     it("shows destructive style when destructive prop is true", () => {
         const wrapper = mount(ConfirmModal, {
+            global: { plugins: [i18n] },
             props: { show: true, title: "Delete?", destructive: true },
         });
         expect(wrapper.html()).toContain("bg-destructive");
