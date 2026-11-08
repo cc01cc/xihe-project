@@ -204,6 +204,15 @@
  */
 :root {
     /*
+     * PLAN-0702 / BL-327: mobile safe-area insets. Defined once at the root; components consume the
+     * vars. env(safe-area-inset-*) is 0 on desktop browsers, so no layout change when absent.
+     * `useMobileSafeArea` overrides the bottom var to 0px while the on-screen keyboard is open.
+     */
+    --mobile-safe-area-inset-top: env(safe-area-inset-top, 0px);
+    --mobile-safe-area-inset-right: env(safe-area-inset-right, 0px);
+    --mobile-safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+    --mobile-safe-area-inset-left: env(safe-area-inset-left, 0px);
+    /*
      * PLAN-0673 UI 视觉 token 实验（A″ = A 几何 + B 色彩，2026-11-05 用户批准）：
      * 只改亮色 token；`--spacing` 不动（密度保持 B 密集）；`.dark` 段本轮不动。
      * 对照度：正文 #16181d/#fbfbfc 16.9:1、次要 #64686f/#f5f6f8 5.18:1、

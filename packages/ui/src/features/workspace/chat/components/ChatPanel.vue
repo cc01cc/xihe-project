@@ -1306,8 +1306,12 @@ watch(
          `h-full` of the column: the panel sits in a flex column with a 36px title row above
          it, so 100% would overflow the column by exactly that row and push the composer (and
          the dock's bottom edge) below the fold. `h-full` stays for hosts where the panel is
-         the only child and the parent is not a flex container. -->
-    <div class="flex flex-col h-full min-h-0 flex-1 overflow-hidden max-md:overflow-x-hidden max-md:overflow-y-auto max-md:scroll-pb-1">
+         the only child and the parent is not a flex container.
+         PLAN-0702 / BL-327: the mobile panel no longer scrolls as a whole — MessageList owns
+         the scroll. Otherwise the composer (the bottom control) leaves the visual viewport when
+         the on-screen keyboard shrinks it, which is exactly the safe-area regression this plan
+         fixes. -->
+    <div class="flex flex-col h-full min-h-0 flex-1 overflow-hidden">
         <SessionSettingsPanel
             :session-id="sessionId"
             :is-mobile="isMobile"
@@ -1394,7 +1398,10 @@ watch(
             @revert="openRevertPreview"
         />
 
-        <div v-else class="flex-1 flex flex-col items-center justify-center gap-4 px-4">
+        <div
+            v-else
+            class="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-4 px-4"
+        >
             <div class="text-2xl font-semibold text-muted-foreground">xihe</div>
             <p class="text-sm text-muted-foreground text-center max-w-md">
                 你好，我是 xihe Agent。有什么我可以帮你的？
