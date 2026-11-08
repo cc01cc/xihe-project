@@ -24,6 +24,7 @@ import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cc01cc.p.xihe.cp.support.TestWorkspaceCleanup;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -141,7 +142,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
             // the session delete fails and masks the real assertion of the next test.
             jdbcTemplate.update("DELETE FROM context_events WHERE session_id IN "
                     + "(SELECT id FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?)", workspaceId);
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
+            TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
         }
         if (principalId != null && workspaceId != null
                 && workspaceAgentRepository.existsById(

@@ -23,6 +23,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import com.cc01cc.p.xihe.cp.support.TestWorkspaceCleanup;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -523,12 +524,11 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
      * 不使用固定 sleep。
      */
     private void deleteWorkspaceSessions() {
-        String sql = "DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?";
         try {
             Awaitility.await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(100))
                     .until(() -> {
                         try {
-                            jdbcTemplate.update(sql, workspaceId);
+                            TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
                             return true;
                         } catch (PessimisticLockingFailureException e) {
                             return false;

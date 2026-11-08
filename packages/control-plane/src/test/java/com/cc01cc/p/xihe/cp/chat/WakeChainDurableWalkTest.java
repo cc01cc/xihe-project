@@ -20,6 +20,7 @@ import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cc01cc.p.xihe.cp.support.TestWorkspaceCleanup;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -110,7 +111,7 @@ class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
             // context_events carries a plain FK to sessions (no cascade): clear it first.
             jdbcTemplate.update("DELETE FROM context_events WHERE session_id IN "
                     + "(SELECT id FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?)", workspaceId);
-            jdbcTemplate.update("DELETE FROM sessions WHERE CAST(workspace_id AS VARCHAR) = ?", workspaceId);
+            TestWorkspaceCleanup.deleteWorkspaceData(jdbcTemplate, workspaceId);
         }
         // After the session delete: woken runs reference the extra principals via the
         // chat_runs.agent_principal_id FK, and the session cascade removes those runs first.
