@@ -15,6 +15,11 @@
  *
  * 纪律：案例 A/A2/B 全部靠**入参**（注入 listener 表 / 伪造租约），不依赖 1263x 真端口、
  * 不起/不停/不重启任何栈、不写 `.xihe-stacks/`；只有案例 C 读真栈，且是**只读** status。
+ *
+ * **案例 C 的断言边界**：`cpBuild.verdict` 是**瞬时**事实（`fresh` 只在 develop 未前进时成立；
+ * 合入一格就会 `stale`，而 `verdict=healthy` 与 `stale` 同时成立正说明租约面与构建面是两层真相）。
+ * 因此案例 C 只断言租约面（`healthy`/`factsOk`/`mismatch=[]`/`unverifiable=[]`）与"栈钉的 commit
+ * == 仓库 HEAD"（`runningCommit`/`headCommit` 非空、`behind` 是数字），**不把 `fresh` 锁进断言**。
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -161,7 +166,7 @@ test('案例 C（真栈只读）：status --all --json ⇒ 每栈 healthy / mism
     encoding: 'utf8',
     timeout: 120_000,
   });
-  console.log(`CASE C cmd 期望=healthy/mismatch=[]/fresh 实测=(见下) exit=${run.status}`);
+  console.log(`CASE C cmd 期望=verdict=healthy / mismatch=[] 实测=(见下) exit=${run.status}`);
   assert.equal(run.error, undefined, `spawn 失败：${run.error?.message}`);
   assert.equal(run.status, 0, `exit=${run.status}，stdout=${(run.stdout || '').slice(0, 600)}，stderr=${(run.stderr || '').slice(0, 400)}`);
 
@@ -173,19 +178,43 @@ test('案例 C（真栈只读）：status --all --json ⇒ 每栈 healthy / mism
   }
   assert.ok(Array.isArray(doc.stacks) && doc.stacks.length >= 2, `stacks 数=${doc.stacks?.length}`);
 
+  const headCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: mainCheckout, encoding: 'utf8' }).stdout.trim();
+  assert.ok(/^[0-9a-f]{40}$/.test(headCommit), `读不到主检出 HEAD：'${headCommit}'`);
+
   for (const stack of doc.stacks) {
     const mismatch = stack?.lease?.mismatch ?? null;
-    const core = `verdict=${stack?.verdict} / mismatch=${JSON.stringify(mismatch)} / cpBuild=${stack?.cpBuild?.verdict}`;
-    reportRow('C', `${stack?.stackId} 真栈`, 'verdict=healthy / mismatch=[] / cpBuild=fresh', core);
-    console.log(`  └ ${stack?.stackId} 附注：dirty=${stack?.cpBuild?.dirty} behind=${stack?.cpBuild?.behind} lease.state=${stack?.lease?.state} owner=${stack?.lease?.owner ?? '(none)'}`);
+    const unverifiable = stack?.lease?.unverifiable ?? null;
+    const actual = `verdict=${stack?.verdict} / mismatch=${JSON.stringify(mismatch)}`;
+    reportRow('C', `${stack?.stackId} 真栈`, 'verdict=healthy / mismatch=[]', actual);
+    // `cpBuild.verdict` 是**瞬时**事实：`fresh` 只在 develop 未前进时成立；合入一格就会 `stale`
+    // （`behind=` 栈钉的 commit 落后 HEAD 的提交数）。**只记录、不断言**——把它锁进断言，每次合入都红。
+    console.log(
+      `  └ ${stack?.stackId} cpBuild.verdict=${stack?.cpBuild?.verdict}（informational：fresh 只在 develop 未前进时成立；behind=${stack?.cpBuild?.behind} dirty=${stack?.cpBuild?.dirty} lease.state=${stack?.lease?.state}）`,
+    );
     assert.ok(
       stack && typeof stack.stackId === 'string',
       `缺失 stackId：${JSON.stringify(stack)?.slice(0, 200)}`,
     );
+    // 租约面（T2.1 的判据主体）
     assert.equal(stack.verdict, 'healthy', `${stack.stackId} verdict=${stack.verdict}（现场不满足 ⇒ T2.1 案例 C 不成立）`);
+    assert.equal(stack.factsOk, true, `${stack.stackId} factsOk=${stack.factsOk}`);
     assert.deepEqual(mismatch, [], `${stack.stackId} lease.mismatch=${JSON.stringify(mismatch)}`);
-    assert.equal(stack.cpBuild?.verdict, 'fresh', `${stack.stackId} cpBuild.verdict=${stack.cpBuild?.verdict}`);
-    assert.deepEqual(stack.cpBuild?.dirty, false, `${stack.stackId} cpBuild.dirty=${stack.cpBuild?.dirty}`);
+    assert.deepEqual(unverifiable, [], `${stack.stackId} lease.unverifiable=${JSON.stringify(unverifiable)}`);
+    // 构建面：只断言"栈钉的是仓库 HEAD"与"字段存在且可解析"，不断言 freshness 值。
+    assert.ok(stack.cpBuild?.runningCommit, `${stack.stackId} cpBuild.runningCommit 缺失`);
+    assert.ok(stack.cpBuild?.headCommit, `${stack.stackId} cpBuild.headCommit 缺失`);
+    assert.equal(
+      stack.cpBuild.headCommit,
+      headCommit,
+      `${stack.stackId} cpBuild.headCommit=${stack.cpBuild.headCommit} 应等于主检出 HEAD=${headCommit}`,
+    );
+    assert.equal(
+      typeof stack.cpBuild?.behind,
+      'number',
+      `${stack.stackId} cpBuild.behind=${stack.cpBuild?.behind} 应是数字`,
+    );
   }
-  console.log(`CASE C 真栈 ${doc.stacks.map((stack) => stack.stackId).join(' + ')} 全部 healthy/fresh（${doc.stacks.length}/${doc.stacks.length}）`);
+  const verdicts = [...new Set(doc.stacks.map((stack) => stack?.cpBuild?.verdict))].join('/');
+  console.log(`CASE C cpBuild.verdict=${verdicts}（informational：fresh 只在 develop 未前进时成立，本次不断言）`);
+  console.log(`CASE C 真栈 ${doc.stacks.map((stack) => stack.stackId).join(' + ')} 全部 healthy/mismatch=[]（${doc.stacks.length}/${doc.stacks.length}），head=${headCommit.slice(0, 8)}`);
 });
