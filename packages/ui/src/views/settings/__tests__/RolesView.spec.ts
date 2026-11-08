@@ -37,8 +37,12 @@ vi.mock("../../../composables/api", async (importOriginal) => {
  * mock so a case can prove it no longer opens the page on its own.
  */
 const authState = vi.hoisted(() => ({ isAdmin: true, canManageRoles: true }));
+const authEnsureSelfPermissions = vi.hoisted(() =>
+    vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
+);
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({
+        ensureSelfPermissions: authEnsureSelfPermissions,
         get isAdmin() {
             return authState.isAdmin;
         },
@@ -140,6 +144,7 @@ beforeEach(() => {
     authState.isAdmin = true;
     authState.canManageRoles = true;
     vi.clearAllMocks();
+    authEnsureSelfPermissions.mockClear();
     mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
     mockedApi.listRoles.mockResolvedValue([SYSTEM_ROLE, role()]);
     mockedApi.listWorkspaces.mockResolvedValue([]);
@@ -157,6 +162,13 @@ afterEach(() => {
 });
 
 describe("RolesView access control", () => {
+    it("D-713/B7: direct mount asks auth for self permissions before rendering the page", async () => {
+        // Direct route frames may arrive before SettingsNav mounted; the page must not 403 on
+        // an unknown projection just because the nav did not fetch it first.
+        await mountView();
+        expect(authEnsureSelfPermissions).toHaveBeenCalledTimes(1);
+    });
+
     it("renders the forbidden view for a non-administrator and issues no request", async () => {
         authState.isAdmin = false;
         authState.canManageRoles = false;
