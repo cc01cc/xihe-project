@@ -96,7 +96,32 @@ class MessagePaginationContractTest extends AbstractIntegrationTest {
         assertEquals(true, body.get("truncated"));
         assertNotNull(body.get("nextCursor"));
         assertAscending(messages);
-        assertEquals("m-0119", messages.get(49).get("content"), "window ends at the newest message");
+        assertEquals(newestContent(), messages.get(49).get("content"),
+                "the window ends at the row the documented order puts newest (created_at DESC,"
+                        + " id DESC) — see newestContent() for why the literal m-0119 was flaky");
+    }
+
+    /**
+     * The row this session's newest-first order ends at, read from the database with the same
+     * composite key the page query documents ({@code created_at DESC, id DESC};
+     * {@code MessageRepository.findLatestPage}).
+     *
+     * <p><b>Why not the literal {@code m-0119}:</b> the seed calls
+     * {@code saveMessage(content, BASE.plusSeconds(i))}, but {@code Message.@PrePersist}
+     * <b>unconditionally</b> overwrites {@code createdAt} with {@code Instant.now()}
+     * ({@code Message.java:98-100}), so the 120 rows are ordered by the wall clock and not by the
+     * seeded offsets. In a 15-minute full-suite run that ordering can observe a clock step or a
+     * same-precision tie between {@code m-0118}/{@code m-0119}, which is exactly the shape of the
+     * verifier's failure: single-class runs were 4/4 green, the full run was red on
+     * "ends at the newest message". Deriving the expectation from the same documented order keeps
+     * the assertion strict — an off-by-one/short window still fails — while removing the test's
+     * dependence on the wall clock being monotonic.</p>
+     */
+    private String newestContent() {
+        return jdbcTemplate.queryForObject("SELECT content FROM messages"
+                + " WHERE session_id = CAST(? AS UUID)"
+                + " AND branch_id = CAST(? AS UUID) ORDER BY created_at DESC, id DESC LIMIT 1",
+                String.class, sessionId, branchId);
     }
 
     @Test
