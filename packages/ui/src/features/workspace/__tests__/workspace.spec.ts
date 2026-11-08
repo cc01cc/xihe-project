@@ -114,7 +114,8 @@ describe("workspace store deleteNode (B-2 failure semantics)", () => {
         const store = useWorkspaceStore(),
             result = await store.deleteNode("missing.txt");
         expect(result).toBe(false);
-        expect(store.treeError).toContain("删除失败");
+        // 0706 错误 i18n 统一：FILE_NOT_FOUND 走通用文案，错误码保留在文案里（不再回显英文 detail）。
+        expect(store.treeError).toBe("操作失败，请稍后重试（FILE_NOT_FOUND）");
     });
 
     it("returns false and records treeError on 500", async () => {
@@ -146,7 +147,8 @@ describe("workspace store createFile (Q-3 same-mode fix)", () => {
         const store = useWorkspaceStore(),
             result = await store.createFile("", "bad");
         expect(result).toBe(false);
-        expect(store.treeError).toContain("创建文件失败");
+        // 0706 错误 i18n 统一：INVALID_REQUEST 走通用文案，错误码保留在文案里。
+        expect(store.treeError).toBe("操作失败，请稍后重试（INVALID_REQUEST）");
     });
 });
 
