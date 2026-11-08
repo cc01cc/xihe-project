@@ -46,10 +46,24 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
-const TIERS = { "1k": 1_000, "5k": 5_000, "20k": 20_000 };
+/** PLAN-0682 T0.1 tier table: TIER => seeded messages (rounds are half of it). */
+export const TIERS = Object.freeze({ "1k": 1_000, "5k": 5_000, "20k": 20_000 });
+
+/**
+ * Pins the tier arithmetic task-38 relies on: one seeded message pair per round, so
+ * {@code runs = messages / 2}. Unknown tiers throw (the CLI keeps its own exit-2 message).
+ */
+export function tierPlan(tier) {
+    const messages = TIERS[tier];
+    if (messages === undefined) {
+        throw new RangeError(`unknown tier ${tier}; expected one of ${Object.keys(TIERS).join(", ")}`);
+    }
+    return { tier, messages, runs: messages / 2 };
+}
 const E2E_HOST = join("scripts", "e2e-host.mjs");
 
 function arg(name, fallback = null) {
@@ -179,16 +193,39 @@ function seedRuns() {
     // Idempotency = deterministic UUIDs (md5-cast) + ON CONFLICT DO NOTHING (design decision 6), so
     // a re-run skips every existing row and the in-transaction count checks below still pass.
     const tier = requireArg("tier");
-    const total = TIERS[tier];
-    if (total === undefined) {
+    let plan;
+    try {
+        plan = tierPlan(tier);
+    } catch {
         console.error(`unknown --tier ${tier}; expected one of ${Object.keys(TIERS).join(", ")}`);
         process.exit(2);
     }
-    const runs = total / 2; // 1 round = USER + ASSISTANT = 2 messages per run (TIERS are all even)
+    const total = plan.messages;
+    const runs = plan.runs;
     const container = requireArg("container");
     const db = requireArg("db");
     const sessionId = arg("session", crypto.randomUUID());
-    const sql = `
+    const sql = seedRunsSql({ tier, sessionId });
+    if (!flag("apply")) {
+        say({ phase: "seed-runs", dryRun: true, tier, seeded: total, runs, sessionId });
+        return;
+    }
+    execFileSync("docker", ["exec", container, "psql", "-U", "xihe", "-d", db, "-v",
+        "ON_ERROR_STOP=1", "-c", sql], { stdio: "inherit" });
+    say({ phase: "seed-runs", tier, seeded: total, runs, sessionId });
+}
+
+/**
+ * Pure SQL builder for the `seed-runs` phase (PLAN-0682 T0.1 / task-38). Exported so the
+ * idempotency test can pin the contract without a database: deterministic UUIDs (md5-cast),
+ * `ON CONFLICT ... DO NOTHING` on both inserts, and the in-transaction count/coverage checks that
+ * make a half-seeded fixture — or a drift between messages and chat_runs — impossible to commit.
+ */
+export function seedRunsSql({ tier, sessionId }) {
+    const plan = tierPlan(tier);
+    const total = plan.messages;
+    const runs = plan.runs;
+    return `
 DO $$
 DECLARE
   sid uuid := '${sessionId}';
@@ -240,13 +277,6 @@ BEGIN
   END IF;
 END $$;
 `;
-    if (!flag("apply")) {
-        say({ phase: "seed-runs", dryRun: true, tier, seeded: total, runs, sessionId });
-        return;
-    }
-    execFileSync("docker", ["exec", container, "psql", "-U", "xihe", "-d", db, "-v",
-        "ON_ERROR_STOP=1", "-c", sql], { stdio: "inherit" });
-    say({ phase: "seed-runs", tier, seeded: total, runs, sessionId });
 }
 
 function seedAttachment() {
@@ -448,17 +478,21 @@ SELECT 'workspace=${workspaceId} principal=${principalId} session=${sessionId} b
     say({ phase: "seed-fixtures", workspaceId, principalId, sessionId, branchId });
 }
 
-const phase = process.argv[2];
-switch (phase) {
-    case "boot": boot(); break;
-    case "seed-fixtures": seedFixtures(); break;
-    case "seed": seed(); break;
-    case "seed-runs": seedRuns(); break;
-    case "seed-attachment": seedAttachment(); break;
-    case "run": await readLoop({ mode: "run" }); break;
-    case "dispatch": await readLoop({ mode: "dispatch" }); break;
-    case "teardown": teardown(); break;
-    default:
-        console.error("usage: run-baseline.mjs boot|seed-fixtures|seed|seed-runs|seed-attachment|run|dispatch|teardown [options]");
-        process.exit(2);
+const invokedDirectly = process.argv[1]
+    && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+    const phase = process.argv[2];
+    switch (phase) {
+        case "boot": boot(); break;
+        case "seed-fixtures": seedFixtures(); break;
+        case "seed": seed(); break;
+        case "seed-runs": seedRuns(); break;
+        case "seed-attachment": seedAttachment(); break;
+        case "run": await readLoop({ mode: "run" }); break;
+        case "dispatch": await readLoop({ mode: "dispatch" }); break;
+        case "teardown": teardown(); break;
+        default:
+            console.error("usage: run-baseline.mjs boot|seed-fixtures|seed|seed-runs|seed-attachment|run|dispatch|teardown [options]");
+            process.exit(2);
+    }
 }
