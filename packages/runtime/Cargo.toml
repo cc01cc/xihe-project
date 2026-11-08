@@ -15,6 +15,11 @@ path = "src/container_runtime.rs"
 name = "xihe-stdio-fixture"
 path = "src/stdio_fixture.rs"
 
+# T2.4a 工艺样本（不是产品插件）：只给 tests/plugin_runner_test.rs 用。
+[[bin]]
+name = "xihe-plugin-fixture"
+path = "src/plugin_fixture.rs"
+
 [dependencies]
 rmcp = { version = "3.7.0", features = ["server", "transport-streamable-http-server", "schemars", "request-state"] }
 # PLAN-0657 M1: explicit tokio feature set (was "full"). Usage audit of src/+tests/: fs/time/sync/io/net/process/signal/select/spawn all present,
@@ -137,6 +142,11 @@ path = "tests/escape_test.rs"
 [[test]]
 name = "mcp_session_test"
 path = "tests/mcp_session_test.rs"
+
+# T2.4a：本地 stdio 插件 runner 的真进程验证（对端 = xihe-plugin-fixture）。
+[[test]]
+name = "plugin_runner_test"
+path = "tests/plugin_runner_test.rs"
 
 [[test]]
 name = "mcp_tools_test"

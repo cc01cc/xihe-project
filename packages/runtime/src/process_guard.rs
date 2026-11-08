@@ -628,8 +628,12 @@ pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
 /// MXC policy `process.timeout` when the caller asks for no deadline.
 const MXC_UNBOUNDED_TIMEOUT_MS: u64 = 86_400_000;
 
+/// 按 PID 杀掉整棵进程树（Windows `taskkill /T /F`）。
+///
+/// `pub(crate)`：T2.4a 的插件 runner（`crate::plugin::runner`）拿它做崩溃回收，
+/// 保证"进程树整棵杀"只有这一份实现，不在第二个地方再写一次 `taskkill` 口径。
 #[cfg(windows)]
-async fn terminate_process_tree(pid: u32) -> Result<()> {
+pub(crate) async fn terminate_process_tree(pid: u32) -> Result<()> {
     let output = tokio::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .output()
