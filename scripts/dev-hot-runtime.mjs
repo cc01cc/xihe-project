@@ -40,7 +40,9 @@ const HELP = `usage: node scripts/dev-hot-runtime.mjs [--stack N] [--debounce 30
 "目标 exe 被占用 ⇒ 编译失败 os error 5"）。所以默认只编译并打印重启命令，由人决定；
 --restart 适合"明确知道自己在干什么"的 dev 循环。`;
 
-const args = { stack: 2, debounce: 300, once: false, dryRun: false, restart: false, quiet: true };
+// task-228：与 dev-hot-cp 同款证据栈守卫——stack-1 是证据栈，热编/重启它的 runtime 会让
+// 真栈证据失真；默认只允许 stack-2，stack-1 必须显式 --i-understand-this-dirties-evidence。
+const args = { stack: 2, debounce: 300, once: false, dryRun: false, restart: false, quiet: true, dirtiesEvidence: false };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i += 1) {
   const a = argv[i];
@@ -57,6 +59,7 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--dry-run') args.dryRun = true;
   else if (a === '--restart') args.restart = true;
   else if (a === '--quiet-build') args.quiet = true;
+  else if (a === '--i-understand-this-dirties-evidence') args.dirtiesEvidence = true;
   else {
     console.error(`unknown flag: ${a}\n\n${HELP}`);
     process.exit(2);
@@ -64,6 +67,15 @@ for (let i = 0; i < argv.length; i += 1) {
 }
 if (!Number.isInteger(args.stack) || args.stack < 1 || args.stack > 8) {
   console.error(`--stack must be 1..8 (got ${args.stack})`);
+  process.exit(2);
+}
+// ① 证据栈守卫（task-228）：与 dev-hot-cp.mjs:111-120 同款口径。
+if (args.stack === 1 && !args.dirtiesEvidence) {
+  console.error(
+    '[hot-runtime] 拒绝：stack-1 是本仓的证据栈（真栈/L2 证据从它取）。\n'
+    + '  热编/重启它的 runtime 会让证据面失真。\n'
+    + '  确实要动证据栈：加 --i-understand-this-dirties-evidence；dev 循环请用 --stack 2。',
+  );
   process.exit(2);
 }
 

@@ -24,10 +24,10 @@
 // 这是**预期**，热循环结束/重启栈时由 `stack-run.mjs cp` 按 HEAD 重新构建并重写戳。
 
 import { spawnSync } from 'node:child_process';
-import { watch } from 'node:fs';
+import { mkdirSync, writeFileSync, watch } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { cpBuildRoot, readPointer, pointerPath } from './lib/cp-build-dir.mjs';
 import { buildInfoPath, gitHead, readBuildInfo, shortSha } from './lib/cp-build-info.mjs';
@@ -42,6 +42,8 @@ const HELP = `usage: node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [-
   --dry-run         只打印将要执行的命令与目标目录，不实际编译
   --no-restart-hint 不打印 devtools 日志提示
   --force           目标端口不在听时仍然编译（默认拒绝：没人重启时编译只会把 classes 改脏）
+  --trigger-file P  编译**成功后** touch 该文件（配合 spring.devtools.restart.trigger-file：
+                    devtools 只在文件变化时重启 ⇒ 1 次干净重启、不会在编译中途重启）
   --i-understand-this-dirties-evidence
                     允许对 stack-1（证据栈）热编（会把"真栈证据"弄脏）
   --help, -h        打印本帮助
@@ -49,7 +51,7 @@ const HELP = `usage: node scripts/dev-hot-cp.mjs [--stack N] [--debounce 300] [-
 判据：编译后 devtools 应在 CP 日志里打出 'Restarting' / 'Started ...'；本脚本编译结束时自动去
 日志尾部找一次并打印（找不到就打印 WARN 与日志路径）。`;
 
-const args = { stack: 2, debounce: 300, once: false, dryRun: false, restartHint: true, force: false, dirtiesEvidence: false };
+const args = { stack: 2, debounce: 300, once: false, dryRun: false, restartHint: true, force: false, dirtiesEvidence: false, triggerFile: null };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i += 1) {
   const a = argv[i];
@@ -67,6 +69,7 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--no-restart-hint') args.restartHint = false;
   else if (a === '--force') args.force = true;
   else if (a === '--i-understand-this-dirties-evidence') args.dirtiesEvidence = true;
+  else if (a === '--trigger-file') args.triggerFile = argv[(i += 1)];
   else {
     console.error(`unknown flag: ${a}\n\n${HELP}`);
     process.exit(2);
@@ -92,7 +95,22 @@ const errLogPath = join(projectRoot, derived.logDir, 'cp.err.log');
 // 目标目录：显式 XIHE_CP_TARGET_DIR > 该栈的 .current 指针（launcher 写的"上次 start 用的目录"）。
 function resolveTargetDir() {
   const explicit = (process.env.XIHE_CP_TARGET_DIR ?? '').trim();
-  if (explicit) return { targetDir: explicit, source: 'XIHE_CP_TARGET_DIR' };
+  if (explicit) {
+    // 证据栈守卫（任务 task-228）：显式 env 会绕过下面的 --stack 1 守卫 ⇒ 这里按"路径是否落在
+    // 证据栈 stack-1 的构建根"再判一次。片段从 cp-build-dir 的推导取（不写死盘符/路径）。
+    const evidenceRoot = dirname(pointerPath({ root: cpBuildRoot({ env: process.env }), stackId: DEFAULT_STACK_ID }));
+    const norm = (p) => resolve(p).replace(/\\/g, '/').toLowerCase();
+    if (norm(explicit).startsWith(`${norm(evidenceRoot)}/`) && !args.dirtiesEvidence) {
+      console.error(
+        '[hot-cp] 拒绝（E_EVIDENCE_TARGET）：XIHE_CP_TARGET_DIR 指向证据栈 stack-1 的构建根'
+        + `（${evidenceRoot}）。\n`
+        + '  热编会让它的 classes 与 build-info 戳不符 ⇒ 证据面被弄脏。\n'
+        + '  确实要热编证据栈：再加 --i-understand-this-dirties-evidence；dev 循环请指向 stack-2 的根。',
+      );
+      process.exit(2);
+    }
+    return { targetDir: explicit, source: 'XIHE_CP_TARGET_DIR' };
+  }
   const root = cpBuildRoot({ env: process.env });
   const pointer = readPointer({ root, stackId });
   if (pointer?.targetDir) return { targetDir: pointer.targetDir, source: `pointer ${pointerPath({ root, stackId })}` };
@@ -110,7 +128,7 @@ if (!targetDir) {
 
 // ① 证据栈守卫：stack-1 是本仓的**证据栈**（真栈/L2 证据从它取）。热编会让它的 classes 与
 // build-info 戳不符 ⇒ 证据面被弄脏。只允许 stack-2 当 dev 栈；stack-1 要显式声明"我知道这脏证据"。
-if (args.stack === DEFAULT_STACK_ID && !args.dirtiesEvidence) {
+if (args.stack === 1 && !args.dirtiesEvidence) {
   console.error(
     '[hot-cp] 拒绝：stack-1 是本仓的证据栈（cpBuild 结论要拿它作真栈证据）。\n'
     + '  热编会让它的 classes 与 build-info 戳不符 ⇒ 证据面被弄脏。\n'
@@ -175,7 +193,16 @@ function buildOnce() {
     return false;
   }
   builds += 1;
-  console.log(`[hot-cp] BUILD OK (#${builds}) in ${elapsed}s`);
+  console.log(`[hot-cp] BUILD OK (#${builds}) in ${elapsed}s  (finishedAt=${new Date().toISOString()})`);
+  if (args.triggerFile) {
+    try {
+      mkdirSync(dirname(args.triggerFile), { recursive: true });
+      writeFileSync(args.triggerFile, `${new Date().toISOString()} build#${builds}\n`);
+      console.log(`[hot-cp] trigger touched: ${args.triggerFile}（devtools restart.trigger-file 只会因此重启一次）`);
+    } catch (error) {
+      console.error(`[hot-cp] WARN: 无法写 trigger 文件 ${args.triggerFile}: ${error.message}`);
+    }
+  }
   tailForRestart(startedAt);
   return true;
 }
@@ -234,11 +261,10 @@ console.log(`[hot-cp] 提示：热循环期间 devtools 自己重启 CP；**不�
 if (errLogPath) console.log(`[hot-cp] 错误日志：${errLogPath}`);
 
 if (args.dryRun) {
-  console.log(`[hot-cp] --dry-run: 将执行 mvn ${mvnArgs.join(' ')}（未执行）`);
-  if (args.once) process.exit(0);
+  console.log(`[hot-cp] --dry-run: 将执行 mvn ${mvnArgs.join(' ')}（未执行，直接退出）`);
+  process.exit(0);
 }
 if (args.once) {
-  if (args.dryRun) process.exit(0);
   process.exit(buildOnce() ? 0 : 1);
 }
 

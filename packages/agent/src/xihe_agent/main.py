@@ -496,10 +496,21 @@ if __name__ == "__main__":
         state.llm_config.provider,
         CP_URL,
     )
+    # task-226: dev-only hot reload. Default behaviour is **byte-identical** — with
+    # `XIHE_AGENT_RELOAD` unset/false, `reload` is False exactly as before. Two gates keep it
+    # narrow: the opt-in variable AND `XIHE_ENV=dev`, so a prod start can never turn it on
+    # (fail-closed). The reloader child process imports `xihe_agent.main:app`, and it inherits
+    # the parent's os.environ — that is why `load_project_env()` above must stay where it is.
+    agent_reload = (
+        os.getenv("XIHE_AGENT_RELOAD", "").strip().lower() in {"1", "true", "yes", "on"}
+        and os.getenv("XIHE_ENV", "").strip().lower() == "dev"
+    )
+    if agent_reload:
+        logger.warning("Agent hot reload ENABLED (XIHE_AGENT_RELOAD + XIHE_ENV=dev) — dev only")
     uvicorn.run(
         "xihe_agent.main:app",
         host=AGENT_HOST,
         port=AGENT_PORT,
         log_level=AGENT_LOG_LEVEL.lower(),
-        reload=False,
+        reload=agent_reload,
     )
