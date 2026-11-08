@@ -20,9 +20,23 @@ import javax.sql.DataSource;
 @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
 public class ReusableTestContextConfiguration {
 
+    /**
+     * task-11（batch1 实测的连接耗尽修复）：路由实例单独暴露为 bean，供基类
+     * {@code @AfterAll} 按类关闭 target 池（{@code @Primary} 的 DataSource 只是它的一层
+     * 懒连接代理，产品侧 Flyway/JPA 仍只吃那一个 {@code @Primary} bean）。
+     *
+     * <p>生命周期：本 Bean 的值（含默认池）由 Spring 上下文持有、活到上下文关闭（复用场景下 =
+     * JVM 退出 → 进程结束即释放）；**类级池**由 {@code AbstractReusableIntegrationTest} 的
+     * {@code @AfterAll} 显式关闭。因此峰值连接 ≈ 活跃类 2 + 默认池 2。
+     */
+    @org.springframework.context.annotation.Bean
+    ReusableTestDatabaseRouting reusableTestDatabaseRouting() {
+        return new ReusableTestDatabaseRouting();
+    }
+
     @org.springframework.context.annotation.Bean
     @org.springframework.context.annotation.Primary
-    DataSource reusedRoutingDataSource() {
-        return new LazyConnectionDataSourceProxy(new ReusableTestDatabaseRouting());
+    DataSource reusedRoutingDataSource(ReusableTestDatabaseRouting routing) {
+        return new LazyConnectionDataSourceProxy(routing);
     }
 }

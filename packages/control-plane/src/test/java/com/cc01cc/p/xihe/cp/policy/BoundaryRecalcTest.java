@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -42,7 +42,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class BoundaryRecalcTest extends AbstractIntegrationTest {
+class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private PolicyEngine policyEngine;

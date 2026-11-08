@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.skill;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The four reachable tiers are expressed as a <b>matrix</b> ({@link #VISIBILITY_MATRIX}), so a
  * future tier is one more row instead of a fifth block of assertions.</p>
  */
-class SkillCatalogIsolationTest extends AbstractIntegrationTest {
+class SkillCatalogIsolationTest extends AbstractReusableIntegrationTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

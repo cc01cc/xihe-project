@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * conversation had no main participant at all. The PRIMARY and its cursor row are written inside the
  * session-creation transaction, and a principal-null placeholder deliberately gets neither.</p>
  */
-class SessionPrimaryParticipantTest extends AbstractReusableIntegrationTest {
+class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
 
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ObjectMapper json;

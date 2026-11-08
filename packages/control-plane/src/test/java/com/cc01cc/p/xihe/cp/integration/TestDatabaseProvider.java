@@ -50,6 +50,18 @@ public final class TestDatabaseProvider {
     private static PostgreSQLContainer<?> container;
     private static boolean templateReady;
 
+    /**
+     * task-11 R-D：默认上下文启动完成后的**快照库**名。它把启动期写入（DataSeeder 的 admin /
+     * InstanceOwnership / SUPER_ADMIN binding、ApplicationReady 期 recovery 等）带进每个类库。
+     *
+     * <p>生命周期：容器内数据库，随测试 PG 容器在 JVM 结束时一起消失；**不回收、不托管**——
+     * 不是可复用的外部资源，也不要当持久资产引用。
+     */
+    private static final String SEED_SNAPSHOT_DATABASE = "xihe_t_reuse_seed";
+
+    /** 非空时 {@link #migratedDatabase(String)} 改为从快照库克隆（{@link #emptyDatabase(String)} 不变）。 */
+    private static volatile String snapshotSource;
+
     private TestDatabaseProvider() {
     }
 
@@ -89,15 +101,10 @@ public final class TestDatabaseProvider {
             ensureTemplate();
         }
         String databaseName = databaseName(label);
-        try (Connection connection = connect(BOOT_DATABASE);
-             Statement statement = connection.createStatement()) {
-            statement.execute(fromTemplate
-                    ? "CREATE DATABASE " + databaseName + " TEMPLATE " + TEMPLATE_DATABASE
-                    : "CREATE DATABASE " + databaseName);
-        } catch (SQLException failure) {
-            throw new IllegalStateException(
-                    "could not create test database " + databaseName + " (label=" + label + ")", failure);
-        }
+        String templateDatabase = fromTemplate && snapshotSource != null
+                ? snapshotSource
+                : (fromTemplate ? TEMPLATE_DATABASE : null);
+        createDatabase(databaseName, templateDatabase, false, label);
         lastDatabaseName = databaseName;
         return new DatabaseRef(databaseName, jdbcUrl(databaseName), USERNAME, PASSWORD);
     }
@@ -147,6 +154,60 @@ public final class TestDatabaseProvider {
                     + " WHERE datname = '" + TEMPLATE_DATABASE + "' AND pid <> pg_backend_pid()");
         } catch (SQLException failure) {
             throw new IllegalStateException("could not release template database sessions", failure);
+        }
+    }
+
+    /**
+     * task-11 R-D：把默认库（已含启动期写入）快照成固定名库，作为后续类库的克隆源。
+     * 由路由在**默认上下文启动完成后、首个类测试开始前**调用一次；先 terminate 默认库会话，
+     * 再用有界重试做 {@code CREATE DATABASE ... TEMPLATE}。
+     */
+    public static DatabaseRef snapshotOf(String sourceDatabaseName, String targetDatabaseName) {
+        ensureStarted();
+        createDatabase(targetDatabaseName, sourceDatabaseName, true, "snapshot");
+        return new DatabaseRef(targetDatabaseName, jdbcUrl(targetDatabaseName), USERNAME, PASSWORD);
+    }
+
+    /** task-11 R-D：切换 {@link #migratedDatabase(String)} 的克隆源（由路由在快照完成后调用）。 */
+    public static void useSnapshotSource(String databaseName) {
+        snapshotSource = databaseName;
+    }
+
+    /**
+     * 建库（可带 TEMPLATE）。{@code terminateSource} 时先踢掉模板库上的会话（PG 的 TEMPLATE 克隆
+     * 要求源库无其它连接）；失败按 **5 s 预算的有界重试**（100 ms 间隔）——这是为模板库会话竞态
+     * 准备的诊断式重试，不是无条件等待。
+     */
+    private static void createDatabase(String targetName, String templateName,
+                                       boolean terminateSource, String label) {
+        long deadlineNanos = System.nanoTime() + 5_000_000_000L;
+        SQLException lastFailure = null;
+        int attempt = 0;
+        while (true) {
+            attempt++;
+            try (Connection connection = connect(BOOT_DATABASE);
+                 Statement statement = connection.createStatement()) {
+                if (terminateSource && templateName != null) {
+                    statement.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+                            + " WHERE datname = '" + templateName + "' AND pid <> pg_backend_pid()");
+                }
+                statement.execute(templateName == null
+                        ? "CREATE DATABASE " + targetName
+                        : "CREATE DATABASE " + targetName + " TEMPLATE " + templateName);
+                return;
+            } catch (SQLException failure) {
+                lastFailure = failure;
+            }
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new IllegalStateException("could not create test database " + targetName
+                        + " in " + attempt + " attempts (label=" + label + ")", lastFailure);
+            }
+            try {
+                Thread.sleep(100L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while creating test database " + targetName, lastFailure);
+            }
         }
     }
 

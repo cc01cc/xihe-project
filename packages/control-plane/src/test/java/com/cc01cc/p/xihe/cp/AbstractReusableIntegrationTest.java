@@ -49,6 +49,9 @@ public abstract class AbstractReusableIntegrationTest {
     /** 每类只打印一次"类 → 库名"映射（失败后可直接进垃圾桶容器查现场）。 */
     private static final Set<String> LOGGED_CLASSES = ConcurrentHashMap.newKeySet();
 
+    /** 类级池的关闭句柄（{@code @AfterAll} 是静态方法，实例注入后存到静态槽）。 */
+    private static volatile com.cc01cc.p.xihe.cp.support.ReusableTestDatabaseRouting reusableRouting;
+
     @LocalServerPort
     protected int port;
 
@@ -75,6 +78,12 @@ public abstract class AbstractReusableIntegrationTest {
      * 上下文的 bean——即设计 §4.2 要求的 reset hook（否则复用类只能排在所有 per-class 类之前）。
      */
     @Autowired
+    void initReusableRouting(
+            com.cc01cc.p.xihe.cp.support.ReusableTestDatabaseRouting routing) {
+        reusableRouting = routing;
+    }
+
+    @Autowired
     void reRegisterRootBranchBinder(
             com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService) {
         com.cc01cc.p.xihe.cp.entity.RootBranchBinder.register(branchPathService::ensureRootBranchId);
@@ -88,6 +97,11 @@ public abstract class AbstractReusableIntegrationTest {
     void bindClassDatabaseAndRestTemplate(TestInfo testInfo) {
         String testClass = testInfo.getTestClass().map(Class::getName).orElse("?");
         ReusableContextSupport.bind(testClass);
+        // task-11 R-D：首个类测试开始前取「启动期写入快照」（默认上下文已就绪 ⇒ DataSeeder/
+        // ApplicationReady recovery 已跑完）。幂等；快照库是容器内一次性库，随 PG 容器消失。
+        if (reusableRouting != null) {
+            reusableRouting.prepareSeedSnapshot();
+        }
         if (LOGGED_CLASSES.add(testClass)) {
             System.out.println("[test-db] reuse class=" + testClass
                     + " key=" + testClass + " (routing target created lazily)");
@@ -110,8 +124,20 @@ public abstract class AbstractReusableIntegrationTest {
         return baseUrl + path;
     }
 
+    /**
+     * task-11（batch1 实测的连接耗尽修复）：类末关闭本类的 target 池（JUnit 保证测试失败路径
+     * 也执行 @AfterAll；这里再 try/finally 保证 unbind 一定发生）。池关闭幂等，重复/落空都安全。
+     */
     @AfterAll
-    static void releaseReuseKey() {
-        ReusableContextSupport.unbind();
+    static void releaseReuseKey(TestInfo testInfo) {
+        String testClass = testInfo.getTestClass().map(Class::getName).orElse(null);
+        try {
+            com.cc01cc.p.xihe.cp.support.ReusableTestDatabaseRouting routing = reusableRouting;
+            if (routing != null) {
+                routing.closeTarget(testClass);
+            }
+        } finally {
+            ReusableContextSupport.unbind();
+        }
     }
 }

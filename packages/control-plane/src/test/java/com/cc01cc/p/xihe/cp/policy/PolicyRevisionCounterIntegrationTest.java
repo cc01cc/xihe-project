@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.chat.ApprovalService;
@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * tightening delete of a non-newest rule) advance the durable revision, so a grant that was valid
  * before the delete is rejected at consume time.
  */
-class PolicyRevisionCounterIntegrationTest extends AbstractIntegrationTest {
+class PolicyRevisionCounterIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String WORKSPACE_LAYER = "workspace";
     private static final String INVOCATION_BODY = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","

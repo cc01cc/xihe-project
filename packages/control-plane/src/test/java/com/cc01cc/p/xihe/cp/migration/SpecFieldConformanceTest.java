@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.migration;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import jakarta.persistence.EntityManagerFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * and wake-edge (PLAN-0630 V105) carriers, and that Hibernate {@code ddl-auto=validate} runs
  * against this schema.</p>
  */
-class SpecFieldConformanceTest extends AbstractIntegrationTest {
+class SpecFieldConformanceTest extends AbstractReusableIntegrationTest {
 
     private static final Pattern QUOTED_VALUE = Pattern.compile("'([^']+)'");
 

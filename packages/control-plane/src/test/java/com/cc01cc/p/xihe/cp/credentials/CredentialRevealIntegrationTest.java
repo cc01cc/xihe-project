@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.credentials;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * failures / 15 minutes), no-store response, value-free audit trail, the
  * owner-visible events read surface and the v1 no-approval guarantee.
  */
-class CredentialRevealIntegrationTest extends AbstractIntegrationTest {
+class CredentialRevealIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

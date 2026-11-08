@@ -3,7 +3,7 @@ import com.cc01cc.p.xihe.cp.policy.GrantSources;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ids) while other atoms keep silent narrowing; the workspace cap uses the same
  * rule ({@code credential:*} ceiling covers any id, exact ids are equal-only, 403).
  */
-class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
+class AgentPrincipalCredentialBoundaryTest extends AbstractReusableIntegrationTest {
 
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AuthService authService;

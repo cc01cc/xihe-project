@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.api;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *       client-generation inconsistency worth naming instead of hiding).</li>
  * </ul>
  */
-class RouteContractParityTest extends AbstractIntegrationTest {
+class RouteContractParityTest extends AbstractReusableIntegrationTest {
 
     /** The MVC bean only (actuator's endpoint handler mappings are separate beans and are not APIs). */
     @Autowired

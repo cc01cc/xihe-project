@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.migration;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PLUGIN_INVOKE to the base set), and human USER grants untouched.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
+class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest {
 
     private static final int LEGACY_AGENT_SEEDS = 40;
 

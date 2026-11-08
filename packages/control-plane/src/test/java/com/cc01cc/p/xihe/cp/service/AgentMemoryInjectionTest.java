@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * maxTokens / same principal in another workspace / soft-deleted. The snapshot is asserted as plain
  * JSON (no Jackson-2 node reaches it — 0633 C1).</p>
  */
-class AgentMemoryInjectionTest extends AbstractIntegrationTest {
+class AgentMemoryInjectionTest extends AbstractReusableIntegrationTest {
 
     @Autowired private AgentMemoryInjectionService injection;
     @Autowired private AgentMemoryRepository memories;

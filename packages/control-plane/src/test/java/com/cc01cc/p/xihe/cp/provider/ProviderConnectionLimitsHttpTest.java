@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.provider;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * limit and the governor always saw {@code UNLIMITED}. These assertions are the write-side producer
  * the governor depends on.</p>
  */
-class ProviderConnectionLimitsHttpTest extends AbstractIntegrationTest {
+class ProviderConnectionLimitsHttpTest extends AbstractReusableIntegrationTest {
 
     @Autowired private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository connections;
     @Autowired private WorkspaceFixture workspaceFixture;

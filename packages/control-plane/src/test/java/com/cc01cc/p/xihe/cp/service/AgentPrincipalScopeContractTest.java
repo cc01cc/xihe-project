@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  *   <li>A binding B's PERSONAL principal → 403.</li>
  * </ol>
  */
-class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
+class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

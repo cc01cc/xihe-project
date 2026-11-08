@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * still-live writer would answer 500 on the next PATCH. The surface is replaced by access-role
  * bindings (W3); the controller routes are deleted in W3 and the UI page in W5.</p>
  */
-class PrincipalGrantAdminControllerContractTest extends AbstractIntegrationTest {
+class PrincipalGrantAdminControllerContractTest extends AbstractReusableIntegrationTest {
 
     /** The shared RestTemplate uses HttpURLConnection: no PATCH and it drops non-2xx bodies. */
     private RestTemplate patchClient;

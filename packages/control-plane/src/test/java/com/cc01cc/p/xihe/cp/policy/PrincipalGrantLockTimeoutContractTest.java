@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * test keeps the class name and asserts the retirement so a future reader does not assume the lock
  * semantics are still live.</p>
  */
-class PrincipalGrantLockTimeoutContractTest extends AbstractIntegrationTest {
+class PrincipalGrantLockTimeoutContractTest extends AbstractReusableIntegrationTest {
 
     private RestTemplate patchClient;
 

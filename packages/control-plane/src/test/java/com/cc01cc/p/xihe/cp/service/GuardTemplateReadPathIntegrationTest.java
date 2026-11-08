@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * document against the schema; V97 reseeds the two inner-keyed rows. This test pins the read
  * path so the blind spot (migration-internal shape assertions only) cannot regress.</p>
  */
-class GuardTemplateReadPathIntegrationTest extends AbstractIntegrationTest {
+class GuardTemplateReadPathIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String GUARD_ROLE_ID = "00000000-0000-4000-8000-0000000000a1";
     private static final String GUARD_TEMPLATE_ID = "00000000-0000-4000-8000-0000000000a2";

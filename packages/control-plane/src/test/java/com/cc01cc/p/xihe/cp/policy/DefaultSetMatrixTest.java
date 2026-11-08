@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ({@code SpecFieldConformanceTest}), out-of-vocabulary fail-closed ({@code LookupAskGateTest}) and
  * HardGuard L0 counter-proofs ({@code HardGuardTest}).</p>
  */
-class DefaultSetMatrixTest extends AbstractIntegrationTest {
+class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
 
     /**
      * spec §4.1 USER row / evidence matrix USER column, extended by PLAN-0622 D8: the five allow

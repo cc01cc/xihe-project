@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * fail-closed error semantics, dual audits (credential_events + AuditLogger)
  * and no plaintext in any durable or audited surface.
  */
-class CredentialLeaseIntegrationTest extends AbstractIntegrationTest {
+class CredentialLeaseIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private CredentialLeaseService leaseService;
     @Autowired private CredentialService credentialService;

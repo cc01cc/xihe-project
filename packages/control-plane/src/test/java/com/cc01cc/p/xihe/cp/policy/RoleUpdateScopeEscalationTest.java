@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Every denial here is also a <b>zero-write</b> assertion: a 403 must leave
  * {@code role_permissions} untouched, because the gates run before {@code replaceAtoms}.</p>
  */
-class RoleUpdateScopeEscalationTest extends AbstractIntegrationTest {
+class RoleUpdateScopeEscalationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;

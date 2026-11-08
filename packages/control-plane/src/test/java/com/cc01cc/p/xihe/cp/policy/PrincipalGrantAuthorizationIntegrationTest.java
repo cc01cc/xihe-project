@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * the atom gate disappear unnoticed; asserting only the 403 would let the context precondition drift
  * behind it.</p>
  */
-class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest {
+class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegrationTest {
 
     private RestTemplate patchClient;
 

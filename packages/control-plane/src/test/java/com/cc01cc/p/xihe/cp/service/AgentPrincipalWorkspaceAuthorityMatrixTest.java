@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *
  * <p>Gate order stays the D22 one: context {@code 409} → existence {@code 404} → authority {@code 403}.</p>
  */
-class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractIntegrationTest {
+class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;

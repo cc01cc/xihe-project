@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code created_at} — a single-key cursor would skip or duplicate those rows.</p>
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class MessagePaginationContractTest extends AbstractIntegrationTest {
+class MessagePaginationContractTest extends AbstractReusableIntegrationTest {
 
     @Autowired private UserRepository userRepository;
     @Autowired private SessionRepository sessionRepository;

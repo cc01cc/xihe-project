@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * <p>Written before the implementation (G2): {@code resolveCapFor} does not exist on the M1.2
  * baseline, so every case below fails to compile / fails on the first call.</p>
  */
-class AgentPrincipalCapEntryPointTest extends AbstractIntegrationTest {
+class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private AgentPrincipalService agentPrincipalService;

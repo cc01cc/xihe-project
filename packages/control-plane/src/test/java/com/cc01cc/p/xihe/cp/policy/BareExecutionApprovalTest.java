@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -60,7 +60,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link GrantAuthorizationService}, {@link ApprovalService} and a real {@link McpProxyController}
  * gate invocation — no mocked verdict anywhere in this class.</p>
  */
-class BareExecutionApprovalTest extends AbstractIntegrationTest {
+class BareExecutionApprovalTest extends AbstractReusableIntegrationTest {
 
     @org.springframework.beans.factory.annotation.Autowired
     private WorkspaceFixture workspaceFixture;

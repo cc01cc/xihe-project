@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * existence via 0495 {@code existsForOwner} (dangling rejected) and the per-role
  * atom cap; explicit error responses.
  */
-class AgentTemplateCredentialValidationTest extends AbstractIntegrationTest {
+class AgentTemplateCredentialValidationTest extends AbstractReusableIntegrationTest {
 
     @Autowired private AgentTemplateService agentTemplateService;
     @Autowired private CredentialService credentialService;
