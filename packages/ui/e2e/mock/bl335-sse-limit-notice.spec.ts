@@ -83,7 +83,9 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
 
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
-        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
+        // 与上一条用例同口径：壳级 + 页面级会各挂一条同源横幅，strict-mode 双元素是已知
+        // 展示现状（产品重复渲染单列跟进）；此处只断言第一条可见横幅，不掩盖“无横幅”。
+        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]').first();
         await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toContainText("停止刷新");
     });

@@ -599,13 +599,12 @@ test.describe("Chat approval flow", () => {
         await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await dialog.locator('[data-testid="approval-approve"]').click();
 
-        await expect(dialog.locator('[data-testid="approval-error"]')).toBeVisible({
-            timeout: ACTION_TIMEOUT_MS,
-        });
-        await expect(dialog.locator('[data-testid="approval-error"]')).toContainText(
-            "APPROVAL_EXPIRED",
-        );
-        await expect(dialog.locator('[data-testid="approval-approve"]')).toBeEnabled();
+        // PLAN-0663 M2/T2.1 语义：APPROVAL_EXPIRED 不再留在 modal 内展示错误，而是
+        // 由 store 退休该审批（modal 关闭）+ 一条非模态 toast 说明；断言跟随产品语义。
+        await expect(dialog).toBeHidden({ timeout: ACTION_TIMEOUT_MS });
+        await expect(
+            page.locator("[data-sonner-toast]").filter({ hasText: "审批已过期" }),
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "approval-modal-expired.png");
     });
 

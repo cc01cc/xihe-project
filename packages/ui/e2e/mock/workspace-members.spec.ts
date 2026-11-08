@@ -217,7 +217,9 @@ test.describe("PLAN-0565 workspace members tab", () => {
         await expect(page.getByTestId("ws-members-panel")).toContainText(
             "仅工作区所有者可以管理成员。",
         );
-        await expect(page.getByTestId("ws-members-add")).toHaveCount(0);
+        // BL-344：加人表单**常驻挂载**（无 v-if），只读时用 hidden 类隐藏；断言可见性而非
+        // DOM 数量（节点存在是设计，不是回归）。
+        await expect(page.getByTestId("ws-members-add")).toBeHidden();
         await expect(page.locator('[data-testid^="ws-members-remove-"]')).toHaveCount(0);
         await expect(page.getByTestId("ws-members-row")).toHaveCount(2);
     });
