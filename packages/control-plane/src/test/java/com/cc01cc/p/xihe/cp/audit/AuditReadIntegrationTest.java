@@ -2,7 +2,7 @@ package com.cc01cc.p.xihe.cp.audit;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.entity.ApprovalHistory;
@@ -62,7 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * cancel), 3 mcp_invocations (completed / unknown / late-confirmed) and 1 approval
  * (requested → decided) — plus a second user for the negative authorization cases.</p>
  */
-class AuditReadIntegrationTest extends AbstractIntegrationTest {
+class AuditReadIntegrationTest extends AbstractReusableIntegrationTest {
 
     @Autowired
     private WorkspaceFixture workspaceFixture;

@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.auth;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * PLAN-0610 W3-2b acceptance: {@code /auth/me.capabilities}, {@code /me/permissions}, the retired
  * user-role endpoint and old tokens that still carry a {@code role} claim.
  */
-class MePermissionsIntegrationTest extends AbstractIntegrationTest {
+class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
 
     @org.springframework.beans.factory.annotation.Autowired
     private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
