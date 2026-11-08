@@ -9,6 +9,8 @@
  * 3. dark-theme evidence at 1920x1080@2x (chat + workspace settings) for V1.
  */
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test, expect } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
@@ -92,14 +94,17 @@ test("dark theme evidence screenshots at 1920x1080@2x", async ({ page }) => {
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Dark evidence" }] });
 
-    const outDir = "e2e/evidence/0702";
+    // 运行时截图不得写进仓库（曾导致 A03 dirty / promote E_DIRTY_CHECKOUT）。
+    // 默认落系统临时目录；正式副本在 one/plans/archive/PLAN-0702-XH-ux-dark-safearea/evidence/screenshots。
+    // 需要固定落点时可注入 XIHE_0702_SHOT_DIR（仓库外路径）。
+    const outDir = process.env.XIHE_0702_SHOT_DIR ?? join(tmpdir(), "xihe-0702-shots");
     mkdirSync(outDir, { recursive: true });
 
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-composer")).toBeVisible();
-    await page.screenshot({ path: outDir + "/dark-chat-1920x1080.png" });
+    await page.screenshot({ path: join(outDir, "dark-chat-1920x1080.png") });
 
     await page.goto("/workspace/workspace-1/settings");
     await expect(page.locator("body")).toBeVisible();
-    await page.screenshot({ path: outDir + "/dark-workspace-settings-1920x1080.png" });
+    await page.screenshot({ path: join(outDir, "dark-workspace-settings-1920x1080.png") });
 });

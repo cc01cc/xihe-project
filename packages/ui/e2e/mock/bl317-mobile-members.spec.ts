@@ -172,8 +172,11 @@ async function openMobileMembers(page: Page): Promise<void> {
 async function expectTouchTarget(page: Page, testId: string): Promise<void> {
     const box = await page.getByTestId(testId).boundingBox();
     if (!box) throw new Error(`${testId} has no layout box at 390×844`);
-    expect(box.height, `${testId} height ≥ ${MIN_TOUCH}px`).toBeGreaterThanOrEqual(MIN_TOUCH);
-    expect(box.width, `${testId} width ≥ ${MIN_TOUCH}px`).toBeGreaterThanOrEqual(MIN_TOUCH);
+    // Chromium 在 390×844@2x 下对 44px 做亚像素舍入（实测 43.99998474121094）；视觉仍是 44，
+    // 这不是「命中小了」而是浮点容差。下限 43.5 仍能抓住真正的回归（<43.5 才红）。
+    const touchFloor = MIN_TOUCH - 0.5;
+    expect(box.height, `${testId} height ≥ ${touchFloor}px`).toBeGreaterThanOrEqual(touchFloor);
+    expect(box.width, `${testId} width ≥ ${touchFloor}px`).toBeGreaterThanOrEqual(touchFloor);
 }
 
 test.describe("BL-317 移动端成员面板（390×844）", () => {
