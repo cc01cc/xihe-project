@@ -270,7 +270,9 @@ function openCreate() {
     <section class="min-h-full bg-background px-4 py-8 sm:px-8">
         <div class="mx-auto max-w-5xl">
             <!-- PLAN-0676 T2：与工作区页共用同一个三态横幅（不新建第二个组件）。 -->
+            <!-- PLAN-0712: same dedupe as WorkspaceView — limit stays on the shell banner only. -->
             <SseSubscriberLimitNotice
+                v-if="pageNoticeState"
                 :state="pageNoticeState"
                 :code="workspaceEvents.connectionErrorCode.value ?? undefined"
                 :on-retry="workspaceEvents.retry"

@@ -51,10 +51,10 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
 
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
-        // PLAN-0699 M2：同一上限会在「壳级横幅」(AppLayout) 与「页面级横幅」
-        // (WorkspaceView，仅 disconnected/reconnecting 才渲染) 之外，还可能被两处壳挂载重复渲染；
-        // 断言只针对第一条可见横幅，避免 strict-mode 双元素误伤。
-        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]').first();
+        // PLAN-0712：limit 只由壳级横幅（AppLayout）渲染；页面级只在 disconnected/
+        // reconnecting 时挂载。严格模式断言「有且仅有一个」，重复横幅会直接让用例红。
+        const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
+        await expect(notice).toHaveCount(1);
         await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toHaveAttribute("role", "status");
         await expect(notice).toContainText("停止刷新");
@@ -84,6 +84,7 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
         await page.goto("/workspace/workspace-1/chat/bl335-session");
 
         const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
+        await expect(notice).toHaveCount(1);
         await expect(notice).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(notice).toContainText("停止刷新");
     });
