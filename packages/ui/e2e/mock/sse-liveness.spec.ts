@@ -1,4 +1,4 @@
-// timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+// timeout-exempt: 30s 静默 + toast 渲染余量（PLAN-0709，单例放宽到 45s/40s）
 import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { resolve } from "node:path";
@@ -6,8 +6,6 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import {
     ACTION_TIMEOUT_MS,
     EXPECT_TIMEOUT_MS,
-    LONG_TIMEOUT_MS,
-    TEST_TIMEOUT_MS,
 } from "../timeouts";
 
 const SESSION_ID = "liveness-session";
@@ -174,7 +172,7 @@ test.describe("SSE liveness timer (S-1, real time)", () => {
     test("pre-content silence shows a visible AGENT_TIMEOUT toast in real time", async ({
         page,
     }) => {
-        test.setTimeout(TEST_TIMEOUT_MS);
+        test.setTimeout(45_000); // timeout-exempt: 30s 静默 + toast 渲染余量
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
         await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.locator("textarea").fill("quick question");
@@ -186,7 +184,8 @@ test.describe("SSE liveness timer (S-1, real time)", () => {
         // BL-328 家族：先按**文案**锁定目标 toast（同一时刻可能还有 provider 自动绑定那条），
         // 再等它出现——顺序不能反：此时 30s 静默还没到，先断数量必然数到 0。
         const toast = page.locator("[data-sonner-toast]").filter({ hasText: "AGENT_TIMEOUT" });
-        await expect(toast).toContainText("AGENT_TIMEOUT", { timeout: LONG_TIMEOUT_MS });
+        // timeout-exempt: 产品 STREAM_TIMEOUT_MS=30000，toast 必晚于 30s；测试总预算同值会先超时。
+        await expect(toast).toContainText("AGENT_TIMEOUT", { timeout: 40_000 });
         await expect(toast).toHaveCount(1);
         // PLAN-0325: the toast must be actually visible inside the viewport
         // (the pre-fix defect placed it below the fold: rect.y == viewport height).

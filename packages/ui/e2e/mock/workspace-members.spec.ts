@@ -1,5 +1,6 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
+import { selectByTestId } from "../helpers/select";
 
 // BL-318：本文件有两条**故意**制造成员写失败（409 已存在 / 404 未知用户名）以验裁定 #6 文案，
 // 逐条放行成员端点的失败信号。
@@ -170,7 +171,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
 
         // Add by username (ruling #7) — the list reloads with the new row.
         await page.getByTestId("ws-members-add-input").fill("newmember");
-        await page.getByTestId("ws-members-add-role").selectOption("VIEWER");
+        await selectByTestId(page, "ws-members-add-role", "VIEWER");
         await page.getByTestId("ws-members-add-btn").click();
         await expect(page.getByTestId("ws-members-row")).toHaveCount(3);
         await expect(page.getByTestId("ws-members-panel")).toContainText("newmember");
@@ -217,7 +218,9 @@ test.describe("PLAN-0565 workspace members tab", () => {
         await expect(page.getByTestId("ws-members-panel")).toContainText(
             "仅工作区所有者可以管理成员。",
         );
-        await expect(page.getByTestId("ws-members-add")).toHaveCount(0);
+        // BL-344：加人表单**常驻挂载**（无 v-if），只读时用 hidden 类隐藏；断言可见性而非
+        // DOM 数量（节点存在是设计，不是回归）。
+        await expect(page.getByTestId("ws-members-add")).toBeHidden();
         await expect(page.locator('[data-testid^="ws-members-remove-"]')).toHaveCount(0);
         await expect(page.getByTestId("ws-members-row")).toHaveCount(2);
     });

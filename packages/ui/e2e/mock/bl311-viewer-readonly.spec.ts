@@ -24,6 +24,7 @@ import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failur
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 
 const WORKSPACE_ID = "workspace-1";
 const SESSION_ID = "bl311-session";
@@ -144,7 +145,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
         );
 
         const select = page.getByTestId("session-policy-mode");
-        await expect(select, "current mode value stays readable").toHaveValue("auto");
+        await expect(select, "current mode value stays readable").toContainText("自动放行");
         await expect(select, "write entry point is unusable before the click").toBeDisabled();
         await expect(select).toHaveAttribute("title", READ_ONLY_COPY);
         await expect(page.getByTestId("session-policy-mode-readonly")).toContainText(
@@ -218,7 +219,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
         // 重载后 dock 的收起/展开与活动标签是**持久化**的（`xihe-layout-ws:<id>`），所以这里
         // 不能假设"面板一定没开、点一下摘要行就行"；`openContextPanel` 的幂等分支正好覆盖两种情况。
         await openContextPanel(page);
-        await expect(page.getByTestId("session-policy-mode")).toHaveValue("auto");
+        await expectTriggerLabel(page, "session-policy-mode", "auto");
     });
 
     test("C) EDITOR 不受影响：控件可用、可切换（现状回归）", async ({ page }) => {
@@ -235,7 +236,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
                 request.method() === "POST" && request.url().includes("/api/v1/policy/mode"),
             { timeout: LONG_TIMEOUT_MS },
         );
-        await select.selectOption("manual");
+        await selectByTestId(page, "session-policy-mode", "manual");
         await writeRequest;
 
         // 写成功 ⇒ 横幅消失、summary 变「手动审批」，写 body 只带 sessionId+mode。
