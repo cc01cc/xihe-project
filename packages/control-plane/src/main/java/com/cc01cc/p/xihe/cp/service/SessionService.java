@@ -149,12 +149,21 @@ public class SessionService {
                                       String modelProvider, String modelName,
                                       String providerConnectionId, String agentPrincipalId,
                                       ContextTemplateService.TemplateSelection templateSelection) {
-        requireWorkspace(userId, workspaceId);
+        // PLAN-0647 D-678: a workspace-less session has no workspace binding to check. The workspace
+        // branch below stays byte-identical for every existing caller.
+        if (workspaceId != null) {
+            requireWorkspace(userId, workspaceId);
+        }
         if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "agentPrincipalId is required");
         }
-        com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveCapFor(
-                agentPrincipalId, workspaceId);
+        // D-686 (workspaceless): the snapshot is null and explicitly not applicable — no owner cap is
+        // fabricated, because "no workspace" must not look like "workspace with zero permissions".
+        // Every authorization reader turns null into a fail-closed refusal (GrantIntersectionEvaluator
+        // throws -> GrantAuthorizationService catches -> false). A NULL never means "unrestricted".
+        com.fasterxml.jackson.databind.JsonNode cap = workspaceId == null
+                ? null
+                : agentPrincipalService.resolveCapFor(agentPrincipalId, workspaceId);
         Session session = new Session(workspaceId, userId, normalizeTitle(title));
         session.setId(UUID.randomUUID());
         // PLAN-0689 A7/D-54: retained snapshot = the PRIMARY's cap at binding time; resolveCapFor
@@ -459,8 +468,10 @@ public class SessionService {
         com.fasterxml.jackson.databind.JsonNode ref = selection == null ? null :
                 new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("layer", selection.layer())
                         .put("templateId", selection.templateId()).put("version", selection.version());
+        // PLAN-0647 D-678: a workspace-less session resolves the template chain user -> instance
+        // (the workspace layer is skipped by the resolver when the id is null).
         var snapshot = apiRequestTemplates.resolve(connection, session.getModelName(), UUID.fromString(session.getUserId()),
-                UUID.fromString(session.getWorkspaceId()), ref);
+                session.getWorkspaceId() == null ? null : UUID.fromString(session.getWorkspaceId()), ref);
         session.setContextTemplateLayer(snapshot.path("layer").asText());
         session.setContextTemplateId(UUID.fromString(snapshot.path("templateId").asText()));
         session.setContextTemplateVersion(snapshot.path("version").asInt());
@@ -510,7 +521,8 @@ public class SessionService {
                     && !connection.getProviderId().equals(requestedProvider.trim())) {
                 throw new IllegalArgumentException("Provider connection does not match model provider");
             }
-            if (!session.getWorkspaceId().equals(workspaceId) || !session.getUserId().equals(userId)) {
+            if (!java.util.Objects.equals(session.getWorkspaceId(), workspaceId)
+                    || !session.getUserId().equals(userId)) {
                 throw new IllegalArgumentException("Session ownership mismatch");
             }
             session.setProviderConnectionId(connection.getId().toString());

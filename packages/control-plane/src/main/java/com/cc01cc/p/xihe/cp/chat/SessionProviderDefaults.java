@@ -48,8 +48,13 @@ public class SessionProviderDefaults {
 
     @Transactional(readOnly = true)
     public Defaults resolve(String userId, String workspaceId, String agentPrincipalId) {
-        AgentPrincipalService.DefaultModel agentDefault =
-                agentPrincipalService.defaultModel(uuid(agentPrincipalId), uuid(workspaceId));
+        // D-687 (workspaceless sessions): the agent-default source is a WORKSPACE-layer default
+        // (AgentPrincipalService.defaultModel requires an active workspace binding, D-49). With no
+        // workspace it is explicitly not applicable — skip it instead of relaxing that binding gate;
+        // the user -> instance llm-provider profile below remains the only default source.
+        AgentPrincipalService.DefaultModel agentDefault = workspaceId == null
+                ? null
+                : agentPrincipalService.defaultModel(uuid(agentPrincipalId), uuid(workspaceId));
         if (agentDefault != null && hasText(agentDefault.provider()) && hasText(agentDefault.model())) {
             return new Defaults(agentDefault.provider().trim(), agentDefault.model().trim(), null,
                     "agent-principal");
