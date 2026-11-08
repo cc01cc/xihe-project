@@ -6,7 +6,16 @@ test.describe("Authentication", () => {
         await page.route("**/api/v1/**", async (route) => {
             const url = route.request().url();
 
-            if (url.includes("/register")) {
+            // PLAN-0699 M1：本 spec 的 catch-all 后注册于公共 fixture，会把 bootstrap-status
+            // 落回 Vite proxy（无后端 ⇒ 502 + console-error 门禁假红）；这里显式桩成与路由守卫
+            // 失败回退一致的语义（`router/index.ts` `{initialized:true, localMode:false}`）。
+            if (url.includes("/auth/bootstrap-status")) {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ initialized: true, localMode: false }),
+                });
+            } else if (url.includes("/register")) {
                 await route.fulfill({
                     status: 200,
                     contentType: "application/json",
