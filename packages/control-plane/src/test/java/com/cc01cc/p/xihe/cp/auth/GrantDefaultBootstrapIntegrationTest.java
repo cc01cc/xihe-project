@@ -73,6 +73,8 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
      * spec §4.1 USER row: the five allow classes. PLAN-0622 D8 appended exactly one atom —
      * {@code CREATE_OWN_AGENT} (an ordinary account may create its <b>own</b> PERSONAL agent) —
      * so the expectation is expressed as "the five plus that one", never as a bare literal count.
+     * Later additions to the same expectation (MEMORY_WRITE_SELF, PLUGIN_INVOKE) are appended in
+     * {@link #userDefaultAtoms()} with their own rulings, not here.
      */
     private static final List<String> USER_ALLOW_ATOMS = List.of(
             ToolFaceRegistry.ACTION_READ, ToolFaceRegistry.ACTION_WRITE,
@@ -90,6 +92,11 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default;
         // the atom is agent-forbidden, so it never applies to agent subjects.
         atoms.add("MEMORY_WRITE_SELF");
+        // PLAN-0691 T1.3 (M1, spec B-4): SystemAccessRoleCatalog.BASE_ATOMS also carries PLUGIN_INVOKE
+        // — invoking an already-bound builtin plugin belongs to the base set every non-viewer role
+        // carries, so the USER default carries it too. It is the only plugin atom an agent may hold;
+        // WS_VIEWER stays out on purpose (invocation executes a tool face).
+        atoms.add(ToolFaceRegistry.ACTION_PLUGIN_INVOKE);
         return Set.copyOf(atoms);
     }
 
@@ -206,8 +213,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         User seededAdmin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
 
         // PLAN-0610 W1b T1.9: DataSeeder seeds the SUPER_ADMIN instance binding (invariant I1), so
-        // the bootstrap admin materializes every action atom of the vocabulary — 16 after PLAN-0622
-        // D8 appended CREATE_OWN_AGENT — instead of ADMIN's nine.
+        // the bootstrap admin materializes every action atom of the vocabulary — 29 after PLAN-0622
+        // D8 appended CREATE_OWN_AGENT, 33 since PLAN-0691 T1.3 added the four plugin atoms —
+        // instead of ADMIN's nine.
         Set<String> seededAdminAtoms = roleAtoms("user", seededAdmin.getId());
         List<AuthorizationGrant> seededAdminRows = roleRows("user", seededAdmin.getId());
         assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()), seededAdminAtoms,
@@ -228,7 +236,8 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertTrue(userAtoms.containsAll(USER_ALLOW_ATOMS),
                 "D8 appended exactly one atom: the five allow classes are still materialized");
         assertEquals(USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
-                "one instance-tier row per USER atom (six after D8)");
+                "one instance-tier row per USER atom (eight after D8's CREATE_OWN_AGENT and"
+                        + " PLAN-0691 T1.3's PLUGIN_INVOKE)");
         assertEquals(0, grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId()).size(),
                 "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
         assertEquals("read", roleRows("user", user.getId()).get(0).getReadState());
@@ -254,7 +263,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals("read", agentDefault.getReadState());
         assertEquals(USER_DEFAULT_ATOMS.size(), agentDefault.getPermissions().size(),
                 "round-2 P1-1: the frozen Agent snapshot keeps the whole USER atom array in one row "
-                        + "(six after D8, not five)");
+                        + "(eight after D8 and PLAN-0691 T1.3, not five)");
         assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT));
@@ -451,7 +460,8 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 "concurrent ensures keep exactly one frozen Agent snapshot");
         assertEquals((long) USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
                 "concurrent ensures keep exactly one instance-tier row per atom (uq_grants_role_atom); "
-                        + "six after PLAN-0622 D8 added CREATE_OWN_AGENT");
+                        + "eight after PLAN-0622 D8's CREATE_OWN_AGENT and"
+                        + " PLAN-0691 T1.3's PLUGIN_INVOKE");
         assertTrue(roleAtoms("user", user.getId()).contains(OWN_AGENT_ATOM),
                 "the extra row is the CREATE_OWN_AGENT atom, not a duplicated base atom");
         // The grants were wiped above, so the first ensure re-creates the instance set (one audit
