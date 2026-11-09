@@ -19,9 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * {@code source='agent_default'} grants carrying CREATE_OWN_AGENT.
  *
  * <p>Pre-state is built on a real upgrade path: migrate to V145, seed the residue plus control
- * rows, then migrate to latest. Covers: (1) 2-row residue is deleted and {@code source='role'} /
- * other-atom rows survive; (2) no-row databases are a no-op (fresh installs and the 0-row
- * branch of the guard); (3) a re-run of the cleanup statement deletes zero rows.</p>
+ * rows, then apply V146. Covers: (1) 2-row residue is deleted and {@code source='role'} /
+ * other-atom rows survive at the V146 boundary; (2) no-row databases are a no-op (fresh installs
+ * and the 0-row branch of the guard); (3) a re-run of the cleanup statement deletes zero rows.
+ * BL-312 (option B): V147 (2026-11-09) then removes the {@code source='role'} atom row in the
+ * same upgrade chain, so the V146-scope assertion is taken at the V146 boundary and the head
+ * state is asserted separately — the control row's deletion is V147's job, not V146's.</p>
  */
 class CreateOwnAgentResidualCleanupMigrationTest {
     static TestDatabaseProvider.DatabaseRef postgres =
@@ -43,9 +46,7 @@ class CreateOwnAgentResidualCleanupMigrationTest {
             seedGrant(connection, "agent_default", "[{\"actionClass\": \"MEMORY_WRITE\"}]");
         }
 
-        migrateToLatest(jdbcUrl);
-        migrateToLatest(jdbcUrl);
-
+        migrateToVersion(jdbcUrl, "146");
         try (Connection connection = connect(jdbcUrl)) {
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM flyway_schema_history "
                     + "WHERE version = '146' AND success"), "V146 must be recorded as applied");
@@ -54,10 +55,21 @@ class CreateOwnAgentResidualCleanupMigrationTest {
                     "all agent_default CREATE_OWN_AGENT rows must be deleted");
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = 'role' "
                     + "AND permissions @> '" + OWN_AGENT_ATOM + "'::jsonb"),
-                    "source='role' rows must not be touched");
+                    "source='role' rows must not be touched by V146 (asserted at the V146 boundary)");
             assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = "
                     + "'agent_default' AND permissions @> '[{\"actionClass\": \"MEMORY_WRITE\"}]'::jsonb"),
                     "agent_default rows for other atoms must not be touched");
+        }
+
+        // Head continues with V147 (BL-312 option B), which owns the source='role' removal.
+        migrateToLatest(jdbcUrl);
+        try (Connection connection = connect(jdbcUrl)) {
+            assertEquals(0, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = 'role' "
+                    + "AND permissions @> '" + OWN_AGENT_ATOM + "'::jsonb"),
+                    "V147 (BL-312 B) removes the source='role' row after the V146 boundary");
+            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE source = "
+                    + "'agent_default' AND permissions @> '[{\"actionClass\": \"MEMORY_WRITE\"}]'::jsonb"),
+                    "agent_default rows for other atoms stay untouched throughout the chain");
         }
     }
 

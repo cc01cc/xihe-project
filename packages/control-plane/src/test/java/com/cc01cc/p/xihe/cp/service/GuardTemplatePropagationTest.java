@@ -64,9 +64,7 @@ class GuardTemplatePropagationTest {
         when(workspaceService.isWorkspaceMember(any(), any())).thenReturn(true);
         GrantIntersectionEvaluator evaluator = mock(GrantIntersectionEvaluator.class);
         when(evaluator.union(any())).thenReturn(Set.of(
-                new GrantIntersectionEvaluator.PermissionAtom("MANAGE_WORKSPACE_AGENTS", "*"),
-                // PERSONAL creation is authorized by CREATE_OWN_AGENT (PLAN-0622 M0.3)
-                new GrantIntersectionEvaluator.PermissionAtom("CREATE_OWN_AGENT", "*")));
+                new GrantIntersectionEvaluator.PermissionAtom("MANAGE_WORKSPACE_AGENTS", "*")));
         // The authorization gate itself is covered elsewhere; here the subject is template propagation.
         when(evaluator.allows(any(), any())).thenReturn(true);
         templates = mock(AgentTemplateService.class);
@@ -84,11 +82,11 @@ class GuardTemplatePropagationTest {
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
                 mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
                 // PLAN-0651 T1.5-A1：建 principal 走共享内核 `RequesterAuthority.allowsForUser`
-                // （不是旧的 service 内联 evaluator 路径）。本测试创建 PERSONAL principal ⇒ 必须声明
-                // CREATE_OWN_AGENT；WORKSPACE 路径的 MANAGE_WORKSPACE_AGENTS 一并声明，保持与旧 stub
-                // （evaluator.union 返回两个 atom）同口径。真实 atom 路径仍由四个真上下文契约测试覆盖。
+                // （不是旧的 service 内联 evaluator 路径）。创建门自 T5.1 起只认
+                // MANAGE_WORKSPACE_AGENTS；BL-312（2026-11-09）移除 CREATE_OWN_AGENT 后声明集
+                // 收缩为单原子。真实 atom 路径仍由四个真上下文契约测试覆盖。
                 new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority(
-                        "CREATE_OWN_AGENT", "MANAGE_WORKSPACE_AGENTS"),
+                        "MANAGE_WORKSPACE_AGENTS"),
                 // D-180: the subset guard is a Spring bean; unit envs pass a permissive mock (the
                 // guard's own decisions are covered by Spring/integration tests).
                 mock(com.cc01cc.p.xihe.cp.policy.GrantabilityGuard.class),

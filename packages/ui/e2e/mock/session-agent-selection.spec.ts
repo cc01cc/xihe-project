@@ -263,7 +263,8 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
 
 /**
  * PLAN-0651 M5 T5.1: the create form no longer offers a principal `scope` selector and creation
- * itself is gated on `MANAGE_WORKSPACE_AGENTS`. A caller with only `CREATE_OWN_AGENT` must be
+ * itself is gated on `MANAGE_WORKSPACE_AGENTS`. A caller without it (fixture: only the user-tier
+ * MEMORY_WRITE_SELF atom; BL-312 removed the former CREATE_OWN_AGENT sample) must be
  * stopped before the click, with the F-02 grant hint, and must not fire a create or bind request.
  */
 test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the click", async ({
@@ -278,7 +279,7 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
             body: JSON.stringify({
                 userId: "user-1",
                 instanceCapabilities: [],
-                instancePermissions: [{ actionClass: "CREATE_OWN_AGENT", resource: "*" }],
+                instancePermissions: [{ actionClass: "MEMORY_WRITE_SELF", resource: "*" }],
                 workspaces: [
                     {
                         workspaceId: "workspace-1",

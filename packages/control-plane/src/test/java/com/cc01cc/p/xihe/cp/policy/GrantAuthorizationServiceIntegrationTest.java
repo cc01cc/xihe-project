@@ -425,7 +425,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         // （createAgentPrincipalGrant 已删除），权限只来自绑定角色 —— 原断言"creation intersects
         // template capabilities with creator grants"已过时。新规则：每个原子一行，集合 = 绑定角色原子集。
         // B 类（BL-326，2026-11-05）：V127/D-174 之后 agent principal 的默认 instance 角色是
-        // **AGENT_USER**（human USER 去掉 agent 禁用的 CREATE_OWN_AGENT），不再是 USER。
+        // **AGENT_USER**（BL-312 移除 CREATE_OWN_AGENT 后，其种子即基础集），不再是 USER。
         // 期望集合从角色目录单一来源派生，不写字面量。
         java.util.Set<String> expectedRoleAtoms =
                 RoleAtomExpectations.declaredAtoms(SystemAccessRoleCatalog.AGENT_USER);
@@ -486,11 +486,12 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
                 Integer.class, workspaceId, principalId.toString()));
 
         // B 类（BL-326，2026-11-05）：夹具改走 ensureUserDefault 后，调用者已持有完整 instance USER
-        // 默认集（含 network@*），旧用例用 "network" 已不再"超出调用者持有"。改用 CREATE_OWN_AGENT：
-        // 调用者作为 human USER 持有它，而 agent principal（AGENT_USER）按 V127/D-174 明确**不**持有
-        // —— 这正是"cap 不得超出被绑定 principal 的授权"的原意。
+        // 默认集（含 network@*），旧用例用 "network" 已不再"超出调用者持有"。原样本 CREATE_OWN_AGENT
+        // 随 BL-312（2026-11-09）移除，改用 MEMORY_WRITE_SELF：调用者作为 human USER 持有它，而
+        // agent principal（AGENT_USER = 基础集）明确**不**持有 —— "cap 不得超出被绑定 principal 的
+        // 授权"的原意不变。
         assertThrows(CpApiException.class, () -> agentPrincipalService.setWorkspaceCap(
-                userId, workspaceId, principalId, atoms("CREATE_OWN_AGENT")),
+                userId, workspaceId, principalId, atoms("MEMORY_WRITE_SELF")),
                 "binding caps cannot exceed the principal or operator's current grants");
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         session, "write", "src/main.java")),

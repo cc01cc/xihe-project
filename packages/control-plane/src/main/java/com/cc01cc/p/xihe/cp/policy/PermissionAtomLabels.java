@@ -66,7 +66,8 @@ public final class PermissionAtomLabels {
         put(labels, ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
                 "管理定时任务", "Manage scheduled tasks");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_ROLES, "管理角色与绑定", "Manage roles & bindings");
-        put(labels, ToolFaceRegistry.ACTION_OWN_AGENT, "创建个人智能体", "Create personal agent");
+        // BL-312 (option B, 2026-11-09): the CREATE_OWN_AGENT label is removed with its atom;
+        // PermissionAtomLabelsTest walks the catalog, so no entry must remain here for it.
         put(labels, ToolFaceRegistry.ACTION_MEMORY_WRITE, "写入智能体记忆", "Write agent memory");
         put(labels, ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
                 "写入自己的智能体记忆", "Write own agent memory");

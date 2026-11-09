@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
@@ -100,7 +99,7 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         JsonNode body = objectMapper.readTree(response.getBody());
         JsonNode atoms = body.path("atoms");
         // Derived, never a hard-coded count: the catalog is the union of the action atoms and the
-        // capability atoms, and PLAN-0622 D8 appended CREATE_OWN_AGENT to the action atoms.
+        // capability atoms (BL-312 removed the former PLAN-0622 D8 atom from the action atoms).
         assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
                 atoms.size(), "catalog = every action atom plus every capability atom");
         assertEquals(List.of("instance", "workspace"), texts(body.path("scopes")));
@@ -115,14 +114,10 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertTrue(byName.get("instance:admin").path("capability").asBoolean());
         assertEquals("instance", byName.get("instance:admin").path("scopeClass").asText());
         assertEquals("both", byName.get("workspace:admin").path("scopeClass").asText());
-        // PLAN-0622 D8: the user-tier "create your own agent" atom must be in the catalog and is
-        // instance-bindable only — a workspace binding would mean "create agents for the workspace".
-        JsonNode ownAgent = byName.get(ToolFaceRegistry.ACTION_OWN_AGENT);
-        assertNotNull(ownAgent, "D8: CREATE_OWN_AGENT is part of the catalog");
-        assertEquals("instance", ownAgent.path("scopeClass").asText(),
-                "D8: CREATE_OWN_AGENT is a user-tier atom, bindable only at the instance scope");
-        assertFalse(ownAgent.path("capability").asBoolean(),
-                "D8: it is an action atom, not a capability authority");
+        // BL-312 (option B, 2026-11-09): the former PLAN-0622 D8 "create your own agent" atom is
+        // removed from the vocabulary; the roles/catalog face must not list it any more.
+        assertFalse(byName.containsKey("CREATE_OWN_AGENT"),
+                "BL-312: the removed D8 atom is gone from the roles/catalog vocabulary");
         assertEquals(PermissionAtomCatalog.capabilityAtoms().size(), atoms.findValues("capability").stream()
                 .filter(JsonNode::asBoolean).count(), "exactly the catalog's capability atoms");
     }

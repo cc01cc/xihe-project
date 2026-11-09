@@ -323,9 +323,9 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
                 "the incoming owner holds exactly one instance tier binding (SUPER_ADMIN)");
         assertEquals(List.of("ADMIN"), instanceTierRoles(ownerId),
                 "the outgoing owner is downgraded to ADMIN, not left without a tier");
-        // Derived from the code-side role seeds (PLAN-0622 D8 appended CREATE_OWN_AGENT): a
-        // hard-coded 15/8 would rot on the next atom change, and the claim here is about *which*
-        // role materialized what, not about a magic number.
+        // Derived from the code-side role seeds (BL-312 removed CREATE_OWN_AGENT; the counts follow
+        // the catalog): a hard-coded 15/8 would rot on the next atom change, and the claim here is
+        // about *which* role materialized what, not about a magic number.
         assertEquals(materializableSeedAtoms(SystemAccessRoleCatalog.SUPER_ADMIN),
                 atomRowCount("user", UUID.fromString(targetId)),
                 "SUPER_ADMIN materializes every action atom (capability atoms stay out of grants)");

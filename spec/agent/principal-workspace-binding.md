@@ -35,6 +35,8 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 ## scope 三档与三段授权（PLAN-0622 增补，实现状态 `partial`）
 
 > 本节由 PLAN-0622 承接；**契约先定、实现随 M1 推进**。动作/atom 的 canonical 正文仍在 `spec/security/principal-workspace-scope.md`，本节只写 Agent 侧的档位与三段关系。
+>
+> **D-174 supersede（2026-11-05，V126）**：`agent_principals.scope` 三档列与两 CHECK 已整体删除——下文 `PERSONAL/WORKSPACE/INSTANCE` 档位表与「三段授权」中的创建段为**历史记录**；现行模型 = 遗留 `owner_user_id` 列 + 绑定，创建唯一路径 = workspace 上下文 + `MANAGE_WORKSPACE_AGENTS`。**BL-312 supersede（2026-11-09，V147）**：`CREATE_OWN_AGENT` 原子已从词表与种子中移除，user 层创建通道不复存在。
 
 ### scope 属于绑定，不属于 principal
 
@@ -46,7 +48,7 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 
 | scope | 谁创建 | 可见 / 可用 | 绑定要求 | 禁用权 |
 |---|---|---|---|---|
-| `PERSONAL` | 主体 owner 本人（`CREATE_OWN_AGENT`，user scope；要求 `owner_user_id` 非空） | 仅 owner + 被绑到的 Workspace 成员 | owner 可绑到自己有绑定权限的 Workspace；绑定时 `owner_user_id` **必须**等于绑定操作者 | owner / instance ADMIN |
+| `PERSONAL` | （历史，D-174/V126 已删档）~~主体 owner 本人（`CREATE_OWN_AGENT`，user scope；要求 `owner_user_id` 非空）~~ | 仅 owner + 被绑到的 Workspace 成员 | owner 可绑到自己有绑定权限的 Workspace；绑定时 `owner_user_id` **必须**等于绑定操作者 | owner / instance ADMIN |
 | `WORKSPACE` | 该 Workspace 内有 `MANAGE_WORKSPACE_AGENTS` 的人 | 该 Workspace 成员（现行语义不变） | **需要** `workspace_agents` 行 | Workspace OWNER / instance ADMIN |
 | `INSTANCE` | instance ADMIN（`CREATE_ACCOUNT`，resource `*`） | 全实例可发现 | **不需要**绑定即可用 | 仅 instance ADMIN |
 
@@ -56,7 +58,7 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 
 | 段 | 动作 | action | 作用域 | 说明 |
 |---|---|---|---|---|
-| **创建** | 建 `PERSONAL` | **`CREATE_OWN_AGENT`（新增）** | user | 普通用户建自己的主体；不得用它建 WORKSPACE/INSTANCE 档 |
+| **创建** | 建 `PERSONAL` | ~~**`CREATE_OWN_AGENT`（新增）**~~（历史：BL-312/V147 已移除该原子） | user | 普通用户建自己的主体；不得用它建 WORKSPACE/INSTANCE 档 |
 | | 建 `WORKSPACE` | `MANAGE_WORKSPACE_AGENTS` | workspace | 在工作区内建 |
 | | 建 `INSTANCE` | `CREATE_ACCOUNT` | instance（resource `*`） | 仅 ADMIN |
 | **绑定** | 挂到 Workspace | `MANAGE_WORKSPACE_AGENTS` | workspace（具体 UUID，禁 `*`） | 可授予他人 ⇒ 被授予者能在别人的 Workspace 里绑**自己**的 `PERSONAL` 主体；**不能**绑别人的 `PERSONAL` |

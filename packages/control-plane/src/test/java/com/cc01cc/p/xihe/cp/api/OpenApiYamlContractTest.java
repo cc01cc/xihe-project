@@ -682,8 +682,10 @@ class OpenApiYamlContractTest {
             assertTrue(((Map<?, ?>) leasePost.get("responses")).containsKey("429"),
                     "the lease admission path declares the 429 refusal");
 
-            // 7: the new user-tier action is named in the contract text.
-            assertTrue(raw.contains("CREATE_OWN_AGENT"), "CREATE_OWN_AGENT must be named in the contract");
+            // 7: BL-312 (option B, 2026-11-09) removed the former PLAN-0622 D8 atom; the contract
+            // must not name it any more (the removal stays visible until the mention is gone).
+            assertFalse(raw.contains("CREATE_OWN_AGENT"),
+                    "BL-312: the removed CREATE_OWN_AGENT atom must not appear in the contract");
         }
     }
 }

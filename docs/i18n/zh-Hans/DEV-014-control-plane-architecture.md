@@ -301,7 +301,7 @@ N1–N10 + `GRANT_ANY_ATOM`（PLAN-0673，V125）在**代码侧**的默认集（
 `ADMIN × MANAGE_ROLES` 有）；`DefaultSetAtomMatrixTest` 继续钉住 N1–N10 的硬编码契约（10×7）。
 迁移面变更（V111/V114/V115/V125 任一）必须让这两个测试同批绿。
 
-**agent principal 禁授集合 = 17 项**（2026-11-05 裁定；PLAN-0673 M2 增 `GRANT_ANY_ATOM`）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES`/`CREATE_OWN_AGENT` + `GRANT_ANY_ATOM` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
+**agent principal 禁授集合 = 16 项**（2026-11-05 裁定；PLAN-0673 M2 增 `GRANT_ANY_ATOM`；BL-312 2026-11-09 移除 `CREATE_OWN_AGENT`，17 → 16）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES` + `GRANT_ANY_ATOM` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
 判据一句话：**实例域的东西 agent 不能碰；工作区域的东西由 owner 通过角色授予**（N5–N9 因此**可授**——禁掉会让所有 `WS_EDITOR` 绑定非法，且 agent 无法跑代码）。
 唯一真相是 `PermissionAtomCatalog.ATOMS` 上每个原子的 `agentPrincipalForbidden` 标记，聚合函数从它派生（别再维护第二份清单）。
 

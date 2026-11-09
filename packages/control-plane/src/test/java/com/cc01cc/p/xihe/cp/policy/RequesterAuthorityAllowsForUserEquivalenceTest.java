@@ -99,8 +99,10 @@ class RequesterAuthorityAllowsForUserEquivalenceTest {
 
     @Test
     void emptyGrantSetDeniesOnBothPaths() {
+        // BL-312: the former D8 sample atom ACTION_OWN_AGENT no longer exists; the equivalence
+        // probe uses a still-existing user-tier atom instead.
         assertSameAsLegacy("no grants ⇒ deny",
-                request(ToolFaceRegistry.ACTION_OWN_AGENT, "*", ToolShape.OPAQUE), List.of());
+                request(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF, "*", ToolShape.OPAQUE), List.of());
     }
 
     @Test

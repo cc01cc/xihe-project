@@ -144,9 +144,10 @@ const unbindConfirmationId = ref<string | null>(null);
 const disableConfirmationId = ref<string | null>(null);
 /**
  * PLAN-0622：写操作的可用性**只看 CP 权威能力投影** `GET /me/permissions` 的原子：
- * - `CREATE_OWN_AGENT`（user 层）→ 能建 PERSONAL；
  * - `MANAGE_WORKSPACE_AGENTS`（workspace 层、resource=本工作区 UUID）→ 能建 WORKSPACE / 绑定 / 禁用；
  * - `CREATE_ACCOUNT`（instance 层、resource `*`）→ 能建 INSTANCE。
+ * （BL-312：原 `CREATE_OWN_AGENT`（user 层 → PERSONAL）原子已随 2026-11-09 裁定移除，
+ * 创建门不再有 user 层通道。）
  *
  * `capabilityState`：`loading` 时按钮保持禁用（fail-closed），`failed` 时同样禁用并显示原因——
  * 绝不出现"点了才发现没权限"。

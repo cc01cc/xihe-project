@@ -302,8 +302,9 @@ class DynamicAccessRoleMigrationTest {
 
     @Test
     void v87SeedsMatchTheCodeSideCatalog() throws SQLException {
-        // This class pins the V87 target, but the code-side catalog keeps growing with later
-        // migrations (PLAN-0622 V91 adds CREATE_OWN_AGENT). The V87-shape assertion is therefore
+        // This class pins the V87 target, but the code-side catalog keeps moving with later
+        // migrations (PLAN-0651 V127 adds AGENT_USER; BL-312's V147 removed CREATE_OWN_AGENT). The
+        // V87-shape assertion is therefore
         // one-directional here: every row V87 seeds must still be described by the code catalog
         // (same id <-> name, and no atom the code no longer knows). The reverse direction — the code
         // catalog being fully seeded — belongs to the head target and is asserted by

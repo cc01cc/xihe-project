@@ -71,8 +71,8 @@ class DefaultSetAtomMatrixTest {
         table.put(SystemAccessRoleCatalog.WS_VIEWER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         table.put(SystemAccessRoleCatalog.AGENT_DELEGATOR, Set.of());
-        // V127 / D-174: the agent default INSTANCE role — human USER's registration set minus
-        // CREATE_OWN_AGENT, so none of N1–N10 (all cells false).
+        // V127 / D-174: the agent default INSTANCE role — the base set (BL-312 removed the former
+        // CREATE_OWN_AGENT differentiator), so none of N1–N10 (all cells false).
         table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
         return table;
     }
@@ -173,8 +173,9 @@ class DefaultSetAtomMatrixTest {
                     "must be grantable to agent principals (workspace capability): " + atom);
         }
         // The aggregate is the single source of truth 0667 derives from.
-        assertEquals(21, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
-                "18 up to BL-345 (2026-11-06) + PLUGIN_MANAGE/PLUGIN_BIND/PLUGIN_DATA"
-                        + " (PLAN-0691 T1.3, 2026-11-08) = 21; PLUGIN_INVOKE stays bindable");
+        assertEquals(20, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+                "17 up to BL-345 (2026-11-06; BL-312 removed CREATE_OWN_AGENT from the 18)"
+                        + " + PLUGIN_MANAGE/PLUGIN_BIND/PLUGIN_DATA (PLAN-0691 T1.3, 2026-11-08)"
+                        + " = 20; PLUGIN_INVOKE stays bindable");
     }
 }
