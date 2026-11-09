@@ -383,14 +383,31 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-import-warnings")).toHaveCount(0);
     });
 
-    // 待裁定（task-109 报告 §三）：旧的「初始加载中…」是死页 ConfigSettings 里的整页状态
-    // （showInitialLoading），新壳 SettingsDomainView 没有等价的 pending 呈现 —— 加载期间它会渲染
-    // 「本域 0 项配置」+ 空表单，等于把「还没回来」画成「没有配置」。要么产品补 loading，要么
-    // 明示该断言退役；在裁定前保持红，不改弱断言。
-    test("shows loading state while layer config is pending", async ({ page }) => {
+    // 旧：死页 ConfigSettings 的整页 `showInitialLoading` →「加载中…」。
+    // 新（task-112）：域页消费 `configStore.layerLoading`（单一状态源，无本地 flag/定时器），
+    // pending 期间**不渲染**「本域 N 项配置」、**不挂载**面板，改渲染 `common.loading`
+    // （`data-testid="settings-domain-loading"`）。断言四件事：①pending 面出现
+    // ②「0 项配置」不出现（不能把「还没回来」画成「没有配置」）③面板未挂载
+    // ④取数落定后三者反转（证明上面是**状态**，不是永远不渲染）。
+    test("shows a pending state instead of an empty domain while layer config loads", async ({
+        page,
+    }) => {
         await mockConfigAPIs(page, { delayMs: 3000 });
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.locator("text=加载中...")).toBeVisible();
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
+
+        // ① pending 面（用 testid，不依赖「加载中…」的省略号字形）
+        await expect(page.getByTestId("settings-domain-loading")).toBeVisible();
+        // ② 不得把 unknown 折成结论：此时不能出现「本域 N 项配置」
+        await expect(page.getByTestId("settings-domain-summary")).toHaveCount(0);
+        // ③ 面板不挂载 —— 断言的是「没假装已加载」，不是「页面能打开」
+        await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
+
+        // ④ 取数落定后三者反转
+        await expect(page.getByTestId("settings-domain-loading")).toHaveCount(0, {
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("settings-domain-summary")).toBeVisible();
+        await expect(page.getByTestId("config-domain-logging")).toBeVisible();
     });
 
     test("shows an error banner when layer config cannot be loaded", async ({ page }) => {
