@@ -4666,7 +4666,7 @@ paths:
     get:
       operationId: getPluginBindingAuthorization
       summary: Explain what a binding currently grants (PLAN-0691 T1.2)
-      description: 'Three sets: `requestedAtoms` come from the installed manifest, `grantedAtoms` from the binding row, and `effectiveAtoms` is their intersection — an atom the manifest never asked for can never be effective. `sources` attributes each effective atom to `default` (the builtin workspace default set) or `plugin_binding` (an explicit grant), so "why does this plugin hold this atom" is answerable without reading the manifest. T1.3 replaces the intersection with the policy engine; until then authentication is the only gate on this route.'
+      description: 'Three sets: `requestedAtoms` come from the installed manifest, `grantedAtoms` from the binding row, and `effectiveAtoms` is their intersection — an atom the manifest never asked for can never be effective. `sources` attributes each effective atom to `default` (the builtin workspace default set) or `plugin_binding` (an explicit grant), so "why does this plugin hold this atom" is answerable without reading the manifest. PLAN-0691 T1.3 is delivered: binding write paths are gated by the plugin policy engine (missing `PLUGIN_BIND` answers `403 PLUGIN_GRANT_DENIED`); this read-only explanation endpoint stays authentication-only (workspace-scoped disclosure).'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
@@ -7854,7 +7854,7 @@ components:
     PluginAuthorizationSummary:
       type: object
       required: [bindingId, requestedAtoms, grantedAtoms, effectiveAtoms, sources]
-      description: 'Three sets — manifest-requested, binding-granted, and their intersection — plus the grant source of every effective atom. T1.3 replaces the intersection with the policy engine; this projection stays the explanation surface.'
+      description: 'Three sets — manifest-requested, binding-granted, and their intersection — plus the grant source of every effective atom. PLAN-0691 T1.3 delivered the `PLUGIN_BIND` authorization takeover on binding write paths; this projection stays the read-only explanation surface (`effectiveAtoms` is `grantedAtoms ∩ requestedAtoms`).'
       properties:
         bindingId: { type: string, format: uuid, readOnly: true }
         requestedAtoms: { type: array, items: { type: string }, readOnly: true, description: 'From the installed manifest' }
