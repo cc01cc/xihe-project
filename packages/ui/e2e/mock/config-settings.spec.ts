@@ -328,33 +328,59 @@ test.describe("Config Settings (three layers)", () => {
         expect(request.url()).toContain("/api/v1/config/export");
     });
 
+    // 旧：/settings/config 死页 ConfigSettings 上传后渲染 config-import-warnings。
+    // 新：导入/导出入口在「数据」页（T4.4）；M1 换页时把 warnings 面丢了（只显示
+    // Imported/Skipped），task-111 补回 —— warnings[] 由 CP 返回后**逐条渲染**。
+    // 这条断言要分辨两件事：①CP 给 N 条 ⇒ 列表恰 N 条且内容是 CP 原文（不是空容器、不是
+    // [object Object]）②CP 没给 ⇒ **容器不渲染**（空容器与不渲染必须能区分）。
     test("import posts the file and renders skip warnings", async ({ page }) => {
         await mockConfigAPIs(page);
+        let warnings: string[] = [
+            "provider-connections: 1 credential(s) skipped - rebuild them via the provider connections API/UI",
+        ];
+        const postedBodies: string[] = [];
         await page.route("**/api/v1/config/import**", async (route: any) => {
+            postedBodies.push(route.request().postData() ?? "");
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({
-                    status: "ok",
-                    imported: 2,
-                    skipped: 1,
-                    warnings: [
-                        "provider-connections: 1 credential(s) skipped - rebuild them via the provider connections API/UI",
-                    ],
-                }),
+                body: JSON.stringify({ status: "ok", imported: 2, skipped: 1, warnings }),
             });
         });
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/settings/data", { waitUntil: "load" });
 
-        await page.getByTestId("config-import-input").setInputFiles({
-            name: "config.import.local.jsonc",
-            mimeType: "application/json",
-            buffer: Buffer.from('{"logging":{"logLevel":"INFO"}}'),
-        });
-        await expect(page.getByTestId("config-import-warnings")).toBeVisible();
-        await expect(page.getByTestId("config-import-warnings")).toContainText(
-            "credential(s) skipped",
-        );
+        // 数据页的导入是两步：选文件 → 预览弹窗确认（预览要求 JSON 里真有 chats 数组）。
+        const importOnce = async (): Promise<void> => {
+            await page.getByRole("button", { name: "导入", exact: true }).click();
+            await page.locator('input[type="file"]').setInputFiles({
+                name: "xihe-chats.json",
+                mimeType: "application/json",
+                buffer: Buffer.from(
+                    JSON.stringify({
+                        chats: [{ id: "chat-1", messages: [{ role: "user", content: "hi" }] }],
+                    }),
+                ),
+            });
+            const modal = page.getByTestId("modal-content");
+            await expect(modal).toBeVisible();
+            await modal.getByRole("button", { name: "确认", exact: true }).click();
+            await expect(modal).toBeHidden();
+        };
+
+        await importOnce();
+        // ① 文件确实 POST 到导入端点（旧断言靠「上传后渲染出 warnings」间接证明，这里直接读请求体）
+        await expect.poll(() => postedBodies.length).toBe(1);
+        expect(postedBodies[0]).toContain("chat-1");
+        // ② CP 给了 1 条 ⇒ 列表恰 1 条，且内容就是 CP 原文
+        const warningList = page.getByTestId("config-import-warnings");
+        await expect(warningList).toBeVisible();
+        await expect(warningList.locator("li")).toHaveCount(1);
+        await expect(warningList).toContainText("credential(s) skipped");
+
+        // ③ CP 没给 warnings ⇒ 不渲染空容器
+        warnings = [];
+        await importOnce();
+        await expect(page.getByTestId("config-import-warnings")).toHaveCount(0);
     });
 
     // 待裁定（task-109 报告 §三）：旧的「初始加载中…」是死页 ConfigSettings 里的整页状态
