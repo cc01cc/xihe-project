@@ -19,9 +19,9 @@ updated: 2026-11-10
 
 | 项 | 要求 | 依据 |
 |---|---|---|
-| 工具链 | Node 24 / pnpm 10 / Python 3.14 / uv / Java 25 / Maven 3.9 / Rust 1.97.1，由 `mise install` 固定 | `mise.toml:23-30`（`[tools]`） |
+| 工具链 | Node 24 / pnpm 10 / Python 3.14 / uv / Java 25 / Maven 3.9 / Rust 1.97.1，由 `mise install` 固定 | `mise.toml:44-51`（`[tools]`） |
 | Docker | **仅 PostgreSQL** 用容器；服务容器化与 `xihe/workspace` 镜像构建已冻结，不要试图 `docker compose up` 全栈 | `mise.toml:1-16`（冻结说明） |
-| 目录 | **任意目录**即可（单 clone）；不再是"必须在 `one/` 工作区内" | `mise run check:standalone`（`mise.toml:395`）自检「不依赖 one 根」 |
+| 目录 | **任意目录**即可（单 clone）；不再是"必须在 `one/` 工作区内" | `mise run check:standalone`（`mise.toml:565`）自检「不依赖 one 根」 |
 | 端口 | stack-1：UI 12630 / CP 12631 / Agent 12632 / Runtime 12633 / PG 12634 | `scripts/lib/stack-ports.mjs:20`（端口事实源） |
 | 工作区 | **首启没有任何工作区**：注册/登录都不再自动创建，第一步是用户自己建（§3 第 2 步 / §4 第 1 步） | `AuthController.withFirstWorkspace`（`AuthController.java:137,165,196-201`） |
 
@@ -36,14 +36,14 @@ updated: 2026-11-10
 
 ```powershell
 mise install
-mise run setup            # mise.toml:32（UI/Agent/CP/Runtime 依赖）
-mise run dev:host         # mise.toml:275（先起 PG 容器，再并行起 CP/Agent/Runtime/UI）
-mise run dev:host:check   # mise.toml:307（可选：只读预检 工具/Docker/端口/host root）
+mise run setup            # mise.toml:53（UI/Agent/CP/Runtime 依赖）
+mise run dev:host         # mise.toml:413（先起 PG 容器，再并行起 CP/Agent/Runtime/UI）
+mise run dev:host:check   # mise.toml:455（可选：只读预检 工具/Docker/端口/host root）
 ```
 
-- `dev:host` **不导入配置、不创建 Provider Connection**（`mise.toml:280`）；需要时显式 `mise run dev:host:import-config`（`mise.toml:290`）或 `mise run dev:host:provider-init`（`mise.toml:296`）。
-- 停栈：`mise run dev:host:stop`（`mise.toml:317`）。
-- 换个端口段（多栈并行）：`mise run dev:stack -- --stack 2`（`mise.toml:285`），槽位表见 DEV-002「模式 D」。
+- `dev:host` **不导入配置、不创建 Provider Connection**（`mise.toml:420`）；需要时显式 `mise run dev:host:import-config`（`mise.toml:438`）或 `mise run dev:host:provider-init`（`mise.toml:444`）。
+- 停栈：`mise run dev:host:stop`（`mise.toml:465`）。
+- 换个端口段（多栈并行）：`mise run dev:stack -- --stack 2`（`mise.toml:425`），槽位表见 DEV-002「模式 D」。
 
 ## 3. 首跑（登录 dev 管理员 → 空白起步）
 
@@ -139,7 +139,7 @@ mise run dev:host:check   # mise.toml:307（可选：只读预检 工具/Docker/
 node scripts/e2e-host.mjs --batch=goldpath --retries=0
 node scripts/e2e-host.mjs --batch=goldpath-closed --retries=0
 # 等价的 mise 任务（单个 spec / 手工参数）
-mise run test:e2e:host -- e2e/real/goldpath-first-run.spec.ts   # mise.toml:181
+mise run test:e2e:host -- e2e/real/goldpath-first-run.spec.ts   # mise.toml:302
 ```
 
 runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全关**，故既有批次行为不变）：
@@ -181,7 +181,7 @@ runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全�
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `dev:host` 起不来，端口被占 | 12630-12634 被其它栈/进程占用 | `mise run dev:host:check`（`mise.toml:307`）；或换槽位 `--stack 2` |
+| `dev:host` 起不来，端口被占 | 12630-12634 被其它栈/进程占用 | `mise run dev:host:check`（`mise.toml:455`）；或换槽位 `--stack 2` |
 | CP 启动即退出，日志提示本地模式需回环 | 只设了 `XIHE_LOCAL_MODE=true`，没设 `SERVER_ADDRESS=127.0.0.1`（或 `XIHE_ENV=prod`） | 补齐三条件（见存档 `localmode-enablement.md` §1）。**local mode 已弃用**：该现象只会在 §5 的 E2E 车道或历史存档语境下遇到 |
 | 登录后是空白页面、没有任何工作区 | **正常**（0614 起不再自动创建工作区） | 点「创建你的第一个工作区」（§4 第 1 步） |
 | 创建对话框里目录读不出来 | 路径不是 Runtime 可见的宿主目录，或后端不可用 | 换一个真实存在的宿主目录；先跑 `POST /api/v1/workspaces/capabilities/preflight` 看 `available=false` 的 `reason` |

@@ -19,9 +19,9 @@ updated: 2026-11-10
 
 | Item | Requirement | Source |
 |---|---|---|
-| Toolchain | Node 24 / pnpm 10 / Python 3.14 / uv / Java 25 / Maven 3.9 / Rust 1.97.1, pinned by `mise install` | `mise.toml:23-30` (`[tools]`) |
+| Toolchain | Node 24 / pnpm 10 / Python 3.14 / uv / Java 25 / Maven 3.9 / Rust 1.97.1, pinned by `mise install` | `mise.toml:44-51` (`[tools]`) |
 | Docker | **PostgreSQL only**. Service containerisation and the `xihe/workspace` image build are frozen — do not `docker compose up` the whole stack | `mise.toml:1-16` (freeze note) |
-| Directory | **Any directory** works (single clone); no longer "must live inside the `one/` workspace" | `mise run check:standalone` (`mise.toml:395`) verifies "no dependency on the one root" |
+| Directory | **Any directory** works (single clone); no longer "must live inside the `one/` workspace" | `mise run check:standalone` (`mise.toml:565`) verifies "no dependency on the one root" |
 | Ports | stack-1: UI 12630 / CP 12631 / Agent 12632 / Runtime 12633 / PG 12634 | `scripts/lib/stack-ports.mjs:20` (port source of truth) |
 | Workspace | **A fresh instance has no workspace at all**: neither register nor login creates one; the first step is the user creating one (§3 step 2 / §4 step 1) | `AuthController.withFirstWorkspace` (`AuthController.java:137,165,196-201`) |
 
@@ -36,14 +36,14 @@ Two operating modes, pick by purpose:
 
 ```powershell
 mise install
-mise run setup            # mise.toml:32 (UI/Agent/CP/Runtime dependencies)
-mise run dev:host         # mise.toml:275 (PostgreSQL container first, then CP/Agent/Runtime/UI in parallel)
-mise run dev:host:check   # mise.toml:307 (optional read-only preflight: tools, Docker, ports, host root)
+mise run setup            # mise.toml:53 (UI/Agent/CP/Runtime dependencies)
+mise run dev:host         # mise.toml:413 (PostgreSQL container first, then CP/Agent/Runtime/UI in parallel)
+mise run dev:host:check   # mise.toml:455 (optional read-only preflight: tools, Docker, ports, host root)
 ```
 
-- `dev:host` **does not import config and does not create a Provider Connection** (`mise.toml:280`). Use `mise run dev:host:import-config` (`mise.toml:290`) or `mise run dev:host:provider-init` (`mise.toml:296`) explicitly when needed.
-- Stop: `mise run dev:host:stop` (`mise.toml:317`).
-- Another port block (parallel stacks): `mise run dev:stack -- --stack 2` (`mise.toml:285`); slot table in DEV-002 "Mode D".
+- `dev:host` **does not import config and does not create a Provider Connection** (`mise.toml:420`). Use `mise run dev:host:import-config` (`mise.toml:438`) or `mise run dev:host:provider-init` (`mise.toml:444`) explicitly when needed.
+- Stop: `mise run dev:host:stop` (`mise.toml:465`).
+- Another port block (parallel stacks): `mise run dev:stack -- --stack 2` (`mise.toml:425`); slot table in DEV-002 "Mode D".
 
 ## 3. First run (sign in as the seeded dev admin → blank start)
 
@@ -139,7 +139,7 @@ Also covered, outside C1–C8: C9 a connection verifies `READY` and the fake mod
 node scripts/e2e-host.mjs --batch=goldpath --retries=0
 node scripts/e2e-host.mjs --batch=goldpath-closed --retries=0
 # Equivalent mise entry (single spec / manual flags)
-mise run test:e2e:host -- e2e/real/goldpath-first-run.spec.ts   # mise.toml:181
+mise run test:e2e:host -- e2e/real/goldpath-first-run.spec.ts   # mise.toml:302
 ```
 
 The runner's three gold-path flags (`scripts/e2e-host.mjs:438-440`; all **off** by default, so existing batches keep their behaviour):
@@ -181,7 +181,7 @@ Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `dev:host` fails to come up, ports busy | 12630-12634 occupied by another stack/process | `mise run dev:host:check` (`mise.toml:307`); or use another slot via `--stack 2` |
+| `dev:host` fails to come up, ports busy | 12630-12634 occupied by another stack/process | `mise run dev:host:check` (`mise.toml:455`); or use another slot via `--stack 2` |
 | CP exits at startup complaining local mode needs loopback | `XIHE_LOCAL_MODE=true` without `SERVER_ADDRESS=127.0.0.1` (or `XIHE_ENV=prod`) | satisfy all three conditions (archive `localmode-enablement.md` §1). **Local mode is deprecated**: you only meet this on the §5 E2E lane or in the historical archive |
 | After login you get a blank screen with no workspace | **Expected** (since 0614 no workspace is auto-created) | click "create your first workspace" (§4 step 1) |
 | The creation dialog cannot read the directory | the path is not a Runtime-visible host directory, or the backend is unavailable | use a real host directory; call `POST /api/v1/workspaces/capabilities/preflight` first and read `reason` when `available=false` |
