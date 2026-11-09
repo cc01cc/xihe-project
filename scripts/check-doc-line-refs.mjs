@@ -189,25 +189,38 @@ export function classifyRef(ref, citingFile, ctx) {
         detail: "",
         foundAt: [],
     };
-    if (resolved.file === null) {
-        item.status = resolved.reason === "ambiguous" ? "ambiguous-target" : "missing-target";
-        item.detail = resolved.reason === "ambiguous"
+    // 目标解析问题：带锚 ⇒ 直接判对应状态；不带锚 ⇒ 记成**信息项**（卡片裁定：无锚不判错）
+    const targetProblem = resolved.file === null
+        ? (resolved.reason === "ambiguous"
             ? "同名 " + resolved.count + " 个候选，引用没写够路径"
-            : "目标文件不存在";
-        return item;
+            : "目标文件不存在")
+        : null;
+    let lineCount = null;
+    if (resolved.file !== null) {
+        item.resolvedTarget = norm(relative(ctx.oneRoot, resolved.file));
+        lineCount = readFileSync(resolved.file, "utf8").split("\n").length;
     }
-    item.resolvedTarget = norm(relative(ctx.oneRoot, resolved.file));
-    const lines = readFileSync(resolved.file, "utf8").split("\n");
-    if (ref.start > lines.length) {
-        item.status = "out-of-range";
-        item.detail = "目标仅 " + lines.length + " 行";
-        return item;
-    }
+    const overRange = lineCount !== null && ref.start > lineCount;
     if (ref.anchor === null) {
         item.status = "no-anchor";
-        item.detail = "不带锚，不判错（计数）";
+        const parts = ["不带锚，不判错（计数）"];
+        if (targetProblem !== null) parts.push("目标信息：" + targetProblem);
+        if (overRange) parts.push("目标信息：目标仅 " + lineCount + " 行");
+        item.detail = parts.join("；");
+        item.targetInfo = targetProblem !== null ? "missing-or-ambiguous" : overRange ? "out-of-range" : "ok";
         return item;
     }
+    if (targetProblem !== null) {
+        item.status = resolved.file === null && resolved.reason === "ambiguous" ? "ambiguous-target" : "missing-target";
+        item.detail = targetProblem;
+        return item;
+    }
+    if (overRange) {
+        item.status = "out-of-range";
+        item.detail = "目标仅 " + lineCount + " 行";
+        return item;
+    }
+    const lines = readFileSync(resolved.file, "utf8").split("\n");
     const needle = ref.anchor;
     const from = Math.max(1, ref.start - WINDOW);
     const to = Math.min(lines.length, ref.end + WINDOW);
@@ -261,6 +274,8 @@ export function scan({ roots, indexRoots, projectRoot, oneRoot, scope = EASY_DRI
         missingTarget: count("missing-target"),
         ambiguousTarget: count("ambiguous-target"),
         withoutAnchor: count("no-anchor"),
+        // 无锚引用里「目标不存在/多义/越界」的条数：**信息项**，不算漂移、不阻断（卡片裁定）
+        anchorlessTargetIssues: items.filter((i) => i.status === "no-anchor" && i.targetInfo !== undefined && i.targetInfo !== "ok").length,
     };
     const byTarget = new Map();
     for (const item of items) {

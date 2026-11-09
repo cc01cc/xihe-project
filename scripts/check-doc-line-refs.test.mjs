@@ -113,7 +113,7 @@ test("六类夹具的判定与计数（--all-targets）", () => {
         assert.ok(!items.some((i) => i.citing.includes("/plans/")), "白名单目录必须跳过");
         assert.equal(out.totals.refs, 10, "plans/ 里那条不应计入总数");
         // 字段序固定、无时间戳
-        assert.deepEqual(Object.keys(out.totals), ["refs", "inScope", "outOfScope", "checked", "ok", "drift", "outOfRange", "missingTarget", "ambiguousTarget", "withoutAnchor"]);
+        assert.deepEqual(Object.keys(out.totals), ["refs", "inScope", "outOfScope", "checked", "ok", "drift", "outOfRange", "missingTarget", "ambiguousTarget", "withoutAnchor", "anchorlessTargetIssues"]);
         assert.equal(out.schema, "check-doc-line-refs/1");
         assert.equal(out.reportOnly, true);
         assert.equal(out.window, 10);
