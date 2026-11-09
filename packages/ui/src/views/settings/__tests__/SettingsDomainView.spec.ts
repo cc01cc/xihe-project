@@ -12,7 +12,12 @@ import { ref } from "vue";
  */
 const state = {
     capability: true,
-    /** task-112：store 的 `layerLoading` 是 pending 的唯一事实源，测试按 ref 可控地驱动它。 */
+    /** task-112/121：pending 的经济判据是「该层是否已有载荷」，故 layerConfig 必须可变。 */
+    layerConfig: ref<Record<string, Record<string, Record<string, string>>>>({
+        instance: { logging: { level: "INFO" } },
+        user: { rag: { k: "v" } },
+    }),
+    /** 全局瞬时标志：task-121 起 pending **不得**跟随它（否则面板挂载/卸载循环）。 */
     layerLoading: ref(false),
     loadLayerDomains: vi.fn<(layer: string) => Promise<void>>(() => Promise.resolve()),
     routeQuery: {} as Record<string, string | undefined>,
@@ -41,7 +46,9 @@ vi.mock("../../../stores/config", async () => {
     return {
         ...actual,
         useConfigStore: () => ({
-            layerConfig: { instance: { logging: { level: "INFO" } }, user: { rag: { k: "v" } } },
+            get layerConfig() {
+                return state.layerConfig.value;
+            },
             loadLayerDomains: state.loadLayerDomains,
             get layerLoading() {
                 return state.layerLoading.value;
@@ -79,14 +86,16 @@ const messages = {
     },
 };
 
-function mountView(layer: "instance" | "user", domain: string) {
+function mountView(layer: "instance" | "user", domain: string, stubs: { panels?: unknown } = {}) {
     const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });
     return mount(SettingsDomainView, {
         props: { layer, domain },
         global: {
             plugins: [i18n],
             stubs: {
-                ConfigLayerPanels: { template: '<div data-testid="panels-stub" />' },
+                ConfigLayerPanels: stubs.panels ?? {
+                    template: '<div data-testid="panels-stub" />',
+                },
                 ToolFacesView: { template: '<div data-testid="tool-faces-stub" />' },
                 RouterLink: { template: "<a><slot /></a>" },
             },
@@ -99,6 +108,10 @@ describe("SettingsDomainView", () => {
         state.capability = true;
         state.routeQuery = {};
         state.layerLoading.value = false;
+        state.layerConfig.value = {
+            instance: { logging: { level: "INFO" } },
+            user: { rag: { k: "v" } },
+        };
         state.loadLayerDomains.mockClear();
         state.loadLayerDomains.mockImplementation(() => Promise.resolve());
         state.replace.mockClear();
@@ -125,7 +138,8 @@ describe("SettingsDomainView", () => {
         await flushPromises();
         await wrapper.find('[data-testid="settings-domain-tab-tool-faces"]').trigger("click");
         expect(wrapper.find('[data-testid="tool-faces-stub"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
+        // task-121：面板常挂（v-show），切到工具分类只是隐藏。
+        expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(false);
         expect(state.replace).toHaveBeenCalledWith({ query: { tab: "tool-faces" } });
     });
 
@@ -184,40 +198,57 @@ describe("SettingsDomainView", () => {
 });
 
 /**
- * task-112：pending（还没回来）**不是**空（本域 0 项）。旧行为在 `loadLayerDomains` 挂起期间
- * 照常渲染「本域 0 项配置」+ 空表单 ⇒ 把 unknown 折成结论。三条用例分别锁：
- * ① pending ⇒ 有 loading 面、无「0 项配置」、无面板；② resolve ⇒ 正常渲染；③ 再次进入 pending（切层/重载）
- * ⇒ loading 面回来（证明消费的是 store 的 `layerLoading`，不是挂载时的一次性标志）。
+ * task-112 / task-121：pending（还没回来）**不是**空（本域 0 项），但判据必须**单调**：
+ * 首次加载期间显示 loading 面；该层一旦落定，**后续 reload 不得退回卸载态** —— 否则
+ * `ProviderHub.load()`（旧 `:763`）在 mount 时也调 `loadLayerDomains` ⇒「面板挂载 → 全局
+ * `layerLoading` 置真 → pending 真 → 面板卸载 → 取数结束 → 重挂」自持循环（dev-3 实测 63 轮/秒、
+ * 5.357 s 内 672 次 `/provider-catalog`）。四条用例：
+ * ① 首次待载 ⇒ loading 面、无「0 项配置」、无面板；
+ * ② 落定 ⇒ summary + 面板；
+ * ③ 落定后再发生 reload（全局 `layerLoading` 翻转）⇒ 面板**保持挂载**、loading 面**不出现**（循环回归）；
+ * ④ 面板桩在 mount 时回写 `loadLayerDomains`（复刻旧 ProviderHub 行为）⇒ 挂载次数与取数次数有界。
  */
-describe("SettingsDomainView pending state (task-112)", () => {
-    it("shows the loading surface instead of 「0 项配置」 while the layer is pending", async () => {
+describe("SettingsDomainView pending state (task-112/121)", () => {
+    beforeEach(() => {
+        state.capability = true;
+        state.routeQuery = {};
+        state.layerLoading.value = false;
+        state.layerConfig.value = { instance: {}, user: {} };
+        state.loadLayerDomains.mockClear();
+        state.loadLayerDomains.mockImplementation(() => Promise.resolve());
+    });
+
+    it("shows the loading surface instead of 「0 项配置」 before the layer has any payload", async () => {
         state.layerLoading.value = true;
         const wrapper = mountView("instance", "logging");
         await flushPromises();
 
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="settings-domain-summary"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
+        // task-121：面板**不卸载**（v-show 隐藏），只在视觉上让位给加载面 —— 卸载会诱发 mount 循环。
+        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(false);
         expect(wrapper.text()).not.toContain("本域 0 项配置");
     });
 
     it("renders the summary and the panel once the layer resolves", async () => {
-        state.layerLoading.value = true;
         const wrapper = mountView("instance", "logging");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(true);
 
-        state.layerLoading.value = false;
+        state.layerConfig.value = { instance: { logging: { level: "INFO" } }, user: {} };
         await flushPromises();
 
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
             "本域 1 项配置",
         );
-        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
     });
 
-    it("re-enters the pending surface when the layer is reloaded (switch-layer path)", async () => {
+    // 循环回归：旧实现 `pending = layerLoading` 会让这里重新出现 loading 面并卸载面板。
+    it("keeps the panel tree mounted when a reload flips the global loading flag", async () => {
+        state.layerConfig.value = { instance: { logging: { level: "INFO" } }, user: {} };
         const wrapper = mountView("instance", "logging");
         await flushPromises();
         expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
@@ -225,8 +256,35 @@ describe("SettingsDomainView pending state (task-112)", () => {
         state.layerLoading.value = true;
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="settings-domain-summary"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
+            "本域 1 项配置",
+        );
+    });
+    // 循环回归（dev-3 trace）：子组件在挂载/重载时回写全局 `layerLoading`。判据是**面板子树不被重建** ——
+    // 卸载/重挂正是「挂载 ⇒ 取数 ⇒ pending ⇒ 卸载 ⇒ 重挂」自持循环的载体。
+    it("keeps the same panel subtree identity across reloads (no unmount ⇒ no re-mount loop)", async () => {
+        state.layerConfig.value = { instance: { logging: { level: "INFO" } }, user: {} };
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+
+        const stub = wrapper.find('[data-testid="panels-stub"]');
+        expect(stub.exists()).toBe(true);
+        expect(stub.isVisible()).toBe(true);
+        const node = stub.element;
+
+        // 复刻 6 次「子组件回写 `layerLoading`」的 reload：面板必须原地不动（同一 DOM 节点）。
+        for (let round = 0; round < 6; round++) {
+            state.layerLoading.value = true;
+            await flushPromises();
+            expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
+            state.layerLoading.value = false;
+            await flushPromises();
+        }
+
+        expect(wrapper.find('[data-testid="panels-stub"]').element).toBe(node);
+        // 页面自身只取一次数；子组件不得因重挂而重复取数。
+        expect(state.loadLayerDomains).toHaveBeenCalledTimes(1);
     });
 });
