@@ -128,6 +128,95 @@ export interface SettingsNavItem {
     gap?: boolean;
 }
 
+/**
+ * 后端能力缺口代码：**唯一来源**是 `internal/A03-xihe/docs/resource-layer-permission-audit.md` §F
+ * （G1–G7，逐条有现状证据）。前端只引用代码与一句话说明，不据此删入口——
+ * 用户 2026-11-10 裁定 D7：**留位标缺口，不隐藏**（隐藏会让人以为能力不存在）。
+ */
+export type BackendGap = "G1" | "G2" | "G3" | "G4";
+
+/**
+ * 「资源」组的条目（不是配置域，走 `/settings/<name>` 或缺口说明）。
+ *
+ * <p>缺口项**没有 path**：点击不跳转、不给 404，弹出说明（与 mock v2 的
+ * `blockedNoticeTitle/Body` 同一种做法：说明 + 不跳转 + 可关闭）。</p>
+ */
+export interface ResourceNavItem {
+    id: string;
+    labelKey: string;
+    /** 该层有后端承载时给真实入口路径。 */
+    path?: string;
+    /** 缺口代码（空数组 = 通用缺口，audit §F 未单列，说明文字里写清缺什么）。 */
+    gaps?: BackendGap[];
+    /** 缺口说明 i18n key：一句话说清「缺什么 + 后端现状」。 */
+    gapNoteKey?: string;
+}
+
+/**
+ * 实例层「资源」组（design §3.2 第 2 行：资源 0 条目、4 个缺口位）。
+ *
+ * <p>4 条与 audit §F 的对应：MCP=G1（表 `workspace_id NOT NULL` 无实例/用户层）、
+ * 凭据=G2（`owner_type` 只有 USER/WORKSPACE）、知识库=G3（CP 无库实体、只有 4 个代理端点）、
+ * 智能体=G4（CP 无 tools/agent 注册实体，只有分类与工作区绑定）。</p>
+ */
+export function instanceResourceGroup(): ResourceNavItem[] {
+    return [
+        {
+            id: "agents",
+            labelKey: "settings.ia.resourceAgents",
+            gaps: ["G4"],
+            gapNoteKey: "settings.ia.gapNoteAgent",
+        },
+        {
+            id: "mcp",
+            labelKey: "settings.ia.resourceMcp",
+            gaps: ["G1"],
+            gapNoteKey: "settings.ia.gapNoteMcp",
+        },
+        {
+            id: "credentials",
+            labelKey: "settings.ia.resourceCredentials",
+            gaps: ["G2"],
+            gapNoteKey: "settings.ia.gapNoteCredentials",
+        },
+        {
+            id: "knowledge",
+            labelKey: "settings.ia.resourceKnowledge",
+            gaps: ["G3"],
+            gapNoteKey: "settings.ia.gapNoteKnowledge",
+        },
+    ];
+}
+
+/**
+ * 用户层「我的资源」组（design §3.2 第 4 行：3 条目 = 我的智能体 / 我的凭据 / 知识库·MCP）。
+ *
+ * <p>只有「我的凭据」这一层有后端承载（`owner_type=USER`，页面 `/settings/credentials` 已实现）；
+ * 我的智能体没有用户级创建入口（创建必须带工作区 + `MANAGE_WORKSPACE_AGENTS`，PLAN-0750 未落地），
+ * 知识库·MCP 是 G1/G3。三条都按 D7 留位。</p>
+ */
+export function userResourceGroup(): ResourceNavItem[] {
+    return [
+        {
+            id: "my-agents",
+            labelKey: "settings.ia.resourceMyAgents",
+            gaps: ["G4"],
+            gapNoteKey: "settings.ia.gapNoteAgentUser",
+        },
+        {
+            id: "my-credentials",
+            labelKey: "settings.ia.resourceMyCredentials",
+            path: "/settings/credentials",
+        },
+        {
+            id: "knowledge-mcp",
+            labelKey: "settings.ia.resourceKnowledgeMcp",
+            gaps: ["G1", "G3"],
+            gapNoteKey: "settings.ia.gapNoteKnowledgeMcp",
+        },
+    ];
+}
+
 export interface SettingsNavGroup {
     id: string;
     labelKey: string;

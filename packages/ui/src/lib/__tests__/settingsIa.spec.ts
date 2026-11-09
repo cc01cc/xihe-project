@@ -4,6 +4,8 @@ import {
     domainRouteExists,
     domainsForLayer,
     instanceOpsGroups,
+    instanceResourceGroup,
+    userResourceGroup,
     isInstanceOnlyForUser,
     layersForDomain,
     resolveLayerRoute,
@@ -124,5 +126,33 @@ describe("instance ops groups", () => {
         ]);
         const domains = domainsForLayer("instance") as readonly ConfigDomain[];
         expect(domains).toContain("logging");
+    });
+});
+describe("settings IA resource groups (PLAN-0752 T4.0/T4.1)", () => {
+    it("instance layer keeps 4 resource slots, all marked with an audit gap code", () => {
+        const items = instanceResourceGroup();
+        expect(items.map((item) => item.id)).toEqual(["agents", "mcp", "credentials", "knowledge"]);
+        // D7：留位标缺口，不隐藏 —— 4 条都没有 path（没有后端承载就没有可跳的页面）
+        expect(items.every((item) => item.path === undefined)).toBe(true);
+        expect(items.flatMap((item) => item.gaps ?? [])).toEqual(["G4", "G1", "G2", "G3"]);
+        expect(items.every((item) => !!item.gapNoteKey)).toBe(true);
+    });
+
+    it("user layer has exactly one real resource entry and two gapped ones", () => {
+        const items = userResourceGroup();
+        expect(items.map((item) => item.id)).toEqual([
+            "my-agents",
+            "my-credentials",
+            "knowledge-mcp",
+        ]);
+        const real = items.filter((item) => item.path);
+        expect(real).toHaveLength(1);
+        expect(real[0]?.id).toBe("my-credentials");
+        // 已有后端承载的项指向已实现页面
+        expect(real[0]?.path).toBe("/settings/credentials");
+        expect(items.filter((item) => !item.path).map((item) => item.gaps)).toEqual([
+            ["G4"],
+            ["G1", "G3"],
+        ]);
     });
 });
