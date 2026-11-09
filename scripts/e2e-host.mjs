@@ -78,7 +78,6 @@ import { cargoTargetBase } from './lib/stack-cargo-target.mjs'
 // "which mode rejects / what does it defer" matrix is unit-tested instead of
 // being re-derived at every call site (see the lib header for the two defects).
 import {
-  artifactGatePolicy,
   decideSkipPreflightDisk,
   describeDiskGate,
   describePreflightGate,
@@ -86,6 +85,7 @@ import {
   evaluateGateFindings,
   parseBlockingScopes,
   parseDiskLine,
+  preflightGatePolicy,
 } from './lib/e2e-preflight-gate.mjs'
 // task-86 (第五形态): the ORDER in which this runner opens a window is data, not something a
 // reader has to trust. `bootPhasePlan()` is the single source and `main()` must `enter()` each
@@ -2713,14 +2713,12 @@ async function stopPersistentProcesses(state) {
 // sections (`e2e-preflight.mjs --disk-only` still runs) and records the verdict,
 // so the run header can prove the disk was never silently ignored.
 async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids = [], cpBootPlan = null, allowResidual = [] } = {}) {
-  const policy = artifactGatePolicy({
-    jarMode,
-    externalServer,
-    // Who boots the artifact decides the section, not the `--jar-mode` argument:
-    // `auto` can end up in `run` (rebuild failed) and `--jar-mode=run` is only one
-    // of the ways to get there (see resolveCpBootPlan()).
-    cpBootMode: cpBootPlan?.mode ?? (externalServer ? 'reuse' : 'jar'),
-  })
+  // Who boots the artifact decides the section, not the `--jar-mode` argument:
+  // `auto` can end up in `run` (rebuild failed) and `--jar-mode=run` is only one
+  // of the ways to get there (see resolveCpBootPlan()). D-763②: the composition
+  // lives in the lib — a reuse run has no boot plan and `reuse` is an *output*
+  // of the policy (`externalServer`), never something to feed back in.
+  const policy = preflightGatePolicy({ jarMode, externalServer, cpBootPlan })
   if (skipPreflight) return runSkipPreflightDiskGate(policy)
   // task-237（坑 7）：共享 e2e 构建根里的**旧 jar** 会被只读 preflight 直接 refuse
   // （"CP jar 过期"）。`--jar-mode=auto` 的自愈本该在 resolveCpBootPlan 里发生，但 reuse/外部栈
