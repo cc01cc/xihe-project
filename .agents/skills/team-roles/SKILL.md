@@ -1,11 +1,13 @@
 ---
-name: xh-team-roles
-description: XH 交付线常驻团队角色化（正式）：verify/dev-A/dev-B/ops/research 分层、成员命名=角色名、并行上限与编译位、测量窗值班、idle/回收、临时席登记与交接契约联动。派多成员并行或起常驻位、写交接档时加载。
+name: team-roles
+description: XH 交付线在 DSH 中的常驻团队角色化（正式；仅 DSH）：verify/dev-A/dev-B/ops/research 分层、成员命名=角色名、并行上限与编译位、测量窗值班、idle/回收、临时席登记与交接契约联动。在 DSH 下派多成员并行、起常驻位或写交接档时加载。
 ---
 
-# XH 常驻团队角色化（正式）
+# XH 常驻团队角色化（DSH 专用；正式）
 
-> 2026-11-09 由试行转正式（用户裁定）。方法层与 XH 实例参数合一，本文件是**唯一流程正文**；XH 实例参数（成员映射、lane 槽、资源实测值）以 `one/internal/A03-xihe/docs/team-roster.md` 为参考快照，二者冲突以本文件为准。
+> **适用范围：DSH（DeepSeek Harness）专用。** 本流程依赖 DSH 的 teammate 机制原语（`spawn_teammate` / `send_message` / `interrupt_agent` / `list_agents` / `team_task_*`）与其会话模型（durable teammate 可中途 steer、一次性 subagent 不可寻址、后台 job 完成不唤醒）；在 Kilo / Codex / OpenCode / Claude Code 等其它 harness 上**不适用**——那类环境按根池 `.agents/skills/subagent-orchestration/` 的通用编排规则执行，DSH 机制事实见其 `references/dsh-team.md`。
+>
+> 2026-11-09 由试行转正式（用户裁定）。本文件是 XH 团队流程的**唯一正文**；XH 实例参数（成员映射、lane 槽、资源实测值）以 `one/internal/A03-xihe/docs/team-roster.md` 为参考快照，冲突以本文件为准。
 
 ## 1 角色分层（最小可用 3，常驻 6）
 
