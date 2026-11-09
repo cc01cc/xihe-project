@@ -243,7 +243,7 @@ async function createFileThroughUi(
     const modal = page.getByTestId("modal-content");
     await expect(modal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await modal.getByRole("textbox").fill(fileName);
-    await modal.getByRole("button", { name: "Create", exact: true }).click();
+    await modal.getByTestId("file-node-create-submit").click();
     return modal;
 }
 
@@ -378,7 +378,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
             await expect(page.getByText(HUMAN_RUNTIME_DOWN).first()).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });
-            await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+            await expect(page.getByTestId("workspace-tree-retry")).toBeVisible();
             await expect(
                 page.getByRole("button", { name: fileName, exact: true }),
             ).not.toBeVisible();
@@ -417,7 +417,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         await page.getByRole("menuitem", { name: /^Delete/ }).click();
         const deleteModal = page.getByTestId("modal-content");
         await expect(deleteModal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await deleteModal.getByRole("button", { name: "Delete", exact: true }).click();
+        await deleteModal.getByTestId("file-node-delete-submit").click();
         await expect(created).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",

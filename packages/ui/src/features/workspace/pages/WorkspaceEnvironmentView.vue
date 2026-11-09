@@ -440,6 +440,7 @@ onBeforeUnmount(stopPolling);
                 <button
                     class="px-3 py-1.5 text-xs rounded border hover:bg-accent text-muted-foreground transition-colors"
                     :title="t('common.refresh')"
+                    data-testid="workspace-environment-refresh"
                     @click="loadEnvironment()"
                 >
                     <RefreshCw class="mr-1 inline-block size-3.5" aria-hidden="true" />
