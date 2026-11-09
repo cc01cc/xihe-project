@@ -52,7 +52,7 @@ mise run setup
 
 > **Checkpoint 存储（PLAN-0653 P3）**：`XIHE_CHECKPOINT_STORAGE=git|dual|self`，**默认 `git`**；`self` 必须显式设置且 `XIHE_ENV=dev|staging` + `XIHE_CHECKPOINT_SELF_ACK=1`（安装版镜像不得预置 self）。`XIHE_CHECKPOINT_STORE_PATH` 指向 workspace 外的独立目录（默认 `<hostRoot>/.xihe-store`）。self 模式下 **store 是主路径、git shadow 是 best-effort 备份**：git 缺失只降级备份（WARN + `shadowBackupFailures`），不阻断 capture/startup；因此 **self 链路不再把 git 列为硬前置**（git 模式/dual 与 `Opaque`/`Reject` 策略仍需 git）。legacy shadow 历史迁移见 `.local/evidence/plan-0653/p3/migration-sop.md`；开关/回切操作手册见 `.local/evidence/plan-0653/p2.4-sop.md`。
 
-> **本仓库可单独 clone 运行（PLAN-0612）**：不依赖上层 ONE 工作区。`mise run check:standalone`（`mise.toml:565`）会导出无父级副本并验证 `stack-run`/`dev check` 不依赖 one 根；端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`，ONE 侧 `config/ports.mjs` 只是编排镜像（见「模式 D」末两条）。
+> **本仓库可单独 clone 运行（PLAN-0612）**：不依赖上层 ONE 工作区。`mise run check:standalone`会导出无父级副本并验证 `stack-run`/`dev check` 不依赖 one 根；端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`，ONE 侧 `config/ports.mjs` 只是编排镜像（见「模式 D」末两条）。
 
 模块级等价命令：
 
@@ -279,8 +279,8 @@ node scripts/stack-run.mjs env-json --stack 2
 - 非法或未登记的 `XIHE_STACK_ID`（如 `stack-9`、`foo`）启动即失败，不回退默认栈。
 - `dev:host:stop` / `dev:reset` 只作用于当前栈的进程、compose project 与沙箱容器（按 `xihe.stack-id` 标签；无标签视为 stack-1）。
 - 建议同时最多 2 套栈（每栈一套 PG + 四个服务）。
-- **端口事实源（PLAN-0612）**：默认端口的唯一事实源在本仓库 `scripts/lib/stack-ports.mjs`（`STACK_PORTS` + `deriveStack()`）；ONE 工作区的 `config/ports.mjs` 只是编排镜像。改任一侧必须在**同批**改另一侧，并用 `mise run check:ports`（`mise.toml:573`，逐栈 × 逐端口 + 派生字段 + `.env.dev` 自洽性）校验。该门**fail-closed**（task-61 P1-3）：带 `--require-mirror` 跑，找不到 ONE 工作区即 exit 2 —— 「跳过」不再等于「通过」。单独 clone 里需要自检时直接跑裸脚本 `node scripts/check-ports-parity.mjs`（只打 `SKIP`、json `skipped:true`、exit 0），不要把这条门当成能过的门。
-- **单 clone 自检**：`mise run check:standalone`（`mise.toml:565`）导出无父级副本并验证启动/自检不依赖 one 根。
+- **端口事实源（PLAN-0612）**：默认端口的唯一事实源在本仓库 `scripts/lib/stack-ports.mjs`（`STACK_PORTS` + `deriveStack()`）；ONE 工作区的 `config/ports.mjs` 只是编排镜像。改任一侧必须在**同批**改另一侧，并用 `mise run check:ports`（逐栈 × 逐端口 + 派生字段 + `.env.dev` 自洽性）校验。该门**fail-closed**（task-61 P1-3）：带 `--require-mirror` 跑，找不到 ONE 工作区即 exit 2 —— 「跳过」不再等于「通过」。单独 clone 里需要自检时直接跑裸脚本 `node scripts/check-ports-parity.mjs`（只打 `SKIP`、json `skipped:true`、exit 0），不要把这条门当成能过的门。
+- **单 clone 自检**：`mise run check:standalone`导出无父级副本并验证启动/自检不依赖 one 根。
 - **OpenAPI 契约门（BL-162）**：`mise run check:openapi` 校验 `docs/api/openapi.yaml`（3.1 文档头、path 唯一性、路径参数声明、Problem Details，以及 checkpoint revert / session 读面的冻结契约切片）。它是 **`test:cp` 的依赖**，所以跑 CP 测试就会查契约；PLAN 收尾/波次验收必须显式过一遍。失败时输出 path 数、首个失败点与修复提示（`docs/api/openapi.yaml` 就是唯一事实源）。注意它**不做**路由 ↔ 契约双向比对（"实现有路由但契约没写"属已知盲区，另立 BL）。
 - **提交信息门禁（2026-11-06）**：`mise run check:commit-msg` **已阻断**并作为 `mise run validate` 的依赖（D-216 翻闸实测：自 `a632de77` 起 32 条、违规率 0%）。口径：首行 `<type>(<scope>): <摘要>`，**摘要显示宽度 ≤72 列（CJK 记 2 列，约 36 汉字）、merge ≤100 列**，非 merge 须引用 `PLAN-####`/`BL-###`/`D-###`。壳脚本 `scripts/check-commit-msg.mjs`（`--file` 供 hook、`--range` 复查、`--stats` 观察窗统计；**阻断是默认行为**，`--report-only` 才只打印不失败，`--enforce` 只是显式声明口径）；本地 hook 可用 `git config core.hooksPath scripts/hooks` 启用。**翻阻断的判据按提交次数、不按日历时间**（D-213）：自 `a632de77` 起累计 **≥30 条** 为观察窗（12h 为上限，先到为准），窗内 `E_*` 违规率 ≤10% 且 merge 零超宽。**实测值（D-216，2026-11-06 02:02 `--range a632de77..HEAD --stats`）：32 条、违规 0、违规率 0%** ⇒ 判据满足后由 report-only 翻 `--enforce` 并接入 `validate`（两个数字性质不同：30 是判据阈值，32 是翻闸时的实测样本）。
 
