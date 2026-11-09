@@ -734,21 +734,28 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             await prepareAuth(page);
             await mockConfigApis(page);
 
-            await page.goto(`/settings/config?variant=${variant.param}`, { waitUntil: "load" });
-            await expect(page.getByTestId("config-tab-instance")).toBeVisible({
-                timeout: LONG_TIMEOUT_MS,
-            });
-            // 展开两个域，让表单与列表同时出现在一屏里（同一数据，默认态与 A/C 都展开同样的域）。
+            // PLAN-0752 M1：设置区一页一域（层进 URL），密度/配色仍按同一批锚点量。
+            // 两个域各展开一次以证明「表单与列表都吃变体」，测量与截图回到 logging 域（量的是它）。
             const fields: Record<string, string> = {
                 rag: "config-field-rag-chunkSize",
                 logging: "config-field-logging-logLevel",
             };
             for (const domain of ["rag", "logging"]) {
+                await page.goto(`/settings/instance/${domain}?variant=${variant.param}`, {
+                    waitUntil: "load",
+                });
                 await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
                 await expect(page.getByTestId(fields[domain])).toBeVisible({
                     timeout: LONG_TIMEOUT_MS,
                 });
             }
+            await page.goto(`/settings/instance/logging?variant=${variant.param}`, {
+                waitUntil: "load",
+            });
+            await page.getByTestId("config-domain-logging").locator("button").first().click();
+            await expect(page.getByTestId(fields.logging)).toBeVisible({
+                timeout: LONG_TIMEOUT_MS,
+            });
             // 点击域会把页面滚到被点元素；默认与 A/C 的密度不同 ⇒ 落点不同 ⇒ 截图不可比。
             // 统一回到顶部（全局路由由 `main` 自身滚动），让三张图从同一个位置开始。
             await page.evaluate(() => {
@@ -902,20 +909,23 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         await prepareAuth(page);
         await mockConfigApis(page);
 
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
+        // 同上：一页一域。两个域各展开一次证明「表单与列表都吃默认密度」，测量与截图回到 logging 域。
         const fields: Record<string, string> = {
             rag: "config-field-rag-chunkSize",
             logging: "config-field-logging-logLevel",
         };
         for (const domain of ["rag", "logging"]) {
+            await page.goto(`/settings/instance/${domain}`, { waitUntil: "load" });
             await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
             await expect(page.getByTestId(fields[domain])).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });
         }
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
+        await page.getByTestId("config-domain-logging").locator("button").first().click();
+        await expect(page.getByTestId(fields.logging)).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.evaluate(() => {
             document.scrollingElement?.scrollTo(0, 0);
             for (const element of document.querySelectorAll("main")) element.scrollTo(0, 0);
