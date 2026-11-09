@@ -2,7 +2,8 @@
     "$comment": "PLAN-0735 / BL-164: mock-lane baseline counts and registered skips.",
     "generatedAt": "2026-11-09",
     "sourceWindow": "W-23",
-    "sourceLog": "one/.tmp/xh/mock-baseline-2026-11-09.log",
+    "sourceRun": "internal/A03-xihe/docs/mock-baseline-provenance.md#w-23（283 passed / 8 skipped / 0 failed / 0 flaky）",
+    "skipSourceLog": "internal/A03-xihe/docs/mock-baseline-provenance.md#skip-8（原 sourceLog 指向的那次跑未入库，仅用于 skip 名单交叉核对）",
     "counts": {
         "expected": 283,
         "skipped": 8,
