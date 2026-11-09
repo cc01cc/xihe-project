@@ -412,6 +412,65 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-domain-logging")).toBeVisible();
     });
 
+    // task-121 / VW-31：pending 期间面板容器是 `v-show` 隐藏 + `inert` + `aria-busy`。
+    // dev-1 的诚实边界：jsdom 里 `display:none` 的元素仍可被脚本 `focus()`，**真实 Tab 顺序只能 e2e 验**。
+    // 选 llm-provider 用户层域页：它是唯一在面板树里挂 ProviderHub 的页，也是 task-121 的循环现场。
+    //
+    // 这条断言的**判别力边界**（四组 A/B 实测，别当它对 inert 本身有判别力）：
+    //  - 面板隐藏 + 无 inert ⇒ **绿**（`display:none` 已把子树移出 tab 序，inert 在此无增量）；
+    //  - 面板可见 + 有 inert ⇒ **绿**（inert 生效，Tab 跳过面板）；
+    //  - 面板可见 + 无 inert ⇒ **红**（Tab #35/41 落进面板）⇒ 断言有判别力，且 inert 在
+    //    「pending 期间面板可见」这种形态下是**承重**的。
+    //  ⇒ 现行实现下它守的是「pending 期间面板不进 tab 序」（今天由 v-show 提供，inert 是第二层）；
+    //    若将来加载态改成「可见但禁用」，这条仍会替我们把 inert 的缺失抓出来。
+    // Tab 预算必须按可聚焦元素数现算：固定 12 次会停在侧栏里，A/B 里正是这样一度变成空断言。
+    test("pending keeps Tab focus out of the panel subtree", async ({ page }) => {
+        // 快路由：provider 端点立即可用（让面板里的控件真的渲染出来）
+        await mockConfigAPIs(page);
+        // 慢路由：只把「层配置」拖住，制造 pending 窗口（LIFO：后注册者优先）
+        await page.route("**/api/v1/config/**", async (route: any) => {
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ domain: "", entries: {}, envOverridden: {} }),
+            });
+        });
+        await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
+
+        await expect(page.getByTestId("settings-domain-loading")).toBeVisible();
+        // 面板常挂但不可见；容器带 aria-busy/inert（本断言的机制前置）。
+        // 注：llm-provider 域在这一层没有 `config-domain-*` 包裹（见 ConfigLayerPanels 的
+        // `v-if="domain === 'llm-provider'"` 分支），面板内容就是 ProviderHub 本体。
+        const panel = page.getByTestId("provider-hub");
+        await expect(panel).toBeAttached();
+        await expect(panel).toBeHidden();
+        await expect(page.locator('div[aria-busy="true"][inert]')).toHaveCount(1);
+        // 非空判据：面板里确实有可聚焦控件（否则「焦点没进去」是空断言）
+        await expect(page.getByTestId("provider-connection-search")).toBeAttached();
+
+        // Tab 预算按「当前可聚焦元素数 + 余量」现算 —— 固定次数（如 12）会停在侧栏里，
+        // 断言就变成空断言（A/B 实测：面板故意可见时 12 次仍绿）。
+        const focusableCount = await page.evaluate(
+            () =>
+                document.querySelectorAll(
+                    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                ).length,
+        );
+        for (let index = 0; index < focusableCount + 5; index += 1) {
+            await page.keyboard.press("Tab");
+            const focusedInsidePanels = await page.evaluate(() => {
+                const active = document.activeElement,
+                    hub = document.querySelector('[data-testid="provider-hub"]');
+                return Boolean(active && hub && hub.contains(active));
+            });
+            expect(
+                focusedInsidePanels,
+                `Tab #${index + 1}/${focusableCount + 5} 后焦点落进面板子树`,
+            ).toBe(false);
+        }
+    });
+
     test("shows an error banner when layer config cannot be loaded", async ({ page }) => {
         await page.route("**/api/v1/**", (route: any) =>
             route.fulfill({
