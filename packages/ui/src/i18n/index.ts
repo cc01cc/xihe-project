@@ -1904,6 +1904,9 @@ const messages = {
             configSourceReadonly: "只读",
             configSourceOverridable: "可被覆盖",
             configSourceInstanceOnly: "仅 instance",
+            configKeyInstanceOnlyBadge: "仅实例层",
+            configKeyInstanceOnlyHint:
+                "该键只在实例层生效：用户层与工作区层不继承，也不能在此层修改",
             configLockNav: "配置锁定",
             languageLabel: "界面语言",
             languageZh: "中文（zh-Hans）",
@@ -4488,6 +4491,9 @@ const messages = {
             configSourceReadonly: "Read-only",
             configSourceOverridable: "Overridable",
             configSourceInstanceOnly: "Instance only",
+            configKeyInstanceOnlyBadge: "Instance only",
+            configKeyInstanceOnlyHint:
+                "This key only takes effect at the instance layer: user and workspace layers neither inherit nor can modify it",
             configLockNav: "Config locks",
             languageLabel: "Interface language",
             languageZh: "中文 (zh-Hans)",

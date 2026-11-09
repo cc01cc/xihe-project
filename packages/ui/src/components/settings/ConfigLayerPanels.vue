@@ -296,10 +296,13 @@ const visibleDomains = computed(() =>
     props.domain ? [props.domain] : [...LAYER_DOMAINS[props.layer]],
 );
 
+/**
+ * PLAN-0752 T3.2：实例专属键在下层**不再静默消失**，而是渲染成只读行 + 「仅实例层」徽标
+ * （design §5.1「不隐藏该行，隐藏会让用户以为没有这项」）。可写性仍由 ConfigDomainPanel 按
+ * CP meta 判定；本函数只负责「这一层该看到哪些键」。
+ */
 function schemaFor(domain: string): DomainField[] {
-    const fields = domainSchemas.value[domain] ?? [];
-    if (props.layer === "instance") return fields;
-    return fields.filter((field) => !field.instanceOnly);
+    return domainSchemas.value[domain] ?? [];
 }
 
 function envLockedFor(domain: string): Record<string, string> {

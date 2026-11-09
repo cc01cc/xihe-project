@@ -150,7 +150,7 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         wrapper.unmount();
     });
 
-    it("hides agent-runtime ceiling keys on the workspace layer", async () => {
+    it("keeps agent-runtime ceiling keys visible but read-only on the workspace layer", async () => {
         routeState.query = { tab: "config" };
         const wrapper = await mountView();
 
@@ -162,11 +162,19 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
                 .find('[data-testid="config-field-agent-runtime-runMaxElapsedSeconds"]')
                 .exists(),
         ).toBe(true);
+        // PLAN-0752 T3.2：工作区层不再隐藏实例专属键，改为只读行 + 「仅实例层」徽标。
+        const ceiling = wrapper.find(
+            '[data-testid="config-field-agent-runtime-runMaxElapsedSecondsCeiling"]',
+        );
+        expect(ceiling.exists()).toBe(true);
+        expect(ceiling.find("input").attributes("disabled")).toBeDefined();
         expect(
-            wrapper
-                .find('[data-testid="config-field-agent-runtime-runMaxElapsedSecondsCeiling"]')
+            ceiling
+                .find(
+                    '[data-testid="config-key-layer-badge-agent-runtime-runMaxElapsedSecondsCeiling"]',
+                )
                 .exists(),
-        ).toBe(false);
+        ).toBe(true);
         wrapper.unmount();
     });
 

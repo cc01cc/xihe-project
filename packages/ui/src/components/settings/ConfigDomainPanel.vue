@@ -85,6 +85,45 @@ function isWritable(key: string): boolean {
     return !item || item.writable;
 }
 
+/**
+ * PLAN-0752 T3.2「同域内不同键不同层」——逐键层属不是整域一个徽标。
+ *
+ * 判定来源是 CP 的 `ConfigService`，UI 不复制键清单：
+ * - 实例层：`GET /config/{domain}/meta?layer=instance` 的 `overridable` 为 false 就是「只在实例层生效」
+ *   （`ConfigService.java:580-583`：`overridable = instanceLayer && !isInstanceOnlyKey(...) && ...`）。
+ *   这会同时覆盖「逐键实例专属」（`INSTANCE_ONLY_KEYS` 12 键）与「整域实例专属」
+ *   （`INSTANCE_ONLY_DOMAINS` / 非 user/workspace 可写域）。
+ * - 非实例层：CP `ConfigService.java:564-566` 直接 `continue`，这些键根本不在 meta 里，所以退回本表单
+ *   的 `instanceOnly` 标记（schema 侧与 CP 的 8 个键一一对应）。
+ */
+function isInstanceOnlyField(field: DomainField): boolean {
+    if (props.layer === "instance") {
+        const item = props.meta?.[field.key];
+        if (item) return item.overridable === false;
+        return field.instanceOnly === true;
+    }
+    return field.instanceOnly === true;
+}
+
+/** 非实例层里实例专属键是只读行（PLAN-0752 design §5.1：不隐藏该行，只禁用 + 徽标解释原因）。 */
+function isLayerReadonly(field: DomainField): boolean {
+    return props.layer !== "instance" && isInstanceOnlyField(field);
+}
+
+function isLayerReadonlyKey(key: string): boolean {
+    const field = props.schema.find((item) => item.key === key);
+    return field ? isLayerReadonly(field) : false;
+}
+
+/**
+ * 行级只读：整域只读（readonly prop）或该键在本层不可写（实例专属键落到下层）。
+ * 只用于「禁用控件 / 隐藏写操作按钮」，**不**用来切换输入控件与纯文本 —— 控件仍渲染并置灰，
+ * 用户才看得出「这一行存在、但你不能改」（design §5.1 只读态）。
+ */
+function fieldReadonly(field: DomainField): boolean {
+    return props.readonly === true || isLayerReadonly(field);
+}
+
 function sourceText(key: string): string {
     switch (props.meta?.[key]?.source) {
         case "env":
@@ -208,7 +247,8 @@ function handleSave() {
     validationError.value = "";
     const body = Object.fromEntries(
         Object.entries(editing.value).filter(
-            ([key, value]) => value !== "" && !isLocked(key) && isWritable(key),
+            ([key, value]) =>
+                value !== "" && !isLocked(key) && isWritable(key) && !isLayerReadonlyKey(key),
         ),
     );
     emit("save", body);
@@ -255,9 +295,19 @@ function handleReset(key: string) {
                 class="flex min-w-0 items-center gap-2"
             >
                 <div class="min-w-0 w-1/3 text-muted-foreground">
-                    <span class="block text-xs text-muted-foreground truncate">{{
-                        field.label
-                    }}</span>
+                    <span class="flex items-center gap-1">
+                        <span class="block text-xs text-muted-foreground truncate">{{
+                            field.label
+                        }}</span>
+                        <span
+                            v-if="isInstanceOnlyField(field)"
+                            :data-testid="`config-key-layer-badge-${domain}-${field.key}`"
+                            class="shrink-0 rounded border border-border px-1 py-0.5 text-[10px] tracking-wide text-muted-foreground"
+                            :title="t('settings.configKeyInstanceOnlyHint')"
+                            :aria-label="t('settings.configKeyInstanceOnlyHint')"
+                            >{{ t("settings.configKeyInstanceOnlyBadge") }}</span
+                        >
+                    </span>
                     <span
                         v-if="meta?.[field.key]"
                         :data-testid="`config-source-${domain}-${field.key}`"
@@ -319,7 +369,7 @@ function handleReset(key: string) {
                         v-if="field.allowCustom && customMode[field.key]"
                         v-model="editing[field.key]"
                         :data-testid="`config-custom-${domain}-${field.key}`"
-                        :disabled="!isWritable(field.key)"
+                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                         class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         :placeholder="t('settings.customPlaceholder')"
                     />
@@ -330,7 +380,7 @@ function handleReset(key: string) {
                                 ? '__unset__'
                                 : editing[field.key]
                         "
-                        :disabled="!isWritable(field.key)"
+                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                         @update:model-value="
                             (value) =>
                                 onSelectChange(
@@ -375,7 +425,7 @@ function handleReset(key: string) {
                     v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
                     v-model="editing[field.key]"
                     rows="3"
-                    :disabled="!isWritable(field.key)"
+                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                     :class="field.type === 'json' ? 'font-mono' : ''"
                     :placeholder="field.type === 'json' ? 'JSON' : ''"
@@ -384,7 +434,7 @@ function handleReset(key: string) {
                 <input
                     v-else-if="!readonly"
                     v-model="editing[field.key]"
-                    :disabled="!isWritable(field.key)"
+                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                     :type="
                         field.type === 'password'
@@ -417,7 +467,7 @@ function handleReset(key: string) {
                     >{{ t("settings.driftedBadge") }}</span
                 >
                 <button
-                    v-if="isDrifted(field) && !readonly && !isLocked(field.key)"
+                    v-if="isDrifted(field) && !fieldReadonly(field) && !isLocked(field.key)"
                     class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
                     :data-testid="`config-drift-clear-${domain}-${field.key}`"
                     :title="t('settings.driftedClear')"
@@ -426,7 +476,7 @@ function handleReset(key: string) {
                     {{ t("settings.driftedClear") }}
                 </button>
                 <button
-                    v-if="field.allowCustom && customMode[field.key] && !readonly"
+                    v-if="field.allowCustom && customMode[field.key] && !fieldReadonly(field)"
                     class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
                     :data-testid="`config-custom-exit-${domain}-${field.key}`"
                     @click="exitCustomMode(field)"
@@ -435,7 +485,12 @@ function handleReset(key: string) {
                 </button>
 
                 <button
-                    v-if="admin && !readonly && !isLocked(field.key) && isWritable(field.key)"
+                    v-if="
+                        admin &&
+                        !fieldReadonly(field) &&
+                        !isLocked(field.key) &&
+                        isWritable(field.key)
+                    "
                     class="text-xs text-muted-foreground hover:text-foreground px-1"
                     :title="t('settings.resetToDefault')"
                     @click="handleReset(field.key)"
