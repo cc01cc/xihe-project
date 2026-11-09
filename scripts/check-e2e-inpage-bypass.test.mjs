@@ -22,9 +22,9 @@ import {
     maskSource,
     scanRoot,
     scanSource,
-} from "../check-e2e-inpage-bypass.mjs";
+} from "./check-e2e-inpage-bypass.mjs";
 
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = path.join(REPO_ROOT, "scripts/check-e2e-inpage-bypass.mjs");
 
 function fixtureRoot() {
