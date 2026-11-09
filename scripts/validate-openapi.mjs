@@ -10,10 +10,22 @@
 //   * it does NOT parse YAML, resolve $ref, validate against the OpenAPI 3.1 schema, or diff Spring
 //     routes against the documented paths — "implemented route missing from the contract" is NOT
 //     caught here (separate BL).
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const CONTRACT = 'docs/api/openapi.yaml'
-const CONTRACT_FILE = new URL('../docs/api/openapi.yaml', import.meta.url)
+const DEFAULT_CONTRACT_FILE = new URL('../docs/api/openapi.yaml', import.meta.url)
+// Test seam: tests point at a temporary copy; production always uses docs/api/openapi.yaml.
+const CONTRACT_FILE = process.env.XH_OPENAPI_CONTRACT
+  ? path.resolve(process.env.XH_OPENAPI_CONTRACT)
+  : DEFAULT_CONTRACT_FILE
+
+// BL-451: reuse the repo's existing mature YAML parser (oxfmt / oxc) instead of adding a
+// dependency or hand-writing a parser. oxfmt parses YAML and reports source line:column.
+const OXFMT_BIN = new URL('../packages/ui/node_modules/oxfmt/bin/oxfmt', import.meta.url)
 const FIX_COMMAND = '`mise run check:openapi` (test:cp runs it automatically too)'
 
 /** A gate failure a reader can act on: what broke, where the first break is, and how to fix it. */
@@ -27,6 +39,60 @@ class ContractError extends Error {
 
 function fail(code, message, hint) {
   throw new ContractError(code, message, hint)
+}
+
+/** Reject raw control bytes (0x00–0x08, 0x0B–0x1F) before any parser sees them. */
+function checkBytes(buffer) {
+  let line = 1
+  let column = 1
+  for (let i = 0; i < buffer.length; i += 1) {
+    const byte = buffer[i]
+    if (byte <= 0x08 || (byte >= 0x0b && byte <= 0x1f)) {
+      fail(
+        'non-printable-byte',
+        `illegal control byte 0x${byte.toString(16).padStart(2, '0')} at ${line}:${column} (offset ${i})`,
+        '文档必须是 UTF-8 且不含 0x00–0x08/0x0B–0x1F 控制字节；删掉不可打印字符后重跑',
+      )
+    }
+    if (byte === 0x0a) {
+      line += 1
+      column = 1
+    } else {
+      column += 1
+    }
+  }
+}
+
+/** Parse YAML with oxfmt; syntax errors are fatal and carry source line:column. */
+function checkYamlSyntax(buffer) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xh-openapi-'))
+  const file = path.join(dir, 'openapi.yaml')
+  try {
+    fs.writeFileSync(file, buffer)
+    const result = spawnSync(process.execPath, [fileURLToPath(OXFMT_BIN), '--write', file], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    if (result.error) {
+      fail(
+        'yaml-parser-unavailable',
+        `cannot run oxfmt YAML parser: ${result.error.message}`,
+        '确认 packages/ui 的 oxfmt 依赖存在；本门禁复用仓库已有成熟解析器，不新增依赖',
+      )
+    }
+    if (result.status !== 0) {
+      const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
+      const location = output.match(/:(\d+):(\d+)\]/)
+      const errorLine = output.match(/x (Syntax error: [^\n]+)/)
+      fail(
+        'yaml-syntax-error',
+        `YAML parse failed${location ? ` at ${location[1]}:${location[2]}` : ''}${errorLine ? ` — ${errorLine[1].trim()}` : ''}`,
+        output.split('\n').slice(0, 8).join(' '),
+      )
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 function parsePaths(text) {
@@ -226,16 +292,19 @@ function reportFailure(error, paths) {
   )
 }
 
-let text
+let buffer
 try {
-  text = fs.readFileSync(CONTRACT_FILE, 'utf8')
+  buffer = fs.readFileSync(CONTRACT_FILE)
 } catch (error) {
   console.error(`✗ cannot read ${CONTRACT}: ${error.message}`)
   process.exit(1)
 }
 
-const paths = parsePaths(text)
+const paths = parsePaths(buffer.toString('utf8'))
 try {
+  checkBytes(buffer)
+  checkYamlSyntax(buffer)
+  const text = buffer.toString('utf8')
   for (const check of CHECKS) check(text)
 } catch (error) {
   if (error instanceof ContractError) {
