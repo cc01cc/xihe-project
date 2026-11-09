@@ -239,7 +239,9 @@ watch(
         <div
             v-show="!pending && !(activeTab === 'tool-faces' && toolFacesTab)"
             class="mt-4"
+            data-testid="settings-domain-panels"
             :aria-busy="pending"
+            :inert="pending || undefined"
         >
             <ConfigLayerPanels :layer="layer" :domain="resolved.domain" />
         </div>
