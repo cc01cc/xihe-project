@@ -6,7 +6,16 @@
  *   --only=a,b / --skip=c  只跑 / 跳过指定门（名称 = 门 id，见 --list）；未知 id ⇒ 用法错误 exit 2
  *   --fast                 只跑 class=fast 的轻门（<60s/门，实施中自查用；L2 重门不跑）
  *   --evidence=<path>      落 JSON 证据（每条门的 name/cmd/exit/durationMs/status/skipReason + 汇总）
+ *   --strict               门前置不满足时从 SKIP 降级为 FAIL（窗口里宁可红，不要「假绿」）
+ *   --since=<ISO8601>      本轮开始时间（默认=本轮启动时刻；用来判报告是否新鲜）
+ *   --run-id=<id>          本轮 runId（默认随机生成，也可用 XH_GATE_RUN_ID）；用来绑报告归属
  *   例：node scripts/xh-verify-gates.mjs --fast      # 实施中自查（不含 L2 重门）
+ *
+ * **输入可信度（BL-528，`check:mock-baseline`）**：不只看报告文件是否存在，还要过三道校验——
+ * ①新鲜度（报告 `stats.startTime`/mtime ≥ 本轮 `--since`）②runId/commit 绑定（报告声明的
+ * runId 必须等于本轮 runId、commit 必须是 `HEAD`）③归属（报告路径与 `config.rootDir` 必须属于
+ * 当前 checkout，并打印所用路径）。不满足默认 **SKIP + 原因**（`stale-report` / `foreign-run` /
+ * `foreign-commit` / `foreign-path`），`--strict` 时降级为 **FAIL**。
  *
  * 门清单**不硬编码命令**：默认门表只登记 task 名 + class，真正的命令与说明从 SSOT
  * （`mise.toml` 的 `[tasks."<name>"]`，或 `package.json` 的 `scripts`）解析；SSOT 里缺该门 ⇒ SKIP 并写明原因。
@@ -18,7 +27,8 @@
  * `test:cp:executed` 需 Maven 编译+Surefire）。L2 触发点仍按 workspace 白名单三条，不因本脚本放宽。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -45,19 +55,140 @@ export const DEFAULT_GATES = [
 const NEEDS_UI_DEPS = new Set(["check:types", "lint:ui", "test:ui", "test:mock"]);
 
 /**
- * 输入前置门：缺输入时**显式 SKIP 并说明怎么补齐**（绝不静默通过，也不把「缺输入」误报成产品红）。
- * 语义区分：缺输入 = SKIP；命令跑了但判据不满足 = FAIL。
+ * 输入前置门：缺输入/输入不可信时**显式 SKIP 并说明补齐方式**（绝不静默通过，也不把「缺输入」
+ * 误报成产品红）。语义区分：缺输入/输入不可信 = SKIP；命令跑了但判据不满足 = FAIL。
+ *
+ * BL-528：`check:mock-baseline` 原先只查「报告文件存在」，于是**别的窗口留下的旧报告**照样判绿
+ * （W-24 实测：槽里躺着 17 分钟前的报告）。现在它必须过三道校验，见 `checkMockBaselineReport()`。
  */
 const PRECONDITIONS = {
   "lint:log-secrets": {
-    ready: (root) => existsSync(join(root, "logs")),
-    reason: "缺少 logs/（本 worktree 无运行日志；在窗口里用主检出的 logs/ 或先起栈产生日志再跑）",
+    evaluate: ({ repoRoot }) =>
+      existsSync(join(repoRoot, "logs"))
+        ? { ok: true }
+        : { ok: false, code: "missing-input", reason: "缺少 logs/（本 worktree 无运行日志；在窗口里用主检出的 logs/ 或先起栈产生日志再跑）" },
   },
   "check:mock-baseline": {
-    ready: (root) => existsSync(join(root, "packages", "ui", "e2e", ".mock-report.json")),
-    reason: "缺少 packages/ui/e2e/.mock-report.json（先跑 test:mock 产出报告，再跑本门；属 L2 窗口流程）",
+    evaluate: (ctx) => checkMockBaselineReport(ctx),
   },
 };
+
+/** Playwright JSON 报告里可能出现「本轮身份」的字段名（不同 reporter / 自定义 metadata 都兼容）。 */
+const REPORT_RUN_ID_KEYS = ["runId", "run_id", "XIHE_E2E_RUN_ID"];
+const REPORT_COMMIT_KEYS = ["commit", "gitHead", "head", "headCommit", "XIHE_E2E_EXPECT_CP_COMMIT"];
+
+/**
+ * `check:mock-baseline` 输入可信度校验（BL-528）：**新鲜度 / runId+commit 绑定 / 归属**三道，缺一不可。
+ *
+ * 单看「文件存在」= 假绿通道：旧报告在、计数也过，但被测的不是本轮代码。所以：
+ * 1. **新鲜度**：报告时间必须 ≥ 本轮 `since`（`stats.startTime` 优先，退文件 mtime）；否则 `stale-report`。
+ * 2. **绑定**：报告里若有 runId/commit 字段，必须等于本轮 runId / `HEAD`；不一致 ⇒ `stale-report`/`foreign-run`。
+ *    （报告没有这些字段时退化为「新鲜度 + 归属」判定，并在结论里写明 —— 不假装校验过。）
+ * 3. **归属**：报告路径必须在当前 checkout 内（`config.rootDir` 若存在也必须等于它），打印所用路径。
+ *
+ * @param {{repoRoot: string, since: number, runId?: string|null, head?: string|null, reportPath?: string, readFile?: Function, statFile?: Function}} ctx
+ * @returns {{ok: true, path: string, mtimeIso: string, binding: string} | {ok: false, code: string, reason: string, path?: string}}
+ */
+export function checkMockBaselineReport(ctx) {
+  const {
+    repoRoot,
+    since,
+    runId = null,
+    head = null,
+    reportPath = join(repoRoot, "packages", "ui", "e2e", ".mock-report.json"),
+    readFile = (p) => readFileSync(p, "utf8"),
+    statFile = (p) => statSync(p),
+  } = ctx;
+
+  if (!existsSync(reportPath)) {
+    return {
+      ok: false,
+      code: "missing-input",
+      reason: "缺少 packages/ui/e2e/.mock-report.json（先跑 test:mock 产出报告，再跑本门；属 L2 窗口流程）",
+    };
+  }
+
+  // ③ 归属：路径必须落在当前 checkout 内（Windows 大小写/分隔符归一后再比）
+  const norm = (p) => resolve(p).replace(/\\/g, "/").toLowerCase();
+  const root = norm(repoRoot);
+  const path = norm(reportPath);
+  if (path !== root && !path.startsWith(`${root}/`)) {
+    return { ok: false, code: "foreign-path", reason: `报告不在当前 checkout 内：${reportPath}（禁止跨槽复用）`, path: reportPath };
+  }
+
+  let report = null;
+  try {
+    report = JSON.parse(readFile(reportPath));
+  } catch (error) {
+    return { ok: false, code: "unreadable", reason: `报告无法解析（${error?.message ?? error}）：${reportPath}`, path: reportPath };
+  }
+
+  // ① 新鲜度：stats.startTime 优先（Playwright 自带），退文件 mtime
+  const startedAtRaw = report?.stats?.startTime ?? report?.startTime ?? null;
+  const startedAt = startedAtRaw ? Date.parse(startedAtRaw) : NaN;
+  const mtimeMs = Number.isFinite(startedAt) ? startedAt : statFile(reportPath).mtimeMs;
+  const mtimeIso = new Date(mtimeMs).toISOString();
+  if (!Number.isFinite(mtimeMs)) {
+    return { ok: false, code: "unreadable", reason: `报告没有可解析的 startTime 且读不到 mtime：${reportPath}`, path: reportPath };
+  }
+  if (since != null && Number.isFinite(since) && mtimeMs < since) {
+    return {
+      ok: false,
+      code: "stale-report",
+      reason: `报告时间 ${mtimeIso} 早于本轮开始 ${new Date(since).toISOString()}（${Math.round((since - mtimeMs) / 1000)}s 之前；旧报告禁止判绿）`,
+      path: reportPath,
+    };
+  }
+
+  // ② 绑定：报告若声明了本轮身份，就必须与本次 run/HEAD 一致
+  const pick = (keys, sources) => {
+    for (const source of sources) {
+      for (const key of keys) {
+        const value = source?.[key];
+        if (typeof value === "string" && value.trim() !== "") return value.trim();
+      }
+    }
+    return null;
+  };
+  const sources = [report, report?.metadata, report?.stats, report?.config];
+  const reportRunId = pick(REPORT_RUN_ID_KEYS, sources);
+  const reportCommit = pick(REPORT_COMMIT_KEYS, sources);
+
+  if (runId && reportRunId && reportRunId !== runId) {
+    return {
+      ok: false,
+      code: "foreign-run",
+      reason: `runId 不匹配：报告 runId=${reportRunId}，本轮 runId=${runId}（禁止拿别轮的报告判本轮）`,
+      path: reportPath,
+    };
+  }
+  if (head && reportCommit && !head.startsWith(reportCommit) && !reportCommit.startsWith(head)) {
+    return {
+      ok: false,
+      code: "foreign-commit",
+      reason: `commit 不匹配：报告 commit=${reportCommit}，HEAD=${head}（报告不是本轮代码产生的）`,
+      path: reportPath,
+    };
+  }
+  // 归属②：报告自报的 rootDir 也要对得上（有的 reporter 会把 cwd 写进去）
+  const reportRoot = typeof report?.config?.rootDir === "string" ? report.config.rootDir : null;
+  if (reportRoot && norm(reportRoot) !== root) {
+    return {
+      ok: false,
+      code: "foreign-path",
+      reason: `报告 config.rootDir=${reportRoot} 不属于当前 checkout ${repoRoot}（禁止跨槽复用）`,
+      path: reportPath,
+    };
+  }
+
+  const bound = [reportRunId ? `runId=${reportRunId}` : null, reportCommit ? `commit=${reportCommit}` : null].filter(Boolean);
+  return {
+    ok: true,
+    path: reportPath,
+    mtimeIso,
+    binding: bound.length ? bound.join(" ") : "报告无 runId/commit 字段，仅按新鲜度+归属判定",
+  };
+}
 
 /** 解析 `mise.toml` 的 `[tasks."<name>"]` 段：拿到 description 与首条 run（只用于展示，不直接执行）。 */
 export function parseMiseTasks(toml) {
@@ -98,7 +229,7 @@ export function parsePkgScripts(json) {
  * 把门表解析成可执行计划：每条门拿到 cmd / source / description，或一个明确 skipReason。
  * @param {{gates?: Array<{id: string, kind?: string, pkgDir?: string}>, miseTasks: Map<string, {description: string, run: string}>, pkgScripts?: Map<string, string>, repoRoot?: string}} input
  */
-export function planGates({ gates = DEFAULT_GATES, miseTasks, pkgScripts = new Map(), repoRoot = REPO_ROOT }) {
+export function planGates({ gates = DEFAULT_GATES, miseTasks, pkgScripts = new Map(), repoRoot = REPO_ROOT, preconditionContext = {} }) {
   return gates.map((gate) => {
     const kind = gate.kind ?? "mise";
     if (kind === "mise") {
@@ -131,13 +262,25 @@ export function planGates({ gates = DEFAULT_GATES, miseTasks, pkgScripts = new M
         };
       }
       const precondition = PRECONDITIONS[gate.id];
-      if (precondition && !precondition.ready(repoRoot)) {
+      if (precondition) {
+        const verdict = precondition.evaluate({ ...preconditionContext, repoRoot });
+        if (!verdict.ok) {
+          const strict = Boolean(preconditionContext.strict);
+          // BL-528：默认 SKIP（进汇总、必带原因）；`--strict` 时降级为 FAIL，避免「窗口里假绿」。
+          return {
+            ...gate,
+            cmd: `mise run ${gate.id}`,
+            source: "mise.toml",
+            description: task.description,
+            ...(strict ? { preflightFailure: `${verdict.code}: ${verdict.reason}` } : { skipReason: `${verdict.code}: ${verdict.reason}` }),
+          };
+        }
         return {
           ...gate,
           cmd: `mise run ${gate.id}`,
           source: "mise.toml",
           description: task.description,
-          skipReason: precondition.reason,
+          precondition: verdict,
         };
       }
       return { ...gate, cmd: `mise run ${gate.id}`, source: "mise.toml", description: task.description };
@@ -192,6 +335,21 @@ export function defaultRunner({ gate, repoRoot = REPO_ROOT, env = process.env })
 export function runGates({ planned, runner = defaultRunner, repoRoot = REPO_ROOT, env = process.env, onResult }) {
   const results = [];
   for (const gate of planned) {
+    if (gate.preflightFailure) {
+      // BL-528 `--strict`：前置不满足从 SKIP 降级为 FAIL（窗口里宁可红，不要假绿）
+      const row = {
+        name: gate.id,
+        cmd: gate.cmd,
+        exit: null,
+        durationMs: 0,
+        status: "FAIL",
+        skipReason: null,
+        detail: gate.preflightFailure,
+      };
+      results.push(row);
+      onResult?.(row, results.length - 1, planned.length);
+      continue;
+    }
     if (gate.skipReason) {
       const row = { name: gate.id, cmd: gate.cmd, exit: null, durationMs: 0, status: "SKIP", skipReason: gate.skipReason };
       results.push(row);
@@ -206,6 +364,7 @@ export function runGates({ planned, runner = defaultRunner, repoRoot = REPO_ROOT
       durationMs: out.durationMs ?? 0,
       status: out.exit === 0 ? "PASS" : "FAIL",
       skipReason: null,
+      ...(gate.precondition ? { precondition: gate.precondition } : {}),
       ...(out.error ? { error: out.error } : {}),
     };
     results.push(row);
@@ -230,10 +389,13 @@ export function summarize(results) {
 
 /** 解析 CLI 参数（不认识的参数 ⇒ null，由调用方转用法错误）。 */
 export function parseArgs(argv) {
-  const opts = { list: false, only: null, skip: null, evidence: null, help: false, fast: false };
+  const opts = { list: false, only: null, skip: null, evidence: null, help: false, fast: false, strict: false, since: null, runId: null };
   for (const arg of argv) {
     if (arg === "--list") opts.list = true;
     else if (arg === "--fast") opts.fast = true;
+    else if (arg === "--strict") opts.strict = true;
+    else if (arg.startsWith("--since=")) opts.since = arg.slice(8);
+    else if (arg.startsWith("--run-id=")) opts.runId = arg.slice(9);
     else if (arg === "--help" || arg === "-h") opts.help = true;
     else if (arg.startsWith("--only=")) opts.only = arg.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
     else if (arg.startsWith("--skip=")) opts.skip = arg.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
@@ -249,6 +411,7 @@ export function helpText() {
     "  node scripts/xh-verify-gates.mjs --list",
     "  node scripts/xh-verify-gates.mjs --fast          # 实施中自查：只跑 <60s 轻门",
     "  node scripts/xh-verify-gates.mjs --skip=test:mock --evidence=.local/evidence/gates.json",
+    "  node scripts/xh-verify-gates.mjs --strict        # 前置不满足 ⇒ FAIL（默认 SKIP + 原因）",
   ].join("\n");
 }
 
@@ -285,6 +448,19 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   const miseTasks = parseMiseTasks(miseToml);
   const pkgScripts = parsePkgScripts(pkgJson);
 
+  // BL-528：门的输入可信度需要「本轮身份」——开始时间 / runId / HEAD 三者一起传下去。
+  // `since` 默认=本轮启动时刻（同一次 `xh-verify-gates` 里 test:mock 先跑、本门后跑 ⇒ 报告自然更新）；
+  // 单独跑本门（如 `mise run check:mock-baseline`）时必须由调用方给 `--since` / `XH_GATE_SINCE`。
+  const startedAtMs = Number(now());
+  const sinceRaw = opts.since ?? env.XH_GATE_SINCE ?? null;
+  const sinceMs = sinceRaw ? Date.parse(sinceRaw) : startedAtMs;
+  if (sinceRaw && !Number.isFinite(sinceMs)) {
+    log(`用法错误：--since / XH_GATE_SINCE 不是可解析的时间（${sinceRaw}）；用 ISO 8601，如 2026-11-09T21:00:00+08:00`);
+    return { exitCode: 2, results: [], summary: null };
+  }
+  const runId = opts.runId ?? env.XH_GATE_RUN_ID ?? randomUUID();
+  const head = gitCommit(repoRoot);
+
   // 门表：默认门（mise）+ 目录里登记的 pkg 门（若 gates 里带 kind:"pkg"）；--fast 只保留轻门
   const selected = [];
   for (const gate of gates) {
@@ -300,21 +476,40 @@ export function main(argv = process.argv.slice(2), deps = {}) {
     return { exitCode: 2, results: [], summary: null };
   }
 
-  const planned = planGates({ gates: selected, miseTasks, pkgScripts, repoRoot }).map((gate) =>
-    opts.skip?.includes(gate.id) ? { ...gate, skipReason: "显式 --skip（调用方指定跳过）" } : gate,
-  );
+  const planned = planGates({
+    gates: selected,
+    miseTasks,
+    pkgScripts,
+    repoRoot,
+    preconditionContext: { since: sinceMs, runId, head, strict: opts.strict },
+  }).map((gate) => (opts.skip?.includes(gate.id) ? { ...gate, skipReason: "显式 --skip（调用方指定跳过）" } : gate));
 
   if (opts.list) {
     log(`可用门 ${planned.length} 个（来源：mise.toml / package.json；class: fast=<60s 可随时跑 / full=L2 窗口内跑）`);
     for (const gate of planned) {
-      const state = gate.skipReason ? `SKIP: ${gate.skipReason}` : "ready";
+      const state = gate.preflightFailure
+        ? `FAIL(--strict): ${gate.preflightFailure}`
+        : gate.skipReason
+          ? `SKIP: ${gate.skipReason}`
+          : "ready";
       log(`  ${gate.id.padEnd(22)} [${(gate.class ?? "fast").padEnd(4)}] ${gate.cmd.padEnd(34)} ${state}`);
       if (gate.description) log(`  ${" ".repeat(28)} ${gate.description.slice(0, 140)}`);
     }
     return { exitCode: 0, results: [], summary: null };
   }
 
-  log(`xh-verify-gates: ${planned.length} 门${opts.fast ? "（--fast：仅轻门）" : ""}（repo=${repoRoot}）`);
+  log(
+    `xh-verify-gates: ${planned.length} 门${opts.fast ? "（--fast：仅轻门）" : ""}（repo=${repoRoot}，`
+      + `runId=${runId}，since=${new Date(sinceMs).toISOString()}，HEAD=${head ? head.slice(0, 12) : "unknown"}）`,
+  );
+  // BL-528：把「本门用的是哪份输入」打出来（报告路径 + 时间 + 绑定），窗口证据里能复查。
+  for (const gate of planned) {
+    if (!gate.precondition?.ok) continue;
+    log(
+      `  输入校验 ${gate.id}: path=${gate.precondition.path} mtime=${gate.precondition.mtimeIso} `
+        + `binding=${gate.precondition.binding}`,
+    );
+  }
   const startedAt = now();
   const results = runGates({
     planned,
@@ -324,6 +519,7 @@ export function main(argv = process.argv.slice(2), deps = {}) {
     onResult: (row, idx, total) => {
       const ms = `${row.durationMs}ms`;
       if (row.status === "SKIP") log(`[${idx + 1}/${total}] ${row.name} — SKIP (${row.skipReason})`);
+      else if (row.detail) log(`[${idx + 1}/${total}] ${row.name} — FAIL (前置不满足, --strict: ${row.detail})`);
       else log(`[${idx + 1}/${total}] ${row.name} — ${row.status} (${ms}${row.status === "FAIL" ? `, exit=${row.exit}` : ""})`);
     },
   });
@@ -349,6 +545,9 @@ export function main(argv = process.argv.slice(2), deps = {}) {
       only: opts.only,
       skip: opts.skip,
       fast: opts.fast,
+      strict: opts.strict,
+      runId,
+      since: new Date(sinceMs).toISOString(),
       gates: results,
       summary,
     };
