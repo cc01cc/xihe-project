@@ -58,6 +58,14 @@ const blocked = ref(false);
 const fetchError = ref(false);
 
 /**
+ * 三态而不是两态（task-112）：loading 期间 `keyCount` 必然是 0，若照常渲染「本域 0 项配置」
+ * 加空表单，就是把 unknown 折成结论 —— **「还没回来」≠「没有配置」**（同族前例：无 atom ≠ 403、
+ * 未落定 ≠ 拒绝）。`configStore.layerLoading` 是唯一进度事实源
+ * （`stores/config.ts:139` 定义、`:262` 置真、`:306` 复位），域页此前零引用。
+ */
+const pending = computed(() => configStore.layerLoading);
+
+/**
  * PLAN-0752 T3.3 / design 决策 #7 + D2：工具分类归入 approval-policy 域，**不单独占顶级设置页**。
  * 形态是「域页内二级页签（一域两视图）」，不是独立子路由——所以 `?tab=` 只表达**域内视图**，
  * 不表达层（层仍然只在 URL 的 `/settings/{layer}/{domain}` 段里，V25 不变）。
@@ -127,7 +135,7 @@ watch(
                 {{ domainLabel }}
             </h2>
             <p
-                v-if="activeTab === 'policy'"
+                v-if="activeTab === 'policy' && !pending"
                 data-testid="settings-domain-summary"
                 class="text-[11px] text-muted-foreground"
             >
@@ -199,7 +207,14 @@ watch(
             </button>
         </div>
 
-        <div v-if="activeTab === 'tool-faces' && toolFacesTab" class="mt-4">
+        <p
+            v-if="pending"
+            data-testid="settings-domain-loading"
+            class="mt-4 text-[11px] text-muted-foreground"
+        >
+            {{ t("common.loading") }}
+        </p>
+        <div v-else-if="activeTab === 'tool-faces' && toolFacesTab" class="mt-4">
             <ToolFacesView embedded />
         </div>
         <div v-else class="mt-4">
