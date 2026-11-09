@@ -307,7 +307,7 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         const renameModal = page.getByTestId("modal-content");
         await expect(renameModal).toBeVisible();
         await renameModal.getByRole("textbox").fill("renamed.md");
-        await renameModal.getByRole("button", { name: "Rename", exact: true }).click();
+        await renameModal.getByTestId("file-node-rename-submit").click();
         await expect(page.getByRole("button", { name: "renamed.md", exact: true })).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -324,7 +324,7 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         const moveModal = page.getByTestId("modal-content");
         await expect(moveModal).toBeVisible();
         await moveModal.getByRole("textbox").fill("archive");
-        await moveModal.getByRole("button", { name: "Move", exact: true }).click();
+        await moveModal.getByTestId("file-node-move-submit").click();
         await expect(duplicate).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const archive = page.getByRole("button", { name: /archive$/ });
@@ -339,7 +339,7 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
         await page.getByRole("menuitem", { name: /^Delete/ }).click();
         const deleteModal = page.getByTestId("modal-content");
         await expect(deleteModal).toContainText("archive/renamed-copy.md");
-        await deleteModal.getByRole("button", { name: "Delete", exact: true }).click();
+        await deleteModal.getByTestId("file-node-delete-submit").click();
         await expect(moved).not.toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         await page.reload({ waitUntil: "load" });

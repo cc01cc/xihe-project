@@ -703,7 +703,7 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         // Mutate the file through the UI file panel (code panel → tree → markdown source → save).
         // No reload: the workspace chat keeps the live timeline (persisted history is not hydrated
         // on this surface, so a reload would drop the run's marker — reported product gap).
-        const treeRefresh = page.getByRole("button", { name: "Refresh" }).first();
+        const treeRefresh = page.getByTestId("workspace-file-refresh").first();
         if (await treeRefresh.isVisible().catch(() => false)) await treeRefresh.click();
         const codeToggle = page.getByTestId("workspace-toolbar-code");
         await codeToggle.click();
