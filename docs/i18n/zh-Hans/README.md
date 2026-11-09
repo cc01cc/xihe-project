@@ -70,7 +70,7 @@ exit code 契约：`0` 成功、`1` 业务/运行失败（含 `partial`）、`2`
 
 `.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；启动前会先跑一次 `mise run check:runtime-target`（watch 只打印，FORCE 线 ≥20GB 或 H 余量 <5GB 会阻止启动）；需要配置时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`（stack-1；并行多栈见 [DEV-002](DEV-002-developer-guide.md)「模式 D」）。`mise run dev:full` **已冻结禁用（2026-10-07：仅 PostgreSQL 保留容器，服务全 host；mise.toml 已注释）**，日常走 `dev:host`；环境说明见 [DEV-002](DEV-002-developer-guide.md)。
 
-**本仓库可单独 clone 运行**，不依赖上层 ONE 工作区：`mise run check:standalone`（`mise.toml:395`）自检「不依赖 one 根」。端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`；ONE 侧的 `config/ports.mjs` 只是编排镜像，改任一侧须同批改另一侧，并由 `mise run check:ports`（`mise.toml:401`）做 parity 校验（ONE 不存在时显式 skip）。
+**本仓库可单独 clone 运行**，不依赖上层 ONE 工作区：`mise run check:standalone`（`mise.toml:565`）自检「不依赖 one 根」。端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`；ONE 侧的 `config/ports.mjs` 只是编排镜像，改任一侧须同批改另一侧，并由 `mise run check:ports`（`mise.toml:573`）做 parity 校验（**fail-closed**：ONE 不存在即 exit 2，不再静默放行；单独 clone 的自检跑裸 `node scripts/check-ports-parity.mjs` 且不带 `--require-mirror`，它只打 `SKIP`）。
 
 开发管理员密码通过 `mise run reset-admin` 临时重置；命令输出只用于本地登录，不要保存到脚本、源码或日志。
 
