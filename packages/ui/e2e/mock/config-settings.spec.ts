@@ -294,7 +294,11 @@ test.describe("Config Settings (three layers)", () => {
         // 旧：/settings/config 的 instance 层签；新：instance 层的 logging 域页，保存仍走层端点。
         await page.goto("/settings/instance/logging", { waitUntil: "load" });
 
-        await expect(page.getByTestId("config-domain-logging")).toBeVisible();
+        // 域面板要等层配置 GET 落定才挂载；4 worker 满载时 5 s 默认值不够（2026-11-10 全量实测 flaky），
+        // 这里给 lane 预算（文件头已有 timeout-exempt 说明），只放宽等待、不放宽断言。
+        await expect(page.getByTestId("config-domain-logging")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await page.getByTestId("config-domain-logging").locator("button").first().click();
         await selectByTestId(page, "config-select-logging-levelCp", "ERROR");
 
