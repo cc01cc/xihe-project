@@ -6,7 +6,12 @@ import { Menu, X } from "@lucide/vue";
 import BackToChatButton from "../components/settings/BackToChatButton.vue";
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
-import { DOMAIN_LABEL_KEY, isConfigDomain, isSettingsLayer } from "../lib/settingsIa";
+import {
+    DOMAIN_LABEL_KEY,
+    isConfigDomain,
+    isSettingsLayer,
+    settingsLayerForPath,
+} from "../lib/settingsIa";
 
 /**
  * PLAN-0752 T1.1：设置区独立布局（**不**复用 layouts/AppLayout.vue）。
@@ -18,8 +23,11 @@ import { DOMAIN_LABEL_KEY, isConfigDomain, isSettingsLayer } from "../lib/settin
 const route = useRoute();
 const { t } = useI18n();
 
+// 层是外框：这里决定它。路由 meta 有层就用 meta；兜底路由（404）没有 meta，按路径推导。
 const layer = computed(() =>
-    isSettingsLayer(route.meta.settingsLayer) ? route.meta.settingsLayer : "instance",
+    isSettingsLayer(route.meta.settingsLayer)
+        ? route.meta.settingsLayer
+        : settingsLayerForPath(route.path),
 );
 
 const domainLabel = computed(() => {

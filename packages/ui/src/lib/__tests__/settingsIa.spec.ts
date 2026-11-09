@@ -8,6 +8,7 @@ import {
     layersForDomain,
     resolveLayerRoute,
     settingsDomainPath,
+    settingsLayerForPath,
     workspaceSettingsDomainPath,
     type ConfigDomain,
 } from "../settingsIa";
@@ -69,6 +70,16 @@ describe("resolveLayerRoute", () => {
             reason: "unknown-domain",
         });
         expect(domainRouteExists("workspace", "agent-profile")).toBe(false);
+    });
+});
+
+describe("settingsLayerForPath (404 兜底路由的层推导)", () => {
+    it("reads the layer out of the URL instead of trusting a hardcoded meta", () => {
+        expect(settingsLayerForPath("/settings/user/logging")).toBe("user");
+        expect(settingsLayerForPath("/settings/instance/rag")).toBe("instance");
+        expect(settingsLayerForPath("/settings/user/rag")).toBe("user");
+        expect(settingsLayerForPath("/settings/nope")).toBe("instance");
+        expect(settingsLayerForPath("/workspace/ws-1/settings/rag")).toBe("workspace");
     });
 });
 

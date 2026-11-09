@@ -88,6 +88,19 @@ function domainRouteExistsInMatrix(layer: SettingsLayer, domain: ConfigDomain): 
     return LAYER_DOMAINS[layer].includes(domain);
 }
 
+/**
+ * 从 URL 路径反推层（V3/V25 的 404 兜底用）。
+ *
+ * <p>为什么需要它：`/settings/:pathMatch(.*)*` 这类兜底路由没有「层×域」参数，若给它写死
+ * `meta.settingsLayer = "instance"`，`/settings/user/logging` 的 404 页会顶着「实例配置」的层标题
+ * ——文案/左栏都对，只有层身份在说胡话（2026-11-10 量测实测，task-66 V03d/V03e）。
+ * 层是外框，只有**一个**地方决定它：路由 meta 有则用，没有则从这里按路径推导。</p>
+ */
+export function settingsLayerForPath(path: string): SettingsLayer {
+    if (path.startsWith("/workspace/")) return "workspace";
+    return path.startsWith("/settings/user") ? "user" : "instance";
+}
+
 /** 全局设置页的域路径（只有 instance / user 两层进 `/settings`）。 */
 export function settingsDomainPath(
     layer: Exclude<SettingsLayer, "workspace">,

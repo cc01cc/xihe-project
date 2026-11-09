@@ -164,11 +164,12 @@ const router = createRouter({
                     redirect: { name: "settings-roles" },
                 },
                 {
-                    // V3/V25：层×域矩阵里没有的组合（含手输 URL 与外部书签）⇒ 404 视图
+                    // V3/V25：层×域矩阵里没有的组合（含手输 URL 与外部书签）⇒ 404 视图。
+                    // 注意**不写** meta.settingsLayer：兜底路由没有层参数，写死任意一层都会让 404
+                    // 页的层标题说胡话；层由 SettingsLayout 用 settingsLayerForPath(route.path) 推导。
                     path: ":pathMatch(.*)*",
                     name: "settings-not-found",
                     component: () => import("../views/settings/SettingsNotFoundView.vue"),
-                    meta: { settingsLayer: "instance" },
                 },
             ],
         },
