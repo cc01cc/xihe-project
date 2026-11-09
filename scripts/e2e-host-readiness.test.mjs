@@ -117,7 +117,7 @@ test('the intentional `missing` lane stays not-ready without burning the budget'
     assert.equal(now(), 0, 'no time is spent waiting')
 })
 
-test('rebuild stamping writes build-info from the real HEAD and passes freshness', (t) => {
+test('rebuild stamping writes build-info from the real HEAD; a dirty CP tree is a named verdict, not a red', (t) => {
     const targetDir = mkdtempSync(join(tmpdir(), 'xihe-e2e-rebuild-stamp-'))
     t.after(() => rmSync(targetDir, { recursive: true, force: true }))
 
@@ -132,7 +132,80 @@ test('rebuild stamping writes build-info from the real HEAD and passes freshness
     const { info } = readBuildInfo(targetDir)
     assert.equal(info.commit, head.commit)
     assert.equal(info.dirty, head.dirty)
-    assert.equal(evaluateCpFreshness({ targetDir, headCommit: head.commit }).fresh, true)
+    // BL-524: a lane with uncommitted CP edits used to fail this test because the stamp's
+    // commit equals HEAD but the tree is dirty. Dirty is a real, nameable state (BL-325), not a
+    // regression: the stamp still belongs to the tested commit. Assert the *relative* fact
+    // (stamp commit == HEAD) and let `dirty` be its own verdict.
+    const verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit })
+    assert.equal(verdict.fileCommit, head.commit)
+    assert.equal(verdict.status, head.dirty ? 'dirty' : 'fresh')
+    assert.equal(verdict.fresh, !head.dirty)
+})
+
+/**
+ * BL-524: deterministic `gitHead` double — the freshness gate's dirty bit is scoped by
+ * `git status --porcelain -- packages/control-plane`, so tests must simulate that exact call
+ * instead of reading the real working tree (which makes the suite fail on any CP lane).
+ */
+function fakeGitRun({ commit = 'a'.repeat(40), cpStatus = '' } = {}) {
+    const calls = []
+    const run = (cmd, args) => {
+        calls.push([cmd, ...args].join(' '))
+        if (args[0] === 'rev-parse') return { status: 0, stdout: `${commit}\n`, stderr: '' }
+        if (args[0] === 'status') return { status: 0, stdout: cpStatus, stderr: '' }
+        throw new Error(`unexpected git call: ${cmd} ${args.join(' ')}`)
+    }
+    return { run, calls }
+}
+
+test('BL-524: uncommitted CP edits => stamp keeps HEAD commit and gets the named `dirty` verdict', (t) => {
+    const targetDir = mkdtempSync(join(tmpdir(), 'xihe-e2e-cp-dirty-'))
+    t.after(() => rmSync(targetDir, { recursive: true, force: true }))
+
+    const { run } = fakeGitRun({ cpStatus: ' M packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/ResetAdmin.java\n' })
+    const head = gitHead({ cwd: projectRoot, run })
+    assert.equal(head.error, null, head.error ?? '')
+    assert.equal(head.dirty, true)
+
+    writeBuildInfo({ targetDir, commit: head.commit, dirty: head.dirty })
+    const verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit })
+    assert.equal(verdict.status, 'dirty', 'a dirty CP tree is `dirty`, never a stale/unverified red')
+    assert.equal(verdict.fileCommit, head.commit, 'the stamp still belongs to the tested commit')
+})
+
+test('BL-524: clean CP tree => same-commit stamp still passes freshness', (t) => {
+    const targetDir = mkdtempSync(join(tmpdir(), 'xihe-e2e-cp-clean-'))
+    t.after(() => rmSync(targetDir, { recursive: true, force: true }))
+
+    const { run } = fakeGitRun({ cpStatus: '' })
+    const head = gitHead({ cwd: projectRoot, run })
+    assert.equal(head.error, null, head.error ?? '')
+    assert.equal(head.dirty, false)
+
+    writeBuildInfo({ targetDir, commit: head.commit, dirty: head.dirty })
+    const verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit })
+    assert.equal(verdict.status, 'fresh')
+    assert.equal(verdict.fresh, true)
+})
+
+test('BL-524: non-CP changes do not affect the judgement (dirty is scoped to packages/control-plane)', () => {
+    const { run, calls } = fakeGitRun({ cpStatus: '' })
+    const head = gitHead({ cwd: projectRoot, run })
+    assert.equal(head.dirty, false)
+
+    // The scope is the contract: a UI/docs/one edit never enters this `git status` call.
+    const statusCall = calls.find((call) => call.includes('status --porcelain'))
+    assert.ok(statusCall, 'gitHead must probe working-tree state')
+    assert.match(statusCall, / status --porcelain -- packages\/control-plane$/u)
+    assert.ok(!calls.some((call) => /status --porcelain -- packages\/(ui|agent|runtime)/u.test(call)))
+
+    const stampDir = mkdtempSync(join(tmpdir(), 'xihe-e2e-noncp-'))
+    try {
+        writeBuildInfo({ targetDir: stampDir, commit: head.commit, dirty: head.dirty })
+        assert.equal(evaluateCpFreshness({ targetDir: stampDir, headCommit: head.commit }).fresh, true)
+    } finally {
+        rmSync(stampDir, { recursive: true, force: true })
+    }
 })
 
 test('e2e-host rebuild branch stamps the fresh jar with the current HEAD', () => {
