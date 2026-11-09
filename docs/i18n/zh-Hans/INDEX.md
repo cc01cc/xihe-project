@@ -62,3 +62,7 @@ sidebar_order: 0
 ## 用户手册
 
 - [USER-001: 用户指南](USER-001-user-guide.md)
+
+## 开发博客（叙事）
+
+- [blog/](blog/README.md)：为什么这么设计、踩了什么坑（日期命名，不占 DEV 编号）

@@ -36,3 +36,7 @@ General-purpose Agent tool platform.
 - `spec/writing-guide.md`: Chinese-first SPEC writing, profiles, Mermaid/ASCII, and verification rules
 
 (WIP - more English translations coming soon)
+
+## Engineering Blog (narrative)
+
+- [blog/](blog/README.md): design rationale and post-mortems (date-named, no DEV numbering)
