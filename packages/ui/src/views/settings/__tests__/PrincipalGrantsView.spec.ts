@@ -117,12 +117,16 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
     });
 
     it("keeps no nav entry, only the role surface", () => {
-        const navSource = readFileSync(
-            resolve(UI_SRC, "components/settings/SettingsNav.vue"),
+        // task-74 B4：旧 SettingsNav 组件已回收（零使用者），导航唯一实现是 SettingsSidebar +
+        // settingsIa 的分组数据 —— 判据跟着搬家，断言对象换到当前实现上。
+        const sidebarSource = readFileSync(
+            resolve(UI_SRC, "components/settings/SettingsSidebar.vue"),
             "utf8",
         );
-        expect(navSource).not.toContain("principal-grants");
-        expect(navSource).toContain("/settings/roles");
+        expect(sidebarSource).not.toContain("principal-grants");
+        const iaSource = readFileSync(resolve(UI_SRC, "lib/settingsIa.ts"), "utf8");
+        expect(iaSource).not.toContain("principal-grants");
+        expect(iaSource).toContain("/settings/roles");
     });
 
     it("redirects the old path to the role surface instead of rendering a page", async () => {
