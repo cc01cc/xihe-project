@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle } from "@lucide/vue";
 import { useAuthStore } from "../../../stores/auth";
-import { useConfigStore } from "../../../stores/config";
+import { useConfigStore, type ConfigDomain } from "../../../stores/config";
 import { useSessionStore } from "../../../stores/session";
 import { api, ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
@@ -14,6 +14,8 @@ import { workspacePath } from "../../../lib/routes";
 import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
+import SettingsNotFoundView from "../../../views/settings/SettingsNotFoundView.vue";
+import { domainsForLayer } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -37,6 +39,20 @@ const route = useRoute(),
     { t } = useI18n();
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
+
+/**
+ * PLAN-0752 M1：工作区层也进域段（/workspace/:id/settings/:domain）。工作区层矩阵是 9 域
+ * （logging 只有实例层），不在矩阵里的 :domain 直链 ⇒ 404 视图（V3/V25），而不是静默忽略。
+ */
+const domainParam = computed(() => {
+    const value = route.params.domain;
+    return typeof value === "string" ? value : "";
+});
+const domainInvalid = computed(
+    () =>
+        domainParam.value !== "" &&
+        !domainsForLayer("workspace").includes(domainParam.value as ConfigDomain),
+);
 
 const initialTab = ((): SettingsTab => {
     const q = route.query.tab;
@@ -217,7 +233,8 @@ onMounted(() => {
 </script>
 
 <template>
-    <section class="min-h-full" data-testid="workspace-settings-page">
+    <SettingsNotFoundView v-if="domainInvalid" />
+    <section v-else class="min-h-full" data-testid="workspace-settings-page">
         <div class="mx-auto w-full max-w-6xl px-6 py-6">
             <div
                 class="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1"

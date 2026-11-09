@@ -2,7 +2,12 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { useConfigStore, LAYER_DOMAINS, type ConfigLayer } from "../../stores/config";
+import {
+    useConfigStore,
+    LAYER_DOMAINS,
+    type ConfigDomain,
+    type ConfigLayer,
+} from "../../stores/config";
 import ConfigDomainPanel, { type DomainField } from "./ConfigDomainPanel.vue";
 import ConfigSourceSummary from "./ConfigSourceSummary.vue";
 import AgentTemplatesPanel from "./AgentTemplatesPanel.vue";
@@ -25,8 +30,10 @@ const props = withDefaults(
         layer: ConfigLayer;
         workspaceId?: string;
         readonly?: boolean;
+        /** PLAN-0752 T1.2：只渲染这一个域（域页用）；不传 = 整层（沿用旧行为）。 */
+        domain?: ConfigDomain;
     }>(),
-    { workspaceId: undefined, readonly: false },
+    { workspaceId: undefined, readonly: false, domain: undefined },
 );
 
 const emit = defineEmits<{
@@ -285,7 +292,9 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
 
 const savingDomains = ref<Record<string, boolean>>({});
 
-const visibleDomains = computed(() => [...LAYER_DOMAINS[props.layer]]);
+const visibleDomains = computed(() =>
+    props.domain ? [props.domain] : [...LAYER_DOMAINS[props.layer]],
+);
 
 function schemaFor(domain: string): DomainField[] {
     const fields = domainSchemas.value[domain] ?? [];

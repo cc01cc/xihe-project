@@ -10,6 +10,8 @@ import {
 } from "../lib/workspaceContext";
 import { resolveLocalModeLanding } from "../lib/workspaceLanding";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
+import { defaultLayerPath, settingsDomainPath } from "../lib/settingsIa";
+import { LAYER_DOMAINS } from "../stores/config";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -60,7 +62,8 @@ const router = createRouter({
                     component: () => import("../features/workspace/pages/ScheduledTasksView.vue"),
                 },
                 {
-                    path: "settings",
+                    // PLAN-0752 M1：工作区层进 URL 的域段（可选；不带域段 = 旧入口）
+                    path: "settings/:domain?",
                     name: "workspace-settings",
                     component: () =>
                         import("../features/workspace/pages/WorkspaceSettingsView.vue"),
@@ -68,70 +71,105 @@ const router = createRouter({
             ],
         },
         {
+            /**
+             * PLAN-0752 M1（V1/V3/V25）：设置区不再复用 AppLayout，层进 URL。
+             *
+             * 只注册矩阵里存在的「层×域」组合（12 + 9）——不存在的组合根本不匹配，
+             * 落到末尾的 404 兜底；这是「路由不存在」的直译，而不是渲染一个错误页假装存在。
+             */
             path: "/settings",
-            component: () => import("../layouts/AppLayout.vue"),
+            component: () => import("../layouts/SettingsLayout.vue"),
             meta: { requiresAuth: true },
             children: [
                 {
+                    // 层默认页：实例层第一个域；非管理员由域页的 403 视图兜底（V4）
                     path: "",
-                    redirect: { name: "settings-config" },
+                    redirect: () => defaultLayerPath("instance"),
                 },
+                ...LAYER_DOMAINS.instance.map((domain) => ({
+                    path: `instance/${domain}`,
+                    name: `settings-instance-domain-${domain}`,
+                    component: () => import("../views/settings/SettingsDomainView.vue"),
+                    props: { layer: "instance" as const, domain },
+                    meta: { settingsLayer: "instance" as const, settingsDomain: domain },
+                })),
+                ...LAYER_DOMAINS.user.map((domain) => ({
+                    path: `user/${domain}`,
+                    name: `settings-user-domain-${domain}`,
+                    component: () => import("../views/settings/SettingsDomainView.vue"),
+                    props: { layer: "user" as const, domain },
+                    meta: { settingsLayer: "user" as const, settingsDomain: domain },
+                })),
+                // 旧路径 redirect（V2）：层不进 URL 时代的入口
                 {
                     path: "config",
-                    name: "settings-config",
-                    component: () => import("../views/settings/ConfigSettings.vue"),
+                    redirect: () => defaultLayerPath("instance"),
                 },
                 {
                     path: "policy",
-                    redirect: { name: "settings-config" },
+                    redirect: () => defaultLayerPath("instance"),
                 },
                 {
-                    path: "config-locks",
-                    name: "settings-config-locks",
-                    component: () => import("../views/settings/ConfigLocksView.vue"),
-                },
-                {
+                    // design.md §7：tool-faces 归入 approval-policy 域，不再占顶级页
                     path: "tool-faces",
-                    name: "settings-tool-faces",
-                    component: () => import("../views/settings/ToolFacesView.vue"),
+                    redirect: () => settingsDomainPath("instance", "approval-policy"),
                 },
+                // 实例运维 / 安全与权限（不是配置域，路径不在层段下）
                 {
-                    path: "credentials",
-                    name: "settings-credentials",
-                    component: () => import("../views/settings/CredentialsView.vue"),
-                },
-                {
-                    path: "knowledge",
-                    name: "settings-knowledge",
-                    component: () => import("../views/settings/KnowledgeBaseView.vue"),
+                    path: "monitoring",
+                    name: "settings-monitoring",
+                    component: () => import("../views/settings/MonitoringView.vue"),
+                    meta: { settingsLayer: "instance" },
                 },
                 {
                     path: "data",
                     name: "settings-data",
                     component: () => import("../views/settings/DataControlsView.vue"),
+                    meta: { settingsLayer: "instance" },
                 },
                 {
-                    path: "monitoring",
-                    name: "settings-monitoring",
-                    component: () => import("../views/settings/MonitoringView.vue"),
+                    path: "config-locks",
+                    name: "settings-config-locks",
+                    component: () => import("../views/settings/ConfigLocksView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
+                {
+                    path: "roles",
+                    name: "settings-roles",
+                    component: () => import("../views/settings/RolesView.vue"),
+                    meta: { settingsLayer: "instance" },
                 },
                 {
                     path: "audit",
                     name: "settings-audit",
                     component: () => import("../views/settings/AuditView.vue"),
+                    meta: { settingsLayer: "instance" },
                 },
                 {
-                    // PLAN-0610 W5c: the principal-grant page is retired (CP answers 410
-                    // PRINCIPAL_GRANTS_RETIRED since W2). The old path stays as a redirect so an
-                    // existing bookmark lands on the replacement instead of a blank route.
+                    // 资源面（M4 才搬进「我的资源」分组）：M1 先保持可达，路径不变
+                    path: "credentials",
+                    name: "settings-credentials",
+                    component: () => import("../views/settings/CredentialsView.vue"),
+                    meta: { settingsLayer: "user" },
+                },
+                {
+                    path: "knowledge",
+                    name: "settings-knowledge",
+                    component: () => import("../views/settings/KnowledgeBaseView.vue"),
+                    meta: { settingsLayer: "user" },
+                },
+                {
+                    // PLAN-0610 W5c：principal-grants 已退役，旧书签落到替代页
                     path: "principal-grants",
                     redirect: { name: "settings-roles" },
                 },
                 {
-                    // PLAN-0610 W5b: access-role definitions + bindings (ADMIN-gated).
-                    path: "roles",
-                    name: "settings-roles",
-                    component: () => import("../views/settings/RolesView.vue"),
+                    // V3/V25：层×域矩阵里没有的组合（含手输 URL 与外部书签）⇒ 404 视图。
+                    // 注意**不写** meta.settingsLayer：兜底路由没有层参数，写死任意一层都会让 404
+                    // 页的层标题说胡话；层由 SettingsLayout 用 settingsLayerForPath(route.path) 推导。
+                    path: ":pathMatch(.*)*",
+                    name: "settings-not-found",
+                    component: () => import("../views/settings/SettingsNotFoundView.vue"),
                 },
             ],
         },

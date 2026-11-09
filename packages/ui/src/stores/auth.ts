@@ -107,6 +107,14 @@ export const useAuthStore = defineStore("auth", () => {
     const canManageRoles = computed(() => hasInstanceAtom(ATOM_MANAGE_ROLES));
 
     /**
+     * PLAN-0752 V15：设置区「实例层可见 / 可写」判据必须与 CP 同源。CP 的 `ConfigController`
+     * 与 `ConfigLockController` 放行实例层用的是 capability `cap:instance:admin`（BL-392），
+     * 它由 `GET /me/capabilities` 投影成 `isInstanceAdmin`。这里用一个**名字说清能力位**的
+     * 访问器，避免调用点再写 `isAdmin` 这种看起来像角色判断的字面量。
+     */
+    const hasInstanceAdminCapability = computed(() => capabilities.value.isInstanceAdmin);
+
+    /**
      * Load the atom projection once per session. Single-flight: concurrent callers (settings nav +
      * a settings page) share one request. Failures stay soft — the surface fails closed and a later
      * call retries, while CP remains authoritative.
@@ -562,6 +570,7 @@ export const useAuthStore = defineStore("auth", () => {
         userName,
         capabilities,
         isAdmin,
+        hasInstanceAdminCapability,
         isInstanceSuper,
         selfPermissions,
         hasInstanceAtom,
