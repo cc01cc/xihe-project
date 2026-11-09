@@ -49,7 +49,11 @@ async function fetchStatus() {
 async function fetchVersion() {
     versionError.value = null;
     try {
-        versionInfo.value = await api.getVersionInfo();
+        const info = await api.getVersionInfo();
+        // BL-530：200 但缺 modules（旧 CP / 网关空 JSON / 字段裁剪）不能让模板崩。
+        // 归入既有 versionError 分支（模板显示 settings.versionUnavailable），不新增文案键。
+        if (!info || !info.modules) throw new Error("version payload missing modules");
+        versionInfo.value = info;
     } catch (e) {
         versionInfo.value = null;
         versionError.value = e instanceof Error ? e.message : String(e);
@@ -60,11 +64,11 @@ async function refreshAll() {
     await Promise.all([fetchStatus(), fetchVersion()]);
 }
 
-function formatVersion(version: string | null): string {
+function formatVersion(version: string | null | undefined): string {
     return version || t("settings.versionNotReported");
 }
 
-function formatCommit(commit: string | null): string {
+function formatCommit(commit: string | null | undefined): string {
     return commit ? commit.slice(0, 12) : t("settings.commitNotInjected");
 }
 
@@ -144,32 +148,32 @@ onUnmounted(() => {
             <div v-if="versionInfo" class="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                 <div class="flex items-center gap-2">
                     <span class="text-muted-foreground">{{ t("settings.moduleCp") }}:</span>
-                    <span>{{ formatVersion(versionInfo.modules.cp.version) }}</span>
+                    <span>{{ formatVersion(versionInfo.modules.cp?.version) }}</span>
                     <span
                         class="truncate text-xs text-muted-foreground"
-                        :title="versionInfo.modules.cp.commit || ''"
+                        :title="versionInfo.modules.cp?.commit || ''"
                     >
-                        {{ formatCommit(versionInfo.modules.cp.commit) }}
+                        {{ formatCommit(versionInfo.modules.cp?.commit) }}
                     </span>
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-muted-foreground">{{ t("settings.moduleAgent") }}:</span>
-                    <span>{{ formatVersion(versionInfo.modules.agent.version) }}</span>
+                    <span>{{ formatVersion(versionInfo.modules.agent?.version) }}</span>
                     <span
                         class="truncate text-xs text-muted-foreground"
-                        :title="versionInfo.modules.agent.commit || ''"
+                        :title="versionInfo.modules.agent?.commit || ''"
                     >
-                        {{ formatCommit(versionInfo.modules.agent.commit) }}
+                        {{ formatCommit(versionInfo.modules.agent?.commit) }}
                     </span>
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-muted-foreground">{{ t("settings.moduleRuntime") }}:</span>
-                    <span>{{ formatVersion(versionInfo.modules.runtime.version) }}</span>
+                    <span>{{ formatVersion(versionInfo.modules.runtime?.version) }}</span>
                     <span
                         class="truncate text-xs text-muted-foreground"
-                        :title="versionInfo.modules.runtime.commit || ''"
+                        :title="versionInfo.modules.runtime?.commit || ''"
                     >
-                        {{ formatCommit(versionInfo.modules.runtime.commit) }}
+                        {{ formatCommit(versionInfo.modules.runtime?.commit) }}
                     </span>
                 </div>
                 <div class="flex items-center gap-2">
