@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // PLAN-0656 R3/R5: orphan-process sweep, shared by `dev-stack.mjs` and `stack-run.mjs`.
@@ -16,6 +16,21 @@ import { join } from 'node:path';
 // should classify it as 'recorded' and skip the kill — restarting a healthy service
 // mid-flight is not the sweep's job.
 
+/**
+ * PowerShell 解析：最小 env（例如 harness 直起的子进程）里 PATH 可能没有
+ * `SystemRoot\System32\WindowsPowerShell\v1.0`，`spawnSync('powershell.exe')` 会 ENOENT，
+ * 而本模块在 spawn 失败时**静默返回 []** ⇒ 上层把它读成「没有监听者」，与事实相反
+ * （task-76 自测踩到：最小 env 下 acquire 报 nothing to adopt）。用绝对路径兜底，
+ * 解析不到才退回裸名字（保持旧行为，不改变其它平台/环境的语义）。
+ */
+function resolvePowerShell() {
+  const root = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows';
+  const absolute = join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return existsSync(absolute) ? absolute : 'powershell.exe';
+}
+
+const POWERSHELL = resolvePowerShell();
+
 export const SERVICE_OWNER = {
   runtime: /xihe-runtime/i,
   // `mvn spring-boot:run` forks a JVM whose cmdline hides the classpath in an
@@ -25,7 +40,9 @@ export const SERVICE_OWNER = {
   ui: /dev-ui-host|vite\b|xihe-ui/i,
 };
 
-/** LISTEN processes on the given ports: [{port, pid, name, cmdline}] (Windows only). */
+/** LISTEN processes on the given ports: [{port, pid, name, cmdline, startedAt}] (Windows only).
+ *  `startedAt`（ISO，UTC；读不出为 null）是进程的**真实启动时刻**：acquire 用它写 pid 记录，
+ *  让「未启动」与「起来又死」在事后可区分（task-76）。 */
 export function stackListeners(portList, { isWindows = process.platform === 'win32' } = {}) {
   if (!isWindows || portList.length === 0) return [];
   const ps =
@@ -34,9 +51,11 @@ export function stackListeners(portList, { isWindows = process.platform === 'win
     ' Where-Object { $ports -contains $_.LocalPort } |' +
     ' ForEach-Object { $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue;' +
     ' if ($proc) { $c = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)").CommandLine;' +
-    ' [pscustomobject]@{ port=[int]$_.LocalPort; pid=[int]$_.OwningProcess; name=[string]$proc.ProcessName; cmdline=[string]$c } } }' +
+    // task-76: StartTime 对受保护进程会抛（access denied）——读不出就留空，绝不把整段探测拖挂。
+    " $st = ''; try { $st = $proc.StartTime.ToUniversalTime().ToString('o') } catch { $st = '' };" +
+    ' [pscustomobject]@{ port=[int]$_.LocalPort; pid=[int]$_.OwningProcess; name=[string]$proc.ProcessName; cmdline=[string]$c; startedAt=[string]$st } } }' +
     ' | ConvertTo-Json -Compress';
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true });
+  const result = spawnSync(POWERSHELL, ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true });
   if (result.status !== 0) return [];
   const text = String(result.stdout || '').trim();
   if (text === '') return [];

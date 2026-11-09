@@ -168,7 +168,10 @@ test('案例 C（真栈只读）：status --all --json ⇒ 每栈 healthy / mism
   });
   console.log(`CASE C cmd 期望=verdict=healthy / mismatch=[] 实测=(见下) exit=${run.status}`);
   assert.equal(run.error, undefined, `spawn 失败：${run.error?.message}`);
-  assert.equal(run.status, 0, `exit=${run.status}，stdout=${(run.stdout || '').slice(0, 600)}，stderr=${(run.stderr || '').slice(0, 400)}`);
+  // 退出码口径（Lead 2026-11-10 裁定同批）：`status --all` 的 exit = 「**任一**槽 !ok ⇒ 1」，
+  // 而 `--all` 恒列 2 槽、常态只有 1 个在跑 ⇒ 未启动槽必然让它 exit 1，那不是故障。
+  // 所以这里不钉死 0，而是钉「exit 与各槽 ok 的聚合一致」——真正的产品契约。
+  assert.ok(run.status === 0 || run.status === 1, `exit=${run.status} 不是 0/1，stdout=${(run.stdout || '').slice(0, 600)}`);
 
   let doc;
   try {
@@ -178,10 +181,33 @@ test('案例 C（真栈只读）：status --all --json ⇒ 每栈 healthy / mism
   }
   assert.ok(Array.isArray(doc.stacks) && doc.stacks.length >= 2, `stacks 数=${doc.stacks?.length}`);
 
+  const expectedExit = doc.stacks.every((stack) => stack?.ok === true) ? 0 : 1;
+  assert.equal(
+    run.status,
+    expectedExit,
+    `exit=${run.status} 与各槽 ok 聚合不一致（期望 ${expectedExit}）：${doc.stacks.map((s) => `${s?.stackId}:ok=${s?.ok}`).join(' ')}`,
+  );
+
   const headCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: mainCheckout, encoding: 'utf8' }).stdout.trim();
   assert.ok(/^[0-9a-f]{40}$/.test(headCommit), `读不到主检出 HEAD：'${headCommit}'`);
 
-  for (const stack of doc.stacks) {
+  // 前提（Lead 2026-11-10 裁定）：`status --all` **恒列 2 个槽**（stack-1/stack-2），而常态只跑一个栈 ⇒
+  // 「**每个** stacks 项都 healthy」等于要求双栈同跑，**前提与常态不符**（不是产品缺陷）。
+  // 故此处显式排除**未启动**的槽（既无租约、也没有任何服务在听），只断言「有租约或在听的槽必须 healthy」；
+  // 被排除的槽反过来断言 **不得 healthy**（防止排除逻辑把真故障一起免掉）。
+  // ⚠️ 此断言前提=双栈同跑，故显式排除未启动槽 —— 下一个人别以为它在测全绿。
+  const hasStarted = (stack) =>
+    stack?.lease?.exists === true ||
+    (Array.isArray(stack?.services) && stack.services.some((row) => row.listening === true));
+  const activeStacks = doc.stacks.filter(hasStarted);
+  const idleStacks = doc.stacks.filter((stack) => !hasStarted(stack));
+  assert.ok(activeStacks.length >= 1, `没有任何已启动的栈：${JSON.stringify(doc.stacks.map((s) => s?.stackId))}`);
+  for (const stack of idleStacks) {
+    console.log(`  └ ${stack?.stackId} 未启动（无租约 + 无监听）⇒ 显式排除，不断言 healthy`);
+    assert.notEqual(stack?.ok, true, `${stack?.stackId} 未启动却 ok=true，排除逻辑有漏洞`);
+  }
+
+  for (const stack of activeStacks) {
     const mismatch = stack?.lease?.mismatch ?? null;
     const unverifiable = stack?.lease?.unverifiable ?? null;
     const actual = `verdict=${stack?.verdict} / mismatch=${JSON.stringify(mismatch)}`;
@@ -216,5 +242,5 @@ test('案例 C（真栈只读）：status --all --json ⇒ 每栈 healthy / mism
   }
   const verdicts = [...new Set(doc.stacks.map((stack) => stack?.cpBuild?.verdict))].join('/');
   console.log(`CASE C cpBuild.verdict=${verdicts}（informational：fresh 只在 develop 未前进时成立，本次不断言）`);
-  console.log(`CASE C 真栈 ${doc.stacks.map((stack) => stack.stackId).join(' + ')} 全部 healthy/mismatch=[]（${doc.stacks.length}/${doc.stacks.length}），head=${headCommit.slice(0, 8)}`);
+  console.log(`CASE C 已启动真栈 ${activeStacks.map((stack) => stack.stackId).join(' + ')} 全部 healthy/mismatch=[]（${activeStacks.length}/${doc.stacks.length}，排除未启动 ${idleStacks.length} 个），head=${headCommit.slice(0, 8)}`);
 });

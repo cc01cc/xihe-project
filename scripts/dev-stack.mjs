@@ -68,6 +68,7 @@ import {
   setLeasePhase,
 } from './lib/stack-lease.mjs';
 import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
+import { buildAdoptedRecord, deadRecordedServices } from './lib/stack-adopt.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 import {
   assertPasswordString,
@@ -110,7 +111,9 @@ function usage(exitCode = 2) {
   console.log('  --help           this message');
   console.log('');
   console.log('lease verbs (PLAN-0694 P0; lease lives at <root>/.xihe-stacks/<n>/lease.json):');
-  console.log('  acquire   adopt a stack that is already running: write the lease from CURRENT facts');
+  console.log('  acquire   adopt a stack that is already running: write the lease AND the pid record from');
+  console.log('            CURRENT facts (task-76: status reads alive from the pid record, so lease-only');
+  console.log('            adoption left every adopted stack permanently "not fully up")');
   console.log('            (refuses when no profile-matched listener exists — nothing to adopt)');
   console.log('  release   delete the lease file only; never stops anything');
   console.log('  gc        read-only sweep: report orphan/ghost stacks + the exact cleanup command;');
@@ -385,7 +388,15 @@ function listenFacts(p = ports) {
   for (const listener of stackListeners(Object.values(p))) {
     const decision = classifyListener(listener, { ports: p });
     if (decision.kind === 'unsupported') break;
-    const base = { port: listener.port, pid: listener.pid, name: listener.name ?? '', service: decision.service ?? null };
+    // task-76: startedAt 必须带出来——acquire 要把它写进 pid 记录（进程真实启动时刻），
+    // 丢在这里就会退化成「认领时刻」，重复 acquire 也就没法幂等。
+    const base = {
+      port: listener.port,
+      pid: listener.pid,
+      name: listener.name ?? '',
+      service: decision.service ?? null,
+      startedAt: listener.startedAt ?? null,
+    };
     if (decision.kind === 'kill') own.push(base);
     else external.push({ ...base, cmdline: listener.cmdline ?? '' });
   }
@@ -928,6 +939,9 @@ async function status() {
   }
   const pgListening = await isPortListening(ports.postgres);
   const factsOk = rows.every((row) => row.alive && row.listening) && pgListening;
+  // task-76: 记录里写着、但进程已经不在的服务。status 必须点名到服务/pid，
+  // 否则「租约在但进程死了」只能读成笼统的 "stack is not fully up"（无法归因）。
+  const deadServices = deadRecordedServices({ record, services: SERVICES, isAlive: processAlive });
   // PLAN-0694 P0: 租约不许「回显即通过」—— 每个字段都拿独立事实核一遍，核不上就写进 mismatch。
   const lease = leaseState();
   const leaseRenewed = refreshHeartbeat(lease);
@@ -947,6 +961,7 @@ async function status() {
           cpBuild,
           services: rows,
           factsOk,
+          deadServices,
           verdict: lease.verdict.verdict,
           reasons: lease.verdict.reasons,
           leaseRenewed,
@@ -969,6 +984,19 @@ async function status() {
     console.log(`  PostgreSQL port ${ports.postgres} listen=${pgListening}`);
     printLease(lease);
     if (leaseRenewed) console.log('  (心跳已刷新：本次核对全绿)');
+    // task-76: 「租约还在、记录也还在，但进程已死」要说清楚是哪几个，
+    // 不能和「端口缺」「租约不成立」混成同一句 not fully up。
+    if (!factsOk && deadServices.length > 0) {
+      console.log(
+        `[dev-stack] lease exists but process(es) are dead: ${deadServices.map((entry) => `${entry.service}(pid ${entry.pid})`).join(', ')}`
+          + ' — 租约与 pid 记录都还在，但监听进程已退出；确认后单服务重启（mise run dev:host:start:<svc>）或 stop 收尾',
+      );
+    } else if (!factsOk && !existsSync(pidFile) && lease.lease !== null) {
+      console.log(
+        `[dev-stack] lease exists but there is no pid record (${pidFile}): task-76 之前的认领只写了租约；`
+          + '重跑一次 `dev-stack acquire --stack N` 即补齐',
+      );
+    }
     console.log(
       `[dev-stack] ${ok ? 'stack is up and every lease field verifies' : factsOk ? 'stack is up but the lease does not verify' : 'stack is not fully up'}`,
     );
@@ -1194,7 +1222,20 @@ async function acquire() {
     process.exitCode = 2;
     return;
   }
-  const record = readJson(pidFile);
+  // task-76: 认领=两份状态一起落盘。只写租约 ⇒ status 的 alive/factsOk 恒 false
+  // （它只读 pidFile），认领完仍报 "stack is not fully up" —— 全绿却 exit 1 的假红。
+  // 记录结构与 start() 写出的完全一致（buildAdoptedRecord，勿发明第二种格式）。
+  const previous = readJson(pidFile);
+  const record = buildAdoptedRecord({
+    stackId: derived.stackId,
+    projectRoot,
+    listeners: listeners.own,
+    ports,
+    services: SERVICES,
+    previous,
+    isAlive: processAlive,
+  });
+  writeJson(pidFile, record);
   const written = writeLease({ record });
   // 写完立刻按同一链路自审一次：认领也得经得起核对，不是「写了就算」。
   const state = leaseState({ listeners: written.listeners });
@@ -1206,6 +1247,7 @@ async function acquire() {
           stackId: derived.stackId,
           projectRoot,
           leasePath: written.path,
+          pidFile,
           adoptedListeners: listeners.own,
           lease: leaseSummary(state),
           verdict: state.verdict.verdict,
@@ -1218,6 +1260,7 @@ async function acquire() {
     );
   } else {
     console.log(`[dev-stack] acquired ${derived.stackId}: lease written to ${written.path}`);
+    console.log(`[dev-stack] pid record written to ${pidFile} (${Object.keys(record.services).length} services)`);
     console.log(`  adopted  ${listeners.own.map((entry) => `${entry.service}:${entry.pid}@${entry.port}`).join(' ')}`);
     printLease(state);
     console.log(`[dev-stack] ${state.checks.allOk ? 'lease verifies' : 'lease written but does NOT verify (see mismatch above)'}`);
