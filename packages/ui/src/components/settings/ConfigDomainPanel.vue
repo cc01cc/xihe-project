@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import type { ConfigKeyMeta } from "../../stores/config";
+import { useRoute, useRouter } from "vue-router";
+import type { ConfigDomain, ConfigKeyMeta } from "../../stores/config";
+import { settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
@@ -181,6 +183,99 @@ function lockedValue(key: string): string {
     return value;
 }
 
+/**
+ * PLAN-0752 T2.4（task-133）：继承层徽标可点 + 锚点落地。
+ *
+ * <p>design.md:24 —— 被覆盖的继承层以浅色**可点**文字展示，点击跳到对应层同一条目并**短暂高亮**
+ * （锚点 `#<setting-key>`）。「生效层」与「继承层」是两类：只有 `meta.source` 是**另一层**时才可点；
+ * 生效层、`env`、`code` 都保持纯文本 —— 它们陈述事实，不是目的地。</p>
+ *
+ * <p>目标层只做 instance / user：它们是真实路由 `/settings/<layer>/<domain>`。工作区层的入口是
+ * `/workspace/:id/settings?tab=config`（tab 形态，需要 workspaceId 上下文），本期**不拼**该路径 ——
+ * 宁可不跳，也不跳到一个拼错的地址（工作区目标层留后续卡）。</p>
+ */
+function jumpLayer(key: string): "instance" | "user" | null {
+    const item = props.meta?.[key];
+    if (!item || !props.layer) return null;
+    if (item.source !== "instance" && item.source !== "user") return null;
+    return item.source === props.layer ? null : item.source;
+}
+
+function jumpToSource(key: string): void {
+    const targetLayer = jumpLayer(key);
+    if (!targetLayer) return;
+    void router.push({
+        path: settingsDomainPath(targetLayer, props.domain as ConfigDomain),
+        hash: `#${key}`,
+    });
+}
+
+const route = useRoute();
+const router = useRouter();
+const anchorHighlight = ref("");
+const rowRefs = new Map<string, HTMLElement>();
+let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+
+function setRowRef(key: string, el: unknown): void {
+    if (el instanceof HTMLElement) rowRefs.set(key, el);
+    else rowRefs.delete(key);
+}
+
+const anchoredKey = computed(() => {
+    const hash = route.hash;
+    return hash.startsWith("#") ? decodeURIComponent(hash.slice(1)) : "";
+});
+
+/**
+ * 等目标行**真的能收焦点**。域页在层配置落定前是 `v-show` 隐藏 + `inert`（task-121/VW-31），
+ * 隐藏子树里的 `focus()` 会被浏览器静默忽略 —— 当场聚焦会「高亮出现但焦点留在 body」。
+ * 所以这里重试到聚焦成功为止（≤2 s），页面离开或一直不可聚焦就放弃，不假装成功。
+ */
+async function focusRowWhenReady(row: HTMLElement): Promise<boolean> {
+    for (let attempt = 0; attempt < 33; attempt += 1) {
+        if (!row.isConnected) return false;
+        row.focus({ preventScroll: true });
+        if (document.activeElement === row) return true;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    return false;
+}
+
+/**
+ * 锚点落地 = 展开域卡（行只在展开后存在）→ 等到可聚焦 → 滚动 → **聚焦** → 短暂高亮（1.6 s 后撤）。
+ * 同页二次跳转靠 watch(route.hash) 生效：只挂 onMounted 会漏掉「已经在本页，再点另一个徽标」。
+ */
+async function applyAnchor(): Promise<void> {
+    const key = anchoredKey.value;
+    if (!key || !props.schema.some((field) => field.key === key)) return;
+    if (!expanded.value) toggle();
+    await nextTick();
+    const row = rowRefs.get(key);
+    if (!row) return;
+    if (!(await focusRowWhenReady(row))) return;
+    // jsdom 无布局引擎、没有 scrollIntoView：单测里跳过滚动，但聚焦与高亮照常执行。
+    if (typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
+    anchorHighlight.value = key;
+    if (highlightTimer) clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => {
+        anchorHighlight.value = "";
+    }, 1600);
+}
+
+watch(
+    () => [route.hash, props.domain] as const,
+    () => {
+        void applyAnchor();
+    },
+    { flush: "post" },
+);
+onMounted(() => {
+    void applyAnchor();
+});
+onBeforeUnmount(() => {
+    if (highlightTimer) clearTimeout(highlightTimer);
+});
+
 function isPasswordKey(key: string): boolean {
     const normalized = key.toLowerCase();
     return (
@@ -299,8 +394,15 @@ function handleReset(key: string) {
             <div
                 v-for="field in schema"
                 :key="field.key"
+                :ref="(el) => setRowRef(field.key, el)"
                 :data-testid="`config-field-${domain}-${field.key}`"
-                class="flex min-w-0 items-center gap-2"
+                :tabindex="-1"
+                class="flex min-w-0 items-center gap-2 outline-none"
+                :class="
+                    anchorHighlight === field.key
+                        ? 'rounded ring-2 ring-primary ring-offset-1 ring-offset-background'
+                        : ''
+                "
             >
                 <div class="min-w-0 w-1/3 text-muted-foreground">
                     <span class="flex items-center gap-1">
@@ -321,7 +423,23 @@ function handleReset(key: string) {
                         :data-testid="`config-source-${domain}-${field.key}`"
                         class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground"
                     >
+                        <!-- T2.4：继承层可点（跳到目标层同一条目并聚焦）；生效层保持纯文本 -->
+                        <button
+                            v-if="jumpLayer(field.key)"
+                            type="button"
+                            :data-testid="`config-source-jump-${domain}-${field.key}`"
+                            :aria-label="
+                                t('settings.configSourceInherited', {
+                                    source: sourceText(field.key),
+                                })
+                            "
+                            class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                            @click="jumpToSource(field.key)"
+                        >
+                            {{ sourceText(field.key) }}
+                        </button>
                         <span
+                            v-else
                             class="shrink-0 rounded border border-border px-1 py-0.5"
                             :aria-label="sourceText(field.key)"
                         >

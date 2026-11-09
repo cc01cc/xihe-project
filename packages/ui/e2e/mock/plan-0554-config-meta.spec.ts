@@ -214,6 +214,43 @@ test.describe("PLAN-0554 config provenance", () => {
         await expect(page.getByTestId("config-source-rag-minScore")).toContainText("env 锁定");
     });
 
+    // PLAN-0752 V6（task-133）：点继承层徽标 ⇒ 跳到对应层同一条目并**聚焦**那条目。
+    // 旧口径 V18 只把「徽标跳转」列成覆盖面（verify.md:113 自陈缺断言），这条把它变成判据：
+    // ①落地 URL 的层与域正确且带 #<setting-key>；②目标行获得焦点并短暂高亮；③**无整页刷新**。
+    test("inherited source chip jumps to the same key on the instance layer", async ({ page }) => {
+        await mockConfig(page, "ADMIN");
+        await page.goto("/settings/user/rag", { waitUntil: "load" });
+        await openRag(page);
+
+        // 用户层里 chunkOverlap 由实例层生效 ⇒ 继承层徽标可点（chunkSize 是生效层，不可点）
+        const jump = page.getByTestId("config-source-jump-rag-chunkOverlap");
+        await expect(jump).toBeVisible();
+        await expect(page.getByTestId("config-source-jump-rag-chunkSize")).toHaveCount(0);
+
+        // ③ 无整页刷新的判据：SPA 内跳转会保留 window 上的标记，整页刷新会把它抹掉。
+        //    （不用 framenavigated —— 同文档 pushState 也会触发它，判不出「刷新」）
+        await page.evaluate(() => {
+            (window as unknown as { __spaMarker?: string }).__spaMarker = "alive";
+        });
+        await jump.click();
+
+        // ① 落地 URL：实例层 + 同域 + 锚点
+        await expect(page).toHaveURL(/\/settings\/instance\/rag#chunkOverlap$/);
+        // ② 目标行：自动展开、获得焦点、短暂高亮
+        const row = page.getByTestId("config-field-rag-chunkOverlap");
+        await expect(row).toBeVisible();
+        await expect(row).toHaveClass(/ring-2/);
+        expect(await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))).toBe(
+            "config-field-rag-chunkOverlap",
+        );
+        // ③ 标记仍在 ⇒ 没有整页刷新
+        expect(
+            await page.evaluate(
+                () => (window as unknown as { __spaMarker?: string }).__spaMarker ?? "",
+            ),
+        ).toBe("alive");
+    });
+
     test("workspace settings config tab shows workspace override and instance inheritance", async ({
         page,
     }) => {
