@@ -5,6 +5,7 @@ import {
     domainsForLayer,
     instanceOpsGroups,
     instanceResourceGroup,
+    knowledgeRedirectTarget,
     userResourceGroup,
     isInstanceOnlyForUser,
     layersForDomain,
@@ -20,6 +21,22 @@ import {
  * 这些用例锁死 12 / 9 / 9 与「用户层没有 logging」两个事实，防止下次再靠推理改数
  * （task-63 的教训：能从 CP 源码读到的，不要从别处反推）。
  */
+// PLAN-0752 T4.4（task-91）：知识库旧路径不能落在「用户层知识库页」上。
+describe("knowledgeRedirectTarget", () => {
+    it("sends the legacy /settings/knowledge bookmark to the workspace knowledge tab", () => {
+        expect(knowledgeRedirectTarget("ws-1")).toEqual({
+            name: "workspace-settings",
+            params: { workspaceId: "ws-1" },
+            query: { tab: "knowledge" },
+        });
+    });
+
+    it("falls back to the workspace picker when there is no workspace context", () => {
+        expect(knowledgeRedirectTarget(null)).toEqual({ name: "workspace-home" });
+        expect(knowledgeRedirectTarget("   ")).toEqual({ name: "workspace-home" });
+    });
+});
+
 describe("settings IA matrix", () => {
     it("keeps the CP layer counts 12 / 9 / 9", () => {
         expect(domainsForLayer("instance")).toHaveLength(12);

@@ -101,6 +101,28 @@ export function settingsLayerForPath(path: string): SettingsLayer {
     return path.startsWith("/settings/user") ? "user" : "instance";
 }
 
+/**
+ * 知识库旧路径 `/settings/knowledge` 的落点（PLAN-0752 T4.4 / task-91）。
+ *
+ * <p>知识库**只有工作区承载**（CP 无库表，数据按 `workspace_id` 分区），而这条 user 层路由没有
+ * 任何导航指向它 —— 留着就是一个「点得到的用户层知识库」幽灵页。所以旧书签改成工作区重定向；
+ * 没有当前工作区上下文时回工作区选择面，而不是把用户丢进一个空页。</p>
+ */
+export function knowledgeRedirectTarget(workspaceId: string | null): {
+    name: string;
+    params?: Record<string, string>;
+    query?: Record<string, string>;
+} {
+    const trimmed = (workspaceId ?? "").trim();
+    return trimmed
+        ? {
+              name: "workspace-settings",
+              params: { workspaceId: trimmed },
+              query: { tab: "knowledge" },
+          }
+        : { name: "workspace-home" };
+}
+
 /** 全局设置页的域路径（只有 instance / user 两层进 `/settings`）。 */
 export function settingsDomainPath(
     layer: Exclude<SettingsLayer, "workspace">,
