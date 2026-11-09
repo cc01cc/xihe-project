@@ -15,7 +15,13 @@ import { computed, ref, watch } from "vue";
 import { Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { participantDisplayName, participantInitials } from "./participantInitials";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../../components/ui/select";
 import type {
     ParticipantRespondPolicy,
     ParticipantWakePolicy,

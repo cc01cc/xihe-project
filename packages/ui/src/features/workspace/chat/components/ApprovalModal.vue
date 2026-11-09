@@ -15,7 +15,13 @@ import type {
     ApprovalRequestOrigin,
 } from "../../../../types";
 import { Bot, LoaderCircle, ShieldAlert, ShieldCheck } from "@lucide/vue";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 const props = withDefaults(
     defineProps<{
@@ -971,8 +977,7 @@ onBeforeUnmount(() => {
                                 :model-value="savedLayer"
                                 :disabled="busy || submitted"
                                 @update:model-value="
-                                    (value) =>
-                                        (savedLayer = String(value) as 'workspace' | 'user')
+                                    (value) => (savedLayer = String(value) as 'workspace' | 'user')
                                 "
                             >
                                 <SelectTrigger

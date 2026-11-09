@@ -131,10 +131,7 @@ test("@host Guidance UI hides input after cancel and an API rejection adds no ph
     await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
     // Dismiss the approval modal temporarily so the independent Guidance panel is reachable.
-    await page
-        .locator('[data-testid="modal-content"]')
-        .getByTestId("modal-close")
-        .click();
+    await page.locator('[data-testid="modal-content"]').getByTestId("modal-close").click();
     await expect(page.locator('[data-testid="modal-content"]')).toBeHidden();
 
     const input = page.locator('[data-testid="guidance-input"]');

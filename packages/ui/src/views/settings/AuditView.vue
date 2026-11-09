@@ -3,7 +3,13 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../components/ui/select";
 import SettingsNav from "../../components/settings/SettingsNav.vue";
 import { useAuditStore } from "../../stores/audit";
 import type {
@@ -289,9 +295,8 @@ onMounted(() => {
                             <SelectValue>{{
                                 typeFilter
                                     ? t(
-                                          typeOptions.find(
-                                              (option) => option.value === typeFilter,
-                                          )?.label ?? "",
+                                          typeOptions.find((option) => option.value === typeFilter)
+                                              ?.label ?? "",
                                       )
                                     : t("settings.auditAllTypes")
                             }}</SelectValue>
@@ -330,11 +335,7 @@ onMounted(() => {
                             <SelectItem value="__all__">{{
                                 t("settings.auditAllStatuses")
                             }}</SelectItem>
-                            <SelectItem
-                                v-for="status in allStatuses"
-                                :key="status"
-                                :value="status"
-                            >
+                            <SelectItem v-for="status in allStatuses" :key="status" :value="status">
                                 {{ statusLabel(status) }}
                             </SelectItem>
                         </SelectContent>

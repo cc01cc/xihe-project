@@ -13,7 +13,13 @@ import {
 } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { credentialErrorText } from "./errorText";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 const props = defineProps<{
     credentialId: string;

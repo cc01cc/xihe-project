@@ -9,11 +9,7 @@ import {
 } from "../../chat/transportLive";
 import { notifySessionConnection, notifySessionEvent } from "../../chat/sessionEvents";
 import SessionMonitorPanel from "../SessionMonitorPanel.vue";
-import {
-    openSelect,
-    selectItemValuesFor,
-    selectModelValue,
-} from "../../../../test-utils/select";
+import { openSelect, selectItemValuesFor, selectModelValue } from "../../../../test-utils/select";
 import type {
     ProviderRequestFingerprintView,
     RunTraceResponse,

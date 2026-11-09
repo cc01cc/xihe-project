@@ -11,7 +11,13 @@ import {
 } from "../../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 const props = defineProps<{
     sessionId: string;
     /**
@@ -190,15 +196,12 @@ async function handleChange(selectedKey: string) {
                 :aria-label="t('chat.contextTemplateLabel')"
                 :title="currentLabel ?? t('sessionSettings.templateUnbound')"
             >
-                <SelectValue
-                    :placeholder="t('sessionSettings.templateSelectPlaceholder')"
-                />
+                <SelectValue :placeholder="t('sessionSettings.templateSelectPlaceholder')" />
             </SelectTrigger>
             <SelectContent>
                 <SelectItem
                     v-if="
-                        current &&
-                        !findOption(current.layer, current.templateId, current.version)
+                        current && !findOption(current.layer, current.templateId, current.version)
                     "
                     :value="optionKey(current)"
                 >

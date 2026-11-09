@@ -3,7 +3,13 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import type {
     ProviderFingerprintAgainstOption,
     ProviderRequestFingerprintDiffView,
@@ -161,7 +167,15 @@ function retry(): void {
                     :aria-label="t('monitor.fingerprint.againstLabel')"
                     data-testid="provider-fingerprint-against-select"
                 >
-                    <SelectValue>{{ againstId ? t("monitor.fingerprint.againstOption", { label: againstOptions.find((option) => option.runId === againstId)?.label ?? againstId }) : t("monitor.fingerprint.againstNone") }}</SelectValue>
+                    <SelectValue>{{
+                        againstId
+                            ? t("monitor.fingerprint.againstOption", {
+                                  label:
+                                      againstOptions.find((option) => option.runId === againstId)
+                                          ?.label ?? againstId,
+                              })
+                            : t("monitor.fingerprint.againstNone")
+                    }}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                     <SelectItem value="__none__">{{

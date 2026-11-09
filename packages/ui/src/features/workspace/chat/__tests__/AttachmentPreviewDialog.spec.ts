@@ -478,7 +478,10 @@ describe("AttachmentPreviewDialog scroll lock", () => {
 
     it("keeps the page locked when the preview closes under an open BaseModal", async () => {
         document.body.style.overflow = "scroll";
-        const outer = mount(BaseModal, { props: { show: true, title: "Outer" }, global: { plugins: [i18n] } });
+        const outer = mount(BaseModal, {
+            props: { show: true, title: "Outer" },
+            global: { plugins: [i18n] },
+        });
         expect(document.body.style.overflow).toBe("hidden");
 
         const wrapper = mountDialog();

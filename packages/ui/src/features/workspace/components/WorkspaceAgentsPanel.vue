@@ -122,7 +122,9 @@ function roleChoiceLabel(): string {
 }
 
 function skillChoiceLabel(): string {
-    const skill = skillCandidates.value.find((candidate) => candidate.skillId === selectedSkillId.value);
+    const skill = skillCandidates.value.find(
+        (candidate) => candidate.skillId === selectedSkillId.value,
+    );
     return skill ? skill.name : t("workspace.agentSkillSelectPlaceholder");
 }
 
@@ -1100,8 +1102,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                 <Select
                     :model-value="templateId || '__default__'"
                     @update:model-value="
-                        (value) =>
-                            (templateId = value === '__default__' ? '' : String(value ?? ''))
+                        (value) => (templateId = value === '__default__' ? '' : String(value ?? ''))
                     "
                 >
                     <SelectTrigger

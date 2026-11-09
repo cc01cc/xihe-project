@@ -260,7 +260,10 @@ defineExpose({ load });
                 class="flex flex-col gap-1 text-xs text-muted-foreground"
             >
                 {{ t("settings.rolesBindingsWorkspace") }}
-                <Select :model-value="scopeId" @update:model-value="(value) => (scopeId = String(value))">
+                <Select
+                    :model-value="scopeId"
+                    @update:model-value="(value) => (scopeId = String(value))"
+                >
                     <SelectTrigger
                         data-testid="role-bindings-workspace"
                         class="min-w-56 rounded border bg-background px-2 py-1 text-sm text-foreground"
@@ -292,8 +295,7 @@ defineExpose({ load });
                 <Select
                     :model-value="subjectType"
                     @update:model-value="
-                        (value) =>
-                            (subjectType = String(value) as 'user' | 'agent_principal')
+                        (value) => (subjectType = String(value) as 'user' | 'agent_principal')
                     "
                 >
                     <SelectTrigger
@@ -415,11 +417,7 @@ defineExpose({ load });
                         }}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem
-                            v-for="user in subjectResults"
-                            :key="user.id"
-                            :value="user.id"
-                        >
+                        <SelectItem v-for="user in subjectResults" :key="user.id" :value="user.id">
                             {{ user.username || user.email }}
                         </SelectItem>
                     </SelectContent>

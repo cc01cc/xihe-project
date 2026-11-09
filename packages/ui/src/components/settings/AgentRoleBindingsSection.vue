@@ -302,11 +302,9 @@ watch(selectedPrincipalId, (next, previous) => {
                     >
                         <SelectValue>{{
                             selectedRoleId
-                                ? (availableRoles.find(
-                                      (role) => role.id === selectedRoleId,
-                                  )?.displayName ??
-                                  availableRoles.find((role) => role.id === selectedRoleId)
-                                      ?.name ??
+                                ? (availableRoles.find((role) => role.id === selectedRoleId)
+                                      ?.displayName ??
+                                  availableRoles.find((role) => role.id === selectedRoleId)?.name ??
                                   selectedRoleId)
                                 : t("settings.rolesBindingsRolePick")
                         }}</SelectValue>
@@ -315,11 +313,7 @@ watch(selectedPrincipalId, (next, previous) => {
                         <SelectItem value="__none__">{{
                             t("settings.rolesBindingsRolePick")
                         }}</SelectItem>
-                        <SelectItem
-                            v-for="role in availableRoles"
-                            :key="role.id"
-                            :value="role.id"
-                        >
+                        <SelectItem v-for="role in availableRoles" :key="role.id" :value="role.id">
                             {{ role.displayName || role.name }}
                         </SelectItem>
                     </SelectContent>

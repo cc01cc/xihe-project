@@ -13,7 +13,13 @@ import { logger } from "../../../lib/logger";
 import { usernameError } from "../../../lib/principalName";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../../components/ui/select";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
 import AlertDialogContent from "../../../components/ui/alert-dialog/AlertDialogContent.vue";
 import AlertDialogHeader from "../../../components/ui/alert-dialog/AlertDialogHeader.vue";
@@ -263,15 +269,10 @@ onMounted(() => {
                     <template v-if="!props.readonly">
                         <Select
                             :model-value="member.role"
-                            :disabled="
-                                isRoleLocked(member) || roleBusyUserIds.has(member.userId)
-                            "
+                            :disabled="isRoleLocked(member) || roleBusyUserIds.has(member.userId)"
                             @update:model-value="
                                 (value) =>
-                                    handleRoleChange(
-                                        member,
-                                        String(value) as MemberAssignableRole,
-                                    )
+                                    handleRoleChange(member, String(value) as MemberAssignableRole)
                             "
                         >
                             <SelectTrigger

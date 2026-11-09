@@ -79,9 +79,7 @@ describe("MobileChatSheet sheet height (BL-405)", () => {
         );
         // ② 替代约束必须在（0702 起为 min(75dvh, calc(100dvh - 2rem))），且含无对抗类的 max-h 兜底。
         const classes = className.split(/\s+/);
-        expect(classes).toContain(
-            "data-[side=bottom]:h-[min(75dvh,calc(100dvh-2rem))]",
-        );
+        expect(classes).toContain("data-[side=bottom]:h-[min(75dvh,calc(100dvh-2rem))]");
         expect(classes).toContain("max-h-[min(75dvh,calc(100dvh-2rem))]");
 
         wrapper.unmount();

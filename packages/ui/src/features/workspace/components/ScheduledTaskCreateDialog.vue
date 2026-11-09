@@ -14,7 +14,13 @@ import DialogDescription from "../../../components/ui/dialog/DialogDescription.v
 import DialogFooter from "../../../components/ui/dialog/DialogFooter.vue";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
 import { LoaderCircle } from "@lucide/vue";
 import type { ScheduledTaskCreateRequest, ScheduledTaskTargetKind } from "../../../types";
@@ -332,9 +338,7 @@ function handleOpenChange(open: boolean) {
                                 data-testid="st-create-session"
                             >
                                 <SelectValue
-                                    :placeholder="
-                                        t('workspace.scheduledTasks.sessionPlaceholder')
-                                    "
+                                    :placeholder="t('workspace.scheduledTasks.sessionPlaceholder')"
                                 />
                             </SelectTrigger>
                             <SelectContent>

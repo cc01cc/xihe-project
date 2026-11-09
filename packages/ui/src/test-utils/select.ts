@@ -97,8 +97,7 @@ export async function setSelectWithin(wrapper: Wrapper, ancestorSelector: string
     const root = selectRoots(wrapper).find((candidate) => {
         const trigger = candidate.find('[data-slot="select-trigger"]');
         return (
-            trigger.exists() &&
-            Boolean((trigger.element as HTMLElement).closest(ancestorSelector))
+            trigger.exists() && Boolean((trigger.element as HTMLElement).closest(ancestorSelector))
         );
     });
     if (!root) throw new Error(`No <Select> inside ${ancestorSelector}`);
