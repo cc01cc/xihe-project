@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mount } from "@vue/test-utils";
 import ConfigDomainPanel, { type DomainField } from "../settings/ConfigDomainPanel.vue";
 import { createI18n } from "vue-i18n";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { openSelectAt, selectCount, selectItemTexts, selectValueAt } from "../../test-utils/select";
 
 const i18n = createI18n({
@@ -37,6 +38,17 @@ const schema: DomainField[] = [
     { key: "maxTokens", label: "Max Tokens", type: "number" },
 ];
 
+/** task-133：组件现在读 `route.hash` 并在徽标点击时 `router.push`，单测必须挂真路由。 */
+function makeRouter() {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            { path: "/settings/instance/:domain", component: { template: "<div />" } },
+            { path: "/settings/user/:domain", component: { template: "<div />" } },
+        ],
+    });
+}
+
 function mountPanel(props: Record<string, unknown> = {}) {
     return mount(ConfigDomainPanel, {
         props: {
@@ -46,7 +58,7 @@ function mountPanel(props: Record<string, unknown> = {}) {
             schema,
             ...props,
         },
-        global: { plugins: [i18n] },
+        global: { plugins: [i18n, makeRouter()] },
     });
 }
 
