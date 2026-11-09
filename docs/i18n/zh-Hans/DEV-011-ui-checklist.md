@@ -5,7 +5,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-10-31
+updated: 2026-11-10
 status: active
 ---
 
@@ -111,6 +111,7 @@ status: active
 - [ ] 中英两侧键集合差集 = 0（2026-11-10 实测：`packages/ui/src/i18n/index.ts` zh 2307 / en 2307）—— 机器判据：`mise run lint:i18n`（task-96 起为常驻门禁，只读、通过时零输出）
 - [ ] 同一键在两侧的 `{placeholder}` 集合一致（漂移会让运行时渲染出 undefined）
 - **已知陷阱（2026-11-10 实测）**：同名族前缀写错只有运行时才暴露 —— `ApprovalModal.vue` 的「另一窗口已处理」第二条提示曾写作 `chat.approvalResolvedElsewhereDraftKept`，而键实际在 `workspace.*`，用户看到的是**裸 key**（已修 `efa527a0`）。扫描口径：键差集 + 占位漂移 + 源码 `t("…")` 静态引用三查，脚本已转正为仓库门禁 `mise run lint:i18n`（`A03-xihe/scripts/i18n-scan.mjs`，task-96）。
+- **已知陷阱（2026-11-10 实测）｜省略号字形**：手写的 `加载中...`（三个半角句点）与实际 i18n 值 `common.loading` = `加载中…`（**U+2026 单字符省略号**）不是同一个字符串 ⇒ `text=加载中...` / `textContent` 断言会「页面明明显示了却匹配不到」（task-112 实测：产品已修好，用例仍红，两条现象同时存在）。**判据**：① 断言优先用 `data-testid` / role / `aria-*` 等结构锚点；② 必须断言文案时取 i18n 同源常量，不手写字面量；③ 确需手写时只匹配不含标点的稳定前缀（如 `加载中`）。同族字符差异：全角/半角括号、`：`vs`:`、`·`vs`-`、不间断空格（U+00A0）。
 
 ## 9. E2E 截图基准
 
@@ -126,6 +127,8 @@ status: active
 - [ ] `workspace-tree-empty` — 文件树空态（新建文件主按钮 + 上传次按钮 + 拖拽提示）
 
 > **平台限制（勿误读为回归）**：基线比对**只在 Linux 生效**（`packages/ui/e2e/helpers/visual.ts:16-26`：非 Linux 直接打 `visual-baseline-platform` annotation 并 return）。Windows 上跑出的「通过」= 未比对，只能**人工复核 actual/diff**；记录时必须写「Linux lane 未跑」。
+
+> **断言陷阱（2026-11-10 实测）｜redirect 丢 query**：`/settings/config` 自 `6002ea60`（PLAN-0752 M1）起是 `redirect: () => defaultLayerPath("instance")`，**不携带 query** ⇒ `goto("/settings/config?tab=tool-faces")` 的参数静默失效，用例会「**落到了正确页面，但断言的是另一个状态**」（旧页某只读态 vs 域页默认页签）。**判据**：① 断言前先核该路径在 `router/index.ts` 里是组件路由还是 redirect，redirect 是否透传 `query`/`params`；② 指向旧入口的用例同时断言落地 URL（`page.url()`）或目标页 testid，不要只断言内容；③ 迁移期把用例直接指向最终地址（新代码同理：导航不要 push 旧入口字面量，复用 `lib/settingsIa` 的 SSOT 函数）。
 
 ---
 
