@@ -575,6 +575,11 @@ alias = "check:event-keys"
 # 判据：`packages/ui/e2e/real/**` 的 `page.evaluate(...)` 块内 `fetch(` 必须带 `// fixture-only:` /
 # `// read-only:` 标注，或在 config/e2e-inpage-bypass-allowlist.json 登记（0644 §4.3 允许通道约定）。
 # mock lane 不在本门判据内（本 PLAN 只登记不扩包）。
+[tasks."check:a11y-refs"]
+run = "node scripts/check-a11y-refs.mjs --report-only"
+description = "BL-519/PLAN-0733: report-only a11y label literal drift audit (English e2e literal whose i18n key has a Chinese value; use without --report-only to enforce)"
+alias = "check:a11y-refs"
+
 [tasks."check:e2e-bypass"]
 run = "node scripts/check-e2e-inpage-bypass.mjs --report-only"
 description = "Report-only audit of in-page fetch bypasses in packages/ui/e2e/real (annotation or allowlist required; never fails; use --enforce manually)"
