@@ -423,7 +423,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - **upsert 时机**：四个服务 `waitReady` 通过、租约翻 `started` **之后**，复用既有 `scripts/reset-admin.ps1`（内部 `ResetAdmin.java`）做 UPDATE/INSERT upsert——`DataSeeder` **只建不更**，**存量库**靠这一步拿到同一个密码；不新写 SQL。
 - **跳过条件**（都会打印跳过原因）：`XIHE_LOCAL_MODE=true`（PLAN-0526 的零用户首启语义——此时 upsert 会凭空造出 admin 行；开关判定与 CP 同口径：**OS env 优先，其次 `.env` 链**，只在 `.env.local` 里写也能识别）；非 Windows（`reset-admin.ps1` 仅 Windows，提示手动 `mise run reset-admin`）；栈未 ready。
 - **失败不阻塞起栈**：upsert 失败只 WARN 并给补救命令（`mise run reset-admin` 或重跑 `start`）；**密码解析/落盘失败**同样降级为 WARN + 跳过注入（既不注入 `XIHE_DEV_ADMIN_PASSWORD`，也不做 upsert）——`start` 的退出码仍只由四端口就绪决定，不会因为在 spawn 前读不到/写不进密码而中断。
-- **日志不含密码值**：只打 `source`/`length`/`file`/`persisted`（附 `value=not-logged`）；密码经子进程 env（`$env:XIHE_DEV_ADMIN_PASSWORD`）传给入口，**不进命令行**。仍需知道的边界：`ResetAdmin.java` 自己以 `--password` argv 收值（该入口现有形态；改成 stdin/env 需动 `packages/**`，另立卡）；且它的 **INSERT 分支（admin 行不存在时自建）在当前 schema 已失效**（`users.role` 被 V89 删列），仅异常路径可达 —— 结论与建议见内部台账 `internal/A03-xihe/docs/bl-candidate-reset-admin-insert-broken.md`（跨仓路径）。
+- **日志不含密码值**：只打 `source`/`length`/`file`/`persisted`（附 `value=not-logged`）；密码经子进程 env（`$env:XIHE_DEV_ADMIN_PASSWORD`）传给入口，**不进命令行**。仍需知道的边界：`ResetAdmin.java` 自己以 `--password` argv 收值（该入口现有形态；改成 stdin/env 需动 `packages/**`，另立卡）；且它的 **INSERT 分支（admin 行不存在时自建）在当前 schema 已失效**（`users.role` 被 V89 删列），仅异常路径可达 —— 结论与建议见内部台账 `internal/A03-xihe/docs/BL-523-reset-admin-insert-broken.md`（跨仓路径）。
 - **首次 upsert 可能占一次构建位**：若 `packages/control-plane/target/reset-admin-classpath.txt` 缺失或早于 `pom.xml`，那一次 upsert 会先跑 `mvn dependency:build-classpath`——**不是编译**，但确实会进 Maven，**别当成编译竞争误报**；该缓存生成一次后长期复用。
 - **与旧描述的关系**：模式 A（`mise run dev:host`）**不走这条路径**，其「随机密码且不打印、需手动 `reset-admin`」结论仍然成立（见模式 B 段落上的 supersede 注）。
 
