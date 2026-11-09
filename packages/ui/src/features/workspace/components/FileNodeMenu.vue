@@ -243,6 +243,7 @@ function copyPath() {
             <button
                 class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="!nameInput.trim() || opLoading"
+                data-testid="file-node-rename-submit"
                 @click="() => void confirmRename()"
             >
                 Rename
@@ -271,6 +272,7 @@ function copyPath() {
             <button
                 class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="opLoading"
+                data-testid="file-node-move-submit"
                 @click="() => void confirmMove()"
             >
                 Move
@@ -301,6 +303,7 @@ function copyPath() {
             <button
                 class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="!nameInput.trim() || opLoading"
+                data-testid="file-node-create-submit"
                 @click="() => void confirmNewFile()"
             >
                 Create
@@ -331,6 +334,7 @@ function copyPath() {
             <button
                 class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="!nameInput.trim() || opLoading"
+                data-testid="file-node-create-dir-submit"
                 @click="() => void confirmNewDir()"
             >
                 Create
@@ -355,6 +359,7 @@ function copyPath() {
             <button
                 class="px-3 py-1.5 text-sm rounded bg-destructive text-destructive-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="opLoading"
+                data-testid="file-node-delete-submit"
                 @click="() => void confirmDelete()"
             >
                 Delete

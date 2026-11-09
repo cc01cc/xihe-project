@@ -380,7 +380,12 @@ onBeforeUnmount(reset);
                     {{ errorMessage || t("files.previewFailed") }}
                 </p>
                 <div class="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" @click="load">
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid="attachment-preview-retry"
+                        @click="load"
+                    >
                         {{ t("files.previewRetry") }}
                     </Button>
                     <Button size="sm" variant="outline" @click="download">
