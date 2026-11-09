@@ -69,6 +69,12 @@ import {
 } from './lib/stack-lease.mjs';
 import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
+import {
+  buildResetAdminCommand,
+  formatDevAdminPassword,
+  resetAdminWrapperPath,
+  resolveDevAdminPassword,
+} from './lib/dev-admin-password.mjs';
 
 // task-234 B：DSH 子 shell 不继承 User 级 env ⇒ 直启时 process.env 里没有
 // `XH_CARGO_TARGET_ROOT`，cargo 会回落 `<one>/.tmp/cargo-target` 使单根不变量失效。
@@ -654,12 +660,87 @@ async function stopPg() {
 
 /* ---------------------------------------------------------------- start */
 
+/**
+ * D-766 乙案最小版：让**存量库**也用上本轮注入的 dev 管理员密码。
+ *
+ * 为什么必须补这一步：`DataSeeder` 只在 `admin@xihe.local` 不存在时按
+ * `XIHE_DEV_ADMIN_PASSWORD` 建行（只建不更）——存量库还挂着某个旧随机密码，
+ * 起了栈也登不上，正是这张卡要消掉的空转。这里复用**既有**入口
+ * `scripts/reset-admin.ps1`（内部 `ResetAdmin.java` 走 UPDATE/INSERT upsert），
+ * 不新写 SQL，也不碰产品代码。
+ *
+ * 秘密面：密码只从子进程 env（`$env:XIHE_DEV_ADMIN_PASSWORD`）读，不进命令行；
+ * 日志只打非密元数据（栈/字符数/耗时），**绝不打印密码值**。
+ *
+ * 失败**不阻塞起栈**：四端口就绪才是 `start` 的既有契约。失败给 WARN + 显式补救命令，
+ * 让操作者能修，而不是把一次 upsert 失败升级成「栈起不来」。
+ */
+function applyDevAdminPassword(adminPassword) {
+  // local mode（PLAN-0526）的设计前提是「零用户首启」：此时 upsert 会凭空造出 admin 行，
+  // 破坏首启引导语义，必须跳过。
+  if (String(childEnv.XIHE_LOCAL_MODE ?? '').trim().toLowerCase() === 'true') {
+    console.log('[dev-stack] dev admin upsert: skipped (XIHE_LOCAL_MODE=true keeps the first-run zero-user state)');
+    return { ok: false, skipped: 'local-mode' };
+  }
+  if (!isWindows) {
+    console.log('[dev-stack] dev admin upsert: skipped (scripts/reset-admin.ps1 is Windows-only); run `mise run reset-admin` manually');
+    return { ok: false, skipped: 'non-windows' };
+  }
+  const wrapper = resetAdminWrapperPath(projectRoot);
+  const { args: psArgs } = buildResetAdminCommand({ wrapperPath: wrapper, stackId: derived.stackId });
+  const startedAt = Date.now();
+  let result = spawnSync('pwsh', psArgs, {
+    cwd: projectRoot,
+    env: childEnv,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  // pwsh 7 不一定装（mise 任务用 pwsh，但 DSH/裸 shell 下的宿主可能只有 5.1）：ENOENT 时退回
+  // powershell.exe，命令体对两者通用（`-Command` + `$env:`）。
+  if (result.error?.code === 'ENOENT') {
+    result = spawnSync('powershell.exe', psArgs, {
+      cwd: projectRoot,
+      env: childEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+  }
+  const elapsed = Date.now() - startedAt;
+  if (result.status === 0 && !result.error) {
+    console.log(
+      `[dev-stack] dev admin upsert: ok stack=${derived.stackId} length=${adminPassword.length} (value not logged, ${elapsed}ms)`,
+    );
+    return { ok: true };
+  }
+  console.warn(
+    `[dev-stack] dev admin upsert: FAILED (exit ${result.status ?? 'spawn-error'}${result.error ? `, ${result.error.code}` : ''}, ${elapsed}ms) — `
+      + `the stack is up, but the injected password may not match this database yet; `
+      + `run \`mise run reset-admin\` (or re-run \`start\`) to repair.`,
+  );
+  // 摘最后几行便于定位（reset-admin 在 -Password 形态下不会回显密码；仍只摘尾部并限行数）。
+  for (const chunk of [result.stdout, result.stderr]) {
+    const text = String(chunk ?? '').trim();
+    if (text === '') continue;
+    console.warn(text.split(/\r?\n/).slice(-3).join('\n'));
+  }
+  return { ok: false };
+}
+
 async function start() {
   mkdirSync(logDir, { recursive: true });
   console.log(
     `[dev-stack] ${args.action} ${derived.stackId} cwd=${projectRoot} ports ui=${ports.ui} cp=${ports.cp} agent=${ports.agent} runtime=${ports.runtime} pg=${ports.postgres}`,
   );
   console.log(`[dev-stack] logs: ${logDir}`);
+  // D-766 乙案最小版：起栈前把**确定性**的 dev 管理员密码注入子进程环境（CP 的
+  // DataSeeder 读 `XIHE_DEV_ADMIN_PASSWORD`），存量库的更新由 waitReady 之后的
+  // reset-admin upsert 补上（见 applyDevAdminPassword）。0 产品面改动。
+  // 日志只打来源/字符数/落盘路径 —— **绝不打印密码值**。
+  const devAdminPassword = resolveDevAdminPassword({ projectRoot });
+  childEnv.XIHE_DEV_ADMIN_PASSWORD = devAdminPassword.password;
+  console.log(formatDevAdminPassword(devAdminPassword));
   const cargoTarget = cargoTargetForStack({ stackId: derived.stackId, projectRoot, env: process.env });
   console.log(
     `[dev-stack] cargo target: ${cargoTarget ? `${cargoTarget} (per-stack)` : 'default .cargo/config.toml target (shared warm cache)'}`,
@@ -719,6 +800,11 @@ async function start() {
   // 此后 `services<4` 不再被当成「过渡中」，回归真故障口径。
   const written = writeLease({ record, phase: 'started' });
   console.log(`[dev-stack] lease: ${written.path}`);
+  // D-766 乙案最小版：CP 起来（DB 已迁移、admin 行可能已存在）之后再做 upsert ——
+  // 存量库靠这一步拿到本轮注入的密码（DataSeeder 只建不更）。租约先翻 started，
+  // 不让这一段 java 耗时把「phase=starting」窗口拉长。
+  if (ready) applyDevAdminPassword(devAdminPassword);
+  else console.log('[dev-stack] dev admin upsert: skipped (stack is not ready)');
   const rows = SERVICES.map((service) => ({
     service,
     port: ports[service],
