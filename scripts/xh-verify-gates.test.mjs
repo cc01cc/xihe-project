@@ -1,6 +1,6 @@
 // xh-verify-gates 单测（task-37）：门表解析、门计划、SKIP 必带原因、失败传染总 exit、--list/--evidence。
 // 全部用可注入的假 runner / 假 SSOT，不真跑任何重门。
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { describe } from "node:test";
@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 
 import {
   DEFAULT_GATES,
+  checkMockBaselineReport,
   main,
   parseArgs,
   parseMiseTasks,
@@ -232,5 +233,120 @@ describe("CLI", () => {
     assert.equal(parseArgs(["--only=a,b"]).only.length, 2);
     assert.equal(parseArgs(["--list"]).list, true);
     assert.equal(parseArgs(["--evidence=x.json"]).evidence, "x.json");
+    assert.equal(parseArgs(["--strict"]).strict, true);
+    assert.equal(parseArgs(["--since=2026-11-09T21:00:00+08:00"]).since, "2026-11-09T21:00:00+08:00");
+    assert.equal(parseArgs(["--run-id=r1"]).runId, "r1");
+  });
+});
+
+// BL-528：`check:mock-baseline` 只查「报告存在」⇒ 旧报告可判绿（W-24 实证：槽里躺着 17 分钟前的报告）。
+// 这组测试钉住新鲜度 / runId+commit 绑定 / 归属三道校验，以及 `--strict` 的 FAIL 降级。
+describe("BL-528 假绿通道：mock 报告必须新鲜且属于本轮", () => {
+  const MOCK_GATE = { id: "check:mock-baseline", kind: "mise", class: "fast" };
+
+  function repoWithMockGate(t) {
+    return fakeRepo(t, { tasks: [["check:mock-baseline", "node scripts/check-mock-baseline.mjs"]] });
+  }
+
+  function writeReport(root, { startTime, runId, commit, rootDir } = {}) {
+    mkdirSync(join(root, "packages", "ui", "e2e"), { recursive: true });
+    const report = { stats: { startTime }, suites: [] };
+    if (runId) report.runId = runId;
+    if (commit) report.commit = commit;
+    if (rootDir) report.config = { rootDir };
+    writeFileSync(join(root, "packages", "ui", "e2e", ".mock-report.json"), JSON.stringify(report), "utf8");
+    return join(root, "packages", "ui", "e2e", ".mock-report.json");
+  }
+
+  test("①新鲜报告（startTime 在本轮之后）⇒ 门照常执行 (PASS)", (t) => {
+    const root = repoWithMockGate(t);
+    writeReport(root, { startTime: new Date().toISOString(), runId: "run-1" });
+    let ran = 0;
+    const { exitCode, results } = runMain(["--only=check:mock-baseline", "--run-id=run-1", "--since=2026-01-01T00:00:00Z"], {
+      repoRoot: root,
+      runner: () => {
+        ran += 1;
+        return { exit: 0, durationMs: 1 };
+      },
+    });
+    assert.equal(ran, 1, "输入可信 ⇒ 必须真跑这道门");
+    assert.equal(results[0].status, "PASS");
+    assert.equal(exitCode, 0);
+  });
+
+  test("②陈旧报告（17 分钟前）⇒ SKIP 且原因含 stale-report（不是静默通过）", (t) => {
+    const root = repoWithMockGate(t);
+    const stale = new Date(Date.now() - 17 * 60 * 1000).toISOString();
+    writeReport(root, { startTime: stale, runId: "run-old" });
+    let ran = 0;
+    const { exitCode, results, summary } = runMain(["--only=check:mock-baseline", "--run-id=run-new"], {
+      repoRoot: root,
+      runner: () => {
+        ran += 1;
+        return { exit: 0, durationMs: 1 };
+      },
+    });
+    assert.equal(ran, 0, "陈旧报告不得执行该门");
+    assert.equal(results[0].status, "SKIP");
+    assert.match(results[0].skipReason, /stale-report/);
+    assert.equal(summary.skip, 1);
+    assert.equal(exitCode, 0, "默认行为：SKIP 但 exit 0（原因进汇总）");
+  });
+
+  test("③runId / commit 不匹配 ⇒ SKIP 带原因（禁止拿别轮/别 commit 的报告判绿）", (t) => {
+    const root = repoWithMockGate(t);
+    writeReport(root, { startTime: new Date().toISOString(), runId: "run-other" });
+    const runIdMismatch = runMain(["--only=check:mock-baseline", "--run-id=run-mine", "--since=2026-01-01T00:00:00Z"], { repoRoot: root, runner: () => ({ exit: 0, durationMs: 1 }) });
+    assert.equal(runIdMismatch.results[0].status, "SKIP");
+    assert.match(runIdMismatch.results[0].skipReason, /foreign-run/);
+
+    const commitMismatch = checkMockBaselineReport({
+      repoRoot: root,
+      since: Date.now() - 1000,
+      runId: "run-mine",
+      head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      reportPath: writeReport(root, { startTime: new Date().toISOString(), runId: "run-mine", commit: "bbbbbbbb" }),
+    });
+    assert.equal(commitMismatch.ok, false);
+    assert.equal(commitMismatch.code, "foreign-commit");
+  });
+
+  test("④--strict：陈旧/不匹配从 SKIP 降级为 FAIL（非 0）", (t) => {
+    const root = repoWithMockGate(t);
+    writeReport(root, { startTime: new Date(Date.now() - 17 * 60 * 1000).toISOString(), runId: "run-old" });
+    const { exitCode, results } = runMain(["--only=check:mock-baseline", "--run-id=run-new", "--strict"], {
+      repoRoot: root,
+      runner: () => ({ exit: 0, durationMs: 1 }),
+    });
+    assert.equal(results[0].status, "FAIL");
+    assert.match(results[0].detail, /stale-report/);
+    assert.equal(exitCode, 1);
+  });
+
+  test("⑤归属：报告路径不在当前 checkout 内 ⇒ SKIP 并打印路径", (t) => {
+    const root = repoWithMockGate(t);
+    const elsewhere = mkdtempSync(join(tmpdir(), "xh-gates-foreign-"));
+    t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+    writeFileSync(join(elsewhere, ".mock-report.json"), JSON.stringify({ stats: { startTime: new Date().toISOString() } }), "utf8");
+    const verdict = checkMockBaselineReport({
+      repoRoot: root,
+      since: Date.now() - 1000,
+      reportPath: join(elsewhere, ".mock-report.json"),
+    });
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, "foreign-path");
+    assert.match(verdict.reason, /禁止跨槽复用/);
+  });
+
+  test("⑥没有 startTime 时退文件 mtime；mtime 过旧同样判 stale", (t) => {
+    const root = repoWithMockGate(t);
+    const file = join(root, "packages", "ui", "e2e", ".mock-report.json");
+    mkdirSync(join(root, "packages", "ui", "e2e"), { recursive: true });
+    writeFileSync(file, JSON.stringify({ suites: [] }), "utf8");
+    const old = new Date(Date.now() - 30 * 60 * 1000);
+    utimesSync(file, old, old);
+    const verdict = checkMockBaselineReport({ repoRoot: root, since: Date.now() - 60 * 1000, reportPath: file });
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, "stale-report");
   });
 });
