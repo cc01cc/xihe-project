@@ -6,6 +6,6 @@
 |-------|------|------|
 | ai-chat-ui-design | AI 聊天界面设计原则（shadcn/ui MessageScroller 15 条流式聊天原则：自动滚动/锚定定位/长对话导航） | `ai-chat-ui-design/SKILL.md` |
 | dev-host-verification | Windows native + Docker PostgreSQL/Sandbox 的 host readiness、M1、E2E profile 和清理证据 | `dev-host-verification/SKILL.md` |
-| team-roles | 常驻团队角色化（正式，**DSH 专用**）：verify/dev-A/dev-B/ops/research 分层、成员命名=角色名、并行上限与编译位、测量窗值班、idle/回收、临时席登记、交接契约 team_rebuild 联动 | `team-roles/SKILL.md` |
+| team-roles | 常驻团队角色化（正式，**DSH 专用**）：verify/dev-1/dev-2/ops/research-1/research-2 分层、成员命名=角色名+数字序号、并行上限与编译位、测量窗值班（含 develop 零前进）、idle/回收、临时席登记、交接契约 team_rebuild 联动 | `team-roles/SKILL.md` |
 
 维护规则：新增/迁移/删除 skill 必须同步更新本清单；根池通用 skill 不在本清单。
