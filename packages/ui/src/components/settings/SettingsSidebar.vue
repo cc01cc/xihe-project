@@ -63,6 +63,7 @@ const opsGroups = computed(() =>
             ...group,
             items: group.items.filter((item) => {
                 if (item.id === "config-locks") return auth.hasInstanceAdminCapability;
+                if (item.id === "tool-faces") return auth.hasInstanceAdminCapability;
                 if (item.id === "roles") return auth.canManageRoles;
                 return true;
             }),

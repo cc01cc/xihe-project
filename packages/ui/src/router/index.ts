@@ -10,7 +10,7 @@ import {
 } from "../lib/workspaceContext";
 import { resolveLocalModeLanding } from "../lib/workspaceLanding";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
-import { defaultLayerPath, settingsDomainPath } from "../lib/settingsIa";
+import { defaultLayerPath } from "../lib/settingsIa";
 import { LAYER_DOMAINS } from "../stores/config";
 
 const router = createRouter({
@@ -110,9 +110,14 @@ const router = createRouter({
                     redirect: () => defaultLayerPath("instance"),
                 },
                 {
-                    // design.md §7：tool-faces 归入 approval-policy 域，不再占顶级页
+                    // PLAN-0752 §7「工具分类」：ToolFacesView 是**审批输入面**，不是配置域（不在 CP
+                    // 的 12 域里），所以不塞进 12 域；但它也不能没有入口——M1 把它 redirect 进
+                    // approval-policy 后页面一度无人挂载（task-74 回归）。这里先挂回独立路由，
+                    // 左栏「实例运维」分组给入口；批 C（T3.3）再按 design §7 并入 approval-policy 页签。
                     path: "tool-faces",
-                    redirect: () => settingsDomainPath("instance", "approval-policy"),
+                    name: "settings-tool-faces",
+                    component: () => import("../views/settings/ToolFacesView.vue"),
+                    meta: { settingsLayer: "instance" },
                 },
                 // 实例运维 / 安全与权限（不是配置域，路径不在层段下）
                 {

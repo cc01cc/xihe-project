@@ -81,6 +81,7 @@ const messages = {
                 groupSecurity: "安全与权限",
                 navMonitoring: "监控",
                 navData: "数据",
+                navToolFaces: "工具分类",
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",

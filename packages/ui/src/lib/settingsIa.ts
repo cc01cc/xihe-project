@@ -150,6 +150,13 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                     path: "/settings/monitoring",
                 },
                 { id: "data", labelKey: "settings.ia.navData", path: "/settings/data" },
+                // task-74：工具分类不是配置域（CP 的 12 域里没有它），按「独立页」挂实例运维分组；
+                // 批 C（T3.3）再按 design §7 并入 approval-policy 域页签，届时删这一项。
+                {
+                    id: "tool-faces",
+                    labelKey: "settings.ia.navToolFaces",
+                    path: "/settings/tool-faces",
+                },
             ],
         },
         {
