@@ -130,6 +130,8 @@ status: active
 
 > **断言陷阱（2026-11-10 实测）｜redirect 丢 query**：`/settings/config` 自 `6002ea60`（PLAN-0752 M1）起是 `redirect: () => defaultLayerPath("instance")`，**不携带 query** ⇒ `goto("/settings/config?tab=tool-faces")` 的参数静默失效，用例会「**落到了正确页面，但断言的是另一个状态**」（旧页某只读态 vs 域页默认页签）。**判据**：① 断言前先核该路径在 `router/index.ts` 里是组件路由还是 redirect，redirect 是否透传 `query`/`params`；② 指向旧入口的用例同时断言落地 URL（`page.url()`）或目标页 testid，不要只断言内容；③ 迁移期把用例直接指向最终地址（新代码同理：导航不要 push 旧入口字面量，复用 `lib/settingsIa` 的 SSOT 函数）。
 
+> **断言陷阱（2026-11-10 实测）｜Vue 布尔属性写成 `:attr="cond"`**：Vue 给元素设属性走两条路——属性名是 DOM 属性（`key in el`）走 `patchDOMProp`，布尔值被正确强制；否则走 `patchAttr`，而 `patchAttr` 的布尔判定用的是**七项小名单** `isSpecialBooleanAttr`（`itemscope,allowfullscreen,formnovalidate,ismap,nomodule,novalidate,readonly`，`@vue/shared` 3.5.44），**不是** `isBooleanAttr`。不在名单里的布尔属性拿到 `false` 会被渲染成 `attr="false"`，而 HTML 对布尔属性**只看存在性** ⇒ 控件被永久禁用，且看起来「已经设成 false 了」。**本仓库 jsdom 实测**：`inert: false` ⇒ `inert="false"`（属性仍在，task-122 就红在 `expected 'false' to be undefined`）；`disabled` / `hidden` / `readonly` / `required` / `multiple: false` ⇒ 属性被正确移除（它们是 DOM 属性，走另一条路）。**判据（可执行）**：① 一律写 `:attr="cond || undefined"`（或 `cond ? '' : undefined`），不要赌某个属性在当前环境有没有 DOM 实现；② 单测必须断言**假态下属性不存在**——`expect(el.hasAttribute("inert")).toBe(false)`；只写 `toHaveAttribute` 抓不到 `attr="false"`（属性确实在，断言会过）；③ 遇到新 HTML 属性（`inert` / `popover` / `commandfor` / `anchor` 这类）先按①写，别照抄浏览器当前行为——「有没有 DOM 属性」随浏览器与 jsdom 版本变化。
+
 ---
 
 ## 10. 注意力预算（2026-11-03 用户裁定，配色判定标准）
