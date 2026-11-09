@@ -12,6 +12,9 @@ import ModalOverlaySection from "./sections/ModalOverlaySection.vue";
 import ProviderFingerprintSection from "./sections/ProviderFingerprintSection.vue";
 import StatesSection from "./sections/StatesSection.vue";
 import WorkbenchSection from "./sections/WorkbenchSection.vue";
+import SettingsShellSection from "./sections/SettingsShellSection.vue";
+import SettingsDomainSection from "./sections/SettingsDomainSection.vue";
+import WorkspaceAgentsSection from "./sections/WorkspaceAgentsSection.vue";
 
 /**
  * Dev-only preview shell (`preview.html`): a sticky block index plus the anchored blocks. It is
@@ -28,6 +31,9 @@ const blocks = [
     { id: "states", index: "07", label: "四态样张" },
     { id: "provider-fingerprint", index: "08", label: "Provider 请求指纹" },
     { id: "modal-overlay", index: "09", label: "Modal 内 Popover" },
+    { id: "settings-shell", index: "10", label: "设置主框架（实例/用户）" },
+    { id: "settings-domain", index: "11", label: "域页与层徽标（rag）" },
+    { id: "workspace-agents", index: "12", label: "工作区智能体绑定" },
 ];
 
 const { width } = useWindowSize();
@@ -86,6 +92,9 @@ const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
             <StatesSection />
             <ProviderFingerprintSection />
             <ModalOverlaySection />
+            <SettingsShellSection />
+            <SettingsDomainSection />
+            <WorkspaceAgentsSection />
         </main>
     </div>
 </template>
