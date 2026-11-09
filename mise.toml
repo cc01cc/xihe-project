@@ -158,11 +158,20 @@ description = "Run every scripts/**/*.test.mjs unit test (explicit file list pin
 alias = "test:cli"
 
 [tasks."test:mock"]
-run = "pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock --reporter=list --workers=4"
+run = "pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock --reporter=json --reporter=list --workers=4 > ../../scripts/mock-last-report.json"
 description = "Mock-lane browser suite — no backend needed (Playwright starts its own Vite dev server). Gate semantics: real failures fail the task; known flaky cases are absorbed by Playwright retries. Proven able to go red (2026-11-03: 48 failures at baseline before this lane was repaired to 187 passed / 0 failed). Two env pins are load-bearing: XIHE_E2E_BROWSER_CHANNEL=chrome-beta (the bundled chromium revision expected by this Playwright version is not installed — without it every launch fails with 'Executable doesn't exist at ...chromium_headless_shell-1243'), and --workers=4 (at the default 16 workers on a loaded machine the lane produces rotating page.goto/visibility timeouts that are indistinguishable from real regressions)."
 dir = "packages/ui"
 env = { XIHE_E2E_PROFILE = "mock", XIHE_E2E_BROWSER_CHANNEL = "chrome-beta" }
 alias = "test:mock"
+
+# PLAN-0735 / BL-164: mock-lane baseline gate. Reads scripts/mock-last-report.json (written
+# by test:mock above) and compares counts + skip titles against e2e/mock-baseline.json.
+# Drift ⇒ exit 1 unless --allow-drift is passed explicitly. mock-last-report.json is
+# a runtime artifact and must stay untracked (no consumer in repo history).
+[tasks."check:mock-baseline"]
+run = "node scripts/check-mock-baseline.mjs"
+dir = "."
+alias = "check:mock-baseline"
 
 [tasks."test:ui"]
 run = "pnpm run test:unit"
