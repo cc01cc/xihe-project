@@ -61,7 +61,8 @@ test.describe("PLAN-0678 UI 配置面", () => {
 
     test("#1 模板名来自 API 响应：A ⇒ 显示 A；改响应 + reload ⇒ 显示 B", async ({ page }) => {
         await stubTemplates(page, "A 模板");
-        await page.goto("/settings/config");
+        // 旧：/settings/config 整页里直接挂模板面板；新：一页一域，模板面板在 api-request-templates 域页。
+        await page.goto("/settings/user/api-request-templates");
 
         const panel = page.locator('[data-testid="api-request-templates-panel"]');
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -86,7 +87,7 @@ test.describe("PLAN-0678 UI 配置面", () => {
         page,
     }) => {
         await stubTemplates(page, "A 模板");
-        await page.goto("/settings/config");
+        await page.goto("/settings/user/api-request-templates");
         await expect(page.locator('[data-testid="api-request-templates-panel"]')).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
