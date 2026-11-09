@@ -16,6 +16,12 @@ const messages = {
             collapse: "收起侧边栏",
             expand: "展开侧边栏",
         },
+        // task-36 ③：导航栏底部新增紧凑语言切换，需要这三条文案。
+        settings: {
+            languageLabel: "界面语言",
+            languageZh: "中文（zh-Hans）",
+            languageEn: "English (en)",
+        },
     },
 };
 

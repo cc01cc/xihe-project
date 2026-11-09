@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../i18n";
 import { api, ApiError } from "../../../composables/api";
@@ -114,12 +115,42 @@ function problemError(status: number, code: string): ApiError {
     return new ApiError({ status, code, detail: undefined, requestId: "test" });
 }
 
+/**
+ * task-36 ②：RolesView 现在由设置区公共壳渲染（返回聊天 + SettingsNav），两者都用真实
+ * vue-router API（useRoute/useRouter/RouterLink），所以挂载时必须给一个 router —— 用内存历史
+ * 而不是再把 vue-router 整个 mock 掉：本 spec 还要验证「页面自己拉权限」这条 D-713 契约，
+ * 真实 router 更接近产品里的直链进入。
+ */
+const SETTINGS_ROUTE_PATHS = [
+    "/settings/config",
+    "/settings/tool-faces",
+    "/settings/credentials",
+    "/settings/knowledge",
+    "/settings/data",
+    "/settings/monitoring",
+    "/settings/audit",
+    "/settings/config-locks",
+    "/settings/roles",
+];
+
+function makeRouter(): Router {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            ...SETTINGS_ROUTE_PATHS.map((path) => ({ path, component: { template: "<div />" } })),
+            { path: "/workspace", component: { template: "<div />" } },
+            { path: "/workspace/:workspaceId/chat/:sessionId", component: { template: "<div />" } },
+            { path: "/:pathMatch(.*)*", component: { template: "<div />" } },
+        ],
+    });
+}
+
 let wrappers: VueWrapper[] = [];
 
 async function mountView() {
     const wrapper = mount(RolesView, {
         attachTo: document.body,
-        global: { plugins: [i18n] },
+        global: { plugins: [i18n, makeRouter()] },
     });
     wrappers.push(wrapper);
     await flushPromises();
@@ -167,7 +198,11 @@ describe("RolesView access control", () => {
         // Direct route frames may arrive before SettingsNav mounted; the page must not 403 on
         // an unknown projection just because the nav did not fetch it first.
         await mountView();
-        expect(authEnsureSelfPermissions).toHaveBeenCalledTimes(1);
+        // task-36 ②：页面外面现在套了设置区公共壳，壳里的 SettingsNav 也会在 onMounted 拉一次，
+        // 所以「被调用」从 1 次变 2 次。真正的不变式是：**页面自己也拉了**（直链进入不等导航），
+        // 网络请求仍只有一条 —— stores/auth.ts 的 ensureSelfPermissions 是缓存 + 单飞。
+        expect(authEnsureSelfPermissions).toHaveBeenCalled();
+        expect(authEnsureSelfPermissions.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     it("renders the forbidden view for a non-administrator and issues no request", async () => {
