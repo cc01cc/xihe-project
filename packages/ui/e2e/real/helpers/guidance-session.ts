@@ -95,6 +95,6 @@ export async function registerAndCreateGuidanceSession(
 /** Dismisses the approval modal so the independent Guidance panel is clickable. */
 export async function closeApprovalModal(page: Page): Promise<void> {
     const modal = page.locator('[data-testid="modal-content"]');
-    await modal.getByRole("button", { name: "Close" }).click();
+    await modal.getByTestId("modal-close").click();
     await expect(modal).toBeHidden();
 }

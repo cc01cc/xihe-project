@@ -134,13 +134,13 @@ test.describe("PLAN-269 viewport matrix: mobile", () => {
     test("Files and Chat sheets remain bounded on mobile", async ({ page }) => {
         await setupViewportFixtures(page);
         await page.goto("/workspace/workspace-1");
-        await page.getByRole("button", { name: "Files" }).click();
+        await page.getByTestId("workspace-toolbar-files-mobile").click();
         const filesSheet = page.getByTestId("mobile-files-sheet");
         await expect(filesSheet).toBeVisible();
         await expect(filesSheet.getByTestId("workspace-empty-state")).toBeVisible();
         await expectPlatformScreenshot(filesSheet, "plan-269-viewport-mobile-files.png");
-        await page.getByRole("button", { name: /close/i }).last().click();
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("sheet-close").click();
+        await page.getByTestId("mobile-chat-open").click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
         await expectNoHorizontalOverflow(page);
         await expect(page.getByTestId("mobile-chat-sheet").getByTestId("chat-input")).toBeVisible();

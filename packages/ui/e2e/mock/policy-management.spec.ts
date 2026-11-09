@@ -513,7 +513,7 @@ test.describe("Policy management (mobile)", () => {
         const calls = installDecisionRoute(page);
 
         await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("mobile-chat-open").click();
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });

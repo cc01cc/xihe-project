@@ -382,7 +382,7 @@ async function openChatSurface(page: Page): Promise<void> {
     const input = page.locator('[data-testid="chat-input"]');
     if (await visibleWithin(input, PROBE_TIMEOUT_MS)) return;
     // Mobile viewport: the chat lives in a sheet that has to be opened explicitly.
-    const openChat = page.getByRole("button", { name: "Open chat" });
+    const openChat = page.getByTestId("mobile-chat-open");
     if (await visibleWithin(openChat, PROBE_TIMEOUT_MS)) {
         await openChat.click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible({

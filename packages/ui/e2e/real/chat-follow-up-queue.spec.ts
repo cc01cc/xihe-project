@@ -234,7 +234,7 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
     const approval = approvalModal.getByTestId("approval-modal-content");
     await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await approvalModal.getByTestId("modal-close").click();
     await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
     const followUpText = "After the first approval, summarize the result.";
@@ -326,7 +326,7 @@ test("@host Follow-up is durably admitted and dispatched after parent approval",
         )
         .toBeGreaterThan(0);
     await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await approvalModal.getByTestId("modal-close").click();
     await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
     const desktopReopen = page.getByTestId("pending-approval-reopen-pill");
     await expect(desktopReopen).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -428,7 +428,7 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     // At 390px the app shell hides the chat pane behind the "Open chat" toggle and
     // defaults to the Files pane; this is the same entry pattern the mock follow-up
     // spec uses at 390x844 (e2e/mock/follow-up-queue.spec.ts mobile tests).
-    const openChat = page.getByRole("button", { name: "Open chat" });
+    const openChat = page.getByTestId("mobile-chat-open");
     await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await openChat.click();
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -438,7 +438,7 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     const approval = approvalModal.getByTestId("approval-modal-content");
     await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("chat-queue-button")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await approvalModal.getByTestId("modal-close").click();
     await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
 
     const followUpText = "Mobile follow-up after parent approval.";
@@ -473,7 +473,7 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     await page.reload({ waitUntil: "domcontentloaded" });
     // The mobile shell always lands on the Files pane after a reload (observed
     // 2026-10-07), so reopen chat unconditionally; click auto-waits for the toggle.
-    await page.getByRole("button", { name: "Open chat" }).click({ timeout: LONG_TIMEOUT_MS });
+    await page.getByTestId("mobile-chat-open").click({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(approval).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByTestId("follow-up-queue-item").first()).toContainText(followUpText);
@@ -520,7 +520,7 @@ test("@host Follow-up queue stays durable and reachable on a mobile viewport", a
     // both approval controls remain reachable in the real mobile viewport.
     const mobileReopen = page.getByTestId("pending-approval-reopen-pill");
     if (await approvalModal.isVisible()) {
-        await approvalModal.getByRole("button", { name: "Close" }).click();
+        await approvalModal.getByTestId("modal-close").click();
     }
     await expect(approvalModal).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
     await expect(mobileReopen).toBeVisible({ timeout: LONG_TIMEOUT_MS });

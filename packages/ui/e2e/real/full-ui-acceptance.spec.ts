@@ -231,7 +231,7 @@ test.describe("@host PLAN-269 full UI acceptance: real mobile flows", () => {
         await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`);
         await page.reload();
 
-        await page.getByRole("button", { name: "Files" }).click();
+        await page.getByTestId("workspace-toolbar-files-mobile").click();
         const filesSheet = page.getByTestId("mobile-files-sheet");
         await expect(filesSheet).toBeVisible();
         await expect(filesSheet.getByTestId("workspace-empty-state")).toBeVisible({
@@ -244,7 +244,7 @@ test.describe("@host PLAN-269 full UI acceptance: real mobile flows", () => {
         });
         await expectPlatformScreenshot(filesSheet, "plan-269-real-mobile-files-sheet-empty.png");
         await page.getByRole("button", { name: /close/i }).last().click();
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("mobile-chat-open").click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
 
         const overflow = await page.evaluate(() => {

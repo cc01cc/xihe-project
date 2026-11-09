@@ -94,7 +94,7 @@ async function openChat(page: import("@playwright/test").Page, mobile = true) {
         await expect(page.locator('[data-testid="workspace-toolbar-more-mobile"]')).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("mobile-chat-open").click();
         await expect(page.locator('[data-testid="mobile-chat-sheet"]')).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

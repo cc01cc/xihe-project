@@ -152,7 +152,7 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
 
         await page.setViewportSize({ width: 390, height: 844 });
         await page.reload({ waitUntil: "load" });
-        const openChat = page.getByRole("button", { name: "Open chat" });
+        const openChat = page.getByTestId("mobile-chat-open");
         const mobileSheet = page.getByTestId("mobile-chat-sheet");
         await expect(openChat, "mobile chat FAB").toBeVisible({ timeout: LONG_TIMEOUT_MS });
         for (let attempt = 0; attempt < 5; attempt++) {

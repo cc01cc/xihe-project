@@ -14,7 +14,7 @@ import { ACTION_TIMEOUT_MS } from "../../timeouts";
 export async function ensureWorkspaceChat(page: Page): Promise<void> {
     const textarea = page.locator("textarea"),
         emptyStateCta = page.getByTestId("workspace-create-session");
-    const chatFab = page.getByRole("button", { name: "Open chat" }),
+    const chatFab = page.getByTestId("mobile-chat-open"),
         sidebarNew = page.getByTestId("sidebar-new-chat");
 
     const pick = (locator: typeof textarea, tag: string) =>

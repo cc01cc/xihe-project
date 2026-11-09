@@ -260,7 +260,7 @@ test("active desktop ChatRun queues the draft and keeps the transcript unchanged
         path: test.info().outputPath("follow-up-queue-active-desktop-1920x1080.png"),
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    const openChat = page.getByRole("button", { name: "Open chat" });
+    const openChat = page.getByTestId("mobile-chat-open");
     await expect(openChat).toBeVisible();
     await openChat.click();
     await expect(page.getByTestId("follow-up-queue")).toBeVisible();
@@ -297,7 +297,7 @@ test("paused queue exposes explicit Continue and resumes in FIFO order on mobile
         waitUntil: "domcontentloaded",
     });
 
-    const openChat = page.getByRole("button", { name: "Open chat" });
+    const openChat = page.getByTestId("mobile-chat-open");
     await expect(openChat).toBeVisible();
     await openChat.click();
     await expect(page.getByTestId("chat-input")).toBeVisible();
