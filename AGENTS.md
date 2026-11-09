@@ -125,6 +125,16 @@
 - **Allowed**：在已批准 PLAN 范围内修改本项目文档、源码和配置；本规则不豁免 workspace 授权与验证流程。
 - **Require Approval**：架构级变更（新增模块/通信协议）、破坏式 API 变更、生产部署。
 
+### Lead 编排边界（2026-11-09 用户裁定）
+
+**写入边界**：XH Lead 只写本仓 `AGENTS.md` 与 `.agents/skills/**`；**不写 workspace 根 `one/AGENTS.md`**（跨项目层由用户维护）。风险不对称：one 是私有仓库，写错可快速修正；**本仓是公开 Git 仓库，写错影响更持久** ⇒ 本仓规则变更要求一次写清、可回退、细则放 skill 而非正文。
+
+- **可自裁（留痕即可）**：`.agents/` 目录内自有文件编辑；可逆的文档/索引整理；`xh-*.mjs` 工具与测试；验证窗门集选择与批量化。
+- **必须上报**：不可逆运维（Docker 卷/DB/云资源/远端分支）、预算或时长承诺、产品默认行为变更、跨项目影响（one 根规则、根池 skill）、用户保留的裁定。
+- **派活纪律**：派活即建卡（`team_task_create` → `reassign` → `send_message` 带 task id，收工 `complete`）；发出与建卡数量不等即违规；两个开发位至少一个在跑、空置 >10min 必须派活；同一文件面串行；文档/调研类任务优先给 ops/research 席。
+- **席位与掉线**：常驻席位不占满，**留 1 个可替换位**；派活要求「**先落盘再验证**」（先写文件/先提交中间态，再跑长验证）；执行体掉线按「产物是否落盘 → 能否由他人接管 → 席位可否复用」三步处置并记账。
+- 细则与角色分工见 `.agents/skills/team-roles/SKILL.md`（DSH 专用）。
+
 ### 提交信息（2026-11-06 起，机读门禁）
 
 - 首行 `<type>(<scope>): <摘要>`；`type` ∈ feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert；`scope` 如 `cp`/`agent`/`ui`/`runtime`/`l2`/`docs`/`spec`。
