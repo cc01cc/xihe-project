@@ -577,8 +577,12 @@ alias = "check:event-keys"
 # mock lane 不在本门判据内（本 PLAN 只登记不扩包）。
 [tasks."check:a11y-refs"]
 run = "node scripts/check-a11y-refs.mjs --report-only"
-description = "BL-519/PLAN-0733: report-only a11y label literal drift audit (English e2e literal whose i18n key has a Chinese value; use without --report-only to enforce)"
+description = "BL-519/PLAN-0733: report-only a11y label literal drift audit (English e2e literal whose i18n key has a Chinese value; default exit 0; tighten with check:a11y-refs:enforce)"
 alias = "check:a11y-refs"
+
+[tasks."check:a11y-refs:enforce"]
+run = "node scripts/check-a11y-refs.mjs --enforce"
+description = "BL-519/PLAN-0733: enforce a11y label literal gate (findings>0 ⇒ exit 1); enable after WP cleanup reaches findings=0 for two consecutive windows"
 
 [tasks."check:e2e-bypass"]
 run = "node scripts/check-e2e-inpage-bypass.mjs --report-only"
