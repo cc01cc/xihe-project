@@ -118,6 +118,7 @@
 
 - `ai-chat-ui-design`：AI 聊天界面设计（MessageScroller 流式/自动滚动）
 - `dev-host-verification`：host readiness / M1 / E2E profile 与可恢复清理
+- `xh-team-roles`：常驻团队角色化（角色分层/命名=角色名/并行上限/测量值班/交接联动）
 
 ## Permissions
 
