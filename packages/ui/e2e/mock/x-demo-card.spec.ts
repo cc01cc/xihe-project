@@ -2,6 +2,7 @@
  * X 宣传卡自测 + 导出（card-spec.md §5）：
  * 1600×1200 画布单帧、无滚动、零外链、1 张图 naturalWidth>0、无拉踩词；导出 card.png / card-real.png。
  * 门控：XIHE_E2E_DEMO=1；variant 由 DEMO_VARIANT=real 切换。
+ * runbook（门控变量 / 三步顺序 / 输入 HTML 契约 / 产出清单）：e2e/DEMO-CHANNEL.md。
  */
 import { expect, test } from "./helpers/mock-test";
 import { join, dirname } from "node:path";

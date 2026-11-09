@@ -12,6 +12,7 @@
  *
  * 真栈事实：UI 12630 / CP 12631，provider=deepseek model=deepseek-flash。
  * 限制：BL-239（TO/CC 本地态，发送后不刷新立即截）、BL-197（actor 只在实时会话，不滚旧消息）。
+ * runbook（门控变量 / 三步顺序 / 状态文件契约）：`e2e/DEMO-CHANNEL.md`。
  */
 import { test, expect } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
