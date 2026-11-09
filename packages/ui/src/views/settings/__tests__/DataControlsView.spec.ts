@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
-import { api } from "../../../composables/api";
+import { api, apiRaw } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
+import ImportPreview from "../../../components/settings/ImportPreview.vue";
 
 vi.mock("vue-router", () => ({
     createRouter: () => ({
@@ -46,6 +47,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             cleanupWorkspaceCheckpoints: vi.fn<typeof apiModule.api.cleanupWorkspaceCheckpoints>(),
             getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
         },
+        apiRaw: vi.fn<typeof apiModule.apiRaw>(),
     };
 });
 
@@ -84,12 +86,19 @@ const mockedApi = vi.mocked(api, true),
                 checkpointCleanupDone: "清理完成",
                 checkpointCleanupEmpty: "没有需要清理的切片",
                 checkpointCleanupFailed: "清理失败",
+                // ImportPreview 的文案：本地词典只补它挂载时真正读到的键，避免 stderr 噪声。
+                importPreview: "导入预览",
+                importFile: "文件",
+                importSize: "大小",
+                importChats: "会话数",
+                importMessages: "消息数",
             },
             common: {
                 confirm: "确认",
                 loading: "加载中...",
                 retry: "重试",
                 cancel: "取消",
+                close: "关闭",
             },
         },
     };
@@ -117,6 +126,7 @@ beforeEach(() => {
     );
     globalThis.URL.createObjectURL = vi.fn<() => string>(() => "blob:mock");
     globalThis.URL.revokeObjectURL = vi.fn<(url: string) => void>(() => undefined);
+    vi.mocked(apiRaw).mockReset();
 });
 
 describe("DataControlsView", () => {
@@ -313,5 +323,83 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         await wrapper.find('[data-testid="settings-checkpoint-retry"]').trigger("click");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-checkpoint-current-runs"]').text()).toBe("1");
+    });
+});
+
+/**
+ * M1 页面替换丢面：旧 `ConfigSettings.vue` 把导入报告的 `warnings[]` 渲染成
+ * `[data-testid="config-import-warnings"]` 列表，新 `/settings/data` 页只留了
+ * `Imported: x, Skipped: y`，CP 的降级/跳过说明（如
+ * `provider-connections: 1 credential(s) skipped - rebuild them via …`）被静默丢弃。
+ * 这里锁三件事：有 warnings 渲染 N 条、无 warnings **不渲染空容器**、形状异常时只留字符串。
+ */
+describe("DataControlsView import warnings", () => {
+    function importResponse(payload: unknown): Response {
+        return { json: () => Promise.resolve(payload) } as unknown as Response;
+    }
+
+    async function mountView() {
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+        return wrapper;
+    }
+
+    /** 走用户路径：选文件 ⇒ 预览挂载 ⇒ 确认导入。 */
+    async function confirmImport(wrapper: VueWrapper, payload: unknown) {
+        vi.mocked(apiRaw).mockResolvedValue(importResponse(payload));
+        const file = new File([JSON.stringify({ chats: [] })], "settings.json", {
+                type: "application/json",
+            }),
+            input = wrapper.find('input[type="file"]');
+        Object.defineProperty(input.element, "files", { value: [file], configurable: true });
+        await input.trigger("change");
+        await flushPromises();
+        const preview = wrapper.findComponent(ImportPreview);
+        expect(preview.exists()).toBe(true);
+        preview.vm.$emit("confirm", { file, chatCount: 0, messageCount: 0 });
+        await flushPromises();
+        expect(vi.mocked(apiRaw)).toHaveBeenCalledWith("/config/import", expect.anything());
+    }
+
+    it("renders every CP warning line after a successful import", async () => {
+        const wrapper = await mountView();
+        await confirmImport(wrapper, {
+            imported: 3,
+            skipped: 1,
+            warnings: [
+                "provider-connections: 1 credential(s) skipped - rebuild them via the credentials page",
+                "tool-faces: 2 entries ignored (unknown category)",
+            ],
+        });
+
+        const list = wrapper.find('[data-testid="config-import-warnings"]');
+        expect(list.exists()).toBe(true);
+        expect(list.findAll("li")).toHaveLength(2);
+        expect(list.text()).toContain("provider-connections: 1 credential(s) skipped");
+        expect(list.text()).toContain("tool-faces: 2 entries ignored");
+        expect(wrapper.text()).toContain("Imported: 3, Skipped: 1");
+    });
+
+    it("renders no warnings container at all when CP reports none", async () => {
+        const wrapper = await mountView();
+        await confirmImport(wrapper, { imported: 1, skipped: 0 });
+
+        expect(wrapper.find('[data-testid="config-import-warnings"]').exists()).toBe(false);
+        expect(wrapper.text()).toContain("Imported: 1, Skipped: 0");
+    });
+
+    it("keeps only non-empty strings when the warnings shape is unexpected", async () => {
+        const wrapper = await mountView();
+        await confirmImport(wrapper, {
+            imported: 2,
+            skipped: 0,
+            warnings: [null, "   ", { detail: "nope" }, "only-this-one"],
+        });
+
+        const list = wrapper.find('[data-testid="config-import-warnings"]');
+        expect(list.exists()).toBe(true);
+        expect(list.findAll("li")).toHaveLength(1);
+        expect(list.text()).toBe("only-this-one");
     });
 });

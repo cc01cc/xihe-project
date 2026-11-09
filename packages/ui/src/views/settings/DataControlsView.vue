@@ -17,6 +17,13 @@ const { t } = useI18n(),
     importFile = ref<File | null>(null),
     showImportPreview = ref(false),
     result = ref<string | null>(null);
+/**
+ * 导入结果里的 `warnings[]`（CP 按域合并时跳过/降级项，如
+ * `provider-connections: 1 credential(s) skipped - rebuild them via …`）。
+ * 旧配置页 `ConfigSettings.vue` 有渲染（`config-import-warnings`），M1 页面替换时丢失；
+ * 这里沿用同一 testid，文案直接展示 CP 原文（后端生成的自然语言，翻译反而失真）。
+ */
+const importWarnings = ref<string[]>([]);
 
 // PLAN-0339: informational retention view + explicit workspace shadow cleanup.
 // Constants are server-reported (N=50 / TTL 30d); the UI never invents them.
@@ -138,6 +145,7 @@ function handleFileSelected(e: Event) {
 
 async function handleConfirmImport(data: ImportData) {
     importing.value = true;
+    importWarnings.value = [];
     try {
         const text = await data.file.text(),
             res = await apiRaw("/config/import", {
@@ -145,11 +153,23 @@ async function handleConfirmImport(data: ImportData) {
                 headers: { "Content-Type": "application/json" },
                 body: text,
             }),
-            resultData = await res.json();
+            resultData = (await res.json()) as {
+                imported?: number;
+                skipped?: number;
+                warnings?: unknown;
+            };
         result.value = `Imported: ${resultData.imported}, Skipped: ${resultData.skipped}`;
+        // 只渲染非空字符串；形状异常时降级为「无 warnings」而不是把 [object Object] 摆上页。
+        importWarnings.value = Array.isArray(resultData.warnings)
+            ? resultData.warnings.filter(
+                  (warning): warning is string =>
+                      typeof warning === "string" && warning.trim().length > 0,
+              )
+            : [];
     } catch (e) {
         logger.error(`Chats import failed: ${e instanceof Error ? e.message : String(e)}`);
         result.value = "Import failed";
+        importWarnings.value = [];
     }
     importing.value = false;
     showImportPreview.value = false;
@@ -354,6 +374,13 @@ function downloadBlob(blob: Blob, filename: string) {
             </div>
 
             <p v-if="result" class="text-xs text-muted-foreground">{{ result }}</p>
+            <ul
+                v-if="importWarnings.length"
+                data-testid="config-import-warnings"
+                class="text-xs text-amber-600 list-disc pl-4"
+            >
+                <li v-for="(warning, index) in importWarnings" :key="index">{{ warning }}</li>
+            </ul>
         </template>
     </div>
 </template>
