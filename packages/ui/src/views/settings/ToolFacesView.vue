@@ -8,7 +8,13 @@ import SettingsNav from "../../components/settings/SettingsNav.vue";
 import { ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { usePolicyAdminStore } from "../../stores/policyAdmin";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import type {
     ApprovalPolicyShape,
     PolicyToolFaceQueryScope,

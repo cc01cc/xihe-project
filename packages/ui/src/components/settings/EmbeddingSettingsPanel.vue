@@ -14,7 +14,13 @@ import {
 import { useConfigStore } from "../../stores/config";
 import type { ProviderConnection } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 const props = defineProps<{
     layer: "user" | "workspace";

@@ -276,11 +276,7 @@ async function submit() {
                                 />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem
-                                    v-for="ws in workspaces"
-                                    :key="ws.id"
-                                    :value="ws.id"
-                                >
+                                <SelectItem v-for="ws in workspaces" :key="ws.id" :value="ws.id">
                                     {{ ws.name }}
                                 </SelectItem>
                             </SelectContent>

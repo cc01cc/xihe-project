@@ -463,7 +463,10 @@ test.describe("Policy management (desktop)", () => {
         expect(calls).toHaveLength(0);
         expect(state.classifications).toHaveLength(0);
         await dialog.locator('[data-testid="approval-classify-action-class"]').fill("exec");
-        await selectByLocator(dialog.locator('[data-testid="approval-classify-shape"]'), "解释器型");
+        await selectByLocator(
+            dialog.locator('[data-testid="approval-classify-shape"]'),
+            "解释器型",
+        );
         await dialog.locator('[data-testid="approval-classify-submit"]').click();
 
         await expect.poll(() => state.classifications.length).toBe(1);

@@ -55,8 +55,12 @@ const { t } = useI18n();
             <slot />
 
             <DialogClose v-if="showCloseButton" data-slot="sheet-close" as-child>
-                <Button variant="ghost" class="absolute top-3 right-3"
-                    data-testid="sheet-close" size="icon-sm">
+                <Button
+                    variant="ghost"
+                    class="absolute top-3 right-3"
+                    data-testid="sheet-close"
+                    size="icon-sm"
+                >
                     <XIcon />
                     <span class="sr-only">{{ t("common.close") }}</span>
                 </Button>

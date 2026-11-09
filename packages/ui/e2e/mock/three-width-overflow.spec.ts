@@ -32,22 +32,23 @@ async function expectNoHorizontalOverflow(
 ): Promise<void> {
     // 用 `page.evaluate(selector)` 而不是 `locator.evaluate`：后者会等 locator 可见/唯一，
     // 面板还没挂载时会一直等到测试超时（首版就是这么红的）。
-    const readMetrics = async () => page.evaluate((sel) => {
-        const el = sel === "html" ? document.documentElement : document.querySelector(sel);
-        if (!el) return null;
-        let widest = { tag: "", cls: "", width: 0 };
-        for (const child of Array.from(el.querySelectorAll("*"))) {
-            const box = child.getBoundingClientRect();
-            if (box.width > widest.width) {
-                widest = {
-                    tag: child.tagName.toLowerCase(),
-                    cls: (child.getAttribute("class") ?? "").slice(0, 80),
-                    width: Math.round(box.width),
-                };
+    const readMetrics = async () =>
+        page.evaluate((sel) => {
+            const el = sel === "html" ? document.documentElement : document.querySelector(sel);
+            if (!el) return null;
+            let widest = { tag: "", cls: "", width: 0 };
+            for (const child of Array.from(el.querySelectorAll("*"))) {
+                const box = child.getBoundingClientRect();
+                if (box.width > widest.width) {
+                    widest = {
+                        tag: child.tagName.toLowerCase(),
+                        cls: (child.getAttribute("class") ?? "").slice(0, 80),
+                        width: Math.round(box.width),
+                    };
+                }
             }
-        }
-        return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, widest };
-    }, selector);
+            return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, widest };
+        }, selector);
 
     let metrics = (await readMetrics())!;
     expect(metrics, `${label}：找不到 ${selector}`).not.toBeNull();

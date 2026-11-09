@@ -10,7 +10,13 @@ import { ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { usePolicyAdminStore, type PolicyRuleDraft } from "../../stores/policyAdmin";
 import type { ApprovalPolicyEffect, PolicyRuleLayer, PolicyRuleView } from "../../types";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 const { t } = useI18n(),
     authStore = useAuthStore(),

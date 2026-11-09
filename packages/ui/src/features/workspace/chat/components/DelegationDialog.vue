@@ -9,7 +9,13 @@ import DialogHeader from "../../../../components/ui/dialog/DialogHeader.vue";
 import DialogTitle from "../../../../components/ui/dialog/DialogTitle.vue";
 import { Button } from "../../../../components/ui/button";
 import { Textarea } from "../../../../components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 /** One delegable (bound, enabled) workspace agent principal. */
 export interface DelegationPrincipal {
@@ -114,9 +120,7 @@ function submit() {
                             data-testid="delegation-principal-select"
                             class="h-8 rounded-lg border border-input bg-action px-2.5 text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
                         >
-                            <SelectValue
-                                :placeholder="t('chat.delegation.principalPlaceholder')"
-                            />
+                            <SelectValue :placeholder="t('chat.delegation.principalPlaceholder')" />
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem

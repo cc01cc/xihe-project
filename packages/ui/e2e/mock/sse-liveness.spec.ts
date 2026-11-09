@@ -3,10 +3,7 @@ import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
-import {
-    ACTION_TIMEOUT_MS,
-    EXPECT_TIMEOUT_MS,
-} from "../timeouts";
+import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "liveness-session";
 

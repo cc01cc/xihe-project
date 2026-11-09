@@ -4,7 +4,13 @@ import { useI18n } from "vue-i18n";
 import { RefreshCw } from "@lucide/vue";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import ProviderRequestFingerprintPanel from "./ProviderRequestFingerprintPanel.vue";
 import RunTraceTimeline from "./RunTraceTimeline.vue";
 import type {
@@ -802,9 +808,7 @@ const connectionChipClass = computed(() => {
                                 :aria-label="t('monitor.trace.runLabel')"
                                 data-testid="monitor-trace-run-select"
                             >
-                                <SelectValue
-                                    :placeholder="t('monitor.trace.runPlaceholder')"
-                                />
+                                <SelectValue :placeholder="t('monitor.trace.runPlaceholder')" />
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem

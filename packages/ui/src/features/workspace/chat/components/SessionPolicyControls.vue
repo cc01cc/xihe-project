@@ -6,7 +6,13 @@ import { usePolicyStore } from "../../../../stores/policy";
 import { useAuthStore } from "../../../../stores/auth";
 import { logger } from "../../../../lib/logger";
 import type { SessionPolicyMode } from "../../../../types";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 const props = defineProps<{
     sessionId: string;
@@ -116,11 +122,7 @@ function retry() {
                 <SelectValue :placeholder="t('chat.approvalModeUnavailable')" />
             </SelectTrigger>
             <SelectContent>
-                <SelectItem
-                    v-for="policyMode in policyModes"
-                    :key="policyMode"
-                    :value="policyMode"
-                >
+                <SelectItem v-for="policyMode in policyModes" :key="policyMode" :value="policyMode">
                     {{ t(modeLabelKeys[policyMode]) }}
                 </SelectItem>
             </SelectContent>

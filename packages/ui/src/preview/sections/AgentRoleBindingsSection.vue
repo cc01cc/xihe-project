@@ -4,7 +4,13 @@ import { Bot, Info, X } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import type { AgentRoleBinding, WorkspaceAgentBinding } from "../../composables/api";
 import {
     mockAgentRoleBindings,
@@ -208,9 +214,8 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                         >
                             <SelectValue>{{
                                 selectedAgentId
-                                    ? (agents.find(
-                                          (agent) => agent.principalId === selectedAgentId,
-                                      )?.name ?? selectedAgentId)
+                                    ? (agents.find((agent) => agent.principalId === selectedAgentId)
+                                          ?.name ?? selectedAgentId)
                                     : "选择智能体主体"
                             }}</SelectValue>
                         </SelectTrigger>
@@ -241,9 +246,8 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
                         >
                             <SelectValue>{{
                                 selectedRoleId
-                                    ? (availableRoles.find(
-                                          (role) => role.id === selectedRoleId,
-                                      )?.displayName ??
+                                    ? (availableRoles.find((role) => role.id === selectedRoleId)
+                                          ?.displayName ??
                                       availableRoles.find((role) => role.id === selectedRoleId)
                                           ?.name ??
                                       selectedRoleId)

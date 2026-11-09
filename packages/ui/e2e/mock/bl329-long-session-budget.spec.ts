@@ -144,27 +144,28 @@ test.describe("BL-329 长会话窗口化预算", () => {
         expectWithinBudget("渲染行数（滚到中部）", atMiddle.renderedRows, BUDGET.renderedRows);
 
         // 连续滚动 4s 内的 long task 数（FPS 的廉价代理）。
-        const collectLongTasks = async () => page.evaluate(async () => {
-            const scroller =
-                document.querySelector('[data-testid="message-scroller-viewport"]') ??
-                document.querySelector('[data-testid="message-list"]');
-            let count = 0;
-            const observer = new PerformanceObserver((list) => {
-                count += list.getEntries().length;
+        const collectLongTasks = async () =>
+            page.evaluate(async () => {
+                const scroller =
+                    document.querySelector('[data-testid="message-scroller-viewport"]') ??
+                    document.querySelector('[data-testid="message-list"]');
+                let count = 0;
+                const observer = new PerformanceObserver((list) => {
+                    count += list.getEntries().length;
+                });
+                try {
+                    observer.observe({ entryTypes: ["longtask"] });
+                } catch {
+                    return -1;
+                }
+                const deadline = performance.now() + 4000;
+                while (performance.now() < deadline) {
+                    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop - 400);
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+                observer.disconnect();
+                return count;
             });
-            try {
-                observer.observe({ entryTypes: ["longtask"] });
-            } catch {
-                return -1;
-            }
-            const deadline = performance.now() + 4000;
-            while (performance.now() < deadline) {
-                if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop - 400);
-                await new Promise((resolve) => setTimeout(resolve, 50));
-            }
-            observer.disconnect();
-            return count;
-        });
         const longTasks = await collectLongTasks();
         if (longTasks >= 0) {
             expect(

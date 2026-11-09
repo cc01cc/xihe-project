@@ -47,7 +47,10 @@ export async function selectByDomClick(trigger: Locator, label: string | RegExp)
 /** 点 option 的可见文本（reka 的 role=option 在浮层内偶发 actionability 超时的兜底）。 */
 export async function selectByText(trigger: Locator, text: string | RegExp): Promise<void> {
     await trigger.click();
-    await trigger.page().getByText(text, { exact: typeof text === "string" }).click();
+    await trigger
+        .page()
+        .getByText(text, { exact: typeof text === "string" })
+        .click();
 }
 
 /** 键盘选择：`index` 为 option 顺序（0 起）；用于 reka popup 被动画/浮层干扰的弹窗内下拉。 */
@@ -56,7 +59,10 @@ export async function selectByIndex(trigger: Locator, index: number): Promise<vo
     const page = trigger.page();
     // 弹窗内 Select（BaseModal focus trap）不能用鼠标点 portal 里的 option：会被 outside-click
     // 先关闭 popup。键盘事件走 listbox focus，不受 focus trap 影响。
-    await page.getByRole("listbox").waitFor({ state: "visible", timeout: 2_000 }).catch(() => {});
+    await page
+        .getByRole("listbox")
+        .waitFor({ state: "visible", timeout: 2_000 })
+        .catch(() => {});
     // index = 从当前高亮项往下按几次；1 = 选中下一项（弹窗内 Select 的常用场景）。
     for (let i = 0; i < index; i += 1) await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");

@@ -353,7 +353,7 @@ describe("ApprovalModal", () => {
         const wrapper = mountModal({ approval: baseApproval, show: true });
         await wrapper.find('[data-testid="approval-feedback"]').setValue("  \n  ");
 
-        await wrapper.find('button[aria-label]').trigger("click");
+        await wrapper.find("button[aria-label]").trigger("click");
 
         expect(wrapper.emitted("dismiss")).toHaveLength(1);
         expect(wrapper.emitted("reject")).toBeUndefined();
@@ -492,7 +492,7 @@ describe("ApprovalModal", () => {
             new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
         );
 
-        expect(document.activeElement).toBe(second.find('button[aria-label]').element);
+        expect(document.activeElement).toBe(second.find("button[aria-label]").element);
         first.unmount();
         second.unmount();
     });

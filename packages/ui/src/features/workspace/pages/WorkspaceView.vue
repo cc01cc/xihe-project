@@ -25,7 +25,13 @@ import ChatPanel from "../chat/components/ChatPanel.vue";
 import SseSubscriberLimitNotice from "../components/SseSubscriberLimitNotice.vue";
 import { workspaceChatPath } from "../../../lib/routes";
 import BaseModal from "../../../components/shared/BaseModal.vue";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 const route = useRoute(),
     router = useRouter(),
@@ -590,9 +596,7 @@ watch(isMobileViewport, (mobile) => {
                         data-testid="workspace-agent-principal-select"
                         class="w-full rounded-md border bg-background px-3 py-2 text-sm"
                     >
-                        <SelectValue
-                            :placeholder="t('workspace.chooseAgentPlaceholder')"
-                        />
+                        <SelectValue :placeholder="t('workspace.chooseAgentPlaceholder')" />
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem
@@ -601,8 +605,8 @@ watch(isMobileViewport, (mobile) => {
                             :value="agent.principalId"
                         >
                             {{ agent.name
-                            }}<template v-if="agent.templateName"
-                                > · {{ agent.templateName }}</template
+                            }}<template v-if="agent.templateName">
+                                · {{ agent.templateName }}</template
                             >
                         </SelectItem>
                     </SelectContent>

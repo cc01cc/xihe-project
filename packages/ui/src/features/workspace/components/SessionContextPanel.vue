@@ -4,7 +4,13 @@ import SessionPolicyControls from "../chat/components/SessionPolicyControls.vue"
 import SessionContextTemplate from "../chat/components/SessionContextTemplate.vue";
 import ContextSourcesU1 from "../chat/components/ContextSourcesU1.vue";
 import { useSessionBranches } from "../chat/composables/useSessionBranches";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 /**
  * PLAN-0626 M2: the dock's `context` panel — the session-level settings that used to be

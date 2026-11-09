@@ -4,7 +4,13 @@ import { useI18n } from "vue-i18n";
 import { ApiError, request } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { INSTANCE_DOMAINS, type ConfigDomain } from "../../stores/config";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 /**
  * PLAN-0556: the admin-only lock page. Ordinary config pages only render the
