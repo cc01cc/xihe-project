@@ -46,7 +46,7 @@ const crumbSeparator = " › ";
         <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
             <nav
                 data-testid="settings-breadcrumb"
-                aria-label="Breadcrumb"
+                :aria-label="t('settings.ia.breadcrumbLabel')"
                 class="flex items-center gap-1 text-[11px] text-muted-foreground"
             >
                 <router-link

@@ -1391,6 +1391,7 @@ const messages = {
         settings: {
             ia: {
                 breadcrumbRoot: "设置",
+                breadcrumbLabel: "面包屑",
                 layerInstance: "实例配置",
                 layerUser: "用户配置",
                 layerWorkspace: "工作区设置",
@@ -3946,6 +3947,7 @@ const messages = {
         settings: {
             ia: {
                 breadcrumbRoot: "Settings",
+                breadcrumbLabel: "Breadcrumb",
                 layerInstance: "Instance settings",
                 layerUser: "User settings",
                 layerWorkspace: "Workspace settings",
