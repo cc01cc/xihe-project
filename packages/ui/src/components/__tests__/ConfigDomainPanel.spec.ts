@@ -9,7 +9,14 @@ const i18n = createI18n({
     locale: "en",
     messages: {
         en: {
-            settings: { notSet: "(not set)", empty: "(empty)", resetToDefault: "Reset" },
+            settings: {
+                notSet: "(not set)",
+                empty: "(empty)",
+                resetToDefault: "Reset",
+                configKeyInstanceOnlyBadge: "Instance only",
+                configKeyInstanceOnlyHint:
+                    "This key only takes effect at the instance layer: user and workspace layers neither inherit nor can modify it",
+            },
             common: { save: "Save" },
         },
     },
@@ -215,5 +222,112 @@ describe("ConfigDomainPanel", () => {
             .filter((b) => b.text() === "Save")[0]
             .trigger("click");
         expect(wrapper.emitted("save")![0][0]).toEqual({ defaults: '{"softThresholdPct":0.9}' });
+    });
+
+    // PLAN-0752 T3.2：徽标要表达「同域内不同键不同层」，不是整域一个徽标。
+    const layerSchema: DomainField[] = [
+        { key: "runMaxTurns", label: "Run Max Turns", type: "number" },
+        {
+            key: "runMaxTurnsCeiling",
+            label: "Run Max Turns Ceiling",
+            type: "number",
+            instanceOnly: true,
+        },
+    ];
+
+    it("TC10: instance layer badges only the instance-only key, using meta.overridable", async () => {
+        const wrapper = mountPanel({
+            schema: layerSchema,
+            layer: "instance",
+            entries: { runMaxTurns: "20", runMaxTurnsCeiling: "40" },
+            // CP 的 meta 里 overridable=false 就是「只在实例层生效」（ConfigService:580-583）
+            meta: {
+                runMaxTurns: {
+                    key: "runMaxTurns",
+                    source: "instance",
+                    locked: false,
+                    writable: true,
+                    reason: null,
+                    instanceEligible: true,
+                    defaultPresent: true,
+                    overridable: true,
+                },
+                runMaxTurnsCeiling: {
+                    key: "runMaxTurnsCeiling",
+                    source: "instance",
+                    locked: false,
+                    writable: true,
+                    reason: null,
+                    instanceEligible: true,
+                    defaultPresent: true,
+                    overridable: false,
+                },
+            },
+        });
+        await expandPanel(wrapper);
+
+        expect(
+            wrapper.find('[data-testid="config-key-layer-badge-test-runMaxTurnsCeiling"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="config-key-layer-badge-test-runMaxTurns"]').exists(),
+        ).toBe(false);
+        // 实例层里实例专属键本身是可写的
+        expect(
+            wrapper
+                .find('[data-testid="config-field-test-runMaxTurnsCeiling"] input')
+                .attributes("disabled"),
+        ).toBeUndefined();
+    });
+
+    it("TC11: lower layer keeps the instance-only row visible but disabled, and never saves it", async () => {
+        const wrapper = mountPanel({
+            schema: layerSchema,
+            layer: "user",
+            entries: { runMaxTurns: "20" },
+        });
+        await expandPanel(wrapper);
+
+        const row = wrapper.find('[data-testid="config-field-test-runMaxTurnsCeiling"]');
+        expect(row.exists()).toBe(true);
+        expect(row.find("input").attributes("disabled")).toBeDefined();
+        expect(
+            row.find('[data-testid="config-key-layer-badge-test-runMaxTurnsCeiling"]').text(),
+        ).toBe("Instance only");
+        // 非徽标键在该层可编辑
+        expect(
+            wrapper
+                .find('[data-testid="config-field-test-runMaxTurns"] input')
+                .attributes("disabled"),
+        ).toBeUndefined();
+
+        await wrapper
+            .findAll("button")
+            .filter((button) => button.text() === "Save")[0]
+            .trigger("click");
+        // 草稿是字符串（数字在 CP 侧收敛），关键是**没有**把实例专属键带进保存体
+        expect(wrapper.emitted("save")![0][0]).toEqual({ runMaxTurns: "20" });
+    });
+
+    it("TC12: no badge when the server says the key is overridable", async () => {
+        const wrapper = mountPanel({
+            schema: layerSchema.slice(0, 1),
+            layer: "instance",
+            entries: { runMaxTurns: "20" },
+            meta: {
+                runMaxTurns: {
+                    key: "runMaxTurns",
+                    source: "instance",
+                    locked: false,
+                    writable: true,
+                    reason: null,
+                    instanceEligible: true,
+                    defaultPresent: true,
+                    overridable: true,
+                },
+            },
+        });
+        await expandPanel(wrapper);
+        expect(wrapper.findAll('[data-testid^="config-key-layer-badge-"]')).toHaveLength(0);
     });
 });

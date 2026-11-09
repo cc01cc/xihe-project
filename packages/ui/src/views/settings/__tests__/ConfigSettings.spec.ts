@@ -403,7 +403,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         }
     });
 
-    it("renders the loop guard fields on the instance tab and hides ceilings elsewhere", async () => {
+    it("renders the loop guard fields on the instance tab and keeps ceilings read-only elsewhere", async () => {
         const wrapper = await mountView();
 
         const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
@@ -436,14 +436,23 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         expect(
             wrapper.find('[data-testid="config-field-agent-runtime-loopRepeatWarn"]').exists(),
         ).toBe(true);
+        // PLAN-0752 T3.2：实例专属键在用户层不再「静默消失」，而是只读行 + 「仅实例层」徽标
+        // （design §5.1：隐藏会让用户以为没有这项）。
+        const ceiling = wrapper.find(
+            '[data-testid="config-field-agent-runtime-loopRepeatEscalateCeiling"]',
+        );
+        expect(ceiling.exists()).toBe(true);
+        expect(ceiling.find("input").attributes("disabled")).toBeDefined();
         expect(
-            wrapper
-                .find('[data-testid="config-field-agent-runtime-loopRepeatEscalateCeiling"]')
+            ceiling
+                .find(
+                    '[data-testid="config-key-layer-badge-agent-runtime-loopRepeatEscalateCeiling"]',
+                )
                 .exists(),
-        ).toBe(false);
+        ).toBe(true);
     });
 
-    it("hides the ceiling keys from the user tab", async () => {
+    it("shows the ceiling keys read-only with the instance-only badge on the user tab", async () => {
         const wrapper = await mountView();
 
         await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
@@ -453,10 +462,17 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         expect(
             wrapper.find('[data-testid="config-field-agent-runtime-runMaxTurns"]').exists(),
         ).toBe(true);
+        const ceiling = wrapper.find(
+            '[data-testid="config-field-agent-runtime-runMaxTurnsCeiling"]',
+        );
+        expect(ceiling.exists()).toBe(true);
+        expect(ceiling.find("input").attributes("disabled")).toBeDefined();
         expect(
-            wrapper.find('[data-testid="config-field-agent-runtime-runMaxTurnsCeiling"]').exists(),
-        ).toBe(false);
-        // PLAN-0560：workspace 层上限隐藏由 WorkspaceSettingsView.spec.ts 覆盖。
+            ceiling
+                .find('[data-testid="config-key-layer-badge-agent-runtime-runMaxTurnsCeiling"]')
+                .text(),
+        ).not.toBe("");
+        // PLAN-0560：workspace 层上限的只读呈现由 WorkspaceSettingsView.spec.ts 覆盖。
         wrapper.unmount();
     });
 
