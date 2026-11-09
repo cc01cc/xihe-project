@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 import {
     ADMIN_PASSWORD_BYTES,
     ADMIN_PASSWORD_ENV,
+    LOCAL_MODE_ENV,
     RESET_ADMIN_WRAPPER,
     buildResetAdminCommand,
     RESET_ADMIN_PASSWORD_ENV,
@@ -17,6 +18,8 @@ import {
     readDevAdminPasswordFile,
     resetAdminWrapperPath,
     resolveDevAdminPassword,
+    resolveDevAdminPasswordSafe,
+    resolveLocalMode,
     writeDevAdminPasswordFile,
 } from "./dev-admin-password.mjs";
 
@@ -196,5 +199,88 @@ describe("buildResetAdminCommand（复用既有入口、密码完全不进命令
     test("默认入口路径 = <root>/scripts/reset-admin.ps1", () => {
         assert.equal(resetAdminWrapperPath("H:/repo"), join("H:/repo", "scripts", "reset-admin.ps1"));
         assert.deepEqual(RESET_ADMIN_WRAPPER, ["scripts", "reset-admin.ps1"]);
+    });
+});
+
+describe("resolveLocalMode（与 CP 同口径：OS env > .env 链）", () => {
+    test("OS env=true 直接命中（source=env），不依赖文件", (t) => {
+        const root = fakeRoot(t);
+        assert.deepEqual(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "true" }, cwd: root }), {
+            enabled: true,
+            source: "env",
+        });
+    });
+
+    test("OS env 压过 .env 链（DotenvLoader 语义：文件永不覆盖 OS env）", (t) => {
+        const root = fakeRoot(t, { envLines: `${LOCAL_MODE_ENV}=true\n` });
+        assert.deepEqual(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "false" }, cwd: root }), {
+            enabled: false,
+            source: "env",
+        });
+    });
+
+    test("只在 .env.local 写 true 也能识别（W-22 verify 缺陷回归）", (t) => {
+        const root = fakeRoot(t);
+        writeFileSync(join(root, ".env.local"), `${LOCAL_MODE_ENV}=true\n`, "utf8");
+        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: true, source: "env-file" });
+    });
+
+    test("链缺失 ⇒ disabled / source=unset", (t) => {
+        const root = fakeRoot(t);
+        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: false, source: "unset" });
+    });
+
+    test("大小写与空白容错：' TRUE ' 开启；'yes' 不开启", (t) => {
+        const root = fakeRoot(t);
+        assert.equal(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "  TRUE \r\n" }, cwd: root }).enabled, true);
+        assert.equal(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "yes" }, cwd: root }).enabled, false);
+    });
+
+    test(".env 里留空占位不算配置（落到 unset，不误判成开启）", (t) => {
+        const root = fakeRoot(t, { envLines: `${LOCAL_MODE_ENV}=\n` });
+        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: false, source: "unset" });
+    });
+});
+
+describe("resolveDevAdminPasswordSafe（解析/落盘失败降级，不炸起栈前段）", () => {
+    test("生成抛错 ⇒ ok:false，reason 带错误码，且不带 password 字段", (t) => {
+        const root = fakeRoot(t);
+        const error = Object.assign(new Error("rng exploded"), { code: "E_RNG" });
+        const result = resolveDevAdminPasswordSafe({
+            projectRoot: root,
+            env: {},
+            generate: () => {
+                throw error;
+            },
+        });
+        assert.equal(result.ok, false);
+        assert.match(result.reason, /E_RNG/);
+        assert.match(result.reason, /rng exploded/);
+        assert.equal("password" in result, false);
+    });
+
+    test("落盘位置不可写（路径中间是普通文件）⇒ ok:false 且不留半成品文件", (t) => {
+        const root = fakeRoot(t);
+        const blocker = join(root, "blocker");
+        writeFileSync(blocker, "not a directory\n", "utf8");
+        const target = join(blocker, "dev", "admin-password");
+        const result = resolveDevAdminPasswordSafe({ projectRoot: root, env: {}, file: target });
+        assert.equal(result.ok, false, `expected a graceful failure, got ${JSON.stringify(result)}`);
+        assert.ok(result.reason.length > 0);
+        assert.equal(existsSync(target), false, "no half-written password file may be left behind");
+    });
+
+    test("成功时 ok:true，字段与直接调用一致（调用方拿到可直接注入的 password）", (t) => {
+        const root = fakeRoot(t);
+        const safe = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
+        assert.equal(safe.ok, true);
+        assert.equal(safe.source, "generated");
+        assert.equal(safe.persisted, "created");
+        assert.equal(safe.length, 32);
+        // 第二次调用（同 root）走持久文件：值稳定、来源翻成 file/reused。
+        const direct = resolveDevAdminPassword({ projectRoot: root, env: {} });
+        assert.equal(safe.password, direct.password);
+        assert.equal(direct.source, "file");
+        assert.equal(direct.persisted, "reused");
     });
 });
