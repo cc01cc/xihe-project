@@ -140,7 +140,15 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         // 真功能：面板在（列表已发请求，自身渲染 heading），不是「缺口说明」占位
         expect(tab.find('[data-testid="credentials-heading"]').exists()).toBe(true);
         expect(tab.find('[data-testid="credentials-scope-note"]').exists()).toBe(true);
-        expect(tab.text()).not.toContain("后端缺口");
+        // 「不是缺口占位」按**权限门的形态**判，而不是按文案里有没有「后端缺口」四个字判：
+        // PLAN-0752 M4 的 403 卡有意写「提示：本页不会被标记为『后端缺口』——后端已实现」，
+        // 旧写法（`tab.text()).not.toContain("后端缺口")`）正是被这句说明命中而误红。
+        // ① 不能是 `no-atom`（那才是「概念不存在」的留位信息条）
+        expect(tab.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(false);
+        // ② 缺口徽标/缺口说明一个都不许出现在这个 tab 里
+        expect(tab.find('[data-testid^="settings-gap-"]').exists()).toBe(false);
+        // ③ 必须是 `atom-denied` 的 403 卡，且它明写「不是后端缺口」——真功能只是缺授权
+        expect(tab.find('[data-testid="settings-atom-denied-not-gap"]').exists()).toBe(true);
         wrapper.unmount();
     });
 
