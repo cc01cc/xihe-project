@@ -58,12 +58,25 @@ const blocked = ref(false);
 const fetchError = ref(false);
 
 /**
- * 三态而不是两态（task-112）：loading 期间 `keyCount` 必然是 0，若照常渲染「本域 0 项配置」
- * 加空表单，就是把 unknown 折成结论 —— **「还没回来」≠「没有配置」**（同族前例：无 atom ≠ 403、
- * 未落定 ≠ 拒绝）。`configStore.layerLoading` 是唯一进度事实源
- * （`stores/config.ts:139` 定义、`:262` 置真、`:306` 复位），域页此前零引用。
+ * 三态而不是两态（task-112）：数据回来前 `keyCount` 必然是 0，若照常渲染「本域 0 项配置」+ 空表单，
+ * 就是把 unknown 折成结论 —— **「还没回来」≠「没有配置」**（同族前例：无 atom ≠ 403、未落定 ≠ 拒绝）。
+ *
+ * 判据必须**单调**，所以用的不是 `configStore.layerLoading`（瞬时标志）而是「该层是否已有任何域载荷」
+ * —— `layerConfig[layer]` 非空 ⇐ `loadLayerDomains` 成功写入（`stores/config.ts:299`），一旦落定就不会退回。
+ *
+ * **为什么不能用 `layerLoading`（task-121 回归）**：`ProviderHub.load()` 在面板挂载时也会调
+ * `loadLayerDomains`（`ProviderHub.vue:763`）⇒ 「面板挂载 → 触发 load → `layerLoading` 真 → pending 真
+ * → 面板卸载 → 取数结束 → 面板重挂」自持循环（dev-3 e2e 实测：5.357 s 内 672 次 `/provider-catalog`、
+ * 9 个域各 337 次）。单调判据下，重挂后的那次 load 不改变 pending，循环不成立。
  */
-const pending = computed(() => configStore.layerLoading);
+const layerSettled = computed(
+    () => Object.keys(configStore.layerConfig[layer.value] ?? {}).length > 0,
+);
+const pending = computed(() => !layerSettled.value && !fetchError.value);
+/** 失败时同样不渲染「0 项配置」——「取数失败」也不是「没有配置」。 */
+const showSummary = computed(
+    () => activeTab.value === "policy" && !pending.value && !fetchError.value,
+);
 
 /**
  * PLAN-0752 T3.3 / design 决策 #7 + D2：工具分类归入 approval-policy 域，**不单独占顶级设置页**。
@@ -135,7 +148,7 @@ watch(
                 {{ domainLabel }}
             </h2>
             <p
-                v-if="activeTab === 'policy' && !pending"
+                v-if="showSummary"
                 data-testid="settings-domain-summary"
                 class="text-[11px] text-muted-foreground"
             >
@@ -214,10 +227,20 @@ watch(
         >
             {{ t("common.loading") }}
         </p>
-        <div v-else-if="activeTab === 'tool-faces' && toolFacesTab" class="mt-4">
+        <div v-if="activeTab === 'tool-faces' && toolFacesTab" class="mt-4">
             <ToolFacesView embedded />
         </div>
-        <div v-else class="mt-4">
+        <!--
+            task-121：面板树用 `v-show` 而不是 `v-if`/`v-else` —— 加载态**只切换可见性，不卸载面板**。
+            `v-if` 会让「面板挂载 ⇒ 有组件回写 `layerLoading`（如旧 ProviderHub.vue:763）⇒ pending 真 ⇒
+            面板卸载 ⇒ 重挂」形成自持循环（dev-3 实测 63 轮/秒）；卸载闸门一旦存在，任何回写方都会复现，
+            所以这一层用「常挂 + 隐藏」把该类缺陷整体挡掉。
+        -->
+        <div
+            v-show="!pending && !(activeTab === 'tool-faces' && toolFacesTab)"
+            class="mt-4"
+            :aria-busy="pending"
+        >
             <ConfigLayerPanels :layer="layer" :domain="resolved.domain" />
         </div>
     </section>
