@@ -7,6 +7,7 @@ import { LAYER_DOMAINS } from "../../../stores/config";
 
 const routeState = vi.hoisted(() => ({
     workspaceId: "66666666-6666-4666-8666-666666666666",
+    domain: "" as string,
     query: {} as Record<string, string>,
 }));
 
@@ -29,7 +30,7 @@ vi.mock("vue-router", () => ({
         ({
             name: "workspace-settings",
             path: `/workspace/${routeState.workspaceId}/settings`,
-            params: { workspaceId: routeState.workspaceId },
+            params: { workspaceId: routeState.workspaceId, domain: routeState.domain },
             query: routeState.query,
             hash: "",
             fullPath: `/workspace/${routeState.workspaceId}/settings`,
@@ -105,6 +106,7 @@ beforeEach(() => {
     sessionStorage.clear();
     vi.clearAllMocks();
     routeState.workspaceId = WORKSPACE_ID;
+    routeState.domain = "";
     routeState.query = {};
     localStorage.setItem("xihe-token", "test-token");
     // PLAN-0610 W3-2b: the wire no longer carries `role`; this spec covers the workspace settings
@@ -165,6 +167,36 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
                 .find('[data-testid="config-field-agent-runtime-runMaxElapsedSecondsCeiling"]')
                 .exists(),
         ).toBe(false);
+        wrapper.unmount();
+    });
+
+    // ---- PLAN-0752 M2 B4：域段模式按单域渲染（不再 tab 内平铺整层 9 域） ----
+    it("renders only the requested domain when the URL carries a domain segment", async () => {
+        routeState.domain = "job-policy";
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-domain-page"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-domain-title"]').text()).toBe(
+            "Job 运行时限",
+        );
+        expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="config-domain-agent-runtime"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="config-domain-rag"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("renders the 404 view for a domain the workspace layer does not have (logging) without loading config", async () => {
+        routeState.domain = "logging";
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="settings-not-found"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-domain-page"]').exists()).toBe(false);
+        const configCalls = vi.mocked(fetch).mock.calls.filter(([input]) => {
+            const url = typeof input === "string" ? input : input.url;
+            return url.includes("/api/v1/config/");
+        });
+        expect(configCalls).toHaveLength(0);
         wrapper.unmount();
     });
 
