@@ -14,6 +14,8 @@ import { workspacePath } from "../../../lib/routes";
 import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
+import CredentialsPanel from "../../../components/settings/credentials/CredentialsPanel.vue";
+import KnowledgeBaseView from "../../../views/settings/KnowledgeBaseView.vue";
 import SettingsNotFoundView from "../../../views/settings/SettingsNotFoundView.vue";
 import { DOMAIN_LABEL_KEY, domainsForLayer } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
@@ -29,7 +31,10 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 // PLAN-0560：每工作区设置页（常规/配置/MCP）。配置区复用 ConfigLayerPanels
 // （layer=workspace），MCP 复用 WorkspaceMcpPanel；常规区 OWNER 可编辑/删除（T2.6）。
 // PLAN-0565：新增「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
-type SettingsTab = "general" | "config" | "mcp" | "members";
+// PLAN-0752 T4.2/T4.3：工作区层的资源入口按 tab 承载 —— MCP（绑定/启用）、凭据（归属本工作区）、
+// 知识库（按工作区分区的文档）。三者后端都已实现，所以都是**真入口**，不是缺口位；实例/用户层
+// 没有对应承载才在外层左栏标 G2/G3（D7 口径：只给真缺的能力标缺口）。
+type SettingsTab = "general" | "config" | "mcp" | "members" | "credentials" | "knowledge";
 
 const route = useRoute(),
     router = useRouter(),
@@ -71,7 +76,14 @@ const domainKeyCount = computed(() =>
 
 const initialTab = ((): SettingsTab => {
     const q = route.query.tab;
-    return q === "config" || q === "mcp" || q === "members" || q === "general" ? q : "general";
+    return q === "config" ||
+        q === "mcp" ||
+        q === "members" ||
+        q === "credentials" ||
+        q === "knowledge" ||
+        q === "general"
+        ? q
+        : "general";
 })();
 const activeTab = ref<SettingsTab>(initialTab);
 
@@ -86,6 +98,8 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
         base.push({ key: "members", label: t("workspace.settingsTabMembers") });
     }
     base.push({ key: "mcp", label: t("workspace.settingsTabMcp") });
+    base.push({ key: "credentials", label: t("workspace.settingsTabCredentials") });
+    base.push({ key: "knowledge", label: t("workspace.settingsTabKnowledge") });
     return base;
 });
 
@@ -538,11 +552,19 @@ onMounted(() => {
                     />
                 </div>
 
-                <div v-else data-testid="ws-settings-mcp">
+                <div v-else-if="activeTab === 'mcp'" data-testid="ws-settings-mcp">
                     <WorkspaceMcpPanel
                         :workspace-id="workspaceId"
                         :readonly="!auth.canWriteWorkspace"
                     />
+                </div>
+
+                <div v-else-if="activeTab === 'credentials'" data-testid="ws-settings-credentials">
+                    <CredentialsPanel :owner-type="'WORKSPACE'" />
+                </div>
+
+                <div v-else data-testid="ws-settings-knowledge">
+                    <KnowledgeBaseView />
                 </div>
             </template>
         </div>

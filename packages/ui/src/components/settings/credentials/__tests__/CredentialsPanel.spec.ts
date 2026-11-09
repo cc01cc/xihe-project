@@ -53,9 +53,10 @@ function credential(overrides: Partial<CredentialSummary> = {}): CredentialSumma
 
 let wrappers: VueWrapper[] = [];
 
-async function mountPanel(): Promise<VueWrapper> {
+async function mountPanel(props: Record<string, unknown> = {}): Promise<VueWrapper> {
     const wrapper = mount(CredentialsPanel, {
         attachTo: document.body,
+        props,
         global: { plugins: [i18n] },
     });
     wrappers.push(wrapper);
@@ -179,6 +180,32 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
         await flushPromises();
         expect(bodyEl('[data-testid="credentials-reveal-dialog"]')).toBeTruthy();
         expect(bodyEl('[data-testid="credentials-reveal-password"]')).toBeTruthy();
+    });
+
+    // PLAN-0752 T4.2：工作区层把同一份面板限定到 owner_type=WORKSPACE（凭据只有 USER/WORKSPACE
+    // 两档，实例层没有承载 ⇒ 外层左栏走缺口说明，不进这个面板）。
+    it("scopes the list and the create flow to WORKSPACE when mounted for the workspace layer", async () => {
+        mockedApi.listCredentials.mockResolvedValue({
+            credentials: [credential({ ownerType: "WORKSPACE", ownerId: "ws-1", label: "ws key" })],
+            count: 1,
+        });
+
+        const wrapper = await mountPanel({ ownerType: "WORKSPACE" });
+
+        expect(mockedApi.listCredentials).toHaveBeenCalledWith({ ownerType: "WORKSPACE" });
+        expect(bodyEl('[data-testid="credentials-scope-note"]')?.textContent).toContain(
+            "owner_type=WORKSPACE",
+        );
+        expect(wrapper.text()).toContain("ws key");
+    });
+
+    it("keeps the unscoped view (both owner types) when no layer is pinned", async () => {
+        mockedApi.listCredentials.mockResolvedValue({ credentials: [], count: 0 });
+
+        await mountPanel();
+
+        expect(mockedApi.listCredentials).toHaveBeenCalledWith({});
+        expect(bodyEl('[data-testid="credentials-scope-note"]')).toBeNull();
     });
 
     it("hides the reveal entry for lease-tier credentials", async () => {

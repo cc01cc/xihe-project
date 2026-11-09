@@ -822,6 +822,10 @@ const messages = {
             settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
             settingsTabMcp: "MCP",
+            settingsTabCredentials: "凭据",
+            settingsTabKnowledge: "知识库",
+            settingsResourceGroupNote:
+                "MCP、凭据、知识库是工作区资源（不是配置域）：MCP 是绑定与启用，凭据是归属本工作区的密钥，知识库是按本工作区分区的文档。",
             settingsGeneralTitle: "基本信息",
             settingsName: "名称",
             settingsDescription: "描述",
@@ -2409,6 +2413,7 @@ const messages = {
             owner: "归属",
             ownerUser: "我的凭据",
             ownerWorkspace: "工作区凭据",
+            scopeWorkspaceNote: "这里只列归属本工作区的凭据（owner_type=WORKSPACE）。",
             ownerWorkspaceSelect: "选择工作区",
             token: "Token",
             accessKey: "Access Key",
@@ -3386,6 +3391,10 @@ const messages = {
             settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
             settingsTabMcp: "MCP",
+            settingsTabCredentials: "Credentials",
+            settingsTabKnowledge: "Knowledge base",
+            settingsResourceGroupNote:
+                "MCP, credentials and the knowledge base are workspace resources (not config domains): MCP is binding/enabling, credentials are keys owned by this workspace, and the knowledge base holds documents partitioned by this workspace.",
             settingsGeneralTitle: "General",
             settingsName: "Name",
             settingsDescription: "Description",
@@ -5051,6 +5060,8 @@ const messages = {
             owner: "Owner",
             ownerUser: "My credentials",
             ownerWorkspace: "Workspace credentials",
+            scopeWorkspaceNote:
+                "This list only shows credentials owned by this workspace (owner_type=WORKSPACE).",
             ownerWorkspaceSelect: "Select workspace",
             token: "Token",
             accessKey: "Access key",

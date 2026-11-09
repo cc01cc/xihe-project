@@ -117,7 +117,7 @@ beforeEach(() => {
 });
 
 describe("WorkspaceSettingsView (PLAN-0560)", () => {
-    it("renders the workspace header and the three tabs", async () => {
+    it("renders the workspace header and the tabs (incl. the resource tabs)", async () => {
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="workspace-settings-page"]').exists()).toBe(true);
@@ -125,6 +125,33 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         expect(wrapper.find('[data-testid="ws-settings-tab-general"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-tab-mcp"]').exists()).toBe(true);
+        // PLAN-0752 T4.2/T4.3：工作区层资源入口 = 真功能，后端都已实现，所以不给缺口标记。
+        expect(wrapper.find('[data-testid="ws-settings-tab-credentials"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-tab-knowledge"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("lands the workspace credentials tab on the real credential panel scoped to WORKSPACE", async () => {
+        routeState.query = { tab: "credentials" };
+        const wrapper = await mountView();
+
+        const tab = wrapper.find('[data-testid="ws-settings-credentials"]');
+        expect(tab.exists()).toBe(true);
+        // 真功能：面板在（列表已发请求，自身渲染 heading），不是「缺口说明」占位
+        expect(tab.find('[data-testid="credentials-heading"]').exists()).toBe(true);
+        expect(tab.find('[data-testid="credentials-scope-note"]').exists()).toBe(true);
+        expect(tab.text()).not.toContain("后端缺口");
+        wrapper.unmount();
+    });
+
+    it("lands the workspace knowledge tab on the real knowledge base panel", async () => {
+        routeState.query = { tab: "knowledge" };
+        const wrapper = await mountView();
+
+        const tab = wrapper.find('[data-testid="ws-settings-knowledge"]');
+        expect(tab.exists()).toBe(true);
+        expect(tab.find('[data-testid="settings-knowledge-heading"]').exists()).toBe(true);
+        expect(tab.text()).not.toContain("后端缺口");
         wrapper.unmount();
     });
 

@@ -10,10 +10,27 @@ import CredentialLinkDialog from "./CredentialLinkDialog.vue";
 import CredentialReplaceDialog from "./CredentialReplaceDialog.vue";
 import CredentialRevealDialog from "./CredentialRevealDialog.vue";
 import { useCredentialsStore } from "../../../stores/credentials";
-import type { CredentialSummary } from "../../../types";
+import type { CredentialOwnerType, CredentialSummary } from "../../../types";
+
+/**
+ * PLAN-0752 T4.2：**按层收窄的凭据面板**。
+ *
+ * <p>凭据后端只有 `owner_type ∈ {USER, WORKSPACE}` 两档（`V63__credential_core.sql:37`
+ * 的 CHECK 约束），所以同一份面板在用户层（默认，不带 scope = 我可见的全部）与工作区层
+ * （`ownerType="WORKSPACE"`）复用；实例层没有承载，走缺口说明而不是这里。</p>
+ */
+const props = defineProps<{
+    /** 该层只看/新建哪种归属的凭据；不传 = 服务端默认视图（用户层）。 */
+    ownerType?: CredentialOwnerType;
+}>();
 
 const { t } = useI18n(),
     store = useCredentialsStore();
+
+/** 只在面板被限定到某一层时，把「这里管的是哪种归属」说清楚（避免和另一层的列表混淆）。 */
+const scopeNote = computed(() =>
+    props.ownerType === "WORKSPACE" ? t("credentials.scopeWorkspaceNote") : "",
+);
 
 const createOpen = ref(false),
     activeDialog = ref<"detail" | "replace" | "reveal" | "link" | null>(null),
@@ -41,13 +58,13 @@ function openLink(credential: CredentialSummary) {
 /** PLAN-0498: bind/unbind keeps the detail dialog open — refresh the list only.
  *  Deletion closes the detail dialog itself (the detail emits `close` after `changed`). */
 function refreshAfterChange() {
-    void store.load();
+    void store.load(props.ownerType);
 }
 
 async function refresh() {
     reloading.value = true;
     try {
-        await store.load();
+        await store.load(props.ownerType);
     } finally {
         reloading.value = false;
     }
@@ -64,7 +81,7 @@ function ownerLabel(credential: CredentialSummary): string {
 }
 
 onMounted(() => {
-    void store.load();
+    void store.load(props.ownerType);
 });
 </script>
 
@@ -79,6 +96,13 @@ onMounted(() => {
                     {{ t("credentials.heading") }}
                 </h1>
                 <p class="mt-1 text-sm text-muted-foreground">{{ t("credentials.desc") }}</p>
+                <p
+                    v-if="scopeNote"
+                    data-testid="credentials-scope-note"
+                    class="mt-1 text-xs text-muted-foreground"
+                >
+                    {{ scopeNote }}
+                </p>
             </div>
             <div class="flex items-center gap-2">
                 <Button
@@ -114,7 +138,9 @@ onMounted(() => {
 
         <section class="min-w-0 rounded-lg border border-border bg-card">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
-                <h2 class="text-sm font-medium">{{ t("credentials.heading") }}</h2>
+                <h2 class="text-sm font-medium" data-testid="credentials-list-heading">
+                    {{ t("credentials.heading") }}
+                </h2>
                 <span class="text-xs text-muted-foreground">{{ store.credentials.length }}</span>
             </div>
             <div v-if="store.loading" class="p-4 text-sm text-muted-foreground">
