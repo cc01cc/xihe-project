@@ -1,7 +1,7 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
-import { LONG_TIMEOUT_MS } from "../timeouts";
+import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 
 // BL-318：`shows an error banner when layer config cannot be loaded` 用
@@ -469,6 +469,63 @@ test.describe("Config Settings (three layers)", () => {
                 `Tab #${index + 1}/${focusableCount + 5} 后焦点落进面板子树`,
             ).toBe(false);
         }
+    });
+
+    // PLAN-0752 V12（移动端 375×812）：旧口径要证明的是「窄视口下设置区仍可用、不塌」，
+    // 新壳里用三件事证明同样的事：
+    //  ①左栏退化为抽屉（桌面 `aside` 在窄屏不渲染）且可开合；
+    //  ②设置区**不出现横向滚动** —— 几何事实（`scrollWidth <= clientWidth`），不是截图观感；
+    //  ③域页内容可见且标题非空（窄屏不是"只画了壳"）。
+    test("mobile viewport: settings drawer opens and closes with no horizontal scroll", async ({
+        page,
+    }) => {
+        await mockConfigAPIs(page);
+        await page.setViewportSize({ width: 375, height: 812 });
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
+
+        // ③ 域页内容可见 + 标题非空（先等层配置落定，避免把 pending 壳当内容）
+        await expect(page.getByTestId("settings-domain-loading")).toHaveCount(0, {
+            timeout: LONG_TIMEOUT_MS,
+        });
+        const domainTitle = page.getByTestId("settings-domain-title");
+        // 「非空」先查、且独立于可见性：空标题的 h2 高为 0，`toBeVisible` 也会红，
+        // 若不先单独断言文字，这条就永远被可见性抢先 —— 文字判据就没有判别力了。
+        await expect(domainTitle).toBeAttached();
+        await expect(domainTitle, "域页标题必须非空").not.toHaveText(/^\s*$/, {
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        await expect(domainTitle).toBeVisible();
+        await expect(page.getByTestId("config-domain-logging")).toBeVisible();
+
+        // ① 抽屉：未开时不存在，打开后可见且含域条目，关闭后消失
+        await expect(page.getByTestId("settings-drawer")).toHaveCount(0);
+        const toggle = page.getByTestId("settings-drawer-toggle");
+        await expect(toggle).toBeVisible();
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
+        await toggle.click();
+        const drawer = page.getByTestId("settings-drawer");
+        await expect(drawer).toBeVisible();
+        await expect(toggle).toHaveAttribute("aria-expanded", "true");
+        await expect(drawer.getByTestId("settings-nav-domain").first()).toBeVisible();
+        await drawer.getByRole("button", { name: "关闭目录" }).click();
+        await expect(page.getByTestId("settings-drawer")).toHaveCount(0);
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+        // ② 无横向滚动 —— 关闭态与打开态都查（抽屉是 fixed 覆盖层，也不该把文档撑宽）
+        const assertNoHorizontalScroll = async (state: string) => {
+            const metrics = await page.evaluate(() => ({
+                scrollWidth: document.documentElement.scrollWidth,
+                clientWidth: document.documentElement.clientWidth,
+            }));
+            expect(
+                metrics.scrollWidth,
+                `${state}出现横向滚动：scrollWidth=${metrics.scrollWidth} > clientWidth=${metrics.clientWidth}`,
+            ).toBeLessThanOrEqual(metrics.clientWidth);
+        };
+        await assertNoHorizontalScroll("抽屉关闭态");
+        await toggle.click();
+        await expect(drawer).toBeVisible();
+        await assertNoHorizontalScroll("抽屉打开态");
     });
 
     test("shows an error banner when layer config cannot be loaded", async ({ page }) => {
