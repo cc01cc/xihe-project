@@ -145,14 +145,23 @@ async function mockSettingsApis(page: Page) {
 
 test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
     test("protected route matrix reaches each current page", async ({ page }) => {
-        await setupMockAuth(page);
+        // 设置区在 PLAN-0752 M1 换成层进 URL：/settings/config 与 /settings/knowledge 都成了旧地址，
+        // 矩阵按「当前真实可达的页面」列（矩阵本身就是可达性断言），实例层域页需要 cap:instance:admin。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
         const routes = [
             { path: "/workspace/workspace-1/chat/session-1", marker: page.locator("textarea") },
-            { path: "/settings/config", marker: page.getByTestId("settings-config-heading") },
-            { path: "/settings/knowledge", marker: page.getByTestId("settings-knowledge-heading") },
+            {
+                path: "/settings/instance/llm-provider",
+                marker: page.getByTestId("settings-domain-view"),
+            },
+            {
+                // 知识库只有工作区承载（T4.4）：旧 /settings/knowledge 已重定向到这里。
+                path: "/workspace/workspace-1/settings?tab=knowledge",
+                marker: page.getByTestId("settings-knowledge-heading"),
+            },
             { path: "/settings/data", marker: page.getByTestId("settings-data-heading") },
             {
                 path: "/settings/monitoring",
@@ -177,7 +186,9 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
     });
 
     test("Sidebar navigation updates route and active state", async ({ page }) => {
-        await setupMockAuth(page);
+        // 侧栏「设置」推的是 /settings/config（旧字面量），路由把它重定向到实例层第一个域页；
+        // 实例层域页要 cap:instance:admin，故夹具给能力，断言的是重定向后的真实落点。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
@@ -188,8 +199,8 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
 
         await page.getByRole("button", { name: "设置", exact: true }).click();
-        await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible();
+        await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
+        await expect(page.getByTestId("settings-domain-view")).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-sidebar-settings-navigation.png");
     });
 
@@ -353,7 +364,9 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             });
         });
 
-        await page.goto("/settings/config");
+        // 旧：/settings/config 里的「模型提供方」分区；新：用户层 llm-provider 域页承载 ProviderHub
+        // （实例层域页只给「去用户层/工作区层」引导，不渲染 ProviderHub 本体）。
+        await page.goto("/settings/user/llm-provider");
         const hub = page.getByTestId("provider-hub");
         await expect(hub).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.getByTestId("provider-hub-connect").click();
