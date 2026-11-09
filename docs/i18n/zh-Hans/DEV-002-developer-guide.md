@@ -133,7 +133,7 @@ sequenceDiagram
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
 | `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
-| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启；目标栈解析 `-StackId`/`--stack` 参数 > `XIHE_STACK_ID` env > stack-1 缺省，栈内 DSN 解析顺序 `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB`（缺省 `12634/xihe_1`，与 0533 起 `xihe_<n>` 命名一致），运行时会打印实际目标。**D-766 起它是手动重置入口**：`dev-stack` 起栈会自动注入并 upsert 密码（见 §4「dev 管理员密码自动注入」） |
+| `mise run reset-admin` | 重置 dev `admin@xihe.local` 密码，随机 24 字节 base64url，免重启；目标栈解析 `-StackId`/`--stack` 参数 > `XIHE_STACK_ID` env > stack-1 缺省，栈内 DSN 解析顺序 `--url` > `XIHE_CP_DATASOURCE_URL` > `localhost:$XIHE_PG_PORT/$POSTGRES_DB`（缺省 `12634/xihe_1`，与 0533 起 `xihe_<n>` 命名一致），运行时会打印实际目标。**D-766 起它是手动重置入口**：`dev-stack` 起栈会自动注入并 upsert 密码（见 §4「dev 管理员密码自动注入」）。**BL-523**：密码走 stdin 或 `XIHE_RESET_ADMIN_PASSWORD`（`--password`/`-Password` 保留但废弃），且账号行不存在时显式失败（exit 3）而非自建 |
 
 命令示例：
 
@@ -420,10 +420,10 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 
 - **来源优先级**（高 → 低）：① 显式 `XIHE_DEV_ADMIN_PASSWORD`（调用方/CI 指定，不落盘）；② 本机 `.env` 链已配置值（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义、fill-gaps，OS env 不被覆盖）；③ `.local/dev/admin-password` 里已持久的值；④ 首次生成 24 字节 base64url（32 字符）并持久到同一路径（目录 `0700` / 文件 `0600`，`.local/` 已在 `.gitignore`），此后跨重启稳定复用。空 / 纯空白值一律视为未配置（`.env.example` 的空占位不会被当成空密码）。
 - **注入点**：`start` 在 spawn 之前把值写进 supervisor 的子进程 env（`childEnv.XIHE_DEV_ADMIN_PASSWORD`）⇒ CP 的 `DataSeeder` 对**空库**直接按该密码建 `admin@xihe.local`（原有 `childEnv` 的其它键——`XIHE_STACK_ID`/`XIHE_ENV`——行为不变）。
-- **upsert 时机**：四个服务 `waitReady` 通过、租约翻 `started` **之后**，复用既有 `scripts/reset-admin.ps1`（内部 `ResetAdmin.java`）做 UPDATE/INSERT upsert——`DataSeeder` **只建不更**，**存量库**靠这一步拿到同一个密码；不新写 SQL。
+- **upsert 时机**：四个服务 `waitReady` 通过、租约翻 `started` **之后**，复用既有 `scripts/reset-admin.ps1`（内部 `ResetAdmin.java`）**只做 UPDATE**——`DataSeeder` **只建不更**，**存量库**靠这一步拿到同一个密码；不新写 SQL。**BL-523 起该入口不再自建账号**：`admin@xihe.local` 行不存在时显式失败（exit 3）并提示 `mise run dev:reset` 或重启该栈让 `DataSeeder` 建行（旧 INSERT 分支写 `users.role`，而 V89 已删该列，必然 SQL 报错；自建行还会缺 instance owner / SUPER_ADMIN 绑定）。
 - **跳过条件**（都会打印跳过原因）：`XIHE_LOCAL_MODE=true`（PLAN-0526 的零用户首启语义——此时 upsert 会凭空造出 admin 行）；非 Windows（`reset-admin.ps1` 仅 Windows，提示手动 `mise run reset-admin`）；栈未 ready。
 - **失败不阻塞起栈**：upsert 失败只 WARN 并给补救命令（`mise run reset-admin` 或重跑 `start`）——`start` 的退出码仍只由四端口就绪决定。
-- **日志不含密码值**：只打 `source`/`length`/`file`/`persisted`（附 `value=not-logged`）；密码经子进程 env（`$env:XIHE_DEV_ADMIN_PASSWORD`）传给入口，**不进命令行**。仍需知道的边界：`ResetAdmin.java` 自己以 `--password` argv 收值（该入口现有形态；改成 stdin/env 需动 `packages/**`，另立卡）。
+- **日志不含密码值**：只打 `source`/`length`/`file`/`persisted`（附 `value=not-logged`）；密码经子进程 env 传给入口，**不进命令行**。reset-admin 那条链路用 **`XIHE_RESET_ADMIN_PASSWORD`**（BL-523：入口内优先级 `stdin > env > --password`，最后者保留但打 deprecation WARN）；`-Password` 参数只是由 wrapper 转成 env，**argv 里不再出现明文**。
 - **首次 upsert 可能占一次构建位**：若 `packages/control-plane/target/reset-admin-classpath.txt` 缺失或早于 `pom.xml`，那一次 upsert 会先跑 `mvn dependency:build-classpath`——**不是编译**，但确实会进 Maven，**别当成编译竞争误报**；该缓存生成一次后长期复用。
 - **与旧描述的关系**：模式 A（`mise run dev:host`）**不走这条路径**，其「随机密码且不打印、需手动 `reset-admin`」结论仍然成立（见模式 B 段落上的 supersede 注）。
 

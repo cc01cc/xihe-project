@@ -72,6 +72,7 @@ import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs
 import {
   buildResetAdminCommand,
   formatDevAdminPassword,
+  resetAdminEnv,
   resetAdminWrapperPath,
   resolveDevAdminPassword,
 } from './lib/dev-admin-password.mjs';
@@ -688,20 +689,23 @@ function applyDevAdminPassword(adminPassword) {
   }
   const wrapper = resetAdminWrapperPath(projectRoot);
   const { args: psArgs } = buildResetAdminCommand({ wrapperPath: wrapper, stackId: derived.stackId });
+  // BL-523：密码**只经 env** 传给入口（`XIHE_RESET_ADMIN_PASSWORD`，ResetAdmin 内部优先级
+  // stdin > env > --password），argv 里不再出现明文 —— 进程表 / shell 历史都看不到。
+  const upsertEnv = resetAdminEnv({ env: childEnv, password: adminPassword });
   const startedAt = Date.now();
   let result = spawnSync('pwsh', psArgs, {
     cwd: projectRoot,
-    env: childEnv,
+    env: upsertEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
     windowsHide: true,
   });
   // pwsh 7 不一定装（mise 任务用 pwsh，但 DSH/裸 shell 下的宿主可能只有 5.1）：ENOENT 时退回
-  // powershell.exe，命令体对两者通用（`-Command` + `$env:`）。
+  // powershell.exe，命令体对两者通用（`-Command`）。
   if (result.error?.code === 'ENOENT') {
     result = spawnSync('powershell.exe', psArgs, {
       cwd: projectRoot,
-      env: childEnv,
+      env: upsertEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
       windowsHide: true,
@@ -714,12 +718,15 @@ function applyDevAdminPassword(adminPassword) {
     );
     return { ok: true };
   }
+  // exit 3 = ResetAdmin 显式报告「用户行不存在」（BL-523：不再自建 admin 行），指向建行路径。
+  const userMissing = result.status === 3;
   console.warn(
     `[dev-stack] dev admin upsert: FAILED (exit ${result.status ?? 'spawn-error'}${result.error ? `, ${result.error.code}` : ''}, ${elapsed}ms) — `
-      + `the stack is up, but the injected password may not match this database yet; `
-      + `run \`mise run reset-admin\` (or re-run \`start\`) to repair.`,
+      + (userMissing
+        ? 'the admin user row does not exist in this database; run `mise run dev:reset` or restart the stack so CP DataSeeder creates it, then re-run `start`.'
+        : 'the stack is up, but the injected password may not match this database yet; run `mise run reset-admin` (or re-run `start`) to repair.'),
   );
-  // 摘最后几行便于定位（reset-admin 在 -Password 形态下不会回显密码；仍只摘尾部并限行数）。
+  // 摘最后几行便于定位（密码只走 env、stdin，入口不回显；仍只摘尾部并限行数）。
   for (const chunk of [result.stdout, result.stderr]) {
     const text = String(chunk ?? '').trim();
     if (text === '') continue;

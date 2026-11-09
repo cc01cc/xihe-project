@@ -9,6 +9,8 @@ import {
     ADMIN_PASSWORD_ENV,
     RESET_ADMIN_WRAPPER,
     buildResetAdminCommand,
+    RESET_ADMIN_PASSWORD_ENV,
+    resetAdminEnv,
     devAdminPasswordFile,
     formatDevAdminPassword,
     generateDevAdminPassword,
@@ -162,18 +164,28 @@ describe("formatDevAdminPassword（只打非密元数据）", () => {
     });
 });
 
-describe("buildResetAdminCommand（复用既有入口、密码不进命令行）", () => {
-    test("密码走子进程 env（$env:XIHE_DEV_ADMIN_PASSWORD），命令行里没有值", () => {
+describe("buildResetAdminCommand（复用既有入口、密码完全不进命令行）", () => {
+    test("BL-523: 命令行里既没有密码值、也没有任何密码参数（连 $env: 引用都不留）", () => {
         const wrapperPath = resetAdminWrapperPath("H:/repo");
         const { args } = buildResetAdminCommand({ wrapperPath, stackId: "stack-2" });
         assert.deepEqual(args.slice(0, 2), ["-NoProfile", "-Command"]);
         const command = args[2];
-        assert.ok(command.includes("$env:XIHE_DEV_ADMIN_PASSWORD"), "the password must come from the child env");
         assert.ok(command.includes("stack-2"));
-        assert.ok(command.includes(wrapperPath.replaceAll("\\", "\\")));
-        // 构造函数根本不收密码 ⇒ 任何命令行里都拼不出值
+        assert.ok(command.includes(wrapperPath));
+        assert.ok(!command.includes("-Password"), command);
+        assert.ok(!command.includes("$env:"), "no env reference is needed any more — the value travels via spawn env");
         assert.ok(!JSON.stringify(args).includes(SECRET));
-        assert.ok(!command.includes("-Password '"), "no literal password value may be baked into the command");
+    });
+
+    test("密码只经 spawn env（XIHE_RESET_ADMIN_PASSWORD）传递，且不污染其他 env 键", () => {
+        const env = resetAdminEnv({ env: { PATH: "x", XIHE_STACK_ID: "stack-2" }, password: SECRET });
+        assert.equal(env[RESET_ADMIN_PASSWORD_ENV], SECRET);
+        assert.equal(env.XIHE_STACK_ID, "stack-2");
+        assert.equal(env.PATH, "x");
+        // 独立函数：不传 env 时以 process.env 为底仍是新对象，不会写坏 process.env
+        const fresh = resetAdminEnv({ password: SECRET });
+        assert.equal(fresh[RESET_ADMIN_PASSWORD_ENV], SECRET);
+        assert.notEqual(fresh, process.env);
     });
 
     test("路径与栈名里的单引号被转义成 ''（不会被当代码执行）", () => {

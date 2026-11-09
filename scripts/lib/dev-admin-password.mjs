@@ -128,19 +128,30 @@ function psLiteral(value) {
     return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+/** `ResetAdmin.java` 的**非 argv** 输入通道（BL-523 / D-766 后续）：优先级高于已废弃的 `--password`。 */
+export const RESET_ADMIN_PASSWORD_ENV = "XIHE_RESET_ADMIN_PASSWORD";
+
 /**
  * 生成调用既有 `reset-admin.ps1` 的 PowerShell 参数（`pwsh` / `powershell.exe` 通用）。
  *
- * 关键点：密码**从子进程 env 读**（`$env:XIHE_DEV_ADMIN_PASSWORD`），不进命令行 ——
- * 命令行会进进程列表与 shell 历史。`ResetAdmin.java` 自己仍以 `--password` 接收（该入口
- * 现有形态，改它属产品面/另立卡），那一步是本链路唯一仍走 argv 的环节。
+ * 关键点：命令行里**不再出现任何密码**（连 `$env:` 引用都去掉更干脆）。密码只经子进程 env
+ * `XIHE_RESET_ADMIN_PASSWORD` 传给 `ResetAdmin.java`（`stdin > env > --password`，见 BL-523）；
+ * 命令行会进进程表与 shell 历史，这条链路必须彻底不碰它。
  *
- * @param {{wrapperPath: string, stackId: string, envName?: string}} options
- * @returns {{args: string[]}} 交给 `spawnSync('pwsh'|'powershell.exe', args)`
+ * @param {{wrapperPath: string, stackId: string}} options
+ * @returns {{args: string[]}} 交给 `spawnSync('pwsh'|'powershell.exe', args, { env })`
  */
-export function buildResetAdminCommand({ wrapperPath, stackId, envName = ADMIN_PASSWORD_ENV }) {
-    const command = `& ${psLiteral(wrapperPath)} -Password $env:${envName} -StackId ${psLiteral(stackId)}`;
+export function buildResetAdminCommand({ wrapperPath, stackId }) {
+    const command = `& ${psLiteral(wrapperPath)} -StackId ${psLiteral(stackId)}`;
     return { args: ["-NoProfile", "-Command", command] };
+}
+
+/**
+ * 给 `reset-admin.ps1` 子进程准备 env：在既有 env 上叠加非 argv 密码通道。
+ * **这是密码在本链路里唯一的传递方式**（不写盘、不进 argv、不进日志）。
+ */
+export function resetAdminEnv({ env = process.env, password }) {
+    return { ...env, [RESET_ADMIN_PASSWORD_ENV]: password };
 }
 
 /**
