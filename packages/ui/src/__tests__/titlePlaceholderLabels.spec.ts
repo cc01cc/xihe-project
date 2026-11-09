@@ -8,7 +8,7 @@ import WorkspaceToolbar from "../features/workspace/components/WorkspaceToolbar.
 
 vi.mock("vue-router", async (importOriginal) => ({
     ...(await importOriginal<typeof import("vue-router")>()),
-    useRouter: () => ({ push: vi.fn() }),
+    useRouter: () => ({ push: vi.fn<() => void>() }),
 }));
 
 const SRC = resolve(process.cwd(), "src");
