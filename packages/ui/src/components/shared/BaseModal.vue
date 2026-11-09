@@ -168,6 +168,7 @@ function preventMountAutoFocus(event: Event) {
                                 type="button"
                                 class="p-1 rounded hover:bg-accent"
                                 :aria-label="t('common.close')"
+                                data-testid="modal-close"
                                 @click="emit('close')"
                             >
                                 <X class="size-4" aria-hidden="true" />

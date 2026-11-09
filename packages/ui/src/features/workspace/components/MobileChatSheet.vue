@@ -94,6 +94,7 @@ defineExpose({ toggle });
             class="fixed bottom-4 right-4 z-30 size-12 rounded-full bg-action text-action-foreground shadow-lg flex items-center justify-center"
             :title="t('chat.titleChat')"
             :aria-label="t('common.openChat')"
+            data-testid="mobile-chat-open"
             @click="toggle"
         >
             <MessageCircle class="size-5" aria-hidden="true" />
