@@ -11,9 +11,11 @@ import { defaultLayerPath } from "../../lib/settingsIa";
 const { t } = useI18n();
 const route = useRoute();
 
-const backPath = route.path.startsWith("/settings/user")
-    ? defaultLayerPath("user")
-    : defaultLayerPath("instance");
+/** 找不到页面时给一条**存在的**出口：按 URL 段判断原来想去哪一层。 */
+const backPath =
+    route?.path?.startsWith("/settings/user/") === true
+        ? defaultLayerPath("user")
+        : defaultLayerPath("instance");
 </script>
 
 <template>
