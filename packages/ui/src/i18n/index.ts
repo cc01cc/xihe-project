@@ -1418,6 +1418,14 @@ const messages = {
                 backendGapBadgeGeneric: "后端缺口",
                 gapDialogTitle: "{item}：暂无后端承载",
                 gapDialogDismiss: "知道了",
+                noAtomTitle: "本页没有权限原子：",
+                noAtomBody:
+                    "内容按你的归属自动收窄 —— 看到空列表不代表没权限，也不代表数据丢了；看不到别人的条目是设计如此，这里不会出现 403。",
+                atomDeniedTitle: "权限不足",
+                atomDeniedBody:
+                    "缺少 {atom}。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
+                atomDeniedNotGap:
+                    "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
                 gapNoteAgent:
                     "智能体在 CP 没有注册实体表（只有分类表与工作区绑定），实例层没有承载；入口先留位，等后端补注册实体后再接。",
                 gapNoteAgentUser:
@@ -4014,6 +4022,14 @@ const messages = {
                 backendGapBadgeGeneric: "Backend gap",
                 gapDialogTitle: "{item}: no backend yet",
                 gapDialogDismiss: "Got it",
+                noAtomTitle: "This page has no permission atom:",
+                noAtomBody:
+                    "content is narrowed by ownership — an empty list does not mean you lack permission, and it does not mean data was lost; other people's entries are invisible by design and you will not see a 403 here.",
+                atomDeniedTitle: "Insufficient permission",
+                atomDeniedBody:
+                    "Missing {atom}. This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
+                atomDeniedNotGap:
+                    "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
                 gapNoteAgent:
                     "The control plane has no agent registry table (only tool-face classification and workspace bindings), so the instance layer has nothing to carry. The entry stays here until the backend adds a registry.",
                 gapNoteAgentUser:

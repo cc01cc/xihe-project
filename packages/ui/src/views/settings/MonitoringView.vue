@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
+import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
 import { api, type VersionInfo } from "../../composables/api";
 
 const { t } = useI18n();
@@ -110,6 +111,9 @@ onUnmounted(() => {
 
 <template>
     <div class="max-w-2xl mx-auto px-4 py-6">
+        <!-- PLAN-0752 T4.4：监控页在 CP 侧只有 isAuthenticated（StatusController:31 / VersionController:49）
+             —— 没有 atom，所以给信息条，不给 403。 -->
+        <SettingsPermissionGate variant="no-atom" />
         <div class="flex items-center justify-between mb-6">
             <div>
                 <h2 data-testid="settings-monitoring-heading" class="text-lg font-semibold">

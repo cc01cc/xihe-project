@@ -27,11 +27,22 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             deleteCredential: vi.fn<typeof apiModule.api.deleteCredential>(),
             getCredentialReferences: vi.fn<typeof apiModule.api.getCredentialReferences>(),
             listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
+            getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
         },
     };
 });
 
 const mockedApi = vi.mocked(api, true);
+
+/** PLAN-0752 T4.4：写操作按 atom 门控；默认给「已授予」，各用例按需收回。 */
+function selfPermissions(atoms: string[]) {
+    return {
+        userId: "user-1",
+        instanceCapabilities: [] as string[],
+        instancePermissions: atoms.map((actionClass) => ({ actionClass, resource: "*" })),
+        workspaces: [],
+    };
+}
 
 function credential(overrides: Partial<CredentialSummary> = {}): CredentialSummary {
     return {
@@ -78,7 +89,13 @@ async function clickBody(selector: string) {
 beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
+    // auth store 的 token 取自 localStorage；没有 token 时 ensureSelfPermissions() 直接 fail-closed。
+    localStorage.setItem("xihe-token", "test-token");
     setActivePinia(createPinia());
+    // 默认：这台开发机的账号被授予凭据管理（V87:145 给默认角色的 credential_manage@credential:*）。
+    mockedApi.getSelfPermissions.mockResolvedValue(
+        selfPermissions(["credential_manage", "credential_reveal"]) as never,
+    );
 });
 
 afterEach(() => {
@@ -180,6 +197,33 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
         await flushPromises();
         expect(bodyEl('[data-testid="credentials-reveal-dialog"]')).toBeTruthy();
         expect(bodyEl('[data-testid="credentials-reveal-password"]')).toBeTruthy();
+    });
+
+    // PLAN-0752 T4.4：有 atom ⇒ 出「新建」按钮（正常路径）；没 atom ⇒ 403 说明 + **无按钮**，
+    // 但列表照旧加载（列表在 CP 侧没有 atom，整页 403 会骗人）。
+    it("shows the create entry when credential_manage is granted", async () => {
+        mockedApi.listCredentials.mockResolvedValue({ credentials: [], count: 0 });
+
+        await mountPanel();
+        await flushPromises();
+
+        expect(bodyEl('[data-testid="credentials-create-button"]')).toBeTruthy();
+        expect(bodyEl('[data-testid="settings-atom-denied"]')).toBeNull();
+    });
+
+    it("replaces the create entry with a 403 explanation when credential_manage is missing", async () => {
+        mockedApi.getSelfPermissions.mockResolvedValue(selfPermissions([]) as never);
+        mockedApi.listCredentials.mockResolvedValue({ credentials: [], count: 0 });
+
+        await mountPanel();
+        await flushPromises();
+
+        expect(bodyEl('[data-testid="credentials-create-button"]')).toBeNull();
+        const denied = bodyEl<HTMLElement>('[data-testid="settings-atom-denied"]');
+        expect(denied?.textContent).toContain("credential_manage");
+        // 列表仍然要发（无 atom），因此「无谓请求」的判据落在这里：只有列表请求，没有写请求
+        expect(mockedApi.listCredentials).toHaveBeenCalled();
+        expect(mockedApi.createCredential).not.toHaveBeenCalled();
     });
 
     // PLAN-0752 T4.2：工作区层把同一份面板限定到 owner_type=WORKSPACE（凭据只有 USER/WORKSPACE

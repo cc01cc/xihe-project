@@ -5,10 +5,12 @@ import { Plus, RefreshCw } from "@lucide/vue";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import CredentialCreateDialog from "./CredentialCreateDialog.vue";
+import SettingsPermissionGate from "../SettingsPermissionGate.vue";
 import CredentialDetailDialog from "./CredentialDetailDialog.vue";
 import CredentialLinkDialog from "./CredentialLinkDialog.vue";
 import CredentialReplaceDialog from "./CredentialReplaceDialog.vue";
 import CredentialRevealDialog from "./CredentialRevealDialog.vue";
+import { useAuthStore } from "../../../stores/auth";
 import { useCredentialsStore } from "../../../stores/credentials";
 import type { CredentialOwnerType, CredentialSummary } from "../../../types";
 
@@ -25,7 +27,16 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n(),
-    store = useCredentialsStore();
+    store = useCredentialsStore(),
+    auth = useAuthStore();
+
+/**
+ * PLAN-0752 T4.4：凭据页**不是**整页 403 —— 列表在 CP 侧没有 atom（只按归属收窄，
+ * `CredentialController:57-58`），整页拒绝会骗人。有 atom 的是**写操作**：注册需要
+ * `credential_manage@credential:*`（`CredentialAdminService:265-286`）。所以这里把 403 语义
+ * 落在「新建」这个动作上：没被授予就换成 403 说明，而不是给一个点了必然 403 的按钮。
+ */
+const canManage = computed(() => auth.hasInstanceAtom("credential_manage"));
 
 /** 只在面板被限定到某一层时，把「这里管的是哪种归属」说清楚（避免和另一层的列表混淆）。 */
 const scopeNote = computed(() =>
@@ -80,7 +91,8 @@ function ownerLabel(credential: CredentialSummary): string {
         : t("credentials.ownerUser");
 }
 
-onMounted(() => {
+onMounted(async () => {
+    await auth.ensureSelfPermissions();
     void store.load(props.ownerType);
 });
 </script>
@@ -117,6 +129,7 @@ onMounted(() => {
                     {{ t("credentials.refresh") }}
                 </Button>
                 <Button
+                    v-if="canManage"
                     type="button"
                     size="sm"
                     data-testid="credentials-create-button"
@@ -127,6 +140,12 @@ onMounted(() => {
                 </Button>
             </div>
         </header>
+
+        <!-- 无 credential_manage ⇒ 403 说明（不是「后端缺口」，也不是「无此概念」）。
+             外层 div 自带 testid：组件根节点已有 settings-atom-denied，直接透传 data-testid 会覆盖它。 -->
+        <div v-if="!canManage" data-testid="credentials-manage-denied" class="mb-4">
+            <SettingsPermissionGate variant="atom-denied" atom="credential_manage" />
+        </div>
 
         <div
             v-if="store.error"
