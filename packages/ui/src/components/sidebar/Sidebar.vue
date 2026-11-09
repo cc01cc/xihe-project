@@ -30,6 +30,7 @@ import {
 import { useLiveResize } from "../../composables/useLiveResize";
 import { useWindowSize } from "@vueuse/core";
 import { useSessionStore } from "../../stores/session";
+import { defaultLayerPath } from "../../lib/settingsIa";
 import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
 
 const props = defineProps<{
@@ -165,8 +166,9 @@ function clearSearch() {
     sessionStore.searchQuery = "";
 }
 
+/** task-113：指向最终地址（`lib/settingsIa` 的 SSOT），不再依赖 `/settings/config` 的 redirect。 */
 function navigateSettings() {
-    void router.push("/settings/config");
+    void router.push(defaultLayerPath("instance"));
 }
 
 function handleLogout() {

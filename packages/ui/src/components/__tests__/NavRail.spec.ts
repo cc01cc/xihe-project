@@ -132,7 +132,7 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
         patchAuth({ isInstanceAdmin: true });
 
         const settingsRail = await mountRail();
-        routeState.path = "/settings/config";
+        routeState.path = "/settings/instance/llm-provider";
         const settingsWrapper = await mountRail();
         expect(
             settingsWrapper.get('[data-testid="nav-rail-settings"]').attributes("aria-current"),
@@ -171,7 +171,7 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
         const wrapper = await mountRail();
 
         await wrapper.get('[data-testid="nav-rail-settings"]').trigger("click");
-        expect(pushSpy).toHaveBeenCalledWith("/settings/config");
+        expect(pushSpy).toHaveBeenCalledWith("/settings/instance/llm-provider");
 
         await wrapper.get('[data-testid="nav-rail-logout"]').trigger("click");
         await flushPromises();
@@ -188,7 +188,7 @@ describe("NavRail (PLAN-0582 S2: fixed 56px icon-only rail)", () => {
         const wrapper = await mountRail();
         const pushesBefore = pushSpy.mock.calls.length;
         await wrapper.get('[data-testid="nav-rail-settings"]').trigger("click");
-        expect(pushSpy.mock.calls.at(-1)).toEqual(["/settings/config"]);
+        expect(pushSpy.mock.calls.at(-1)).toEqual(["/settings/instance/llm-provider"]);
         expect(pushSpy.mock.calls.length).toBe(pushesBefore + 1);
     });
 });

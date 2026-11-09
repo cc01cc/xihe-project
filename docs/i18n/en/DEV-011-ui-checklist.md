@@ -5,7 +5,7 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 11
 created: 2026-05-31
-updated: 2026-10-31
+updated: 2026-11-10
 status: active
 ---
 
@@ -107,6 +107,7 @@ status: active
 - [ ] Zero key-set difference between locales (measured 2026-11-10: `packages/ui/src/i18n/index.ts` zh 2307 / en 2307) — machine check: `mise run lint:i18n` (a standing gate since task-96; read-only, silent on success)
 - [ ] A key's `{placeholder}` set is identical on both sides (drift renders "undefined" at runtime)
 - **Known trap (measured 2026-11-10)**: a wrong prefix inside a same-named family only shows up at runtime — the second line of `ApprovalModal.vue`'s "handled in another window" notice used `chat.approvalResolvedElsewhereDraftKept` while the key lives under `workspace.*`, so users saw the bare key (fixed in `efa527a0`). Scan recipe: key diff + placeholder drift + static `t("…")` references; the scanner is now a standing repo gate: `mise run lint:i18n` (`A03-xihe/scripts/i18n-scan.mjs`, task-96).
+- **Known trap (measured 2026-11-10) | ellipsis glyph**: a hand-written `Loading...` (three ASCII dots) and the actual i18n value `common.loading` = `加载中…` (**single U+2026 character**) are different strings ⇒ a `text=Loading...` / `textContent` assertion fails even though the page renders it (task-112: the product was already fixed and the test still failed). **Rules**: ① assert on structural anchors first (`data-testid`, role, `aria-*`); ② when text must be asserted, take the value from the i18n source instead of a literal; ③ if a literal is unavoidable, match only a punctuation-free stable prefix. Same family of character diffs: full-width vs half-width brackets, `：`vs`:`, `·`vs`-`, and non-breaking spaces (U+00A0).
 
 ## 9. E2E Screenshot Baselines
 
@@ -122,3 +123,5 @@ status: active
 - [ ] `workspace-tree-empty` — File tree empty state (primary create-file + secondary upload + drag hint)
 
 > **Platform limitation (do not misread as a regression)**: baseline comparison **only runs on Linux** (`packages/ui/e2e/helpers/visual.ts:16-26`: on non-Linux it attaches a `visual-baseline-platform` annotation and returns). A "pass" on Windows means **not compared** — it can only be reviewed manually via actual/diff, and the record must state "Linux lane not run".
+
+> **Assertion trap (measured 2026-11-10) | redirects drop the query string**: since `6002ea60` (PLAN-0752 M1) `/settings/config` is `redirect: () => defaultLayerPath("instance")`, which **does not carry the query** ⇒ `goto("/settings/config?tab=tool-faces")` silently loses its parameter, so a test can **land on the right page while asserting a different state** (an old read-only view vs the domain page's default tab). **Rules**: ① before asserting, check whether the path is a component route or a redirect in `router/index.ts`, and whether the redirect forwards `query`/`params`; ② for tests aimed at legacy entries, also assert the landed URL (`page.url()`) or the target page testid instead of content alone; ③ during migration, point tests straight at the final address (and in new code never push a legacy literal — reuse the SSOT helper from `lib/settingsIa`).
