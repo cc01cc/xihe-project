@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ConfigKeyMeta } from "../../stores/config";
+import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 const { t } = useI18n();
@@ -280,6 +281,13 @@ function handleReset(key: string) {
                 <span class="text-muted-foreground">{{ expanded ? "▾" : "▸" }}</span>
             </span>
         </button>
+        <!-- PLAN-0752 T3.5：域级摘要行（数字来自 CP meta，UI 不自己算） -->
+        <ConfigDomainSummary
+            v-if="layer && meta && Object.keys(meta).length > 0"
+            :domain="domain"
+            :layer="layer"
+            :meta="meta"
+        />
         <div v-if="expanded" class="px-4 pb-3 space-y-2">
             <p
                 v-if="note"
