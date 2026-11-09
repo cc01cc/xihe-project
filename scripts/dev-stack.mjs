@@ -73,7 +73,8 @@ import {
   buildResetAdminCommand,
   formatDevAdminPassword,
   resetAdminWrapperPath,
-  resolveDevAdminPassword,
+  resolveDevAdminPasswordSafe,
+  resolveLocalMode,
 } from './lib/dev-admin-password.mjs';
 
 // task-234 B：DSH 子 shell 不继承 User 级 env ⇒ 直启时 process.env 里没有
@@ -678,8 +679,15 @@ async function stopPg() {
 function applyDevAdminPassword(adminPassword) {
   // local mode（PLAN-0526）的设计前提是「零用户首启」：此时 upsert 会凭空造出 admin 行，
   // 破坏首启引导语义，必须跳过。
-  if (String(childEnv.XIHE_LOCAL_MODE ?? '').trim().toLowerCase() === 'true') {
-    console.log('[dev-stack] dev admin upsert: skipped (XIHE_LOCAL_MODE=true keeps the first-run zero-user state)');
+  //
+  // 判定必须与 CP 同口径：**OS env 优先，其次 `.env` 链**（D-770 / W-22 verify 发现）。
+  // CP 的 DotenvLoader 把 `.env*` 读进 system properties，所以「只在 `.env.local` 写
+  // XIHE_LOCAL_MODE=true」时 CP 真的进了 local mode —— 这里只读 process.env 就会漏判。
+  const localMode = resolveLocalMode({ env: childEnv, cwd: projectRoot });
+  if (localMode.enabled) {
+    console.log(
+      `[dev-stack] dev admin upsert: skipped (XIHE_LOCAL_MODE=true via ${localMode.source} keeps the first-run zero-user state)`,
+    );
     return { ok: false, skipped: 'local-mode' };
   }
   if (!isWindows) {
@@ -738,9 +746,20 @@ async function start() {
   // DataSeeder 读 `XIHE_DEV_ADMIN_PASSWORD`），存量库的更新由 waitReady 之后的
   // reset-admin upsert 补上（见 applyDevAdminPassword）。0 产品面改动。
   // 日志只打来源/字符数/落盘路径 —— **绝不打印密码值**。
-  const devAdminPassword = resolveDevAdminPassword({ projectRoot });
-  childEnv.XIHE_DEV_ADMIN_PASSWORD = devAdminPassword.password;
-  console.log(formatDevAdminPassword(devAdminPassword));
+  //
+  // D-770 / W-22 verify：解析或落盘失败发生在 spawn **之前**，原来会直接打断起栈（与文档承诺的
+  // 「密码链路失败不阻塞起栈」不一致）。这里降级为 WARN + 跳过注入，`start` 继续走。
+  const devAdmin = resolveDevAdminPasswordSafe({ projectRoot });
+  const devAdminPassword = devAdmin.ok ? devAdmin : null;
+  if (devAdmin.ok) {
+    childEnv.XIHE_DEV_ADMIN_PASSWORD = devAdmin.password;
+    console.log(formatDevAdminPassword(devAdmin));
+  } else {
+    console.warn(
+      `[dev-stack] dev admin password: unavailable (${devAdmin.reason}) — continuing WITHOUT injection; `
+        + 'run `mise run reset-admin` if you need to log in to this stack.',
+    );
+  }
   const cargoTarget = cargoTargetForStack({ stackId: derived.stackId, projectRoot, env: process.env });
   console.log(
     `[dev-stack] cargo target: ${cargoTarget ? `${cargoTarget} (per-stack)` : 'default .cargo/config.toml target (shared warm cache)'}`,
@@ -803,8 +822,13 @@ async function start() {
   // D-766 乙案最小版：CP 起来（DB 已迁移、admin 行可能已存在）之后再做 upsert ——
   // 存量库靠这一步拿到本轮注入的密码（DataSeeder 只建不更）。租约先翻 started，
   // 不让这一段 java 耗时把「phase=starting」窗口拉长。
-  if (ready) applyDevAdminPassword(devAdminPassword);
-  else console.log('[dev-stack] dev admin upsert: skipped (stack is not ready)');
+  if (!devAdminPassword) {
+    console.log('[dev-stack] dev admin upsert: skipped (no injected password; see the WARN above)');
+  } else if (!ready) {
+    console.log('[dev-stack] dev admin upsert: skipped (stack is not ready)');
+  } else {
+    applyDevAdminPassword(devAdminPassword);
+  }
   const rows = SERVICES.map((service) => ({
     service,
     port: ports[service],
