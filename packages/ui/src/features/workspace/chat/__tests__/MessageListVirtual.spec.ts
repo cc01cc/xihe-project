@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import MessageList from "../components/MessageList.vue";
+import { DEFAULT_VIRTUAL_OVERSCAN } from "../composables/virtualWindow";
 import {
     MessageScroller,
     MessageScrollerContent,
@@ -671,6 +672,262 @@ describe("MessageList window swap vs new message (BL-316 step 2)", () => {
             expect(moved, "数据变化必须仍然进入跟随/锚定路径（不得被'投影换页'分支一起吞掉）").toBe(
                 true,
             );
+
+            wrapper.unmount();
+        } finally {
+            restoreLayout();
+        }
+    });
+});
+
+/**
+ * BL-382 A/B 回归 —— prepend 的锚定代价必须与**表长无关**。
+ *
+ * 缺陷（`docs/evidence/bl382-attribution/proof.md` §3.1）：每补一页历史都会把 `historyMutationPause`
+ * 置真 ⇒ 窗口化关闭 ⇒ **整表挂载一次**、等一帧再拆回窗口。99 轮 = 99 次全表挂载/卸载，实测 192 个长任务
+ * （1.94/轮）、第 99 轮 5698ms，代价随「表长 × 轮次」增长。
+ *
+ * 修复分两半，各自有独立判据：
+ * - **B**（上界）：只有 `rows.length ≤ HISTORY_PAUSE_MAX_ROWS(200)` 才允许走全表渲染；超过就保持窗口化。
+ * - **A**（补偿）：大表 prepend 时在 prepend 前记录视口几何、DOM 更新后**同一帧**把 `scrollTop` 加上
+ *   `scrollHeight` 增量 ⇒ 视口里那几行视觉位置不变（渲染集合不变、只是顶部占位长高）。
+ *
+ * 判据对应 proof §8.1：AC-1（窗口在且不等于全量）、AC-2（单次 prepend 渲染行数峰值 ≤ 窗口 + 2×overscan）、
+ * AC-3（大表 `virtualEnabled` 与 `historyMutationPause` 无关）。
+ */
+describe("MessageList prepend anchoring is bounded by table length (BL-382 A/B)", () => {
+    const ROW_HEIGHT = 80;
+    const VIEWPORT_HEIGHT = 640;
+    /** 窗口 + 2×overscan（overscan=6）+ 取整余量：超过它就意味着"又整表渲染了"。 */
+    const OVERSHOOT_GUARD = 2 * DEFAULT_VIRTUAL_OVERSCAN + 2;
+    /** 让 6 帧校正循环（jsdom 的 rAF ≈ 16ms/帧）跑完，避免测试结束仍在写 scrollTop。 */
+    const RAF_DRAIN_MS = 160;
+
+    const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+    const originalScrollTo = (Element.prototype as unknown as { scrollTo?: Element["scrollTo"] })
+        .scrollTo;
+    const hadOwnClientHeight = Object.prototype.hasOwnProperty.call(
+        HTMLElement.prototype,
+        "clientHeight",
+    );
+
+    function stubLayout() {
+        Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+            return {
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 100,
+                bottom: ROW_HEIGHT,
+                width: 100,
+                height: ROW_HEIGHT,
+                toJSON() {
+                    return {};
+                },
+            } as DOMRect;
+        };
+        Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+            configurable: true,
+            get: () => VIEWPORT_HEIGHT,
+        });
+        // provider 的 auto-scroll 会调 `scrollTo`；jsdom 未实现，且真滚会覆盖本用例显式设的位置。
+        Element.prototype.scrollTo = (() => undefined) as Element["scrollTo"];
+    }
+
+    function restoreLayout() {
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+        if (originalScrollTo) Element.prototype.scrollTo = originalScrollTo;
+        else delete (Element.prototype as { scrollTo?: Element["scrollTo"] }).scrollTo;
+        if (!hadOwnClientHeight) {
+            delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+        }
+    }
+
+    /** jsdom 的 `scrollTop` setter 是 no-op；给这个元素一个可读写的后备值。 */
+    function makeScrollable(element: HTMLElement) {
+        let top = 0;
+        Object.defineProperty(element, "scrollTop", {
+            configurable: true,
+            get: () => top,
+            set: (value: number) => {
+                top = value;
+            },
+        });
+        return {
+            set(next: number) {
+                element.scrollTop = next;
+                element.dispatchEvent(new Event("scroll"));
+            },
+            get top() {
+                return top;
+            },
+        };
+    }
+
+    /**
+     * jsdom 没有布局（`scrollHeight` 恒 0）⇒ 按**真实 DOM 同构**还原：
+     * `顶部占位 + 已渲染行 × 行高 + 底部占位`。这样「prepend 后顶部占位长高」才会真的体现在 scrollHeight 上，
+     * 同帧补偿（A）才有可验证的输入 —— 用固定假值会让补偿恒为 0，等于测不到。
+     */
+    function attachFaithfulScrollHeight(element: HTMLElement) {
+        Object.defineProperty(element, "scrollHeight", {
+            configurable: true,
+            get(this: HTMLElement) {
+                const spacer = (testId: string): number => {
+                    const node = this.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+                    return node ? Number.parseFloat(node.style.height || "0") || 0 : 0;
+                };
+                const rendered = this.querySelectorAll('[data-testid="stub-message"]').length;
+                return (
+                    spacer("virtual-top-spacer") +
+                    rendered * ROW_HEIGHT +
+                    spacer("virtual-bottom-spacer")
+                );
+            },
+        });
+    }
+
+    /** 同一 runId ⇒ 不分组：rows ≈ 消息数 + 1 个日期分隔。 */
+    function buildMessages(from: number, count: number): Message[] {
+        return Array.from({ length: count }, (_, offset) => ({
+            ...message(from + offset),
+            runId: "run-1",
+        }));
+    }
+
+    function mountLongSession(messages: Message[]) {
+        return mount(MessageList, {
+            props: { messages },
+            global: {
+                plugins: [i18n, createPinia()],
+                stubs: {
+                    MessageSearch: true,
+                    Marker: { template: "<div><slot /></div>" },
+                    RunGroupHeader: true,
+                    MessageItem: {
+                        props: ["message"],
+                        template: `<div data-testid="stub-message">{{ message.id }}</div>`,
+                    },
+                },
+            },
+        });
+    }
+
+    function renderedIndexes(rendered: readonly { text(): string }[]): number[] {
+        return rendered
+            .map((node) => Number(/msg-(\d+)/.exec(node.text())?.[1] ?? Number.NaN))
+            .filter((index) => Number.isFinite(index));
+    }
+
+    // ⚠️ 固定 4 轮是**经验值**（非推导，与上文 BL-316 用例同源）：改渲染链路时先确认仍够用。
+    async function settle() {
+        for (let round = 0; round < 4; round += 1) await nextTick();
+    }
+
+    it("large table: prepend keeps the window (AC-1/2/3) and compensates scrollTop in the same frame (A)", async () => {
+        stubLayout();
+        try {
+            const wrapper = mountLongSession(buildMessages(30, 500));
+            await settle();
+            const viewport = wrapper.get('[data-testid="message-scroller-viewport"]')
+                .element as HTMLElement;
+            const scroller = makeScrollable(viewport);
+            attachFaithfulScrollHeight(viewport);
+            scroller.set(ROW_HEIGHT * 120);
+            await settle();
+
+            const rendered = () => wrapper.findAll('[data-testid="stub-message"]');
+            const before = renderedIndexes(rendered());
+            expect(before.length, "前置：窗口化必须在切").toBeGreaterThan(0);
+            expect(before.length).toBeLessThan(60);
+            expect(Math.min(...before), "前置：视口在中部而不是贴顶").toBeGreaterThan(50);
+
+            const scrollTopBefore = scroller.top;
+            const scrollHeightBefore = viewport.scrollHeight;
+
+            // 30 条更旧消息 prepend：rows 531 → 561，超过 HISTORY_PAUSE_MAX_ROWS=200。
+            const pending = wrapper.setProps({
+                messages: [...buildMessages(0, 30), ...buildMessages(30, 500)],
+            });
+            let peak = 0;
+            for (let round = 0; round < 10; round += 1) {
+                await nextTick();
+                peak = Math.max(peak, rendered().length);
+            }
+            await pending;
+            for (let round = 0; round < 6; round += 1) {
+                await nextTick();
+                peak = Math.max(peak, rendered().length);
+            }
+            await new Promise((resolve) => setTimeout(resolve, RAF_DRAIN_MS));
+
+            const after = renderedIndexes(rendered());
+            // AC-2：单次 prepend 期间渲染行数峰值不得越过「窗口 + 2×overscan」。
+            expect(
+                peak,
+                `AC-2：回填期间渲染行数峰值 ${peak} 越过「窗口+2×overscan」=${before.length + OVERSHOOT_GUARD}`,
+            ).toBeLessThanOrEqual(before.length + OVERSHOOT_GUARD);
+            // AC-1 / AC-3：大表任何时刻都不得出现整表渲染（与 historyMutationPause 无关）。
+            expect(peak, "AC-1/AC-3：大表不得整表渲染").toBeLessThan(500 / 2);
+            expect(after.length, "回填后仍只渲染窗口").toBeLessThan(
+                before.length + OVERSHOOT_GUARD,
+            );
+
+            // A：同帧补偿 —— scrollTop 恰好加上 scrollHeight 增量，因此渲染集合**不变**。
+            const grown = viewport.scrollHeight - scrollHeightBefore;
+            expect(grown, "顶部占位必须随 prepend 长高，否则补偿无从谈起").toBeGreaterThan(0);
+            expect(
+                scroller.top,
+                `scrollTop 必须按 scrollHeight 增量补偿（前 ${scrollTopBefore}，增量 ${grown}）`,
+            ).toBeCloseTo(scrollTopBefore + grown, 0);
+            expect(after, "补偿成立 ⇒ 渲染集合不变（用户正在读的还是那几条）").toEqual(before);
+
+            wrapper.unmount();
+        } finally {
+            restoreLayout();
+        }
+    });
+
+    it("small table (≤200 rows) keeps the legacy full-render pause (B: 小表行为不变)", async () => {
+        stubLayout();
+        try {
+            // rows ≈ 181：过窗口化阈值（150）但没到上界（200）⇒ 仍走旧的「关窗口化」路径。
+            const wrapper = mountLongSession(buildMessages(200, 180));
+            await settle();
+            const viewport = wrapper.get('[data-testid="message-scroller-viewport"]')
+                .element as HTMLElement;
+            const scroller = makeScrollable(viewport);
+            attachFaithfulScrollHeight(viewport);
+            scroller.set(ROW_HEIGHT * 100);
+            await settle();
+
+            const rendered = () => wrapper.findAll('[data-testid="stub-message"]');
+            const before = renderedIndexes(rendered());
+            expect(before.length, "前置：窗口化必须在切").toBeLessThan(60);
+
+            const scrollTopBefore = scroller.top;
+            const pending = wrapper.setProps({
+                messages: [...buildMessages(190, 10), ...buildMessages(200, 180)],
+            });
+            let peak = 0;
+            for (let round = 0; round < 10; round += 1) {
+                await nextTick();
+                peak = Math.max(peak, rendered().length);
+            }
+            await pending;
+            for (let round = 0; round < 6; round += 1) {
+                await nextTick();
+                peak = Math.max(peak, rendered().length);
+            }
+            await new Promise((resolve) => setTimeout(resolve, RAF_DRAIN_MS));
+
+            // 小表仍必须出现「整表渲染一帧」（这正是大表被 B 禁止、小表被保留的那条路径）。
+            expect(peak, "小表必须仍走「关窗口化 → 全量渲染一帧」").toBeGreaterThanOrEqual(180);
+            // 小表不参与 A 的补偿（A 只在大表生效），位置交给 provider + restoreAnchor。
+            expect(scroller.top, "小表路径不得被 A 改动").toBe(scrollTopBefore);
+            // 恢复窗口化后仍只渲染窗口。
+            expect(rendered().length).toBeLessThan(before.length + OVERSHOOT_GUARD);
 
             wrapper.unmount();
         } finally {

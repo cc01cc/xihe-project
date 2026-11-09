@@ -29,12 +29,20 @@ const TEST_SUFFIX = ".test.mjs";
 const SELF = "scripts/test-wiring.test.mjs";
 
 /**
- * 显式排除清单：仓库相对路径 → 原因。**当前为空** —— `scripts/` 下所有单测都是自洽的（无网络、
- * 不需要 mise/docker/live 栈、不绑端口）。将来若某个文件确实需要外部依赖，在这里登记并写清
- * "需要什么、为什么不能进 test:cli、它由哪个车道负责"；不要用注释掉列表项的办法临时排除
- * （注释掉的项正是这份测试要抓的东西）。
+ * 显式排除清单：仓库相对路径 → 原因。**目前只有 1 项**（真栈只读案例，见下）—— 其余 `scripts/` 下
+ * 单测都是自洽的（无网络、不需要 mise/docker/live 栈、不绑端口）。将来若某个文件确实需要外部依赖，
+ * 在这里登记并写清 "需要什么、为什么不能进 test:cli、它由哪个车道负责"；不要用注释掉列表项的办法
+ * 临时排除（注释掉的项正是这份测试要抓的东西）。
  */
-const EXCLUDED = new Map([]);
+const EXCLUDED = new Map([
+    [
+        "scripts/lib/stack-lease-three-cases.test.mjs",
+        "案例 C「真栈只读」需要 live 栈 healthy：直接跑 `dev-stack status --all --json` 并断言每栈 healthy /"
+            + " mismatch=[] / cpBuild=fresh（2026-11-09 23:3x 实测：停栈环境 exit=1，案例 A/A′/B/A2 四个纯注入案例绿）。"
+            + "日常门禁里没有真栈、也不该为跑单测起栈（用户裁定 B：停栈不是故障）；同一文件无法只接子集 ⇒"
+            + " 由 dev-host-verification 车道在真栈窗口单独跑 `node --test scripts/lib/stack-lease-three-cases.test.mjs`。",
+    ],
+]);
 
 function posix(path) {
     return path.split(sep).join("/");
