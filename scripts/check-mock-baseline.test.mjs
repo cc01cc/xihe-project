@@ -14,17 +14,36 @@ const SCRIPT = fileURLToPath(new URL("./check-mock-baseline.mjs", import.meta.ur
 const REPORT = {
     suites: [
         {
-            specs: [{ title: "registered skip A", tests: [] }],
+            specs: [
+                {
+                    title: "registered skip A",
+                    tests: [
+                        {
+                            status: "skipped",
+                            expectedStatus: "skipped",
+                            results: [{ status: "skipped" }],
+                        },
+                    ],
+                },
+            ],
             suites: [
                 {
-                    specs: [{ title: "registered skip B", tests: [{ results: [{ status: "passed" }] }] }],
+                    specs: [
+                        {
+                            title: "registered skip B",
+                            tests: [{ results: [{ status: "passed" }] }],
+                        },
+                    ],
                 },
             ],
         },
     ],
     stats: { expected: 283, skipped: 2, unexpected: 0, flaky: 0 },
 };
-const BASELINE = { counts: { expected: 283, skipped: 2, failed: 0, flaky: 0 }, skipNames: ["registered skip A"] };
+const BASELINE = {
+    counts: { expected: 283, skipped: 2, failed: 0, flaky: 0 },
+    skipNames: ["registered skip A"],
+};
 
 function writeFixtures(dir, report, baseline) {
     const reportFile = path.join(dir, "report.json");
@@ -36,12 +55,11 @@ function writeFixtures(dir, report, baseline) {
 
 function runCli(dir, extra = []) {
     const { reportFile, baselineFile } = writeFixtures(dir, REPORT, BASELINE);
-    return spawnSync(process.execPath, [
-        SCRIPT,
-        "--report", reportFile,
-        "--baseline", baselineFile,
-        ...extra,
-    ], { encoding: "utf8" });
+    return spawnSync(
+        process.execPath,
+        [SCRIPT, "--report", reportFile, "--baseline", baselineFile, ...extra],
+        { encoding: "utf8" },
+    );
 }
 
 test("summarizeReport extracts counts and skip titles", () => {
@@ -69,13 +87,41 @@ test("skip count drift ⇒ exit 1 with E_MOCK_BASELINE_DRIFT", () => {
     try {
         const drifted = {
             ...REPORT,
-            suites: [{ specs: [{ title: "registered skip A", tests: [] }, { title: "unregistered skip", tests: [] }], suites: [] }],
+            suites: [
+                {
+                    specs: [
+                        {
+                            title: "registered skip A",
+                            tests: [
+                                {
+                                    status: "skipped",
+                                    expectedStatus: "skipped",
+                                    results: [{ status: "skipped" }],
+                                },
+                            ],
+                        },
+                        {
+                            title: "unregistered skip",
+                            tests: [
+                                {
+                                    status: "skipped",
+                                    expectedStatus: "skipped",
+                                    results: [{ status: "skipped" }],
+                                },
+                            ],
+                        },
+                    ],
+                    suites: [],
+                },
+            ],
             stats: { ...REPORT.stats, skipped: 2 },
         };
         const { reportFile, baselineFile } = writeFixtures(dir, drifted, BASELINE);
-        const result = spawnSync(process.execPath, [
-            SCRIPT, "--report", reportFile, "--baseline", baselineFile,
-        ], { encoding: "utf8" });
+        const result = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            { encoding: "utf8" },
+        );
         assert.equal(result.status, 1);
         assert.match(result.stderr, /E_MOCK_BASELINE_DRIFT/);
         assert.match(result.stderr, /skip unregistered: unregistered skip/);
@@ -89,9 +135,11 @@ test("failed count != 0 ⇒ exit 1", () => {
     try {
         const drifted = { ...REPORT, stats: { ...REPORT.stats, unexpected: 1 } };
         const { reportFile, baselineFile } = writeFixtures(dir, drifted, BASELINE);
-        const result = spawnSync(process.execPath, [
-            SCRIPT, "--report", reportFile, "--baseline", baselineFile,
-        ], { encoding: "utf8" });
+        const result = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            { encoding: "utf8" },
+        );
         assert.equal(result.status, 1);
         assert.match(result.stderr, /failed: baseline=0 actual=1/);
     } finally {
@@ -104,9 +152,11 @@ test("--allow-drift accepts deliberately", () => {
     try {
         const drifted = { ...REPORT, stats: { ...REPORT.stats, unexpected: 1 } };
         const { reportFile, baselineFile } = writeFixtures(dir, drifted, BASELINE);
-        const result = spawnSync(process.execPath, [
-            SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--allow-drift",
-        ], { encoding: "utf8" });
+        const result = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--allow-drift"],
+            { encoding: "utf8" },
+        );
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /drift accepted/);
     } finally {
@@ -115,7 +165,13 @@ test("--allow-drift accepts deliberately", () => {
 });
 
 test("compareWithBaseline flags retired skip titles", () => {
-    const summary = { expected: 283, failed: 0, flaky: 0, skipped: 1, skipNames: ["registered skip A"] };
+    const summary = {
+        expected: 283,
+        failed: 0,
+        flaky: 0,
+        skipped: 1,
+        skipNames: ["registered skip A"],
+    };
     const { problems, retired } = compareWithBaseline(summary, {
         counts: { expected: 283, skipped: 2, failed: 0, flaky: 0 },
         skipNames: ["registered skip A", "registered skip B"],
