@@ -13,7 +13,6 @@ import { logger } from "../../lib/logger";
 import { roleErrorMessage } from "../../components/settings/roleErrorMessages";
 import RoleEditorDialog from "../../components/settings/RoleEditorDialog.vue";
 import RoleBindingsPanel from "../../components/settings/RoleBindingsPanel.vue";
-import SettingsPageShell from "../../components/settings/SettingsPageShell.vue";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
@@ -173,7 +172,7 @@ watch(
 </script>
 
 <template>
-    <SettingsPageShell container-class="mx-auto w-full max-w-6xl px-6 py-6">
+    <div class="mx-auto w-full max-w-6xl px-6 py-6">
         <div data-testid="roles-view">
             <template v-if="!canManageRoles">
                 <div
@@ -376,5 +375,5 @@ watch(
                 </AlertDialog>
             </template>
         </div>
-    </SettingsPageShell>
+    </div>
 </template>

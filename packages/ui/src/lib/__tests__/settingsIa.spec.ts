@@ -33,6 +33,20 @@ describe("settings IA matrix", () => {
         expect(layersForDomain("rag")).toEqual(["instance", "user", "workspace"]);
     });
 
+    it("B4: workspace layer keeps its 9 writable domains (approval-policy/job-policy in, logging/agent-profile out)", () => {
+        // PLAN-0752 M2 B4：工作区层从「tab 内嵌整层」升级为「按域段渲染单域」时，白名单必须原样保留。
+        const workspace = domainsForLayer("workspace");
+        expect(workspace).toHaveLength(9);
+        expect(workspace).toContain("approval-policy");
+        expect(workspace).toContain("job-policy");
+        expect(workspace).not.toContain("logging");
+        expect(workspace).not.toContain("agent-profile");
+        expect(workspace).not.toContain("user-preference");
+        expect(workspaceSettingsDomainPath("ws-1", "approval-policy")).toBe(
+            "/workspace/ws-1/settings/approval-policy",
+        );
+    });
+
     it("marks exactly the three user-layer gaps as instance-only for the user layer", () => {
         const instanceOnly = domainsForLayer("instance").filter((domain) =>
             isInstanceOnlyForUser(domain),
@@ -100,6 +114,7 @@ describe("instance ops groups", () => {
     it("keeps the design's two groups with five entries", () => {
         const groups = instanceOpsGroups();
         expect(groups.map((group) => group.id)).toEqual(["ops", "security"]);
+        // task-74 T3.3 后 tool-faces 已并入 approval-policy 域页签，运维分组回到 2 项（不再有过渡项）。
         expect(groups.flatMap((group) => group.items.map((item) => item.id))).toEqual([
             "monitoring",
             "data",

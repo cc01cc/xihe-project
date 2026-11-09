@@ -5,7 +5,6 @@ import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { useConfigStore } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
-import SettingsNav from "../../components/settings/SettingsNav.vue";
 import LanguageSwitcher from "../../components/settings/LanguageSwitcher.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import { logger } from "../../lib/logger";
@@ -132,7 +131,6 @@ async function handleImportFile(event: Event) {
 <template>
     <div>
         <BackToChatButton />
-        <SettingsNav />
         <div class="mx-auto w-full max-w-6xl px-6 pt-4">
             <LanguageSwitcher />
         </div>

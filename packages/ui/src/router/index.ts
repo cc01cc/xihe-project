@@ -10,7 +10,7 @@ import {
 } from "../lib/workspaceContext";
 import { resolveLocalModeLanding } from "../lib/workspaceLanding";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
-import { defaultLayerPath, settingsDomainPath } from "../lib/settingsIa";
+import { defaultLayerPath } from "../lib/settingsIa";
 import { LAYER_DOMAINS } from "../stores/config";
 
 const router = createRouter({
@@ -110,9 +110,14 @@ const router = createRouter({
                     redirect: () => defaultLayerPath("instance"),
                 },
                 {
-                    // design.md §7：tool-faces 归入 approval-policy 域，不再占顶级页
+                    // PLAN-0752 T3.3 / design 决策 #7 + D2：工具分类已并入 approval-policy 域页签，
+                    // 不再单独占顶级设置页；旧书签保留 302（防 bookmark 死掉），落地即该域的
+                    // 「工具分类」页签（?tab= 只表达域内视图，不表达层）。
                     path: "tool-faces",
-                    redirect: () => settingsDomainPath("instance", "approval-policy"),
+                    redirect: {
+                        name: "settings-instance-domain-approval-policy",
+                        query: { tab: "tool-faces" },
+                    },
                 },
                 // 实例运维 / 安全与权限（不是配置域，路径不在层段下）
                 {

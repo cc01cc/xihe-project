@@ -331,9 +331,10 @@ test.describe("Policy management (desktop)", () => {
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Policy Session" }] });
     });
 
-    // The policy-rule editor is retired from the product: `router/index.ts:84-87` redirects
-    // `/settings/policy` to `settings-config`, no route imports `PolicyRulesView.vue` (only its own
-    // unit test does), and `SettingsNav` no longer links `/settings/policy`. The four cases below
+    // The policy-rule editor is retired from the product: `router/index.ts` redirects
+    // `/settings/policy` to the default instance domain, no route imports the editor page, and no nav
+    // links `/settings/policy`. task-74 B4 also recycled the dead editor page and the two unused
+    // legacy shell/nav components, so those files no longer exist at all. The four cases below
     // keep their original intent — where a user who asks for policy management ends up, and who may
     // see the admin-only layer — but assert the current behaviour instead of the removed editor.
     test("the retired /settings/policy route lands on the config page and issues no policy reads", async ({

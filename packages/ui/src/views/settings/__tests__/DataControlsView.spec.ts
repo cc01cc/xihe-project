@@ -127,12 +127,10 @@ describe("DataControlsView", () => {
         expect(fileInput.exists()).toBe(true);
     });
 
-    it("renders SettingsNav with config tab", async () => {
+    it("no longer mounts its own settings nav (task-74 B0: the layout owns navigation)", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
-        expect(wrapper.text()).toContain("配置管理");
-        expect(wrapper.text()).toContain("知识库");
-        expect(wrapper.text()).toContain("数据控制");
+        expect(wrapper.find('[data-testid^="settings-nav-"]').exists()).toBe(false);
     });
 });
 

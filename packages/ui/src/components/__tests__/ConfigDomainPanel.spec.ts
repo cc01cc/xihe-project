@@ -148,6 +148,28 @@ describe("ConfigDomainPanel", () => {
         expect(emitted![0][0]).toBe("model");
     });
 
+    it("TC7b: reset clears that field's draft so the input does not keep the deleted value", async () => {
+        // task-74 B1 实测缺陷：editing 草稿只在展开时初始化，重置（父层 DELETE + 整层 reload）后
+        // props.entries 变了草稿不重算 ⇒ 输入框留着刚被删掉的旧值（"点了重置没反应"）。
+        const wrapper = mountPanel({ admin: true, entries: { model: "db-model" } });
+        await expandPanel(wrapper);
+        const input = wrapper
+            .findAll("input")
+            .find((el) => (el.element as HTMLInputElement).value === "db-model");
+        expect(input).toBeTruthy();
+        const resetButton = wrapper.findAll("button").filter((b) => b.text().includes("↺"))[2];
+        await resetButton.trigger("click");
+        const cleared = wrapper
+            .findAll("input")
+            .find((el) => (el.element as HTMLInputElement).value === "");
+        expect(cleared).toBeTruthy();
+        expect(
+            wrapper
+                .findAll("input")
+                .some((el) => (el.element as HTMLInputElement).value === "db-model"),
+        ).toBe(false);
+    });
+
     it("TC8: env-locked field shows env value, hides input, and is excluded from save", async () => {
         const wrapper = mountPanel({
             entries: { model: "db-model", apiKey: "sk-old" },

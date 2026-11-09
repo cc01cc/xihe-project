@@ -45,7 +45,7 @@ const layerName = computed(
     >
         <nav
             class="flex items-center gap-1 text-[11px] text-muted-foreground"
-            aria-label="breadcrumb"
+            aria-label="面包屑"
             data-testid="settings-breadcrumb"
         >
             <button

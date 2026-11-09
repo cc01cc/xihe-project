@@ -819,6 +819,7 @@ const messages = {
                 "本工作区的常规信息、配置与 MCP。配置优先级：workspace > user > instance > code default；env 与管理员锁定始终优先且只读。",
             settingsTabGeneral: "常规",
             settingsTabConfig: "配置",
+            settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
             settingsTabMcp: "MCP",
             settingsGeneralTitle: "基本信息",
@@ -1390,6 +1391,7 @@ const messages = {
         settings: {
             ia: {
                 breadcrumbRoot: "设置",
+                breadcrumbLabel: "面包屑",
                 layerInstance: "实例配置",
                 layerUser: "用户配置",
                 layerWorkspace: "工作区设置",
@@ -1401,6 +1403,8 @@ const messages = {
                 groupSecurity: "安全与权限",
                 navMonitoring: "监控",
                 navData: "数据",
+                navToolFaces: "工具分类",
+                approvalTabPolicy: "审批策略",
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",
@@ -3344,6 +3348,7 @@ const messages = {
                 "General info, config, and MCP for this workspace. Priority: workspace > user > instance > code default; env and admin locks always win and are read-only.",
             settingsTabGeneral: "General",
             settingsTabConfig: "Config",
+            settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
             settingsTabMcp: "MCP",
             settingsGeneralTitle: "General",
@@ -3942,6 +3947,7 @@ const messages = {
         settings: {
             ia: {
                 breadcrumbRoot: "Settings",
+                breadcrumbLabel: "Breadcrumb",
                 layerInstance: "Instance settings",
                 layerUser: "User settings",
                 layerWorkspace: "Workspace settings",
@@ -3953,6 +3959,8 @@ const messages = {
                 groupSecurity: "Security & permissions",
                 navMonitoring: "Monitoring",
                 navData: "Data",
+                navToolFaces: "Tool classes",
+                approvalTabPolicy: "Approval policy",
                 navConfigLocks: "Config locks",
                 navRoles: "Roles & grants",
                 navAudit: "Audit log",

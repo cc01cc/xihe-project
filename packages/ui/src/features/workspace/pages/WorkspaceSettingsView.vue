@@ -15,7 +15,7 @@ import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vu
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 import SettingsNotFoundView from "../../../views/settings/SettingsNotFoundView.vue";
-import { domainsForLayer } from "../../../lib/settingsIa";
+import { DOMAIN_LABEL_KEY, domainsForLayer } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -52,6 +52,21 @@ const domainInvalid = computed(
     () =>
         domainParam.value !== "" &&
         !domainsForLayer("workspace").includes(domainParam.value as ConfigDomain),
+);
+
+/**
+ * PLAN-0752 M2 B4：带域段时按**单域**渲染（与实例/用户层域页同构：域标题 18px + 该域面板），
+ * 不再把「整个工作区层 9 域」平铺在 tab 里。可写域白名单仍是 `domainsForLayer("workspace")`
+ * 的 9 域 —— 矩阵口径：approval-policy / job-policy 在工作区层可写，logging 不在该层（域段直接 404）。
+ */
+const domainLabel = computed(() =>
+    domainParam.value ? t(DOMAIN_LABEL_KEY[domainParam.value as ConfigDomain]) : "",
+);
+const domainKeyCount = computed(() =>
+    domainParam.value
+        ? Object.keys(configStore.layerConfig.workspace?.[domainParam.value as ConfigDomain] ?? {})
+              .length
+        : 0,
 );
 
 const initialTab = ((): SettingsTab => {
@@ -107,6 +122,16 @@ function switchTab(tab: SettingsTab) {
     if (tab === "config") void loadConfig();
 }
 
+/** 域段模式下「切到配置总览」= 回到不带域段的旧入口（保留 tab 形态）。 */
+function goConfigOverview() {
+    if (!workspaceId.value) return;
+    void router.push({
+        name: "workspace-settings",
+        params: { workspaceId: workspaceId.value },
+        query: { tab: "config" },
+    });
+}
+
 // T3.7 头部动作组：新建对话复用 ?newChat=1 语义（Sidebar.startNewChat 同口径）。
 function newChat() {
     if (!workspaceId.value) return;
@@ -149,7 +174,11 @@ async function loadWorkspace() {
     } finally {
         loading.value = false;
     }
-    if (activeTab.value === "config") await loadConfig();
+    // 域段模式（/workspace/:id/settings/:domain）不经过 tab，同样要装载该层 9 域配置；
+    // 但矩阵里不存在的域段（如 logging）先 404，不该顺带发一整层配置请求（V4 同口径）。
+    if (activeTab.value === "config" || (domainParam.value !== "" && !domainInvalid.value)) {
+        await loadConfig();
+    }
 }
 
 async function retryLoad() {
@@ -235,7 +264,56 @@ onMounted(() => {
 <template>
     <SettingsNotFoundView v-if="domainInvalid" />
     <section v-else class="min-h-full" data-testid="workspace-settings-page">
-        <div class="mx-auto w-full max-w-6xl px-6 py-6">
+        <!-- 域段模式（PLAN-0752 M2 B4）：/workspace/:id/settings/:domain 只渲染该域 -->
+        <div
+            v-if="domainParam"
+            class="mx-auto w-full max-w-6xl px-6 py-6"
+            data-testid="ws-settings-domain-page"
+        >
+            <div
+                class="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1"
+                data-testid="workspace-settings-kicker"
+            >
+                {{ t("workspace.settingsKicker") }} · {{ t("workspace.settingsTabConfig") }}
+            </div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <h2 class="text-lg font-medium" data-testid="ws-settings-domain-title">
+                    {{ domainLabel }}
+                </h2>
+                <p
+                    class="text-[11px] text-muted-foreground"
+                    data-testid="ws-settings-domain-summary"
+                >
+                    {{ t("settings.ia.domainKeysCount", { count: domainKeyCount }) }}
+                </p>
+                <button
+                    type="button"
+                    class="ml-auto rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    data-testid="ws-settings-domain-overview"
+                    @click="goConfigOverview"
+                >
+                    {{ t("workspace.settingsDomainBackToOverview") }}
+                </button>
+            </div>
+            <p
+                v-if="!auth.canWriteWorkspace"
+                class="mt-1 text-[11px] text-muted-foreground"
+                data-testid="ws-settings-domain-readonly"
+            >
+                {{ t("workspace.settingsConfigNote") }}
+            </p>
+
+            <div class="mt-4">
+                <ConfigLayerPanels
+                    layer="workspace"
+                    :workspace-id="workspaceId"
+                    :domain="domainParam as ConfigDomain"
+                    :readonly="!auth.canWriteWorkspace"
+                />
+            </div>
+        </div>
+
+        <div v-else class="mx-auto w-full max-w-6xl px-6 py-6">
             <div
                 class="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1"
                 data-testid="workspace-settings-kicker"
