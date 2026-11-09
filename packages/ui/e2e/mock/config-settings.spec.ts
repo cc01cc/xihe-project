@@ -134,27 +134,44 @@ test.describe("Config Settings (three layers)", () => {
         );
     }
 
-    test("renders layer tabs and the import/export entry for admins", async ({ page }) => {
+    // PLAN-0752 M1 换掉了「层 = 页内页签」的交互：层现在是左栏的两个分组，域是二级链接
+    // （`SettingsSidebar`）。所以本用例证明的同一件事换了承载物：
+    //   旧 config-tab-instance / config-tab-user    → settings-nav-group-primary 的两段（实例配置 / 用户配置）
+    //   旧 config-tab-workspace 不存在              → 所有域链接都是 /settings/(instance|user)/<domain>，无 workspace 段
+    //   旧 config-domain-logging / -agent-runtime   → 域页 `/settings/instance/<domain>` 里的同名面板
+    // 旧用例里的「admin 才看得到导入导出入口」移到导出用例（数据页）继续断言，不在这里重复。
+    test("settings sidebar exposes both layers to admins, domain pages render their panels", async ({
+        page,
+    }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
 
-        // The tabs render after `loadLayerDomains` settles; give that state wait a lane-sized
-        // budget instead of the 5 s default (the element simply had not mounted yet under load).
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible({
+        // 侧栏层分组要等能力投影落定（cap:instance:admin）；给足 lane 预算而不是 5 s 默认值。
+        await expect(page.getByTestId("settings-nav-group-primary")).toHaveCount(2, {
             timeout: LONG_TIMEOUT_MS,
         });
-        // PLAN-0560: the workspace layer moved to each workspace's settings page.
-        await expect(page.getByTestId("config-tab-workspace")).toHaveCount(0);
-        await expect(page.getByTestId("config-tab-user")).toBeVisible();
-        await expect(page.getByTestId("config-import-export")).toBeVisible();
+        await expect(page.getByTestId("settings-domain-title")).toHaveText("日志设置");
         await expect(page.getByTestId("config-domain-logging")).toBeVisible();
+
+        // 同层另一个域：一页一域，所以换页验第二块面板仍在。
+        await page.goto("/settings/instance/agent-runtime", { waitUntil: "load" });
         await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
+
+        // PLAN-0560：工作区层不在全局设置区（只在 /workspace/:id/settings）——层进 URL 里没有 workspace 段。
+        const hrefs = await page
+            .getByTestId("settings-nav-domain")
+            .evaluateAll((els) => els.map((el) => el.getAttribute("href") ?? ""));
+        expect(hrefs.length).toBeGreaterThan(0);
+        expect(hrefs.every((href) => /^\/settings\/(instance|user)\/[\w-]+$/.test(href))).toBe(
+            true,
+        );
         await expectPlatformScreenshot(page, "config-instance-tab.png");
     });
 
-    test("instance tab keeps the instance-only instructions field", async ({ page }) => {
+    test("instance layer keeps the instance-only instructions field", async ({ page }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        // 旧：/settings/config 的 instance 层签里展开 agent-runtime；新：instance 层的 agent-runtime 域页（一页一域）。
+        await page.goto("/settings/instance/agent-runtime", { waitUntil: "load" });
 
         await page.getByTestId("config-domain-agent-runtime").locator("button").first().click();
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toBeVisible();
@@ -182,7 +199,8 @@ test.describe("Config Settings (three layers)", () => {
         page,
     }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        // 旧：/settings/config 的 instance 层签；新：instance 层的 approval-policy 域页。
+        await page.goto("/settings/instance/approval-policy", { waitUntil: "load" });
 
         // PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：instance 层可写默认。
         const instanceDomain = page.getByTestId("config-domain-approval-policy");
@@ -203,9 +221,10 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByRole("option")).toHaveCount(2);
         await page.keyboard.press("Escape");
 
-        // user 层仍不可写（显式例外）
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-user").click();
+        // user 层仍不可写（显式例外）：层×域矩阵里 user 层没有 approval-policy，
+        // 直链落「该组合不存在」的 404 视图（V3/V25），而不是渲染一块点不动的面板。
+        await page.goto("/settings/user/approval-policy", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-not-found")).toBeVisible();
         await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
     });
 
@@ -230,16 +249,31 @@ test.describe("Config Settings (three layers)", () => {
         expect(JSON.parse(request.postData() ?? "{}").mode).toBe("auto");
     });
 
-    test("user tab drops instance-only domains and the instructions field", async ({ page }) => {
+    test("user layer drops instance-only domains and the instructions field", async ({ page }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
 
-        await page.getByTestId("config-tab-user").click();
+        // 用户层的域各占一页；旧用例在同一个「用户层签」里一次看全，现在按域逐个验同一批事实。
+        await page.goto("/settings/user/agent-profile", { waitUntil: "load" });
         await expect(page.getByTestId("config-domain-agent-profile")).toBeVisible();
+        await page.goto("/settings/user/user-preference", { waitUntil: "load" });
         await expect(page.getByTestId("config-domain-user-preference")).toBeVisible();
+
+        // logging 是实例独占域：用户层矩阵里没有它 ⇒ 直链 404 视图（旧断言是「用户层签里不出现该面板」）。
+        await page.goto("/settings/user/logging", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-not-found")).toBeVisible();
         await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
+
+        // 实例专属字段：「用户层看不到」这条旧口径被 PLAN-0752 T3.2 / design §5.1 取代 ——
+        // 不再静默隐藏（隐藏会让人以为没这项），而是渲染成只读行 + 「仅实例层」徽标。
+        await page.goto("/settings/user/agent-runtime", { waitUntil: "load" });
+        await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
         await page.getByTestId("config-domain-agent-runtime").locator("button").first().click();
-        await expect(page.getByTestId("config-field-agent-runtime-instructions")).toHaveCount(0);
+        const instructions = page.getByTestId("config-field-agent-runtime-instructions");
+        await expect(instructions).toBeVisible();
+        await expect(
+            page.getByTestId("config-key-layer-badge-agent-runtime-instructions"),
+        ).toHaveText("仅实例层");
+        await expect(instructions.locator("input, textarea").first()).toBeDisabled();
     });
 
     test("env-locked embedding model shows the env source and stays read-only", async ({
@@ -257,7 +291,8 @@ test.describe("Config Settings (three layers)", () => {
 
     test("saving a value goes through the layer endpoint", async ({ page }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        // 旧：/settings/config 的 instance 层签；新：instance 层的 logging 域页，保存仍走层端点。
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
 
         await expect(page.getByTestId("config-domain-logging")).toBeVisible();
         await page.getByTestId("config-domain-logging").locator("button").first().click();
@@ -273,16 +308,20 @@ test.describe("Config Settings (three layers)", () => {
         expect(JSON.parse(request.postData() ?? "{}").levelCp).toBe("ERROR");
     });
 
+    // PLAN-0752 M1 把配置页换成域页后，旧的「配置导入/导出」区块随死页一起没了入口；
+    // 现存的导出/导入入口在「数据」页（/settings/data，T4.4：数据面是有 atom 的页）。
+    // 旧断言还验过 URL 上的 layer=instance 与 includeSecrets=true —— 这两个值自 0752 起不再由 UI 传参，
+    // 而是 CP 的默认值（ConfigController.java:492-505：layer 服务端写死 instance、includeSecrets 默认 true）；
+    // 该不变量由 CP 侧测试守（task-111/dev-1 补），UI 侧只证明「导出按钮确实打到实例导出端点」。
     test("export triggers the instance export request", async ({ page }) => {
         await mockConfigAPIs(page);
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/settings/data", { waitUntil: "load" });
 
         const [request] = await Promise.all([
             page.waitForRequest((req) => req.url().includes("/api/v1/config/export")),
-            page.getByTestId("config-export-button").click(),
+            page.locator('button:has-text("导出设置")').click(),
         ]);
-        expect(request.url()).toContain("layer=instance");
-        expect(request.url()).toContain("includeSecrets=true");
+        expect(request.url()).toContain("/api/v1/config/export");
     });
 
     test("import posts the file and renders skip warnings", async ({ page }) => {
@@ -314,6 +353,10 @@ test.describe("Config Settings (three layers)", () => {
         );
     });
 
+    // 待裁定（task-109 报告 §三）：旧的「初始加载中…」是死页 ConfigSettings 里的整页状态
+    // （showInitialLoading），新壳 SettingsDomainView 没有等价的 pending 呈现 —— 加载期间它会渲染
+    // 「本域 0 项配置」+ 空表单，等于把「还没回来」画成「没有配置」。要么产品补 loading，要么
+    // 明示该断言退役；在裁定前保持红，不改弱断言。
     test("shows loading state while layer config is pending", async ({ page }) => {
         await mockConfigAPIs(page, { delayMs: 3000 });
         await page.goto("/settings/config", { waitUntil: "load" });
@@ -336,8 +379,9 @@ test.describe("Config Settings (three layers)", () => {
                 body: "retry: 5000\n\n",
             }),
         );
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible();
+        // 旧：/settings/config 里层的整块加载失败；新：域页拉层配置失败（SettingsDomainView 的 fetchError 分支）。
+        await page.goto("/settings/instance/logging", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-domain-title")).toBeVisible();
         await expect(page.locator("text=保存失败")).toBeVisible();
     });
 });
