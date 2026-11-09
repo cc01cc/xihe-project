@@ -74,8 +74,12 @@ screenshots/
 # Runtime data (generated, not committed)
 packages/control-plane/data/
 
-# Dev/test data (PDFs, images, etc.)
-data/
+# PLAN-0745 T0.2 (2026-11-10): 原这里是一条宽泛的 `data/`（未锚定，等同 `**/data/`），
+# 会静默吞掉将来真实的 `<pkg>/data` 目录。实测它当时只额外覆盖两处：
+#   ① 仓库根 `data/`（考研 PDF，T0.1 已迁 `internal/A03-xihe/assets/exam-660/` 并删目录）
+#   ② `packages/control-plane/data/`（由上面一行显式覆盖，不需要它）
+# ⇒ 无独有覆盖面，本行取消。将来确需忽略新的 `<path>/data` 时**按包精确单列**，不要再写宽泛规则。
+# 依据：`plans/PLAN-0745-XH-local-runtime-hygiene/tasks.md` T0.2。
 
 # Project SPEC data contracts are Markdown, not runtime data
 !spec/data/
