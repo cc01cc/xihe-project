@@ -229,6 +229,9 @@ test.describe("PLAN-0554 config provenance", () => {
 
         // ③ 无整页刷新的判据：SPA 内跳转会保留 window 上的标记，整页刷新会把它抹掉。
         //    （不用 framenavigated —— 同文档 pushState 也会触发它，判不出「刷新」）
+        //    偏离卡面：卡里给的备选是 performance.navigation 判据，但它已废弃（Navigation
+        //    Timing L1），且"某事件没触发"是**负向证据**（监听器漏挂也会绿）；这里换成**正向
+        //    证据**——整页刷新必然重建 window，标记必然消失。Lead 已于 VW-35 批准该偏离。
         await page.evaluate(() => {
             (window as unknown as { __spaMarker?: string }).__spaMarker = "alive";
         });
