@@ -215,6 +215,11 @@ function handleSave() {
 }
 
 function handleReset(key: string) {
+    // 乐观清空该键草稿：重置 = 删掉本层覆盖（父组件 DELETE 后整层 reload），但 `editing` 只在展开
+    // 那一刻初始化（`toggle()`），`props.entries` 变了草稿不重算 ⇒ 输入框会留着刚被删掉的旧值
+    // （task-74 B1 浏览器量测实测：DELETE 已发出、回读已完成，输入框仍显示 1234 = "点了重置没反应"）。
+    // 这里只清这一个键，不动其它键的未保存编辑。
+    editing.value[key] = "";
     emit("reset", key);
 }
 </script>
