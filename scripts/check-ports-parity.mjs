@@ -12,11 +12,16 @@
  *    （base/ports/composeProject/containerPrefix/database/hostRoot/logDir/runtimeStateDir/env）；
  * 3. `.env.dev` 的 stack-1 端口基线 vs A03 内置表（仓库内自洽性）。
  *
- * 用法：node scripts/check-ports-parity.mjs [--json]
- * 退出码：0 = 一致或 skip；1 = 发现漂移（打印逐项差异）。
+ * 用法：node scripts/check-ports-parity.mjs [--json] [--require-mirror]
+ * 退出码：0 = 一致，或（未给 --require-mirror 时）standalone 跳过并显式 SKIP；
+ *         1 = 发现漂移（打印逐项差异；优先于下面的 2）；
+ *         2 = --require-mirror 要求镜像比对，但找不到 ONE 工作区（fail-closed，不默认绿）。
  *
  * 注：不提供任何"one 根目录定位开关"（PLAN-0612 决策 #1 已否决该逃逸口）；ONE 根目录
- * 只按"从本仓库向上查找 config/ports.mjs"解析，找不到即 skip。
+ * 只按"从本仓库向上查找 config/ports.mjs"解析。找不到时**默认**仍允许单独 clone 运行，
+ * 但必须是显式 SKIP（`skipped:true` + 人读行 `SKIP (...)`，退出码 0）——**跳过不等于通过**；
+ * 门禁/CI 必须带 `--require-mirror`，否则这条唯一的 A03↔ONE 镜像校验在脱离 ONE 的
+ * 工作副本里永远不被触发（task-61 P1-3 假信号）。
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -26,6 +31,8 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..");
 const args = process.argv.slice(2);
 const json = args.includes("--json");
+/** task-61 P1-3 / AC-3.1：门禁必须能要求"镜像真的比过了"；找不到 ONE 根时不得默认绿。 */
+const requireMirror = args.includes("--require-mirror");
 
 function findOneRoot(start) {
   let current = resolve(start);
@@ -67,26 +74,37 @@ for (const [key, expected] of Object.entries(deriveStack("stack-1").env)) {
 
 const oneRoot = findOneRoot(projectRoot);
 if (!oneRoot || !existsSync(join(oneRoot, "config", "ports.mjs"))) {
+  /* task-61 P1-3：这个分支过去把「找不到 ONE 根」写成 `skipped:false` + `ok:true` + 人读行 `OK (`，
+   * 于是同一份漂移表「有 ONE 根 ⇒ exit 1 / 无 ONE 根 ⇒ exit 0」—— 判定真值来自**目录位置**而不是端口是否漂移。
+   * 现三处对齐：①`skipped:true`（真跳过了）②人读行 `SKIP (`（跳过 ≠ 通过）③`--require-mirror` ⇒ exit 2。 */
   const reason = `no ONE workspace (config/ports.mjs) found above ${projectRoot}`;
+  const ok = envPortDiffs.length === 0 && !requireMirror;
   const result = {
-    ok: envPortDiffs.length === 0,
-    skipped: false,
+    ok,
+    skipped: true,
     mode: "standalone",
-    reason: `${reason}; ports mirror not applicable (standalone)`,
+    requireMirror,
+    reason: requireMirror
+      ? `${reason}; --require-mirror 要求 A03↔ONE 端口镜像比对，但找不到 ONE 工作区 ⇒ 拒绝放行（fail-closed）`
+      : `${reason}; ports mirror not applicable (standalone)`,
     envDevPortDiffs: envPortDiffs,
   };
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
-    if (result.ok) {
-      console.log("[ports-parity] OK (standalone: no ONE workspace, ports mirror not applicable)");
+    if (requireMirror) {
+      console.log(`[ports-parity] FAIL (standalone): --require-mirror set, but ${reason}`);
+      console.log("[ports-parity] 处置：在 ONE 工作区内运行（或在门禁里保留 --require-mirror 并修好检出布局），不许静默认绿");
+    } else if (ok) {
+      console.log("[ports-parity] SKIP (standalone: no ONE workspace, ports mirror not applicable)");
     } else {
       console.log("[ports-parity] FAIL (standalone): .env.dev drift, see DIFF lines");
     }
     for (const diff of envPortDiffs) console.log(`[ports-parity] DIFF: ${diff}`);
     console.log(`[ports-parity] env.dev self-consistency: ${envPortDiffs.length === 0 ? "ok" : "drift"}`);
   }
-  process.exit(result.ok ? 0 : 1);
+  // 漂移（1）是真结论，优先于环境缺件（2）：两种都要能行动，别让 2 盖掉 1。
+  process.exit(envPortDiffs.length > 0 ? 1 : requireMirror ? 2 : 0);
 }
 
 const oneConfig = await import(pathToFileURL(join(oneRoot, "config", "ports.mjs")).href);
