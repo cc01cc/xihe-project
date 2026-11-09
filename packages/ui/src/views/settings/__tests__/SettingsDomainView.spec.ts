@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { ref } from "vue";
 
 /**
  * PLAN-0752 M1 的域页三分支（verify.md「入口分层」）与 V26 拦截：
@@ -11,6 +12,8 @@ import { createI18n } from "vue-i18n";
  */
 const state = {
     capability: true,
+    /** task-112：store 的 `layerLoading` 是 pending 的唯一事实源，测试按 ref 可控地驱动它。 */
+    layerLoading: ref(false),
     loadLayerDomains: vi.fn<(layer: string) => Promise<void>>(() => Promise.resolve()),
     routeQuery: {} as Record<string, string | undefined>,
     replace: vi.fn<(arg: { query: Record<string, unknown> }) => Promise<void>>(() =>
@@ -40,6 +43,9 @@ vi.mock("../../../stores/config", async () => {
         useConfigStore: () => ({
             layerConfig: { instance: { logging: { level: "INFO" } }, user: { rag: { k: "v" } } },
             loadLayerDomains: state.loadLayerDomains,
+            get layerLoading() {
+                return state.layerLoading.value;
+            },
         }),
     };
 });
@@ -69,6 +75,7 @@ const messages = {
                 backToDefault: "回到默认页",
             },
         },
+        common: { loading: "加载中…" },
     },
 };
 
@@ -91,7 +98,9 @@ describe("SettingsDomainView", () => {
     beforeEach(() => {
         state.capability = true;
         state.routeQuery = {};
+        state.layerLoading.value = false;
         state.loadLayerDomains.mockClear();
+        state.loadLayerDomains.mockImplementation(() => Promise.resolve());
         state.replace.mockClear();
     });
 
@@ -171,5 +180,53 @@ describe("SettingsDomainView", () => {
         const wrapper = mountView("instance", "rag");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-switch-layer"]').exists()).toBe(false);
+    });
+});
+
+/**
+ * task-112：pending（还没回来）**不是**空（本域 0 项）。旧行为在 `loadLayerDomains` 挂起期间
+ * 照常渲染「本域 0 项配置」+ 空表单 ⇒ 把 unknown 折成结论。三条用例分别锁：
+ * ① pending ⇒ 有 loading 面、无「0 项配置」、无面板；② resolve ⇒ 正常渲染；③ 再次进入 pending（切层/重载）
+ * ⇒ loading 面回来（证明消费的是 store 的 `layerLoading`，不是挂载时的一次性标志）。
+ */
+describe("SettingsDomainView pending state (task-112)", () => {
+    it("shows the loading surface instead of 「0 项配置」 while the layer is pending", async () => {
+        state.layerLoading.value = true;
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-domain-summary"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
+        expect(wrapper.text()).not.toContain("本域 0 项配置");
+    });
+
+    it("renders the summary and the panel once the layer resolves", async () => {
+        state.layerLoading.value = true;
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(true);
+
+        state.layerLoading.value = false;
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
+            "本域 1 项配置",
+        );
+        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
+    });
+
+    it("re-enters the pending surface when the layer is reloaded (switch-layer path)", async () => {
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
+
+        state.layerLoading.value = true;
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-domain-summary"]').exists()).toBe(false);
     });
 });
