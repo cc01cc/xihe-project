@@ -22,7 +22,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { usePreviewCopy } from "./copy";
-import { domainsFor, opsNav, resourceNav, securityNav, type SettingsLayer } from "./mock";
+import {
+    domainsFor,
+    opsNav,
+    resourceNav,
+    securityNav,
+    workspaceResourceNav,
+    type SettingsLayer,
+} from "./mock";
 import LayerHeader from "./LayerHeader.vue";
 
 /**
@@ -73,11 +80,11 @@ const navIcon: Record<string, typeof Wrench> = {
 
 const domains = computed(() => domainsFor(activeLayer.value));
 
-const summary = computed(() =>
-    activeLayer.value === "instance"
-        ? copy.value.shell.instanceSummary
-        : copy.value.shell.userSummary,
-);
+const summary = computed(() => {
+    if (activeLayer.value === "instance") return copy.value.shell.instanceSummary;
+    if (activeLayer.value === "user") return copy.value.shell.userSummary;
+    return copy.value.shell.workspaceSummary;
+});
 
 /** 左栏：两块 L1 分组（层），只有当前层展开——同一时刻只在一层内（PLAN-0752 §3.1 读法）。 */
 const blocks = computed(() => [
@@ -130,6 +137,28 @@ const blocks = computed(() => [
             },
         ],
     },
+    // 工作区层（task-61）：10 域 + 3 项工作区资源，第三块与实例/用户层同构
+    {
+        layer: "workspace" as SettingsLayer,
+        title: copy.value.shell.layerWorkspace,
+        count: copy.value.shell.countWorkspaceDomains,
+        groups: [
+            {
+                id: "domains",
+                label: copy.value.shell.groupDomains,
+                count: copy.value.shell.countWorkspaceDomains,
+                items: [] as string[],
+                withDomains: true,
+            },
+            {
+                id: "resources",
+                label: copy.value.shell.groupWorkspaceResources,
+                count: copy.value.shell.countWorkspaceResources,
+                items: workspaceResourceNav as unknown as string[],
+                withDomains: false,
+            },
+        ],
+    },
 ]);
 
 function navLabel(id: string) {
@@ -144,9 +173,9 @@ function domainLabel(id: string) {
     return (copy.value.shell.domainLabels as Record<string, string>)[id] ?? id;
 }
 
-/** 只在实例层可写的域：logging / approval-policy / job-policy（CP 矩阵事实） */
-function instanceOnly(d: { layers: SettingsLayer[] }) {
-    return activeLayer.value === "instance" && d.layers.length === 1;
+/** 用户层不可写的域：logging / approval-policy / job-policy（CP 矩阵事实，实例+工作区可写） */
+function instanceOnlyForUser(d: { layers: SettingsLayer[] }) {
+    return activeLayer.value === "instance" && !d.layers.includes("user");
 }
 </script>
 
@@ -187,13 +216,18 @@ function instanceOnly(d: { layers: SettingsLayer[] }) {
                         <div v-if="block.layer === activeLayer" class="mt-1 space-y-2 pb-1">
                             <section v-for="group in block.groups" :key="group.id">
                                 <p
+                                    data-testid="settings-nav-group-secondary"
                                     class="flex items-center gap-1 px-2 pb-1 text-[11px] text-muted-foreground"
                                 >
                                     {{ group.label }}
                                     <span class="font-mono text-[10px]">{{ group.count }}</span>
                                 </p>
 
-                                <div v-if="group.withDomains" class="space-y-0.5 pl-2">
+                                <div
+                                    v-if="group.withDomains"
+                                    data-testid="settings-nav-group-items"
+                                    class="space-y-0.5 pl-2"
+                                >
                                     <button
                                         v-for="d in domains"
                                         :key="d.id"
@@ -223,7 +257,11 @@ function instanceOnly(d: { layers: SettingsLayer[] }) {
                                     </button>
                                 </div>
 
-                                <div v-else class="space-y-0.5 pl-2">
+                                <div
+                                    v-else
+                                    data-testid="settings-nav-group-items"
+                                    class="space-y-0.5 pl-2"
+                                >
                                     <div
                                         v-for="id in group.items"
                                         :key="id"
@@ -315,7 +353,7 @@ function instanceOnly(d: { layers: SettingsLayer[] }) {
                             <span class="text-border">·</span>
                             <span>{{ d.overridden }} {{ copy.shell.overriddenUnit }}</span>
                             <button
-                                v-if="instanceOnly(d)"
+                                v-if="instanceOnlyForUser(d)"
                                 type="button"
                                 data-testid="settings-domain-switch-layer"
                                 class="ml-auto rounded px-1 underline-offset-4 hover:bg-muted hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"

@@ -143,7 +143,7 @@ export const domainRows: ConfigKeyRow[] = [
 
 /**
  * 12 个 CP 配置域（PLAN-0752 §3.2）。`layers` 是**该域在哪一层可写**的矩阵事实：
- * - `logging` / `approval-policy` / `job-policy` 只在实例层（用户层不出现 ⇒ 不是漏项）
+ * - `logging` / `approval-policy` / `job-policy` 在**用户层**不出现（实例+工作区可写 ⇒ 用户层缺这三项不是漏项）
  * - `agent-profile` / `user-preference` 不在工作区层
  * 标签走 copy 表，mock 只放 id 与计数，避免文案与 locale 脱钩。
  */
@@ -169,8 +169,14 @@ export const domainDefs: DomainDef[] = [
     },
     { id: "agent-profile", keys: 7, overridden: 0, layers: ["instance", "user"] },
     { id: "user-preference", keys: 5, overridden: 1, layers: ["instance", "user"] },
-    { id: "logging", keys: 4, overridden: 0, layers: ["instance"] },
-    { id: "approval-policy", keys: 6, overridden: 2, locked: "instance", layers: ["instance"] },
+    { id: "logging", keys: 4, overridden: 0, layers: ["instance", "workspace"] },
+    {
+        id: "approval-policy",
+        keys: 6,
+        overridden: 2,
+        locked: "instance",
+        layers: ["instance", "workspace"],
+    },
     { id: "agent-templates", keys: 5, overridden: 0, layers: ["instance", "user", "workspace"] },
     {
         id: "api-request-templates",
@@ -178,7 +184,7 @@ export const domainDefs: DomainDef[] = [
         overridden: 0,
         layers: ["instance", "user", "workspace"],
     },
-    { id: "job-policy", keys: 4, overridden: 0, layers: ["instance"] },
+    { id: "job-policy", keys: 4, overridden: 0, layers: ["instance", "workspace"] },
 ];
 
 export function domainsFor(layer: SettingsLayer): DomainDef[] {

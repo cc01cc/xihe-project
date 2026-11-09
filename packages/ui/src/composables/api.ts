@@ -549,7 +549,7 @@ export interface WorkspaceAgentBinding {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    /** 工作区绑定的权限上限；角色绑定的 scope 与主体无关。 */
+    /** 工作区绑定的工作区角色；角色绑定的 scope 与主体无关。 */
     permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
     /** 是否存在该工作区的 cap 绑定；角色绑定可使未绑定行可见。 */
     bound: boolean;

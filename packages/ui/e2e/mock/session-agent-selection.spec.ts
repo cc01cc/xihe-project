@@ -238,7 +238,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     await page.getByTestId("agent-cap-write").check();
     await page.getByTestId("workspace-agent-save-cap-agent-1").click();
     await expect(binding).toContainText("写入");
-    await expect(dialog.getByRole("status")).toContainText("权限上限已保存");
+    await expect(dialog.getByRole("status")).toContainText("工作区角色已保存");
     await page.screenshot({
         path: test
             .info()
