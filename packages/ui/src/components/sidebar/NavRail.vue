@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { LogOut, PanelLeftOpen, Settings, ShieldCheck } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
+import { defaultLayerPath } from "../../lib/settingsIa";
 import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
 
 /**
@@ -48,8 +49,13 @@ const itemClass =
 const inactiveClass = "text-sidebar-foreground hover:bg-sidebar-accent";
 const activeClass = "bg-brand/10 font-medium text-brand";
 
+/**
+ * task-113：不再 push 旧入口 `/settings/config`（它只剩 redirect，且 redirect 会丢 query）。
+ * 目标由 `lib/settingsIa` 的 `defaultLayerPath("instance")` 算出 —— 与 redirect 用**同一个**
+ * 事实源（实例层默认域页 `/settings/instance/llm-provider`），不在调用点再写一份字面量。
+ */
 function navigateSettings() {
-    void router.push("/settings/config");
+    void router.push(defaultLayerPath("instance"));
 }
 
 function navigateAdmin() {
