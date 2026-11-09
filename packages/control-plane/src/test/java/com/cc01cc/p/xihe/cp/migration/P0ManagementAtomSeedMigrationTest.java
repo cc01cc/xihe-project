@@ -169,12 +169,13 @@ class P0ManagementAtomSeedMigrationTest {
 
     @Test
     void atomCountsStayConsistentWithTheCatalog() {
-        // V129/V130 added MEMORY_WRITE_SELF (27 → 28) and BL-345's follow-up keeps the total at 29;
-        // PLAN-0691 T1.3 added the four plugin atoms (29 → 33). Update together with
-        // SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
-        assertEquals(33, PermissionAtomCatalog.actionAtoms().size(),
+        // V129/V130 added MEMORY_WRITE_SELF (27 → 28); PLAN-0691 T1.3 added the four plugin atoms
+        // (29 → 33); BL-312 (2026-11-09) removed the former D8 CREATE_OWN_AGENT atom (33 → 32).
+        // Update together with SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
+        assertEquals(32, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
-                        + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33; the same arithmetic"
+                        + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
+                        + " CREATE_OWN_AGENT removal = 32; the same arithmetic"
                         + " is frozen in SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());
         assertEquals(PermissionAtomCatalog.actionAtoms().size(),

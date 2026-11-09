@@ -112,7 +112,6 @@ public final class PermissionAtomCatalog {
             // capability. An agent principal is a grantee, not an owner of user data — letting it
             // hold this atom would let tool writes target the human's own subject memory.
             ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
-            ToolFaceRegistry.ACTION_OWN_AGENT,
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
             // caps
             CAP_INSTANCE_SUPER,
@@ -145,8 +144,6 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK,
             ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
-            // PLAN-0622 D8: user tier — create one's own PERSONAL agent principal.
-            ToolFaceRegistry.ACTION_OWN_AGENT,
             // PLAN-0629 D29-24/34: the agent tool channel writing subject memory. Stored as an atom
             // and deliberately seeded into NO default role, which is the mechanical form of
             // "tool writes are denied by default". Scope class stays `both`: memory is isolated by
@@ -196,9 +193,6 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
             // PLAN-0673 M2 (D-166): bypassing the subset rule is instance-wide authority.
             ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
-            // PLAN-0622 D8: "create your own agent" is a user capability; a workspace-scoped
-            // binding of it would be meaningless, so it is instance-bindable only.
-            ToolFaceRegistry.ACTION_OWN_AGENT,
             // PLAN-0651 M1 (D51-26): instance-level agent-principal authority acts on the instance.
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
             // PLAN-0651 M2 T2.1: reading/writing instance content and revealing secrets all act on
@@ -266,7 +260,7 @@ public final class PermissionAtomCatalog {
                 : WILDCARD;
     }
 
-    /** The action atoms, in canonical order (33 after PLAN-0691 T1.3 added four plugin atoms). */
+    /** The action atoms, in canonical order (32 after BL-312 removed CREATE_OWN_AGENT). */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
     }

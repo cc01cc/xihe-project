@@ -389,7 +389,7 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         User admin = userRepository.saveAndFlush(new User(
                 "hooks-http-" + UUID.randomUUID() + "@test.com", "hash", "Hooks HTTP admin"));
         adminUserId = admin.getId();
-        // A plain account (USER tier: CREATE_OWN_AGENT) that also holds instance,admin — exactly the
+        // A plain account (USER tier) that also holds instance,admin — exactly the
         // matrix the walkthrough used (admin can read the instance template layer and create).
         grantDefaultService.ensureUserDefault(admin);
         AccessRole adminRole = accessRoleRepository.findByName("ADMIN")

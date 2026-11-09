@@ -128,9 +128,9 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
                         request("credential_use", "credential:" + UUID.randomUUID(),
                                 fixture.userId(), fixture.workspaceA())),
                 "the instance USER role carries no credential atom");
-        // PLAN-0622 D8: the USER default set is the five registration atoms plus
-        // CREATE_OWN_AGENT (an ordinary account may create its own PERSONAL agent). The count is
-        // derived from the code-side role seed so the next atom does not silently re-break it.
+        // The USER default set is the five registration atoms plus MEMORY_WRITE_SELF/PLUGIN_INVOKE
+        // (BL-312 removed the former PLAN-0622 D8 atom). The count is derived from the code-side
+        // role seed so the next atom change does not silently re-break it.
         assertEquals(seedAtomCount(SystemAccessRoleCatalog.USER), grantRepository.findScopedGrants(
                         "user", fixture.userId(), GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).stream()
                         .filter(row -> AccessScope.INSTANCE.equals(row.getScopeType()))

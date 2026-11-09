@@ -278,10 +278,12 @@ describe("WorkspaceAgentsPanel create gating (T5.1 default WORKSPACE)", () => {
 });
 
 // ── PLAN-0622（M3 UI 跟随）：agent 三档 scope / 模型意图 / disable / 来源徽标 ────────────
-const PERSONAL_ONLY = {
+// BL-312：原 PERSONAL-only fixture 持有的 CREATE_OWN_AGENT 已移除；改用仍存在的 user 层原子
+// MEMORY_WRITE_SELF——三个用例的语义都是「不持 MANAGE_WORKSPACE_AGENTS ⇒ fail-closed」。
+const USER_TIER_ONLY = {
     userId: "99999999-9999-4999-8999-999999999999",
-    instanceCapabilities: ["CREATE_OWN_AGENT"],
-    instancePermissions: [{ actionClass: "CREATE_OWN_AGENT", resource: "*" }],
+    instanceCapabilities: ["MEMORY_WRITE_SELF"],
+    instancePermissions: [{ actionClass: "MEMORY_WRITE_SELF", resource: "*" }],
     workspaces: [],
 };
 const WORKSPACE_ONLY = {
@@ -313,7 +315,7 @@ describe("WorkspaceAgentsPanel T5.1 scope write exit", () => {
     });
 
     it("gates creation on MANAGE_WORKSPACE_AGENTS because CP defaults to WORKSPACE", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(USER_TIER_ONLY);
         const personal = await mountOpenedPanel();
         expect(
             personal.find('[data-testid="agent-principal-create"]').attributes("disabled"),
@@ -666,7 +668,7 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
     it("keeps the row-level bind disabled without MANAGE_WORKSPACE_AGENTS (fail-closed)", async () => {
         admin.value = false;
         apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(USER_TIER_ONLY);
         const wrapper = await mountOpenedPanel();
         const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
         expect(bindRow.attributes("disabled")).toBeDefined();
@@ -701,7 +703,7 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
     it("keeps the edit entry disabled without MANAGE_WORKSPACE_AGENTS and fires no request", async () => {
         admin.value = false;
         apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(USER_TIER_ONLY);
         wrapper = await mountOpenedPanel();
 
         expect(editCap().attributes("disabled")).toBeDefined();

@@ -38,9 +38,11 @@ public class SystemAccessRoleCatalog {
     /** 2026-11-04 ruling (task-25): the non-administrative delegation role for agent principals. */
     public static final UUID AGENT_DELEGATOR_ID = UUID.fromString("00000000-0000-4000-8000-000000000007");
     /**
-     * D-174 (user ruling): the default instance role bound to a freshly created agent principal =
-     * the human USER registration set minus {@code CREATE_OWN_AGENT} (agent-forbidden). Human USER
-     * stays untouched; migration V127 rebinds the legacy agent seed bindings (stack-1: 40 rows).
+     * D-174 (user ruling): the default instance role bound to a freshly created agent principal.
+     * Originally "human USER minus {@code CREATE_OWN_AGENT}"; BL-312 (user ruling 2026-11-09)
+     * removed that atom from the vocabulary entirely, so AGENT_USER is now simply the base set.
+     * Human USER stays untouched apart from the same atom removal; migration V127 rebinds the
+     * legacy agent seed bindings (stack-1: 40 rows).
      */
     public static final UUID AGENT_USER_ID = UUID.fromString("00000000-0000-4000-8000-000000000008");
 
@@ -51,7 +53,7 @@ public class SystemAccessRoleCatalog {
     public static final String WS_EDITOR = "WS_EDITOR";
     public static final String WS_VIEWER = "WS_VIEWER";
     public static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
-    /** D-174: agent default instance role (human USER minus the agent-forbidden CREATE_OWN_AGENT). */
+    /** D-174: agent default instance role (the base set; BL-312 removed CREATE_OWN_AGENT). */
     public static final String AGENT_USER = "AGENT_USER";
 
     /** The three instance-level system roles, used to keep one tier binding per user. */
@@ -91,13 +93,13 @@ public class SystemAccessRoleCatalog {
             AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
 
     /**
-     * PLAN-0622 D8 (M0.3): the registration default set plus the user tier action that lets an
-     * ordinary account create its own PERSONAL agent principal. Deliberately one atom — the
-     * workspace tier still needs MANAGE_WORKSPACE_AGENTS and the instance tier still needs
-     * CREATE_ACCOUNT (three independent actions, never alias-merged).
+     * The registration default set. BL-312 (user ruling 2026-11-09) removed the former
+     * PLAN-0622 D8 own-agent atom from the vocabulary: creating one's own agent principal is not
+     * a registration capability any more (workspace tier = MANAGE_WORKSPACE_AGENTS, instance tier
+     * = CREATE_ACCOUNT).
      */
     private static final List<AtomRef> USER_DEFAULT_ATOMS = concat(BASE_ATOMS,
-            List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_OWN_AGENT),
+            List.of(
                     // BL-345 (user ruling 2026-11-06): every registered account may write the
                     // memory of a principal it owns. MEMORY_WRITE (any subject) is NOT here.
                     AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF)));
@@ -161,7 +163,8 @@ public class SystemAccessRoleCatalog {
                                                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)))),
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
-                                + "(read/write/delete/exec/network) plus CREATE_OWN_AGENT.",
+                                + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
+                                + "own-principal memory atom (BL-312 removed CREATE_OWN_AGENT).",
                         USER_DEFAULT_ATOMS),
                 new RoleSeed(WS_OWNER_ID, WS_OWNER, "Workspace Owner",
                         "Workspace scope: editor actions plus workspace agent management "
@@ -236,12 +239,14 @@ public class SystemAccessRoleCatalog {
                         "Workspace scope: delegate by creating child Sessions/Runs inside the same "
                                 + "workspace. Intended for agent principals; bound explicitly.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT))),
-                // D-174 (user ruling 2026-11-05): the agent's default INSTANCE role — human USER's
-                // registration set WITHOUT CREATE_OWN_AGENT (agent-principal-forbidden, 17-item set).
+                // D-174 (user ruling 2026-11-05): the agent's default INSTANCE role — the base set.
+                // Originally "human USER minus CREATE_OWN_AGENT" (agent-principal-forbidden);
+                // BL-312 (2026-11-09) removed that atom from the vocabulary entirely, so the two
+                // roles now differ only by the human MEMORY_WRITE_SELF atom.
                 // Migration V127 rebinds legacy agent seed bindings (stack-1 measured 40) to it.
                 new RoleSeed(AGENT_USER_ID, AGENT_USER, "Agent User (default)",
-                        "Instance scope: read/write/delete/exec/network — the human USER set "
-                                + "minus the agent-forbidden CREATE_OWN_AGENT.",
+                        "Instance scope: read/write/delete/exec/network + PLUGIN_INVOKE — the "
+                                + "agent default base set (BL-312 removed CREATE_OWN_AGENT).",
                         BASE_ATOMS));
     }
 

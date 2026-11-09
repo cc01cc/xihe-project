@@ -53,12 +53,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
 
     /**
-     * spec §4.1 USER row / evidence matrix USER column, extended by PLAN-0622 D8: the five allow
-     * rows plus CREATE_OWN_AGENT (an ordinary account may create its own PERSONAL agent principal).
+     * spec §4.1 USER row / evidence matrix USER column: the five allow rows plus the BL-345 SELF
+     * atom and the base PLUGIN_INVOKE (BL-312 removed the former D8 CREATE_OWN_AGENT row).
      * credential atoms stay denied.
      */
     private static final Set<String> USER_MATRIX = Set.of(
-            "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT",
+            "read", "write", "delete", "exec", "network",
             // BL-345 (user ruling 2026-11-06): every account may write memory of the principals
             // it owns; writing arbitrary subjects stays an owner/SUPER_ADMIN atom.
             "MEMORY_WRITE_SELF",
@@ -71,15 +71,16 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
      * PLAN-0496 three credential atoms (the legacy single `credential` word retired).
      */
     private static final Set<String> ADMIN_MATRIX = Set.of(
-            "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT",
+            "read", "write", "delete", "exec", "network",
             "credential_use", "credential_reveal", "credential_manage",
             // PLAN-0651 M1 (D51-26): the two faces that used to be an isInstanceAdmin() bypass.
             // These are action atoms and therefore materialize; workspace:admin does NOT (capability).
             "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS",
             // PLAN-0651 M2 T2.1: the eight P1 atoms are part of the fixed instance-administrator
-            // set (D51-27). 20 action atoms + these 8 = 28, plus GRANT_ANY_ATOM (PLAN-0673 M2,
-            // D-166) = 29 (see SkillReadFaceTest for the count). MEMORY_WRITE_SELF (BL-345) is in
-            // USER's set above and therefore inherited here.
+            // set (D51-27). 19 action atoms + these 8 = 27, plus GRANT_ANY_ATOM (PLAN-0673 M2,
+            // D-166) = 28 (see SkillReadFaceTest for the count; BL-312 removed the former D8 atom
+            // from the 20). MEMORY_WRITE_SELF (BL-345) is in USER's set above and therefore
+            // inherited here.
             "READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT", "VIEW_SECRET_CONTENT",
             "MANAGE_SKILL_LIBRARY", "MANAGE_PROVIDER_CONNECTIONS", "USE_WORKSPACE_RUNTIME",
             "MANAGE_WORKSPACE_RUNTIME", "MANAGE_WORKSPACE_POLICY",
@@ -89,9 +90,10 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             "MANAGE_ROLES",
             // BL-345: ADMIN inherits the USER default set (SELF), but not MEMORY_WRITE (any subject).
             "MEMORY_WRITE_SELF",
-            // PLAN-0691 T1.3 (M1): the four plugin atoms make the count 33; ADMIN (the fixed
-            // instance-administrator set) holds manage + bind, inherits invoke from USER's set, and
-            // never holds PLUGIN_DATA (the data plane belongs to a binding, not to a person).
+            // PLAN-0691 T1.3 (M1): the four plugin atoms make the count 32 (BL-312 removed
+            // CREATE_OWN_AGENT); ADMIN (the fixed instance-administrator set) holds manage + bind,
+            // inherits invoke from USER's set, and never holds PLUGIN_DATA (the data plane belongs
+            // to a binding, not to a person).
             "PLUGIN_MANAGE", "PLUGIN_BIND", "PLUGIN_INVOKE");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */

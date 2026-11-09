@@ -43,10 +43,11 @@ public class ToolFaceRegistry {
     // Kubernetes terms). Instance-only; default SUPER_ADMIN only; every use must be audited.
     // Never a role-name check — the bypass is an atom like any other.
     public static final String ACTION_GRANT_ANY_ATOM = "GRANT_ANY_ATOM";
-    // PLAN-0622 (D8, M0.3): the sixteenth action atom — a user tier action that lets an
-    // ordinary account create its own PERSONAL agent principal. It is never alias-merged with
-    // CREATE_ACCOUNT (instance tier) or MANAGE_WORKSPACE_AGENTS (workspace tier).
-    public static final String ACTION_OWN_AGENT = "CREATE_OWN_AGENT";
+    // BL-312 (option B, user ruling 2026-11-09): the former CREATE_OWN_AGENT atom (PLAN-0622 D8) is
+    // removed from the vocabulary entirely — creating one's own agent principal is carried by
+    // MANAGE_WORKSPACE_AGENTS (workspace tier) and CREATE_ACCOUNT (instance tier) only. The seed
+    // rows are deleted by migration V147; the string is gone on purpose so a re-introduction fails
+    // closed at PermissionAtomCatalog.atom(...) instead of resurrecting silently.
     // PLAN-0629 M1 (D29-24/34): the seventeenth action atom — writing an agent subject's memory
     // through the agent tool channel. Default-deny by construction: it is stored in the catalog
     // but seeded into NO default role (USER/ADMIN included), so an account can only use it after
@@ -206,7 +207,7 @@ public class ToolFaceRegistry {
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
                 ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES,
-                ACTION_OWN_AGENT, ACTION_MEMORY_WRITE, ACTION_MEMORY_WRITE_SELF,
+                ACTION_MEMORY_WRITE, ACTION_MEMORY_WRITE_SELF,
                 // PLAN-0651 M1 (D51-26): management atoms. They join the built-in vocabulary because
                 // it is the catalog's action-class set (PermissionAtomCatalog.actionAtoms() must stay
                 // equal to it, see MemoryWriteAtomTest); they are not attached to any tool face.

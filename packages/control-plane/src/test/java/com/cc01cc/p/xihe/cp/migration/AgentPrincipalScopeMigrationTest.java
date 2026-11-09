@@ -308,25 +308,26 @@ class AgentPrincipalScopeMigrationTest {
 
     @Test
     void headSeedsMatchTheCodeSideCatalog() throws SQLException {
-        // PLAN-0622 D8 (M0.3): V91 makes the PostgreSQL seed agree with the code catalog again.
+        // BL-312 (option B, 2026-11-09): V147 removed the atom V91 planted, so the PostgreSQL seed
+        // and the code catalog shrank together (33 → 32 action atoms).
         assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
                 roleAtomCount(connection, SystemAccessRoleCatalog.SUPER_ADMIN_ID),
                 "SUPER_ADMIN carries every action atom plus the capability atoms");
-        // The per-role counts are derived from the code-side seeds: V91 is the SQL mirror of
+        // The per-role counts are derived from the code-side seeds: V91/V147 keep the SQL mirror of
         // SystemAccessRoleCatalog, so a hard-coded 10/6 would be the next thing to rot.
         assertEquals(seedAtomCount(SystemAccessRoleCatalog.ADMIN),
                 roleAtomCount(connection, SystemAccessRoleCatalog.ADMIN_ID),
                 "ADMIN seeds exactly the atoms of its code-side role definition "
-                        + "(nine action atoms incl. CREATE_OWN_AGENT, plus instance:admin)");
+                        + "(plus instance:admin; BL-312 removed CREATE_OWN_AGENT from both sides)");
         assertEquals(seedAtomCount(SystemAccessRoleCatalog.USER),
                 roleAtomCount(connection, SystemAccessRoleCatalog.USER_ID),
                 "USER seeds exactly the atoms of its code-side role definition "
-                        + "(five registration atoms plus CREATE_OWN_AGENT)");
+                        + "(BL-312 removed CREATE_OWN_AGENT from both sides)");
         for (UUID roleId : new UUID[] {SystemAccessRoleCatalog.SUPER_ADMIN_ID,
                 SystemAccessRoleCatalog.ADMIN_ID, SystemAccessRoleCatalog.USER_ID}) {
-            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+            assertEquals(0, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                             + roleId + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
-                    "CREATE_OWN_AGENT is seeded on " + roleId);
+                    "BL-312: V147 removed the CREATE_OWN_AGENT seed row from " + roleId);
         }
         // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
         // V115 N9 default.
@@ -353,12 +354,14 @@ class AgentPrincipalScopeMigrationTest {
     }
 
     @Test
-    void v91BackfillsTheMaterializedOwnAgentAtomForExistingTierSubjects() throws SQLException {
-        assertEquals(1, scalarInt(connection, "SELECT count(*) FROM grants WHERE subject_type = 'user'"
+    void v91BackfilledTheOwnAgentAtomAndV147RemovesItAgain() throws SQLException {
+        // V91 backfilled exactly one materialized row for the pre-existing tier subject; the BL-312
+        // removal (V147) deletes it again at head, so the final replayed state is zero rows.
+        assertEquals(0, scalarInt(connection, "SELECT count(*) FROM grants WHERE subject_type = 'user'"
                         + " AND subject_id = '" + LEGACY_USER_ID + "' AND source = 'role'"
                         + " AND scope_type = 'instance' AND scope_id IS NULL"
                         + " AND permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT'"),
-                "the pre-existing tier subject gets exactly one materialized CREATE_OWN_AGENT row");
+                "BL-312: the V91-backfilled CREATE_OWN_AGENT row is removed again by V147");
     }
 
     // ------------------------------------------------------------------ fixture: both legacy shapes
@@ -370,8 +373,9 @@ class AgentPrincipalScopeMigrationTest {
                 + LEGACY_USER_ID.toString().substring(0, 8) + "')");
         execute(connection, "INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('"
                 + LEGACY_PRINCIPAL_ID + "', 'legacy principal', '" + LEGACY_USER_ID + "')");
-        // A V89-era instance tier binding: V91 must backfill its materialized CREATE_OWN_AGENT row,
-        // otherwise existing accounts would keep the five-atom set until their next materialization.
+        // A V89-era instance tier binding: V91 backfilled its materialized CREATE_OWN_AGENT row
+        // (removed again at head by V147, asserted above); at V91-time the backfill was required so
+        // existing accounts would not keep the five-atom set until their next materialization.
         execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '"
                 + SystemAccessRoleCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
