@@ -439,6 +439,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 
 - **DEV-only 预览页**：UI dev server 下打开 `/preview.html`（Vite 多入口，非产品路由、非构建入口）；其中「Modal 内 Popover」区块用于**层级回归手测**——验证 BaseModal backdrop 与 Popover/Select 的 z-index（PLAN-0714/BL-518）。该页不请求 `/api/v1/**`，全部为 mock。
 - E2E in-page bypass 静态门（PLAN-0687，report-only）：`mise run check:e2e-bypass` 扫描 `packages/ui/e2e/real/**` 的 `page.evaluate(...)` 块内 `fetch(` 调用（浏览器页内直连后端 API，可能绕过被测产品 UI）。每个命中必须带 `// fixture-only: <理由>` 或 `// read-only: <理由>` 标注（0644 §4.3 的两条允许通道），或在 `config/e2e-inpage-bypass-allowlist.json` 登记；默认 report-only 永不因存量命中失败（显式 `--enforce` 才阻断），不进 `validate`。完成产品行为的 in-page fetch 必须改走产品 UI 路径，不得用标注洗白；mock lane 不在判据内。自测：`node --test scripts/__tests__/check-e2e-inpage-bypass.test.mjs`。判据与裁定见 PLAN-0687。
+- **i18n 门禁（task-96，2026-11-10）**：`mise run lint:i18n`（= `node scripts/i18n-scan.mjs`，已并入 `mise run lint`）**只读**扫描三件事 —— ①zh-CN/en-US 键集合差集 ②同一键两侧 `{placeholder}` 集合是否一致 ③源码里 `t("…")` 的静态引用能否在两侧解析。**通过时零输出、exit 0**；有问题 exit 1 并逐条点名（第 ③ 类带 `file:line`）；脚本自身/仓库结构坏掉 exit 2（脚本问题不算产品问题）。`-- --json` 出结构化报告，`-- --root <dir>` 扫别的根（单测夹具用）。为什么要有这道门：2026-11-10 它抓到 `ApprovalModal.vue` 把 `workspace.approvalResolvedElsewhereDraftKept` 写成 `chat.*` ⇒ **用户看到一串裸 key**（静态类型不报、单测不崩、页面照渲染）。自测：`node --test scripts/i18n-scan.test.mjs`（含缺键/占位漂移/未解析引用/结构坏掉四类负例）。
 - 全量：`mise run validate:full`。策略详见 DEV-020/021/022/023。host E2E 参数语义（`--batch`∪位置参数、`--llm-mode` 与批声明冲突即拒绝、两种重试旋钮、`--only`/`--check-cli`）见 DEV-020 §3 的「host runner CLI 语义（PLAN-0664）」。
 
 ### CP GraalVM Native Image（实验性，Windows x64）

@@ -52,7 +52,7 @@ pnpm run build
 - 工作区成员 tab（PLAN-0565）：设置页第四 tab「成员」（`canViewMembers` 过滤渲染，裁定 #2 VIEWER 不渲染）；`WorkspaceMembersPanel` 承载列表/添加（按 username）/改角色/移除（AlertDialog 确认）；readonly 传 `!canManageWorkspace`（EDITOR 只读）；错误按 `ApiError.problem.code` 映射（裁定 #6 文案等），CP 权威、前端不复制授权逻辑。
 - ~~Composer 模型标签（PLAN-0555）三段展示~~ **已废止（2026-11-04 用户裁定：移除 composer 模型选择器）**：`ModelPopover` 与工具栏入口已删除，composer 不再展示模型/连接段（避免"看起来像已绑"的误导，见 C1 `modelDisplay` 契约）；模型绑定改为发送时自动补绑（`bind-defaults`）+ 引导弹窗，`modelDisplay.ts` 仅作为"发送时会用什么"的只读解析器保留。
 - 凭据页（PLAN-0553）：连接弹窗只做「输入 key 快速新建凭据」；凭据页「关联到连接」用 `PATCH /provider-connections/{id}` 的 `credentialId` 换绑，展示引用计数与删除 409 提示；不在连接弹窗里选择已有凭据。
-- Vue `t()` 消息不得包含 `{...}` placeholder；locale 文本按实际插值参数编写。
+- Vue `t()` 消息不得包含 `{...}` placeholder；locale 文本按实际插值参数编写。机器判据：`mise run lint:i18n`（`scripts/i18n-scan.mjs`，只读三查：两侧键差集 / 同键占位漂移 / 源码 `t("…")` 静态引用；通过时零输出）。改 locale 前后都跑它 —— 它抓到过 `chat.*` 写 `workspace.*` 键的裸 key 事故。
 - 语言切换（PLAN-0602）：唯一入口 `src/i18n/locale.ts#applyLocale`（同时写 `i18n.global.locale` 与 `<html lang>`），持久化经 `useSettingsStore().setLanguage` 落到 `xihe-language`（VueUse 字符串序列化 = **raw 字符串**，不是 JSON）；启动期由 `main.ts` 的 `initLanguage()` 统一应用。业务代码**禁止**直接写 `i18n.global.locale` 或改 `<html lang>`；新增语言只加 `SUPPORTED_LOCALES` 与两侧资源。
 - 新增或修改 UI 合同、焦点/键盘行为、弹窗、流式交互或动画/过渡时必须用真实浏览器验证；组件单测不能替代 Playwright 证据。
 - 新 E2E 禁止固定 `sleep`/`waitForTimeout`；使用显式 timeout、readiness、事件或轮询。具体命令与超时策略见 [`command-execution-strategies`](../../../.agents/skills/command-execution-strategies/SKILL.md)。

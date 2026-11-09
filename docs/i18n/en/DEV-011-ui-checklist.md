@@ -104,9 +104,9 @@ status: active
 - [ ] Both zh-Hans and en locales have corresponding keys
 - [ ] Link text does not show raw keys (e.g., `login.login`)
 - [ ] Form validation error messages have corresponding translations
-- [ ] Zero key-set difference between locales (measured 2026-11-10: `packages/ui/src/i18n/index.ts` zh 2307 / en 2307)
+- [ ] Zero key-set difference between locales (measured 2026-11-10: `packages/ui/src/i18n/index.ts` zh 2307 / en 2307) — machine check: `mise run lint:i18n` (a standing gate since task-96; read-only, silent on success)
 - [ ] A key's `{placeholder}` set is identical on both sides (drift renders "undefined" at runtime)
-- **Known trap (measured 2026-11-10)**: a wrong prefix inside a same-named family only shows up at runtime — the second line of `ApprovalModal.vue`'s "handled in another window" notice used `chat.approvalResolvedElsewhereDraftKept` while the key lives under `workspace.*`, so users saw the bare key (fixed in `efa527a0`). Scan recipe: key diff + placeholder drift + static `t("…")` references; script at `one/.tmp/xh/task-95/i18n-scan.mjs` (temp dir per the task card, re-runnable).
+- **Known trap (measured 2026-11-10)**: a wrong prefix inside a same-named family only shows up at runtime — the second line of `ApprovalModal.vue`'s "handled in another window" notice used `chat.approvalResolvedElsewhereDraftKept` while the key lives under `workspace.*`, so users saw the bare key (fixed in `efa527a0`). Scan recipe: key diff + placeholder drift + static `t("…")` references; the scanner is now a standing repo gate: `mise run lint:i18n` (`A03-xihe/scripts/i18n-scan.mjs`, task-96).
 
 ## 9. E2E Screenshot Baselines
 
