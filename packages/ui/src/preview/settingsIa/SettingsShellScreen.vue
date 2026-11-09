@@ -173,7 +173,7 @@ function domainLabel(id: string) {
     return (copy.value.shell.domainLabels as Record<string, string>)[id] ?? id;
 }
 
-/** 用户层不可写的域：logging / approval-policy / job-policy（CP 矩阵事实，实例+工作区可写） */
+/** 用户层不可写的域：logging（仅实例）+ approval-policy / job-policy（实例+工作区）——CP 矩阵事实 */
 function instanceOnlyForUser(d: { layers: SettingsLayer[] }) {
     return activeLayer.value === "instance" && !d.layers.includes("user");
 }
