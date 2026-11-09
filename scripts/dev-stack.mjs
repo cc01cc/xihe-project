@@ -79,6 +79,7 @@ import {
   resolveDevAdminPasswordSafe,
   resolveLocalMode,
 } from './lib/dev-admin-password.mjs';
+import { assertEnvValues, makeChildEnv } from './lib/env-values.mjs';
 
 // task-234 B：DSH 子 shell 不继承 User 级 env ⇒ 直启时 process.env 里没有
 // `XH_CARGO_TARGET_ROOT`，cargo 会回落 `<one>/.tmp/cargo-target` 使单根不变量失效。
@@ -349,11 +350,10 @@ const logDir = resolve(projectRoot, derived.logDir);
 const pidFile = join(logDir, 'dev-stack-pids.json');
 const stackRun = join(projectRoot, 'scripts', 'stack-run.mjs');
 const ports = derived.ports;
-const childEnv = {
-  ...process.env,
-  XIHE_STACK_ID: derived.stackId,
-  XIHE_ENV: process.env.XIHE_ENV ?? 'dev',
-};
+// task-56（BL-527 同类风险）：子进程 env 走**单一出口**并冻结 —— 任何散点赋值
+// （如 `childEnv.X = <对象>`）在这里立刻 TypeError，而不是被 Node `String()` 静默强转成
+// "[object Object]" 传给子进程（那正是 BL-527 把一个 15 字符串写进库的通道）。
+let childEnv = makeChildEnv({ stackId: derived.stackId, env: process.env });
 
 /* ------------------------------------------------------- lease (PLAN-0694) */
 
@@ -563,6 +563,7 @@ function spawnDetached(service, outPath, errPath) {
       `$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d','/s','/c','${inner.replace(/'/g, "''")} 1> "${outPath.replace(/'/g, "''")}" 2> "${errPath.replace(/'/g, "''")}"' ` +
       `-WorkingDirectory '${safeCwd}' -WindowStyle Hidden -PassThru; $p.Id`;
     return new Promise((done) => {
+      assertEnvValues(childEnv, 'spawn:powershell-launcher');
       const child = spawn('powershell.exe', ['-NoProfile', '-Command', script], {
         env: childEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -581,6 +582,7 @@ function spawnDetached(service, outPath, errPath) {
   }
   const outFd = openSync(outPath, 'a');
   const errFd = openSync(errPath, 'a');
+  assertEnvValues(childEnv, 'spawn:' + service);
   const child = spawn(process.execPath, [stackRun, service], {
     cwd: projectRoot,
     env: childEnv,
@@ -637,6 +639,7 @@ async function ensurePg() {
     return { started: false, listening: true };
   }
   console.log(`[dev-stack] starting PostgreSQL for ${derived.stackId} (compose project ${derived.composeProject}) ...`);
+  assertEnvValues(childEnv, 'spawn:postgres');
   const result = spawnSync(process.execPath, [stackRun, 'pg', '--stack', derived.stackId], {
     cwd: projectRoot,
     env: childEnv,
@@ -704,7 +707,7 @@ function applyDevAdminPassword(adminPassword) {
   const { args: psArgs } = buildResetAdminCommand({ wrapperPath: wrapper, stackId: derived.stackId });
   // BL-523：密码**只经 env** 传给入口（`XIHE_RESET_ADMIN_PASSWORD`，ResetAdmin 内部优先级
   // stdin > env > --password），argv 里不再出现明文 —— 进程表 / shell 历史都看不到。
-  const upsertEnv = resetAdminEnv({ env: childEnv, password });
+  const upsertEnv = assertEnvValues(resetAdminEnv({ env: childEnv, password }), 'spawn:reset-admin');
   const startedAt = Date.now();
   let result = spawnSync('pwsh', psArgs, {
     cwd: projectRoot,
@@ -778,7 +781,9 @@ async function start() {
   // `devAdminPasswordFrom()` 只返回 string|null，拿不到就跳过 upsert（绝不传对象）。
   const devAdminPassword = devAdminPasswordFrom(devAdmin);
   if (devAdmin.ok) {
-    childEnv.XIHE_DEV_ADMIN_PASSWORD = devAdmin.password;
+    // 冻结对象不能原地赋值：改走「复制 → 断言 → 替换」，仍然是单一出口。
+    childEnv = Object.freeze({ ...childEnv, XIHE_DEV_ADMIN_PASSWORD: devAdmin.password });
+    assertEnvValues(childEnv, 'childEnv+devAdminPassword');
     console.log(formatDevAdminPassword(devAdmin));
   } else {
     console.warn(
