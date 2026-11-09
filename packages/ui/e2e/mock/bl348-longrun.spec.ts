@@ -1,9 +1,16 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 /**
- * BL-348 段 2（**临时探针，不提交**）：90 秒连续滚动下的 heap 时间序列。
+ * BL-348 段 2（**已入库的 90s 长跑探针**）：90 秒连续滚动下的 heap 时间序列。
  *
  * 目的：回答"长时间滚动时 heap 是否单调上升"，**不是**跑 30 分钟长跑。
  * 采样：每 15 秒用 CDP 取一次 `HeapProfiler.collectGarbage` ×2 后的 `Runtime.getHeapUsage`。
+ *
+ * 现状（task-116 审计如实化）：本文件当初按「临时探针，**不提交**」写，但它**已随 develop 入库**
+ * ⇒ 这里如实描述，不再自称临时物：
+ *  - **因成本默认 skip**（90s 会拖慢 mock 全量；它是全量 8 条 skip 之一），`BL348_LONGRUN=1` 才跑；
+ *  - **长期口径回归不看本文件**：生产口径的 heap 采样与"拒绝对比"硬门由
+ *    `scripts/l2/heap-sample.mjs`（采样）+ `scripts/l2/heap-compare.mjs`（口径不一致即拒绝算 delta）
+ *    承担；本探针只做一次性/周期性观测，不参与 gate。
  */
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
@@ -63,7 +70,11 @@ test.describe("BL-348 长跑探针", () => {
     test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
 
     // 90s 长跑会拖慢常规 e2e：默认 skip，需要时 `BL348_LONGRUN=1 pnpm exec playwright test …`。
-    test.skip(!process.env.BL348_LONGRUN, "长跑探针默认跳过（设 BL348_LONGRUN=1 启用）");
+    // 长期 heap 回归判定不在本文件：见 scripts/l2/heap-sample.mjs + scripts/l2/heap-compare.mjs。
+    test.skip(
+        !process.env.BL348_LONGRUN,
+        "90s 长跑探针默认跳过（BL348_LONGRUN=1 启用；长期 heap 硬门见 scripts/l2/heap-compare.mjs）",
+    );
     test("90s 连续滚动：每 15s 采 heap", async ({ page }) => {
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-348 longrun" }] });

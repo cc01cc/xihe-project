@@ -1,6 +1,7 @@
 /**
  * X 图文（单文件 HTML）自测：`file://` 打开、零外链、5 图全部可见、打印媒体不塌。
  * 只有 `XIHE_E2E_DEMO=1` 时执行；HTML 路径取 `XIHE_E2E_DEMO_DIR` 的上一级。
+ * runbook（门控变量 / 三步顺序 / 输入 HTML 契约）：e2e/DEMO-CHANNEL.md。
  */
 import { expect, test } from "./helpers/mock-test";
 import { join, dirname } from "node:path";

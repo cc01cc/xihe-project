@@ -74,8 +74,11 @@ test.describe("PLAN-269 viewport matrix: desktop-4k", () => {
 
     test("settings shell remains bounded on 4K", async ({ page }) => {
         await setupViewportFixtures(page);
-        await page.goto("/settings/config");
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible();
+        // 旧 /settings/config 已重定向；4K 下有界性断言落在「非管理员也能打开的用户层域页」上，
+        // 验的仍是设置区外壳（侧栏 + 内容列）在 4K 不横向溢出。
+        await page.goto("/settings/user/rag");
+        await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+        await expect(page.getByTestId("settings-domain-view")).toBeVisible();
         await expectNoHorizontalOverflow(page);
         await expectPlatformScreenshot(page, "plan-269-viewport-desktop-4k-settings.png");
     });

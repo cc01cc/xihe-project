@@ -92,10 +92,15 @@ test.describe("PLAN-0560 workspace settings", () => {
         await expect(page.getByTestId("ws-settings-general")).toBeVisible();
         expect(page.url()).toContain("tab=workspace");
 
-        // 全局配置页不消费 tab query：同样落默认（mock 用户非 ADMIN → 个人层）。
+        // 旧契约「全局配置页不消费 tab query、落个人层」在层进 URL 下已**废弃**（Lead 2026-11-10 裁定：
+        // URL 不承载层参数，层只由 /settings/{layer}/{domain} 的路径段表达）。
+        // 新契约：/settings/config（无论带什么 tab）一律 redirect 到实例层第一个域页；
+        // 非管理员在该域页看到 403 视图（入口分层），不会被 tabs 参数分派到别的层。
         await page.goto("/settings/config?tab=workspace", { waitUntil: "load" });
-        await expect(page.getByTestId("config-tab-user")).toBeVisible();
-        await expect(page.getByTestId("config-tab-instance")).toHaveCount(0);
+        // 重定向保留 query（路由只换 path），但层已由路径段决定 ⇒ tab=workspace 不再有分派作用。
+        await expect(page).toHaveURL(/\/settings\/instance\/llm-provider(\?.*)?$/);
+        await expect(page.getByTestId("settings-forbidden")).toBeVisible();
+        await expect(page.getByTestId("settings-domain-view")).toHaveCount(0);
     });
 
     test("VIEWER sees read-only general info, config and MCP", async ({ page }) => {
