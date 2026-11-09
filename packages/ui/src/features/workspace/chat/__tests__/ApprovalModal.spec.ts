@@ -30,7 +30,7 @@ const i18n = createI18n({
     locale: "en",
     messages: {
         en: {
-            common: { close: "Close" },
+            common: { close: "Close", saving: "Saving..." },
             chat: {
                 approvalRequired: "Approval Required",
                 approvalDescription: "Review this action",
@@ -112,7 +112,6 @@ const i18n = createI18n({
                 approvalGuardVerdictDeny: "Suggests rejecting",
                 approvalClassifyRequiresOnce: "Unclassified tools can only be allowed once.",
             },
-            common: { saving: "Saving..." },
         },
     },
 });
