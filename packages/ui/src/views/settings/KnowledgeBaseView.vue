@@ -4,8 +4,6 @@ import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
 import { apiDelete, apiGet, apiPost } from "../../composables/api";
 import { AlertCircle, LoaderCircle } from "@lucide/vue";
-import SettingsNav from "../../components/settings/SettingsNav.vue";
-import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 
 const { t } = useI18n(),
     files = ref<File[]>([]),
@@ -61,8 +59,6 @@ async function removeDoc(id: string) {
 </script>
 
 <template>
-    <BackToChatButton />
-    <SettingsNav />
     <div class="space-y-4">
         <h3 data-testid="settings-knowledge-heading" class="font-medium">
             {{ t("settings.knowledgeBase") }}

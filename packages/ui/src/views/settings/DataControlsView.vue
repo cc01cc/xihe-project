@@ -2,8 +2,6 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
-import SettingsNav from "../../components/settings/SettingsNav.vue";
-import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import ImportPreview, { type ImportData } from "../../components/settings/ImportPreview.vue";
 import { apiRaw, api, ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
@@ -148,8 +146,6 @@ function downloadBlob(blob: Blob, filename: string) {
 </script>
 
 <template>
-    <BackToChatButton />
-    <SettingsNav />
     <div class="space-y-4">
         <h3 data-testid="settings-data-heading" class="font-medium">
             {{ t("settings.dataControls") }}

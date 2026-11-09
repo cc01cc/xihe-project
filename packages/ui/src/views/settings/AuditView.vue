@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
-import SettingsPageShell from "../../components/settings/SettingsPageShell.vue";
 import {
     Select,
     SelectContent,
@@ -264,7 +263,7 @@ onMounted(() => {
 </script>
 
 <template>
-    <SettingsPageShell>
+    <div data-testid="audit-view">
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -708,5 +707,5 @@ onMounted(() => {
                 </div>
             </section>
         </div>
-    </SettingsPageShell>
+    </div>
 </template>

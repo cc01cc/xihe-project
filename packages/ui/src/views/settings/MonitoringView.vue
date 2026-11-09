@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
-import SettingsNav from "../../components/settings/SettingsNav.vue";
-import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import { api, type VersionInfo } from "../../composables/api";
 
 const { t } = useI18n();
@@ -111,8 +109,6 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <BackToChatButton />
-    <SettingsNav />
     <div class="max-w-2xl mx-auto px-4 py-6">
         <div class="flex items-center justify-between mb-6">
             <div>
