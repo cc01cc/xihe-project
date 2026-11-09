@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, type ReporterDescription } from "@playwright/test";
 import { SERVER_START_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./timeouts";
 
 const UI_PORT = process.env.XIHE_UI_PORT || "12630",
@@ -14,7 +14,7 @@ const viewport = (() => {
 // BL-148: traces can capture APIRequestContext request bodies; turn them off
 // whenever real provider credentials are present in the test process.
 
-const REPORTERS =
+const REPORTERS: ReporterDescription[] | undefined =
     process.env.XIHE_MOCK_REPORT === "1"
         ? [["list"], ["json", { outputFile: ".mock-report.json" }]]
         : undefined;
