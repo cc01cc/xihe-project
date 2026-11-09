@@ -217,7 +217,9 @@ test.describe("PLAN-0339 workspace slices", () => {
     let state: MockState;
     test.beforeEach(async ({ page }) => {
         state = createState();
-        await setupMockAuth(page);
+        // PLAN-0752 M4：`/settings/data` 是「有 atom」页（WRITE_INSTANCE_CONTENT / instance admin）；
+        // 夹具用户默认零能力 ⇒ 只渲染 403 卡片、保留期区块不挂载。授予实例管理员能力，回到「控件可见」。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, {
             sessions: [{ id: SESSION_ID, title: "Workspace slices" }],
             messages: state.messages,
@@ -304,7 +306,9 @@ test.describe("PLAN-0339 workspace slices mobile", () => {
     test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
     test.beforeEach(async ({ page }) => {
         state = createState();
-        await setupMockAuth(page);
+        // PLAN-0752 M4：`/settings/data` 是「有 atom」页（WRITE_INSTANCE_CONTENT / instance admin）；
+        // 夹具用户默认零能力 ⇒ 只渲染 403 卡片、保留期区块不挂载。授予实例管理员能力，回到「控件可见」。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, {
             sessions: [{ id: SESSION_ID, title: "Workspace slices" }],
             messages: state.messages,

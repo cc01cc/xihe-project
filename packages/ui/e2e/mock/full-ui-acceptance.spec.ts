@@ -392,7 +392,9 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
     });
 
     test("MCP JSON validation and Data import preview are recoverable", async ({ page }) => {
-        await setupMockAuth(page);
+        // PLAN-0752 M4：`/settings/data` 是「有 atom」页 —— 零能力夹具只会看到 403 卡片，
+        // 导入预览无从进入；本用例验的是导入预览可恢复，所以显式授予实例管理员能力。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
