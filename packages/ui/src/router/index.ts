@@ -110,14 +110,14 @@ const router = createRouter({
                     redirect: () => defaultLayerPath("instance"),
                 },
                 {
-                    // PLAN-0752 §7「工具分类」：ToolFacesView 是**审批输入面**，不是配置域（不在 CP
-                    // 的 12 域里），所以不塞进 12 域；但它也不能没有入口——M1 把它 redirect 进
-                    // approval-policy 后页面一度无人挂载（task-74 回归）。这里先挂回独立路由，
-                    // 左栏「实例运维」分组给入口；批 C（T3.3）再按 design §7 并入 approval-policy 页签。
+                    // PLAN-0752 T3.3 / design 决策 #7 + D2：工具分类已并入 approval-policy 域页签，
+                    // 不再单独占顶级设置页；旧书签保留 302（防 bookmark 死掉），落地即该域的
+                    // 「工具分类」页签（?tab= 只表达域内视图，不表达层）。
                     path: "tool-faces",
-                    name: "settings-tool-faces",
-                    component: () => import("../views/settings/ToolFacesView.vue"),
-                    meta: { settingsLayer: "instance" },
+                    redirect: {
+                        name: "settings-instance-domain-approval-policy",
+                        query: { tab: "tool-faces" },
+                    },
                 },
                 // 实例运维 / 安全与权限（不是配置域，路径不在层段下）
                 {

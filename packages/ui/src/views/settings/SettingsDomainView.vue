@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { Info } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
 import { useConfigStore, type ConfigLayer } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
 import SettingsForbiddenView from "./SettingsForbiddenView.vue";
 import SettingsNotFoundView from "./SettingsNotFoundView.vue";
+import ToolFacesView from "./ToolFacesView.vue";
 import { DOMAIN_LABEL_KEY, isInstanceOnlyForUser, resolveLayerRoute } from "../../lib/settingsIa";
 import { logger } from "../../lib/logger";
 
@@ -55,6 +57,39 @@ const instanceOnly = computed(
 const blocked = ref(false);
 const fetchError = ref(false);
 
+/**
+ * PLAN-0752 T3.3 / design 决策 #7 + D2：工具分类归入 approval-policy 域，**不单独占顶级设置页**。
+ * 形态是「域页内二级页签（一域两视图）」，不是独立子路由——所以 `?tab=` 只表达**域内视图**，
+ * 不表达层（层仍然只在 URL 的 `/settings/{layer}/{domain}` 段里，V25 不变）。
+ * 旧书签 `/settings/tool-faces` 由 router 重定向到这里并带上 `?tab=tool-faces`。
+ */
+const route = useRoute();
+const router = useRouter();
+const toolFacesTab = computed(
+    () =>
+        resolved.value.ok &&
+        resolved.value.layer === "instance" &&
+        resolved.value.domain === "approval-policy",
+);
+const activeTab = ref<"policy" | "tool-faces">("policy");
+
+function syncTabFromQuery(): void {
+    activeTab.value =
+        toolFacesTab.value && route.query.tab === "tool-faces" ? "tool-faces" : "policy";
+}
+
+function selectTab(tab: "policy" | "tool-faces"): void {
+    activeTab.value = tab;
+    void router.replace({
+        query:
+            tab === "tool-faces"
+                ? { ...route.query, tab: "tool-faces" }
+                : { ...route.query, tab: undefined },
+    });
+}
+
+watch(() => route.query.tab, syncTabFromQuery);
+
 const keyCount = computed(() => {
     if (!resolved.value.ok) return 0;
     return Object.keys(configStore.layerConfig[layer.value]?.[resolved.value.domain] ?? {}).length;
@@ -71,7 +106,10 @@ async function load() {
     }
 }
 
-onMounted(load);
+onMounted(() => {
+    syncTabFromQuery();
+    void load();
+});
 watch(
     () => [layer.value, resolved.value.ok ? resolved.value.domain : ""],
     () => {
@@ -88,7 +126,11 @@ watch(
             <h2 data-testid="settings-domain-title" class="text-lg font-medium">
                 {{ domainLabel }}
             </h2>
-            <p data-testid="settings-domain-summary" class="text-[11px] text-muted-foreground">
+            <p
+                v-if="activeTab === 'policy'"
+                data-testid="settings-domain-summary"
+                class="text-[11px] text-muted-foreground"
+            >
                 {{ t("settings.ia.domainKeysCount", { count: keyCount }) }}
             </p>
             <button
@@ -127,7 +169,40 @@ watch(
             {{ t("settings.saveFailed") }}
         </p>
 
-        <div class="mt-4">
+        <div
+            v-if="toolFacesTab"
+            data-testid="settings-domain-tabs"
+            role="tablist"
+            :aria-label="domainLabel"
+            class="mt-3 flex items-center gap-1 border-b"
+        >
+            <button
+                v-for="tab in ['policy', 'tool-faces'] as const"
+                :key="tab"
+                type="button"
+                role="tab"
+                :data-testid="'settings-domain-tab-' + tab"
+                :aria-selected="activeTab === tab"
+                class="-mb-px min-h-8 border-b-2 px-2 text-xs transition-colors"
+                :class="
+                    activeTab === tab
+                        ? 'border-foreground font-medium text-foreground'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                "
+                @click="selectTab(tab)"
+            >
+                {{
+                    tab === "policy"
+                        ? t("settings.ia.approvalTabPolicy")
+                        : t("settings.ia.navToolFaces")
+                }}
+            </button>
+        </div>
+
+        <div v-if="activeTab === 'tool-faces' && toolFacesTab" class="mt-4">
+            <ToolFacesView embedded />
+        </div>
+        <div v-else class="mt-4">
             <ConfigLayerPanels :layer="layer" :domain="resolved.domain" />
         </div>
     </section>

@@ -12,7 +12,17 @@ import { createI18n } from "vue-i18n";
 const state = {
     capability: true,
     loadLayerDomains: vi.fn<(layer: string) => Promise<void>>(() => Promise.resolve()),
+    routeQuery: {} as Record<string, string | undefined>,
+    replace: vi.fn<(arg: { query: Record<string, unknown> }) => Promise<void>>(() =>
+        Promise.resolve(),
+    ),
 };
+
+// 域页要读 ?tab=（approval-policy 的域内页签，T3.3）⇒ 组件测试需要 router 的两个入口。
+vi.mock("vue-router", () => ({
+    useRoute: () => ({ query: state.routeQuery }),
+    useRouter: () => ({ replace: state.replace }),
+}));
 
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({
@@ -41,6 +51,7 @@ const messages = {
         settings: {
             domainLogging: "日志",
             domainRag: "检索增强（RAG）",
+            domainApprovalPolicy: "审批策略",
             saveFailed: "保存失败",
             ia: {
                 domainKeysCount: "本域 {count} 项配置",
@@ -48,6 +59,8 @@ const messages = {
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail: "{domain} 不在用户层的可写域清单里",
                 dismiss: "知道了",
+                approvalTabPolicy: "审批策略",
+                navToolFaces: "工具分类",
                 forbiddenTitle: "这一层需要实例管理员能力",
                 forbiddenBody: "不加载配置",
                 backToUserLayer: "去用户层",
@@ -67,6 +80,7 @@ function mountView(layer: "instance" | "user", domain: string) {
             plugins: [i18n],
             stubs: {
                 ConfigLayerPanels: { template: '<div data-testid="panels-stub" />' },
+                ToolFacesView: { template: '<div data-testid="tool-faces-stub" />' },
                 RouterLink: { template: "<a><slot /></a>" },
             },
         },
@@ -76,7 +90,41 @@ function mountView(layer: "instance" | "user", domain: string) {
 describe("SettingsDomainView", () => {
     beforeEach(() => {
         state.capability = true;
+        state.routeQuery = {};
         state.loadLayerDomains.mockClear();
+        state.replace.mockClear();
+    });
+
+    // ---- T3.3：工具分类并入 approval-policy 域页签（design 决策 #7 / D2） ----
+    it("offers the domain-internal tabs only on instance/approval-policy", async () => {
+        const plain = mountView("instance", "rag");
+        await flushPromises();
+        expect(plain.find('[data-testid="settings-domain-tabs"]').exists()).toBe(false);
+
+        const approval = mountView("instance", "approval-policy");
+        await flushPromises();
+        expect(approval.find('[data-testid="settings-domain-tabs"]').exists()).toBe(true);
+        expect(approval.find('[data-testid="settings-domain-tab-policy"]').exists()).toBe(true);
+        expect(approval.find('[data-testid="settings-domain-tab-tool-faces"]').exists()).toBe(true);
+        // 默认落在策略页签：面板在、工具分类面不在
+        expect(approval.find('[data-testid="panels-stub"]').exists()).toBe(true);
+        expect(approval.find('[data-testid="tool-faces-stub"]').exists()).toBe(false);
+    });
+
+    it("switches to the tool-faces view and mirrors it into ?tab=", async () => {
+        const wrapper = mountView("instance", "approval-policy");
+        await flushPromises();
+        await wrapper.find('[data-testid="settings-domain-tab-tool-faces"]').trigger("click");
+        expect(wrapper.find('[data-testid="tool-faces-stub"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
+        expect(state.replace).toHaveBeenCalledWith({ query: { tab: "tool-faces" } });
+    });
+
+    it("opens the tool-faces tab directly when the URL carries ?tab=tool-faces (old bookmark)", async () => {
+        state.routeQuery = { tab: "tool-faces" };
+        const wrapper = mountView("instance", "approval-policy");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="tool-faces-stub"]').exists()).toBe(true);
     });
 
     it("renders the domain panel for a valid combination", async () => {

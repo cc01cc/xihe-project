@@ -97,15 +97,13 @@ describe("path helpers", () => {
 });
 
 describe("instance ops groups", () => {
-    it("keeps the design's two groups; tool-faces sits in ops until 批 C folds it into the domain", () => {
+    it("keeps the design's two groups with five entries", () => {
         const groups = instanceOpsGroups();
         expect(groups.map((group) => group.id)).toEqual(["ops", "security"]);
-        // task-74：tool-faces 不是配置域（CP 12 域里没有它），先按独立页挂「实例运维」；
-        // 批 C（tasks.md T3.3）把它并入 approval-policy 域页签时，这一项要同步删掉。
+        // task-74 T3.3 后 tool-faces 已并入 approval-policy 域页签，运维分组回到 2 项（不再有过渡项）。
         expect(groups.flatMap((group) => group.items.map((item) => item.id))).toEqual([
             "monitoring",
             "data",
-            "tool-faces",
             "config-locks",
             "roles",
             "audit",

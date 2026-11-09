@@ -19,6 +19,18 @@ import type {
     PolicyToolFaceView,
 } from "../../types";
 
+const props = withDefaults(
+    defineProps<{
+        /**
+         * 嵌进 approval-policy 域页的页签时置 true（design.md §7 / 决策 #7：工具分类归入该域，
+         * 不单独占顶级设置页）。嵌入态不再输出 24px 页级标题与「XH / Policy」眉标——
+         * 层/域标题由 SettingsLayout 与域页提供，页内再造一个大标题会破坏 24>18>14 的层级。
+         */
+        embedded?: boolean;
+    }>(),
+    { embedded: false },
+);
+
 const { t } = useI18n(),
     authStore = useAuthStore(),
     policyAdmin = usePolicyAdminStore();
@@ -130,18 +142,30 @@ onMounted(() => {
 
 <template>
     <div data-testid="tool-faces-view">
-        <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <header class="mb-4 flex flex-wrap items-end justify-between gap-4">
             <div>
-                <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <p
+                    v-if="!props.embedded"
+                    class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground"
+                >
                     XH / Policy
                 </p>
                 <h1
                     data-testid="settings-tool-faces-heading"
-                    class="text-xl font-semibold tracking-tight"
+                    :class="
+                        props.embedded
+                            ? 'text-sm font-medium'
+                            : 'text-xl font-semibold tracking-tight'
+                    "
                 >
                     {{ t("settings.toolFacesTitle") }}
                 </h1>
-                <p class="mt-1 text-sm text-muted-foreground">{{ t("settings.toolFacesDesc") }}</p>
+                <p
+                    class="mt-1 text-muted-foreground"
+                    :class="props.embedded ? 'text-[11px]' : 'text-sm'"
+                >
+                    {{ t("settings.toolFacesDesc") }}
+                </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
                 <div
