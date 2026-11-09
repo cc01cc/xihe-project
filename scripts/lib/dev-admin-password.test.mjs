@@ -7,14 +7,21 @@ import { describe, test } from "node:test";
 import {
     ADMIN_PASSWORD_BYTES,
     ADMIN_PASSWORD_ENV,
+    LOCAL_MODE_ENV,
     RESET_ADMIN_WRAPPER,
+    assertPasswordString,
     buildResetAdminCommand,
+    devAdminPasswordFrom,
+    RESET_ADMIN_PASSWORD_ENV,
+    resetAdminEnv,
     devAdminPasswordFile,
     formatDevAdminPassword,
     generateDevAdminPassword,
     readDevAdminPasswordFile,
     resetAdminWrapperPath,
     resolveDevAdminPassword,
+    resolveDevAdminPasswordSafe,
+    resolveLocalMode,
     writeDevAdminPasswordFile,
 } from "./dev-admin-password.mjs";
 
@@ -162,18 +169,28 @@ describe("formatDevAdminPassword（只打非密元数据）", () => {
     });
 });
 
-describe("buildResetAdminCommand（复用既有入口、密码不进命令行）", () => {
-    test("密码走子进程 env（$env:XIHE_DEV_ADMIN_PASSWORD），命令行里没有值", () => {
+describe("buildResetAdminCommand（复用既有入口、密码完全不进命令行）", () => {
+    test("BL-523: 命令行里既没有密码值、也没有任何密码参数（连 $env: 引用都不留）", () => {
         const wrapperPath = resetAdminWrapperPath("H:/repo");
         const { args } = buildResetAdminCommand({ wrapperPath, stackId: "stack-2" });
         assert.deepEqual(args.slice(0, 2), ["-NoProfile", "-Command"]);
         const command = args[2];
-        assert.ok(command.includes("$env:XIHE_DEV_ADMIN_PASSWORD"), "the password must come from the child env");
         assert.ok(command.includes("stack-2"));
-        assert.ok(command.includes(wrapperPath.replaceAll("\\", "\\")));
-        // 构造函数根本不收密码 ⇒ 任何命令行里都拼不出值
+        assert.ok(command.includes(wrapperPath));
+        assert.ok(!command.includes("-Password"), command);
+        assert.ok(!command.includes("$env:"), "no env reference is needed any more — the value travels via spawn env");
         assert.ok(!JSON.stringify(args).includes(SECRET));
-        assert.ok(!command.includes("-Password '"), "no literal password value may be baked into the command");
+    });
+
+    test("密码只经 spawn env（XIHE_RESET_ADMIN_PASSWORD）传递，且不污染其他 env 键", () => {
+        const env = resetAdminEnv({ env: { PATH: "x", XIHE_STACK_ID: "stack-2" }, password: SECRET });
+        assert.equal(env[RESET_ADMIN_PASSWORD_ENV], SECRET);
+        assert.equal(env.XIHE_STACK_ID, "stack-2");
+        assert.equal(env.PATH, "x");
+        // 独立函数：不传 env 时以 process.env 为底仍是新对象，不会写坏 process.env
+        const fresh = resetAdminEnv({ password: SECRET });
+        assert.equal(fresh[RESET_ADMIN_PASSWORD_ENV], SECRET);
+        assert.notEqual(fresh, process.env);
     });
 
     test("路径与栈名里的单引号被转义成 ''（不会被当代码执行）", () => {
@@ -184,5 +201,128 @@ describe("buildResetAdminCommand（复用既有入口、密码不进命令行）
     test("默认入口路径 = <root>/scripts/reset-admin.ps1", () => {
         assert.equal(resetAdminWrapperPath("H:/repo"), join("H:/repo", "scripts", "reset-admin.ps1"));
         assert.deepEqual(RESET_ADMIN_WRAPPER, ["scripts", "reset-admin.ps1"]);
+    });
+});
+
+describe("resolveLocalMode（与 CP 同口径：OS env > .env 链）", () => {
+    test("OS env=true 直接命中（source=env），不依赖文件", (t) => {
+        const root = fakeRoot(t);
+        assert.deepEqual(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "true" }, cwd: root }), {
+            enabled: true,
+            source: "env",
+        });
+    });
+
+    test("OS env 压过 .env 链（DotenvLoader 语义：文件永不覆盖 OS env）", (t) => {
+        const root = fakeRoot(t, { envLines: `${LOCAL_MODE_ENV}=true\n` });
+        assert.deepEqual(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "false" }, cwd: root }), {
+            enabled: false,
+            source: "env",
+        });
+    });
+
+    test("只在 .env.local 写 true 也能识别（W-22 verify 缺陷回归）", (t) => {
+        const root = fakeRoot(t);
+        writeFileSync(join(root, ".env.local"), `${LOCAL_MODE_ENV}=true\n`, "utf8");
+        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: true, source: "env-file" });
+    });
+
+    test("链缺失 ⇒ disabled / source=unset", (t) => {
+        const root = fakeRoot(t);
+        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: false, source: "unset" });
+    });
+
+    test("大小写与空白容错：' TRUE ' 开启；'yes' 不开启", (t) => {
+        const root = fakeRoot(t);
+        assert.equal(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "  TRUE \r\n" }, cwd: root }).enabled, true);
+        assert.equal(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "yes" }, cwd: root }).enabled, false);
+    });
+
+    test(".env 里留空占位不算配置（落到 unset，不误判成开启）", (t) => {
+        const root = fakeRoot(t, { envLines: `${LOCAL_MODE_ENV}=\n` });
+        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: false, source: "unset" });
+    });
+});
+
+describe("resolveDevAdminPasswordSafe（解析/落盘失败降级，不炸起栈前段）", () => {
+    test("生成抛错 ⇒ ok:false，reason 带错误码，且不带 password 字段", (t) => {
+        const root = fakeRoot(t);
+        const error = Object.assign(new Error("rng exploded"), { code: "E_RNG" });
+        const result = resolveDevAdminPasswordSafe({
+            projectRoot: root,
+            env: {},
+            generate: () => {
+                throw error;
+            },
+        });
+        assert.equal(result.ok, false);
+        assert.match(result.reason, /E_RNG/);
+        assert.match(result.reason, /rng exploded/);
+        assert.equal("password" in result, false);
+    });
+
+    test("落盘位置不可写（路径中间是普通文件）⇒ ok:false 且不留半成品文件", (t) => {
+        const root = fakeRoot(t);
+        const blocker = join(root, "blocker");
+        writeFileSync(blocker, "not a directory\n", "utf8");
+        const target = join(blocker, "dev", "admin-password");
+        const result = resolveDevAdminPasswordSafe({ projectRoot: root, env: {}, file: target });
+        assert.equal(result.ok, false, `expected a graceful failure, got ${JSON.stringify(result)}`);
+        assert.ok(result.reason.length > 0);
+        assert.equal(existsSync(target), false, "no half-written password file may be left behind");
+    });
+
+    test("成功时 ok:true，字段与直接调用一致（调用方拿到可直接注入的 password）", (t) => {
+        const root = fakeRoot(t);
+        const safe = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
+        assert.equal(safe.ok, true);
+        assert.equal(safe.source, "generated");
+        assert.equal(safe.persisted, "created");
+        assert.equal(safe.length, 32);
+        // 第二次调用（同 root）走持久文件：值稳定、来源翻成 file/reused。
+        const direct = resolveDevAdminPassword({ projectRoot: root, env: {} });
+        assert.equal(safe.password, direct.password);
+        assert.equal(direct.source, "file");
+        assert.equal(direct.persisted, "reused");
+    });
+});
+
+// BL-527 护栏：`resetAdminEnv()` / `devAdminPasswordFrom()` 出口只许 string。
+// 事故（2026-11-09）：dev-stack 把 `resolveDevAdminPasswordSafe()` 的**结果对象**当密码传下来，
+// Node 强转成 `"[object Object]"`（15 字符，绕开 ResetAdmin 的 <12 位告警）写进库 ⇒ 任何真实
+// 密码都 401，而日志仍是 `ok … length=36`（打的是元数据的 length 字段）。这组测试钉住：
+// 非 string 必须**抛错**，不允许静默强转。
+describe("BL-527 护栏：密码值必须是 string（禁止对象被强转进子进程 env）", () => {
+    test("正常路径：resetAdminEnv() 的值是 string，且与传入密码逐字节相同", () => {
+        const env = resetAdminEnv({ env: { PATH: "/usr/bin" }, password: SECRET });
+        assert.equal(typeof env[RESET_ADMIN_PASSWORD_ENV], "string");
+        assert.equal(env[RESET_ADMIN_PASSWORD_ENV], SECRET);
+        assert.equal(env.PATH, "/usr/bin", "既有 env 必须原样保留");
+    });
+
+    test("传「解析结果对象」/ undefined / null ⇒ 抛 TypeError，绝不静默强转", (t) => {
+        const root = fakeRoot(t);
+        const safe = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
+        assert.equal(safe.ok, true);
+        // 事故原样：把整个结果对象传进来
+        assert.throws(() => resetAdminEnv({ password: safe }), /必须是 string/);
+        assert.throws(() => resetAdminEnv({ password: undefined }), /必须是 string/);
+        assert.throws(() => resetAdminEnv({ password: null }), /必须是 string/);
+        // 已经被别处 String() 过的对象串同样拒收
+        assert.throws(() => resetAdminEnv({ password: String(safe) }), /\[object /);
+        assert.throws(() => resetAdminEnv({ password: "   " }), /不能为空/);
+        assert.throws(() => assertPasswordString(42), /必须是 string/);
+    });
+
+    test("ok=false ⇒ devAdminPasswordFrom() 返回 null（env 里不会出现该键）", (t) => {
+        const root = fakeRoot(t);
+        // 失败契约（真实失败原因见 resolveDevAdminPasswordSafe 的用例）：只要 ok!==true 就必须 null
+        assert.equal(devAdminPasswordFrom({ ok: false, reason: "EACCES: permission denied" }), null);
+        assert.equal(devAdminPasswordFrom(null), null);
+        assert.equal(devAdminPasswordFrom(undefined), null);
+        // 正向：成功结果取出的是字符串本身，不是对象
+        const ok = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
+        assert.equal(typeof devAdminPasswordFrom(ok), "string");
+        assert.equal(devAdminPasswordFrom(ok), ok.password);
     });
 });
