@@ -1,13 +1,13 @@
 {
     "$comment": "PLAN-0735 / BL-164: mock-lane baseline counts and registered skips.",
     "generatedAt": "2026-11-09",
-    "sourceWindow": "W-26 dev-a lane run (282/8/0/1; bl316 flaky on chrome headless)",
+    "sourceWindow": "W-23",
     "sourceLog": "one/.tmp/xh/mock-baseline-2026-11-09.log",
     "counts": {
-        "expected": 282,
+        "expected": 283,
         "skipped": 8,
         "failed": 0,
-        "flaky": 1
+        "flaky": 0
     },
     "skipNames": [
         "判 1：8×500px 上滚序列单调不增",

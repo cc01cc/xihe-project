@@ -71,6 +71,66 @@ test("summarizeReport extracts counts and skip titles", () => {
     assert.deepEqual(summary.skipNames, ["registered skip A"]);
 });
 
+test("PLAN-0735 zero-flaky design: flaky=0 ⇒ exit 0", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const green = {
+            ...REPORT,
+            stats: { ...REPORT.stats, unexpected: 0, flaky: 0 },
+        };
+        const { reportFile, baselineFile } = writeFixtures(dir, green, {
+            counts: { expected: 283, skipped: 2, failed: 0, flaky: 0 },
+            skipNames: ["registered skip A"],
+        });
+        const result = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            { encoding: "utf8" },
+        );
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /OK/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("PLAN-0735 zero-flaky design: flaky=1 ⇒ exit 1 unless --allow-drift", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const flaky = {
+            ...REPORT,
+            stats: { ...REPORT.stats, unexpected: 0, flaky: 1 },
+        };
+        const baselineFile = path.join(dir, "baseline.json");
+        fs.writeFileSync(
+            baselineFile,
+            JSON.stringify({
+                counts: { expected: 283, skipped: 2, failed: 0, flaky: 0 },
+                skipNames: ["registered skip A"],
+            }),
+        );
+        const reportFile = path.join(dir, "report.json");
+        fs.writeFileSync(reportFile, JSON.stringify(flaky));
+        const rejected = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            { encoding: "utf8" },
+        );
+        assert.equal(rejected.status, 1);
+        assert.match(rejected.stderr, /E_MOCK_BASELINE_DRIFT/);
+        assert.match(rejected.stderr, /flaky: baseline=0 actual=1/);
+        const accepted = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--allow-drift"],
+            { encoding: "utf8" },
+        );
+        assert.equal(accepted.status, 0);
+        assert.match(accepted.stdout, /drift accepted/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test("matching counts + registered skip ⇒ exit 0", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
     try {
