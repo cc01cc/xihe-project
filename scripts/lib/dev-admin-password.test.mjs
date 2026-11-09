@@ -9,7 +9,9 @@ import {
     ADMIN_PASSWORD_ENV,
     LOCAL_MODE_ENV,
     RESET_ADMIN_WRAPPER,
+    assertPasswordString,
     buildResetAdminCommand,
+    devAdminPasswordFrom,
     RESET_ADMIN_PASSWORD_ENV,
     resetAdminEnv,
     devAdminPasswordFile,
@@ -282,5 +284,45 @@ describe("resolveDevAdminPasswordSafe（解析/落盘失败降级，不炸起栈
         assert.equal(safe.password, direct.password);
         assert.equal(direct.source, "file");
         assert.equal(direct.persisted, "reused");
+    });
+});
+
+// BL-527 护栏：`resetAdminEnv()` / `devAdminPasswordFrom()` 出口只许 string。
+// 事故（2026-11-09）：dev-stack 把 `resolveDevAdminPasswordSafe()` 的**结果对象**当密码传下来，
+// Node 强转成 `"[object Object]"`（15 字符，绕开 ResetAdmin 的 <12 位告警）写进库 ⇒ 任何真实
+// 密码都 401，而日志仍是 `ok … length=36`（打的是元数据的 length 字段）。这组测试钉住：
+// 非 string 必须**抛错**，不允许静默强转。
+describe("BL-527 护栏：密码值必须是 string（禁止对象被强转进子进程 env）", () => {
+    test("正常路径：resetAdminEnv() 的值是 string，且与传入密码逐字节相同", () => {
+        const env = resetAdminEnv({ env: { PATH: "/usr/bin" }, password: SECRET });
+        assert.equal(typeof env[RESET_ADMIN_PASSWORD_ENV], "string");
+        assert.equal(env[RESET_ADMIN_PASSWORD_ENV], SECRET);
+        assert.equal(env.PATH, "/usr/bin", "既有 env 必须原样保留");
+    });
+
+    test("传「解析结果对象」/ undefined / null ⇒ 抛 TypeError，绝不静默强转", (t) => {
+        const root = fakeRoot(t);
+        const safe = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
+        assert.equal(safe.ok, true);
+        // 事故原样：把整个结果对象传进来
+        assert.throws(() => resetAdminEnv({ password: safe }), /必须是 string/);
+        assert.throws(() => resetAdminEnv({ password: undefined }), /必须是 string/);
+        assert.throws(() => resetAdminEnv({ password: null }), /必须是 string/);
+        // 已经被别处 String() 过的对象串同样拒收
+        assert.throws(() => resetAdminEnv({ password: String(safe) }), /\[object /);
+        assert.throws(() => resetAdminEnv({ password: "   " }), /不能为空/);
+        assert.throws(() => assertPasswordString(42), /必须是 string/);
+    });
+
+    test("ok=false ⇒ devAdminPasswordFrom() 返回 null（env 里不会出现该键）", (t) => {
+        const root = fakeRoot(t);
+        // 失败契约（真实失败原因见 resolveDevAdminPasswordSafe 的用例）：只要 ok!==true 就必须 null
+        assert.equal(devAdminPasswordFrom({ ok: false, reason: "EACCES: permission denied" }), null);
+        assert.equal(devAdminPasswordFrom(null), null);
+        assert.equal(devAdminPasswordFrom(undefined), null);
+        // 正向：成功结果取出的是字符串本身，不是对象
+        const ok = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
+        assert.equal(typeof devAdminPasswordFrom(ok), "string");
+        assert.equal(devAdminPasswordFrom(ok), ok.password);
     });
 });
