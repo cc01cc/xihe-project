@@ -188,7 +188,8 @@ test.describe("PLAN-0554 config provenance", () => {
         page,
     }) => {
         await mockConfig(page, "ADMIN");
-        await page.goto("/settings/config", { waitUntil: "load" });
+        // 旧：/settings/config 的 instance 层签；新：instance 层的 rag 域页（一页一域）。
+        await page.goto("/settings/instance/rag", { waitUntil: "load" });
         await openRag(page);
 
         await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("instance");
@@ -200,10 +201,10 @@ test.describe("PLAN-0554 config provenance", () => {
         await expect(page.getByRole("button", { name: /锁定|解锁/ })).toHaveCount(0);
     });
 
-    test("user tab shows own value and inheritance", async ({ page }) => {
+    test("user layer shows own value and inheritance", async ({ page }) => {
         await mockConfig(page, "ADMIN");
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-user").click();
+        // 旧：切到用户层签；新：用户层的 rag 域页。
+        await page.goto("/settings/user/rag", { waitUntil: "load" });
         await openRag(page);
 
         await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("user");
@@ -227,14 +228,23 @@ test.describe("PLAN-0554 config provenance", () => {
         );
     });
 
-    test("ordinary user has no instance tab", async ({ page }) => {
+    test("ordinary user has no instance layer in the settings sidebar", async ({ page }) => {
         await mockConfig(page, "USER");
-        await page.goto("/settings/config", { waitUntil: "load" });
+        await page.goto("/settings/user/rag", { waitUntil: "load" });
 
-        await expect(page.getByTestId("config-tab-instance")).toHaveCount(0);
-        await expect(page.getByTestId("config-tab-user")).toBeVisible();
-        await expect(page.getByTestId("config-tab-workspace")).toHaveCount(0);
-        await expect(page.locator("nav").getByText("Policy", { exact: false })).toHaveCount(0);
+        // 旧：页签里只有 user（无 instance / workspace 签）；新：侧栏只渲染「用户配置」一段层分组。
+        await expect(page.getByTestId("settings-nav-group-primary")).toHaveCount(1);
+        await expect(page.getByTestId("settings-nav-group-primary")).toHaveText("用户配置");
+        // 域链接必须全是用户层 URL —— 既没有 instance 段，也没有退役的 Policy 入口。
+        const hrefs = await page
+            .getByTestId("settings-nav-domain")
+            .evaluateAll((els) => els.map((el) => el.getAttribute("href") ?? ""));
+        expect(hrefs.length).toBeGreaterThan(0);
+        expect(hrefs.every((href) => /^\/settings\/user\/[\w-]+$/.test(href))).toBe(true);
+        expect(hrefs.some((href) => href.includes("/policy"))).toBe(false);
+        // 实例独占域对普通用户不存在：直链落 404 视图，且不渲染该域面板。
+        await page.goto("/settings/user/logging", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-not-found")).toBeVisible();
         await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
     });
 
@@ -242,8 +252,8 @@ test.describe("PLAN-0554 config provenance", () => {
         page,
     }) => {
         await mockConfig(page, "ADMIN");
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await page.getByTestId("config-tab-user").click();
+        // 旧：切到用户层签再看 ProviderHub；新：用户层 llm-provider 域页就是 ProviderHub 的宿主。
+        await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
 
         await expect(page.getByTestId("provider-hub")).toBeVisible();
         await expect(page.getByTestId("provider-hub-connect")).toBeVisible();
