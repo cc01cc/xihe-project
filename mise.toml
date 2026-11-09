@@ -364,7 +364,7 @@ alias = "lint:runtime"
 
 [tasks."lint:links"]
 run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
-description = "Check documentation links (no escape from docs/); skips and exits 0 when the ONE main checkout (and its scripts/check-doc-links.sh) is absent — same degradation as check:ports / check:standalone"
+description = "Check documentation links (no escape from docs/); skips and exits 0 when the ONE main checkout (and its scripts/check-doc-links.sh) is absent — same degradation as check:standalone (check:ports is fail-closed instead: missing ONE ⇒ exit 2)"
 alias = "lint:links"
 
 [tasks."lint:e2e"]
@@ -567,10 +567,12 @@ run = "node scripts/check-standalone.mjs --worktree"
 description = "Export a parent-less copy of the working tree and verify stack-run/dev-check work without the ONE workspace"
 alias = "check:standalone"
 
-# PLAN-0612: A03 端口事实源 vs ONE 端口分配镜像的 parity（ONE 不存在时显式 skip）。
+# PLAN-0612: A03 端口事实源 vs ONE 端口分配镜像的 parity。找不到 one 根时**不再静默放行**：
+# 裸脚本只打 SKIP（不写成 OK，json 里 skipped:true），本门带 --require-mirror ⇒ 缺 one 根即 exit 2
+# （task-61 P1-3 / AC-3.1 / AC-3.4：否则这条唯一的镜像校验在脱离 ONE 的工作副本里永远不被触发）。
 [tasks."check:ports"]
-run = "node scripts/check-ports-parity.mjs"
-description = "Compare the built-in xihe port table with ONE's allocation table (skips with a reason when ONE is absent)"
+run = "node scripts/check-ports-parity.mjs --require-mirror"
+description = "Compare the built-in xihe port table with ONE's allocation table (fail-closed: a missing ONE workspace exits 2 instead of looking green; a standalone clone should run the bare script without --require-mirror)"
 alias = "check:ports"
 
 # BL-303 Phase 3: 事件名扫描器（默认 report-only，永不非零退出；观察期结束后再考虑接入 validate）。
