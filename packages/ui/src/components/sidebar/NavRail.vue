@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { LogOut, PanelLeftOpen, Settings, ShieldCheck } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
+import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
 
 /**
  * PLAN-0582 S2 ruling #1/#2: the icon rail is a fixed 56px icon-only column.
@@ -107,6 +108,12 @@ function handleLogout() {
         </button>
 
         <div class="mt-auto flex flex-col items-center gap-1">
+            <!--
+                task-36 ③：语言切换原本只在设置页的配置 tab 里（ConfigSettings.vue），
+                用户在聊天里没有任何入口。导航栏是每条路由都可见的「用户区」（设置/退出也在这里），
+                所以把紧凑变体放进同一组：不改 locale 状态机，只换一个用户可达的位置。
+            -->
+            <LanguageSwitcher variant="compact" />
             <button
                 type="button"
                 data-testid="nav-rail-settings"

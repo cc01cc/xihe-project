@@ -33,6 +33,12 @@ const messages = {
             clearSearch: "清除搜索",
             resize: "调整导航面板宽度",
         },
+        // task-36 ③：移动端用户区新增紧凑语言切换，需要这三条文案。
+        settings: {
+            languageLabel: "界面语言",
+            languageZh: "中文（zh-Hans）",
+            languageEn: "English (en)",
+        },
     },
 };
 

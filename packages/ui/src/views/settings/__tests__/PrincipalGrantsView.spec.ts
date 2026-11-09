@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,24 @@ vi.mock("../../../stores/auth", () => ({
         },
     }),
 }));
+
+/**
+ * task-36 ②：RolesView 现在由设置区公共壳渲染（返回聊天 + SettingsNav），需要真实 router。
+ * 本文件刻意**不** mock vue-router —— 上面还要 import 产品 router 断言退役路由表，
+ * 所以这里只额外造一个内存 router 给挂载用。
+ */
+function makeMountRouter(): Router {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            { path: "/settings/config", component: { template: "<div />" } },
+            { path: "/settings/roles", component: { template: "<div />" } },
+            { path: "/workspace", component: { template: "<div />" } },
+            { path: "/workspace/:workspaceId/chat/:sessionId", component: { template: "<div />" } },
+            { path: "/:pathMatch(.*)*", component: { template: "<div />" } },
+        ],
+    });
+}
 
 const mockedApi = vi.mocked(api, true);
 const UI_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -124,7 +143,7 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
     it("renders the role surface in place of the retired page", async () => {
         const wrapper = mount(RolesView, {
             attachTo: document.body,
-            global: { plugins: [i18n] },
+            global: { plugins: [i18n, makeMountRouter()] },
         });
         wrappers.push(wrapper);
         await flushPromises();

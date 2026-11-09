@@ -13,6 +13,7 @@ import { logger } from "../../lib/logger";
 import { roleErrorMessage } from "../../components/settings/roleErrorMessages";
 import RoleEditorDialog from "../../components/settings/RoleEditorDialog.vue";
 import RoleBindingsPanel from "../../components/settings/RoleBindingsPanel.vue";
+import SettingsPageShell from "../../components/settings/SettingsPageShell.vue";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
@@ -172,192 +173,208 @@ watch(
 </script>
 
 <template>
-    <div data-testid="roles-view" class="max-w-6xl">
-        <template v-if="!canManageRoles">
-            <div
-                data-testid="roles-forbidden"
-                class="mx-auto mt-16 max-w-md rounded-xl border bg-card p-6 text-center"
-            >
-                <h1 class="text-base font-semibold">{{ t("settings.rolesForbiddenTitle") }}</h1>
-                <p class="mt-1 text-sm text-muted-foreground">
-                    {{ t("settings.rolesForbiddenBody") }}
+    <SettingsPageShell container-class="mx-auto w-full max-w-6xl px-6 py-6">
+        <div data-testid="roles-view">
+            <template v-if="!canManageRoles">
+                <div
+                    data-testid="roles-forbidden"
+                    class="mx-auto mt-16 max-w-md rounded-xl border bg-card p-6 text-center"
+                >
+                    <h1 class="text-base font-semibold">{{ t("settings.rolesForbiddenTitle") }}</h1>
+                    <p class="mt-1 text-sm text-muted-foreground">
+                        {{ t("settings.rolesForbiddenBody") }}
+                    </p>
+                </div>
+            </template>
+
+            <template v-else>
+                <header class="mb-4">
+                    <h1 class="text-lg font-semibold">{{ t("settings.rolesTitle") }}</h1>
+                    <p class="mt-1 text-sm text-muted-foreground">
+                        {{ t("settings.rolesSubtitle") }}
+                    </p>
+                </header>
+
+                <div class="mb-3 flex gap-1 border-b">
+                    <button
+                        type="button"
+                        data-testid="roles-tab-roles"
+                        class="px-3 py-2 text-sm"
+                        :class="
+                            tab === 'roles'
+                                ? 'border-b-2 border-brand font-medium'
+                                : 'text-muted-foreground'
+                        "
+                        @click="tab = 'roles'"
+                    >
+                        {{ t("settings.rolesTabRoles") }}
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="roles-tab-bindings"
+                        class="px-3 py-2 text-sm"
+                        :class="
+                            tab === 'bindings'
+                                ? 'border-b-2 border-brand font-medium'
+                                : 'text-muted-foreground'
+                        "
+                        @click="tab = 'bindings'"
+                    >
+                        {{ t("settings.rolesTabBindings") }}
+                    </button>
+                </div>
+
+                <p
+                    v-if="error"
+                    data-testid="roles-error"
+                    class="mb-3 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-700"
+                >
+                    {{ error }}
                 </p>
-            </div>
-        </template>
-
-        <template v-else>
-            <header class="mb-4">
-                <h1 class="text-lg font-semibold">{{ t("settings.rolesTitle") }}</h1>
-                <p class="mt-1 text-sm text-muted-foreground">{{ t("settings.rolesSubtitle") }}</p>
-            </header>
-
-            <div class="mb-3 flex gap-1 border-b">
-                <button
-                    type="button"
-                    data-testid="roles-tab-roles"
-                    class="px-3 py-2 text-sm"
-                    :class="
-                        tab === 'roles'
-                            ? 'border-b-2 border-brand font-medium'
-                            : 'text-muted-foreground'
-                    "
-                    @click="tab = 'roles'"
+                <p
+                    v-if="notice"
+                    data-testid="roles-notice"
+                    class="mb-3 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700"
                 >
-                    {{ t("settings.rolesTabRoles") }}
-                </button>
-                <button
-                    type="button"
-                    data-testid="roles-tab-bindings"
-                    class="px-3 py-2 text-sm"
-                    :class="
-                        tab === 'bindings'
-                            ? 'border-b-2 border-brand font-medium'
-                            : 'text-muted-foreground'
-                    "
-                    @click="tab = 'bindings'"
+                    {{ notice }}
+                </p>
+
+                <section v-if="tab === 'roles'" data-testid="roles-list-section" class="space-y-3">
+                    <div class="flex items-center justify-between">
+                        <p class="text-xs text-muted-foreground">
+                            {{ t("settings.rolesListHint") }}
+                        </p>
+                        <Button data-testid="roles-create" @click="openCreate">
+                            <Plus class="size-4" aria-hidden="true" />
+                            {{ t("settings.rolesCreate") }}
+                        </Button>
+                    </div>
+
+                    <div v-if="loading" class="text-xs text-muted-foreground">
+                        {{ t("settings.rolesLoading") }}
+                    </div>
+
+                    <table v-else class="w-full text-left text-sm" data-testid="roles-table">
+                        <thead class="text-xs text-muted-foreground">
+                            <tr>
+                                <th class="py-1">{{ t("settings.rolesColumnName") }}</th>
+                                <th class="py-1">{{ t("settings.rolesColumnAtoms") }}</th>
+                                <th class="py-1">{{ t("settings.rolesColumnBindings") }}</th>
+                                <th class="py-1 text-right">
+                                    {{ t("settings.rolesColumnActions") }}
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr
+                                v-for="role in roles"
+                                :key="role.id"
+                                :data-testid="`role-row-${role.name}`"
+                                class="border-t"
+                            >
+                                <td class="py-1">
+                                    <span class="font-medium">{{
+                                        role.displayName || role.name
+                                    }}</span>
+                                    <span class="ml-2 font-mono text-xs text-muted-foreground">
+                                        {{ role.name }}
+                                    </span>
+                                    <Badge
+                                        v-if="role.system"
+                                        variant="secondary"
+                                        data-testid="role-system-badge"
+                                        class="ml-2"
+                                    >
+                                        {{ t("settings.rolesSystemBadge") }}
+                                    </Badge>
+                                </td>
+                                <td class="py-1 text-xs">{{ atomSummary(role) }}</td>
+                                <td class="py-1 text-xs" data-testid="role-binding-count">
+                                    {{ role.bindingCount }}
+                                </td>
+                                <td class="space-x-1 py-1 text-right">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        :data-testid="`role-edit-${role.name}`"
+                                        @click="openEdit(role)"
+                                    >
+                                        <Pencil class="size-3.5" aria-hidden="true" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        :disabled="role.system"
+                                        :title="
+                                            role.system
+                                                ? t('settings.rolesSystemNotDeletable')
+                                                : t('settings.rolesDelete')
+                                        "
+                                        :data-testid="`role-delete-${role.name}`"
+                                        @click="deleteTarget = role"
+                                    >
+                                        <Trash2 class="size-3.5" aria-hidden="true" />
+                                    </Button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <RoleBindingsPanel
+                    v-else
+                    :roles="roles"
+                    :workspaces="workspaces"
+                    @notice="notice = $event"
+                />
+
+                <RoleEditorDialog
+                    :open="editorOpen"
+                    :role="editorRole"
+                    :catalog="catalog"
+                    :saving="saving"
+                    @close="editorOpen = false"
+                    @submit="submitEditor"
+                />
+
+                <AlertDialog
+                    :open="deleteTarget !== null"
+                    @update:open="(value: boolean) => !value && (deleteTarget = null)"
                 >
-                    {{ t("settings.rolesTabBindings") }}
-                </button>
-            </div>
-
-            <p
-                v-if="error"
-                data-testid="roles-error"
-                class="mb-3 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-700"
-            >
-                {{ error }}
-            </p>
-            <p
-                v-if="notice"
-                data-testid="roles-notice"
-                class="mb-3 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700"
-            >
-                {{ notice }}
-            </p>
-
-            <section v-if="tab === 'roles'" data-testid="roles-list-section" class="space-y-3">
-                <div class="flex items-center justify-between">
-                    <p class="text-xs text-muted-foreground">{{ t("settings.rolesListHint") }}</p>
-                    <Button data-testid="roles-create" @click="openCreate">
-                        <Plus class="size-4" aria-hidden="true" />
-                        {{ t("settings.rolesCreate") }}
-                    </Button>
-                </div>
-
-                <div v-if="loading" class="text-xs text-muted-foreground">
-                    {{ t("settings.rolesLoading") }}
-                </div>
-
-                <table v-else class="w-full text-left text-sm" data-testid="roles-table">
-                    <thead class="text-xs text-muted-foreground">
-                        <tr>
-                            <th class="py-1">{{ t("settings.rolesColumnName") }}</th>
-                            <th class="py-1">{{ t("settings.rolesColumnAtoms") }}</th>
-                            <th class="py-1">{{ t("settings.rolesColumnBindings") }}</th>
-                            <th class="py-1 text-right">{{ t("settings.rolesColumnActions") }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr
-                            v-for="role in roles"
-                            :key="role.id"
-                            :data-testid="`role-row-${role.name}`"
-                            class="border-t"
-                        >
-                            <td class="py-1">
-                                <span class="font-medium">{{ role.displayName || role.name }}</span>
-                                <span class="ml-2 font-mono text-xs text-muted-foreground">
-                                    {{ role.name }}
-                                </span>
-                                <Badge
-                                    v-if="role.system"
-                                    variant="secondary"
-                                    data-testid="role-system-badge"
-                                    class="ml-2"
-                                >
-                                    {{ t("settings.rolesSystemBadge") }}
-                                </Badge>
-                            </td>
-                            <td class="py-1 text-xs">{{ atomSummary(role) }}</td>
-                            <td class="py-1 text-xs" data-testid="role-binding-count">
-                                {{ role.bindingCount }}
-                            </td>
-                            <td class="space-x-1 py-1 text-right">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    :data-testid="`role-edit-${role.name}`"
-                                    @click="openEdit(role)"
-                                >
-                                    <Pencil class="size-3.5" aria-hidden="true" />
-                                </Button>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    :disabled="role.system"
-                                    :title="
-                                        role.system
-                                            ? t('settings.rolesSystemNotDeletable')
-                                            : t('settings.rolesDelete')
-                                    "
-                                    :data-testid="`role-delete-${role.name}`"
-                                    @click="deleteTarget = role"
-                                >
-                                    <Trash2 class="size-3.5" aria-hidden="true" />
-                                </Button>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </section>
-
-            <RoleBindingsPanel
-                v-else
-                :roles="roles"
-                :workspaces="workspaces"
-                @notice="notice = $event"
-            />
-
-            <RoleEditorDialog
-                :open="editorOpen"
-                :role="editorRole"
-                :catalog="catalog"
-                :saving="saving"
-                @close="editorOpen = false"
-                @submit="submitEditor"
-            />
-
-            <AlertDialog
-                :open="deleteTarget !== null"
-                @update:open="(value: boolean) => !value && (deleteTarget = null)"
-            >
-                <AlertDialogContent data-testid="role-delete-dialog">
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>{{ t("settings.rolesDeleteTitle") }}</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            {{
-                                t("settings.rolesDeleteBody", {
-                                    name: deleteTarget?.displayName || deleteTarget?.name || "",
-                                })
-                            }}
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <Button variant="ghost" @click="deleteTarget = null">
-                            {{ t("settings.rolesCancel") }}
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            data-testid="role-delete-confirm"
-                            :disabled="deleting"
-                            @click="confirmDelete"
-                        >
-                            <LoaderCircle v-if="deleting" class="animate-spin" aria-hidden="true" />
-                            {{ t("settings.rolesDelete") }}
-                        </Button>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
-        </template>
-    </div>
+                    <AlertDialogContent data-testid="role-delete-dialog">
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>{{
+                                t("settings.rolesDeleteTitle")
+                            }}</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                {{
+                                    t("settings.rolesDeleteBody", {
+                                        name: deleteTarget?.displayName || deleteTarget?.name || "",
+                                    })
+                                }}
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <Button variant="ghost" @click="deleteTarget = null">
+                                {{ t("settings.rolesCancel") }}
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                data-testid="role-delete-confirm"
+                                :disabled="deleting"
+                                @click="confirmDelete"
+                            >
+                                <LoaderCircle
+                                    v-if="deleting"
+                                    class="animate-spin"
+                                    aria-hidden="true"
+                                />
+                                {{ t("settings.rolesDelete") }}
+                            </Button>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+            </template>
+        </div>
+    </SettingsPageShell>
 </template>

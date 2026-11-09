@@ -3,8 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle, Lock, RefreshCw, TriangleAlert, Wrench } from "@lucide/vue";
-import BackToChatButton from "../../components/settings/BackToChatButton.vue";
-import SettingsNav from "../../components/settings/SettingsNav.vue";
+import SettingsPageShell from "../../components/settings/SettingsPageShell.vue";
 import { ApiError } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { usePolicyAdminStore } from "../../stores/policyAdmin";
@@ -131,9 +130,7 @@ onMounted(() => {
 </script>
 
 <template>
-    <BackToChatButton />
-    <SettingsNav />
-    <main class="mx-auto max-w-5xl px-4 py-6">
+    <SettingsPageShell>
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -406,5 +403,5 @@ onMounted(() => {
                 <option v-for="item in actionClassSuggestions" :key="item" :value="item" />
             </datalist>
         </section>
-    </main>
+    </SettingsPageShell>
 </template>
