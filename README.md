@@ -180,6 +180,7 @@ mise run test:runtime:lib:gate  # BL-262 race gate: serial 1 + parallel 3; miles
 mise run test:cp:baseline       # BL-368: classify CP failures against scripts/cp-known-baseline.json (run after test:cp; baseline only shrinks)
 mise run ledger:validate      # read-only ledger (BL/PLAN) validation; run from the ONE workspace root; report-only
 mise run check:e2e-bypass     # PLAN-0687: in-page fetch bypass audit in e2e/real (report-only; annotation or allowlist required)
+mise run lint:i18n            # task-96: zh-CN/en-US key sets, {placeholder} drift, static t("…") refs; read-only, silent when clean (part of mise run lint)
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
 

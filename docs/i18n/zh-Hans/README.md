@@ -192,6 +192,7 @@ mise run pkg:installer                               # 从既有服务产物构�
 mise run validate             # lint + typecheck + build + test（+ e2e 夹具自测）
 mise run validate:full        # validate + test:runtime + test:integration（不含 E2E；compose E2E 车道已冻结）
 mise run test:e2e:fixtures    # 只跑 e2e 夹具自测（fake LLM 链式状态机；不起栈、秒级）
+mise run lint:i18n            # task-96：中英键集合差集 / 同键 {placeholder} 漂移 / 静态 t("…") 引用；只读，通过时零输出（并入 mise run lint）
 mise run test:e2e:host        # Host E2E：先停 dev:host（见 DEV-002 §5），每轮使用隔离环境
 ```
 

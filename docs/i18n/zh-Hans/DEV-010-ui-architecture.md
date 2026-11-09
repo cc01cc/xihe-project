@@ -152,3 +152,14 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 - **Tree**（`TreeRoot/TreeItem`，受控 `v-model:expanded`）：`getKey=node.path`、`getChildren=node.children`；`expandedPaths`（store `Set`）↔ 数组双向映射；`update:expanded` 在搜索态下不回写（搜索展开为临时并集）。
 - **约束**：`TreeVirtualizer` 封装已就位但默认关闭（当前树全量递归加载，虚拟化收益待大数据量验证）；`AlertDialogAction` 点击无条件关闭——需“校验失败保持打开”的场景（如删除二次确认）必须用普通 destructive `Button`（PLAN-262 E-3）。
 - **测试约束**：reka-ui MenuItem 的程序化选择在 jsdom 下不可行（内部 armed ref 无法被合成事件置位，6 种组合已验证）；组件交互连接层由 Playwright 覆盖，单测只覆盖菜单内容判定与 store 分支（PLAN-262 §5.1 备注）。
+
+## 9. 设置信息架构（PLAN-0752，已实施）
+
+设置区不再是「一组路由各挂一页」：**层 × 域**是唯一骨架——层决定外框，域决定页签。
+
+- **矩阵单一来源**：`packages/ui/src/lib/settingsIa.ts` —— `LAYER_DOMAINS`（instance 12 / user 9 / workspace 9，域清单以 CP `ConfigService.java:76-96` 为准）、`settingsLayerForPath()`（兜底页按路径推层，避免 404 顶着错的层标题）、`settingsDomainPath()` / `workspaceSettingsDomainPath()`、`knowledgeRedirectTarget()`。
+- **路由**（`packages/ui/src/router/index.ts`）：`/settings/:layer/:domain` 承载 instance/user，`/workspace/:workspaceId/settings` 用 `?tab=` 承载工作区层，`/settings/*` 兜底 404；旧 `/settings/knowledge` 已改工作区重定向（知识库只有工作区承载）。
+- **左栏**：`components/settings/SettingsSidebar.vue`（层切换 + 资源入口）+ `components/settings/SettingsResourceNav.vue`（资源组；后端缺口是**标缺口的按钮**并弹解释，不伪装成可用入口）。
+- **权限两面不许混用**：`components/settings/SettingsPermissionGate.vue` —— `variant="no-atom"` 是信息条（`data-testid="settings-no-atom-notice"`，页面照常取数：CP 侧本就没有这个原子）；`variant="atom-denied"` 是 403 卡片（`data-testid="settings-atom-denied"`，点名缺失原子、明写「不是后端缺口」，主体不挂载 ⇒ 不发无谓请求）。五页判定表与请求数断言见 `internal/A03-xihe/docs/settings-m2-migration-matrix.md` §8.2（跨仓路径，one 私有层）。
+- **工作区层入口是 tab 不是新页**：`features/workspace/pages/WorkspaceSettingsView.vue` 的 `general | config | mcp | members | credentials | knowledge`（`data-testid="ws-settings-tab-*`）。
+- **证据**：PLAN-0752 `tasks.md` M2–M4 已完成；浏览器量测脚本在 `one/.tmp/xh/task-{78,81,82,89,91}/verify.cjs`（临时目录，不随仓分发，捕获见任务台账）。
