@@ -337,9 +337,19 @@ const rowKeys = computed(() => rows.value.map((row) => row.key));
  * `restoreAnchor` 做精确校正。窗口化下直接按高度估算会因 fallback 误差跳位（实测 11k px）。
  */
 const historyMutationPause = ref(false);
+/**
+ * BL-382 B —— 「篇幅无关上界」：只有**表小到挂一次也不贵**时才允许用「关窗口化 → 全量渲染一帧」
+ * 当锚定手段；超过这个行数就保持窗口化，位置交给 `prependScrollSnapshot` 的同帧补偿（A）。
+ *
+ * 根因（`docs/evidence/bl382-attribution/proof.md` §3.1）：每补一页都会整表挂载 → 等一帧 → 拆回
+ * 窗口，99 轮 = 99 次全表挂载/卸载（实测 192 个长任务、1.94/轮、第 99 轮 5698ms），代价随表长 × 轮次
+ * 增长；而锚定本身只需要 O(视口) 的补偿。阈值按 proof §7.1 先取 200，AC-2 出数后再按实测调。
+ */
+const HISTORY_PAUSE_MAX_ROWS = 200;
 const virtualEnabled = computed(
     () =>
-        !historyMutationPause.value &&
+        // BL-382 B：大表禁止用「关窗口化」当锚定手段（否则又把代价绑回表长）。
+        (!historyMutationPause.value || rows.value.length > HISTORY_PAUSE_MAX_ROWS) &&
         !searchQuery.value &&
         rows.value.length > DEFAULT_VIRTUAL_MIN_ROWS,
 );
@@ -350,6 +360,7 @@ const {
     measure: measureRow,
     captureAnchor,
     restoreAnchor,
+    scrollTop: virtualScrollTop,
 } = useVirtualMessageWindow({
     rowKeys,
     enabled: virtualEnabled,
@@ -383,6 +394,74 @@ function rowElementRef(key: string, element: unknown): void {
 }
 
 /**
+ * BL-382 C —— 回填期指标（longTasks/轮、pause 时长、单轮回填耗时）的**可观测输出**。
+ *
+ * 默认全关：关闭时每轮只多一次字符串比较，不改行为、不打印、不写 DOM。开启后只写内存环形数组：
+ * - 开：控制台 `localStorage.setItem("xh:history-perf", "1")` 后刷新，或会话内 `window.__xhHistoryPerfOn = true`
+ * - 读：`window.__xhHistoryPerfReport()`（最近 200 轮明细 + longTasks 累计与每轮增量）
+ * - 清：`window.__xhHistoryPerfReset()`；关：`localStorage.removeItem("xh:history-perf")`
+ * 需要它的判据是 proof §8.2 的 AC-4（longTasks/轮）与 AC-5（堆与轮次解耦），都要真栈测量窗，故本组件
+ * 只负责**把数备好**，不自己下结论。
+ */
+const HISTORY_PERF_KEY = "xh:history-perf";
+const HISTORY_PERF_MAX_ENTRIES = 200;
+interface HistoryPerfEntry {
+    at: number;
+    rows: number;
+    firstKey: string;
+    /** 本轮是否走了「关窗口化」全表渲染（BL-382 B：只有 ≤ HISTORY_PAUSE_MAX_ROWS 才会）。 */
+    paused: boolean;
+    /** 关窗口化的持续时长（ms）；未关窗口化时为 0。 */
+    pauseMs: number;
+    /** 同帧 scrollTop 补偿量（px，BL-382 A）；未补偿时为 0。 */
+    grownPx: number;
+    /** 本轮期间新增的 longtask 条数（= longTasks/轮 的直接读数）。 */
+    longTasks: number;
+    /** 本轮从 watcher 进入到 6 帧校正结束的总耗时（ms）。 */
+    totalMs: number;
+}
+const historyPerfLog: HistoryPerfEntry[] = [];
+const historyPerfLongTasks: number[] = [];
+function historyPerfEnabled(): boolean {
+    if (typeof window === "undefined") return false;
+    if ((window as unknown as { __xhHistoryPerfOn?: boolean }).__xhHistoryPerfOn === true)
+        return true;
+    try {
+        return window.localStorage.getItem(HISTORY_PERF_KEY) === "1";
+    } catch {
+        // 隐私模式/禁用 storage：按"关"处理（观测功能失效不得影响回填路径）。
+        return false;
+    }
+}
+function historyPerfInstall(): void {
+    const host = window as unknown as {
+        __xhHistoryPerfReport?: () => unknown;
+        __xhHistoryPerfReset?: () => void;
+    };
+    if (host.__xhHistoryPerfReport) return;
+    if (typeof PerformanceObserver !== "undefined") {
+        try {
+            new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) historyPerfLongTasks.push(entry.duration);
+            }).observe({ type: "longtask", buffered: true });
+        } catch {
+            // 浏览器不支持 longtask（Safari/Firefox 现状）：其余指标照采，报告里 longTasks 恒 0。
+        }
+    }
+    host.__xhHistoryPerfReport = () => ({
+        prepends: historyPerfLog.map((entry) => ({ ...entry })),
+        longTasks: {
+            count: historyPerfLongTasks.length,
+            totalMs: Math.round(historyPerfLongTasks.reduce((sum, duration) => sum + duration, 0)),
+        },
+    });
+    host.__xhHistoryPerfReset = () => {
+        historyPerfLog.length = 0;
+        historyPerfLongTasks.length = 0;
+    };
+}
+
+/**
  * 向上加载历史（分页就绪后由 ChatPanel prepend）时，prepend 前抓锚点、DOM 更新后恢复：
  * 用户正在读的那一行保持原视觉位置（与 `preserve-scroll-on-prepend` 同源，虚拟列表必须显式做）。
  */
@@ -391,24 +470,75 @@ watch(
     async (nextFirst, prevFirst) => {
         if (!virtualizationActive.value || !nextFirst || !prevFirst || nextFirst === prevFirst)
             return;
-        // 先在旧 DOM 上抓锚点，再临时全量渲染一帧，让 provider 的 prepend 恢复生效。
+        // BL-382 C：指标只在显式开启时采集（关闭时 perf 恒 null，后续分支全是 no-op）。
+        const perfEnabled = historyPerfEnabled();
+        if (perfEnabled) historyPerfInstall();
+        const perf = perfEnabled
+            ? {
+                  beganAt: performance.now(),
+                  longTasksBefore: historyPerfLongTasks.length,
+                  pauseMs: 0,
+                  grownPx: 0,
+              }
+            : null;
+        // 先在旧 DOM 上抓锚点，再做锚定校正。
         const anchor = captureAnchor();
-        historyMutationPause.value = true;
+        // BL-382 A（根因修复）：prepend 前记录视口几何；DOM 更新后**同一帧**（微任务内、浏览器绘制前）
+        // 把 scrollTop 加上 scrollHeight 增量 ⇒ 视口里那几行视觉位置不变。窗口化下这个增量正好等于
+        // 顶部占位（未测量的 prepend 行按 fallback 撑高），所以不需要真实 DOM 也能算准。
+        const viewport = resolveViewportElement();
+        const snapshot =
+            viewport === null
+                ? null
+                : { scrollHeight: viewport.scrollHeight, scrollTop: viewport.scrollTop };
+        // BL-382 B：只有小表才允许「关窗口化 → 全量渲染一帧」（provider 用真实 DOM 锚点恢复）；
+        // 大表保持窗口化，位置交给 A。这样代价不再随表长增长。
+        const pauseWindowing = rows.value.length <= HISTORY_PAUSE_MAX_ROWS;
+        const pauseStartedAt = perfEnabled ? performance.now() : 0;
+        if (pauseWindowing) historyMutationPause.value = true;
         try {
             await nextTick();
-            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+            if (!pauseWindowing && snapshot !== null && viewport !== null) {
+                const grown = viewport.scrollHeight - snapshot.scrollHeight;
+                if (perf) perf.grownPx = Math.round(grown);
+                if (grown !== 0) {
+                    const next = Math.max(0, snapshot.scrollTop + grown);
+                    viewport.scrollTop = next;
+                    // 同步窗口计算的读数：只写 DOM 的话，本帧窗口仍按旧 scrollTop 切片，
+                    // 要等 scroll 事件回来才补 —— 用户会看到一帧空白/错行。
+                    virtualScrollTop.value = next;
+                }
+            }
+            if (pauseWindowing)
+                await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
         } finally {
-            historyMutationPause.value = false;
+            if (perf)
+                perf.pauseMs = pauseWindowing ? Math.round(performance.now() - pauseStartedAt) : 0;
+            if (pauseWindowing) historyMutationPause.value = false;
         }
         await nextTick();
         await restoreAnchor(anchor);
-        if (!anchor) return;
-        // provider 的 MutationObserver 在“全量渲染 → 恢复窗口化”两次 DOM 变更后仍可能用
-        // 旧锚点再纠正一次（实测中间位置 prepend 会被它拉到贴底）；连续几帧把锚点按回原视觉位置，
-        // 谁最后写 scrollTop 谁生效，直到稳定为止。
-        for (let frame = 0; frame < 6; frame += 1) {
-            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-            await restoreAnchor(anchor);
+        if (anchor) {
+            // provider 的 MutationObserver 在"全量渲染 → 恢复窗口化"两次 DOM 变更后仍可能用
+            // 旧锚点再纠正一次（实测中间位置 prepend 会被它拉到贴底）；连续几帧把锚点按回原视觉位置，
+            // 谁最后写 scrollTop 谁生效，直到稳定为止。
+            for (let frame = 0; frame < 6; frame += 1) {
+                await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+                await restoreAnchor(anchor);
+            }
+        }
+        if (perf) {
+            historyPerfLog.push({
+                at: Date.now(),
+                rows: rows.value.length,
+                firstKey: nextFirst,
+                paused: pauseWindowing,
+                pauseMs: perf.pauseMs,
+                grownPx: perf.grownPx,
+                longTasks: historyPerfLongTasks.length - perf.longTasksBefore,
+                totalMs: Math.round(performance.now() - perf.beganAt),
+            });
+            if (historyPerfLog.length > HISTORY_PERF_MAX_ENTRIES) historyPerfLog.shift();
         }
     },
     { flush: "pre" },
