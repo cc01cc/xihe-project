@@ -30,6 +30,11 @@ const i18n = createI18n({
     locale: "en",
     messages: {
         en: {
+            workspace: {
+                approvalResolvedElsewhere: "This approval was handled in another window.",
+                approvalResolvedElsewhereDraftKept:
+                    "Your draft is kept; you can copy it, but submitting is disabled.",
+            },
             common: { close: "Close", saving: "Saving..." },
             chat: {
                 approvalRequired: "Approval Required",
@@ -142,6 +147,7 @@ function mountModal(props: {
     busy?: boolean;
     error?: string | null;
     canClassify?: boolean;
+    resolvedElsewhere?: boolean;
 }) {
     // PLAN-0676 T3：审批反馈草稿属于父层；测试挂载需模拟 v-model:draft 回写。
     const Host = defineComponent({
@@ -379,6 +385,23 @@ describe("ApprovalModal", () => {
 
         expect(wrapper.emitted("approve")).toEqual([[{ decision: "once", requestId: REQUEST_ID }]]);
         expect(wrapper.emitted("approve")).toHaveLength(1);
+    });
+
+    // PLAN-0752 T5.1（task-95）：i18n 脚本扫出的**真实缺陷** —— 这句曾写成 `chat.*` 前缀，而键其实在
+    // `workspace.*`，于是「另一窗口已处理」时用户看到的是裸 key。断言渲染的是文案、不是 key 本身。
+    it("renders the draft-kept copy, not the raw i18n key, when resolved elsewhere", async () => {
+        const wrapper = mountModal({
+            approval: baseApproval,
+            show: true,
+            resolvedElsewhere: true,
+        });
+        await flushPromises();
+
+        const notice = wrapper.find('[data-testid="approval-resolved-elsewhere"]');
+        expect(notice.exists()).toBe(true);
+        expect(notice.text()).toContain("This approval was handled in another window.");
+        expect(notice.text()).toContain("Your draft is kept");
+        expect(notice.text()).not.toContain("approvalResolvedElsewhereDraftKept");
     });
 
     it("restores focus to the triggering element after a dismiss close", async () => {

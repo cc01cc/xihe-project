@@ -714,7 +714,7 @@ onBeforeUnmount(() => {
                     >
                         {{ t("workspace.approvalResolvedElsewhere") }}
                         <span class="block text-xs text-muted-foreground">
-                            {{ t("chat.approvalResolvedElsewhereDraftKept") }}
+                            {{ t("workspace.approvalResolvedElsewhereDraftKept") }}
                         </span>
                     </p>
 
