@@ -133,6 +133,49 @@ function chainValue(name, cwd) {
 export const LOCAL_MODE_ENV = "XIHE_LOCAL_MODE";
 
 /**
+ * 密码值**只接受非空 string**（BL-527 护栏 A）。
+ *
+ * 事故（2026-11-09 W-23 后）：`dev-stack.mjs` 把 `resolveDevAdminPasswordSafe()` 的**结果对象**
+ * 当成密码传下来，Node 把它写进子进程 env 时强转成 `"[object Object]"`（15 字符）——
+ * 长度 ≥12 不触发 `ResetAdmin` 的短密码告警，于是这个串被 bcrypt 写库，**任何真实密码都 401**，
+ * 而起栈日志照样打印 `ok … length=36`（打的是解析元数据的 length 字段）。宁可抛错，不可静默强转。
+ *
+ * @param {unknown} value
+ * @param {string} [label]
+ * @returns {string} 原值（不做 trim，保留调用方语义）
+ */
+export function assertPasswordString(value, label = "password") {
+    if (typeof value !== "string") {
+        const got = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+        throw new TypeError(
+            `${label} 必须是 string，收到 ${got}` +
+                (got === "object"
+                    ? "（常见错因：把 resolveDevAdminPasswordSafe() 的结果对象当密码传出，应取 .password）"
+                    : ""),
+        );
+    }
+    if (value.trim() === "") {
+        throw new TypeError(`${label} 不能为空串/纯空白（空输入会让 ResetAdmin 走随机生成分支，库与调用方都不知道密码）`);
+    }
+    if (/\[object .*\]/i.test(value)) {
+        throw new TypeError(`${label} 含 "[object …]"：调用方把对象当值传进来了`);
+    }
+    return value;
+}
+
+/**
+ * 从 `resolveDevAdminPasswordSafe()` 的结果取出**密码字符串**（拿不到就是 `null`）。
+ * 这是 dev-stack 起栈路径上唯一允许的取值方式：宁可 `null`（跳过 upsert）也不传对象。
+ *
+ * @param {{ok: boolean, password?: unknown} | null | undefined} result
+ * @returns {string | null}
+ */
+export function devAdminPasswordFrom(result) {
+    if (result == null || result.ok !== true) return null;
+    return assertPasswordString(result.password, "resolveDevAdminPasswordSafe().password");
+}
+
+/**
  * 解析 CP 的 local-mode 开关：**OS env 优先，其次 `.env` 链**。
  *
  * 为什么不能只看 `process.env`（W-22 verify 非阻塞发现）：CP 侧的 `DotenvLoader` 会把
@@ -201,9 +244,14 @@ export function buildResetAdminCommand({ wrapperPath, stackId }) {
 /**
  * 给 `reset-admin.ps1` 子进程准备 env：在既有 env 上叠加非 argv 密码通道。
  * **这是密码在本链路里唯一的传递方式**（不写盘、不进 argv、不进日志）。
+ *
+ * BL-527 护栏 A：出口强制校验——非 string / 空串 / 含 `[object …]` 一律抛 TypeError。
+ * Node 对非 string 的 env 值会 `String()` 强转（对象 ⇒ `"[object Object]"`），这个强转
+ * 曾把库里的密码写成 15 字符的对象字符串，因此绝不能静默通过。
  */
 export function resetAdminEnv({ env = process.env, password }) {
-    return { ...env, [RESET_ADMIN_PASSWORD_ENV]: password };
+    const checked = assertPasswordString(password, "resetAdminEnv.password");
+    return { ...env, [RESET_ADMIN_PASSWORD_ENV]: checked };
 }
 
 /**

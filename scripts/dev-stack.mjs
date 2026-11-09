@@ -70,7 +70,9 @@ import {
 import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 import {
+  assertPasswordString,
   buildResetAdminCommand,
+  devAdminPasswordFrom,
   formatDevAdminPassword,
   resetAdminEnv,
   resetAdminWrapperPath,
@@ -678,6 +680,9 @@ async function stopPg() {
  * 让操作者能修，而不是把一次 upsert 失败升级成「栈起不来」。
  */
 function applyDevAdminPassword(adminPassword) {
+  // BL-527 护栏 A：这一层只接受**字符串**密码。事故就是解析结果对象从这里漏进 env 的，
+  // 所以入口再断言一次（调用方已用 devAdminPasswordFrom() 取值，这里是第二道闸）。
+  const password = assertPasswordString(adminPassword, "applyDevAdminPassword(adminPassword)");
   // local mode（PLAN-0526）的设计前提是「零用户首启」：此时 upsert 会凭空造出 admin 行，
   // 破坏首启引导语义，必须跳过。
   //
@@ -699,7 +704,7 @@ function applyDevAdminPassword(adminPassword) {
   const { args: psArgs } = buildResetAdminCommand({ wrapperPath: wrapper, stackId: derived.stackId });
   // BL-523：密码**只经 env** 传给入口（`XIHE_RESET_ADMIN_PASSWORD`，ResetAdmin 内部优先级
   // stdin > env > --password），argv 里不再出现明文 —— 进程表 / shell 历史都看不到。
-  const upsertEnv = resetAdminEnv({ env: childEnv, password: adminPassword });
+  const upsertEnv = resetAdminEnv({ env: childEnv, password });
   const startedAt = Date.now();
   let result = spawnSync('pwsh', psArgs, {
     cwd: projectRoot,
@@ -721,8 +726,18 @@ function applyDevAdminPassword(adminPassword) {
   }
   const elapsed = Date.now() - startedAt;
   if (result.status === 0 && !result.error) {
+    // BL-527 护栏 A（可观测）：把 **java 自己报的 `source=` 行回显出来**。
+    // 事故当时 java 的输出只在失败时摘尾，于是「库里的密码来自哪个通道」没有任何信号；
+    // 现在成功也回显（该行只含来源/邮箱，**不含密码值**）。
+    const javaLine = [result.stdout, result.stderr]
+      .map((chunk) => String(chunk ?? ""))
+      .join("\n")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.startsWith("[reset-admin]") && /source=/.test(line) && !line.includes("XIHE_RESET_ADMIN_PASSWORD"));
+    if (javaLine) console.log(`[dev-stack] ${javaLine}`);
     console.log(
-      `[dev-stack] dev admin upsert: ok stack=${derived.stackId} length=${adminPassword.length} (value not logged, ${elapsed}ms)`,
+      `[dev-stack] dev admin upsert: ok stack=${derived.stackId} length=${password.length} (value not logged, ${elapsed}ms)`,
     );
     return { ok: true };
   }
@@ -757,7 +772,11 @@ async function start() {
   // D-770 / W-22 verify：解析或落盘失败发生在 spawn **之前**，原来会直接打断起栈（与文档承诺的
   // 「密码链路失败不阻塞起栈」不一致）。这里降级为 WARN + 跳过注入，`start` 继续走。
   const devAdmin = resolveDevAdminPasswordSafe({ projectRoot });
-  const devAdminPassword = devAdmin.ok ? devAdmin : null;
+  // BL-527：这里**必须取 `.password` 字符串**。事故版本写的是 `devAdmin.ok ? devAdmin : null`，
+  // 于是「解析结果对象」被塞进 `XIHE_RESET_ADMIN_PASSWORD`，Node 强转成 `"[object Object]"`
+  // （15 字符，绕过 ResetAdmin 的 <12 位告警）写进库 ⇒ 任何真实密码登录都 401。
+  // `devAdminPasswordFrom()` 只返回 string|null，拿不到就跳过 upsert（绝不传对象）。
+  const devAdminPassword = devAdminPasswordFrom(devAdmin);
   if (devAdmin.ok) {
     childEnv.XIHE_DEV_ADMIN_PASSWORD = devAdmin.password;
     console.log(formatDevAdminPassword(devAdmin));
