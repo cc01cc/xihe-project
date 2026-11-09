@@ -154,7 +154,7 @@ test.describe("Context templates (PLAN-0414)", () => {
         // The viewport decides this, not a `count()` probe: probing made the outcome depend on
         // whether the trigger had already rendered (flaky when the lane was loaded).
         if ((page.viewportSize()?.width ?? 1920) < 768) {
-            await page.getByRole("button", { name: "Open chat" }).click();
+            await page.getByTestId("mobile-chat-open").click();
         }
 
         // PLAN-0582 S4 / PLAN-0626 M2: collapsed by default. The unbound state is a

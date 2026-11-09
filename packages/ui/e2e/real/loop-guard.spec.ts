@@ -279,7 +279,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
         await page.setViewportSize({ width: 390, height: 844 });
         // At 390px the app shell defaults to the Files pane; the chat composer is
         // reachable through the "Open chat" toggle (same entry as queue mobile spec).
-        const openChat = page.getByRole("button", { name: "Open chat" });
+        const openChat = page.getByTestId("mobile-chat-open");
         await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await openChat.click();
         const textarea = page.locator("textarea");

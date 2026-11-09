@@ -504,7 +504,7 @@ test.describe("@host Session branch path", () => {
         });
 
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("mobile-chat-open").click();
         const mobileChatSheet = page.getByTestId("mobile-chat-sheet");
         await expect(mobileChatSheet).toBeVisible();
         const mobileBranchSelect = mobileChatSheet.getByTestId("session-branch-select");

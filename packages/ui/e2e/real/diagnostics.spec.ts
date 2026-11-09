@@ -150,7 +150,7 @@ async function approveCardIfShown(
     const card = page
         .locator('[data-testid="approval-approve"], [data-testid="approval-allow-session"]')
         .first();
-    const openChat = page.getByRole("button", { name: /open chat/i });
+    const openChat = page.getByTestId("mobile-chat-open");
 
     const appeared = await expect
         .poll(
@@ -177,7 +177,7 @@ async function approveCardIfShown(
 async function ensureChatSheetOpen(page: Page): Promise<void> {
     const root = page.getByTestId("mobile-chat-sheet");
     if (await root.isVisible().catch(() => false)) return;
-    const openChat = page.getByRole("button", { name: /open chat/i });
+    const openChat = page.getByTestId("mobile-chat-open");
     await expect(openChat).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await openChat.click();
     await expect(root).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -346,7 +346,7 @@ test.describe("@host diagnostics feedback", () => {
         await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
 
         // Mobile composes inside a sheet (viewport-matrix convention).
-        const openChat = page.getByRole("button", { name: /open chat/i });
+        const openChat = page.getByTestId("mobile-chat-open");
         if (await openChat.isVisible({ timeout: ACTION_TIMEOUT_MS }).catch(() => false)) {
             await openChat.click();
         }

@@ -59,7 +59,7 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
     await expect(page.getByTestId("workspace-active-agent")).toContainText("agent-1");
     if ((page.viewportSize()?.width ?? 1920) < 768) {
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("mobile-chat-open").click();
         const sheet = page.getByTestId("mobile-chat-sheet");
         await expect(sheet).toBeVisible();
         await expect(page.getByTestId("mobile-session-agent")).toContainText("agent-1");

@@ -49,7 +49,7 @@ test("@host Guidance UI entry submits and projects pending status", async ({ pag
     await expect(submitBtn).toBeVisible();
 
     const approvalModal = page.locator('[data-testid="modal-content"]');
-    await approvalModal.getByRole("button", { name: "Close" }).click();
+    await approvalModal.getByTestId("modal-close").click();
     await expect(approvalModal).toBeHidden();
     await expect(page.getByTestId("pending-approval-reopen-pill")).toBeVisible();
 
@@ -133,7 +133,7 @@ test("@host Guidance UI hides input after cancel and an API rejection adds no ph
     // Dismiss the approval modal temporarily so the independent Guidance panel is reachable.
     await page
         .locator('[data-testid="modal-content"]')
-        .getByRole("button", { name: "Close" })
+        .getByTestId("modal-close")
         .click();
     await expect(page.locator('[data-testid="modal-content"]')).toBeHidden();
 

@@ -33,7 +33,7 @@ test("390 composer stays inside viewport before and after the keyboard opens", a
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
 
     // At 390px the chat lives in the bottom sheet; open it through the mobile entry.
-    await page.getByRole("button", { name: "Open chat" }).first().click();
+    await page.getByTestId("mobile-chat-open").first().click();
 
     // Wait for the sheet's open animation to settle before measuring boxes (a mid-slide
     // boundingBox would report a transient +40px offset).

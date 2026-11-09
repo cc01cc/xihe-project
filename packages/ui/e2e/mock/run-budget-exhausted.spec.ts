@@ -87,7 +87,7 @@ test.describe("Run budget exhaustion surface", () => {
         // 390 视口下聊天在 `MobileChatSheet` 内：必须先点「Open chat」触发器，否则输入框根本不在可见层
         // （与 `checkpoint-rollback.spec.ts` / `approval.spec.ts` 的移动端写法一致）。
         if ((page.viewportSize()?.width ?? 1920) < 768) {
-            await page.getByRole("button", { name: "Open chat" }).click();
+            await page.getByTestId("mobile-chat-open").click();
         }
         const input = page.locator('[data-testid="chat-input"]');
         await expect(input).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

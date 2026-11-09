@@ -305,7 +305,7 @@ for (const wire of cases) {
                     animations: "disabled",
                 });
                 await page.setViewportSize({ width: 390, height: 844 });
-                const openChat = page.getByRole("button", { name: "Open chat" });
+                const openChat = page.getByTestId("mobile-chat-open");
                 if (await openChat.isVisible()) await openChat.click();
                 await expect(
                     page.getByText("template-wire-confirmed", { exact: true }),

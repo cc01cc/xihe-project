@@ -180,7 +180,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
             timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("chat-stop-button")).toBeVisible();
-        await page.getByTestId("modal-content").getByRole("button", { name: "Close" }).click();
+        await page.getByTestId("modal-content").getByTestId("modal-close").click();
         await expect(modal).toBeHidden();
         await expect(page.getByTestId("pending-approval-reopen-pill")).toBeVisible();
 

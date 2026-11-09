@@ -94,7 +94,7 @@ test.describe("Mobile Viewport (390x844)", () => {
     test("mobile chat dialogs remain closable", async ({ page }) => {
         await page.addInitScript((t) => localStorage.setItem("xihe-token", t), authToken);
         await page.goto("/workspace", { waitUntil: "load" });
-        const fab = page.getByRole("button", { name: "Open chat" });
+        const fab = page.getByTestId("mobile-chat-open");
         await expect(fab).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         expect(await page.locator('[role="dialog"]').count()).toBe(0);
 

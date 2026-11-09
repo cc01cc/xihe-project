@@ -527,11 +527,11 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
 
         await page.goto("/workspace/workspace-1");
         await page.reload();
-        await page.getByRole("button", { name: "Files" }).click();
+        await page.getByTestId("workspace-toolbar-files-mobile").click();
         await expect(page.getByTestId("mobile-files-sheet")).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-mobile-files-sheet.png");
-        await page.getByRole("button", { name: /close|关闭/i }).last().click();
-        await page.getByRole("button", { name: "Open chat" }).click();
+        await page.getByTestId("sheet-close").click();
+        await page.getByTestId("mobile-chat-open").click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
 
         const overflow = await page.evaluate(() => {
