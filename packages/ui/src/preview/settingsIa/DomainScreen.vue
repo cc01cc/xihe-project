@@ -8,9 +8,14 @@ import { Separator } from "@/components/ui/separator";
 import { usePreviewCopy } from "./copy";
 import { domainRows, type ConfigKeyRow, type LayerValue } from "./mock";
 import LayerBadge from "./LayerBadge.vue";
+import LayerHeader from "./LayerHeader.vue";
 
 /**
- * Screen 2 — proposed domain page (rag), one row per config key.
+ * Screen 2 — proposed domain page (rag), v2 (task-56, PLAN-0752 §5.2).
+ *
+ * Hierarchy is measured, not asserted: the sticky layer title is 24px (largest), the domain
+ * heading right below it is 18px (strictly smaller), and every entry row is ≥ 44px tall at 14px.
+ * The breadcrumb ends with 检索增强（RAG） carrying `aria-current="page"`.
  *
  * Every row shows its **effective layer** on the right; overridden keys render the inheritance
  * chain underneath (instance 64k / user 96k) and that line is a **jump link**: clicking it
@@ -22,6 +27,10 @@ import LayerBadge from "./LayerBadge.vue";
  */
 const copy = usePreviewCopy();
 const highlighted = ref<{ key: string; layer: ConfigKeyRow["layer"] | "env" } | null>(null);
+
+const ragLabel = computed(
+    () => (copy.value.shell.domainLabels as Record<string, string>).rag ?? "rag",
+);
 
 const located = computed(() => {
     if (!highlighted.value) return "";
@@ -67,96 +76,116 @@ function jump(row: ConfigKeyRow, layer: ConfigKeyRow["layer"]) {
 
 <template>
     <div class="preview-screen h-[860px] w-full overflow-hidden rounded-xl border bg-background">
-        <header class="flex items-start gap-6 border-b px-8 pt-5 pb-4">
-            <div>
-                <div class="flex items-center gap-2">
-                    <h3 class="text-lg font-semibold tracking-tight">{{ copy.domain.title }}</h3>
-                    <span class="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        /settings/config?domain=rag
-                    </span>
-                </div>
-                <p class="mt-1 text-[13px] text-muted-foreground">{{ copy.domain.summary }}</p>
-            </div>
-            <div class="ml-auto text-right text-[11px] text-muted-foreground">
-                <p>{{ copy.domain.jumpHint }}</p>
-                <p v-if="located" class="mt-1 font-medium text-foreground">{{ located }}</p>
-            </div>
-        </header>
+        <div class="grid h-full grid-cols-[minmax(0,1fr)_320px]">
+            <div class="min-h-0 overflow-y-auto">
+                <LayerHeader layer="instance" :domain="ragLabel" :summary="copy.domain.summary">
+                    <p class="mt-1.5 text-[11px] text-muted-foreground">
+                        {{ copy.domain.jumpHint }}
+                        <span v-if="located" class="font-medium text-foreground"
+                            >· {{ located }}</span
+                        >
+                    </p>
+                </LayerHeader>
 
-        <div class="grid h-[calc(860px-96px)] grid-cols-[minmax(0,1fr)_320px]">
-            <div class="min-h-0 overflow-y-auto px-8 py-4">
-                <div
-                    v-for="row in domainRows"
-                    :key="row.key"
-                    class="rounded-lg border px-3 py-2 transition-shadow"
-                    :class="[
-                        highlighted?.key === row.key
-                            ? 'border-ring ring-2 ring-ring'
-                            : 'border-transparent hover:border-border',
-                    ]"
-                >
-                    <div class="flex items-center gap-4">
-                        <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-2">
-                                <span class="text-sm font-medium">{{ row.label }}</span>
-                                <code class="font-mono text-[11px] text-muted-foreground">
-                                    {{ row.key }}
-                                </code>
+                <div class="px-8 pt-4 pb-6">
+                    <div class="flex items-baseline gap-2">
+                        <h2
+                            data-testid="settings-domain-title"
+                            class="text-lg font-medium tracking-tight"
+                        >
+                            {{ ragLabel }}
+                        </h2>
+                        <code class="font-mono text-[11px] text-muted-foreground">
+                            /settings/instance/rag
+                        </code>
+                        <span class="ml-auto text-[10px] text-muted-foreground">{{
+                            copy.domain.entryUnit
+                        }}</span>
+                    </div>
+
+                    <div class="mt-2">
+                        <div
+                            v-for="row in domainRows"
+                            :key="row.key"
+                            data-testid="settings-entry-row"
+                            class="flex min-h-[44px] items-center gap-4 border-b px-2 py-2 transition-colors"
+                            :class="
+                                highlighted?.key === row.key
+                                    ? 'border-ring bg-muted/40 ring-1 ring-ring'
+                                    : 'border-border/60 hover:bg-muted/20'
+                            "
+                        >
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-medium">{{ row.label }}</span>
+                                    <code class="font-mono text-[11px] text-muted-foreground">
+                                        {{ row.key }}
+                                    </code>
+                                </div>
+                                <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                    {{ row.description }}
+                                </p>
+                                <div
+                                    v-if="row.chain.length"
+                                    class="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                                >
+                                    <Link2 class="size-3" aria-hidden="true" />
+                                    <span>↳</span>
+                                    <template v-for="(c, i) in row.chain" :key="c.layer">
+                                        <button
+                                            type="button"
+                                            class="rounded px-1 text-muted-foreground underline-offset-4 transition-colors hover:bg-muted hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                                            @click="jump(row, c.layer)"
+                                        >
+                                            <span class="font-medium">{{
+                                                shortLayer(c.layer)
+                                            }}</span>
+                                            <span class="ml-1 font-mono">{{ c.value }}</span>
+                                            <ArrowUpRight
+                                                class="ml-0.5 inline size-3"
+                                                aria-hidden="true"
+                                            />
+                                        </button>
+                                        <span v-if="i < row.chain.length - 1" class="text-border"
+                                            >/</span
+                                        >
+                                    </template>
+                                    <span
+                                        v-if="row.locked"
+                                        class="ml-2 inline-flex items-center gap-1"
+                                    >
+                                        <Lock class="size-3" />{{
+                                            row.locked === "env"
+                                                ? copy.domain.lockedByEnv
+                                                : copy.domain.lockedByInstance
+                                        }}
+                                    </span>
+                                </div>
                             </div>
-                            <p class="mt-0.5 truncate text-[11px] text-muted-foreground">
-                                {{ row.description }}
-                            </p>
-                        </div>
 
-                        <div class="flex w-[190px] shrink-0 items-center gap-1.5">
-                            <Input
-                                :model-value="row.effective"
-                                :disabled="!row.writable || Boolean(row.locked)"
-                                class="h-8 font-mono text-xs"
-                                readonly
-                            />
-                            <ChevronDown
-                                v-if="row.editor === 'select'"
-                                class="size-3.5 shrink-0 text-muted-foreground"
-                            />
-                        </div>
+                            <div class="flex w-[190px] shrink-0 items-center gap-1.5">
+                                <Input
+                                    :model-value="row.effective"
+                                    :disabled="!row.writable || Boolean(row.locked)"
+                                    class="h-8 font-mono text-xs"
+                                    readonly
+                                />
+                                <ChevronDown
+                                    v-if="row.editor === 'select'"
+                                    class="size-3.5 shrink-0 text-muted-foreground"
+                                />
+                            </div>
 
-                        <div class="flex w-[168px] shrink-0 justify-end">
-                            <LayerBadge :kind="badgeKind(row)" />
+                            <div class="flex w-[168px] shrink-0 justify-end">
+                                <LayerBadge :kind="badgeKind(row)" />
+                            </div>
                         </div>
-                    </div>
-
-                    <div
-                        v-if="row.chain.length"
-                        class="mt-1 flex items-center gap-1.5 pl-1 text-[11px] text-muted-foreground"
-                    >
-                        <Link2 class="size-3" aria-hidden="true" />
-                        <span>↳</span>
-                        <template v-for="(c, i) in row.chain" :key="c.layer">
-                            <button
-                                type="button"
-                                class="rounded px-1 text-muted-foreground underline-offset-4 transition-colors hover:bg-muted hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                                @click="jump(row, c.layer)"
-                            >
-                                <span class="font-medium">{{ shortLayer(c.layer) }}</span>
-                                <span class="ml-1 font-mono">{{ c.value }}</span>
-                                <ArrowUpRight class="ml-0.5 inline size-3" aria-hidden="true" />
-                            </button>
-                            <span v-if="i < row.chain.length - 1" class="text-border">/</span>
-                        </template>
-                        <span v-if="row.locked" class="ml-2 inline-flex items-center gap-1">
-                            <Lock class="size-3" />{{
-                                row.locked === "env"
-                                    ? copy.domain.lockedByEnv
-                                    : copy.domain.lockedByInstance
-                            }}
-                        </span>
                     </div>
                 </div>
             </div>
 
-            <aside class="flex min-h-0 flex-col gap-3 border-l px-5 py-4">
-                <Card class="gap-2 py-3">
+            <aside class="flex min-h-0 flex-col gap-3 overflow-y-auto border-l px-5 py-4">
+                <Card class="gap-2 border-border/70 py-3">
                     <CardHeader class="px-3 py-0">
                         <CardTitle class="text-sm">{{ copy.domain.chainTitle }}</CardTitle>
                     </CardHeader>
@@ -182,7 +211,7 @@ function jump(row: ConfigKeyRow, layer: ConfigKeyRow["layer"]) {
                     </CardContent>
                 </Card>
 
-                <Card class="gap-2 py-3">
+                <Card class="gap-2 border-border/70 py-3">
                     <CardHeader class="px-3 py-0">
                         <CardTitle class="text-sm">{{ copy.domain.coverageTitle }}</CardTitle>
                     </CardHeader>
