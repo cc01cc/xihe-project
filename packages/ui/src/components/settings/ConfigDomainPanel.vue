@@ -227,8 +227,23 @@ const anchoredKey = computed(() => {
 });
 
 /**
- * 锚点落地 = 展开域卡（行只在展开后存在）→ 滚动 → **聚焦** → 短暂高亮（1.6 s 后撤）。
- * 同页二次跳转靠 watch(route.hash) 生效：只 watch onMounted 会漏掉「已经在本页，再点另一个徽标」。
+ * 等目标行**真的能收焦点**。域页在层配置落定前是 `v-show` 隐藏 + `inert`（task-121/VW-31），
+ * 隐藏子树里的 `focus()` 会被浏览器静默忽略 —— 当场聚焦会「高亮出现但焦点留在 body」。
+ * 所以这里重试到聚焦成功为止（≤2 s），页面离开或一直不可聚焦就放弃，不假装成功。
+ */
+async function focusRowWhenReady(row: HTMLElement): Promise<boolean> {
+    for (let attempt = 0; attempt < 33; attempt += 1) {
+        if (!row.isConnected) return false;
+        row.focus({ preventScroll: true });
+        if (document.activeElement === row) return true;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    return false;
+}
+
+/**
+ * 锚点落地 = 展开域卡（行只在展开后存在）→ 等到可聚焦 → 滚动 → **聚焦** → 短暂高亮（1.6 s 后撤）。
+ * 同页二次跳转靠 watch(route.hash) 生效：只挂 onMounted 会漏掉「已经在本页，再点另一个徽标」。
  */
 async function applyAnchor(): Promise<void> {
     const key = anchoredKey.value;
@@ -237,9 +252,9 @@ async function applyAnchor(): Promise<void> {
     await nextTick();
     const row = rowRefs.get(key);
     if (!row) return;
+    if (!(await focusRowWhenReady(row))) return;
     // jsdom 无布局引擎、没有 scrollIntoView：单测里跳过滚动，但聚焦与高亮照常执行。
     if (typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
-    row.focus({ preventScroll: true });
     anchorHighlight.value = key;
     if (highlightTimer) clearTimeout(highlightTimer);
     highlightTimer = setTimeout(() => {
