@@ -85,6 +85,19 @@ const messages = {
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",
+                groupInstanceResources: "实例资源",
+                groupMyResources: "我的资源",
+                resourceAgents: "智能体",
+                resourceMcp: "MCP 服务器",
+                resourceCredentials: "凭据",
+                resourceKnowledge: "知识库",
+                resourceMyAgents: "我的智能体",
+                resourceMyCredentials: "我的凭据",
+                resourceKnowledgeMcp: "知识库 · MCP",
+                backendGapBadge: "后端缺口 {code}",
+                backendGapBadgeGeneric: "后端缺口",
+                gapDialogTitle: "{item}：暂无后端承载",
+                gapDialogDismiss: "知道了",
             },
         },
     },
@@ -117,6 +130,38 @@ describe("SettingsSidebar", () => {
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
         expect(wrapper.findAll('[data-testid="settings-nav-domain"]')).toHaveLength(9);
         expect(wrapper.text()).not.toContain("配置锁定");
+    });
+
+    it("T4.0: lands the resource group in both layers and keeps every gap slot visible", () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("instance", "rag");
+        // 实例层「实例资源」4 条全缺口；用户层「我的资源」2 缺口 + 1 真入口
+        const groups = wrapper.findAll('[data-testid="settings-nav-resource-group"]');
+        expect(groups).toHaveLength(2);
+        expect(groups[0]!.text()).toContain("实例资源");
+        expect(groups[1]!.text()).toContain("我的资源");
+        const gaps = wrapper.findAll('[data-testid^="settings-nav-resource-gap-"]');
+        expect(gaps).toHaveLength(6);
+        expect(gaps.map((gap) => gap.attributes("data-gap-codes"))).toEqual([
+            "G4",
+            "G1",
+            "G2",
+            "G3",
+            "G4",
+            "G1,G3",
+        ]);
+        // 唯一有后端承载的资源项是「我的凭据」→ 已实现的凭据页
+        // 只留真入口：排除分组容器本身（它也叫 settings-nav-resource-group）与缺口按钮
+        const real = wrapper.findAll('[data-testid^="settings-nav-resource-"]').filter((node) => {
+            const id = node.attributes("data-testid") ?? "";
+            return (
+                id !== "settings-nav-resource-group" && !id.startsWith("settings-nav-resource-gap-")
+            );
+        });
+        expect(real).toHaveLength(1);
+        expect(real[0]!.attributes("data-testid")).toBe("settings-nav-resource-my-credentials");
+        expect(real[0]!.text()).toBe("我的凭据");
     });
 
     it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {

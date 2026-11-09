@@ -10,7 +10,7 @@ import {
 } from "../lib/workspaceContext";
 import { resolveLocalModeLanding } from "../lib/workspaceLanding";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
-import { defaultLayerPath } from "../lib/settingsIa";
+import { defaultLayerPath, knowledgeRedirectTarget } from "../lib/settingsIa";
 import { LAYER_DOMAINS } from "../stores/config";
 
 const router = createRouter({
@@ -158,10 +158,12 @@ const router = createRouter({
                     meta: { settingsLayer: "user" },
                 },
                 {
+                    // PLAN-0752 T4.4（task-91）：知识库**只有工作区承载**（T4.3：CP 无库表、按 workspace 分区），
+                    // 而这条 user 层路由没有任何导航指向它 —— 保留它等于留一个「点得到的用户层知识库」幽灵页。
+                    // 因此改成工作区重定向：有当前工作区 ⇒ 落到工作区设置的「知识库」tab；没有 ⇒ 回工作区选择面。
                     path: "knowledge",
                     name: "settings-knowledge",
-                    component: () => import("../views/settings/KnowledgeBaseView.vue"),
-                    meta: { settingsLayer: "user" },
+                    redirect: () => knowledgeRedirectTarget(readTabWorkspaceId()),
                 },
                 {
                     // PLAN-0610 W5c：principal-grants 已退役，旧书签落到替代页

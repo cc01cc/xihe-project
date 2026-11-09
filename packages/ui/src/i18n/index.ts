@@ -822,6 +822,10 @@ const messages = {
             settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
             settingsTabMcp: "MCP",
+            settingsTabCredentials: "凭据",
+            settingsTabKnowledge: "知识库",
+            settingsResourceGroupNote:
+                "MCP、凭据、知识库是工作区资源（不是配置域）：MCP 是绑定与启用，凭据是归属本工作区的密钥，知识库是按本工作区分区的文档。",
             settingsGeneralTitle: "基本信息",
             settingsName: "名称",
             settingsDescription: "描述",
@@ -1401,6 +1405,39 @@ const messages = {
                 groupDomains: "域",
                 groupOps: "实例运维",
                 groupSecurity: "安全与权限",
+                groupInstanceResources: "实例资源",
+                groupMyResources: "我的资源",
+                resourceAgents: "智能体",
+                resourceMcp: "MCP 服务器",
+                resourceCredentials: "凭据",
+                resourceKnowledge: "知识库",
+                resourceMyAgents: "我的智能体",
+                resourceMyCredentials: "我的凭据",
+                resourceKnowledgeMcp: "知识库 · MCP",
+                backendGapBadge: "后端缺口 {code}",
+                backendGapBadgeGeneric: "后端缺口",
+                gapDialogTitle: "{item}：暂无后端承载",
+                gapDialogDismiss: "知道了",
+                noAtomTitle: "本页没有权限原子：",
+                noAtomBody:
+                    "内容按你的归属自动收窄 —— 看到空列表不代表没权限，也不代表数据丢了；看不到别人的条目是设计如此，这里不会出现 403。",
+                atomDeniedTitle: "权限不足",
+                atomDeniedBody:
+                    "缺少 {atom}。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
+                atomDeniedNotGap:
+                    "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
+                gapNoteAgent:
+                    "智能体在 CP 没有注册实体表（只有分类表与工作区绑定），实例层没有承载；入口先留位，等后端补注册实体后再接。",
+                gapNoteAgentUser:
+                    "智能体创建目前必须带工作区上下文并需要 MANAGE_WORKSPACE_AGENTS，用户级创建入口尚未实施（PLAN-0750）；此处先留位。",
+                gapNoteMcp:
+                    "MCP 服务器只有工作区归属（mcp_remote_servers / mcp_stdio_servers 的 workspace_id 非空），实例层与用户层没有承载；接口也只有工作区面。",
+                gapNoteCredentials:
+                    "凭据只有 USER 与 WORKSPACE 两种归属（ck_credentials_owner_type），实例层没有承载。",
+                gapNoteKnowledge:
+                    "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个代理端点且按 workspace 分区，因此没有可管理的“库”。",
+                gapNoteKnowledgeMcp:
+                    "用户层没有知识库实体（CP 无库表、按 workspace 分区），也没有用户级 MCP 服务器（只有工作区归属）；入口先留位。",
                 navMonitoring: "监控",
                 navData: "数据",
                 navToolFaces: "工具分类",
@@ -1911,6 +1948,7 @@ const messages = {
             configSummaryInheritedMany: "{count} 项由上层设定",
             configSummaryShow: "查看",
             configSummaryHide: "收起",
+
             configKeyInstanceOnlyHint:
                 "该键只在实例层生效：用户层与工作区层不继承，也不能在此层修改",
             configLockNav: "配置锁定",
@@ -2383,6 +2421,7 @@ const messages = {
             owner: "归属",
             ownerUser: "我的凭据",
             ownerWorkspace: "工作区凭据",
+            scopeWorkspaceNote: "这里只列归属本工作区的凭据（owner_type=WORKSPACE）。",
             ownerWorkspaceSelect: "选择工作区",
             token: "Token",
             accessKey: "Access Key",
@@ -3360,6 +3399,10 @@ const messages = {
             settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
             settingsTabMcp: "MCP",
+            settingsTabCredentials: "Credentials",
+            settingsTabKnowledge: "Knowledge base",
+            settingsResourceGroupNote:
+                "MCP, credentials and the knowledge base are workspace resources (not config domains): MCP is binding/enabling, credentials are keys owned by this workspace, and the knowledge base holds documents partitioned by this workspace.",
             settingsGeneralTitle: "General",
             settingsName: "Name",
             settingsDescription: "Description",
@@ -3966,6 +4009,39 @@ const messages = {
                 groupDomains: "Domains",
                 groupOps: "Instance operations",
                 groupSecurity: "Security & permissions",
+                groupInstanceResources: "Instance resources",
+                groupMyResources: "My resources",
+                resourceAgents: "Agents",
+                resourceMcp: "MCP servers",
+                resourceCredentials: "Credentials",
+                resourceKnowledge: "Knowledge bases",
+                resourceMyAgents: "My agents",
+                resourceMyCredentials: "My credentials",
+                resourceKnowledgeMcp: "Knowledge base · MCP",
+                backendGapBadge: "Backend gap {code}",
+                backendGapBadgeGeneric: "Backend gap",
+                gapDialogTitle: "{item}: no backend yet",
+                gapDialogDismiss: "Got it",
+                noAtomTitle: "This page has no permission atom:",
+                noAtomBody:
+                    "content is narrowed by ownership — an empty list does not mean you lack permission, and it does not mean data was lost; other people's entries are invisible by design and you will not see a 403 here.",
+                atomDeniedTitle: "Insufficient permission",
+                atomDeniedBody:
+                    "Missing {atom}. This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
+                atomDeniedNotGap:
+                    "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
+                gapNoteAgent:
+                    "The control plane has no agent registry table (only tool-face classification and workspace bindings), so the instance layer has nothing to carry. The entry stays here until the backend adds a registry.",
+                gapNoteAgentUser:
+                    "Creating an agent currently requires a workspace context and MANAGE_WORKSPACE_AGENTS; the user-level create entry is not implemented yet (PLAN-0750). The entry stays here for now.",
+                gapNoteMcp:
+                    "MCP servers are workspace-owned only (mcp_remote_servers / mcp_stdio_servers have a non-null workspace_id) and the API surface is workspace-only, so neither the instance nor the user layer can host one.",
+                gapNoteCredentials:
+                    "Credentials can only be owned by a USER or a WORKSPACE (ck_credentials_owner_type), so the instance layer has nothing to carry.",
+                gapNoteKnowledge:
+                    'The control plane has no knowledge-base entity (no table, no CRUD): only four proxy endpoints partitioned by workspace, so there is no manageable "library".',
+                gapNoteKnowledgeMcp:
+                    "The user layer has no knowledge-base entity (no CP table, partitioned by workspace) and no user-level MCP servers (workspace-owned only); the entry stays here for now.",
                 navMonitoring: "Monitoring",
                 navData: "Data",
                 navToolFaces: "Tool classes",
@@ -5000,6 +5076,8 @@ const messages = {
             owner: "Owner",
             ownerUser: "My credentials",
             ownerWorkspace: "Workspace credentials",
+            scopeWorkspaceNote:
+                "This list only shows credentials owned by this workspace (owner_type=WORKSPACE).",
             ownerWorkspaceSelect: "Select workspace",
             token: "Token",
             accessKey: "Access key",

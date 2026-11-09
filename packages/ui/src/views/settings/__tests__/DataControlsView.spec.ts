@@ -44,6 +44,7 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             getWorkspaceCheckpointRetention:
                 vi.fn<typeof apiModule.api.getWorkspaceCheckpointRetention>(),
             cleanupWorkspaceCheckpoints: vi.fn<typeof apiModule.api.cleanupWorkspaceCheckpoints>(),
+            getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
         },
     };
 });
@@ -59,6 +60,14 @@ const mockedApi = vi.mocked(api, true),
                 import: "导入",
                 configTab: "配置管理",
                 knowledge: "知识库",
+                // PLAN-0752 T4.4：权限面文案（无 atom 信息条 / atom 缺失 403 卡片）。
+                ia: {
+                    noAtomTitle: "本页没有权限原子：",
+                    noAtomBody: "内容按你的归属自动收窄，这里不会出现 403。",
+                    atomDeniedTitle: "权限不足",
+                    atomDeniedBody: "缺少 {atom}。这是授权问题，不是功能缺失。",
+                    atomDeniedNotGap: "本页不是后端缺口。",
+                },
                 checkpointRetention: "快照保留",
                 checkpointRetentionDesc:
                     "每次可写运行前建立快照；按数量与时间保留，超出后自动清理。",
@@ -89,8 +98,23 @@ function createI18nInstance() {
     return createI18n({ legacy: false, locale: "zh-CN", fallbackLocale: "zh-CN", messages });
 }
 
+/** PLAN-0752 T4.4：数据面按实例原子门控；默认「已授予」，denied 用例显式收回。 */
+function selfPermissions(atoms: string[]) {
+    return {
+        userId: "user-1",
+        instanceCapabilities: [] as string[],
+        instancePermissions: atoms.map((actionClass) => ({ actionClass, resource: "*" })),
+        workspaces: [],
+    };
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
+    // auth store 的 token 来自 localStorage；无 token ⇒ ensureSelfPermissions() fail-closed。
+    localStorage.setItem("xihe-token", "test-token");
+    vi.mocked(api, true).getSelfPermissions.mockResolvedValue(
+        selfPermissions(["WRITE_INSTANCE_CONTENT"]) as never,
+    );
     globalThis.URL.createObjectURL = vi.fn<() => string>(() => "blob:mock");
     globalThis.URL.revokeObjectURL = vi.fn<(url: string) => void>(() => undefined);
 });
@@ -99,37 +123,79 @@ describe("DataControlsView", () => {
     it("renders title", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         expect(wrapper.text()).toContain("数据控制");
     });
 
     it("renders export settings button", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         expect(wrapper.text()).toContain("导出设置");
     });
 
     it("renders export chats button", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         expect(wrapper.text()).toContain("导出聊天");
     });
 
     it("renders import button", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         expect(wrapper.text()).toContain("导入");
     });
 
     it("opens ImportPreview on file selection", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
-            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } }),
-            fileInput = wrapper.find('input[type="file"]');
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+        const fileInput = wrapper.find('input[type="file"]');
         expect(fileInput.exists()).toBe(true);
+    });
+
+    // PLAN-0752 T4.4：数据面是**有 atom**的页 —— 没被授予时给 403 视图，并且**不取数**（judge ②）。
+    it("renders the 403 view and skips all requests when WRITE_INSTANCE_CONTENT is missing", async () => {
+        vi.mocked(api, true).getSelfPermissions.mockResolvedValue(selfPermissions([]) as never);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("WRITE_INSTANCE_CONTENT");
+        expect(mockedApi.getWorkspaceCheckpointRetention).not.toHaveBeenCalled();
+        // 主体不挂载：导出/导入按钮与保留区块都不在 DOM
+        expect(wrapper.text()).not.toContain("导出设置");
+        expect(wrapper.find('[data-testid="settings-checkpoint-retention"]').exists()).toBe(false);
+    });
+
+    it("renders the data controls (and loads retention) when the atom is granted", async () => {
+        // 有工作区上下文才会真正取保留期（无上下文时 loadRetention 直接返回）
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({ id: WORKSPACE_ID, name: "Workspace" }),
+        );
+        mockedApi.getWorkspaceCheckpointRetention.mockResolvedValue({
+            maxRuns: 50,
+            ttlDays: 30,
+            currentRuns: 2,
+            currentRefs: 3,
+        } as never);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(false);
+        expect(wrapper.text()).toContain("导出设置");
+        expect(mockedApi.getWorkspaceCheckpointRetention).toHaveBeenCalled();
     });
 
     it("no longer mounts its own settings nav (task-74 B0: the layout owns navigation)", async () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         expect(wrapper.find('[data-testid^="settings-nav-"]').exists()).toBe(false);
     });
 });
@@ -157,6 +223,7 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
         await flushPromises();
+        await flushPromises();
         expect(mockedApi.getWorkspaceCheckpointRetention).toHaveBeenCalledWith(WORKSPACE_ID);
         expect(wrapper.find('[data-testid="settings-checkpoint-max-runs"]').text()).toBe("50");
         expect(wrapper.find('[data-testid="settings-checkpoint-ttl-days"]').text()).toBe("30");
@@ -175,6 +242,7 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         mockedApi.cleanupWorkspaceCheckpoints.mockResolvedValueOnce({ removed: true });
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         await flushPromises();
 
         await wrapper.find('[data-testid="settings-checkpoint-cleanup"]').trigger("click");
@@ -204,6 +272,7 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
         await flushPromises();
+        await flushPromises();
         await wrapper.find('[data-testid="settings-checkpoint-cleanup"]').trigger("click");
         await wrapper.find('[data-testid="settings-checkpoint-cleanup-cancel"]').trigger("click");
         expect(
@@ -216,6 +285,7 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         localStorage.removeItem("xihe-workspace");
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-checkpoint-no-workspace"]').exists()).toBe(
             true,
@@ -230,6 +300,7 @@ describe("DataControlsView snapshot retention (PLAN-0328 M3)", () => {
         mockedApi.getWorkspaceCheckpointRetention.mockRejectedValueOnce(new Error("offline"));
         const { default: DataControlsView } = await import("../DataControlsView.vue"),
             wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-checkpoint-error"]').exists()).toBe(true);
         mockedApi.getWorkspaceCheckpointRetention.mockResolvedValueOnce({

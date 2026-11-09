@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { logger } from "../../lib/logger";
 import ImportPreview, { type ImportData } from "../../components/settings/ImportPreview.vue";
 import { apiRaw, api, ApiError } from "../../composables/api";
+import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
 import { useAuthStore } from "../../stores/auth";
 import { useCheckpointStore } from "../../stores/checkpoint";
 import type { CheckpointRetention } from "../../types";
@@ -19,6 +20,24 @@ const { t } = useI18n(),
 
 // PLAN-0339: informational retention view + explicit workspace shadow cleanup.
 // Constants are server-reported (N=50 / TTL 30d); the UI never invents them.
+/**
+ * PLAN-0752 T4.4：数据面是**有 atom**的页 —— 导出/导入走实例作用域原子（`WRITE_INSTANCE_CONTENT`，
+ * 导出另需 `cap:instance:admin`；`ConfigController:488-495,453`），保留期清理是工作区成员面。
+ * 非管理员三个动作全 403（audit §C2），所以**整页**给 403 视图并跳过取数，而不是渲染一个点不动的页。
+ * 与「无 atom」页的区别：这里不是「概念不存在」，是「你没被授予」。
+ */
+const canUseInstanceData = computed(
+    () =>
+        authStore.hasInstanceAtom("WRITE_INSTANCE_CONTENT") || authStore.hasInstanceAdminCapability,
+);
+
+/**
+ * 三态而不是两态：原子投影是异步的。若一上来就按「没权限」渲染 403，已授权用户会先看到一屏
+ * 「权限不足」再跳成正常页（假 403）。`permissionsChecked` 落定前只渲染标题，两边的谎都不说。
+ */
+const permissionsChecked = ref(false);
+const dataDenied = computed(() => permissionsChecked.value && !canUseInstanceData.value);
+
 const workspaceId = computed(() => authStore.currentWorkspaceId),
     retention = ref<CheckpointRetention | null>(null),
     retentionLoading = ref(false),
@@ -72,11 +91,16 @@ async function cleanupCheckpoints() {
     }
 }
 
-onMounted(loadRetention);
+onMounted(async () => {
+    // 先拿原子投影（单飞、失败 fail-closed），再决定取不取数：无权限时不发请求（T4.4 判据②）。
+    await authStore.ensureSelfPermissions();
+    permissionsChecked.value = true;
+    if (canUseInstanceData.value) await loadRetention();
+});
 watch(workspaceId, () => {
     cleanupConfirming.value = false;
     cleanupResult.value = null;
-    void loadRetention();
+    if (canUseInstanceData.value) void loadRetention();
 });
 
 async function exportSettings() {
@@ -151,162 +175,185 @@ function downloadBlob(blob: Blob, filename: string) {
             {{ t("settings.dataControls") }}
         </h3>
 
-        <div class="space-y-2">
-            <button
-                class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
-                :disabled="exporting"
-                @click="exportSettings"
-            >
-                {{ t("settings.exportSettings") }}
-            </button>
-            <button
-                class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
-                :disabled="exporting"
-                @click="exportChats"
-            >
-                {{ t("settings.exportChats") }}
-            </button>
-        </div>
+        <!-- 无授权时只留 403 说明；页面主体不挂载 ⇒ 不会发出无谓请求。 -->
+        <SettingsPermissionGate
+            v-if="dataDenied"
+            variant="atom-denied"
+            atom="WRITE_INSTANCE_CONTENT"
+        />
 
-        <div class="border-t pt-3 space-y-2">
-            <button
-                class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors"
-                @click="($refs.fileInput as HTMLInputElement)?.click()"
-            >
-                {{ t("settings.import") }}
-            </button>
-            <input
-                ref="fileInput"
-                type="file"
-                accept=".json"
-                class="hidden"
-                @change="handleFileSelected"
-            />
-
-            <ImportPreview
-                v-if="showImportPreview"
-                :file="importFile"
-                @confirm="handleConfirmImport"
-                @cancel="handleCancelImport"
-            />
-        </div>
-
-        <div class="border-t pt-3 space-y-2" data-testid="settings-checkpoint-retention">
-            <h4 class="text-xs font-medium">{{ t("settings.checkpointRetention") }}</h4>
-            <p class="text-xs text-muted-foreground">{{ t("settings.checkpointRetentionDesc") }}</p>
-
-            <p
-                v-if="retentionLoading"
-                data-testid="settings-checkpoint-loading"
-                class="text-xs text-muted-foreground"
-            >
-                {{ t("common.loading") }}
-            </p>
-            <div
-                v-else-if="retentionError"
-                data-testid="settings-checkpoint-error"
-                class="space-y-1"
-            >
-                <p class="text-xs text-destructive" role="alert">{{ retentionError }}</p>
+        <template v-else-if="permissionsChecked">
+            <div class="space-y-2">
                 <button
-                    type="button"
-                    data-testid="settings-checkpoint-retry"
-                    class="px-2 py-1 rounded text-xs border bg-background hover:bg-muted transition-colors"
-                    @click="loadRetention"
+                    class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
+                    :disabled="exporting"
+                    @click="exportSettings"
                 >
-                    {{ t("common.retry") }}
+                    {{ t("settings.exportSettings") }}
+                </button>
+                <button
+                    class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
+                    :disabled="exporting"
+                    @click="exportChats"
+                >
+                    {{ t("settings.exportChats") }}
                 </button>
             </div>
-            <p
-                v-else-if="!workspaceId"
-                data-testid="settings-checkpoint-no-workspace"
-                class="text-xs text-muted-foreground"
-            >
-                {{ t("settings.checkpointNoWorkspace") }}
-            </p>
-            <template v-else-if="retention">
-                <dl
-                    data-testid="settings-checkpoint-constants"
-                    class="grid grid-cols-2 gap-2 text-xs"
-                >
-                    <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
-                        <dt class="text-muted-foreground">{{ t("settings.checkpointMaxRuns") }}</dt>
-                        <dd data-testid="settings-checkpoint-max-runs" class="font-medium">
-                            {{ retention.maxRuns }}
-                        </dd>
-                    </div>
-                    <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
-                        <dt class="text-muted-foreground">{{ t("settings.checkpointTtlDays") }}</dt>
-                        <dd data-testid="settings-checkpoint-ttl-days" class="font-medium">
-                            {{ retention.ttlDays }}
-                        </dd>
-                    </div>
-                    <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
-                        <dt class="text-muted-foreground">
-                            {{ t("settings.checkpointCurrentRuns") }}
-                        </dt>
-                        <dd data-testid="settings-checkpoint-current-runs" class="font-medium">
-                            {{ retention.currentRuns }}
-                        </dd>
-                    </div>
-                    <div class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1">
-                        <dt class="text-muted-foreground">
-                            {{ t("settings.checkpointCurrentRefs") }}
-                        </dt>
-                        <dd data-testid="settings-checkpoint-current-refs" class="font-medium">
-                            {{ retention.currentRefs }}
-                        </dd>
-                    </div>
-                </dl>
-            </template>
 
-            <div v-if="!cleanupConfirming">
+            <div class="border-t pt-3 space-y-2">
                 <button
-                    type="button"
-                    data-testid="settings-checkpoint-cleanup"
-                    class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors disabled:opacity-50"
-                    :disabled="!workspaceId || cleanupBusy"
-                    @click="cleanupConfirming = true"
+                    class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors"
+                    @click="($refs.fileInput as HTMLInputElement)?.click()"
                 >
-                    {{ t("settings.checkpointCleanup") }}
+                    {{ t("settings.import") }}
                 </button>
+                <input
+                    ref="fileInput"
+                    type="file"
+                    accept=".json"
+                    class="hidden"
+                    @change="handleFileSelected"
+                />
+
+                <ImportPreview
+                    v-if="showImportPreview"
+                    :file="importFile"
+                    @confirm="handleConfirmImport"
+                    @cancel="handleCancelImport"
+                />
             </div>
-            <div
-                v-else
-                data-testid="settings-checkpoint-cleanup-confirm-box"
-                class="space-y-2 rounded border border-amber-500/40 bg-amber-500/10 p-2"
-            >
-                <p class="text-xs">{{ t("settings.checkpointCleanupWarning") }}</p>
-                <div class="flex flex-wrap gap-2">
+
+            <div class="border-t pt-3 space-y-2" data-testid="settings-checkpoint-retention">
+                <h4 class="text-xs font-medium">{{ t("settings.checkpointRetention") }}</h4>
+                <p class="text-xs text-muted-foreground">
+                    {{ t("settings.checkpointRetentionDesc") }}
+                </p>
+
+                <p
+                    v-if="retentionLoading"
+                    data-testid="settings-checkpoint-loading"
+                    class="text-xs text-muted-foreground"
+                >
+                    {{ t("common.loading") }}
+                </p>
+                <div
+                    v-else-if="retentionError"
+                    data-testid="settings-checkpoint-error"
+                    class="space-y-1"
+                >
+                    <p class="text-xs text-destructive" role="alert">{{ retentionError }}</p>
                     <button
                         type="button"
-                        data-testid="settings-checkpoint-cleanup-cancel"
+                        data-testid="settings-checkpoint-retry"
                         class="px-2 py-1 rounded text-xs border bg-background hover:bg-muted transition-colors"
-                        :disabled="cleanupBusy"
-                        @click="cleanupConfirming = false"
+                        @click="loadRetention"
                     >
-                        {{ t("common.cancel") }}
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="settings-checkpoint-cleanup-confirm"
-                        class="px-2 py-1 rounded text-xs border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50"
-                        :disabled="cleanupBusy"
-                        @click="cleanupCheckpoints"
-                    >
-                        {{ t("settings.checkpointCleanupConfirm") }}
+                        {{ t("common.retry") }}
                     </button>
                 </div>
-            </div>
-            <p
-                v-if="cleanupResult"
-                data-testid="settings-checkpoint-cleanup-result"
-                class="text-xs text-muted-foreground"
-            >
-                {{ cleanupResult }}
-            </p>
-        </div>
+                <p
+                    v-else-if="!workspaceId"
+                    data-testid="settings-checkpoint-no-workspace"
+                    class="text-xs text-muted-foreground"
+                >
+                    {{ t("settings.checkpointNoWorkspace") }}
+                </p>
+                <template v-else-if="retention">
+                    <dl
+                        data-testid="settings-checkpoint-constants"
+                        class="grid grid-cols-2 gap-2 text-xs"
+                    >
+                        <div
+                            class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1"
+                        >
+                            <dt class="text-muted-foreground">
+                                {{ t("settings.checkpointMaxRuns") }}
+                            </dt>
+                            <dd data-testid="settings-checkpoint-max-runs" class="font-medium">
+                                {{ retention.maxRuns }}
+                            </dd>
+                        </div>
+                        <div
+                            class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1"
+                        >
+                            <dt class="text-muted-foreground">
+                                {{ t("settings.checkpointTtlDays") }}
+                            </dt>
+                            <dd data-testid="settings-checkpoint-ttl-days" class="font-medium">
+                                {{ retention.ttlDays }}
+                            </dd>
+                        </div>
+                        <div
+                            class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1"
+                        >
+                            <dt class="text-muted-foreground">
+                                {{ t("settings.checkpointCurrentRuns") }}
+                            </dt>
+                            <dd data-testid="settings-checkpoint-current-runs" class="font-medium">
+                                {{ retention.currentRuns }}
+                            </dd>
+                        </div>
+                        <div
+                            class="flex justify-between gap-2 rounded border bg-muted/20 px-2 py-1"
+                        >
+                            <dt class="text-muted-foreground">
+                                {{ t("settings.checkpointCurrentRefs") }}
+                            </dt>
+                            <dd data-testid="settings-checkpoint-current-refs" class="font-medium">
+                                {{ retention.currentRefs }}
+                            </dd>
+                        </div>
+                    </dl>
+                </template>
 
-        <p v-if="result" class="text-xs text-muted-foreground">{{ result }}</p>
+                <div v-if="!cleanupConfirming">
+                    <button
+                        type="button"
+                        data-testid="settings-checkpoint-cleanup"
+                        class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors disabled:opacity-50"
+                        :disabled="!workspaceId || cleanupBusy"
+                        @click="cleanupConfirming = true"
+                    >
+                        {{ t("settings.checkpointCleanup") }}
+                    </button>
+                </div>
+                <div
+                    v-else
+                    data-testid="settings-checkpoint-cleanup-confirm-box"
+                    class="space-y-2 rounded border border-amber-500/40 bg-amber-500/10 p-2"
+                >
+                    <p class="text-xs">{{ t("settings.checkpointCleanupWarning") }}</p>
+                    <div class="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            data-testid="settings-checkpoint-cleanup-cancel"
+                            class="px-2 py-1 rounded text-xs border bg-background hover:bg-muted transition-colors"
+                            :disabled="cleanupBusy"
+                            @click="cleanupConfirming = false"
+                        >
+                            {{ t("common.cancel") }}
+                        </button>
+                        <button
+                            type="button"
+                            data-testid="settings-checkpoint-cleanup-confirm"
+                            class="px-2 py-1 rounded text-xs border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50"
+                            :disabled="cleanupBusy"
+                            @click="cleanupCheckpoints"
+                        >
+                            {{ t("settings.checkpointCleanupConfirm") }}
+                        </button>
+                    </div>
+                </div>
+                <p
+                    v-if="cleanupResult"
+                    data-testid="settings-checkpoint-cleanup-result"
+                    class="text-xs text-muted-foreground"
+                >
+                    {{ cleanupResult }}
+                </p>
+            </div>
+
+            <p v-if="result" class="text-xs text-muted-foreground">{{ result }}</p>
+        </template>
     </div>
 </template>

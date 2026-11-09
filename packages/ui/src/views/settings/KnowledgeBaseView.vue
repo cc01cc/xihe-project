@@ -5,6 +5,8 @@ import { logger } from "../../lib/logger";
 import { apiDelete, apiGet, apiPost } from "../../composables/api";
 import { AlertCircle, LoaderCircle } from "@lucide/vue";
 
+import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
+
 const { t } = useI18n(),
     files = ref<File[]>([]),
     uploading = ref(false),
@@ -60,6 +62,9 @@ async function removeDoc(id: string) {
 
 <template>
     <div class="space-y-4">
+        <!-- PLAN-0752 T4.4：RAG 面在 CP 侧只有 isAuthenticated + 租户下传（RagProxyController:74,87,139,166），
+             没有 atom ⇒ 信息条，不是 403。 -->
+        <SettingsPermissionGate variant="no-atom" />
         <h3 data-testid="settings-knowledge-heading" class="font-medium">
             {{ t("settings.knowledgeBase") }}
         </h3>

@@ -7,9 +7,12 @@ import {
     DOMAIN_LABEL_KEY,
     domainsForLayer,
     instanceOpsGroups,
+    instanceResourceGroup,
     settingsDomainPath,
+    userResourceGroup,
     type SettingsNavItem,
 } from "../../lib/settingsIa";
+import SettingsResourceNav from "./SettingsResourceNav.vue";
 
 /**
  * PLAN-0752 T1.4：设置区左栏（**不**复用工作区 Sidebar）。
@@ -57,6 +60,13 @@ const userDomains = computed<SettingsNavItem[]>(() =>
 );
 
 /** 运维/安全两组按能力收敛：config-locks 与 roles 各自有前置条件（详见顶注）。 */
+/**
+ * PLAN-0752 T4.0：资源组。实例层 4 条全缺口（G1/G2/G3/G4）、用户层 1 条真（我的凭据）+ 2 条缺口，
+ * 按 D7 留位标缺口——具体呈现与点击行为在 SettingsResourceNav。
+ */
+const instanceResources = computed(() => instanceResourceGroup());
+const userResources = computed(() => userResourceGroup());
+
 const opsGroups = computed(() =>
     instanceOpsGroups()
         .map((group) => ({
@@ -114,6 +124,10 @@ function isOpsActive(path: string): boolean {
                     {{ t(item.labelKey) }}
                 </router-link>
             </div>
+            <SettingsResourceNav
+                :group-label-key="'settings.ia.groupInstanceResources'"
+                :items="instanceResources"
+            />
             <div v-for="group in opsGroups" :key="group.id" class="mt-3">
                 <p
                     data-testid="settings-nav-group-secondary"
@@ -169,6 +183,10 @@ function isOpsActive(path: string): boolean {
                     {{ t(item.labelKey) }}
                 </router-link>
             </div>
+            <SettingsResourceNav
+                :group-label-key="'settings.ia.groupMyResources'"
+                :items="userResources"
+            />
         </section>
     </nav>
 </template>
