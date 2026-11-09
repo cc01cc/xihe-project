@@ -119,7 +119,7 @@ class PluginUninstallRetentionTest extends AbstractIntegrationTest {
         drainOrphans();
         Fixture fixture = uninstalledPlugin();
         ageData(fixture.bindingId(), Instant.now().minus(8, ChronoUnit.DAYS));
-        Instant runStart = Instant.now();
+        int auditsBefore = countPurgeAudits();
 
         PluginDataRetentionService.PurgeReport report =
                 retention.purgeBefore(Instant.now().minus(7, ChronoUnit.DAYS));
@@ -131,7 +131,7 @@ class PluginUninstallRetentionTest extends AbstractIntegrationTest {
         assertEquals(1, count("plugin_index_declarations", fixture.bindingId()));
         assertEquals(List.of("plugin.install", "plugin.disable", "plugin.uninstall"),
                 lifecycleActions(fixture.pluginId()));
-        List<String> details = purgeDetailsSince(runStart);
+        List<String> details = purgeAuditsBetween(auditsBefore);
         assertEquals(1, details.size(), details.toString());
         assertTrue(details.get(0).contains("kv=1"), details.get(0));
         assertTrue(details.get(0).contains("records=1"), details.get(0));
@@ -201,10 +201,11 @@ class PluginUninstallRetentionTest extends AbstractIntegrationTest {
         assertEquals(1, second.recordsRows());
         assertFalse(second.capped(), "the short batch proves both tables drained");
 
-        Instant runStart = Instant.now();
+        int auditsBefore = countPurgeAudits();
         PluginDataRetentionService.PurgeReport third = retention.purgeBefore(Instant.now());
         assertEquals(0, third.totalRows());
-        assertEquals(0, purgeDetailsSince(runStart).size(), "a no-op run must not audit");
+        assertEquals(0, purgeAuditsBetween(auditsBefore).size(),
+                "a no-op run must not audit");
     }
 
     // ------------------------------------------------------------------ fixtures
@@ -315,9 +316,23 @@ class PluginUninstallRetentionTest extends AbstractIntegrationTest {
                 + " ORDER BY created_at, action", String.class, pluginId);
     }
 
-    private List<String> purgeDetailsSince(Instant since) {
-        return jdbc.queryForList("SELECT details FROM audit_logs WHERE action = 'plugin.purge'"
-                + " AND created_at >= ? ORDER BY created_at, id", String.class, timestamp(since));
+    private int countPurgeAudits() {
+        Integer rows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM audit_logs WHERE action = 'plugin.purge'",
+                Integer.class);
+        return rows == null ? 0 : rows;
+    }
+
+    /**
+     * PLAN-0739: returns the details of every purge audit written after the caller read
+     * {@code countPurgeAudits()}. Reads the full action window and slices in memory instead of
+     * comparing two clocks, so a no-op assertion cannot pick up an earlier run's audit.
+     */
+    private List<String> purgeAuditsBetween(int before) {
+        List<String> details = jdbc.queryForList(
+                "SELECT details FROM audit_logs WHERE action = 'plugin.purge'"
+                        + " ORDER BY created_at, id", String.class);
+        return details.size() > before ? details.subList(before, details.size()) : List.of();
     }
 
     private static OffsetDateTime timestamp(Instant instant) {

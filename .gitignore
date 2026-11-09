@@ -1,7 +1,7 @@
 # Rust
 **/target/
 # PLAN-0735: runtime artifact written by test:mock (JSON report snapshot).
-scripts/mock-last-report.json
+packages/ui/e2e/.mock-report.json
 # D32-26 T2: mvn -Dxihe.build.suffix=-b builds into 	arget-b/; keep every per-runner build dir ignored.
 **/target-*/
 **/Cargo.lock

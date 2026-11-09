@@ -14,9 +14,15 @@ const viewport = (() => {
 // BL-148: traces can capture APIRequestContext request bodies; turn them off
 // whenever real provider credentials are present in the test process.
 
+const REPORTERS =
+    process.env.XIHE_MOCK_REPORT === "1"
+        ? [["list"], ["json", { outputFile: ".mock-report.json" }]]
+        : undefined;
+
 export default defineConfig({
     testDir: "..",
     testMatch: ["e2e/mock/*.spec.ts", "e2e/real/*.spec.ts", "e2e/headed/*.spec.ts"],
+    ...(REPORTERS ? { reporter: REPORTERS } : {}),
     timeout: TEST_TIMEOUT_MS,
     retries: 1,
     use: {
