@@ -337,36 +337,42 @@ test.describe("Policy management (desktop)", () => {
     // legacy shell/nav components, so those files no longer exist at all. The four cases below
     // keep their original intent — where a user who asks for policy management ends up, and who may
     // see the admin-only layer — but assert the current behaviour instead of the removed editor.
-    test("the retired /settings/policy route lands on the config page and issues no policy reads", async ({
+    // PLAN-0752 M1 之后 /settings/policy 的落点从「整页配置」变成「实例层第一个域页」，
+    // 且普通账号在实例层域页看到的是 403 视图（入口分层，不是把用户踢回用户层）。
+    test("the retired /settings/policy route redirects to the default instance domain and issues no policy reads", async ({
         page,
     }) => {
         const state = installPolicyApi(page);
         await page.goto("/settings/policy");
 
-        await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+        await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
+        await expect(page.getByTestId("settings-forbidden")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        await expect(page.getByTestId("config-tab-user")).toBeVisible();
+        await expect(page.getByTestId("settings-domain-view")).toHaveCount(0);
         // Retirement, stated as behaviour: the old URL must not read or write any policy surface.
         expect(state.policyRequests).toEqual([]);
     });
 
-    test("a caller without the admin capability lands on the user-layer config page only", async ({
+    test("a caller without the admin capability gets the instance 403 view and no admin-only surfaces", async ({
         page,
     }) => {
         installPolicyApi(page);
         await page.goto("/settings/policy");
 
-        await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+        await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
+        await expect(page.getByTestId("settings-forbidden")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        // Capability gating still holds on the page the redirect lands on: instance-layer tab and
-        // the instance import/export block stay admin-only.
-        await expect(page.getByTestId("config-tab-user")).toBeVisible();
-        await expect(page.getByTestId("config-tab-instance")).toHaveCount(0);
-        await expect(page.getByTestId("config-import-export")).toHaveCount(0);
+        // 能力门仍然成立：侧栏只剩「用户配置」一段，实例层不出现，域面板一个都不渲染。
+        await expect(page.getByTestId("settings-nav-group-primary")).toHaveCount(1);
+        await expect(page.getByTestId("config-domain-llm-provider")).toHaveCount(0);
+        // 实例层的导出入口仍只给管理员：数据页对无能力者只给 403 卡片，不给「导出设置」。
+        await page.goto("/settings/data", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-atom-denied")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.locator('button:has-text("导出设置")')).toHaveCount(0);
     });
 
     test("an instance admin landing on the retired URL keeps the admin-only config surfaces", async ({
@@ -386,20 +392,42 @@ test.describe("Policy management (desktop)", () => {
         installPolicyApi(page);
         await page.goto("/settings/policy");
 
-        await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible();
-        await expect(page.getByTestId("config-tab-user")).toBeVisible();
-        // The instance layer is the default tab for admins, and its import/export block is the
-        // admin-gated affordance that replaced the retired locked-rule control.
-        await expect(page.getByTestId("config-import-export")).toBeVisible();
+        await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
+        // 管理员落在实例层默认域页（不是 403）：域页 + 侧栏两层都在。
+        await expect(page.getByTestId("settings-domain-view")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("settings-nav-group-primary")).toHaveCount(2);
+        // 「管理员才有的实例级导出入口」现在在数据页（T4.4 把配置导入导出并入数据面）。
+        await page.goto("/settings/data", { waitUntil: "load" });
+        await expect(page.locator('button:has-text("导出设置")')).toBeVisible();
     });
 
-    test("lists tool faces, highlights unclassified tools, and classifies as workspace owner", async ({
+    // PLAN-0752 T3.3：工具分类并入**实例层** approval-policy 域的「工具分类」页签，
+    // 而实例层域页要 cap:instance:admin（M1 入口分层）⇒ 夹具必须给实例管理员能力。
+    // 被验语义没变：分类请求仍是 scope=workspace（见下方 payload 断言）。
+    test("lists tool faces, highlights unclassified tools, and classifies workspace-scope tools", async ({
         page,
     }) => {
+        await page.addInitScript(() => {
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
+                }),
+            );
+        });
         const state = installPolicyApi(page);
         await page.goto("/settings/tool-faces");
 
+        // 旧书签仍可用：落在 approval-policy 域页并自动选中「工具分类」页签。
+        await expect(page).toHaveURL(/\/settings\/instance\/approval-policy\?tab=tool-faces$/);
+        await expect(page.getByTestId("settings-domain-tab-tool-faces")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
         await expect(page.getByTestId("settings-tool-faces-heading")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
@@ -490,21 +518,37 @@ test.describe("Policy management (mobile)", () => {
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Policy Session" }] });
     });
 
-    test("renders the retired policy URL as config and keeps the tool-face classifier on a small viewport", async ({
+    test("renders the retired policy URL as the default instance domain and keeps the tool-face classifier on a small viewport", async ({
         page,
     }) => {
+        // 工具分类页签在实例层（需 cap:instance:admin）——与桌面用例同一条夹具口径。
+        await page.addInitScript(() => {
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
+                }),
+            );
+        });
         installPolicyApi(page);
         await page.goto("/settings/policy");
 
-        // Same retirement as the desktop cases, at 390 px: the old URL resolves to config.
-        await expect(page).toHaveURL(/\/settings\/config$/);
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+        // Same retirement as the desktop cases, at 390 px: the old URL resolves to the default
+        // instance domain page (admins see the domain view, not the 403 view).
+        await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
+        await expect(page.getByTestId("settings-domain-view")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
 
         // `/settings/tool-faces` is the policy surface that survived the retirement; the
         // unclassified-tool affordance must stay reachable and readable on a small viewport.
         await page.goto("/settings/tool-faces");
+        await expect(page.getByTestId("settings-domain-tab-tool-faces")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
         await expect(page.getByTestId("settings-tool-faces-heading")).toBeVisible();
         await expect(
             page.getByTestId(`settings-tool-face-unclassified-${UNCLASSIFIED_TOOL}`),
