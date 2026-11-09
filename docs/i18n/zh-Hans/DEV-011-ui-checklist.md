@@ -108,6 +108,9 @@ status: active
 - [ ] `zh-CN` 和 `en-US` 两个 locale 均有对应 key
 - [ ] 链接文字不出现原始 key（如 `login.login`）
 - [ ] 表单验证错误信息有对应翻译
+- [ ] 中英两侧键集合差集 = 0（2026-11-10 实测：`packages/ui/src/i18n/index.ts` zh 2307 / en 2307）
+- [ ] 同一键在两侧的 `{placeholder}` 集合一致（漂移会让运行时渲染出 undefined）
+- **已知陷阱（2026-11-10 实测）**：同名族前缀写错只有运行时才暴露 —— `ApprovalModal.vue` 的「另一窗口已处理」第二条提示曾写作 `chat.approvalResolvedElsewhereDraftKept`，而键实际在 `workspace.*`，用户看到的是**裸 key**（已修 `efa527a0`）。扫描口径：键差集 + 占位漂移 + 源码 `t("…")` 静态引用三查，脚本在 `one/.tmp/xh/task-95/i18n-scan.mjs`（按卡放临时目录，可复跑）。
 
 ## 9. E2E 截图基准
 
