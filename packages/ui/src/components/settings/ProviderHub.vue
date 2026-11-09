@@ -758,12 +758,11 @@ async function load() {
         providers.value = catalog.providers ?? [];
         await configStore.loadProviderConnections();
         // T3.2: profile / modelParams live on the current layer's llm-provider domain.
-        // Non-fatal: a config-backend hiccup must not block connection/model loading.
-        try {
-            await configStore.loadLayerDomains(currentLayer.value, props.workspaceId);
-        } catch (cause) {
-            logger.warn("Layer config load failed", cause);
-        }
+        // task-121: 这里**不再**在 mount 时调 `loadLayerDomains`。取数由**页面**负责
+        // （`SettingsDomainView` / `ConfigSettings` / `WorkspaceSettingsView` 各自 onMounted 调一次），
+        // 子组件 mount 回写全局 `layerLoading` 是「面板挂载 → 页面 pending 门闩卸载面板 → 重挂 → 再取数」
+        // 自持循环的闭环节点（dev-3 实测 63 轮/秒、672 次 `/provider-catalog`）。
+        // 显示侧本来就只读 store：`layerLlmEntries` = computed(() => configStore.layerConfig[…]…)（:90-92）。
         try {
             const typeList = await request<{
                 types: import("../../types/providerConnection").ApiInputType[];

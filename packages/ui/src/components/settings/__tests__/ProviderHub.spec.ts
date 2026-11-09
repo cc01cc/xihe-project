@@ -21,6 +21,7 @@ import {
 import { ApiError, request } from "../../../composables/api";
 import { toast } from "vue-sonner";
 import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
+import { useConfigStore } from "../../../stores/config";
 import { i18n } from "../../../i18n";
 
 // PLAN-0523 T3.4: install the real i18n plugin so template strings resolve.
@@ -109,6 +110,14 @@ const workspace: ProviderConnection = {
 
 async function mountHub(readonly = false) {
     const wrapper = mount(ProviderHub, { props: { scope: "USER", readonly } });
+    await flushPromises();
+    // task-121：`ProviderHub` 不再在 mount 时自己取层配置（子组件不回写全局 loading 状态）。
+    // 取数由**页面**负责 —— 测试里显式扮演这个角色，否则 `layerConfig` 恒空、profile 派生不出来。
+    try {
+        await useConfigStore().loadLayerDomains("user");
+    } catch {
+        // 少数用例不给 /config/* 的 mock 响应；取数失败不影响它们要断言的行为。
+    }
     await flushPromises();
     return wrapper;
 }
