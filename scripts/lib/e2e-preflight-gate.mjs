@@ -110,6 +110,32 @@ export function artifactGatePolicy({ jarMode = 'auto', externalServer = false, c
 }
 
 /**
+ * 宿主喂给 `artifactGatePolicy()` 的**入参组合**，收成一个可单测的纯函数（D-763②）。
+ *
+ * `cpBootMode` 的口径是 `resolveCpBootPlan()` 实际给出的入口（`jar|run|native`）；reuse 跑
+ * 根本没有 boot plan（`main()` 在 `externalServer` 下不进入 `CP_BOOT_PLAN` 相位）。`reuse` 是
+ * 判据自己按 `externalServer` **派生出来的输出语义**，不是输入。
+ *
+ * `ed1f3dab` 把输出值回灌进了输入位：`cpBootPlan?.mode ?? (externalServer ? 'reuse' : 'jar')`。
+ * reuse 跑下 `cpBootPlan` 恒为 `null` ⇒ 每次都同步抛 `unknown cpBootMode "reuse"`，测量窗
+ * Route A 在开窗第一步恒死；boot（`--persistent`）因 `cpBootPlan` 非空而幸免。
+ * 把组合搬到库里（同 `e2e-host-boot-phases.mjs` 的教训），漂移才会红在单测而不是红在窗口。
+ *
+ * @param {object} input
+ * @param {string} [input.jarMode]
+ * @param {boolean} [input.externalServer]
+ * @param {{mode: 'jar'|'run'|'native'}|null} [input.cpBootPlan] `resolveCpBootPlan()` 的结果（reuse 跑为 null）
+ * @returns {ReturnType<typeof artifactGatePolicy>}
+ */
+export function preflightGatePolicy({ jarMode = 'auto', externalServer = false, cpBootPlan = null } = {}) {
+  return artifactGatePolicy({
+    jarMode,
+    externalServer,
+    cpBootMode: cpBootPlan?.mode ?? 'jar',
+  });
+}
+
+/**
  * preflight 跑完之后：拿真实阻塞 scope 判拒绝。**只有**可延期/不适用产物类的条件被放行。
  *
  * @param {object} input

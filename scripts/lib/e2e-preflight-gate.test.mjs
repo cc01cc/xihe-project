@@ -25,6 +25,7 @@ import {
   evaluateGateFindings,
   parseBlockingScopes,
   parseDiskLine,
+  preflightGatePolicy,
 } from './e2e-preflight-gate.mjs';
 
 /**
@@ -331,4 +332,32 @@ test('T15 artifact-truth 是"核不了"而不是"可自愈"：任何 jar 模式/
   const mixed = decidePreflightGate({ jarMode: 'auto', cpBootMode: 'jar', blockingScopes: ['build', 'artifact-truth'] });
   assert.equal(mixed.verdict, 'refuse');
   assert.deepEqual(mixed.refusals, ['artifact-truth']);
+});
+
+// D-763② / PLAN-0682 M2 回归：ed1f3dab 让 e2e-host 把门的**输出**值 `reuse` 回灌成了**输入**。
+// external-server 模式下 `cpBootPlan` 恒为 null ⇒ 每个 reuse 跑都同步抛 TypeError，测量窗
+// Route A 开窗第一步就死（`--persistent` boot 因 `cpBootPlan` 非空而幸免）。修复前本用例必死
+// （组合函数不存在/组合里带 'reuse'），修复后必须全绿。
+test('T16 回归：reuse run 无 boot plan 时不得把输出值 reuse 回灌成 cpBootMode 输入', () => {
+  // 修复前：`cpBootPlan?.mode ?? (externalServer ? 'reuse' : 'jar')` —— reuse 跑恒抛。
+  assert.throws(
+    () => artifactGatePolicy({ externalServer: true, cpBootMode: 'reuse' }),
+    /unknown cpBootMode/,
+    '输入口径仍是 jar|run|native：修的是调用方，不是放宽白名单',
+  );
+  // 修复后：reuse 是 externalServer 派生的**输出**，入参回落到中性 'jar'。
+  for (const jarMode of ['auto', 'use', 'rebuild', 'run', 'native']) {
+    const policy = preflightGatePolicy({ jarMode, externalServer: true, cpBootPlan: null });
+    assert.equal(policy.cpBootMode, 'reuse', `${jarMode}: reuse 是派生输出`);
+    assert.equal(policy.ignoreBuild, true);
+    assert.match(policy.reason, /reuse run/);
+  }
+  // 自有跑仍用 resolveCpBootPlan() 给出的入口（三种都在输入口径内）。
+  for (const mode of ['jar', 'run', 'native']) {
+    const policy = preflightGatePolicy({ jarMode: 'auto', externalServer: false, cpBootPlan: { mode } });
+    assert.equal(policy.cpBootMode, mode);
+  }
+  // 合法的 owned 组合不许被顺手改坏：fresh jar + auto 仍然核产物段。
+  const fresh = preflightGatePolicy({ jarMode: 'auto', externalServer: false, cpBootPlan: { mode: 'jar' } });
+  assert.equal(fresh.buildSection, 'checked');
 });
