@@ -384,10 +384,12 @@ test.describe("Config Settings (three layers)", () => {
     });
 
     // 旧：死页 ConfigSettings 的整页 `showInitialLoading` →「加载中…」。
-    // 新（task-112）：域页消费 `configStore.layerLoading`（单一状态源，无本地 flag/定时器），
-    // pending 期间**不渲染**「本域 N 项配置」、**不挂载**面板，改渲染 `common.loading`
-    // （`data-testid="settings-domain-loading"`）。断言四件事：①pending 面出现
-    // ②「0 项配置」不出现（不能把「还没回来」画成「没有配置」）③面板未挂载
+    // 新（task-112 + task-121）：域页在数据回来前渲染 `common.loading`
+    // （`data-testid="settings-domain-loading"`），且**不渲染**「本域 N 项配置」；
+    // 面板树用 `v-show` **常挂但不可见**（task-121：`v-if` 卸载窗口会和任何回写
+    // `layerLoading` 的子组件组成「挂载→取数→卸载→重挂」自持循环，实测 63 轮/秒）。
+    // 断言四件事：①pending 面出现 ②「0 项配置」不出现（不能把「还没回来」画成「没有配置」）
+    // ③面板**不可见**（判据是「没假装已加载」，不是「DOM 里没有」—— 常挂是 task-121 的设计）
     // ④取数落定后三者反转（证明上面是**状态**，不是永远不渲染）。
     test("shows a pending state instead of an empty domain while layer config loads", async ({
         page,
@@ -399,8 +401,8 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("settings-domain-loading")).toBeVisible();
         // ② 不得把 unknown 折成结论：此时不能出现「本域 N 项配置」
         await expect(page.getByTestId("settings-domain-summary")).toHaveCount(0);
-        // ③ 面板不挂载 —— 断言的是「没假装已加载」，不是「页面能打开」
-        await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
+        // ③ 面板不可见（task-121：v-show 常挂，所以判据从「DOM 里没有」改为「不可见」）
+        await expect(page.getByTestId("config-domain-logging")).toBeHidden();
 
         // ④ 取数落定后三者反转
         await expect(page.getByTestId("settings-domain-loading")).toHaveCount(0, {
