@@ -6,7 +6,7 @@ lang: en
 sidebar_group: "Developer Guide"
 status: active
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-10
 ---
 
 # DEV-033: First Run (Gold Path)
@@ -23,12 +23,14 @@ updated: 2026-11-01
 | Docker | **PostgreSQL only**. Service containerisation and the `xihe/workspace` image build are frozen — do not `docker compose up` the whole stack | `mise.toml:1-16` (freeze note) |
 | Directory | **Any directory** works (single clone); no longer "must live inside the `one/` workspace" | `mise run check:standalone` (`mise.toml:395`) verifies "no dependency on the one root" |
 | Ports | stack-1: UI 12630 / CP 12631 / Agent 12632 / Runtime 12633 / PG 12634 | `scripts/lib/stack-ports.mjs:20` (port source of truth) |
-| Workspace | **A fresh instance has no workspace at all**: neither register nor login creates one; the first step is the user creating one (§3 step 4 / §4 step 1) | `AuthController.withFirstWorkspace` (`AuthController.java:137,165,196-201`) |
+| Workspace | **A fresh instance has no workspace at all**: neither register nor login creates one; the first step is the user creating one (§3 step 2 / §4 step 1) | `AuthController.withFirstWorkspace` (`AuthController.java:137,165,196-201`) |
 
 Two operating modes, pick by purpose:
 
-1. **Local mode (newcomer default)**: one `dev:host` stack with `XIHE_LOCAL_MODE=true`, empty database, drive §3/§4 in the browser.
+1. **Single dev stack + the seeded admin login (newcomer default)**: one `dev:host` (or `dev:stack`) stack; the first-run account is created by CP `DataSeeder` (`admin@xihe.local`) and you drive §3/§4 from its login. Password sources: see §3.
 2. **Isolated E2E stack (replaying the §5 matrix)**: `scripts/e2e-host.mjs` creates its own PG container and random ports (27xxx block) per round — see §5.4.
+
+> **Local mode (`XIHE_LOCAL_MODE`) is abandoned (option A, 2026-11-10)**: not a first-run path, and no enabling support is offered. It still appears in §3/§5 only because the §5 matrix runs `goldpath-first-run.spec.ts` on the `--first-run=local` lane — what is kept there is **regression evidence**. Historical design and residual risks live in the internal archive `internal/A03-xihe/docs/localmode-enablement.md` (`status: deprecated`).
 
 ## 2. Start
 
@@ -43,25 +45,30 @@ mise run dev:host:check   # mise.toml:307 (optional read-only preflight: tools, 
 - Stop: `mise run dev:host:stop` (`mise.toml:317`).
 - Another port block (parallel stacks): `mise run dev:stack -- --stack 2` (`mise.toml:285`); slot table in DEV-002 "Mode D".
 
-## 3. First run (local-mode onboarding → blank start)
+## 3. First run (sign in as the seeded dev admin → blank start)
 
-**All three conditions are required**; otherwise CP refuses to start (`LocalModeService.java:49-64`):
+**"Blank instance" means no workspace, not no account**: at startup, in **non**-local mode, `DataSeeder` creates `admin@xihe.local` and — in the same transaction — binds it as instance owner + `SUPER_ADMIN` (`DataSeeder.java:65-89`). So a first run needs neither registration nor the (abandoned) local mode.
 
-1. `XIHE_LOCAL_MODE=true`
-2. CP bound to loopback: `SERVER_ADDRESS=127.0.0.1`
-3. `XIHE_ENV` is not `prod`
+Where the password comes from depends on how you started the stack:
+
+| Start path | Password source |
+|---|---|
+| `mise run dev:stack` (mode A2, `scripts/dev-stack.mjs start`) | injected by D-766: (1) `XIHE_DEV_ADMIN_PASSWORD`, (2) a value already in the `.env` chain, (3) a persisted `.local/dev/admin-password`, (4) first run generates 24 bytes base64url and persists it to that path; logs print only `source`/`length`/`file`, **never the value** (`scripts/lib/dev-admin-password.mjs`; details in [DEV-002](DEV-002-developer-guide.md) §4 "dev admin password auto-injection") |
+| `mise run dev:host` (mode A) | **not** covered by D-766: `DataSeeder` uses a random password it never prints ⇒ after the stack is up, run `mise run reset-admin` once (BL-523: password via stdin or `XIHE_RESET_ADMIN_PASSWORD`; it exits 3 when the account row is missing, pointing at `mise run dev:reset` or a restart so `DataSeeder` creates it) |
 
 Steps:
 
-1. Open `http://localhost:12630/workspace` → a blank instance redirects to `/onboarding?redirect=…`.
-2. The form has only **email** and **name** — **no password field** (local mode is passwordless); the submit button stays disabled while empty.
-3. Submit → `POST /api/v1/auth/register` returns **201**; `GET /api/v1/bootstrap-status` flips `initialized` from `false` to `true`.
-4. **Registration no longer creates any workspace** (the semantic change since PLAN-0614): you land on `/workspace` in its **empty state** — a "create your first workspace" button, zero workspace entries, `GET /api/v1/workspaces` returns an **empty array**, and `AuthResponse.workspaceId` is **`null`**.
-5. In local mode that account holds instance-level `SUPER_ADMIN` (the 0610 access-role model), so **no self-grant step** is needed to manage Agents or settings.
+1. Open `http://localhost:12630/login` and sign in as `admin@xihe.local` with the password from above (`POST /api/v1/auth/login` 200).
+2. You land on `/workspace` in its **empty state**: a "create your first workspace" button, zero workspace entries, `GET /api/v1/workspaces` returns an **empty array**, `AuthResponse.workspaceId` is **`null`** (`AuthController.withFirstWorkspace`, the same path register and login use).
+3. That account is instance owner + `SUPER_ADMIN` (`InstanceOwnershipService.ensureAssigned` / `GrantDefaultService.ensureInstanceSuperAdmin`, seeded at `DataSeeder.java:86-89`), so **no self-grant step** is needed to manage Agents or settings.
+
+> **Registration is no longer the first-run path**: `/onboarding` still works outside local mode (the form carries a **password**; omitting it returns **400 `INVALID_REQUEST`**, `AuthController.java:113-119`), but **registration grants neither instance owner nor `SUPER_ADMIN`** — both seeds run only on the local-mode branch (`AuthController.java:126-136`, gated on `XIHE_LOCAL_MODE=true`, and local mode is abandoned). To make a registered account an instance admin, use the grant surface instead of turning local mode back on.
+
+> **Local mode (`XIHE_LOCAL_MODE`) is abandoned (option A, 2026-11-10)**: it is no longer a recommended first-run path and no enabling support is offered. The original four-condition gate, single-user count, prod fail-fast and residual risks are all preserved in the internal archive `internal/A03-xihe/docs/localmode-enablement.md` (`status: deprecated`).
 
 > **There is no "system-created workspace" any more**: register / login / `local-login` / `refresh` only *read* the account's first active workspace; they never create one (`AuthController.withFirstWorkspace`). Existing accounts are unaffected (their first workspace is still returned). This also removes the old **BL-171** defect (first run landing in a "chat always fails" default workspace) — the first step is now the user choosing a directory.
 
-> **Local mode exempts the registration policy**: `AuthController.register` only calls `registrationPolicy.requireOpen()` when local mode is **off**. So "the first account can still register while `closed`" is by design, not a defect; the same exemption also lets a second account register on that instance (criterion and boundaries in §5.3).
+> **Local mode exempts the registration policy (historical)**: `AuthController.register` only calls `registrationPolicy.requireOpen()` when local mode is **off** (`AuthController.java:108-110`). So "the first account can still register while `closed`" is by design, not a defect; the same exemption also lets a second account register on that instance. **That exemption goes away with local mode** — it is only observable on the §5 E2E lane now (criterion and boundaries in §5.3 item 2).
 
 ## 4. From the empty state to the first reply
 
@@ -83,6 +90,8 @@ Models and connections:
 ## 5. What success looks like
 
 ### 5.1 Eight visible criteria
+
+> **How to read this (since 2026-11-10)**: C1 / C4 / C5 are the criteria of the **E2E local-mode lane** (`--first-run=local`); they exist to keep the §5.2 spec assertions honest — local mode is **abandoned** and is no longer the first-run path (first run: §3). C2 / C3 / C6 / C7 / C8 are lane-independent: empty state, `direct_attach` workspace, instance-owner privileges, session, first reply.
 
 | # | What you should see | How to confirm |
 |---|---|---|
@@ -116,8 +125,8 @@ Also covered, outside C1–C8: C9 a connection verifies `READY` and the fake mod
 ### 5.3 Known boundaries (read this before calling anything a regression)
 
 1. **The two G4 cases are `test.fixme`, and the host lane does not even collect them**: `G4-a` (:1069-1082, BL-152 readable failure copy) and `G4-b` (:1085-1092, F-09 connection → Agent ready) live in the `@gap` describe (:1068), while the host Playwright config is `grep: /@host/` (`packages/ui/e2e/playwright.config.ts:42`) ⇒ they are **neither passing nor skipped — they never enter the run list**; `--grep "@gap"` is overridden by the config grep. Running them needs a config change or a separate lane (not in this batch).
-2. **Local mode exempts the registration policy (the G1-e reading)**: `G1-e` (:724) asserts `bootstrap-status` 200 (:741) + `localMode=true` (:742) + a **second registration returning 201** (:754) — **not** "second registration 403". Rationale in §3; proving the strict 403 needs a **non-local-mode** stack (not done in this batch).
-3. **BL-169 (ruled: the local-mode passwordless context write is intentional)**: on passwordless auto-login the guard writes the tab workspace context (`router/index.ts` → `resolveLocalModeLanding`), so C5 may land on a **workspace view** instead of the picker; the case therefore accepts any of the three states. The exception is documented in `packages/ui/AGENTS.md` (I6 exception, `ef73ae12`).
+2. **Local mode exempts the registration policy (the G1-e reading)**: `G1-e` (:724) asserts `bootstrap-status` 200 (:741) + `localMode=true` (:742) + a **second registration returning 201** (:754) — **not** "second registration 403". Rationale in §3; proving the strict 403 needs a **non-local-mode** stack (not done in this batch). (Added 2026-11-10: that exemption goes away with local mode and is only observable on the E2E lane.)
+3. **BL-169 (ruled: the local-mode passwordless context write is intentional)**: on passwordless auto-login the guard writes the tab workspace context (`router/index.ts` → `resolveLocalModeLanding`), so C5 may land on a **workspace view** instead of the picker; the case therefore accepts any of the three states. The exception is documented in `packages/ui/AGENTS.md` (I6 exception, `ef73ae12`). (Added 2026-11-10: with local mode abandoned the exception loses its justification; it is recorded as a residual risk in `localmode-enablement.md` §3.6.)
 4. **BL-170 (fixed, shipped with 0614 M2)**: the guard-written session used to skip Pinia ⇒ right after passwordless entry the first paint lacked the admin entry and config/session preload was skipped. Fixed by `stores/auth.ts#adoptGuardSession` (`:146`), the guard adopting that session, and `App.vue` awaiting `router.isReady()` (`39e6f093`). C6 depends on this fix.
 5. **BL-171 (closed by PLAN-0614)**: the old behaviour created a `managed_import` + docker default workspace on registration; once the docker backend became frozen/unavailable, the first chat failed structurally. PLAN-0614's blank start **removes that path** (no auto-created workspace); the user's first step is choosing a `direct_attach` directory. This document no longer describes a "default workspace".
 6. **BL-172 (fixed, with a regression guard)**: the workspace picker could hang on "loading" after a bounce (early return never reset loading + the bounce did not clear the context ⇒ bounce loop). Fixed in `WorkspacePicker.vue` (`clearTabWorkspace()` / loading reset) and `WorkspaceView.vue`, guarded by 2 unit tests.
@@ -137,7 +146,7 @@ The runner's three gold-path flags (`scripts/e2e-host.mjs:438-440`; all **off** 
 
 | Flag | Semantics | Default |
 |---|---|---|
-| `--first-run=local` | empty DB + `XIHE_LOCAL_MODE=true` + `SERVER_ADDRESS=127.0.0.1`, **no seeded admin** | off |
+| `--first-run=local` | empty DB + `XIHE_LOCAL_MODE=true` + `SERVER_ADDRESS=127.0.0.1`, **no seeded admin**. **Local mode is deprecated**: the flag survives only for e2e compatibility, and `local` is still the only value the runner accepts | off |
 | `--bootstrap-user=register\|none` | `register` = the runner registers the first account and imports the fake LLM profile with it; `none` = let the spec register | `none` |
 | `--registration-policy=open\|closed` | injects `XIHE_AUTH_REGISTRATION_POLICY` (local mode still exempts the first account) | `open` |
 
@@ -153,6 +162,8 @@ The four batches (`scripts/e2e-batches.jsonc:144-175`):
 **Measured (raw output in `m3-goldpath.md` §3)**: `goldpath` ×3 = 9 passed / 4 skipped (22.9s / 22.9s / 24.9s), `goldpath-closed` ×3 = 5 passed / 8 skipped (9.2s / 8.8s / 11.2s); all exit 0, 0 failed / 0 flaky / 0 did-not-run, teardown left no residue; plus one independent Lead rerun of `goldpath` = 9 passed / 4 skipped. Nothing beyond that is claimed.
 
 ### 5.5 Screenshot references (7 shots, produced by the same assertions)
+
+> The shots were taken on the **local-mode lane** (`--first-run=local`) in 2026-11: the email+name-only, password-less form in `01-onboarding.png` is that lane's shape. Local mode is abandoned; see the §5.1 note for how to read the criteria.
 
 Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](../../../../plans/archive/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots/)
 
@@ -171,13 +182,13 @@ Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](
 | Symptom | Cause | Fix |
 |---|---|---|
 | `dev:host` fails to come up, ports busy | 12630-12634 occupied by another stack/process | `mise run dev:host:check` (`mise.toml:307`); or use another slot via `--stack 2` |
-| CP exits at startup complaining local mode needs loopback | `XIHE_LOCAL_MODE=true` without `SERVER_ADDRESS=127.0.0.1` (or `XIHE_ENV=prod`) | satisfy all three conditions (§3) |
+| CP exits at startup complaining local mode needs loopback | `XIHE_LOCAL_MODE=true` without `SERVER_ADDRESS=127.0.0.1` (or `XIHE_ENV=prod`) | satisfy all three conditions (archive `localmode-enablement.md` §1). **Local mode is deprecated**: you only meet this on the §5 E2E lane or in the historical archive |
 | After login you get a blank screen with no workspace | **Expected** (since 0614 no workspace is auto-created) | click "create your first workspace" (§4 step 1) |
 | The creation dialog cannot read the directory | the path is not a Runtime-visible host directory, or the backend is unavailable | use a real host directory; call `POST /api/v1/workspaces/capabilities/preflight` first and read `reason` when `available=false` |
 | Creating a workspace returns `409 BACKEND_DISABLED` | `managed_import` selected (docker backend frozen) | switch to `direct_attach` |
 | Sending a message returns `503 LLM_NOT_CONFIGURED` | no usable model/connection (`missing_credentials`) | create a connection and verify to `READY`; this is exactly the G4-a status quo (BL-152), not a failure of this path |
 | Sending returns `409 API_TYPE_REBIND_REQUIRED` | the session did not pin "connection + template triple" | create the session through the UI, or send the triple explicitly via API |
-| `POST /local-login` returns 404 | non-loopback origin, or not a single-user instance (the gate fails closed with 404) | open via `127.0.0.1`/`localhost`; confirm the instance has exactly one login-capable account |
+| `POST /local-login` returns 404 | non-loopback origin, or not a single-user instance (the gate fails closed with 404) | open via `127.0.0.1`/`localhost`; confirm the instance has exactly one login-capable account. **`/local-login` is deprecated with local mode** (kept in code for the E2E lane only); use `/login` for a first run |
 | The workspace picker sits on "loading" forever | old BL-172 symptom (fixed) | upgrade to a build containing `39e6f093`; if it still reproduces, capture evidence per §5.3 item 6 |
 
 ## 7. How this relates to USER-001 / DEV-002
@@ -188,4 +199,4 @@ Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](
 | [USER-001](USER-001-user-guide.md) | day-to-day usage once you have an account (chat, multimodal, MCP tools, members, settings) | §1.4 keeps registration/login and points at this document's "blank-instance first run" |
 | [DEV-002](DEV-002-developer-guide.md) | the full environment setup, run modes A/B/C/D, full-stack debugging, test entry points | no duplicated first-run criteria; "Mode A" links here |
 
-Terminology follows [DEV-032](DEV-032-terminology.md); this document introduces no new terms. "Local mode" is the code/env literal `localMode` (`XIHE_LOCAL_MODE`); "first run / gold path" names the blank-instance → first-reply path taken from the PLAN-0611 title, defined once here and not spread as a second name. Everything else (`bootstrap-status`, `SUPER_ADMIN`, `direct_attach`, `managed_import`; `workspace-picker-*` are test-id literals) already exists in the repository vocabulary.
+Terminology follows [DEV-032](DEV-032-terminology.md); this document introduces no new terms. "Local mode" is the code/env literal `localMode` (`XIHE_LOCAL_MODE`, **abandoned** as of 2026-11-10; this document only uses the term in the §5 E2E-lane context); "first run / gold path" names the blank-instance → first-reply path taken from the PLAN-0611 title, defined once here and not spread as a second name. Everything else (`bootstrap-status`, `SUPER_ADMIN`, `direct_attach`, `managed_import`; `workspace-picker-*` are test-id literals) already exists in the repository vocabulary.
