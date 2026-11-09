@@ -48,6 +48,13 @@ export interface MockAuthOptions {
      * "投影不可用"降级路径的用例；传对象可覆盖参与者花名册 / capabilities。
      */
     projections?: SessionProjectionOptions | false;
+    /**
+     * PLAN-0752 M4：`/settings/data`、凭据面板这类**有 atom** 的页现在按能力投影决定是否挂载主体
+     * （`SettingsPermissionGate` 的 `atom-denied` 只留 403 卡片，不渲染控件）。夹具用户默认**零能力**，
+     * 所以「导出/导入按钮在」「保留期清理控件在」这类用例必须显式授予能力，否则看到的是 403 视图
+     * ——那是另一条用例（权限门）该断言的东西，不该让功能用例替它红。
+     */
+    capabilities?: Record<string, boolean>;
 }
 
 export interface MockSessionRecord {
@@ -94,35 +101,43 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             response: { branchId: string; parentBranchId: string; forkPointMessageId: string };
         }
     >();
-    await page.addInitScript((workspaceOverrides) => {
-        localStorage.setItem("xihe-token", "mock-token");
-        localStorage.setItem(
-            "xihe-user",
-            JSON.stringify({ id: "user-1", email: "test@xihe.local", name: "Test User" }),
-        );
-        localStorage.setItem(
-            "xihe-workspace",
-            JSON.stringify({
-                id: "workspace-1",
-                name: "Mock Workspace",
-                ownerId: "user-1",
-                ...workspaceOverrides,
-            }),
-        );
-        // PLAN-0559 per-tab context is authoritative; migrateLegacyWorkspace drops
-        // role fields, so seed sessionStorage directly with the post-login shape
-        // (PLAN-0560 workspace settings rely on workspaceRole).
-        sessionStorage.setItem(
-            "xihe-workspace",
-            JSON.stringify({
-                id: "workspace-1",
-                name: "Mock Workspace",
-                workspaceRole: "OWNER",
-                ownerId: "user-1",
-                ...workspaceOverrides,
-            }),
-        );
-    }, options.workspace ?? {});
+    await page.addInitScript(
+        ({ workspaceOverrides, capabilities }) => {
+            localStorage.setItem("xihe-token", "mock-token");
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    name: "Test User",
+                    ...(capabilities ? { capabilities } : {}),
+                }),
+            );
+            localStorage.setItem(
+                "xihe-workspace",
+                JSON.stringify({
+                    id: "workspace-1",
+                    name: "Mock Workspace",
+                    ownerId: "user-1",
+                    ...workspaceOverrides,
+                }),
+            );
+            // PLAN-0559 per-tab context is authoritative; migrateLegacyWorkspace drops
+            // role fields, so seed sessionStorage directly with the post-login shape
+            // (PLAN-0560 workspace settings rely on workspaceRole).
+            sessionStorage.setItem(
+                "xihe-workspace",
+                JSON.stringify({
+                    id: "workspace-1",
+                    name: "Mock Workspace",
+                    workspaceRole: "OWNER",
+                    ownerId: "user-1",
+                    ...workspaceOverrides,
+                }),
+            );
+        },
+        { workspaceOverrides: options.workspace ?? {}, capabilities: options.capabilities },
+    );
 
     if (options.sse) {
         await page.addInitScript(

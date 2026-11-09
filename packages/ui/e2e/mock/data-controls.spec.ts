@@ -10,6 +10,19 @@ test.describe("Data Controls", () => {
             // assertions below read the zh-Hans copy, so the fixture must request zh-CN; seeding
             // a locale other than the copy under test is what made this spec red.
             localStorage.setItem("xihe-language", "zh-CN");
+            // PLAN-0752 M4：`/settings/data` 是「有 atom」页（`WRITE_INSTANCE_CONTENT`，导出另需实例管理员）。
+            // 去看 `DataControlsView` 的 `canUseInstanceData`：零能力 ⇒ 整页只渲染 403 卡片、
+            // 导出/导入按钮不挂载。本 spec 不带 `setupMockAuth`（它自己 stub 全部 `/api/v1/**`），
+            // 所以在这里直接种一个带实例管理员能力的能力投影。
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    name: "Test User",
+                    capabilities: { isInstanceAdmin: true },
+                }),
+            );
         });
     });
 
