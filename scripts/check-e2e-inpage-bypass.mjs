@@ -420,7 +420,7 @@ async function main(argv = process.argv.slice(2)) {
         return 2;
     }
     const evaluation = evaluateHits({ hits: scan.hits, allowlist: allowlist.entries });
-    const baselineCounts = loadBaselineCounts(options.baseline);
+    const baselineCounts = options.root === REPO_ROOT ? loadBaselineCounts(options.baseline) : null;
     const elapsedMs = performance.now() - started;
     const mode = options.writeBaseline ? "write-baseline" : options.enforce ? "enforce" : "report-only";
 
@@ -468,6 +468,8 @@ async function main(argv = process.argv.slice(2)) {
         );
     }
     // BL-430 / PLAN-0736：report-only 门也要校验命中计数漂移；差异 ⇒ exit 1 + 清单。
+    // 仅当 root = 本仓库（REPO_ROOT）时才生效：fixture root 是夹具树（默认基线不适用），
+    // 显式 --expect-hits/--expect-annotated/--baseline 时仍照常校验。
     const expectHits = options.expectHits ?? (baselineCounts?.hits ?? null);
     const expectAnnotated = options.expectAnnotated ?? (baselineCounts?.annotated ?? null);
     const actualHits = scan.hits.length;
