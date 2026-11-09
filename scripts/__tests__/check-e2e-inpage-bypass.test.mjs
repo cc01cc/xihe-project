@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,6 +18,7 @@ import {
     buildAllowlist,
     evaluateHits,
     loadAllowlist,
+    loadBaselineCounts,
     maskSource,
     scanRoot,
     scanSource,
@@ -248,4 +250,51 @@ test("真实树：扫描结果与 PLAN-0687 AST 重扫的 real 命中数一致�
     const verdict = evaluateHits({ hits: scan.hits, allowlist: loadAllowlist(path.join(REPO_ROOT, "config/e2e-inpage-bypass-allowlist.json")) });
     assert.equal(verdict.violations.length, 0, `真实树仍有未标注命中: ${verdict.violations.map((hit) => `${hit.file}:${hit.fetchLine}`).join(", ")}`);
     assert.equal(verdict.annotated.length, 12);
+});
+test("baseline：--expect-hits/--expect-annotated 与实测一致 ⇒ exit 0（真实树 12/12）", () => {
+  const result = runCli(["--json", "--expect-hits", "12", "--expect-annotated", "12"]);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.hits, 12);
+  assert.equal(payload.annotated, 12);
+});
+
+test("baseline：--expect-hits 少一个 ⇒ exit 1 + COUNT_MISMATCH 清单（report-only 也拦）", () => {
+  const result = runCli(["--expect-hits", "11", "--expect-annotated", "12"]);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /基线计数漂移（BL-430）/);
+  assert.match(result.stderr, /hits: expected=11 actual=12 \(Δ=1\)/);
+  assert.match(result.stderr, /显式改基线/, "必须给出处置口径");
+});
+
+test("baseline：--expect-annotated 多一个 ⇒ exit 1 + annotated 差异清单", () => {
+  const result = runCli(["--expect-hits", "12", "--expect-annotated", "13"]);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /基线计数漂移（BL-430）/);
+  assert.match(result.stderr, /annotated: expected=13 actual=12 \(Δ=-1\)/);
+});
+
+test("baseline：基线文件缺字段/坏 JSON ⇒ null（不匹配任何期望）", () => {
+  const bad = mkdtempSync(path.join(tmpdir(), "bypass-baseline-"));
+  const file = path.join(bad, "baseline.json");
+  writeFileSync(file, JSON.stringify({ hits: "not-a-number" }), "utf8");
+  assert.equal(loadBaselineCounts(file), null);
+  writeFileSync(file, "{broken", "utf8");
+  assert.equal(loadBaselineCounts(file), null);
+  fs.rmSync(bad, { recursive: true, force: true });
+});
+
+test("baseline：--baseline 文件提供 hits/annotated ⇒ 按基线校验", () => {
+  const root = fixtureRoot();
+  const config = path.join(root, "config/allowlist.json");
+  const baseline = path.join(root, "config/e2e-inpage-bypass-baseline.json");
+  mkdirSync(path.dirname(config), { recursive: true });
+  writeSpec(root, "packages/ui/e2e/real/bypass.spec.ts", "await page.evaluate(async () => { await fetch(\"/api/v1/chat\", { method: \"POST\" }); });");
+  writeFileSync(config, JSON.stringify({ version: 1, entries: [{ file: "packages/ui/e2e/real/bypass.spec.ts", url: "/api/v1/chat", reason: "fixture" }] }), "utf8");
+  writeFileSync(baseline, JSON.stringify({ hits: 1, annotated: 0 }), "utf8");
+  const result = runCli(["--json", "--root", root, "--config", config, "--baseline", baseline]);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.hits, 1);
+  assert.equal(payload.annotated, 0);
 });

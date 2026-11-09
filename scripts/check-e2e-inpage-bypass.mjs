@@ -22,6 +22,11 @@
  *   node scripts/check-e2e-inpage-bypass.mjs --json         # 机器可读
  *   node scripts/check-e2e-inpage-bypass.mjs --write-baseline  # 当前 violation 写进 allowlist
  *   node scripts/check-e2e-inpage-bypass.mjs --root <dir> --config <file>
+ *   node scripts/check-e2e-inpage-bypass.mjs --expect-hits 12 --expect-annotated 12   # BL-430 基线计数断言
+ *
+ * BL-430 / PLAN-0736：report-only 门只看 violation，命中计数漂移会静默通过。加 `--expect-hits <n>`
+ * 与 `--expect-annotated <n>`（或读 `config/e2e-inpage-bypass-baseline.json` 的 {hits, annotated}）后，
+ * 实测 ≠ 期望 ⇒ exit 1 + 差异清单；计数变了必须显式改基线（登记新命中/清掉旧命中），不许静默漂移。
  *
  * 退出码：0 = 通过（report-only 恒 0）；1 = --enforce 且有 violation；2 = 扫描/配置错误。
  */
@@ -40,6 +45,40 @@ export const ANNOTATION_PATTERN = /\/\/\s*(fixture-only|read-only)\s*:/i;
 
 /** allowlist 默认位置（仓库相对）。 */
 export const DEFAULT_CONFIG = "config/e2e-inpage-bypass-allowlist.json";
+/** 基线计数默认位置（BL-430 / PLAN-0736）：report-only 门也校验 hits/annotated 不漂移。 */
+export const DEFAULT_BASELINE = "config/e2e-inpage-bypass-baseline.json";
+
+/**
+ * 读取基线计数（BL-430）：`{hits: n, annotated: m}`；文件缺失/字段非法 ⇒ null。
+ * 期望可通过 `--expect-hits/--expect-annotated` 显式覆盖基线。
+ */
+export function loadBaselineCounts(absPath) {
+    if (!existsSync(absPath)) return null;
+    try {
+        const parsed = JSON.parse(readFileSync(absPath, "utf8"));
+        const hitCount = Number(parsed?.hits);
+        const annotatedCount = Number(parsed?.annotated);
+        if (!Number.isInteger(hitCount) || hitCount < 0) return null;
+        if (!Number.isInteger(annotatedCount) || annotatedCount < 0) return null;
+        return { hits: hitCount, annotated: annotatedCount };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 对比实测与期望（BL-430）：只比给定的期望字段；返回差异清单，空数组 = 一致。
+ */
+export function countDiffs({ hits, annotated, expectHits, expectAnnotated }) {
+    const diffs = [];
+    if (expectHits !== null && expectHits !== undefined && Number.isInteger(expectHits) && hits !== expectHits) {
+        diffs.push({ kind: "hits", expected: expectHits, actual: hits });
+    }
+    if (expectAnnotated !== null && expectAnnotated !== undefined && Number.isInteger(expectAnnotated) && annotated !== expectAnnotated) {
+        diffs.push({ kind: "annotated", expected: expectAnnotated, actual: annotated });
+    }
+    return diffs;
+}
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -315,6 +354,9 @@ function parseArgs(argv) {
     const options = {
         root: REPO_ROOT,
         config: path.join(REPO_ROOT, DEFAULT_CONFIG),
+        baseline: path.join(REPO_ROOT, DEFAULT_BASELINE),
+        expectHits: null,
+        expectAnnotated: null,
         enforce: false,
         json: false,
         writeBaseline: false,
@@ -329,7 +371,16 @@ function parseArgs(argv) {
         else if (arg === "--help" || arg === "-h") options.help = true;
         else if (arg === "--root") options.root = path.resolve(argv[++i]);
         else if (arg === "--config") options.config = path.resolve(argv[++i]);
+        else if (arg === "--expect-hits") options.expectHits = Number(argv[++i]);
+        else if (arg === "--expect-annotated") options.expectAnnotated = Number(argv[++i]);
+        else if (arg === "--baseline") options.baseline = path.resolve(argv[++i]);
         else throw new Error(`未知参数: ${arg}（--help 查看用法）`);
+    }
+    if (options.expectHits !== null && (!Number.isInteger(options.expectHits) || options.expectHits < 0)) {
+        throw new Error("--expect-hits 必须是非负整数");
+    }
+    if (options.expectAnnotated !== null && (!Number.isInteger(options.expectAnnotated) || options.expectAnnotated < 0)) {
+        throw new Error("--expect-annotated 必须是非负整数");
     }
     return options;
 }
@@ -346,6 +397,9 @@ const HELP = `check:e2e-bypass —— E2E in-page bypass 静态门（PLAN-0687�
   --write-baseline    把当前 violation 写入 allowlist（显式动作，慎用）
   --root <dir>        仓库根（默认 = 本脚本上一级）
   --config <file>     allowlist 路径（默认 config/e2e-inpage-bypass-allowlist.json）
+  --baseline <file>   基线计数路径（默认 config/e2e-inpage-bypass-baseline.json）
+  --expect-hits <n>   期望 real 命中数（缺省读基线；实测 ≠ 期望 ⇒ exit 1）
+  --expect-annotated <n> 期望已标注数（缺省读基线；实测 ≠ 期望 ⇒ exit 1）
   --help              显示本帮助
 
 判据见文件头注释与 PLAN-0687 design.md。`;
@@ -366,6 +420,7 @@ async function main(argv = process.argv.slice(2)) {
         return 2;
     }
     const evaluation = evaluateHits({ hits: scan.hits, allowlist: allowlist.entries });
+    const baselineCounts = loadBaselineCounts(options.baseline);
     const elapsedMs = performance.now() - started;
     const mode = options.writeBaseline ? "write-baseline" : options.enforce ? "enforce" : "report-only";
 
@@ -411,6 +466,19 @@ async function main(argv = process.argv.slice(2)) {
                 allowlistPath: options.config,
             }),
         );
+    }
+    // BL-430 / PLAN-0736：report-only 门也要校验命中计数漂移；差异 ⇒ exit 1 + 清单。
+    const expectHits = options.expectHits ?? (baselineCounts?.hits ?? null);
+    const expectAnnotated = options.expectAnnotated ?? (baselineCounts?.annotated ?? null);
+    const actualHits = scan.hits.length;
+    const actualAnnotated = evaluation.annotated.length;
+    const countDiffsResult = countDiffs({ hits: actualHits, annotated: actualAnnotated, expectHits, expectAnnotated });
+    if (countDiffsResult.length > 0) {
+        const lines = countDiffsResult.map((diff) => `  ✗ COUNT_MISMATCH ${diff.kind}: expected=${diff.expected} actual=${diff.actual} (Δ=${diff.actual - diff.expected})`);
+        console.error(`[check:e2e-bypass] 基线计数漂移（BL-430）：`);
+        console.error(lines.join("\n"));
+        console.error(`  修法：命中数变化必须显式改基线/allowlist 并登记新命中或清掉旧命中（不许静默漂移）。`);
+        return 1;
     }
     if (options.enforce && evaluation.violations.length > 0) return 1;
     return 0;
