@@ -1,0 +1,22 @@
+{
+  "$comment": "PLAN-0735 / BL-164: mock-lane baseline counts and registered skips.",
+  "generatedAt": "2026-11-09",
+  "sourceWindow": "W-23",
+  "sourceLog": "one/.tmp/xh/mock-baseline-2026-11-09.log",
+  "counts": {
+    "expected": 283,
+    "skipped": 8,
+    "failed": 0,
+    "flaky": 0
+  },
+  "skipNames": [
+    "判 1：8×500px 上滚序列单调不增",
+    "主判据：8×500px 上滚 3 次首跳中位 ≤ 600px",
+    "BL-316 原判据 40×2000px：单调不增且能到顶",
+    "90s 连续滚动：每 15s 采 heap",
+    "单帧 1600×1200：无滚动 / 零外链 / 1 图可见 / 无拉踩词 + 导出 PNG",
+    "file:// 打开：无外链、图片可见、打印不塌",
+    "①②③④ 投递 + 成员面板 + run 分组",
+    "⑤ 委派 DAG"
+  ]
+}
