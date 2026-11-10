@@ -190,9 +190,12 @@ function lockedValue(key: string): string {
  * （锚点 `#<setting-key>`）。「生效层」与「继承层」是两类：只有 `meta.source` 是**另一层**时才可点；
  * 生效层、`env`、`code` 都保持纯文本 —— 它们陈述事实，不是目的地。</p>
  *
- * <p>目标层只做 instance / user：它们是真实路由 `/settings/<layer>/<domain>`。工作区层的入口是
- * `/workspace/:id/settings?tab=config`（tab 形态，需要 workspaceId 上下文），本期**不拼**该路径 ——
- * 宁可不跳，也不跳到一个拼错的地址（工作区目标层留后续卡）。</p>
+ * <p>目标层只有 instance / user：它们是真实路由 `/settings/<layer>/<domain>`。</p>
+ *
+ * <p>**workspace 不是目标层（task-138 关闭的依据）**：CP `ConfigService.meta()` 只在 `layer=workspace`
+ * 视图里加载 workspace 行，`sourceFor()` 因此只在该视图返回 `workspace`（`ConfigService.java:531-533,616-627`），
+ * 而那里 workspace 是**生效层**、不该可点 ⇒ 真实世界不存在「继承自 workspace」的徽标。
+ * 不要给它补跳转分支：一个永不执行的分支会让后来人以为「用户层能看到工作区覆盖」。</p>
  */
 function jumpLayer(key: string): "instance" | "user" | null {
     const item = props.meta?.[key];
