@@ -21,14 +21,31 @@ import { LAYER_DOMAINS, type ConfigDomain, type ConfigLayer } from "../stores/co
 
 const NON_DOMAIN_SEGMENTS = new Set(["export", "import"]);
 
-/** 是否为设置区矩阵里的层（`instance` / `user` / `workspace`）。 */
+/** 是否为设置区矩阵里**当前仍在用**的层（task-253 之后只有 `instance` / `user`）。 */
 export function isConfigLayer(value: unknown): value is ConfigLayer {
     return typeof value === "string" && LAYER_DOMAINS[value as ConfigLayer] !== undefined;
 }
 
+/**
+ * 解析用的层值：**含已退役的 `workspace`**。
+ *
+ * <p>task-253 把 UI 的 `ConfigLayer` 收敛为 `instance | user`，但 CP 契约侧工作区层只是
+ * deprecated、尚未删除，历史/遗留请求里仍可能出现它。防复活守卫必须能**识别**这种请求 ——
+ * 若解析只用 `isConfigLayer` 判，`layer === "workspace"` 会永远 false，守卫变成死断言
+ * （绿着但什么都没验）。</p>
+ */
+export type RequestLayer = ConfigLayer | "workspace";
+
+/** 已退役、但仍需被守卫识别的层值。加新值时同步 `RequestLayer`。 */
+const RETIRED_LAYERS: readonly string[] = ["workspace"];
+
+function isRequestLayer(value: unknown): value is RequestLayer {
+    return isConfigLayer(value) || (typeof value === "string" && RETIRED_LAYERS.includes(value));
+}
+
 export interface ParsedConfigRequest {
     /** 解析不出就 null（例如 `/config/export`、无 `layer` 的读路径）。 */
-    layer: ConfigLayer | null;
+    layer: RequestLayer | null;
     /** 首个非层段即域；`/config/export` 这类非域请求为 null。 */
     domain: string | null;
 }
@@ -58,15 +75,15 @@ export function parseConfigRequest(rawUrl: string): ParsedConfigRequest {
         return { layer: null, domain: null };
     }
     // 写路径：/config/<layer>/<domain>[/<key>] —— 层在 path 段里。
-    if (isConfigLayer(first)) {
+    if (isRequestLayer(first)) {
         return { layer: first, domain: parsed.segments[configIndex + 2] ?? null };
     }
     // 读路径：/config/<domain>[/meta]?layer=<layer> —— 层只能在 query 里。
     const queryLayer = parsed.searchParams.get("layer");
-    return { layer: isConfigLayer(queryLayer) ? queryLayer : null, domain: first };
+    return { layer: isRequestLayer(queryLayer) ? queryLayer : null, domain: first };
 }
 
-export function configRequestLayer(rawUrl: string): ConfigLayer | null {
+export function configRequestLayer(rawUrl: string): RequestLayer | null {
     return parseConfigRequest(rawUrl).layer;
 }
 
@@ -82,6 +99,8 @@ export function configRequestDomain(rawUrl: string): string | null {
  * - 读：`/api/v1/config/<domain>?layer=workspace`（层在 query，**pathname 里看不出来**）。
  */
 export function isWorkspaceLayerConfigRequest(rawUrl: string): boolean {
+    // 这是「工作区层请求不得出现」的**防复活断言**，不是能力查询 —— 所以刻意用包含已退役层的
+    // `RequestLayer` 比较，而不是把它收窄回 `ConfigLayer`（那样会成 TS2367，且守卫恒 false）。
     return configRequestLayer(rawUrl) === "workspace";
 }
 

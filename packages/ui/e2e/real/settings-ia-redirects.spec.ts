@@ -13,9 +13,14 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
  * ⏳ 待补的两条 —— **V2（三条旧路径 redirect）** 与 **V3（层×域矩阵外组合 404 + 零请求）**。
  * 重复断言已在同一文件里做过的事只会拉长真栈窗口，不增加覆盖面。</p>
  *
+ * <p><b>task-253（2026-11-10，Q-1110-45）已把工作区块配置层整体退役</b>：`?tab=config` 入口与
+ * `ws-settings-domain-` 系列容器都不存在了 ⇒ 原文 V2 第三条（`/workspace/:id/settings?tab=config`）
+ * 与「工作区旧 tab 入口仍渲染配置页签」用例整条删除，原位留 (a) 标注；V3 里同样指向已删面的
+ * 反向断言（`ws-settings-domain-page` count 0，断「不存在的东西不存在」）也一并删除 —— 留着只会
+ * 让人误以为有覆盖。存活判据：V2 的两条全局旧路径 redirect + V3 的层×域 404 与零工作区层请求。</p>
+ *
  * <p>判据出处：`plans/PLAN-0752-XH-settings-information-architecture/verify.md`
- * - V2：`/settings/config`、`/settings/policy`、`/workspace/:id/settings?tab=config`
- *   三条旧路径都能到达新路径（断言最终 URL 与落点）。
+ * - V2：`/settings/config`、`/settings/policy` 两条全局旧路径都能到达实例层默认域（断言最终 URL 与落点）。
  * - V3：矩阵不存在的组合（此处 `/settings/user/logging`，logging 只在实例层）⇒ 404 视图，
  *   且不请求该组合的配置。</p>
  *
@@ -149,21 +154,10 @@ test("@host PLAN-0752 V2 两条旧设置路径重定向到实例层默认域", a
     }
 });
 
-test("@host PLAN-0752 V2 工作区旧 tab 入口仍渲染配置页签", async ({ page, request }) => {
-    const owner = await registerOwner(request);
-    await installOwnerAuth(page, owner);
-
-    // 旧形态：`?tab=config`（层不进 URL 时代的入口）。新形态是域段路由，但该入口必须继续可用。
-    await page.goto(`/workspace/${owner.workspaceId}/settings?tab=config`);
-    await expect(page.getByTestId("workspace-settings-page")).toBeVisible({
-        timeout: LONG_TIMEOUT_MS,
-    });
-    await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
-    await expect(page.getByTestId("ws-settings-config")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-    // 概览态不应渲染单域页容器（那是 `/workspace/:id/settings/<domain>` 的形态）。
-    await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
-    await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
-});
+// (a) 删 —— 「工作区旧 tab 入口仍渲染配置页签」（原 @host PLAN-0752 V2 第三条）：task-253 把工作区
+// 配置层整体退役后，`ws-settings-tab-config` 与 `ws-settings-config` 两个 testid 在
+// WorkspaceSettingsView.vue 里都已不存在（现存页签只有 general|mcp|members|credentials|knowledge）
+// ⇒ 断言对象消失，整条删除。幸存页签的可得性由 mock 车道 plan-0752-settings-ia.spec.ts 覆盖。
 
 test("@host PLAN-0752 V3 用户层矩阵外组合 404 且不发工作区层配置请求", async ({
     page,
@@ -193,8 +187,8 @@ test("@host PLAN-0752 V3 用户层矩阵外组合 404 且不发工作区层配�
     await expect(page.getByTestId("settings-nav-domain-user-llm-provider")).toBeVisible();
     // 矩阵外的条目不得出现在左栏（V3 附带判据；V25 的左栏快照是另一条）。
     await expect(page.getByTestId("settings-nav-domain-user-logging")).toHaveCount(0);
-    // 404 页不得渲染域页容器（不把错误状态伪装成正常页）。
-    await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
+    // (a) 删 —— 原文此处断 `ws-settings-domain-page` count 0：该容器已随 task-253 退役，全树不存在，
+    // 这条断言恒真且零信息量（断「不存在的东西不存在」），删掉以免被当成有效覆盖。
 
     // 零工作区层配置请求（口径收窄见文件头：排除 user/instance 层，壳内其它组件会拉）。
     // 两种形态都算：显式路径 `/config/workspace/<domain>`（写路径，stores/config.ts:321）
