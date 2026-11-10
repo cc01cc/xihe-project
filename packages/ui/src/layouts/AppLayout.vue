@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { PanelLeftOpen } from "@lucide/vue";
+import { useWindowSize } from "@vueuse/core";
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
 import Sidebar from "../components/sidebar/Sidebar.vue";
 import WorkspaceTabBar from "../features/workspace/components/WorkspaceTabBar.vue";
 import SseSubscriberLimitNotice from "../features/workspace/components/SseSubscriberLimitNotice.vue";
@@ -18,10 +20,21 @@ import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
 import { workspaceChatPath } from "../lib/routes";
 import {
+    NAV_WIDTH_DEFAULT,
+    NAV_WIDTH_KEYBOARD_STEP,
+    NAV_WIDTH_MAX,
+    NAV_WIDTH_MIN,
+    RAIL_WIDTH,
     WORKSPACE_LAYOUT_KEY,
+    clampNavWidth,
+    clampNavWidthForViewport,
     clearLayoutStorage,
     useWorkspaceLayout,
 } from "../composables/useWorkspaceLayout";
+import {
+    useSplitterPanelBridge,
+    type SplitterPanelExposed,
+} from "../composables/useSplitterPanelBridge";
 
 const mobileMediaQuery =
     typeof window === "undefined" || typeof window.matchMedia !== "function"
@@ -29,7 +42,7 @@ const mobileMediaQuery =
         : window.matchMedia("(max-width: 767px)");
 const isMobile = ref(mobileMediaQuery?.matches ?? false);
 const workspaceLayout = useWorkspaceLayout({ isMobile });
-const { navOpen, navWidth, mainOffset, navYielded } = workspaceLayout;
+const { navOpen, navWidth, effectiveNavWidth, navYielded } = workspaceLayout;
 // S5-W2: the workbench publishes its squeeze demand here (single geometry owner).
 provide(WORKSPACE_LAYOUT_KEY, workspaceLayout);
 const route = useRoute();
@@ -43,7 +56,88 @@ const userQuestionsStore = useUserQuestionsStore();
 const pendingPollIntervalMs = 10_000;
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null;
 
-const mainMargin = computed(() => `${mainOffset.value}px`);
+/**
+ * PLAN-0753 T3: the navigation panel's resize handle id. reka derives the
+ * `data-panel-resize-handle-id` attribute from it, and the bridge locates the
+ * handle by the same value in its capture-phase keyboard router.
+ */
+const NAV_RESIZE_HANDLE_ID = "nav-resize-handle";
+/** Panel #1 constraints are element pixels: the fixed 56px rail + the stored panel width. */
+const NAV_PANEL_MIN_SIZE = RAIL_WIDTH + NAV_WIDTH_MIN;
+const NAV_PANEL_MAX_SIZE = RAIL_WIDTH + NAV_WIDTH_MAX;
+
+const { width: viewportWidth } = useWindowSize();
+
+/** Render-only collapse state: the stored `navOpen` is never rewritten by a yield. */
+const navPanelCollapsed = computed(() => !navOpen.value || navYielded.value);
+/** px`defaultSize` for the panel; reka only reads it while initialising the layout. */
+const navPanelDefaultSize = computed(() =>
+    navPanelCollapsed.value ? RAIL_WIDTH : RAIL_WIDTH + effectiveNavWidth.value,
+);
+const navHandleVisible = computed(() => !isMobile.value && !navPanelCollapsed.value);
+
+const sidebarRef = ref<{ bubbleRef: HTMLElement | null } | null>(null);
+/** Drag width bubble: filled imperatively by the bridge (no reactive width channel). */
+const navBubble = computed<HTMLElement | null>(() => sidebarRef.value?.bubbleRef ?? null);
+const navPanelEl = ref<SplitterPanelExposed | null>(null);
+
+/**
+ * PLAN-0753 T3 —— 导航面板（splitter panel #1）的桥接层。
+ *
+ * reka 拥有 flex 几何与指针拖拽，桥接把**我们自己的**不变量叠在上面（见
+ * `useSplitterPanelBridge` 头注释）：存储宽度只经 release(`getSize()` 真值) /
+ * 键盘 / 双击三条路写入；`@resize` 只喂宽度气泡；视口夹取只走 display resize
+ * （ruling ③）；collapse/expand 由 `navOpen`/`navYielded` 驱动且永不 commit。
+ * panel #1 的像素宽 = 固定 56px icon rail + 导航面板存储宽（R-D：收起后 rail 仍在）。
+ */
+const navBridge = useSplitterPanelBridge({
+    clamp: clampNavWidth,
+    currentWidth: () => navWidth.value,
+    commit: (width) => workspaceLayout.setNavWidth(width),
+    defaultWidth: NAV_WIDTH_DEFAULT,
+    onKeyResize: (key) => {
+        if (key === "ArrowLeft") return navWidth.value - NAV_WIDTH_KEYBOARD_STEP;
+        if (key === "ArrowRight") return navWidth.value + NAV_WIDTH_KEYBOARD_STEP;
+        if (key === "Home") return NAV_WIDTH_MIN;
+        if (key === "End") return NAV_WIDTH_MAX;
+        return null;
+    },
+    toWidth: (px) => px - RAIL_WIDTH,
+    toPx: (width) => width + RAIL_WIDTH,
+    displayResize: clampNavWidthForViewport,
+    viewportWidth,
+    bubble: navBubble,
+    handleId: NAV_RESIZE_HANDLE_ID,
+    isCollapsed: () => navPanelCollapsed.value,
+});
+const { resizing: navResizing } = navBridge;
+
+function setNavPanel(el: unknown): void {
+    navPanelEl.value = (el as SplitterPanelExposed | null) ?? null;
+}
+
+watch(navPanelEl, (panel) => {
+    navBridge.panelRef.value = panel;
+});
+
+// navOpen/navYielded → collapse()/expand(): the rendered width is not a projection
+// of reactive state, so open/close has to go through reka's imperative API (reka
+// remembers the pre-collapse size in `panelSizeBeforeCollapseRef`).
+watch(
+    navPanelCollapsed,
+    (collapsed) => {
+        if (collapsed) {
+            navBridge.collapse();
+            return;
+        }
+        navBridge.expand();
+        // expand() restores the pre-collapse element px; after a viewport change that
+        // restored size may exceed the breakpoint clamp. Re-issue the display clamp in
+        // the same tick: both layout writes render only once, so no double transition.
+        navBridge.resizeToWidth(effectiveNavWidth.value);
+    },
+    { flush: "post" },
+);
 
 /**
  * S3a: the route tab bar is part of the workspace shell. It renders for the four
@@ -224,12 +318,128 @@ onUnmounted(() => {
 
 <template>
     <div class="flex h-screen overflow-hidden bg-background text-foreground">
-        <Sidebar
-            v-model:open="navOpen"
-            v-model:width="navWidth"
-            :is-mobile="isMobile"
-            :force-collapsed="navYielded"
-        />
+        <!--
+            PLAN-0753 T3 —— 壳的几何交给 reka SplitterGroup：panel #1 是导航
+            （aside 从 fixed 变 static flex 子项，宽度由 reka 的 flex-grow 驱动），
+            handle 是相邻 flex 项（`-ml-1` 抵消自身 4px ⇒ 主列起始位与旧的
+            fixed+margin 逐像素一致），panel #2 包 main。
+            同一个 group 常驻是为了让 `<main>`（含唯一 router-view）跨断点不换实例
+            （BL-344）；移动端导航面板是 `position: fixed` 抽屉 ⇒ 不是 flex 项，
+            因此不参与 split、也不产生挤压。
+        -->
+        <SplitterGroup
+            direction="horizontal"
+            class="flex h-full min-h-0 w-full"
+            @keydown.capture="navBridge.onKeydownCapture"
+        >
+            <SplitterPanel
+                :ref="setNavPanel"
+                as-child
+                size-unit="px"
+                collapsible
+                :default-size="navPanelDefaultSize"
+                :min-size="NAV_PANEL_MIN_SIZE"
+                :max-size="NAV_PANEL_MAX_SIZE"
+                :collapsed-size="RAIL_WIDTH"
+                @resize="navBridge.onResize"
+            >
+                <Sidebar
+                    ref="sidebarRef"
+                    v-model:open="navOpen"
+                    :width="navWidth"
+                    :is-mobile="isMobile"
+                    :force-collapsed="navYielded"
+                    :resizing="navResizing"
+                />
+            </SplitterPanel>
+            <!--
+                testid/aria 走 fallthrough attrs（reka 的 handle 自己不渲染它们；
+                不 fork SplitterResizeHandle）。aria-valuenow/min/max 是**首帧初值**（像素）：
+                group 测量到几何后，reka 的 useWindowSplitterPanelGroupBehavior 会用 0–100
+                百分比 remove/set 这三个属性（同标度自洽，dev-3 裁定 ③）。
+            -->
+            <SplitterResizeHandle
+                v-if="navHandleVisible"
+                id="nav-resize-handle"
+                data-testid="sidebar-resizer"
+                aria-orientation="vertical"
+                :aria-label="t('sidebar.resize')"
+                :aria-valuenow="navWidth"
+                :aria-valuemin="NAV_WIDTH_MIN"
+                :aria-valuemax="NAV_WIDTH_MAX"
+                class="relative -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+                @dragging="navBridge.onDragging"
+                @dblclick="navBridge.onDblclick"
+            />
+            <SplitterPanel
+                class="flex min-h-0 min-w-0"
+                :class="navResizing ? 'transition-none' : 'transition-[flex-grow] duration-300'"
+            >
+                <main
+                    class="min-h-0 min-w-0 flex-1 bg-surface-content"
+                    :class="
+                        workspaceTabBarVisible
+                            ? 'flex flex-col overflow-hidden'
+                            : 'overflow-x-hidden overflow-y-auto'
+                    "
+                >
+                    <!-- BL-335：SSE 订阅上限（429）是持续态，用壳级横幅常驻；重新连上后自动消失。 -->
+                    <SseSubscriberLimitNotice />
+
+                    <div
+                        v-if="firstPendingOtherSession"
+                        data-testid="global-pending-approval-banner"
+                        class="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm backdrop-blur-sm"
+                        role="status"
+                    >
+                        <div class="min-w-0">
+                            <p class="font-medium">{{ t("sidebar.pendingApprovalBanner") }}</p>
+                            <p class="text-xs text-muted-foreground">
+                                <span class="tabular-nums">{{ pendingForOtherSessionCount }}</span>
+                                {{ t("sidebar.pendingApprovalCount") }}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            data-testid="global-pending-approval-go-to"
+                            class="shrink-0 rounded-md border border-amber-500/40 px-3 py-1.5 text-sm font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click="goToFirstPendingSession"
+                        >
+                            {{ t("sidebar.pendingApprovalGoTo") }}
+                        </button>
+                    </div>
+                    <div data-testid="pending-approval-live" aria-live="polite" class="sr-only">
+                        {{ t("sidebar.pendingApprovalLive") }}: {{ totalPendingApprovalCount }}
+                    </div>
+                    <!-- S3a: the middle route tab bar belongs to the workspace shell, so it
+               survives navigation between the four sibling workspace routes. -->
+                    <WorkspaceTabBar
+                        v-if="workspaceTabBarVisible"
+                        :workspace-id="workspaceTabBarWorkspaceId"
+                        :session-id="workspaceTabBarSessionId"
+                    />
+                    <!--
+                BL-344 残留（根治）：这里**只能有一个 `<router-view>`**。
+                历史上是 `v-if` 分支里一个 + `v-else` 一个 —— 两个不同的 outlet 实例，
+                当视口跨断点切换（`workspaceTabBarVisible` 随 `isMobile` 翻转）时，被路由的页面
+                会**整体卸载重挂**（`e2e` 观测：被观察容器内 `mutations=0`、输入被清空，
+                因为旧节点是连根移除的）。用户可见后果：正在填的表单草稿丢失。
+                现在统一为一个 outlet，只切换外层容器是否参与布局：
+                - 有页签栏（桌面 /workspace）：flex 列，页面拿到页签栏以下的剩余高度；
+                - 无页签栏（移动）：`contents`（display:contents）让子节点等价于 `main` 的直接子节点，
+                  布局与旧的 `v-else` 分支逐像素一致，但**不换实例**。
+            -->
+                    <!-- 单一 router-view：断点切换不得换实例（否则路由页面整体重挂、草稿丢失；见 BL-344）。 -->
+                    <div
+                        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
+                        :class="workspaceTabBarVisible ? '' : 'contents'"
+                        data-testid="workspace-route-viewport"
+                    >
+                        <router-view />
+                    </div>
+                </main>
+            </SplitterPanel>
+        </SplitterGroup>
         <button
             v-if="!navOpen && isMobile"
             type="button"
@@ -241,69 +451,17 @@ onUnmounted(() => {
         >
             <PanelLeftOpen class="size-4" />
         </button>
-        <main
-            class="min-h-0 min-w-0 flex-1 bg-surface-content transition-[margin] duration-300"
-            :class="
-                workspaceTabBarVisible
-                    ? 'flex flex-col overflow-hidden'
-                    : 'overflow-x-hidden overflow-y-auto'
-            "
-            :style="{ marginLeft: mainMargin }"
-        >
-            <!-- BL-335：SSE 订阅上限（429）是持续态，用壳级横幅常驻；重新连上后自动消失。 -->
-            <SseSubscriberLimitNotice />
-
+        <!--
+            移动端抽屉遮罩：与 `navOpen` 成对。从 Sidebar 的 Teleport 挪到壳层，
+            因为 Sidebar 现在是 splitter panel 的单根 as-child 子节点（多根会丢
+            fallthrough attrs）。
+        -->
+        <Teleport to="body">
             <div
-                v-if="firstPendingOtherSession"
-                data-testid="global-pending-approval-banner"
-                class="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm backdrop-blur-sm"
-                role="status"
-            >
-                <div class="min-w-0">
-                    <p class="font-medium">{{ t("sidebar.pendingApprovalBanner") }}</p>
-                    <p class="text-xs text-muted-foreground">
-                        <span class="tabular-nums">{{ pendingForOtherSessionCount }}</span>
-                        {{ t("sidebar.pendingApprovalCount") }}
-                    </p>
-                </div>
-                <button
-                    type="button"
-                    data-testid="global-pending-approval-go-to"
-                    class="shrink-0 rounded-md border border-amber-500/40 px-3 py-1.5 text-sm font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    @click="goToFirstPendingSession"
-                >
-                    {{ t("sidebar.pendingApprovalGoTo") }}
-                </button>
-            </div>
-            <div data-testid="pending-approval-live" aria-live="polite" class="sr-only">
-                {{ t("sidebar.pendingApprovalLive") }}: {{ totalPendingApprovalCount }}
-            </div>
-            <!-- S3a: the middle route tab bar belongs to the workspace shell, so it
-               survives navigation between the four sibling workspace routes. -->
-            <WorkspaceTabBar
-                v-if="workspaceTabBarVisible"
-                :workspace-id="workspaceTabBarWorkspaceId"
-                :session-id="workspaceTabBarSessionId"
+                v-if="isMobile && navOpen"
+                class="fixed inset-0 z-30 bg-black/50"
+                @click="navOpen = false"
             />
-            <!--
-                BL-344 残留（根治）：这里**只能有一个 `<router-view>`**。
-                历史上是 `v-if` 分支里一个 + `v-else` 一个 —— 两个不同的 outlet 实例，
-                当视口跨断点切换（`workspaceTabBarVisible` 随 `isMobile` 翻转）时，被路由的页面
-                会**整体卸载重挂**（`e2e` 观测：被观察容器内 `mutations=0`、输入被清空，
-                因为旧节点是连根移除的）。用户可见后果：正在填的表单草稿丢失。
-                现在统一为一个 outlet，只切换外层容器是否参与布局：
-                - 有页签栏（桌面 /workspace）：flex 列，页面拿到页签栏以下的剩余高度；
-                - 无页签栏（移动）：`contents`（display:contents）让子节点等价于 `main` 的直接子节点，
-                  布局与旧的 `v-else` 分支逐像素一致，但**不换实例**。
-            -->
-            <!-- 单一 router-view：断点切换不得换实例（否则路由页面整体重挂、草稿丢失；见 BL-344）。 -->
-            <div
-                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
-                :class="workspaceTabBarVisible ? '' : 'contents'"
-                data-testid="workspace-route-viewport"
-            >
-                <router-view />
-            </div>
-        </main>
+        </Teleport>
     </div>
 </template>

@@ -715,3 +715,67 @@ describe("WorkspaceWorkbench pagehide/visibilitychange listener pairing (BL-379)
         }
     });
 });
+
+describe("WorkspaceWorkbench file tree as splitter panel (PLAN-0753 T3)", () => {
+    it("renders the tree column and the main column as panels with the handle between them", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        const group = wrapper.get('[data-testid="workspace-workbench"]').find("[data-panel-group]");
+        expect(group.exists(), "workbench row is a splitter group").toBe(true);
+
+        const panels = group.findAll("[data-panel]");
+        expect(panels.length).toBe(2);
+        // panel #1 = 文件树列（rail），panel #2 = 主列。
+        // `as-child`：panel #1 **就是** rail 本身（不另套一层）。
+        expect(panels[0].attributes("data-testid")).toBe("workspace-file-rail");
+        // panel #2 是主列包装 div（center slot 由父级提供，单测不填 ⇒ 只锁包装身份）。
+        expect(panels[1].attributes("data-panel-collapsible")).toBe(undefined);
+        expect(panels[1].element.tagName).toBe("DIV");
+        // 折叠语义：collapsible + collapsedSize=40 rail。
+        expect(panels[0].attributes("data-panel-collapsible")).toBe("true");
+        expect(panels[0].attributes("data-panel-size")).toBe("240.0");
+        expect(panels[0].attributes("data-state")).toBe("expanded");
+
+        // handle 走 fallthrough：testid/aria + 桥接路由键。
+        const handle = wrapper.get('[data-testid="tree-resizer"]');
+        expect(handle.attributes("role")).toBe("separator");
+        expect(handle.attributes("aria-orientation")).toBe("vertical");
+        expect(handle.attributes("data-panel-resize-handle-id")).toBe("tree-resize-handle");
+    });
+
+    it("collapses the tree column to the 40px rail through the panel state", async () => {
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({ treeCollapsed: true, treeWidth: 280 }),
+        );
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        const panels = wrapper.findAll("[data-panel]");
+        // 收起是渲染态：rail 内只剩展开按钮，文件树与 handle 都不渲染。
+        expect(panels[0].get('[data-testid="workspace-tree-expand"]').exists()).toBe(true);
+        expect(panels[0].find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="tree-resizer"]').exists()).toBe(false);
+        // 收起不改宽度：存储仍是 280（PLAN-0582 §1.5-A）。
+        expect(storedLayout().treeWidth).toBe(280);
+    });
+
+    it("commits keyboard widths through the tree bridge (arrow keys, single write)", async () => {
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({ treeCollapsed: false, treeWidth: 240 }),
+        );
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        const handle = wrapper.get('[data-testid="tree-resizer"]');
+
+        // 240 + 16 = 256（TREE_WIDTH_KEYBOARD_STEP）。
+        await handle.trigger("keydown", { key: "ArrowRight" });
+        await expectStored(() => expect(storedLayout().treeWidth).toBe(256));
+
+        // 双击复位默认宽（240）。
+        await handle.trigger("dblclick");
+        await expectStored(() => expect(storedLayout().treeWidth).toBe(240));
+    });
+});
