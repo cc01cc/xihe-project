@@ -9,6 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { coverageVerdict, coverageVerdictNote, EXIT_CODES } from './lib/coverage-verdict.mjs';
+
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
   const index = argv.indexOf(`--${name}`);
@@ -96,19 +98,37 @@ const shards = ['a', 'b'].map((shard) => {
 
 const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expectedRaw = computeExpectedTestClasses({ repoRoot: ROOT });
-const expected = expectedRaw?.classes ?? expectedRaw?.classNames ?? [];
+// BL-572 的第二层缺陷（本门改完才暴露）：helper 的契约字段是 `expected`，而这里读的是
+// `classes` / `classNames` —— 两个都不存在 ⇒ **分母恒为 0**，覆盖判据从构造上就是空转。
+// 三条字段都认，但一条都读不到就**说出来并以 exit 2 收场**，不再静默退化成空数组。
+const EXPECTED_FIELDS = ['expected', 'classes', 'classNames'];
+const expectedFieldName = EXPECTED_FIELDS.find((name) => Array.isArray(expectedRaw?.[name])) ?? null;
+if (!expectedFieldName) {
+  console.error('[shard-report] BUG: computeExpectedTestClasses() 没返回 expected[]/classes[]/classNames[] —— '
+    + '覆盖判据没有分母（这不是通过，是脚本契约破了）');
+  process.exitCode = 2;
+}
+const expected = expectedFieldName ? expectedRaw[expectedFieldName] : [];
 const expectedSet = new Set(expected);
 const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.fullClass));
 const ranSet = new Set(ran);
 const duplicates = [...new Set(ran.filter((name, index) => ran.indexOf(name) !== index))];
 const coverage = {
   expected: expectedSet.size,
+  expectedField: expectedFieldName,
   ran: ranSet.size,
   missing: [...expectedSet].filter((name) => !ranSet.has(name)).sort(),
   unexpected: [...ranSet].filter((name) => !expectedSet.has(name)).sort(),
   duplicates,
 };
-coverage.ok = coverage.missing.length === 0 && coverage.unexpected.length === 0 && coverage.duplicates.length === 0;
+// BL-572 / D-816：判据硬门。此前是
+//   `coverage.ok = missing==0 && unexpected==0 && duplicates==0`
+// —— `expected==0`（报告目录不存在、源码根指错）时**恒为 true**，于是空输入印 `coverage ok=true`
+// 且整个脚本没有一处 exit ⇒ 永远 exit 0。这是「声称结论却不阻断」的假绿门形态。
+// 现在：没有分母 ⇒ NOT_EVALUATED/exit 2；有分母但覆盖不全 ⇒ FAIL/exit 1；齐全才 PASS/exit 0。
+const verdict = coverageVerdict(coverage);
+coverage.verdict = verdict;
+coverage.ok = verdict === 'PASS';
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -134,6 +154,8 @@ const report = {
     skipped: shards.reduce((sum, shard) => sum + shard.skipped, 0),
   },
   coverage,
+  verdict,
+  exitCode: EXIT_CODES[verdict],
   creationsAvailable: shards.every((shard) => shard.cacheStatsLines > 0),
 };
 
@@ -150,8 +172,13 @@ for (const shard of report.shards) {
   }
 }
 console.log(`=== totals: tests=${report.totals.tests} F=${report.totals.failures} E=${report.totals.errors} S=${report.totals.skipped}`);
-console.log(`=== coverage ok=${coverage.ok} expected=${coverage.expected} ran=${coverage.ran} `
+console.log(`=== coverage ${verdict} expected=${coverage.expected} ran=${coverage.ran} `
   + `missing=${coverage.missing.length} unexpected=${coverage.unexpected.length} duplicates=${coverage.duplicates.length}`);
+console.log(`    ${coverageVerdictNote(verdict, coverage)}`);
 if (coverage.missing.length) console.log(`    missing: ${coverage.missing.slice(0, 10).join(', ')}`);
 if (coverage.unexpected.length) console.log(`    unexpected: ${coverage.unexpected.slice(0, 10).join(', ')}`);
 console.log(`=== creations available from a clean run: ${report.creationsAvailable}`);
+
+// 用 exitCode 而不是 process.exit()：后者在 Windows 管道上可能截断尚未 flush 的 stdout/report。
+// 结论与退出码同源（EXIT_CODES），保证「印了什么」和「返回什么」不会各说一套。
+process.exitCode = EXIT_CODES[verdict];
