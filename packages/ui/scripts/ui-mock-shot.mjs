@@ -98,7 +98,9 @@ class DirtyTreeError extends Error {
                 paths,
                 "",
                 "原因：图必须钉在 commit sha 上；脏树拍的图事后无法证明对应哪条提交。",
-                "先提交再拍。若只是自查迭代，可加 --allow-dirty（manifest 会记 allowDirty: true，不得用于交付批次）。",
+                "先提交再拍。若脏改动确实不影响像素（比如别处的 WIP），加 --allow-dirty 并配 --dirty-proof <json>：",
+                "  每个脏路径都要有一条可复算命令 + 它的实际输出，脚本会把两者一起写进 manifest.dirtyNonRendering。",
+                "  「已忽略」不是证明；能跑的命令才是。",
             ].join("\n"),
         );
         this.name = "DirtyTreeError";
@@ -130,15 +132,121 @@ function gitState() {
         return { ok: true, output: String(res.stdout).trim() };
     };
     const head = run(["rev-parse", "HEAD"]);
-    if (!head.ok) return { commit: null, dirtyPaths: [], gitError: head.output || "git 不可用" };
+    if (!head.ok) {
+        return {
+            commit: null,
+            dirtyPaths: [],
+            gitError: head.output || "git 不可用",
+            repoRoot: null,
+        };
+    }
+    const toplevel = run(["rev-parse", "--show-toplevel"]);
+    const repoRoot = toplevel.ok ? toplevel.output : null;
     const status = run(["status", "--porcelain", "-uall", "--"].concat(GIT_SCOPE));
-    if (!status.ok) return { commit: head.output, dirtyPaths: [], gitError: status.output };
+    if (!status.ok) {
+        return { commit: head.output, dirtyPaths: [], gitError: status.output, repoRoot };
+    }
     const dirtyPaths = status.output
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => line.replace(/^[A-Z?!]{1,2}\s+/, ""));
-    return { commit: head.output, dirtyPaths, gitError: null };
+    return { commit: head.output, dirtyPaths, gitError: null, repoRoot };
+}
+
+/**
+ * 脏树交付的**证据层**：每个脏路径都要给一条可复算命令，脚本亲自跑、把输出写进 manifest。
+ *
+ * 为什么不是"允许 --allow-dirty 就完事"：那条门的目的是「这图确实代表这个 commit」，
+ * 干净树只是达成手段之一。脏改动若确实不进渲染图（别处 WIP、e2e 用例、未跟踪文件），
+ * 用「命令 + 实际输出」证明它不进，比"等树干净"更强也更快 —— 但它必须**可复算**，
+ * 所以这里跑的是命令本身，而不是相信我写在 reason 里的话。
+ *
+ * 证明文件格式（JSON 数组）：
+ *   [{ "path": "packages/ui/x.ts", "reason": "为什么不影响像素",
+ *      "command": ["git", "grep", "-n", "…", "--", "packages/ui/src/preview"],
+ *      "expect": "empty" }]      // expect 可选：empty = 期望无输出（如"0 命中"）
+ */
+function loadDirtyProofs(proofPath, dirtyPaths, repoRoot) {
+    const normalize = (value) => String(value).replace(/\\/g, "/").replace(/^\.\//, "");
+    const wanted = dirtyPaths.map(normalize);
+    let entries = [];
+    if (proofPath) {
+        const raw = fs.readFileSync(proofPath, "utf8");
+        entries = JSON.parse(raw);
+        if (!Array.isArray(entries)) throw new Error("--dirty-proof 必须是 JSON 数组");
+    }
+    const byPath = new Map(entries.map((item) => [normalize(item.path), item]));
+    const missing = wanted.filter((item) => !byPath.has(item));
+    if (missing.length > 0) {
+        throw new Error(
+            [
+                "以下未提交路径没有「不影响渲染」的证明，拒绝把它们当成可忽略：",
+                ...missing.map((item) => "  - " + item),
+                "",
+                "给 --dirty-proof <json> 补上每条：{ path, reason, command: [argv…], expect? }",
+                "「已忽略」不是证明；能跑的命令 + 它的实际输出才是。",
+            ].join("\n"),
+        );
+    }
+    const stale = [...byPath.keys()].filter((item) => !wanted.includes(item));
+    if (stale.length > 0) {
+        process.stderr.write(
+            "[ui-mock-shot] 警告: 证明里有 " +
+                stale.length +
+                " 条已不再脏（" +
+                stale.join(", ") +
+                "）\n",
+        );
+    }
+    return wanted.map((item) => {
+        const proof = byPath.get(item);
+        const argv = Array.isArray(proof.command) ? proof.command : null;
+        if (!argv || argv.length === 0) {
+            throw new Error(
+                '证明缺少 command（argv 数组，例如 ["git","grep","-n","x","--","packages/ui/src/preview"]）：' +
+                    item,
+            );
+        }
+        const cwd = repoRoot ?? uiRoot;
+        const res = spawnSync(argv[0], argv.slice(1), { cwd, encoding: "utf8", timeout: 60000 });
+        const output = String((res.stdout ?? "") + (res.stderr ?? "")).trim();
+        const record = {
+            path: item,
+            reason: proof.reason ?? null,
+            command: argv
+                .map((part) => (part.includes(" ") ? JSON.stringify(part) : part))
+                .join(" "),
+            cwd: path.relative(cwd, cwd) || ".",
+            exit: res.status,
+            output: output.slice(0, 4000),
+        };
+        if (proof.expect === "empty" && output.length > 0) {
+            throw new Error(
+                "脏路径 " +
+                    item +
+                    " 的证明命令**有输出**，与 expect: empty 矛盾（命令：" +
+                    record.command +
+                    "）：\n" +
+                    record.output,
+            );
+        }
+        if (proof.expect === "nonempty" && output.length === 0) {
+            throw new Error(
+                "脏路径 " + item + " 的证明命令无输出，与 expect: nonempty 矛盾：" + record.command,
+            );
+        }
+        process.stdout.write(
+            "[ui-mock-shot] 脏路径证明 " +
+                item +
+                " → exit=" +
+                res.status +
+                " output=" +
+                (output.length === 0 ? "(空)" : output.split("\n").length + " 行") +
+                "\n",
+        );
+        return record;
+    });
 }
 
 function parseArgs(argv) {
@@ -148,6 +256,7 @@ function parseArgs(argv) {
         channel: "chrome-beta",
         only: null,
         allowDirty: false,
+        dirtyProof: null,
         selftest: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
@@ -173,6 +282,9 @@ function parseArgs(argv) {
         } else if (arg === "--selftest") {
             // 只跑探活自检：不起浏览器、不需要 dev server，秒级返回（负例必须快速失败）。
             opts.selftest = true;
+        } else if (arg === "--dirty-proof") {
+            opts.dirtyProof = path.resolve(process.cwd(), value);
+            i += 1;
         } else if (arg === "--allow-dirty") {
             // 只用于自查迭代：脏树出的图不得当交付批次，manifest 里会留 allowDirty: true。
             opts.allowDirty = true;
@@ -180,7 +292,7 @@ function parseArgs(argv) {
             process.stdout.write(
                 [
                     "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--allow-dirty] [--selftest]",
-                    "工作树脏时默认 exit 1；--allow-dirty 只给自查迭代用，不得用于交付批次。",
+                    "工作树脏时默认 exit 1；--allow-dirty --dirty-proof <json> 用于「脏改动不影响像素」的交付批次（每个脏路径一条可复算命令 + 实际输出）。",
                     "--selftest 只跑探活自检（不开浏览器、不起 dev server），用于验证「探不到要快速失败且报全 URL」。",
                 ].join("\n") + "\n",
             );
@@ -736,11 +848,18 @@ async function main() {
                 "），manifest 里 commit=null\n",
         );
     }
+    // 脏树能不能当交付批次，取决于「每一条脏改动是否被一条可复算命令证明不影响渲染」，
+    // 而不是取决于树脏不脏 —— 缺少证明就到这里为止（loadDirtyProofs 会点名缺哪条）。
+    const dirtyNonRendering =
+        git.dirtyPaths.length > 0
+            ? loadDirtyProofs(opts.dirtyProof, git.dirtyPaths, git.repoRoot)
+            : [];
     if (git.dirtyPaths.length > 0) {
         process.stderr.write(
-            "[ui-mock-shot] 警告: 工作树有 " +
+            "[ui-mock-shot] 说明: 工作树有 " +
                 git.dirtyPaths.length +
-                " 处未提交改动，本批次 **不得用于交付**（manifest 会记 allowDirty: true）\n",
+                " 处未提交改动，已逐条附「不影响渲染」的证明（manifest.dirtyNonRendering，命令 + 实际输出）；" +
+                "allowDirty: true\n",
         );
     }
     fs.mkdirSync(opts.out, { recursive: true });
@@ -818,6 +937,8 @@ async function main() {
                 {
                     commit: git.commit,
                     dirtyPaths: git.dirtyPaths,
+                    // 每条脏路径的「不影响渲染」证据：{ path, reason, command, cwd, exit, output }
+                    dirtyNonRendering,
                     allowDirty: opts.allowDirty,
                     base,
                     // 服务器怎么来的、探通用的是哪个候选地址：自起模式修好（task-84）之后，
