@@ -889,6 +889,13 @@ const messages = {
             contextTruncationNotice:
                 "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
             contextTruncationDismiss: "关闭截断提示",
+            // PLAN-0572 / BL-555 G3：持久化 toolCalls 快照被 CP 截断时（MAX_CALLS=200）的提示。
+            toolCallsTruncationTitle: "工具调用被截断",
+            toolCallsTruncationNotice:
+                "仅显示前 {visible} 条工具调用（共 {total} 条，更早的未持久化）",
+            toolCallsTruncationDetail:
+                "更早的调用没有持久化到消息上，界面上无法还原；如需完整清单请查看该 run 的调用轨迹。",
+            toolCallsTruncationTraceHint: "完整调用轨迹（run）：",
             send: "发送",
             // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
             runHeader: {
@@ -3471,6 +3478,13 @@ const messages = {
             contextTruncationNotice:
                 "This answer used a truncated history ({dropped} dropped / {kept} kept)",
             contextTruncationDismiss: "Dismiss truncation notice",
+            // PLAN-0572 / BL-555 G3: notice for a persisted toolCalls snapshot cut by CP MAX_CALLS.
+            toolCallsTruncationTitle: "Tool calls truncated",
+            toolCallsTruncationNotice:
+                "Showing the first {visible} tool calls ({total} in total; earlier ones are not persisted)",
+            toolCallsTruncationDetail:
+                "Earlier calls were not persisted on the message and cannot be restored in the UI; see this run's trace for the full list.",
+            toolCallsTruncationTraceHint: "Full call trace (run):",
             send: "Send",
             runHeader: {
                 toggle: "Expand or collapse run {run}",

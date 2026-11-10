@@ -26,7 +26,16 @@ import {
     AttachmentTrigger,
 } from "@/components/ui/attachment";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import { Download, Brain, LoaderCircle, Clock, Trash2, GitBranch, Shield } from "@lucide/vue";
+import {
+    Download,
+    Brain,
+    LoaderCircle,
+    Clock,
+    Trash2,
+    GitBranch,
+    Shield,
+    ChevronDown,
+} from "@lucide/vue";
 import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
 import ProcessRow from "./ProcessRow.vue";
 import AttachmentPreviewDialog from "./AttachmentPreviewDialog.vue";
@@ -79,6 +88,12 @@ const deliveryToNames = computed(() =>
     (props.delivery?.to ?? []).join(t("chat.delivery.listSeparator")),
 );
 
+/**
+ * PLAN-0572 / BL-555 G3：持久化快照被 CP 截断（ToolCallSnapshotService.MAX_CALLS）。
+ * 只有显式 true 才算截断；缺失 = 未截断（或旧 CP 未投影），不渲染提示。
+ */
+const toolCallsTruncated = computed(() => props.message.toolCallsTruncated === true);
+
 const emit = defineEmits<{
     approve: [id: string];
     reject: [id: string];
@@ -87,6 +102,15 @@ const emit = defineEmits<{
     branch: [id: string];
     revert: [sliceRef: string];
 }>();
+
+/**
+ * PLAN-0572 / BL-555 G3：截断提示的展开态。
+ *
+ * 持久化快照最多 200 条（`ToolCallSnapshotService.MAX_CALLS`），更早的调用**不在**快照里，
+ * 因此没有卡片可展开。展开体的作用是说明这一点并指向唯一可读的完整清单 —— run trace
+ * （`GET /chat/runs/{runId}/trace`）；不把未持久化的调用伪装成卡片。
+ */
+const toolCallsExpanded = ref(false);
 
 const isUser = computed(() => props.message.role === "user");
 const isSystem = computed(() => props.message.role === "system");
@@ -536,6 +560,57 @@ onUnmounted(() => {
                 >
                     {{ t("common.retry") }}
                 </button>
+            </div>
+
+            <!--
+                PLAN-0572 / BL-555 G3：持久化快照被 CP 截断时（ToolCallSnapshotService.MAX_CALLS）
+                明示「可见 N / 共 M」，避免用户把截断列表当成全部调用。
+                `toolCallsTotal` 缺失时回落到当前数组长度（不显示 0/0 这类假数字）。
+            -->
+            <div
+                v-if="toolCallsTruncated"
+                class="mt-1.5 rounded-md border border-border/60 bg-muted/20"
+                data-testid="tool-calls-truncation-notice"
+            >
+                <button
+                    type="button"
+                    class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/40"
+                    :aria-expanded="toolCallsExpanded"
+                    data-testid="tool-calls-truncation-toggle"
+                    @click="toolCallsExpanded = !toolCallsExpanded"
+                >
+                    <span class="shrink-0 font-medium text-foreground">
+                        {{ t("chat.toolCallsTruncationTitle") }}
+                    </span>
+                    <span class="min-w-0 flex-1 truncate">
+                        {{
+                            t("chat.toolCallsTruncationNotice", {
+                                visible: message.toolCalls?.length ?? 0,
+                                total: message.toolCallsTotal ?? message.toolCalls?.length ?? 0,
+                            })
+                        }}
+                    </span>
+                    <ChevronDown
+                        class="size-3.5 shrink-0 transition-transform"
+                        :class="toolCallsExpanded ? 'rotate-180' : ''"
+                        aria-hidden="true"
+                    />
+                </button>
+                <!--
+                    展开体：说明「更早的调用未持久化、界面无法还原」，并指向 run trace
+                    （唯一可读的完整清单）。不伪造卡片 —— 未持久化的调用没有可读数据。
+                -->
+                <div
+                    v-if="toolCallsExpanded"
+                    class="border-t border-border/60 px-2 py-1.5 text-[11px] text-muted-foreground"
+                    data-testid="tool-calls-truncation-body"
+                >
+                    <p>{{ t("chat.toolCallsTruncationDetail") }}</p>
+                    <p v-if="message.runId" class="mt-1">
+                        {{ t("chat.toolCallsTruncationTraceHint") }}
+                        <span class="font-mono text-foreground">{{ message.runId }}</span>
+                    </p>
+                </div>
             </div>
 
             <div v-if="message.toolCalls?.length" class="mt-1.5 w-full space-y-1">

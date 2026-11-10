@@ -600,27 +600,85 @@ describe("MessageItem actor badges (PLAN-0659 T1.2)", () => {
         message.unmount();
     });
 
-    it("passes the same actor down to tool cards", () => {
-        const wrapper = mountActorMessage(
-            {
-                participantId: "part-agent-alpha",
-                toolCalls: [
-                    {
-                        id: "tc-1",
-                        name: "read_file",
-                        arguments: "{}",
-                        status: "completed",
-                        startedAt: "2026-11-04T00:00:01.000Z",
+    // ── PLAN-0572 / BL-555 G3（持久化 toolCalls 快照截断态） ──────────────────
+    describe("MessageItem toolCalls truncation notice (BL-555 G3)", () => {
+        function mountToolCallsMessage(overrides: Partial<Message> = {}) {
+            return mount(MessageItem, {
+                props: {
+                    message: {
+                        id: "message-truncated",
+                        sessionId: "session-1",
+                        role: "assistant",
+                        content: "",
+                        timestamp: "2026-11-10T00:00:00Z",
+                        toolCalls: [
+                            {
+                                id: "tc-1",
+                                name: "read_file",
+                                arguments: "{}",
+                                status: "completed",
+                                startedAt: "2026-11-10T00:00:01.000Z",
+                            },
+                        ],
+                        ...overrides,
                     },
-                ],
-            },
-            { responder: participant(), showActor: true },
-        );
-        const badge = wrapper
-            .get('[data-testid="tool-card"]')
-            .get('[data-testid="process-row-actor"]');
-        expect(badge.attributes("data-actor-principal-id")).toBe("part-agent-alpha");
-        wrapper.unmount();
+                },
+                global: { plugins: [i18n, createPinia()] },
+            });
+        }
+
+        it("shows visible/total and keeps the persisted cards when the snapshot is truncated", () => {
+            const wrapper = mountToolCallsMessage({
+                toolCallsTruncated: true,
+                toolCallsTotal: 250,
+            });
+
+            const notice = wrapper.get('[data-testid="tool-calls-truncation-notice"]');
+            expect(notice.text()).toContain(
+                i18n.global.t("chat.toolCallsTruncationNotice", { visible: 1, total: 250 }),
+            );
+            // 既有 toolCalls 渲染不被破坏。
+            expect(wrapper.findAll('[data-testid="tool-card"]')).toHaveLength(1);
+            wrapper.unmount();
+        });
+
+        it("renders no notice when the snapshot is not truncated (flag absent or false)", () => {
+            const absent = mountToolCallsMessage();
+            expect(absent.find('[data-testid="tool-calls-truncation-notice"]').exists()).toBe(
+                false,
+            );
+            absent.unmount();
+
+            const explicitFalse = mountToolCallsMessage({ toolCallsTruncated: false });
+            expect(
+                explicitFalse.find('[data-testid="tool-calls-truncation-notice"]').exists(),
+            ).toBe(false);
+            explicitFalse.unmount();
+        });
+
+        it("expands the notice to disclose that earlier calls are not persisted", async () => {
+            const wrapper = mountToolCallsMessage({
+                toolCallsTruncated: true,
+                toolCallsTotal: 250,
+                runId: "run-truncated",
+            });
+
+            const toggle = wrapper.get('[data-testid="tool-calls-truncation-toggle"]');
+            expect(toggle.attributes("aria-expanded")).toBe("false");
+            expect(wrapper.find('[data-testid="tool-calls-truncation-body"]').exists()).toBe(false);
+
+            await toggle.trigger("click");
+
+            expect(
+                wrapper
+                    .get('[data-testid="tool-calls-truncation-toggle"]')
+                    .attributes("aria-expanded"),
+            ).toBe("true");
+            const body = wrapper.get('[data-testid="tool-calls-truncation-body"]');
+            expect(body.text()).toContain(i18n.global.t("chat.toolCallsTruncationDetail"));
+            expect(body.text()).toContain("run-truncated");
+            wrapper.unmount();
+        });
     });
 
     it("carries the actor identity on the message identity dot (DOM assertion surface)", () => {
@@ -648,6 +706,29 @@ describe("MessageItem actor badges (PLAN-0659 T1.2)", () => {
         );
         expect(wrapper.find('[data-testid="process-row-actor"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="message-responder"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("passes the same actor down to tool cards", () => {
+        const wrapper = mountActorMessage(
+            {
+                participantId: "part-agent-alpha",
+                toolCalls: [
+                    {
+                        id: "tc-1",
+                        name: "read_file",
+                        arguments: "{}",
+                        status: "completed",
+                        startedAt: "2026-11-04T00:00:01.000Z",
+                    },
+                ],
+            },
+            { responder: participant(), showActor: true },
+        );
+        const badge = wrapper
+            .get('[data-testid="tool-card"]')
+            .get('[data-testid="process-row-actor"]');
+        expect(badge.attributes("data-actor-principal-id")).toBe("part-agent-alpha");
         wrapper.unmount();
     });
 });
