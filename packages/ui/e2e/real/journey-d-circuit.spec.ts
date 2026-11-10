@@ -39,9 +39,12 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
             name: "JourneyCircuitFixture",
         });
+        // task-174（PLAN-0647）：getRootBranchId 走 GET /sessions/{id}/branches（带 ws 上下文），
+        // 会话必须落在 ctx.workspaceId ⇒ 显式路径形态。
         const sessionId = await createSessionWithPrincipal(request, auth, {
             principalId,
             title: "circuit-host",
+            workspaceId: auth.workspaceId,
         });
         const branchId = await getRootBranchId(request, sessionId, ctx.headers);
 

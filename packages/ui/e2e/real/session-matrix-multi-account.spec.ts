@@ -235,10 +235,12 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
                 defaultModelName: FAKE_LLM_MODEL,
             },
         );
+        // task-174（PLAN-0647）：后续 participants/messages/branches 都是 workspace 面，
+        // 会话必须落在 owner.workspaceId ⇒ 显式路径形态。
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: owner.token, workspaceId: owner.workspaceId },
-            { principalId, title: `r1-matrix-${NONCE}` },
+            { principalId, title: `r1-matrix-${NONCE}`, workspaceId: owner.workspaceId },
         );
         rootBranchId = await getRootBranchId(request, sessionId, owner.headers);
 
