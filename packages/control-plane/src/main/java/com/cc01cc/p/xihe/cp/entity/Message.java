@@ -55,6 +55,15 @@ public class Message {
     @Column(name = "attachments", columnDefinition = "TEXT")
     private String attachments;
 
+    /**
+     * PLAN-0761 (BL-555): the reasoning text of this assistant Message, stored verbatim
+     * (the Agent already redacted it through {@code StreamingSecretRedactor} before it left
+     * the process). Nullable and never backfilled: rows written before V150 have no reasoning
+     * record and the read side omits the field, exactly like {@link #toolCalls}.
+     */
+    @Column(name = "reasoning", columnDefinition = "TEXT")
+    private String reasoning;
+
     /** PLAN-0572 D1=A: bounded tool-call snapshot for this assistant Message (JSONB). */
     @Column(name = "tool_calls", columnDefinition = "jsonb")
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
@@ -124,6 +133,10 @@ public class Message {
 
     public String getAttachments() { return attachments; }
     public void setAttachments(String attachments) { this.attachments = attachments; }
+
+    /** PLAN-0761 (BL-555): reasoning text of this Message; {@code null} = no record. */
+    public String getReasoning() { return reasoning; }
+    public void setReasoning(String reasoning) { this.reasoning = reasoning; }
 
     public String getToolCalls() { return toolCalls; }
     public void setToolCalls(String toolCalls) { this.toolCalls = toolCalls; }

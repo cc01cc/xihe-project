@@ -334,6 +334,9 @@ public class MessageReadService {
         }
         putToolCalls(dto, message);
         putDelivery(dto, message);
+        // PLAN-0761 (BL-555): reasoning is a plain string, so this is a plain projection — omitted
+        // (not null) for pre-V150 rows, the same "absent ⇒ no thinking block" contract as toolCalls.
+        putReasoning(dto, message);
         if (message.getRunId() != null) {
             ChatRun run = chatRunRepository.findById(java.util.UUID.fromString(message.getRunId())).orElse(null);
             // Forked Message rows may keep the parent Run id as nullable lineage.
@@ -382,6 +385,19 @@ public class MessageReadService {
                             + "errorType={}", message.getId(), e.getClass().getSimpleName());
         }
     }
+    /**
+     * PLAN-0761 (BL-555): expose the durable reasoning text of an assistant Message. Plain string,
+     * no parsing and no size gate — the Agent already bounded it by the model's own output, and the
+     * same text was relayed live over SSE. Omitted for Messages written before V150.
+     */
+    private void putReasoning(Map<String, Object> dto, Message message) {
+        String reasoning = message.getReasoning();
+        if (reasoning == null || reasoning.isBlank()) {
+            return;
+        }
+        dto.put("reasoning", reasoning);
+    }
+
     /** PLAN-0572: expose the Message's bounded snapshot; parse failures never break the listing. */
     private void putToolCalls(Map<String, Object> dto, Message message) {
         String snapshotJson = message.getToolCalls();

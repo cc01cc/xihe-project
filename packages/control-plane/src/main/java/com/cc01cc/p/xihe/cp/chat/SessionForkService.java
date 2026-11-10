@@ -343,6 +343,9 @@ public class SessionForkService {
             childMessage.setBranchId(childRootBranchId);
             // PLAN-0572 D1=A: the tool-call snapshot travels with its message.
             childMessage.setToolCalls(sourceMessage.getToolCalls());
+            // PLAN-0761 (BL-555): reasoning travels with the message too — a forked conversation
+            // must not silently lose the thinking blocks its parent rendered.
+            childMessage.setReasoning(sourceMessage.getReasoning());
             // PLAN-0669 D4: attribution is deliberately NOT copied. The child has its own roster
             // (fork never copies session_participants), so a parent participant id would dangle —
             // and would violate the V121 FK. The child rows start with NULL (no badge) instead.

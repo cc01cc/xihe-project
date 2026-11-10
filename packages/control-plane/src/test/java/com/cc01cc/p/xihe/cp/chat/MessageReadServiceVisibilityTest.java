@@ -76,4 +76,29 @@ class MessageReadServiceVisibilityTest {
         assertEquals("please answer", listed.get(0).get("content"));
         assertTrue(listed.stream().noneMatch(row -> String.valueOf(row.get("content")).contains("mention wake")));
     }
+
+    /**
+     * PLAN-0761 (BL-555): the reasoning field projects onto the public message view and is
+     * omitted (not null) for Messages written before V150 — the same "absent ⇒ no thinking
+     * block" contract the UI already has for toolCalls.
+     */
+    @Test
+    void reasoning_projects_only_when_present() {
+        Message withReasoning = message(MessageRole.ASSISTANT, "answer", Message.VISIBILITY_USER);
+        withReasoning.setReasoning("thinking about the answer");
+        Message withoutReasoning = message(MessageRole.ASSISTANT, "older answer", Message.VISIBILITY_USER);
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
+                .thenReturn(List.of(withReasoning, withoutReasoning));
+
+        BranchPathService.BranchVisibility visibility =
+                new BranchPathService.BranchVisibility(BRANCH_ID, Map.of());
+
+        List<Map<String, Object>> listed =
+                service.listVisibleMessages(SESSION_ID, WORKSPACE_ID, BRANCH_ID, visibility);
+
+        assertEquals(2, listed.size());
+        assertEquals("thinking about the answer", listed.get(0).get("reasoning"));
+        assertTrue(!listed.get(1).containsKey("reasoning"),
+                "pre-V150 rows must omit reasoning instead of sending null");
+    }
 }

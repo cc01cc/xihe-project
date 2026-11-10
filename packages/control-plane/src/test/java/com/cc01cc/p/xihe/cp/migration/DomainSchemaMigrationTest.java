@@ -504,6 +504,28 @@ class DomainSchemaMigrationTest {
                 "approval grant consumption column must exist");
     }
 
+    /**
+     * PLAN-0761 (BL-555): {@code messages.reasoning} exists, is TEXT, and stays nullable —
+     * pre-V150 rows carry no reasoning record and the read side omits the field rather than
+     * inventing an empty thinking block.
+     */
+    @Test
+    void v150ReasoningColumnExistsNullableAndUnbackfilled() throws SQLException {
+        assertEquals("YES", scalarString(
+                "SELECT is_nullable FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'messages' "
+                        + "AND column_name = 'reasoning'"),
+                "messages.reasoning must stay nullable (no backfill by D-215)");
+        assertEquals("text", scalarString(
+                "SELECT data_type FROM information_schema.columns "
+                        + "WHERE table_schema = 'public' AND table_name = 'messages' "
+                        + "AND column_name = 'reasoning'"),
+                "messages.reasoning is a plain TEXT column, not JSONB");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '150' AND success = true"),
+                "V150 must be recorded as applied");
+    }
+
 
 
 

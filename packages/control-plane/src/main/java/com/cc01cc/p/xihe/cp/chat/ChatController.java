@@ -1799,13 +1799,15 @@ public class ChatController {
                 }
 
                 String assistantContent = relayResult.assistantContent();
-                logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={}",
-                        requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length());
+                String reasoningContent = relayResult.reasoningContent();
+                logger.info("[LIFECYCLE] service=cp event=chat_run_finished requestId={} sessionId={} runId={} assistantChars={} reasoningChars={}",
+                        requestId, sessionId, runId, assistantContent == null ? 0 : assistantContent.length(),
+                        reasoningContent == null ? 0 : reasoningContent.length());
 
                 // PLAN-0572 D5: persist a tool-only terminal turn as well; the
-                // service returns null only when there is neither text nor tools.
+                // service returns null only when there is neither text nor tools nor reasoning.
                 String assistantMessageId = chatSubmissionService.persistAssistantResponse(
-                        sessionId, runId, assistantContent);
+                        sessionId, runId, assistantContent, reasoningContent);
                 if (assistantMessageId != null) {
                     logger.info("[LIFECYCLE] service=cp event=chat_assistant_persisted requestId={} sessionId={} runId={} messageId={} assistantChars={}",
                             requestId, sessionId, runId, assistantMessageId,
@@ -2420,6 +2422,9 @@ public class ChatController {
                                                AtomicBoolean approvalInFlight,
                                                boolean suppressOverflowError) throws Exception {
         StringBuilder assistantContent = new StringBuilder();
+        // PLAN-0761 (BL-555): reasoning is accumulated from the SAME events that are relayed live
+        // (the Agent already redacted them), so the persisted text is exactly what the UI showed.
+        StringBuilder reasoningContent = new StringBuilder();
         List<RelayedTerminalEvent> terminalEvents = new ArrayList<>();
         Map<String, Integer> eventCounts = new LinkedHashMap<>();
         // PLAN-294 decision #13: real/estimated token totals from the agent's
@@ -2462,7 +2467,7 @@ public class ChatController {
                         transitionRun(runId, List.of("running", "awaiting_approval"), "streaming", null, null, null, 0, 0);
                         streamingMarked = true;
                     }
-                    collectEventContent(assistantContent, eventName, data.toString());
+                    collectEventContent(assistantContent, reasoningContent, eventName, data.toString());
                     if ("usage".equals(eventName)) {
                         // PLAN-0464 T1.4: cost mapping still happens here so the
                         // session-header usage line is relayed before `done`
@@ -2552,7 +2557,7 @@ public class ChatController {
                 transitionRun(runId, List.of("running", "awaiting_approval"), "streaming", null, null, null, 0, 0);
                 streamingMarked = true;
             }
-            collectEventContent(assistantContent, eventName, data.toString());
+            collectEventContent(assistantContent, reasoningContent, eventName, data.toString());
             if ("error".equals(eventName)) {
                 Map<?, ?> errorPayload = asMap(parsePayload(eventName, data.toString()));
                 errorCode = stringValue(errorPayload, "code");
@@ -2607,7 +2612,7 @@ public class ChatController {
                 ? intValue(usageData.get("totalTokens"), eventCounts.getOrDefault("token", 0))
                 : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
-                assistantContent.toString(), outcome, errorCode, budgetDimension,
+                assistantContent.toString(), reasoningContent.toString(), outcome, errorCode, budgetDimension,
                 usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope, contextTruncation);
     }
 
@@ -2750,6 +2755,8 @@ public class ChatController {
 
     private record StreamRelayResult(
             String assistantContent,
+            /** PLAN-0761 (BL-555): the Run's reasoning text; empty when the Run produced none. */
+            String reasoningContent,
             String outcome,
             String errorCode,
             /** PLAN-0492: exhausted run-budget dimension when errorCode=RUN_BUDGET_EXHAUSTED. */
@@ -2783,7 +2790,19 @@ public class ChatController {
                 requestId, sessionId, runId, eventIndex, eventName, payloadLength);
     }
 
-    private void collectEventContent(StringBuilder builder, String eventName, String payload) {
+    /**
+     * PLAN-0761 (BL-555): accumulates the Run's assistant text and its reasoning from the SAME
+     * events that are relayed to the browser, so the persisted text is byte-for-byte what the UI
+     * rendered live (the Agent already redacted reasoning through {@code StreamingSecretRedactor}).
+     *
+     * <p>PLAN-0761 keeps the two accumulators apart on purpose: {@code text} stays the assistant
+     * reply (the Run's {@code assistantChars} and the wake-chain mention scan read it), while
+     * {@code reasoning} is the thinking block that used to be dropped here (pre-PLAN-0761 the
+     * {@code hint=reasoning} branch returned early for both). Splitting by the event's own hint
+     * keeps the rule single-sourced: one pass, two destinations, no second parse.
+     */
+    private void collectEventContent(StringBuilder text, StringBuilder reasoning,
+                                    String eventName, String payload) {
         if (payload == null || payload.isBlank()) {
             return;
         }
@@ -2794,28 +2813,25 @@ public class ChatController {
         }
         Object parsed = parsePayload(eventName, payload);
         if (parsed instanceof Map<?, ?> map) {
-            // Reasoning tokens are separate parts (hint=reasoning), not final assistant text.
-            Object hint = map.get("hint");
-            if ("reasoning".equals(hint)) {
-                return;
-            }
+            boolean reasoningEvent = "reasoning".equals(map.get("hint"));
             Object content = map.get("content");
+            StringBuilder target = reasoningEvent ? reasoning : text;
             if (content instanceof String s && !s.isBlank()) {
-                builder.append(s);
+                target.append(s);
             } else if (content instanceof java.util.List<?> list) {
                 for (Object item : list) {
                     if (item instanceof String str) {
-                        builder.append(str);
+                        target.append(str);
                     } else if (item instanceof Map<?, ?> block) {
-                        Object text = block.get("text");
-                        if (text instanceof String t && !t.isBlank()) {
-                            builder.append(t);
+                        Object textBlock = block.get("text");
+                        if (textBlock instanceof String t && !t.isBlank()) {
+                            target.append(t);
                         }
                     }
                 }
             }
         } else if (parsed instanceof String s) {
-            builder.append(s);
+            text.append(s);
         }
     }
 

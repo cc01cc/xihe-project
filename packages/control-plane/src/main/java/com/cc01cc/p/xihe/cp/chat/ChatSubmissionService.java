@@ -303,17 +303,25 @@ public class ChatSubmissionService {
      * <p>PLAN-0669 M1/D2 (V121): this is the single assistant-write point, so it also stamps the
      * durable actor attribution ({@code messages.participant_id}) — one resolution per Message, no
      * per-dispatch-site duplication.</p>
+     *
+     * <p>PLAN-0761 (BL-555): the same point writes the Run's reasoning text. A reasoning-only turn
+     * (a model that thought without emitting final text) is persisted too — the null-check below
+     * treats reasoning as renderable content in its own right, while {@code assistantChars} on the
+     * Run keeps counting text only (reasoning is not part of the assistant reply length).</p>
      */
-    public String persistAssistantResponse(String sessionId, String runId, String assistantContent) {
+    public String persistAssistantResponse(String sessionId, String runId, String assistantContent,
+                                           String reasoningContent) {
         // Preserve the existing repository commit boundaries by keeping this method non-transactional.
         String toolCalls = toolCallSnapshotService.snapshotJson(sessionId, runId);
         String content = assistantContent == null ? "" : assistantContent;
-        if (content.isBlank() && toolCalls == null) {
+        String reasoning = reasoningContent == null || reasoningContent.isBlank() ? null : reasoningContent;
+        if (content.isBlank() && toolCalls == null && reasoning == null) {
             return null;
         }
         Message assistantMessage = new Message(sessionId, MessageRole.ASSISTANT, content);
         assistantMessage.setRunId(runId);
         assistantMessage.setToolCalls(toolCalls);
+        assistantMessage.setReasoning(reasoning);
         var ownerRun = chatRunRepository.findById(UUID.fromString(runId));
         ownerRun.ifPresent(run -> assistantMessage.setBranchId(run.getBranchId()));
         assistantMessage.setParticipantId(resolveResponderParticipantId(sessionId, ownerRun.orElse(null)));

@@ -1,4 +1,4 @@
-import type { JobSummary, ToolCall } from "../../../../types";
+import type { JobSummary, MessagePart, ToolCall } from "../../../../types";
 
 /**
  * PLAN-0344 T1.4 / PLAN-0465 T2.2：messages DTO 的 `jobSummary` → tool 卡片。
@@ -10,6 +10,21 @@ export function jobStatusToToolStatus(status: string): ToolCall["status"] {
     if (status === "running") return "running";
     if (status === "succeeded") return "completed";
     return "failed";
+}
+
+/**
+ * PLAN-0761 (BL-555)：历史 reasoning 字段 → 消息 parts 的**唯一**装配点。
+ *
+ * reasoning 是 assistant Message 上的独立 durable 字段（V150），正文里没有对应文本，
+ * 所以刷新后必须由它重建 thinking part；顺序与直播一致（思考在前、正文在后）。
+ * 缺失/空白（V150 之前的行）不加 part —— 保持「无 reasoning ⇒ 无思考块」单一路径。
+ */
+export function mergeHistoryReasoning(
+    parts: MessagePart[],
+    reasoning?: string | null,
+): MessagePart[] {
+    if (!reasoning?.trim()) return parts;
+    return [{ type: "reasoning", content: reasoning }, ...parts];
 }
 
 export interface HistoryToolCall {
