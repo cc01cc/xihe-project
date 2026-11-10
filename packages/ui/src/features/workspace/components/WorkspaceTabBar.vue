@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { VueDraggable } from "vue-draggable-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
@@ -82,9 +83,11 @@ const tabs = computed<RouteTab[]>(() => {
         "scheduled-tasks": t("workspace.scheduledTasks.nav"),
         settings: t("workspace.settingsTitle"),
     };
-    // Keep the design order regardless of the order they were opened in.
-    for (const id of WORKSPACE_TAB_IDS) {
-        if (!openTabs.value.includes(id)) continue;
+    // PLAN-0753 T5: render the open set in the persisted user order (the chat
+    // tab stays first — it is the fallback and is not closable). Unknown ids are
+    // dropped so a corrupt payload can never render a dead tab.
+    for (const id of openTabs.value) {
+        if (!WORKSPACE_TAB_IDS.includes(id)) continue;
         list.push({
             id,
             label: labels[id],
@@ -127,8 +130,12 @@ function currentTabId(): WorkspaceTabId | null {
  */
 function persistOpenTabs(next: WorkspaceTabId[]): void {
     const defaults = defaultOpenTabs();
+    // PLAN-0753 T5: order is now user-owned, so "default" means the default
+    // **sequence** — a permutation of the defaults (e.g. after a drag/keyboard
+    // move) is a real choice and must be persisted, or the next mount silently
+    // reverts the user's order.
     const isDefaultSet =
-        next.length === defaults.length && defaults.every((id) => next.includes(id));
+        next.length === defaults.length && defaults.every((id, index) => next[index] === id);
     openTabs.value = next;
     if (!props.workspaceId || isDefaultSet) return;
     // Only the tab slice is written: re-writing the whole layout from a
@@ -203,6 +210,47 @@ function closeTab(tab: RouteTab): void {
     // Closing the active tab falls back to the chat tab via a normal navigation.
     if (activeId.value === tab.id) void router.push(chatPath.value);
 }
+
+/**
+ * PLAN-0753 T5 (M5): the tab order is now user-owned. `tabs` renders the open
+ * set in the persisted order (the chat tab stays first because it is the fallback
+ * and is not closable); `VueDraggable` owns the drag, and this handler is the
+ * **keyboard-equivalent path** — ArrowLeft/ArrowRight on a focused tab moves it
+ * one slot (Shift for the start/end), persists the new order and keeps focus.
+ *
+ * The drag itself reorders the DOM via Sortable; `onUpdate` is wired to the
+ * same `persistOpenTabs` so the store and the DOM never diverge (PLAN-0753
+ * "拖拽必须有键盘替代：聚焦 + 方向键移动").
+ */
+function moveTab(id: "chat" | WorkspaceTabId, delta: number): void {
+    const list = tabs.value;
+    const from = list.findIndex((tab) => tab.id === id);
+    if (from < 0) return;
+    const to = Math.min(list.length - 1, Math.max(0, from + delta));
+    if (to === from) return;
+    const nextIds = list.map((tab) => tab.id);
+    nextIds.splice(to, 0, nextIds.splice(from, 1)[0]);
+    // Persist only the open (non-chat) slice: the chat tab is always first.
+    persistOpenTabs(nextIds.slice(1) as WorkspaceTabId[]);
+}
+
+function onDragUpdate(event: { oldIndex?: number; newIndex?: number }): void {
+    const { oldIndex, newIndex } = event;
+    if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
+    const list = tabs.value;
+    if (oldIndex >= list.length || newIndex >= list.length) return;
+    const nextIds = list.map((tab) => tab.id);
+    nextIds.splice(newIndex, 0, nextIds.splice(oldIndex, 1)[0]);
+    persistOpenTabs(nextIds.slice(1) as WorkspaceTabId[]);
+}
+
+function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    // Only move when the tab bar is horizontal; the chat tab never moves.
+    if (tab.id === "chat") return;
+    event.preventDefault();
+    moveTab(tab.id, event.key === "ArrowLeft" ? -1 : 1);
+}
 </script>
 
 <template>
@@ -213,39 +261,53 @@ function closeTab(tab: RouteTab): void {
     >
         <Tabs v-model="activeTab" class="min-w-0 flex-1">
             <TabsList variant="line" class="p-0">
-                <div
-                    v-for="tab in tabs"
-                    :key="tab.id"
-                    class="group inline-flex shrink-0 items-center rounded-md"
-                    :class="
-                        tab.id === activeId
-                            ? 'bg-brand/10 text-brand'
-                            : 'text-muted-foreground hover:bg-accent'
-                    "
+                <!--
+                  PLAN-0753 T5: `VueDraggable` wraps the tab rows and owns the mouse
+                  drag (Sortable). It renders a plain div, so the reka TabsList
+                  markup/aria is unchanged; the drag handle is the whole tab row
+                  and onDragUpdate mirrors the DOM reorder into the store.
+                -->
+                <VueDraggable
+                    v-model="openTabs"
+                    :animation="150"
+                    class="contents"
+                    @update="onDragUpdate"
                 >
-                    <TabsTrigger
-                        :value="tab.id"
-                        :data-testid="tab.testid"
-                        :data-tab-id="tab.id"
-                        :title="tab.label"
-                        class="h-auto max-w-52 flex-none rounded-md px-2 py-1 text-xs after:hidden data-active:bg-transparent data-active:text-inherit dark:data-active:border-transparent dark:data-active:bg-transparent"
-                        :class="tab.id === activeId ? 'font-medium' : ''"
-                        @click="selectTab(tab)"
+                    <div
+                        v-for="tab in tabs"
+                        :key="tab.id"
+                        class="group inline-flex shrink-0 items-center rounded-md"
+                        :class="
+                            tab.id === activeId
+                                ? 'bg-brand/10 text-brand'
+                                : 'text-muted-foreground hover:bg-accent'
+                        "
                     >
-                        <span class="truncate">{{ tab.label }}</span>
-                    </TabsTrigger>
-                    <button
-                        v-if="tab.closable"
-                        type="button"
-                        :data-testid="`workspace-tab-close-${tab.id}`"
-                        :aria-label="t('workspace.tabClose')"
-                        :title="t('workspace.tabClose')"
-                        class="mr-1 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        @click.stop="closeTab(tab)"
-                    >
-                        <X class="size-3" aria-hidden="true" />
-                    </button>
-                </div>
+                        <TabsTrigger
+                            :value="tab.id"
+                            :data-testid="tab.testid"
+                            :data-tab-id="tab.id"
+                            :title="tab.label"
+                            class="h-auto max-w-52 flex-none rounded-md px-2 py-1 text-xs after:hidden data-active:bg-transparent data-active:text-inherit dark:data-active:border-transparent dark:data-active:bg-transparent"
+                            :class="tab.id === activeId ? 'font-medium' : ''"
+                            @click="selectTab(tab)"
+                            @keydown="onTabKeydown($event, tab)"
+                        >
+                            <span class="truncate">{{ tab.label }}</span>
+                        </TabsTrigger>
+                        <button
+                            v-if="tab.closable"
+                            type="button"
+                            :data-testid="`workspace-tab-close-${tab.id}`"
+                            :aria-label="t('workspace.tabClose')"
+                            :title="t('workspace.tabClose')"
+                            class="mr-1 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click.stop="closeTab(tab)"
+                        >
+                            <X class="size-3" aria-hidden="true" />
+                        </button>
+                    </div>
+                </VueDraggable>
             </TabsList>
         </Tabs>
     </nav>
