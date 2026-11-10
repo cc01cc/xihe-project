@@ -115,13 +115,21 @@ describe("SettingsSidebar", () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
-        const links = wrapper.findAll('[data-testid="settings-nav-domain"]');
+        const links = wrapper.findAll('[data-testid^="settings-nav-domain-"]');
         expect(links).toHaveLength(21);
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(2);
         // 未挂 router 插件时 router-link 是未解析元素，to 以原生属性渲染（组件产出的值仍可断言）
         expect(links[0]!.attributes("to")).toBe("/settings/instance/llm-provider");
         expect(links[12]!.attributes("to")).toBe("/settings/user/llm-provider");
         expect(links[0]!.classes().join(" ")).toContain("bg-muted");
+
+        // task-172：per-domain id 必须带层 —— 12 实例域与 9 用户域有 9 个同名（llm-provider /
+        // embedding / rag …），不带层会撞 id（getByTestId 在 strict mode 直接抛）。
+        expect(links[0]!.attributes("data-testid")).toBe(
+            "settings-nav-domain-instance-llm-provider",
+        );
+        expect(links[12]!.attributes("data-testid")).toBe("settings-nav-domain-user-llm-provider");
+        expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(21);
 
         // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
         // security(config-locks,roles,audit)。
@@ -146,7 +154,7 @@ describe("SettingsSidebar", () => {
         state.capability = false;
         const wrapper = mountSidebar("user", "rag");
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
-        expect(wrapper.findAll('[data-testid="settings-nav-domain"]')).toHaveLength(9);
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(9);
         expect(wrapper.text()).not.toContain("配置锁定");
         // 实例块整体不渲染 ⇒ 运维/安全项也一个都不在（不是靠文案判断）。
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);

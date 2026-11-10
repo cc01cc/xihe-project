@@ -192,7 +192,8 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
             timeout: ACTION_TIMEOUT_MS,
         });
-        await expect(page.locator('a[href="/settings/user/llm-provider"]').first()).toHaveText(
+        // task-172：左栏域链接有层限定 per-domain testid，直接按语义取用户层 llm-provider。
+        await expect(page.getByTestId("settings-nav-domain-user-llm-provider")).toHaveText(
             "LLM Provider",
         );
         await page.screenshot({
