@@ -66,8 +66,74 @@ export async function pushContextEvent(page: Page, name: string, data: unknown):
  * 就会记 `workspace_sse_invalid_json` —— 那是 task-101 的产品面，不该由夹具制造。
  * 因此这条流在第一个事件之前**一个字节都不发**。
  */
-export async function installWorkspaceEventStream(page: Page): Promise<void> {
-    await page.addInitScript(() => {
+/**
+ * task-101 ② 的测量场景（`XH_FIXTURE_SSE_SCENARIO`）。
+ *
+ * 存在的理由：R1 的判据是「**30 s 观测窗内连接数**」，而现成的 spec 只活 1.8–2.8 s ——
+ * 没有固定分母就没法说「30 s 内多少次」。所以需要一个能被固定在某个场景里、
+ * 反复以同样方式关流的夹具。
+ *
+ * 关键实现细节：**用 `controller.close()`（服务器正常结束），不是 `cancel()`** ——
+ * 前者让响应体正常结束 ⇒ 库 `getBytes` resolve ⇒ 我们的 `onclose`（`reason: clean_close`）；
+ * 后者只是客户端放弃读，走的不是同一条分支。造场景要造在正确的分支上。
+ */
+export type WorkspaceStreamScenario =
+    | { kind: "hold" }
+    | { kind: "closeSoon" }
+    | { kind: "eventThenClose"; ms: number }
+    | { kind: "closeAfter"; ms: number };
+
+/** `event-then-close` 场景里「先发一条事件」与「关流」之间的间隔。 */
+const EVENT_THEN_CLOSE_MS = 200;
+
+let warnedScenario = false;
+
+/**
+ * 解析 `XH_FIXTURE_SSE_SCENARIO`。
+ *
+ * **未知值抛错，不静默退回 hold** —— 一个拼错的场景名如果悄悄跑成 hold，
+ * 量出来的就是「1 次连接」，而那个数**看起来最正常**，最容易骗过自己。
+ */
+export function resolveWorkspaceStreamScenario(
+    raw: string | undefined = process.env.XH_FIXTURE_SSE_SCENARIO,
+): WorkspaceStreamScenario {
+    if (raw === undefined || raw === "" || raw === "hold") return { kind: "hold" };
+    if (raw === "close-soon") return { kind: "closeSoon" };
+    if (raw === "event-then-close") return { kind: "eventThenClose", ms: EVENT_THEN_CLOSE_MS };
+    const match = /^close-after:(\d+)$/.exec(raw);
+    if (match) return { kind: "closeAfter", ms: Number(match[1]) };
+    throw new Error(
+        `[fixture] 未知 XH_FIXTURE_SSE_SCENARIO=${raw}（可选：hold | close-soon | event-then-close | close-after:<ms>）`,
+    );
+}
+
+/** 给日志/断言用的场景名。 */
+export function describeWorkspaceStreamScenario(scenario: WorkspaceStreamScenario): string {
+    switch (scenario.kind) {
+        case "hold":
+            return "hold";
+        case "closeSoon":
+            return "close-soon";
+        case "eventThenClose":
+            return `event-then-close(${scenario.ms}ms)`;
+        case "closeAfter":
+            return `close-after:${scenario.ms}`;
+    }
+}
+
+export async function installWorkspaceEventStream(
+    page: Page,
+    scenarioArg?: WorkspaceStreamScenario,
+): Promise<void> {
+    const scenario = scenarioArg ?? resolveWorkspaceStreamScenario();
+    if (scenario.kind !== "hold" && !warnedScenario) {
+        warnedScenario = true;
+        // 让「这批跑在关流场景上」这件事自己喊出来，而不是留在 shell 历史里
+        console.warn(
+            `[fixture] 工作区事件流场景 = ${describeWorkspaceStreamScenario(scenario)} ⇒ 每条连接按该场景主动关流（测量/重连用例专用）`,
+        );
+    }
+    await page.addInitScript((scenarioArg: WorkspaceStreamScenario) => {
         let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
         const encode = (value: string) => new TextEncoder().encode(value);
         (window as unknown as Record<string, unknown>).__pushWorkspaceEvent = (
@@ -86,9 +152,35 @@ export async function installWorkspaceEventStream(page: Page): Promise<void> {
                       ? input.url
                       : String(input);
             if (/\/api\/v1\/workspaces\/[^/]+\/events(\?|$)/.test(url)) {
+                // 服务器侧「正常结束响应体」⇒ 客户端走 onclose(clean_close)。
+                // 用 cancel() 不是同一条分支：那只是客户端放弃读。
+                const closeStream = () => {
+                    controller?.close();
+                    controller = null;
+                };
                 const body = new ReadableStream<Uint8Array>({
                     start(next) {
                         controller = next;
+                        if (scenarioArg.kind === "closeSoon") {
+                            queueMicrotask(closeStream);
+                        } else if (scenarioArg.kind === "eventThenClose") {
+                            setTimeout(() => {
+                                controller?.enqueue(
+                                    encode(
+                                        "event: heartbeat\ndata: " +
+                                            JSON.stringify({
+                                                workspaceId: "workspace-1",
+                                                sequence: 1,
+                                                type: "heartbeat",
+                                            }) +
+                                            "\n\n",
+                                    ),
+                                );
+                                closeStream();
+                            }, scenarioArg.ms);
+                        } else if (scenarioArg.kind === "closeAfter") {
+                            setTimeout(closeStream, scenarioArg.ms);
+                        }
                     },
                     cancel() {
                         controller = null;
@@ -101,7 +193,7 @@ export async function installWorkspaceEventStream(page: Page): Promise<void> {
             }
             return originalFetch(input, init);
         };
-    });
+    }, scenario);
 }
 
 /** 往页面推一条工作区事件（`event: <name>` + JSON data）。预留钩子，当前没有用例依赖它。 */

@@ -5,7 +5,7 @@ import {
     stubSessionProjectionsForAllSessions,
     type SessionProjectionOptions,
 } from "./session-projections";
-import { installWorkspaceEventStream } from "./context-events";
+import { installWorkspaceEventStream, type WorkspaceStreamScenario } from "./context-events";
 
 export interface MockSSEStream {
     tokens: string[];
@@ -67,6 +67,13 @@ export interface MockAuthOptions {
      *   有限体（含它的重连 churn），属**已知代价**，不是回退。
      */
     workspaceEvents?: "stream" | "off";
+    /**
+     * task-101：显式指定工作区事件流的**关流场景**（见 `WorkspaceStreamScenario`）。
+     *
+     * 为什么要能显式传：环境变量 `XH_FIXTURE_SSE_SCENARIO` 只在测量时设，忘了设的用例会
+     * 悄悄跑在 `hold`（永不关流）上 —— 那种绿不携带信息。重连退避用例必须把场景**写进代码**。
+     */
+    workspaceEventsScenario?: WorkspaceStreamScenario;
 }
 
 export interface MockSessionRecord {
@@ -165,7 +172,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         options.workspaceEvents ??
         (process.env.XH_FIXTURE_WORKSPACE_EVENTS === "off" ? "off" : "stream");
     if (workspaceEvents === "stream") {
-        await installWorkspaceEventStream(page);
+        await installWorkspaceEventStream(page, options.workspaceEventsScenario);
     }
     const branchesBySession = new Map<string, MockBranch[]>();
     const branchResponses = new Map<
