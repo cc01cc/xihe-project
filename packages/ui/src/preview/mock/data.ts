@@ -15,8 +15,8 @@ import {
     UserCog,
     Wrench,
 } from "@lucide/vue";
-import { fieldCountOf } from "./data/domains-core";
-import { panelBadgeOf } from "./panels/domains-dedicated";
+// 域全集与派生计数只在 `data/all-domains.ts` 一处（此前这里与 S1SettingsAfter.vue 各拼一份 ⇒ 必然漂）
+import { badgeOf } from "./data/all-domains";
 
 /**
  * Mock data for the task-233 sheets.
@@ -98,13 +98,8 @@ function item(id: string, badge?: string, state?: Partial<NavItem>): NavItem {
  * 某域数据还没落地时渲染 **`—`**，**不渲染 0**（0 会被读成「这个域没有配置项」，是另一种假信息）。
  * 每个域的数据落地后，那个数字自动变真 —— 不需要再批量改一遍。
  */
-function badgeOf(domainId: string): string {
-    // 专用面板域量的是**资源条数**（3 个连接 / 3 个模板），不是配置项数 —— 两种量纲不能混
-    const panel = panelBadgeOf(domainId);
-    if (panel) return panel.count + " " + panel.unit;
-    const count = fieldCountOf(domainId);
-    return count > 0 ? String(count) : "—";
-}
+// 徽标文本由 `data/all-domains.ts` 的 `badgeOf()` 派生（面板域量资源条数 / 表单域量配置项数 /
+// 数据未落地渲染 `—`），这里不再保留第二份实现。
 
 export const domains: NavItem[] = [
     item("llm-provider", badgeOf("llm-provider")),

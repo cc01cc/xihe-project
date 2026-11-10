@@ -31,6 +31,11 @@ export interface MockField {
     control: "text" | "number" | "select" | "switch" | "textarea" | "secret";
     value: string | number | boolean;
     options?: string[];
+    /**
+     * [task-81 ⑦-3] 接口枚举原值 → 屏上标签（`published` → 「已发布」）。
+     * 只改显示，不改 `value`/`options`：数据仍按接口原值写，避免为了好看先把数据改坏。
+     */
+    optionLabels?: Record<string, string>;
     /** 由 `writableAtOf()` 推导，不手填。 */
     writableAt: MockLayer[];
     /** 仅当后端不存在该键（gap）或该层 0 项配置（unconfigured）时填。 */

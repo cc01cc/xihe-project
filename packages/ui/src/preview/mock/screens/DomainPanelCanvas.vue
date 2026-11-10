@@ -94,8 +94,9 @@ const detailDomain = computed<MockDomain>(() => ({
                 <span class="mk-caption text-muted-foreground" data-single-line
                     >· {{ panel.rows.length }} {{ panel.unit ?? "条目" }}</span
                 >
+                <!-- [task-81 ⑦-1] 与前面的「· N 个连接」同形：元信息之间必须可见分隔 -->
                 <span class="mk-caption text-muted-foreground" data-single-line
-                    >当前层：{{ LAYER_NAME[layer] }}</span
+                    >· 当前层：{{ LAYER_NAME[layer] }}</span
                 >
             </div>
             <p class="mt-1 mk-body text-muted-foreground">{{ domain.summary }}</p>
@@ -139,16 +140,19 @@ const detailDomain = computed<MockDomain>(() => ({
                     <span
                         v-for="column in panel.columns"
                         :key="column.key"
-                        class="truncate mk-body"
+                        class="flex min-w-0 items-center gap-2 mk-body"
                         data-single-line
-                        >{{ row.cells[column.key] ?? "—"
-                        }}<Badge
+                    >
+                        <span class="truncate">{{ row.cells[column.key] ?? "—" }}</span>
+                        <!-- [task-81 ⑦-2] 表格内标记必须与单元格文字拉开，否则读成名称的一部分
+                             （03 屏的「release-notes 后端缺口」） -->
+                        <Badge
                             v-if="row.state === 'gap' && column.key === panel.columns[0].key"
                             variant="outline"
-                            class="ml-1 mk-caption align-middle"
+                            class="shrink-0 mk-caption"
                             >后端缺口</Badge
-                        ></span
-                    >
+                        >
+                    </span>
                 </div>
             </div>
         </div>

@@ -49,9 +49,12 @@ function writableHere(field: { writableAt: MockLayer[]; state?: string }): boole
     if (field.state === "gap") return false;
     return field.writableAt.includes(layer.value);
 }
-function inheritedFrom(field: { writableAt: MockLayer[] }): string | null {
+function inheritedFrom(field: { writableAt: MockLayer[]; state?: string }): string | null {
     // 裁定 ④：层可写性只有 Set 推导时，**不显示「继承自上层」** —— 继承关系本身是猜的
     if (props.domain.layerDerivedOnly) return null;
+    // [task-81 ⑧] gap = 后端根本没有这个键，不是「在别的层有」。少这一行时 explicit-only 域会给
+    // 用户陈述一个不存在的关系（「部分配置继承自上层」），与 writableHere() 的 gap 分支对齐。
+    if (field.state === "gap") return null;
     if (writableHere(field)) return null;
     const here = ORDER.indexOf(layer.value);
     const source = field.writableAt.find((item) => ORDER.indexOf(item) < here);
@@ -81,6 +84,8 @@ const LAYER_LABEL: Record<MockLayer, string> = {
         <div class="flex items-baseline gap-3">
             <h1 class="mk-title" data-single-line>{{ domain.label }}</h1>
             <span class="mk-caption text-muted-foreground" data-single-line>{{ countLabel }}</span>
+            <!-- [task-81 ⑦-1] 元信息之间要有可见分隔，否则读成一句话（「8 个可编辑字段 当前层：用户层」） -->
+            <span class="mk-caption text-muted-foreground/60" aria-hidden="true">·</span>
             <span class="mk-caption text-muted-foreground" data-single-line
                 >当前层：{{ LAYER_LABEL[layer] }}</span
             >
@@ -170,7 +175,7 @@ const LAYER_LABEL: Record<MockLayer, string> = {
                                     v-for="option in field.options ?? []"
                                     :key="option"
                                     :value="option"
-                                    >{{ option }}</SelectItem
+                                    >{{ field.optionLabels?.[option] ?? option }}</SelectItem
                                 >
                             </SelectContent>
                         </Select>

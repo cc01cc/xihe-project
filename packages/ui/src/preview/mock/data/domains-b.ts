@@ -47,6 +47,8 @@ import { writableAtOf, type MockDomain } from "./types";
  */
 const userPreference: MockDomain = {
     id: "user-preference",
+    // [task-81 D-829 ②] 跨层合并域、无 resolveChain 覆盖 ⇒ 层可写性是推导值
+    layerDerivedOnly: true,
     label: "偏好设置",
     summary: "两个键都能存进 CP，但界面外观不读它们：主题与语言真正生效的是浏览器本地存储。",
     layout: "form",
@@ -89,6 +91,8 @@ const userPreference: MockDomain = {
  */
 const logging: MockDomain = {
     id: "logging",
+    // [task-81 D-829 ②] 跨层合并域、无 resolveChain 覆盖 ⇒ 层可写性是推导值
+    layerDerivedOnly: true,
     label: "日志",
     summary:
         "调低级别等于放大日志量。六个键里两个真的会改日志、一个是被覆盖的 legacy、两个没有消费方。",
@@ -178,6 +182,8 @@ const logging: MockDomain = {
  */
 const jobPolicy: MockDomain = {
     id: "job-policy",
+    // [task-81 D-829 ②] 跨层合并域、无 resolveChain 覆盖 ⇒ 层可写性是推导值
+    layerDerivedOnly: true,
     label: "任务策略",
     summary: "后台任务的默认时限与硬上限。上限会钳制默认值和模型传入的值，0 表示未设上限。",
     layout: "form",

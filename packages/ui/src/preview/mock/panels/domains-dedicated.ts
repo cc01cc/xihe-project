@@ -409,6 +409,8 @@ const apiRequestTemplates: MockDomain = {
                             control: "select",
                             value: "published",
                             options: ["draft", "published"],
+                            // [task-81 ⑦-3] 列表里写「已发布」、控件却显示 published ⇒ 同一产品两种写法
+                            optionLabels: { draft: "草稿", published: "已发布" },
                             writableAt: writableAtOf("api-request-templates", "templates[].status"),
                         },
                     ],
@@ -420,15 +422,5 @@ const apiRequestTemplates: MockDomain = {
 
 /** 三个专用面板域（顺序与 12 域清单一致：embedding / agent-templates / api-request-templates）。 */
 export const DEDICATED_DOMAINS: MockDomain[] = [embedding, agentTemplates, apiRequestTemplates];
-
-/**
- * 面板域的徽标值。由 data.ts 的 badgeOf() 调用（dev-3 接线）；
- * 未接线时回 null，调用方照旧渲染「—」（不进位成 0 —— 0 会被读成「这个域没有资源」）。
- */
-export function panelBadgeOf(domainId: string): { count: number; unit: string } | null {
-    const domain = DEDICATED_DOMAINS.find((item) => item.id === domainId);
-    if (!domain?.panel?.unit) return null;
-    return { count: domain.panel.rows.length, unit: domain.panel.unit };
-}
 
 export default DEDICATED_DOMAINS;

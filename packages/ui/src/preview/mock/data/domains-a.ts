@@ -38,6 +38,8 @@ import { writableAtOf, type MockDomain } from "./types";
 
 const agentProfile: MockDomain = {
     id: "agent-profile",
+    // [task-81 D-829 ②] 跨层合并域、无 resolveChain 覆盖 ⇒ 层可写性是推导值
+    layerDerivedOnly: true,
     label: "智能体档案",
     summary: "只有一个真键：Agent 在系统提示里怎么称呼你。它只是称呼，不参与权限判定。",
     layout: "form",
@@ -71,6 +73,8 @@ const agentProfile: MockDomain = {
  */
 const approvalPolicy: MockDomain = {
     id: "approval-policy",
+    // [task-81 D-829 ②] 跨层合并域、无 resolveChain 覆盖 ⇒ 层可写性是推导值
+    layerDerivedOnly: true,
     label: "审批策略",
     summary:
         "两个真键决定「什么操作要人点确认」：模式管命中清单后是问还是放行，清单管哪些动作类算命中。",

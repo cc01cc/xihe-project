@@ -42,9 +42,7 @@ import NavRail from "@/components/sidebar/NavRail.vue";
 import DomainCanvas from "./DomainCanvas.vue";
 import DomainPanelCanvas from "./DomainPanelCanvas.vue";
 import { CORE_DOMAINS } from "../data/domains-core";
-import { domains as AB_A } from "../data/domains-a";
-import { domains as AB_B } from "../data/domains-b";
-import { DEDICATED_DOMAINS } from "../panels/domains-dedicated";
+import { ALL_DOMAINS } from "../data/all-domains";
 import { domains, opsItems, securityItems, userItems } from "../data";
 
 /**
@@ -93,12 +91,8 @@ const domainParam = new URLSearchParams(window.location.search).get("domain");
  * api-request-templates 的表单版，`find()` 先命中它们 ⇒ 面板域取不到，
  * 详情态与列表态 sha 完全相同（画错域的假绿）。
  */
-const TAKEN_IDS = new Set([...DEDICATED_DOMAINS, ...CORE_DOMAINS].map((d) => d.id));
-const ALL_DOMAINS = [
-    ...DEDICATED_DOMAINS,
-    ...CORE_DOMAINS,
-    ...[...AB_A, ...AB_B].filter((d) => !TAKEN_IDS.has(d.id)),
-];
+// 域全集收敛在 `data/all-domains.ts`（task-81）：面板域在前、同 id 时表单域让位。
+// 这里不再自己拼集合 —— 那样会漏掉 agent-runtime（`?domain=agent-runtime` 曾静默落回 rag）。
 const activeDomain = computed(
     () => ALL_DOMAINS.find((domain) => domain.id === domainParam) ?? CORE_DOMAINS[0],
 );

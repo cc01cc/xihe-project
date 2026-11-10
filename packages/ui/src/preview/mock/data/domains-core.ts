@@ -14,6 +14,8 @@ import { writableAtOf, type MockDomain } from "./types";
 
 const rag: MockDomain = {
     id: "rag",
+    // [task-81 D-829 ②] 层可写性只有 Set 推导、没找到 resolveChain ⇒ 屏上标 [推导]，且不显示「继承自上层」
+    layerDerivedOnly: true,
     label: "RAG 检索",
     summary: "检索参数：分块、召回、重排与相似度阈值。数值越大召回越粗、调用越少。",
     layout: "form",
@@ -70,6 +72,8 @@ const llmProvider: MockDomain = {
     layout: "panel",
     groups: [],
     panel: {
+        // [task-81] 量词由数据给：左栏徽标与标题行都读它；缺省「条目」（12 个徽标里唯一一个「—」的根因）
+        unit: "个提供商",
         addLabel: "新增提供商",
         columns: [
             { key: "name", label: "名称" },
@@ -303,12 +307,5 @@ const contextPolicy: MockDomain = {
     ],
 };
 export const CORE_DOMAINS: MockDomain[] = [rag, llmProvider, contextPolicy];
-
-/** 域 id → 字段条数（左栏 badge 的**唯一来源**，裁定 B）。 */
-export function fieldCountOf(domainId: string): number {
-    const domain = CORE_DOMAINS.find((item) => item.id === domainId);
-    if (!domain) return 0;
-    return domain.groups.reduce((n, group) => n + group.fields.length, 0);
-}
 
 export default CORE_DOMAINS;
