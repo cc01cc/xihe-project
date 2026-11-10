@@ -362,7 +362,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         const body = (await bootstrap.json()) as { initialized?: boolean };
         test.skip(
             body.initialized === true,
-            "S1 未覆盖：本车道栈已 bootstrap（已有账号），观察不到空白实例首屏。复现需 `--first-run=local --bootstrap-user=none` 起独立栈。",
+            "S1 未覆盖：本车道栈已 bootstrap（已有账号），观察不到空白实例首屏。复现需清库后的独立栈（PLAN-0758 后无 first-run 车道）。",
         );
         await page.goto("/", { waitUntil: "load" });
         await expect(page).toHaveURL(/\/onboarding/, { timeout: LONG_TIMEOUT_MS });

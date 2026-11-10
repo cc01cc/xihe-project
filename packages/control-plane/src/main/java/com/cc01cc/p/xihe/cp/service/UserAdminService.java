@@ -403,7 +403,7 @@ public class UserAdminService {
         return candidate;
     }
 
-    /** Same generator shape as the local-mode path ({@code AuthController}), 24 random bytes. */
+    /** 24 random bytes, URL-safe Base64 (same shape as {@code DataSeeder}'s admin password). */
     private static String generateTemporaryPassword() {
         byte[] bytes = new byte[24];
         SECURE_RANDOM.nextBytes(bytes);

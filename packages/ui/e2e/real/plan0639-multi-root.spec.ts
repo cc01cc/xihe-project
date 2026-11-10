@@ -132,7 +132,7 @@ async function getWorkspace(
     return (await r.json()) as WorkspaceView;
 }
 
-/** 真实登录表单（localMode 栈上已证可行，见 goldpath G2-a）。 */
+/** 真实登录表单（标准登录路径）。 */
 async function loginViaForm(page: Page, email: string): Promise<void> {
     await page.goto("/login", { waitUntil: "load" });
     // 当前 LoginView 的账号输入框 name="identifier"（PLAN-0565 ruling #7：email 或 username）。

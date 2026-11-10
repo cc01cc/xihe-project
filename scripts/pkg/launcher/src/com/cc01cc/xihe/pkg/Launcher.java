@@ -1084,10 +1084,9 @@ public final class Launcher {
         cpEnv.put("XIHE_RUNTIME_STATE_DIR", dataRoot.resolve("data").resolve("runtime-state").toString());
         cpEnv.put("XIHE_WORKSPACE_DOCKER_BACKEND", "disabled");
         cpEnv.put("XIHE_CHANNEL_ENABLED", "true");
-        // XIHE_ENV=prod + XIHE_LOCAL_MODE=true is rejected by SecurityDefaultsValidator (local
-        // single-user mode is a dev-only shortcut that disables the login entry). The packaged
-        // product therefore keeps the normal register/login flow; a fresh install boots with no
-        // accounts and the UI's first screen is registration.
+        // PLAN-0758 (D-787): the retired local single-user mode is gone, so the packaged
+        // product keeps the normal register/login flow; a fresh install boots with no accounts
+        // and the UI's first screen is registration.
         services.put("cp", new ServiceSpec(
                 "cp",
                 jre,

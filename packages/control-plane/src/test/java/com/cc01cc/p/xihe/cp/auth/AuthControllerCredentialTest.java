@@ -38,15 +38,8 @@ class AuthControllerCredentialTest {
         when(attempts.tryAcquireBcryptSlot()).thenReturn(true);
         when(resolver.resolve(any())).thenReturn("203.0.113.5");
 
-        LocalModeService localMode = new LocalModeService("127.0.0.1") {
-            @Override
-            public boolean enabled() {
-                return false;
-            }
-        };
-        AuthController controller = new AuthController(authService, workspaceService, localMode,
-                attempts, resolver, mock(com.cc01cc.p.xihe.cp.service.InstanceOwnershipService.class),
-                mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class),
+        AuthController controller = new AuthController(authService, workspaceService,
+                attempts, resolver,
                 mock(com.cc01cc.p.xihe.cp.auth.RegistrationPolicy.class),
                 mock(PlatformTransactionManager.class));
 

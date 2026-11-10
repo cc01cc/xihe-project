@@ -21,71 +21,59 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
-import java.security.SecureRandom;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 
 /**
- * PLAN-0470 #25: the auth entry orchestrates identity and default-Workspace
- * bootstrap. Register/login/refresh resolve or create the default Workspace
- * here (same transaction as user creation on register, so a Workspace failure
- * still rolls the registration back), then hand the resolved workspaceId to
- * {@link AuthService#issueTokens}; Auth itself no longer depends on Workspace.
+ * PLAN-0470 #25: the auth entry orchestrates identity bootstrap. Since
+ * PLAN-0614, register/login/refresh never create a Workspace; they resolve the
+ * account's first active workspace and hand its id to
+ * {@link AuthService#issueTokens} (null when there is none), so Auth itself no
+ * longer depends on Workspace.
  *
- * <p>PLAN-0526 adds the single-user local-mode entry: a loopback-only
- * {@code bootstrap-status}, {@code local-login} and {@code local-password-reset},
- * plus an optional password on register. All of it is gated by
- * {@link LocalModeService}.
+ * <p>PLAN-0758 (D-787) removes the retired single-user local-mode entry
+ * ({@code local-login} / {@code local-password-reset}); {@code bootstrap-status}
+ * stays as the onboarding signal and now reports {@code initialized} only.
  */
 @RestController
     @RequestMapping("/api/v1/auth")
 public class AuthController {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final AuthService authService;
     private final WorkspaceService workspaceService;
-    private final LocalModeService localModeService;
     private final LoginAttemptService loginAttemptService;
     private final ClientIpResolver clientIpResolver;
     private final TransactionTemplate transactionTemplate;
-    private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
-    /**
-     * PLAN-0610 W1c (round-3 P0-2): the local-mode first account must end the transaction holding
-     * the instance-level {@code SUPER_ADMIN} binding (I1/I5), not a plain {@code ADMIN} tier.
-     */
-    private final com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     /** PLAN-0581 §6: bootstrap env switch for public self-registration (default open). */
     private final RegistrationPolicy registrationPolicy;
 
     public AuthController(AuthService authService, WorkspaceService workspaceService,
-                          LocalModeService localModeService,
                           LoginAttemptService loginAttemptService,
                           ClientIpResolver clientIpResolver,
-                          com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
-                          com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService,
                           RegistrationPolicy registrationPolicy,
                           PlatformTransactionManager transactionManager) {
         this.authService = authService;
         this.workspaceService = workspaceService;
-        this.localModeService = localModeService;
         this.loginAttemptService = loginAttemptService;
         this.clientIpResolver = clientIpResolver;
-        this.instanceOwnershipService = instanceOwnershipService;
-        this.grantDefaultService = grantDefaultService;
         this.registrationPolicy = registrationPolicy;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    /** PLAN-0526: onboarding signal; always 200, never gated, exposes two booleans only. */
+    /**
+     * Onboarding signal; always 200, never gated, exposes one boolean only.
+     *
+     * <p>PLAN-0758: the retired local-mode flag was removed with D-787. {@code initialized}
+     * remains the sole onboarding discriminator (the UI entry resolution reads it), so the
+     * endpoint keeps its shape minus the flag.
+     */
     @GetMapping("/bootstrap-status")
     public ResponseEntity<?> bootstrapStatus() {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("initialized", authService.hasAnyUser());
-        body.put("localMode", localModeService.enabled());
         return ResponseEntity.ok(body);
     }
 
@@ -101,39 +89,16 @@ public class AuthController {
         }
         // PLAN-0581 §6: the registration policy is evaluated AFTER the 0558 IP
         // throttle (a closed instance still throttles probes instead of handing out
-        // an unthrottled 403 oracle) and BEFORE any user row exists. Local
-        // single-user mode is exempt — otherwise a fresh instance with
-        // XIHE_LOCAL_MODE=true plus a closed policy could never create its first
-        // account (I5).
-        if (!localModeService.enabled()) {
-            registrationPolicy.requireOpen();
-        }
-        // PLAN-0526: local mode may omit the password (server generates an
-        // unmemorized strong one); elsewhere the password stays mandatory (400).
+        // an unthrottled 403 oracle) and BEFORE any user row exists.
+        registrationPolicy.requireOpen();
+        // The password is mandatory on every registration path (PLAN-0758 removed
+        // the local-mode omission that used to generate a server-side password).
         if (isBlank(request.getPassword())) {
-            if (!localModeService.enabled()) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "password is required");
-            }
-            localModeService.requireLocalAccess(httpRequest);
-            request.setPassword(generatePassword());
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "password is required");
         }
         try {
             AuthResponse response = transactionTemplate.execute(status -> {
                 User user = authService.registerUser(request);
-                // PLAN-0580 decision #10: in local single-user mode the first (and
-                // only) account is ADMIN, so it also becomes the instance owner in
-                // the same transaction. Idempotent: an existing pointer stays.
-                if (localModeService.enabled()) {
-                    instanceOwnershipService.ensureAssigned(user, user.getId().toString());
-                    // PLAN-0610 W1c (round-3 P0-2): the USER tier alone leaves an empty instance with
-                    // no SUPER_ADMIN binding, and DataSeeder (the other seed site) returns early in
-                    // local mode. Seeding here, in the same transaction and after the owner
-                    // assignment (frozen lock order instance_owner → users row), is the only path
-                    // that makes I1/I5 true on a fresh local instance. Idempotent and guarded
-                    // against privilege resurrection. W4a: this is now the *only* elevation on the
-                    // registration path — no role column write exists any more.
-                    grantDefaultService.ensureInstanceSuperAdmin(user);
-                }
                 return withFirstWorkspace(user);
             });
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -150,23 +115,18 @@ public class AuthController {
                                    HttpServletRequest httpRequest) {
         String ip = clientIpResolver.resolve(httpRequest);
         LoginAttemptService.Lease lease = null;
-        boolean throttled = !localModeService.enabled();
         try {
-            if (throttled) {
-                // PLAN-0565 ruling #7: the identifier (email or username) keys the lockout lease.
-                lease = loginAttemptService.beginLogin(request.getIdentifier(), ip);
-                if (!loginAttemptService.tryAcquireBcryptSlot()) {
-                    throw new LoginThrottledException(1);
-                }
+            // PLAN-0565 ruling #7: the identifier (email or username) keys the lockout lease.
+            lease = loginAttemptService.beginLogin(request.getIdentifier(), ip);
+            if (!loginAttemptService.tryAcquireBcryptSlot()) {
+                throw new LoginThrottledException(1);
             }
             try {
                 User user = authService.authenticate(request);
                 loginAttemptService.recordSuccess(lease);
                 return ResponseEntity.ok(withFirstWorkspace(user));
             } finally {
-                if (throttled) {
-                    loginAttemptService.releaseBcryptSlot();
-                }
+                loginAttemptService.releaseBcryptSlot();
             }
         } catch (LoginThrottledException e) {
             return rateLimited(e);
@@ -209,30 +169,6 @@ public class AuthController {
         }
     }
 
-    /** PLAN-0526: passwordless re-entry for the single local user. */
-    @PostMapping("/local-login")
-    public ResponseEntity<?> localLogin(HttpServletRequest httpRequest) {
-        localModeService.requireLocalAccess(httpRequest);
-        User user = authService.requireSingleUser();
-        // PLAN-0610 W1c (round-3 P0-2): repair a local instance created before the SUPER_ADMIN seed
-        // existed (or whose seed transaction did not include it). Both calls are idempotent and the
-        // seed is guarded, so a deliberately downgraded or disabled account is not re-promoted and a
-        // login never widens privilege by itself.
-        instanceOwnershipService.ensureAssigned(user, user.getId().toString());
-        grantDefaultService.ensureInstanceSuperAdmin(user);
-        return ResponseEntity.ok(withFirstWorkspace(user));
-    }
-
-    /** PLAN-0526: loopback-only password reset (no old password) for lockout recovery. */
-    @PostMapping("/local-password-reset")
-    public ResponseEntity<?> localPasswordReset(@Valid @RequestBody LocalPasswordResetRequest request,
-                                                HttpServletRequest httpRequest) {
-        localModeService.requireLocalAccess(httpRequest);
-        User user = authService.requireSingleUser();
-        authService.resetPassword(user, request.getNewPassword());
-        return ResponseEntity.noContent().build();
-    }
-
     @GetMapping("/me")
     public ResponseEntity<?> me(Authentication authentication) {
         if (authentication == null || !authentication.isAuthenticated()) {
@@ -256,7 +192,7 @@ public class AuthController {
      * PLAN-0614 (blank start, decision #2): the entry-level response carries the account's first
      * active workspace, or {@code null} when the account has none yet.
      *
-     * <p>Register/login/local-login/refresh all go through here, so a fresh account can authenticate
+     * <p>Register/login/refresh all go through here, so a fresh account can authenticate
      * (201/200) while its first screen is empty; the user then creates the first workspace explicitly.
      * Nothing is created on the auth path any more (that was the BL-171 default workspace).</p>
      */
@@ -273,11 +209,5 @@ public class AuthController {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    private static String generatePassword() {
-        byte[] bytes = new byte[24];
-        SECURE_RANDOM.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 }

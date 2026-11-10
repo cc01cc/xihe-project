@@ -239,7 +239,7 @@ export const useAuthStore = defineStore("auth", () => {
     /**
      * PLAN-0611 (BL-169 的姊妹问题): 采用**路由守卫**写下的免密会话。
      *
-     * 守卫（`router/index.ts` 的 localMode 分支）直接写 localStorage 后放行；此时 store 可能已经被
+     * 守卫（`router/index.ts` 的免密分支，PLAN-0758 已移除）曾直接写 localStorage 后放行；此时 store 可能已经被
      * 创建（`main.ts` 先 `app.mount()`，App.vue 的 setup 会实例化 store，而初始导航尚未结束），
      * 内存里的 `token/user` 会一直停在"未登录"：`isAuthenticated`/`isAdmin` 全为 false，免密进入后
      * 看不到管理入口，刷新一次才正常。
@@ -331,36 +331,10 @@ export const useAuthStore = defineStore("auth", () => {
         };
     }
 
-    /** PLAN-0526: passwordless re-entry for the single local user (loopback-only gate on CP). */
-    async function localLogin(): Promise<boolean> {
-        loading.value = true;
-        error.value = null;
-        lastError.value = null;
-        try {
-            const res = await api.localLogin();
-            const ws =
-                res.workspace ??
-                (res.workspaceId ? { id: res.workspaceId, name: "Default Workspace" } : null);
-            _saveToken(res.accessToken, res.user, ws, res.refreshToken);
-            clearSessionCaches();
-            return true;
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : "Local login failed";
-            logger.warn("Local login failed: " + msg);
-            error.value = msg;
-            // BL-150 A: the login page needs the stable Problem code to localize
-            // 409 LOCAL_SINGLE_USER_REQUIRED instead of echoing the English detail.
-            lastError.value = errorDetails(e);
-            return false;
-        } finally {
-            loading.value = false;
-        }
-    }
-
     /**
      * PLAN-0610 W5a: refresh the caller's capability projection from `GET /auth/me`.
      *
-     * <p>Capabilities ride on the login/register/local-login response, so a fresh sign-in is already
+     * <p>Capabilities ride on the login/register response, so a fresh sign-in is already
      * correct. This exists for the two cases where the cached `xihe-user` is stale: a reload with a
      * user object written by a pre-upgrade build (no `capabilities` field at all), and a capability
      * change made by another administrator. Failure is soft — the cached user stays and CP remains
@@ -585,7 +559,6 @@ export const useAuthStore = defineStore("auth", () => {
         currentWorkspaceId,
         login,
         register,
-        localLogin,
         adoptGuardSession,
         refreshCapabilities,
         logout,

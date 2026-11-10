@@ -129,9 +129,6 @@ function chainValue(name, cwd) {
     }
 }
 
-/** CP 的 local-mode 开关键（PLAN-0526；与 `LocalModeService` 同口径：`"true"` 大小写不敏感）。 */
-export const LOCAL_MODE_ENV = "XIHE_LOCAL_MODE";
-
 /**
  * 密码值**只接受非空 string**（BL-527 护栏 A）。
  *
@@ -173,21 +170,6 @@ export function assertPasswordString(value, label = "password") {
 export function devAdminPasswordFrom(result) {
     if (result == null || result.ok !== true) return null;
     return assertPasswordString(result.password, "resolveDevAdminPasswordSafe().password");
-}
-
-/**
- * 解析 CP 的 local-mode 开关：**OS env 优先，其次 `.env` 链**。
- *
- * 为什么不能只看 `process.env`（W-22 verify 非阻塞发现）：CP 侧的 `DotenvLoader` 会把
- * `.env*` 的值装进 system properties，所以**只在 `.env.local` 写 `XIHE_LOCAL_MODE=true`
- * 时 CP 自己是真的进入 local mode**；而 `dev-stack` 只读 OS env 就会漏判，接着去 upsert
- * admin 行 —— 正好破坏 local mode「零用户首启」的前提。这里与密码来源统一走同一条链。
- */
-export function resolveLocalMode({ env = process.env, cwd = process.cwd() } = {}) {
-    const direct = normalize(env?.[LOCAL_MODE_ENV]);
-    const value = direct !== "" ? direct : chainValue(LOCAL_MODE_ENV, cwd);
-    const source = direct !== "" ? "env" : value !== "" ? "env-file" : "unset";
-    return { enabled: value.toLowerCase() === "true", source };
 }
 
 /**

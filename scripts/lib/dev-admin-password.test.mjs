@@ -7,7 +7,6 @@ import { describe, test } from "node:test";
 import {
     ADMIN_PASSWORD_BYTES,
     ADMIN_PASSWORD_ENV,
-    LOCAL_MODE_ENV,
     RESET_ADMIN_WRAPPER,
     assertPasswordString,
     buildResetAdminCommand,
@@ -21,7 +20,6 @@ import {
     resetAdminWrapperPath,
     resolveDevAdminPassword,
     resolveDevAdminPasswordSafe,
-    resolveLocalMode,
     writeDevAdminPasswordFile,
 } from "./dev-admin-password.mjs";
 
@@ -201,46 +199,6 @@ describe("buildResetAdminCommand（复用既有入口、密码完全不进命令
     test("默认入口路径 = <root>/scripts/reset-admin.ps1", () => {
         assert.equal(resetAdminWrapperPath("H:/repo"), join("H:/repo", "scripts", "reset-admin.ps1"));
         assert.deepEqual(RESET_ADMIN_WRAPPER, ["scripts", "reset-admin.ps1"]);
-    });
-});
-
-describe("resolveLocalMode（与 CP 同口径：OS env > .env 链）", () => {
-    test("OS env=true 直接命中（source=env），不依赖文件", (t) => {
-        const root = fakeRoot(t);
-        assert.deepEqual(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "true" }, cwd: root }), {
-            enabled: true,
-            source: "env",
-        });
-    });
-
-    test("OS env 压过 .env 链（DotenvLoader 语义：文件永不覆盖 OS env）", (t) => {
-        const root = fakeRoot(t, { envLines: `${LOCAL_MODE_ENV}=true\n` });
-        assert.deepEqual(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "false" }, cwd: root }), {
-            enabled: false,
-            source: "env",
-        });
-    });
-
-    test("只在 .env.local 写 true 也能识别（W-22 verify 缺陷回归）", (t) => {
-        const root = fakeRoot(t);
-        writeFileSync(join(root, ".env.local"), `${LOCAL_MODE_ENV}=true\n`, "utf8");
-        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: true, source: "env-file" });
-    });
-
-    test("链缺失 ⇒ disabled / source=unset", (t) => {
-        const root = fakeRoot(t);
-        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: false, source: "unset" });
-    });
-
-    test("大小写与空白容错：' TRUE ' 开启；'yes' 不开启", (t) => {
-        const root = fakeRoot(t);
-        assert.equal(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "  TRUE \r\n" }, cwd: root }).enabled, true);
-        assert.equal(resolveLocalMode({ env: { [LOCAL_MODE_ENV]: "yes" }, cwd: root }).enabled, false);
-    });
-
-    test(".env 里留空占位不算配置（落到 unset，不误判成开启）", (t) => {
-        const root = fakeRoot(t, { envLines: `${LOCAL_MODE_ENV}=\n` });
-        assert.deepEqual(resolveLocalMode({ env: {}, cwd: root }), { enabled: false, source: "unset" });
     });
 });
 

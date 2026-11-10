@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
-import com.cc01cc.p.xihe.cp.auth.LocalModeService;
 import com.cc01cc.p.xihe.cp.auth.LoginAttemptService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
@@ -51,7 +50,6 @@ public class InstanceOwnershipService {
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
     private final AuthService authService;
-    private final LocalModeService localModeService;
     private final LoginAttemptService loginAttemptService;
 
     public InstanceOwnershipService(InstanceOwnerRepository owners,
@@ -60,7 +58,6 @@ public class InstanceOwnershipService {
                                     AuditLogger audit,
                                     DbLockTimeout dbLockTimeout,
                                     AuthService authService,
-                                    LocalModeService localModeService,
                                     LoginAttemptService loginAttemptService) {
         this.owners = owners;
         this.users = users;
@@ -68,7 +65,6 @@ public class InstanceOwnershipService {
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
         this.authService = authService;
-        this.localModeService = localModeService;
         this.loginAttemptService = loginAttemptService;
     }
 
@@ -97,13 +93,6 @@ public class InstanceOwnershipService {
      */
     @Transactional
     public OwnerState transfer(String actorUserId, UUID targetUserId, String rawPassword, String clientIp) {
-        if (localModeService.enabled()) {
-            // PLAN-0526 single-user invariant: there is no second account to hand
-            // ownership to, so the endpoint answers with a stable 409 instead of
-            // pretending the action does not exist (contract §7 / decision #10).
-            throw new CpApiException(HttpStatus.CONFLICT, "LOCAL_SINGLE_USER_MODE",
-                    "Instance ownership cannot be transferred in local single-user mode");
-        }
         dbLockTimeout.apply();
         InstanceOwner owner = lockSingleton();
         OwnerState state = new OwnerState(owner.getOwnerUserId(), owner.getAssignedAt());
@@ -156,8 +145,8 @@ public class InstanceOwnershipService {
     }
 
     /**
-     * Bootstrap assignment (decision #10, spec §3 "无 ADMIN/空库"): the seeder and
-     * the local-mode registration path make sure a fresh instance has an owner.
+     * Bootstrap assignment (decision #10, spec §3 "无 ADMIN/空库"): the seeder
+     * makes sure a fresh instance has an owner.
      * Idempotent: an existing pointer is never overwritten, so a manual transfer
      * survives restarts.
      */

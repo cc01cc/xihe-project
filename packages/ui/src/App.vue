@@ -17,9 +17,9 @@ const authStore = useAuthStore(),
     configStore = useConfigStore(),
     sessionStore = useSessionStore();
 onMounted(async () => {
-    // PLAN-0611: the initial navigation may still be resolving here — it can also perform the
-    // localMode passwordless sign-in. Reading `isAuthenticated` before it settles sees the store's
-    // pre-navigation state and skips every post-login load (config domains, sessions).
+    // PLAN-0611: the initial navigation may still be resolving here. Reading `isAuthenticated`
+    // before it settles sees the store's pre-navigation state and skips every post-login load
+    // (config domains, sessions).
     await router.isReady();
     if (!authStore.isAuthenticated) return;
     // PLAN-0610 W5a: the cached user may predate the capability projection (no `capabilities`

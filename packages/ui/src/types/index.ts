@@ -1155,7 +1155,7 @@ export interface LangChainEvent {
 
 /**
  * PLAN-0610 W3-2b decision #22: the wire no longer carries a `role` string. `/auth/me`, the login /
- * register / local-login responses and `GET /api/v1/me/permissions` all use this projection, so the
+ * register responses and `GET /api/v1/me/permissions` both use this projection, so the
  * UI decides "who may administer" from capabilities instead of comparing role names.
  */
 export interface UserCapabilities {

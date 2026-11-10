@@ -23,7 +23,7 @@ import org.springframework.stereotype.Service;
  *   <li>{@code test:e2e:host} 显式注入 enabled（唯一豁免，DEV-020）。</li>
  * </ul>
  *
- * <p>非法值在启动时 fail-fast（先例：{@code LocalModeService}/{@code RegistrationPolicy}）。
+ * <p>非法值在启动时 fail-fast（先例：{@code RegistrationPolicy}）。
  */
 @Service
 public class WorkspaceBackendPolicy {

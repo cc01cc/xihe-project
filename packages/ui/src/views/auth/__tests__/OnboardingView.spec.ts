@@ -2,19 +2,15 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import OnboardingView from "../OnboardingView.vue";
 
-const { authMock, pushMock, bootstrapStatusMock } = vi.hoisted(() => ({
+const { authMock, pushMock } = vi.hoisted(() => ({
     authMock: {
         register: vi.fn<(email: string, password: string, name: string) => Promise<boolean>>(),
         error: null as string | null,
     },
     pushMock: vi.fn<(location: unknown) => Promise<unknown>>(),
-    bootstrapStatusMock: vi.fn<() => Promise<{ localMode: boolean }>>(),
 }));
 
 vi.mock("../../../stores/auth", () => ({ useAuthStore: () => authMock }));
-vi.mock("../../../composables/api", () => ({
-    api: { bootstrapStatus: bootstrapStatusMock },
-}));
 vi.mock("vue-router", () => ({
     useRouter: () => ({ push: pushMock }),
     useRoute: () => ({ query: {} }),
@@ -37,8 +33,6 @@ beforeEach(() => {
     authMock.register.mockResolvedValue(true);
     authMock.error = null;
     pushMock.mockReset();
-    bootstrapStatusMock.mockReset();
-    bootstrapStatusMock.mockResolvedValue({ localMode: true });
 });
 
 describe("OnboardingView validation (BL-151)", () => {
@@ -75,7 +69,7 @@ describe("OnboardingView validation (BL-151)", () => {
         );
     });
 
-    it("clears the hint once the email becomes valid and submits the trimmed value", async () => {
+    it("clears the email hint once valid and blocks submit until a password is present", async () => {
         const wrapper = mountView();
         await settle();
         await wrapper.find("#email").setValue("bad");
@@ -88,9 +82,17 @@ describe("OnboardingView validation (BL-151)", () => {
         await settle();
         expect(wrapper.find('[data-testid="onboarding-email-error"]').exists()).toBe(false);
 
+        // PLAN-0758: the password is required (no local-mode exemption), so the
+        // first submit surfaces the inline password error and registers nothing.
         await wrapper.find("form").trigger("submit");
         await settle();
-        expect(authMock.register).toHaveBeenCalledWith("a@test.com", "", "");
+        expect(authMock.register).not.toHaveBeenCalled();
+        expect(wrapper.find('[data-testid="onboarding-password-error"]').exists()).toBe(true);
+
+        await wrapper.find("#password").setValue("s3cret-pass");
+        await wrapper.find("form").trigger("submit");
+        await settle();
+        expect(authMock.register).toHaveBeenCalledWith("a@test.com", "s3cret-pass", "");
         expect(pushMock).toHaveBeenCalled();
     });
 });
