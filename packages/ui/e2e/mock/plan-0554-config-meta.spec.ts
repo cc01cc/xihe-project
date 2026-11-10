@@ -258,11 +258,16 @@ test.describe("PLAN-0554 config provenance", () => {
         page,
     }) => {
         await mockConfig(page, "ADMIN");
-        await page.goto("/workspace/workspace-1/settings?tab=config", { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
+        // task-112：原用例验「工作区覆盖 + 继承自 instance」，宿在已废弃的工作区「配置」标签上
+        // （task-253 用户 2026-11-10 裁定，提交 51c1d2a40）。工作区层整体移除后，覆盖语义只剩
+        // instance → user 两层 ⇒ 改到用户层 rag 域页，并把「不再是 workspace 来源」写成正面断言。
+        await page.goto("/settings/user/rag", { waitUntil: "load" });
         await openRag(page);
 
-        await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("workspace");
+        await expect(page.getByTestId("config-source-rag-chunkSize")).toBeVisible();
+        await expect(page.getByTestId("config-source-rag-chunkSize")).not.toContainText(
+            "workspace",
+        );
         await expect(page.getByTestId("config-source-rag-chunkOverlap")).toContainText(
             "继承自 instance",
         );
