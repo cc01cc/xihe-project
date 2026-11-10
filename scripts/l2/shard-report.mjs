@@ -5,6 +5,7 @@
 //
 // USAGE node scripts/l2/shard-report.mjs [--root <worktree>] [--log-dir <dir>] [--json <file>]
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -14,10 +15,16 @@ const flag = (name, fallback) => {
   return index >= 0 ? argv[index + 1] : fallback;
 };
 
+/**
+ * git toplevel —— 从任意子目录调用都要拿到它（此前 `execFileSync` 缺 import，抛 `ReferenceError`
+ * 被 `catch {}` 吞掉，于是恒返回 null、`ROOT` 静默退回 `process.cwd()`：从子目录跑会读错根且没有任何提示）。
+ * 取不到时才回落调用方 cwd，并且必须把原因打出来（MUST NOT 静默降级）。
+ */
 function readToplevel() {
   try {
     return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd(), encoding: 'utf8' }).trim();
-  } catch {
+  } catch (error) {
+    console.error(`[shard-report] git rev-parse --show-toplevel failed; falling back to cwd (${process.cwd()}): ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -132,6 +139,7 @@ const report = {
 
 if (JSON_OUT) writeFileSync(resolve(JSON_OUT), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 
+console.log(`=== root: ${ROOT}`);
 for (const shard of report.shards) {
   console.log(`=== shard ${shard.shard}: suites=${shard.suites} tests=${shard.tests} `
     + `F=${shard.failures} E=${shard.errors} S=${shard.skipped} suiteSeconds=${shard.suiteSeconds}`);
