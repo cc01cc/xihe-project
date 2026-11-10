@@ -16,9 +16,9 @@ Agent Worker Registry supports dynamic loading of Agent Workers from markdown fi
 
 ### Enable
 
-```bash
-export XIHE_USE_REGISTRY=true
-```
+The Agent Worker Registry is controlled by the **CP business config** `agent-runtime.useRegistry`: Settings → Config → agent-runtime → useRegistry, or the config import file (key shape in `config.import.example.jsonc`). It defaults to `false`; the Agent picks it up on its next config refresh.
+
+> Historical note: older docs showed `export XIHE_USE_REGISTRY=true`. That environment variable **has no consumer** (the registry gate only reads the CP config `agent-runtime.useRegistry`), so setting it does nothing — ignore that line when you find it in old docs or scripts (BL-543).
 
 ### Worker File Format
 
@@ -61,9 +61,8 @@ watchdog automatically monitors the `agents/` directory (0.5s debounce):
 | `POST /registry/workers/{id}/enable` | Enable worker |
 | `POST /registry/workers/{id}/disable` | Disable worker |
 
-### Environment Variables
+### CP config (domain `agent-runtime`)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `XIHE_USE_REGISTRY` | `false` | Enable Registry mode |
-| `XIHE_AGENT_WORKERS_DIR` | `./agents/` | Worker file directory |
+| Key | Default | Description |
+|-----|---------|-------------|
+| `useRegistry` | `false` | Enable Registry mode (**not** an environment variable: `XIHE_USE_REGISTRY` has no consumer, see BL-543) |
