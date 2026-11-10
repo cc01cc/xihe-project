@@ -601,8 +601,10 @@ alias = "check:standalone"
 # 退出码 0 干净 / 1 越界(E_SHARED_FILE_WRITE) / 2 用法或环境错误（ONE 根找不到、非模块分支、git 读不到）。
 # 用法：`mise run check:branch-scope`（自动取当前分支，模块分支上才有意义）；
 #       `mise run check:branch-scope -- --branch m/cp --json`。**不接 validate**（未在窗口里跑过全量前不引入新红面）。
+#       ⚠️ 入口走 `scripts/run-branch-scope.mjs`（不是直接的 ../internal 相对路径）：worktree 里
+#       `<slot>/../internal` 不存在，实测会让这条门 MODULE_NOT_FOUND（2026-11-11 队列头 c0d8f056 门梯）。
 [tasks."check:branch-scope"]
-run = "node ../internal/A03-xihe/scripts/check-branch-scope.mjs --repo ."
+run = "node scripts/run-branch-scope.mjs --repo ."
 description = "Module-branch write-surface gate: only packages/<module>/**, docs/i18n/** (and docs/api/openapi.yaml for m/cp) may change on m/<module> branches (0 clean / 1 E_SHARED_FILE_WRITE / 2 usage-or-environment)"
 alias = "check:branch-scope"
 
