@@ -84,7 +84,7 @@ pnpm run build
 - 覆盖面为常态维护项：工作台主面板（含 **TO / CC**）、智能体面板、记忆面板、配置页（ProviderHub + API 请求模板）、凭据与角色页、审批卡与工具调用卡、空/加载/错误/无权限四态。
 - 「页面上点了保存没反应」这类问题，真栈 E2E 才能发现；预览页只解决"看"，不替代 E2E 证据。
 - **截图执行器**：`packages/ui/scripts/ui-mock-shot.mjs` —— 交付图的唯一拍法（自起自关 dev server，或 `--url` 复用已起的；连拍两次比 sha，抖动即非 0 退出；输出目录取 `--out`，默认 `../../.tmp/xh/ui-mock-shot`）。**禁止手拍交付图**：手拍的 PNG 无法用「commit sha + 一条命令」重建。
-  - **现状（2026-11-11 实测）：只有 `--url` 路径可用。** 脚本「自起自关」分支在本机探活失败 —— 起 vite 后日志已 `ready in ~1s`，脚本自己的 `waitForServer` 仍在 120 s 后超时退出（exit 2，`dev server 在 120000 ms 内没有就绪`），怀疑探测只打 `127.0.0.1` / 不认 `localhost`↔IPv6 回退；**绕法**：先手动/后台起 dev server，再 `--url http://127.0.0.1:<port>` 复用。修好探测前，别照「自起自关」的说明直接调用。
+  - **探活（task-84 修好，2026-11-11 实测自起自关可用）**：两条路径都先探活，候选列表**并行**打 —— vite 自己打印的 `Local:` host → `127.0.0.1` → `localhost` → `[::1]`，**每个请求各自 2 s 上限**，所以一个挂住的请求吃不掉整个预算（旧版没有单次超时：一次挂住 = 循环再也检查不到 deadline，最后报「120 s 没就绪」，与根因脱钩）。探不通时 exit 2 并打印**每个 URL 的尝试次数 / 最后一次耗时 / 错误码** + 一层 TCP 直连诊断（区分「没人听」与「听了但 HTTP 不应答」）+ vite 输出尾部；`--url` 复用模式在 TCP 也连不上时**约 1 s 快速失败**（2026-11-11 实测 1 s / exit 2，旧版是 120 s 黑盒等待）。manifest 新增 `server: { mode: "spawned"|"reused", base, readyVia }` —— 图是自起拍的还是复用拍的，事后可从 manifest 读。自检：`node packages/ui/scripts/ui-mock-shot.mjs --selftest`（不开浏览器、不起 server，实测 7 项 ~0.6 s）。
   - 脏树默认拒拍（`git status --porcelain` 非空即 exit 1，manifest 记 `dirtyPaths`）；自查迭代可 `--allow-dirty`，但**交付图不得带 `allowDirty: true`** —— 图必须钉在 commit sha 上。
 
 ## Session / Agent Principal
