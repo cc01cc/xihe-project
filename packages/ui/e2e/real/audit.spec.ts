@@ -12,6 +12,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
@@ -221,7 +222,9 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
             response.status() === 200
         );
     });
-    await page.getByTestId("settings-audit-type").selectOption("chat_run");
+    // BL-547（task-175）：类型筛选是 reka Select（触发器为 button），selectOption 不适用 ——
+    // 点触发器 → 点选项（选项文本 = 本地化的类型标签，中英两套都接受）。
+    await chooseRekaOption(page, page.getByTestId("settings-audit-type"), /对话运行|Chat run/);
     await filterResponse;
     await expect(entryRow).toBeVisible();
 
@@ -344,7 +347,7 @@ test("@host PLAN-0466 AuditView paginates and surfaces a list error", async ({ p
             const url = new URL(response.url());
             return url.pathname === "/api/v1/audit/entries" && response.status() === 503;
         }),
-        page.getByTestId("settings-audit-status").selectOption("failed"),
+        chooseRekaOption(page, page.getByTestId("settings-audit-status"), /^失败$|^Failed$/),
     ]);
     await expect(page.getByText("audit edge unavailable")).toBeVisible();
     await expect(page.getByTestId("settings-audit-no-selection")).toBeVisible();

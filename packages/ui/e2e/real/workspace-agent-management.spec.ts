@@ -1,6 +1,6 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
@@ -12,6 +12,7 @@ import {
     seedUserGrantPermissions,
 } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -111,10 +112,11 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     await page.getByTestId("agent-role-name").fill("Browser Reader");
     await page.getByTestId("agent-role-add-permission").click();
-    await page.getByTestId("agent-role-action-0").selectOption("read");
+    // BL-547（task-175）：权限动作是 reka Select（触发器为 button），选项文本 = 动作类名本身。
+    await chooseRekaOption(page, page.getByTestId("agent-role-action-0"), /^read$/);
     await page.getByTestId("agent-role-resource-0").fill("src/*");
     await page.getByTestId("agent-role-add-permission").click();
-    await page.getByTestId("agent-role-action-1").selectOption("write");
+    await chooseRekaOption(page, page.getByTestId("agent-role-action-1"), /^write$/);
     await page.getByTestId("agent-role-resource-1").fill("*");
     const roleWritePromise = page.waitForResponse(
         (response) =>
@@ -127,8 +129,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await page.getByTestId("agent-template-name").fill("Browser Workspace Reader");
     await page.getByTestId("agent-template-description").fill("Template created through Settings");
     await page.getByTestId("agent-template-prompt").fill(TEMPLATE_PROMPT);
-    await page.getByTestId("agent-template-tool-mode").selectOption("workspace");
-    await page.getByTestId("agent-template-role").selectOption({ label: "Browser Reader" });
+    await chooseRekaOption(page, page.getByTestId("agent-template-tool-mode"), /^workspace$/);
+    await chooseRekaOption(page, page.getByTestId("agent-template-role"), "Browser Reader");
     await page.getByTestId("agent-template-provider").fill("openai");
     await page.getByTestId("agent-template-model").fill("e2e-model");
     const templateWritePromise = page.waitForResponse(
@@ -171,7 +173,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await expect(dialog.getByText("暂无活动会话")).toHaveCount(0);
 
     await page.getByTestId("agent-principal-name").fill("T44PersistentAgent");
-    await page.getByTestId("agent-principal-template").selectOption(templateId);
+    // BL-547（task-175）：模板选择器是 reka Select；选项文本 = "模板名 · 层"。
+    await chooseRekaOption(
+        page,
+        page.getByTestId("agent-principal-template"),
+        /Browser Workspace Reader · user/,
+    );
     await expect(page.getByTestId("agent-principal-create-form")).toContainText(
         "Browser Workspace Reader",
     );
@@ -489,11 +496,28 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     const e2eRunId = process.env.XIHE_E2E_RUN_ID;
     if (!e2eRunId) throw new Error("XIHE_E2E_RUN_ID is required for isolated log scanning");
-    const logDir = resolve(process.cwd(), "../../.tmp/e2e-host", e2eRunId, "logs");
-    const logFiles = readdirSync(logDir).filter((file) => file.endsWith(".log"));
+    // BL-547（task-175）：runner 进程内重试会把 host root 改名为 <runId>-rN，原路径在重试轮
+    // 直接 ENOENT。按基名匹配该 run 的全部轮次目录，每一轮的日志都扫（不削弱断言）。
+    const runBase = e2eRunId.replace(/-r\d+$/, "");
+    const hostRoot = resolve(process.cwd(), "../../.tmp/e2e-host");
+    const logDirs = readdirSync(hostRoot)
+        .filter(
+            (d) =>
+                d === runBase ||
+                d === e2eRunId ||
+                (d.startsWith(runBase) && /^-r\d+$/.test(d.slice(runBase.length))),
+        )
+        .map((d) => resolve(hostRoot, d, "logs"))
+        .filter((d) => existsSync(d));
+    expect(logDirs.length, `no log dirs for run ${e2eRunId} under ${hostRoot}`).toBeGreaterThan(0);
+    const logFiles = logDirs.flatMap((d) =>
+        readdirSync(d)
+            .filter((file) => file.endsWith(".log"))
+            .map((file) => resolve(d, file)),
+    );
     expect(logFiles.length).toBeGreaterThan(0);
     for (const file of logFiles) {
-        const content = readFileSync(resolve(logDir, file), "utf8");
+        const content = readFileSync(file, "utf8");
         expect(content, `${file} leaked a template prompt`).not.toContain(TEMPLATE_PROMPT);
         expect(content, `${file} leaked an owner token`).not.toContain(owner.authToken);
         expect(content, `${file} leaked a second-owner token`).not.toContain(secondOwner.authToken);
@@ -521,12 +545,36 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     );
     expect(attemptedSessionPosts).toEqual([]);
 
-    const unboundSessionAttempt = await request.post(`${CP_URL}/api/v1/sessions`, {
+    // BL-554（2026-11-10 用户裁定；PLAN-0647 D-678 / PLAN-0689 A7 后的语义）：**不带工作区上下文**
+    // 的会话创建是「纯对话会话」`sessions.workspace_id IS NULL`，它没有工作区绑定可校验 ⇒ 未绑定到
+    // workspaceA 的 principal 也能创建（201），且会话**不落地**在该工作区。旧断言期望 403 是 PLAN-0647
+    // 之前的语义残留（那时代理商会回落到默认工作区，同一请求实际是工作区的）。
+    const unboundWorkspacelessAttempt = await request.post(`${CP_URL}/api/v1/sessions`, {
         headers: owner.headers,
+        data: { title: "Workspaceless after unbind", agentPrincipalId: principalId },
+    });
+    expect(unboundWorkspacelessAttempt.status(), await unboundWorkspacelessAttempt.text()).toBe(
+        201,
+    );
+    const workspacelessSession = (await unboundWorkspacelessAttempt.json()) as { id: string };
+    const workspacelessSessionId = requireUuid(workspacelessSession.id);
+    // 关键不变式：这条会话**不是** workspaceA 的会话 —— 否则未绑定主体就真的落地到了该工作区。
+    expect(
+        scalarCount(
+            `SELECT count(*) FROM sessions WHERE id = '${workspacelessSessionId}'::uuid ` +
+                `AND workspace_id IS NOT NULL`,
+        ),
+        "workspaceless session must not carry a workspace",
+    ).toBe(0);
+    // 工作区侧的真门（本条断言的真正对象）：**带** `X-Workspace-Id` 的同一请求必须 403 ——
+    // `requireActiveWorkspaceBinding` 只认 workspace 作用域绑定（instance 角色绑定不构成工作区资格，
+    // PLAN-0629 语义），解绑后 `workspace_agents` 行与 workspace 角色授权都已删除。
+    const unboundWorkspaceAttempt = await request.post(`${CP_URL}/api/v1/sessions`, {
+        headers: { ...owner.headers, "X-Workspace-Id": workspaceA },
         data: { title: "Must stay uncreated", agentPrincipalId: principalId },
     });
-    expect(unboundSessionAttempt.status()).toBe(403);
-    // History kept, no new Session: exactly the pre-unbind row survives.
+    expect(unboundWorkspaceAttempt.status(), await unboundWorkspaceAttempt.text()).toBe(403);
+    // History kept: the pre-unbind session still resolves with the same PRIMARY.
     // PLAN-0689 A7 / V133：`sessions.agent_principal_id` 已被删除（V133:18 `DROP COLUMN`），会话
     // 身份改由 PRIMARY 参与者行承载 —— CP 的唯一读入口是
     // `SessionParticipantRepository.primaryPrincipalId` → `SessionViews.toView`，所以这里必须查同一张表，
@@ -535,13 +583,25 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     // `uq_session_participants_principal`（V92:90-91）保证每个 (session, principal) 最多一行。
     // 不额外过滤 `disabled_at`：view 侧的 PRIMARY 读路径同样不过滤，两处必须同口径（解绑只删
     // `workspace_agents` 绑定，不动 `session_participants`，历史行本来就该留着）。
+    // PRIMARY 计数从 1 变 2：解绑前的历史会话 + 本次「纯对话」会话（BL-554 后者的
+    // PRIMARY 由 `SessionService.createAgentSession` → `ensurePrimaryParticipant` 一同落库）。
     expect(
         scalarCount(
             `SELECT count(*) FROM session_participants ` +
                 `WHERE principal_kind = 'AGENT' AND principal_id = '${principalId}'::uuid ` +
                 `AND role = 'PRIMARY'`,
         ),
-    ).toBe(1);
+    ).toBe(2);
+    // 但**没有一条**落在 workspaceA：未绑定主体不得在该工作区拥有会话（这是解绑的真正不变式）。
+    expect(
+        scalarCount(
+            `SELECT count(*) FROM session_participants sp ` +
+                `JOIN sessions s ON s.id = sp.session_id ` +
+                `WHERE sp.principal_kind = 'AGENT' AND sp.principal_id = '${principalId}'::uuid ` +
+                `AND sp.role = 'PRIMARY' AND s.workspace_id = '${workspaceA}'::uuid`,
+        ),
+        "unbound principal must hold no session in the workspace",
+    ).toBe(0);
     const preservedHistory = await request.get(`${CP_URL}/api/v1/sessions/${historicalSessionId}`, {
         headers: owner.headers,
     });

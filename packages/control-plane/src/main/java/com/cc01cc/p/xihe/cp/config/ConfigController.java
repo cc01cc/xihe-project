@@ -739,7 +739,7 @@ public class ConfigController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "mcpServers is required");
         }
         Map<String, JsonNode> stdio = new LinkedHashMap<>();
-        Map<String, String> remoteEndpoints = new LinkedHashMap<>();
+        Map<String, McpProxyCatalogService.RemoteEndpointInput> remoteEndpoints = new LinkedHashMap<>();
         for (Map.Entry<?, ?> entry : servers.entrySet()) {
             if (!(entry.getKey() instanceof String name) || !(entry.getValue() instanceof Map<?, ?> value)) {
                 return ProblemDetailsHandler.problemResponse(
@@ -761,7 +761,9 @@ public class ConfigController {
                     return ProblemDetailsHandler.problemResponse(
                             HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Remote MCP server requires a url");
                 }
-                remoteEndpoints.put(name, url);
+                // PLAN-0759 / BL-548: the OAuth client block is server-level config, not
+                // per-user state, so it lives on the remote row alongside the endpoint.
+                remoteEndpoints.put(name, toRemoteEndpointInput(url, value.get("oauth")));
             } else {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
@@ -773,6 +775,35 @@ public class ConfigController {
         log.info("MCP config saved for workspace {}: stdio={}, remote={}",
                 wsId, stdio.size(), remoteEndpoints.size());
         return ResponseEntity.ok(Map.of("status", "ok"));
+    }
+
+    /**
+     * PLAN-0759 / BL-548: read the optional {@code oauth} object from a remote entry.
+     * Accepted shape is the nested object the UI sends; every field is optional so a
+     * bare {@code {url}} entry keeps working. Values that are not strings are ignored
+     * rather than failing the whole save (the endpoint itself is already validated).
+     */
+    private static McpProxyCatalogService.RemoteEndpointInput toRemoteEndpointInput(String url, Object oauth) {
+        if (!(oauth instanceof Map<?, ?> map)) {
+            return new McpProxyCatalogService.RemoteEndpointInput(url, null, null, null, null, null);
+        }
+        return new McpProxyCatalogService.RemoteEndpointInput(
+                url,
+                textOrNull(map.get("clientId")),
+                textOrNull(map.get("authorizationEndpoint")),
+                textOrNull(map.get("tokenEndpoint")),
+                textOrNull(map.get("redirectUri")),
+                textOrNull(map.get("scope")));
+    }
+
+    private static String textOrNull(Object value) {
+        return value instanceof String text && !text.isBlank() ? text : null;
+    }
+
+    private static void putIfNotBlank(Map<String, Object> target, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            target.put(key, value);
+        }
     }
 
     private ResponseEntity<Map<String, Object>> getMixedMcpConfig(String wsId) {
@@ -787,6 +818,18 @@ public class ConfigController {
                 Map<String, Object> value = new LinkedHashMap<>();
                 value.put("url", row.endpoint());
                 value.put("type", "http");
+                // PLAN-0759 / BL-548: round-trip the OAuth client block so the UI can
+                // render the authorize entry (previously dropped on PUT, so the UI list
+                // was always empty and the entry unreachable since 2026-09-11).
+                Map<String, Object> oauth = new LinkedHashMap<>();
+                putIfNotBlank(oauth, "clientId", row.oauthClientId());
+                putIfNotBlank(oauth, "authorizationEndpoint", row.oauthAuthorizationEndpoint());
+                putIfNotBlank(oauth, "tokenEndpoint", row.oauthTokenEndpoint());
+                putIfNotBlank(oauth, "redirectUri", row.oauthRedirectUri());
+                putIfNotBlank(oauth, "scope", row.oauthScope());
+                if (!oauth.isEmpty()) {
+                    value.put("oauth", oauth);
+                }
                 servers.putIfAbsent(row.name(), value);
             }
             Map<String, Object> response = new LinkedHashMap<>();

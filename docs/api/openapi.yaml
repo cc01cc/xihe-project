@@ -2991,8 +2991,48 @@ paths:
   /api/v1/rag/documents/{docId}:
     delete: { operationId: ragDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/workspaces/{workspaceId}/mcp-config:
-     get: { operationId: getMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP configuration } } }
-     put: { operationId: putMcpConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+     get:
+       operationId: getMcpConfig
+       security: [{ bearerAuth: [] }]
+       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+       responses:
+         '200':
+           description: Mixed MCP configuration (stdio entries by value, remote entries with optional oauth)
+           content:
+             application/json:
+               schema:
+                 type: object
+                 required: [mcpServers]
+                 properties:
+                   mcpServers:
+                     type: object
+                     additionalProperties:
+                       oneOf:
+                         - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                         - type: object
+                           description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+     put:
+       operationId: putMcpConfig
+       security: [{ bearerAuth: [] }]
+       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
+       requestBody:
+         required: true
+         content:
+           application/json:
+             schema:
+               type: object
+               required: [mcpServers]
+               properties:
+                 mcpServers:
+                   type: object
+                   additionalProperties:
+                     oneOf:
+                       - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                       - type: object
+                         description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+       responses:
+         '200': { description: Updated }
+         '400': { $ref: '#/components/responses/Problem' }
   # PLAN-0307 T0.3: structured stdio servers (Claude Desktop compatible values); mixed mcp-config above is split by field.
   /api/v1/workspaces/{workspaceId}/stdio-servers:
      get: { operationId: getWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Stdio servers with generation/hash } } }
@@ -7568,6 +7608,33 @@ components:
         truncated: { type: boolean }
         data: { type: string }
         jobStatus: { type: string, enum: [running, succeeded, cancelled, timeout, orphaned] }
+    RemoteOauth:
+      type: object
+      description: |
+        PLAN-0759 / BL-548: server-level OAuth client configuration for a remote MCP server.
+        Shared by every user of the workspace (unlike `oauth_credentials`, which holds the
+        per-user tokens). All fields optional; a remote entry without any of them is a plain
+        http endpoint. Field names match the UI's `RemoteMcpServer.oauth` shape verbatim.
+      properties:
+        clientId: { type: string, description: OAuth client_id registered with the authorization server }
+        authorizationEndpoint: { type: string, description: Authorization endpoint (where the user is redirected to consent) }
+        tokenEndpoint: { type: string, description: Token endpoint (where CP exchanges the code) }
+        redirectUri: { type: string, description: Redirect URI registered for the client; defaults to the app origin when omitted }
+        scope: { type: string, description: Space-separated scopes requested at authorization time }
+    RemoteMcpServerEntry:
+      type: object
+      description: |
+        PLAN-0759 / BL-548: one entry of the mixed `mcpServers` map on
+        `/api/v1/workspaces/{workspaceId}/mcp-config`. Remote entries carry `url` +
+        optional `oauth`; stdio entries carry `command`/`args`. A single entry must not
+        mix both shapes (CP answers 400 INVALID_REQUEST).
+      required: [url]
+      properties:
+        url: { type: string, description: Remote MCP endpoint (http or https) }
+        type: { type: string, enum: [http], description: Wire marker; CP keeps emitting "http" for remote entries }
+        oauth:
+          allOf:
+            - $ref: '#/components/schemas/RemoteOauth'
     McpServerStatusList:
       type: object
       description: PLAN-0366 stdio MCP session status list. Field names are the CP public camelCase mapping of the Runtime SessionSnapshot wire (server_id/last_error/since_ms); `state` keeps the Runtime lowercase literals, `sinceMs` is Unix milliseconds.

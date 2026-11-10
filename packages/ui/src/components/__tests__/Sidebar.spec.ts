@@ -114,6 +114,7 @@ async function mountSidebar(
         isMobile: boolean;
         width: number;
         forceCollapsed: boolean;
+        resizing: boolean;
     }> = {},
 ) {
     const wrapper = mount(Sidebar, {
@@ -272,15 +273,14 @@ describe("Sidebar", () => {
         expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain("待审批");
     });
 
-    it("keeps the 56px icon rail mounted and zero-width panel when collapsed on desktop", async () => {
+    it("keeps the icon rail mounted and the panel inert when collapsed on desktop", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ open: false });
 
-        // R-D / S2 ruling #1: collapsing the panel must keep the 56px rail offset.
-        expect(wrapper.find("aside").attributes("style")).toContain("width: 56px");
-        expect(wrapper.find("[data-testid='sidebar-panel']").attributes("style")).toContain(
-            "width: 0px",
-        );
+        // PLAN-0753 T3: 桌面宽度归壳层 splitter 的 panel #1（reka flex-grow）；旧的
+        // `aside width: 56px` 几何断言随迁移换成 AppLayout 的面板语义（data-state +
+        // collapsedSize）。这里只锁组件语义：rail 仍在、面板 inert、handle 已离开 aside。
+        expect(wrapper.find("aside").attributes("style")).toBeUndefined();
         expect(wrapper.findComponent(NavRail).exists()).toBe(true);
         expect(wrapper.find("[data-testid='sidebar-panel']").attributes("aria-hidden")).toBe(
             "true",
@@ -288,13 +288,17 @@ describe("Sidebar", () => {
         // R-C: the rail itself must stay reachable while the panel is inert.
         expect(wrapper.find("aside").attributes("aria-hidden")).toBeUndefined();
         expect(wrapper.find('[data-testid="nav-rail"]').attributes("inert")).toBeUndefined();
+        // handle 上移到壳层（两个 splitter panel 之间），不再挂载在 aside 内。
+        expect(wrapper.find('[data-testid="sidebar-resizer"]').exists()).toBe(false);
     });
 
     it("collapses to a zero-width sheet on mobile", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ isMobile: true, open: false });
 
-        expect(wrapper.find("aside").attributes("style")).toContain("width: 0px");
+        // 宽度载体上移到 AppLayout 的 panel 层（dev-3 存量缺陷修法）⇒ aside 不再声明宽度；
+        // 「零宽」由壳层 `navPanelStyle` 的 `width: 0px` 持有（见 AppLayout.spec 移动端用例）。
+        expect(wrapper.find("aside").attributes("style")).toBeUndefined();
         expect(wrapper.find("aside").attributes("aria-hidden")).toBe("true");
         expect(wrapper.findComponent(NavRail).exists()).toBe(false);
     });
@@ -354,49 +358,16 @@ describe("Sidebar", () => {
         expect(wrapper.text()).toContain("Beta review");
     });
 
-    it("resizes the panel with the keyboard on the separator", async () => {
+    it("shows the live width bubble only while the shell reports resizing (PLAN-0753 T3)", async () => {
         mockAuth();
-        const wrapper = await mountSidebar();
-        const separator = wrapper.get('[data-testid="sidebar-resizer"]');
-        expect(separator.attributes("role")).toBe("separator");
-        expect(separator.attributes("aria-valuenow")).toBe("280");
-        expect(separator.attributes("aria-valuemin")).toBe("220");
-        expect(separator.attributes("aria-valuemax")).toBe("360");
+        // 指针/键盘/双击三条 resize 路径整体上移到壳层（useSplitterPanelBridge 的
+        // 6 条契约单测覆盖）；组件侧只剩 render-only 的显隐。
+        const idle = await mountSidebar();
+        expect(idle.find('[data-testid="sidebar-resize-bubble"]').exists()).toBe(false);
 
-        await separator.trigger("keydown", { key: "ArrowRight" });
-        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([296]);
-
-        await separator.trigger("keydown", { key: "Home" });
-        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([220]);
-
-        await separator.trigger("keydown", { key: "End" });
-        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([360]);
-
-        await separator.trigger("keydown", { key: "ArrowLeft" });
-        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([264]);
-    });
-
-    it("resets the panel width on a handle double-click (S3b P2-1)", async () => {
-        mockAuth();
-        const wrapper = await mountSidebar({ width: 340 });
-        await wrapper.get('[data-testid="sidebar-resizer"]').trigger("dblclick");
-        expect(wrapper.emitted("update:width")?.at(-1)).toEqual([280]);
-    });
-
-    it("shows a live width bubble only while dragging (S3b P2-2)", async () => {
-        mockAuth();
-        const wrapper = await mountSidebar();
-        const separator = wrapper.get('[data-testid="sidebar-resizer"]');
-        expect(wrapper.find('[data-testid="sidebar-resize-bubble"]').exists()).toBe(false);
-
-        await separator.trigger("mousedown", { clientX: 300 });
-        document.dispatchEvent(new MouseEvent("mousemove", { clientX: 320 }));
-        await wrapper.vm.$nextTick();
-        expect(wrapper.get('[data-testid="sidebar-resize-bubble"]').text()).toContain("px");
-
-        document.dispatchEvent(new MouseEvent("mouseup"));
-        await wrapper.vm.$nextTick();
-        expect(wrapper.find('[data-testid="sidebar-resize-bubble"]').exists()).toBe(false);
+        const resizing = await mountSidebar({ resizing: true });
+        // 文本由桥接在 @resize 里命令式写入（不进响应式宽度通道）。
+        expect(resizing.get('[data-testid="sidebar-resize-bubble"]').exists()).toBe(true);
     });
 
     it("collapses the panel from its own header control (S2 ruling #1)", async () => {
@@ -419,11 +390,10 @@ describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
     it("renders rail-only when the shell yielded the panel, without touching the stored state", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ open: true, forceCollapsed: true });
-        // The aside collapses to the fixed rail (56px); the panel itself is 0 wide.
-        expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toContain("width: 56px");
-        expect(wrapper.get('[data-testid="sidebar-panel"]').attributes("style")).toContain(
-            "width: 0px",
-        );
+        // PLAN-0753 T3: 收起由壳层的 collapse() 驱动（panelSizeBeforeCollapseRef 记住
+        // 原宽），Sidebar 不再写 aside 宽度 —— 宽度归 splitter panel。
+        expect(wrapper.findComponent(NavRail).exists()).toBe(true);
+        expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toBeUndefined();
         // Render-only: no state write happens on its own.
         expect(wrapper.emitted("update:open")).toBeUndefined();
     });
@@ -431,13 +401,11 @@ describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
     it("leaves the panel rendered when forceCollapsed is false (no false positive)", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ open: true, forceCollapsed: false });
-        // jsdom viewport is 1024 -> the panel width is breakpoint-clamped to 240
-        // (S3a audit P1-3), so rail 56 + 240 = 296.
-        expect(wrapper.get('[data-testid="sidebar-panel"]').attributes("style")).toContain(
-            "width: 240px",
-        );
-        expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toContain(
-            "width: 296px",
-        );
+        // 断点夹取（S3a audit P1-3）随几何一起上移到壳层（panel display resize）。
+        expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toBeUndefined();
+        expect(
+            wrapper.get('[data-testid="sidebar-panel"]').attributes("aria-hidden"),
+        ).toBeUndefined();
+        expect(wrapper.get('[data-testid="sidebar-workspace"]').exists()).toBe(true);
     });
 });

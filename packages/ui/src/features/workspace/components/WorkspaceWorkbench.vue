@@ -3,7 +3,7 @@ import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { FolderTree, GripVertical } from "@lucide/vue";
+import { FolderTree } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
     TREE_COLLAPSED_WIDTH,
@@ -29,7 +29,11 @@ import {
     type WorkbenchSqueezeResult,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
-import { useLiveResize } from "../../../composables/useLiveResize";
+import {
+    useSplitterPanelBridge,
+    type SplitterPanelExposed,
+} from "../../../composables/useSplitterPanelBridge";
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
@@ -293,38 +297,65 @@ const effectiveTreeCollapsed = computed(
 );
 
 const treeWidth = computed(() => layout.value.treeWidth);
-const treeRailRef = ref<HTMLElement | null>(null);
 const treeBubbleRef = ref<HTMLElement | null>(null);
 
 function setTreeWidth(width: number): void {
     layout.value.treeWidth = clampTreeWidth(width);
 }
 
-/** Resize-follow fix: the rail follows the pointer directly; the store sees one write. */
-const { resizingWidth: treeResizingWidth, start: handleTreeResizeStart } = useLiveResize({
+/**
+ * PLAN-0753 T3 —— 文件树列（splitter panel #1）的桥接层，与导航面板同构：reka 拥有
+ * 几何与指针拖拽，`@resize` 只喂宽度气泡（命令式文本），存储只经
+ * release(`getSize()` 真值)/键盘/双击写入。折叠状态与宽度分开存（PLAN-0582 §1.5-A：
+ * 收起不改宽度、展开回原宽），所以 `defaultSize` 是**展开宽**、`collapsedSize` 是 40px
+ * rail —— reka 的 `collapsePanel` 只存 `panelSizeBeforeCollapseRef`，展开时恢复原宽。
+ * 折叠桥接复用外壳已落地的 `navBridge` 同款 watcher 模式（`effectiveTreeCollapsed`）。
+ */
+const TREE_RESIZE_HANDLE_ID = "tree-resize-handle";
+const treePanelCollapsed = computed(() => effectiveTreeCollapsed.value);
+const treePanelEl = ref<SplitterPanelExposed | null>(null);
+
+const treeBridge = useSplitterPanelBridge({
     clamp: clampTreeWidth,
     currentWidth: () => layout.value.treeWidth,
-    grow: "right",
     commit: (width) => setTreeWidth(width),
-    panel: treeRailRef,
+    defaultWidth: TREE_WIDTH_DEFAULT,
+    onKeyResize: (key) => {
+        if (key === "ArrowLeft") return treeWidth.value - TREE_WIDTH_KEYBOARD_STEP;
+        if (key === "ArrowRight") return treeWidth.value + TREE_WIDTH_KEYBOARD_STEP;
+        if (key === "Home") return TREE_WIDTH_MIN;
+        if (key === "End") return TREE_WIDTH_MAX;
+        return null;
+    },
     bubble: treeBubbleRef,
+    handleId: TREE_RESIZE_HANDLE_ID,
+    isCollapsed: () => treePanelCollapsed.value,
+});
+const { resizing: treeResizing } = treeBridge;
+
+function setTreePanel(el: unknown): void {
+    treePanelEl.value = (el as SplitterPanelExposed | null) ?? null;
+}
+
+watch(treePanelEl, (panel) => {
+    treeBridge.panelRef.value = panel;
 });
 
-/** P2-1 (tree): double-clicking the handle restores the default width. */
-function resetTreeWidth(): void {
-    setTreeWidth(TREE_WIDTH_DEFAULT);
-}
-
-function handleTreeResizeKeydown(event: KeyboardEvent): void {
-    let next: number | null = null;
-    if (event.key === "ArrowRight") next = layout.value.treeWidth + TREE_WIDTH_KEYBOARD_STEP;
-    else if (event.key === "ArrowLeft") next = layout.value.treeWidth - TREE_WIDTH_KEYBOARD_STEP;
-    else if (event.key === "Home") next = TREE_WIDTH_MIN;
-    else if (event.key === "End") next = TREE_WIDTH_MAX;
-    if (next === null) return;
-    event.preventDefault();
-    setTreeWidth(next);
-}
+// `treeCollapsed`（用户/窄视口收起）与 `treeYielded`（挤压让位）都是**渲染**状态：
+// 它们走 collapse()/expand()，永不写存储宽度。
+watch(
+    treePanelCollapsed,
+    (collapsed) => {
+        if (collapsed) {
+            treeBridge.collapse();
+            return;
+        }
+        treeBridge.expand();
+        // expand() 恢复 collapse 前宽度；窄视口等显示态变化后补一次 display 夹取（见 ruling ③）。
+        treeBridge.resizeToWidth(treeWidth.value);
+    },
+    { flush: "post" },
+);
 
 /** Pin/unpin is an explicit user choice: it wins over the breakpoint derivation. */
 function toggleDockMode(): void {
@@ -572,89 +603,106 @@ defineExpose({ openDockTab });
             <FileEditor />
         </div>
 
+        <!--
+            PLAN-0753 T3: 文件树 | 主列 同构进 SplitterGroup（S3b 的 draggable 列变 panel #1）。
+            handle 在两项之间且净零宽（`-ml-1 w-1` ⇒ 主列起始位与旧绝对定位一致）。
+        -->
         <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
-            <!-- Left column: the file tree. S3b: draggable 200-320 + keyboard + dblclick. -->
-            <div
-                ref="treeRailRef"
-                data-testid="workspace-file-rail"
-                class="relative flex shrink-0 flex-col border-r border-border-subtle bg-surface-canvas"
-                :class="{ 'is-resizing': treeResizingWidth !== null }"
-                :style="{
-                    width: `${effectiveTreeCollapsed ? TREE_COLLAPSED_WIDTH : treeWidth}px`,
-                }"
+            <SplitterGroup
+                direction="horizontal"
+                class="flex min-h-0 min-w-0 flex-1"
+                @keydown.capture="treeBridge.onKeydownCapture"
             >
-                <div v-if="effectiveTreeCollapsed" class="flex flex-col items-center gap-1 py-2">
-                    <button
-                        type="button"
-                        data-testid="workspace-tree-expand"
-                        class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        :title="t('workspace.expandFiles')"
-                        :aria-label="t('workspace.expandFiles')"
-                        :aria-pressed="false"
-                        @click="toggleTree"
+                <!-- Left column: the file tree. S3b: draggable 200-320 + keyboard + dblclick. -->
+                <SplitterPanel
+                    :ref="setTreePanel"
+                    as-child
+                    size-unit="px"
+                    collapsible
+                    :default-size="treeWidth"
+                    :min-size="TREE_WIDTH_MIN"
+                    :max-size="TREE_WIDTH_MAX"
+                    :collapsed-size="TREE_COLLAPSED_WIDTH"
+                    @resize="treeBridge.onResize"
+                >
+                    <div
+                        data-testid="workspace-file-rail"
+                        class="relative flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface-canvas"
+                        :class="{
+                            'is-resizing': treeResizing,
+                        }"
                     >
-                        <FolderTree class="size-4" aria-hidden="true" />
-                    </button>
-                </div>
-                <div
-                    v-else
-                    class="flex h-full min-h-0 flex-1 flex-col"
-                    data-testid="workspace-file-tree"
-                >
-                    <!-- S3a: tree panel head (workspace name / file actions / collapse). -->
-                    <FileTreePanel @collapse="toggleTree" />
-                </div>
+                        <div
+                            v-if="effectiveTreeCollapsed"
+                            class="flex flex-col items-center gap-1 py-2"
+                        >
+                            <button
+                                type="button"
+                                data-testid="workspace-tree-expand"
+                                class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                :title="t('workspace.expandFiles')"
+                                :aria-label="t('workspace.expandFiles')"
+                                :aria-pressed="false"
+                                @click="toggleTree"
+                            >
+                                <FolderTree class="size-4" aria-hidden="true" />
+                            </button>
+                        </div>
+                        <div
+                            v-else
+                            class="flex h-full min-h-0 flex-1 flex-col"
+                            data-testid="workspace-file-tree"
+                        >
+                            <!-- S3a: tree panel head (workspace name / file actions / collapse). -->
+                            <FileTreePanel @collapse="toggleTree" />
+                        </div>
 
-                <!-- P2-2: live width bubble (display-only; the write is throttled). -->
-                <span
-                    v-if="treeResizingWidth !== null"
-                    ref="treeBubbleRef"
-                    data-testid="tree-resize-bubble"
-                    aria-hidden="true"
-                    class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
-                >
-                    {{ treeResizingWidth }}px
-                </span>
-                <div
-                    v-if="!effectiveTreeCollapsed"
-                    role="separator"
+                        <!--
+                            PLAN-0753 T3: 宽度气泡的显隐由桥接 `resizing` 驱动，文本由桥接在
+                            `@resize` 里命令式写入（textContent）——不建响应式宽度通道。
+                        -->
+                        <span
+                            v-if="treeResizing"
+                            ref="treeBubbleRef"
+                            data-testid="tree-resize-bubble"
+                            aria-hidden="true"
+                            class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
+                        />
+                    </div>
+                </SplitterPanel>
+                <!-- testid/aria 走 fallthrough（与导航 handle 同口径；GripVertical 的把手视觉留在 rail 内）。 -->
+                <SplitterResizeHandle
+                    v-if="!treePanelCollapsed"
+                    id="tree-resize-handle"
+                    data-testid="tree-resizer"
                     aria-orientation="vertical"
                     :aria-label="t('workspace.treeResize')"
                     :aria-valuenow="treeWidth"
                     :aria-valuemin="TREE_WIDTH_MIN"
                     :aria-valuemax="TREE_WIDTH_MAX"
-                    tabindex="0"
-                    data-testid="tree-resizer"
-                    class="absolute -right-0.5 top-0 bottom-0 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
-                    @mousedown="handleTreeResizeStart"
-                    @dblclick="resetTreeWidth"
-                    @keydown="handleTreeResizeKeydown"
-                >
-                    <span
-                        class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/40"
-                        aria-hidden="true"
-                    >
-                        <GripVertical class="size-3" />
-                    </span>
-                </div>
-            </div>
+                    class="relative -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+                    @dragging="treeBridge.onDragging"
+                    @dblclick="treeBridge.onDblclick"
+                />
 
-            <!--
+                <!--
                 Center: the routed main content (chat / environment / settings).
                 D26-04: focus hides this column with `v-show` (never `v-if`) — unmounting
                 ChatPanel would drop its SSE subscription and the streaming state mid-run
                 (`useSSE.ts:555-557`), so the column stays mounted and merely stops taking
                 layout space.
             -->
-            <div
-                v-show="!dockFocus"
-                class="flex min-w-0 flex-1 flex-col bg-surface-content"
-                :data-main-hidden="dockFocus ? 'true' : 'false'"
-                @mousedown="handleMainColumnPointerDown"
-            >
-                <slot name="center" />
-            </div>
-
+                <SplitterPanel class="flex min-w-0">
+                    <div
+                        v-show="!dockFocus"
+                        class="flex min-w-0 flex-1 flex-col bg-surface-content"
+                        :data-main-hidden="dockFocus ? 'true' : 'false'"
+                        @mousedown="handleMainColumnPointerDown"
+                    >
+                        <slot name="center" />
+                    </div>
+                </SplitterPanel>
+            </SplitterGroup>
             <WorkspaceDock
                 v-if="dockOpen && activeDockTab"
                 :tabs="dockTabs"

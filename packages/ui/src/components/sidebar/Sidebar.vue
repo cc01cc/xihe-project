@@ -18,17 +18,6 @@ import SessionList from "../../features/workspace/chat/components/SessionList.vu
 import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
 import NavRail from "./NavRail.vue";
 import { workspacePath } from "../../lib/routes";
-import {
-    NAV_WIDTH_DEFAULT,
-    NAV_WIDTH_KEYBOARD_STEP,
-    NAV_WIDTH_MAX,
-    NAV_WIDTH_MIN,
-    RAIL_WIDTH,
-    clampNavWidth,
-    clampNavWidthForViewport,
-} from "../../composables/useWorkspaceLayout";
-import { useLiveResize } from "../../composables/useLiveResize";
-import { useWindowSize } from "@vueuse/core";
 import { useSessionStore } from "../../stores/session";
 import { defaultLayerPath } from "../../lib/settingsIa";
 import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
@@ -43,11 +32,16 @@ const props = defineProps<{
     open: boolean;
     width: number;
     isMobile: boolean;
+    /**
+     * PLAN-0753 T3: the shell's splitter bridge owns the pointer/keyboard resize;
+     * this is render-only state for transition suppression, layer promotion and the
+     * live width bubble. Never a width channel of its own.
+     */
+    resizing?: boolean;
 }>();
 
 const emit = defineEmits<{
     "update:open": [value: boolean];
-    "update:width": [value: number];
 }>();
 
 const router = useRouter(),
@@ -68,12 +62,6 @@ const isWorkspacePage = computed(() => {
     return (route?.path ?? "") === workspacePath(workspaceId);
 });
 
-// S2 ruling #1: the rail is a fixed 56px icon strip, so the panel sits right
-// after it; collapsing the panel keeps that 56px offset (R-D).
-// P1-4 (S2 audit): clamp to the breakpoint table for rendering only; the stored
-// user width is untouched, so a wider window restores it.
-const { width: viewportWidth } = useWindowSize();
-const effectiveWidth = computed(() => clampNavWidthForViewport(props.width, viewportWidth.value));
 const isOpen = computed(() => Boolean(props.open) && !props.forceCollapsed);
 
 /**
@@ -88,18 +76,7 @@ function expandSidebar() {
     emit("update:open", true);
 }
 
-const asideStyle = computed(() => {
-    if (props.isMobile) {
-        return { width: isOpen.value ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
-    }
-    const total = RAIL_WIDTH + (isOpen.value ? effectiveWidth.value : 0);
-    return { width: `${total}px` };
-});
-
-const panelStyle = computed(() => {
-    if (props.isMobile) return { width: "100%" };
-    return { width: isOpen.value ? `${effectiveWidth.value}px` : "0px" };
-});
+const panelStyle = computed(() => (props.isMobile ? { width: "100%" } : undefined));
 
 async function startNewChat() {
     if (!auth.currentWorkspaceId) {
@@ -118,37 +95,14 @@ function toggleSidebar() {
 }
 
 /**
- * S3b P2-2 + resize-follow fix: the width follows the pointer through a direct
- * `style.width` write (the aside also carries the fixed icon rail), and
- * `update:width` is emitted once on release so the store/persistence sees one write.
+ * PLAN-0753 T3: 指针 / 键盘 / 双击三条 resize 路径整体上移到壳层（AppLayout 的
+ * `useSplitterPanelBridge`）——aside 现在是 splitter panel #1，宽度由 reka 的
+ * flex-grow 拥有，本组件不再写 `style.width`、也不再 emit `update:width`。
+ * 只剩两件 render-only 的事：`resizing` 驱动 will-change / transition 抑制，
+ * 以及把气泡元素暴露给桥接做**命令式**文本写入（不建响应式宽度通道）。
  */
-const panelRef = ref<HTMLElement | null>(null);
 const bubbleRef = ref<HTMLElement | null>(null);
-const { resizingWidth, start: handleResizeStart } = useLiveResize({
-    clamp: clampNavWidth,
-    currentWidth: () => props.width,
-    grow: "right",
-    commit: (width) => emit("update:width", width),
-    panel: panelRef,
-    bubble: bubbleRef,
-    elementWidth: (width) => RAIL_WIDTH + width,
-});
-
-/** S3b P2-1: double-clicking the handle restores the default panel width. */
-function resetWidth() {
-    emit("update:width", NAV_WIDTH_DEFAULT);
-}
-
-function handleResizeKeydown(e: KeyboardEvent) {
-    let next: number | null = null;
-    if (e.key === "ArrowLeft") next = props.width - NAV_WIDTH_KEYBOARD_STEP;
-    else if (e.key === "ArrowRight") next = props.width + NAV_WIDTH_KEYBOARD_STEP;
-    else if (e.key === "Home") next = NAV_WIDTH_MIN;
-    else if (e.key === "End") next = NAV_WIDTH_MAX;
-    if (next === null) return;
-    e.preventDefault();
-    emit("update:width", clampNavWidth(next));
-}
+defineExpose({ bubbleRef });
 
 async function navigateToWorkspace() {
     if (!auth.currentWorkspaceId) {
@@ -179,24 +133,29 @@ function handleLogout() {
 
 <template>
     <aside
-        ref="panelRef"
         data-testid="sidebar"
         :aria-hidden="isMobile && !open ? 'true' : undefined"
         :inert="isMobile && !open ? true : undefined"
-        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border"
+        class="flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border"
         :class="[
-            { 'shadow-lg': isMobile && open, 'is-resizing': resizingWidth !== null },
-            resizingWidth === null ? 'transition-[width] duration-300' : 'transition-none',
+            isMobile ? 'fixed left-0 top-0 z-40' : 'relative min-w-0',
+            { 'shadow-lg': isMobile && open, 'is-resizing': resizing },
+            resizing
+                ? 'transition-none'
+                : isMobile
+                  ? 'transition-[width] duration-300'
+                  : 'transition-[flex-grow] duration-300',
         ]"
-        :style="asideStyle"
     >
         <NavRail v-if="!isMobile" :show-expand="showRailExpand" @expand="expandSidebar" />
+        <!-- 桌面：panel #1 已经是 rail + 面板的整宽，内层用 flex-1 吃掉除去 56px rail 的宽度 -->
         <div
             id="sidebar-panel"
             data-testid="sidebar-panel"
             :aria-hidden="!isMobile && !open ? 'true' : undefined"
             :inert="!isMobile && !open ? true : undefined"
             class="relative flex h-full min-w-0 flex-col overflow-hidden"
+            :class="isMobile ? undefined : 'flex-1'"
             :style="panelStyle"
         >
             <div class="flex h-14 shrink-0 items-center gap-1 px-2">
@@ -306,52 +265,29 @@ function handleLogout() {
                 </button>
             </div>
 
-            <!-- S3b P2-2: live width bubble (display-only). -->
+            <!--
+                PLAN-0753 T3: 宽度气泡的显隐由壳层桥接的 `resizing` 驱动，文本由桥接在
+                `@resize` 里**命令式**写入（textContent）——不建响应式宽度通道。
+            -->
             <span
-                v-if="resizingWidth !== null"
+                v-if="resizing"
                 ref="bubbleRef"
                 data-testid="sidebar-resize-bubble"
                 aria-hidden="true"
                 class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
-            >
-                {{ resizingWidth }}px
-            </span>
-
-            <div
-                v-if="!isMobile && open"
-                role="separator"
-                aria-orientation="vertical"
-                :aria-label="t('sidebar.resize')"
-                :aria-valuenow="width"
-                :aria-valuemin="NAV_WIDTH_MIN"
-                :aria-valuemax="NAV_WIDTH_MAX"
-                tabindex="0"
-                data-testid="sidebar-resizer"
-                class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
-                @mousedown="handleResizeStart"
-                @dblclick="resetWidth"
-                @keydown="handleResizeKeydown"
             />
         </div>
     </aside>
-
-    <Teleport to="body">
-        <div
-            v-if="isMobile && open"
-            class="fixed inset-0 z-30 bg-black/50"
-            @click="emit('update:open', false)"
-        />
-    </Teleport>
 </template>
 
 <style scoped>
 /*
- * Resize-follow fix: no width transition while the pointer drags (the 300ms
- * `transition-[width]` was the left column's "one beat behind" feeling), promoted
- * layer, and children stop hit-testing so nav content cannot reflow per mousemove.
+ * PLAN-0753 T3: reka 拥有 panel 宽度（flex-grow），拖拽期间抑制 transition 并把
+ * 子节点设为 pointer-events: none —— 内容不会跟着每次 pointermove 重排，手感与
+ * PLAN-0626 的"跟手不走响应式"一致。will-change 指向实际被动画的属性。
  */
 .is-resizing {
-    will-change: width;
+    will-change: flex-grow;
 }
 
 .is-resizing :deep(*) {

@@ -1,30 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import DiffViewer from "../components/DiffViewer.vue";
-import type * as monacoModule from "monaco-editor";
 
 vi.mock("vue-i18n", () => ({
     useI18n: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock(
-    "monaco-editor",
-    () => ({
-        editor: {
-            createDiffEditor: vi.fn<typeof monacoModule.editor.createDiffEditor>(),
-            createModel: vi.fn<typeof monacoModule.editor.createModel>(),
-        },
-    }),
-    {
-        spy: true,
-    },
-);
-
 describe("DiffViewer", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
     it("renders diff container div", () => {
         const wrapper = mount(DiffViewer, { props: { original: "hello", modified: "world" } });
         expect(wrapper.find("div").exists()).toBe(true);
@@ -50,29 +32,22 @@ describe("DiffViewer", () => {
         expect(wrapper.props("modified")).toBe("new b");
     });
 
-    // PLAN-0753 M1 (F5, task-167): a monaco load failure must be visible, never a silent
-    // blank pane (the old catch left an empty editor div that read as "no diff").
-    it("F5 fail-fast: a monaco failure surfaces an explicit error state", async () => {
-        const monaco = await import("monaco-editor");
-        vi.mocked(monaco.editor.createDiffEditor).mockImplementation(() => {
-            throw new Error("monaco unavailable");
-        });
-        const wrapper = mount(DiffViewer, { props: { original: "a", modified: "b" } });
+    // PLAN-0755 M6：@git-diff-view 接入后，F5 语义改为「解析失败可见」——
+    // hunks 缺 ---/+++ 头会静默解析成 0 行（POC 实测坑），适配层补头 + 断言非空。
+    it("renders the diff table when given a text pair (git-diff-view)", async () => {
+        const wrapper = mount(DiffViewer, { props: { original: "a\nb", modified: "a\nc" } });
         await flushPromises();
-        expect(wrapper.find('[data-testid="workspace-diff-load-failed"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-diff-viewer"]').exists()).toBe(true);
+        // @git-diff-view 挂载后渲染 diff 行（jsdom 下结构断言，像素级交浏览器证据）
+        expect(wrapper.find(".diff-tailwindcss-wrapper").exists()).toBe(true);
     });
 
-    it("F5: a successful monaco load keeps the editor pane without the error state", async () => {
-        const monaco = await import("monaco-editor");
-        vi.mocked(monaco.editor.createDiffEditor).mockReturnValue({
-            setModel: vi.fn<(diff: unknown) => void>(),
-        } as unknown as ReturnType<typeof monaco.editor.createDiffEditor>);
-        vi.mocked(monaco.editor.createModel).mockReturnValue({
-            dispose: vi.fn<() => void>(),
-        } as never);
-        const wrapper = mount(DiffViewer, { props: { original: "a", modified: "b" } });
+    it("surfaces an explicit error state when diff parsing yields no lines", async () => {
+        const wrapper = mount(DiffViewer, {
+            props: { original: "same", modified: "same" },
+        });
         await flushPromises();
-        expect(vi.mocked(monaco.editor.createDiffEditor)).toHaveBeenCalled();
-        expect(wrapper.find('[data-testid="workspace-diff-load-failed"]').exists()).toBe(false);
+        // 无差异 ⇒ diffLineLength=0 ⇒ 显式错误态（不静默空面板）
+        expect(wrapper.find('[data-testid="workspace-diff-error"]').exists()).toBe(true);
     });
 });

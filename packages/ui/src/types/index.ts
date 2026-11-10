@@ -721,6 +721,16 @@ export interface Message {
     parts?: MessagePart[];
     timestamp: string;
     toolCalls?: ToolCall[];
+    /**
+     * PLAN-0572 / BL-555 G3：持久化 toolCalls 快照的截断态。
+     *
+     * CP 的 ToolCallSnapshotService.MAX_CALLS（200）是快照上限：超过时只保留前 N 条，
+     * 并把 truncated/total 写进快照（MessageReadService.putToolCalls 投影到 DTO）。
+     * 渲染侧据此显示 N/M，避免用户把「被截断的列表」当成「全部调用」。
+     * 缺失或为假 = 未截断（或旧 CP 未投影），不渲染提示。
+     */
+    toolCallsTruncated?: boolean;
+    toolCallsTotal?: number;
     isStreaming?: boolean;
     attachments?: AttachmentFile[];
     branchId?: string;

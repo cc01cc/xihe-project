@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { logger } from "@/lib/logger";
+import { DiffView } from "@git-diff-view/vue";
+import "@git-diff-view/vue/styles/diff-view.css";
+import type { DiffFile } from "@git-diff-view/core";
+import { diffFileFromHunks, diffFileFromText, assertDiffNotEmpty } from "@/composables/useDiffFile";
 
-export interface DiffFile {
+export interface DiffFileMeta {
     path: string;
     status: "added" | "modified" | "deleted" | "renamed";
     oldPath?: string;
@@ -27,7 +30,7 @@ const props = withDefaults(
         original?: string;
         modified?: string;
         language?: string;
-        files?: DiffFile[];
+        files?: DiffFileMeta[];
         hunks?: DiffHunk[];
     }>(),
     {
@@ -38,39 +41,24 @@ const props = withDefaults(
     },
 );
 
-const editorRef = ref<HTMLDivElement | null>(null);
 const { t } = useI18n();
-// PLAN-0753 M1 (F5, task-167): the load outcome is observable state, never a silent swallow.
-const monacoFailed = ref(false);
 
+/** 服务端 hunks 形态（PLAN-0753 M1 F5）：有 files/hunks 时走预计算 diff。 */
 const isUnifiedMode = computed(() => props.files !== undefined || props.hunks !== undefined);
 
-const statusLabel: Record<DiffFile["status"], string> = {
+const statusLabel: Record<DiffFileMeta["status"], string> = {
     added: "A",
     modified: "M",
     deleted: "D",
     renamed: "R",
 };
 
-const statusColor: Record<DiffFile["status"], string> = {
+const statusColor: Record<DiffFileMeta["status"], string> = {
     added: "text-emerald-400",
     modified: "text-amber-400",
     deleted: "text-red-400",
     renamed: "text-blue-400",
 };
-
-function lineClass(type: DiffLine["type"]): string {
-    switch (type) {
-        case "add":
-            return "bg-emerald-500/10 text-emerald-300";
-        case "delete":
-            return "bg-red-500/10 text-red-300";
-        case "hunk":
-            return "bg-blue-500/10 text-blue-300 font-semibold";
-        default:
-            return "text-zinc-400";
-    }
-}
 
 const totalAdded = computed(() =>
     (props.hunks ?? []).reduce((n, h) => n + h.lines.filter((l) => l.type === "add").length, 0),
@@ -79,36 +67,45 @@ const totalDeleted = computed(() =>
     (props.hunks ?? []).reduce((n, h) => n + h.lines.filter((l) => l.type === "delete").length, 0),
 );
 
-async function renderDiff() {
-    if (!editorRef.value || isUnifiedMode.value) return;
+/** PLAN-0755 M6：diff 高亮唯一亮点 = hljs（@git-diff-view 内建 lowlight/highlight.js）。 */
+const diffFile = ref<DiffFile | null>(null);
+const diffError = ref<string | null>(null);
+
+function buildDiffFile(): void {
+    diffError.value = null;
+    diffFile.value = null;
     try {
-        const monaco = await import("monaco-editor");
-        const diff = monaco.editor.createDiffEditor(editorRef.value, {
-            renderSideBySide: true,
-            originalEditable: false,
-            fontSize: 13,
-            minimap: { enabled: false },
-            automaticLayout: true,
-        });
-        diff.setModel({
-            original: monaco.editor.createModel(props.original ?? "", props.language),
-            modified: monaco.editor.createModel(props.modified ?? "", props.language),
-        });
-        monacoFailed.value = false;
+        if (isUnifiedMode.value) {
+            // 形态 B：服务端 hunks（适配层补 ---/+++ 头 + 行数断言）
+            diffFile.value = diffFileFromHunks({
+                oldFileName: props.files?.[0]?.oldPath ?? props.files?.[0]?.path,
+                newFileName: props.files?.[0]?.path,
+                oldContent: props.original,
+                newContent: props.modified,
+                language: props.language,
+                hunks: (props.hunks ?? []).flatMap((h) =>
+                    h.lines.map((l) => (l.type === "hunk" ? l.content : "")),
+                ),
+            });
+        } else {
+            // 形态 A：本地文本对
+            diffFile.value = diffFileFromText({
+                oldFileName: "original",
+                newFileName: "modified",
+                oldContent: props.original,
+                newContent: props.modified,
+                language: props.language,
+            });
+        }
+        if (diffFile.value) assertDiffNotEmpty(diffFile.value);
     } catch (error) {
-        // PLAN-0753 M1 (F5, task-167 render matrix): fail fast. monaco is a devDependency on
-        // purpose (kept out of the production bundle), so a --prod install genuinely lacks it —
-        // the old silent catch left a blank pane that read as "no diff". Surface it loudly.
-        monacoFailed.value = true;
-        logger.error(
-            "monaco diff editor failed to load (devDependency; --prod installs lack it)",
-            error,
-        );
+        diffError.value = error instanceof Error ? error.message : String(error);
     }
 }
 
-onMounted(renderDiff);
-watch(() => [props.original, props.modified], renderDiff);
+watch(() => [props.original, props.modified, props.hunks, props.files], buildDiffFile, {
+    immediate: true,
+});
 </script>
 
 <template>
@@ -116,79 +113,40 @@ watch(() => [props.original, props.modified], renderDiff);
         data-testid="workspace-diff-viewer"
         class="h-full w-full border rounded-lg overflow-hidden"
     >
-        <template v-if="isUnifiedMode">
-            <div class="flex flex-col h-full overflow-hidden text-sm font-mono bg-zinc-950">
-                <div
-                    class="flex items-center gap-4 px-3 py-2 border-b border-zinc-800 text-zinc-500"
-                >
-                    <span class="text-emerald-400">+{{ totalAdded }}</span>
-                    <span class="text-red-400">-{{ totalDeleted }}</span>
-                    <span class="ml-auto"
-                        >{{ (files ?? []).length }} file{{
-                            (files ?? []).length !== 1 ? "s" : ""
-                        }}</span
-                    >
-                </div>
-
-                <div v-if="files?.length" class="border-b border-zinc-800">
-                    <div
-                        v-for="file in files"
-                        :key="file.path"
-                        class="flex items-center gap-2 px-3 py-1 hover:bg-zinc-900"
-                    >
-                        <span :class="['font-bold w-4', statusColor[file.status]]">{{
-                            statusLabel[file.status]
-                        }}</span>
-                        <span class="text-zinc-300 truncate">{{ file.path }}</span>
-                        <span v-if="file.contentHash" class="ml-auto text-zinc-600 text-xs">{{
-                            file.contentHash
-                        }}</span>
-                    </div>
-                </div>
-
-                <div class="flex-1 overflow-auto">
-                    <div v-for="(hunk, hi) in hunks" :key="hi">
-                        <div
-                            class="px-3 py-1 bg-zinc-900 border-b border-zinc-800 text-blue-400 text-xs"
-                        >
-                            {{ hunk.header }}
-                        </div>
-                        <div
-                            v-for="(line, li) in hunk.lines"
-                            :key="li"
-                            :class="[lineClass(line.type), 'px-3 whitespace-pre']"
-                        >
-                            <span
-                                v-if="line.type === 'add'"
-                                class="inline-block w-4 mr-2 select-none opacity-50"
-                                >+</span
-                            >
-                            <span
-                                v-else-if="line.type === 'delete'"
-                                class="inline-block w-4 mr-2 select-none opacity-50"
-                                >-</span
-                            >
-                            <span v-else class="inline-block w-4 mr-2 select-none opacity-50"
-                                >&nbsp;</span
-                            >
-                            {{ line.content }}
-                        </div>
-                    </div>
-                    <div v-if="!hunks?.length" class="p-4 text-zinc-600 text-center">
-                        No diff data
-                    </div>
-                </div>
-            </div>
-        </template>
-        <template v-else>
-            <div
-                v-if="monacoFailed"
-                data-testid="workspace-diff-load-failed"
-                class="h-full w-full flex items-center justify-center text-sm text-red-400"
+        <!-- 统一头部：增删计数 + 文件数（保留 PLAN-0753 M1 语义） -->
+        <div
+            class="flex items-center gap-4 px-3 py-2 border-b border-zinc-800 bg-zinc-950 text-zinc-500 text-sm font-mono"
+        >
+            <span class="text-emerald-400">+{{ totalAdded }}</span>
+            <span class="text-red-400">-{{ totalDeleted }}</span>
+            <span v-if="files?.length" class="ml-auto"
+                >{{ files.length }} file{{ files.length !== 1 ? "s" : "" }}</span
             >
-                {{ t("workspace.diffLoadFailed") }}
+        </div>
+
+        <!-- 文件列表（unified 模式） -->
+        <div v-if="files?.length" class="border-b border-zinc-800 bg-zinc-950">
+            <div
+                v-for="file in files"
+                :key="file.path"
+                class="flex items-center gap-2 px-3 py-1 hover:bg-zinc-900"
+            >
+                <span :class="['font-bold w-4', statusColor[file.status]]">{{
+                    statusLabel[file.status]
+                }}</span>
+                <span class="text-zinc-300 truncate">{{ file.path }}</span>
+                <span v-if="file.contentHash" class="ml-auto text-zinc-600 text-xs">{{
+                    file.contentHash
+                }}</span>
             </div>
-            <div v-else ref="editorRef" class="h-full w-full" />
-        </template>
+        </div>
+
+        <div v-if="diffError" data-testid="workspace-diff-error" class="p-4 text-red-400 text-sm">
+            {{ t("workspace.diffLoadFailed") }}
+        </div>
+        <div v-else-if="diffFile" class="h-full overflow-auto">
+            <DiffView :diffFile="diffFile" diffViewTheme="light" />
+        </div>
+        <div v-else class="p-4 text-zinc-600 text-center">No diff data</div>
     </div>
 </template>

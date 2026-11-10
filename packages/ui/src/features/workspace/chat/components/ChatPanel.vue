@@ -377,6 +377,10 @@ function mapRawMessages(rawMessages: ApiSessionMessage[]): Message[] {
         //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
         // PLAN-0572：优先用持久化的 toolCalls 快照，并按 toolCallId 与 jobSummary 合并。
         toolCalls: mergeHistoryToolCalls(message.toolCalls, message.jobSummary),
+        // PLAN-0572 / BL-555 G3：快照截断态随历史 DTO 回来（CP 只在 truncated=true 时下发）。
+        // 渲染侧据此显示「N/M 条调用」；缺失 = 未截断，不渲染提示。
+        toolCallsTruncated: message.toolCallsTruncated ?? undefined,
+        toolCallsTotal: message.toolCallsTotal ?? undefined,
         // PLAN-0659 T1.3 / PLAN-0669 M1：历史消息的主体归属（可选）。缺失即 undefined ⇒
         // 不渲染 identity 徽标（不猜 PRIMARY、不显示"未知"）；只多一个可选字段，
         // 不影响 delivery 解析与 run 分组。

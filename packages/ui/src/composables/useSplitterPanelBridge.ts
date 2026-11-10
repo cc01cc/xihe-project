@@ -136,12 +136,15 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         panelRef.value?.expand();
     }
 
-    if (options.viewportWidth && options.displayResize) {
-        watch(options.viewportWidth, (vw) => {
+    // Destructured consts keep the narrowing valid inside the watcher callback: an
+    // optional property of the options object is NOT narrowed for the closure.
+    const { viewportWidth, displayResize } = options;
+    if (viewportWidth && displayResize) {
+        watch(viewportWidth, (vw) => {
             if (draggingActive || options.isCollapsed?.()) return;
             // Ruling ③: constraint/viewport crossings re-initialize defaultSize;
             // re-issue the user's width clamped for display, never committed.
-            const display = options.displayResize(options.currentWidth(), vw);
+            const display = displayResize(options.currentWidth(), vw);
             panelRef.value?.resize(widthToPx(display));
         });
     }
