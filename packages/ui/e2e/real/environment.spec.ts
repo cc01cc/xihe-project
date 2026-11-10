@@ -30,6 +30,15 @@ test.describe("Workspace environment status", () => {
             ({ token, workspaceId }) => {
                 localStorage.setItem("xihe-token", token);
                 localStorage.setItem("xihe-user", JSON.stringify({ workspaceId }));
+                // PLAN-0608 C′：/workspace 在**无 tab 工作区上下文**时渲染显式选择面，
+                // 只有上下文已存在守卫才跳 /workspace/{id}。并存键由守卫的
+                // migrateLegacyWorkspace() 搬进 sessionStorage；audit/approval 等
+                // 58 处 real spec 同样种这个键，本 spec 之前漏了 → 停在选择面、
+                // GET .../environment 从未发出、30 s 超时（task-140/142）。
+                localStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({ id: workspaceId, name: "Default Workspace" }),
+                );
             },
             { token: auth.accessToken, workspaceId: auth.workspaceId },
         );
