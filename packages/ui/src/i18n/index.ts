@@ -1304,6 +1304,12 @@ const messages = {
             principalMissing: "此会话尚未绑定可用的智能体（Agent principal）",
             principalMissingHint:
                 "请在工作区设置 → 智能体管理绑定一个智能体，或联系工作区管理员开通绑定权限后重试",
+            // PLAN-0750 V10 (A1-lite): toast 通道专用（与上面的卡片通道分开），经
+            // `errorCopyKey()` 走 key ⇒ 跟随 locale。动作导向：给出可操作路径。
+            principalMissingToast:
+                "此会话尚未绑定可用的智能体：请在工作区设置 → 智能体管理绑定一个智能体后再发送",
+            principalDisabledToast:
+                "此会话绑定的智能体已停用：请在工作区设置 → 智能体管理解绑后重新绑定一个可用的智能体",
             resourceExhausted: "{kind}并发已满，约 {seconds} 秒后重试",
             resourceExhaustedNoWait: "{kind}并发已满，请稍后重试",
             resourceExhaustedHint: "也可以在上方模型/连接选择器里换一个连接后再试。",
@@ -3944,6 +3950,12 @@ const messages = {
             principalMissing: "This session has no active Agent principal bound",
             principalMissingHint:
                 "Bind an Agent in Workspace settings → Agent management, or ask a workspace admin to grant binding permission, then retry",
+            // PLAN-0750 V10 (A1-lite): toast-channel copy (separate from the card channel above);
+            // resolved through `errorCopyKey()` so it follows the active locale.
+            principalMissingToast:
+                "This session has no active Agent principal bound: bind one in Workspace settings → Agent management, then send again",
+            principalDisabledToast:
+                "The Agent principal bound to this session is disabled: unbind it in Workspace settings → Agent management, then bind an available one",
             resourceExhausted: "{kind} capacity is full; retry in about {seconds}s",
             resourceExhaustedNoWait: "{kind} capacity is full; try again shortly",
             resourceExhaustedHint:

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     chatErrorToastText,
+    errorCopyKey,
     humanizeErrorCode,
     mappedErrorCopy,
     normalizeRefusalCode,
@@ -8,6 +9,33 @@ import {
     PROBLEM_DETAIL_MAX_LENGTH,
     toolRefusalCopyKey,
 } from "../errorMessages";
+
+/**
+ * PLAN-0750 V10 (A1-lite)：toast 通道只给这两个码开 i18n key，其余一律 null 走旧路径。
+ * 这条 describe 同时是 BL-563 的边界说明 —— 白名单之外的全量硬编码中文问题不在本卡范围内。
+ */
+describe("errorCopyKey (PLAN-0750 V10 / A1-lite)", () => {
+    it("只覆盖 AGENT_PRINCIPAL_MISSING 与 AGENT_PRINCIPAL_DISABLED", () => {
+        expect(errorCopyKey("AGENT_PRINCIPAL_MISSING")).toBe("chat.principalMissingToast");
+        expect(errorCopyKey("AGENT_PRINCIPAL_DISABLED")).toBe("chat.principalDisabledToast");
+    });
+
+    it("白名单之外的码一律 null（旧路径逐字节不变，BL-563）", () => {
+        // 取样必须包含「有 mappedErrorCopy 文案」的码 —— 否则证明不了 key 通道没有越界。
+        expect(errorCopyKey("PROVIDER_REQUIRED")).toBeNull();
+        expect(errorCopyKey("AGENT_TIMEOUT")).toBeNull();
+        expect(errorCopyKey("RUNTIME_UNAVAILABLE")).toBeNull();
+        expect(errorCopyKey("SOMETHING_NOT_MAPPED")).toBeNull();
+        expect(errorCopyKey("")).toBeNull();
+        expect(errorCopyKey(undefined)).toBeNull();
+        expect(errorCopyKey(null)).toBeNull();
+    });
+
+    it("只做 trim，不改写码本身", () => {
+        expect(errorCopyKey("  AGENT_PRINCIPAL_MISSING  ")).toBe("chat.principalMissingToast");
+        expect(errorCopyKey("agent_principal_missing")).toBeNull();
+    });
+});
 
 describe("mappedErrorCopy", () => {
     it("returns dedicated copy only for codes it actually maps", () => {
