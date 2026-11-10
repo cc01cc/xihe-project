@@ -93,6 +93,11 @@ test("isLiteralUnion: 纯字面量联合才排除（含 null 也算）", () => {
   assert.equal(isLiteralUnion("keyof typeof X"), false);
 });
 
+test("extractHandwrittenTypes: 带 extends 子句的 interface 也要抽到（实测曾漏 2/205）", () => {
+  const src = "export interface Envelope extends Base { id: string }\nexport interface Plain { id: string }\n";
+  assert.deepEqual(extractHandwrittenTypes(src).map((t) => t.name), ["Envelope", "Plain"]);
+});
+
 test("extractHandwrittenTypes: interface/type 都能抽，字面量联合有 body", () => {
   const types = extractHandwrittenTypes(HANDWRITTEN);
   assert.deepEqual(types.map((t) => t.name).sort(), ["Alpha", "Beta", "Gamma", "Status"]);
