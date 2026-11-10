@@ -112,6 +112,7 @@ status: active
 - [ ] 同一键在两侧的 `{placeholder}` 集合一致（漂移会让运行时渲染出 undefined）
 - **已知陷阱（2026-11-10 实测）**：同名族前缀写错只有运行时才暴露 —— `ApprovalModal.vue` 的「另一窗口已处理」第二条提示曾写作 `chat.approvalResolvedElsewhereDraftKept`，而键实际在 `workspace.*`，用户看到的是**裸 key**（已修 `efa527a0`）。扫描口径：键差集 + 占位漂移 + 源码 `t("…")` 静态引用三查，脚本已转正为仓库门禁 `mise run lint:i18n`（`A03-xihe/scripts/i18n-scan.mjs`，task-96）。
 - **已知陷阱（2026-11-10 实测）｜省略号字形**：手写的 `加载中...`（三个半角句点）与实际 i18n 值 `common.loading` = `加载中…`（**U+2026 单字符省略号**）不是同一个字符串 ⇒ `text=加载中...` / `textContent` 断言会「页面明明显示了却匹配不到」（task-112 实测：产品已修好，用例仍红，两条现象同时存在）。**判据**：① 断言优先用 `data-testid` / role / `aria-*` 等结构锚点；② 必须断言文案时取 i18n 同源常量，不手写字面量；③ 确需手写时只匹配不含标点的稳定前缀（如 `加载中`）。同族字符差异：全角/半角括号、`：`vs`:`、`·`vs`-`、不间断空格（U+00A0）。
+- **新门禁首日误报审计（2026-11-10 实测，task-96 / task-148）**：`mise run lint:i18n` 上线首日在 `literal-brace` 规则上**误报 3 处** —— `chat.delivery.mentioned` 的 vue-i18n 字面量插值 `{'@'}`、`settings.jsonPlaceholder` 的 mcpServers JSON 样板（中英各一）；规则改成「花括号内是标识符 / 是 `'…'` 字面量 / 含引号 ⇒ 放行」之后才可用。三条要求：① **新门禁上线第一天必须做误报审计** —— 拿真仓跑一遍，把每条命中判成「真缺陷」或「规则误报」，**误报不清零就上线 = 以后没人看**（没人看的门禁等于没有门禁）；② **误报判定口径** —— 真·漏替换是非标识符花括号（`{...}`、`{ … }`、`${x}`）；合法花括号是已声明的插值参数 `{name}`、vue-i18n 字面量 `{'@'}`、JSON 样板（花括号内含引号）；③ **每条放行规则都要有正例单测** —— 本次 `legitimate braces (vue-i18n literals, JSON samples) are not false positives` 与「`{...}` 仍会红」的负例成对存在，**改规则必须同时改这两条**。
 
 ## 9. E2E 截图基准
 
