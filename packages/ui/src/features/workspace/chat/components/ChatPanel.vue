@@ -44,7 +44,7 @@ import {
     type ProviderBindingGuideReason,
 } from "../composables/ensureProviderBinding";
 import ProviderBindingGuideDialog from "./ProviderBindingGuideDialog.vue";
-import { chatErrorToastText, problemDetailText } from "../../../../lib/errorMessages";
+import { chatErrorToastText, errorCopyKey, problemDetailText } from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Clock, ShieldAlert } from "@lucide/vue";
@@ -122,7 +122,11 @@ async function guardProviderBinding(id: string): Promise<boolean> {
             providerBindingGuide.value = { reason, detail: detail ?? null };
         },
         onBlocked: (code, detail) => {
-            toast.error(chatErrorToastText(code, detail));
+            // PLAN-0750 V10 (A1-lite): the principal codes carry an i18n key so this toast follows
+            // the active locale (mappedErrorCopy is deliberately hardcoded Chinese — BL-563).
+            // Every other code keeps the byte-identical legacy path.
+            const key = errorCopyKey(code);
+            toast.error(key ? t(key) : chatErrorToastText(code, detail));
         },
     });
 }

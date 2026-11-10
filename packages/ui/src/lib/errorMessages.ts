@@ -176,6 +176,34 @@ export function chatErrorToastText(code: string | undefined, detail?: string | n
 }
 
 /**
+ * PLAN-0750 V10 (A1-lite) —— 少数码的 **i18n key**，让 toast 通道跟随当前 locale。
+ *
+ * 为什么需要：`mappedErrorCopy` 是**故意**硬编码中文的（HTTP/SSE 错误通道，理由见
+ * `toolRefusalCopyKey` 的注释）。于是 en 语系用户在 toast 里看到的是中文 —— 对
+ * `AGENT_PRINCIPAL_MISSING` 这类「必须给出可操作指引」的码，等于**判据在 en 下不成立**。
+ *
+ * 调用点写法（两处，仅 toast）：
+ * ```ts
+ * const key = errorCopyKey(code);
+ * toast.error(key ? t(key) : chatErrorToastText(code, detail));
+ * ```
+ *
+ * **刻意只覆盖 V10 涉及的两个码**：把 `mappedErrorCopy` 的几十个码全量搬进 i18n 是独立
+ * 工作量，已登记 BL-563（本卡不合入）。返回 `null` = 该码没有 key，调用点走原路径，
+ * 行为逐字节不变 —— 所以这条通道是**加法**，不动既有文案与顺序。
+ */
+export function errorCopyKey(code: string | undefined | null): string | null {
+    switch ((code ?? "").trim()) {
+        case "AGENT_PRINCIPAL_MISSING":
+            return "chat.principalMissingToast";
+        case "AGENT_PRINCIPAL_DISABLED":
+            return "chat.principalDisabledToast";
+        default:
+            return null;
+    }
+}
+
+/**
  * PLAN-0649 M3 (spec `tool-refusal-observability.md` §1/§2): the frozen shape of
  * a `refusalCode`. The UI re-validates instead of trusting the wire, so a value
  * that is not a bare enum token can never reach the card as "a reason".
