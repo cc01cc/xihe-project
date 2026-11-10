@@ -1301,6 +1301,9 @@ const messages = {
             budgetExhaustedHint: "可在下方输入框继续发送，接续本次会话",
             noProgressReason: "检测到重复或无进展动作，运行已停止",
             streamErrorGeneric: "本次运行未能完成，请重试；若持续失败请查看监控日志",
+            principalMissing: "此会话尚未绑定可用的智能体（Agent principal）",
+            principalMissingHint:
+                "请在工作区设置 → 智能体管理绑定一个智能体，或联系工作区管理员开通绑定权限后重试",
             resourceExhausted: "{kind}并发已满，约 {seconds} 秒后重试",
             resourceExhaustedNoWait: "{kind}并发已满，请稍后重试",
             resourceExhaustedHint: "也可以在上方模型/连接选择器里换一个连接后再试。",
@@ -3904,6 +3907,9 @@ const messages = {
             noProgressReason: "Repeated or no-progress actions detected; the run was stopped",
             streamErrorGeneric:
                 "This run did not finish. Retry; if it keeps failing, check the monitor logs.",
+            principalMissing: "This session has no active Agent principal bound",
+            principalMissingHint:
+                "Bind an Agent in Workspace settings → Agent management, or ask a workspace admin to grant binding permission, then retry",
             resourceExhausted: "{kind} capacity is full; retry in about {seconds}s",
             resourceExhaustedNoWait: "{kind} capacity is full; try again shortly",
             resourceExhaustedHint:
