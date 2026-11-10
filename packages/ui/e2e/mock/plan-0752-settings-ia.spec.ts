@@ -178,6 +178,10 @@ test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
         //   user-preference / logging / approval-policy / job-policy
         // 也就是说「有没有 /config/logging」度量的是**应用壳启动预热**，不是本页 404 行为，
         // 加进来会让任何页面都红。本页判据只能落在「有没有**工作区层**请求」上（上一条）。
+        //
+        // 定性质（task-230 复核裁定）：这次启动预热是**既定产品行为，不是缺陷** —— 它既做首屏
+        // 预热，也兼作后端不可用时回退本地持久化配置的那条路（App.vue:30 的 .catch 注释）。
+        // **不要把它当 bug「修掉」**；若要调整预热范围，走 PLAN 决策，不要用 e2e 断言倒逼产品改。
         // 依据：isWorkspaceLayerConfigRequest 的读路径口径见 src/lib/settingsIaRequests.ts。
     });
 
