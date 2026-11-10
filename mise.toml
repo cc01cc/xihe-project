@@ -686,6 +686,8 @@ description = "Blocking commit-message gate (type/scope, display-width <=72 cols
 # PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate，本地必红（已知存量 264/56，见 task-245 清账）。
 # task-69 / D-827：build-docs 已切 Redoc 3，主题走「模板注入 CSS 变量」而不是 .redocly.yaml 的 theme 块（后者在 Redoc 3 下实测无效）。
 #   -t ../../.redocly/api-docs.hbs ⇒ XH 主题（字体/主色/侧栏），相对路径从 packages/ui 解析；
+#   --openapi.disableTelemetry=true ⇒ 关掉 Redoc 3 的 OpenTelemetry 上报（内部文档页不该向第三方发请求）；
+#   模板里的 CSP 再做一层浏览器级兜底（外联一律拒绝，含 Redoc 硬编码的 logo）。
 #   --inlineBundle ⇒ 把 Redoc 脚本内嵌进产物。缺它时产物含 6 处 https 外链（Redocly CDN），断网打开是白屏 ——
 #   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
@@ -693,5 +695,5 @@ run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../
 description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；未接入 validate；本地必红（当前 264 errors / 56 warnings 属已知存量），清账前不得接 validate（task-245）"
 
 [tasks."docs:api:html"]
-run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs"
+run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
 description = "从 openapi.yaml 生成单文件 HTML 文档到 .tmp/api-docs/index.html（gitignored）"

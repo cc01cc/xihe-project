@@ -26,6 +26,61 @@
   <title>{{title}}</title>
   <!-- needed for adaptive design -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 离线硬要求（D-827 追补）：这份产物是「发出去双击就能开」的单文件。
+       Redoc 3 自己还会发两类外联请求，且都不受 build-docs 参数控制：
+       ① 侧栏页脚的 Redocly logo（https://cdn.redoc.ly/redoc/logo-mini*.svg，硬编码在 Redoc 3 包里）
+       ② OpenTelemetry 上报（https://otel.cloud.redocly.com/v1/traces）
+       ① 用 CSS 隐藏解决不了「不加载」（display:none 不阻止 fetch），② 只靠 disableTelemetry 是「尽量不发」。
+       所以这里用 CSP 在**浏览器层**兜底：外联一律拒绝，page 内联脚本/样式照常。
+       判据：performance.getEntriesByType('resource') 不含任何非 localhost URL。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; worker-src blob:;">
+  <!-- 兜底一层：即使 CSP 被打开方忽略（老浏览器/被剥离），也不让外联真的发出去，
+       并顺手清掉 Redoc 内置的 CDN logo img（display:none 不阻止 fetch ⇒ 必须从源头换成 data URI）。
+       实测口径见 mise.toml 注释：performance.getEntriesByType('resource') 里非 localhost 必须为 0 条。 -->
+  <script>
+    (function () {
+      // 外链图片不显示，改成本地内联的 XH 小标（data URI；零请求、断网也不会成破图）
+      var LOCAL_MARK = "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%233b5bd0'/%3E%3Ctext x='8' y='11.5' font-family='Segoe UI, sans-serif' font-size='8' font-weight='600' fill='%23ffffff' text-anchor='middle'%3EXH%3C/text%3E%3C/svg%3E";
+      var BLANK = LOCAL_MARK;
+      var EXTERNAL = /^https?:\/\/(?!127\.0\.0\.1|localhost)/i;
+      var OTEL = /otel\.cloud\.redocly\.com/i;
+      // 1) React 用 setAttribute 设 src：外链图片一律换成 1x1 透明图（不产生任何请求）
+      var setAttr = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function (name, value) {
+        if ((name === 'src' || name === 'href') && typeof value === 'string' && EXTERNAL.test(value)) {
+          if (this instanceof HTMLImageElement) return setAttr.call(this, name, BLANK);
+          return;
+        }
+        return setAttr.call(this, name, value);
+      };
+      // 1b) React 对 img.src 走的是**属性赋值**（不是 setAttribute）⇒ 单独拦原型 setter，
+      //     否则那一次 CDN 请求仍会被发出（实测：只拦 setAttribute 时 resource 里还剩 1 条 logo）。
+      var srcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+      if (srcDesc && srcDesc.set) {
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+          configurable: true,
+          enumerable: srcDesc.enumerable,
+          get: srcDesc.get,
+          set: function (v) { return srcDesc.set.call(this, EXTERNAL.test(String(v)) ? BLANK : v); }
+        });
+      }
+      // 2) 遥测/任何外联请求：直接短路（CSP 已在网络层拒绝，这层让 resource timing 也干净）
+      var _fetch = window.fetch;
+      if (_fetch) window.fetch = function (input, init) {
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (OTEL.test(url) || EXTERNAL.test(url)) return Promise.resolve(new Response('', { status: 204 }));
+        return _fetch.call(this, input, init);
+      };
+      var _open = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        var args = Array.prototype.slice.call(arguments);
+        if (OTEL.test(String(url)) || EXTERNAL.test(String(url))) args[1] = 'about:blank';
+        return _open.apply(this, args);
+      };
+      var _beacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+      if (_beacon) navigator.sendBeacon = function (url, data) { return OTEL.test(String(url)) ? true : _beacon(url, data); };
+    })();
+  </script>
   <style>
     body {
       padding: 0;
@@ -61,6 +116,14 @@
        不动侧栏文字色（侧栏走 --sidebar-text-color）。 */
     #redoc a[href^="#/"] {
       color: var(--link-color-primary);
+    }
+
+    /* 离线硬要求：产物必须「双击就能开」。Redoc 3 默认从 CDN 拉 logo 图
+       （https://cdn.redoc.ly/redoc/logo-mini-full.svg），断网时那是一张**破图**，
+       审阅者会以为文档坏了 ⇒ 直接不显示，而不是留一个会失败的引用。 */
+    img[src^="https://cdn.redoc.ly"],
+    img[src*="logo-mini"] {
+      display: none !important;
     }
   </style>
 </head>
