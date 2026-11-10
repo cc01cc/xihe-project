@@ -230,7 +230,7 @@ export function parseMiseTasks(toml) {
       continue;
     }
     if (!current) continue;
-    if (/^\[/.test(line)) {
+    if (line.startsWith('[')) {
       current = null;
       continue;
     }

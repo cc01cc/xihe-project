@@ -42,7 +42,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { cpBuildRoot, readPointer, pointerPath } from './lib/cp-build-dir.mjs';
-import { buildInfoPath, gitHead, readBuildInfo, shortSha } from './lib/cp-build-info.mjs';
+import { gitHead, readBuildInfo, shortSha } from './lib/cp-build-info.mjs';
 import { DEFAULT_STACK_ID, deriveStack } from './lib/stack-ports.mjs';
 
 const projectRoot = dirname(import.meta.dirname);

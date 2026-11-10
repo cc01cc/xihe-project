@@ -78,7 +78,6 @@ export async function waitForPhase({
   const startedAt = now();
   const deadline = startedAt + phase.timeoutMs;
   let attempts = 0;
-  let lastProbe = null;
   let lastState = null;
   for (;;) {
     attempts += 1;
@@ -91,7 +90,6 @@ export async function waitForPhase({
         state: `probe threw: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-    lastProbe = result;
     // Every probe is persisted (the launcher writes this to <logDir>/launcher.log); the
     // console only hears about state changes so a 240 s wait does not scroll the terminal.
     logProbe({

@@ -53,6 +53,7 @@ async function api(method, path, { token, workspaceId, body } = {}) {
     if (token) headers.Authorization = `Bearer ${token}`;
     if (workspaceId) headers['X-Workspace-Id'] = workspaceId;
     const response = await fetch(`${CP}${path}`, {
+        // oxlint-disable-next-line unicorn/no-invalid-fetch-options -- Fetch 规范里 body 为 undefined 等同「没有 body」（`Request` init 不会带 body），所以 GET 分支实际不发 body；改成条件展开只会让调用点更难读
         method, headers, body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await response.text();

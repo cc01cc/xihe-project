@@ -120,7 +120,7 @@ export async function runChatCancel({ apiBase, fetchImpl, token, runId, options,
   const result = await requestJson(`/api/v1/chat/runs/${encodeURIComponent(runId)}/cancel`, {
     apiBase, fetchImpl, token, method: 'POST', body, headers: workspaceHeaders(workspaceId), preserveServerCodes: true,
   });
-  return { kind: 'chat-cancelled', runId, ...(result ?? {}) };
+  return { kind: 'chat-cancelled', runId, ...result };
 }
 
 export async function runChatApprovals({ apiBase, fetchImpl, token, workspaceId }) {
@@ -145,7 +145,7 @@ export async function runChatApprovalDecision({ apiBase, fetchImpl, token, reque
   const result = await requestJson(`/api/v1/chat/approvals/${encodeURIComponent(requestId)}/decision`, {
     apiBase, fetchImpl, token, method: 'POST', body, headers: workspaceHeaders(workspaceId), preserveServerCodes: true,
   });
-  return { kind: 'chat-approval-decision', requestId, decision, ...(result ?? {}) };
+  return { kind: 'chat-approval-decision', requestId, decision, ...result };
 }
 
 export async function runSessionList({ apiBase, fetchImpl, token, workspaceId }) {

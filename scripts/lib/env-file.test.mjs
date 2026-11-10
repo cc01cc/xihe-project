@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test, describe, beforeEach, afterEach } from "node:test";
+import { test, describe, beforeEach } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

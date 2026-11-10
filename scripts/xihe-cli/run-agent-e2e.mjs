@@ -367,7 +367,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
       : new CliError('UNEXPECTED_ERROR', 'The runner failed unexpectedly; sensitive details were not printed.');
     result = {
       exitCode: cliError.exitCode ?? 1,
-      error: { code: cliError.code, message: cliError.message, ...(cliError.details ?? {}) },
+      error: { code: cliError.code, message: cliError.message, ...cliError.details },
     };
   }
   const summary = summarize({

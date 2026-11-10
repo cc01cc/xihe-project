@@ -259,7 +259,6 @@ export function resolveBuildTargetForStack({
     env = process.env,
     commit,
     dirty = false,
-    platform,
 }) {
     const pointer = readPointer({ root, stackId });
     if (pointer && typeof pointer.targetDir === 'string' && pointer.targetDir) {

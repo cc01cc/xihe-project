@@ -20,14 +20,13 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_TIMEOUTS, PHASE_ORDER } from '../lib/service-supervisor.mjs';
 
 const PKG_DIR = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(PKG_DIR, '..', '..');
 const JAVA_LAUNCHER = join(
   PKG_DIR,
   'launcher',

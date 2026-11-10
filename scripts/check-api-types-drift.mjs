@@ -219,7 +219,7 @@ export function collectHandwritten(target) {
         if (e === "generated" || e.startsWith(".")) continue;
         walk(join(q, e));
       }
-    } else if (/\.ts$/u.test(q) && !/\.test\.ts$/u.test(q)) files.push(q);
+    } else if (q.endsWith(".ts") && !q.endsWith(".test.ts")) files.push(q);
   };
   walk(abs);
   const types = [];

@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { withLoginLock } from './login-lock.mjs';
 import { cacheDisabled, persistToken, tokenEntryFor } from './token-store.mjs';

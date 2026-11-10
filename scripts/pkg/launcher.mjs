@@ -374,7 +374,7 @@ function killTree(pid) {
 
 /* ----------------------------------------------------------------- deps */
 
-function makeDeps({ services, logDir, console_ = console }) {
+function makeDeps({ logDir, console_ = console }) {
   const launcherLog = join(logDir, 'launcher.log');
   const appendLog = (line) => {
     try {
@@ -490,7 +490,7 @@ async function start({ args, derived, services, logDir }) {
   }
   for (const [name, spec] of Object.entries(services)) {
     if (spec.pid && !record.services[name]) {
-      record.services[name] = { ...(previous?.services?.[name] ?? {}), pid: spec.pid, port: spec.port };
+      record.services[name] = { ...previous?.services?.[name], pid: spec.pid, port: spec.port };
     }
   }
   writeRecord(logDir, record);

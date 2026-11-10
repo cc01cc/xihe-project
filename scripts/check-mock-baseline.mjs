@@ -122,7 +122,7 @@ export function compareWithBaseline(summary, baseline) {
  *   ② 用例总数不足基线的 50%（实测：全量 317 条 vs 单文件/5 文件子集 60 量级）。
  */
 export function rejectSubsetReport(reportPath, summary, baseline) {
-    if (/\.subset\.json$/.test(reportPath)) {
+    if (reportPath.endsWith(".subset.json")) {
         return `子集报告不能用来判基线：${reportPath}`;
     }
     const baselineTotal =
@@ -165,7 +165,7 @@ function main() {
         );
         return 2;
     }
-    const { problems, unregistered, retired } = compareWithBaseline(summary, baseline);
+    const { problems } = compareWithBaseline(summary, baseline);
     const line =
         `[check-mock-baseline] expected=${summary.expected} skipped=${summary.skipped} ` +
         `failed=${summary.failed} flaky=${summary.flaky} skips=${summary.skipNames.length}`;

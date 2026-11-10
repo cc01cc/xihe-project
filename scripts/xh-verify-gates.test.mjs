@@ -242,7 +242,6 @@ describe("CLI", () => {
 // BL-528：`check:mock-baseline` 只查「报告存在」⇒ 旧报告可判绿（W-24 实证：槽里躺着 17 分钟前的报告）。
 // 这组测试钉住新鲜度 / runId+commit 绑定 / 归属三道校验，以及 `--strict` 的 FAIL 降级。
 describe("BL-528 假绿通道：mock 报告必须新鲜且属于本轮", () => {
-  const MOCK_GATE = { id: "check:mock-baseline", kind: "mise", class: "fast" };
 
   function repoWithMockGate(t) {
     return fakeRepo(t, { tasks: [["check:mock-baseline", "node scripts/check-mock-baseline.mjs"]] });

@@ -33,7 +33,6 @@ import {
 const projectRoot = fileURLToPath(new URL('../..', import.meta.url));
 const SHA_A = '0123456789abcdef0123456789abcdef01234567';
 const SHA_B = 'fedcba9876543210fedcba9876543210fedcba98';
-const SHA_C = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 function tempRoot(t) {
   const directory = mkdtempSync(join(tmpdir(), 'xihe-cp-build-dir-'));

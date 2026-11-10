@@ -151,7 +151,7 @@ test('T8 boundary: a commit at exactly the artifact time is fresh, 1 ms later is
 
 test('T9 dirty source newer than the jar is STALE; an older dirty edit is UNVERIFIABLE', () => {
   const path = 'src/main/java/com/cc01cc/p/xihe/cp/Plugin.java'
-  const dirty = (mtimeMs) => ({ ok: true, state: 'dirty', commit: 'deadbeef', commitTimeMs: OLDER, error: null })
+  const dirty = (_mtimeMs) => ({ ok: true, state: 'dirty', commit: 'deadbeef', commitTimeMs: OLDER, error: null })
   const newer = decideArtifactFreshness({
     artifactTimeMs: ARTIFACT,
     sources: [{ path, mtimeMs: NEWER }],

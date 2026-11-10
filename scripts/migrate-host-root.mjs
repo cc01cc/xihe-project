@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, readdir, lstat, readFile, readlink, symlink, copyFile, writeFile, access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { dirname, join, resolve, relative, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 
@@ -62,10 +62,6 @@ function normalizeForCompare(value) {
 
 function toGitPath(value) {
   return value.replace(/\\/g, "/").replace(/^\/\/\?\//, "");
-}
-
-function toPosix(value) {
-  return value.split(sep).join("/");
 }
 
 async function exists(path) {
@@ -172,7 +168,7 @@ function readCoreConfig(text) {
       inCore = true;
       continue;
     }
-    if (/^\[/.test(trimmed)) inCore = false;
+    if (trimmed.startsWith('[')) inCore = false;
     if (inCore) {
       const match = trimmed.match(/^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$/);
       if (match) values.set(match[1].toLowerCase(), match[2]);
@@ -194,7 +190,7 @@ function setCoreValues(text, replacements) {
       inCore = true;
       return line;
     }
-    if (/^\[/.test(trimmed)) inCore = false;
+    if (trimmed.startsWith('[')) inCore = false;
     if (!inCore) return line;
     const match = line.match(/^(\s*)([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$/);
     if (!match) return line;

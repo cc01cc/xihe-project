@@ -10,14 +10,6 @@ const JOB_OUTPUT_MAX_LIMIT = 1_048_576;
 // adds overhead, so allow headroom above the wire maximum.
 const JOB_OUTPUT_MAX_BYTES = 4_000_000;
 
-function requirePositional(positionals, index, label) {
-  const value = positionals[index];
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new CliError('INVALID_ARGUMENT', `A ${label} is required.`, {}, 1);
-  }
-  return value.trim();
-}
-
 function optionalInteger(values, flag, { min = 0, max = Number.MAX_SAFE_INTEGER, fallback } = {}) {
   const raw = values[flag];
   if (raw === undefined) return fallback;
@@ -120,7 +112,7 @@ export async function runWorkspaceGet({ apiBase, fetchImpl, token, workspaceId }
       token,
       headers: { 'X-Workspace-Id': workspaceId },
     });
-    environment = { retrieved: true, ...(env ?? {}) };
+    environment = { retrieved: true, ...env };
   } catch (error) {
     environmentFailed = true;
     environment = {
@@ -205,7 +197,7 @@ export async function runCheckpointList({ apiBase, fetchImpl, token, workspaceId
       fetchImpl,
       token,
       headers: { 'X-Workspace-Id': workspaceId },
-    }) ?? {}) };
+    })) };
   } catch (error) {
     retentionFailed = true;
     retention = {

@@ -35,6 +35,7 @@ const SUBJECT_MAX = 72;
 const MERGE_MAX = 100;
 const BODY_MAX = 100;
 const DEFAULT_SINCE = "1dd57056";
+// oxlint-disable-next-line no-misleading-character-class -- U+FE0F（变体选择符）必须留在字符类里：这条正则的用途就是拦首行 emoji，去掉它会让 ✅ / ⚠️ 这类「基字符 + VS16」序列漏检
 const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u;
 const EMPTY_WORD = /^(更新|修改|调整|优化|处理|完善|整理)/;
 

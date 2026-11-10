@@ -3171,7 +3171,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(workspaceLifecycle.principalId, 'p-2');
 
   const workspaceUnboundVisible = await runWorkspaceLifecycleProbe({
-    client: fakeClient((method, pathname) => {
+    client: fakeClient((method, _pathname) => {
       if (method === 'POST') return { status: 201, body: { principalId: 'p-2', scope: 'WORKSPACE' }, code: null };
       if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-2', source: 'workspace' }] }, code: null };
       return { status: 404, body: {}, code: 'NOT_FOUND' };
@@ -3181,7 +3181,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(workspaceUnboundVisible.status, 'FAIL');
   assert.equal(workspaceUnboundVisible.code, 'WORKSPACE_VISIBLE_UNBOUND');
   const wrongSource = await runPersonalLifecycleProbe({
-    client: fakeClient((method, pathname) => {
+    client: fakeClient((method, _pathname) => {
       if (method === 'POST') return { status: 201, body: { principalId: 'p-1', scope: 'PERSONAL' }, code: null };
       if (method === 'PUT') return { status: 200, body: {}, code: null };
       if (method === 'GET') return { status: 200, body: { agents: [{ principalId: 'p-1', source: 'workspace' }] }, code: null };
@@ -3204,7 +3204,7 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(notPersisted.code, 'LIMIT_NOT_PERSISTED');
   assert.match(notPersisted.detail, /UNLIMITED/);
   const limitUnsupported = await runResourceLimitProbe({
-    client: fakeClient((method, pathname) => {
+    client: fakeClient((method, _pathname) => {
       if (method === 'GET') return { status: 200, body: { connections: [{ id: 'c-1' }] }, code: null };
       return { status: 404, body: { code: 'NOT_FOUND' }, code: 'NOT_FOUND' };
     }),
@@ -5104,7 +5104,7 @@ async function startConfigCpMock({
       const layer = url.searchParams.get('layer');
       const includeMeta = url.searchParams.get('includeMeta') === 'true';
       const rows = layer
-        ? { ...(domains[state.lastConfigDomain]?.[layer] ?? {}) }
+        ? { ...domains[state.lastConfigDomain]?.[layer] }
         : {
             ...domains[state.lastConfigDomain]?.instance,
             ...domains[state.lastConfigDomain]?.user,
@@ -5659,14 +5659,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Real-process tests must reach the in-test loopback mock directly: strip the
 // operator's proxy environment (NODE_USE_ENV_PROXY/HTTP(S)_PROXY/ALL_PROXY) so
 // Node's env-proxy cannot route the child's fetch away from 127.0.0.1.
-function directConnectEnv(extra = {}) {
-  const env = { ...process.env, ...extra };
-  for (const key of Object.keys(env)) {
-    if (/^(https?_proxy|all_proxy|no_proxy|node_use_env_proxy)$/i.test(key)) delete env[key];
-  }
-  return env;
-}
-
 async function startChatSessionMock() {
   const state = {
     loginRequests: 0,
@@ -6842,7 +6834,7 @@ test('PLAN-0643 T4.6: events tail usage errors stay exit 2', async (t) => {
   assert.equal(badTimeout.error.code, 'INVALID_ARGUMENT');
 });
 
-test('PLAN-0643 V2 re-judge: coverage groups.added counts >= 12 via new groups + extensions', async (t) => {
+test('PLAN-0643 V2 re-judge: coverage groups.added counts >= 12 via new groups + extensions', async () => {
   const coverageScript = path.resolve('scripts/xihe-cli/coverage.mjs');
   const child = spawnSync(process.execPath, [coverageScript, '--json'], {
     cwd: process.cwd(), encoding: 'utf8', windowsHide: true, timeout: 30_000,
@@ -7007,7 +6999,7 @@ test('PLAN-0643 T5.3: a CP 403 maps to ACCESS_DENIED for four commands; status d
   assert.equal(results[0].data.endpoints.status.status, 'failed');
   assert.equal(results[0].data.endpoints.status.code, 'ACCESS_DENIED');
   // The four plain read-only commands surface the 403 as a stable code without CP detail.
-  for (const [index, [, argv, kind]] of READ_ONLY_COMMANDS.entries()) {
+  for (const [index, [, , kind]] of READ_ONLY_COMMANDS.entries()) {
     if (index === 0) continue;
     assert.equal(results[index].exitCode, 1, `${kind}: ${JSON.stringify(results[index].data)}`);
     assert.equal(results[index].error.code, 'ACCESS_DENIED', kind);
