@@ -13,6 +13,8 @@ info:
     Context guards that find **no principal** (`@PreAuthorize` already guarantees one) are invariant fuses: they answer **403 `FORBIDDEN`** and log a warning with the request id, never 401 (BL-182).
 servers:
   - url: /
+x-owner-conventions: |-
+  'x-owner' on a path item names the service that implements its server side. It is written only where the URL prefix would mislead: 7 paths under /internal/v1/agent* are served by CP (the Agent is their client), so they carry 'x-owner: cp'. Unannotated paths follow the prefix convention: /api/v1/** -> CP; /internal/v1/agent/** -> Agent; /internal/v1/runtime/** -> Runtime; other /internal/v1/** -> CP.
 tags:
   - name: auth
     description: "Authentication, the caller's own identity (/me) and the OAuth device/callback flow"
@@ -3630,6 +3632,7 @@ paths:
   /internal/v1/agent/registry/workers/{workerId}/disable:
     post: { tags: [service-agent], operationId: disableWorker, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workerId, required: true, schema: { type: string } }], responses: { '200': { description: Disabled } } }
   /internal/v1/agent/checkpoints/lineages:
+    x-owner: cp
     post:
       tags: [service-agent]
       operationId: createAgentCheckpointLineage
@@ -3642,6 +3645,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/checkpoints/lineages/{threadId}:
+    x-owner: cp
     get:
       tags: [service-agent]
       operationId: getAgentCheckpointLineage
@@ -3661,6 +3665,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/checkpoints/{threadId}:
+    x-owner: cp
     delete:
       tags: [service-agent]
       operationId: deleteAgentCheckpointThread
@@ -3675,6 +3680,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/checkpoints/{threadId}/checkpoints:
+    x-owner: cp
     put:
       tags: [service-agent]
       operationId: putAgentCheckpoint
@@ -3709,6 +3715,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/checkpoints/{threadId}/checkpoints/{checkpointId}:
+    x-owner: cp
     get:
       tags: [service-agent]
       operationId: getAgentCheckpoint
@@ -3728,6 +3735,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/checkpoints/{threadId}/writes:
+    x-owner: cp
     post:
       tags: [service-agent]
       operationId: putAgentCheckpointWrites
@@ -4440,7 +4448,39 @@ paths:
         '403': { description: 'FORBIDDEN — non-creator without MANAGE_SCHEDULED_TASK', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: SCHEDULED_TASK_NOT_FOUND (foreign or missing), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { description: SCHEDULED_TASK_STATE (task not missed/expired/scheduled), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /internal/v1/agent/judge/decide:
+    post:
+      tags: [service-agent]
+      operationId: agentJudgeDecide
+      summary: One judge completion for one CP-assembled prompt
+      description: 'PLAN-0624 M1 (D24-01 path A) / PLAN-0763: service-to-service only. CP assembles the Q1 input window and mints a one-use credential lease for this hop; the provider credential itself never travels in the body. 200 carries the raw verdict text plus provider usage; CP owns verdict parsing, cost accounting, fallbacks and the judge_decisions audit row. Implemented by packages/agent/src/xihe_agent/api/judge.py:190; caller is CP service/AgentJudgeModelClient.java:50.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: header, name: X-Request-Id, required: false, schema: { type: string }, description: Correlation id; echoed back in the 200 envelope and in problem+json bodies. }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentJudgeDecideRequest' } } } }
+      responses:
+        '200': { description: 'Judge completion (status ok + verdict text + usage)', content: { application/json: { schema: { $ref: '#/components/schemas/AgentJudgeDecideResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'PROVIDER_CREDENTIAL_LEASE_INVALID - judgeCredentialLease absent/empty (the lease gate refuses before any provider call)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '502': { description: 'JUDGE_PROVIDER_FAILED - the provider call failed or returned an unusable response (LLM_PROVIDER_INVALID_RESPONSE)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /internal/v1/agent/runs/{runId}/cancel:
+    post:
+      tags: [service-agent]
+      operationId: agentCancelRun
+      summary: Ask the Agent to cancel one live run
+      description: 'PLAN-290 M0.3 / PLAN-0763: CP forwards a user cancel here before it settles the durable row. The endpoint attaches the cancel to the run registry entry and is fire-and-forget for CP (forwarding failures are logged, never surfaced to the caller). 202 accepted means the cancel attached; 404 unknown means this process does not know the run (or it already finished); 500 failed means the cancel action itself blew up. Implemented by packages/agent/src/xihe_agent/api/misc.py:57; caller is CP chat/ChatRunCancellationService.java:117.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid }, description: Chat run id; the wire path segment is the same value the Agent route declares as run_id. }
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/AgentRunCancelRequest' } } } }
+      responses:
+        '202': { description: 'Cancel attached to an active run', content: { application/json: { schema: { $ref: '#/components/schemas/AgentRunCancelResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'unknown - runId not registered in this process, or the run already finished', content: { application/json: { schema: { $ref: '#/components/schemas/AgentRunCancelResponse' } } } }
+        '500': { description: 'failed - the cancel action itself failed (CANCEL_FAILED)', content: { application/json: { schema: { $ref: '#/components/schemas/AgentRunCancelResponse' } } } }
   /internal/v1/agents/spawn:
+    x-owner: cp
     post:
       tags: [service-agent]
       operationId: spawnAgentSession
@@ -5863,6 +5903,10 @@ components:
     AgentCheckpointView: { type: object, additionalProperties: false, required: [threadId, checkpointNs, checkpointId, payloadType, payloadBase64, sessionId, schemaVersion, createdAt], description: 'BL-320 批 1: one stored checkpoint plus its still-pending writes. `payloadBase64` is the opaque graph state; `pendingWrites` are the un-consumed writes attached to it.', properties: { threadId: { type: string, format: uuid }, checkpointNs: { type: string }, checkpointId: { type: string, format: uuid }, parentCheckpointId: { type: [string, 'null'], format: uuid }, payloadType: { type: string }, payloadBase64: { type: string, contentEncoding: base64 }, lineageId: { type: [string, 'null'], format: uuid }, sourceRunId: { type: [string, 'null'], format: uuid }, sessionId: { type: string, format: uuid }, branchId: { type: [string, 'null'], format: uuid }, userId: { type: [string, 'null'], format: uuid }, workspaceId: { type: [string, 'null'], format: uuid }, schemaVersion: { type: integer }, createdAt: { type: string, format: date-time }, producerVersion: { type: [string, 'null'] }, metadata: { type: [object, 'null'], additionalProperties: true }, pendingWrites: { type: array, items: { $ref: '#/components/schemas/AgentCheckpointWritesView' } } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
+    AgentJudgeDecideRequest: { type: object, additionalProperties: false, required: [modelName, prompt], properties: { modelProvider: { type: [string, 'null'], description: 'Provider override; null means the lease carries the provider.' }, modelName: { type: string, minLength: 1 }, prompt: { type: string, minLength: 1, description: 'CP-assembled judge prompt: CP owns the template and the Q1 input window, the Agent never builds it.' }, judgeCredentialLease: { type: [string, 'null'], description: 'One-use lease minted by CP for this hop (the provider credential itself never travels in the body). Required in practice: absent/empty answers 409 PROVIDER_CREDENTIAL_LEASE_INVALID.' } } }
+    AgentJudgeDecideResponse: { type: object, required: [status, verdictText, promptTokens, completionTokens, latencyMs], properties: { status: { type: string, enum: [ok] }, verdictText: { type: string, description: 'Raw judge completion text; CP parses the verdict from it (a blank text is treated as FAILED by the caller).' }, promptTokens: { type: [integer, 'null'], minimum: 0 }, completionTokens: { type: [integer, 'null'], minimum: 0 }, latencyMs: { type: integer, minimum: 0 }, requestId: { type: [string, 'null'], description: 'Echo of the X-Request-Id header.' } } }
+    AgentRunCancelRequest: { type: object, additionalProperties: false, properties: { reason: { type: string, description: 'Free-form cancel reason; the Agent defaults to user_requested when absent.' }, workspaceId: { type: [string, 'null'], format: uuid, description: 'Workspace the run belongs to; logged on the LIFECYCLE correlation line.' } } }
+    AgentRunCancelResponse: { type: object, required: [status, runId], properties: { status: { type: string, enum: [accepted, unknown, failed] }, runId: { type: string }, code: { type: string, description: 'Set only when status=failed (CANCEL_FAILED).' } } }
     RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Required; PLAN-0758 removed the server-generated local-mode password.' }, name: { type: string }, username: { type: string, maxLength: 32, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'PLAN-0565 ruling #7 + 决策 v29 (2026-11-04): optional; blank derives a unique default from the email local part. Explicit values follow the shared name rule (letters any case / Chinese characters / digits, no leading digit, no spaces or symbols, 1-32 chars); invalid shape is 400 USERNAME_INVALID, taken is 409 USERNAME_TAKEN.' } } }
     LoginRequest: { type: object, required: [identifier, password], properties: { identifier: { type: string, description: 'PLAN-0565 ruling #7: email (contains @) or username; renamed from the former email field.' }, password: { type: string } } }
     MemberView: { type: object, required: [userId, username, email, role, createdAt], properties: { userId: { type: string, format: uuid }, username: { type: string }, email: { type: string }, name: { type: [string, 'null'] }, role: { type: string, enum: [OWNER, EDITOR, VIEWER], description: 'Canonical role; legacy ADMIN/MEMBER rows project as EDITOR (PLAN-0559).' }, createdAt: { type: string, format: date-time, description: 'Membership creation time (the joined-at value).' } } }
