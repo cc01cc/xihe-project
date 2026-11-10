@@ -214,6 +214,9 @@ function loadDirtyProofs(proofPath, dirtyPaths, repoRoot) {
         const record = {
             path: item,
             reason: proof.reason ?? null,
+            // 把声明写进证据：expect 为 empty 时「output 为空」本身就是结论（如 grep 0 命中、exit=1），
+            // 不是「没跑出东西」。缺这一列，读 manifest 的人分不清「通过」与「没证据」。
+            expect: proof.expect ?? null,
             command: argv
                 .map((part) => (part.includes(" ") ? JSON.stringify(part) : part))
                 .join(" "),
@@ -937,8 +940,15 @@ async function main() {
                 {
                     commit: git.commit,
                     dirtyPaths: git.dirtyPaths,
-                    // 每条脏路径的「不影响渲染」证据：{ path, reason, command, cwd, exit, output }
+                    // 每条脏路径的「不影响渲染」证据：{ path, reason, expect, command, cwd, exit, output }
                     dirtyNonRendering,
+                    // 证明文件本身也钉住：换了证明文件，sha 会变
+                    dirtyProof: opts.dirtyProof
+                        ? {
+                              path: path.relative(uiRoot, opts.dirtyProof).replace(/\\/g, "/"),
+                              sha256_16: sha(fs.readFileSync(opts.dirtyProof)),
+                          }
+                        : null,
                     allowDirty: opts.allowDirty,
                     base,
                     // 服务器怎么来的、探通用的是哪个候选地址：自起模式修好（task-84）之后，
