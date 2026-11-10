@@ -36,7 +36,9 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 
 > 本节由 PLAN-0622 承接；**契约先定、实现随 M1 推进**。动作/atom 的 canonical 正文仍在 `spec/security/principal-workspace-scope.md`，本节只写 Agent 侧的档位与三段关系。
 >
-> **D-174 supersede（2026-11-05，V126）**：`agent_principals.scope` 三档列与两 CHECK 已整体删除——下文 `PERSONAL/WORKSPACE/INSTANCE` 档位表与「三段授权」中的创建段为**历史记录**；现行模型 = 遗留 `owner_user_id` 列 + 绑定，创建唯一路径 = workspace 上下文 + `MANAGE_WORKSPACE_AGENTS`。**BL-312 supersede（2026-11-09，V147）**：`CREATE_OWN_AGENT` 原子已从词表与种子中移除，user 层创建通道不复存在。
+> **D-174 supersede（2026-11-05，V126）**：`agent_principals.scope` 三档列与两 CHECK 已整体删除——下文 `PERSONAL/WORKSPACE/INSTANCE` 档位表与「三段授权」中的创建段为**历史记录**；现行模型 = 遗留 `owner_user_id` 列 + 绑定，~~创建唯一路径 = workspace 上下文 + `MANAGE_WORKSPACE_AGENTS`~~。~~**BL-312 supersede（2026-11-09，V147）**：`CREATE_OWN_AGENT` 原子已从词表与种子中移除，user 层创建通道不复存在。~~ `owner_user_id` 仍是**遗留**归属列；**可见性**（个人视图）自 PLAN-0750 M2 起按 `created_by_user_id` 派生（用户级创建不写 owner，owner 臂恒空）。
+>
+> **PLAN-0750 M1 supersede（2026-11-10，V148）**：`CREATE_OWN_AGENT` 以**用户级语义**恢复（instance scope、resource `*`、非 capability，只表达「建自己的主体」），**用户级创建通道重新成立**：无显式 workspace 上下文即可创建，缺该原子 ⇒ 403（不再 409 `WORKSPACE_CONTEXT_REQUIRED`）。D-174 删的是**档位列**（`scope`），不是该原子本身——上面两句划掉的「创建唯一路径」与「通道不复存在」均为历史记录；现行两扇门见下方「三段授权」表创建段。
 
 ### scope 属于绑定，不属于 principal
 
