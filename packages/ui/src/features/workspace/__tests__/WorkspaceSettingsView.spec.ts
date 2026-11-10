@@ -371,6 +371,142 @@ describe("WorkspaceSettingsView 权限一致性 (PLAN-0560 T3.6)", () => {
     });
 });
 
+describe("WorkspaceSettingsView 工具分类入口 (G9 / task-153)", () => {
+    const faces = [
+        {
+            id: null,
+            scope: "builtin",
+            ownerId: null,
+            tool: "read_file",
+            actionClass: "read",
+            shape: "structured",
+        },
+        {
+            id: "88888888-8888-4888-8888-888888888888",
+            scope: "workspace",
+            ownerId: WORKSPACE_ID,
+            tool: "mcp__third_party__do",
+            actionClass: "unclassified",
+            shape: "opaque",
+        },
+    ];
+    const requested: string[] = [];
+
+    /** 身份从 sessionStorage 播种：OWNER 才有分类能力，VIEWER 只读（G9 两态）。 */
+    function seedWorkspaceRole(role: "OWNER" | "VIEWER", capabilities?: Record<string, unknown>) {
+        localStorage.removeItem("xihe-workspace");
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({
+                id: WORKSPACE_ID,
+                name: "Workspace",
+                workspaceRole: role,
+                ownerId: role === "OWNER" ? "u1" : "someone-else",
+            }),
+        );
+        if (capabilities) {
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({ id: "u1", email: "owner@xihe.local", capabilities }),
+            );
+        }
+    }
+
+    function mockFetchWithToolFaces() {
+        vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (url.includes("/api/v1/policy/tool-faces")) {
+                requested.push(url);
+                return Promise.resolve(new Response(JSON.stringify(faces), { status: 200 }));
+            }
+            return mockConfigFetchResponse(input);
+        });
+    }
+
+    beforeEach(() => {
+        requested.length = 0;
+        routeState.domain = "approval-policy";
+        routeState.query = {};
+        mockFetchWithToolFaces();
+    });
+
+    it("G9-①: 工作区 OWNER 能打开「工具分类」页签并读到 workspace 口径的分类表", async () => {
+        seedWorkspaceRole("OWNER");
+        routeState.query = { tab: "tool-faces" };
+        const wrapper = await mountView();
+
+        // 域页出现域内页签，且默认落在 tool-faces（?tab= 只表达域内视图）
+        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(true);
+        expect(
+            wrapper
+                .get('[data-testid="settings-domain-tab-tool-faces"]')
+                .attributes("aria-selected"),
+        ).toBe("true");
+        expect(wrapper.find('[data-testid="ws-settings-tool-faces"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="tool-faces-view"]').exists()).toBe(true);
+        // 真读取：请求带 scope=workspace，且列表渲染出内置面与工作区面
+        expect(requested.some((url) => url.includes("scope=workspace"))).toBe(true);
+        expect(wrapper.find('[data-testid="settings-tool-face-read_file"]').exists()).toBe(true);
+        // OWNER 具备分类能力 ⇒ 未分类项出现分类按钮，且不显示只读提示
+        expect(
+            wrapper
+                .find('[data-testid="settings-tool-face-classify-mcp__third_party__do"]')
+                .exists(),
+        ).toBe(true);
+        expect(wrapper.find('[data-testid="settings-tool-faces-forbidden"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("G9-②: 非 OWNER 可见但只读（能读表、无分类按钮、有只读提示）", async () => {
+        seedWorkspaceRole("VIEWER");
+        routeState.query = { tab: "tool-faces" };
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-tool-faces"]').exists()).toBe(true);
+        // 读面保留：后端 workspace scope 读取只要求带工作区上下文（ToolFaceService.ownerFor(requireOwner=false)）
+        expect(requested.some((url) => url.includes("scope=workspace"))).toBe(true);
+        expect(wrapper.find('[data-testid="settings-tool-face-read_file"]').exists()).toBe(true);
+        // 写面收起：与「工作区设置页对非写角色只读」同语义
+        expect(
+            wrapper
+                .find('[data-testid="settings-tool-face-classify-mcp__third_party__do"]')
+                .exists(),
+        ).toBe(false);
+        expect(wrapper.find('[data-testid="settings-tool-faces-forbidden"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("G9-③: 实例 ADMIN 在工作区页也不出现「切到实例视图」的范围选择（scopeLock=workspace）", async () => {
+        seedWorkspaceRole("VIEWER", {
+            isInstanceAdmin: true,
+            isInstanceSuper: false,
+            workspaceAdminOf: [],
+        });
+        routeState.query = { tab: "tool-faces" };
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-tool-faces-scope-workspace"]').exists()).toBe(
+            true,
+        );
+        expect(wrapper.find('[data-testid="settings-tool-faces-scope-instance"]').exists()).toBe(
+            false,
+        );
+        expect(requested.every((url) => !url.includes("scope=instance"))).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("G9-④: 只有 approval-policy 域页出现这两个页签", async () => {
+        seedWorkspaceRole("OWNER");
+        routeState.domain = "rag";
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+});
+
 describe("WorkspaceSettingsView 错误回退 (PLAN-0560 T4.1)", () => {
     it("redirects to workspace-home on WORKSPACE_FORBIDDEN", async () => {
         // fixture 缓存短路会让 selectWorkspace 直接命中；清空后强制走真实请求。

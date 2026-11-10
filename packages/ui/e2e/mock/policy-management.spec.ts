@@ -464,6 +464,40 @@ test.describe("Policy management (desktop)", () => {
         ).toHaveCount(0);
     });
 
+    // G9 / task-153：工作区层自己也要有分类入口 —— `POST /policy/tool-faces` 本来就吃
+    // `scope=workspace`（CP 只校验 workspace OWNER/ADMIN），但旧 IA 只在实例层域页挂页签，
+    // 于是「能改的人点不到，能点的人不需要」。这条用例走真实 UI 路径（读面，不写入）。
+    test("workspace OWNER opens the tool-face classifier from the workspace approval-policy domain", async ({
+        page,
+    }) => {
+        const state = installPolicyApi(page);
+        await page.goto(`/workspace/${WORKSPACE_ID}/settings/approval-policy?tab=tool-faces`);
+
+        await expect(page.getByTestId("ws-settings-domain-tabs")).toBeVisible({
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("settings-domain-tab-tool-faces")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
+        await expect(page.getByTestId("settings-tool-faces-heading")).toBeVisible({
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        // 层由 URL 表达：工作区页里不该出现「切到实例视图」（那是另一层的配置面）。
+        await expect(page.getByTestId("settings-tool-faces-scope-workspace")).toBeVisible();
+        await expect(page.getByTestId("settings-tool-faces-scope-instance")).toHaveCount(0);
+        await expect(
+            page.getByTestId(`settings-tool-face-unclassified-${UNCLASSIFIED_TOOL}`),
+        ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
+        // OWNER 才有分类能力 ⇒ 未分类项出现分类入口；本例只验读取，不点提交。
+        await expect(
+            page.getByTestId(`settings-tool-face-classify-${UNCLASSIFIED_TOOL}`),
+        ).toBeVisible();
+        expect(state.policyRequests).toContain("GET /api/v1/policy/tool-faces");
+        expect(state.policyRequests.filter((call) => call.startsWith("POST"))).toHaveLength(0);
+        expect(state.classifications).toHaveLength(0);
+    });
+
     // PLAN-0707：同一 BaseModal 内 reka Select 阻塞；待事件序列排查（见 evidence/reka-dialog-select.md）。
     test("approval classify-and-allow classifies first and hands back a once decision", async ({
         page,
