@@ -1,5 +1,5 @@
 {
-  "note": "窗口梯次实际执行的门（27 步口径里的 mise 门部分；脚本单测与残留快照见 gate-parity 文档）",
+  "note": "窗口梯次应跑的门（24 个 mise 门）。**声明面**：实际是否跑了以 --ladder-from <run log> 派生为准（Lead 2026-11-11 倾向 A）。",
   "gates": [
     "check:types",
     "lint:ui",
@@ -22,6 +22,8 @@
     "docs:api:html",
     "test:runtime:lib",
     "check:branch-scope",
-    "test:cp"
+    "test:cp",
+    "lint:log-secrets",
+    "test:cp:executed"
   ]
 }

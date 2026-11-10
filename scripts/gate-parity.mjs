@@ -13,7 +13,7 @@
  * 判定是集合差，不写死任何门名：修好某门后自动变绿，别的门漂移时仍会红。
  * 用法：node scripts/gate-parity.mjs [--json]
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_GATES } from "./xh-verify-gates.mjs";
@@ -31,7 +31,6 @@ export const NOT_IN_WINDOW = Object.freeze([
   { id: "test:mock", why: "888s，窗 13min 涨到 28min，不值（Lead 2026-11-11）" },
   { id: "check:mock-baseline", why: "紧随 test:mock 的基线比对，无新报告即无意义" },
   { id: "check:a11y-refs", why: "被 check:a11y-refs:enforce 取代（前者警告级、后者阻断级）" },
-  { id: "test:cp:executed", why: "梯次跑的是 test:cp 本体（含 zero-execution guard），本门是其子断言" },
 ]);
 
 /** mise.toml 里声明的任务 id 集合。 */
@@ -63,12 +62,28 @@ export function evaluateParity({ ladder, ssot, windowOnly = [], notInWindow = []
 }
 
 function main() {
-  const ladder = JSON.parse(readFileSync(resolve(ROOT, "scripts/gate-ladder.json"), "utf8")).gates;
+  const li = process.argv.indexOf("--ladder-from");
+const fromLog = li >= 0 ? process.argv[li + 1] : null;
+const declared = JSON.parse(readFileSync(resolve(ROOT, "scripts/gate-ladder.json"), "utf8")).gates;
+let ladder = declared, ladderSource = "scripts/gate-ladder.json", ladderMtime = null;
+if (fromLog) {
+  const txt = readFileSync(fromLog, "utf8");
+  ladder = [...new Set([...txt.matchAll(/\bgate (\S+) (?:exit=|pass\b|fail\b)/g)].map((m) => m[1]))];
+  ladderSource = fromLog;
+  ladderMtime = statSync(fromLog).mtime.toISOString();
+}
   const ssot = DEFAULT_GATES.map((g) => g.id);
   const miseIds = miseTaskIds(readFileSync(resolve(ROOT, "mise.toml"), "utf8"));
   const r = evaluateParity({ ladder, ssot, windowOnly: WINDOW_ONLY, notInWindow: NOT_IN_WINDOW });
+  if (fromLog) {
+    const ran = new Set(ladder);
+    for (const id of declared) if (!ran.has(id)) r.rows.push({ id, cell: "0-declared-not-executed", ok: false, why: "梯次声明里有、这次运行日志里没有 ⇒ 声明面与执行面漂移" });
+    r.bad = r.rows.filter((x) => !x.ok);
+    r.ok = r.bad.length === 0;
+  }
   if (process.argv.includes("--json")) { console.log(JSON.stringify({ ...r, ladderCount: ladder.length, ssotCount: ssot.length }, null, 2)); process.exit(r.ok ? 0 : 1); }
   console.log(`门集对账：梯次 ${ladder.length} / SSOT ${ssot.length} / mise ${miseIds.size}`);
+  console.log(`  ladderSource=${ladderSource}` + (ladderMtime ? ` mtime=${ladderMtime}` : "（声明面，未给 --ladder-from ⇒ 效力限于「声明与 SSOT 是否一致」，不证明跑过）"));
   for (const row of r.rows) console.log(`  ${row.ok ? "OK " : "RED"} [${row.cell}] ${row.id} —— ${row.why}`);
   const noTask = ladder.filter((id) => !miseIds.has(id));
   if (noTask.length) console.log(`  note: 梯次里 ${noTask.length} 门在 mise.toml 无 task：${noTask.join(", ")}`);
