@@ -96,23 +96,29 @@ test("BL-576 守卫：主列不是坍缩态，两面板按百分比分配且吃�
 
     // ② 守卫之一：主列至少占容器宽 30%（BL-576 时是 5 px ⇒ 必红）。
     //    用 soft：②③④ 各自独立归因，一次运行能同时看到「哪几条被违反」，而不是只看第一条。
-    expect.soft(
-        geom.mainWidth,
-        `主列宽应 ≥ 容器宽 30%（BL-576 的坍缩会让它变成个位数 px）；${detail}`,
-    ).toBeGreaterThanOrEqual(geom.containerWidth * 0.3);
+    expect
+        .soft(
+            geom.mainWidth,
+            `主列宽应 ≥ 容器宽 30%（BL-576 的坍缩会让它变成个位数 px）；${detail}`,
+        )
+        .toBeGreaterThanOrEqual(geom.containerWidth * 0.3);
 
     // ④ 守卫之二：文件树不得超过它自己声明的最大宽（否则 max-size 约束失效 —— preE 里树是 1208 px）。
     //    与 ② 独立：② 管主列下限、④ 管树上限，可各自单独失败。
-    expect.soft(
-        geom.treeWidth,
-        `树宽应 ≤ TREE_WIDTH_MAX(${TREE_WIDTH_MAX}) + 2 px，超过说明 max-size 约束失效；${detail}`,
-    ).toBeLessThanOrEqual(TREE_WIDTH_MAX + 2);
+    expect
+        .soft(
+            geom.treeWidth,
+            `树宽应 ≤ TREE_WIDTH_MAX(${TREE_WIDTH_MAX}) + 2 px，超过说明 max-size 约束失效；${detail}`,
+        )
+        .toBeLessThanOrEqual(TREE_WIDTH_MAX + 2);
 
     // ③ 的职责是「容器宽度没被第三方面板吃掉」，不是「主列没坍缩」。
     //    BL-576 在 preE 上它也是绿的（tree 1208 + main 5 = 1213 = 容器宽，宽度没被吃掉，是文件树把它吃掉了）。
     //    能抓它的是 ②（主列 ≥30%）与 ④（树 ≤ TREE_WIDTH_MAX）。@see BL-576
-    expect.soft(
-        Math.abs(geom.treeWidth + geom.mainWidth - geom.containerWidth),
-        `树宽 + 主列宽应 ≈ 容器宽（±2 px）；${detail}`,
-    ).toBeLessThanOrEqual(2);
+    expect
+        .soft(
+            Math.abs(geom.treeWidth + geom.mainWidth - geom.containerWidth),
+            `树宽 + 主列宽应 ≈ 容器宽（±2 px）；${detail}`,
+        )
+        .toBeLessThanOrEqual(2);
 });
