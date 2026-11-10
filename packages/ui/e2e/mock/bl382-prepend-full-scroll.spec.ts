@@ -542,4 +542,103 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
         );
         expect(await page.getByText("更早的", { exact: false }).count(), "小表折叠应耗尽").toBe(0);
     });
+    // PLAN-0760 test4：M=1500 触顶 UI。timeout-exempt: 分页点击 + 几何稳定等待。
+    test("M=1500 触顶：横幅变已展开到上限 + 禁用 + 不再发请求", async ({ page }) => {
+        test.setTimeout(120_000); // timeout-exempt: M 触顶需多次分页点击，超默认 30s
+        const mcapSession = "bl382-prepend-mcap";
+        const TOTAL = 1800;
+        const PAGE = 300;
+        const mcapAll = Array.from({ length: TOTAL }, (_, index) => ({
+            id: `bl382-mcap-${index}`,
+            sessionId: mcapSession,
+            role: index % 2 === 0 ? "USER" : "ASSISTANT",
+            content: `bl382-mcap-row-${index}`,
+            createdAt: new Date(Date.now() - (TOTAL - index) * 60_000).toISOString(),
+        }));
+        await setupSessionFixture(page, mcapSession, "BL-382 Mcap");
+        const path = MESSAGES_PATH(mcapSession);
+        await page.route(
+            (url) =>
+                url.hostname === "localhost" &&
+                url.pathname.endsWith(path) &&
+                url.searchParams.has("before"),
+            async (route) => {
+                const cursor = Number(
+                    route.request().url().split("before=").pop()?.split("-").pop() ?? String(TOTAL),
+                );
+                const end = Math.max(0, cursor);
+                const start = Math.max(0, end - PAGE);
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        messages: mcapAll.slice(start, end),
+                        nextCursor: `mcap-cursor-${start}`,
+                        truncated: start > 0,
+                    }),
+                });
+            },
+        );
+        await page.route(
+            (url) =>
+                url.hostname === "localhost" &&
+                url.pathname.endsWith(path) &&
+                !url.searchParams.has("before"),
+            async (route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        messages: mcapAll.slice(TOTAL - PAGE),
+                        nextCursor: `mcap-cursor-${TOTAL - PAGE}`,
+                        truncated: true,
+                    }),
+                });
+            },
+        );
+
+        const chat = new ChatPage(page);
+        await chat.goto(mcapSession);
+        await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        let beforeRequests = 0;
+        page.on("request", (request) => {
+            if (request.url().includes("before=")) beforeRequests += 1;
+        });
+
+        const button = page.locator('[data-testid="load-older-messages"]');
+        await expect(button).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        let clicks = 0;
+        let limitText = "";
+        for (let i = 0; i < 8; i += 1) {
+            const currentText = ((await button.textContent()) ?? "").trim();
+            if (
+                currentText.includes("已展开到上限") ||
+                currentText.includes("Expanded to the limit")
+            ) {
+                limitText = currentText;
+                break;
+            }
+            await button.click();
+            clicks += 1;
+            await settle(page);
+        }
+        const finalText = limitText || ((await button.textContent()) ?? "").trim();
+        expect(finalText, "M=1500 触顶后文案应为已展开到上限").toMatch(
+            /已展开到上限|Expanded to the limit/,
+        );
+        await expect(button, "M 触顶后按钮应禁用").toBeDisabled();
+        const requestsAtLimit = beforeRequests;
+        await button.click({ force: true }).catch(() => undefined);
+        await settle(page);
+        expect(beforeRequests, "M 触顶后不应再发请求").toBe(requestsAtLimit);
+        if (EVIDENCE_DIR) {
+            await page.screenshot({ path: `${EVIDENCE_DIR}/bl382-mcap-limit.png` });
+            await import("node:fs/promises").then((f) =>
+                f.writeFile(
+                    `${EVIDENCE_DIR}/bl382-mcap-clicks.json`,
+                    JSON.stringify({ clicks, limitText: finalText, beforeRequests }, null, 2),
+                ),
+            );
+        }
+    });
 });
