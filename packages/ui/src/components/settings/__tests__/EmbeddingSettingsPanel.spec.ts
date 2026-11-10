@@ -108,21 +108,18 @@ describe("EmbeddingSettingsPanel", () => {
         } as never);
         mockedEffective.mockResolvedValue({ profile: null, profileScope: null, resolved: null });
         const wrapper = mount(EmbeddingSettingsPanel, {
-            props: { layer: "workspace", workspaceId: "ws-1" },
+            props: { layer: "user" },
         });
         await flushPromises();
         await setOnlySelectValue(wrapper, "embed-1");
         await wrapper.find("button[data-testid='embedding-save']").trigger("click");
         await flushPromises();
-        expect(mockedSave).toHaveBeenCalledWith(
-            "workspace",
-            {
-                providerId: "dashscope-qwen",
-                connectionKey: "embedding",
-                model: "tongyi-embedding-vision-flash-2026-03-06",
-            },
-            "ws-1",
-        );
+        // task-253：工作区层移除后只剩两个参数（层 + profile），不再带 workspaceId。
+        expect(mockedSave).toHaveBeenCalledWith("user", {
+            providerId: "dashscope-qwen",
+            connectionKey: "embedding",
+            model: "tongyi-embedding-vision-flash-2026-03-06",
+        });
         expect(wrapper.emitted("saved")).toBeTruthy();
     });
 

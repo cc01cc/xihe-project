@@ -49,17 +49,16 @@ export function fetchEmbeddingEffective(workspaceId?: string): Promise<Embedding
     return request<EmbeddingEffectiveProfile>(`/config/embedding/effective${query}`);
 }
 
+/** task-253：工作区层移除后，embedding profile 只能写实例/用户两层。 */
 export function saveEmbeddingProfile(
-    layer: "user" | "workspace" | "instance",
+    layer: "user" | "instance",
     profile: EmbeddingProfileInput | null,
-    workspaceId?: string,
 ): Promise<void> {
-    const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
     const body: Record<string, string> = {};
     if (profile) {
         body.profile = JSON.stringify(profile);
     }
-    return request<void>(`/config/${layer}/embedding${query}`, {
+    return request<void>(`/config/${layer}/embedding`, {
         method: "PUT",
         body: JSON.stringify(body),
     });

@@ -58,8 +58,9 @@ const router = createRouter({
                     component: () => import("../features/workspace/pages/ScheduledTasksView.vue"),
                 },
                 {
-                    // PLAN-0752 M1：工作区层进 URL 的域段（可选；不带域段 = 旧入口）
-                    path: "settings/:domain?",
+                    // task-253：工作区配置层已从 UI 移除（域段路由 /settings/:domain 随之退役）。
+                    // 工作区内部设置面本轮不重新设计，只剩不带域段的入口。
+                    path: "settings",
                     name: "workspace-settings",
                     component: () =>
                         import("../features/workspace/pages/WorkspaceSettingsView.vue"),

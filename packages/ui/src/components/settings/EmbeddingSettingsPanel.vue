@@ -11,7 +11,7 @@ import {
     type EmbeddingEffectiveProfile,
     type EmbeddingTestResult,
 } from "../../services/embeddingProfile";
-import { useConfigStore } from "../../stores/config";
+import { useConfigStore, type ConfigLayer } from "../../stores/config";
 import type { ProviderConnection } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
 import {
@@ -23,8 +23,8 @@ import {
 } from "@/components/ui/select";
 
 const props = defineProps<{
-    layer: "user" | "workspace";
-    workspaceId?: string;
+    // task-253：工作区层已从 UI 移除；本面板只挂在实例/用户层（父组件在实例层不渲染它）。
+    layer: ConfigLayer;
     saving?: boolean;
     readonly?: boolean;
 }>();
@@ -72,7 +72,8 @@ const currentProfileConnectionId = computed(() => {
 async function load() {
     loading.value = true;
     try {
-        const profile = await fetchEmbeddingEffective(props.workspaceId);
+        // task-253：全局设置没有工作区上下文，effective 按实例/用户层求值即可。
+        const profile = await fetchEmbeddingEffective();
         await configStore.loadProviderConnections();
         effective.value = profile;
         selectedConnectionId.value = currentProfileConnectionId.value;
@@ -89,15 +90,11 @@ async function handleSave() {
         return;
     }
     try {
-        await saveEmbeddingProfile(
-            props.layer,
-            {
-                providerId: selectedConnection.value.providerId,
-                connectionKey: selectedConnection.value.connectionKey,
-                model: contractModel.value,
-            },
-            props.workspaceId,
-        );
+        await saveEmbeddingProfile(props.layer, {
+            providerId: selectedConnection.value.providerId,
+            connectionKey: selectedConnection.value.connectionKey,
+            model: contractModel.value,
+        });
         toast.success(t("settings.embeddingSaved"));
         await load();
         emit("saved");
@@ -109,7 +106,7 @@ async function handleSave() {
 
 async function handleClear() {
     try {
-        await saveEmbeddingProfile(props.layer, null, props.workspaceId);
+        await saveEmbeddingProfile(props.layer, null);
         toast.success(t("settings.embeddingCleared"));
         await load();
         emit("saved");
@@ -123,7 +120,7 @@ async function handleTest() {
     testing.value = true;
     testResult.value = null;
     try {
-        const result = await testEmbedding(props.workspaceId);
+        const result = await testEmbedding();
         testResult.value = result;
         if (result.status === "ok") {
             toast.success(t("settings.embeddingTestOk"));

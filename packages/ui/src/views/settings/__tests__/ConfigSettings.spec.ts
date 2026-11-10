@@ -109,10 +109,9 @@ beforeEach(() => {
 });
 
 describe("ConfigSettings job-policy (PLAN-0373)", () => {
-    it("store domain lists register job-policy on instance+workspace only", () => {
+    it("store domain lists register job-policy on the instance layer only (task-253)", () => {
         expect(INSTANCE_DOMAINS).toContain("job-policy");
         expect(LAYER_DOMAINS.instance).toContain("job-policy");
-        expect(LAYER_DOMAINS.workspace).toContain("job-policy");
         expect(LAYER_DOMAINS.user).not.toContain("job-policy");
     });
 
@@ -170,7 +169,6 @@ describe("ConfigSettings Agent template and approval policy (PLAN-0374)", () => 
         expect(INSTANCE_DOMAINS).toContain("agent-templates");
         expect(LAYER_DOMAINS.instance).toContain("agent-templates");
         expect(LAYER_DOMAINS.user).toContain("agent-templates");
-        expect(LAYER_DOMAINS.workspace).toContain("agent-templates");
     });
 
     it("renders the structured template editor while keeping approval action classes in approval-policy", async () => {
@@ -236,7 +234,6 @@ describe("ConfigSettings API request templates (PLAN-0439 rename of PLAN-0414)",
         expect(INSTANCE_DOMAINS).toContain("api-request-templates");
         expect(LAYER_DOMAINS.instance).toContain("api-request-templates");
         expect(LAYER_DOMAINS.user).toContain("api-request-templates");
-        expect(LAYER_DOMAINS.workspace).toContain("api-request-templates");
         expect(CONFIG_DOMAINS).not.toContain("api-request-templates");
     });
 
@@ -304,13 +301,12 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         wrapper.unmount();
     });
 
-    it("实例层提供前往用户/工作区的入口（PLAN-0560：工作区走路由跳转）", async () => {
+    it("实例层只提供前往用户层的入口（task-253：工作区层入口已移除）", async () => {
         const wrapper = await mountView();
         const goUser = wrapper.find('[data-testid="provider-instance-go-user"]');
-        const goWorkspace = wrapper.find('[data-testid="provider-instance-go-workspace"]');
         expect(goUser.exists()).toBe(true);
-        expect(goWorkspace.exists()).toBe(true);
-        expect(goWorkspace.attributes("disabled")).toBeUndefined();
+        // task-253：工作区配置层从 UI 移除 ⇒ 那个「前往工作区层」按钮不再存在。
+        expect(wrapper.find('[data-testid="provider-instance-go-workspace"]').exists()).toBe(false);
 
         await goUser.trigger("click");
         await flushPromises();
@@ -318,21 +314,6 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
             // PLAN-0631 色彩方案：选中指示从 --primary 改为 --brand（蓝只在"身份"位置）。
             "border-brand",
         );
-
-        await wrapper.find('[data-testid="config-tab-instance"]').trigger("click");
-        await flushPromises();
-        await wrapper.find('[data-testid="provider-instance-go-workspace"]').trigger("click");
-        await flushPromises();
-        expect(routerSpies.push).toHaveBeenCalledWith(`/workspace/${WORKSPACE_ID}/settings`);
-        wrapper.unmount();
-    });
-
-    it("未选择工作区时禁用工作区入口", async () => {
-        localStorage.removeItem("xihe-workspace");
-        const wrapper = await mountView();
-        const goWorkspace = wrapper.find('[data-testid="provider-instance-go-workspace"]');
-        expect(goWorkspace.exists()).toBe(true);
-        expect(goWorkspace.attributes("disabled")).toBeDefined();
         wrapper.unmount();
     });
 
@@ -347,38 +328,9 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
     });
 });
 
-describe("ConfigSettings 工作区迁移提示 (PLAN-0560)", () => {
-    it("渲染迁移提示，按钮路由到当前工作区设置页", async () => {
-        const wrapper = await mountView();
-
-        const notice = wrapper.find('[data-testid="config-workspace-moved"]');
-        expect(notice.exists()).toBe(true);
-        const go = wrapper.find('[data-testid="config-go-workspace-settings"]');
-        expect(go.exists()).toBe(true);
-        expect(go.attributes("disabled")).toBeUndefined();
-        await go.trigger("click");
-        expect(routerSpies.push).toHaveBeenCalledWith(`/workspace/${WORKSPACE_ID}/settings`);
-        wrapper.unmount();
-    });
-
-    it("无工作区上下文时禁用前往按钮", async () => {
-        localStorage.removeItem("xihe-workspace");
-        sessionStorage.clear();
-        const wrapper = await mountView();
-
-        const go = wrapper.find('[data-testid="config-go-workspace-settings"]');
-        expect(go.exists()).toBe(true);
-        expect(go.attributes("disabled")).toBeDefined();
-        await go.trigger("click");
-        expect(routerSpies.push).not.toHaveBeenCalled();
-        wrapper.unmount();
-    });
-});
-
 describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
     it("registers agent-runtime on the writable layers, ceilings stay instance-only", () => {
         expect(LAYER_DOMAINS.instance).toContain("agent-runtime");
-        expect(LAYER_DOMAINS.workspace).toContain("agent-runtime");
         expect(LAYER_DOMAINS.user).toContain("agent-runtime");
     });
 

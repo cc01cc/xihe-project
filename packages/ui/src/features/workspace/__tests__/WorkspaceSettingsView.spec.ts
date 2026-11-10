@@ -3,7 +3,6 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
-import { LAYER_DOMAINS } from "../../../stores/config";
 
 const routeState = vi.hoisted(() => ({
     workspaceId: "66666666-6666-4666-8666-666666666666",
@@ -121,11 +120,14 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="workspace-settings-page"]').exists()).toBe(true);
-        // T1.1b（task-179）：层头归一到 SettingsLayerHeader，旧手写 kicker 退役。
-        expect(wrapper.find('[data-testid="settings-layer-header"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="settings-breadcrumb"]').exists()).toBe(true);
+        // task-253：工作区设置不再是设置区的「一层」⇒ 自带页面标题头，不再借用
+        // SettingsLayerHeader 的「设置 › 工作区层」面包屑。
+        expect(wrapper.find('[data-testid="workspace-settings-header"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-settings-title"]').text()).toBe("工作区设置");
+        expect(wrapper.find('[data-testid="settings-layer-header"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-settings-tab-general"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(true);
+        // 工作区配置 tab 随 workspace 配置层一起移除（那块面走已废弃的 /config/workspace/**）。
+        expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-settings-tab-mcp"]').exists()).toBe(true);
         // PLAN-0752 T4.2/T4.3：工作区层资源入口 = 真功能，后端都已实现，所以不给缺口标记。
         expect(wrapper.find('[data-testid="ws-settings-tab-credentials"]').exists()).toBe(true);
@@ -174,92 +176,6 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         wrapper.unmount();
     });
 
-    it("renders job-policy on the workspace layer config tab", async () => {
-        routeState.query = { tab: "config" };
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(true);
-        const panel = wrapper.find('[data-testid="config-domain-job-policy"]');
-        await panel.find("button").trigger("click");
-        expect(
-            wrapper.find('[data-testid="config-field-job-policy-defaultTimeoutSecs"]').exists(),
-        ).toBe(true);
-        wrapper.unmount();
-    });
-
-    it("keeps agent-runtime ceiling keys visible but read-only on the workspace layer", async () => {
-        routeState.query = { tab: "config" };
-        const wrapper = await mountView();
-
-        const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
-        expect(panel.exists()).toBe(true);
-        await panel.find("button").trigger("click");
-        expect(
-            wrapper
-                .find('[data-testid="config-field-agent-runtime-runMaxElapsedSeconds"]')
-                .exists(),
-        ).toBe(true);
-        // PLAN-0752 T3.2：工作区层不再隐藏实例专属键，改为只读行 + 「仅实例层」徽标。
-        const ceiling = wrapper.find(
-            '[data-testid="config-field-agent-runtime-runMaxElapsedSecondsCeiling"]',
-        );
-        expect(ceiling.exists()).toBe(true);
-        expect(ceiling.find("input").attributes("disabled")).toBeDefined();
-        expect(
-            ceiling
-                .find(
-                    '[data-testid="config-key-layer-badge-agent-runtime-runMaxElapsedSecondsCeiling"]',
-                )
-                .exists(),
-        ).toBe(true);
-        wrapper.unmount();
-    });
-
-    // ---- PLAN-0752 M2 B4：域段模式按单域渲染（不再 tab 内平铺整层 9 域） ----
-    it("renders only the requested domain when the URL carries a domain segment", async () => {
-        routeState.domain = "job-policy";
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="ws-settings-domain-page"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-settings-domain-title"]').text()).toBe(
-            "Job 运行时限",
-        );
-        expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="config-domain-agent-runtime"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="config-domain-rag"]').exists()).toBe(false);
-        wrapper.unmount();
-    });
-
-    it("renders the 404 view for a domain the workspace layer does not have (logging) without loading config", async () => {
-        routeState.domain = "logging";
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="settings-not-found"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-settings-domain-page"]').exists()).toBe(false);
-        const configCalls = vi.mocked(fetch).mock.calls.filter(([input]) => {
-            const url = typeof input === "string" ? input : input.url;
-            return url.includes("/api/v1/config/");
-        });
-        expect(configCalls).toHaveLength(0);
-        wrapper.unmount();
-    });
-
-    it("loads config lazily when switching to the config tab", async () => {
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(false);
-        await wrapper.find('[data-testid="ws-settings-tab-config"]').trigger("click");
-        await flushPromises();
-        expect(wrapper.find('[data-testid="config-domain-job-policy"]').exists()).toBe(true);
-        const request = vi.mocked(fetch).mock.calls.find(([input]) => {
-            const url = typeof input === "string" ? input : input.url;
-            return url.includes("layer=workspace") && url.includes(`workspaceId=${WORKSPACE_ID}`);
-        });
-        expect(request).toBeTruthy();
-        wrapper.unmount();
-    });
-
     it("renders the MCP panel on the mcp tab", async () => {
         routeState.query = { tab: "mcp" };
         const wrapper = await mountView();
@@ -267,11 +183,6 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         expect(wrapper.find('[data-testid="ws-settings-mcp"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="mcp-config-textarea"]').exists()).toBe(true);
         wrapper.unmount();
-    });
-
-    it("keeps workspace-layer domains out of user-only lists (sanity)", () => {
-        expect(LAYER_DOMAINS.workspace).toContain("job-policy");
-        expect(LAYER_DOMAINS.workspace).toContain("llm-provider");
     });
 });
 
@@ -369,142 +280,6 @@ describe("WorkspaceSettingsView 权限一致性 (PLAN-0560 T3.6)", () => {
         expect(wrapper.find('[data-testid="ws-settings-save"]').exists()).toBe(false);
         // 头部动作组仍可用（新建对话/环境状态/返回工作区均为只读导航动作）。
         expect(wrapper.find('[data-testid="ws-settings-new-chat"]').exists()).toBe(true);
-        wrapper.unmount();
-    });
-});
-
-describe("WorkspaceSettingsView 工具分类入口 (G9 / task-153)", () => {
-    const faces = [
-        {
-            id: null,
-            scope: "builtin",
-            ownerId: null,
-            tool: "read_file",
-            actionClass: "read",
-            shape: "structured",
-        },
-        {
-            id: "88888888-8888-4888-8888-888888888888",
-            scope: "workspace",
-            ownerId: WORKSPACE_ID,
-            tool: "mcp__third_party__do",
-            actionClass: "unclassified",
-            shape: "opaque",
-        },
-    ];
-    const requested: string[] = [];
-
-    /** 身份从 sessionStorage 播种：OWNER 才有分类能力，VIEWER 只读（G9 两态）。 */
-    function seedWorkspaceRole(role: "OWNER" | "VIEWER", capabilities?: Record<string, unknown>) {
-        localStorage.removeItem("xihe-workspace");
-        sessionStorage.setItem(
-            "xihe-workspace",
-            JSON.stringify({
-                id: WORKSPACE_ID,
-                name: "Workspace",
-                workspaceRole: role,
-                ownerId: role === "OWNER" ? "u1" : "someone-else",
-            }),
-        );
-        if (capabilities) {
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({ id: "u1", email: "owner@xihe.local", capabilities }),
-            );
-        }
-    }
-
-    function mockFetchWithToolFaces() {
-        vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-            const url = typeof input === "string" ? input : input.url;
-            if (url.includes("/api/v1/policy/tool-faces")) {
-                requested.push(url);
-                return Promise.resolve(new Response(JSON.stringify(faces), { status: 200 }));
-            }
-            return mockConfigFetchResponse(input);
-        });
-    }
-
-    beforeEach(() => {
-        requested.length = 0;
-        routeState.domain = "approval-policy";
-        routeState.query = {};
-        mockFetchWithToolFaces();
-    });
-
-    it("G9-①: 工作区 OWNER 能打开「工具分类」页签并读到 workspace 口径的分类表", async () => {
-        seedWorkspaceRole("OWNER");
-        routeState.query = { tab: "tool-faces" };
-        const wrapper = await mountView();
-
-        // 域页出现域内页签，且默认落在 tool-faces（?tab= 只表达域内视图）
-        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(true);
-        expect(
-            wrapper
-                .get('[data-testid="settings-domain-tab-tool-faces"]')
-                .attributes("aria-selected"),
-        ).toBe("true");
-        expect(wrapper.find('[data-testid="ws-settings-tool-faces"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="tool-faces-view"]').exists()).toBe(true);
-        // 真读取：请求带 scope=workspace，且列表渲染出内置面与工作区面
-        expect(requested.some((url) => url.includes("scope=workspace"))).toBe(true);
-        expect(wrapper.find('[data-testid="settings-tool-face-read_file"]').exists()).toBe(true);
-        // OWNER 具备分类能力 ⇒ 未分类项出现分类按钮，且不显示只读提示
-        expect(
-            wrapper
-                .find('[data-testid="settings-tool-face-classify-mcp__third_party__do"]')
-                .exists(),
-        ).toBe(true);
-        expect(wrapper.find('[data-testid="settings-tool-faces-forbidden"]').exists()).toBe(false);
-        wrapper.unmount();
-    });
-
-    it("G9-②: 非 OWNER 可见但只读（能读表、无分类按钮、有只读提示）", async () => {
-        seedWorkspaceRole("VIEWER");
-        routeState.query = { tab: "tool-faces" };
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-settings-tool-faces"]').exists()).toBe(true);
-        // 读面保留：后端 workspace scope 读取只要求带工作区上下文（ToolFaceService.ownerFor(requireOwner=false)）
-        expect(requested.some((url) => url.includes("scope=workspace"))).toBe(true);
-        expect(wrapper.find('[data-testid="settings-tool-face-read_file"]').exists()).toBe(true);
-        // 写面收起：与「工作区设置页对非写角色只读」同语义
-        expect(
-            wrapper
-                .find('[data-testid="settings-tool-face-classify-mcp__third_party__do"]')
-                .exists(),
-        ).toBe(false);
-        expect(wrapper.find('[data-testid="settings-tool-faces-forbidden"]').exists()).toBe(true);
-        wrapper.unmount();
-    });
-
-    it("G9-③: 实例 ADMIN 在工作区页也不出现「切到实例视图」的范围选择（scopeLock=workspace）", async () => {
-        seedWorkspaceRole("VIEWER", {
-            isInstanceAdmin: true,
-            isInstanceSuper: false,
-            workspaceAdminOf: [],
-        });
-        routeState.query = { tab: "tool-faces" };
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="settings-tool-faces-scope-workspace"]').exists()).toBe(
-            true,
-        );
-        expect(wrapper.find('[data-testid="settings-tool-faces-scope-instance"]').exists()).toBe(
-            false,
-        );
-        expect(requested.every((url) => !url.includes("scope=instance"))).toBe(true);
-        wrapper.unmount();
-    });
-
-    it("G9-④: 只有 approval-policy 域页出现这两个页签", async () => {
-        seedWorkspaceRole("OWNER");
-        routeState.domain = "rag";
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="ws-settings-domain-tabs"]').exists()).toBe(false);
         wrapper.unmount();
     });
 });

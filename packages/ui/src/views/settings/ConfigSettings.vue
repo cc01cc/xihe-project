@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { useConfigStore } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
@@ -9,12 +8,10 @@ import LanguageSwitcher from "../../components/settings/LanguageSwitcher.vue";
 import BackToChatButton from "../../components/settings/BackToChatButton.vue";
 import { logger } from "../../lib/logger";
 import { useAuthStore } from "../../stores/auth";
-import { workspaceSettingsPath } from "../../lib/routes";
 
 const { t } = useI18n(),
     configStore = useConfigStore(),
-    authStore = useAuthStore(),
-    router = useRouter();
+    authStore = useAuthStore();
 
 // PLAN-0560：全局设置只保留 Instance/User 两层；Workspace 配置移至各工作区
 // 设置页（/workspace/:workspaceId/settings）。旧 ?tab=workspace 不做兼容（决策 #6）。
@@ -31,16 +28,6 @@ const tabs = computed<{ key: LayerTab; label: string }[]>(() => {
     list.push({ key: "user", label: t("settings.tabUser") });
     return list;
 });
-
-function currentWorkspaceId(): string {
-    return authStore.currentWorkspaceId ?? "";
-}
-
-function goWorkspaceSettings() {
-    const workspaceId = currentWorkspaceId();
-    if (!workspaceId) return;
-    void router.push(workspaceSettingsPath(workspaceId));
-}
 
 const fetchError = ref(false);
 // Only the first load of a layer shows the full-page loading state. Reloads
@@ -139,26 +126,6 @@ async function handleImportFile(event: Event) {
                 {{ t("settings.configTab") }}
             </h2>
 
-            <div
-                class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
-                data-testid="config-workspace-moved"
-            >
-                <span>{{ t("settings.workspaceConfigMovedNotice") }}</span>
-                <button
-                    data-testid="config-go-workspace-settings"
-                    class="px-3 py-1 text-xs border rounded hover:bg-muted disabled:opacity-50"
-                    :disabled="!currentWorkspaceId()"
-                    :title="
-                        currentWorkspaceId()
-                            ? undefined
-                            : t('settings.workspaceConfigMovedNoWorkspace')
-                    "
-                    @click="goWorkspaceSettings"
-                >
-                    {{ t("settings.workspaceConfigMovedGo") }}
-                </button>
-            </div>
-
             <div v-if="fetchError" class="mb-3 px-3 py-2 text-sm bg-red-100 text-red-800 rounded">
                 {{ t("common.error") }}: {{ t("settings.saveFailed") }}
             </div>
@@ -245,12 +212,7 @@ async function handleImportFile(event: Event) {
                         </div>
                     </div>
 
-                    <ConfigLayerPanels
-                        :layer="activeTab"
-                        :workspace-id="currentWorkspaceId() || undefined"
-                        @switch-layer="switchTab"
-                        @go-workspace="goWorkspaceSettings"
-                    />
+                    <ConfigLayerPanels :layer="activeTab" @switch-layer="switchTab" />
                 </div>
             </template>
         </div>
