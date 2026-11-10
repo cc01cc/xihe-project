@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -138,30 +138,57 @@ function initialLayout(workspaceId: string): WorkspaceLayoutState {
 
 const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
 /**
- * task-88 / F5（D-841 裁 E）：内层 SplitterGroup 的**主列 panel** 必须给 `defaultSize`。
+ * task-94 (B)：内层 SplitterGroup 的两道 panel 一律用**百分比**，持久化仍是 px。
  *
- * reka 在 `layout[panelIndex] == null` 时把 `defaultSize` **直接当 flex-grow** 用，没给就落到
- * `"1"`（reka-ui@2.11.0 `dist/utils/style.js:45-50`）。而这一组的 layout 真的会一直是 `[]`：
- * 组内有 px 面板且首次测量拿不到几何 ⇒ `convertPanelConstraintsToPercent` 返回 null ⇒
- * `SplitterGroup.vue:341-343` 直接 return；之后 `groupSizeInPixels` 的恢复分支又要求
- * `prevLayout.length !== 0`（`:387-388`）⇒ 永不恢复。
- * 后果实测：文件树 240 : 主列 1 = 1208px : **5px**，聊天列只剩 21px、被 pinned dock 盖住，
- * dock 的 context 入口（聊天列摘要行）物理上点不到 —— F5 的 11 条红就是这条链。
+ * 依据：`reka-ui@2.11.0 src/Splitter/utils/units.ts:29-38` —— 组内只要有 px 面板且首次测量
+ * 拿不到 groupSize，`convertPanelConstraintsToPercent` 就返回 null ⇒ `SplitterGroup.vue:341-343`
+ * 直接 return，`layout` 永远是 `[]`；而 `:387-388` 的恢复分支又要求 `prevLayout.length !== 0`
+ * ⇒ 永不恢复。layout 空的时候：① `computePanelFlexBoxStyle` 把 `defaultSize` 当 flex-grow、
+ * 缺省落 `"1"`（`dist/utils/style.js:45-50`），主列被压成 5px；② 重渲染期
+ * `isPanelCollapsed → getPanelSize` 断言（`Panel size not found`）打断渲染 ⇒ dock 状态改了不渲染。
+ * 全用 % 之后 `requiresMeasurement` 为 false，layout 一定能从默认值初始化。
  *
- * 补上 `defaultSize` 后，即便 layout 仍是空，比例也变成 240 : 960 ≈ 20% : 80%
- * （= 默认树宽 / 主列剩余），与正常布局一致。单位与文件树一样用 px：
- * 树的 240 是 TREE_WIDTH_DEFAULT 的 px 语义（拖拽/持久化按 px），两者同一单位才可比。
- *
- * 实测（2026-11-11，task-88 探针）：文件树 242px / 主列 963px / `chat-input` 873px，
- * 摘要行 970×32 且 `elementFromPoint` 命中自身、`handleSummaryClick` 真的执行。
- *
- * ⚠️ 这**只治了可见几何，没治根**：layout 仍是 `[]`，于是任何一次重渲染都会踩 reka 的
- * `isPanelCollapsed → getPanelSize` 断言（页面错误实测：`Panel size not found for panel
- * "reka-splitter-panel-v-10"`），渲染中断 ⇒ dock 的状态改了却不渲染（task-88 的「后半段」）。
- * 要真正修好，得让 layout 真的初始化（改 % 尺寸或上游修「从未初始化」这半）；本行只是让
- * 「未初始化」不再等于「主列 5px」。别把这行当 F5 已修。
+ * 换算只在这一处：reka 收/发 %（`treePercentOf` / `treePxOf`），store 与 UI 仍是 px。
  */
-const MAIN_PANEL_DEFAULT_SIZE = 960;
+const splitterGroupRef = ref<{ $el?: HTMLElement } | null>(null);
+const splitterWidth = ref(0);
+let splitterObserver: ResizeObserver | null = null;
+
+/** 量不到几何时的折算基准：默认树宽 : 默认主列宽（与 E 的 240:960 同一比例）。 */
+const SPLITTER_REFERENCE_WIDTH = TREE_WIDTH_DEFAULT + 960;
+
+function releaseSplitterObserver(): void {
+    splitterObserver?.disconnect();
+    splitterObserver = null;
+}
+
+function treePercentOf(px: number): number {
+    const width = splitterWidth.value > 0 ? splitterWidth.value : SPLITTER_REFERENCE_WIDTH;
+    return Math.min(100, Math.max(0, (px / width) * 100));
+}
+
+function treePxOf(percent: number): number {
+    const width = splitterWidth.value > 0 ? splitterWidth.value : SPLITTER_REFERENCE_WIDTH;
+    return (percent / 100) * width;
+}
+
+const treeDefaultPercent = computed(() => treePercentOf(treeWidth.value));
+const treeMinPercent = computed(() => treePercentOf(TREE_WIDTH_MIN));
+const treeMaxPercent = computed(() => treePercentOf(TREE_WIDTH_MAX));
+const treeCollapsedPercent = computed(() => treePercentOf(TREE_COLLAPSED_WIDTH));
+const mainDefaultPercent = computed(() => Math.max(0, 100 - treePercentOf(TREE_WIDTH_DEFAULT)));
+
+onMounted(() => {
+    const element = splitterGroupRef.value?.$el;
+    if (!element || typeof ResizeObserver !== "function") return;
+    splitterObserver = new ResizeObserver((entries) => {
+        const width = entries[0]?.contentRect.width ?? 0;
+        if (width > 0) splitterWidth.value = width;
+    });
+    splitterObserver.observe(element);
+});
+
+onBeforeUnmount(releaseSplitterObserver);
 
 let layoutWriter = createWorkspaceLayoutWriter(props.workspaceId || "");
 
@@ -354,6 +381,8 @@ const treeBridge = useSplitterPanelBridge({
         return null;
     },
     bubble: treeBubbleRef,
+    // task-94 (B)：reka 侧收/发百分比，store 仍是 px。
+    sizeUnit: { toPx: treePxOf, fromPx: treePercentOf },
     handleId: TREE_RESIZE_HANDLE_ID,
     isCollapsed: () => treePanelCollapsed.value,
 });
@@ -635,6 +664,7 @@ defineExpose({ openDockTab });
         -->
         <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
             <SplitterGroup
+                ref="splitterGroupRef"
                 direction="horizontal"
                 class="flex min-h-0 min-w-0 flex-1"
                 @keydown.capture="treeBridge.onKeydownCapture"
@@ -643,12 +673,12 @@ defineExpose({ openDockTab });
                 <SplitterPanel
                     :ref="setTreePanel"
                     as-child
-                    size-unit="px"
+                    size-unit="%"
                     collapsible
-                    :default-size="treeWidth"
-                    :min-size="TREE_WIDTH_MIN"
-                    :max-size="TREE_WIDTH_MAX"
-                    :collapsed-size="TREE_COLLAPSED_WIDTH"
+                    :default-size="treeDefaultPercent"
+                    :min-size="treeMinPercent"
+                    :max-size="treeMaxPercent"
+                    :collapsed-size="treeCollapsedPercent"
                     @resize="treeBridge.onResize"
                 >
                     <div
@@ -718,10 +748,11 @@ defineExpose({ openDockTab });
                 (`useSSE.ts:555-557`), so the column stays mounted and merely stops taking
                 layout space.
             -->
+                <!-- task-94 (B)：主列也用 %（组里只要还剩一个 px 面板，layout 就可能永不初始化）。 -->
                 <SplitterPanel
                     class="flex min-w-0"
-                    size-unit="px"
-                    :default-size="MAIN_PANEL_DEFAULT_SIZE"
+                    size-unit="%"
+                    :default-size="mainDefaultPercent"
                 >
                     <div
                         v-show="!dockFocus"

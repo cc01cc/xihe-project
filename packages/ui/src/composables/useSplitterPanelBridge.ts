@@ -41,6 +41,15 @@ export interface SplitterPanelBridgeOptions {
     viewportWidth?: Ref<number>;
     /** Live width bubble; its text is written imperatively during drags. */
     bubble?: Ref<HTMLElement | null>;
+    /**
+     * task-94 (B): 面板在 reka 里的尺寸单位换算。默认 `px`（内部 group 曾用 px）。
+     * 内层 group 现在用 **百分比**：组里只要有 px 面板且首次测量拿不到 groupSize，
+     * reka 的 `convertPanelConstraintsToPercent` 就返回 null（`units.ts:29-38`）⇒ `layout`
+     * 永远初始化不了 ⇒ 重渲染期 `isPanelCollapsed → getPanelSize` 断言。
+     * 因此 reka 侧一律收/发 %，**持久化仍是 px**：两个方向都经由这里换算，
+     * 产品语义（用户设定的像素宽度、min/max/collapsed 也都是 px）不丢。
+     */
+    sizeUnit?: { toPx: (value: number) => number; fromPx: (px: number) => number };
     /** The resize handle id whose keys this bridge routes (fallthrough `id`). */
     handleId: string;
     /** Skip keyboard routing when the panel is collapsed (handle is v-if'd away). */
@@ -74,14 +83,20 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         return options.toPx ? options.toPx(width) : width;
     }
 
-    function onResize(px: number): void {
+    /** reka 报出的尺寸 → 元素像素；percent 组按当前组宽折算。 */
+    function reportedPx(size: number): number {
+        return options.sizeUnit ? options.sizeUnit.toPx(size) : size;
+    }
+
+    function onResize(size: number): void {
         if (!draggingActive) return;
-        // reka 的 @resize 就是它自己对这一帧的最终像素值（size-unit="px" 时已经过约束夹取），
+        // reka 的 @resize 就是它自己对这一帧的最终值（px 组=像素、% 组=百分比，都已过约束夹取），
         // 因此 release 沿用它即可 —— 不再回读 getSize()。BL-562 的根因就在这里：
         // getSize() 会 assert(layout[panelIndex] != null)，而 reka 的 "drag 结束" 事件可以在
         // 「group 还没量到几何 / 布局尚未重算」的窗口里到达（实测：在 handle 命中区内按下即抬起、
         // 一次 resize 都没有，也会走 dragging(true) → dragging(false)），此时 layout 里没有该面板，
         // vendor 断言直接抛未捕获错误。用「本帧自己报的值」把这条依赖整段拿掉。
+        const px = reportedPx(size);
         lastDragPx = px;
         // Pointer path only: bubble imperative, no reactive write, no commit.
         const bubble = options.bubble?.value;
@@ -130,7 +145,8 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
     }
 
     function resizeToWidth(width: number): void {
-        panelRef.value?.resize(widthToPx(width));
+        const px = widthToPx(width);
+        panelRef.value?.resize(options.sizeUnit ? options.sizeUnit.fromPx(px) : px);
     }
 
     function onDblclick(): void {

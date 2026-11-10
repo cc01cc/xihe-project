@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { nextTick, ref } from "vue";
+import { nextTick, ref, type Ref } from "vue";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { useSplitterPanelBridge, type SplitterPanelExposed } from "../useSplitterPanelBridge";
 
@@ -25,7 +25,12 @@ function makePanel(): Panel {
 
 function mountHost(opts: {
     width?: number;
+    viewport?: number;
     displayResize?: (width: number, viewportWidth: number) => number;
+    /** task-94 (B)：给了就按百分比组接线（reka 收/发 %，store 仍是 px）。 */
+    percentGroup?: Ref<number>;
+    /** 关掉 Sidebar 的图标 rail 换算（+56px），让 px/percent 断言保持直观。 */
+    identityWidths?: boolean;
 }) {
     const commits: number[] = [];
     const viewport = ref(opts.viewport ?? 1440);
@@ -50,10 +55,17 @@ function mountHost(opts: {
                     if (key === "End") return 360;
                     return null;
                 },
-                toWidth: (px) => px - 56,
-                toPx: (w) => w + 56,
+                toWidth: opts.identityWidths ? undefined : (px) => px - 56,
+                toPx: opts.identityWidths ? undefined : (w) => w + 56,
                 displayResize: opts.displayResize,
                 viewportWidth: viewport,
+                sizeUnit: opts.percentGroup
+                    ? {
+                          // 组宽为 0（还没量到几何）时按 1000 折算，绝不产生 NaN/Infinity。
+                          toPx: (percent) => (percent / 100) * (opts.percentGroup?.value || 1000),
+                          fromPx: (px) => (px / (opts.percentGroup?.value || 1000)) * 100,
+                      }
+                    : undefined,
                 handleId: "nav-resize-handle",
             });
             bridge.panelRef.value = panel;
@@ -145,5 +157,51 @@ describe("useSplitterPanelBridge (PLAN-0753 T3)", () => {
         await nextTick();
         expect(host.panel.resize).toHaveBeenCalledWith(240 + 56); // display clamp, element px
         expect(host.commits).toEqual([]); // clamp is display-only
+    });
+});
+
+/**
+ * task-94 (B)：内层 group 从 px 尺寸改成百分比尺寸（让 reka 的 layout 一定能初始化），
+ * 但**持久化语义仍是 px** —— 换算压在这一层，下面 4 条把这个契约钉住。
+ */
+describe("useSplitterPanelBridge — 百分比组（task-94 / B）", () => {
+    it("reka 报出的百分比按组宽折成 px 再提交（release 仍只写一次）", () => {
+        const groupWidth = ref(1200);
+        const host = mountHost({ width: 240, percentGroup: groupWidth, identityWidths: true });
+        host.bridge.onDragging(true);
+        host.bridge.onResize(20); // 20% of 1200 = 240px
+        host.bridge.onResize(25); // 25% of 1200 = 300px
+        expect(host.commits).toEqual([]);
+        host.bridge.onDragging(false);
+        expect(host.commits).toEqual([300]); // store 收到 px，不是 25
+    });
+
+    it("键盘/双击写回 reka 的是百分比，写进 store 的是 px", () => {
+        const groupWidth = ref(1200);
+        const host = mountHost({ width: 240, percentGroup: groupWidth, identityWidths: true });
+        press(host.wrapper, "End"); // 360px -> 30%
+        expect(host.panel.resize).toHaveBeenCalledWith(30);
+        expect(host.commits).toEqual([360]);
+    });
+
+    it("一次 resize 都没收到就不提交（BL-562 的负例在百分比组同样成立）", () => {
+        const groupWidth = ref(1200);
+        const host = mountHost({ width: 240, percentGroup: groupWidth, identityWidths: true });
+        host.bridge.onDragging(true);
+        host.bridge.onDragging(false);
+        expect(host.commits).toEqual([]);
+        expect(host.panel.resize).not.toHaveBeenCalled();
+    });
+
+    it("组还没量到几何（宽 0）时不产生 NaN/Infinity，也照常提交有限值", () => {
+        const groupWidth = ref(0);
+        const host = mountHost({ width: 240, percentGroup: groupWidth, identityWidths: true });
+        host.bridge.onDragging(true);
+        host.bridge.onResize(20); // 20% of fallback 1000 = 200px
+        host.bridge.onDragging(false);
+        expect(host.commits).toEqual([220]); // clamp(200) -> 220（min 220）
+        host.bridge.onDblclick();
+        const written = host.panel.resize.mock.calls.at(-1)?.[0] ?? Number.NaN;
+        expect(Number.isFinite(written)).toBe(true);
     });
 });
