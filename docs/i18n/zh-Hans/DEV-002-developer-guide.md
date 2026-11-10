@@ -426,6 +426,17 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - **日志不含密码值**：只打 `source`/`length`/`file`/`persisted`（附 `value=not-logged`）；密码经子进程 env 传给入口，**不进命令行**。reset-admin 那条链路用 **`XIHE_RESET_ADMIN_PASSWORD`**（BL-523：入口内优先级 `stdin > env > --password`，最后者保留但打 deprecation WARN；需要确定性管道输入时用 `--password-stdin`）；`-Password` 参数只是由 wrapper 转成 env，**argv 里不再出现明文**。完整结论与建议见内部台账 `internal/A03-xihe/docs/BL-523-reset-admin-insert-broken.md`（跨仓路径）。- **首次 upsert 可能占一次构建位**：若 `packages/control-plane/target/reset-admin-classpath.txt` 缺失或早于 `pom.xml`，那一次 upsert 会先跑 `mvn dependency:build-classpath`——**不是编译**，但确实会进 Maven，**别当成编译竞争误报**；该缓存生成一次后长期复用。
 - **与旧描述的关系**：模式 A（`mise run dev:host`）**不走这条路径**，其「随机密码且不打印、需手动 `reset-admin`」结论仍然成立（见模式 B 段落上的 supersede 注）。
 
+### springdoc 调试面（`/v3/api-docs`、`/swagger-ui/**`）—— 默认关闭（task-244 / PLAN-0763 D-800）
+
+`docs/api/openapi.yaml` 是 API wire 契约的唯一 SSOT；CP 的 `/v3/api-docs` 与 Swagger UI 只是**调试/对账产物**。因此**出厂默认关闭**（`application.properties`：`springdoc.api-docs.enabled` / `springdoc.swagger-ui.enabled` = `${XIHE_SPRINGDOC_ENABLED:false}`），打包与生产向部署不再匿名暴露整份路由索引。
+
+- **本地怎么开（一行）**：
+  - PowerShell：`$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`
+  - POSIX shell：`XIHE_SPRINGDOC_ENABLED=true mise run dev:host`
+- **已自动开启的 profile**：`dev` / `e2e` / `test`（`application-{dev,e2e}.properties`、`src/test/resources/application-test.properties`）。`dev:host` 走的是**默认 profile**，所以它需要上面那行 env，或显式 `--spring.profiles.active=dev`。
+- **关闭时的样子**：`GET /v3/api-docs` 与 `/swagger-ui.html` 返回 **404**（handler 不存在）。`SecurityConfig` 里那三条 `permitAll` 只在该面被显式开启时才有意义，**不是常开的匿名口子**。
+- **不要拿它当契约或分母**：它比 live `RequestMappingHandlerMapping` **少报路由**，也不收录 `/internal/**`；对账与守恒一律以 `RouteContractParityTest`（live mapping）为准。
+
 ## 5. 测试入口
 
 - 单元：`mise run test`（UI + Agent + CP + Runtime lib）；`mise run validate`（`check:openapi` + `check:commit-msg` + lint + typecheck + build + test + `test:e2e:fixtures` + `lint:links`）。
