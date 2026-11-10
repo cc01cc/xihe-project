@@ -35,10 +35,8 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const ZH_HINT = "工作区设置 → 智能体管理绑定";
 
 test.describe.configure({ mode: "serial", retries: 0 });
-// 本用例串了「注册 → 建工作区 → 建 principal → 绑定 → UI 建会话 → 撤绑 → 提交」七步，
-// 且首次会话会触发工作区物化，默认 30 s 的 test 预算不够（实测：chat-input 还在等就被
-// test timeout 掐掉，而不是选择器出错）。放宽到 120 s，单步仍用 LONG/EXPECT 超时兜住。
-test.setTimeout(120_000);
+// 预算：**不设**字面量，走默认 30 s。实测整例 5.1 s（真栈 runId host-1794312675693-dff3），
+// 6 倍余量已足够；早先那版 120 s 是排障期的临时余量，不是需求。
 
 /**
  * 夹具回执。`foreignPrincipalId` 只在断言里读（用它反查工作区成员清单，证明**没有**被静默
