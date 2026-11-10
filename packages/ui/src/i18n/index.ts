@@ -455,6 +455,7 @@ const messages = {
             agentBindFailed: "智能体已创建，但绑定失败",
             agentSaveFailed: "保存工作区角色失败",
             agentUnbindFailed: "解绑智能体失败",
+            diffLoadFailed: "差异视图加载失败（monaco 未包含在生产构建中）",
             agentPrincipalCreated: "智能体主体已创建，等待绑定",
             agentBound: "智能体已绑定到工作区",
             agentCapSaved: "工作区角色已保存",
@@ -3005,6 +3006,8 @@ const messages = {
             agentBindFailed: "Agent was created, but binding failed",
             agentSaveFailed: "Failed to save workspace role",
             agentUnbindFailed: "Failed to unbind Agent",
+            diffLoadFailed:
+                "Diff view failed to load (monaco is not included in production builds)",
             agentPrincipalCreated: "Agent principal created; binding is pending",
             agentBound: "Agent bound to the Workspace",
             agentCapSaved: "Workspace role saved",

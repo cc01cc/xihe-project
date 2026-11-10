@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import hljs from "highlight.js";
-import { logger } from "@/lib/logger";
+import { escapeHtml } from "@/lib/escapeHtml";
+import { highlightCodeBlock } from "@/composables/useShiki";
 import CodeBlock from "../CodeBlock.vue";
-import { useMarkdownContext } from "./markdownContext.ts";
 
 export interface CodeToken {
     lang: string;
@@ -14,75 +13,23 @@ const props = defineProps<{
     token: CodeToken;
 }>();
 
-const { isStreaming } = useMarkdownContext();
-const highlightedHtml = ref("");
-
 const lang = computed(() => props.token.lang ?? "text"),
     code = computed(() => props.token.text ?? "");
+const highlightedHtml = ref("");
 
-function syncHighlight() {
-    try {
-        const result =
-            lang.value !== "text" && hljs.getLanguage(lang.value)
-                ? hljs.highlight(code.value, { language: lang.value, ignoreIllegals: true })
-                : hljs.highlightAuto(code.value);
-        highlightedHtml.value = result.value;
-    } catch (error) {
-        logger.warn("highlight.js failed", error);
-        highlightedHtml.value = escapeHtml(code.value);
-    }
-}
-
-function escapeHtml(text: string): string {
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-async function asyncShikiHighlight() {
-    try {
-        const { createHighlighter } = await import("shiki");
-        const highlighter = await createHighlighter({
-            themes: ["github-dark", "github-light"],
-            langs: [
-                "typescript",
-                "javascript",
-                "python",
-                "html",
-                "css",
-                "json",
-                "yaml",
-                "bash",
-                "shell",
-                "sql",
-                "markdown",
-                "xml",
-                "vue",
-                "jsx",
-                "tsx",
-            ],
-        });
-        highlightedHtml.value = highlighter.codeToHtml(code.value, {
-            lang: lang.value || "text",
-            theme: "github-dark",
-        });
-    } catch (error) {
-        logger.warn("Shiki highlight failed, falling back to highlight.js", error);
-        syncHighlight();
-    }
-}
-
+// PLAN-0750 M1 → PLAN-0753 M1 (F1/F3, task-167 matrix): ONE highlight path for streaming and
+// final states alike — the shiki singleton handles both; the per-token highlight.js streaming
+// branch is gone (F3), so there is no mid-stream engine switch and no second highlighter
+// lifecycle (F1). The request guard keeps a slow in-flight highlight from painting over a
+// newer token state; a failure falls back to escaped plain text (shared F10 escape).
+let requestSeq = 0;
 watch(
-    () => [code.value, lang.value, isStreaming],
-    () => {
-        if (isStreaming) {
-            syncHighlight();
-        } else {
-            asyncShikiHighlight();
-        }
+    [code, lang],
+    async ([nextCode, nextLang]) => {
+        const seq = ++requestSeq;
+        const html = await highlightCodeBlock(nextCode, nextLang);
+        if (seq !== requestSeq) return;
+        highlightedHtml.value = html ?? escapeHtml(nextCode);
     },
     { immediate: true },
 );

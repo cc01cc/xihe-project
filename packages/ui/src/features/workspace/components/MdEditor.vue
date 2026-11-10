@@ -98,12 +98,7 @@ function onInput(event: Event) {
             />
         </div>
         <div v-else class="flex-1 overflow-y-auto p-4 prose prose-sm max-w-none">
-            <MarkdownRender
-                mode="chat"
-                :content="text"
-                :final="true"
-                custom-id="xihe-workspace-md"
-            />
+            <MarkdownRender mode="chat" :content="text" :final="true" custom-id="xihe" />
         </div>
 
         <div
