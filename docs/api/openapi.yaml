@@ -1309,7 +1309,7 @@ paths:
                         name: { type: string, description: 'Slash command including its leading slash, e.g. /export' }
                         source: { type: string, enum: [builtin] }
                         available: { type: boolean }
-                        reason: { type: string, nullable: true, enum: [approval_required, denied, policy_unavailable, branch_locked] }
+                        reason: { type: [string, 'null'], enum: [approval_required, denied, policy_unavailable, branch_locked] }
                       additionalProperties: false
                 additionalProperties: false
         '400': { $ref: '#/components/responses/Problem' }
@@ -2716,12 +2716,12 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
         '400':
           description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
-          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '409':
           description: 'PROVIDER_CONNECTION_KEY_CONFLICT, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label) when another connection for the same owner and provider already uses the label (case-insensitive, trimmed).'
-          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/provider-connections/{connectionId}:
     parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
     patch:
@@ -2738,12 +2738,12 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
         '400':
           description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
-          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409':
           description: 'PROVIDER_CONNECTION_KEY_IMMUTABLE, CONNECTION_REVISION_CHANGED, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label; label uniqueness is per owner + provider, case-insensitive and trimmed).'
-          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
     delete:
       tags: [provider]
       operationId: deleteProviderConnection
@@ -4273,7 +4273,7 @@ paths:
         - { in: query, name: stream, schema: { type: string, enum: [stdout, stderr], default: stdout } }
         - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read } }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 1048576, default: 65536 } }
-      responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or WORKSPACE_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/responses/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/responses/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/responses/Problem' } } } } }
+      responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or WORKSPACE_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } }
   /api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel:
     post:
       tags: [job]
@@ -5467,7 +5467,7 @@ components:
       properties:
         scopeType: { type: string, enum: [user, agent, workspace] }
         scopeId: { type: string, format: uuid }
-        title: { type: string, maxLength: 255, nullable: true }
+        title: { type: [string, 'null'], maxLength: 255 }
     ConversationThreadAttachRequest:
       type: object
       required: [sessionId]
@@ -5479,7 +5479,7 @@ components:
       required: [id, title, workspaceId, userId, createdAt]
       properties:
         id: { type: string, format: uuid }
-        title: { type: string, nullable: true }
+        title: { type: [string, 'null'] }
         workspaceId: { type: string, format: uuid }
         userId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
@@ -5491,7 +5491,7 @@ components:
         scopeType: { type: string, enum: [user, agent, workspace] }
         scopeId: { type: string, format: uuid }
         createdByUserId: { type: string, format: uuid }
-        title: { type: string, nullable: true }
+        title: { type: [string, 'null'] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         sessions: { type: array, items: { $ref: '#/components/schemas/ConversationThreadSession' } }
@@ -5513,13 +5513,11 @@ components:
         runId: { type: string, format: uuid }
         available: { type: boolean }
         reason:
-          type: string
-          nullable: true
+          type: [string, 'null']
           enum: [pre_plan, not_dispatched]
           description: Present iff `available=false`. `not_dispatched` is read-side only.
         fingerprint:
-          nullable: true
-          allOf: [{ $ref: '#/components/schemas/ContextFingerprint' }]
+          oneOf: [{ $ref: '#/components/schemas/ContextFingerprint' }, {type: 'null'}]
     ContextFingerprint:
       type: object
       description: |
@@ -5529,8 +5527,8 @@ components:
       properties:
         enabled: { type: boolean }
         status: { type: string, enum: [ok, disabled, error] }
-        reason: { type: string, nullable: true, enum: [workspace_disabled] }
-        reasonCode: { type: string, nullable: true, description: 'Closed set, e.g. HASH_FAILED.' }
+        reason: { type: [string, 'null'], enum: [workspace_disabled] }
+        reasonCode: { type: [string, 'null'], description: 'Closed set, e.g. HASH_FAILED.' }
         algo: { type: string, example: sha256 }
         dispatchAttempt: { type: integer, minimum: 1, description: 'v1 is always 1 (first dispatch only).' }
         layers:
@@ -5571,8 +5569,8 @@ components:
             type: object
             properties:
               side: { type: string, enum: [against, current] }
-              reason: { type: string, nullable: true }
-              status: { type: string, nullable: true }
+              reason: { type: [string, 'null'] }
+              status: { type: [string, 'null'] }
         layers:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ContextFingerprintLayerDiff' }
@@ -5602,8 +5600,8 @@ components:
           enum: [unchanged, 'changed(sameShape)', 'changed(grew)', 'changed(shrank)', added, removed, unavailable, absent]
         countDelta: { type: integer }
         bytesDelta: { type: integer }
-        againstReason: { type: string, nullable: true }
-        currentReason: { type: string, nullable: true }
+        againstReason: { type: [string, 'null'] }
+        currentReason: { type: [string, 'null'] }
     ProviderRequestFingerprintView:
       type: object
       description: |
@@ -5614,18 +5612,16 @@ components:
         runId: { type: string, format: uuid }
         available: { type: boolean }
         reason:
-          type: string
-          nullable: true
+          type: [string, 'null']
           enum: [not_captured]
           description: Present iff `available=false`; read-side synthetic state.
         fingerprint:
-          nullable: true
           oneOf:
             - $ref: '#/components/schemas/ProviderRequestFingerprintDocument'
             - $ref: '#/components/schemas/ProviderRequestFingerprintErrorMarker'
+            - {type: 'null'}
         request:
-          nullable: true
-          allOf: [{ $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }]
+          oneOf: [{ $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }, {type: 'null'}]
     ProviderRequestFingerprintDocument:
       type: object
       description: |
@@ -5648,8 +5644,7 @@ components:
         hash: { type: string, description: 'sha256 hex over canonical JSON (Python-side, design D3).' }
         bytes: { type: integer }
         count:
-          type: integer
-          nullable: true
+          type: [integer, 'null']
           description: Present only where a count is meaningful (history, toolSchema, outbound).
     ProviderRequestFingerprintErrorMarker:
       type: object
@@ -5668,7 +5663,7 @@ components:
       required: [apiTypeId, model, messageCount, toolCount, bytesTotal]
       properties:
         apiTypeId: { type: string, example: openai-chat-completions }
-        apiTypeVersion: { type: integer, nullable: true }
+        apiTypeVersion: { type: [integer, 'null'] }
         model: { type: string, description: 'Agent-resolved model actually dispatched (incl. overrides).' }
         messageCount: { type: integer }
         toolCount: { type: integer }
@@ -5697,9 +5692,9 @@ components:
             type: object
             properties:
               side: { type: string, enum: [against, current] }
-              reason: { type: string, nullable: true, description: 'Present when the side has no row (not_captured).' }
-              status: { type: string, nullable: true }
-              reasonCode: { type: string, nullable: true }
+              reason: { type: [string, 'null'], description: 'Present when the side has no row (not_captured).' }
+              status: { type: [string, 'null'] }
+              reasonCode: { type: [string, 'null'] }
         layers:
           type: object
           additionalProperties: { $ref: '#/components/schemas/ProviderRequestFingerprintLayerDiff' }
@@ -5719,14 +5714,14 @@ components:
       required: [status]
       description: 'Design 4.4: an unavailable side is never downgraded to unchanged.'
       properties:
-        layer: { type: string, nullable: true }
+        layer: { type: [string, 'null'] }
         status:
           type: string
           enum: [unchanged, 'changed(sameShape)', 'changed(grew)', 'changed(shrank)', added, removed, unavailable, absent]
-        countDelta: { type: integer, nullable: true, description: Present only when both sides carry a count. }
-        bytesDelta: { type: integer, nullable: true }
-        againstReason: { type: string, nullable: true }
-        currentReason: { type: string, nullable: true }
+        countDelta: { type: [integer, 'null'], description: Present only when both sides carry a count. }
+        bytesDelta: { type: [integer, 'null'] }
+        againstReason: { type: [string, 'null'] }
+        currentReason: { type: [string, 'null'] }
     UserCapabilities:
       type: object
       description: 'PLAN-0610 W3-2b: binding-backed capability projection that replaces the retired role string (decision #22).'
@@ -5743,7 +5738,7 @@ components:
       type: object
       properties:
         workspaceId: { type: string, format: uuid }
-        workspaceRole: { type: string, nullable: true }
+        workspaceRole: { type: [string, 'null'] }
         workspaceAdmin: { type: boolean }
         permissions: { type: array, items: { $ref: '#/components/schemas/MePermissionsAtom' } }
     MePermissions:
@@ -5760,10 +5755,10 @@ components:
         id: { type: string, format: uuid }
         email: { type: string }
         username: { type: string }
-        name: { type: string, nullable: true }
+        name: { type: [string, 'null'] }
         capabilities: { $ref: '#/components/schemas/UserCapabilities' }
         status: { type: string, enum: [ACTIVE, DISABLED] }
-        deletedAt: { type: string, format: date-time, nullable: true, description: 'non-null only on a soft-deleted row' }
+        deletedAt: { type: [string, 'null'], format: date-time, description: 'non-null only on a soft-deleted row' }
         createdAt: { type: string, format: date-time }
     UserAdminPage:
       type: object
@@ -5798,8 +5793,8 @@ components:
       type: object
       description: 'PLAN-0580 owner pointer. Deliberately carries no account identifiers (no username/email/name): the users surface is ADMIN-only.'
       properties:
-        ownerUserId: { type: string, format: uuid, nullable: true, description: 'null when the instance has no ADMIN yet' }
-        assignedAt: { type: string, format: date-time, nullable: true, description: 'ISO-8601 instant; null together with ownerUserId' }
+        ownerUserId: { type: [string, 'null'], format: uuid, description: 'null when the instance has no ADMIN yet' }
+        assignedAt: { type: [string, 'null'], format: date-time, description: 'ISO-8601 instant; null together with ownerUserId' }
         isCurrentUser: { type: boolean, description: 'true when the requesting principal is the current owner' }
     InstanceOwnerTransferRequest:
       type: object
@@ -5829,7 +5824,7 @@ components:
         id: { type: string, format: uuid }
         name: { type: string }
         displayName: { type: string }
-        description: { type: string, nullable: true }
+        description: { type: [string, 'null'] }
         system: { type: boolean, description: 'Seeded by V87; only the display name is editable' }
         atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
         bindingCount: { type: integer, minimum: 0 }
@@ -5838,8 +5833,8 @@ components:
       required: [name, atoms]
       properties:
         name: { type: string, description: 'Matches ^[A-Z][A-Z0-9_]{1,63}$ (V87 ck_roles_name_format); 400 INVALID_ROLE_NAME otherwise' }
-        displayName: { type: string, nullable: true, description: 'Defaults to name; 1..200 characters' }
-        description: { type: string, nullable: true }
+        displayName: { type: [string, 'null'], description: 'Defaults to name; 1..200 characters' }
+        description: { type: [string, 'null'] }
         atoms: { type: array, minItems: 1, items: { type: string } }
     RoleUpdateRequest:
       type: object
@@ -5847,7 +5842,7 @@ components:
       properties:
         name: { type: string }
         displayName: { type: string }
-        description: { type: string, nullable: true }
+        description: { type: [string, 'null'] }
         atoms: { type: array, minItems: 1, items: { type: string } }
     BindingView:
       type: object
@@ -5858,14 +5853,14 @@ components:
         subjectId: { type: string, format: uuid }
         roleId: { type: string, format: uuid }
         roleName: { type: string }
-        grantedBy: { type: string, format: uuid, nullable: true }
+        grantedBy: { type: [string, 'null'], format: uuid }
         grantedAt: { type: string, format: date-time }
     BindingSetView:
       type: object
       required: [scopeType, bindings]
       properties:
         scopeType: { type: string, enum: [instance, workspace] }
-        scopeId: { type: string, format: uuid, nullable: true, description: 'Null for the instance scope' }
+        scopeId: { type: [string, 'null'], format: uuid, description: 'Null for the instance scope' }
         bindings: { type: array, items: { $ref: '#/components/schemas/BindingView' } }
     BindingReplaceRequest:
       type: object
@@ -5904,7 +5899,7 @@ components:
         apiTypeVersion: { type: integer, minimum: 1 }
         nativeRecords: { type: array, items: { type: object, additionalProperties: true } }
     RuntimeReadFileRequest: { type: object, required: [path], additionalProperties: false, properties: { path: { type: string, description: 'Workspace-relative path.' }, max_bytes: { type: integer, description: 'Truncate content to N bytes; truncated=true marks an applied cut.' } } }
-    WorkspaceFactsResult: { type: object, required: [isRepository, cwd, platform, shell, observedAt], properties: { isRepository: { type: boolean }, branch: { type: string, description: 'Omitted when non-repo or detached.' }, head: { type: string }, cwd: { type: string, nullable: true, description: 'Logical sandbox cwd (/workspace in docker); null = unknown (host/mxc never report host paths).' }, platform: { type: string, nullable: true, description: 'Execution-face OS (container OS in docker, Runtime host OS otherwise).' }, shell: { type: string, nullable: true, description: 'Tool-exec shell entry (xihe-shell in docker); null = no shell layer or unknown.' }, observedAt: { type: string, format: date-time, description: 'Report time (RFC3339 UTC); diagnostics only, never an idempotency key.' } } }
+    WorkspaceFactsResult: { type: object, required: [isRepository, cwd, platform, shell, observedAt], properties: { isRepository: { type: boolean }, branch: { type: string, description: 'Omitted when non-repo or detached.' }, head: { type: string }, cwd: { type: [string, 'null'], description: 'Logical sandbox cwd (/workspace in docker); null = unknown (host/mxc never report host paths).' }, platform: { type: [string, 'null'], description: 'Execution-face OS (container OS in docker, Runtime host OS otherwise).' }, shell: { type: [string, 'null'], description: 'Tool-exec shell entry (xihe-shell in docker); null = no shell layer or unknown.' }, observedAt: { type: string, format: date-time, description: 'Report time (RFC3339 UTC); diagnostics only, never an idempotency key.' } } }
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentCheckpointOwnerRequest: { type: object, additionalProperties: false, required: [sessionId, userId, workspaceId], description: 'BL-320 批 1: owner scope of one checkpoint thread. CP validates the triple before every read/write — a checkpoint is never addressable across owners (an unrelated thread answers 404, never a 403 oracle).', properties: { sessionId: { type: string, format: uuid }, userId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid } } }
     AgentCheckpointLineageRequest: { type: object, additionalProperties: false, required: [sessionId, userId, workspaceId], properties: { sessionId: { type: string, format: uuid }, userId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, sourceRunId: { type: [string, 'null'], format: uuid, description: 'Run that produced the graph; recorded on the lineage and used to narrow the owner scope.' }, probeId: { type: [string, 'null'], format: uuid, description: 'Probe identity when the lineage belongs to a probe run.' }, producerVersion: { type: [string, 'null'], description: 'Producer checkpoint-format version (diagnostic only).' } } }
@@ -6370,14 +6365,14 @@ components:
       required: [id]
       properties:
         id: { type: string, format: uuid }
-        title: { type: string, nullable: true }
-        agentPrincipalId: { type: string, format: uuid, nullable: true, description: Sourced from the Session PRIMARY participant. }
-        modelProvider: { type: string, nullable: true }
-        modelName: { type: string, nullable: true }
-        providerConnectionId: { type: string, format: uuid, nullable: true }
-        connectionRevision: { type: integer, nullable: true }
-        createdAt: { type: string, format: date-time, nullable: true }
-        updatedAt: { type: string, format: date-time, nullable: true }
+        title: { type: [string, 'null'] }
+        agentPrincipalId: { type: [string, 'null'], format: uuid, description: Sourced from the Session PRIMARY participant. }
+        modelProvider: { type: [string, 'null'] }
+        modelName: { type: [string, 'null'] }
+        providerConnectionId: { type: [string, 'null'], format: uuid }
+        connectionRevision: { type: [integer, 'null'] }
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
     SessionMonitorActivityItem:
       type: object
       additionalProperties: false
@@ -6386,9 +6381,9 @@ components:
         runId: { type: string, format: uuid }
         origin: { type: string }
         status: { type: string, description: Effective status; `awaiting_approval` is synthesized by Control Plane from pending approvals }
-        createdAt: { type: string, format: date-time, nullable: true }
-        waitingOnRunId: { type: string, format: uuid, nullable: true }
-        waitingToolCallId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: [string, 'null'], format: date-time }
+        waitingOnRunId: { type: [string, 'null'], format: uuid }
+        waitingToolCallId: { type: [string, 'null'], format: uuid }
         leaseExpired: { type: boolean }
     SessionMonitorHistory:
       type: object
@@ -6405,10 +6400,10 @@ components:
       properties:
         runId: { type: string, format: uuid }
         origin: { type: string }
-        terminalOutcome: { type: string, nullable: true }
-        errorCode: { type: string, nullable: true }
-        createdAt: { type: string, format: date-time, nullable: true }
-        terminalAt: { type: string, format: date-time, nullable: true }
+        terminalOutcome: { type: [string, 'null'] }
+        errorCode: { type: [string, 'null'] }
+        createdAt: { type: [string, 'null'], format: date-time }
+        terminalAt: { type: [string, 'null'], format: date-time }
     SessionMonitorReadiness:
       type: object
       additionalProperties: false
@@ -6430,8 +6425,8 @@ components:
       required: [status]
       properties:
         status: { type: string, enum: [UNVERIFIED, VERIFYING, READY, INVALID_CREDENTIALS, UNREACHABLE, DISABLED] }
-        lastErrorCode: { type: string, nullable: true }
-        lastVerifiedAt: { type: string, format: date-time, nullable: true }
+        lastErrorCode: { type: [string, 'null'] }
+        lastVerifiedAt: { type: [string, 'null'], format: date-time }
     SessionMonitorAgentFact:
       type: object
       additionalProperties: false
@@ -6440,7 +6435,7 @@ components:
       properties:
         status: { type: string, enum: [up, down, unknown] }
         llmReady: { type: string }
-        verifiedAt: { type: string, format: date-time, nullable: true }
+        verifiedAt: { type: [string, 'null'], format: date-time }
         configRevision: { type: string }
     SessionMonitorLastObservedRun:
       type: object
@@ -6448,9 +6443,9 @@ components:
       required: [runId]
       properties:
         runId: { type: string, format: uuid }
-        terminalOutcome: { type: string, nullable: true }
-        errorCode: { type: string, nullable: true }
-        terminalAt: { type: string, format: date-time, nullable: true }
+        terminalOutcome: { type: [string, 'null'] }
+        errorCode: { type: [string, 'null'] }
+        terminalAt: { type: [string, 'null'], format: date-time }
     ChatTransportAggregate:
       type: object
       additionalProperties: false
@@ -6590,24 +6585,24 @@ components:
             - type: string
               enum: [success, error, timeout, aborted, partial]
             - type: 'null'
-        provider: { type: string, nullable: true }
-        model: { type: string, nullable: true }
-        connectionId: { type: string, nullable: true }
-        connectionRevision: { type: integer, nullable: true }
+        provider: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        connectionId: { type: [string, 'null'] }
+        connectionRevision: { type: [integer, 'null'] }
         startedAt: { type: string, format: date-time }
-        endedAt: { type: string, format: date-time, nullable: true }
-        durationMs: { type: integer, minimum: 0, nullable: true }
+        endedAt: { type: [string, 'null'], format: date-time }
+        durationMs: { type: [integer, 'null'], minimum: 0 }
         errorCode:
           oneOf:
             - type: string
             - type: integer
             - type: 'null'
-        firstChunkMs: { type: integer, minimum: 0, nullable: true }
-        chunkCount: { type: integer, minimum: 0, nullable: true }
-        uploadBytes: { type: integer, nullable: true, description: 'Fixed null in v1 (unknown, never fabricated)' }
-        downloadBytes: { type: integer, nullable: true, description: 'Fixed null in v1 (unknown, never fabricated)' }
-        lastProgressStage: { type: string, nullable: true, enum: [attempt_started, first_chunk, streaming, attempt_finished] }
-        lastProgressElapsedMs: { type: integer, minimum: 0, nullable: true }
+        firstChunkMs: { type: [integer, 'null'], minimum: 0 }
+        chunkCount: { type: [integer, 'null'], minimum: 0 }
+        uploadBytes: { type: [integer, 'null'], description: 'Fixed null in v1 (unknown, never fabricated)' }
+        downloadBytes: { type: [integer, 'null'], description: 'Fixed null in v1 (unknown, never fabricated)' }
+        lastProgressStage: { type: [string, 'null'], enum: [attempt_started, first_chunk, streaming, attempt_finished] }
+        lastProgressElapsedMs: { type: [integer, 'null'], minimum: 0 }
     ChatApprovalDecisionRequest:
       type: object
       additionalProperties: false
@@ -7251,8 +7246,8 @@ components:
          status: { type: string, enum: [active, disabled] }
          fingerprint: { type: string }
          revision: { type: integer }
-         createdAt: { type: string, nullable: true }
-         replacedAt: { type: string, nullable: true }
+         createdAt: { type: [string, 'null'] }
+         replacedAt: { type: [string, 'null'] }
     CredentialSummary:
        allOf:
          - $ref: '#/components/schemas/CredentialView'
@@ -7380,11 +7375,11 @@ components:
         runId: { type: string, format: uuid }
         state: { type: string, enum: [pending, answered, expired, cancelled] }
         prompt: { type: string, description: 'The question body (untrusted).' }
-        answer: { type: string, nullable: true, description: 'Only set by the pending → answered transition.' }
-        expiresAt: { type: string, format: date-time, nullable: true, description: 'null = blocking ask; otherwise the askTimed deadline.' }
+        answer: { type: [string, 'null'], description: 'Only set by the pending → answered transition.' }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'null = blocking ask; otherwise the askTimed deadline.' }
         createdAt: { type: string, format: date-time }
-        firstDeliveredAt: { type: string, format: date-time, nullable: true, description: 'Reserved: first time the pending hint reached the addressee. CURRENTLY ALWAYS null — the relay path has no write point yet (T5.25 reconciliation, tracked as drift); do not build UI logic on it.' }
-        settledAt: { type: string, format: date-time, nullable: true, description: 'Terminal stamp; the "answered at" instant for an answered question (frozen column settled_at).' }
+        firstDeliveredAt: { type: [string, 'null'], format: date-time, description: 'Reserved: first time the pending hint reached the addressee. CURRENTLY ALWAYS null — the relay path has no write point yet (T5.25 reconciliation, tracked as drift); do not build UI logic on it.' }
+        settledAt: { type: [string, 'null'], format: date-time, description: 'Terminal stamp; the "answered at" instant for an answered question (frozen column settled_at).' }
     UserQuestionListResponse:
       type: object
       required: [items, pendingCount]
@@ -7407,7 +7402,7 @@ components:
         runId: { type: string, format: uuid }
         sessionId: { type: string }
         content: { type: string }
-        parentRunId: { type: string, format: uuid, nullable: true, description: 'PLAN-0660 T5.16 (LD-16=A), additive and OPTIONAL: present only when CP dispatches a **spawned** run, carrying the parent run id (same value as `chat_runs.parent_run_id`). A root run omits the key entirely, so a pre-T5.16 reader stays compatible. The Agent uses it as the root-run gate: `ask_user` refuses a child run at the door with `code=SUBAGENT_QUESTION_REFUSED` before publishing anything.' }
+        parentRunId: { type: [string, 'null'], format: uuid, description: 'PLAN-0660 T5.16 (LD-16=A), additive and OPTIONAL: present only when CP dispatches a **spawned** run, carrying the parent run id (same value as `chat_runs.parent_run_id`). A root run omits the key entirely, so a pre-T5.16 reader stays compatible. The Agent uses it as the root-run gate: `ask_user` refuses a child run at the door with `code=SUBAGENT_QUESTION_REFUSED` before publishing anything.' }
         pathMentions:
           type: array
           description: |
@@ -7831,7 +7826,7 @@ components:
       type: object
       required: [code]
       properties:
-        sourcePath: { type: string, nullable: true }
+        sourcePath: { type: [string, 'null'] }
         code:
           type: string
           enum: [SKILL_NAME_INVALID, SKILL_DESCRIPTION_REQUIRED, SKILL_DESCRIPTION_TOO_LONG, SKILL_DESCRIPTION_EDGE_WHITESPACE, SKILL_DESCRIPTION_CONTROL_CHARACTER, SKILL_BODY_EMPTY, SKILL_BODY_TOO_LARGE, SKILL_ATTACHMENT_INVALID, SKILL_SOURCE_PATH_INVALID, SKILL_TRUSTED_FORBIDDEN]
@@ -7902,7 +7897,7 @@ components:
         subjectType: { type: string, enum: [user, agent_principal] }
         subjectId: { type: string, format: uuid }
         scopeType: { type: string, enum: [instance, workspace] }
-        scopeId: { type: string, format: uuid, nullable: true }
+        scopeId: { type: [string, 'null'], format: uuid }
         createdByUserId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
     SkillBindingListResponse:
