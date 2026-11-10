@@ -208,6 +208,7 @@ mise run test:e2e:host        # Host E2E：先停 dev:host（见 DEV-002 §5）�
 | [DEV-001](DEV-001-system-architecture.md) | 系统架构与通信协议 |
 | [DEV-002](DEV-002-developer-guide.md) | 环境搭建、运行模式与调试 |
 | [DEV-033](DEV-033-first-run-gold-path.md) | 新手首跑：空白实例 → 首条回复（判据与 spec 断言映射） |
+| [DEV-034](DEV-034-spec-contract-map.md) | 四类规范契约地图（HTTP / 事件流 / MCP / 持久化的权威在哪） |
 | [DEV-003](DEV-003-config-management.md) | ConfigService、环境变量与配置导入 |
 | [DEV-004](DEV-004-logging.md) | 日志、脱敏与泄露扫描 |
 | [USER-001](USER-001-user-guide.md) | 用户指南 |
