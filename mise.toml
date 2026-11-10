@@ -349,13 +349,22 @@ description = "Run T3 cross-module real integration tests (requires Docker)"
 alias = "test:integration:t3"
 
 [tasks.lint]
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n"]
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts"]
 description = "Run all linters"
 alias = "lint"
 
 [tasks."lint:log-secrets"]
 run = "node scripts/scan-log-secrets.mjs"
 description = "Scan logs/ for credential leakage (PLAN-196 gate)"
+
+[tasks."lint:scripts"]
+# 仓根 `scripts/**/*.mjs`（183 文件）。此前是唯一零 lint 覆盖的代码面（task-59）：
+# 一开 `no-undef` 就抓到 `l2/shard-report.mjs` 缺 `node:child_process` import 的静默降级。
+# 配置 = 仓根 `.oxlintrc.json`（`no-undef` 常开；`perf/bl301-multitab.mjs` 用 per-file browser env，
+# 因为它在 `page.evaluate()` 里用浏览器 globals）。实测 145 ms / 183 文件，故并入 `lint` 聚合。
+run = "node packages/ui/node_modules/oxlint/bin/oxlint scripts"
+description = "Lint repo-root scripts/**/*.mjs (oxlint 1.83; correctness + no-undef)"
+alias = "lint:scripts"
 
 [tasks."lint:ui"]
 run = "pnpm run lint"
