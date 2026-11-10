@@ -196,7 +196,8 @@ async function saveMcpConfig() {
     mcpError.value = "";
     try {
         const parsed = JSON.parse(mcpJson.value);
-        await api.saveMcpConfig(props.workspaceId, parsed.mcpServers);
+        // api.saveMcpConfig takes the JSON string (it wraps it in { mcpServers }).
+        await api.saveMcpConfig(props.workspaceId, JSON.stringify(parsed.mcpServers ?? parsed));
         toast.success(t("common.saved"));
     } catch (e) {
         if (e instanceof SyntaxError) {

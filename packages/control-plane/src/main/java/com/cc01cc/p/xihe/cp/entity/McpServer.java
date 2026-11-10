@@ -40,6 +40,24 @@ public class McpServer {
     @Column(name = "tool_timeout_s")
     private Integer toolTimeoutS;
 
+    // PLAN-0759 / BL-548: server-level OAuth client configuration (shared by all
+    // users of the workspace). All nullable: rows created before the OAuth block
+    // was persisted carry NULLs and stay valid as plain http endpoints.
+    @Column(name = "oauth_client_id", length = 255)
+    private String oauthClientId;
+
+    @Column(name = "oauth_authorization_endpoint", length = 512)
+    private String oauthAuthorizationEndpoint;
+
+    @Column(name = "oauth_token_endpoint", length = 512)
+    private String oauthTokenEndpoint;
+
+    @Column(name = "oauth_redirect_uri", length = 512)
+    private String oauthRedirectUri;
+
+    @Column(name = "oauth_scope", length = 1024)
+    private String oauthScope;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -88,6 +106,21 @@ public class McpServer {
 
     public Integer getToolTimeoutS() { return toolTimeoutS; }
     public void setToolTimeoutS(Integer toolTimeoutS) { this.toolTimeoutS = toolTimeoutS; }
+
+    public String getOauthClientId() { return oauthClientId; }
+    public void setOauthClientId(String oauthClientId) { this.oauthClientId = oauthClientId; }
+
+    public String getOauthAuthorizationEndpoint() { return oauthAuthorizationEndpoint; }
+    public void setOauthAuthorizationEndpoint(String oauthAuthorizationEndpoint) { this.oauthAuthorizationEndpoint = oauthAuthorizationEndpoint; }
+
+    public String getOauthTokenEndpoint() { return oauthTokenEndpoint; }
+    public void setOauthTokenEndpoint(String oauthTokenEndpoint) { this.oauthTokenEndpoint = oauthTokenEndpoint; }
+
+    public String getOauthRedirectUri() { return oauthRedirectUri; }
+    public void setOauthRedirectUri(String oauthRedirectUri) { this.oauthRedirectUri = oauthRedirectUri; }
+
+    public String getOauthScope() { return oauthScope; }
+    public void setOauthScope(String oauthScope) { this.oauthScope = oauthScope; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
