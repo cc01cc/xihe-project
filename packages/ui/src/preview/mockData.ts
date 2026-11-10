@@ -15,6 +15,7 @@ import type {
     ProviderRequestFingerprintView,
     Session,
     SessionMonitorResponse,
+    ToolCall,
 } from "../types";
 import type { SessionParticipantView } from "../types/participant";
 import type { ApiTypePair, ProviderConnection } from "../types/providerConnection";
@@ -776,3 +777,122 @@ export const mockSessionMonitor: SessionMonitorResponse = {
     },
     transport: { attemptCount: 12, failedCount: 2, partialCount: 1 },
 };
+
+export const LONG_UUID = "9c1f47ab-3d2e-4f81-a6b5-0c7d9e2f4a10";
+export const LONG_RUN_ID = "run_9c1f47ab3d2e4f81a6b50c7d9e2f4a10";
+
+// 覆盖「工具卡 / 审批卡 / 原始输出」三类 mono 落点上的**真实长度**：bash 命令行、绝对路径、
+// 工具参数 JSON、runId、错误码。取数原则：只用真实形状与真实长度（UUID 36 字符、pnpm 命令、
+// POSIX 绝对路径、CP 错误串），不写「看起来很长的假串」—— 假串量出来的折行不代表产品。
+// 前 4 张是 POSIX 形态；第 5 张是 Windows 反斜杠形态（边界见该条注释）。
+export const mockLongArgsToolCall: ToolCall = {
+    id: "tc-long-args",
+    runId: LONG_RUN_ID,
+    name: "runtime.exec_command",
+    arguments: JSON.stringify({
+        command:
+            "node .tmp/xh/task102/scan-tmp-windows.mjs && rg -n --no-heading -g '*.jsonl' 'tool_call|arguments' H:/zeogit/one/.tmp/xh | head -n 200",
+        cwd: "/workspace/A03-xihe/.worktrees/t233-ui-mock/packages/ui",
+        timeoutMs: 120000,
+        env: { XIHE_E2E_LLM_MODE: "exec_command", XIHE_E2E_SCENARIO: "preview-mono-width-long" },
+    }),
+    status: "completed",
+    result: "scan done: 15317 entries, 3308 files read, 10 hits",
+    startedAt: "2026-11-11T05:42:08Z",
+    completedAt: "2026-11-11T05:42:19Z",
+};
+
+export const mockLongOutputToolCall: ToolCall = {
+    id: "tc-long-output",
+    runId: LONG_RUN_ID,
+    name: "workspace.read_file",
+    arguments: JSON.stringify({
+        path: "/workspace/A03-xihe/packages/ui/src/preview/mockData.ts",
+        offset: 1,
+        limit: 2000,
+    }),
+    status: "completed",
+    result: "   1: /**\n   2:  * Mock data for the real-component UI preview (preview.html).\n   3:  *\n   4:  * Every object below is typed against the product types (src/types/*) so the shapes\n   5:  * cannot drift from the real contract while staying 100% offline.\n   6:  */\n   7: import type { AttachmentFile, CredentialSummary, Message, Session } from '../types';\n",
+    startedAt: "2026-11-11T05:43:02Z",
+    completedAt: "2026-11-11T05:43:05Z",
+};
+
+export const mockLongErrorToolCall: ToolCall = {
+    id: "tc-long-error",
+    runId: LONG_RUN_ID,
+    name: "runtime.apply_patch",
+    arguments: JSON.stringify({
+        patch: "*** Begin Patch\n*** Update File: packages/ui/src/preview/mockData.ts\n@@ export const mockSuccessToolCall @@\n+export const mockLongArgsToolCall: ToolCall = { id: 'tc-long-args' };\n*** End Patch",
+    }),
+    status: "failed",
+    error: "Error: apply_patch rejected (E_PATCH_CONTEXT_MISMATCH): hunk at packages/ui/src/preview/mockData.ts:215 no longer matches; expected context 'export const mockSuccessToolCall' but found 'export const mockLongArgsToolCall'. Retry with a narrower hunk or re-read the file before patching.",
+    startedAt: "2026-11-11T05:44:10Z",
+    completedAt: "2026-11-11T05:44:12Z",
+};
+
+export const mockLongRefusalToolCall: ToolCall = {
+    id: "tc-long-refusal",
+    runId: LONG_RUN_ID,
+    name: "delegate.spawn_worker",
+    arguments: JSON.stringify({
+        role: "reviewer",
+        budget: { max_turns: 24, max_elapsed_seconds: 900, max_tokens: 250000 },
+        workspaceId: LONG_UUID,
+        correlationId: LONG_RUN_ID,
+    }),
+    status: "completed",
+    refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+    startedAt: "2026-11-11T05:45:00Z",
+    completedAt: "2026-11-11T05:45:01Z",
+};
+
+// Windows 反斜杠形态：**形态样本，不是本产品记录**。内容照抄本地会话转储里的真实工具调用
+// （Codex 的 shell 工具审批 JSON；只取内容、不写指针 —— 转储在 gitignored 的 .tmp 下，随时会消失）。
+// 它证明：本机真实 tool arguments 里盘符路径就长这样（exe 绝对路径 + 混用分隔符的长命令 + cwd）。
+// 它不证明：XH 自己的 exec_command 会产生同样的字段名/字段序 —— 本产品的 Windows 样本仍缺。
+export const mockLongWindowsPathToolCall: ToolCall = {
+    id: "tc-long-winpath",
+    runId: LONG_RUN_ID,
+    name: "runtime.exec_command",
+    arguments: JSON.stringify({
+        command: [
+            "C:\\Users\\zeoneo\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+            "-Command",
+            "node Temp/xh-series-watchdog.mjs H:/zeogit/one/A03-xihe/.local/worktrees/api-request-rag/packages/agent 120000 uv run --no-sync pytest tests/unit/test_approval_tool.py tests/unit/test_mcp_client.py -q",
+        ],
+        cwd: "H:\\zeogit\\one",
+        environment_id: "local",
+    }),
+    status: "completed",
+    result: "exit 0",
+    startedAt: "2026-11-11T05:46:00Z",
+    completedAt: "2026-11-11T05:46:09Z",
+};
+
+// 正对照（task-102 压力腿可见性）：**单行**超长参数 JSON —— 没有硬换行，折行完全由字宽决定。
+// 用途：证明 1.5× 字距压力腿对「break-all 的 pre 块」真的会增行；若这张都不增行，
+// 就说明压力腿对这类块失明，chat-long 的「0」必须改写成 n/a。
+export const mockLongWrapProbeToolCall: ToolCall = {
+    id: "tc-long-wrapprobe",
+    runId: LONG_RUN_ID,
+    name: "runtime.exec_command",
+    arguments: JSON.stringify({
+        command:
+            "rg -n --no-heading --color never -g '*.ts' -g '*.vue' -g '!node_modules' -e 'data-mono-probe' -e 'measure-mono-width' -e 'letter-spacing' A03-xihe/packages/ui/src A03-xihe/packages/ui/e2e internal/A03-xihe/scripts | sort -u",
+        cwd: "/workspace/A03-xihe/packages/ui",
+    }),
+    status: "completed",
+    result: "exit 0",
+    startedAt: "2026-11-11T05:50:00Z",
+    completedAt: "2026-11-11T05:50:03Z",
+};
+
+// 聚合导出：preview 区块一次性渲染全部长串卡；以后加卡只改这一处。
+export const mockLongToolCalls: ToolCall[] = [
+    mockLongArgsToolCall,
+    mockLongOutputToolCall,
+    mockLongErrorToolCall,
+    mockLongRefusalToolCall,
+    mockLongWindowsPathToolCall,
+    mockLongWrapProbeToolCall,
+];
