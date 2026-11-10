@@ -7,6 +7,14 @@ import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./us
 import { AGENT_NAME_PATTERN } from "./agent-name";
 import { LONG_TIMEOUT_MS } from "../../timeouts";
 type AgentAuth = { accessToken: string; workspaceId: string };
+/** GET /api/v1/provider-connections 的 connections[] 元素里本夹具用到的字段。 */
+type ProviderConnectionRow = {
+    id: string;
+    providerId: string;
+    connectionKey: string;
+    status?: string;
+    enabled?: boolean;
+};
 type ToolAction = "read" | "write";
 type PrincipalOptions = {
     name: string;
@@ -66,6 +74,71 @@ export function isSessionCreateRequest(url: string, method: string): boolean {
     if (method !== "POST") return false;
     return /^\/api\/v1\/(workspaces\/[^/]+\/)?sessions$/.test(new URL(url).pathname);
 }
+/**
+ * task-158：为「当前 token 的消费用户」补齐一条 USER 层的默认 fake 连接。
+ *
+ * 为什么需要（实测机制，不是猜）：mock 车道 runner 只写 **instance 层** profile
+ * `{providerId: openai, connectionKey: default, model: mock}`（`scripts/e2e-host.mjs`
+ * configureFakeLlm 分支），而 `ConfigService.strictResolveConnection` 对
+ * `profileScope ∈ {user, instance}` 一律要求 **消费用户自己** 有一条
+ * `OWNER_USER + userId + providerId + connectionKey` 且 READY 的连接
+ * （`ConfigService.java:1204-1217`）。spec 里新注册的用户天然没有连接 ⇒ 建会话
+ * 409 `LLM_PROFILE_CONFLICT`（证据：task-158 诊断，建连接前后同一调用 409→201）。
+ *
+ * 幂等：已有同 providerId+connectionKey 的 READY 连接时直接复用；否则 verify 到 READY。
+ */
+export async function ensureUserDefaultFakeConnection(
+    request: APIRequestContext,
+    auth: AgentAuth,
+): Promise<void> {
+    const headers: Record<string, string> = {
+        Authorization: `Bearer ${auth.accessToken}`,
+        "Content-Type": "application/json",
+    };
+    if (auth.workspaceId) headers["X-Workspace-Id"] = auth.workspaceId;
+    const list = await request.get(`${CP_URL}/api/v1/provider-connections`, { headers });
+    expect(list.ok(), await list.text()).toBe(true);
+    const rows =
+        ((await list.json()) as { connections?: ProviderConnectionRow[] }).connections ?? [];
+    const found = rows.find(
+        (row) => row.providerId === "openai" && row.connectionKey === "default",
+    );
+    if (found?.status === "READY" && found.enabled !== false) return;
+    let connection = found;
+    if (!connection) {
+        const fakeLlmPort = process.env.XIHE_FAKE_LLM_PORT;
+        if (!fakeLlmPort) {
+            throw new Error(
+                "ensureUserDefaultFakeConnection needs XIHE_FAKE_LLM_PORT (the host runner provides it)",
+            );
+        }
+        const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+            headers,
+            data: {
+                providerId: "openai",
+                apiTypeId: "openai-chat-completions",
+                apiTypeVersion: 1,
+                apiKey: "sk-fake-openai-key",
+                connectionKey: "default",
+                label: "e2e default fake connection (USER)",
+                scope: "USER",
+                modelDiscovery: "manual",
+                // 解析只看 providerId+connectionKey；mock 车道 profile.model 是 "mock"，
+                // write_file 车道是 "fake-openai" —— 两个都登记，聊天选模型时才不会空。
+                manualModels: ["mock", "fake-openai"],
+                baseUrl: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
+            },
+        });
+        expect(created.ok(), await created.text()).toBe(true);
+        connection = (await created.json()) as ProviderConnectionRow;
+    }
+    const verified = await request.post(
+        `${CP_URL}/api/v1/provider-connections/${connection.id}/verify`,
+        { headers },
+    );
+    expect(verified.ok(), await verified.text()).toBe(true);
+}
+
 export async function provisionWorkspaceAgentPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
@@ -98,6 +171,8 @@ export async function provisionWorkspaceAgentPrincipal(
             "provisionWorkspaceAgentPrincipal requires a workspace; call ensureWorkspace() first",
         );
     }
+    // task-158：建 principal 的用户必须自己有一条 key=default 的 USER 连接，否则后续建会话 409。
+    await ensureUserDefaultFakeConnection(request, auth);
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBe(true);
     const { id: userId } = (await me.json()) as { id: string };
@@ -176,6 +251,8 @@ export async function createSessionWithPrincipal(
         : `${CP_URL}/api/v1/sessions`;
     const headers: Record<string, string> = { Authorization: `Bearer ${auth.accessToken}` };
     if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
+    // task-158：兜底保证「用它自己的 token 建会话的这个用户」有一条 key=default 的 USER 连接。
+    await ensureUserDefaultFakeConnection(request, auth);
     const response = await request.post(url, {
         headers,
         data: {

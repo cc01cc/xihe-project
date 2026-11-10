@@ -2,7 +2,10 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { CP_URL, evidenceDir } from "./helpers/journey";
-import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
+import {
+    ensureUserDefaultFakeConnection,
+    provisionWorkspaceAgentPrincipal,
+} from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
 import { TEST_TIMEOUT_MS } from "../timeouts";
@@ -441,6 +444,11 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         );
 
         const createInA = async (account: typeof b) => {
+            // task-158：每个「消费用户」各需要自己的 USER 连接（分钟级多账号场景）。
+            await ensureUserDefaultFakeConnection(request, {
+                accessToken: account.accessToken,
+                workspaceId: workspaceA,
+            });
             const res = await request.post(`${CP_URL}/api/v1/workspaces/${workspaceA}/sessions`, {
                 headers: { Authorization: `Bearer ${account.accessToken}` },
                 data: { agentPrincipalId: principalId, title: `v1-${account.username}` },
