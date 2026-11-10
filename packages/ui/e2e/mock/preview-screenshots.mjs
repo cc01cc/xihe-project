@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const OUT = process.argv[2];
-const BASE = process.argv[3] || "http://127.0.0.1:12699";
+const BASE = process.argv[3] || "http://127.0.0.1:12696";
 mkdirSync(OUT, { recursive: true });
 
 const SHEETS = [

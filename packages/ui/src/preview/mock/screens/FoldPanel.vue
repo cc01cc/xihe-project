@@ -14,27 +14,40 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
     SidebarProvider,
+    SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { domains, resourceItems } from "../data";
+import { domains, opsItems, securityItems, userItems } from "../data";
 
 /**
  * One rail in a given folding state. Local refs (not props) so the toggle still works when the
  * reader clicks — the sheet is a live component tree, not a frozen snapshot.
+ *
+ * 折叠的粒度是**层**，不是「域 / 我的资源」那种功能分块：用户 2026-11-10 指出「切换层」是错的
+ * 交互，层由路由决定，所以左栏只剩折叠可见性这一件事可调。
  */
-const props = defineProps<{ domainsOpen: boolean; resourcesOpen: boolean }>();
+const props = defineProps<{ instanceOpen: boolean; userOpen: boolean }>();
 
-const domainsOpen = ref(props.domainsOpen);
-const resourcesOpen = ref(props.resourcesOpen);
+const instanceOpen = ref(props.instanceOpen);
+const userOpen = ref(props.userOpen);
+
+function instanceTotal(): number {
+    return domains.length + opsItems.length + securityItems.length;
+}
 </script>
 
 <template>
     <SidebarProvider class="w-[330px] shrink-0">
         <Sidebar collapsible="none" class="h-full w-[330px] rounded-lg border">
             <SidebarHeader class="border-b border-sidebar-border px-3 py-3">
-                <span class="text-sm font-semibold">设置 · 实例层</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-semibold">设置</span>
+                    <span class="font-mono text-[10px] text-muted-foreground"
+                        >/settings/instance</span
+                    >
+                </div>
             </SidebarHeader>
             <SidebarContent class="px-1">
-                <Collapsible v-model:open="domainsOpen">
+                <Collapsible v-model:open="instanceOpen">
                     <SidebarGroup>
                         <SidebarGroupLabel as-child>
                             <CollapsibleTrigger
@@ -42,10 +55,16 @@ const resourcesOpen = ref(props.resourcesOpen);
                             >
                                 <ChevronRight
                                     class="size-3 transition-transform"
-                                    :class="domainsOpen ? 'rotate-90' : ''"
+                                    :class="instanceOpen ? 'rotate-90' : ''"
+                                    aria-hidden="true"
                                 />
-                                <span>域</span>
-                                <span class="font-mono text-[10px] text-muted-foreground">12</span>
+                                <span>实例</span>
+                                <span class="font-mono text-[10px] text-muted-foreground">{{
+                                    instanceTotal()
+                                }}</span>
+                                <span class="ml-auto text-[10px] normal-case text-muted-foreground"
+                                    >当前层</span
+                                >
                             </CollapsibleTrigger>
                         </SidebarGroupLabel>
                         <CollapsibleContent>
@@ -70,11 +89,45 @@ const resourcesOpen = ref(props.resourcesOpen);
                                     </SidebarMenuItem>
                                 </SidebarMenu>
                             </SidebarGroupContent>
+
+                            <SidebarSeparator class="my-1" />
+                            <p
+                                class="px-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground"
+                            >
+                                实例运维 <span class="font-mono">2</span>
+                            </p>
+                            <SidebarGroupContent>
+                                <SidebarMenu>
+                                    <SidebarMenuItem v-for="item in opsItems" :key="item.id">
+                                        <SidebarMenuButton class="h-8">
+                                            <component :is="item.icon" class="size-4 shrink-0" />
+                                            <span class="truncate">{{ item.label }}</span>
+                                        </SidebarMenuButton>
+                                    </SidebarMenuItem>
+                                </SidebarMenu>
+                            </SidebarGroupContent>
+
+                            <SidebarSeparator class="my-1" />
+                            <p
+                                class="px-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground"
+                            >
+                                安全与权限 <span class="font-mono">3</span>
+                            </p>
+                            <SidebarGroupContent>
+                                <SidebarMenu>
+                                    <SidebarMenuItem v-for="item in securityItems" :key="item.id">
+                                        <SidebarMenuButton class="h-8">
+                                            <component :is="item.icon" class="size-4 shrink-0" />
+                                            <span class="truncate">{{ item.label }}</span>
+                                        </SidebarMenuButton>
+                                    </SidebarMenuItem>
+                                </SidebarMenu>
+                            </SidebarGroupContent>
                         </CollapsibleContent>
                     </SidebarGroup>
                 </Collapsible>
 
-                <Collapsible v-model:open="resourcesOpen">
+                <Collapsible v-model:open="userOpen">
                     <SidebarGroup>
                         <SidebarGroupLabel as-child>
                             <CollapsibleTrigger
@@ -82,19 +135,28 @@ const resourcesOpen = ref(props.resourcesOpen);
                             >
                                 <ChevronRight
                                     class="size-3 transition-transform"
-                                    :class="resourcesOpen ? 'rotate-90' : ''"
+                                    :class="userOpen ? 'rotate-90' : ''"
+                                    aria-hidden="true"
                                 />
-                                <span>我的资源</span>
-                                <span class="font-mono text-[10px] text-muted-foreground">3</span>
+                                <span>用户</span>
+                                <span class="font-mono text-[10px] text-muted-foreground">{{
+                                    userItems.length
+                                }}</span>
                             </CollapsibleTrigger>
                         </SidebarGroupLabel>
                         <CollapsibleContent>
                             <SidebarGroupContent>
                                 <SidebarMenu>
-                                    <SidebarMenuItem v-for="item in resourceItems" :key="item.id">
-                                        <SidebarMenuButton class="h-8">
+                                    <SidebarMenuItem v-for="item in userItems" :key="item.id">
+                                        <SidebarMenuButton
+                                            class="h-8"
+                                            :href="'/settings/user/' + item.id"
+                                        >
                                             <component :is="item.icon" class="size-4 shrink-0" />
                                             <span class="truncate">{{ item.label }}</span>
+                                            <SidebarMenuBadge v-if="item.badge">{{
+                                                item.badge
+                                            }}</SidebarMenuBadge>
                                         </SidebarMenuButton>
                                     </SidebarMenuItem>
                                 </SidebarMenu>
