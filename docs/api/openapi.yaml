@@ -672,11 +672,17 @@ paths:
       description: |
         D-174 (user ruling 2026-11-05, tier removed): the `scope` query is gone. Visibility is:
         - without `workspaceId` — a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS` (N1)
-          sees every principal; any other caller sees only rows whose `owner_user_id` is their own;
+          sees every principal; any other caller sees only the rows they **created**
+          (`created_by_user_id` = self, PLAN-0750 M2 / G13=(a): user-level creates never write
+          `owner_user_id`, so an owner-based arm would answer an empty list — see
+          `AgentPrincipalRepository.findByCreatedByUserId`);
         - with `workspaceId` — Workspace membership plus the **real reach**: principals bound in
           that Workspace (`workspace_agents` row or a workspace-scoped agent role binding) unioned
           with the caller's own owned rows (an owned, unbound row appears with `bound: false` so a
           fresh create stays discoverable; `created_by_user_id` is never an authorization source).
+
+        The workspace arm stays deliberately **owner**-based (PLAN-0750 M2): it is reach-gated, so an
+        owner-less row carries no reach there and enters a Workspace only through the bind surface.
 
         PLAN-0629 (user ruling 2026-11-04, B-class change): an agent principal's permission is a
         **role binding**, exactly like a human account's — permissions live in the config surface
