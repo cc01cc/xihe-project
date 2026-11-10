@@ -122,6 +122,24 @@ describe("SettingsSidebar", () => {
         expect(links[0]!.attributes("to")).toBe("/settings/instance/llm-provider");
         expect(links[12]!.attributes("to")).toBe("/settings/user/llm-provider");
         expect(links[0]!.classes().join(" ")).toContain("bg-muted");
+
+        // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
+        // security(config-locks,roles,audit)。
+        const ops = wrapper.findAll('[data-testid^="settings-nav-ops-"]');
+        expect(ops.map((item) => item.attributes("data-testid"))).toEqual([
+            "settings-nav-ops-monitoring",
+            "settings-nav-ops-data",
+            "settings-nav-ops-config-locks",
+            "settings-nav-ops-roles",
+            "settings-nav-ops-audit",
+        ]);
+        expect(ops.map((item) => item.attributes("to"))).toEqual([
+            "/settings/monitoring",
+            "/settings/data",
+            "/settings/config-locks",
+            "/settings/roles",
+            "/settings/audit",
+        ]);
     });
 
     it("hides the whole instance block without the capability (fail-closed)", () => {
@@ -130,6 +148,8 @@ describe("SettingsSidebar", () => {
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
         expect(wrapper.findAll('[data-testid="settings-nav-domain"]')).toHaveLength(9);
         expect(wrapper.text()).not.toContain("配置锁定");
+        // 实例块整体不渲染 ⇒ 运维/安全项也一个都不在（不是靠文案判断）。
+        expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);
     });
 
     it("T4.0: lands the resource group in both layers and keeps every gap slot visible", () => {
@@ -170,8 +190,13 @@ describe("SettingsSidebar", () => {
         const wrapper = mountSidebar("instance", "");
         expect(wrapper.text()).toContain("审计日志");
         expect(wrapper.text()).not.toContain("角色与授权");
+        // 语义 testid：权限门断言「这一项有没有渲染」，不靠文案/URL 消歧。
+        expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-nav-ops-audit"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(true);
         state.canManageRoles = true;
         const withRoles = mountSidebar("instance", "");
         expect(withRoles.text()).toContain("角色与授权");
+        expect(withRoles.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
     });
 });

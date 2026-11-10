@@ -24,10 +24,11 @@ const ADMIN_EMAIL = "admin@xihe.local";
 const ADMIN_PASSWORD = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
 const EVIDENCE = evidenceDir("plan-0651-t42-permissions-tab");
 
-// PLAN-0752：左栏换成层×域（`SettingsSidebar`），旧 `settings-nav-settings-*` testid 已随旧
-// 配置页退役，运维项没有 per-item testid ⇒ 用 href 定位（仍是真实可点链接，不是选择器兜底）。
-const ROLES_TAB = 'a[href="/settings/roles"]';
-const LOCKS_TAB = 'a[href="/settings/config-locks"]';
+// PLAN-0752：左栏换成层×域（`SettingsSidebar`）。运维/安全项在 task-171 补了 per-item testid
+// `settings-nav-ops-<id>` ⇒ 这两个入口断言绑语义、不再按 URL 定位；域链接仍是共享
+// `settings-nav-domain`（per-domain id 属 phase 2），故 CONFIG_TAB 继续按 href 定位。
+const ROLES_TAB = '[data-testid="settings-nav-ops-roles"]';
+const LOCKS_TAB = '[data-testid="settings-nav-ops-config-locks"]';
 const CONFIG_TAB = 'a[href="/settings/user/llm-provider"]';
 const SETTINGS_PATH = "/settings/user/llm-provider";
 
