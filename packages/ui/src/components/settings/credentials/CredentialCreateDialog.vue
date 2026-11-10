@@ -147,11 +147,7 @@ async function submit() {
                 <DialogTitle>{{ t("credentials.createTitle") }}</DialogTitle>
                 <DialogDescription>{{ t("credentials.createDesc") }}</DialogDescription>
             </DialogHeader>
-            <FormRoot
-                class="space-y-4"
-                :errors="serverErrors"
-                @form-submit="submit"
-            >
+            <FormRoot class="space-y-4" :errors="serverErrors" @form-submit="submit">
                 <FieldRoot name="label" class="space-y-1.5" :validate="validateLabel" required>
                     <FieldLabel class="text-sm font-medium">
                         {{ t("credentials.label") }}

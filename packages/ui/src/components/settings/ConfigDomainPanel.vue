@@ -352,7 +352,9 @@ function numberRule(field: DomainField): ((value: unknown) => string | null) | u
         const raw = typeof value === "string" ? value : "";
         if (raw === "") return null;
         const num = Number(raw);
-        return Number.isInteger(num) && num >= 1 && num <= limit ? null : `${field.label} ≤ ${limit}`;
+        return Number.isInteger(num) && num >= 1 && num <= limit
+            ? null
+            : `${field.label} ≤ ${limit}`;
     };
 }
 

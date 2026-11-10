@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
-import { nextTick } from "vue";
 import { setActivePinia, createPinia } from "pinia";
 import ScheduledTaskCreateDialog from "../components/ScheduledTaskCreateDialog.vue";
 import { api, ApiError } from "../../../composables/api";
