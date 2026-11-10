@@ -186,6 +186,53 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", 
         expect(wrapper.find("main").exists()).toBe(true);
     });
 
+    it("keeps the mobile drawer out of the flex flow (zero width footprint)", async () => {
+        // dev-3 carve-out A：移动端 panel #1 不得参与 split ⇒ 不得有占位宽度。
+        // jsdom 无布局引擎，用「不参与 flex 流」的等效判据（浏览器侧
+        // getBoundingClientRect().width===0 由 e2e/AB 轮取证）：
+        //   ① aside 的 computed class 是 fixed（position:fixed 的 flex 子项不参与 flex 布局）；
+        //   ② 该面板的 defaultSize 退化为 collapsedSize=56 且 handle 卸载（无拖拽面）；
+        //   ③ 主列（panel #2）是唯一 flex 项，独占整行。
+        vi.stubGlobal("matchMedia", ((query: string) => ({
+            matches: true,
+            media: query,
+            onchange: null,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+            addListener: () => undefined,
+            removeListener: () => undefined,
+            dispatchEvent: () => false,
+        })) as unknown as typeof window.matchMedia);
+        vi.resetModules();
+        const { default: FreshAppLayout } = await import("../AppLayout.vue");
+        const { default: FreshSidebar } = await import("../../components/sidebar/Sidebar.vue");
+        const router = createTestRouter();
+        await router.push("/workspace/workspace-1/chat/current");
+        await router.isReady();
+        const wrapper = mount(FreshAppLayout, {
+            global: {
+                plugins: [router, i18n],
+                stubs: {
+                    Sidebar: FreshSidebar,
+                    "router-view": { template: '<div data-testid="route-view" />' },
+                },
+            },
+        });
+        await flushPromises();
+
+        const aside = wrapper.get('[data-testid="sidebar"]');
+        expect(aside.classes()).toContain("fixed");
+        // 抽屉面板的默认宽退化为 56（collapsedSize）⇒ 无内容宽度声明，不参与 flex 分配。
+        expect(aside.attributes("data-panel-size")).toBe("56.0");
+        // handle 在移动端卸载（抽屉不进 split）。
+        expect(wrapper.find('[data-testid="sidebar-resizer"]').exists()).toBe(false);
+        // 主列（panel #2）是唯一 flex 项，独占整行。
+        const panels = wrapper.findAll("[data-panel]");
+        expect(panels.length).toBe(2);
+        expect(panels[1].find("main").exists()).toBe(true);
+        wrapper.unmount();
+    });
+
     it("commits keyboard and double-click widths through the shell bridge", async () => {
         localStorage.setItem(
             "xihe-layout-global",
