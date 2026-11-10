@@ -27,7 +27,13 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 2. **Runtime Gateway** — Per-workspace dispatch
 3. **In-container bridge** — STDIO subprocess management
 
-> **Protocol version note**: The current MCP `Protocol-Version: 2026-07-28` (rmcp 3.7.0, SEP-2567) is fully **sessionless (stateless)** on the Runtime side. Therefore CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. CP neither issues nor accepts `mcp-session-id`: any inbound value returns 403 `MCP_SESSION_INVALID` (PLAN-0537). This is orthogonal to the Runtime transport.
+> **Protocol version note (2026-11-10 erratum: read it as two layers)**
+>
+> - **① CP wire contract = `2026-07-28`**: the logical endpoint serves `MCP-Protocol-Version: 2026-07-28` (rmcp 3.7.0's stateless protocol face, SEP-2567); the header and `params.protocolVersion` **must agree**, otherwise the CP answers `-32600` (measured text: `Invalid Request: MCP-Protocol-Version header (2026-07-28) does not match initialize params.protocolVersion (…)`).
+> - **② rmcp's own negotiated value = `2025-11-25`**: the Runtime `initialize` result advertises `protocolVersion: "2025-11-25"` (rmcp 3.7.0's supported version). The previous wording ("the current MCP `Protocol-Version: 2026-07-28` (rmcp 3.7.0)") implied the negotiated value was the same — it is not; both facts hold at once.
+> - **Sessionless (stateless) holds only with the `2026-07-28` header**: call the Runtime endpoint without it and the request is treated as sessionful (`400 Session ID is required`); with it, every request must also carry `params._meta` with `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` (the CP fills these in `normalizeRuntimeBody`).
+>
+> Everything else is unchanged: CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. CP neither issues nor accepts `mcp-session-id`: any inbound value returns 403 `MCP_SESSION_INVALID` (PLAN-0537). Measured snapshot and the tool catalog: [`docs/api/mcp-tools.md`](../../api/mcp-tools.md).
 
 ## 2. Architecture Diagram
 
@@ -197,3 +203,32 @@ User → UI textarea → PUT /api/v1/workspaces/{wsId}/mcp-config
 | `packages/control-plane/.../McpProxyController.java` | CP layer routing proxy |
 | `packages/control-plane/.../ConfigController.java` | MCP config API |
 | `packages/ui/.../MCPSettings.vue` | MCP config UI |
+## 9. Runtime MCP tool catalog (snapshot; the handshake is authoritative)
+
+The tool catalog is a **runtime property**, not a static contract: it is decided by the `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` and declared to callers by the `tools/list` handshake. The catalog itself lives in [`docs/api/mcp-tools.md`](../../api/mcp-tools.md).
+
+**Read it this way**: that document is a **snapshot**; the **authoritative** value is always a live `tools/list` answer. When they disagree, the handshake wins and the document is what gets corrected. The snapshot carries per-tool `name` / `description` / `inputSchema` summary, side effects, the CP policy face (`ToolFaceRegistry`), and the commands to regenerate and re-verify it.
+
+**Three faces, one catalog** (measured on dev stack `stack-1`, 2026-11-10):
+
+| Face | Caller | Tools | Note |
+|---|---|---|---|
+| Runtime MCP server | CP only (`/internal/v1/runtime/workspaces/{id}/mcp`) | **23** | the full "system tools" set |
+| CP logical entry, user/agent token | Agent, user-facing MCP clients | **23** | plus workspace-configured STDIO/remote tools (none on a fresh workspace) |
+| CP logical entry, internal service token | CP-internal faces (sub-agent / credential / skill / git) | **29** | 23 + **6 CP-owned tools** |
+
+The CP-owned tools (`spawn_agent`, `acquire_credential`, `skill_read`, `git_status`, `git_diff`, `git_log`) are injected by `populateSystemTools` only when `access.internalService()` is true (`McpProxyController.java:605-622`) — **a user/agent face never sees them** (which is also why the three git tools in §3.2.1 are service-face capabilities, not model-face ones).
+
+**Re-verification (run both, then align line by line)**:
+
+1. source side — `#[tool(` count in `packages/runtime/src/main.rs` is 23 and the method-name set equals the handshake `name` set;
+2. runtime side — send `tools/list` to `/api/v1/mcp` (stateless; an `mcp-session-id` is rejected with 403) and read `result.tools`.
+
+The runnable script and acceptance criteria are in [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6, together with the six known discrepancies/clarifications of the moment (including `start_background_process` advertising a `truncate_limit` it ignores).
+
+**Change rule**: adding/removing a tool, or changing a `description` or `inputSchema`, is a tool-surface change — update the catalog in the same batch and re-run the §6 check. Code without the catalog update is documentation debt.
+
+**Three easy-to-misread points**:
+
+- **Two protocol-version layers** (CP wire contract `2026-07-28` vs rmcp negotiated `2025-11-25`) and **the condition for sessionless mode** (`MCP-Protocol-Version: 2026-07-28` + `params._meta`): see the erratum in §1; not repeated here.
+- **Do not document `X-Workspace-Id` as optional**: a single-workspace dev stack returns the same catalog without it, but multi-workspace behavior is unverified, so the user face must send it.
