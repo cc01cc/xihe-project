@@ -201,3 +201,88 @@ describe("WorkspaceTabBar tab semantics (BL-476 L1 reka Tabs pilot)", () => {
         wrapper.unmount();
     });
 });
+
+describe("WorkspaceTabBar tab ordering (PLAN-0753 T5)", () => {
+    it("renders the open set in the persisted order", async () => {
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({ openTabs: ["settings", "environment", "scheduled-tasks"] }),
+        );
+        const wrapper = mountBar();
+        await flushPromises();
+
+        const ids = wrapper.findAll("[data-tab-id]").map((node) => node.attributes("data-tab-id"));
+        expect(ids).toEqual(["chat", "settings", "environment", "scheduled-tasks"]);
+        wrapper.unmount();
+    });
+
+    it("moves a tab with ArrowLeft and persists the new order (keyboard path)", async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+
+        const settings = wrapper.get('[data-testid="workspace-toolbar-settings"]');
+        await settings.trigger("keydown", { key: "ArrowLeft" });
+        await flushPromises();
+
+        expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
+            "environment",
+            "settings",
+            "scheduled-tasks",
+        ]);
+        const ids = wrapper.findAll("[data-tab-id]").map((node) => node.attributes("data-tab-id"));
+        expect(ids).toEqual(["chat", "environment", "settings", "scheduled-tasks"]);
+        wrapper.unmount();
+    });
+
+    it("keeps the chat tab first and ignores ArrowLeft on it", async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="workspace-tab-chat"]').trigger("keydown", {
+            key: "ArrowLeft",
+        });
+        await flushPromises();
+
+        expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
+            "environment",
+            "scheduled-tasks",
+            "settings",
+        ]);
+        wrapper.unmount();
+    });
+
+    it("moves a tab with ArrowRight and clamps at the end", async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+
+        const settings = wrapper.get('[data-testid="workspace-toolbar-settings"]');
+        await settings.trigger("keydown", { key: "ArrowRight" });
+        await flushPromises();
+        await settings.trigger("keydown", { key: "ArrowRight" });
+        await flushPromises();
+
+        expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
+            "environment",
+            "scheduled-tasks",
+            "settings",
+        ]);
+        wrapper.unmount();
+    });
+
+    it("syncs the store from a drag reorder (onDragUpdate)", async () => {
+        const wrapper = mountBar();
+        await flushPromises();
+
+        // Simulate Sortable's update: the environment row was dragged to the end.
+        const draggable = wrapper.findComponent({ name: "VueDraggable" });
+        draggable.vm.$emit("update", { oldIndex: 1, newIndex: 3 });
+        await flushPromises();
+
+        expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
+            "scheduled-tasks",
+            "settings",
+            "environment",
+        ]);
+        wrapper.unmount();
+    });
+});
