@@ -22,6 +22,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.OAuthCredential;
+import com.cc01cc.p.xihe.cp.entity.McpServer;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyCatalogService;
 import com.cc01cc.p.xihe.cp.repository.OAuthCredentialRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -75,12 +76,18 @@ public class OAuthCredentialService {
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     }
 
+    /**
+     * PLAN-0759 / BL-548 (D2): the stored server-level OAuth block is authoritative;
+     * request parameters are optional overrides so older callers that still send the
+     * full set keep working. Only fields the caller actually supplied are overridden.
+     */
     public AuthorizationStart start(StartRequest request) {
-        validateEndpoints(request);
-        registerOrValidateServer(request);
+        StartRequest effective = mergeStoredOauth(request);
+        validateEndpoints(effective);
+        registerOrValidateServer(effective);
         PkceSessionService.PendingSession session = pkce.start(
-                request.userId(), request.workspaceId(), request.serverId(), request.clientId(),
-                request.authorizationEndpoint(), request.tokenEndpoint(), request.redirectUri(), request.scope());
+                effective.userId(), effective.workspaceId(), effective.serverId(), effective.clientId(),
+                effective.authorizationEndpoint(), effective.tokenEndpoint(), effective.redirectUri(), effective.scope());
         String authorizationUrl = session.authorizationEndpoint()
                 + "?response_type=code&client_id=" + encode(session.clientId())
                 + "&redirect_uri=" + encode(session.redirectUri())
@@ -340,6 +347,34 @@ public class OAuthCredentialService {
         if (!mcpProxyCatalogService.isWorkspaceEnabledServer(workspaceId, serverId)) {
             throw new IllegalArgumentException("mcp_server_not_found");
         }
+    }
+
+    /**
+     * PLAN-0759 / BL-548 (D2): overlay the request on the stored server-level OAuth
+     * config. Blank request fields fall back to the stored value; the endpoint itself
+     * is never taken from storage (the request is the fresh, user-confirmed value).
+     */
+    private StartRequest mergeStoredOauth(StartRequest request) {
+        Optional<McpServer> stored = mcpProxyCatalogService.findEnabledRemoteServerRow(
+                request.workspaceId(), request.serverId());
+        if (stored.isEmpty()) {
+            return request;
+        }
+        McpServer row = stored.get();
+        return new StartRequest(
+                request.userId(),
+                request.workspaceId(),
+                request.serverId(),
+                request.remoteEndpoint(),
+                firstNonBlank(request.clientId(), row.getOauthClientId()),
+                firstNonBlank(request.authorizationEndpoint(), row.getOauthAuthorizationEndpoint()),
+                firstNonBlank(request.tokenEndpoint(), row.getOauthTokenEndpoint()),
+                firstNonBlank(request.redirectUri(), row.getOauthRedirectUri()),
+                firstNonBlank(request.scope(), row.getOauthScope()));
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return preferred == null || preferred.isBlank() ? fallback : preferred;
     }
 
     private void registerOrValidateServer(StartRequest request) {
