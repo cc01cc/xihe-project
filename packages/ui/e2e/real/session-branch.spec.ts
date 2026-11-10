@@ -184,11 +184,16 @@ test.describe("@host Session branch path", () => {
         // of the default `custom-openai-compatible` fixture (capability.tools =
         // false), otherwise a workspace-tool chat fails closed with
         // LLM_TOOL_ROUTE_UNSUPPORTED before any transport attempt.
+        // BL-547（task-175）实测修正：helper 之前固定绑定 "wire-model"，但会话创建
+        // （POST /sessions:119-124）按 principal 模板 provider/model 解析（openai/fake-openai），
+        // PATCH 的 modelName 与连接模型集不一致 ⇒ SessionService.bindProviderConnection
+        // requireUsableForOwner 抛 PROVIDER_CONNECTION_UNAVAILABLE（实测 400 报文
+        // requestId=face1cf6…）。绑定模型必须与会话解析出的模型一致。
         await bindToolCapableChat(
             request,
             { authToken: journey.authToken, workspaceId: journey.workspaceId },
             sessionId,
-            "wire-model",
+            "fake-openai",
         );
 
         const anchorText = `root-anchor-${Date.now()}`;
@@ -603,11 +608,12 @@ test.describe("@host Session branch path", () => {
 
         // PLAN-0591 capability gate: same tool-capable binding as the first
         // case (see bindToolCapableChat in helpers/tool-capable-chat.ts).
+        // BL-547（task-175）：同第一处 —— 绑定模型须与会话解析模型一致（fake-openai）。
         await bindToolCapableChat(
             request,
             { authToken: journey.authToken, workspaceId: journey.workspaceId },
             compactSessionId,
-            "wire-model",
+            "fake-openai",
         );
 
         const runChatRound = async (text: string) => {
