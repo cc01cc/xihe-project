@@ -12,6 +12,7 @@ import ModalOverlaySection from "./sections/ModalOverlaySection.vue";
 import ProviderFingerprintSection from "./sections/ProviderFingerprintSection.vue";
 import StatesSection from "./sections/StatesSection.vue";
 import WorkbenchSection from "./sections/WorkbenchSection.vue";
+import MonitorPanelSection from "./sections/MonitorPanelSection.vue";
 import SettingsShellSection from "./sections/SettingsShellSection.vue";
 import SettingsDomainSection from "./sections/SettingsDomainSection.vue";
 import WorkspaceAgentsSection from "./sections/WorkspaceAgentsSection.vue";
@@ -95,6 +96,7 @@ const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
             <SettingsShellSection />
             <SettingsDomainSection />
             <WorkspaceAgentsSection />
+            <MonitorPanelSection />
         </main>
     </div>
 </template>

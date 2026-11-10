@@ -36,7 +36,30 @@ import {
  * initial load + debounced invalidation from the shared chat SSE signals +
  * manual retry. It never opens a second SSE connection.
  */
-const props = defineProps<{ sessionId: string }>();
+/**
+ * task-83 第三腿：两个 fetch seam。生产恒用 `api.*`；dev-only UI 预览注入 mock fetcher，
+ * 面板用 fixture 渲染、不发请求（与 `ProviderRequestFingerprintPanel` 的 seam 同一模式）。
+ * 只加 seam，不改渲染路径 —— 量出来的行宽才是产品的行宽。
+ */
+const props = withDefaults(
+    defineProps<{
+        sessionId: string;
+        monitorFetcher?: typeof api.getSessionMonitor;
+        attemptsFetcher?: typeof api.getRunAttempts;
+        traceFetcher?: typeof api.getRunTrace;
+        /**
+         * 直接透传给 provider 指纹块（它自己已有 seam）。放在这里是因为**面板会自动选中
+         * diagnoseRunId 并取 trace/指纹** —— 预览只注入上面的 fetcher 挡不住这两条请求。
+         */
+        fingerprintFetcher?: typeof api.getRunProviderRequestFingerprint;
+    }>(),
+    {
+        monitorFetcher: undefined,
+        attemptsFetcher: undefined,
+        traceFetcher: undefined,
+        fingerprintFetcher: undefined,
+    },
+);
 const { t, te } = useI18n();
 
 const DEBOUNCE_MS = 500;
@@ -70,7 +93,7 @@ async function fetchMonitor(): Promise<void> {
     }
     inFlight = true;
     try {
-        data.value = await api.getSessionMonitor(props.sessionId);
+        data.value = await (props.monitorFetcher ?? api.getSessionMonitor)(props.sessionId);
         loadFailed.value = false;
         void fetchAttempts(diagnoseRunId.value);
     } catch (fetchError) {
@@ -236,7 +259,7 @@ async function fetchTrace(runId: string | null): Promise<void> {
 
     traceLoading.value = true;
     try {
-        const response = await api.getRunTrace(runId, { limit: 100 });
+        const response = await (props.traceFetcher ?? api.getRunTrace)(runId, { limit: 100 });
         if (!isCurrentTraceRequest(generation, runId)) return;
         if (response.runId !== runId) throw new Error("Run trace response did not match request");
         trace.value = response;
@@ -280,7 +303,7 @@ async function loadMoreTrace(): Promise<void> {
     traceLoadingMore.value = true;
     traceMoreFailed.value = false;
     try {
-        const page = await api.getRunTrace(runId, { cursor, limit: 100 });
+        const page = await (props.traceFetcher ?? api.getRunTrace)(runId, { cursor, limit: 100 });
         if (!isCurrentTraceRequest(generation, runId)) return;
         if (page.runId !== runId || page.asOf !== asOf) {
             throw new Error("Run trace page did not match its snapshot");
@@ -350,7 +373,7 @@ async function fetchAttempts(runId: string | null): Promise<void> {
     }
     attemptsInFlight = true;
     try {
-        attempts.value = await api.getRunAttempts(runId);
+        attempts.value = await (props.attemptsFetcher ?? api.getRunAttempts)(runId);
         attemptsRunId.value = runId;
         attemptsLoadFailed.value = false;
     } catch (fetchError) {
@@ -848,6 +871,7 @@ const connectionChipClass = computed(() => {
                     <ProviderRequestFingerprintPanel
                         :run-id="selectedTraceRunId"
                         :against-options="fingerprintAgainstOptions"
+                        :fetcher="fingerprintFetcher"
                     />
                 </section>
 
