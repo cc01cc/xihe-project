@@ -1,16 +1,13 @@
 // timeout-exempt: 真·1200 条全展开（BL-382 prepend 路径）后逐条复验四风险；多轮滚动采样按设计超默认 10s 预算
 /**
- * PLAN-0753 M4 / BL-382 prepend 路径 —— **真·1200 条全展开**后的窗口化复验（task-190）。
+ * PLAN-0753 M4 / BL-382 prepend 路径 —— 真·1200 条全展开后的窗口化复验（task-190）。
  *
  * 与 bl482-long-transcript-scroll.spec.ts 的分工：那份验的是「产品保留最近 500 条」状态下的窗口；
- * 本份点「加载更早」把折叠的 700 条真的 prepend 进表（foldedCount 700 → 0），然后复验：
- * ① prepend 保位：加载前后锚点行（视口内首行）视觉偏移 Δ ≤ 2px；
- * ② 贴底跟随：加载后仍贴底（末行可见、下占位 ≈ 0）；
- * ③ 上滚单调不增：加载后上滚不回跳（容 ≤64px settle 抖动一次）；
- * ④ 窗口有界 + 零 pageError：渲染行数远小于总条数；无自触发循环。
+ * 本份点「加载更早」把折叠的更早段真的 prepend 进表，然后复验四风险。
  *
- * 分页夹具（与 CP 契约同形 { messages, nextCursor, truncated }，ChatPanel.loadOlderMessages :435-468）：
- * 首屏 = 全部 1200 条 + truncated:true + nextCursor；before 页 = 更早的 700 条 + 终止标记。
+ * ⚠️ 现状（BL-556，2026-11-10 实测）：折叠场景下 prepend 净效果为零 —— 500 上限（PLAN-0670 M2d.3）
+ * 与 loadOlderMessages 对抗，prepend 进表的行当帧被 trim 丢回，视口内容不变、阅读位置漂移。
+ * 本 spec 的 test1/test2 即该缺陷的复现基线（修复前红、修复后绿），test3 是对照（≤500 条正常）。
  *
  * ⚠️ 路由注册顺序（实测踩坑）：setupMockAuth 与 setupMockSessions 内部都会注册 sessions 通配路由，
  * 窄路由必须最后注册（Playwright 后注册者优先），否则静默回落通用夹具。
@@ -30,6 +27,7 @@ const OLDEST_RETAINED = TOTAL - RETAINED;
 const CURSOR = "mock-page-1";
 const EVIDENCE_DIR = process.env.XH_0753_EVIDENCE_DIR;
 const FOLD_BANNER_TEXT = `更早的 ${TOTAL - RETAINED} 条消息已折叠`;
+const MESSAGES_PATH = (sessionId: string) => `/api/v1/sessions/${sessionId}/messages`;
 
 interface ScrollSample {
     scrollTop: number;
@@ -40,6 +38,7 @@ interface ScrollSample {
     bottomSpacer: number;
 }
 
+/** 视口几何 + 窗口化读数（渲染行数 / 上下占位）。 */
 async function readSample(page: import("@playwright/test").Page): Promise<ScrollSample> {
     return page.evaluate(() => {
         const viewport = document.querySelector<HTMLElement>(
@@ -89,19 +88,16 @@ async function readRowOffset(
     page: import("@playwright/test").Page,
     id: string,
 ): Promise<number | null> {
-    return page.evaluate(
-        (target) => {
-            const viewport = document.querySelector<HTMLElement>(
-                '[data-testid="message-scroller-viewport"]',
-            );
-            const row = Array.from(document.querySelectorAll<HTMLElement>(
-                '[data-slot="message-scroller-item"]',
-            )).find((element) => element.dataset.messageId === target);
-            if (!viewport || !row) return null;
-            return row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-        },
-        id,
-    );
+    return page.evaluate((target) => {
+        const viewport = document.querySelector<HTMLElement>(
+            '[data-testid="message-scroller-viewport"]',
+        );
+        const row = Array.from(
+            document.querySelectorAll<HTMLElement>('[data-slot="message-scroller-item"]'),
+        ).find((element) => element.dataset.messageId === target);
+        if (!viewport || !row) return null;
+        return row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    }, id);
 }
 
 async function settle(page: import("@playwright/test").Page): Promise<void> {
@@ -111,6 +107,20 @@ async function settle(page: import("@playwright/test").Page): Promise<void> {
                 requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
             ),
     );
+}
+
+/** 等表几何稳定（连续两次采样 scrollHeight 一致）。 */
+async function waitScrollHeightStable(
+    page: import("@playwright/test").Page,
+): Promise<ScrollSample> {
+    let previous = await readSample(page);
+    for (let round = 0; round < 20; round += 1) {
+        await settle(page);
+        const current = await readSample(page);
+        if (current.scrollHeight === previous.scrollHeight) return current;
+        previous = current;
+    }
+    return previous;
 }
 
 async function scrollToOffset(
@@ -135,12 +145,12 @@ async function scrollToOffset(
 }
 
 /** 造一页消息（id/文本按 index 生成，时间戳递增）。 */
-function makePage(count: number, offset: number) {
+function makePage(sessionId: string, count: number, offset: number) {
     return Array.from({ length: count }, (_, index) => {
         const globalIndex = offset + index;
         return {
             id: `bl382-msg-${globalIndex}`,
-            sessionId: SESSION_ID,
+            sessionId,
             role: globalIndex % 2 === 0 ? "USER" : "ASSISTANT",
             content:
                 `bl382-row-${globalIndex}` +
@@ -150,84 +160,108 @@ function makePage(count: number, offset: number) {
     });
 }
 
+/** 注册会话 + 参与者桩（内容不生效：分页路由最后覆盖）。 */
+async function setupSessionFixture(
+    page: import("@playwright/test").Page,
+    sessionId: string,
+    title: string,
+): Promise<void> {
+    await setupMockSessions(page, {
+        sessions: [{ id: sessionId, title }],
+        messages: {
+            [sessionId]: [
+                {
+                    id: `${sessionId}-placeholder`,
+                    sessionId,
+                    role: "USER",
+                    content: `${sessionId}-placeholder`,
+                    createdAt: new Date().toISOString(),
+                },
+            ],
+        },
+    });
+    await stubSessionProjections(page, sessionId);
+    await page.route(`**/api/v1/sessions/${sessionId}/participants`, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                participants: [],
+                capabilities: { view: false, manage: false, mention: false, speakAs: false },
+            }),
+        });
+    });
+}
+
+/** 窄路由：首屏（全量）与 before 页（更早段）。必须最后注册。 */
+async function installPaginationRoutes(
+    page: import("@playwright/test").Page,
+    sessionId: string,
+    firstScreen: unknown[],
+    olderPage: unknown[],
+    firstCursor: string | null,
+    firstTruncated: boolean,
+    olderCursor: string | null,
+    olderTruncated: boolean,
+): Promise<void> {
+    const path = MESSAGES_PATH(sessionId);
+    await page.route(
+        (url) => url.hostname === "localhost" && url.pathname.endsWith(path),
+        async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    messages: firstScreen,
+                    nextCursor: firstCursor,
+                    truncated: firstTruncated,
+                }),
+            });
+        },
+    );
+    await page.route(
+        (url) =>
+            url.hostname === "localhost" &&
+            url.pathname.endsWith(path) &&
+            url.searchParams.has("before"),
+        async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    messages: olderPage,
+                    nextCursor: olderCursor,
+                    truncated: olderTruncated,
+                }),
+            });
+        },
+    );
+}
+
+/** 等窗口化生效（spacer 出现）。 */
+async function waitForVirtualization(page: import("@playwright/test").Page): Promise<void> {
+    await expect(page.locator('[data-testid="virtual-top-spacer"]')).toHaveCount(1, {
+        timeout: LONG_TIMEOUT_MS,
+    });
+}
+
 test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复验", () => {
     let failures: PageFailures;
 
     test.beforeEach(async ({ page }) => {
         failures = collectPageFailures(page);
-        // 埋点：首屏 messages 请求与响应体（诊断窄路由是否命中）。
-        page.on("response", async (response) => {
-            const url = response.url();
-            if (url.includes("/messages")) {
-                let body = "";
-                try {
-                    body = (await response.text()).slice(0, 160);
-                } catch {
-                    body = "<unreadable>";
-                }
-                console.log("[bl382-debug] RESP " + url + " => " + body);
-            }
-        });
         await setupMockAuth(page);
-        // 注入用于注册会话（消息内容不生效：窄路由在下面覆盖）。
-        await setupMockSessions(page, {
-            sessions: [{ id: SESSION_ID, title: "BL-382 Full Transcript" }],
-            messages: {
-                [SESSION_ID]: [
-                    {
-                        id: "bl382-placeholder",
-                        sessionId: SESSION_ID,
-                        role: "USER",
-                        content: "bl382-placeholder",
-                        createdAt: new Date().toISOString(),
-                    },
-                ],
-            },
-        });
-        await stubSessionProjections(page, SESSION_ID);
-        await page.route(`**/api/v1/sessions/${SESSION_ID}/participants`, async (route) => {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    participants: [],
-                    capabilities: { view: false, manage: false, mention: false, speakAs: false },
-                }),
-            });
-        });
-        // 窄路由最后注册（覆盖 setupMockSessions 闭包内的 sessions 通配路由）。
-        // ① 首屏 = 全部 1200 条 + 分页信封（truncated:true ⇒ 产品显示「加载更早」）
-        await page.route(
-            (url) => url.hostname === "localhost" && /\/api\/v1\/sessions\/bl382-prepend-full\/messages$/.test(url.pathname),
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({
-                        messages: makePage(TOTAL, 0),
-                        nextCursor: CURSOR,
-                        truncated: true,
-                    }),
-                });
-            },
-        );
-        // ② 翻页 = 更早的 700 条 + 终止标记（truncated:false ⇒ 入口消失）
-        await page.route(
-            (url) =>
-                url.hostname === "localhost" &&
-                /\/api\/v1\/sessions\/bl382-prepend-full\/messages$/.test(url.pathname) &&
-                url.searchParams.has("before"),
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({
-                        messages: makePage(OLDEST_RETAINED, 0),
-                        nextCursor: null,
-                        truncated: false,
-                    }),
-                });
-            },
+        // 顺序：fixture 先（注册会话 + 通配路由），窄路由后（覆盖通配）。
+        await setupSessionFixture(page, SESSION_ID, "BL-382 Full Transcript");
+        await installPaginationRoutes(
+            page,
+            SESSION_ID,
+            makePage(SESSION_ID, TOTAL, 0),
+            makePage(SESSION_ID, OLDEST_RETAINED, 0),
+            CURSOR,
+            true,
+            null,
+            false,
         );
     });
 
@@ -235,14 +269,15 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
         expectNoPageFailures(failures, [FONT_ORIGIN_FAILURE]);
     });
 
-    test("prepend 全展开后：保位 / 贴底 / 上滚单调 / 窗口有界 逐条复验", async ({ page }, testInfo) => {
-        test.setTimeout(LONG_TIMEOUT_MS * 3);
+    test("prepend 全展开后：保位 / 贴底 / 上滚单调 / 窗口有界 逐条复验", async ({
+        page,
+    }, testInfo) => {
+        // timeout-exempt: 连点 20 次分页 + 每次几何稳定等待
+        test.setTimeout(60_000); // timeout-exempt: 千条级多轮滚动采样 + 几何稳定等待
         const chat = new ChatPage(page);
         await chat.goto(SESSION_ID);
         await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(page.locator('[data-testid="virtual-top-spacer"]')).toHaveCount(1, {
-            timeout: LONG_TIMEOUT_MS,
-        });
+        await waitForVirtualization(page);
 
         const shot = async (name: string): Promise<void> => {
             const path = EVIDENCE_DIR
@@ -265,41 +300,10 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
         expect(anchorBefore, "prepend 前必须能读到锚点行").toBeTruthy();
         expect(anchorOffsetBefore, "prepend 前必须能读到锚点偏移").not.toBeNull();
 
-        // —— 决定性验证：点击前后「可读集」是否真的变化 ——
         const preClick = await readSample(page);
-        const preIds = await page.evaluate(() =>
-            Array.from(document.querySelectorAll('[data-slot="message-scroller-item"]'))
-                .map((el) => (el as HTMLElement).dataset.messageId)
-                .filter(Boolean),
-        );
         await loadOlderButton.click();
         await settle(page);
-        await page.waitForTimeout(800);
-        const postClick = await readSample(page);
-        const postIds = await page.evaluate(() =>
-            Array.from(document.querySelectorAll('[data-slot="message-scroller-item"]'))
-                .map((el) => (el as HTMLElement).dataset.messageId)
-                .filter(Boolean),
-        );
-        // 全表可读集（含 spacer 推断）：scrollHeight 增长量 ≈ 新增行数 × 行高
-        console.log(
-            "[bl382-debug] pre=" +
-                JSON.stringify(preClick) +
-                " post=" +
-                JSON.stringify(postClick) +
-                " preIds=" +
-                JSON.stringify(preIds) +
-                " postIds=" +
-                JSON.stringify(postIds) +
-                " grewPx=" +
-                (postClick.scrollHeight - preClick.scrollHeight),
-        );
-        // 折叠被消费：更早段进入表（scrollHeight 明显增长）。
-        expect(
-            postClick.scrollHeight,
-            `prepend 未落地：scrollHeight ${preClick.scrollHeight} → ${postClick.scrollHeight}`,
-        ).toBeGreaterThan(preClick.scrollHeight + 1_000);
-        await settle(page);
+        const postClick = await waitScrollHeightStable(page);
         await shot("after-prepend");
 
         const anchorOffsetAfter = await readRowOffset(page, anchorBefore ?? "");
@@ -310,10 +314,18 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
             `prepend 保位失败：锚点行 ${anchorBefore} 偏移 ${anchorOffsetBefore}px → ${anchorOffsetAfter}px（Δ=${anchorDelta}，期望 ≤2）`,
         ).toBeLessThanOrEqual(2);
 
+        // 折叠被消费：更早段进入表（scrollHeight 明显增长）。
+        expect(
+            postClick.scrollHeight,
+            `prepend 未落地：scrollHeight ${preClick.scrollHeight} → ${postClick.scrollHeight}`,
+        ).toBeGreaterThan(preClick.scrollHeight + 1_000);
+
         // —— ② 贴底跟随：加载后仍贴底（末行可见、下占位 ≈0） ——
         const afterPrepend = await readSample(page);
         expect(afterPrepend.bottomSpacer, "prepend 后仍应贴底").toBeLessThan(2);
-        await expect(page.getByText(`bl382-row-${TOTAL - 1}`, { exact: false }).first()).toBeVisible({
+        await expect(
+            page.getByText(`bl382-row-${TOTAL - 1}`, { exact: false }).first(),
+        ).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
 
@@ -346,8 +358,13 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
             `prepend 全展开后上滚违规回跳=${violations}（容忍抖动=${settleJumps.join(",") || "无"}）：` +
                 samples.map((sample) => Math.round(sample.scrollTop)).join(" → "),
         ).toBe(0);
-        const maxRendered = Math.max(...samples.map((sample) => sample.renderedRows), before.renderedRows);
-        expect(maxRendered, `全展开后渲染行数=${maxRendered}（总 ${TOTAL}）`).toBeLessThan(TOTAL / 4);
+        const maxRendered = Math.max(
+            ...samples.map((sample) => sample.renderedRows),
+            before.renderedRows,
+        );
+        expect(maxRendered, `全展开后渲染行数=${maxRendered}（总 ${TOTAL}）`).toBeLessThan(
+            TOTAL / 4,
+        );
         expect(current.scrollTop, "prepend 全展开后仍应能到顶").toBeLessThan(8);
         await expect(page.getByText("bl382-row-0", { exact: false }).first()).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -370,6 +387,8 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
                             anchorOffsetBefore,
                             anchorOffsetAfter,
                             anchorDelta,
+                            preClick,
+                            postClick,
                             afterPrepend,
                             scrollUpSamples: samples,
                             maxRendered,
@@ -381,22 +400,13 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
                 ),
             );
         }
-        console.log(
-            "[bl382] anchorDelta=" +
-                anchorDelta +
-                " maxRendered=" +
-                maxRendered +
-                " samples=" +
-                samples.length +
-                " settleJumps=" +
-                (settleJumps.join(",") || "none"),
-        );
     });
 
-    test("真实 CP 分页形态：首屏 500 + 每页 50，验证「加载更早」实际行为", async ({ page }, testInfo) => {
-        test.setTimeout(LONG_TIMEOUT_MS * 3);
-        // 首屏 = 最近 500 条（CP 分页契约 limit=500），nextCursor 指向更早端
-        // before 页 = 每页 50 条，逐页回卷
+    // timeout-exempt: 连点 20 次分页 + 每次几何稳定等待，按设计超默认 30s 预算
+    test("真实 CP 分页形态：首屏 500 + 每页 50，连点必须让更早段进入可读范围（BL-556）", async ({
+        page,
+    }, testInfo) => {
+        test.setTimeout(60_000); // timeout-exempt: 连点 20 次分页 + 几何稳定等待
         const realisticSession = "bl382-prepend-realistic";
         const realisticAll = Array.from({ length: TOTAL }, (_, index) => ({
             id: `bl382-real-${index}`,
@@ -406,29 +416,28 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
             createdAt: new Date(Date.now() - (TOTAL - index) * 60_000).toISOString(),
         }));
         const firstScreen = realisticAll.slice(TOTAL - RETAINED);
-        await page.route(
-            (url) =>
-                url.hostname === "localhost" &&
-                /\/api\/v1\/sessions\/bl382-prepend-realistic\/messages$/.test(url.pathname),
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({
-                        messages: firstScreen,
-                        nextCursor: "real-cursor-700",
-                        truncated: true,
-                    }),
-                });
-            },
+        await setupSessionFixture(page, realisticSession, "BL-382 Realistic");
+        // 窄路由必须在 fixture 之后注册（否则被 sessions 通配路由吞掉）。
+        await installPaginationRoutes(
+            page,
+            realisticSession,
+            firstScreen,
+            [],
+            "real-cursor-700",
+            true,
+            null,
+            false,
         );
+        const path = MESSAGES_PATH(realisticSession);
         await page.route(
             (url) =>
                 url.hostname === "localhost" &&
-                /\/api\/v1\/sessions\/bl382-prepend-realistic\/messages$/.test(url.pathname) &&
+                url.pathname.endsWith(path) &&
                 url.searchParams.has("before"),
             async (route) => {
-                const cursor = Number(url.searchParams.get("before")?.split("-").pop() ?? "700");
+                const cursor = Number(
+                    route.request().url().split("before=").pop()?.split("-").pop() ?? "700",
+                );
                 const end = Math.max(0, cursor);
                 const start = Math.max(0, end - 50);
                 await route.fulfill({
@@ -442,86 +451,65 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
                 });
             },
         );
-        await setupMockSessions(page, {
-            sessions: [{ id: realisticSession, title: "BL-382 Realistic" }],
-            messages: {
-                [realisticSession]: [
-                    {
-                        id: "bl382-real-placeholder",
-                        sessionId: realisticSession,
-                        role: "USER",
-                        content: "bl382-real-placeholder",
-                        createdAt: new Date().toISOString(),
-                    },
-                ],
-            },
-        });
-        await stubSessionProjections(page, realisticSession);
-        await page.route(`**/api/v1/sessions/${realisticSession}/participants`, async (route) => {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    participants: [],
-                    capabilities: { view: false, manage: false, mention: false, speakAs: false },
-                }),
-            });
-        });
+
         const chat = new ChatPage(page);
         await chat.goto(realisticSession);
         await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(page.locator('[data-testid="virtual-top-spacer"]')).toHaveCount(1, {
-            timeout: LONG_TIMEOUT_MS,
-        });
+        await waitForVirtualization(page);
+
         const samples: Array<{
             click: number;
             scrollHeight: number;
             renderedRows: number;
             banner: boolean;
-            firstRow: string | null;
         }> = [];
         for (let click = 0; click < 20; click += 1) {
             const button = page.locator('[data-testid="load-older-messages"]');
             if ((await button.count()) === 0) break;
             await button.click();
             await settle(page);
-            await page.waitForTimeout(300);
-            const sample = await page.evaluate(() => {
-                const viewport = document.querySelector<HTMLElement>(
-                    '[data-testid="message-scroller-viewport"]',
-                );
-                const first = document.querySelector<HTMLElement>('[data-slot="message-scroller-item"]');
-                return {
-                    scrollHeight: viewport?.scrollHeight ?? 0,
-                    renderedRows: document.querySelectorAll('[data-testid="run-group-body"]').length,
-                    firstRow: first?.dataset.messageId ?? null,
-                };
-            });
+            const sample = await readSample(page);
             samples.push({
                 click,
                 scrollHeight: sample.scrollHeight,
                 renderedRows: sample.renderedRows,
                 banner: (await page.getByText("更早的", { exact: false }).count()) > 0,
-                firstRow: sample.firstRow,
             });
         }
-        console.log("[bl382-realistic] " + JSON.stringify(samples));
-        const path = EVIDENCE_DIR
-            ? `${EVIDENCE_DIR}/bl382-realistic-samples.json`
-            : testInfo.outputPath("bl382-realistic-samples.json");
-        await import("node:fs/promises").then((fsModule) =>
-            fsModule.writeFile(path, JSON.stringify(samples, null, 2)),
-        );
-        await page.screenshot({
-            path: EVIDENCE_DIR
-                ? `${EVIDENCE_DIR}/bl382-realistic-after-paging.png`
-                : testInfo.outputPath("bl382-realistic-after-paging.png"),
-        });
+
+        if (EVIDENCE_DIR) {
+            await import("node:fs/promises").then((fsModule) =>
+                fsModule.writeFile(
+                    `${EVIDENCE_DIR}/bl382-realistic-samples.json`,
+                    JSON.stringify(samples, null, 2),
+                ),
+            );
+            await page.screenshot({
+                path: `${EVIDENCE_DIR}/bl382-realistic-after-paging.png`,
+            });
+        } else {
+            await page.screenshot({
+                path: testInfo.outputPath("bl382-realistic-after-paging.png"),
+            });
+        }
+
+        // BL-556 缺陷断言（修复前红、修复后绿）：连点必须让「更早段」真正进入可读范围。
+        const first = samples[0];
+        const last = samples.at(-1);
+        const grew = (last?.scrollHeight ?? 0) - (first?.scrollHeight ?? 0);
+        const bannerStillShown = samples.some((sample) => sample.banner);
+        expect(
+            grew > 5_000 && !bannerStillShown,
+            `BL-556 未修复：连点 ${samples.length} 次后 scrollHeight 仅增 ${grew}px，` +
+                `折叠横幅仍在=${bannerStillShown}（样本=${JSON.stringify(samples)}）`,
+        ).toBe(true);
     });
-    test("对照：≤500 条（不折叠）时 prepend 正常（缺陷只在折叠场景）", async ({ page }, testInfo) => {
-        test.setTimeout(LONG_TIMEOUT_MS * 2);
+
+    // timeout-exempt: 小表 prepend 对照需等几何稳定，按设计超默认 30s 预算
+    test("对照：≤500 条（不折叠）时 prepend 正常（缺陷只在折叠场景）", async ({ page }) => {
+        // timeout-exempt: 小表 prepend 对照需等几何稳定
+        test.setTimeout(60_000);
         const smallSession = "bl382-prepend-small";
-        // 400 条（<500 上限）：首屏 400 + nextCursor，before 页 100 条 ⇒ 全量 500，永不触发 trim
         const smallAll = Array.from({ length: 500 }, (_, index) => ({
             id: `bl382-small-${index}`,
             sessionId: smallSession,
@@ -529,64 +517,18 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
             content: `bl382-small-row-${index}`,
             createdAt: new Date(Date.now() - (500 - index) * 60_000).toISOString(),
         }));
-        await setupMockSessions(page, {
-            sessions: [{ id: smallSession, title: "BL-382 Small" }],
-            messages: {
-                [smallSession]: [
-                    {
-                        id: "bl382-small-placeholder",
-                        sessionId: smallSession,
-                        role: "USER",
-                        content: "bl382-small-placeholder",
-                        createdAt: new Date().toISOString(),
-                    },
-                ],
-            },
-        });
-        await stubSessionProjections(page, smallSession);
-        await page.route(`**/api/v1/sessions/${smallSession}/participants`, async (route) => {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    participants: [],
-                    capabilities: { view: false, manage: false, mention: false, speakAs: false },
-                }),
-            });
-        });
-        await page.route(
-            (url) =>
-                url.hostname === "localhost" &&
-                /\/api\/v1\/sessions\/bl382-prepend-small\/messages$/.test(url.pathname),
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({
-                        messages: smallAll.slice(100),
-                        nextCursor: "small-cursor",
-                        truncated: true,
-                    }),
-                });
-            },
+        await setupSessionFixture(page, smallSession, "BL-382 Small");
+        await installPaginationRoutes(
+            page,
+            smallSession,
+            smallAll.slice(100),
+            smallAll.slice(0, 100),
+            "small-cursor",
+            true,
+            null,
+            false,
         );
-        await page.route(
-            (url) =>
-                url.hostname === "localhost" &&
-                /\/api\/v1\/sessions\/bl382-prepend-small\/messages$/.test(url.pathname) &&
-                url.searchParams.has("before"),
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify({
-                        messages: smallAll.slice(0, 100),
-                        nextCursor: null,
-                        truncated: false,
-                    }),
-                });
-            },
-        );
+
         const chat = new ChatPage(page);
         await chat.goto(smallSession);
         await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -595,16 +537,12 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
         await expect(button).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await button.click();
         await settle(page);
-        await page.waitForTimeout(800);
-        const after = await readSample(page);
-        console.log(
-            "[bl382-small] before=" + JSON.stringify(before) + " after=" + JSON.stringify(after),
+        const after = await waitScrollHeightStable(page);
+
+        // 期望：prepend 100 条 ⇒ scrollHeight 明显增长且不再折叠。
+        expect(after.scrollHeight, "小表 prepend 应落地").toBeGreaterThan(
+            before.scrollHeight + 2_000,
         );
-        // 期望：prepend 100 条 ⇒ scrollHeight 明显增长（≥100 × 30px）且不再折叠
-        expect(after.scrollHeight, "小表 prepend 应落地").toBeGreaterThan(before.scrollHeight + 2_000);
-        expect(
-            await page.getByText("更早的", { exact: false }).count(),
-            "小表 prepend 后折叠应耗尽",
-        ).toBe(0);
+        expect(await page.getByText("更早的", { exact: false }).count(), "小表折叠应耗尽").toBe(0);
     });
 });
