@@ -22,6 +22,7 @@ import {
     SelectValue,
 } from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
+import { FieldControl, FieldDescription, FieldError, FieldLabel, FieldRoot, FormRoot } from "reka-ui";
 import { LoaderCircle } from "@lucide/vue";
 import type { ScheduledTaskCreateRequest, ScheduledTaskTargetKind } from "../../../types";
 
@@ -57,8 +58,8 @@ const mode = ref<TriggerMode>("cron"),
     argsText = ref(""),
     cwd = ref(""),
     submitting = ref(false),
-    fieldError = ref(""),
-    formError = ref("");
+    /** PLAN-0753 M2: server-side errors keyed by field name (reka clears on edit). */
+    serverErrors = ref<Record<string, string | string[]>>({});
 
 const DELAY_UNIT_MS: Record<DelayUnit, number> = {
     minutes: 60_000,
@@ -89,8 +90,7 @@ watch(
         command.value = "";
         argsText.value = "";
         cwd.value = "";
-        fieldError.value = "";
-        formError.value = "";
+        serverErrors.value = {};
         if (sessionStore.sessions.length === 0) {
             void sessionStore.loadSessions().catch((cause: unknown) => {
                 logger.warn("Failed to load sessions for scheduled task create", cause);
@@ -101,28 +101,39 @@ watch(
     { immediate: true },
 );
 
-function validate(): string {
-    if (mode.value === "cron") {
-        if (!cronExpr.value.trim()) return t("workspace.scheduledTasks.cronRequired");
-        if (cronExpr.value.trim().split(/\s+/).length !== 5) {
-            return t("workspace.scheduledTasks.errInvalidCronExpr");
-        }
-        if (!timezone.value.trim()) return t("workspace.scheduledTasks.timezoneRequired");
-    } else {
-        if (!Number.isFinite(delayAmount.value) || delayAmount.value <= 0) {
-            return t("workspace.scheduledTasks.delayAmountInvalid");
-        }
-        if (delayAmount.value * DELAY_UNIT_MS[delayUnit.value] > TTL_MS) {
-            return t("workspace.scheduledTasks.delayExceedsTtl");
-        }
+/** PLAN-0753 M2: field rules — each a pure function of the value, fed to a FieldRoot. */
+function validateCron(value: unknown): string | null {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return t("workspace.scheduledTasks.cronRequired");
+    if (raw.split(/\s+/).length !== 5) return t("workspace.scheduledTasks.errInvalidCronExpr");
+    return null;
+}
+function validateTimezone(value: unknown): string | null {
+    const raw = typeof value === "string" ? value.trim() : "";
+    return raw ? null : t("workspace.scheduledTasks.timezoneRequired");
+}
+function validateDelayAmount(value: unknown): string | null {
+    // FieldControl hands the raw string; Number() also accepts a pre-coerced number.
+    const num = typeof value === "number" ? value : Number(String(value ?? "").trim());
+    if (!Number.isFinite(num) || num <= 0) {
+        return t("workspace.scheduledTasks.delayAmountInvalid");
     }
-    if (targetKind.value === "session_wakeup") {
-        if (!targetSessionId.value) return t("workspace.scheduledTasks.sessionRequired");
-        if (!prompt.value.trim()) return t("workspace.scheduledTasks.promptRequired");
-    } else if (!command.value.trim()) {
-        return t("workspace.scheduledTasks.commandRequired");
+    if (num * DELAY_UNIT_MS[delayUnit.value] > TTL_MS) {
+        return t("workspace.scheduledTasks.delayExceedsTtl");
     }
-    return "";
+    return null;
+}
+function validateSession(value: unknown): string | null {
+    const raw = typeof value === "string" ? value : "";
+    return raw ? null : t("workspace.scheduledTasks.sessionRequired");
+}
+function validatePrompt(value: unknown): string | null {
+    const raw = typeof value === "string" ? value.trim() : "";
+    return raw ? null : t("workspace.scheduledTasks.promptRequired");
+}
+function validateCommand(value: unknown): string | null {
+    const raw = typeof value === "string" ? value.trim() : "";
+    return raw ? null : t("workspace.scheduledTasks.commandRequired");
 }
 
 function buildRequest(): ScheduledTaskCreateRequest {
@@ -161,14 +172,8 @@ function buildRequest(): ScheduledTaskCreateRequest {
 
 async function handleSubmit() {
     if (submitting.value || !props.workspaceId) return;
-    fieldError.value = "";
-    formError.value = "";
-    const validation = validate();
-    if (validation) {
-        fieldError.value = validation;
-        return;
-    }
     submitting.value = true;
+    serverErrors.value = {};
     try {
         await store.createTask(props.workspaceId, buildRequest());
         toast.success(t("workspace.scheduledTasks.created"));
@@ -178,8 +183,10 @@ async function handleSubmit() {
         logger.warn("Create scheduled task failed", cause);
         const code = cause instanceof ApiError ? cause.problem.code : null;
         const text = scheduledTaskErrorText(t, cause);
-        if (code === "INVALID_CRON_EXPR" || code === "INVALID_TIMEZONE") fieldError.value = text;
-        else formError.value = text;
+        // Field-shaped codes land on the field node; everything else is a form-level error.
+        if (code === "INVALID_CRON_EXPR") serverErrors.value = { cronExpr: text };
+        else if (code === "INVALID_TIMEZONE") serverErrors.value = { timezone: text };
+        else serverErrors.value = { __form: text };
     } finally {
         submitting.value = false;
     }
@@ -203,7 +210,11 @@ function handleOpenChange(open: boolean) {
                 </DialogDescription>
             </DialogHeader>
 
-            <div class="grid gap-4 py-2">
+            <FormRoot
+                class="grid gap-4 py-2"
+                :errors="serverErrors"
+                @form-submit="handleSubmit"
+            >
                 <div class="flex gap-1 rounded-md border p-1" data-testid="st-create-mode">
                     <button
                         type="button"
@@ -234,73 +245,86 @@ function handleOpenChange(open: boolean) {
                 </div>
 
                 <template v-if="mode === 'cron'">
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-cron-expr">
+                    <FieldRoot name="cronExpr" class="grid gap-2" :validate="validateCron" required>
+                        <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.cronLabel") }}
-                        </label>
-                        <Input
-                            id="st-cron-expr"
-                            v-model="cronExpr"
-                            data-testid="st-create-cron-expr"
-                            placeholder="0 9 * * *"
-                        />
-                        <p class="text-xs text-muted-foreground">
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Input
+                                v-model="cronExpr"
+                                data-testid="st-create-cron-expr"
+                                placeholder="0 9 * * *"
+                            />
+                        </FieldControl>
+                        <FieldDescription class="text-xs text-muted-foreground">
                             {{ t("workspace.scheduledTasks.cronHint") }}
-                        </p>
-                    </div>
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-timezone">
-                            {{ t("workspace.scheduledTasks.timezoneLabel") }}
-                        </label>
-                        <Input
-                            id="st-timezone"
-                            v-model="timezone"
-                            data-testid="st-create-timezone"
+                        </FieldDescription>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-field-error"
                         />
-                        <p class="text-xs text-muted-foreground">
+                    </FieldRoot>
+                    <FieldRoot name="timezone" class="grid gap-2" :validate="validateTimezone" required>
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("workspace.scheduledTasks.timezoneLabel") }}
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Input v-model="timezone" data-testid="st-create-timezone" />
+                        </FieldControl>
+                        <FieldDescription class="text-xs text-muted-foreground">
                             {{ t("workspace.scheduledTasks.timezoneHint") }}
-                        </p>
-                    </div>
+                        </FieldDescription>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-timezone-error"
+                        />
+                    </FieldRoot>
                 </template>
 
                 <template v-else>
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-delay-amount">
+                    <FieldRoot name="delayAmount" class="grid gap-2" :validate="validateDelayAmount" required>
+                        <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.delayAmountLabel") }}
-                        </label>
+                        </FieldLabel>
                         <div class="flex gap-2">
-                            <Input
-                                id="st-delay-amount"
-                                v-model.number="delayAmount"
+                            <FieldControl
+                                v-model="delayAmount"
+                                as="input"
                                 type="number"
                                 min="1"
-                                class="w-28"
+                                class="h-8 w-28 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                                 data-testid="st-create-delay-amount"
                             />
-                            <Select v-model="delayUnit">
-                                <SelectTrigger
-                                    class="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    data-testid="st-create-delay-unit"
-                                >
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="minutes">{{
-                                        t("workspace.scheduledTasks.delayUnitMinutes")
-                                    }}</SelectItem>
-                                    <SelectItem value="hours">{{
-                                        t("workspace.scheduledTasks.delayUnitHours")
-                                    }}</SelectItem>
-                                    <SelectItem value="days">{{
-                                        t("workspace.scheduledTasks.delayUnitDays")
-                                    }}</SelectItem>
-                                </SelectContent>
-                            </Select>
+                            <FieldRoot name="delayUnit" class="contents">
+                                <Select v-model="delayUnit">
+                                    <SelectTrigger
+                                        class="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                        data-testid="st-create-delay-unit"
+                                    >
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="minutes">{{
+                                            t("workspace.scheduledTasks.delayUnitMinutes")
+                                        }}</SelectItem>
+                                        <SelectItem value="hours">{{
+                                            t("workspace.scheduledTasks.delayUnitHours")
+                                        }}</SelectItem>
+                                        <SelectItem value="days">{{
+                                            t("workspace.scheduledTasks.delayUnitDays")
+                                        }}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </FieldRoot>
                         </div>
-                        <p class="text-xs text-muted-foreground">
+                        <FieldDescription class="text-xs text-muted-foreground">
                             {{ t("workspace.scheduledTasks.delayHint") }}
-                        </p>
-                    </div>
+                        </FieldDescription>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-field-error"
+                        />
+                    </FieldRoot>
                 </template>
 
                 <div class="grid gap-2">
@@ -327,13 +351,12 @@ function handleOpenChange(open: boolean) {
                 </div>
 
                 <template v-if="targetKind === 'session_wakeup'">
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-session">
+                    <FieldRoot name="targetSessionId" class="grid gap-2" :validate="validateSession" required>
+                        <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.sessionSelectLabel") }}
-                        </label>
+                        </FieldLabel>
                         <Select v-model="targetSessionId">
                             <SelectTrigger
-                                id="st-session"
                                 class="rounded-md border border-input bg-background px-3 py-2 text-sm"
                                 data-testid="st-create-session"
                             >
@@ -351,96 +374,106 @@ function handleOpenChange(open: boolean) {
                                 </SelectItem>
                             </SelectContent>
                         </Select>
-                        <p
+                        <FieldDescription
                             v-if="sessions.length === 0"
                             class="text-xs text-muted-foreground"
                             data-testid="st-create-session-empty"
                         >
                             {{ t("workspace.scheduledTasks.sessionEmpty") }}
-                        </p>
-                    </div>
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-prompt">
-                            {{ t("workspace.scheduledTasks.promptLabel") }}
-                        </label>
-                        <Textarea
-                            id="st-prompt"
-                            v-model="prompt"
-                            rows="3"
-                            data-testid="st-create-prompt"
-                            :placeholder="t('workspace.scheduledTasks.promptPlaceholder')"
+                        </FieldDescription>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-session-error"
                         />
-                    </div>
+                    </FieldRoot>
+                    <FieldRoot name="prompt" class="grid gap-2" :validate="validatePrompt" required>
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("workspace.scheduledTasks.promptLabel") }}
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Textarea
+                                v-model="prompt"
+                                rows="3"
+                                data-testid="st-create-prompt"
+                                :placeholder="t('workspace.scheduledTasks.promptPlaceholder')"
+                            />
+                        </FieldControl>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-prompt-error"
+                        />
+                    </FieldRoot>
                 </template>
 
                 <template v-else>
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-command">
+                    <FieldRoot name="command" class="grid gap-2" :validate="validateCommand" required>
+                        <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.commandLabel") }}
-                        </label>
-                        <Input
-                            id="st-command"
-                            v-model="command"
-                            data-testid="st-create-command"
-                            :placeholder="t('workspace.scheduledTasks.commandPlaceholder')"
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Input
+                                v-model="command"
+                                data-testid="st-create-command"
+                                :placeholder="t('workspace.scheduledTasks.commandPlaceholder')"
+                            />
+                        </FieldControl>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-create-command-error"
                         />
-                    </div>
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-args">
+                    </FieldRoot>
+                    <FieldRoot name="argsText" class="grid gap-2">
+                        <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.argsLabel") }}
-                        </label>
-                        <Textarea
-                            id="st-args"
-                            v-model="argsText"
-                            rows="2"
-                            data-testid="st-create-args"
-                        />
-                    </div>
-                    <div class="grid gap-2">
-                        <label class="text-sm font-medium" for="st-cwd">
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Textarea
+                                v-model="argsText"
+                                rows="2"
+                                data-testid="st-create-args"
+                            />
+                        </FieldControl>
+                    </FieldRoot>
+                    <FieldRoot name="cwd" class="grid gap-2">
+                        <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.cwdLabel") }}
-                        </label>
-                        <Input id="st-cwd" v-model="cwd" data-testid="st-create-cwd" />
-                    </div>
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Input v-model="cwd" data-testid="st-create-cwd" />
+                        </FieldControl>
+                    </FieldRoot>
                 </template>
 
                 <p
-                    v-if="fieldError"
-                    class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
-                    data-testid="st-create-field-error"
-                >
-                    {{ fieldError }}
-                </p>
-                <p
-                    v-if="formError"
+                    v-if="serverErrors.__form"
                     class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
                     data-testid="st-create-form-error"
                 >
-                    {{ formError }}
+                    {{ serverErrors.__form }}
                 </p>
-            </div>
 
-            <DialogFooter>
-                <Button variant="outline" data-testid="st-create-cancel" @click="emit('close')">
-                    {{ t("common.cancel") }}
-                </Button>
-                <Button
-                    :disabled="submitting"
-                    data-testid="st-create-submit"
-                    @click="() => void handleSubmit()"
-                >
-                    <LoaderCircle
-                        v-if="submitting"
-                        class="mr-1 inline-block size-3 animate-spin"
-                        aria-hidden="true"
-                    />
-                    {{
-                        submitting
-                            ? t("workspace.scheduledTasks.creating")
-                            : t("workspace.scheduledTasks.submitCreate")
-                    }}
-                </Button>
-            </DialogFooter>
+                <DialogFooter>
+                    <Button type="button" variant="outline" data-testid="st-create-cancel" @click="emit('close')">
+                        {{ t("common.cancel") }}
+                    </Button>
+                    <Button
+                        type="submit"
+                        :disabled="submitting"
+                        data-testid="st-create-submit"
+                    >
+                        <LoaderCircle
+                            v-if="submitting"
+                            class="mr-1 inline-block size-3 animate-spin"
+                            aria-hidden="true"
+                        />
+                        {{
+                            submitting
+                                ? t("workspace.scheduledTasks.creating")
+                                : t("workspace.scheduledTasks.submitCreate")
+                        }}
+                    </Button>
+                </DialogFooter>
+            </FormRoot>
         </DialogContent>
     </Dialog>
 </template>

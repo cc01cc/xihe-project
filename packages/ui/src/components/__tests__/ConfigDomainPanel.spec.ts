@@ -212,7 +212,9 @@ describe("ConfigDomainPanel", () => {
 
         const emitted = wrapper.emitted("save");
         expect(emitted).toBeTruthy();
-        expect(emitted![0][0]).toEqual({ apiKey: "sk-old", maxTokens: 8192 });
+        // PLAN-0753 M2: number fields now emit the string draft (reka FieldControl
+        // model is string-typed); the config save body keeps all values as strings.
+        expect(emitted![0][0]).toEqual({ apiKey: "sk-old", maxTokens: "8192" });
         expect(emitted![0][0]).not.toHaveProperty("model");
     });
 

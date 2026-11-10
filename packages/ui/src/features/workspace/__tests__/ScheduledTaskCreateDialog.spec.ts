@@ -69,11 +69,13 @@ function bodyEl<T extends Element>(selector: string): T | null {
     return document.body.querySelector(selector) as T | null;
 }
 
+/** PLAN-0753 M2: reka FormRoot 校验是异步提交后跑一轮，click 后必须 flushPromises。 */
 async function clickBody(selector: string) {
     const el = bodyEl<HTMLElement>(selector);
     expect(el).toBeTruthy();
     el!.click();
-    await nextTick();
+    await flushPromises();
+    await flushPromises();
 }
 
 async function setBodyValue(selector: string, value: string) {
@@ -81,7 +83,7 @@ async function setBodyValue(selector: string, value: string) {
     expect(input).toBeTruthy();
     input!.value = value;
     input!.dispatchEvent(new Event("input", { bubbles: true }));
-    await nextTick();
+    await flushPromises();
 }
 
 async function selectBodyValue(wrapper: VueWrapper, selector: string, value: string) {
@@ -202,10 +204,10 @@ describe("ScheduledTaskCreateDialog", () => {
         await clickBody('[data-testid="st-create-mode-delay"]');
         await setBodyValue('[data-testid="st-create-delay-amount"]', "8");
         await setSelectValue(wrapper, '[data-testid="st-create-delay-unit"]', "days");
-        await nextTick();
+        await flushPromises();
         await setBodyValue('[data-testid="st-create-prompt"]', "p");
         await clickBody('[data-testid="st-create-submit"]');
-        await nextTick();
+        await flushPromises();
 
         expect(mockedApi.createScheduledTask).not.toHaveBeenCalled();
         expect(bodyEl('[data-testid="st-create-field-error"]')?.textContent).toContain("TTL");

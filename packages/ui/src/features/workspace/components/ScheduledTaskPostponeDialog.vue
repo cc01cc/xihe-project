@@ -12,6 +12,14 @@ import DialogDescription from "../../../components/ui/dialog/DialogDescription.v
 import DialogFooter from "../../../components/ui/dialog/DialogFooter.vue";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
+import {
+    FieldControl,
+    FieldDescription,
+    FieldError,
+    FieldLabel,
+    FieldRoot,
+    FormRoot,
+} from "reka-ui";
 import { LoaderCircle } from "@lucide/vue";
 import type { ScheduledTask } from "../../../types";
 
@@ -42,7 +50,12 @@ function localInputToUtcIso(value: string): string | null {
 
 const at = ref(""),
     submitting = ref(false),
-    error = ref("");
+    /**
+     * PLAN-0753 M2: server-side error keyed by the field name. `FormRoot` hands it to
+     * `FieldError` until the user edits that field — the same contract reka documents
+     * for server errors, so no hand-rolled error paragraph survives.
+     */
+    serverErrors = ref<Record<string, string | string[]>>({});
 
 const taskLabel = computed(
     () => props.task?.prompt?.slice(0, 60) || props.task?.cronExpr || props.task?.id || "",
@@ -52,7 +65,7 @@ watch(
     () => props.open,
     (open) => {
         at.value = "";
-        error.value = "";
+        serverErrors.value = {};
         submitting.value = false;
         if (!open) return;
         // 默认建议 1 小时后，datetime-local 需要 YYYY-MM-DDTHH:mm 墙钟格式。
@@ -63,27 +76,34 @@ watch(
     { immediate: true },
 );
 
-function validate(): string {
-    const iso = localInputToUtcIso(at.value);
-    if (!iso) return t("workspace.scheduledTasks.postponeInvalidFuture");
-    const instant = new Date(iso);
-    if (instant.getTime() <= Date.now()) return t("workspace.scheduledTasks.postponeInvalidFuture");
+/**
+ * PLAN-0753 M2: field-level rule fed to reka `FieldRoot`. Returns `null` when
+ * valid, or the message `FieldError` renders. Keeping it a pure function of the
+ * value (no `t()` inside the render path) is what lets the rule be unit-tested
+ * without mounting i18n — the message key is resolved here, once.
+ *
+ * `FieldValidateFn` hands us `unknown` (the control may be a non-text widget), so the
+ * string narrowing lives here rather than at every call site.
+ */
+function validateAt(value: unknown): string | null {
+    const raw = typeof value === "string" ? value : "";
+    const iso = localInputToUtcIso(raw);
+    if (!iso || new Date(iso).getTime() <= Date.now()) {
+        return t("workspace.scheduledTasks.postponeInvalidFuture");
+    }
     const expiresAt = props.task?.expiresAt;
-    if (expiresAt && instant.getTime() > new Date(expiresAt).getTime()) {
+    if (expiresAt && new Date(iso).getTime() > new Date(expiresAt).getTime()) {
         return t("workspace.scheduledTasks.postponeExceedsTtl");
     }
-    return "";
+    return null;
 }
 
 async function handleSubmit() {
     const task = props.task;
     if (submitting.value || !task || !props.workspaceId) return;
-    error.value = "";
-    const validation = validate();
-    if (validation) {
-        error.value = validation;
-        return;
-    }
+    // reka `FormRoot` runs every field's `validate` before `formSubmit`; reaching
+    // here means the field passed, so the only remaining failure mode is the API.
+    serverErrors.value = {};
     submitting.value = true;
     try {
         await store.postponeTask(props.workspaceId, task, localInputToUtcIso(at.value)!);
@@ -92,7 +112,9 @@ async function handleSubmit() {
         emit("close");
     } catch (cause) {
         logger.warn("Postpone scheduled task failed", cause);
-        error.value = scheduledTaskErrorText(t, cause);
+        // Server errors stay keyed by field name — reka clears the entry when the
+        // user edits that field, which is the behaviour the old paragraph hand-rolled.
+        serverErrors.value = { at: scheduledTaskErrorText(t, cause) };
     } finally {
         submitting.value = false;
     }
@@ -106,51 +128,58 @@ function handleOpenChange(open: boolean) {
 <template>
     <Dialog :open="open" @update:open="handleOpenChange">
         <DialogContent data-testid="scheduled-task-postpone-dialog">
-            <DialogHeader>
-                <DialogTitle>{{ t("workspace.scheduledTasks.postponeTitle") }}</DialogTitle>
-                <DialogDescription>
-                    {{ t("workspace.scheduledTasks.postponeDescription") }}
-                    <span class="font-medium text-foreground">{{ taskLabel }}</span>
-                </DialogDescription>
-            </DialogHeader>
+            <FormRoot :errors="serverErrors" @form-submit="handleSubmit">
+                <DialogHeader>
+                    <DialogTitle>{{ t("workspace.scheduledTasks.postponeTitle") }}</DialogTitle>
+                    <DialogDescription>
+                        {{ t("workspace.scheduledTasks.postponeDescription") }}
+                        <span class="font-medium text-foreground">{{ taskLabel }}</span>
+                    </DialogDescription>
+                </DialogHeader>
 
-            <div class="grid gap-2 py-2">
-                <label class="text-sm font-medium" for="st-postpone-at">
-                    {{ t("workspace.scheduledTasks.postponeTimeLabel") }}
-                </label>
-                <Input
-                    id="st-postpone-at"
-                    v-model="at"
-                    type="datetime-local"
-                    data-testid="st-postpone-at"
-                />
-                <p class="text-xs text-muted-foreground">
-                    {{ t("workspace.scheduledTasks.postponeHint") }}
-                </p>
-                <p
-                    v-if="error"
-                    class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
-                    data-testid="st-postpone-error"
-                >
-                    {{ error }}
-                </p>
-            </div>
+                <div class="grid gap-2 py-2">
+                    <FieldRoot
+                        name="at"
+                        class="grid gap-2"
+                        :validate="validateAt"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("workspace.scheduledTasks.postponeTimeLabel") }}
+                        </FieldLabel>
+                        <FieldControl as-child>
+                            <Input
+                                v-model="at"
+                                type="datetime-local"
+                                data-testid="st-postpone-at"
+                            />
+                        </FieldControl>
+                        <FieldDescription class="text-xs text-muted-foreground">
+                            {{ t("workspace.scheduledTasks.postponeHint") }}
+                        </FieldDescription>
+                        <FieldError
+                            class="rounded-md border border-destructive/40 px-3 py-2 text-sm text-destructive"
+                            data-testid="st-postpone-error"
+                        />
+                    </FieldRoot>
+                </div>
 
-            <DialogFooter>
-                <Button variant="outline" @click="emit('close')">{{ t("common.cancel") }}</Button>
-                <Button
-                    :disabled="submitting"
-                    data-testid="st-postpone-submit"
-                    @click="() => void handleSubmit()"
-                >
-                    <LoaderCircle
-                        v-if="submitting"
-                        class="mr-1 inline-block size-3 animate-spin"
-                        aria-hidden="true"
-                    />
-                    {{ t("workspace.scheduledTasks.postponeSubmit") }}
-                </Button>
-            </DialogFooter>
+                <DialogFooter>
+                    <Button type="button" variant="outline" @click="emit('close')">{{ t("common.cancel") }}</Button>
+                    <Button
+                        type="submit"
+                        :disabled="submitting"
+                        data-testid="st-postpone-submit"
+                    >
+                        <LoaderCircle
+                            v-if="submitting"
+                            class="mr-1 inline-block size-3 animate-spin"
+                            aria-hidden="true"
+                        />
+                        {{ t("workspace.scheduledTasks.postponeSubmit") }}
+                    </Button>
+                </DialogFooter>
+            </FormRoot>
         </DialogContent>
     </Dialog>
 </template>

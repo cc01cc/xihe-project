@@ -93,11 +93,13 @@ describe("PLAN-0622 ConnectionResourceLimits", () => {
         const input = wrapper.get('[data-testid="connection-limit-max-inflight"]');
         for (const invalid of ["0", "-1", "1.5", "abc"]) {
             await input.setValue(invalid);
+            await flushPromises();
             expect(
                 wrapper.find('[data-testid="connection-limit-max-inflight-error"]').exists(),
             ).toBe(true);
         }
         await input.setValue("3");
+        await flushPromises();
         expect(wrapper.find('[data-testid="connection-limit-max-inflight-error"]').exists()).toBe(
             false,
         );

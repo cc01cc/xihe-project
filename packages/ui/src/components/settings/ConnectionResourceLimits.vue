@@ -8,6 +8,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { FieldControl, FieldError, FieldLabel, FieldRoot } from "reka-ui";
 import type { ConnectionModelLimit, ProviderConnection } from "../../types/providerConnection";
 
 const props = defineProps<{
@@ -67,7 +68,15 @@ watch(
     { immediate: true },
 );
 
-/** 每一项要么空，要么是正整数；`0` 与负数、小数都非法（限额为 0 等于禁用，应留空不设限）。 */
+/**
+ * PLAN-0753 M2: per-field rule fed to reka FieldRoot. 空串 = 不限额（合法）；否则必须是正整数。
+ */
+function validateLimit(value: unknown): string | null {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (raw === "") return null;
+    return /^[1-9]\d*$/.test(raw) ? null : t("settings.providerHub.limitsPositiveInteger");
+}
+
 const fieldErrors = computed(() => {
     const errors: Record<keyof LimitsForm, string> = {
         maxInflight: "",
@@ -182,25 +191,28 @@ defineExpose({ hasError, fieldErrors });
             </p>
         </div>
         <div class="grid grid-cols-2 gap-2">
-            <label v-for="field in fields" :key="field.key" class="block space-y-1 text-xs">
-                <span>{{ t(field.label) }}</span>
-                <input
+            <FieldRoot
+                v-for="field in fields"
+                :key="field.key"
+                class="block space-y-1 text-xs"
+                :validate="validateLimit"
+                validation-mode="onChange"
+            >
+                <FieldLabel>{{ t(field.label) }}</FieldLabel>
+                <FieldControl
                     v-model="form[field.key]"
+                    as="input"
                     type="text"
                     inputmode="numeric"
                     :readonly="readonly"
                     :data-testid="`connection-limit-${field.testId}`"
-                    :aria-invalid="Boolean(fieldErrors[field.key])"
                     class="w-full rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-60"
                 />
-                <span
-                    v-if="fieldErrors[field.key]"
-                    :data-testid="`connection-limit-${field.testId}-error`"
+                <FieldError
                     class="block text-destructive"
-                >
-                    {{ fieldErrors[field.key] }}
-                </span>
-            </label>
+                    :data-testid="`connection-limit-${field.testId}-error`"
+                />
+            </FieldRoot>
         </div>
         <div class="space-y-2">
             <div class="flex items-center justify-between">
