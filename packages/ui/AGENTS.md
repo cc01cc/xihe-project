@@ -35,10 +35,12 @@ pnpm run build
 
 `test:unit -- ...` 后接实际测试文件或 Vitest 参数。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。
 
-### UI 单测稳定性判据（2026-11-06 实测基线）
+### UI 单测稳定性判据（2026-11-11 实测基线）
 
 - **判据**：同 commit、同机、`CI=1`、串行连跑 **3 轮** —— ①`Test Files`/`Tests` 计数一致 ②`failed` 三轮恒 0 ③`skipped` 恒等 ④`Duration` 极差 ≤5%。四条同时满足才叫"本机稳定"，**一次全绿不算**。
-- **基线（`39a8e929` 口径，2026-11-06 实测）**：`165 files / 1720 passed / 3 skipped / 151–153 s`（细分：transform ~4.3 · setup ~7.7 · import ~27 · tests ~21.7 · environment ~75.5 s）。
+- **基线（`b6fb7d9ec` 口径，2026-11-11 实测）**：`205 files / 2076 passed / 3 skipped (2079) / 202.75 s`（细分：transform 4.75 · setup 9.83 · import 45.88 · tests 33.62 · environment 91.30 s）。
+  上版（`39a8e929`，2026-11-06）为 `165 files / 1720 passed / 3 skipped / 151–153 s`：四个月 +40 文件 / +356 用例 / +50 s。
+  **耗时涨的是 import（+19 s）与 environment（+16 s），不是 tests（33.6 vs 21.7 s）** ⇒ 抱怨「单测变慢」时先看加载与环境开销，不要默认是用例变重。
 - **能测出**：顺序性/随机 flake、明显性能回归、"修完只跑一次"的假绿。**测不出**：慢机器/CI（真实 `sleep` 类等待会先崩）、并发与分片 flake（`BL-308` 记过分片敏感）、时区/日期/随机种子边界、跨文件全局状态污染、真实网络/DB（全 mock）。
 - **进阶检查**：`--sequence.shuffle`（随机顺序，可配 `--sequence.seed=<n>` 复现）与 `--maxWorkers=1`（单 worker）。2026-11-06 实测：**shuffle 暴露 5 文件 / 8–9 用例的顺序依赖（可复现）**，而 `--maxWorkers=1` 全绿 ⇒ 污染只在多 worker 场景；隔离单跑那 5 个文件也全绿。
 - **至少跑 3 个种子**：单种子 `--sequence.shuffle` 通过**不构成**稳定性证据 —— 2026-11-06 实测 `2/3` 通过（一条是已知 1/3 偶发，另一条换种子才照出来的 `Sidebar.spec.ts` 顺序依赖）。判据：**3 个种子全绿**才算 shuffle 干净。
