@@ -135,6 +135,9 @@ flowchart LR
 
 ## 7. Workspace 移动端独立 IA（PLAN-262 决策 15）
 
+> **移动端：MVP 阶段不新增适配与功能（2026-11-10 用户裁定），既有实现与用例保持不变。**
+> 即：不再为新 UI 写移动端布局 / 抽屉 / 断点；本节描述的既有移动端实现与其既有测试**照原样保留并继续跑**（它们是既有设计的回归保护）。解锁条件：桌面 MVP 验收后由用户解除。
+
 移动端（`<768px`，Tailwind `md:` 断点）不是桌面三栏的响应式压缩，而是独立信息架构：
 
 - **单栏栈**：顶栏汉堡按钮（唤出文件树 Sheet）+ 面包屑 + Environment 入口；编辑器全屏；桌面左右栏 `hidden md:flex` 隐藏。
@@ -163,3 +166,87 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 - **权限两面不许混用**：`components/settings/SettingsPermissionGate.vue` —— `variant="no-atom"` 是信息条（`data-testid="settings-no-atom-notice"`，页面照常取数：CP 侧本就没有这个原子）；`variant="atom-denied"` 是 403 卡片（`data-testid="settings-atom-denied"`，点名缺失原子、明写「不是后端缺口」，主体不挂载 ⇒ 不发无谓请求）。五页判定表与请求数断言见 `internal/A03-xihe/docs/settings-m2-migration-matrix.md` §8.2（跨仓路径，one 私有层）。
 - **工作区层入口是 tab 不是新页**：`features/workspace/pages/WorkspaceSettingsView.vue` 的 `general | config | mcp | members | credentials | knowledge`（`data-testid="ws-settings-tab-*`）。
 - **证据**：PLAN-0752 `tasks.md` M2–M4 已完成；浏览器量测脚本在 `one/.tmp/xh/task-{78,81,82,89,91}/verify.cjs`（临时目录，不随仓分发，捕获见任务台账）。
+
+## 10. 布局与区域命名契约（2026-11-10 用户裁定）
+
+> 本节是**区域命名与布局契约的唯一正文**（2026-11-10 用户确认命名方案后落盘）。纪律自本日起对**新写的**文档、代码与 testid 生效；存量正文按 §10.7 分批对齐。
+>
+> **实现状态 `partial`**：§10.3 的分隔条交互在工作区三列**已实现**（下给 `file:line`）；§10.1 的正名、§10.2 的全局两级结构与悬停「三点抓手」**尚未落地**（逐行见「现状」列与 §10.6）。
+>
+> **与 PLAN-0582 S2 的关系**：`composables/useWorkspaceLayout.ts:18-20` 的 S2 注释（fixed 56px icon-only / `48<->176` dual state gone）**就全局导航条而言被本节 supersede** —— 2026-10-31 的 S2 约束的是**工作区内部那条 rail**；2026-11-10 用户要的是**跨模块的全局条**要双态，两者不是同一条。工作区导航面板（`NavPanel`）的折叠语义**不变**。该 S2 代码注释在 **PLAN-0762 M1 落地时同批更新**；本卡只改文档，不动源码。
+
+### 10.1 区域命名表（唯一正名）
+
+| 中文正名 | 英文/代码 | testid | 判据 | 现状（2026-11-10） |
+| --- | --- | --- | --- | --- |
+| 全局导航条 | `GlobalRail` | `global-rail` | 唯一、最左、切模块、可折叠（56px 图标 ↔ 图标+文字） | **未落地**：现名 `NavRail`（`components/sidebar/NavRail.vue`），固定 56px 纯图标、无双态 |
+| 模块舞台 | `ModuleStage` | `module-stage` | 全局条右侧容器，一次只装一个模块 | **未落地**：现由 `layouts/AppLayout.vue` 主区的 `SplitterPanel` 承接 |
+| 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | 模块内部的分区/列表导航 | **部分**：`settings-nav-*` 已符合（`components/settings/SettingsResourceNav.vue`）；工作区侧无 `workspace-nav` |
+| 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | 可折叠、可调宽的数据列 | **未落地**：现分四段 —— 导航面板（`sidebar-resizer`）/ 文件树（`tree-resizer`）/ 主区（路由容器 `workspace-route-viewport`）/ dock（`dock-resizer`，即 `ContextPane`） |
+
+**三条纪律**（对新增内容强制）：
+
+1. **禁用无定语的「左栏 / 右栏 / 侧栏」**：必须带限定语（全局 / 模块 / 列表 / 主列 / 上下文）。
+2. **「栏」只用于可折叠或可调宽的竖向容器**；纯导航叫「导航」（`XxxNav`），不叫「栏」。
+3. **四词分工**：`Rail` = 图标条 · `Nav` = 导航列表 · `Pane` = 内容列 · `Stage` = 容器；不混用。
+
+### 10.2 三层布局模型与 MVP 范围
+
+- **全局层**：`GlobalRail` + `ModuleStage`。**MVP 的全局条只放两个模块：主体工作区 / 设置页**（2026-11-10 用户裁定「先这俩」）。模块清单扩展**待裁定**（§10.6）。
+- **主体工作区**：左（会话/任务列表 `ListPane`）+ 中（`MainPane`）+ 右（`ContextPane`，即现 dock）；左右可折叠。
+- **设置页**：左 = 设置导航（`SettingsNav`，**不是**全局条）+ 右 = 内容。**MVP 两栏，不做右栏**（见 §10.5）。
+
+### 10.3 折叠与拖拽交互规格（Sash 模式，2026-11-10 用户明确要求）
+
+**契约**：
+
+- **边界拖动**：命中区 4–6px（视觉 1px 线）、`cursor: col-resize`、**不设可见箭头按钮**。
+- **hover 抓手**：鼠标进入边界 → 竖向三点「⋮」出现在该列垂直中心 + 边界线高亮，离开即消失。
+- **拖拽**：实时改宽 + 显示当前 px 浮标；**clamp 到 min/max**，窄屏夹取**只影响渲染、不写回**用户原值。
+- **双击复位**：双击边界回到该列默认宽。
+- **折叠按钮只切开关**：展开回**上次记忆宽度**（不是默认宽）；折叠态与宽度**分开持久化**。
+- **键盘可达（禁止抄漏）**：`role="separator"` + `aria-valuenow/min/max`、`←/→` ±16px、`Home`/`End` 到边界。VS Code 的 sash 键盘不可达，我们**必须**保留此能力（WCAG）。
+- **全局条例外**：全局条是「图标 ↔ 图标+文字」双态（`shadcn-vue Sidebar` 的 `collapsible="icon"` + `⌘/Ctrl+B` + `SidebarRail` hover），**不提供自由拖拽** —— 中间宽度无信息价值（VS Code 活动栏同理固定）。
+
+**现状**（逐项核对，HEAD `4204d7be8`）：
+
+| 项 | 状态 | 位置 |
+| --- | --- | --- |
+| 三处分隔条 + a11y | 已实现 | 导航 `layouts/AppLayout.vue:379-391`（`sidebar-resizer`）、文件树 `features/workspace/components/WorkspaceWorkbench.vue:674-686`（`tree-resizer`）、dock `features/workspace/components/WorkspaceDock.vue:203-217`（`dock-resizer`）：`role="separator"` + `aria-orientation` + `aria-valuenow/min/max` |
+| 4–6px 命中区 / 无箭头按钮 | 已实现 | 三处均 `w-1`（4px）+ `cursor-col-resize` + `hover:bg-primary/20` / `focus-visible:bg-primary/30` |
+| 键盘 ±16 / `Home`·`End` | 已实现 | 常量 `composables/useWorkspaceLayout.ts:35/41/48`；dock 显式处理 `WorkspaceDock.vue:180-185`（`Home`→MIN、`End`→MAX）；导航与文件树经 `composables/useSplitterPanelBridge.ts:60` 的 `RESIZE_KEYS` |
+| 拖拽 px 浮标 | 已实现（dock） | `WorkspaceDock.vue:219+`，`data-testid="dock-resize-bubble"`，仅显示不持久化 |
+| 双击复位 | 已实现 | 三处 `@dblclick`（`AppLayout.vue:390` / `WorkspaceWorkbench.vue:685` / `WorkspaceDock.vue:214`） |
+| 折叠态与宽度分开持久化 | 已实现 | `composables/useWorkspaceLayout.ts:26-27`（`xihe-layout-global` / `xihe-layout-ws:<id>`）、`:88-99`（`navOpen` / `treeCollapsed` / `dockCollapsed` 与各自宽度分开） |
+| 窄屏夹取不写回 | 已实现 | `composables/useSplitterPanelBridge.ts:24`（stored-width clamp 只作用于 keyboard/dblclick/release）；`clampNavWidthForViewport` 同口径 |
+| **hover 竖向三点抓手** | **未落地** | 仅注释提到 `GripVertical`（`WorkspaceWorkbench.vue:673`），`src` 无实际引入；现状是 hover 背景高亮 |
+| **全局条双态 / `SidebarRail` / `⌘B`** | **未落地** | `shadcn-vue Sidebar` 组件族**尚未 vendor**（见 §10.6 第 3 条） |
+
+**复用而非新建**：布局几何的唯一 owner 是 `composables/useWorkspaceLayout.ts`（常量 `:24-51`、状态接口 `:88-99`）与 `composables/useSplitterPanelBridge.ts`；新增列一律走这套，**不另建第二份布局状态**。
+
+### 10.4 移动端：MVP 阶段范围不变
+
+见 §7 顶部横幅：**MVP 阶段不新增移动端适配与功能**，既有实现与既有用例照原样保留并继续跑。本节不重复正文。
+
+### 10.5 不做项：设置页右栏 `ContextPane`（BL-566）
+
+设置页右栏（挂域说明 / 继承链 / 来源）= **MVP 不做**，登记 **BL-566**（编号由 Lead 确认；登记动作不在本卡）。设置页现状见 §9；本节只钉「不做」这个结论，避免后续被当成漏做。
+
+### 10.6 待裁定
+
+以下三项**均未裁定**，实施方不得自行选择：
+
+1. **全局条后续模块清单**：MVP 只放「主体工作区 / 设置页」两个；第三个模块何时进、进什么，待用户裁定。
+2. **设置页右栏参数**：`ContextPane` 挂什么、默认宽、是否可折叠 —— 与 §10.5 的「不做」配套，等桌面 MVP 验收后另定。
+3. **`shadcn-vue Sidebar` 三档固定宽 vs 现有 220–360 自由拖拽**：`Sidebar` 宽度走 CSS 变量（`--sidebar-width` / `--sidebar-width-icon`）三档固定，与 `useWorkspaceLayout.ts` 的连续拖拽模型**语义冲突**；全局条采 `Sidebar` 还是保留自研双态，**待裁定**。
+
+### 10.7 存量表述待对齐（分批）
+
+本契约自 2026-11-10 生效；**既有正文本次不改**（避免把一张 4 处改动的卡做成 20 处）。下列位置仍是无定语表述，下一批照单改，且对齐时**同批跑 `mise run lint:links`**：
+
+| 位置（行号按本次改动后计） | 现表述 | 建议正名 |
+| --- | --- | --- |
+| **:48**（§1 `AppLayout` 段） | 「两层**左栏** + 主区」 | 全局导航条 + 模块内导航 + 模块舞台 |
+| **:143**（§7「单栏栈」条） | 「桌面**左右栏** `hidden md:flex` 隐藏」 | 列表列 / 上下文列 |
+| **:165**（§9 骨架条首项） | 「**左栏**：`SettingsSidebar.vue`…」 | 模块内导航（`SettingsNav`） |
+
