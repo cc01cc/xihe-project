@@ -138,12 +138,7 @@ function handleOpenChange(open: boolean) {
                 </DialogHeader>
 
                 <div class="grid gap-2 py-2">
-                    <FieldRoot
-                        name="at"
-                        class="grid gap-2"
-                        :validate="validateAt"
-                        required
-                    >
+                    <FieldRoot name="at" class="grid gap-2" :validate="validateAt" required>
                         <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.postponeTimeLabel") }}
                         </FieldLabel>
@@ -165,12 +160,10 @@ function handleOpenChange(open: boolean) {
                 </div>
 
                 <DialogFooter>
-                    <Button type="button" variant="outline" @click="emit('close')">{{ t("common.cancel") }}</Button>
-                    <Button
-                        type="submit"
-                        :disabled="submitting"
-                        data-testid="st-postpone-submit"
-                    >
+                    <Button type="button" variant="outline" @click="emit('close')">{{
+                        t("common.cancel")
+                    }}</Button>
+                    <Button type="submit" :disabled="submitting" data-testid="st-postpone-submit">
                         <LoaderCircle
                             v-if="submitting"
                             class="mr-1 inline-block size-3 animate-spin"

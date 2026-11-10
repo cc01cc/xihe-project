@@ -542,9 +542,14 @@ test.describe("PLAN-0753 M4 / BL-382：真·1200 条全展开 prepend 路径复�
         );
         expect(await page.getByText("更早的", { exact: false }).count(), "小表折叠应耗尽").toBe(0);
     });
-    // PLAN-0760 test4：M=1500 触顶 UI。timeout-exempt: 分页点击 + 几何稳定等待。
+    // PLAN-0760 test4：M=1500 触顶 UI。
+    //
+    // task-230：这里原本挂一条 120 秒的用例预算（`test.setTimeout`），但那个预算是 f5d096376 之前
+    // 「beforeEach 没执行、用例真卡死」时的**排障余量**，不是实测需求。测试移回 describe
+    // 内后实测（2026-11-10，mock 车道单跑）：本用例 4.6s / 整轮 7.3s；默认 30s 已是 6.5×
+    // 余量，故撤掉自定义预算 —— 也顺带不再顶穿 `check-e2e-timeouts.mjs` 的 60s 硬上限。
+    // 若要再抬预算，必须先给出新的实测值，不要凭「多次点击」的观感往上加。
     test("M=1500 触顶：横幅变已展开到上限 + 禁用 + 不再发请求", async ({ page }) => {
-        test.setTimeout(120_000); // timeout-exempt: M 触顶需多次分页点击，超默认 30s
         const mcapSession = "bl382-prepend-mcap";
         const TOTAL = 1800;
         const PAGE = 300;

@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
+import { isWorkspaceLayerConfigRequest } from "../../src/lib/settingsIaRequests";
 
 /**
  * PLAN-0752 收尾（task-184）：
@@ -19,6 +20,11 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
  *   expectPlatformScreenshot 是空操作（比较判定留 Linux 轮），本 spec 用
  *   page.screenshot 做留档截图（任意平台可用），并把每个断言槽写成三态记录
  *   （value=捕获留档 / empty=确认为空 / unreadable=读不出）落 JSON，供回填。
+ *
+ * <p>task-230（2026-11-10）：上面「域段 404 + 零工作区层请求」这条原本是**恒真断言** ——
+ * 采集端只存 pathname，判定端比 `/config/workspace/` 前缀，而工作区层的读路径是
+ * `/config/<domain>?layer=workspace`（层在 query），两边都碰不到层 ⇒ filter 恒空。
+ * 现改为采集 pathname+search 并用 `src/lib/settingsIaRequests.ts` 的纯函数判定（该函数有单测）。</p>
  */
 const OUT_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan-0752-closeout");
 const V12_DIR = path.join(OUT_DIR, "v12");
@@ -72,7 +78,12 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
     // Catch-all first: Playwright routes are LIFO, specific routes below win.
     await page.route("**/api/v1/**", async (route: any) => {
         const url = new URL(route.request().url());
-        if (url.pathname.includes("/config/")) configRequests.push(url.pathname);
+        // task-230：收 **pathname + search**。只收 pathname 会丢掉 query，而工作区层的读请求是
+        // /config/<domain>?layer=workspace —— 层在 query 里。丢了它，下游「零工作区层请求」判定
+        // 就恒真（假绿）。
+        if (url.pathname.includes("/config/")) {
+            configRequests.push(`${url.pathname}${url.search}`);
+        }
         await route.fulfill({
             status: 200,
             contentType: "application/json",
@@ -105,7 +116,8 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
     //     且工作区层 /config 请求整体消失，判据失去对象。
     // (a) 删 —— 「域页概览按钮回 ?tab=config」：概览按钮与域页同批删除。
     test("legacy ?tab= form still renders every surviving tab container", async ({ page }) => {
-        await mockSettingsAPIs(page);
+        const configRequests: string[] = [];
+        await mockSettingsAPIs(page, configRequests);
         await page.goto("/workspace/ws-1/settings?tab=mcp");
         // task-253 起工作区设置页自带标题头（不再借用 SettingsLayerHeader 的「设置 › 工作区层」面包屑）。
         await expect(page.getByTestId("workspace-settings-header")).toBeVisible();
@@ -126,6 +138,16 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
 
         // 工作区配置 tab 随层退役：任何 URL 都不该再把它渲染出来。
         await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
+
+        // 防复活守卫（task-230 建立，task-253 删面后接手）：工作区设置页不得发出**工作区层**
+        // config 请求。读路径的层在 query（/config/<domain>?layer=workspace），**pathname 里看不出来**，
+        // 所以只能走纯函数判（src/lib/settingsIaRequests.ts，带单测），读写两种形态都覆盖。
+        // 失败时把**全部**捕获到的 config 请求打出来：否则「多了一条」只能靠猜来源。
+        const captured = `捕获到的 config 请求：${JSON.stringify(configRequests)}`;
+        expect(
+            configRequests.filter((requestUrl) => isWorkspaceLayerConfigRequest(requestUrl)),
+            `工作区设置页不得发工作区层 /config 请求。${captured}`,
+        ).toEqual([]);
     });
 });
 

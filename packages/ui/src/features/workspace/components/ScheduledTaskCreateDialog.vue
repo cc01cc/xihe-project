@@ -22,7 +22,14 @@ import {
     SelectValue,
 } from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
-import { FieldControl, FieldDescription, FieldError, FieldLabel, FieldRoot, FormRoot } from "reka-ui";
+import {
+    FieldControl,
+    FieldDescription,
+    FieldError,
+    FieldLabel,
+    FieldRoot,
+    FormRoot,
+} from "reka-ui";
 import { LoaderCircle } from "@lucide/vue";
 import type { ScheduledTaskCreateRequest, ScheduledTaskTargetKind } from "../../../types";
 
@@ -210,11 +217,7 @@ function handleOpenChange(open: boolean) {
                 </DialogDescription>
             </DialogHeader>
 
-            <FormRoot
-                class="grid gap-4 py-2"
-                :errors="serverErrors"
-                @form-submit="handleSubmit"
-            >
+            <FormRoot class="grid gap-4 py-2" :errors="serverErrors" @form-submit="handleSubmit">
                 <div class="flex gap-1 rounded-md border p-1" data-testid="st-create-mode">
                     <button
                         type="button"
@@ -264,7 +267,12 @@ function handleOpenChange(open: boolean) {
                             data-testid="st-create-field-error"
                         />
                     </FieldRoot>
-                    <FieldRoot name="timezone" class="grid gap-2" :validate="validateTimezone" required>
+                    <FieldRoot
+                        name="timezone"
+                        class="grid gap-2"
+                        :validate="validateTimezone"
+                        required
+                    >
                         <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.timezoneLabel") }}
                         </FieldLabel>
@@ -282,7 +290,12 @@ function handleOpenChange(open: boolean) {
                 </template>
 
                 <template v-else>
-                    <FieldRoot name="delayAmount" class="grid gap-2" :validate="validateDelayAmount" required>
+                    <FieldRoot
+                        name="delayAmount"
+                        class="grid gap-2"
+                        :validate="validateDelayAmount"
+                        required
+                    >
                         <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.delayAmountLabel") }}
                         </FieldLabel>
@@ -351,7 +364,12 @@ function handleOpenChange(open: boolean) {
                 </div>
 
                 <template v-if="targetKind === 'session_wakeup'">
-                    <FieldRoot name="targetSessionId" class="grid gap-2" :validate="validateSession" required>
+                    <FieldRoot
+                        name="targetSessionId"
+                        class="grid gap-2"
+                        :validate="validateSession"
+                        required
+                    >
                         <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.sessionSelectLabel") }}
                         </FieldLabel>
@@ -406,7 +424,12 @@ function handleOpenChange(open: boolean) {
                 </template>
 
                 <template v-else>
-                    <FieldRoot name="command" class="grid gap-2" :validate="validateCommand" required>
+                    <FieldRoot
+                        name="command"
+                        class="grid gap-2"
+                        :validate="validateCommand"
+                        required
+                    >
                         <FieldLabel class="text-sm font-medium">
                             {{ t("workspace.scheduledTasks.commandLabel") }}
                         </FieldLabel>
@@ -427,11 +450,7 @@ function handleOpenChange(open: boolean) {
                             {{ t("workspace.scheduledTasks.argsLabel") }}
                         </FieldLabel>
                         <FieldControl as-child>
-                            <Textarea
-                                v-model="argsText"
-                                rows="2"
-                                data-testid="st-create-args"
-                            />
+                            <Textarea v-model="argsText" rows="2" data-testid="st-create-args" />
                         </FieldControl>
                     </FieldRoot>
                     <FieldRoot name="cwd" class="grid gap-2">
@@ -453,14 +472,15 @@ function handleOpenChange(open: boolean) {
                 </p>
 
                 <DialogFooter>
-                    <Button type="button" variant="outline" data-testid="st-create-cancel" @click="emit('close')">
+                    <Button
+                        type="button"
+                        variant="outline"
+                        data-testid="st-create-cancel"
+                        @click="emit('close')"
+                    >
                         {{ t("common.cancel") }}
                     </Button>
-                    <Button
-                        type="submit"
-                        :disabled="submitting"
-                        data-testid="st-create-submit"
-                    >
+                    <Button type="submit" :disabled="submitting" data-testid="st-create-submit">
                         <LoaderCircle
                             v-if="submitting"
                             class="mr-1 inline-block size-3 animate-spin"

@@ -9,7 +9,7 @@ import { useConfigStore } from "../../../../stores/config";
 import { useWorkspaceAgentSync } from "../../composables/useWorkspaceAgentSync";
 import { toast } from "vue-sonner";
 import { logger } from "../../../../lib/logger";
-import { chatErrorToastText } from "../../../../lib/errorMessages";
+import { chatErrorToastText, errorCopyKey } from "../../../../lib/errorMessages";
 import { api } from "../../../../composables/api";
 import type { ChatRunResponse, ChatRunUsage } from "../../../../types";
 
@@ -229,7 +229,12 @@ function connectSession(id: string) {
                 activeRunId = undefined;
             }
             terminalEpoch += 1;
-            toast.error(chatErrorToastText(payload.code, payload.detail));
+            // PLAN-0750 V10 (A1-lite): a submission-time refusal (a 403 such as
+            // AGENT_PRINCIPAL_MISSING) arrives here through useSSE.sendMessage's catch — it never
+            // becomes a persisted message, so this toast IS the user-visible refusal. Resolve the
+            // principal codes through i18n so an English locale does not get Chinese copy.
+            const copyKey = errorCopyKey(payload.code);
+            toast.error(copyKey ? t(copyKey) : chatErrorToastText(payload.code, payload.detail));
         },
         onApprovalRequest: (data) => {
             if (!isCurrentSession()) return;
