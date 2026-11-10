@@ -2193,6 +2193,13 @@ async function runPlaywright() {
       XIHE_E2E_PROFILE: 'host',
       XIHE_E2E_EXTERNAL_SERVER: '1',
       XIHE_E2E_RUN_ID: runIdForTests,
+      // BL-560: the per-round RUN_ID above rotates (`-r2`, ...) but the host root is
+      // process-level fixed (e2e-host.mjs:369). Specs that resolve evidence/artifacts
+      // from the host root (checkpoint-rollback/slices, bl382, attachment-preview-budget,
+      // ...) previously fell back to `path.join(..., '.tmp/e2e-host', <RUN_ID>)` and so
+      // read a wrong, per-round root on round 2+. Passing the real hostRoot lets every
+      // spec read the same process-level root the runner and native services use.
+      XIHE_WORKSPACE_HOST_ROOT: hostRoot,
       // BL-538: specs declare an intentional service stop here (see takeDeclaredServiceExit).
       ...(declaredExitDir ? { XIHE_E2E_EXPECTED_EXIT_DIR: declaredExitDir } : {}),
       XIHE_CP_API_TOKEN: serviceToken,

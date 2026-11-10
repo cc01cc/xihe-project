@@ -12,6 +12,7 @@
  * Run: node --test scripts/lib/e2e-rounds.test.mjs
  */
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -31,6 +32,7 @@ import {
     keepTablesReferencedByKept,
     parseForeignKeySnapshot,
     parseSeedCounts,
+    resolveSpecHostRoot,
     roundRunId,
     seedTablesFromCounts,
     selectTablesToTruncate,
@@ -253,4 +255,39 @@ test('a reset with no test-data tables is a no-op, not an error', () => {
     });
     assert.deepEqual(plan.truncate, []);
     assert.equal(plan.refused, '');
+});
+
+// ---------------------------------------------------------------------------
+// BL-560: a spec must resolve the host root from the process-level fixed env, not
+// from the per-round XIHE_E2E_RUN_ID. The runner passes XIHE_WORKSPACE_HOST_ROOT to
+// Playwright (e2e-host.mjs:2195-2198) so every round reads the same root the runner
+// and native services use.
+// ---------------------------------------------------------------------------
+test('BL-560: the explicit XIHE_WORKSPACE_HOST_ROOT wins over the per-round RUN_ID', () => {
+    const base = 'H:\\proj\\.tmp\\e2e-host\\host-1';
+    const root = resolveSpecHostRoot(
+        { XIHE_WORKSPACE_HOST_ROOT: base, XIHE_E2E_RUN_ID: 'host-1-r2' },
+        { projectDir: 'H:\\proj' },
+    );
+    assert.equal(root, base, 'the process-level fixed root must win, not the -r2 round id');
+});
+
+test('BL-560: without the env, a per-round RUN_ID yields a per-round root that diverges from the runner root', () => {
+    const projectDir = 'H:\\proj';
+    const round2 = resolveSpecHostRoot({ XIHE_E2E_RUN_ID: 'host-1-r2' }, { projectDir });
+    const runnerRoot = join(projectDir, '.tmp', 'e2e-host', 'host-1');
+    assert.notEqual(round2, runnerRoot, 'the deficient path reads a different root than the runner');
+    assert.equal(round2, join(projectDir, '.tmp', 'e2e-host', 'host-1-r2'));
+    // The fix: the runner sets the env, so the spec never reaches the deficient path.
+    const fixed = resolveSpecHostRoot(
+        { XIHE_WORKSPACE_HOST_ROOT: runnerRoot, XIHE_E2E_RUN_ID: 'host-1-r2' },
+        { projectDir },
+    );
+    assert.equal(fixed, runnerRoot);
+});
+
+test('BL-560: returns the caller default when neither env nor run id is present', () => {
+    const fallback = 'H:\\proj\\.xihe-workspaces';
+    assert.equal(resolveSpecHostRoot({}, { defaultRoot: fallback }), fallback);
+    assert.equal(resolveSpecHostRoot({}, {}), null);
 });
