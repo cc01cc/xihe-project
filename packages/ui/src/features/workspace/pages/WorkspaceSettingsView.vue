@@ -17,6 +17,7 @@ import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 import CredentialsPanel from "../../../components/settings/credentials/CredentialsPanel.vue";
 import KnowledgeBaseView from "../../../views/settings/KnowledgeBaseView.vue";
 import SettingsNotFoundView from "../../../views/settings/SettingsNotFoundView.vue";
+import ToolFacesView from "../../../views/settings/ToolFacesView.vue";
 import { DOMAIN_LABEL_KEY, domainsForLayer } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
@@ -86,6 +87,41 @@ const initialTab = ((): SettingsTab => {
         : "general";
 })();
 const activeTab = ref<SettingsTab>(initialTab);
+
+/**
+ * G9（PLAN-0752 / task-153）：工作区层也挂出「工具分类」入口。
+ *
+ * <p>**缺口**：工具分类的唯一挂载点是 approval-policy 域页内的页签，而旧判据只认实例层
+ * （`SettingsDomainView.vue:89-94` 的 `toolFacesTab` 限定 layer === "instance"）⇒
+ * **工作区 OWNER 能改却点不到**，能点到的实例 ADMIN 又不以工作区口径改。</p>
+ *
+ * <p>**不动后端**：`POST /api/v1/policy/tool-faces` 只校验已登录
+ * （`PolicyController.java:71-83`），scope 语义在 `ToolFaceService.java:149-169` ——
+ * workspace scope 写入要求 workspace OWNER 或实例 ADMIN，读取只要求带工作区上下文
+ * （`ownerFor(..., requireOwner=false)`）。</p>
+ *
+ * <p>**权限面按能力求值，不按角色名特判**：页签对「能进入该域页的成员」可见；能否分类由
+ * `useAuthStore().canClassifyTools`（实例 admin 或工作区 OWNER，`stores/auth.ts:213-216`）
+ * 在 `ToolFacesView` 内部求值 ⇒ 非 OWNER 看到只读列表（`settings-tool-faces-forbidden`
+ * 信息条 + 无分类按钮），与「工作区设置页对非写角色只读」的既有语义一致。</p>
+ */
+const toolFacesTab = computed(() => domainParam.value === "approval-policy");
+const activeDomainTab = ref<"policy" | "tool-faces">("policy");
+
+function syncDomainTab(): void {
+    activeDomainTab.value =
+        toolFacesTab.value && route.query.tab === "tool-faces" ? "tool-faces" : "policy";
+}
+syncDomainTab();
+// `?tab=` 只表达**域内视图**（同实例层口径 `SettingsDomainView.vue:97-112`），层仍在 URL 域段里。
+watch(() => [route.query.tab, toolFacesTab.value] as const, syncDomainTab);
+
+function selectDomainTab(tab: "policy" | "tool-faces"): void {
+    activeDomainTab.value = tab;
+    void router.replace({
+        query: { ...route.query, tab: tab === "tool-faces" ? "tool-faces" : undefined },
+    });
+}
 
 const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
     const base: { key: SettingsTab; label: string }[] = [
@@ -309,6 +345,36 @@ onMounted(() => {
                     {{ t("workspace.settingsDomainBackToOverview") }}
                 </button>
             </div>
+            <div
+                v-if="toolFacesTab"
+                data-testid="ws-settings-domain-tabs"
+                role="tablist"
+                :aria-label="domainLabel"
+                class="mt-3 flex items-center gap-1 border-b"
+            >
+                <button
+                    v-for="tab in ['policy', 'tool-faces'] as const"
+                    :key="tab"
+                    type="button"
+                    role="tab"
+                    :data-testid="'settings-domain-tab-' + tab"
+                    :aria-selected="activeDomainTab === tab"
+                    class="-mb-px min-h-8 border-b-2 px-2 text-xs transition-colors"
+                    :class="
+                        activeDomainTab === tab
+                            ? 'border-foreground font-medium text-foreground'
+                            : 'border-transparent text-muted-foreground hover:text-foreground'
+                    "
+                    @click="selectDomainTab(tab)"
+                >
+                    {{
+                        tab === "policy"
+                            ? t("settings.ia.approvalTabPolicy")
+                            : t("settings.ia.navToolFaces")
+                    }}
+                </button>
+            </div>
+
             <p
                 v-if="!auth.canWriteWorkspace"
                 class="mt-1 text-[11px] text-muted-foreground"
@@ -317,13 +383,23 @@ onMounted(() => {
                 {{ t("workspace.settingsConfigNote") }}
             </p>
 
-            <div class="mt-4">
+            <!-- 策略面板用 `v-show` 保留挂载（切页签不重挂、不重复拉层配置），工具分类按需挂载
+                 —— 与实例层域页同一口径：按需挂载 `SettingsDomainView.vue:230-232`，
+                 常挂隐藏 `:239-241`。 -->
+            <div v-show="activeDomainTab === 'policy'" class="mt-4">
                 <ConfigLayerPanels
                     layer="workspace"
                     :workspace-id="workspaceId"
                     :domain="domainParam as ConfigDomain"
                     :readonly="!auth.canWriteWorkspace"
                 />
+            </div>
+            <div
+                v-if="activeDomainTab === 'tool-faces' && toolFacesTab"
+                class="mt-4"
+                data-testid="ws-settings-tool-faces"
+            >
+                <ToolFacesView embedded scope-lock="workspace" />
             </div>
         </div>
 
