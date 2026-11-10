@@ -24,15 +24,15 @@ import java.util.Set;
  */
 class PluginBindingAuthorizationTest {
 
-    private static final int ACTION_ATOM_COUNT = 32;
+    // 29 before PLAN-0691 + the four plugin atoms = 33, minus the BL-312 removal = 32, plus the
+    // PLAN-0750 M1 (G1) restore = 33. SkillReadFaceTest and P0ManagementAtomSeedMigrationTest
+    // freeze the same number from the other two directions.
+    private static final int ACTION_ATOM_COUNT = 33;
 
     @Test
     void pluginAtomsJoinTheCatalogWithTheSpecifiedScopes() {
         List<String> atoms = PluginBindingAuthorization.pluginAtoms();
         assertEquals(4, atoms.size());
-        // 29 before PLAN-0691 + the four plugin atoms - the BL-312 CREATE_OWN_AGENT removal;
-        // SkillReadFaceTest and P0ManagementAtomSeedMigrationTest freeze the same number from the
-        // other two directions.
         assertEquals(ACTION_ATOM_COUNT, PermissionAtomCatalog.actionAtoms().size());
         assertEquals(ACTION_ATOM_COUNT, ToolFaceRegistry.builtinActionClasses().size());
 

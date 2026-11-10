@@ -149,6 +149,8 @@ class DefaultSetAtomMatrixTest {
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
                 // BL-345: the human ownership capability — an agent is a grantee, not an owner.
                 ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
+                // PLAN-0750 M1 (G1): creating an agent principal is an account capability, same family.
+                ToolFaceRegistry.ACTION_CREATE_OWN_AGENT,
                 // PLAN-0691 T1.3: an agent may invoke a bound builtin plugin (PLUGIN_INVOKE, bindable)
                 // but may not install one (PLUGIN_MANAGE), bind one (PLUGIN_BIND) or touch the plugin
                 // data plane (PLUGIN_DATA) — the installed surface is instance administration.
@@ -173,9 +175,10 @@ class DefaultSetAtomMatrixTest {
                     "must be grantable to agent principals (workspace capability): " + atom);
         }
         // The aggregate is the single source of truth 0667 derives from.
-        assertEquals(20, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+        assertEquals(21, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
                 "17 up to BL-345 (2026-11-06; BL-312 removed CREATE_OWN_AGENT from the 18)"
                         + " + PLUGIN_MANAGE/PLUGIN_BIND/PLUGIN_DATA (PLAN-0691 T1.3, 2026-11-08)"
-                        + " = 20; PLUGIN_INVOKE stays bindable");
+                        + " = 20, + the PLAN-0750 M1 (G1) own-agent atom = 21; PLUGIN_INVOKE stays"
+                        + " bindable");
     }
 }

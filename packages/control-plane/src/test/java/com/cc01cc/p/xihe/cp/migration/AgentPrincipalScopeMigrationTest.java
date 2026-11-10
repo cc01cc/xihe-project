@@ -325,10 +325,16 @@ class AgentPrincipalScopeMigrationTest {
                         + "(BL-312 removed CREATE_OWN_AGENT from both sides)");
         for (UUID roleId : new UUID[] {SystemAccessRoleCatalog.SUPER_ADMIN_ID,
                 SystemAccessRoleCatalog.ADMIN_ID, SystemAccessRoleCatalog.USER_ID}) {
-            assertEquals(0, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+            assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
                             + roleId + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
-                    "BL-312: V147 removed the CREATE_OWN_AGENT seed row from " + roleId);
+                    "PLAN-0750 M1 (V148): the user-level create atom is seeded on " + roleId
+                            + " (BL-312's V147 removal is superseded by the G1 ruling)");
         }
+        // AGENT_USER must stay clean: the atom is agent-principal-forbidden.
+        assertEquals(0, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
+                        + SystemAccessRoleCatalog.AGENT_USER_ID + "'::uuid"
+                        + " AND action_class = 'CREATE_OWN_AGENT'"),
+                "an agent principal is a grantee, never an account creator");
         // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
         // V115 N9 default.
         assertEquals(1, scalarInt(connection, "SELECT count(*) FROM role_permissions WHERE role_id = '"
@@ -355,13 +361,19 @@ class AgentPrincipalScopeMigrationTest {
 
     @Test
     void v91BackfilledTheOwnAgentAtomAndV147RemovesItAgain() throws SQLException {
-        // V91 backfilled exactly one materialized row for the pre-existing tier subject; the BL-312
-        // removal (V147) deletes it again at head, so the final replayed state is zero rows.
+        // V91 backfilled exactly one materialized row for the pre-existing tier subject; BL-312's
+        // V147 deletes it again at head, and PLAN-0750 M1's V148 deliberately does **not** rebuild
+        // the backfill: it only re-plants the role definition rows. Reason: evaluation reads the
+        // materialized rows, so an existing account keeps its pre-V148 atom set until its next
+        // materialization, which D-215 (2026-11-06, development data carries no migration
+        // obligation) explicitly allows — and re-running V91's INSERT … SELECT would rebuild the
+        // BL-366 duplicate-key trap. A fresh registration materializes the atom from the role seed.
         assertEquals(0, scalarInt(connection, "SELECT count(*) FROM grants WHERE subject_type = 'user'"
                         + " AND subject_id = '" + LEGACY_USER_ID + "' AND source = 'role'"
                         + " AND scope_type = 'instance' AND scope_id IS NULL"
                         + " AND permissions -> 0 ->> 'actionClass' = 'CREATE_OWN_AGENT'"),
-                "BL-312: the V91-backfilled CREATE_OWN_AGENT row is removed again by V147");
+                "V147 deleted V91's backfilled row and V148 does not re-introduce the backfill"
+                        + " (role seed only, per D-215)");
     }
 
     // ------------------------------------------------------------------ fixture: both legacy shapes
