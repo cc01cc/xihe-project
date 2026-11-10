@@ -158,11 +158,11 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 ## 9. 设置信息架构（PLAN-0752，已实施）
 
-设置区不再是「一组路由各挂一页」：**层 × 域**是唯一骨架——层决定外框，域决定页签。
+设置区不再是「一组路由各挂一页」：**层 × 域**是唯一骨架——**层由路由决定**（`/settings/instance/**` 与 `/settings/user/**` 各自是独立页面，URL 可分享、浏览器后退可用），域决定页签。
 
 - **矩阵单一来源**：`packages/ui/src/lib/settingsIa.ts` —— `LAYER_DOMAINS`（instance 12 / user 9 / workspace 9，域清单以 CP `ConfigService.java:76-96` 为准）、`settingsLayerForPath()`（兜底页按路径推层，避免 404 顶着错的层标题）、`settingsDomainPath()` / `workspaceSettingsDomainPath()`、`knowledgeRedirectTarget()`。
 - **路由**（`packages/ui/src/router/index.ts`）：`/settings/:layer/:domain` 承载 instance/user，`/workspace/:workspaceId/settings` 用 `?tab=` 承载工作区层，`/settings/*` 兜底 404；旧 `/settings/knowledge` 已改工作区重定向（知识库只有工作区承载）。
-- **左栏**：`components/settings/SettingsSidebar.vue`（层切换 + 资源入口）+ `components/settings/SettingsResourceNav.vue`（资源组；后端缺口是**标缺口的按钮**并弹解释，不伪装成可用入口）。
+- **左栏**：`components/settings/SettingsSidebar.vue`（**按层分组、可折叠；不做层切换器**——层写在地址里，当前层默认展开，展开另一层只是「看一眼」，点其条目即跳该层路由）+ `components/settings/SettingsResourceNav.vue`（资源组；后端缺口是**标缺口的按钮**并弹解释，不伪装成可用入口）。全局设置只有**实例 / 用户**两层，工作区设置在各工作区内部（见下一条），左栏不出现工作区层。
 - **权限两面不许混用**：`components/settings/SettingsPermissionGate.vue` —— `variant="no-atom"` 是信息条（`data-testid="settings-no-atom-notice"`，页面照常取数：CP 侧本就没有这个原子）；`variant="atom-denied"` 是 403 卡片（`data-testid="settings-atom-denied"`，点名缺失原子、明写「不是后端缺口」，主体不挂载 ⇒ 不发无谓请求）。五页判定表与请求数断言见 `internal/A03-xihe/docs/settings-m2-migration-matrix.md` §8.2（跨仓路径，one 私有层）。
 - **工作区层入口是 tab 不是新页**：`features/workspace/pages/WorkspaceSettingsView.vue` 的 `general | config | mcp | members | credentials | knowledge`（`data-testid="ws-settings-tab-*`）。
 - **证据**：PLAN-0752 `tasks.md` M2–M4 已完成；浏览器量测脚本在 `one/.tmp/xh/task-{78,81,82,89,91}/verify.cjs`（临时目录，不随仓分发，捕获见任务台账）。

@@ -21,7 +21,7 @@ const SHEETS = [
     {
         n: 1,
         label: "设置页·实例层（改造后）",
-        note: "shadcn Sidebar 分组 + lucide 图标 + 2px 选中条 + Breadcrumb + 内容列宽上限",
+        note: "全局 rail 常驻 + 实例/用户两层折叠分组 + 2px 选中条 + 内容列宽上限",
         comp: S1SettingsAfter,
     },
     {
@@ -33,13 +33,13 @@ const SHEETS = [
     {
         n: 3,
         label: "左栏分组折叠",
-        note: "Collapsible 折起「域」、展开「我的资源」——两态并排",
+        note: "Collapsible 折起「实例」、展开「用户」——两态并排",
         comp: S3Collapse,
     },
     {
         n: 4,
         label: "全局导航条双态",
-        note: "同一 Sidebar：48px 纯图标 ↔ 256px 图标+文字+模块名",
+        note: "同一 Sidebar：56px 纯图标 ↔ 256px 图标+文字+模块名",
         comp: S4GlobalNav,
     },
     {

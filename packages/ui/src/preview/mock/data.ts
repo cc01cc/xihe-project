@@ -98,9 +98,18 @@ export const domains: NavItem[] = [
 
 export const opsItems: NavItem[] = [item("monitoring"), item("data")];
 export const securityItems: NavItem[] = [item("config-locks"), item("roles"), item("audit")];
-export const resourceItems: NavItem[] = [
-    item("agent-principals"),
+/**
+ * 用户层入口（Lead 2026-11-10 裁定：全局设置只有实例层与用户层；工作区设置在各工作区内部，
+ * 本轮不设计）。
+ *
+ * <p>「偏好设置」在两层都存在：实例层那次是**默认值**，用户层这次是**我自己的偏好**
+ * （CP 矩阵 `LAYER_DOMAINS.user` 含 `user-preference`）。所以它出现在两个分组里是矩阵事实，
+ * 不是重复条目——这也是为什么左栏必须按层分组：同一条目在不同层是不同的写入目标。</p>
+ */
+export const userItems: NavItem[] = [
     item("my-credentials"),
+    item("agent-principals"),
+    item("user-preference", "5"),
     item("knowledge-mcp"),
 ];
 
