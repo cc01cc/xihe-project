@@ -56,6 +56,7 @@ import { ensureEnvFromUser } from './lib/user-env.mjs';
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
 import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
 import { buildCommitEnv, describeBuildCommit, resolveBuildCommit } from './lib/build-commit-env.mjs';
+import { CP_NO_REBUILD_FLAG, describeCpNoRebuild, resolveCpNoRebuild, serviceArgs } from './lib/stack-cp-args.mjs';
 import {
   DEFAULT_STALE_AFTER_MS,
   acquireLease,
@@ -157,6 +158,8 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--stack=')) args.stack = arg.slice('--stack='.length);
     else if (arg === '--cwd') args.cwd = argv[(i += 1)];
     else if (arg.startsWith('--cwd=')) args.cwd = arg.slice('--cwd='.length);
+    // G12 反证逃生门（task-154）：把 `--no-rebuild` 透传给 cp 子进程；默认关闭。
+    else if (arg === CP_NO_REBUILD_FLAG) args.cpNoRebuild = true;
     else if (arg === '--timeout') args.timeout = Number(argv[(i += 1)]);
     else if (arg.startsWith('--timeout=')) args.timeout = Number(arg.slice('--timeout='.length));
     else if (arg.startsWith('-')) throw new Error(`unknown option: ${arg}`);
@@ -329,8 +332,11 @@ function formatCpBuild(cpBuild) {
 // 参数错误恒 exit 2（design「退出码与输出契约」）：顶层 throw 会落到 Node 的未捕获异常（exit 1 +
 // 栈帧），既不符合契约也难读 —— 所以在解析这一层就兜住，和下面的 context 错误同一口径。
 let args;
+// G12 反证开关：flag 与 env 只允许一个来源（同时给出直接抛错，见 lib/stack-cp-args.mjs）。
+let cpNoRebuild = { active: false, source: null };
 try {
   args = parseArgs(process.argv.slice(2));
+  cpNoRebuild = resolveCpNoRebuild({ flag: args.cpNoRebuild === true, env: process.env });
 } catch (error) {
   console.error(`[dev-stack] ERROR: ${error.message}`);
   process.exit(2);
@@ -579,7 +585,9 @@ function printLease(state, { indent = '  ' } = {}) {
 /* ---------------------------------------------------------------- spawn */
 
 function spawnDetached(service, outPath, errPath) {
-  const inner = `node "${stackRun}" ${service}`;
+  // 默认 args 与原先逐字节相同；只有反证开关生效时 cp 才多一个 `--no-rebuild`（见 lib/stack-cp-args.mjs）。
+  const childArgs = serviceArgs({ stackRun, service, noRebuild: cpNoRebuild.active });
+  const inner = `node "${stackRun}" ${childArgs.slice(1).join(' ')}`;
   if (isWindows) {
     const safeCwd = projectRoot.replace(/'/g, "''");
     const script =
@@ -606,7 +614,7 @@ function spawnDetached(service, outPath, errPath) {
   const outFd = openSync(outPath, 'a');
   const errFd = openSync(errPath, 'a');
   assertEnvValues(childEnv, 'spawn:' + service);
-  const child = spawn(process.execPath, [stackRun, service], {
+  const child = spawn(process.execPath, childArgs, {
     cwd: projectRoot,
     env: childEnv,
     detached: true,
@@ -791,6 +799,7 @@ async function start() {
   );
   console.log(`[dev-stack] logs: ${logDir}`);
 console.log(`[dev-stack] ${'XIHE_BUILD_COMMIT'}=${stackBuildCommit.value === '' ? '(空串)' : stackBuildCommit.value} — ${describeBuildCommit(stackBuildCommit)}（注入 cp/agent/runtime 三个子进程；env-first，项目侧只读 env）`);
+if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNoRebuild)}`);
   // D-766 乙案最小版：起栈前把**确定性**的 dev 管理员密码注入子进程环境（CP 的
   // DataSeeder 读 `XIHE_DEV_ADMIN_PASSWORD`），存量库的更新由 waitReady 之后的
   // reset-admin upsert 补上（见 applyDevAdminPassword）。0 产品面改动。
