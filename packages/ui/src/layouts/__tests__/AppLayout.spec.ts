@@ -6,11 +6,6 @@ import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../composables/api";
 import type * as apiModule from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
-import {
-    NAV_WIDTH_DEFAULT,
-    RAIL_WIDTH,
-    clampNavWidthForViewport,
-} from "../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../stores/session";
 import AppLayout from "../AppLayout.vue";
 
@@ -38,6 +33,7 @@ const i18n = createI18n({
                 pendingApprovalCount: "items pending",
                 pendingApprovalGoTo: "Review now",
                 pendingApprovalLive: "Pending approval count updated",
+                resize: "Resize navigation panel",
             },
         },
     },
@@ -110,30 +106,162 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe("AppLayout navigation IA (PLAN-0582 S1/S2)", () => {
-    it("offsets the content by the fixed 56px rail plus the open navigation panel", async () => {
+describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", () => {
+    it("renders nav|main as splitter panels with the resize handle between them", async () => {
         const wrapper = await mountLayout(createTestRouter());
 
-        const style = wrapper.find("main").attributes("style");
-        // S2 ruling #1: fixed 56px icon rail + the default 280px panel. S3a audit
-        // P1-3: the offset uses the *breakpoint-clamped* panel width, so build the
-        // expectation with the same helper instead of hardcoding the wide-window sum.
-        const expectedOffset =
-            RAIL_WIDTH + clampNavWidthForViewport(NAV_WIDTH_DEFAULT, window.innerWidth);
-        expect(style).toContain(`${expectedOffset}px`);
+        // PLAN-0753 T3: 壳的几何归 reka SplitterGroup —— 导航是 panel #1（aside 不再
+        // fixed、main 不再用 margin 清位），main 是 panel #2，handle 是两项之间的
+        // flex 项（`-ml-1` 抵消自身 4px ⇒ 主列起始位与旧几何一致）。
+        const group = wrapper.get("[data-panel-group]");
+        expect(group.attributes("data-orientation")).toBe("horizontal");
+
+        const panels = wrapper.findAll("[data-panel]");
+        expect(panels.length).toBe(2);
+        // `as-child`：导航面板**就是 aside 本身**（不另套一层 div），这也是像素几何
+        // 与旧 `aside + fixed` 对齐的前提。
+        expect(panels[0].element.tagName).toBe("ASIDE");
+        expect(panels[0].attributes("data-testid")).toBe("sidebar-stub");
+        expect(panels[1].find("main").exists()).toBe(true);
+        // S2 ruling #1 / R-D：navOpen 默认开 ⇒ 可折叠面板处于 expanded。
+        expect(panels[0].attributes("data-panel-collapsible")).toBe("true");
+        expect(panels[0].attributes("data-state")).toBe("expanded");
+
+        // 主列不再由 margin-left 偏移（旧的 fixed aside + marginLeft 组合退场）。
+        expect(wrapper.get("main").attributes("style") ?? "").not.toContain("margin");
+
+        // testid/aria 走 handle 的 fallthrough attrs（不 fork SplitterResizeHandle）。
+        // data-panel-resize-handle-id 是桥接 keydown 路由的定位键：必须等于
+        // AppLayout 的 NAV_RESIZE_HANDLE_ID（否则键盘纪律整条失效）。
+        const handle = wrapper.get('[data-testid="sidebar-resizer"]');
+        expect(handle.attributes("role")).toBe("separator");
+        expect(handle.attributes("aria-orientation")).toBe("vertical");
+        expect(handle.attributes("aria-label")).toBe("Resize navigation panel");
+        expect(handle.attributes("data-panel-resize-handle-id")).toBe("nav-resize-handle");
+        // aria-valuenow/min/max 的**标度所有权**：首帧是 fallthrough 的像素初值，
+        // group 测量到几何后由 reka 用 0–100 百分比接管（dev-3 裁定 ③）；首帧值见下一条用例。
     });
 
-    it("keeps the 56px rail offset when the navigation panel is collapsed", async () => {
+    it("exposes the stored width as px aria range values on the first frame (fallthrough)", async () => {
+        const router = createTestRouter();
+        await router.push("/workspace/workspace-1/chat/current");
+        await router.isReady();
+        const wrapper = mount(AppLayout, {
+            global: {
+                plugins: [router, i18n],
+                stubs: {
+                    Sidebar: { template: '<aside data-testid="sidebar-stub" />' },
+                    "router-view": { template: '<div data-testid="route-view" />' },
+                },
+            },
+        });
+
+        // 测量前：fallthrough 绑定就是消费面看到的初值（像素标度，与旧手写 handle 一致）。
+        const handle = wrapper.get('[data-testid="sidebar-resizer"]');
+        expect(handle.attributes("aria-valuenow")).toBe("280");
+        expect(handle.attributes("aria-valuemin")).toBe("220");
+        expect(handle.attributes("aria-valuemax")).toBe("360");
+
+        // 测量后：reka 的 useWindowSplitterPanelGroupBehavior 会 remove/set 这三个属性，
+        // 生产环境里落成百分比标度（min/now/max 同标度自洽）。jsdom 无可测几何 ⇒ 该效果
+        // 删掉后不再写；故此后只锁语义属性仍在，不锁测量后的标度（浏览器侧由 e2e/AB 核）。
+        await flushPromises();
+        expect(wrapper.get('[data-testid="sidebar-resizer"]').attributes("role")).toBe("separator");
+    });
+
+    it("collapses the nav panel to the rail button when the stored state is closed", async () => {
         localStorage.setItem(
             "xihe-layout-global",
             JSON.stringify({ railCollapsed: false, navOpen: false, navWidth: 300 }),
         );
         const wrapper = await mountLayout(createTestRouter());
 
-        const style = wrapper.find("main").attributes("style");
-        // R-D: collapsing the panel never removes the rail offset.
-        expect(style).toContain("56px");
-        expect(style).not.toContain("356px");
+        // R-D: 收起只发生在 panel 内（collapsible + collapsedSize = 56px rail），
+        // 面板 data-state 是 reka 的折叠语义（defaultSize === collapsedSize）。
+        const panels = wrapper.findAll("[data-panel]");
+        expect(panels[0].attributes("data-state")).toBe("collapsed");
+        // 收起时 handle 卸载（旧行为 `v-if="!isMobile && open"`）。
+        expect(wrapper.find('[data-testid="sidebar-resizer"]').exists()).toBe(false);
+        // 主列仍然渲染（面板收起不等于主列退场）。
+        expect(wrapper.find("main").exists()).toBe(true);
+    });
+
+    it("keeps the mobile drawer out of the flex flow (zero width footprint)", async () => {
+        // dev-3 carve-out A：移动端 panel #1 不得参与 split ⇒ 不得有占位宽度。
+        // jsdom 无布局引擎，用「不参与 flex 流」的等效判据（浏览器侧
+        // getBoundingClientRect().width===0 由 e2e/AB 轮取证）：
+        //   ① aside 的 computed class 是 fixed（position:fixed 的 flex 子项不参与 flex 布局）；
+        //   ② 该面板的 defaultSize 退化为 collapsedSize=56 且 handle 卸载（无拖拽面）；
+        //   ③ 主列（panel #2）是唯一 flex 项，独占整行。
+        vi.stubGlobal("matchMedia", ((query: string) => ({
+            matches: true,
+            media: query,
+            onchange: null,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+            addListener: () => undefined,
+            removeListener: () => undefined,
+            dispatchEvent: () => false,
+        })) as unknown as typeof window.matchMedia);
+        vi.resetModules();
+        const { default: FreshAppLayout } = await import("../AppLayout.vue");
+        const { default: FreshSidebar } = await import("../../components/sidebar/Sidebar.vue");
+        const router = createTestRouter();
+        await router.push("/workspace/workspace-1/chat/current");
+        await router.isReady();
+        const wrapper = mount(FreshAppLayout, {
+            global: {
+                plugins: [router, i18n],
+                stubs: {
+                    Sidebar: FreshSidebar,
+                    "router-view": { template: '<div data-testid="route-view" />' },
+                },
+            },
+        });
+        await flushPromises();
+
+        const aside = wrapper.get('[data-testid="sidebar"]');
+        expect(aside.classes()).toContain("fixed");
+        // 宽度载体在 panel 层（dev-3 存量缺陷修法）：组件不再声明 aside 宽度，
+        // 改由 AppLayout 的 `navPanelStyle` 在 panel 载体上声明 `flex: none` + 显式宽度。
+        const panelStyle = aside.attributes("style") ?? "";
+        expect(panelStyle).toContain("flex: 0 0 auto");
+        expect(panelStyle).toContain("width: 0px");
+        // 抽屉面板的默认宽退化为 56（collapsedSize）⇒ 无内容宽度声明，不参与 flex 分配。
+        expect(aside.attributes("data-panel-size")).toBe("56.0");
+        // handle 在移动端卸载（抽屉不进 split）。
+        expect(wrapper.find('[data-testid="sidebar-resizer"]').exists()).toBe(false);
+        // 主列（panel #2）是唯一 flex 项，独占整行。
+        const panels = wrapper.findAll("[data-panel]");
+        expect(panels.length).toBe(2);
+        expect(panels[1].find("main").exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("commits keyboard and double-click widths through the shell bridge", async () => {
+        localStorage.setItem(
+            "xihe-layout-global",
+            JSON.stringify({ navOpen: true, navWidth: 340 }),
+        );
+        const wrapper = await mountLayout(createTestRouter());
+        const readNavWidth = () =>
+            (
+                JSON.parse(localStorage.getItem("xihe-layout-global") ?? "{}") as {
+                    navWidth?: number;
+                }
+            ).navWidth;
+
+        // 键盘纪律：ArrowRight = +16（夹到 220–360），一次按键恰一次存储写。
+        await wrapper.get('[data-testid="sidebar-resizer"]').trigger("keydown", {
+            key: "ArrowRight",
+        });
+        await flushPromises();
+        expect(readNavWidth()).toBe(356);
+
+        // 双击复位默认宽（280），同样只写一次。
+        await wrapper.get('[data-testid="sidebar-resizer"]').trigger("dblclick");
+        await flushPromises();
+        expect(readNavWidth()).toBe(280);
     });
 
     it("clears the user-scoped layout keys when the session is logged out", async () => {
