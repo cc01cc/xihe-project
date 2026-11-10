@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
-import { chooseRekaOption } from "./helpers/reka-select";
+import { chooseRekaOption, expectRekaValue } from "./helpers/reka-select";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
@@ -337,7 +337,8 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         await expect(select).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // BL-547（task-175）：执行模式是 reka Select；选项文本 = 模式名本身。
         await chooseRekaOption(page, select, "windows-host");
-        await expect(select).toHaveValue("windows-host", { timeout: LONG_TIMEOUT_MS });
+        // BL-547（task-175）：reka Select 无原生 value —— 读触发器可见文本。
+        await expectRekaValue(select, "windows-host");
         await page.screenshot({
             scale: "css",
             path: path.join(EVIDENCE_DIR, "execution-mode-switch.png"),
