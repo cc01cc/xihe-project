@@ -127,14 +127,19 @@ describe("CredentialCreateDialog (PLAN-0498 T1.2)", () => {
         await nextTick();
 
         expect(mockedApi.createCredential).not.toHaveBeenCalled();
-        expect(bodyEl('[data-testid="credentials-create-error"]')?.textContent).toContain("名称");
+        // PLAN-0753 M2: client-side rules surface per-field, server errors stay on the generic node.
+        expect(bodyEl('[data-testid="credentials-create-label-error"]')?.textContent).toContain(
+            "名称",
+        );
 
         await setBodyValue('[data-testid="credentials-create-label"]', "No secret");
         await clickBody('[data-testid="credentials-create-submit"]');
         await nextTick();
 
         expect(mockedApi.createCredential).not.toHaveBeenCalled();
-        expect(bodyEl('[data-testid="credentials-create-error"]')?.textContent).toContain("Token");
+        expect(bodyEl('[data-testid="credentials-create-token-error"]')?.textContent).toContain(
+            "Token",
+        );
     });
 
     it("masks the secret input until the toggle is used", async () => {
