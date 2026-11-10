@@ -1,42 +1,5 @@
 {
   "reviewedAt": "2026-11-10",
-  "note": "2026-11-10 首次入基线（此前 entries 为空 ⇒ `mise run test:cp:baseline` 恒报 0/10 covered、判据失效）。来源窗口 VW-20261110-92 门 5 的 10 红：6 条 develop 既有（本文件 6 条，逐条见 BL-566 / BL-567）+ 1 条本批自执红（OpenApiDuplicateKeyTest，随 task-13 收缩基线后转绿）+ 3 条环境前置（ContextEventReadContractIntegrationTest，槽位缺 -Dxihe.context.python，非代码红、不入基线）。规则不变：基线只许收缩 —— 条目转绿必须删，reviewBy 过期即 exit 1。",
-  "entries": [
-    {
-      "test": "com.cc01cc.p.xihe.cp.chat.ChatControllerTest.chatRejectsSessionWithoutStableAgentPrincipalBeforeCreatingRun",
-      "kind": "fail",
-      "reviewBy": "2026-12-10",
-      "reason": "BL-566: 期望 body code=FORBIDDEN，CP 现发具体码 AGENT_PRINCIPAL_MISSING（HTTP 403 未变）"
-    },
-    {
-      "test": "com.cc01cc.p.xihe.cp.chat.ChatIntegrationTest.postChatWithExplicitPrincipalOnUnboundSessionFailsAdmissionClosed",
-      "kind": "fail",
-      "reviewBy": "2026-12-10",
-      "reason": "BL-566: 同上（同型 4 条之一）"
-    },
-    {
-      "test": "com.cc01cc.p.xihe.cp.chat.ChatIntegrationTest.postChatWithoutSessionPrincipalIsForbiddenWithoutCreatingRun",
-      "kind": "fail",
-      "reviewBy": "2026-12-10",
-      "reason": "BL-566: 同上（同型 4 条之一）"
-    },
-    {
-      "test": "com.cc01cc.p.xihe.cp.chat.FollowUpQueuePostgresIntegrationTest.stalePrincipalBindingFailsClosedAtAdmissionWithoutChild",
-      "kind": "fail",
-      "reviewBy": "2026-12-10",
-      "reason": "BL-566: 同上（同型 4 条之一）"
-    },
-    {
-      "test": "com.cc01cc.p.xihe.cp.policy.PrincipalGrantAuthorizationIntegrationTest.withoutWorkspaceContextTheRequestStopsBeforeTheAtomGate",
-      "kind": "fail",
-      "reviewBy": "2026-12-10",
-      "reason": "BL-567: 期望 409 WORKSPACE_CONTEXT_REQUIRED，实测 403 FORBIDDEN（契约/代码双侧仍声明 409，根因未定）"
-    },
-    {
-      "test": "com.cc01cc.p.xihe.cp.policy.PrincipalGrantAuthorizationIntegrationTest.administratorWithoutWorkspaceContextIsToldTheContextIsRequired",
-      "kind": "fail",
-      "reviewBy": "2026-12-10",
-      "reason": "BL-567: 同上（同型 2 条之一）"
-    }
-  ]
+  "note": "2026-11-10 二次评审：6 条全部修绿（BL-566/BL-567，caad9dab4），entries 归零。首次登记的 6 条在当时的树（6 红）上是正确的；本条目覆盖它，因为基线的判据是「entries == 当前树的红」——条目转绿必须删，否则门会拿到 6 expired。候选项里 3 条环境前置（ContextEventReadContractIntegrationTest 缺 -Dxihe.context.python）不入基线，补前置即绿。下一次出现真红时按同一判据登记，勿留过期条目。",
+  "entries": []
 }
