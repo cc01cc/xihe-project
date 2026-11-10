@@ -119,10 +119,9 @@ test("@host PLAN-0337 Workspace approval mode is set in Settings and survives a 
     const auth = await register(request);
     await installAuth(page, auth);
 
-    await page.goto("/settings/config", { waitUntil: "load" });
-
-    // Instance 层不得出现该域：审批模式只有 workspace 一个配置面（PLAN-0337）。
-    await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
+    // PLAN-0752 迁移：旧全局配置页入口与其「实例 tab 不列该域」断言随旧页退役。
+    // 恢复本用例时直接在下面 workspace 域页（`/workspace/:id/settings/approval-policy`）上重写；
+    // 审批模式只有 workspace 一个配置面（PLAN-0337），实例层不该出现可写入口。
 
     // PLAN-0560: the workspace override lives on the workspace settings page.
     await page.goto(`/workspace/${auth.workspaceId}/settings?tab=config`, { waitUntil: "load" });

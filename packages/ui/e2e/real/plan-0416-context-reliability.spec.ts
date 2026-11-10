@@ -136,8 +136,7 @@ async function publishAndOpen(
             JSON.stringify({ id: workspaceId, name: "ContextReliability" }),
         );
     }, fixture.auth);
-    await page.goto("/settings/config");
-    await page.getByTestId("config-tab-user").click();
+    await page.goto("/settings/user/api-request-templates");
     const panel = page.getByTestId("api-request-templates-panel");
     await panel.getByTestId("api-request-type").selectOption("openai-chat-completions@1");
     await panel.getByTestId("api-request-new").click();

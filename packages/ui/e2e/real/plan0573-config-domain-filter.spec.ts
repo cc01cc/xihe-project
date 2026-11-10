@@ -104,8 +104,10 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
         });
 
         await injectSession(page, userAuth);
-        await page.goto(`${UI_URL}/settings/config`);
-        await expect(page.getByTestId("config-tab-user")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await page.goto(`${UI_URL}/settings/user/llm-provider`);
+        await expect(page.getByTestId("settings-domain-title")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         // Both config batches are issued synchronously (boot merged pull at App
         // mount, then the user-tab layer pull): llm-provider appears twice by
         // the time the settings page has rendered both surfaces.
@@ -148,7 +150,7 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
         });
 
         await injectSession(page, adminAuth);
-        await page.goto(`${UI_URL}/settings/config`);
+        await page.goto(`${UI_URL}/settings/instance/logging`);
 
         // Admin bypass unchanged: the merged batch includes `logging` and lands 200.
         await expect
@@ -159,9 +161,6 @@ test.describe.serial("@host PLAN-0573 config domain filter", () => {
             "every admin logging read must succeed",
         ).toEqual([]);
         expect(configRequests, "admin boot must request the logging domain").toContain("logging");
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
         const loggingPanel = page.getByTestId("config-domain-logging");
         await expect(loggingPanel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         for (const domain of NON_ADMIN_MERGED_DOMAINS) {

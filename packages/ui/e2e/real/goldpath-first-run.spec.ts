@@ -370,8 +370,7 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     const chatUrl = page.url();
 
     // 1) 经产品 UI（ProviderHub 表单）创建连接。
-    await page.goto("/settings/config", { waitUntil: "load" });
-    await page.getByTestId("config-tab-user").click();
+    await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
     await page.getByTestId("provider-hub-connect").click();
     await expect(page.getByTestId("provider-picker-modal")).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
@@ -1024,11 +1023,9 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
         request,
     }) => {
         await openOrCreateWorkspace(page, request);
-        await page.goto("/settings/config", { waitUntil: "load" });
-
-        // 实例层的 LLM 分区是只读提示（`settings.providerInstanceNote`），ProviderHub 只在
-        // user / workspace 层渲染 ⇒ 新建连接必须切到「用户」层（PLAN-0554/0560 的分层面）。
-        await page.getByTestId("config-tab-user").click();
+        // PLAN-0752：层在 URL 域段里，直接进用户层 llm-provider 域页（实例层只有只读提示，
+        // ProviderHub 只在 user / workspace 层渲染 —— PLAN-0554/0560 的分层面）。
+        await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
         await page.getByTestId("provider-hub-connect").click();
         await expect(page.getByTestId("provider-picker-modal")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,

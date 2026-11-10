@@ -97,14 +97,15 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     });
     seedPage(page, owner);
 
+    // PLAN-0752：`/settings/policy` 仍重定向，但落点从旧配置页改为实例层默认域页。
     await page.goto("/settings/policy", { waitUntil: "load" });
-    await expect(page).toHaveURL(/\/settings\/config$/);
+    await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
     await expect(page.locator('a[href="/settings/policy"]')).toHaveCount(0);
     await page.screenshot({
         scale: "css",
         path: testInfo.outputPath("settings-policy-deep-link-redirect.png"),
     });
-    await page.getByTestId("config-tab-user").click();
+    await page.goto("/settings/user/agent-templates", { waitUntil: "load" });
     const templatePanel = page.getByTestId("agent-templates-panel");
     await expect(templatePanel).toBeVisible();
 
@@ -466,9 +467,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     // 的注释写明「relocation. It is now the panel body, not a modal」，所以旧 spec 那套
     // `modal-content` + `Close` 按钮 + 关闭后计数为 0 的路径已不存在。改按当前结构：离开该路由后
     // 面板随之消失，并仍**严格**断言它已不在（不是把断言删掉，只是换到正确的时机）。
-    await page.goto("/settings/config", { waitUntil: "load" });
+    await page.goto("/settings/user/agent-templates", { waitUntil: "load" });
     await expect(page.getByTestId("workspace-agent-management-dialog")).toHaveCount(0);
-    await page.getByTestId("config-tab-user").click();
     const deleteTemplateButton = page.getByTestId(`agent-template-delete-${templateId}`);
     await deleteTemplateButton.click();
     await expect(deleteTemplateButton).toContainText("再次点击确认删除");

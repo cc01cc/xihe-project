@@ -143,7 +143,7 @@ test.describe("@host PLAN-0438 Provider Connection keys", () => {
         const auth = await register(request, "provider-connection-keys");
         await installAuth(page, auth);
         try {
-            await page.goto("/settings/config");
+            await page.goto("/settings/user/llm-provider");
 
             await createConnection(page, {
                 key: "primary",

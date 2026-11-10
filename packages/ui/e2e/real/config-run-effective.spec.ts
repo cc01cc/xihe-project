@@ -78,11 +78,13 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
         expect(verified.ok(), await verified.text()).toBe(true);
 
         // 1. Save the whole profile unit through the real settings UI.
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
-            timeout: EXPECT_TIMEOUT_MS,
-        });
-        await page.getByTestId("config-tab-user").click();
+        // PLAN-0752 迁移：profile 保存面（`llm-provider-profile` / `llm-profile-*`）在本次 IA
+        // 重构中被 ProviderHub 模型身份区取代（src 0 命中），本用例的 UI 保存步骤待产品侧
+        // 给出口径后重写（已报 Lead）。
+        test.fixme(
+            true,
+            "PLAN-0752: llm-provider-profile / llm-profile-* testids retired (0 hits in src)",
+        );
 
         const panel = page.getByTestId("llm-provider-profile");
         await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

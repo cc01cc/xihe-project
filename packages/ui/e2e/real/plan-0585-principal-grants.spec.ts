@@ -245,10 +245,11 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
             }
         });
 
-        await page.goto("/settings/config", { waitUntil: "load" });
-        const rolesItem = page.getByTestId("settings-nav-settings-roles");
+        await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
+        // PLAN-0752 后左栏是域/资源链接，运维项没有 per-item testid ⇒ 用 href 定位。
+        const rolesItem = page.locator('a[href="/settings/roles"]');
         await expect(rolesItem).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(page.getByTestId("settings-nav-settings-principal-grants")).toHaveCount(0);
+        await expect(page.locator('a[href="/settings/principal-grants"]')).toHaveCount(0);
 
         await rolesItem.click();
         await expect(page).toHaveURL(/\/settings\/roles$/);

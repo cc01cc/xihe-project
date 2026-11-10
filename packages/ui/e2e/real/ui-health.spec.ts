@@ -27,10 +27,10 @@ const pages: HealthPage[] = [
         benign: [] as string[],
     },
     {
-        path: "/settings/config",
-        name: "settings-config",
+        path: "/settings/user/llm-provider",
+        name: "settings-user-llm-provider",
         requiresAuth: true,
-        keySelector: '[data-testid="settings-config-heading"]',
+        keySelector: '[data-testid="settings-domain-title"]',
         benign: [] as string[],
     },
     {

@@ -29,11 +29,12 @@ test.beforeEach(async ({ page }) => {
         localStorage.setItem("xihe-token", t);
         localStorage.setItem("xihe-user", JSON.stringify({ id: "vis", name: "Visual" }));
     }, authToken);
-    await page.goto("/settings/config", { waitUntil: "load" });
+    // PLAN-0752：设置面按「层×域」拆页，选用户层 llm-provider 域页作为视觉基线入口。
+    await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
 });
 
-test("settings config page renders", async ({ page }) => {
-    await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({
+test("settings domain page renders", async ({ page }) => {
+    await expect(page.locator('[data-testid="settings-domain-title"]')).toBeVisible({
         timeout: ACTION_TIMEOUT_MS,
     });
     // PLAN-0307 T2.17: the three-layer settings page is verified with
@@ -46,20 +47,21 @@ test("settings config page renders", async ({ page }) => {
     });
 });
 
-test("settings knowledge page with tab nav", async ({ page }) => {
-    await page.locator('[data-testid="settings-nav-settings-knowledge"]').click();
-    await expect(page.locator('[data-testid="settings-knowledge-heading"]')).toBeVisible();
-    await expectPlatformScreenshot(page, "settings-knowledge.png");
+test("settings knowledge page with tab nav", async () => {
+    // PLAN-0752 迁移：知识库已不是设置页（`/settings/knowledge` 重定向到工作区 tab），
+    // 旧 `settings-nav-settings-knowledge` 左栏项与 `settings-knowledge.png` 基线一起退役；
+    // 新的知识库视觉基线应由工作区设置页承担（已报 Lead，不在此处顺手造基线）。
+    test.fixme(true, "PLAN-0752: knowledge moved out of the settings surface");
 });
 
 test("settings data page with tab nav", async ({ page }) => {
-    await page.locator('[data-testid="settings-nav-settings-data"]').click();
+    await page.goto("/settings/data", { waitUntil: "load" });
     await expect(page.locator('[data-testid="settings-data-heading"]')).toBeVisible();
     await expectPlatformScreenshot(page, "settings-data.png");
 });
 
 test("settings monitoring page with tab nav", async ({ page }) => {
-    await page.locator('[data-testid="settings-nav-settings-monitoring"]').click();
+    await page.goto("/settings/monitoring", { waitUntil: "load" });
     await expect(page.locator('[data-testid="settings-monitoring-heading"]')).toBeVisible();
     await expectPlatformScreenshot(page, "settings-monitoring.png");
 });
