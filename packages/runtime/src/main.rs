@@ -4798,12 +4798,52 @@ mod remote_handler_tests {
 
     const TEST_WS: &str = "ws-test";
 
+    // test-global-state: allow — 豁免理由（不变量）：写入值恒定（恒为 "true"），读者
+    // `remote_mcp.rs:527/597` 只按值比较 ⇒ 任意并发顺序下该变量都不会出现第三种状态，也不存在
+    // 「本测试结束后残留影响后续测试」的情形（无测试依赖它未设置）。复核点 = 若改写入值或新增
+    // 读者，须重新论证该不变量，否则本豁免失效。
     #[allow(unsafe_code)]
     fn allow_local_http() {
         // Edition 2024: env mutation is unsafe; confined to this test binary,
         // which has no other readers of this flag.
         unsafe {
             std::env::set_var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL", "true");
+        }
+    }
+
+    /// BL-262/task-45: `XIHE_CP_URL` is read by the OAuth-mode handler under test, so one test
+    /// pins it to its own fake control plane. Serialise the mutators, and restore on drop — the
+    /// old version left a dead stub URL behind for every *later* test in the process.
+    static PROCESS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct CpUrlPin {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl CpUrlPin {
+        // test-global-state: allow — every caller holds PROCESS_LOCK; drop restores the old value.
+        fn set(url: &str) -> Self {
+            let previous = std::env::var_os("XIHE_CP_URL");
+            // Edition 2024: env mutation is unsafe; see the PROCESS_LOCK contract above.
+            unsafe {
+                std::env::set_var("XIHE_CP_URL", url);
+            }
+            Self { previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for CpUrlPin {
+        // test-global-state: allow — restoration half of `set`, same lock contract.
+        fn drop(&mut self) {
+            // Edition 2024: env mutation is unsafe (see `set`).
+            unsafe {
+                match self.previous.take() {
+                    Some(previous) => std::env::set_var("XIHE_CP_URL", previous),
+                    None => std::env::remove_var("XIHE_CP_URL"),
+                }
+            }
         }
     }
 
@@ -5549,14 +5589,7 @@ mod remote_handler_tests {
     /// non-2xx → remote_mcp_unavailable.
     #[tokio::test]
     async fn oauth_mode_broker_failures_map_per_call_site() {
-        #[allow(unsafe_code)]
-        fn point_cp_at(url: &str) {
-            // Edition 2024: env mutation is unsafe; only the OAuth-mode handler
-            // calls in this module read XIHE_CP_URL.
-            unsafe {
-                std::env::set_var("XIHE_CP_URL", url);
-            }
-        }
+        let _serial = PROCESS_LOCK.lock().await;
         use std::collections::HashMap;
         use std::sync::{Arc, Mutex};
 
@@ -5615,7 +5648,7 @@ mod remote_handler_tests {
             axum::serve(listener, app).await.expect("serve broker stub");
         });
         let cp_url = format!("http://{addr}");
-        point_cp_at(&cp_url);
+        let _cp_url_pin = CpUrlPin::set(&cp_url);
         allow_local_http();
 
         async fn fake_mcp_unauthorized() -> String {
@@ -7776,32 +7809,86 @@ mod job_engine_route_tests {
         drop(dir);
     }
 
+    /// BL-568: `XIHE_MXC_EXECUTABLE` is process-global, so tests that pin it must
+    /// serialise — the BL-262 rule enforced by `scripts/check-test-global-state.mjs`.
+    static PROCESS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// The executable `process_guard::probe_mxc` falls back to when the override is
+    /// unset (`process_guard.rs:686-687`).
+    const MXC_FALLBACK_EXECUTABLE: &str = "wxc-exec.exe";
+
+    /// Pins `XIHE_MXC_EXECUTABLE` to one branch's value and restores the previous
+    /// value on drop (also while unwinding), so branches cannot leak into each other
+    /// or into a sibling test.
+    struct MxcExecutablePin {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl MxcExecutablePin {
+        // test-global-state: allow — only constructed by callers that hold PROCESS_LOCK.
+        fn set(value: &std::path::Path) -> Self {
+            let previous = std::env::var_os("XIHE_MXC_EXECUTABLE");
+            // Edition 2024: env mutation is unsafe; the process-wide value is written
+            // only while PROCESS_LOCK is held, and restored on drop.
+            unsafe {
+                std::env::set_var("XIHE_MXC_EXECUTABLE", value);
+            }
+            Self { previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for MxcExecutablePin {
+        // test-global-state: allow — restoration half of `set`, same lock contract.
+        fn drop(&mut self) {
+            // Edition 2024: env mutation is unsafe (see `set`).
+            unsafe {
+                match self.previous.take() {
+                    Some(previous) => std::env::set_var("XIHE_MXC_EXECUTABLE", previous),
+                    None => std::env::remove_var("XIHE_MXC_EXECUTABLE"),
+                }
+            }
+        }
+    }
+
+    // BL-568: on a host **without** a usable MXC the `--bin xihe-runtime` route tests
+    // below go red by design — the branch really is unverified there, and a skip would
+    // disguise that as a pass. CI without MXC must not run this target
+    // (`test:runtime` / `--bin xihe-runtime`); the default gates are `--lib`.
+    /// The executable the implementation would probe, **if this host can actually
+    /// answer `--probe`** — the same criterion the product uses
+    /// (`process_guard.rs:686-687` plus a successful probe run), not "is the env var
+    /// set". `None` means the available branch is unverifiable here, which the caller
+    /// must treat as a failure rather than a skip (BL-568).
+    fn mxc_executable_answering_probe() -> Option<std::path::PathBuf> {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(configured) = std::env::var_os("XIHE_MXC_EXECUTABLE") {
+            candidates.push(std::path::PathBuf::from(configured));
+        }
+        candidates.push(std::path::PathBuf::from(MXC_FALLBACK_EXECUTABLE));
+        candidates.into_iter().find(|candidate| {
+            std::process::Command::new(candidate)
+                .arg("--probe")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        })
+    }
+
     #[tokio::test]
     async fn mxc_job_route_is_probe_gated() {
+        let _serial = PROCESS_LOCK.lock().await;
         let DirectAttachApp {
             app,
             ws_id,
             dir,
             _server,
         } = direct_attach_app_with_mode("windows-mxc").await;
-        let job_id = uuid::Uuid::new_v4().to_string();
-        let result = workspace_job_start_handler(
-            Path(ws_id.clone()),
-            State(app.clone()),
-            axum::Json(JobStartRequest {
-                job_id: job_id.clone(),
-                command: "cmd".to_string(),
-                args: vec!["/C".to_string(), "exit 0".to_string()],
-                timeout_secs: 30,
-                cwd: None,
-                env: None,
-            }),
-        )
-        .await;
-        let mxc = std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_default();
-        let mxc_available = !mxc.is_empty() && std::path::Path::new(&mxc).exists();
         // Capability content is adapter-owned: MXC claims filesystem isolation,
-        // host does not (asserted in the host route test).
+        // host does not (asserted in the host route test). Env-independent.
         let capability =
             workspace_job_capabilities_handler(Path(ws_id.clone()), State(app.clone()))
                 .await
@@ -7809,33 +7896,66 @@ mod job_engine_route_tests {
         let capability_body = body_json(capability.into_response()).await;
         assert_eq!(capability_body["canIsolateFilesystem"], true);
         assert_eq!(capability_body["backendKind"], "windows-mxc");
-        if mxc_available {
-            let (status, _) = result.expect("mxc job start");
+
+        // Branch 1/2 — the probe cannot run ⇒ fail closed. BL-568: the old version
+        // derived availability from "is the env var set" and then asserted *that*
+        // guess, so on a host with MXC installed but no override both branches were
+        // wrong at once; each branch is now driven explicitly instead.
+        let unrunnable = dir.path().join("bl568-no-such-wxc-exec.exe");
+        let job_id = uuid::Uuid::new_v4().to_string();
+        {
+            let _pin = MxcExecutablePin::set(&unrunnable);
+            let problem = start_job(
+                &app,
+                &ws_id,
+                &job_id,
+                vec!["/C".to_string(), "exit 0".to_string()],
+                30,
+            )
+            .await
+            .expect_err("MXC must fail closed when the probe cannot run");
+            assert_eq!(problem.0, StatusCode::NOT_IMPLEMENTED);
+            assert_eq!(problem.1["code"], "JOB_BACKEND_LAUNCH_PENDING");
+            assert!(
+                !problem.1["detail"].as_str().unwrap_or_default().is_empty(),
+                "fail-closed must explain why: {problem:?}"
+            );
+            assert!(
+                !app.job_engine.output_dir(&job_id).exists(),
+                "no artifact may be written when the probe fails"
+            );
+        }
+
+        // Branch 2/2 — the probe answers ⇒ the route accepts the job. Needs a host MXC
+        // that really answers `--probe`; failing loudly is deliberate, because an
+        // `#[ignore]`/env-skip here would present an unverified branch as a pass.
+        let executable = mxc_executable_answering_probe().expect(
+            "BL-568: the MXC available branch needs a host MXC answering `--probe` \
+             (install per the mxc-windows-sandbox-ops skill, or point XIHE_MXC_EXECUTABLE at it)",
+        );
+        let job_id = uuid::Uuid::new_v4().to_string();
+        {
+            let _pin = MxcExecutablePin::set(&executable);
+            let (status, _) = start_job(
+                &app,
+                &ws_id,
+                &job_id,
+                vec!["/C".to_string(), "exit 0".to_string()],
+                30,
+            )
+            .await
+            .expect("mxc job start");
             assert_eq!(status, StatusCode::ACCEPTED);
-            let mut terminal = false;
-            for _ in 0..200 {
-                let response = workspace_job_status_handler(
-                    Path(ws_id.clone()),
-                    State(app.clone()),
-                    axum::Json(JobStatusRequest {
-                        job_id: job_id.clone(),
-                    }),
-                )
-                .await
-                .expect("status");
-                let body = body_json(response.into_response()).await;
-                if matches!(
-                    body["status"].as_str().unwrap_or_default(),
+            let terminal = await_terminal(&app, &ws_id, &job_id).await;
+            assert!(
+                matches!(
+                    terminal["status"].as_str().unwrap_or_default(),
                     "succeeded" | "failed" | "cancelled" | "timeout"
-                ) {
-                    terminal = true;
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-            }
-            assert!(terminal, "MXC job never reached a terminal state");
+                ),
+                "MXC job must reach a terminal state: {terminal}"
+            );
             let cleanup = workspace_job_cleanup_handler(
-                Path(ws_id),
+                Path(ws_id.clone()),
                 State(app.clone()),
                 axum::Json(JobStatusRequest {
                     job_id: job_id.clone(),
@@ -7851,14 +7971,6 @@ mod job_engine_route_tests {
                     .join("policy.json")
                     .exists(),
                 "policy artifact must be reclaimed with the job output"
-            );
-        } else {
-            let problem = result.expect_err("MXC must fail closed without a backend");
-            assert_eq!(problem.0, StatusCode::NOT_IMPLEMENTED);
-            assert_eq!(problem.1.0["code"], "JOB_BACKEND_LAUNCH_PENDING");
-            assert!(
-                !app.job_engine.output_dir(&job_id).exists(),
-                "no artifact may be written when the probe fails"
             );
         }
         drop(dir);
@@ -8020,7 +8132,7 @@ mod job_engine_route_tests {
     #[tokio::test]
     async fn conf_start_unsupported_backend() {
         // 契约：后备不可用/进程创建失败时不产生任何进程。
-        // 路由级 501 分支由 `mxc_job_route_is_probe_gated` 覆盖（无 MXC 环境）。
+        // 路由级两支（501 / 202）由 `mxc_job_route_is_probe_gated` 显式驱动（BL-568）。
         let DirectAttachApp {
             app,
             ws_id: _ws_id,
@@ -8288,16 +8400,20 @@ mod job_engine_route_tests {
             "PROCESS_BACKEND_LAUNCH_PENDING"
         );
 
-        // 与真实分支对照：环境未配置 MXC 时路由返回 501 且带 reason。
+        // 两支都必须真跑一次（BL-568）：旧版按 "env 是否设置" 猜分支，本机装了 MXC
+        // 后只跑得到一支，且断言的是另一支的期望 —— 于是恒红。
+        let _serial = PROCESS_LOCK.lock().await;
         let DirectAttachApp {
             app,
             ws_id,
             dir,
             _server,
         } = direct_attach_app_with_mode("windows-mxc").await;
-        let mxc = std::env::var("XIHE_MXC_EXECUTABLE").unwrap_or_default();
-        let mxc_available = !mxc.is_empty() && std::path::Path::new(&mxc).exists();
-        if !mxc_available {
+
+        // Branch 1/2 — 探针跑不动 ⇒ 501 且带 reason。
+        let unrunnable = dir.path().join("bl568-no-such-wxc-exec.exe");
+        {
+            let _pin = MxcExecutablePin::set(&unrunnable);
             let problem = start_job(
                 &app,
                 &ws_id,
@@ -8312,6 +8428,28 @@ mod job_engine_route_tests {
                 !problem.1["detail"].as_str().unwrap_or_default().is_empty(),
                 "fail-closed must explain why: {problem:?}"
             );
+        }
+
+        // Branch 2/2 — 探针跑得通 ⇒ 路由接受，跑到终态再收掉（否则 tempdir 会带着
+        // 一个活着的 job 被删）。
+        let executable = mxc_executable_answering_probe().expect(
+            "BL-568: the MXC available branch needs a host MXC answering `--probe` \
+             (install per the mxc-windows-sandbox-ops skill, or point XIHE_MXC_EXECUTABLE at it)",
+        );
+        {
+            let _pin = MxcExecutablePin::set(&executable);
+            let job_id = uuid::Uuid::new_v4().to_string();
+            let (status, _) = start_job(
+                &app,
+                &ws_id,
+                &job_id,
+                vec!["/C".to_string(), "exit 0".to_string()],
+                30,
+            )
+            .await
+            .expect("mxc job start");
+            assert_eq!(status, StatusCode::ACCEPTED);
+            await_terminal(&app, &ws_id, &job_id).await;
         }
         drop(dir);
     }

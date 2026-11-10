@@ -37,6 +37,42 @@ function lineAt(text, index) {
     return line;
 }
 
+/**
+ * Last index of the raw string literal that opens at `start` (a `r` / `br` prefix), or -1 when
+ * `start` is not a raw string. `r"…"` and `r#…"#` style literals may contain quotes and braces,
+ * so they have to be skipped wholesale (task-45: a brace inside one shifted every later region).
+ * @returns {number} index of the last character of the literal, or -1
+ */
+function rawStringEnd(text, start) {
+    let index = text[start] === 'b' ? start + 2 : start + 1;
+    if (text[start] === 'b' && text[start + 1] !== 'r') return -1;
+    let hashes = 0;
+    while (text[index] === '#') {
+        hashes += 1;
+        index += 1;
+    }
+    if (text[index] !== '"') return -1;
+    const terminator = `"${'#'.repeat(hashes)}`;
+    const close = text.indexOf(terminator, index + 1);
+    return close < 0 ? text.length - 1 : close + terminator.length - 1;
+}
+
+/**
+ * Length of the char literal at `index` (including both quotes), or 0 when the `'` there is a
+ * lifetime / loop label. Rust writes lifetimes as `&'static str`, which the naive rule
+ * "`'` followed by a word char opens a char literal" turned into a literal that swallowed
+ * everything up to the next quote — that is how whole `#[cfg(test)]` modules went unscanned.
+ */
+function charLiteralLength(text, index) {
+    const next = text[index + 1];
+    if (next === undefined) return 0;
+    if (next === '\\') return -1; // escape sequence: caller uses the char state machine
+    if (text[index + 2] === "'") return 3; // 'a'
+    const code = next.codePointAt(0) ?? 0;
+    if (code >= 0xd800 && code <= 0xdbff && text[index + 3] === "'") return 4; // surrogate pair
+    return 0;
+}
+
 /** Index of the `}` matching the `{` at `open`, or -1. Ignores braces inside strings/chars/comments. */
 export function matchingBrace(text, open) {
     let depth = 0;
@@ -79,8 +115,26 @@ export function matchingBrace(text, open) {
             state = 'string';
             continue;
         }
-        if (char === "'" && /[\w\\]/.test(next ?? '')) {
-            state = 'char';
+        const previous = text[index - 1] ?? '';
+        const atIdentifierEnd = /[A-Za-z0-9_]/.test(previous);
+        if ((char === 'r' || (char === 'b' && next === 'r')) && !atIdentifierEnd) {
+            const rawEnd = rawStringEnd(text, index);
+            if (rawEnd > 0) {
+                index = rawEnd;
+                continue;
+            }
+        }
+        if (char === "'") {
+            const length = charLiteralLength(text, index);
+            if (length === -1) {
+                state = 'char';
+                continue;
+            }
+            if (length > 0) {
+                index += length - 1;
+                continue;
+            }
+            // lifetime or loop label: plain code, the quote closes nothing
             continue;
         }
         if (char === '{') depth += 1;

@@ -166,6 +166,8 @@ mise run test:runtime:lib:gate
 # BL-262 ignored-suite tiers: explicit test names + measured timeouts (NOT part of validate)
 mise run test:runtime:lib:ignored:isolated
 mise run test:runtime:lib:ignored:functional
+# MXC boundary cases need XIHE_MXC_EXECUTABLE (installed wxc-exec.exe); without it they fail loudly
+mise run test:runtime:lib:ignored:mxc
 
 # e2e fixture self-tests (fake LLM chain state machine; no stack, seconds) — part of `validate`
 mise run test:e2e:fixtures
