@@ -9,6 +9,15 @@
  *   --strict               门前置不满足时从 SKIP 降级为 FAIL（窗口里宁可红，不要「假绿」）
  *   --since=<ISO8601>      本轮开始时间（默认=本轮启动时刻；用来判报告是否新鲜）
  *   --run-id=<id>          本轮 runId（默认随机生成，也可用 XH_GATE_RUN_ID）；用来绑报告归属
+ *   --window=<VW-id>       绑定本轮所属窗口（也可用 XH_WINDOW_ID）；四象限规则：
+ *     ① 窗存在 + --run-id 缺省     ⇒ 采用窗 id，输出 window=<VW-id>
+ *     ② 窗存在 + --run-id == 窗 id ⇒ 允许，输出 window=<VW-id>
+ *     ③ 窗存在 + --run-id != 窗 id ⇒ exit 2，点名两个值（不许拿别轮的报告判本轮）
+ *     ④ 窗不存在 + 无 --run-id     ⇒ 自生成，输出 window=none
+ *     ⑤ 窗不存在 + 给了 --run-id   ⇒ **不覆盖调用方的值**，仍输出 window=none + 提示「不具窗内效力」
+ *   为什么第 ④/⑤ 象限必须显式打 window=none：VW-20261111-09/-10 之前的所有证据都没有窗 id，
+ *   若省略该字段或打 '-'，将来会被当成窗内证据引用。**none 是一个断言，不是缺失。**
+ *   为什么⑤不覆盖用户值：显式标识属于调用方，工具不改写；「不具窗内效力」由 window=none 表达。
  *   例：node scripts/xh-verify-gates.mjs --fast      # 实施中自查（不含 L2 重门）
  *
  * **输入可信度（BL-528，`check:mock-baseline`）**：不只看报告文件是否存在，还要过三道校验——
@@ -270,6 +279,27 @@ export function parsePkgScripts(json) {
  * 把门表解析成可执行计划：每条门拿到 cmd / source / description，或一个明确 skipReason。
  * @param {{gates?: Array<{id: string, kind?: string, pkgDir?: string}>, miseTasks: Map<string, {description: string, run: string}>, pkgScripts?: Map<string, string>, repoRoot?: string}} input
  */
+/**
+ * 四象限窗口解析（纯函数，供 --window/--run-id 绑定与自测使用）。
+ * window 恒为字符串：窗 id 或 "none"（**从不返回空/"-"**）。
+ */
+export function resolveWindow({ activeWindowIds = [], windowId = null, runId = null } = {}) {
+  const active = activeWindowIds.filter(Boolean);
+  if (active.length) {
+    const target = windowId ?? active[0];
+    if (!active.includes(target)) return { ok: false, code: 2, message: `--window=${target} 不在当前活动窗里（active=${active.join(", ")}）` };
+    if (runId && runId !== target) return { ok: false, code: 2, message: `--run-id=${runId} 与窗 ${target} 不一致：窗内跑必须相等（禁止拿别轮的报告判本轮）` };
+    return { ok: true, window: target, effectiveRunId: target, note: null };
+  }
+  return {
+    window: "none",
+    ok: true,
+    effectiveRunId: runId ?? null,
+    note: runId
+      ? `窗外临时跑（window=none）：--run-id=${runId} 保留调用方取值，不做覆盖；该轮证据不具窗内效力`
+      : "窗外临时跑（window=none）：run-id 自生成，该轮证据不具窗内效力",
+  };
+}
 export function planGates({ gates = DEFAULT_GATES, miseTasks, pkgScripts = new Map(), repoRoot = REPO_ROOT, preconditionContext = {} }) {
   return gates.map((gate) => {
     const kind = gate.kind ?? "mise";
@@ -437,6 +467,7 @@ export function parseArgs(argv) {
     else if (arg === "--strict") opts.strict = true;
     else if (arg.startsWith("--since=")) opts.since = arg.slice(8);
     else if (arg.startsWith("--run-id=")) opts.runId = arg.slice(9);
+  else if (arg.startsWith("--window=")) opts.window = arg.slice(9);
     else if (arg === "--help" || arg === "-h") opts.help = true;
     else if (arg.startsWith("--only=")) opts.only = arg.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
     else if (arg.startsWith("--skip=")) opts.skip = arg.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
@@ -453,6 +484,10 @@ export function helpText() {
     "  node scripts/xh-verify-gates.mjs --fast          # 实施中自查：只跑 <60s 轻门",
     "  node scripts/xh-verify-gates.mjs --skip=test:mock --evidence=.local/evidence/gates.json",
     "  node scripts/xh-verify-gates.mjs --strict        # 前置不满足 ⇒ FAIL（默认 SKIP + 原因）",
+    "  node scripts/xh-verify-gates.mjs --list --window=<VW-id>   # 绑定窗口（四象限见下）",
+    "  --window 四象限：① 窗存在+缺省⇒采用窗 id ② == 窗 id⇒允许 ③ != ⇒ exit 2（点名两个值）",
+    "                   ④ 无窗⇒window=none（**断言不是缺失**：-09/-10 前证据无窗 id，省略会被误当窗内证据）",
+    "                   ⑤ 无窗但给了 --run-id ⇒ 不覆盖调用方值，仍 window=none + 「不具窗内效力」提示",
   ].join("\n");
 }
 
@@ -499,7 +534,18 @@ export function main(argv = process.argv.slice(2), deps = {}) {
     log(`用法错误：--since / XH_GATE_SINCE 不是可解析的时间（${sinceRaw}）；用 ISO 8601，如 2026-11-09T21:00:00+08:00`);
     return { exitCode: 2, results: [], summary: null };
   }
-  const runId = opts.runId ?? env.XH_GATE_RUN_ID ?? randomUUID();
+  const winIds = (() => {
+    try {
+      const ledPath = env.XH_WINDOW_LEDGER ?? join(repoRoot, "..", "internal", "A03-xihe", "scripts", "windows.json");
+      const led = JSON.parse(readFileSync(ledPath, "utf8"));
+      return (led.windows ?? []).filter((w) => w.status === "active").map((w) => w.id);
+    } catch { return []; }
+  })();
+  const winRes = resolveWindow({ activeWindowIds: winIds, windowId: opts.window ?? env.XH_WINDOW_ID ?? null, runId: opts.runId ?? env.XH_GATE_RUN_ID ?? null });
+  if (!winRes.ok) { log(`用法错误：${winRes.message}`); return { exitCode: winRes.code, results: [], summary: null }; }
+  const runId = winRes.effectiveRunId ?? randomUUID();
+  if (winRes.note) log(winRes.note);
+  log(`window=${winRes.window} run-id=${runId}`);
   const head = gitCommit(repoRoot);
 
   // 门表：默认门（mise）+ 目录里登记的 pkg 门（若 gates 里带 kind:"pkg"）；--fast 只保留轻门
@@ -526,14 +572,18 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   }).map((gate) => (opts.skip?.includes(gate.id) ? { ...gate, skipReason: "显式 --skip（调用方指定跳过）" } : gate));
 
   if (opts.list) {
-    log(`可用门 ${planned.length} 个（来源：mise.toml / package.json；class: fast=<60s 可随时跑 / full=L2 窗口内跑）`);
+    const ladder = (() => { try { return JSON.parse(readFileSync(join(repoRoot, "scripts/gate-ladder.json"), "utf8")).gates ?? []; } catch { return []; } })();
+    log(`可用门 ${planned.length} 个（SSOT=${DEFAULT_GATES.length} 条 @ 本次读取；梯次声明 ${ladder.length} 条 @ scripts/gate-ladder.json；class: fast=<60s / full=L2 窗口内跑）`);
     for (const gate of planned) {
+      const inLadder = ladder.includes(gate.id);
+      const winCol = inLadder ? `window:${winRes.window}` : "window:not-in-window";
+      const ssotCol = DEFAULT_GATES.some((g) => g.id === gate.id) ? "ssot:是" : "ssot:否";
       const state = gate.preflightFailure
         ? `FAIL(--strict): ${gate.preflightFailure}`
         : gate.skipReason
           ? `SKIP: ${gate.skipReason}`
           : "ready";
-      log(`  ${gate.id.padEnd(22)} [${(gate.class ?? "fast").padEnd(4)}] ${gate.cmd.padEnd(34)} ${state}`);
+      log(`  ${gate.id.padEnd(22)} [${(gate.class ?? "fast").padEnd(4)}] ${winCol.padEnd(22)} ${ssotCol.padEnd(20)} ${gate.cmd.padEnd(30)} ${state}`);
       if (gate.description) log(`  ${" ".repeat(28)} ${gate.description.slice(0, 140)}`);
     }
     return { exitCode: 0, results: [], summary: null };
