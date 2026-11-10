@@ -14,7 +14,7 @@ const messages = {
         settings: {
             ia: {
                 groupMyResources: "我的资源",
-                resourceMyAgents: "我的智能体",
+                resourceAgentPrincipals: "智能体主体",
                 resourceMyCredentials: "我的凭据",
                 resourceKnowledgeMcp: "知识库 · MCP",
                 backendGapBadge: "后端缺口 {code}",
@@ -52,9 +52,11 @@ function mountNav() {
 describe("SettingsResourceNav (PLAN-0752 T4.0)", () => {
     it("keeps the surviving gap entry visible and badges it (D7: no hiding)", () => {
         const wrapper = mountNav();
-        // PLAN-0750 M3 之后：我的智能体 / 我的凭据都是真入口，只剩知识库·MCP 是缺口。
+        // PLAN-0750 M3 之后：智能体主体 / 我的凭据都是真入口，只剩知识库·MCP 是缺口。
         // D7 的机制本身不能因为一项转真就删掉 —— 断言就靠 knowledge-mcp 这一条。
-        expect(wrapper.find('[data-testid="settings-nav-resource-my-agents"]').exists()).toBe(true);
+        expect(
+            wrapper.find('[data-testid="settings-nav-resource-agent-principals"]').exists(),
+        ).toBe(true);
         expect(wrapper.find('[data-testid="settings-nav-resource-my-credentials"]').exists()).toBe(
             true,
         );
@@ -67,13 +69,13 @@ describe("SettingsResourceNav (PLAN-0752 T4.0)", () => {
     it("routes real entries and never links gap entries", () => {
         const wrapper = mountNav();
         // 两个真入口都是链接，且指向已实现的页面
-        expect(wrapper.find('[data-testid="settings-nav-resource-my-agents"]').text()).toBe(
-            "我的智能体",
+        expect(wrapper.find('[data-testid="settings-nav-resource-agent-principals"]').text()).toBe(
+            "智能体主体",
         );
         // 真入口渲染成带 to 的链接（SettingsSidebar.spec 对 ops 项用的是同一条断言方式）。
         expect(
-            wrapper.find('[data-testid="settings-nav-resource-my-agents"]').attributes("to"),
-        ).toBe("/settings/my-agents");
+            wrapper.find('[data-testid="settings-nav-resource-agent-principals"]').attributes("to"),
+        ).toBe("/settings/agent-principals");
         expect(wrapper.find('[data-testid="settings-nav-resource-my-credentials"]').text()).toBe(
             "我的凭据",
         );
