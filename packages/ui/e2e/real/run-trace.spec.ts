@@ -7,6 +7,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { actionableErrors } from "./helpers/console";
+import { chooseRekaOption } from "./helpers/reka-select";
 import {
     CP_URL,
     awaitOperationCompletedForRun,
@@ -613,10 +614,9 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
         expect(run.status, "the real provider completed this no-tool Run").toBe("succeeded");
 
         const runSelect = page.getByTestId("monitor-trace-run-select");
-        await expect(runSelect.locator(`option[value="${runId}"]`)).toBeAttached({
-            timeout: LONG_TIMEOUT_MS,
-        });
-        await runSelect.selectOption(runId);
+        // BL-547（task-175）：运行追踪选择器是 reka Select（无原生 option 元素）；
+        // 选项文本 = "{短 id} · {label}" —— 用短 id 等选项出现并点击（覆盖原 attached 轮询）。
+        await chooseRekaOption(page, runSelect, new RegExp(runId.slice(0, 8)), LONG_TIMEOUT_MS);
         await expect
             .poll(() => page.getByTestId("run-trace-event").count(), {
                 timeout: LONG_TIMEOUT_MS,

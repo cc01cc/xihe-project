@@ -1,6 +1,6 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
@@ -12,6 +12,7 @@ import {
     seedUserGrantPermissions,
 } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -111,10 +112,11 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     await page.getByTestId("agent-role-name").fill("Browser Reader");
     await page.getByTestId("agent-role-add-permission").click();
-    await page.getByTestId("agent-role-action-0").selectOption("read");
+    // BL-547（task-175）：权限动作是 reka Select（触发器为 button），选项文本 = 动作类名本身。
+    await chooseRekaOption(page, page.getByTestId("agent-role-action-0"), /^read$/);
     await page.getByTestId("agent-role-resource-0").fill("src/*");
     await page.getByTestId("agent-role-add-permission").click();
-    await page.getByTestId("agent-role-action-1").selectOption("write");
+    await chooseRekaOption(page, page.getByTestId("agent-role-action-1"), /^write$/);
     await page.getByTestId("agent-role-resource-1").fill("*");
     const roleWritePromise = page.waitForResponse(
         (response) =>
@@ -127,8 +129,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await page.getByTestId("agent-template-name").fill("Browser Workspace Reader");
     await page.getByTestId("agent-template-description").fill("Template created through Settings");
     await page.getByTestId("agent-template-prompt").fill(TEMPLATE_PROMPT);
-    await page.getByTestId("agent-template-tool-mode").selectOption("workspace");
-    await page.getByTestId("agent-template-role").selectOption({ label: "Browser Reader" });
+    await chooseRekaOption(page, page.getByTestId("agent-template-tool-mode"), /^workspace$/);
+    await chooseRekaOption(page, page.getByTestId("agent-template-role"), "Browser Reader");
     await page.getByTestId("agent-template-provider").fill("openai");
     await page.getByTestId("agent-template-model").fill("e2e-model");
     const templateWritePromise = page.waitForResponse(
@@ -171,7 +173,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await expect(dialog.getByText("暂无活动会话")).toHaveCount(0);
 
     await page.getByTestId("agent-principal-name").fill("T44PersistentAgent");
-    await page.getByTestId("agent-principal-template").selectOption(templateId);
+    // BL-547（task-175）：模板选择器是 reka Select；选项文本 = "模板名 · 层"。
+    await chooseRekaOption(
+        page,
+        page.getByTestId("agent-principal-template"),
+        /Browser Workspace Reader · user/,
+    );
     await expect(page.getByTestId("agent-principal-create-form")).toContainText(
         "Browser Workspace Reader",
     );
@@ -489,11 +496,28 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     const e2eRunId = process.env.XIHE_E2E_RUN_ID;
     if (!e2eRunId) throw new Error("XIHE_E2E_RUN_ID is required for isolated log scanning");
-    const logDir = resolve(process.cwd(), "../../.tmp/e2e-host", e2eRunId, "logs");
-    const logFiles = readdirSync(logDir).filter((file) => file.endsWith(".log"));
+    // BL-547（task-175）：runner 进程内重试会把 host root 改名为 <runId>-rN，原路径在重试轮
+    // 直接 ENOENT。按基名匹配该 run 的全部轮次目录，每一轮的日志都扫（不削弱断言）。
+    const runBase = e2eRunId.replace(/-r\d+$/, "");
+    const hostRoot = resolve(process.cwd(), "../../.tmp/e2e-host");
+    const logDirs = readdirSync(hostRoot)
+        .filter(
+            (d) =>
+                d === runBase ||
+                d === e2eRunId ||
+                (d.startsWith(runBase) && /^-r\d+$/.test(d.slice(runBase.length))),
+        )
+        .map((d) => resolve(hostRoot, d, "logs"))
+        .filter((d) => existsSync(d));
+    expect(logDirs.length, `no log dirs for run ${e2eRunId} under ${hostRoot}`).toBeGreaterThan(0);
+    const logFiles = logDirs.flatMap((d) =>
+        readdirSync(d)
+            .filter((file) => file.endsWith(".log"))
+            .map((file) => resolve(d, file)),
+    );
     expect(logFiles.length).toBeGreaterThan(0);
     for (const file of logFiles) {
-        const content = readFileSync(resolve(logDir, file), "utf8");
+        const content = readFileSync(file, "utf8");
         expect(content, `${file} leaked a template prompt`).not.toContain(TEMPLATE_PROMPT);
         expect(content, `${file} leaked an owner token`).not.toContain(owner.authToken);
         expect(content, `${file} leaked a second-owner token`).not.toContain(secondOwner.authToken);

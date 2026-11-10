@@ -5,7 +5,43 @@ import { CP_URL } from "./journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./user-grants";
 
 import { AGENT_NAME_PATTERN } from "./agent-name";
+import { chooseRekaOption } from "./reka-select";
 import { LONG_TIMEOUT_MS } from "../../timeouts";
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * BL-547（task-175）：reka Select 的选项只以可见文本渲染（reka SelectItem 不出
+ * data-value），按 principalId 选不了项。从页面 localStorage 取 token，经列表端点
+ * 反查 principal 名，供 chooseRekaOption 按 "agent.name · templateName" 文本匹配。
+ */
+async function resolvePrincipalNameForPicker(page: Page, principalId: string): Promise<string> {
+    const token = await page.evaluate(() => localStorage.getItem("xihe-token") ?? "");
+    expect(
+        token,
+        "resolvePrincipalNameForPicker needs xihe-token (installAuth first)",
+    ).toBeTruthy();
+    const res = await page.request.get(CP_URL + "/api/v1/agent-principals", {
+        headers: { Authorization: "Bearer " + token },
+    });
+    expect(res.ok(), await res.text()).toBe(true);
+    const body = (await res.json()) as {
+        principals?: Array<{ id?: string; principalId?: string; name?: string }>;
+    };
+    const hit = (body.principals ?? []).find((p) => (p.id ?? p.principalId) === principalId);
+    expect(hit?.name, "principal " + principalId + " must be listed for the caller").toBeTruthy();
+    return hit!.name!;
+}
+
+/** 按 id 在 reka 工作区 agent 选择器里点选项（选项文本 = "agent.name · templateName"）。 */
+export async function chooseWorkspacePrincipalById(
+    page: Page,
+    trigger: Locator,
+    principalId: string,
+): Promise<void> {
+    const name = await resolvePrincipalNameForPicker(page, principalId);
+    await chooseRekaOption(page, trigger, new RegExp(escapeRegExp(name)));
+}
 type AgentAuth = { accessToken: string; workspaceId: string };
 /** GET /api/v1/provider-connections 的 connections[] 元素里本夹具用到的字段。 */
 type ProviderConnectionRow = {
@@ -347,7 +383,8 @@ export async function createWorkspaceSessionWithPrincipal(
 ): Promise<string> {
     await openAgentSessionSelector(page);
     const principalSelect = page.getByTestId("workspace-agent-principal-select");
-    await principalSelect.selectOption(principalId);
+    // BL-547（task-175）：reka Select —— 按 id 反查名字后点选项（见 resolvePrincipalNameForPicker）。
+    await chooseWorkspacePrincipalById(page, principalSelect, principalId);
 
     const responsePromise = page.waitForResponse((response) =>
         isSessionCreateRequest(response.url(), response.request().method()),

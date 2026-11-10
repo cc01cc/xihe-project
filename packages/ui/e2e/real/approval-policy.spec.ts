@@ -8,6 +8,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { expectRekaValue } from "./helpers/reka-select";
 
 /**
  * PLAN-0337 M1 真实链路验收（@host）：
@@ -200,8 +201,9 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
     // PLAN-0626 M2：模式选择器迁进右侧 dock 的 `context` 标签，聊天列摘要行只是入口；
     // 帮助器返回时面板已可见，不再需要点完再等。
     await openContextPanel(page);
-    // 模式控件是 <select>：断言选中值（文本是各选项标签拼接，不能整段比对）。
-    await expect(page.getByTestId("session-policy-mode")).toHaveValue("auto");
+    // BL-547（task-175）：模式控件是 reka Select，触发器是 button —— `toHaveValue` 会以
+    // "Not an input element" 失败。改为断言触发器可见文本（= 当前选中项标签）。
+    await expectRekaValue(page.getByTestId("session-policy-mode"), /自动放行|Auto allow/);
     await expect(page.getByTestId("session-policy-auto-banner")).toBeVisible();
 
     await page.screenshot({
@@ -219,7 +221,7 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
         timeout: LONG_TIMEOUT_MS,
     });
     await openContextPanel(page);
-    await expect(page.getByTestId("session-policy-mode")).toHaveValue("manual");
+    await expectRekaValue(page.getByTestId("session-policy-mode"), /手动审批|Manual approval/);
     await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0);
 
     await page.screenshot({

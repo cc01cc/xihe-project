@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { isSessionCreateRequest } from "./helpers/agent-principal";
+import { chooseWorkspacePrincipalById, isSessionCreateRequest } from "./helpers/agent-principal";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import {
     CP_URL,
@@ -482,7 +482,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     await createSession.click();
     const principalPicker = page.getByTestId("workspace-agent-principal-select");
     await expect(principalPicker).toBeVisible();
-    await principalPicker.selectOption(principalId);
+    // BL-547（task-175）：reka Select —— 按 id 反查名字后点选项。
+    await chooseWorkspacePrincipalById(page, principalPicker, principalId);
     const sessionResponsePromise = page.waitForResponse((response) =>
         isSessionCreateRequest(response.url(), response.request().method()),
     );

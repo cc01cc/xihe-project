@@ -11,6 +11,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
+import { chooseFirstRekaOption } from "./helpers/reka-select";
 import { ensureWorkspace } from "./helpers/workspace";
 import { generateE2EPassword } from "./helpers/password";
 import { seedUserGrant } from "./helpers/user-grants";
@@ -130,7 +131,8 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
     await page.getByTestId("workspace-create-session").click();
     const agentSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(agentSelect).toBeVisible();
-    await agentSelect.selectOption({ index: 1 });
+    // BL-547（task-175）：reka Select —— native index 选择改为点第一项。
+    await chooseFirstRekaOption(page, agentSelect);
     const sessionCreatedPromise = page.waitForResponse((response) =>
         isSessionCreateRequest(response.url(), response.request().method()),
     );

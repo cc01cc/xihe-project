@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { seedUserGrant } from "./helpers/user-grants";
+import { chooseWorkspacePrincipalById } from "./helpers/agent-principal";
 import {
     ensureAgentWorkspaceBinding,
     getRootBranchId,
@@ -159,7 +160,8 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     await page.getByTestId("workspace-create-session").click();
     const agentSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(agentSelect).toBeVisible();
-    await agentSelect.selectOption(principalId);
+    // BL-547（task-175）：reka Select —— 按 id 反查名字后点选项。
+    await chooseWorkspacePrincipalById(page, agentSelect, principalId);
     await page.getByTestId("workspace-create-agent-session").click();
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 

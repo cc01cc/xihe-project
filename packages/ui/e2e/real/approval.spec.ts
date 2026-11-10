@@ -10,6 +10,7 @@ import {
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+import { chooseFirstRekaOption } from "./helpers/reka-select";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -158,7 +159,8 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     await page.getByTestId("workspace-create-session").click();
     const agentSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(agentSelect).toBeVisible();
-    await agentSelect.selectOption({ index: 1 });
+    // BL-547（task-175）：reka Select —— native index 选择改为点第一项。
+    await chooseFirstRekaOption(page, agentSelect);
     await page.getByTestId("workspace-create-agent-session").click();
     const textarea = page.locator("textarea");
     await expect(textarea).toBeVisible({ timeout: LONG_TIMEOUT_MS });

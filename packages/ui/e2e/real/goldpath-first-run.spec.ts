@@ -24,6 +24,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { chooseFirstRekaOption, chooseRekaOption } from "./helpers/reka-select";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const FIRST_RUN = process.env.XIHE_E2E_FIRST_RUN ?? "";
@@ -456,7 +457,12 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     });
     const agentName = `GoldPathAgent${randomUUID().slice(0, 8)}`;
     await page.getByTestId("agent-principal-name").fill(agentName);
-    await page.getByTestId("agent-principal-template").selectOption("");
+    // BL-547（task-175）：模板选择器是 reka Select；「留空 = 默认模板」= 点默认模板项。
+    await chooseRekaOption(
+        page,
+        page.getByTestId("agent-principal-template"),
+        /默认模板|Default template/,
+    );
 
     const createResponse = page.waitForResponse(
         (response) =>
@@ -865,8 +871,12 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await page
             .getByTestId("agent-principal-name")
             .fill(`GoldPathAgent${randomUUID().slice(0, 8)}`);
-        // 模板留空 = 默认模板。
-        await page.getByTestId("agent-principal-template").selectOption("");
+        // 模板留空 = 默认模板（reka Select：点默认模板项，见 helpers/reka-select）。
+        await chooseRekaOption(
+            page,
+            page.getByTestId("agent-principal-template"),
+            /默认模板|Default template/,
+        );
 
         const createResponse = page.waitForResponse(
             (response) =>
@@ -903,9 +913,9 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await page.getByTestId("workspace-create-session").click();
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
         await expect(principalSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        const principalId = await principalSelect.locator("option").nth(1).getAttribute("value");
-        expect(principalId, "a bound principal must be selectable").toBeTruthy();
-        await principalSelect.selectOption(principalId!);
+        // BL-547（task-175）：reka Select 无原生 option 元素；「已绑定 agent 可选」=
+        // 打开下拉后存在可点选项（无选项时 first() 点击会明确失败，断言不削弱）。
+        await chooseFirstRekaOption(page, principalSelect);
 
         const sessionResponse = page.waitForResponse(
             (response) =>
@@ -939,9 +949,8 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await page.getByTestId("workspace-create-session").click();
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
         await expect(principalSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        const principalId = await principalSelect.locator("option").nth(1).getAttribute("value");
-        expect(principalId, "the bound principal must be selectable").toBeTruthy();
-        await principalSelect.selectOption(principalId!);
+        // BL-547（task-175）：同 G2-d —— reka Select 按第一项点选。
+        await chooseFirstRekaOption(page, principalSelect);
 
         const sessionResponse = page.waitForResponse(
             (response) =>

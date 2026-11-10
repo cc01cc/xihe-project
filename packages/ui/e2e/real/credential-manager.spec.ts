@@ -35,6 +35,7 @@ import { ensureWorkspace } from "./helpers/workspace";
 
 import { agentName } from "./helpers/agent-name";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = evidenceDir("plan-0498-credential-manager");
@@ -141,9 +142,20 @@ async function createCredentialViaUi(
     const dialog = page.getByTestId("credentials-create-dialog");
     await expect(dialog).toBeVisible();
     await dialog.getByTestId("credentials-create-label").fill(options.label);
-    await dialog.getByTestId("credentials-create-tier").selectOption(options.tier);
+    // BL-547（task-175）：层/种类是 reka Select（触发器为 button）；选项文本 = 本地化标签。
+    await chooseRekaOption(
+        page,
+        dialog.getByTestId("credentials-create-tier"),
+        options.tier === "lease"
+            ? /租约（智能体交付）|Lease \(Agent delivery\)/
+            : /Reveal（人工查看）|Reveal \(manual view\)/,
+    );
     if (options.kind === "key_pair") {
-        await dialog.getByTestId("credentials-create-kind").selectOption("key_pair");
+        await chooseRekaOption(
+            page,
+            dialog.getByTestId("credentials-create-kind"),
+            /Access Key \/ Secret Key|Access key \/ secret key/,
+        );
         await dialog.getByTestId("credentials-create-access-key").fill(options.accessKey ?? "");
         await dialog.getByTestId("credentials-create-secret-key").fill(options.secretKey ?? "");
     } else {
@@ -385,7 +397,9 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await expect(page.getByTestId("credential-bindings"), "生效范围文案").toContainText(
         "新建会话生效",
     );
-    await page.getByTestId("credential-bind-workspace").selectOption(wsId);
+    // BL-547（task-175）：绑定工作区是 reka Select（触发器为 button），selectOption 不适用；
+    // 选项文本 = workspace.name（ensureWorkspace 命名为 e2e-workspace-<ts>）。
+    await chooseRekaOption(page, page.getByTestId("credential-bind-workspace"), /^e2e-workspace-/);
     await expect(page.getByTestId(`credential-bind-agent-${principalId}`)).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });
@@ -523,7 +537,9 @@ test("@host credential manager — UI registration, role block, binding, lease u
     // --- V5 批量解绑：两个 principal 一次提交 → 已绑定标记消失 ---
     await openCredentialDetail(page, leaseCredentialId!);
     await page.getByTestId("credentials-tab-bindings").click();
-    await page.getByTestId("credential-bind-workspace").selectOption(wsId);
+    // BL-547（task-175）：绑定工作区是 reka Select（触发器为 button），selectOption 不适用；
+    // 选项文本 = workspace.name（ensureWorkspace 命名为 e2e-workspace-<ts>）。
+    await chooseRekaOption(page, page.getByTestId("credential-bind-workspace"), /^e2e-workspace-/);
     await expect(page.getByTestId(`credential-bind-agent-${principalId}`)).toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });
