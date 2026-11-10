@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CheckCircle2, CircleAlert, Clock, ShieldCheck, ShieldX, XCircle } from "@lucide/vue";
+import { nextTick, onMounted, ref } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import MessageItem from "@/features/workspace/chat/components/MessageItem.vue";
@@ -11,6 +12,15 @@ import {
     mockRefusedToolCall,
     mockSuccessToolCall,
 } from "../mockData";
+
+// 长串区块里的卡片默认折叠（产品行为），折叠时参数/结果块不在 DOM 里 ⇒ 量不到。
+// 这里挂载后按用户真实路径逐张点开，而不是给组件塞一个人造的「默认展开」状态。
+const longBlock = ref<HTMLElement | null>(null);
+const TOOL_CARD_TOGGLE = '[data-testid="tool-card-toggle"]';
+onMounted(async () => {
+    await nextTick();
+    longBlock.value?.querySelectorAll<HTMLElement>(TOOL_CARD_TOGGLE).forEach((el) => el.click());
+});
 </script>
 
 <template>
@@ -53,6 +63,7 @@ import {
                     工具卡 · 真实量级长串（bash 命令 / 绝对路径 / 参数 JSON / runId / 错误码）
                 </h3>
                 <div
+                    ref="longBlock"
                     class="space-y-3 rounded-xl border border-border bg-background p-4"
                     data-mono-probe="chat-long"
                 >
@@ -60,7 +71,6 @@ import {
                         v-for="call in mockLongToolCalls"
                         :key="call.id"
                         :tool-call="call"
-                        initial-expanded
                         @approve="() => {}"
                         @reject="() => {}"
                     />

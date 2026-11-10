@@ -869,6 +869,24 @@ export const mockLongWindowsPathToolCall: ToolCall = {
     completedAt: "2026-11-11T05:46:09Z",
 };
 
+// 正对照（task-102 压力腿可见性）：**单行**超长参数 JSON —— 没有硬换行，折行完全由字宽决定。
+// 用途：证明 1.5× 字距压力腿对「break-all 的 pre 块」真的会增行；若这张都不增行，
+// 就说明压力腿对这类块失明，chat-long 的「0」必须改写成 n/a。
+export const mockLongWrapProbeToolCall: ToolCall = {
+    id: "tc-long-wrapprobe",
+    runId: LONG_RUN_ID,
+    name: "runtime.exec_command",
+    arguments: JSON.stringify({
+        command:
+            "rg -n --no-heading --color never -g '*.ts' -g '*.vue' -g '!node_modules' -e 'data-mono-probe' -e 'measure-mono-width' -e 'letter-spacing' A03-xihe/packages/ui/src A03-xihe/packages/ui/e2e internal/A03-xihe/scripts | sort -u",
+        cwd: "/workspace/A03-xihe/packages/ui",
+    }),
+    status: "completed",
+    result: "exit 0",
+    startedAt: "2026-11-11T05:50:00Z",
+    completedAt: "2026-11-11T05:50:03Z",
+};
+
 // 聚合导出：preview 区块一次性渲染全部长串卡；以后加卡只改这一处。
 export const mockLongToolCalls: ToolCall[] = [
     mockLongArgsToolCall,
@@ -876,4 +894,5 @@ export const mockLongToolCalls: ToolCall[] = [
     mockLongErrorToolCall,
     mockLongRefusalToolCall,
     mockLongWindowsPathToolCall,
+    mockLongWrapProbeToolCall,
 ];
