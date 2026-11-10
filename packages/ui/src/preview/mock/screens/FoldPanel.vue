@@ -17,6 +17,8 @@ import {
     SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { domains, opsItems, securityItems, userItems } from "../data";
+// 当前域只从这一处取（此前把 rag 写死 ⇒ 正文换域后左栏高亮不动）
+import { activeDomainId } from "../data/all-domains";
 
 /**
  * One rail in a given folding state. Local refs (not props) so the toggle still works when the
@@ -26,6 +28,8 @@ import { domains, opsItems, securityItems, userItems } from "../data";
  * 交互，层由路由决定，所以左栏只剩折叠可见性这一件事可调。
  */
 const props = defineProps<{ instanceOpen: boolean; userOpen: boolean }>();
+
+const activeDomain = activeDomainId();
 
 const instanceOpen = ref(props.instanceOpen);
 const userOpen = ref(props.userOpen);
@@ -72,11 +76,11 @@ function instanceTotal(): number {
                                 <SidebarMenu>
                                     <SidebarMenuItem v-for="item in domains" :key="item.id">
                                         <SidebarMenuButton
-                                            :is-active="item.id === 'rag'"
+                                            :is-active="item.id === activeDomain"
                                             class="relative h-8"
                                         >
                                             <span
-                                                v-if="item.id === 'rag'"
+                                                v-if="item.id === activeDomain"
                                                 class="absolute inset-y-1 left-0 w-0.5 rounded-full bg-foreground"
                                                 aria-hidden="true"
                                             />

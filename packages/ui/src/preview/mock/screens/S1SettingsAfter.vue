@@ -42,7 +42,7 @@ import NavRail from "@/components/sidebar/NavRail.vue";
 import DomainCanvas from "./DomainCanvas.vue";
 import DomainPanelCanvas from "./DomainPanelCanvas.vue";
 import { CORE_DOMAINS } from "../data/domains-core";
-import { ALL_DOMAINS } from "../data/all-domains";
+import { ALL_DOMAINS, activeDomainId } from "../data/all-domains";
 import { domains, opsItems, securityItems, userItems } from "../data";
 
 /**
@@ -73,7 +73,10 @@ import { domains, opsItems, securityItems, userItems } from "../data";
  *
  * 全局设置只有两层：工作区设置在各工作区内部（本轮不设计），所以左栏不出现「工作区层」。
  */
-const active = ref("rag");
+// 当前域 = 唯一状态：初值从 URL 取（`activeDomainId()`），点击后由交互改。
+// 2026-11-11 实证：此前这里是写死的 `ref("rag")`，于是 `?domain=embedding` 的图上正文是「向量化」、
+// 左栏高亮却停在「RAG 检索」——「当前态」必须随数据/交互变，不能钉死。
+const active = ref(activeDomainId());
 /** 审阅辅助注记（内容列宽边线/尺寸标注）由外壳的 `?notes=0` 统一开关，画布内默认不显示。 */
 const notes = inject<Ref<boolean>>("mockNotes", ref(false));
 
@@ -81,7 +84,7 @@ const notes = inject<Ref<boolean>>("mockNotes", ref(false));
 const instanceOpen = ref(true);
 const userOpen = ref(false);
 
-// task-77：内容区按 ?domain= 切换；未指定时退回原有的 RAG 硬编码体（便于对照）
+// task-77：内容区按 ?domain= 切换。URL 解析收敛在 activeDomainId()（左栏高亮也读它，一处判断）。
 const domainParam = new URLSearchParams(window.location.search).get("domain");
 // 表单域（我）+ 专用面板域（ui-2）合成唯一查找表；否则 ?domain=embedding 会静默落回 rag
 // 面板域排在最前：同 id 时专用面板实现优先（A/B 数据待 Lead 重派，暂不并入）
@@ -94,7 +97,7 @@ const domainParam = new URLSearchParams(window.location.search).get("domain");
 // 域全集收敛在 `data/all-domains.ts`（task-81）：面板域在前、同 id 时表单域让位。
 // 这里不再自己拼集合 —— 那样会漏掉 agent-runtime（`?domain=agent-runtime` 曾静默落回 rag）。
 const activeDomain = computed(
-    () => ALL_DOMAINS.find((domain) => domain.id === domainParam) ?? CORE_DOMAINS[0],
+    () => ALL_DOMAINS.find((domain) => domain.id === active.value) ?? CORE_DOMAINS[0],
 );
 // [裁定 E] 专用面板域有两个状态：列表态 / 详情态（?detail=1）
 const detailParam = new URLSearchParams(window.location.search).get("detail") === "1";

@@ -28,6 +28,19 @@ export const FORM_DOMAINS: MockDomain[] = [
 export const ALL_DOMAINS: MockDomain[] = [...DEDICATED_DOMAINS, ...FORM_DOMAINS];
 
 /** 域 id → 字段条数（左栏 badge 的唯一来源）。未知域返回 0，由 `badgeOf()` 决定怎么显示。 */
+/**
+ * 当前域 id —— **唯一来源**。
+ *
+ * 屏面用 `?domain=<id>` 选域。左栏高亮、标题行、画布都必须从这一处取，否则「当前是谁」会有
+ * 好几个答案：2026-11-11 实证 —— `FoldPanel.vue` / `S4GlobalNav.vue` 把 RAG 钉成 active
+ * （`item.id === 'rag'`），于是 `?domain=embedding` 的图上正文是「向量化」、左栏高亮却在「RAG 检索」。
+ * 未知/缺省一律回落到 `CORE_DOMAINS[0]`（=rag），与画布的兜底同口径。
+ */
+export function activeDomainId(override?: string | null): string {
+    const raw = override ?? new URLSearchParams(window.location.search).get("domain");
+    return raw && ALL_DOMAINS.some((domain) => domain.id === raw) ? raw : CORE_DOMAINS[0].id;
+}
+
 export function fieldCountOf(domainId: string): number {
     const domain = ALL_DOMAINS.find((item) => item.id === domainId);
     if (!domain) return 0;

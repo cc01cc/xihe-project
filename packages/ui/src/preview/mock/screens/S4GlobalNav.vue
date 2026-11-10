@@ -17,6 +17,8 @@ import {
     SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { domains, modules, opsItems } from "../data";
+// 当前域只从这一处取（模块栏的 settings 常亮是另一回事，见 :is-active="m.id === 'settings'"）
+import { activeDomainId } from "../data/all-domains";
 
 /**
  * Sheet 04 — the global module bar in both states.
@@ -34,6 +36,8 @@ import { domains, modules, opsItems } from "../data";
  * one-way `:open` prop once its internal state is writable — a static `:open="false"` renders
  * expanded (observed while building this sheet).
  */
+const activeDomain = activeDomainId();
+
 const collapsedOpen = ref(false);
 const expandedOpen = ref(true);
 </script>
@@ -183,12 +187,12 @@ const expandedOpen = ref(true);
                                             :key="item.id"
                                         >
                                             <SidebarMenuButton
-                                                :is-active="item.id === 'rag'"
+                                                :is-active="item.id === activeDomain"
                                                 size="sm"
                                                 class="relative"
                                             >
                                                 <span
-                                                    v-if="item.id === 'rag'"
+                                                    v-if="item.id === activeDomain"
                                                     class="absolute inset-y-1 left-0 w-0.5 rounded-full bg-foreground"
                                                     aria-hidden="true"
                                                 />
