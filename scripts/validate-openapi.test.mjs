@@ -29,12 +29,16 @@ function run(file) {
   })
 }
 
-test('valid contract ⇒ exit 0 and parses 272 paths', () => {
+test('valid contract ⇒ exit 0 and paths count matches yaml', () => {
   const fx = fixture('openapi.yaml')
   try {
     const result = run(fx.file)
     assert.equal(result.status, 0, result.stderr)
-    assert.match(result.stdout, /paths: 272/)
+    // 动态断言：validator 报出的 paths 数必须与 yaml 顶层 path 键数一致（不硬编码存量数，
+    // 契约合法增删 path 时本测试不应红——272→270 存量漂移的根因就是硬编码，task-218）。
+    const yamlText = fs.readFileSync(fx.file, 'utf8')
+    const yamlPaths = (yamlText.match(/^  \/[^:]+:\s*$/gm) || []).length
+    assert.match(result.stdout, new RegExp('paths: ' + yamlPaths))
   } finally {
     fx.cleanup()
   }
