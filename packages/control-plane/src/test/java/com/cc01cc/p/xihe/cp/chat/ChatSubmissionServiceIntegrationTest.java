@@ -169,7 +169,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         String missingPrincipalRunId = UUID.randomUUID().toString();
         CpApiException missing = assertThrows(CpApiException.class,
                 () -> submit(missingPrincipalRunId, persistedSession, user, workspace, "rejected message"));
-        assertEquals("FORBIDDEN", missing.getCode());
+        // PLAN-0750 / G8 (task-155): dedicated code, not a bare FORBIDDEN — the UI branches on it.
+        assertEquals("AGENT_PRINCIPAL_MISSING", missing.getCode());
         assertTrue(chatRunRepository.findById(UUID.fromString(missingPrincipalRunId)).isEmpty());
 
         AgentPrincipal principal = savePrincipal(user);
@@ -265,7 +266,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 user, workspace, "new content", principal.getId().toString()));
 
         assertEquals(HttpStatus.FORBIDDEN, rejected.getStatus());
-        assertEquals("FORBIDDEN", rejected.getCode());
+        assertEquals("AGENT_PRINCIPAL_MISSING", rejected.getCode());
         Session unchanged = sessionRepository.findById(persistedSession.getId()).orElseThrow();
         assertTrue(sessionParticipantRepository.primaryPrincipalId(unchanged.getId()).isEmpty(),
                 "a refused historical-session admission leaves no PRIMARY participant");
@@ -303,7 +304,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 user, workspace, "not allowed", principal.getId().toString()));
 
         assertEquals(HttpStatus.FORBIDDEN, rejected.getStatus());
-        assertEquals("FORBIDDEN", rejected.getCode());
+        assertEquals("AGENT_PRINCIPAL_MISSING", rejected.getCode());
         assertTrue(sessionParticipantRepository.primaryPrincipalId(session.getId()).isEmpty(),
                 "a refused direct-user Session admission leaves no PRIMARY participant");
         assertFalse(chatRunRepository.findById(UUID.fromString(runId)).isPresent());
@@ -329,7 +330,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 user, workspace, "not allowed", principal.getId().toString()));
 
         assertEquals(HttpStatus.FORBIDDEN, rejected.getStatus());
-        assertEquals("FORBIDDEN", rejected.getCode());
+        assertEquals("AGENT_PRINCIPAL_MISSING", rejected.getCode());
         assertTrue(sessionParticipantRepository.primaryPrincipalId(session.getId()).isEmpty(),
                 "a refused tool-event Session admission leaves no PRIMARY participant");
         assertFalse(chatRunRepository.findById(UUID.fromString(runId)).isPresent());
@@ -560,7 +561,8 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "a refused submission must not persist a run");
     }
     private void assertRejectedWithoutWrites(String runId, Session session, User user, Workspace workspace) {
-        assertRejectedWithoutWrites(runId, session, user, workspace, HttpStatus.FORBIDDEN, "FORBIDDEN");
+        assertRejectedWithoutWrites(runId, session, user, workspace, HttpStatus.FORBIDDEN,
+                "AGENT_PRINCIPAL_MISSING");
     }
 
     private void assertRejectedWithoutWrites(String runId, Session session, User user, Workspace workspace,
