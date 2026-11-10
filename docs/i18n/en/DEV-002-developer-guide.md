@@ -170,6 +170,14 @@ mise run test:runtime:lib:ignored:functional
 # e2e fixture self-tests (fake LLM chain state machine; no stack, seconds) — part of `validate`
 mise run test:e2e:fixtures
 
+# mock-lane S1 smoke (29 spec files; measured 106 passed / 1 flaky / 2 skipped, 95 s wall, --workers=4,
+# headless). No backend needed. XIHE_UI_PORT is REQUIRED: playwright.config.ts defaults to 12630, which
+# sits inside the verification-window forbidden range 12630-12633, so unset or in-range exits 2.
+mise run test:mock:smoke
+# test:mock (full mock lane, same config, all spec files) ALREADY EXISTS and was NOT measured in this
+# round — TODO: record wall time / test counts / red count from a real run before quoting numbers.
+mise run test:mock
+
 # read-only ledger (BL/PLAN) validation, run from the ONE workspace root; report-only (not part of `validate`)
 mise run ledger:validate
 
