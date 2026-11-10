@@ -280,12 +280,6 @@ function checkProjectRoot(projectRoot) {
   }
 }
 
-function tableRows(rows, columns) {
-  const lines = [];
-  for (const column of columns) lines.push(column);
-  return lines;
-}
-
 /**
  * PLAN-0662 L4 + BL-253 L3: build freshness of **this stack's** CP build.
  *

@@ -143,7 +143,7 @@ export async function runConfigSet({ apiBase, fetchImpl, token, options, positio
 
 // T2.7: delete one instance key (DELETE /api/v1/config/instance/{domain}/{key}).
 // Idempotent on the CP side; 409 lock codes pass through with the locks hint.
-export async function runConfigUnset({ apiBase, fetchImpl, token, options, positionals, stderr }) {
+export async function runConfigUnset({ apiBase, fetchImpl, token, positionals, stderr }) {
   requirePositionalCount(positionals, 2, '<domain> <key>');
   const [domain, key] = positionals.map((item) => String(item).trim());
   requireDomain([domain]);

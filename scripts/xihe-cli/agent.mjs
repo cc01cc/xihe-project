@@ -104,7 +104,7 @@ function expectStatus(response, action, accepted = [200, 201, 204]) {
   const code = response.code ?? `HTTP_${response.status}`;
   throw new CliError(code, `CP rejected ${action} (HTTP ${response.status}${code === `HTTP_${response.status}` ? '' : ` ${code}`}).`, {
     httpStatus: response.status,
-    ...(response.body ?? {}),
+    ...response.body,
     ...(response.retryAfter ? { retryAfter: response.retryAfter } : {}),
   }, 1);
 }

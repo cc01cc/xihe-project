@@ -48,8 +48,6 @@ export async function runAuthCommand({
   platform,
   now,
   stderr = process.stderr,
-  stdin = process.stdin,
-  forcePassword = false,
 }) {
   if (command === 'login') {
     const parsed = parseOptions(rest, ['--email'], ['--force', '--no-cache', '--yes']);

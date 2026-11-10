@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 
 import { CliError, getApiBase, requestJson } from './provider.mjs';
 import { cacheDisabled, persistToken, resolveTokenPath, tokenEntryFor } from './token-store.mjs';

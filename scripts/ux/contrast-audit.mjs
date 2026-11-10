@@ -137,7 +137,7 @@ function parseColor(raw) {
     }
     m = value.match(/^rgba?\(([^)]+)\)$/);
     if (m) {
-        const parts = m[1].split(/[,\s\/]+/).filter(Boolean).map((p) => p.trim());
+        const parts = m[1].split(/[,\s/]+/).filter(Boolean).map((p) => p.trim());
         if (parts.length < 3) fail("bad rgb color: " + raw);
         const channel = (p) => {
             const n = p.endsWith("%") ? parseFloat(p) * 2.55 : parseFloat(p);
@@ -151,7 +151,7 @@ function parseColor(raw) {
     }
     m = value.match(/^oklch\(([^)]+)\)$/);
     if (m) {
-        const parts = m[1].split(/[,\s\/]+/).filter(Boolean).map((p) => p.trim());
+        const parts = m[1].split(/[,\s/]+/).filter(Boolean).map((p) => p.trim());
         if (parts.length < 3) fail("bad oklch color: " + raw);
         const l = parts[0].endsWith("%") ? parseFloat(parts[0]) / 100 : parseFloat(parts[0]);
         const c = parseFloat(parts[1]);

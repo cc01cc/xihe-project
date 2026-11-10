@@ -56,7 +56,7 @@ function run(program, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnCommand(program, args, {
       cwd: options.cwd ?? projectDir,
-      env: { ...process.env, ...(options.env ?? {}) },
+      env: { ...process.env, ...options.env },
       stdio: options.stdio ?? 'inherit',
       windowsHide: true,
     })

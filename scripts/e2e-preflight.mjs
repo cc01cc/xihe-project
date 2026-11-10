@@ -755,7 +755,7 @@ function runDiskGate() {
   console.log('')
   return result
 }
-const diskResult = runDiskGate()
+runDiskGate()
 
 // --------------------------------------------------------------- 5. digest
 console.log('[5/5] recent runs (.local/dev + Playwright last run)')

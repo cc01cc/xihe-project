@@ -30,7 +30,7 @@
  *
  * 退出码：0 = 通过（report-only 恒 0）；1 = --enforce 且有 violation；2 = 扫描/配置错误。
  */
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -88,7 +88,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
  */
 export function maskSource(source) {
     const chars = source.split("");
-    const masked = new Array(chars.length);
+    const masked = Array.from({ length: chars.length });
     let state = "code";
     let quote = "";
     for (let i = 0; i < chars.length; i += 1) {

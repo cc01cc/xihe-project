@@ -93,7 +93,7 @@ function depInfoOwner(profileDir) {
     let text;
     try {
       text = readFileSync(join(profileDir, entry.name), 'utf8');
-    } catch (error) {
+    } catch {
       continue;
     }
     for (const match of text.matchAll(/[A-Za-z]:[\\/]zeogit[\\/]one[\\/]([^\\/\s]+)/g)) {
@@ -162,7 +162,7 @@ function deriveExternalRoot() {
     const candidate = join(current, '.tmp', 'cargo-target');
     try {
       if (statSync(candidate).isDirectory()) return candidate;
-    } catch (error) {
+    } catch {
       // 继续向上找
     }
     const parent = dirname(current);
@@ -187,7 +187,7 @@ function probeRuntimeBinary() {
   let laneName = null;
   try {
     if (statSync(join(root, '.git')).isFile()) laneName = root.split(/[\\/]/).pop();
-  } catch (error) {
+  } catch {
     laneName = null;
   }
   const roots = [];
@@ -245,7 +245,7 @@ function legacyLocalRoot(externalRoot) {
   const candidate = join(base, '.local', 'cargo-target');
   try {
     return statSync(candidate).isDirectory() ? candidate : null;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

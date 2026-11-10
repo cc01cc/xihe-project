@@ -98,7 +98,7 @@ for (const line of chatSessionSource.split('\n')) {
             dispatchCommands.add(`${moduleGroup} ${m[1]}`);
         }
     }
-    if (/^}/.test(line)) moduleGroup = null;
+    if (line.startsWith('}')) moduleGroup = null;
 }
 // 3-level commands only appear in the help registry (`xihe-cli/help.mjs`, PLAN-0643 T4.7);
 // the registry replaced the `helpText()` string array, so import it instead of slicing a

@@ -160,7 +160,6 @@ export async function runApiEscape({
   apiBase,
   promptSecret,
   stdin = process.stdin,
-  stdout = process.stdout,
   stderr = process.stderr,
   fsImpl,
   confirm = confirmAction,

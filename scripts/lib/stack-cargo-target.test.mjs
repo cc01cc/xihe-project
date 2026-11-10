@@ -108,7 +108,6 @@ test('a set root that does not exist throws (no silent fallback to the old volum
 });
 
 test('a relative root is rejected instead of being resolved against the cwd', () => {
-  const projectRoot = resolve('A03-xihe');
   for (const bad of ['zeotmp/xh-cargo-target', '.tmp/cargo-target']) {
     assert.throws(
       () => cargoTargetRoot({ env: rootEnv(bad), exists: () => true }),

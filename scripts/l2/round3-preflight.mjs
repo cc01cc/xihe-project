@@ -147,12 +147,10 @@ function record(id, name, ok, detail, { blocking = true } = {}) {
 }
 
 /* ------------------------------- 3. event keys ------------------------------- */
-let eventKeys = null;
 {
   const res = run('node scripts/check-event-keys.mjs --enforce', { timeout: 120_000 });
   const redMatch = /^RED\s+(\d+)/mu.exec(res.out);
   const red = redMatch ? Number(redMatch[1]) : null;
-  eventKeys = { red, exitCode: res.code };
   const ok = red === 0;
   let detail;
   if (red === null) detail = `无法解析 RED 计数（exit=${res.code}）—— 视为失败`;
@@ -255,7 +253,6 @@ let eventKeys = null;
 /* ---------------------------------- 输出 ---------------------------------- */
 const blockingFailures = checks.filter((check) => check.blocking && !check.ok);
 const ok = blockingFailures.length === 0;
-const sha = checks.find((check) => check.id === 'target-sha')?.detail ?? '';
 
 if (JSON_MODE) {
   console.log(JSON.stringify({

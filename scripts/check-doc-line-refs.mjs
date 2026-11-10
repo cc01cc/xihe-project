@@ -59,7 +59,7 @@ const SKIP_DIRS = new Set([
     "coverage",
 ]);
 
-const REF_RE = /`([A-Za-z0-9_@./+-]+\.(?:java|kt|ts|tsx|vue|sql|mjs|cjs|js|toml|json|jsonc|md|py|yaml|yml|xml|ps1|sh|rs|css|mts)):(\d+)(?:-(\d+))?(?:#([A-Za-z0-9_$.#:\-]+))?`/gu;
+const REF_RE = /`([A-Za-z0-9_@./+-]+\.(?:java|kt|ts|tsx|vue|sql|mjs|cjs|js|toml|json|jsonc|md|py|yaml|yml|xml|ps1|sh|rs|css|mts)):(\d+)(?:-(\d+))?(?:#([A-Za-z0-9_$.#:-]+))?`/gu;
 
 /** 从一段 markdown 里抽引用。返回 [{line, target, start, end, anchor, raw}] */
 export function parseRefs(text) {
@@ -308,7 +308,6 @@ const itemKey = (item) => item.citing + "|" + item.citingLine + "|" + item.targe
 export function compareBaseline(current, baseline) {
     const baselineDrift = new Set((baseline.items ?? []).filter((i) => i.status === "drift").map(itemKey));
     const currentDrift = current.items.filter((i) => i.status === "drift");
-    const currentKeys = new Set(currentDrift.map(itemKey));
     const newDrift = currentDrift.filter((i) => !baselineDrift.has(itemKey(i)));
     // 「已修复」只算**本次真扫到且不再漂**的项；本次没扫到的项不算修复（否则未带锚的存量会被误读成已修好）
     const currentByKey = new Map(current.items.map((i) => [itemKey(i), i]));

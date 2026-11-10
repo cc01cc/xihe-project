@@ -1,10 +1,10 @@
 import { join, dirname, isAbsolute } from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
-import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
+import { connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
@@ -255,7 +255,6 @@ if (batchName) {
 
 const workerCount = process.env.XIHE_E2E_WORKERS ?? '1'
 const readinessTimeoutMs = Number(process.env.XIHE_E2E_READY_TIMEOUT_MS ?? '120000')
-const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const uvCommand = process.platform === 'win32' ? 'uv.exe' : 'uv'
 const nodeCommand = process.execPath
 const mvnCommand = process.platform === 'win32' ? 'mvn.cmd' : 'mvn'
@@ -786,37 +785,6 @@ function randomPassword(length) {
   return result
 }
 
-function reservePort(preferredPort) {
-  return new Promise((resolve, reject) => {
-    const probe = createTcpServer()
-    const listen = (port) => probe.listen(port, '127.0.0.1')
-    probe.once('error', (error) => {
-      if (error.code === 'EADDRINUSE' && preferredPort !== '0') {
-        listen(0)
-        return
-      }
-      reject(error)
-    })
-    probe.once('listening', () => {
-      const address = probe.address()
-      const port = typeof address === 'object' && address ? address.port : 0
-      probe.close(() => resolve(String(port)))
-    })
-    listen(Number(preferredPort))
-  })
-}
-
-async function reserveHostPorts() {
-  if (!process.env.XIHE_UI_PORT) uiPort = await reservePort(uiPort)
-  if (!process.env.XIHE_CP_PORT) cpPort = await reservePort(cpPort)
-  if (!process.env.XIHE_AGENT_PORT) agentPort = await reservePort(agentPort)
-  if (!process.env.XIHE_RUNTIME_PORT) runtimePort = await reservePort(runtimePort)
-  if (!process.env.XIHE_PG_PORT) pgPort = await reservePort(pgPort)
-  if (!process.env.XIHE_FAKE_OAUTH_PORT) fakeOAuthPort = await reservePort(fakeOAuthPort)
-  if (!process.env.XIHE_FAKE_MCP_PORT) fakeMcpPort = await reservePort(fakeMcpPort)
-  if (!process.env.XIHE_FAKE_LLM_PORT) fakeLlmPort = await reservePort(fakeLlmPort)
-}
-
 function isWithin(child, parent) {
   const childPath = child.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
   const parentPath = parent.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
@@ -847,7 +815,7 @@ function run(program, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnCommand(program, args, {
       cwd: options.cwd ?? projectDir,
-      env: { ...process.env, ...(options.env ?? {}) },
+      env: { ...process.env, ...options.env },
       stdio: options.stdio ?? 'inherit',
       windowsHide: true,
     })
@@ -860,7 +828,7 @@ function runCapture(program, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawnCommand(program, args, {
       cwd: options.cwd ?? projectDir,
-      env: { ...process.env, ...(options.env ?? {}) },
+      env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })

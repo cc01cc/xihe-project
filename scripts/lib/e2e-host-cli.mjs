@@ -69,7 +69,6 @@ export function decideLlmMode({ batchName, batchLlmMode, argMode, envMode, allow
  */
 export function warnBatchPlusSpecs({ batchName, batchSpecs = [], positionalSpecs = [] }) {
   if (!batchName || positionalSpecs.length === 0) return { action: 'ok' };
-  const alreadyInBatch = positionalSpecs.filter((spec) => batchSpecs.includes(spec));
   const added = positionalSpecs.filter((spec) => !batchSpecs.includes(spec));
   const appended = added.length > 0
     ? `位置参数里的 ${added.length} 个 spec 只是追加，不会收窄。`

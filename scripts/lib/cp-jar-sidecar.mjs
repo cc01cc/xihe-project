@@ -384,7 +384,7 @@ export function readSidecar({ jarPath, readFile = readFileSync }) {
  *   now?: () => number,
  * }} input
  */
-export function evaluateSidecar({ jarPath, projectDir, scope = DEFAULT_SOURCE_SCOPE, run = spawnSync, readFile = readFileSync, now = Date.now }) {
+export function evaluateSidecar({ jarPath, projectDir, scope = DEFAULT_SOURCE_SCOPE, run = spawnSync, readFile = readFileSync }) {
   const read = readSidecar({ jarPath, readFile });
   if (read.state === 'missing') return { state: 'missing', file: read.file, data: null, reason: 'no sidecar manifest next to the jar' };
   if (read.state === 'invalid') return { state: 'invalid', file: read.file, data: null, reason: `the sidecar is unusable: ${read.error}` };

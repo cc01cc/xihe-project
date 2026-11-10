@@ -23,7 +23,7 @@
  * 退出码：0 = 通过；1 = 任一步失败/发现违规。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,7 +83,6 @@ function run(command, argv, options = {}) {
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "xihe-standalone-"));
 const tarPath = join(tmpRoot, "repo.tar");
-const extractDir = join(tmpRoot, "repo");
 
 function buildArchive() {
   if (!useWorktree) {

@@ -131,7 +131,7 @@ function main() {
         return 2;
     }
     const summary = summarizeReport(report);
-    const { problems, unregistered, retired } = compareWithBaseline(summary, baseline);
+    const { problems } = compareWithBaseline(summary, baseline);
     const line =
         `[check-mock-baseline] expected=${summary.expected} skipped=${summary.skipped} ` +
         `failed=${summary.failed} flaky=${summary.flaky} skips=${summary.skipNames.length}`;

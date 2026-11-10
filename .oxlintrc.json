@@ -1,0 +1,21 @@
+{
+  "env": {
+    "node": true
+  },
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "no-undef": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "scripts/perf/bl301-multitab.mjs"
+      ],
+      "env": {
+        "browser": true
+      }
+    }
+  ]
+}
