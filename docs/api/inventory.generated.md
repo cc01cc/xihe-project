@@ -5,9 +5,9 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**330** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 232 · 服务间 98
+- 规模：**332** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 232 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 10 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（330 / 330 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（332 / 332 个操作带 tag）。
 
 ## public（232 operations · 公开 · 17 tags）
 
@@ -196,7 +196,7 @@
 | `PUT /api/v1/config/instance/{domain}` | `putInstanceConfig` | `bearerAuth` | — | 公开 |
 | `DELETE /api/v1/config/instance/{domain}/{key}` | `deleteInstanceConfig` | `bearerAuth` | Clear one instance-layer default (PLAN-0554) | 公开 |
 | `PUT /api/v1/config/user/{domain}` | `putUserConfig` | `bearerAuth` | — | 公开 |
-| `PUT /api/v1/config/workspace/{domain}` | `putWorkspaceConfig` | `bearerAuth` | — | 公开 |
+| `PUT /api/v1/config/workspace/{domain}` | `putWorkspaceConfig` | `bearerAuth` | (deprecated) Write one workspace-layer config domain | 公开 |
 | `GET /api/v1/config/{domain}` | `getConfig` | `bearerAuth` | — | 公开 |
 | `GET /api/v1/config/{domain}/meta` | `getConfigMeta` | `bearerAuth` | Read per-key config provenance for one layer (PLAN-0554) | 公开 |
 | `PUT /api/v1/config/{layer}/api-request-templates` | `saveApiRequestTemplates` | `bearerAuth` | — | 公开 |
@@ -328,9 +328,9 @@
 | `POST /api/v1/telemetry/logs` | `ingestTelemetry` | `bearerAuth` | — | 公开 |
 | `GET /api/v1/version` | `deploymentVersion` | `bearerAuth` | Deployment identity and module versions | 公开 |
 
-## internal（98 operations · 服务间 · 3 tags）
+## internal（100 operations · 服务间 · 3 tags）
 
-### service-agent（28）
+### service-agent（30）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -347,6 +347,7 @@
 | `POST /internal/v1/agent/checkpoints/{threadId}/writes` | `putAgentCheckpointWrites` | `bearerAuth` | Store pending writes for one checkpoint (owner-scoped) | 服务间 |
 | `GET /internal/v1/agent/embedding-models` | `agentEmbeddingModels` | `bearerAuth` | — | 服务间 |
 | `GET /internal/v1/agent/health` | `agentHealth` | — | — | 服务间 |
+| `POST /internal/v1/agent/judge/decide` | `agentJudgeDecide` | `bearerAuth` | One judge completion for one CP-assembled prompt | 服务间 |
 | `POST /internal/v1/agent/mcp/reinit` | `reinitializeAgentMcp` | `bearerAuth` | — | 服务间 |
 | `GET /internal/v1/agent/models` | `agentModelsLegacy` | `bearerAuth` | — | 服务间 |
 | `POST /internal/v1/agent/models` | `agentScopedModels` | `bearerAuth` | — | 服务间 |
@@ -358,6 +359,7 @@
 | `GET /internal/v1/agent/registry/workers` | `listWorkers` | `bearerAuth` | — | 服务间 |
 | `POST /internal/v1/agent/registry/workers/{workerId}/disable` | `disableWorker` | `bearerAuth` | — | 服务间 |
 | `POST /internal/v1/agent/registry/workers/{workerId}/enable` | `enableWorker` | `bearerAuth` | — | 服务间 |
+| `POST /internal/v1/agent/runs/{runId}/cancel` | `agentCancelRun` | `bearerAuth` | Ask the Agent to cancel one live run | 服务间 |
 | `POST /internal/v1/agent/summarize` | `agentSummarize` | `bearerAuth` | — | 服务间 |
 | `GET /internal/v1/agent/tools` | `agentTools` | `bearerAuth` | — | 服务间 |
 | `POST /internal/v1/agent/user-question/respond` | `agentUserQuestionRespond` | `bearerAuth` | Deliver the user's answer to the Agent's blocked ask_user wait | 服务间 |
