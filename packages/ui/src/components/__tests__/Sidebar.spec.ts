@@ -296,7 +296,9 @@ describe("Sidebar", () => {
         mockAuth();
         const wrapper = await mountSidebar({ isMobile: true, open: false });
 
-        expect(wrapper.find("aside").attributes("style")).toContain("width: 0px");
+        // 宽度载体上移到 AppLayout 的 panel 层（dev-3 存量缺陷修法）⇒ aside 不再声明宽度；
+        // 「零宽」由壳层 `navPanelStyle` 的 `width: 0px` 持有（见 AppLayout.spec 移动端用例）。
+        expect(wrapper.find("aside").attributes("style")).toBeUndefined();
         expect(wrapper.find("aside").attributes("aria-hidden")).toBe("true");
         expect(wrapper.findComponent(NavRail).exists()).toBe(false);
     });

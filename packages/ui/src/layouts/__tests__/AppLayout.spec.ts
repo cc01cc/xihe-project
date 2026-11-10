@@ -222,6 +222,11 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", 
 
         const aside = wrapper.get('[data-testid="sidebar"]');
         expect(aside.classes()).toContain("fixed");
+        // 宽度载体在 panel 层（dev-3 存量缺陷修法）：组件不再声明 aside 宽度，
+        // 改由 AppLayout 的 `navPanelStyle` 在 panel 载体上声明 `flex: none` + 显式宽度。
+        const panelStyle = aside.attributes("style") ?? "";
+        expect(panelStyle).toContain("flex: 0 0 auto");
+        expect(panelStyle).toContain("width: 0px");
         // 抽屉面板的默认宽退化为 56（collapsedSize）⇒ 无内容宽度声明，不参与 flex 分配。
         expect(aside.attributes("data-panel-size")).toBe("56.0");
         // handle 在移动端卸载（抽屉不进 split）。
