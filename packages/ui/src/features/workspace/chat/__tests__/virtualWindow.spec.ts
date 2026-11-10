@@ -7,6 +7,7 @@ import {
     computeVirtualWindow,
     indexAtOffset,
     scrollCompensation,
+    windowFromMeasurements,
 } from "../composables/virtualWindow";
 import { useVirtualMessageWindow } from "../composables/useVirtualMessageWindow";
 
@@ -255,5 +256,58 @@ describe("useVirtualMessageWindow DOM adapter", () => {
     it("reports an empty anchor when nothing is mounted", () => {
         const { api } = setup(["a", "b"]);
         expect(api.captureAnchor()).toBeNull();
+    });
+
+    describe("windowFromMeasurements（PLAN-0753 M4 库测量 → 渲染契约映射）", () => {
+        const measurements = Array.from({ length: 100 }, (_, index) => ({
+            start: index * 100,
+            size: 100,
+        }));
+        const totalSize = 10_000;
+
+        it("maps the viewport to the same window the legacy pure engine produced", () => {
+            const window = windowFromMeasurements(measurements, totalSize, 5_000, 300, 2, 100);
+            expect(window.start).toBe(48);
+            expect(window.end).toBe(56);
+            expect(window.topPadding).toBe(4_800);
+            expect(window.bottomPadding).toBe(10_000 - 5_600);
+            expect(window.totalHeight).toBe(totalSize);
+        });
+
+        it("keeps the overscan clamped at both edges", () => {
+            const top = windowFromMeasurements(measurements, totalSize, 0, 300, 2, 100);
+            expect(top.start).toBe(0);
+            expect(top.end).toBe(6);
+            const bottom = windowFromMeasurements(measurements, totalSize, 9_700, 300, 2, 100);
+            expect(bottom.start).toBe(95);
+            expect(bottom.end).toBe(100);
+            expect(bottom.bottomPadding).toBe(0);
+        });
+
+        it("uses measured sizes instead of the uniform estimate when rows are mixed height", () => {
+            const mixed = [
+                { start: 0, size: 50 },
+                { start: 50, size: 250 },
+                { start: 300, size: 50 },
+                { start: 350, size: 50 },
+            ];
+            const window = windowFromMeasurements(mixed, 400, 300, 100, 0, 4);
+            // 行 1 实测 250px：scrollTop=300 落在行 2 顶（start=2），若按均匀 100px 估算会错算成行 3。
+            expect(window.start).toBe(2);
+            expect(window.topPadding).toBe(300);
+            // 视口底 400 = 表尾：末行仍算可见（与旧引擎 indexAtOffset 的边界语义一致）。
+            expect(window.end).toBe(4);
+            expect(window.bottomPadding).toBe(0);
+        });
+
+        it("returns an empty window before the library reports any measurement", () => {
+            expect(windowFromMeasurements([], 0, 0, 300, 2, 100)).toEqual({
+                start: 0,
+                end: 0,
+                topPadding: 0,
+                bottomPadding: 0,
+                totalHeight: 0,
+            });
+        });
     });
 });
