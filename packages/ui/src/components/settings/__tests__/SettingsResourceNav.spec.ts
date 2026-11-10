@@ -21,7 +21,6 @@ const messages = {
                 backendGapBadgeGeneric: "后端缺口",
                 gapDialogTitle: "{item}：暂无后端承载",
                 gapDialogDismiss: "知道了",
-                gapNoteAgentUser: "用户级创建入口尚未实施（PLAN-0750）",
                 gapNoteKnowledgeMcp: "用户层没有知识库实体，也没有用户级 MCP 服务器",
             },
         },
@@ -51,33 +50,37 @@ function mountNav() {
 }
 
 describe("SettingsResourceNav (PLAN-0752 T4.0)", () => {
-    it("keeps the gap entries visible and badges them (D7: no hiding)", () => {
+    it("keeps the surviving gap entry visible and badges it (D7: no hiding)", () => {
         const wrapper = mountNav();
-        // 三条都在：我的智能体（缺口）、我的凭据（真）、知识库·MCP（缺口）
-        expect(wrapper.find('[data-testid="settings-nav-resource-gap-my-agents"]').exists()).toBe(
-            true,
-        );
+        // PLAN-0750 M3 之后：我的智能体 / 我的凭据都是真入口，只剩知识库·MCP 是缺口。
+        // D7 的机制本身不能因为一项转真就删掉 —— 断言就靠 knowledge-mcp 这一条。
+        expect(wrapper.find('[data-testid="settings-nav-resource-my-agents"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="settings-nav-resource-my-credentials"]').exists()).toBe(
             true,
         );
-        expect(
-            wrapper.find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]').exists(),
-        ).toBe(true);
-        expect(
-            wrapper.find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]').text(),
-        ).toContain("后端缺口 G1 / G3");
+        const gap = wrapper.find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]');
+        expect(gap.exists()).toBe(true);
+        expect(gap.text()).toContain("后端缺口 G1 / G3");
         wrapper.unmount();
     });
 
     it("routes real entries and never links gap entries", () => {
         const wrapper = mountNav();
+        // 两个真入口都是链接，且指向已实现的页面
+        expect(wrapper.find('[data-testid="settings-nav-resource-my-agents"]').text()).toBe(
+            "我的智能体",
+        );
+        // 真入口渲染成带 to 的链接（SettingsSidebar.spec 对 ops 项用的是同一条断言方式）。
+        expect(
+            wrapper.find('[data-testid="settings-nav-resource-my-agents"]').attributes("to"),
+        ).toBe("/settings/my-agents");
         expect(wrapper.find('[data-testid="settings-nav-resource-my-credentials"]').text()).toBe(
             "我的凭据",
         );
         // 缺口项是 button（没有 href / 没有 to），点击不走路由
-        const gap = wrapper.find('[data-testid="settings-nav-resource-gap-my-agents"]');
+        const gap = wrapper.find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]');
         expect(gap.element.tagName).toBe("BUTTON");
-        expect(wrapper.find('[data-testid="settings-nav-resource-my-agents"]').exists()).toBe(
+        expect(wrapper.find('[data-testid="settings-nav-resource-knowledge-mcp"]').exists()).toBe(
             false,
         );
         wrapper.unmount();
@@ -86,13 +89,15 @@ describe("SettingsResourceNav (PLAN-0752 T4.0)", () => {
     it("opens an explanation instead of navigating when a gap entry is clicked", async () => {
         const wrapper = mountNav();
         pushed.mockClear();
-        await wrapper.find('[data-testid="settings-nav-resource-gap-my-agents"]').trigger("click");
+        await wrapper
+            .find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]')
+            .trigger("click");
 
-        const dialog = document.querySelector('[data-testid="settings-gap-dialog-my-agents"]');
+        const dialog = document.querySelector('[data-testid="settings-gap-dialog-knowledge-mcp"]');
         expect(dialog).not.toBeNull();
-        expect(dialog?.textContent ?? "").toContain("我的智能体：暂无后端承载");
-        expect(dialog?.textContent ?? "").toContain("后端缺口 G4");
-        expect(dialog?.textContent ?? "").toContain("PLAN-0750");
+        expect(dialog?.textContent ?? "").toContain("知识库 · MCP：暂无后端承载");
+        expect(dialog?.textContent ?? "").toContain("后端缺口 G1 / G3");
+        expect(dialog?.textContent ?? "").toContain("用户层没有知识库实体");
         // 不跳转：既没 push，也没渲染成链接
         expect(pushed).not.toHaveBeenCalled();
         wrapper.unmount();

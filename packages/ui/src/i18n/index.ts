@@ -1440,8 +1440,6 @@ const messages = {
                     "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
                 gapNoteAgent:
                     "智能体在 CP 没有注册实体表（只有分类表与工作区绑定），实例层没有承载；入口先留位，等后端补注册实体后再接。",
-                gapNoteAgentUser:
-                    "智能体创建目前必须带工作区上下文并需要 MANAGE_WORKSPACE_AGENTS，用户级创建入口尚未实施（PLAN-0750）；此处先留位。",
                 gapNoteMcp:
                     "MCP 服务器只有工作区归属（mcp_remote_servers / mcp_stdio_servers 的 workspace_id 非空），实例层与用户层没有承载；接口也只有工作区面。",
                 gapNoteCredentials:
@@ -2409,6 +2407,42 @@ const messages = {
             emailRequired: "请填写邮箱",
             emailInvalid: "邮箱格式不正确",
             passwordRequired: "请填写密码",
+        },
+        myAgents: {
+            title: "我的智能体",
+            heading: "我的智能体",
+            desc: "这里只列出你自己创建的智能体（CP 按创建者过滤，不是按属主）。创建不需要选择工作区。",
+            create: "创建智能体",
+            refresh: "刷新",
+            empty: "你还没有创建过智能体",
+            name: "名称",
+            namePlaceholder: "例如 ResearchAgent",
+            submit: "创建",
+            creating: "创建中…",
+            cancel: "取消",
+            created: "已创建「{name}」",
+            createFailed: "创建失败，请重试",
+            loadFailed: "列表加载失败，请重试",
+            loading: "加载中…",
+            createDenied: "你的账号没有 CREATE_OWN_AGENT 原子，无法创建个人智能体。",
+            createdAt: "创建于 {date}",
+            templateFallback: "默认模板",
+            disabledBadge: "已停用",
+            bind: "绑定到工作区",
+            bindTitle: "把「{name}」绑定到工作区",
+            bindDesc:
+                "绑定后该工作区的会话才能选到这个智能体；解绑请到工作区设置。绑定默认不授予工具权限。",
+            bindWorkspace: "选择工作区",
+            bindSubmit: "绑定",
+            binding: "绑定中…",
+            bindNeedWorkspace: "请选择工作区",
+            bindNoPermission:
+                "你在任何工作区都没有 MANAGE_WORKSPACE_AGENTS —— 无法发起绑定。这不是功能缺失：绑定是工作区侧的管理动作。",
+            bindSuccess: "已绑定到「{workspace}」",
+            bindFailed: "绑定失败，请重试",
+            boundTo: "已绑定：{workspaces}",
+            unbound: "未绑定任何工作区",
+            close: "关闭",
         },
         credentials: {
             title: "凭据",
@@ -4053,8 +4087,6 @@ const messages = {
                     "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
                 gapNoteAgent:
                     "The control plane has no agent registry table (only tool-face classification and workspace bindings), so the instance layer has nothing to carry. The entry stays here until the backend adds a registry.",
-                gapNoteAgentUser:
-                    "Creating an agent currently requires a workspace context and MANAGE_WORKSPACE_AGENTS; the user-level create entry is not implemented yet (PLAN-0750). The entry stays here for now.",
                 gapNoteMcp:
                     "MCP servers are workspace-owned only (mcp_remote_servers / mcp_stdio_servers have a non-null workspace_id) and the API surface is workspace-only, so neither the instance nor the user layer can host one.",
                 gapNoteCredentials:
@@ -5070,6 +5102,43 @@ const messages = {
             emailRequired: "Email is required",
             emailInvalid: "Enter a valid email address",
             passwordRequired: "Password is required",
+        },
+        myAgents: {
+            title: "My agents",
+            heading: "My agents",
+            desc: "Only the agent principals you created yourself (the control plane filters by creator, not by owner). Creating one needs no workspace.",
+            create: "Create agent",
+            refresh: "Refresh",
+            empty: "You have not created any agents yet",
+            name: "Name",
+            namePlaceholder: "e.g. ResearchAgent",
+            submit: "Create",
+            creating: "Creating…",
+            cancel: "Cancel",
+            created: 'Created "{name}"',
+            createFailed: "Creation failed, please retry",
+            loadFailed: "Could not load the list, please retry",
+            loading: "Loading…",
+            createDenied:
+                "Your account does not hold the CREATE_OWN_AGENT atom, so it cannot create a personal agent.",
+            createdAt: "Created {date}",
+            templateFallback: "Default template",
+            disabledBadge: "Disabled",
+            bind: "Bind to workspace",
+            bindTitle: 'Bind "{name}" to a workspace',
+            bindDesc:
+                "Only after binding can that workspace's sessions select this agent; unbind from the workspace settings. Binding grants no tool permissions by default.",
+            bindWorkspace: "Select workspace",
+            bindSubmit: "Bind",
+            binding: "Binding…",
+            bindNeedWorkspace: "Select a workspace",
+            bindNoPermission:
+                "You hold MANAGE_WORKSPACE_AGENTS in no workspace, so you cannot start a binding. This is not a missing feature: binding is a workspace-side management action.",
+            bindSuccess: 'Bound to "{workspace}"',
+            bindFailed: "Binding failed, please retry",
+            boundTo: "Bound: {workspaces}",
+            unbound: "Not bound to any workspace",
+            close: "Close",
         },
         credentials: {
             title: "Credentials",

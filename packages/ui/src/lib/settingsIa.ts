@@ -213,17 +213,23 @@ export function instanceResourceGroup(): ResourceNavItem[] {
 /**
  * 用户层「我的资源」组（design §3.2 第 4 行：3 条目 = 我的智能体 / 我的凭据 / 知识库·MCP）。
  *
- * <p>只有「我的凭据」这一层有后端承载（`owner_type=USER`，页面 `/settings/credentials` 已实现）；
- * 我的智能体没有用户级创建入口（创建必须带工作区 + `MANAGE_WORKSPACE_AGENTS`，PLAN-0750 未落地），
- * 知识库·MCP 是 G1/G3。三条都按 D7 留位。</p>
+ * <p>承载状态（PLAN-0750 M3 之后）：</p>
+ * <ul>
+ *   <li><b>我的智能体</b>——真入口 `/settings/my-agents`。用户级创建走 `CREATE_OWN_AGENT`
+ *       无工作区上下文（矩阵 U1），列表走 `GET /agent-principals` 无 `workspaceId` 的个人视图
+ *       （R3：只回 `created_by=self`）。**不再是缺口**，所以去掉 `gaps`/`gapNoteKey`。</li>
+ *   <li><b>我的凭据</b>——真入口 `/settings/credentials`（`owner_type=USER`）。</li>
+ *   <li><b>知识库·MCP</b>——仍是 G1/G3 缺口，按 D7 留位。</li>
+ * </ul>
+ * <p>注意：缺口机制本身不能因为本项转真就去掉——`knowledge-mcp` 仍靠它留位（D7：留位标缺口，
+ * 不隐藏）。</p>
  */
 export function userResourceGroup(): ResourceNavItem[] {
     return [
         {
             id: "my-agents",
             labelKey: "settings.ia.resourceMyAgents",
-            gaps: ["G4"],
-            gapNoteKey: "settings.ia.gapNoteAgentUser",
+            path: "/settings/my-agents",
         },
         {
             id: "my-credentials",

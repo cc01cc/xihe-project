@@ -2199,6 +2199,114 @@ describe("workspace header (PLAN-0559)", () => {
     });
 });
 
+/**
+ * PLAN-0750 M3（矩阵 U1）：用户层创建必须**不带**工作区上下文。
+ *
+ * <p>自动注入的 `X-Workspace-Id` 会把请求推到 `MANAGE_WORKSPACE_AGENTS` 门，普通 USER 拿
+ * 403 —— 所以 `createOwnAgentPrincipal` 显式发一个**空串** header 来抑制注入。空串不是
+ * "漏填"：CP 的 `TenantContextInterceptor` 用 `!isBlank()` 跳过它，请求落到
+ * `source="default"`，`currentWorkspaceContext()` 返回 null ⇒ `CREATE_OWN_AGENT` 门。
+ * 这三条断言就是那个抑制信号的锁：谁把空 header 当脏数据清掉，这里立刻红。</p>
+ */
+describe("agent principal create doors (PLAN-0750 M3)", () => {
+    function createdResponse(): Response {
+        return {
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    principalId: "principal-own",
+                    templateId: null,
+                    templateName: null,
+                    createdAt: "2026-11-10T00:00:00Z",
+                }),
+        } as Response;
+    }
+
+    function lastCall(): unknown[] {
+        return fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1] as unknown[];
+    }
+
+    function headersOf(call: unknown[]): Record<string, string> {
+        return ((call[1] as RequestInit).headers ?? {}) as Record<string, string>;
+    }
+
+    it("createOwnAgentPrincipal suppresses the auto-injected workspace header with an empty value", async () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
+        fetchSpy.mockResolvedValueOnce(createdResponse());
+
+        await api.createOwnAgentPrincipal({ name: "MyAgent" });
+
+        const call = lastCall();
+        expect(call[0]).toBe("/api/v1/agent-principals");
+        const headers = headersOf(call);
+        // key 必须在（否则自动注入会把它填成工作区 id）；值必须是空串。
+        expect(Object.keys(headers)).toContain("X-Workspace-Id");
+        expect(headers["X-Workspace-Id"]).toBe("");
+    });
+
+    it("createAgentPrincipal keeps sending the tab workspace (U2: the workspace door is unchanged)", async () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
+        fetchSpy.mockResolvedValueOnce(createdResponse());
+
+        await api.createAgentPrincipal({ name: "WorkspaceAgent" });
+
+        // 工作区面依赖自动注入走到 MANAGE_WORKSPACE_AGENTS 门；这条锁住"没被顺手改掉"。
+        expect(headersOf(lastCall())["X-Workspace-Id"]).toBe(WORKSPACE_ID);
+    });
+
+    it("never puts workspaceId in the create body (R4 / G3=(b))", async () => {
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: WORKSPACE_ID }));
+        fetchSpy.mockResolvedValueOnce(createdResponse());
+
+        await api.createOwnAgentPrincipal({ name: "MyAgent" });
+
+        const body = JSON.parse(String((lastCall()[1] as RequestInit).body)) as Record<
+            string,
+            unknown
+        >;
+        expect(body).toEqual({ name: "MyAgent" });
+        expect(Object.keys(body)).not.toContain("workspaceId");
+    });
+
+    it("listMyAgentPrincipals asks for the personal view (no workspaceId query) and maps the row", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    principals: [
+                        {
+                            principalId: "principal-own",
+                            name: "MyAgent",
+                            templateId: "tpl-1",
+                            templateName: "Research",
+                            createdAt: "2026-11-10T00:00:00Z",
+                            disabledAt: null,
+                            defaultModelProvider: "openai",
+                            defaultModelName: "gpt-4o",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const rows = await api.listMyAgentPrincipals();
+
+        // R3：个人视图靠"没有 workspaceId 参数"选择，不是靠 header。
+        expect(lastCall()[0]).toBe("/api/v1/agent-principals");
+        expect(rows).toEqual([
+            {
+                principalId: "principal-own",
+                name: "MyAgent",
+                templateId: "tpl-1",
+                templateName: "Research",
+                createdAt: "2026-11-10T00:00:00Z",
+                disabled: false,
+                defaultModelProvider: "openai",
+                defaultModelName: "gpt-4o",
+            },
+        ]);
+    });
+});
+
 // PLAN-0622 D14：429 的 `resourceKind` / `retryAfterSeconds` 是**契约字段**，必须穿过
 // ApiError 传到 UI；否则 MessageItem 只能落到兜底文案「资源」，用户不知道是连接还是模型不够。
 describe("apiErrorFromResponse Resource Governor fields (PLAN-0622)", () => {
