@@ -43,7 +43,7 @@
 - **栈租约（PLAN-0694，运维口径）**：`dev-stack.mjs` 用 `.xihe-stacks/<n>/lease.json` 记录"这栈是谁起的"，`status` 对**每个**租约字段做独立事实交叉校验（pid 死活 / 端口是否在听 / `instanceId` / `cpVersion` / pid 漂移 / 可选 `phase`），失配进 `mismatch[]`、核不了记 `unverifiable`；**心跳超 TTL（10 min）单独记 `lease-cold`（输出字段 `lease.state` = `live`|`cold`），是信息项：不进 `mismatch`、不进 `reasons`、不改 verdict 与退出码** —— `cold` 只表示"这栈最近 10 分钟没人跑过一次 `status` 交叉核对"，不是故障（`verdict` 只由事实决定）。因此 `ok` 只在"事实全绿 + 所有字段都核得上（冷暖不计）"时为真；**升级前起的旧栈首次 `status` 会报 `verdict=ghost` + exit 1（不是故障）**，迁移 = `acquire --stack <n>` 认领或重启一次；`acquire`/`release`/`gc`/`status --all` 只读优先、`gc` 零 kill。改 `.xihe-stacks` 路径/端口/`heartbeatAt` 语义见 DEV-002 §4（`dev-stack` 状态与租约契约）。
 - 根 `README.md`（英文 GitHub 门面）与 `docs/i18n/zh-Hans/README.md`（中文文档页）独立维护；架构图、Quick Start 命令、端口和技术栈摘要同批同步，功能状态表仅在中文版维护。`scripts/sync-readmes.sh` 只管理包 README symlink，不管理根 README。
 - **CP 构建目录按栈隔离（BL-253 L3）**：每栈一个 `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]`（`XIHE_CP_BUILD_ROOT` 可改根），`.current` 记录该栈**最后一次启动**所用目录；`cpBuild.targetDirSource` = `pointer`/`newest`/`env`/`derived`（**新增字段，旧字段契约不变**）。保留只走显式清理 `mise run dev:host:cp-build:clean`（默认 dry-run，`-- --apply` 才删；每栈留最新 3 个 + 指针目标；绝不碰 legacy 目录）。回滚通道 = 显式 `XIHE_CP_TARGET_DIR`（优先级最高）。切布局后各栈**下次重启**首建约 60s，谁重启谁核 `verdict=fresh`+四端口。
-- **dev 热循环（试行，2026-11-08）**：「改一行多久看到效果」的能力分层、dev/验证两条通道与两条禁令（**dev 产物不得当验收证据 / 验证通道不得复用 dev 根**）见 ONE 工作区 `internal/A03-xihe/docs/dev-hot-loop.md`（**跨仓路径**，不入本仓正文）；试行 2 个工作日后由 Lead 复核持久化/修订/废弃。
+- **dev 热循环（**试行未转正 ⇒ deprecated**，D-818 ①，2026-11-11）**：「改一行多久看到效果」的能力分层、dev/验证两条通道与两条禁令（**dev 产物不得当验收证据 / 验证通道不得复用 dev 根**）见 ONE 工作区 `internal/A03-xihe/docs/dev-hot-loop.md`（**跨仓路径**，不入本仓正文）。**该文 status 已置 `deprecated`**：文件保留（历史事实），但逐节已标 ✅/❌，读前先看其 §0 判定表。
 
 ## Architecture
 
@@ -126,7 +126,7 @@
 ## Plan and Release Rules
 
 - 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/` 分册）；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
-- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT；池表见项目私有层 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位，`git switch develop && git merge develop && git switch -c task/<topic>` 开工，合并后回 `develop` 休息态。**禁止 `git worktree add` 新建**——H: 卷建树实测 470s 且会在 checkout 未完成时留下 0 MB 半成品目录（2026-11-05 实测一天新建 34 个 + 14 个空残留）；只有池内 6 个槽位全忙、且用户明确授权时才可新建，**新建必须同批登记进池表**。**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（两者是不同机制，2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
+- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT；池表见项目私有层 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位；开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序**以该 skill 为准，本行不复述**。**禁止 `git worktree add` 新建**——H: 卷建树实测 470s 且会在 checkout 未完成时留下 0 MB 半成品目录（2026-11-05 实测一天新建 34 个 + 14 个空残留）；只有池内槽位全忙、且用户明确授权时才可新建，**新建必须同批登记进池表**。**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（两者是不同机制，2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
 - **开发期数据无迁移包袱（D-215，2026-11-06 用户裁定）**：**XH 尚未上线**，本地/隔离栈的开发数据属可丢弃物 —— **旧数据不得成为开发与设计的阻碍**。schema 变更可以**直接清库重建**（`mise run dev:reset` 或删库重跑 Flyway），**不写回填脚本、不做双读/双写/灰度开关、不保留"新旧快照并存"的兼容分支**，也不把"存量行数对照"当验收判据。边界：①仅限**开发期数据**（lane/隔离栈/dev 栈）；②任何用户可见的发布产物、备份、`.local/evidence/` 证据、仓库历史不在此列；③清库前必须声明**目标栈与库身份**（避免误清他人 lane），不可逆动作执行前留一句"将清哪些库"的说明。
 
@@ -160,5 +160,5 @@
 - **候选与窗口**：`internal/A03-xihe/docs/l2-window-protocol.md` §19–§20（lane→候选树→develop 八步、I1–I5、窗口冻结 §20.6）。
 - **测试超时**：`internal/A03-xihe/docs/test-timeout-budget.md`（action/expect 10 s、test 30 s、boot 120 s；>10 s 必须 `timeout-exempt`；预算门 `mise run lint:e2e`）。
 - **测试成本/context 根因**：`internal/A03-xihe/docs/test-suite-cost.md` §1–§7；复用设计 `test-context-reuse-design.md`。
-- **dev 热循环与 lane 同步**：`internal/A03-xihe/docs/dev-hot-loop.md` §1–§11（develop 前进后 merge→分类→hot/mvn/restart）。
+- **dev 热循环与 lane 同步**：`internal/A03-xihe/docs/dev-hot-loop.md` —— **§11（lane 同步，merge→分类→hot/mvn/restart）仍有效**；§1–§10 已按 D-818 ① 判废弃，状态看该文 §0 判定表。
 - **团队角色/并行上限**：`internal/A03-xihe/docs/team-roster.md`（常驻 6、≤2 编译、测量值班 16:00–18:00）。
