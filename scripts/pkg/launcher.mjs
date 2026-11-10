@@ -44,6 +44,7 @@ import {
   stopServices,
 } from '../lib/service-supervisor.mjs';
 import { DEFAULT_STACK_ID, deriveStack, normalizeStackArg, stackEnvDefaults } from '../lib/stack-ports.mjs';
+import { buildCommitEnv, describeBuildCommit, resolveBuildCommit } from '../lib/build-commit-env.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = resolve(dirname(scriptPath), '..', '..');
@@ -226,9 +227,13 @@ export function buildServices({ installDir, exes = {}, skip = [], derived, dataD
  * stack defaults only fill what the caller did not set, and NO_PROXY is scrubbed for the
  * Agent (bracketed `[::1]` breaks httpx URLPatterns — see sanitizeNoProxyEnv).
  */
-export function buildServiceEnv(name, { derived, baseEnv = process.env }) {
+export function buildServiceEnv(name, { derived, baseEnv = process.env, buildCommit = null }) {
   const env = { ...baseEnv, ...stackEnvDefaults(derived, baseEnv), XIHE_STACK_ID: derived.stackId };
   env.XIHE_ENV ??= 'prod';
+  // G12（task-154）：与 dev-stack 同一口径 —— 只注入 env，项目侧仍只读 env（env-first）。
+  // 传 `buildCommit` 时**总是**写一个键（缺失即空串），这样三个服务的读取行为一致；
+  // 不传则保持原样（既有调用方/单测不受影响）。
+  if (buildCommit) Object.assign(env, buildCommitEnv(buildCommit));
   return name === 'agent' ? sanitizeNoProxyEnv(env) : env;
 }
 
@@ -411,7 +416,7 @@ function makeDeps({ services, logDir, console_ = console }) {
       }
       const outFd = openSync(spec.logPaths.out, 'a');
       const errFd = openSync(spec.logPaths.err, 'a');
-      const env = buildServiceEnv(name, { derived: spec.derived, baseEnv: process.env });
+      const env = buildServiceEnv(name, { derived: spec.derived, baseEnv: process.env, buildCommit: spec.buildCommit ?? null });
       const child = spawn(spec.exe, spec.args, {
         cwd: spec.cwd,
         env,
@@ -620,7 +625,18 @@ async function main() {
   const dataDir = resolve(args.data ?? join(installDir, '..', 'data'));
   const logDir = resolve(projectRoot, derived.logDir);
   const services = buildServices({ installDir, exes: args.exes, skip: args.skip, derived, dataDir, logDir });
-  for (const spec of Object.values(services)) spec.derived = derived;
+  // G12（task-154）：打包安装用的是 CP exe（没有 `classes/META-INF/build-info.properties`），
+  // 所以这里解析出来通常是 `unknown/missing-build-info` —— 仍然注入空串并显式记录，
+  // 而不是跳过（跳过会让「没有字段」和「值为空」两种状态混在一起）。
+  // 待办（不在本卡范围）：installer 组装 payload 时把 build-info 一起写进去，launcher 就能拿到真值。
+  const buildCommit = resolveBuildCommit({ targetDir: join(installDir, 'cp') });
+  for (const spec of Object.values(services)) {
+    spec.derived = derived;
+    spec.buildCommit = buildCommit;
+  }
+  if (args.action === 'start') {
+    console.log(`[launcher] XIHE_BUILD_COMMIT=${buildCommit.value === '' ? '(空串)' : buildCommit.value} — ${describeBuildCommit(buildCommit)}`);
+  }
 
   try {
     if (args.action === 'start') return await start({ args, derived, services, logDir });
