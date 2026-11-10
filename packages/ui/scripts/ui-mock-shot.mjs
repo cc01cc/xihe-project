@@ -257,6 +257,8 @@ function parseArgs(argv) {
         url: null,
         out: path.resolve(uiRoot, "../../.tmp/xh/ui-mock-shot"),
         channel: "chrome-beta",
+        // 可重复传；用途是把「同一 commit 两批图不一样」的变量逐个关掉（合成路径 / GPU 开关）。
+        chromiumArgs: [],
         only: null,
         allowDirty: false,
         dirtyProof: null,
@@ -274,6 +276,13 @@ function parseArgs(argv) {
         } else if (arg === "--channel") {
             opts.channel = value;
             i += 1;
+        } else if (arg === "--chromium-arg") {
+            if (!value)
+                throw new Error("--chromium-arg 需要一个值，例如 --chromium-arg=--disable-gpu");
+            opts.chromiumArgs.push(value);
+            i += 1;
+        } else if (arg.startsWith("--chromium-arg=")) {
+            opts.chromiumArgs.push(arg.slice("--chromium-arg=".length));
         } else if (arg === "--only") {
             opts.only = new Set(
                 value
@@ -294,7 +303,8 @@ function parseArgs(argv) {
         } else if (arg === "--help" || arg === "-h") {
             process.stdout.write(
                 [
-                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--allow-dirty] [--selftest]",
+                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--allow-dirty] [--selftest]",
+                    "--chromium-arg 可重复传，原样进 chromium.launch 的 args（例：--chromium-arg=--disable-gpu 强制软件合成）；它和 channel/版本一起写进 manifest.browser。",
                     "工作树脏时默认 exit 1；--allow-dirty --dirty-proof <json> 用于「脏改动不影响像素」的交付批次（每个脏路径一条可复算命令 + 实际输出）。",
                     "--selftest 只跑探活自检（不开浏览器、不起 dev server），用于验证「探不到要快速失败且报全 URL」。",
                 ].join("\n") + "\n",
@@ -761,6 +771,18 @@ async function shootOne(page, base, shot, outDir) {
  * 为什么要有它：探活失败这条路径平时只在"真出事"时才走到，没人会手动验证；
  * 而它一旦退化成 120 s 黑盒等待（task-84 之前的形状），最需要诊断的时刻恰好没有诊断。
  */
+/**
+ * Chromium 启动参数。**必须单独成函数**：manifest 要记下它，selftest 也要断言它原样透传 ——
+ * 2026-11-11 实证：同一 commit、同一 channel，仅合成路径不同就能让 1 张图差 4 个抗锯齿像素，
+ * 而当时产物里没有任何字段能说明「这两批图是不是同一台浏览器、带同样开关拍的」。
+ */
+function launchOptions(opts) {
+    const args = opts.chromiumArgs ?? [];
+    return args.length > 0
+        ? { channel: opts.channel, args: args.slice() }
+        : { channel: opts.channel };
+}
+
 async function runSelftest() {
     const checks = [];
     const check = (name, ok, detail) => {
@@ -813,6 +835,33 @@ async function runSelftest() {
         "无 Local: 行时回落 base",
         boundBaseFromLog("vite 没有打印地址", "http://fallback:1") === "http://fallback:1",
         "",
+    );
+
+    // 负例 3：--chromium-arg 必须可重复、按序收集，并原样透传进 launch options
+    const parsedArgs = parseArgs([
+        "--chromium-arg=--disable-gpu",
+        "--chromium-arg",
+        "--use-gl=swiftshader",
+    ]);
+    check(
+        "--chromium-arg 可重复且按序收集",
+        JSON.stringify(parsedArgs.chromiumArgs) ===
+            JSON.stringify(["--disable-gpu", "--use-gl=swiftshader"]),
+        JSON.stringify(parsedArgs.chromiumArgs),
+    );
+    check(
+        "--chromium-arg 原样透传到 launch options",
+        JSON.stringify(launchOptions(parsedArgs)) ===
+            JSON.stringify({
+                channel: "chrome-beta",
+                args: ["--disable-gpu", "--use-gl=swiftshader"],
+            }),
+        JSON.stringify(launchOptions(parsedArgs)),
+    );
+    check(
+        "无 --chromium-arg 时 launch options 不带 args",
+        JSON.stringify(launchOptions(parseArgs([]))) === JSON.stringify({ channel: "chrome-beta" }),
+        JSON.stringify(launchOptions(parseArgs([]))),
     );
 
     for (const item of checks) {
@@ -909,7 +958,22 @@ async function main() {
         );
     }
 
-    const browser = await chromium.launch({ channel: opts.channel });
+    const browser = await chromium.launch(launchOptions(opts));
+    // 浏览器指纹：不记它，「这批图是哪台浏览器、带什么开关拍的」就不可复算（只能靠反推）。
+    const browserInfo = {
+        channel: opts.channel,
+        version: browser.version(),
+        chromiumArgs: (opts.chromiumArgs ?? []).slice(),
+    };
+    process.stdout.write(
+        "[ui-mock-shot] 浏览器: " +
+            browserInfo.channel +
+            " " +
+            browserInfo.version +
+            "  args=" +
+            (browserInfo.chromiumArgs.length > 0 ? browserInfo.chromiumArgs.join(" ") : "(默认)") +
+            "\n",
+    );
     const results = [];
     try {
         const context = await browser.newContext({ viewport: VIEWPORT });
@@ -960,6 +1024,9 @@ async function main() {
                     // 服务器怎么来的、探通用的是哪个候选地址：自起模式修好（task-84）之后，
                     // "这图是自起拍的还是复用拍的"必须能从 manifest 里读出来。
                     server: serverInfo,
+                    // 浏览器指纹：channel / 版本 / 启动参数。换浏览器整张图就会变（实测
+                    // chrome-beta → chrome 让 04 主图从 0525a43b 变成 8901dbee），必须留痕。
+                    browser: browserInfo,
                     viewport: VIEWPORT,
                     canvas: CANVAS,
                     shots: results,
