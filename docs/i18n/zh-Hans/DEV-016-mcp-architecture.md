@@ -29,7 +29,13 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 2. **Runtime Gateway** — per-workspace 分发
 3. **stdio 会话（PLAN-0347）** — 宿主 `exec attach` 直连容器内 MCP server 进程（无容器内 HTTP bridge；会话 = 状态机 + 预算 + FIFO 单飞）
 
-> **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.7.0，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。CP 不签发也不接受 `mcp-session-id`：入站该头一律 403 `MCP_SESSION_INVALID`（PLAN-0537），二者不冲突。
+> **协议版本说明（2026-11-10 勘误：版本要分两层读）**
+>
+> - **① CP 线上契约 = `2026-07-28`**：逻辑入口按 `MCP-Protocol-Version: 2026-07-28`（rmcp 3.7.0 的 stateless 协议面，SEP-2567）服务；请求头与 `params.protocolVersion` **必须一致**，不一致 CP 直接回 `-32600`（实测原文：`Invalid Request: MCP-Protocol-Version header (2026-07-28) does not match initialize params.protocolVersion (…)`）。
+> - **② rmcp 自身协商值 = `2025-11-25`**：Runtime 的 `initialize` 结果回报 `protocolVersion: "2025-11-25"`（rmcp 3.7.0 支持版本）。本行旧表述「当前采用 `Protocol-Version: 2026-07-28`（rmcp 3.7.0）」会让人误以为协商值就是它，此处更正 —— 两层并存，不是矛盾。
+> - **无会话（stateless）只在带 `2026-07-28` 头时成立**：Runtime 直连端点不带该头按有会话处理（`400 Session ID is required`），该头模式下每请求还需在 `params._meta` 带 `io.modelcontextprotocol/protocolVersion` 与 `io.modelcontextprotocol/clientCapabilities`（CP 由 `normalizeRuntimeBody` 补齐）。
+>
+> 其余原语义不变：CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。CP 不签发也不接受 `mcp-session-id`：入站该头一律 403 `MCP_SESSION_INVALID`（PLAN-0537），二者不冲突。实测快照与工具清单见 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md)。
 
 ## 2. 架构图
 
@@ -269,9 +275,39 @@ UI 设置页 workspace 标签以 `stdio-servers`（配置 name）∪ 本端点�
 
 现状（2026-10-19 起）：
 
-- 逻辑 MCP 按 **无会话** 语义服务（协议 `2026-07-28`），CP **不签发、不回传、不转发** `mcp-session-id`。
+- 逻辑 MCP 按 **无会话** 语义服务（线上协议版本 `2026-07-28`，版本两层语义见 §1「协议版本说明」），CP **不签发、不回传、不转发** `mcp-session-id`。
 - 入站请求携带该头 **一律 403 `MCP_SESSION_INVALID`**，不需要任何签名密钥。
 - 该 HMAC 签名密钥已从代码、配置、脚本与部署模板中移除。
 - Runtime ↔ 上游远程 MCP server 之间的 `mcp-session-id` 不受影响，属另一条边界（见 `packages/runtime/src/remote_mcp.rs`）。
 
 模块间认证的完整链路与密钥矩阵见 [DEV-024 模块认证与密钥矩阵](DEV-024-authentication-matrix.md)。
+
+## 10. Runtime MCP 工具清单（快照，权威是握手）
+
+Tool 清单是**运行时属性**，不是静态契约：它由 `packages/runtime/src/main.rs` 的 `#[tool(...)]` 注册点决定，并由 `tools/list` 握手对外声明。为避免每个调用方各自去猜，清单正文落在 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md)。
+
+**口径（务必按这条读）**：该文档是**快照**；**权威永远是活的 `tools/list` 结果**。两者不一致时以握手为准，并把文档改回来。快照附带：逐条 `name`/`description`/`inputSchema` 摘要、副作用、CP 策略面（`ToolFaceRegistry`）、以及**重新生成/复核命令**。
+
+**三个面，一份目录**（2026-11-10 dev stack `stack-1` 实测）：
+
+| 面 | 调用方 | Tool 数 | 说明 |
+|---|---|---|---|
+| Runtime MCP server | 仅 CP（`/internal/v1/runtime/workspaces/{id}/mcp`） | **23** | 下文「系统工具」全集 |
+| CP 逻辑入口（用户/Agent token） | Agent、用户面 MCP 客户端 | **23** | 另加工作区配置的 STDIO/remote 工具（新工作区为空） |
+| CP 逻辑入口（内部服务 token） | CP 内部面（子 Agent / 凭据 / skill / git） | **29** | 23 + **6 个 CP 自有工具** |
+
+CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_status`、`git_diff`、`git_log`）由 `populateSystemTools` 在 `access.internalService()` 为真时注入（`McpProxyController.java:605-622`）——**用户/Agent 面的 `tools/list` 永远看不到它们**（§3.2.1 的三条 git 工具由此解释：它们是 service 面能力，不是模型面能力）。
+
+**复核（两条都要跑，逐条对齐）**：
+
+1. 源侧：`packages/runtime/src/main.rs` 的 `#[tool(` 计数 = 23，方法名集合 = 握手返回的 `name` 集合；
+2. 运行时侧：对 `/api/v1/mcp` 发 `tools/list`（无会话；`mcp-session-id` 会 403），拿 `result.tools`。
+
+完整脚本与判据见 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6；该节同时列出当前 6 条已知不一致/待澄清项（含 `start_background_process` 的 `truncate_limit` 参数被声明但忽略）。
+
+**变更规则**：新增/删除 tool、改 `description`、改 `inputSchema` 都属 tool 面变更，必须同批更新该清单并跑 §6 复核；只改代码不改清单视为文档债。
+
+**三条容易读错的地方**：
+
+- **协议版本分两层**（CP 线上契约 `2026-07-28` / rmcp 协商值 `2025-11-25`）与**无会话的条件**（`MCP-Protocol-Version: 2026-07-28` + `params._meta`）：见 §1「协议版本说明」的勘误，本节不重复。
+- **`X-Workspace-Id` 不要写成可选**：单工作区 dev 栈上省略该头仍返回同一目录，但多工作区行为未验证，文档按「用户面必须带」表述。
