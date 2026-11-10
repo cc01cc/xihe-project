@@ -47,7 +47,16 @@ watch(
 </script>
 
 <template>
-    <div class="flex min-h-screen bg-background text-foreground">
+    <!--
+        task-257 B①：宽度只有**一个口径** = `--settings-sidebar-width`（H3 单一口径的落地）。
+        设置左栏固定 264（不做 220–360 拖拽：那是工作区三栏的模型，设置区无 handle 也从无此需求），
+        但宽度必须变量化 —— 否则下次又要出现 920/1010 那类各自算一个数的局部字面量。
+        悬停/折叠状态用 data-* 属性表达（vendor Sidebar 的 ③ 模式），CSS 侧可据此选择器化。
+    -->
+    <div
+        class="flex min-h-screen bg-background text-foreground"
+        :style="{ '--settings-sidebar-width': '264px' }"
+    >
         <!--
             task-253（用户 2026-11-10 裁定 ①）：**全局 rail 在所有页面常驻，设置页也不例外**。
             旧实现刻意不复用 AppLayout（顶注 V10 的理由仍成立：工作区 Sidebar 不该出现在设置区），
@@ -60,7 +69,14 @@ watch(
             <NavRail :show-expand="false" />
         </div>
 
-        <aside class="hidden w-[264px] shrink-0 border-r lg:block">
+        <aside
+            data-testid="settings-sidebar-scope"
+            data-variant="sidebar"
+            data-collapsible="offcanvas"
+            data-state="expanded"
+            class="hidden shrink-0 border-r lg:block"
+            :style="{ width: 'var(--settings-sidebar-width)' }"
+        >
             <div class="sticky top-0 h-screen">
                 <SettingsSidebar />
             </div>
@@ -75,7 +91,14 @@ watch(
                 role="dialog"
                 aria-modal="true"
                 data-testid="settings-drawer"
-                class="absolute inset-y-0 left-0 flex w-[280px] flex-col border-r bg-background shadow-lg"
+                data-variant="sheet"
+                data-collapsible="offcanvas"
+                data-state="open"
+                class="absolute inset-y-0 left-0 flex flex-col border-r bg-background shadow-lg"
+                :style="{
+                    width: 'var(--settings-sidebar-width)',
+                    '--settings-sidebar-width': '280px',
+                }"
             >
                 <div class="flex items-center justify-between border-b px-3 py-2">
                     <span class="text-sm font-medium">{{ t("settings.ia.menuButton") }}</span>

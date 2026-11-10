@@ -102,6 +102,20 @@ const opsGroups = computed(() =>
         .filter((group) => group.items.length > 0),
 );
 
+/**
+ * H4（.agents/skills/xh-settings-ui-design）：组徽标数**入口数**，行徽标才数**字段数** ——
+ * 同一列出现两个量纲时必须靠量词区分，否则「17 / 14」读者无法判断谁在数什么。
+ * 字段数需要 per-domain meta（GET /config/<domain>/meta 的 keys），本组件不取数 ⇒ 本轮只落
+ * 组级入口数 + 图例；行级字段徽标留给持有 meta 的域页（AGENTS: 不猜数据）。
+ */
+const instanceEntryCount = computed(
+    () =>
+        instanceDomains.value.length +
+        instanceResources.value.length +
+        opsGroups.value.reduce((sum, group) => sum + group.items.length, 0),
+);
+const userEntryCount = computed(() => userDomains.value.length + userResources.value.length);
+
 function isDomainActive(layer: "instance" | "user", domain: string): boolean {
     return activeLayer.value === layer && activeDomain.value === domain;
 }
@@ -126,6 +140,13 @@ const itemActiveClass = "bg-muted font-medium text-foreground";
         data-testid="settings-sidebar"
         class="flex h-full flex-col gap-2 overflow-y-auto px-3 py-4"
     >
+        <!-- H4 图例：首次出现处说明徽标量纲，避免「17 个入口 vs 14 项字段」被读成同一件事。 -->
+        <p
+            data-testid="settings-nav-count-legend"
+            class="px-2 text-[10px] leading-tight text-muted-foreground/70"
+        >
+            {{ t("settings.ia.countLegend") }}
+        </p>
         <!-- 实例层：当前层默认展开 -->
         <Collapsible v-if="canSeeInstanceLayer || canSeeInstanceOps" v-model:open="instanceOpen">
             <section aria-labelledby="settings-nav-instance">
@@ -139,7 +160,13 @@ const itemActiveClass = "bg-muted font-medium text-foreground";
                         :class="instanceOpen ? 'rotate-90' : ''"
                         aria-hidden="true"
                     />
-                    <span>{{ t("settings.ia.layerInstance") }}</span>
+                    <span class="truncate">{{ t("settings.ia.layerInstance") }}</span>
+                    <span
+                        data-testid="settings-nav-count-instance"
+                        class="ml-auto shrink-0 rounded px-1.5 py-px font-mono text-[10px] font-normal ring-1 ring-border ring-inset"
+                    >
+                        {{ t("settings.ia.entryCount", { count: instanceEntryCount }) }}
+                    </span>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                     <template v-if="canSeeInstanceLayer">
@@ -213,7 +240,13 @@ const itemActiveClass = "bg-muted font-medium text-foreground";
                         :class="userOpen ? 'rotate-90' : ''"
                         aria-hidden="true"
                     />
-                    <span>{{ t("settings.ia.layerUser") }}</span>
+                    <span class="truncate">{{ t("settings.ia.layerUser") }}</span>
+                    <span
+                        data-testid="settings-nav-count-user"
+                        class="ml-auto shrink-0 rounded px-1.5 py-px font-mono text-[10px] font-normal ring-1 ring-border ring-inset"
+                    >
+                        {{ t("settings.ia.entryCount", { count: userEntryCount }) }}
+                    </span>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                     <p
