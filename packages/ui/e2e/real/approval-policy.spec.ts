@@ -175,9 +175,12 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
     const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
         name: "ApprovalPolicyFixture",
     });
+    // task-174（PLAN-0647）：legacy 无上下文形态现在建 workspaceless 会话，后续 policy/mode
+    // 是 workspace 面（PolicyController:129 requireCurrent）⇒ 显式走路径形态。
     const sessionId = await createSessionWithPrincipal(request, auth, {
         principalId,
         title: "Approval Policy Real",
+        workspaceId: auth.workspaceId,
     });
     await installAuth(page, auth);
 

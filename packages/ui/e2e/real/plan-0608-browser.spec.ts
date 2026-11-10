@@ -372,7 +372,17 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
             workspaceId: ((await pathForm.json()) as { workspaceId?: string }).workspaceId,
         });
 
-        for (const r of results) {
+        // task-174（PLAN-0647）：无上下文 legacy 形态建的是 workspaceless 会话（workspaceId=null），
+        // 「落在唯一 ws」只对显式带上下文的形态成立；无输入形态改为断言「落在空工作区」。
+        const explicit = results.filter((r) => r.form !== "无输入（legacy）");
+        const legacy = results.find((r) => r.form === "无输入（legacy）")!;
+        expect(legacy.status, `无输入（legacy） 必须 201：${JSON.stringify(results)}`).toBe(201);
+        // CP wire 返回 workspaceId: null（JSON null）；absent 与 null 都算 workspaceless。
+        expect(
+            legacy.workspaceId ?? null,
+            `无输入（legacy） 必须是 workspaceless（PLAN-0647）`,
+        ).toBeNull();
+        for (const r of explicit) {
             expect(r.status, `${r.form} 必须 201：${JSON.stringify(results)}`).toBe(201);
             expect(r.workspaceId, `${r.form} 必须落在唯一 ws`).toBe(solo.workspaceId);
         }

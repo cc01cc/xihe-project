@@ -235,10 +235,24 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
                 defaultModelName: FAKE_LLM_MODEL,
             },
         );
+        // task-174（PLAN-0647）：后续 participants/messages/branches 都是 workspace 面，
+        // 会话必须落在 owner.workspaceId ⇒ 显式路径形态。
+        // task-174（G2 创建门）：owner 现有两条 READY 连接（夹具专用 r1-<NONCE> + task-158 的
+        // default），隐式解析 400 PROVIDER_CONNECTION_AMBIGUOUS ⇒ 显式钉到夹具自建的
+        // :205-226 连接（其注释自述"会话创建解析用"，即原设计意图）。
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: owner.token, workspaceId: owner.workspaceId },
-            { principalId, title: `r1-matrix-${NONCE}` },
+            {
+                principalId,
+                title: `r1-matrix-${NONCE}`,
+                workspaceId: owner.workspaceId,
+                // PLAN-0438 模型身份是 connectionId+modelId 对：显式连接必须同批给 modelName
+                //（SessionService.bindApiTemplate:505 requireModel），provider 同批核对。
+                providerConnectionId: connectionId,
+                modelProvider: "openai",
+                modelName: FAKE_LLM_MODEL,
+            },
         );
         rootBranchId = await getRootBranchId(request, sessionId, owner.headers);
 

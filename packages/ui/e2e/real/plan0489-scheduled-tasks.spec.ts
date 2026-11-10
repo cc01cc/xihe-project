@@ -228,9 +228,12 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
             name: "Plan0489Scheduled",
         });
+        // task-174（PLAN-0647）：cron targetSessionId 校验走 requireCurrent（ScheduledTaskApiService:235），
+        // 目标会话必须落在 ctx.workspaceId ⇒ 显式路径形态。
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,
             title: "Plan0489 target session",
+            workspaceId: agentAuth.workspaceId,
         });
 
         // 两个处置夹具（cron：仅在凌晨触发，测试窗口内不会自然到期）。
