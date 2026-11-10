@@ -15,6 +15,8 @@ import {
     UserCog,
     Wrench,
 } from "@lucide/vue";
+import { fieldCountOf } from "./data/domains-core";
+import { panelBadgeOf } from "./panels/domains-dedicated";
 
 /**
  * Mock data for the task-233 sheets.
@@ -28,6 +30,14 @@ export interface NavItem {
     label: string;
     icon: typeof Wrench;
     badge?: string;
+    // 示例，非真实名单；真实缺口以 settings-ui-issue-inventory N-09 / C-01 为准
+    /**
+     * 后端缺口（settings-ui-issue-inventory N-09）：**这个能力本身不存在**，不是「本域没配」。
+     * 渲染成禁用 + 右侧「后端缺口」文字标记——不能只靠变淡区分（灰度截图下就分不出来了）。
+     */
+    gap?: boolean;
+    /** 能力存在但本层 0 项配置（C-01）：可点，右侧「未配置」虚线标记。 */
+    unconfigured?: boolean;
 }
 
 const ICONS: Record<string, typeof Wrench> = {
@@ -76,28 +86,50 @@ const LABELS: Record<string, string> = {
     "knowledge-mcp": "知识库 / MCP",
 };
 
-function item(id: string, badge?: string): NavItem {
-    return { id, label: LABELS[id] ?? id, icon: ICONS[id] ?? Wrench, badge };
+function item(id: string, badge?: string, state?: Partial<NavItem>): NavItem {
+    return { id, label: LABELS[id] ?? id, icon: ICONS[id] ?? Wrench, badge, ...state };
 }
 
-/** 实例层 12 个配置域（CP `INSTANCE_WRITABLE_DOMAINS` 全集）。 */
+/**
+ * 实例层 12 个配置域（CP `UI_DOMAINS` 全集，见 `ConfigService.java:76-79`）。
+ *
+ * **计数由数据派生，不是从产品截图抄的**（2026-11-11 裁定 B）：
+ * `fieldCountOf()` 数 `domains-*.ts` 里真实存在的 `groups[].fields[]`；
+ * 某域数据还没落地时渲染 **`—`**，**不渲染 0**（0 会被读成「这个域没有配置项」，是另一种假信息）。
+ * 每个域的数据落地后，那个数字自动变真 —— 不需要再批量改一遍。
+ */
+function badgeOf(domainId: string): string {
+    // 专用面板域量的是**资源条数**（3 个连接 / 3 个模板），不是配置项数 —— 两种量纲不能混
+    const panel = panelBadgeOf(domainId);
+    if (panel) return panel.count + " " + panel.unit;
+    const count = fieldCountOf(domainId);
+    return count > 0 ? String(count) : "—";
+}
+
 export const domains: NavItem[] = [
-    item("llm-provider", "14"),
-    item("context-policy", "9"),
-    item("embedding", "6"),
-    item("rag", "9"),
-    item("agent-runtime", "11"),
-    item("agent-profile", "7"),
-    item("user-preference", "5"),
-    item("logging", "4"),
-    item("approval-policy", "6"),
-    item("agent-templates", "5"),
-    item("api-request-templates", "5"),
-    item("job-policy", "4"),
+    item("llm-provider", badgeOf("llm-provider")),
+    item("context-policy", badgeOf("context-policy")),
+    item("embedding", badgeOf("embedding")),
+    item("rag", badgeOf("rag")),
+    item("agent-runtime", badgeOf("agent-runtime")),
+    item("agent-profile", badgeOf("agent-profile")),
+    item("user-preference", badgeOf("user-preference")),
+    item("logging", badgeOf("logging")),
+    item("approval-policy", badgeOf("approval-policy")),
+    item("agent-templates", badgeOf("agent-templates")),
+    item("api-request-templates", badgeOf("api-request-templates")),
+    item("job-policy", badgeOf("job-policy")),
 ];
 
-export const opsItems: NavItem[] = [item("monitoring"), item("data")];
-export const securityItems: NavItem[] = [item("config-locks"), item("roles"), item("audit")];
+export const opsItems: NavItem[] = [
+    item("monitoring"),
+    item("data", undefined, { unconfigured: true }),
+];
+export const securityItems: NavItem[] = [
+    item("config-locks"),
+    item("roles"),
+    item("audit", undefined, { gap: true }),
+];
 /**
  * 用户层入口（Lead 2026-11-10 裁定：全局设置只有实例层与用户层；工作区设置在各工作区内部，
  * 本轮不设计）。
@@ -108,14 +140,20 @@ export const securityItems: NavItem[] = [item("config-locks"), item("roles"), it
  */
 export const userItems: NavItem[] = [
     item("my-credentials"),
-    item("agent-principals"),
+    item("agent-principals", undefined, { gap: true }),
     item("user-preference", "5"),
     item("knowledge-mcp"),
 ];
 
-/** 全局条（模块切换）三层：工作区 / 设置 / 观测。 */
+/**
+ * 全局条（模块切换）：**只有两个** —— 工作区 / 设置。
+ *
+ * [裁定 PLAN-0762 T2.3 / DEV-010 §10.2] MVP 的全局条只放「主体工作区 / 设置页」两个模块，
+ * **不加第三个**；第三个模块何时进、进什么，[裁定] 待用户裁定（DEV-010 §10.6）。
+ * 2026-11-11 返工：此处原有一个 `observability / 观测` 项 —— **它不是模块**
+ * （[源码] `monitoring` 只是设置页路由 `settings-monitoring`，见 `router/index.ts:121-122`），已删。
+ */
 export const modules: NavItem[] = [
     { id: "workspace", label: "工作区", icon: MessageSquare },
     { id: "settings", label: "设置", icon: SlidersHorizontal },
-    { id: "observability", label: "观测", icon: Gauge },
 ];

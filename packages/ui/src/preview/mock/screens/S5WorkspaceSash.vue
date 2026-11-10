@@ -15,11 +15,13 @@ const dockWidth = 360;
 
 <template>
     <div class="flex h-full min-h-0 flex-col">
-        <div class="flex h-9 shrink-0 items-center border-b border-border bg-muted/40 px-4 text-xs">
+        <div
+            class="flex h-9 shrink-0 items-center border-b border-border bg-muted/40 px-4 mk-caption"
+        >
             <span class="font-medium">xihe</span>
             <span class="mx-2 text-muted-foreground">/</span>
             <span class="text-muted-foreground">主工作区</span>
-            <span class="ml-auto font-mono text-[11px] text-muted-foreground"
+            <span class="ml-auto font-mono mk-caption text-muted-foreground"
                 >导航 {{ navWidth }} · 文件树 240 · 主列 flex · dock {{ dockWidth }}</span
             >
         </div>
@@ -29,7 +31,7 @@ const dockWidth = 360;
             <div class="flex w-[280px] shrink-0 flex-col border-r-0 bg-muted/20">
                 <div class="flex items-center gap-2 border-b border-border px-3 py-2">
                     <Search class="size-3.5 text-muted-foreground" />
-                    <span class="text-xs text-muted-foreground">搜索会话</span>
+                    <span class="mk-caption text-muted-foreground">搜索会话</span>
                 </div>
                 <div class="space-y-1 p-2">
                     <div
@@ -41,7 +43,7 @@ const dockWidth = 360;
                 </div>
                 <div class="mt-auto flex items-center gap-2 border-t border-border px-3 py-2">
                     <MessageSquarePlus class="size-3.5" />
-                    <span class="text-xs">新建会话</span>
+                    <span class="mk-caption">新建会话</span>
                 </div>
             </div>
 
@@ -49,7 +51,7 @@ const dockWidth = 360;
 
             <!-- 文件树列 -->
             <div class="flex w-[240px] shrink-0 flex-col bg-muted/20">
-                <div class="border-b border-border px-3 py-2 text-xs font-medium">文件</div>
+                <div class="border-b border-border px-3 py-2 mk-caption font-medium">文件</div>
                 <div class="space-y-1 p-2">
                     <div v-for="i in 12" :key="i" class="h-6 rounded bg-background/60" />
                 </div>
@@ -60,8 +62,8 @@ const dockWidth = 360;
             <!-- 主列 -->
             <div class="flex min-w-0 flex-1 flex-col bg-background">
                 <div class="flex items-center gap-2 border-b border-border px-4 py-2">
-                    <span class="text-xs font-medium">会话 · 主列（硬底线 640px）</span>
-                    <span class="ml-auto font-mono text-[10px] text-muted-foreground">flex-1</span>
+                    <span class="mk-caption font-medium">会话 · 主列（硬底线 640px）</span>
+                    <span class="ml-auto font-mono mk-caption text-muted-foreground">flex-1</span>
                 </div>
                 <div class="min-h-0 flex-1 space-y-3 p-5">
                     <div class="h-16 rounded-lg border border-border bg-muted/20" />
@@ -78,7 +80,7 @@ const dockWidth = 360;
 
             <!-- 上下文列 -->
             <div class="flex w-[360px] shrink-0 flex-col bg-muted/20">
-                <div class="flex border-b border-border text-xs">
+                <div class="flex border-b border-border mk-caption">
                     <span class="border-b-2 border-foreground px-3 py-2 font-medium">文件</span>
                     <span class="px-3 py-2 text-muted-foreground">工具</span>
                     <span class="px-3 py-2 text-muted-foreground">智能体</span>
@@ -89,7 +91,7 @@ const dockWidth = 360;
             </div>
         </div>
 
-        <div class="flex h-12 shrink-0 items-center gap-6 border-t border-border px-4 text-[11px]">
+        <div class="flex h-12 shrink-0 items-center gap-6 border-t border-border px-4 mk-caption">
             <span class="font-medium">抓手三态</span>
             <span class="flex items-center gap-2 text-muted-foreground"
                 ><span class="inline-block h-4 w-2 rounded bg-border" /> idle：仅 1px

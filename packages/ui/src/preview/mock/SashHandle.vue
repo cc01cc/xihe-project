@@ -33,7 +33,7 @@ defineProps<{ value: number; min: number; max: number; state?: "idle" | "hover" 
         </div>
         <span
             v-if="state === 'active'"
-            class="absolute left-1/2 top-1/2 mt-6 -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 font-mono text-[10px] text-background"
+            class="absolute left-1/2 top-1/2 mt-6 -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 font-mono mk-caption text-background"
             >{{ value }}px</span
         >
     </div>

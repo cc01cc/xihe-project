@@ -40,17 +40,17 @@ const expandedOpen = ref(true);
 
 <template>
     <div class="flex h-full min-h-0 flex-col">
-        <div class="flex h-10 shrink-0 border-b border-border bg-muted/40 text-xs">
+        <div class="flex h-10 shrink-0 border-b border-border bg-muted/40 mk-caption">
             <div class="flex flex-1 items-center gap-2 border-r border-border px-5">
                 <span class="font-semibold">A · 折叠态</span>
-                <span class="text-[11px] text-muted-foreground"
+                <span class="mk-caption text-muted-foreground"
                     >折叠 56px（覆盖 --sidebar-width-icon = 3.5rem；shadcn 默认 3rem =
                     48px，不采用）</span
                 >
             </div>
             <div class="flex flex-1 items-center gap-2 px-5">
                 <span class="font-semibold">B · 展开态</span>
-                <span class="text-[11px] text-muted-foreground"
+                <span class="mk-caption text-muted-foreground"
                     >图标 + 文字 + 模块名 · 256px（--sidebar-width = 16rem）</span
                 >
             </div>
@@ -67,7 +67,7 @@ const expandedOpen = ref(true);
                     <Sidebar collapsible="icon" class="relative h-full md:relative md:h-full">
                         <SidebarHeader class="items-center px-1 py-2">
                             <div
-                                class="flex size-8 items-center justify-center rounded-md bg-foreground text-[11px] font-semibold text-background"
+                                class="flex size-8 items-center justify-center rounded-md bg-foreground mk-caption font-semibold text-background"
                             >
                                 XH
                             </div>
@@ -94,7 +94,7 @@ const expandedOpen = ref(true);
                                 <SidebarMenuItem>
                                     <SidebarMenuButton tooltip="账号" class="justify-center">
                                         <span
-                                            class="flex size-5 items-center justify-center rounded-full bg-muted text-[9px] font-semibold"
+                                            class="flex size-5 items-center justify-center rounded-full bg-muted mk-caption font-semibold"
                                             >D3</span
                                         >
                                     </SidebarMenuButton>
@@ -105,7 +105,7 @@ const expandedOpen = ref(true);
                     <SidebarInset class="bg-background">
                         <div class="flex items-center gap-2 border-b border-border px-4 py-2">
                             <SidebarTrigger class="size-7" />
-                            <span class="text-xs text-muted-foreground"
+                            <span class="mk-caption text-muted-foreground"
                                 >模块内导航在右侧，不在这一条里</span
                             >
                         </div>
@@ -113,9 +113,13 @@ const expandedOpen = ref(true);
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <div class="h-9 rounded border border-border bg-muted/30" />
-                            <p class="pt-1 text-[11px] leading-5 text-muted-foreground">
-                                图标条只放 3 个顶层模块 + 账号：M3「collapsed rail 只放 3–7
-                                个目的地」。56px 见 DEV-010 §10 与 RAIL_WIDTH。
+                            <p class="pt-1 mk-caption leading-5 text-muted-foreground">
+                                [裁定 PLAN-0762 T2.3 / DEV-010 §10.2] 全局条 MVP
+                                <strong>只放两个模块</strong>：主体工作区 /
+                                设置页，<strong>不加第三个</strong>；第三个模块何时进、进什么，[裁定]
+                                待用户裁定（DEV-010 §10.6）。 [引用 M3] M3 建议 collapsed rail 放
+                                3–7 个目的地 —— <strong>我们比它更严，取 2</strong>，不是 M3
+                                让我们放 3。56px 见 DEV-010 §10 与 RAIL_WIDTH。
                             </p>
                         </div>
                     </SidebarInset>
@@ -133,19 +137,19 @@ const expandedOpen = ref(true);
                         <SidebarHeader class="gap-2 border-b border-sidebar-border px-3 py-3">
                             <div class="flex items-center gap-2">
                                 <div
-                                    class="flex size-8 items-center justify-center rounded-md bg-foreground text-[11px] font-semibold text-background"
+                                    class="flex size-8 items-center justify-center rounded-md bg-foreground mk-caption font-semibold text-background"
                                 >
                                     XH
                                 </div>
                                 <div class="flex flex-col">
-                                    <span class="text-sm font-semibold leading-4">Xihe</span>
-                                    <span class="text-[10px] text-muted-foreground">dev 环境</span>
+                                    <span class="mk-body font-semibold leading-4">Xihe</span>
+                                    <span class="mk-caption text-muted-foreground">dev 环境</span>
                                 </div>
                             </div>
                         </SidebarHeader>
                         <SidebarContent class="px-1">
                             <SidebarGroup>
-                                <SidebarGroupLabel class="text-[11px] uppercase tracking-wide"
+                                <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
                                     >模块</SidebarGroupLabel
                                 >
                                 <SidebarGroupContent>
@@ -169,7 +173,7 @@ const expandedOpen = ref(true);
                             </SidebarGroup>
                             <SidebarSeparator />
                             <SidebarGroup>
-                                <SidebarGroupLabel class="text-[11px] uppercase tracking-wide"
+                                <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
                                     >设置 · 实例层</SidebarGroupLabel
                                 >
                                 <SidebarGroupContent>
@@ -208,7 +212,7 @@ const expandedOpen = ref(true);
                             </SidebarGroup>
                             <SidebarSeparator />
                             <SidebarGroup>
-                                <SidebarGroupLabel class="text-[11px] uppercase tracking-wide"
+                                <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
                                     >实例运维</SidebarGroupLabel
                                 >
                                 <SidebarGroupContent>
@@ -227,7 +231,7 @@ const expandedOpen = ref(true);
                     <SidebarInset class="bg-background">
                         <div class="flex items-center gap-2 border-b border-border px-4 py-2">
                             <SidebarTrigger class="size-7" />
-                            <span class="text-xs text-muted-foreground"
+                            <span class="mk-caption text-muted-foreground"
                                 >同一组件、同一 prop，open 状态切换即两态</span
                             >
                         </div>
@@ -235,9 +239,14 @@ const expandedOpen = ref(true);
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <div class="h-9 rounded border border-border bg-muted/30" />
                             <div class="h-9 rounded border border-border bg-muted/30" />
-                            <p class="pt-1 text-[11px] leading-5 text-muted-foreground">
-                                这一段演示的是 schema 2「一个 Sidebar
-                                内分两组」：上组=模块，下组=模块内导航， 不是两根独立侧栏。
+                            <p class="pt-1 mk-caption leading-5 text-muted-foreground">
+                                <strong>被否决候选（仅作对照，不采用）</strong>「一根 Sidebar
+                                内分两组」：上组=模块，下组=模块内导航。 否决理由：PLAN-0762 design
+                                已定 <strong>两根</strong>（GlobalRail + 设置页左导航）；「一层
+                                Sidebar 全扛」属 webui-design-research §方案 B，<strong
+                                    >需单独立 PLAN</strong
+                                >
+                                ⇒ mock 不画成结论，只摆在对照位。
                             </p>
                         </div>
                     </SidebarInset>
