@@ -5,7 +5,12 @@ import { Button } from "@/components/ui/button";
 import MessageItem from "@/features/workspace/chat/components/MessageItem.vue";
 import ToolCallCard from "@/features/workspace/chat/components/ToolCallCard.vue";
 import SectionShell from "../SectionShell.vue";
-import { mockMessageSamples, mockRefusedToolCall, mockSuccessToolCall } from "../mockData";
+import {
+    mockLongToolCalls,
+    mockMessageSamples,
+    mockRefusedToolCall,
+    mockSuccessToolCall,
+} from "../mockData";
 </script>
 
 <template>
@@ -39,6 +44,22 @@ import { mockMessageSamples, mockRefusedToolCall, mockSuccessToolCall } from "..
                     />
                     <ToolCallCard
                         :tool-call="mockRefusedToolCall"
+                        @approve="() => {}"
+                        @reject="() => {}"
+                    />
+                </div>
+
+                <h3 class="pt-1 text-sm font-medium text-muted-foreground">
+                    工具卡 · 真实量级长串（bash 命令 / 绝对路径 / 参数 JSON / runId / 错误码）
+                </h3>
+                <div
+                    class="space-y-3 rounded-xl border border-border bg-background p-4"
+                    data-mono-probe="chat-long"
+                >
+                    <ToolCallCard
+                        v-for="call in mockLongToolCalls"
+                        :key="call.id"
+                        :tool-call="call"
                         @approve="() => {}"
                         @reject="() => {}"
                     />
