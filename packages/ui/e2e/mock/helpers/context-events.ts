@@ -107,13 +107,30 @@ export function resolveWorkspaceStreamScenario(
     );
 }
 
-export async function installWorkspaceEventStream(page: Page): Promise<void> {
-    const scenario = resolveWorkspaceStreamScenario();
+/** 给日志/断言用的场景名。 */
+export function describeWorkspaceStreamScenario(scenario: WorkspaceStreamScenario): string {
+    switch (scenario.kind) {
+        case "hold":
+            return "hold";
+        case "closeSoon":
+            return "close-soon";
+        case "eventThenClose":
+            return `event-then-close(${scenario.ms}ms)`;
+        case "closeAfter":
+            return `close-after:${scenario.ms}`;
+    }
+}
+
+export async function installWorkspaceEventStream(
+    page: Page,
+    scenarioArg?: WorkspaceStreamScenario,
+): Promise<void> {
+    const scenario = scenarioArg ?? resolveWorkspaceStreamScenario();
     if (scenario.kind !== "hold" && !warnedScenario) {
         warnedScenario = true;
-        // 让「整批跑在测量场景上」这件事自己喊出来，而不是留在 shell 历史里
+        // 让「这批跑在关流场景上」这件事自己喊出来，而不是留在 shell 历史里
         console.warn(
-            `[fixture] XH_FIXTURE_SSE_SCENARIO=${process.env.XH_FIXTURE_SSE_SCENARIO} ⇒ 工作区事件流按该场景主动关流（仅测量用）`,
+            `[fixture] 工作区事件流场景 = ${describeWorkspaceStreamScenario(scenario)} ⇒ 每条连接按该场景主动关流（测量/重连用例专用）`,
         );
     }
     await page.addInitScript((scenarioArg: WorkspaceStreamScenario) => {
