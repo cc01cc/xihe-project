@@ -15,7 +15,7 @@
 // teardown. On a dev stack, restart the runtime afterwards with `mise run
 // dev:runtime`.
 import { execSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { registerJourneyUser, seedPage, type JourneyContext } from "./helpers/journey";
@@ -110,6 +110,48 @@ async function waitForHttp(url: string, timeoutMs = 120000): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     throw new Error(`${url} not ready within ${timeoutMs}ms`);
+}
+
+/**
+ * BL-538: declare this service stop to the host runner *before* it happens.
+ *
+ * The runner's fail-fast only looked at "which phase did the exit happen in", so this spec's
+ * intentional Runtime kill was classified as a real crash and aborted the run (masking every
+ * later spec in the batch). The declaration is a file in the run directory the runner passed via
+ * `XIHE_E2E_EXPECTED_EXIT_DIR`; the runner consumes it single-use and logs a warning with this
+ * spec name + window instead of aborting. No directory provided (standalone spec run, mock lane)
+ * ⇒ no declaration and today's behaviour is unchanged.
+ *
+ * @returns disposer that removes the declaration if the exit never happened.
+ */
+function declareExpectedServiceExit(service: string, windowMs = 120000): () => void {
+    const dir = process.env.XIHE_E2E_EXPECTED_EXIT_DIR;
+    if (!dir) return () => {};
+    const file = path.join(dir, `${service}.json`);
+    const startedAt = Date.now();
+    try {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            file,
+            JSON.stringify({
+                service,
+                spec: "journey-b.spec.ts:B1-fail-human",
+                startedAt,
+                expiresAt: startedAt + windowMs,
+            }),
+            "utf8",
+        );
+    } catch {
+        // A missing declaration only means we fall back to the plain fail-fast path.
+        return () => {};
+    }
+    return () => {
+        try {
+            unlinkSync(file);
+        } catch {
+            // already consumed by the runner
+        }
+    };
 }
 
 async function killRuntime(): Promise<void> {
@@ -355,6 +397,8 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
         await page.goto("/workspace/" + ctx.workspaceId, { waitUntil: "load" });
         await expect(dirButton(page)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
+        // BL-538: the next exit of the Runtime is intentional — tell the runner before killing it.
+        const clearExpectedExit = declareExpectedServiceExit("runtime");
         try {
             await killRuntime();
 
@@ -388,6 +432,7 @@ test.describe("@host Journey B — manual workspace mutations (PLAN-0353 D1)", (
                 fullPage: false,
             });
         } finally {
+            clearExpectedExit();
             // PLAN-0579 R3: recovery is unconditional — a failed assertion above
             // must not leave the runtime dead for the remaining serial specs.
             await ensureRuntimeUp(request);

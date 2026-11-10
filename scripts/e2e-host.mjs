@@ -1,7 +1,7 @@
 import { join, dirname, isAbsolute } from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { stat as stat2, readdir, writeFile, readFile, mkdir } from 'node:fs/promises'
 import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
@@ -462,6 +462,10 @@ const nativeServiceChildren = new Map()
 let checkpointProbeControlServer = null
 let checkpointProbeControlToken = null
 let checkpointProbeControlUrl = null
+// BL-538: per-run directory a spec writes its declared service-stop window into, e.g.
+// `runtime.json` = { service, spec, startedAt, expiresAt }. Kept under the run dir (never the
+// repo) and consumed single-use below, so a crash-restart loop cannot be forgiven twice.
+let declaredExitDir = null
 let agentDatabaseConfigPresent = null
 let cleaned = false
 let teardownResult = { ok: true, failures: [] }
@@ -1284,9 +1288,19 @@ async function launchNativeService({ name, cmd, args, cwd, extraEnv, healthUrl }
     console.log(`[e2e-host] native ${name} exited code=${code ?? 'null'} signal=${signal ?? 'none'}`)
     // task-237 fail-fast for a real crash; task-257: a nonzero exit during the cleanup window is
     // expected (the runner terminates its own services) and must not turn a green suite into exit=1.
-    const disposition = classifyChildExit({ code, signal, shuttingDown, phase: lifecyclePhase })
+    // BL-538: a spec may declare "I am about to stop this service" beforehand; the declaration is
+    // consumed here and only downgrades this phase to `declared` (logged with spec + window, never
+    // silent). Signal deaths and undeclared/expired exits keep the fail path.
+    const intent = takeDeclaredServiceExit(name)
+    const disposition = classifyChildExit({ code, signal, shuttingDown, phase: lifecyclePhase, intent })
     if (disposition === 'fail') {
       void abortRun(`native ${name} exited code=${code} (signal=${signal ?? 'none'})`)
+    } else if (disposition === 'declared') {
+      console.warn(
+        `[e2e-host] native ${name} exited code=${code ?? 'null'} inside a DECLARED stop window `
+          + `(spec=${intent.spec} window=${new Date(intent.startedAt).toISOString()}→${new Date(intent.expiresAt).toISOString()}) `
+          + '— not fatal; declaration consumed (BL-538)',
+      )
     } else if (disposition === 'warn') {
       console.warn(
         `[e2e-host] native ${name} exited code=${code ?? 'null'} during ${lifecyclePhase} (expected shutdown; not fatal)`,
@@ -1686,6 +1700,34 @@ function sendControlJson(response, status, value) {
     connection: 'close',
   })
   response.end(JSON.stringify(value))
+}
+
+/**
+ * BL-538: read AND consume a declared stop window for one service.
+ *
+ * Single-use on purpose: the first exit consumes the declaration, so a second non-zero exit inside
+ * the same window (a crash-restart loop) goes back to the normal `fail` path instead of being
+ * forgiven repeatedly. Invalid/expired declarations return an intent with `matches` false (or
+ * null), which classifies as `fail` — a stale marker must never widen the exception.
+ */
+function takeDeclaredServiceExit(service) {
+    if (!declaredExitDir) return null
+    const file = join(declaredExitDir, `${service}.json`)
+    if (!existsSync(file)) return null
+    let parsed = null
+    try {
+        parsed = JSON.parse(readFileSync(file, 'utf8'))
+    } catch {
+        parsed = null
+    } finally {
+        try { unlinkSync(file) } catch { /* already consumed/removed */ }
+    }
+    if (!parsed || typeof parsed !== 'object') return null
+    const startedAt = Number(parsed.startedAt)
+    const expiresAt = Number(parsed.expiresAt)
+    if (!Number.isFinite(startedAt) || !Number.isFinite(expiresAt)) return null
+    const spec = typeof parsed.spec === 'string' && parsed.spec.trim() ? parsed.spec.slice(0, 200) : 'unknown-spec'
+    return { spec, startedAt, expiresAt, matches: Date.now() <= expiresAt }
 }
 
 async function startCheckpointProbeControl() {
@@ -2230,6 +2272,12 @@ async function runPlaywright() {
   if (!playwrightCli) {
     throw new Error(`[e2e-host] playwright CLI not found (tried: ${cliCandidates.join(', ')})`)
   }
+  // BL-538: fresh per-run directory for declared stop windows (wiped with the run dir).
+  declaredExitDir = join(hostRootParent, runIdForTests, 'expected-exits')
+  await mkdir(declaredExitDir, { recursive: true }).catch((error) => {
+    console.warn(`[e2e-host] declared-exit dir unavailable (${error instanceof Error ? error.message : String(error)}); declared windows disabled`)
+    declaredExitDir = null
+  })
   const result = await run(nodeCommand, [
     playwrightCli,
     'test',
@@ -2246,6 +2294,8 @@ async function runPlaywright() {
       XIHE_E2E_PROFILE: 'host',
       XIHE_E2E_EXTERNAL_SERVER: '1',
       XIHE_E2E_RUN_ID: runIdForTests,
+      // BL-538: specs declare an intentional service stop here (see takeDeclaredServiceExit).
+      ...(declaredExitDir ? { XIHE_E2E_EXPECTED_EXIT_DIR: declaredExitDir } : {}),
       XIHE_CP_API_TOKEN: serviceToken,
       XIHE_UI_PORT: uiPort,
       XIHE_CP_PORT: cpPort,
