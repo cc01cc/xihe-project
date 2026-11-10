@@ -150,14 +150,30 @@ describe("SettingsSidebar", () => {
         ]);
     });
 
-    it("hides the whole instance block without the capability (fail-closed)", () => {
+    it("hides instance domains/resources without the capability and no atom (fail-closed)", () => {
         state.capability = false;
+        state.canManageRoles = false;
         const wrapper = mountSidebar("user", "rag");
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
         expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(9);
         expect(wrapper.text()).not.toContain("配置锁定");
-        // 实例块整体不渲染 ⇒ 运维/安全项也一个都不在（不是靠文案判断）。
+        // 域 + 实例资源整段不渲染 ⇒ ops/安全项也一个都不在（不是靠文案判断）。
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);
+    });
+
+    // BL-552 / PLAN-0651 T4.2 case 3：atom-only（有 MANAGE_ROLES、无 cap:instance:admin）
+    // 必须仍看到 roles 入口 —— 修复前实例层整段被能力位遮住，该用例即当时真栈失败面。
+    it("BL-552: keeps the roles entry visible for an atom-only user (no capability)", () => {
+        state.capability = false;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("user", "rag");
+        // 域与实例资源仍按能力位隐藏。
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-instance-"]')).toHaveLength(0);
+        expect(wrapper.findAll('[data-testid="settings-nav-resource-group"]')).toHaveLength(1);
+        // 但 ops/安全组里的 roles 项必须渲染（PLAN-0651 ruling ①）。
+        expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
+        // config-locks 走能力位（BL-392），atom-only 下必须隐藏 —— 证明两组门没有互相污染。
+        expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(false);
     });
 
     it("T4.0: lands the resource group in both layers and keeps every gap slot visible", () => {
