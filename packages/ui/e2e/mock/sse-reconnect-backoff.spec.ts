@@ -17,9 +17,11 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
  */
 const SESSION_ID = "reconnect-backoff-session";
 /**
- * 第 1 次与第 5 次连接的时间跨度判据：旧行为 ~1.0 s ⇒ 红；R1 实测 4.17 s ⇒ 绿。
+ * 第 1 次与第 5 次连接的时间跨度判据。
  *
- * 取 2.5 s 而不是 5 s：5 s 会**假红**（真实 R1 跨度 4.17 s）——判据假红会被绕过，绕过它的人是对的。
+ * 阈值 2.5 s：实测「旧产品 1173 ms / R1 4167 ms」，2.5 s 落在两者之间且两侧各有 >2× 余量。
+ * 曾用 5 s（按「第 6 次连接」误算成 7.75 s），真跑时对 R1 **假红**（4167 < 5000）后按实测改。
+ * **不要把它调回 5 s** —— 那个数是算错的，不是保守取值。
  */
 const FIRST_TO_FIFTH_CONNECT_MS = 2_500;
 
@@ -39,11 +41,11 @@ test("workspace SSE 重连按指数退避，不是恒速重连", async ({ page }
     await setupMockAuth(page, { workspaceEventsScenario: { kind: "closeSoon" } });
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "reconnect backoff" }] });
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-    await expect(page.getByTestId("chat-input"), "composer 挂载").toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("chat-input"), "composer 挂载").toBeVisible({ timeout: 10_000 });
 
     await expect
         .poll(() => connectTimes.length, {
-            timeout: 20_000,
+            timeout: 10_000,
             intervals: [100, 200, 250],
             message: "工作区 SSE 应至少重连到第 5 次",
         })
