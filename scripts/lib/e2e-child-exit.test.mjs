@@ -34,3 +34,27 @@ test('defaults are conservative: boot phase + unknown code', () => {
     assert.equal(classifyChildExit({}), 'ignore');
     assert.equal(classifyChildExit({ code: 1 }), 'fail');
 });
+
+// ── BL-538：声明式停机窗口（既有 task-257 的 5 组断言原样保留） ──────────
+// 新增档位只有 'declared'：窗口内的非零退出不 abort，但调用方必须打审计日志。
+
+const declaredWindow = { matches: true, spec: 'journey-b.spec.ts:B1-fail-human', startedAt: 0, expiresAt: 1 };
+
+test('BL-538 声明窗口内的非零退出记 declared（不 abort，但必须打审计日志）', () => {
+    assert.equal(classifyChildExit({ code: 1, phase: 'tests', intent: declaredWindow }), 'declared');
+});
+
+test('BL-538 窗口外/过期的声明不得放宽判据（仍 fail）', () => {
+    assert.equal(classifyChildExit({ code: 1, phase: 'tests', intent: { ...declaredWindow, matches: false } }), 'fail');
+    assert.equal(classifyChildExit({ code: 1, phase: 'tests', intent: {} }), 'fail');
+});
+
+test('BL-538 信号退出与 boot 阶段不因声明而放行', () => {
+    assert.equal(classifyChildExit({ code: null, signal: 'SIGTERM', phase: 'tests', intent: declaredWindow }), 'fail');
+    assert.equal(classifyChildExit({ code: 1, phase: 'boot', intent: declaredWindow }), 'fail');
+});
+
+test('BL-538 cleanup 窗口与干净退出的既有结论不受声明影响', () => {
+    assert.equal(classifyChildExit({ code: 1, phase: 'cleanup', intent: declaredWindow }), 'warn');
+    assert.equal(classifyChildExit({ code: 0, phase: 'tests', intent: declaredWindow }), 'ignore');
+});
