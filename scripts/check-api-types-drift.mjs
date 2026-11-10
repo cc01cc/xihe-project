@@ -53,7 +53,8 @@ export function isLiteralUnion(body) {
 /** 抽 export type|interface NAME 的声明体（花括号/分号配平，零依赖）。 */
 export function extractHandwrittenTypes(source) {
   const out = [];
-  const re = /export\s+(?:type|interface)\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*(=|\{)/gu;
+  // interface 可以带 extends 子句（`export interface X extends Y {`）—— 漏了这类会静默少算（实测漏 2/205）
+  const re = /export\s+(?:type|interface)\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*(?:extends\s+[^{=]*?)?\s*(=|\{)/gu;
   let m;
   while ((m = re.exec(source)) !== null) {
     const name = m[1];
