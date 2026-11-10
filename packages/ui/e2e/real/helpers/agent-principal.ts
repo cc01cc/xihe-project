@@ -32,6 +32,16 @@ type SessionOptions = {
     principalId: string;
     title: string;
     /**
+     * task-174：显式钉定建会话用的 provider 连接与模型身份（PLAN-0438：模型身份 =
+     * connectionId + modelId，SessionService.bindApiTemplate:505 对显式连接强制
+     * requireModel ⇒ modelName 必须同批给）。G2 创建门把「多条 READY 候选」显式化为
+     * 400 PROVIDER_CONNECTION_AMBIGUOUS 并提示 pass providerConnectionId explicitly；
+     * 三个字段均可选透传，不传 = 逐字节旧行为（隐式解析）。
+     */
+    providerConnectionId?: string;
+    modelProvider?: string;
+    modelName?: string;
+    /**
      * PLAN-0601 显式绑定（可选）：POST /api/v1/sessions 的 binding 字段，满足
      * `ApiRequestTemplateService.admissionSnapshot` —— 不传则**裸会话**，agent dispatch 会
      * 409 `API_TYPE_REBIND_REQUIRED`。字段名即 wire 名（providerConnectionId/modelProvider/modelName/
@@ -244,7 +254,15 @@ export async function provisionWorkspaceAgentPrincipal(
 export async function createSessionWithPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
-    { principalId, title, workspaceId, binding }: SessionOptions & { workspaceId?: string },
+    {
+        principalId,
+        title,
+        workspaceId,
+        binding,
+        providerConnectionId,
+        modelProvider,
+        modelName,
+    }: SessionOptions & { workspaceId?: string },
 ): Promise<string> {
     const url = workspaceId
         ? `${CP_URL}/api/v1/workspaces/${workspaceId}/sessions`
@@ -260,6 +278,10 @@ export async function createSessionWithPrincipal(
             agentPrincipalId: principalId,
             // 有绑定才带（不传 ⇒ 与旧行为逐字节一致）。
             ...(binding ? binding : {}),
+            // task-174：有显式模型身份才带（同上，缺席 = 隐式解析旧行为）。
+            ...(providerConnectionId ? { providerConnectionId } : {}),
+            ...(modelProvider ? { modelProvider } : {}),
+            ...(modelName ? { modelName } : {}),
         },
     });
     expect(response.status(), await response.text()).toBe(201);
