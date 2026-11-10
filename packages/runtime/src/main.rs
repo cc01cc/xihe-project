@@ -4782,8 +4782,10 @@ mod remote_handler_tests {
 
     const TEST_WS: &str = "ws-test";
 
-    // test-global-state: allow — 全程只写常量 "true"，且 remote_mcp.rs:527/597 只按值比较；
-    // 每个调用点写同一值（幂等），不会让并发测试看到第三种状态。
+    // test-global-state: allow — 豁免理由（不变量）：写入值恒定（恒为 "true"），读者
+    // `remote_mcp.rs:527/597` 只按值比较 ⇒ 任意并发顺序下该变量都不会出现第三种状态，也不存在
+    // 「本测试结束后残留影响后续测试」的情形（无测试依赖它未设置）。复核点 = 若改写入值或新增
+    // 读者，须重新论证该不变量，否则本豁免失效。
     #[allow(unsafe_code)]
     fn allow_local_http() {
         // Edition 2024: env mutation is unsafe; confined to this test binary,
