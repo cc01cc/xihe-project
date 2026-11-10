@@ -224,6 +224,9 @@ async function installPaginationRoutes(
             });
         },
     );
+    // 函数式窄路由（与首屏路由同类型）—— Playwright 路由 LIFO 下**后注册者先匹配**，
+    // 而 auth.ts 的 `**/messages` 通配已按 `?before` 守卫跳过（见 helpers/auth.ts）⇒
+    // 「加载更早」必由本路由应答，不会被通配替换成首屏数据（实测 scrollHeight 698 重载）。
     await page.route(
         (url) =>
             url.hostname === "localhost" &&
