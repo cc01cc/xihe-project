@@ -5,21 +5,15 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { LoaderCircle } from "@lucide/vue";
 import { useAuthStore } from "../../../stores/auth";
-import { useConfigStore, type ConfigDomain } from "../../../stores/config";
 import { useSessionStore } from "../../../stores/session";
 import { api, ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
-import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vue";
-import SettingsLayerHeader from "../../../components/settings/SettingsLayerHeader.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 import CredentialsPanel from "../../../components/settings/credentials/CredentialsPanel.vue";
 import KnowledgeBaseView from "../../../views/settings/KnowledgeBaseView.vue";
-import SettingsNotFoundView from "../../../views/settings/SettingsNotFoundView.vue";
-import ToolFacesView from "../../../views/settings/ToolFacesView.vue";
-import { DOMAIN_LABEL_KEY, domainsForLayer } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -30,56 +24,29 @@ import AlertDialogDescription from "../../../components/ui/alert-dialog/AlertDia
 import AlertDialogFooter from "../../../components/ui/alert-dialog/AlertDialogFooter.vue";
 import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCancel.vue";
 
-// PLAN-0560：每工作区设置页（常规/配置/MCP）。配置区复用 ConfigLayerPanels
-// （layer=workspace），MCP 复用 WorkspaceMcpPanel；常规区 OWNER 可编辑/删除（T2.6）。
-// PLAN-0565：新增「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
+// PLAN-0560：每工作区设置页（常规/MCP）。MCP 复用 WorkspaceMcpPanel，常规区 OWNER 可编辑/删除。
+// PLAN-0565：「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
 // PLAN-0752 T4.2/T4.3：工作区层的资源入口按 tab 承载 —— MCP（绑定/启用）、凭据（归属本工作区）、
 // 知识库（按工作区分区的文档）。三者后端都已实现，所以都是**真入口**，不是缺口位；实例/用户层
 // 没有对应承载才在外层左栏标 G2/G3（D7 口径：只给真缺的能力标缺口）。
-type SettingsTab = "general" | "config" | "mcp" | "members" | "credentials" | "knowledge";
+//
+// task-253（用户 2026-11-10 裁定）：**移除「配置」tab 与域段路由**
+// （/workspace/:id/settings/:domain）。全局 config 的 workspace 层已在 UI 侧失效（契约侧由
+// task-250 只标 deprecated），工作区内部设置面本轮不重新设计 ⇒ 这里只保留不依赖该层的资源
+// tab。删除理由不是「看起来多余」：留着它就会继续 PUT/GET /config/workspace/**，而这层已废弃。
+type SettingsTab = "general" | "mcp" | "members" | "credentials" | "knowledge";
 
 const route = useRoute(),
     router = useRouter(),
     auth = useAuthStore(),
-    configStore = useConfigStore(),
     sessionStore = useSessionStore(),
     { t } = useI18n();
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
 
-/**
- * PLAN-0752 M1：工作区层也进域段（/workspace/:id/settings/:domain）。工作区层矩阵是 9 域
- * （logging 只有实例层），不在矩阵里的 :domain 直链 ⇒ 404 视图（V3/V25），而不是静默忽略。
- */
-const domainParam = computed(() => {
-    const value = route.params.domain;
-    return typeof value === "string" ? value : "";
-});
-const domainInvalid = computed(
-    () =>
-        domainParam.value !== "" &&
-        !domainsForLayer("workspace").includes(domainParam.value as ConfigDomain),
-);
-
-/**
- * PLAN-0752 M2 B4：带域段时按**单域**渲染（与实例/用户层域页同构：域标题 18px + 该域面板），
- * 不再把「整个工作区层 9 域」平铺在 tab 里。可写域白名单仍是 `domainsForLayer("workspace")`
- * 的 9 域 —— 矩阵口径：approval-policy / job-policy 在工作区层可写，logging 不在该层（域段直接 404）。
- */
-const domainLabel = computed(() =>
-    domainParam.value ? t(DOMAIN_LABEL_KEY[domainParam.value as ConfigDomain]) : "",
-);
-const domainKeyCount = computed(() =>
-    domainParam.value
-        ? Object.keys(configStore.layerConfig.workspace?.[domainParam.value as ConfigDomain] ?? {})
-              .length
-        : 0,
-);
-
 const initialTab = ((): SettingsTab => {
     const q = route.query.tab;
-    return q === "config" ||
-        q === "mcp" ||
+    return q === "mcp" ||
         q === "members" ||
         q === "credentials" ||
         q === "knowledge" ||
@@ -89,45 +56,12 @@ const initialTab = ((): SettingsTab => {
 })();
 const activeTab = ref<SettingsTab>(initialTab);
 
-/**
- * G9（PLAN-0752 / task-153）：工作区层也挂出「工具分类」入口。
- *
- * <p>**缺口**：工具分类的唯一挂载点是 approval-policy 域页内的页签，而旧判据只认实例层
- * （`SettingsDomainView.vue:89-94` 的 `toolFacesTab` 限定 layer === "instance"）⇒
- * **工作区 OWNER 能改却点不到**，能点到的实例 ADMIN 又不以工作区口径改。</p>
- *
- * <p>**不动后端**：`POST /api/v1/policy/tool-faces` 只校验已登录
- * （`PolicyController.java:71-83`），scope 语义在 `ToolFaceService.java:149-169` ——
- * workspace scope 写入要求 workspace OWNER 或实例 ADMIN，读取只要求带工作区上下文
- * （`ownerFor(..., requireOwner=false)`）。</p>
- *
- * <p>**权限面按能力求值，不按角色名特判**：页签对「能进入该域页的成员」可见；能否分类由
- * `useAuthStore().canClassifyTools`（实例 admin 或工作区 OWNER，`stores/auth.ts:213-216`）
- * 在 `ToolFacesView` 内部求值 ⇒ 非 OWNER 看到只读列表（`settings-tool-faces-forbidden`
- * 信息条 + 无分类按钮），与「工作区设置页对非写角色只读」的既有语义一致。</p>
- */
-const toolFacesTab = computed(() => domainParam.value === "approval-policy");
-const activeDomainTab = ref<"policy" | "tool-faces">("policy");
-
-function syncDomainTab(): void {
-    activeDomainTab.value =
-        toolFacesTab.value && route.query.tab === "tool-faces" ? "tool-faces" : "policy";
-}
-syncDomainTab();
-// `?tab=` 只表达**域内视图**（同实例层口径 `SettingsDomainView.vue:97-112`），层仍在 URL 域段里。
-watch(() => [route.query.tab, toolFacesTab.value] as const, syncDomainTab);
-
-function selectDomainTab(tab: "policy" | "tool-faces"): void {
-    activeDomainTab.value = tab;
-    void router.replace({
-        query: { ...route.query, tab: tab === "tool-faces" ? "tool-faces" : undefined },
-    });
-}
-
+// task-253：域段模式（/workspace/:id/settings/:domain）随工作区配置层一起移除 ——
+// 该模式下唯一的域内页签「工具分类」也就没有宿主了（G9/task-153 的工作区入口在本轮消失，
+// 已作为「产品面减少」报 Lead 裁定；ToolFacesView 本身与实例层入口不受影响）。
 const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
     const base: { key: SettingsTab; label: string }[] = [
         { key: "general", label: t("workspace.settingsTabGeneral") },
-        { key: "config", label: t("workspace.settingsTabConfig") },
     ];
     // BL-344：`canViewMembers` 是三态 —— 未知（`undefined`）时**保留**成员 tab，
     // 只有确定无权（`false`）才隐藏；否则能力位一抖动 tab 就会消失再回来。
@@ -153,34 +87,11 @@ watch(
 );
 
 const loadError = ref(""),
-    loading = ref(false),
-    configLoaded = ref(false);
-
-async function loadConfig() {
-    if (configLoaded.value || !workspaceId.value) return;
-    try {
-        await configStore.loadLayerDomains("workspace", workspaceId.value);
-        configLoaded.value = true;
-    } catch (e) {
-        logger.warn("Failed to load workspace config domains", e);
-        toast.error(t("workspace.settingsLoadFailed"));
-    }
-}
+    loading = ref(false);
 
 function switchTab(tab: SettingsTab) {
     if (activeTab.value === tab) return;
     activeTab.value = tab;
-    if (tab === "config") void loadConfig();
-}
-
-/** 域段模式下「切到配置总览」= 回到不带域段的旧入口（保留 tab 形态）。 */
-function goConfigOverview() {
-    if (!workspaceId.value) return;
-    void router.push({
-        name: "workspace-settings",
-        params: { workspaceId: workspaceId.value },
-        query: { tab: "config" },
-    });
 }
 
 // T3.7 头部动作组：新建对话复用 ?newChat=1 语义（Sidebar.startNewChat 同口径）。
@@ -224,11 +135,6 @@ async function loadWorkspace() {
         return;
     } finally {
         loading.value = false;
-    }
-    // 域段模式（/workspace/:id/settings/:domain）不经过 tab，同样要装载该层 9 域配置；
-    // 但矩阵里不存在的域段（如 logging）先 404，不该顺带发一整层配置请求（V4 同口径）。
-    if (activeTab.value === "config" || (domainParam.value !== "" && !domainInvalid.value)) {
-        await loadConfig();
     }
 }
 
@@ -313,102 +219,28 @@ onMounted(() => {
 </script>
 
 <template>
-    <SettingsNotFoundView v-if="domainInvalid" />
-    <section v-else class="min-h-full" data-testid="workspace-settings-page">
-        <!-- 域段模式（PLAN-0752 M2 B4）：/workspace/:id/settings/:domain 只渲染该域。
-             T1.1b（task-179 案A 裁定）：层头归一到 SettingsLayerHeader —— 面包屑
-             「设置 › 工作区层 › {域}」+ text-2xl 层标题，旧手写 kicker（第二套实现）退役。 -->
-        <div v-if="domainParam" data-testid="ws-settings-domain-page">
-            <SettingsLayerHeader layer="workspace" :domain="domainLabel" />
-            <div class="mx-auto w-full max-w-6xl px-6 py-6">
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                    <h2 class="text-lg font-medium" data-testid="ws-settings-domain-title">
-                        {{ domainLabel }}
-                    </h2>
-                    <p
-                        class="text-[11px] text-muted-foreground"
-                        data-testid="ws-settings-domain-summary"
-                    >
-                        {{ t("settings.ia.domainKeysCount", { count: domainKeyCount }) }}
-                    </p>
-                    <button
-                        type="button"
-                        class="ml-auto rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                        data-testid="ws-settings-domain-overview"
-                        @click="goConfigOverview"
-                    >
-                        {{ t("workspace.settingsDomainBackToOverview") }}
-                    </button>
-                </div>
-                <div
-                    v-if="toolFacesTab"
-                    data-testid="ws-settings-domain-tabs"
-                    role="tablist"
-                    :aria-label="domainLabel"
-                    class="mt-3 flex items-center gap-1 border-b"
+    <section class="min-h-full" data-testid="workspace-settings-page">
+        <!-- task-253：工作区设置不再是「设置区的一层」（全局设置只有实例/用户两层），
+             所以不再复用 SettingsLayerHeader 的「设置 › 工作区层」面包屑，页面自带标题头。
+             工作区配置 tab 与域段路由同时移除 —— 那块面走的是已废弃的 /config/workspace/**。 -->
+        <header
+            data-testid="workspace-settings-header"
+            class="sticky top-0 z-10 border-b bg-background/95 backdrop-blur"
+        >
+            <div class="mx-auto w-full max-w-6xl px-6 pt-4 pb-3">
+                <h1
+                    data-testid="workspace-settings-title"
+                    class="text-2xl leading-tight font-semibold tracking-tight"
                 >
-                    <button
-                        v-for="tab in ['policy', 'tool-faces'] as const"
-                        :key="tab"
-                        type="button"
-                        role="tab"
-                        :data-testid="'settings-domain-tab-' + tab"
-                        :aria-selected="activeDomainTab === tab"
-                        class="-mb-px min-h-8 border-b-2 px-2 text-xs transition-colors"
-                        :class="
-                            activeDomainTab === tab
-                                ? 'border-foreground font-medium text-foreground'
-                                : 'border-transparent text-muted-foreground hover:text-foreground'
-                        "
-                        @click="selectDomainTab(tab)"
-                    >
-                        {{
-                            tab === "policy"
-                                ? t("settings.ia.approvalTabPolicy")
-                                : t("settings.ia.navToolFaces")
-                        }}
-                    </button>
-                </div>
-
-                <p
-                    v-if="!auth.canWriteWorkspace"
-                    class="mt-1 text-[11px] text-muted-foreground"
-                    data-testid="ws-settings-domain-readonly"
-                >
-                    {{ t("workspace.settingsConfigNote") }}
-                </p>
-
-                <!-- 策略面板用 `v-show` 保留挂载（切页签不重挂、不重复拉层配置），工具分类按需挂载
-                 —— 与实例层域页同一口径：按需挂载 `SettingsDomainView.vue:230-232`，
-                 常挂隐藏 `:239-241`。 -->
-                <div v-show="activeDomainTab === 'policy'" class="mt-4">
-                    <ConfigLayerPanels
-                        layer="workspace"
-                        :workspace-id="workspaceId"
-                        :domain="domainParam as ConfigDomain"
-                        :readonly="!auth.canWriteWorkspace"
-                    />
-                </div>
-                <div
-                    v-if="activeDomainTab === 'tool-faces' && toolFacesTab"
-                    class="mt-4"
-                    data-testid="ws-settings-tool-faces"
-                >
-                    <ToolFacesView embedded scope-lock="workspace" />
-                </div>
-            </div>
-        </div>
-
-        <!-- T1.1b（task-179 案A 裁定）：层头归一 —— 旧手写 kicker + text-lg 标题退役；
-             层标题文案不变（settings.ia.layerWorkspace 与 workspace.settingsTitle 同为「工作区设置」），
-             面包屑按 design.md:98 模板「设置 › 工作区层」。 -->
-        <div v-else>
-            <SettingsLayerHeader layer="workspace" />
-            <div class="mx-auto w-full max-w-6xl px-6 py-6">
-                <p class="text-sm text-muted-foreground mb-4 max-w-3xl">
+                    {{ t("workspace.settingsTitle") }}
+                </h1>
+                <p class="mt-1 max-w-3xl text-sm text-muted-foreground">
                     {{ t("workspace.settingsDesc") }}
                 </p>
-
+            </div>
+        </header>
+        <div>
+            <div class="mx-auto w-full max-w-6xl px-6 py-6">
                 <div
                     class="flex flex-wrap items-center gap-2 mb-4"
                     data-testid="ws-settings-actions"
@@ -603,17 +435,6 @@ onMounted(() => {
                                 </div>
                             </div>
                         </div>
-                    </div>
-
-                    <div v-else-if="activeTab === 'config'" data-testid="ws-settings-config">
-                        <p class="text-xs text-muted-foreground mb-2">
-                            {{ t("workspace.settingsConfigNote") }}
-                        </p>
-                        <ConfigLayerPanels
-                            layer="workspace"
-                            :workspace-id="workspaceId"
-                            :readonly="!auth.canWriteWorkspace"
-                        />
                     </div>
 
                     <div

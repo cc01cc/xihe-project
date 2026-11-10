@@ -52,12 +52,12 @@ describe("API request template lifecycle", () => {
                 entries: { templates: JSON.stringify([builtin]) },
                 saving: false,
                 layer: "user",
-                workspaceId: "a",
             },
         });
         await flushPromises();
         await wrapper.get('[data-testid="api-request-publish"]').trigger("click");
-        await wrapper.setProps({ layer: "workspace", workspaceId: "b", entries: {} });
+        // task-253：层是唯一的重置轴（workspaceId prop 已随工作区层一起移除）。
+        await wrapper.setProps({ layer: "instance", entries: {} });
         expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(false);
         finish({ valid: true, diagnostics: [] });
         await flushPromises();
@@ -87,18 +87,19 @@ describe("API request template lifecycle", () => {
         expect(wrapper.emitted("save")).toBeUndefined();
     });
 
-    it("resets between Workspaces even when the layer stays the same", async () => {
+    it("keeps the selection when only entries refresh for the same layer", async () => {
+        // task-253：重置判据只剩「层变了」——同层 entries 回填不得把编辑区清掉。
         const wrapper = mount(Panel, {
             props: {
                 entries: { templates: JSON.stringify([builtin]) },
                 saving: false,
-                layer: "workspace",
-                workspaceId: "a",
+                layer: "user",
             },
         });
         await flushPromises();
-        await wrapper.setProps({ workspaceId: "b", entries: {} });
-        expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(true);
+        await wrapper.setProps({ entries: {} });
+        expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(true);
         wrapper.unmount();
     });
     it("preserves invalid raw source as a draft without invoking publication validation", async () => {

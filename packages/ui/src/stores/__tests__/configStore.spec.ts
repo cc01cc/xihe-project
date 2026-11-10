@@ -153,7 +153,7 @@ describe("useConfigStore", () => {
             ]);
             // Layer surfaces (user/workspace tabs reachable by non-admins) stay
             // fully readable: no request there can 403 on domain grounds.
-            for (const domain of [...LAYER_DOMAINS.user, ...LAYER_DOMAINS.workspace]) {
+            for (const domain of LAYER_DOMAINS.user) {
                 expect(isDomainReadableWithoutAdmin(domain)).toBe(true);
             }
         });
@@ -438,42 +438,39 @@ describe("useConfigStore", () => {
             return calls;
         }
 
-        it("loadLayerDomains fetches only the layer domain set with includeMeta", async () => {
+        it("loadLayerDomains fetches only the layer domain set with includeMeta (task-253: no workspace query)", async () => {
             const calls = mockLayerFetch();
             const store = useConfigStore();
 
-            await store.loadLayerDomains("workspace", "ws-1");
+            await store.loadLayerDomains("user");
 
-            // Workspace includes approval-policy, agent-templates, context-templates, and job-policy.
-            // Each domain now issues a config read plus a PLAN-0554 meta read.
+            // Each domain issues a config read plus a PLAN-0554 meta read.
             const domainCalls = calls.filter((call) => !call.url.includes("/meta"));
             const metaCalls = calls.filter((call) => call.url.includes("/meta"));
             expect(domainCalls).toHaveLength(9);
             expect(metaCalls).toHaveLength(9);
             for (const call of domainCalls) {
-                expect(call.url).toContain("layer=workspace");
+                expect(call.url).toContain("layer=user");
                 expect(call.url).toContain("includeMeta=true");
-                expect(call.url).toContain("workspaceId=ws-1");
+                // task-253：工作区层从 UI 移除后，读面不再拼 workspaceId 查询参数。
+                expect(call.url).not.toContain("workspaceId=");
             }
             for (const call of metaCalls) {
-                expect(call.url).toContain("layer=workspace");
+                expect(call.url).toContain("layer=user");
                 expect(call.url).not.toContain("includeMeta=true");
-                expect(call.url).toContain("workspaceId=ws-1");
+                expect(call.url).not.toContain("workspaceId=");
             }
-            expect(Object.keys(store.layerConfig.workspace)).toHaveLength(9);
-            expect(store.layerConfig.workspace["embedding"]).toEqual({
-                "workspace-embedding-key": "value",
-            });
+            expect(Object.keys(store.layerConfig.user)).toHaveLength(9);
+            expect(store.layerConfig.user["embedding"]).toEqual({ "user-embedding-key": "value" });
             expect(store.envOverridden["embedding"]).toEqual({ model: "env-model" });
             expect(store.envOverridden["rag"]).toEqual({});
         });
 
-        it("job-policy is instance+workspace writable but absent from the user layer (PLAN-0373)", async () => {
+        it("job-policy is instance-only once the workspace layer is gone (PLAN-0373 / task-253)", async () => {
             const calls = mockLayerFetch(),
                 store = useConfigStore();
 
             expect(INSTANCE_DOMAINS).toContain("job-policy");
-            expect(LAYER_DOMAINS.workspace).toContain("job-policy");
             expect(LAYER_DOMAINS.user).not.toContain("job-policy");
 
             await store.loadLayerDomains("instance");
@@ -506,15 +503,16 @@ describe("useConfigStore", () => {
             expect(store.layerConfig.user["logging"]).toBeUndefined();
         });
 
-        it("putLayerConfig targets the layer endpoint with workspace query", async () => {
+        it("putLayerConfig targets the layer endpoint without any workspace query", async () => {
             const calls = mockLayerFetch(),
                 store = useConfigStore();
 
-            await store.putLayerConfig("workspace", "rag", { topK: "5" }, "ws-2");
+            await store.putLayerConfig("user", "rag", { topK: "5" });
             await store.putLayerConfig("user", "agent-profile", { userName: "zero" });
             await store.putLayerConfig("instance", "logging", { logLevel: "DEBUG" });
 
-            expect(calls[0].url).toContain("/config/workspace/rag?workspaceId=ws-2");
+            expect(calls[0].url).toContain("/config/user/rag");
+            expect(calls[0].url).not.toContain("workspaceId=");
             expect(calls[0].init?.method).toBe("PUT");
             expect(calls[0].init?.body).toBe(JSON.stringify({ topK: "5" }));
             expect(calls[1].url).toContain("/config/user/agent-profile");
@@ -541,7 +539,7 @@ describe("useConfigStore", () => {
 
             store.clearForUserSwitch();
 
-            expect(store.layerConfig).toEqual({ instance: {}, workspace: {}, user: {} });
+            expect(store.layerConfig).toEqual({ instance: {}, user: {} });
             expect(store.envOverridden).toEqual({});
         });
     });

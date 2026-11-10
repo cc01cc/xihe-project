@@ -102,6 +102,7 @@ const messages = {
             expandRail: "展开导航栏",
             clearSearch: "清除搜索",
             resize: "调整导航面板宽度",
+            toggle: "切换侧边栏",
         },
         monitor: {
             refresh: "刷新监控数据",
@@ -2364,6 +2365,7 @@ const messages = {
             openChat: "打开对话",
             files: "文件",
             openNavigation: "打开导航",
+            breadcrumb: "面包屑",
             delete: "删除",
         },
         login: {
@@ -2687,6 +2689,7 @@ const messages = {
             expandRail: "Expand navigation rail",
             clearSearch: "Clear search",
             resize: "Resize navigation panel",
+            toggle: "Toggle sidebar",
         },
         monitor: {
             refresh: "Refresh monitor data",
@@ -5065,6 +5068,7 @@ const messages = {
             openChat: "Open chat",
             files: "Files",
             openNavigation: "Open navigation",
+            breadcrumb: "Breadcrumb",
             delete: "Delete",
         },
         login: {

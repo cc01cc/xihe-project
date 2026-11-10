@@ -19,7 +19,6 @@ const props = defineProps<{
     entries: Record<string, string>;
     saving: boolean;
     layer: ConfigLayer;
-    workspaceId?: string;
     readonly?: boolean;
     /**
      * 保存写入口，由父组件注入：必须 await 到真实 PUT 200 才 resolve，失败要抛。
@@ -69,9 +68,9 @@ const revisions = computed(() =>
         .sort((a, b) => b.version - a.version),
 );
 watch(
-    () => [props.layer, props.workspaceId, props.entries.templates] as const,
-    ([layer, workspaceId, raw], previous) => {
-        if (!previous || layer !== previous[0] || workspaceId !== previous[1]) {
+    () => [props.layer, props.entries.templates] as const,
+    ([layer, raw], previous) => {
+        if (!previous || layer !== previous[0]) {
             generation++;
             selected.value = null;
             diagnostics.value = [];
@@ -185,7 +184,7 @@ function nextRevision(status: ApiRequestTemplate["status"]): ApiRequestTemplate 
  */
 async function refreshTemplatesFromServer() {
     try {
-        const entries = await readTemplateConfig(props.layer, props.workspaceId);
+        const entries = await readTemplateConfig(props.layer);
         templates.value = parseTemplates(entries.templates);
         if (props.layer === "instance") {
             builtins.value = templates.value.filter((item) => item.status === "published");

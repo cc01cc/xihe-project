@@ -8,8 +8,19 @@ import { request } from "../composables/api";
 import { listProviderConnections } from "../services/providerConnectionService";
 import { parseLlmProfileValue } from "../services/llmProviderProfile";
 
-export type ConfigLayer = "instance" | "workspace" | "user";
+/**
+ * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**移除 workspace 层** —— 全局设置
+ * 只有实例/用户两层，工作区内部设置本轮不设计、也不再走全局 config 的 workspace 层。
+ * 这里收窄成两值不是文档美化：任何还想传 "workspace" 的调用点会在 typecheck 当场失败，
+ * 是「彻底移除」的编译期保证（契约侧由 task-250 只标 deprecated，不删）。
+ */
+export type ConfigLayer = "instance" | "user";
 
+/**
+ * 配置值的**来源**（GET /config/{domain}/meta 回填的 provenance），与上面的层**不是同一个轴**：
+ * CP 仍可能报 source=workspace（历史行、或 CP 侧其它写入口），UI 只负责如实显示它。
+ * 所以这里保留 "workspace" 这个取值，不随 ConfigLayer 一起收窄。
+ */
 export type ConfigSource = "env" | "workspace" | "user" | "instance" | "code" | "none";
 
 /** PLAN-0554: per-key provenance returned by GET /config/{domain}/meta. */
@@ -97,17 +108,6 @@ export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
         "agent-templates",
         "api-request-templates",
     ],
-    workspace: [
-        "llm-provider",
-        "context-policy",
-        "embedding",
-        "rag",
-        "agent-runtime",
-        "approval-policy",
-        "agent-templates",
-        "api-request-templates",
-        "job-policy",
-    ],
 };
 
 export interface ConfigImportReport {
@@ -130,10 +130,9 @@ export const useConfigStore = defineStore("config", () => {
     const loading = ref(false),
         error = ref<string | null>(null);
 
-    /** Per-layer raw entries for the three settings entries (T2.17). */
+    /** Per-layer raw entries for the two settings entries (T2.17; task-253 去掉 workspace). */
     const layerConfig = ref<Record<ConfigLayer, Record<string, Record<string, string>>>>({
         instance: {},
-        workspace: {},
         user: {},
     });
     const layerLoading = ref(false);
@@ -142,7 +141,6 @@ export const useConfigStore = defineStore("config", () => {
     /** PLAN-0554: layer -> domain -> key -> provenance metadata. */
     const layerMeta = ref<Record<ConfigLayer, Record<string, Record<string, ConfigKeyMeta>>>>({
         instance: {},
-        workspace: {},
         user: {},
     });
 
@@ -255,16 +253,9 @@ export const useConfigStore = defineStore("config", () => {
      * PLAN-0307 T2.17: load one layer's entries for all writable domains of that
      * layer, together with the env-lock metadata (`includeMeta=true`).
      */
-    async function loadLayerDomains(
-        layer: ConfigLayer,
-        workspaceId?: string | null,
-    ): Promise<void> {
+    async function loadLayerDomains(layer: ConfigLayer): Promise<void> {
         layerLoading.value = true;
         error.value = null;
-        const workspaceQuery =
-            layer === "workspace" && workspaceId
-                ? `&workspaceId=${encodeURIComponent(workspaceId)}`
-                : "";
         try {
             const domains = LAYER_DOMAINS[layer];
             const results = await Promise.all(
@@ -274,9 +265,9 @@ export const useConfigStore = defineStore("config", () => {
                             domain: string;
                             entries: Record<string, string>;
                             envOverridden?: Record<string, string>;
-                        }>(`/config/${domain}?layer=${layer}&includeMeta=true${workspaceQuery}`),
+                        }>(`/config/${domain}?layer=${layer}&includeMeta=true`),
                         request<{ keys?: ConfigKeyMeta[] }>(
-                            `/config/${domain}/meta?layer=${layer}${workspaceQuery}`,
+                            `/config/${domain}/meta?layer=${layer}`,
                         ),
                     ]);
                     return { domain, body, metaBody };
@@ -312,13 +303,8 @@ export const useConfigStore = defineStore("config", () => {
         layer: ConfigLayer,
         domain: string,
         body: Record<string, string>,
-        workspaceId?: string | null,
     ): Promise<void> {
-        const workspaceQuery =
-            layer === "workspace" && workspaceId
-                ? `?workspaceId=${encodeURIComponent(workspaceId)}`
-                : "";
-        await request(`/config/${layer}/${domain}${workspaceQuery}`, {
+        await request(`/config/${layer}/${domain}`, {
             method: "PUT",
             body: JSON.stringify(body),
         });
@@ -445,9 +431,9 @@ export const useConfigStore = defineStore("config", () => {
         sessionModels.value = {};
         modelFavorites.value = [];
         modelError.value = null;
-        layerConfig.value = { instance: {}, workspace: {}, user: {} };
+        layerConfig.value = { instance: {}, user: {} };
         envOverridden.value = {};
-        layerMeta.value = { instance: {}, workspace: {}, user: {} };
+        layerMeta.value = { instance: {}, user: {} };
         providerConnections.value = [];
         providerConnectionsLoaded.value = false;
         providerConnectionsError.value = false;

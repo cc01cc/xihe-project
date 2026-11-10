@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
@@ -111,10 +111,14 @@ function mountSidebar(layer: string, domain = "") {
 }
 
 describe("SettingsSidebar", () => {
-    it("shows both layers for an instance admin with 12 + 9 domain entries", () => {
+    it("shows both layers for an instance admin with 12 + 9 domain entries", async () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
+        // task-253：左栏改成两个可折叠层分组 —— 当前层默认展开、另一层默认收起。
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(12);
+        await wrapper.find("#settings-nav-user").trigger("click");
+        await flushPromises();
         const links = wrapper.findAll('[data-testid^="settings-nav-domain-"]');
         expect(links).toHaveLength(21);
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(2);
@@ -163,12 +167,15 @@ describe("SettingsSidebar", () => {
 
     // BL-552 / PLAN-0651 T4.2 case 3：atom-only（有 MANAGE_ROLES、无 cap:instance:admin）
     // 必须仍看到 roles 入口 —— 修复前实例层整段被能力位遮住，该用例即当时真栈失败面。
-    it("BL-552: keeps the roles entry visible for an atom-only user (no capability)", () => {
+    it("BL-552: keeps the roles entry visible for an atom-only user (no capability)", async () => {
         state.capability = false;
         state.canManageRoles = true;
         const wrapper = mountSidebar("user", "rag");
         // 域与实例资源仍按能力位隐藏。
         expect(wrapper.findAll('[data-testid^="settings-nav-domain-instance-"]')).toHaveLength(0);
+        // 当前层是用户层 ⇒ 实例组默认收起；ops/安全组的可见性要在展开之后判。
+        await wrapper.find("#settings-nav-instance").trigger("click");
+        await flushPromises();
         expect(wrapper.findAll('[data-testid="settings-nav-resource-group"]')).toHaveLength(1);
         // 但 ops/安全组里的 roles 项必须渲染（PLAN-0651 ruling ①）。
         expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
@@ -176,10 +183,13 @@ describe("SettingsSidebar", () => {
         expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(false);
     });
 
-    it("T4.0: lands the resource group in both layers and keeps every gap slot visible", () => {
+    it("T4.0: lands the resource group in both layers and keeps every gap slot visible", async () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
+        // 实例层当前展开；展开用户层后才能一次看到两层的资源组。
+        await wrapper.find("#settings-nav-user").trigger("click");
+        await flushPromises();
         // 实例层「实例资源」4 条全缺口；用户层「我的资源」1 缺口 + 2 真入口（PLAN-0750 M3）
         const groups = wrapper.findAll('[data-testid="settings-nav-resource-group"]');
         expect(groups).toHaveLength(2);

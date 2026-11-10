@@ -146,7 +146,7 @@ beforeEach(() => {
 });
 
 describe("ProviderHub master-detail", () => {
-    it("writes a Workspace default to the same explicit Workspace used for its read", async () => {
+    it("writes the default template binding to the user layer (task-253: no workspace layer)", async () => {
         const target = { ...workspace, apiTypeId: user.apiTypeId, workspaceId: "workspace-b" };
         vi.mocked(listProviderConnections).mockResolvedValue({ connections: [target] });
         vi.mocked(listVisibleTemplates).mockResolvedValue([
@@ -171,20 +171,21 @@ describe("ProviderHub master-detail", () => {
             "instance:builtin:1",
         );
         await flushPromises();
-        expect(readTemplateConfig).toHaveBeenCalledWith("workspace", "workspace-b");
+        // 连接的 scope/workspaceId 是**连接归属**那根轴，不再决定配置层；配置层只剩实例/用户。
+        expect(readTemplateConfig).toHaveBeenCalledWith("user");
         expect(request).toHaveBeenCalledWith(
-            "/config/workspace/api-request-templates?workspaceId=workspace-b",
+            "/config/user/api-request-templates",
             expect.objectContaining({ method: "PUT" }),
         );
         wrapper.unmount();
     });
-    it("loads Workspace templates using the current context for a User connection", async () => {
+    it("loads visible templates from the two UI layers without a workspace argument", async () => {
         const wrapper = mount(ProviderHub, {
             props: { scope: "USER", workspaceId: "current-workspace" },
         });
         await flushPromises();
-        expect(listVisibleTemplates).toHaveBeenCalledWith("current-workspace");
-        expect(readTemplateConfig).toHaveBeenCalledWith("user", "current-workspace");
+        expect(listVisibleTemplates).toHaveBeenCalledWith();
+        expect(readTemplateConfig).toHaveBeenCalledWith("user");
         wrapper.unmount();
     });
     it("groups connections by Provider and switches the entire detail by connection ID", async () => {
