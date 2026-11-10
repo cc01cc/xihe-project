@@ -126,6 +126,8 @@ sequenceDiagram
 | `mise run dev:host:provider-init` | 创建或复用 Provider Connection |
 | `mise run test:e2e:host:real` | 运行指定真实 MiMo 用例 |
 | `mise run test:e2e:fixtures` | e2e 夹具自测（fake LLM `mode=chain` 状态机；不起栈、秒级；已并入 `validate`） |
+| `mise run test:mock:smoke` | Mock S1 浏览器快车道（29 个 spec；[实测] 106 passed / 1 flaky / 2 skipped、95 s 墙钟、`--workers=4`、headless；不需要后端 —— Playwright 自起 Vite）。**`XIHE_UI_PORT` 必须显式设置**：`playwright.config.ts` 默认 12630 落在窗口禁用段 12630-12633，未设置或设入该段直接 exit 2 |
+| `mise run test:mock` | **已存在，本次未实测** —— 全量 mock lane（同一 config，不限定 spec 文件）。**待补**：耗时/用例数/红点数均未在本轮实测，勿引用二手数字 |
 | `mise run test:cp:baseline` | BL-368 CP 已知基线判定：读 `test:cp` 刚写的 surefire 报告，失败 ⊆ `scripts/cp-known-baseline.json` 才 exit 0；转绿只 WARN、`reviewBy` 过期失败；**不接 `validate`** |
 | `mise run test:runtime:lib:gate` | BL-262 竞态复验门：串行 1 + 并行 3 连跑（里程碑/竞态修复后跑；**不进 `validate`**） |
 | `mise run test:runtime:lib:ignored:isolated` / `:functional` / `:mxc` | BL-262 ignored 套件三档（显式列名 + 实测超时；`:mxc` 的 4 条 MXC 边界用例需 `XIHE_MXC_EXECUTABLE`，缺 env 会按可执行消息失败；**不进 `validate`**） |

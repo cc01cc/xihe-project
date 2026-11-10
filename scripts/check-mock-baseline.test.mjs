@@ -239,3 +239,55 @@ test("compareWithBaseline flags retired skip titles", () => {
     assert.equal(problems.length, 2);
     assert.deepEqual(retired, ["registered skip B"]);
 });
+
+test("task-48: subset report filename ⇒ exit 2 E_MOCK_REPORT_SCOPE", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const reportFile = path.join(dir, "report.subset.json");
+        const baselineFile = path.join(dir, "baseline.json");
+        fs.writeFileSync(reportFile, JSON.stringify(REPORT));
+        fs.writeFileSync(baselineFile, JSON.stringify(BASELINE));
+        const result = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            { encoding: "utf8" },
+        );
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_MOCK_REPORT_SCOPE/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-48: report covering <50% of baseline ⇒ exit 2 E_MOCK_REPORT_SCOPE", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        // 全量 317 条 vs 单文件/5 文件子集 60 量级：拿子集比全量基线既不是回归也不是修好。
+        const subset = {
+            ...REPORT,
+            suites: [],
+            stats: { expected: 3, skipped: 0, unexpected: 0, flaky: 0 },
+        };
+        const { reportFile, baselineFile } = writeFixtures(dir, subset, BASELINE);
+        const result = spawnSync(
+            process.execPath,
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            { encoding: "utf8" },
+        );
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_MOCK_REPORT_SCOPE/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-48: full-size report still judged normally (guard does not block)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const result = runCli(dir);
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.doesNotMatch(result.stderr, /E_MOCK_REPORT_SCOPE/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

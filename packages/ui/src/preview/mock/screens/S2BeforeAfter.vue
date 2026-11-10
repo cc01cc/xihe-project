@@ -39,8 +39,8 @@ const active = ref("rag");
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="text-xs font-semibold">改造前</span>
-                <span class="text-[11px] text-muted-foreground"
+                <span class="mk-caption font-semibold">改造前</span>
+                <span class="mk-caption text-muted-foreground"
                     >SettingsSidebar.vue + SettingsLayerHeader.vue（产品原组件，未改一行）</span
                 >
             </div>
@@ -54,7 +54,7 @@ const active = ref("rag");
                         <div class="h-9 rounded-md border border-dashed border-border" />
                         <div class="h-9 rounded-md border border-dashed border-border" />
                         <div class="h-9 rounded-md border border-dashed border-border" />
-                        <p class="pt-2 text-xs leading-5 text-muted-foreground">
+                        <p class="pt-2 mk-caption leading-5 text-muted-foreground">
                             内容区无宽度上限：文本框随视口拉满，行长超过可读区间（1200px+）。
                         </p>
                     </div>
@@ -67,8 +67,8 @@ const active = ref("rag");
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="text-xs font-semibold">改造后</span>
-                <span class="text-[11px] text-muted-foreground"
+                <span class="mk-caption font-semibold">改造后</span>
+                <span class="mk-caption text-muted-foreground"
                     >components/ui/sidebar（vendor 官方件）+ lucide 图标 + 2px 选中条 +
                     Breadcrumb</span
                 >
@@ -76,12 +76,12 @@ const active = ref("rag");
             <SidebarProvider class="h-full min-h-0">
                 <Sidebar collapsible="none" class="h-full w-[280px]">
                     <SidebarHeader class="border-b border-sidebar-border px-3 py-3">
-                        <span class="text-sm font-semibold">设置 · 实例层</span>
+                        <span class="mk-body font-semibold">设置 · 实例层</span>
                     </SidebarHeader>
                     <SidebarContent class="px-1">
                         <SidebarGroup>
-                            <SidebarGroupLabel class="gap-2 text-[11px] uppercase tracking-wide"
-                                >域 <span class="font-mono text-[10px]">12</span></SidebarGroupLabel
+                            <SidebarGroupLabel class="gap-2 mk-caption uppercase tracking-wide"
+                                >域 <span class="font-mono mk-caption">12</span></SidebarGroupLabel
                             >
                             <SidebarGroupContent>
                                 <SidebarMenu>
@@ -108,7 +108,7 @@ const active = ref("rag");
                         </SidebarGroup>
                         <SidebarSeparator />
                         <SidebarGroup>
-                            <SidebarGroupLabel class="text-[11px] uppercase tracking-wide"
+                            <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
                                 >实例运维</SidebarGroupLabel
                             >
                             <SidebarGroupContent>
@@ -124,7 +124,7 @@ const active = ref("rag");
                         </SidebarGroup>
                         <SidebarSeparator />
                         <SidebarGroup>
-                            <SidebarGroupLabel class="text-[11px] uppercase tracking-wide"
+                            <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
                                 >安全与权限</SidebarGroupLabel
                             >
                             <SidebarGroupContent>
@@ -142,7 +142,7 @@ const active = ref("rag");
                 </Sidebar>
                 <div class="min-h-0 flex-1 overflow-hidden bg-background">
                     <div class="border-b border-border px-8 py-3">
-                        <nav aria-label="面包屑" class="text-xs text-muted-foreground">
+                        <nav aria-label="面包屑" class="mk-caption text-muted-foreground">
                             <ol class="flex items-center gap-2">
                                 <li>设置</li>
                                 <li aria-hidden="true">›</li>
@@ -157,7 +157,7 @@ const active = ref("rag");
                             <div class="h-9 rounded-md border border-border bg-muted/30" />
                             <div class="h-9 rounded-md border border-border bg-muted/30" />
                             <div class="h-9 rounded-md border border-border bg-muted/30" />
-                            <p class="pt-2 text-xs leading-5 text-muted-foreground">
+                            <p class="pt-2 mk-caption leading-5 text-muted-foreground">
                                 内容列封顶 920px：行长回到可读区间，右侧留白而不是被拉满。
                             </p>
                         </div>

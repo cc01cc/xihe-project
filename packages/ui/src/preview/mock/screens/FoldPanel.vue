@@ -17,6 +17,8 @@ import {
     SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { domains, opsItems, securityItems, userItems } from "../data";
+// 当前域只从这一处取（此前把 rag 写死 ⇒ 正文换域后左栏高亮不动）
+import { activeDomainId } from "../data/all-domains";
 
 /**
  * One rail in a given folding state. Local refs (not props) so the toggle still works when the
@@ -26,6 +28,8 @@ import { domains, opsItems, securityItems, userItems } from "../data";
  * 交互，层由路由决定，所以左栏只剩折叠可见性这一件事可调。
  */
 const props = defineProps<{ instanceOpen: boolean; userOpen: boolean }>();
+
+const activeDomain = activeDomainId();
 
 const instanceOpen = ref(props.instanceOpen);
 const userOpen = ref(props.userOpen);
@@ -40,8 +44,8 @@ function instanceTotal(): number {
         <Sidebar collapsible="none" class="h-full w-[330px] rounded-lg border">
             <SidebarHeader class="border-b border-sidebar-border px-3 py-3">
                 <div class="flex items-center gap-2">
-                    <span class="text-sm font-semibold">设置</span>
-                    <span class="font-mono text-[10px] text-muted-foreground"
+                    <span class="mk-body font-semibold">设置</span>
+                    <span class="font-mono mk-caption text-muted-foreground"
                         >/settings/instance</span
                     >
                 </div>
@@ -51,7 +55,7 @@ function instanceTotal(): number {
                     <SidebarGroup>
                         <SidebarGroupLabel as-child>
                             <CollapsibleTrigger
-                                class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] uppercase tracking-wide hover:bg-sidebar-accent"
+                                class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 mk-caption uppercase tracking-wide hover:bg-sidebar-accent"
                             >
                                 <ChevronRight
                                     class="size-3 transition-transform"
@@ -59,10 +63,10 @@ function instanceTotal(): number {
                                     aria-hidden="true"
                                 />
                                 <span>实例</span>
-                                <span class="font-mono text-[10px] text-muted-foreground">{{
+                                <span class="font-mono mk-caption text-muted-foreground">{{
                                     instanceTotal()
                                 }}</span>
-                                <span class="ml-auto text-[10px] normal-case text-muted-foreground"
+                                <span class="ml-auto mk-caption normal-case text-muted-foreground"
                                     >当前层</span
                                 >
                             </CollapsibleTrigger>
@@ -72,11 +76,11 @@ function instanceTotal(): number {
                                 <SidebarMenu>
                                     <SidebarMenuItem v-for="item in domains" :key="item.id">
                                         <SidebarMenuButton
-                                            :is-active="item.id === 'rag'"
+                                            :is-active="item.id === activeDomain"
                                             class="relative h-8"
                                         >
                                             <span
-                                                v-if="item.id === 'rag'"
+                                                v-if="item.id === activeDomain"
                                                 class="absolute inset-y-1 left-0 w-0.5 rounded-full bg-foreground"
                                                 aria-hidden="true"
                                             />
@@ -92,7 +96,7 @@ function instanceTotal(): number {
 
                             <SidebarSeparator class="my-1" />
                             <p
-                                class="px-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground"
+                                class="px-2 pb-1 mk-caption uppercase tracking-wide text-muted-foreground"
                             >
                                 实例运维 <span class="font-mono">2</span>
                             </p>
@@ -109,7 +113,7 @@ function instanceTotal(): number {
 
                             <SidebarSeparator class="my-1" />
                             <p
-                                class="px-2 pb-1 text-[10px] uppercase tracking-wide text-muted-foreground"
+                                class="px-2 pb-1 mk-caption uppercase tracking-wide text-muted-foreground"
                             >
                                 安全与权限 <span class="font-mono">3</span>
                             </p>
@@ -131,7 +135,7 @@ function instanceTotal(): number {
                     <SidebarGroup>
                         <SidebarGroupLabel as-child>
                             <CollapsibleTrigger
-                                class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] uppercase tracking-wide hover:bg-sidebar-accent"
+                                class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 mk-caption uppercase tracking-wide hover:bg-sidebar-accent"
                             >
                                 <ChevronRight
                                     class="size-3 transition-transform"
@@ -139,7 +143,7 @@ function instanceTotal(): number {
                                     aria-hidden="true"
                                 />
                                 <span>用户</span>
-                                <span class="font-mono text-[10px] text-muted-foreground">{{
+                                <span class="font-mono mk-caption text-muted-foreground">{{
                                     userItems.length
                                 }}</span>
                             </CollapsibleTrigger>
