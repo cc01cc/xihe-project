@@ -7717,6 +7717,10 @@ mod job_engine_route_tests {
         }
     }
 
+    // BL-568: on a host **without** a usable MXC the `--bin xihe-runtime` route tests
+    // below go red by design — the branch really is unverified there, and a skip would
+    // disguise that as a pass. CI without MXC must not run this target
+    // (`test:runtime` / `--bin xihe-runtime`); the default gates are `--lib`.
     /// The executable the implementation would probe, **if this host can actually
     /// answer `--probe`** — the same criterion the product uses
     /// (`process_guard.rs:686-687` plus a successful probe run), not "is the env var
