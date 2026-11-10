@@ -178,7 +178,7 @@ describe("CLI", () => {
     }
     // L2 全量门必须显式标 full（只能在窗口内跑），其余为 fast
     const full = DEFAULT_GATES.filter((g) => g.class === "full").map((g) => g.id);
-    assert.deepEqual(full.sort(), ["test:cp:executed", "test:mock", "test:ui"]);
+    assert.deepEqual(full.sort(), ["test:agent", "test:cp", "test:cp:executed", "test:mock", "test:ui"]);
   });
 
   test("--fast 只跑 class=fast 的门，L2 重门既不跑也不出现在结果里", (t) => {

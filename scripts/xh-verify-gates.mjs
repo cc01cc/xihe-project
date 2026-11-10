@@ -54,6 +54,20 @@ export const DEFAULT_GATES = [
   { id: "lint:links", kind: "mise", class: "fast" },
   { id: "test:cp:executed", kind: "mise", class: "full" },
   { id: "lint:log-secrets", kind: "mise", class: "fast" },
+  // task-105：把梯次实际在跑、但 DEFAULT_GATES 手写表漏登记的门补齐（原为 B 类漂移）。
+  { id: "lint:scripts", kind: "mise", class: "fast" },
+  { id: "lint:i18n", kind: "mise", class: "fast" },
+  { id: "lint:e2e", kind: "mise", class: "fast" },
+  { id: "test:e2e:fixtures", kind: "mise", class: "fast" },
+  { id: "check:a11y-refs:enforce", kind: "mise", class: "fast" },
+  { id: "lint:cp", kind: "mise", class: "fast" },
+  { id: "lint:agent", kind: "mise", class: "fast" },
+  { id: "lint:runtime", kind: "mise", class: "fast" },
+  { id: "test:agent", kind: "mise", class: "full" },
+  { id: "docs:api:html", kind: "mise", class: "fast" },
+  { id: "test:runtime:lib", kind: "mise", class: "fast" },
+  { id: "check:branch-scope", kind: "mise", class: "fast" },
+  { id: "test:cp", kind: "mise", class: "full" },
 ];
 
 /** 这些门需要 `packages/ui` 的依赖；worktree 里通常没有 node_modules ⇒ 显式 SKIP 并给原因。 */

@@ -1,0 +1,27 @@
+{
+  "note": "窗口梯次实际执行的门（27 步口径里的 mise 门部分；脚本单测与残留快照见 gate-parity 文档）",
+  "gates": [
+    "check:types",
+    "lint:ui",
+    "lint:scripts",
+    "lint:i18n",
+    "lint:e2e",
+    "test:e2e:fixtures",
+    "check:a11y-refs:enforce",
+    "check:e2e-bypass",
+    "lint:cp",
+    "lint:agent",
+    "lint:runtime",
+    "check:openapi",
+    "check:event-keys",
+    "check:ports",
+    "lint:links",
+    "check:api-docs",
+    "test:agent",
+    "test:ui",
+    "docs:api:html",
+    "test:runtime:lib",
+    "check:branch-scope",
+    "test:cp"
+  ]
+}
