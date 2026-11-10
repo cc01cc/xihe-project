@@ -17,17 +17,26 @@
  * 仓库的 `testMatch` 只扫 `e2e/mock/*.spec.ts`（顶层）⇒ 本文件必须在顶层，
  * 否则它既不会出现在常规报告里、也无法用显式路径跑（Playwright 的显式路径仍在 testMatch 之内过滤）。
  *
- * Windows PowerShell，一条命令拿到三个数：
+ * Windows PowerShell，一条命令拿到三个数 —— **浏览器显式钉成 chrome-beta**（与 `mise run test:mock` 一致）：
+ * 裸跑不设 `XIHE_E2E_BROWSER_CHANNEL` 会用 Playwright bundled Chromium，与历史基线**不是同一个引擎**。
  * ```
- * $env:XH_MEASURE_SSE='1'; $env:XIHE_UI_PORT='12795';
+ * $env:XH_MEASURE_SSE='1'; $env:XIHE_UI_PORT='12795'; $env:XIHE_E2E_BROWSER_CHANNEL='chrome-beta';
  * pnpm exec playwright test --config e2e/playwright.config.ts --workers=1 --retries=0 --reporter=line e2e/mock/measure-sse-connects.spec.ts;
- * Remove-Item Env:XH_MEASURE_SSE
+ * Remove-Item Env:XH_MEASURE_SSE, Env:XIHE_E2E_BROWSER_CHANNEL
  * ```
  * 终端里会出现三行 `MEASURE_WINDOW={...}`，字段与 2026-11-11 那几批**逐字同格式**，可直接对账：
  * - `hold` ⇒ 预期 `connects: 1`（**对照**：流永不关闭 ⇒ 无重连；不是 1 就是量具坏了）
  * - `close-soon` ⇒ 预期落在 `[7, 11]`（带宽由 `retryDelay` 的 `rand(0..base/4)` 派生）
  * - `event-then-close` ⇒ 预期与 `close-soon` 相差 ≤1（R3 否证的实质：有无事件对结果无影响）
  * 预期值写在这里是**给人读的对账参考**，不是断言；脚本不会因此变红。
+ *
+ * ## 数的身份必须自证（browserChannel / browserVersion）
+ * 每条量测都会先打印一行 `MEASURE_ENV={"browserChannel":…,"browserVersion":…,"windowMs":…}`，
+ * 再打印 `MEASURE_WINDOW=…`。原因：**2026-11-11 那几批历史数（1 / 9 / 9、1 / 10 / 9、隔离腿 105）
+ * 全是在 bundled Chromium 上跑的**（当时未设 `XIHE_E2E_BROWSER_CHANNEL`，见 `e2e/playwright.config.ts:8,42`）。
+ * 换引擎（例如钉 `chrome-beta`，与 `mise run test:mock` 一致）后，这些数**只能算「大致能复现」而不是「能复现」** ——
+ * 谁拿 Chrome Beta 的数去对 Chromium 的基线，就会得出错误的回归结论。
+ * 另注：「Chrome Beta 进程数 = 0」这条判据**只覆盖有头 Beta 一种形态**，它证明不了 bundled Chromium 跑量测时 CPU 上没有别人。
  *
  * ## 场景为什么写死在代码里
  * 靠环境变量（`XH_FIXTURE_SSE_SCENARIO`）会让「忘设 env」跑成 `hold` 却照样"有数"，
@@ -75,6 +84,15 @@ async function measureWindow(
     await page.waitForTimeout(WINDOW_MS);
     const windowMs = Date.now() - startedAt;
 
+    // 数的身份要能自证：每行 MEASURE_WINDOW 都能对上它的引擎，否则「能复现」会退化成「大致能复现」
+    console.log(
+        "MEASURE_ENV=" +
+            JSON.stringify({
+                browserChannel: process.env.XIHE_E2E_BROWSER_CHANNEL ?? "bundled",
+                browserVersion: page.context().browser()?.version() ?? "unknown",
+                windowMs: WINDOW_MS,
+            }),
+    );
     console.log(
         "MEASURE_WINDOW=" + JSON.stringify({ scenario: label, windowMs, connects, cleanCloses }),
     );
