@@ -140,6 +140,7 @@ function isOpsActive(path: string): boolean {
                         v-for="item in group.items"
                         :key="item.id"
                         :to="item.path"
+                        :data-testid="`settings-nav-ops-${item.id}`"
                         class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm"
                         :class="
                             isOpsActive(item.path)

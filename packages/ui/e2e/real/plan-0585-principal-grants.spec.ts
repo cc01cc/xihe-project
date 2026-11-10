@@ -246,8 +246,9 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         });
 
         await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
-        // PLAN-0752 后左栏是域/资源链接，运维项没有 per-item testid ⇒ 用 href 定位。
-        const rolesItem = page.locator('a[href="/settings/roles"]');
+        // 运维/安全项有语义 testid（task-171）；下面「退役面不得被链」那条断言的语义就是 URL，
+        // 继续按 href 断言退役面不在左栏。
+        const rolesItem = page.getByTestId("settings-nav-ops-roles");
         await expect(rolesItem).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('a[href="/settings/principal-grants"]')).toHaveCount(0);
 
