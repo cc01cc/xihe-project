@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
+import { chooseRekaOption } from "./helpers/reka-select";
 import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
@@ -319,7 +320,8 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         await page.goto(`/workspace/${wsId}/environment`);
         const select = page.locator('[data-testid="workspace-execution-mode"]');
         await expect(select).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await select.selectOption("windows-host");
+        // BL-547（task-175）：执行模式是 reka Select；选项文本 = 模式名本身。
+        await chooseRekaOption(page, select, "windows-host");
         await expect(select).toHaveValue("windows-host", { timeout: LONG_TIMEOUT_MS });
         await page.screenshot({
             scale: "css",

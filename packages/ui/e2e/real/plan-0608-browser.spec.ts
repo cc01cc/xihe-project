@@ -88,6 +88,9 @@ async function buildTwoWorkspaceFixture(request: APIRequestContext) {
     const g = await registerAccount(request, "p0608g");
     const targetWs = g.workspaceId;
     await addMember(request, g, targetWs, b.username, "EDITOR");
+    // PLAN-0552 严格解析（task-158 诊断）：新注册用户没有 USER 连接 ⇒ 经 principal 建会话
+    // 409 LLM_PROFILE_CONFLICT。先给实际操作者 B 备好 fake 连接（幂等，见 helper 注释）。
+    await ensureUserDefaultFakeConnection(request, b);
 
     const current = await request.get(`${CP_URL}/api/v1/workspaces/current`, {
         headers: { Authorization: `Bearer ${b.accessToken}` },
@@ -283,6 +286,9 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
             { accessToken: owner.accessToken, workspaceId: workspaceA },
             { name: principalName },
         );
+        // 同 fixture 门：B、C 都要经 UI 建会话 ⇒ 各自备 fake 连接（PLAN-0552 严格解析）。
+        await ensureUserDefaultFakeConnection(request, b);
+        await ensureUserDefaultFakeConnection(request, c);
 
         const results: { label: string; sessionId: string; workspaceId: string }[] = [];
 

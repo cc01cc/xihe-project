@@ -17,17 +17,29 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * 所以选项一律从 `page` 上按 role 找。
  */
 
-/** 点开 reka Select 并选中一项（按可见文本匹配选项）。 */
+/** 点开 reka Select 并选中一项（按可见文本匹配选项）。
+ *  optionTimeout：等选项出现的预算（默认即时可见；数据异步加载时用 LONG_TIMEOUT 轮询）。
+ */
 export async function chooseRekaOption(
     page: Page,
     trigger: Locator,
     optionName: string | RegExp,
+    optionTimeout?: number,
 ): Promise<void> {
     await trigger.click();
     const listbox = page.getByRole("listbox");
     await expect(listbox).toBeVisible();
-    await page.getByRole("option", { name: optionName }).click();
+    await page.getByRole("option", { name: optionName }).click({ timeout: optionTimeout });
     // 收起才代表交互完成：随后的等待/断言都建立在这之后。
+    await expect(listbox).toBeHidden();
+}
+
+/** 点开 reka Select 并选第一项（旧 native `selectOption({ index: 1 })` 的等价物）。 */
+export async function chooseFirstRekaOption(page: Page, trigger: Locator): Promise<void> {
+    await trigger.click();
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
+    await page.getByRole("option").first().click();
     await expect(listbox).toBeHidden();
 }
 

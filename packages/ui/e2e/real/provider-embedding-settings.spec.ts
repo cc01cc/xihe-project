@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { chooseRekaOption } from "./helpers/reka-select";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -106,7 +107,8 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
         await expect(select).toContainText(`E2E embedding ${connectionKey}`, {
             timeout: LONG_TIMEOUT_MS,
         });
-        await select.selectOption(connectionId);
+        // BL-547（task-175）：连接选择器是 reka Select；选项文本 = 连接标签（个人/工作区 后缀）。
+        await chooseRekaOption(page, select, new RegExp("E2E embedding " + connectionKey));
 
         // Fixed V1 model/dimension contract is displayed, never editable.
         const contract = panel.getByTestId("embedding-contract");

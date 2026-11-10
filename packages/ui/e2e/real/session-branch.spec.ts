@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { openContextPanel } from "../helpers/context-panel";
 import { ensureUserDefaultFakeConnection } from "./helpers/agent-principal";
+import { chooseRekaOption, expectRekaValue } from "./helpers/reka-select";
 import {
     CP_URL,
     awaitOperationCompletedForRun,
@@ -60,6 +61,17 @@ test.describe("@host Session branch path", () => {
         userId = ((await meResponse.json()) as { id: string }).id;
         seedUserGrant(userId, journey.workspaceId);
 
+        // task-175 / BL-547（卡面「400 bind(provider…)」红点）：把用户级 fake 连接提前到
+        // 模板/principal 创建之前。原顺序是先 bind 再建连接 —— 若 principal/绑定链在校验时
+        // 解析模板 provider/model（本模板 provider="openai"、model="fake-openai"）而此刻
+        // 用户还没有任何 USER 连接，400 报文就会带 provider 字样（task-158 观测形态）。
+        // 【未实测】根因以真栈复现的 400 报文为准；此处只把「连接必须先于消费方」这一
+        // 显然成立的夹具顺序修正，不动产品码。
+        await ensureUserDefaultFakeConnection(request, {
+            accessToken: journey.authToken,
+            workspaceId: journey.workspaceId,
+        });
+
         const roleId = randomUUID(),
             templateId = randomUUID();
         const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
@@ -102,11 +114,7 @@ test.describe("@host Session branch path", () => {
             },
         );
         expect(binding.status(), await binding.text()).toBe(200);
-        // task-158：instance profile 的严格解析要消费用户自己的 USER 连接，见 helper 注释。
-        await ensureUserDefaultFakeConnection(request, {
-            accessToken: journey.authToken,
-            workspaceId: journey.workspaceId,
-        });
+        // 用户级 fake 连接已上移（见 beforeAll 头部注释）；此处不再重复创建。
 
         const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers: workspaceHeaders,
@@ -307,12 +315,20 @@ test.describe("@host Session branch path", () => {
         // to root, assert the original messages are shown again and the branch-only
         // message is gone from the DOM, then re-select the branch before forking.
         await expandSessionSettings(page);
-        await branchSelect.selectOption(rootBranchId);
-        await expect(branchSelect).toHaveValue(rootBranchId);
+        // BL-547（task-175）：分支选择器是 reka Select；根分支选项文本 = 本地化「主路径」。
+        await chooseRekaOption(page, branchSelect, /主路径|Main path/);
+        await expectRekaValue(branchSelect, /主路径|Main path/);
         await expect(page.locator('[data-slot="message"]').last()).toContainText(anchorText);
         await expect(page.getByText(branchChatText)).toHaveCount(0);
-        await branchSelect.selectOption(createdBranch.branchId);
-        await expect(branchSelect).toHaveValue(createdBranch.branchId);
+        // 子分支选项文本 = "分支 <id 前 8 位>"（深度前缀 "- " 不影响子串匹配）。
+        const branchPick = new RegExp(
+            "分支 " +
+                createdBranch.branchId.slice(0, 8) +
+                "|Branch " +
+                createdBranch.branchId.slice(0, 8),
+        );
+        await chooseRekaOption(page, branchSelect, branchPick);
+        await expectRekaValue(branchSelect, branchPick);
         await expect(page.locator('[data-slot="message"][data-align="end"]').last()).toContainText(
             branchChatText,
         );

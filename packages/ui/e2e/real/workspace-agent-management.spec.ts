@@ -1,6 +1,6 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
@@ -173,7 +173,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await expect(dialog.getByText("暂无活动会话")).toHaveCount(0);
 
     await page.getByTestId("agent-principal-name").fill("T44PersistentAgent");
-    await page.getByTestId("agent-principal-template").selectOption(templateId);
+    // BL-547（task-175）：模板选择器是 reka Select；选项文本 = "模板名 · 层"。
+    await chooseRekaOption(
+        page,
+        page.getByTestId("agent-principal-template"),
+        /Browser Workspace Reader · user/,
+    );
     await expect(page.getByTestId("agent-principal-create-form")).toContainText(
         "Browser Workspace Reader",
     );
@@ -491,11 +496,27 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     const e2eRunId = process.env.XIHE_E2E_RUN_ID;
     if (!e2eRunId) throw new Error("XIHE_E2E_RUN_ID is required for isolated log scanning");
-    const logDir = resolve(process.cwd(), "../../.tmp/e2e-host", e2eRunId, "logs");
-    const logFiles = readdirSync(logDir).filter((file) => file.endsWith(".log"));
+    // BL-547（task-175）：runner 进程内重试会把 host root 改名为 <runId>-rN，原路径在重试轮
+    // 直接 ENOENT。按基名匹配该 run 的全部轮次目录，每一轮的日志都扫（不削弱断言）。
+    const runBase = e2eRunId.replace(/-r\d+$/, "");
+    const hostRoot = resolve(process.cwd(), "../../.tmp/e2e-host");
+    const logDirs = readdirSync(hostRoot)
+        .filter(
+            (d) =>
+                d === e2eRunId ||
+                (d.startsWith(runBase) && /^-r\d+$/.test(d.slice(runBase.length))),
+        )
+        .map((d) => resolve(hostRoot, d, "logs"))
+        .filter((d) => existsSync(d));
+    expect(logDirs.length, `no log dirs for run ${e2eRunId} under ${hostRoot}`).toBeGreaterThan(0);
+    const logFiles = logDirs.flatMap((d) =>
+        readdirSync(d)
+            .filter((file) => file.endsWith(".log"))
+            .map((file) => resolve(d, file)),
+    );
     expect(logFiles.length).toBeGreaterThan(0);
     for (const file of logFiles) {
-        const content = readFileSync(resolve(logDir, file), "utf8");
+        const content = readFileSync(file, "utf8");
         expect(content, `${file} leaked a template prompt`).not.toContain(TEMPLATE_PROMPT);
         expect(content, `${file} leaked an owner token`).not.toContain(owner.authToken);
         expect(content, `${file} leaked a second-owner token`).not.toContain(secondOwner.authToken);
