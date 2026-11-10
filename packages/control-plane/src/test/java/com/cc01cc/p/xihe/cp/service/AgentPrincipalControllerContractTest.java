@@ -88,12 +88,15 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         fixture();
         int principalCount = principalRepository.findAll().size();
 
-        ResponseEntity<Map> denied = create(Map.of("name", "NoGrant"));
-        // Layer 1 of 2: no workspace context ⇒ the precondition fails closed (409), not the atom gate.
-        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(), String.valueOf(denied.getBody()));
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", denied.getBody().get("code"));
+        // Layer 1 of 2 (PLAN-0750 M1, G1): the old context precondition is gone — a contextless
+        // create is now the user-level door authorized by CREATE_OWN_AGENT. The equivalent
+        // fail-closed proof is the atom gate itself: an actor holding no grants gets 403.
+        ResponseEntity<Map> denied = mutate(HttpMethod.POST, "/api/v1/agent-principals",
+                Map.of("name", "NoGrant"), contextlessToken());
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
+        assertEquals("FORBIDDEN", denied.getBody().get("code"));
         // Layer 2 of 2: valid workspace context, no MANAGE_WORKSPACE_AGENTS ⇒ 403 (the original intent;
-        // asserting only the 409 above would let the atom gate disappear unnoticed).
+        // asserting only Layer 1 above would let the workspace atom gate disappear unnoticed).
         ResponseEntity<Map> forbidden = create(Map.of("name", "NoGrantInContext"), workspaceId);
         assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode(), String.valueOf(forbidden.getBody()));
         assertEquals(principalCount, principalRepository.findAll().size());

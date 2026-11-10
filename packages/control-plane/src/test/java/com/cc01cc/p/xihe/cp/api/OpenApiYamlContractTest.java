@@ -682,10 +682,11 @@ class OpenApiYamlContractTest {
             assertTrue(((Map<?, ?>) leasePost.get("responses")).containsKey("429"),
                     "the lease admission path declares the 429 refusal");
 
-            // 7: BL-312 (option B, 2026-11-09) removed the former PLAN-0622 D8 atom; the contract
-            // must not name it any more (the removal stays visible until the mention is gone).
-            assertFalse(raw.contains("CREATE_OWN_AGENT"),
-                    "BL-312: the removed CREATE_OWN_AGENT atom must not appear in the contract");
+            // 7: PLAN-0750 M1 (G1=(1a), user ruling 2026-11-10) restored the atom with user-level
+            // semantics, superseding BL-312's removal — so the contract must name it again: the
+            // user-level create door is authorized by exactly this atom.
+            assertTrue(raw.contains("CREATE_OWN_AGENT"),
+                    "PLAN-0750 M1: the contract must name the user-level create atom");
         }
     }
 }

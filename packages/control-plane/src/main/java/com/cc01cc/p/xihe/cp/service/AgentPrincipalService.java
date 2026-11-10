@@ -140,7 +140,9 @@ public class AgentPrincipalService {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         UUID workspaceContext = currentWorkspaceContext();
-        requireCreationAction(actorId, workspaceContext);
+        // PLAN-0750 M1 (G1/G2): the gate reports the atom it authorized with, so the durable audit
+        // names the real source instead of a hard-coded workspace-administration action.
+        String authorizationAction = requireCreationAction(actorId, workspaceContext);
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
@@ -156,17 +158,35 @@ public class AgentPrincipalService {
                 defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
                 builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET
                         : (origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin),
-                builtinPreset ? resolvedTemplateId : presetId, roleIds);
+                builtinPreset ? resolvedTemplateId : presetId, roleIds, authorizationAction);
     }
 
-    /** Retains the original default creation authorization. */
-    private void requireCreationAction(UUID actorId, UUID workspaceContext) {
+    /**
+     * Authorizes a create and reports the atom that did it, so the audit records the real source
+     * (PLAN-0750 M1, G1=(1a) + G2=(b), user ruling 2026-11-10).
+     *
+     * <p>The gate has <b>two independent doors</b> and they are never alias-merged:</p>
+     * <ul>
+     *   <li><b>user-level create</b> — no explicit workspace context (G3=(b): {@code source=default}
+     *       counts as none) means "create a principal for myself": {@code CREATE_OWN_AGENT}, an
+     *       instance-scope atom the human default set carries, so an ordinary account needs no
+     *       workspace-administration right and needs no workspace at all. The created row carries
+     *       no {@code owner_user_id} (G2=(b)) and no Workspace binding — reach is granted later by
+     *       the explicit bind surface.</li>
+     *   <li><b>workspace-tier create</b> — an explicit workspace context keeps the original
+     *       D-174 requirement verbatim: {@code MANAGE_WORKSPACE_AGENTS} <em>in that workspace</em>.</li>
+     * </ul>
+     *
+     * @return the action atom the caller was authorized with, for the durable audit
+     */
+    private String requireCreationAction(UUID actorId, UUID workspaceContext) {
         if (workspaceContext == null) {
-            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
-                    "Creating an agent principal requires a workspace context");
+            requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_OWN_AGENT, "*", null);
+            return ToolFaceRegistry.ACTION_CREATE_OWN_AGENT;
         }
         requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 workspaceContext.toString(), workspaceContext);
+        return ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS;
     }
 
     /**
@@ -250,13 +270,40 @@ public class AgentPrincipalService {
                 null, AgentPrincipal.ORIGIN_USER, null, null);
     }
 
-    /** Validates and writes the principal and its instance role bindings atomically. */
+    /**
+     * Validates and writes the principal and its instance role bindings atomically, recording the
+     * caller-supplied authorizing atom in the durable audit.
+     *
+     * <p>The workspace-administration default keeps this overload's historical audit value for
+     * server-internal callers that authorize the create themselves; the HTTP create path passes the
+     * atom its gate actually used ({@code CREATE_OWN_AGENT} or {@code MANAGE_WORKSPACE_AGENTS}).</p>
+     */
     @Transactional
     public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
                                           JsonNode templateSnapshot,
                                           String defaultModelProvider, String defaultModelName,
                                           JsonNode allowedModels, JsonNode hooks,
                                           String origin, String presetId, List<UUID> roleIds) {
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, defaultModelProvider,
+                defaultModelName, allowedModels, hooks, origin, presetId, roleIds,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
+    }
+
+    /**
+     * Same contract as the overload above, plus the atom the caller was actually authorized with.
+     *
+     * @param authorizationAction the authorizing action atom — {@code CREATE_OWN_AGENT} for a
+     *     user-level create, {@code MANAGE_WORKSPACE_AGENTS} for a workspace-tier create. Recorded
+     *     verbatim in {@code audit_logs.detail.authorizationAction}; a blank value falls back to the
+     *     historical workspace value rather than writing an empty audit field.
+     */
+    @Transactional
+    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
+                                          JsonNode templateSnapshot,
+                                          String defaultModelProvider, String defaultModelName,
+                                          JsonNode allowedModels, JsonNode hooks,
+                                          String origin, String presetId, List<UUID> roleIds,
+                                          String authorizationAction) {
         // D-180 锁序：instance mutex 是第一把锁（RoleAdmin/BindingAdmin 同协议），之后才
         // ①锁角色行（validateGrantableRoles，稳定序）②写主体/绑定/用户。
         lockInstanceMutex();
@@ -335,7 +382,11 @@ public class AgentPrincipalService {
         bindInstanceRoles(savedPrincipal.getId(), actorId, roleIds);
 
         ObjectNode detail = objectMapper.createObjectNode();
-        detail.put("authorizationAction", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
+        // PLAN-0750 M1 (G1/G2): the audit names the atom that actually authorized this create.
+        // Hard-coding the workspace action would record a user-level create as an administrator
+        // action — a security-relevant misattribution, not a wording problem.
+        detail.put("authorizationAction", authorizationAction == null || authorizationAction.isBlank()
+                ? ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS : authorizationAction);
         if (templateId != null) {
             detail.put("templateId", templateId);
         }

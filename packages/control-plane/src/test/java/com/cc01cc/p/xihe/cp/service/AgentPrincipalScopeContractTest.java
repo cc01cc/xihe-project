@@ -43,6 +43,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0622 M1.1 — the three-tier creation/binding invariants (design §1, audit checklist O1–O7).
@@ -154,14 +155,25 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
 
         int principalCount = principalRepository.findAll().size();
 
-        ResponseEntity<Map> withoutContext = create(globalToken(owner),
-                Map.of("name", "SharedAgent"));
-        assertEquals(HttpStatus.CONFLICT, withoutContext.getStatusCode(),
-                "creating without a workspace context fails explicitly: "
-                        + String.valueOf(withoutContext.getBody()));
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", withoutContext.getBody().get("code"));
+        // PLAN-0750 M1 (G1/G2, user ruling 2026-11-10): a contextless create is the *user-level*
+        // door, authorized by the instance-scope CREATE_OWN_AGENT atom of the human default set —
+        // the ordinary account needs no workspace and no administration right. The audit has to
+        // name that atom, not the workspace administration action.
+        ResponseEntity<Map> userLevel = create(globalToken(owner), Map.of("name", "SharedAgent"));
+        assertEquals(HttpStatus.CREATED, userLevel.getStatusCode(),
+                "a contextless create is a user-level create: "
+                        + String.valueOf(userLevel.getBody()));
+        UUID userLevelId = UUID.fromString((String) userLevel.getBody().get("principalId"));
+        principals.add(userLevelId);
+        assertEquals("CREATE_OWN_AGENT",
+                objectMapper.readTree(auditDetail(userLevelId)).path("authorizationAction").asText(),
+                "the audit names the atom that actually authorized the create");
+        assertNull(principalRepository.findById(userLevelId).orElseThrow().getOwnerUserId(),
+                "G2=(b): even the user-level door leaves owner_user_id NULL");
+        assertTrue(bindingRepository.findByIdPrincipalId(userLevelId).isEmpty(),
+                "G2 explicit binding: a user-level create adds no Workspace binding");
 
-        assertEquals(principalCount, principalRepository.findAll().size());
+        assertEquals(principalCount + 1, principalRepository.findAll().size());
     }
 
     private Workspace workspaceFor(User owner) {
@@ -169,6 +181,52 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
                 owner.getId().toString());
         workspaces.add(workspace.getId());
         return workspace;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // PLAN-0750 M1: G2=(b) — the create path never writes owner_user_id; the user-level door is an
+    // atom check, not a context check and never a role-name special case (G1).
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void userLevelCreateNeverWritesOwnerUserIdAndCreatesNoWorkspaceBinding() throws Exception {
+        User owner = newUser("owner-lock");
+        grantDefaultService.ensureUserDefault(owner);
+
+        ResponseEntity<Map> created = create(globalToken(owner), Map.of("name", "OwnerLockAgent"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
+        principals.add(principalId);
+
+        AgentPrincipal stored = principalRepository.findById(principalId).orElseThrow();
+        // G2=(b) lock (D-84 style): if a future change starts writing owner_user_id on create,
+        // this assertion — and nothing else in the suite — goes red.
+        assertNull(stored.getOwnerUserId(),
+                "G2=(b) / D-174: the create path must leave owner_user_id NULL");
+        assertNull(created.getBody().get("ownerUserId"), "and the create view must not mint one");
+        assertEquals(owner.getId(), UUID.fromString(stored.getCreatedByUserId()),
+                "created_by_user_id records the actor; ownership is never inferred from it");
+        assertTrue(bindingRepository.findByIdPrincipalId(principalId).isEmpty(),
+                "G2 explicit binding: reach to a Workspace comes from the bind surface, not from create");
+        assertEquals("CREATE_OWN_AGENT",
+                objectMapper.readTree(auditDetail(principalId)).path("authorizationAction").asText(),
+                "the durable audit names the actual authorizing atom");
+    }
+
+    @Test
+    void userWithoutTheOwnAgentAtomCannotCreateAtAll() {
+        // No ensureUserDefault: the account holds no grants, so the user-level door must refuse.
+        // This is the atom gate — the assertion below never mentions a role name (G1 forbids
+        // isInstanceAdmin-style special cases).
+        User unprovisioned = newUser("no-default-grants");
+        int principalCount = principalRepository.findAll().size();
+
+        ResponseEntity<Map> denied = create(globalToken(unprovisioned), Map.of("name", "NotAllowed"));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
+        assertEquals("FORBIDDEN", denied.getBody().get("code"));
+        assertTrue(String.valueOf(denied.getBody()).contains("CREATE_OWN_AGENT"),
+                "the refusal names the missing atom: " + denied.getBody());
+        assertEquals(principalCount, principalRepository.findAll().size());
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -184,12 +242,16 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("M1.1 scope ws", owner.getId().toString());
         workspaces.add(workspace.getId());
 
-        ResponseEntity<Map> withoutContext = create(globalToken(owner),
-                Map.of("name", "NoContext"));
-        assertEquals(HttpStatus.CONFLICT, withoutContext.getStatusCode(),
-                "creation without a workspace context must fail explicitly: "
-                        + String.valueOf(withoutContext.getBody()));
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", withoutContext.getBody().get("code"));
+        // PLAN-0750 M1 (G1): the "no context" request is no longer a 409 — it is the user-level
+        // door. The workspace tier is the *explicit-context* path below and keeps its own atom.
+        ResponseEntity<Map> userLevel = create(globalToken(owner), Map.of("name", "NoContext"));
+        assertEquals(HttpStatus.CREATED, userLevel.getStatusCode(),
+                "no workspace context = user-level create, not a conflict: "
+                        + String.valueOf(userLevel.getBody()));
+        UUID userLevelId = UUID.fromString((String) userLevel.getBody().get("principalId"));
+        principals.add(userLevelId);
+        assertEquals("CREATE_OWN_AGENT",
+                objectMapper.readTree(auditDetail(userLevelId)).path("authorizationAction").asText());
 
         ResponseEntity<Map> created = create(workspaceToken(owner, workspace.getId(),
                         WorkspaceRole.OWNER), Map.of("name", "TeamAgent"));
@@ -350,21 +412,24 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
         grantDefaultService.ensureUserDefault(plain);
         int principalCount = principalRepository.findAll().size();
 
-        // No MANAGE_WORKSPACE_AGENTS: the legacy CREATE_ACCOUNT path must be gone, so this is 403.
-        // REFACTOR-GUARD(null-workspace): this denial is produced by
+        // PLAN-0750 M1 (G1): a contextless create is the user-level door and succeeds on the
+        // instance-scope CREATE_OWN_AGENT atom — never on a legacy scope/tier path.
+        // REFACTOR-GUARD(null-workspace): this authorization is produced by
         // AgentPrincipalService#requireUserAction, which builds a PolicyRequest with a null workspace
-        // and evaluates it with evaluator.allows(...) directly (no UUID parsing). ASSERT THE EXACT
-        // 403 — if that method is ever refactored onto GrantAuthorizationService#allowsUserOnly, the
-        // null workspace goes through UUID.fromString and the caller turns into a 500; this
-        // assertion must go red, not silent. (rg 'REFACTOR-GUARD' finds every such guard.)
-        // D-174: one create path, checked context-first — a contextless create answers 409 (the old
-        // "403 via requireUserAction with a null workspace" branch no longer exists on this face).
-        ResponseEntity<Map> denied = create(globalToken(plain), Map.of("name", "LegacyBody"));
-        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(),
-                "an omitted scope must not fall back to any legacy path: "
-                        + String.valueOf(denied.getBody()));
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", denied.getBody().get("code"));
-        assertEquals(principalCount, principalRepository.findAll().size());
+        // and evaluates it with evaluator.allows(...) directly (no UUID parsing). If that method is
+        // ever refactored onto GrantAuthorizationService#allowsUserOnly, the null workspace goes
+        // through UUID.fromString and the caller turns into a 500; this 201 assertion must go red,
+        // not silent. (rg 'REFACTOR-GUARD' finds every such guard.)
+        ResponseEntity<Map> userLevel = create(globalToken(plain), Map.of("name", "LegacyBody"));
+        assertEquals(HttpStatus.CREATED, userLevel.getStatusCode(),
+                "an omitted tier is a plain user-level create, not a legacy path: "
+                        + String.valueOf(userLevel.getBody()));
+        UUID userLevelId = UUID.fromString((String) userLevel.getBody().get("principalId"));
+        principals.add(userLevelId);
+        assertEquals("CREATE_OWN_AGENT",
+                objectMapper.readTree(auditDetail(userLevelId)).path("authorizationAction").asText(),
+                "no legacy scope path authorizes this create");
+        assertEquals(principalCount + 1, principalRepository.findAll().size());
 
         User owner = newUser("omitted-scope-owner");
         grantDefaultService.ensureUserDefault(owner);

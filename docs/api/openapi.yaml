@@ -705,16 +705,29 @@ paths:
       operationId: createAgentPrincipal
       summary: Create an Agent principal from a readable template snapshot
       description: |
-        D-174 (tier removed, one creation path): the request is **workspace-authorized** —
-        a missing workspace context answers 409 `WORKSPACE_CONTEXT_REQUIRED` and the caller must
-        hold `MANAGE_WORKSPACE_AGENTS` in that Workspace (403). The legacy `scope` body field is
-        rejected with 400 `INVALID_REQUEST` (no compatibility branch), the caller never assigns an
-        owner (`ownerUserId` stays NULL unless the row already carried one), and **no Workspace
-        binding is created** — reach is granted later through the existing bind surface.
+        PLAN-0750 M1 (user ruling 2026-11-10) splits the former D-174 single path into **two
+        doors**; they are independent and never alias-merged:
+
+        1. **user-level create** — **no explicit workspace context** (an implicit `source=default`
+           membership counts as none, G3) means "create a principal for myself" and is authorized
+           by the instance-scope `CREATE_OWN_AGENT` atom (403 `FORBIDDEN` without it). No Workspace
+           is involved and none is required: 409 `WORKSPACE_CONTEXT_REQUIRED` is **not** returned on
+           this path any more.
+        2. **workspace-tier create** — an **explicit** workspace context (header
+           `X-Workspace-Id`, G3=b: the context stays a header, never a body field) keeps the D-174
+           requirement verbatim: the caller must hold `MANAGE_WORKSPACE_AGENTS` in that Workspace
+           (403).
+
+        Either way the legacy `scope` body field is rejected with 400 `INVALID_REQUEST` (no
+        compatibility branch), the caller never assigns an owner (`ownerUserId` stays NULL — G2=(b)
+        expresses ownership through bindings, not through the column), and **no Workspace binding
+        is created** — reach is granted later through the existing bind surface. The durable audit
+        records the atom that actually authorized the create (`detail.authorizationAction`).
 
         `roleIds` defaults to the instance seed role `AGENT_USER` (the human USER registration
-        base set; the former user-tier creation atom was removed by BL-312, 2026-11-09); every id is validated once before the row is
-        written (unknown / agent-principal-forbidden / wider than the caller holds ⇒ 403
+        base set; the user-level creation atom `CREATE_OWN_AGENT` is part of that base set again
+        since PLAN-0750 M1 restored it with these semantics); every id is validated once before the
+        row is written (unknown / agent-principal-forbidden / wider than the caller holds ⇒ 403
         `ROLE_NOT_GRANTABLE`; the grant-side subset guard answers 403 `PRIVILEGE_ESCALATION` and
         names the atoms). Resolves an optional template only from caller-readable config layers and
         freezes the snapshot in one transaction.
