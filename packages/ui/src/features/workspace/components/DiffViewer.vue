@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from "vue";
+import { useI18n } from "vue-i18n";
+import { logger } from "@/lib/logger";
 
 export interface DiffFile {
     path: string;
@@ -37,6 +39,9 @@ const props = withDefaults(
 );
 
 const editorRef = ref<HTMLDivElement | null>(null);
+const { t } = useI18n();
+// PLAN-0753 M1 (F5, task-167): the load outcome is observable state, never a silent swallow.
+const monacoFailed = ref(false);
 
 const isUnifiedMode = computed(() => props.files !== undefined || props.hunks !== undefined);
 
@@ -89,8 +94,16 @@ async function renderDiff() {
             original: monaco.editor.createModel(props.original ?? "", props.language),
             modified: monaco.editor.createModel(props.modified ?? "", props.language),
         });
-    } catch {
-        /* Monaco not available */
+        monacoFailed.value = false;
+    } catch (error) {
+        // PLAN-0753 M1 (F5, task-167 render matrix): fail fast. monaco is a devDependency on
+        // purpose (kept out of the production bundle), so a --prod install genuinely lacks it —
+        // the old silent catch left a blank pane that read as "no diff". Surface it loudly.
+        monacoFailed.value = true;
+        logger.error(
+            "monaco diff editor failed to load (devDependency; --prod installs lack it)",
+            error,
+        );
     }
 }
 
@@ -168,7 +181,14 @@ watch(() => [props.original, props.modified], renderDiff);
             </div>
         </template>
         <template v-else>
-            <div ref="editorRef" class="h-full w-full" />
+            <div
+                v-if="monacoFailed"
+                data-testid="workspace-diff-load-failed"
+                class="h-full w-full flex items-center justify-center text-sm text-red-400"
+            >
+                {{ t("workspace.diffLoadFailed") }}
+            </div>
+            <div v-else ref="editorRef" class="h-full w-full" />
         </template>
     </div>
 </template>

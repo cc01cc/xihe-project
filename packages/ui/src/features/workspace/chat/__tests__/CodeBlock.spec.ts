@@ -43,4 +43,19 @@ describe("CodeBlock", () => {
         expect(events[0].detail.code).toBe("console.log(1)");
         expect(events[0].detail.lang).toBe("javascript");
     });
+
+    // PLAN-0753 M1 (F2, task-167): shiki dual-theme output carries both palettes as CSS custom
+    // properties (defaultColor: false). If sanitizing ever strips them, the F2 theme following
+    // dies silently — pin the wire here at the component boundary.
+    it("keeps shiki dual-theme CSS variables through sanitization", async () => {
+        const { default: CodeBlock } = await import("../components/CodeBlock.vue");
+        const highlightedHtml =
+            '<pre class="shiki" style="--shiki-light-bg:#ffffff;--shiki-dark-bg:#0d1117">' +
+            '<code><span style="--shiki-light:#24292e;--shiki-dark:#e1e4e8">const x = 1</span></code></pre>';
+        const wrapper = mount(CodeBlock, {
+            props: { code: "const x = 1", lang: "typescript", highlightedHtml },
+        });
+        expect(wrapper.find("pre.shiki").attributes("style")).toContain("--shiki-dark-bg");
+        expect(wrapper.find("pre.shiki span").attributes("style")).toContain("--shiki-dark");
+    });
 });

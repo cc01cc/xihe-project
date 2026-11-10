@@ -37,6 +37,27 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * PLAN-0753 M1 (F2, task-167 render matrix): the shiki singleton emits dual-theme tokens with
+ * `defaultColor: false` — every span carries both palettes as CSS custom properties and nothing
+ * is pinned inline. Which palette paints follows the document scheme (the Tailwind `dark`
+ * class on `<html>`; `data-xh-color` c1/c3 are light-palette variants and keep the light code
+ * theme), so code blocks follow the app theme instead of a second, hardcoded one. Only color
+ * and background switch — font-style/weight vars are intentionally not consumed because an
+ * unset var would resolve to inherited rather than initial.
+ */
+.shiki,
+.shiki span {
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
+}
+
+.dark .shiki,
+.dark .shiki span {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+}
+
 @theme inline {
     --color-background: var(--background);
     --color-foreground: var(--foreground);

@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import DOMPurify from "dompurify";
 import { logger } from "@/lib/logger";
+import { escapeHtml } from "@/lib/escapeHtml";
 
 const props = defineProps<{
     code: string;
@@ -36,15 +37,6 @@ function handleApply() {
 const displayHtml = computed(() =>
     DOMPurify.sanitize(props.highlightedHtml || escapeHtml(props.code)),
 );
-
-function escapeHtml(text: string): string {
-    return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
 </script>
 
 <template>
