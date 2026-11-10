@@ -179,19 +179,29 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toBeVisible();
     });
 
-    test("workspace settings config tab shows workspace-scoped domains; MCP lives on its own tab", async ({
+    // task-112：原用例是「工作区设置页的『配置』标签签里按域铺面板」。该标签与域段路由已被
+    // task-253（用户 2026-11-10 裁定，提交 51c1d2a40）移除 —— 留着它就会继续 PUT/GET
+    // /config/workspace/**，而这层已废弃（src/stores/config.ts：ConfigLayer 收窄成 instance|user，
+    // 任何还想传 workspace 的调用点在 typecheck 当场失败）。
+    //
+    // 保留但改成**正面守卫**：断言「五个存活标签在、配置标签不在、没有任何域面板」——
+    // 纯删除会让撤销的事实消失，将来有人把 config 标签加回来没有任何东西会红；改写成断言后，
+    // 「不存在」本身成为一条被持续验证的契约（可执行的注释）。
+    test("workspace settings page keeps the surviving tabs and renders no config domains (task-253)", async ({
         page,
     }) => {
         await mockConfigAPIs(page);
+        // ?tab=config 已不在 tab 白名单里 ⇒ 兜底回落 general（WorkspaceSettingsView.vue initialTab）。
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-        await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
-        await expect(page.getByTestId("config-domain-agent-profile")).toHaveCount(0);
-        await expect(page.getByTestId("config-domain-user-preference")).toHaveCount(0);
-        await expect(page.getByTestId("config-domain-logging")).toHaveCount(0);
+        await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-tab-mcp")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
+        await expect(page.locator('[data-testid^="config-domain-"]')).toHaveCount(0);
         await expectPlatformScreenshot(page, "config-workspace-tab.png");
 
+        // MCP 仍在自己独立的标签上（原用例里唯一随撤销一起存活的行为）。
         await page.getByTestId("ws-settings-tab-mcp").click();
         await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
         await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
@@ -210,18 +220,14 @@ test.describe("Config Settings (three layers)", () => {
         await instanceDomain.locator("button").first().click();
         await expectTriggerLabel(page, "config-select-approval-policy-mode", "manual");
 
-        // PLAN-0560: workspace override lives on the workspace settings page.
+        // PLAN-0560 的「工作区覆盖段」已随 task-253 一并移除（用户 2026-11-10 裁定，提交
+        // 51c1d2a40）：工作区设置页没有「配置」标签，全局 config 也不再有 workspace 层 ——
+        // 覆盖语义只剩 instance → user 两层（见 stores/config.ts 的 ConfigLayer 收窄）。
+        // 因此这里不再验证「在 workspace 页上改 approval-policy」，改为验证它不在工作区页出现：
+        // 「撤销」本身有业务含义 ⇒ 断言它，而不是删掉不提（task-112 的判据）。
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-        const domain = page.getByTestId("config-domain-approval-policy");
-        await expect(domain).toBeVisible();
-        await domain.locator("button").first().click();
-
-        const modeSelect = page.getByTestId("config-select-approval-policy-mode");
-        await expect(modeSelect).toContainText("手动审批");
-        await modeSelect.click();
-        await expect(page.getByRole("option")).toHaveCount(2);
-        await page.keyboard.press("Escape");
+        await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
 
         // user 层仍不可写（显式例外）：层×域矩阵里 user 层没有 approval-policy，
         // 直链落「该组合不存在」的 404 视图（V3/V25），而不是渲染一块点不动的面板。
@@ -230,26 +236,14 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
     });
 
-    test("saving the approval mode goes through the workspace endpoint", async ({ page }) => {
-        await mockConfigAPIs(page);
-        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
-
-        await page.getByTestId("config-domain-approval-policy").locator("button").first().click();
-        await selectByTestId(page, "config-select-approval-policy-mode", "auto");
-
-        const [request] = await Promise.all([
-            page.waitForRequest(
-                (req) =>
-                    req.method() === "PUT" &&
-                    req.url().includes("/api/v1/config/workspace/approval-policy"),
-            ),
-            page
-                .getByTestId("config-domain-approval-policy")
-                .getByRole("button", { name: "保存" })
-                .click(),
-        ]);
-        expect(JSON.parse(request.postData() ?? "{}").mode).toBe("auto");
-    });
+    // 已删除：「saving the approval mode goes through the workspace endpoint」（task-112）。
+    // 删除理由：它钉的是 `PUT /api/v1/config/workspace/approval-policy` 这条写路径，而工作区
+    // 配置层已按 task-253（用户 2026-11-10 裁定，提交 51c1d2a40）整体废弃 —— 产品侧不再
+    // 有任何入口能触发该请求。**保留它会要求产品把已废弃的写入路径加回来**，那是拿测试反向
+    // 绑架产品。同层端点仍在服务的部分由实例层/用户层的保存用例覆盖：
+    //   · 「saving a value goes through the layer endpoint」（本文件，instance/logging）
+    //   · approval-policy 的层语义由「approval-policy is instance-writable…」覆盖
+    // 「工作区层不再发任何 /config/workspace 请求」这条撤销事实，由上面的正面守卫承重。
 
     test("user layer drops instance-only domains and the instructions field", async ({ page }) => {
         await mockConfigAPIs(page);
@@ -282,7 +276,10 @@ test.describe("Config Settings (three layers)", () => {
         page,
     }) => {
         await mockConfigAPIs(page);
-        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        // task-112：EmbeddingSettingsPanel 只在**非实例层**的 embedding 域页挂载
+        // （ConfigLayerPanels.vue：domain === "embedding" && layer !== "instance"），
+        // 原来的宿主是已废弃的工作区「配置」标签（task-253 / 51c1d2a40）⇒ 改到用户层域页。
+        await page.goto("/settings/user/embedding", { waitUntil: "load" });
 
         await expect(page.getByTestId("embedding-settings")).toBeVisible();
         const source = page.getByTestId("config-source-summary-embedding");
