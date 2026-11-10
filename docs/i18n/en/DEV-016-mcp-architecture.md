@@ -224,7 +224,7 @@ The CP-owned tools (`spawn_agent`, `acquire_credential`, `skill_read`, `git_stat
 1. source side — `#[tool(` count in `packages/runtime/src/main.rs` is 23 and the method-name set equals the handshake `name` set;
 2. runtime side — send `tools/list` to `/api/v1/mcp` (stateless; an `mcp-session-id` is rejected with 403) and read `result.tools`.
 
-The runnable script and acceptance criteria are in [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6, together with the six known discrepancies/clarifications of the moment (including `start_background_process` advertising a `truncate_limit` it ignores).
+The runnable script and acceptance criteria are in [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6, together with the six discrepancies/clarifications of the moment (the entry where `start_background_process` advertised a `truncate_limit` it ignored is now fixed by dropping the parameter: the background path returns no output, so output is read page-wise through `read_command_output` and truncated by the per-stream 1 MiB retention budget).
 
 **Change rule**: adding/removing a tool, or changing a `description` or `inputSchema`, is a tool-surface change — update the catalog in the same batch and re-run the §6 check. Code without the catalog update is documentation debt.
 

@@ -299,6 +299,23 @@ pub struct ExecuteCommandRequest {
     pub truncate_limit: Option<u64>,
 }
 
+/// Background-process parameters (task-241, PLAN-0763 follow-up).
+///
+/// Deliberately a separate type from [`ExecuteCommandRequest`]: `truncate_limit` sizes the
+/// **inline wire preview** of a *foreground* result, while this tool returns no output at all —
+/// only a `jobId`. Advertising the parameter here told callers it did something while the handler
+/// dropped it. Background output is retained on disk per stream and read back page-wise through
+/// `read_command_output`, which reports `truncated` once the 1 MiB retention cap was hit; there is
+/// no per-call knob on that path, so the field must not be advertised.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct StartBackgroundProcessRequest {
+    pub command: String,
+    #[serde(default, deserialize_with = "deserialize_args")]
+    #[schemars(default)]
+    pub args: Vec<String>,
+    pub timeout: Option<u64>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadCommandOutputRequest {
     pub artifact_id: String,
@@ -724,16 +741,15 @@ impl XiheRuntime {
     }
 
     #[tool(
-        description = "Execute a long-running command in the background and return a jobId; timeout is in seconds and is clamped to the configured maximum — an omitted timeout uses the configured default, an explicit 0 is clamped to the maximum, and a maximum of 0 means no limit"
+        description = "Execute a long-running command in the background and return a jobId; timeout is in seconds and is clamped to the configured maximum — an omitted timeout uses the configured default, an explicit 0 is clamped to the maximum, and a maximum of 0 means no limit. Output is not returned here: read it page-wise with read_command_output (each stream is retained up to 1 MiB, and truncated=true marks that cap)."
     )]
     async fn start_background_process(
         &self,
-        Parameters(ExecuteCommandRequest {
+        Parameters(StartBackgroundProcessRequest {
             command,
             args,
             timeout,
-            truncate_limit: _truncate,
-        }): Parameters<ExecuteCommandRequest>,
+        }): Parameters<StartBackgroundProcessRequest>,
     ) -> Result<String, String> {
         let args_vec = args;
         self.router
@@ -7328,6 +7344,92 @@ mod tool_router_regression_tests {
             !description.contains("PID"),
             "start description must not mention PID: {description}"
         );
+    }
+
+    /// task-241：`start_background_process` 曾声明 `truncate_limit` 却把参数丢弃。后台路径
+    /// 不返回输出（只回 jobId），输出由 `read_command_output` 分页读、截断由 1 MiB 保留预算
+    /// 决定。因此该参数必须从 wire schema 消失：契约与实现一致，且调用方看得到即代表生效。
+    #[test]
+    fn start_background_process_schema_drops_the_inert_truncate_limit() {
+        let tools = XiheRuntime::tool_router().list_all();
+        let start = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "start_background_process")
+            .expect("start_background_process present");
+        let json = serde_json::to_value(start).expect("tool serializes");
+        let props = json
+            .get("inputSchema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(|properties| properties.as_object())
+            .expect("start_background_process input schema missing");
+        assert!(
+            !props.contains_key("truncate_limit"),
+            "truncate_limit is inert on the background path and must not be advertised: {props:?}"
+        );
+        for kept in ["command", "args", "timeout"] {
+            assert!(
+                props.contains_key(kept),
+                "{kept} must stay in the background schema: {props:?}"
+            );
+        }
+        let description = start.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("read_command_output") && description.contains("1 MiB"),
+            "the description must point at read_command_output and the retention cap: {description}"
+        );
+    }
+
+    /// 同一次收窄不得误伤前台：`execute_command` 的 `truncate_limit` 是**生效**的 wire 预览
+    /// 长度，必须继续出现在 schema 里。
+    #[test]
+    fn execute_command_schema_keeps_truncate_limit() {
+        let tools = XiheRuntime::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "execute_command")
+            .expect("execute_command present");
+        let json = serde_json::to_value(tool).expect("tool serializes");
+        let props = json
+            .get("inputSchema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(|properties| properties.as_object())
+            .expect("execute_command input schema missing");
+        assert!(
+            props.contains_key("truncate_limit"),
+            "execute_command honors truncate_limit and must keep advertising it: {props:?}"
+        );
+    }
+
+    /// 旧 schema 声明过 `truncate_limit`，老调用方可能还在传：未知字段必须被忽略而不是报错，
+    /// 否则这次收窄就成了破坏性变更。
+    #[test]
+    fn background_request_tolerates_historical_truncate_limit_argument() {
+        let parsed: StartBackgroundProcessRequest = serde_json::from_value(serde_json::json!({
+            "command": "sleep 1",
+            "args": ["a"],
+            "timeout": 5,
+            "truncate_limit": 4096,
+        }))
+        .expect("a historical caller passing truncate_limit must still deserialize");
+        assert_eq!(parsed.command, "sleep 1");
+        assert_eq!(parsed.args, vec!["a".to_string()]);
+        assert_eq!(parsed.timeout, Some(5));
+    }
+
+    /// 反向（卡面要求的「不传」那一半）：收窄之后**唯一**合法形态是只传 `command`——`args`
+    /// 缺省为空 vec、`timeout` 缺省为 `None`。与上一条合起来覆盖「传 / 不传」两种行为。
+    #[test]
+    fn background_request_accepts_the_minimal_wire_form() {
+        let parsed: StartBackgroundProcessRequest =
+            serde_json::from_value(serde_json::json!({ "command": "sleep 1" }))
+                .expect("the minimal wire form must deserialize");
+        assert_eq!(parsed.command, "sleep 1");
+        assert!(
+            parsed.args.is_empty(),
+            "omitted args default to an empty vec: {:?}",
+            parsed.args
+        );
+        assert_eq!(parsed.timeout, None);
     }
 
     /// PLAN-0308 M1（V10）：超时署名日志的 `timeout` target 必须在默认过滤器内可见，

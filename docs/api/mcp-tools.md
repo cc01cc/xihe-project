@@ -83,7 +83,7 @@ marked **bold** below. "Face" is the CP policy face from `ToolFaceRegistry`
 | Tool | What it does | Parameters | Side effect |
 |---|---|---|---|
 | `execute_command` | Execute a shell command inside a sandboxed container | **command**, args, timeout, truncate_limit | runs code in the sandbox |
-| `start_background_process` | Long-running command in background, returns `jobId`; `timeout` in seconds, clamped to the configured maximum (omitted = default, explicit 0 = clamped to max, max 0 = no limit) | **command**, args, timeout, truncate_limit | spawns a detached job |
+| `start_background_process` | Long-running command in background, returns `jobId`; `timeout` in seconds, clamped to the configured maximum (omitted = default, explicit 0 = clamped to max, max 0 = no limit). Returns **no output** — read it page-wise with `read_command_output` (each stream is retained up to 1 MiB and `truncated=true` marks that cap) | **command**, args, timeout | spawns a detached job |
 | `cancel_background_process` | Cancel a background process by `jobId` | **jobId** | kills the job |
 
 > `INTERPRETER` shape is why `execute_command` arguments are not path-listed for policy matching —
@@ -193,7 +193,7 @@ means either the source registration and the running binary are out of sync (sta
 
 | # | Observation | Severity | Status |
 |---|---|---|---|
-| 1 | `start_background_process` advertises `truncate_limit` but its handler destructures it as `_truncate` and ignores it (`main.rs:726-737`). `execute_command` honors it. | low | not fixed; schema and behavior disagree |
+| 1 | `start_background_process` advertised `truncate_limit` but its handler destructured it as `_truncate` and ignored it (`main.rs:726-737`). `execute_command` honors it. | low | **fixed (task-241) by removing the parameter**: the background path returns no output at all, so there is nothing for a per-call preview limit to size — output is retained per stream up to 1 MiB (`job_engine/mod.rs:33 STREAM_CAP_BYTES`) and read back through `read_command_output`, which reports `truncated`. `execute_command` keeps the parameter because there it really does size the inline wire preview (`container_runtime.rs:744-748`). Historical callers still passing it are tolerated (serde ignores unknown fields). |
 | 2 | `DEV-016` §1 states the protocol is `2026-07-28`; the Runtime `initialize` result advertises `2025-11-25` (rmcp 3.7.0). The CP *enforces* `2026-07-28` on the wire, so this is a doc-vs-negotiation wording gap, not a broken handshake. | doc | clarified in this file; DEV-016 now points here |
 | 3 | `DEV-016` §3.2.1 can read as "the git tools are in every `tools/list`". They are injected only when `access.internalService()` is true, i.e. the user face never sees them. | doc | clarified in DEV-016 §10 |
 | 4 | `DEV-016` §1 note "Runtime 侧按该协议全程无会话" holds only with `MCP-Protocol-Version: 2026-07-28` + `_meta`; without the header the endpoint is sessionful (`400 Session ID is required`). | doc | clarified in DEV-016 §10 |
