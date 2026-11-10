@@ -760,19 +760,21 @@ mod tests {
 
     use super::{BackendCapabilitySnapshot, CONTRACT_VERSION, DirectAttachProbeRequest};
 
+    /// Every MXC case below is `#[ignore]`d on purpose (BL-568/task-46): it needs the host binary,
+    /// and silently *returning* from the test reported "passed" for a boundary nobody measured.
+    /// `#[ignore]` shows up in the test summary; this helper turns a missing env var into one
+    /// actionable message instead of a confusing "backend unavailable" deep inside `execute`.
     #[cfg(windows)]
-    fn mxc_available_for_test() -> bool {
-        let Some(path) = std::env::var_os("XIHE_MXC_EXECUTABLE") else {
-            eprintln!("SKIP: XIHE_MXC_EXECUTABLE is not configured; MXC boundary is unmeasured");
-            return false;
-        };
-        if !std::path::Path::new(&path).is_file() {
-            eprintln!(
-                "SKIP: XIHE_MXC_EXECUTABLE does not point to a file; MXC boundary is unmeasured"
-            );
-            return false;
-        }
-        true
+    fn mxc_executable_for_test() -> std::path::PathBuf {
+        std::env::var_os("XIHE_MXC_EXECUTABLE")
+            .map(std::path::PathBuf::from)
+            .filter(|candidate| candidate.is_file())
+            .unwrap_or_else(|| {
+                panic!(
+                    "MXC boundary cases need XIHE_MXC_EXECUTABLE pointing at the installed wxc-exec.exe; \
+                     run `mise run test:runtime:lib:ignored:mxc` with it set (see the mxc-windows-sandbox-ops skill)"
+                )
+            })
     }
 
     #[test]
@@ -883,14 +885,10 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
+    #[ignore = "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`"]
     async fn mxc_execution_captures_process_output() {
-        if !mxc_available_for_test() {
-            return;
-        }
+        let _executable = mxc_executable_for_test();
         let directory = tempfile::tempdir().expect("temporary workspace directory");
-        let executable = std::env::var("XIHE_MXC_EXECUTABLE")
-            .expect("XIHE_MXC_EXECUTABLE must point to the installed MXC binary");
-        assert!(std::path::Path::new(&executable).is_file());
         let result = super::execute(super::ProcessRequest {
             contract_version: CONTRACT_VERSION.to_string(),
             backend_kind: Some("windows-mxc".to_string()),
@@ -916,14 +914,10 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
+    #[ignore = "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`"]
     async fn mxc_execution_passes_cwd_and_environment() {
-        if !mxc_available_for_test() {
-            return;
-        }
+        let _executable = mxc_executable_for_test();
         let directory = tempfile::tempdir().expect("temporary workspace directory");
-        let executable = std::env::var("XIHE_MXC_EXECUTABLE")
-            .expect("XIHE_MXC_EXECUTABLE must point to the installed MXC binary");
-        assert!(std::path::Path::new(&executable).is_file());
         let mut env = BTreeMap::new();
         env.insert(
             "XIHE_MXC_ACCEPTANCE_ENV".to_string(),
@@ -964,10 +958,9 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
+    #[ignore = "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`"]
     async fn mxc_timeout_terminates_the_wrapper_process_tree() {
-        if !mxc_available_for_test() {
-            return;
-        }
+        let _executable = mxc_executable_for_test();
         let directory = tempfile::tempdir().expect("temporary workspace directory");
         let error = super::execute(super::ProcessRequest {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -993,10 +986,9 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
+    #[ignore = "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`"]
     async fn mxc_execution_rejects_cwd_outside_granted_root() {
-        if !mxc_available_for_test() {
-            return;
-        }
+        let _executable = mxc_executable_for_test();
         let allowed = tempfile::tempdir().expect("allowed directory");
         let outside = tempfile::tempdir().expect("outside directory");
         let result = super::execute(super::ProcessRequest {

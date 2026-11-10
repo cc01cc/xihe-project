@@ -252,7 +252,7 @@ description = "BL-262 gate: serial once + parallel 3x (milestone / post-race-fix
 dir = "packages/runtime"
 alias = "test:runtime:lib:gate"
 
-# BL-262 ignored 套件两档（2026-11-04 Lead 批准；**都不进 validate**）。
+# BL-262 ignored 套件三档（2026-11-04 Lead 批准；**都不进 validate**）。
 # 19 条 `--ignored` 里 0 条需要 Docker；盲跑 `--ignored` 会挂：2 条子进程 helper（单独跑无意义）、
 # 10 条 200x/10k 基准或手动诊断（分钟级）、3 条读真实 dev store（env 驱动）、1 条 symlink 需特权。
 # 故按**显式列名**分两档，其余保持手动；分类表见 one/.local/bl229-evidence/ignored-suite-triage.md。
@@ -283,9 +283,28 @@ run = [
   "node ../../scripts/run-with-timeout.mjs --timeout-sec 180 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v3_git_checkout_parity --test-threads=1",
   "node ../../scripts/run-with-timeout.mjs --timeout-sec 90 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v5_1000_file_restore_zero_diff --test-threads=1"
 ]
-description = "BL-262 ignored tier 2/2: 5 functional ignored tests, serial + measured timeouts; not part of validate"
+description = "BL-262 ignored tier 2/3: 5 functional ignored tests, serial + measured timeouts; not part of validate"
 dir = "packages/runtime"
 alias = "test:runtime:lib:ignored:functional"
+
+# BL-568/task-46 MXC 边界档（tier 3/3；**不进 validate**）。
+# 这 4 条原先靠 `mxc_available_for_test()`：`XIHE_MXC_EXECUTABLE` 未设就 eprintln SKIP 后
+# `return` —— 报告里是「passed」，实际上一个断言都没跑（BL-262 同源）。改成 #[ignore] 后，
+# 未跑会显式出现在 `test result: ... ignored` 里；要跑就必须给 env，缺 env 由
+# `mxc_executable_for_test()` 抛一条可执行的消息（不静默、也不失败在产品逻辑里）。
+# 前置：`XIHE_MXC_EXECUTABLE` 指向已安装的 wxc-exec.exe（安装见 mxc-windows-sandbox-ops skill）。
+# timeout：4 条合计实测 1.31s（2026-11-11 lane 实测，真 MXC），逐条取 60s 上限。
+[tasks."test:runtime:lib:ignored:mxc"]
+run = [
+  "node ../../scripts/cargo-run.mjs test --locked --lib --no-run",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact process_guard::tests::mxc_execution_captures_process_output --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact process_guard::tests::mxc_execution_passes_cwd_and_environment --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact process_guard::tests::mxc_execution_rejects_cwd_outside_granted_root --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact process_guard::tests::mxc_timeout_terminates_the_wrapper_process_tree --test-threads=1"
+]
+description = "BL-262 ignored tier 3/3: 4 MXC boundary tests, needs XIHE_MXC_EXECUTABLE, serial + measured timeouts; not part of validate"
+dir = "packages/runtime"
+alias = "test:runtime:lib:ignored:mxc"
 
 # [FROZEN 2026-10-07] Compose lane 冻结，见文件头冻结说明
 # [tasks."test:e2e:compose"]
