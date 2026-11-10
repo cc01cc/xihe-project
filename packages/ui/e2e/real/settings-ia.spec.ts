@@ -84,6 +84,8 @@ test("@host PLAN-0752 workspace domain deep link renders in the workspace tab sh
     const title = page.getByTestId("ws-settings-domain-title");
     await expect(title).toBeVisible();
     await expect(title).not.toHaveText("");
+    // T1.1b（task-179 已进 develop）：工作区域页层头 = SettingsLayerHeader（面包屑末段 = 域）。
+    await expect(page.getByTestId("settings-layer-header")).toBeVisible();
     await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
     // 工作区设置是 AppLayout 壳内的 tab（非 /settings 层壳）：工作区 Sidebar 照常 1 份。
     await expect(page.getByTestId("sidebar")).toHaveCount(1);

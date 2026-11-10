@@ -105,10 +105,12 @@ test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
         const title = page.getByTestId("ws-settings-domain-title");
         await expect(title).toBeVisible();
         await expect(title).not.toHaveText("");
+        // T1.1b（task-179，d5865c57 已进 develop）：工作区域页层头归一到 SettingsLayerHeader
+        // —— 面包屑「设置 › 工作区层 › {域}」+ text-2xl 层标题（旧手写 kicker 已退役）。
+        await expect(page.getByTestId("settings-layer-header")).toBeVisible();
+        await expect(page.getByTestId("settings-breadcrumb")).toBeVisible();
         // 工作区设置是 **AppLayout 壳内的 tab**（导航页签「工作区设置」），不是 /settings 层壳：
         // 因此这里工作区 Sidebar 恰好渲染 1 份（V10 只约束 /settings/* 的实例/用户层，见下方用例）。
-        // 注意：task-179 的「工作区层挂 SettingsLayerHeader」（d5865c57）**尚未进本 lane 基座**
-        // （merge-base 校验非祖先），故不断言 layer-header —— 该归一合入后本 spec 不受影响。
         await expect(page.getByTestId("sidebar")).toHaveCount(1);
         await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
     });
@@ -155,7 +157,8 @@ test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
     test("legacy ?tab= form still renders every tab container", async ({ page }) => {
         await mockSettingsAPIs(page);
         await page.goto("/workspace/ws-1/settings?tab=config");
-        await expect(page.getByTestId("workspace-settings-heading")).toBeVisible();
+        // T1.1b 后概览态层头 = SettingsLayerHeader（旧 workspace-settings-heading 退役）。
+        await expect(page.getByTestId("settings-layer-header")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
         // 工作区设置页在 AppLayout 壳内（页签形态），工作区 Sidebar 照常 1 份。
         await expect(page.getByTestId("sidebar")).toHaveCount(1);
@@ -180,7 +183,8 @@ test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
         await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
         await page.getByTestId("ws-settings-domain-overview").click();
         await expect(page).toHaveURL(/workspace\/ws-1\/settings\?tab=config$/);
-        await expect(page.getByTestId("workspace-settings-heading")).toBeVisible();
+        await expect(page.getByTestId("settings-layer-header")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
         await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
     });
 });
