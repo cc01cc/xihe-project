@@ -12,6 +12,7 @@ import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
 import ConfigLayerPanels from "../../../components/settings/ConfigLayerPanels.vue";
+import SettingsLayerHeader from "../../../components/settings/SettingsLayerHeader.vue";
 import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 import CredentialsPanel from "../../../components/settings/credentials/CredentialsPanel.vue";
@@ -314,335 +315,340 @@ onMounted(() => {
 <template>
     <SettingsNotFoundView v-if="domainInvalid" />
     <section v-else class="min-h-full" data-testid="workspace-settings-page">
-        <!-- 域段模式（PLAN-0752 M2 B4）：/workspace/:id/settings/:domain 只渲染该域 -->
-        <div
-            v-if="domainParam"
-            class="mx-auto w-full max-w-6xl px-6 py-6"
-            data-testid="ws-settings-domain-page"
-        >
-            <div
-                class="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1"
-                data-testid="workspace-settings-kicker"
-            >
-                {{ t("workspace.settingsKicker") }} · {{ t("workspace.settingsTabConfig") }}
-            </div>
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                <h2 class="text-lg font-medium" data-testid="ws-settings-domain-title">
-                    {{ domainLabel }}
-                </h2>
-                <p
-                    class="text-[11px] text-muted-foreground"
-                    data-testid="ws-settings-domain-summary"
-                >
-                    {{ t("settings.ia.domainKeysCount", { count: domainKeyCount }) }}
-                </p>
-                <button
-                    type="button"
-                    class="ml-auto rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                    data-testid="ws-settings-domain-overview"
-                    @click="goConfigOverview"
-                >
-                    {{ t("workspace.settingsDomainBackToOverview") }}
-                </button>
-            </div>
-            <div
-                v-if="toolFacesTab"
-                data-testid="ws-settings-domain-tabs"
-                role="tablist"
-                :aria-label="domainLabel"
-                class="mt-3 flex items-center gap-1 border-b"
-            >
-                <button
-                    v-for="tab in ['policy', 'tool-faces'] as const"
-                    :key="tab"
-                    type="button"
-                    role="tab"
-                    :data-testid="'settings-domain-tab-' + tab"
-                    :aria-selected="activeDomainTab === tab"
-                    class="-mb-px min-h-8 border-b-2 px-2 text-xs transition-colors"
-                    :class="
-                        activeDomainTab === tab
-                            ? 'border-foreground font-medium text-foreground'
-                            : 'border-transparent text-muted-foreground hover:text-foreground'
-                    "
-                    @click="selectDomainTab(tab)"
-                >
-                    {{
-                        tab === "policy"
-                            ? t("settings.ia.approvalTabPolicy")
-                            : t("settings.ia.navToolFaces")
-                    }}
-                </button>
-            </div>
-
-            <p
-                v-if="!auth.canWriteWorkspace"
-                class="mt-1 text-[11px] text-muted-foreground"
-                data-testid="ws-settings-domain-readonly"
-            >
-                {{ t("workspace.settingsConfigNote") }}
-            </p>
-
-            <!-- 策略面板用 `v-show` 保留挂载（切页签不重挂、不重复拉层配置），工具分类按需挂载
-                 —— 与实例层域页同一口径：按需挂载 `SettingsDomainView.vue:230-232`，
-                 常挂隐藏 `:239-241`。 -->
-            <div v-show="activeDomainTab === 'policy'" class="mt-4">
-                <ConfigLayerPanels
-                    layer="workspace"
-                    :workspace-id="workspaceId"
-                    :domain="domainParam as ConfigDomain"
-                    :readonly="!auth.canWriteWorkspace"
-                />
-            </div>
-            <div
-                v-if="activeDomainTab === 'tool-faces' && toolFacesTab"
-                class="mt-4"
-                data-testid="ws-settings-tool-faces"
-            >
-                <ToolFacesView embedded scope-lock="workspace" />
-            </div>
-        </div>
-
-        <div v-else class="mx-auto w-full max-w-6xl px-6 py-6">
-            <div
-                class="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1"
-                data-testid="workspace-settings-kicker"
-            >
-                {{ t("workspace.settingsKicker") }}
-            </div>
-            <h2 class="text-lg font-semibold mb-1" data-testid="workspace-settings-heading">
-                {{ t("workspace.settingsTitle") }}
-            </h2>
-            <p class="text-sm text-muted-foreground mb-4 max-w-3xl">
-                {{ t("workspace.settingsDesc") }}
-            </p>
-
-            <div class="flex flex-wrap items-center gap-2 mb-4" data-testid="ws-settings-actions">
-                <Button size="sm" data-testid="ws-settings-new-chat" @click="newChat">
-                    {{ t("sidebar.newChat") }}
-                </Button>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="ws-settings-environment"
-                    @click="goEnvironment"
-                >
-                    {{ t("workspace.settingsGoEnvironment") }}
-                </Button>
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    data-testid="ws-settings-back"
-                    @click="goBackToWorkspace"
-                >
-                    {{ t("workspace.settingsBack") }}
-                </Button>
-            </div>
-
-            <div
-                v-if="loadError"
-                class="mb-3 flex flex-wrap items-center gap-2 px-3 py-2 text-sm bg-red-100 text-red-800 rounded"
-                data-testid="workspace-settings-error"
-            >
-                <span>{{ t("common.error") }}: {{ loadError }}</span>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="ws-settings-retry"
-                    :disabled="loading"
-                    @click="() => void retryLoad()"
-                >
-                    <LoaderCircle v-if="loading" class="mr-1 inline-block size-3 animate-spin" />
-                    {{ t("workspace.settingsRetry") }}
-                </Button>
-            </div>
-
-            <template v-else>
-                <div class="flex gap-1 border-b mb-4">
+        <!-- 域段模式（PLAN-0752 M2 B4）：/workspace/:id/settings/:domain 只渲染该域。
+             T1.1b（task-179 案A 裁定）：层头归一到 SettingsLayerHeader —— 面包屑
+             「设置 › 工作区层 › {域}」+ text-2xl 层标题，旧手写 kicker（第二套实现）退役。 -->
+        <div v-if="domainParam" data-testid="ws-settings-domain-page">
+            <SettingsLayerHeader layer="workspace" :domain="domainLabel" />
+            <div class="mx-auto w-full max-w-6xl px-6 py-6">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <h2 class="text-lg font-medium" data-testid="ws-settings-domain-title">
+                        {{ domainLabel }}
+                    </h2>
+                    <p
+                        class="text-[11px] text-muted-foreground"
+                        data-testid="ws-settings-domain-summary"
+                    >
+                        {{ t("settings.ia.domainKeysCount", { count: domainKeyCount }) }}
+                    </p>
                     <button
-                        v-for="tab in tabs"
-                        :key="tab.key"
-                        :data-testid="`ws-settings-tab-${tab.key}`"
-                        class="px-4 py-2 text-sm border-b-2 transition-colors"
+                        type="button"
+                        class="ml-auto rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                        data-testid="ws-settings-domain-overview"
+                        @click="goConfigOverview"
+                    >
+                        {{ t("workspace.settingsDomainBackToOverview") }}
+                    </button>
+                </div>
+                <div
+                    v-if="toolFacesTab"
+                    data-testid="ws-settings-domain-tabs"
+                    role="tablist"
+                    :aria-label="domainLabel"
+                    class="mt-3 flex items-center gap-1 border-b"
+                >
+                    <button
+                        v-for="tab in ['policy', 'tool-faces'] as const"
+                        :key="tab"
+                        type="button"
+                        role="tab"
+                        :data-testid="'settings-domain-tab-' + tab"
+                        :aria-selected="activeDomainTab === tab"
+                        class="-mb-px min-h-8 border-b-2 px-2 text-xs transition-colors"
                         :class="
-                            activeTab === tab.key
-                                ? 'border-brand text-foreground font-medium'
+                            activeDomainTab === tab
+                                ? 'border-foreground font-medium text-foreground'
                                 : 'border-transparent text-muted-foreground hover:text-foreground'
                         "
-                        @click="switchTab(tab.key)"
+                        @click="selectDomainTab(tab)"
                     >
-                        {{ tab.label }}
+                        {{
+                            tab === "policy"
+                                ? t("settings.ia.approvalTabPolicy")
+                                : t("settings.ia.navToolFaces")
+                        }}
                     </button>
                 </div>
 
-                <div v-if="activeTab === 'general'" data-testid="ws-settings-general">
-                    <div class="border rounded-lg mb-2 overflow-hidden">
-                        <div class="px-4 py-3 text-sm font-medium bg-muted/30">
-                            {{ t("workspace.settingsGeneralTitle") }}
-                        </div>
+                <p
+                    v-if="!auth.canWriteWorkspace"
+                    class="mt-1 text-[11px] text-muted-foreground"
+                    data-testid="ws-settings-domain-readonly"
+                >
+                    {{ t("workspace.settingsConfigNote") }}
+                </p>
 
-                        <div
-                            v-if="auth.canManageWorkspace"
-                            class="px-4 py-3 space-y-3 text-sm"
-                            data-testid="ws-settings-edit"
-                        >
-                            <div class="grid gap-2">
-                                <label class="text-sm font-medium" for="ws-settings-name-input">
-                                    {{ t("workspace.settingsName") }}
-                                </label>
-                                <Input
-                                    id="ws-settings-name-input"
-                                    v-model="editName"
-                                    maxlength="120"
-                                    data-testid="ws-settings-name-input"
-                                />
-                            </div>
-                            <div class="grid gap-2">
-                                <label
-                                    class="text-sm font-medium"
-                                    for="ws-settings-description-input"
-                                >
-                                    {{ t("workspace.settingsDescription") }}
-                                </label>
-                                <Input
-                                    id="ws-settings-description-input"
-                                    v-model="editDescription"
-                                    maxlength="500"
-                                    data-testid="ws-settings-description-input"
-                                />
-                            </div>
-                            <div class="grid gap-2 sm:grid-cols-2">
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsId")
-                                }}</span>
-                                <span class="font-mono text-xs break-all">{{ workspaceId }}</span>
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsStorageRef")
-                                }}</span>
-                                <span class="font-mono text-xs break-all">
-                                    {{ auth.workspace?.storageRef || "—" }}
-                                </span>
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsExecutionMode")
-                                }}</span>
-                                <span class="flex items-center gap-2">
-                                    {{ auth.workspace?.executionMode || "—" }}
-                                    <RouterLink
-                                        class="text-xs text-link underline"
-                                        :to="{
-                                            name: 'workspace-environment',
-                                            params: { workspaceId },
-                                        }"
-                                        data-testid="ws-settings-go-environment"
-                                    >
-                                        {{ t("workspace.settingsGoEnvironment") }}
-                                    </RouterLink>
-                                </span>
-                            </div>
-                            <p v-if="editError" class="text-sm text-destructive">
-                                {{ editError }}
-                            </p>
-                            <div class="flex flex-wrap gap-2">
-                                <Button
-                                    :disabled="saving"
-                                    data-testid="ws-settings-save"
-                                    @click="() => void handleSave()"
-                                >
-                                    <LoaderCircle
-                                        v-if="saving"
-                                        class="mr-1 inline-block size-3 animate-spin"
-                                    />
-                                    {{ saving ? t("common.saving") : t("common.save") }}
-                                </Button>
-                                <Button
-                                    variant="destructive"
-                                    data-testid="ws-settings-delete"
-                                    @click="confirmDeleteOpen = true"
-                                >
-                                    {{ t("workspace.settingsDeleteTitle") }}
-                                </Button>
-                            </div>
-                        </div>
-
-                        <div v-else class="px-4 py-3 space-y-2 text-sm">
-                            <div class="flex justify-between gap-3">
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsName")
-                                }}</span>
-                                <span data-testid="ws-settings-name">{{
-                                    auth.workspace?.name ?? "—"
-                                }}</span>
-                            </div>
-                            <div class="flex justify-between gap-3">
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsDescription")
-                                }}</span>
-                                <span>{{ auth.workspace?.description || "—" }}</span>
-                            </div>
-                            <div class="flex justify-between gap-3">
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsId")
-                                }}</span>
-                                <span class="font-mono text-xs break-all">{{ workspaceId }}</span>
-                            </div>
-                            <div class="flex justify-between gap-3">
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsStorageRef")
-                                }}</span>
-                                <span class="font-mono text-xs break-all">{{
-                                    auth.workspace?.storageRef || "—"
-                                }}</span>
-                            </div>
-                            <div class="flex justify-between gap-3">
-                                <span class="text-muted-foreground">{{
-                                    t("workspace.settingsExecutionMode")
-                                }}</span>
-                                <span>{{ auth.workspace?.executionMode || "—" }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div v-else-if="activeTab === 'config'" data-testid="ws-settings-config">
-                    <p class="text-xs text-muted-foreground mb-2">
-                        {{ t("workspace.settingsConfigNote") }}
-                    </p>
+                <!-- 策略面板用 `v-show` 保留挂载（切页签不重挂、不重复拉层配置），工具分类按需挂载
+                 —— 与实例层域页同一口径：按需挂载 `SettingsDomainView.vue:230-232`，
+                 常挂隐藏 `:239-241`。 -->
+                <div v-show="activeDomainTab === 'policy'" class="mt-4">
                     <ConfigLayerPanels
                         layer="workspace"
                         :workspace-id="workspaceId"
+                        :domain="domainParam as ConfigDomain"
                         :readonly="!auth.canWriteWorkspace"
                     />
+                </div>
+                <div
+                    v-if="activeDomainTab === 'tool-faces' && toolFacesTab"
+                    class="mt-4"
+                    data-testid="ws-settings-tool-faces"
+                >
+                    <ToolFacesView embedded scope-lock="workspace" />
+                </div>
+            </div>
+        </div>
+
+        <!-- T1.1b（task-179 案A 裁定）：层头归一 —— 旧手写 kicker + text-lg 标题退役；
+             层标题文案不变（settings.ia.layerWorkspace 与 workspace.settingsTitle 同为「工作区设置」），
+             面包屑按 design.md:98 模板「设置 › 工作区层」。 -->
+        <div v-else>
+            <SettingsLayerHeader layer="workspace" />
+            <div class="mx-auto w-full max-w-6xl px-6 py-6">
+                <p class="text-sm text-muted-foreground mb-4 max-w-3xl">
+                    {{ t("workspace.settingsDesc") }}
+                </p>
+
+                <div
+                    class="flex flex-wrap items-center gap-2 mb-4"
+                    data-testid="ws-settings-actions"
+                >
+                    <Button size="sm" data-testid="ws-settings-new-chat" @click="newChat">
+                        {{ t("sidebar.newChat") }}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="ws-settings-environment"
+                        @click="goEnvironment"
+                    >
+                        {{ t("workspace.settingsGoEnvironment") }}
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid="ws-settings-back"
+                        @click="goBackToWorkspace"
+                    >
+                        {{ t("workspace.settingsBack") }}
+                    </Button>
                 </div>
 
                 <div
-                    v-else-if="activeTab === 'members' && auth.canViewMembers !== false"
-                    data-testid="ws-settings-members"
+                    v-if="loadError"
+                    class="mb-3 flex flex-wrap items-center gap-2 px-3 py-2 text-sm bg-red-100 text-red-800 rounded"
+                    data-testid="workspace-settings-error"
                 >
-                    <WorkspaceMembersPanel
-                        :workspace-id="workspaceId"
-                        :readonly="
-                            auth.workspace?.workspaceRole === undefined
-                                ? undefined
-                                : !auth.canManageWorkspace
-                        "
-                    />
+                    <span>{{ t("common.error") }}: {{ loadError }}</span>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="ws-settings-retry"
+                        :disabled="loading"
+                        @click="() => void retryLoad()"
+                    >
+                        <LoaderCircle
+                            v-if="loading"
+                            class="mr-1 inline-block size-3 animate-spin"
+                        />
+                        {{ t("workspace.settingsRetry") }}
+                    </Button>
                 </div>
 
-                <div v-else-if="activeTab === 'mcp'" data-testid="ws-settings-mcp">
-                    <WorkspaceMcpPanel
-                        :workspace-id="workspaceId"
-                        :readonly="!auth.canWriteWorkspace"
-                    />
-                </div>
+                <template v-else>
+                    <div class="flex gap-1 border-b mb-4">
+                        <button
+                            v-for="tab in tabs"
+                            :key="tab.key"
+                            :data-testid="`ws-settings-tab-${tab.key}`"
+                            class="px-4 py-2 text-sm border-b-2 transition-colors"
+                            :class="
+                                activeTab === tab.key
+                                    ? 'border-brand text-foreground font-medium'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                            "
+                            @click="switchTab(tab.key)"
+                        >
+                            {{ tab.label }}
+                        </button>
+                    </div>
 
-                <div v-else-if="activeTab === 'credentials'" data-testid="ws-settings-credentials">
-                    <CredentialsPanel :owner-type="'WORKSPACE'" />
-                </div>
+                    <div v-if="activeTab === 'general'" data-testid="ws-settings-general">
+                        <div class="border rounded-lg mb-2 overflow-hidden">
+                            <div class="px-4 py-3 text-sm font-medium bg-muted/30">
+                                {{ t("workspace.settingsGeneralTitle") }}
+                            </div>
 
-                <div v-else data-testid="ws-settings-knowledge">
-                    <KnowledgeBaseView />
-                </div>
-            </template>
+                            <div
+                                v-if="auth.canManageWorkspace"
+                                class="px-4 py-3 space-y-3 text-sm"
+                                data-testid="ws-settings-edit"
+                            >
+                                <div class="grid gap-2">
+                                    <label class="text-sm font-medium" for="ws-settings-name-input">
+                                        {{ t("workspace.settingsName") }}
+                                    </label>
+                                    <Input
+                                        id="ws-settings-name-input"
+                                        v-model="editName"
+                                        maxlength="120"
+                                        data-testid="ws-settings-name-input"
+                                    />
+                                </div>
+                                <div class="grid gap-2">
+                                    <label
+                                        class="text-sm font-medium"
+                                        for="ws-settings-description-input"
+                                    >
+                                        {{ t("workspace.settingsDescription") }}
+                                    </label>
+                                    <Input
+                                        id="ws-settings-description-input"
+                                        v-model="editDescription"
+                                        maxlength="500"
+                                        data-testid="ws-settings-description-input"
+                                    />
+                                </div>
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsId")
+                                    }}</span>
+                                    <span class="font-mono text-xs break-all">{{
+                                        workspaceId
+                                    }}</span>
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsStorageRef")
+                                    }}</span>
+                                    <span class="font-mono text-xs break-all">
+                                        {{ auth.workspace?.storageRef || "—" }}
+                                    </span>
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsExecutionMode")
+                                    }}</span>
+                                    <span class="flex items-center gap-2">
+                                        {{ auth.workspace?.executionMode || "—" }}
+                                        <RouterLink
+                                            class="text-xs text-link underline"
+                                            :to="{
+                                                name: 'workspace-environment',
+                                                params: { workspaceId },
+                                            }"
+                                            data-testid="ws-settings-go-environment"
+                                        >
+                                            {{ t("workspace.settingsGoEnvironment") }}
+                                        </RouterLink>
+                                    </span>
+                                </div>
+                                <p v-if="editError" class="text-sm text-destructive">
+                                    {{ editError }}
+                                </p>
+                                <div class="flex flex-wrap gap-2">
+                                    <Button
+                                        :disabled="saving"
+                                        data-testid="ws-settings-save"
+                                        @click="() => void handleSave()"
+                                    >
+                                        <LoaderCircle
+                                            v-if="saving"
+                                            class="mr-1 inline-block size-3 animate-spin"
+                                        />
+                                        {{ saving ? t("common.saving") : t("common.save") }}
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        data-testid="ws-settings-delete"
+                                        @click="confirmDeleteOpen = true"
+                                    >
+                                        {{ t("workspace.settingsDeleteTitle") }}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div v-else class="px-4 py-3 space-y-2 text-sm">
+                                <div class="flex justify-between gap-3">
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsName")
+                                    }}</span>
+                                    <span data-testid="ws-settings-name">{{
+                                        auth.workspace?.name ?? "—"
+                                    }}</span>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsDescription")
+                                    }}</span>
+                                    <span>{{ auth.workspace?.description || "—" }}</span>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsId")
+                                    }}</span>
+                                    <span class="font-mono text-xs break-all">{{
+                                        workspaceId
+                                    }}</span>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsStorageRef")
+                                    }}</span>
+                                    <span class="font-mono text-xs break-all">{{
+                                        auth.workspace?.storageRef || "—"
+                                    }}</span>
+                                </div>
+                                <div class="flex justify-between gap-3">
+                                    <span class="text-muted-foreground">{{
+                                        t("workspace.settingsExecutionMode")
+                                    }}</span>
+                                    <span>{{ auth.workspace?.executionMode || "—" }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else-if="activeTab === 'config'" data-testid="ws-settings-config">
+                        <p class="text-xs text-muted-foreground mb-2">
+                            {{ t("workspace.settingsConfigNote") }}
+                        </p>
+                        <ConfigLayerPanels
+                            layer="workspace"
+                            :workspace-id="workspaceId"
+                            :readonly="!auth.canWriteWorkspace"
+                        />
+                    </div>
+
+                    <div
+                        v-else-if="activeTab === 'members' && auth.canViewMembers !== false"
+                        data-testid="ws-settings-members"
+                    >
+                        <WorkspaceMembersPanel
+                            :workspace-id="workspaceId"
+                            :readonly="
+                                auth.workspace?.workspaceRole === undefined
+                                    ? undefined
+                                    : !auth.canManageWorkspace
+                            "
+                        />
+                    </div>
+
+                    <div v-else-if="activeTab === 'mcp'" data-testid="ws-settings-mcp">
+                        <WorkspaceMcpPanel
+                            :workspace-id="workspaceId"
+                            :readonly="!auth.canWriteWorkspace"
+                        />
+                    </div>
+
+                    <div
+                        v-else-if="activeTab === 'credentials'"
+                        data-testid="ws-settings-credentials"
+                    >
+                        <CredentialsPanel :owner-type="'WORKSPACE'" />
+                    </div>
+
+                    <div v-else data-testid="ws-settings-knowledge">
+                        <KnowledgeBaseView />
+                    </div>
+                </template>
+            </div>
         </div>
 
         <AlertDialog :open="confirmDeleteOpen" @update:open="(v) => (confirmDeleteOpen = v)">

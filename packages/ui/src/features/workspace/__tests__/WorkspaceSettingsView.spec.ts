@@ -121,7 +121,9 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="workspace-settings-page"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-settings-kicker"]').exists()).toBe(true);
+        // T1.1b（task-179）：层头归一到 SettingsLayerHeader，旧手写 kicker 退役。
+        expect(wrapper.find('[data-testid="settings-layer-header"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-breadcrumb"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-tab-general"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-tab-mcp"]').exists()).toBe(true);
