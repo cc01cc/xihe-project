@@ -928,8 +928,14 @@ async function main() {
                     "scan=" + result.probe.singleLineElements + "/" + result.probe.textNodes,
                     "wrap=" + result.probe.wrapped,
                     "chromeIn=" + result.probe.chromeInsideCanvas,
+                    // 底部图是**另一张文件**，必须报它自己的 sha：只印主图 sha 时，从 stdout 誊写
+                    // 报告的人会把「04 的 sha」当成「04 与 04-bottom 的 sha」（2026-11-11 实测发生过）。
                     result.bottom
-                        ? "bottom=yes(+" + result.bottom.overflow.gap + "px)"
+                        ? "bottom=yes(+" +
+                          result.bottom.overflow.gap +
+                          "px, sha=" +
+                          result.bottom.sha256_16 +
+                          ")"
                         : "bottom=n/a",
                 ].join("  ") + "\n",
             );
