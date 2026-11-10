@@ -350,3 +350,34 @@ describe("BL-528 假绿通道：mock 报告必须新鲜且属于本轮", () => {
     assert.equal(verdict.code, "stale-report");
   });
 });
+
+describe("task-27 A′：DEFAULT_GATES 补两条缺门", () => {
+  test("默认门集包含 check:api-docs 与 lint:links", () => {
+    const ids = DEFAULT_GATES.map((g) => g.id);
+    assert.ok(ids.includes("check:api-docs"), "缺 check:api-docs ⇒ doc↔contract 门回到无人跑的旧状态");
+    assert.ok(ids.includes("lint:links"), "缺 lint:links ⇒ 文档链接漂移只能靠人守");
+  });
+
+  test("mise.toml 缺 check:api-docs 任务 ⇒ SKIP 且带原因（未跑 ≠ 通过）", (t) => {
+    const root = fakeRepo(t, { tasks: [["check:openapi", "node scripts/validate-openapi.mjs"]] });
+    const plan = planGates({ miseTasks: parseMiseTasks(readFileSync(join(root, "mise.toml"), "utf8")), repoRoot: root });
+    const gate = plan.find((g) => g.id === "check:api-docs");
+    assert.match(gate.skipReason ?? "", /SSOT 缺该门/);
+  });
+
+  test("解释器缺失 ⇒ missing-input SKIP；--strict ⇒ preflightFailure", (t) => {
+    const root = fakeRepo(t, { tasks: [["check:api-docs", "node scripts/gen-api-docs.mjs --check"]] });
+    const miseTasks = parseMiseTasks(readFileSync(join(root, "mise.toml"), "utf8"));
+    const prev = process.env.XH_PYTHON;
+    delete process.env.XH_PYTHON;
+    try {
+      const relaxed = planGates({ miseTasks, repoRoot: root }).find((g) => g.id === "check:api-docs");
+      assert.match(relaxed.skipReason ?? "", /missing-input/);
+      const strict = planGates({ miseTasks, repoRoot: root, preconditionContext: { strict: true } }).find((g) => g.id === "check:api-docs");
+      assert.match(strict.preflightFailure ?? "", /missing-input/);
+      assert.equal(strict.skipReason, undefined);
+    } finally {
+      if (prev !== undefined) process.env.XH_PYTHON = prev;
+    }
+  });
+});
