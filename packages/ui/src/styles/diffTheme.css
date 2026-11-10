@@ -1,0 +1,57 @@
+/**
+ * PLAN-0755 M6 —— @git-diff-view 主题覆写（POC task-182 验收① 集成层）。
+ *
+ * 契约：git-diff-view 内部主题变量 scoped 在 `.diff-tailwindcss-wrapper[data-theme] .diff-style-root`
+ * （库内硬编码色）。这里用 A03 token 覆写，跟随 `data-xh-color` 换色（POC 实测两通道）：
+ * - 行级底色 = `--diff-*-content--` / `--diff-*-lineNumber--` 等内部变量；
+ * - 语法色 = `.diff-line-syntax-raw .hljs-*` 类（hljs 为唯一高亮点，无第二副本）。
+ *
+ * 只写 `var(--token)`，不引第二套色值。
+ */
+.diff-tailwindcss-wrapper[data-theme="light"] .diff-style-root {
+    --diff-add-content--: color-mix(in srgb, var(--brand) 10%, transparent);
+    --diff-del-content--: color-mix(in srgb, var(--destructive) 12%, transparent);
+    --diff-add-lineNumber--: color-mix(in srgb, var(--brand) 22%, transparent);
+    --diff-del-lineNumber--: color-mix(in srgb, var(--destructive) 24%, transparent);
+    --diff-border--: var(--border-subtle);
+    --diff-plain-content--: var(--background);
+    --diff-hunk-content--: var(--muted);
+    --diff-hunk-content-color: var(--muted-foreground);
+    --diff-expand-content--: var(--muted);
+}
+
+/* 语法高亮：hljs 语义类接 token（唯一高亮点） */
+.diff-line-syntax-raw .hljs-keyword,
+.diff-line-syntax-raw .hljs-doctag,
+.diff-line-syntax-raw .hljs-template-tag,
+.diff-line-syntax-raw .hljs-template-variable,
+.diff-line-syntax-raw .hljs-type,
+.diff-line-syntax-raw .hljs-variable,
+.diff-line-syntax-raw .hljs-title,
+.diff-line-syntax-raw .hljs-title.function_,
+.diff-line-syntax-raw .hljs-attr,
+.diff-line-syntax-raw .hljs-attribute,
+.diff-line-syntax-raw .hljs-selector-attr,
+.diff-line-syntax-raw .hljs-selector-class,
+.diff-line-syntax-raw .hljs-selector-id,
+.diff-line-syntax-raw .hljs-regexp,
+.diff-line-syntax-raw .hljs-built_in,
+.diff-line-syntax-raw .hljs-symbol,
+.diff-line-syntax-raw .hljs-name {
+    color: var(--primary);
+}
+
+.diff-line-syntax-raw .hljs-string,
+.diff-line-syntax-raw .hljs-code,
+.diff-line-syntax-raw .hljs-formula,
+.diff-line-syntax-raw .hljs-literal,
+.diff-line-syntax-raw .hljs-number,
+.diff-line-syntax-raw .hljs-operator,
+.diff-line-syntax-raw .hljs-quote {
+    color: var(--link);
+}
+
+.diff-line-syntax-raw .hljs-comment,
+.diff-line-syntax-raw .hljs-meta {
+    color: var(--muted-foreground);
+}
