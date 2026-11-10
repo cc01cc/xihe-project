@@ -537,7 +537,6 @@ async function handleReset(domain: string, key: string) {
             :domain="domain"
             :title="domainLabels[domain] || domain"
             :entries="configStore.layerConfig[layer][domain] || {}"
-            :admin="layer !== 'user'"
             :summary="generateSummary(domain)"
             :schema="schemaFor(domain)"
             :env-locked="envLockedFor(domain)"

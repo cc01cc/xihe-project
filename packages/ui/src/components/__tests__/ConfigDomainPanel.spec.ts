@@ -155,7 +155,7 @@ describe("ConfigDomainPanel", () => {
     });
 
     it("TC7: admin mode shows reset button and emits reset", async () => {
-        const wrapper = mountPanel({ admin: true });
+        const wrapper = mountPanel({ layer: "instance" });
         await expandPanel(wrapper);
 
         const resetButtons = wrapper.findAll("button").filter((b) => b.text().includes("↺"));
@@ -170,7 +170,7 @@ describe("ConfigDomainPanel", () => {
     it("TC7b: reset clears that field's draft so the input does not keep the deleted value", async () => {
         // task-74 B1 实测缺陷：editing 草稿只在展开时初始化，重置（父层 DELETE + 整层 reload）后
         // props.entries 变了草稿不重算 ⇒ 输入框留着刚被删掉的旧值（"点了重置没反应"）。
-        const wrapper = mountPanel({ admin: true, entries: { model: "db-model" } });
+        const wrapper = mountPanel({ layer: "instance", entries: { model: "db-model" } });
         await expandPanel(wrapper);
         const input = wrapper
             .findAll("input")

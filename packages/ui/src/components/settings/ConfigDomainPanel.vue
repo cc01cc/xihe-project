@@ -37,7 +37,6 @@ const props = defineProps<{
     title: string;
     entries: Record<string, string>;
     readonly?: boolean;
-    admin?: boolean;
     summary?: string;
     schema: DomainField[];
     /** domain key -> env-effective value when an env overlay wins (decision #22). */
@@ -54,6 +53,19 @@ const emit = defineEmits<{
     save: [body: Record<string, string>];
     reset: [key: string];
 }>();
+
+/**
+ * PLAN-0752 / BL-542：只有**实例层**能真正「删掉本层覆盖」。
+ *
+ * <p>证据：CP 只有 `DELETE /api/v1/config/instance/{domain}/{key}`（`ConfigController.java:350-351`，
+ * 原子 `WRITE_INSTANCE_CONTENT`）；user/workspace 层没有删除端点，同款按钮会走
+ * `PUT {key: ""}`，而通用写入路径把空串**原样入库**（`ConfigService.java:1374-1405`，只有
+ * `llm-provider`/`embedding` 有空值=删行特例）⇒ 不回退继承，而是把该键钉成空串。</p>
+ *
+ * <p>因此这是**层的属性**，不由调用方传：传了就能传错（旧实现传的是 `layer !== 'user'`，
+ * 于是 workspace 层也显示了假的 ↺）。将来 CP 给非实例层补删除语义时，改这一处即可。</p>
+ */
+const canDeleteOverride = computed(() => props.layer === "instance");
 
 const expanded = ref(false),
     editing = ref<Record<string, string>>({});
@@ -595,8 +607,16 @@ function handleReset(key: string) {
                     :title="t('settings.driftedHint')"
                     >{{ t("settings.driftedBadge") }}</span
                 >
+                <!-- 漂移清理与 ↺ 调的是同一个 handler（父层对非实例层发 PUT {key:""}），
+                     所以同样只在能真正删覆盖的实例层出现；徽标保留，用户仍看得到「值不在候选集」，
+                     逃生路径是直接选一个合法值再保存。 -->
                 <button
-                    v-if="isDrifted(field) && !fieldReadonly(field) && !isLocked(field.key)"
+                    v-if="
+                        canDeleteOverride &&
+                        isDrifted(field) &&
+                        !fieldReadonly(field) &&
+                        !isLocked(field.key)
+                    "
                     class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
                     :data-testid="`config-drift-clear-${domain}-${field.key}`"
                     :title="t('settings.driftedClear')"
@@ -615,7 +635,7 @@ function handleReset(key: string) {
 
                 <button
                     v-if="
-                        admin &&
+                        canDeleteOverride &&
                         !fieldReadonly(field) &&
                         !isLocked(field.key) &&
                         isWritable(field.key)
