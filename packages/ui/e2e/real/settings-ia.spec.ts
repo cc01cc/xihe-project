@@ -11,7 +11,9 @@ import { ensureWorkspace } from "./helpers/workspace";
  * - V10：`/settings/*`（实例/用户层）**不渲染** AppLayout 的工作区 <Sidebar>。
  *   verify.md:37 写的 testid 是 `workspace-sidebar`，但组件真实 testid 是 `sidebar`
  *   （src/components/sidebar/Sidebar.vue:183）——本 spec 按真实 testid 断言。
- * - 工作区域段深链（T2.5 的真栈取样）：`/workspace/:id/settings/:domain` 直达 + 域段 404。
+ * - ~~工作区域段深链（T2.5 的真栈取样）：`/workspace/:id/settings/:domain` 直达 + 域段 404。~~
+ *   **已随 task-253（2026-11-10，Q-1110-45）删除**：工作区块配置层整体退役，域段深链 / 域页 /
+ *   域 404 都不存在了。删除项在原处留了 (a) 标注；幸存的判据见下方 V10 与 V12 用例。
  * - V12 真栈取样：375×812 抽屉可开合 + 无横向滚动；截图留档，比较判定留 Linux 轮
  *   （expectPlatformScreenshot 在非 Linux 是空操作，helpers/visual.ts:16）。
  *
@@ -72,29 +74,11 @@ test("@host PLAN-0752 V10 settings pages render without the workspace sidebar", 
     }
 });
 
-test("@host PLAN-0752 workspace domain deep link renders in the workspace tab shell", async ({
-    page,
-    request,
-}) => {
-    const auth = await register(request);
-    await installAuth(page, auth);
-    await page.goto(`/workspace/${auth.workspaceId}/settings/rag`);
-    await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-    await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
-    const title = page.getByTestId("ws-settings-domain-title");
-    await expect(title).toBeVisible();
-    await expect(title).not.toHaveText("");
-    // T1.1b（task-179 已进 develop）：工作区域页层头 = SettingsLayerHeader（面包屑末段 = 域）。
-    await expect(page.getByTestId("settings-layer-header")).toBeVisible();
-    await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
-    // 工作区设置是 AppLayout 壳内的 tab（非 /settings 层壳）：工作区 Sidebar 照常 1 份。
-    await expect(page.getByTestId("sidebar")).toHaveCount(1);
-
-    // 域段不在工作区矩阵（logging 只有实例层）⇒ 404 视图。
-    await page.goto(`/workspace/${auth.workspaceId}/settings/logging`);
-    await expect(page.getByTestId("settings-not-found")).toBeVisible();
-    await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
-});
+// (a) 删 —— 「@host 工作区域段深链渲染在工作区 tab 壳内」：task-253 已删除
+// `/workspace/:id/settings/:domain` 路由、单域页（ws-settings-domain-page/-title）与
+// `settings-not-found` 域 404 面（工作区块配置层整体退役，Q-1110-45 裁定）。
+// 断言对象不存在且不会回来，故整条删除；工作区设置页的存活面由 mock 车道的
+// `legacy ?tab= form still renders every surviving tab container` 覆盖。
 
 test("@host PLAN-0752 V12 mobile 375x812 drawer and horizontal scroll sampling", async ({
     page,
@@ -149,13 +133,10 @@ test("@host PLAN-0752 V12 mobile 375x812 drawer and horizontal scroll sampling",
     await expect(drawer).toHaveCount(0);
     record("drawerCycle", { opened: true, closedAfterCloseClick: true });
 
-    await page.goto(`/workspace/${auth.workspaceId}/settings/rag`);
-    await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
-    record("horizontalOverflowWorkspaceDomain", {
-        overflowPx: await overflowPx(),
-        hasHorizontalOverflow: (await overflowPx()) > 0,
-    });
-    await shoot("v12-real-workspace-domain-mobile.png");
+    // (a) 删 —— 「工作区域段页在移动端无横向滚动」取样：域段页随 task-253 退役。
+    // 工作区设置页（tab 形态）的移动端取样改在 mock 车道
+    // （e2e/mock/plan-0752-settings-ia.spec.ts 的 V12 用例，screenshotWorkspaceSettingsMobile）；
+    // 真栈改跑该形态需在 VW 窗口另立用例，不在本卡（不跑真栈）。
 
     writeFileSync(
         path.join(V12_DIR, "v12-records-real.json"),

@@ -9,6 +9,8 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
  * - T2.5：workspace 域段深链的浏览器用例 —— /workspace/:id/settings/:domain 直达
  *   （task-150 审计：e2e/** 里该形态命中 0，此前只有单测 WorkspaceSettingsView.spec.ts:217）
  *   + ?tab= 既有路径回归 + 域段 404（V3 形态）。
+ *   **task-253（2026-11-10，Q-1110-45）已把工作区块配置层整体退役**：域段深链 / 域页 / 域 404 /
+ *   域内 tool-faces 页签全部随删。本 spec 只保留 ?tab= 路径回归，四条被删用例在原处留了 (a) 标注。
  * - T5.2（mock 部分）：V10「/settings/* 不渲染工作区 <Sidebar>」的自动化断言。
  *   verify.md:37 写的 testid 是 workspace-sidebar —— 组件真实 testid 是 sidebar
  *   （src/components/sidebar/Sidebar.vue:183），本 spec 按真实 testid 断言，
@@ -94,77 +96,23 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
     );
 }
 
-test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
-    test("deep link /workspace/ws-1/settings/rag renders the single-domain page", async ({
-        page,
-    }) => {
+test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-253 退役）", () => {
+    // (a) 删 —— 域段深链「/workspace/ws-1/settings/rag 渲染单域页」：工作区块配置层整体退役
+    //     （task-253 / Q-1110-45），域段路由与单域页都不会回来，断言对象已不存在。
+    // (a) 删 —— 「approval-policy 域段暴露 policy/tool-faces 页签」：域内页签随域页一起删除；
+    //     tool-faces 能力仍在实例层（ToolFacesView + 其 spec 保留），工作区入口按 Lead 裁定认下削减。
+    // (a) 删 —— 「域段不在矩阵内渲染 404 且零 /config/workspace 请求」：域 404 面已不存在，
+    //     且工作区层 /config 请求整体消失，判据失去对象。
+    // (a) 删 —— 「域页概览按钮回 ?tab=config」：概览按钮与域页同批删除。
+    test("legacy ?tab= form still renders every surviving tab container", async ({ page }) => {
         await mockSettingsAPIs(page);
-        await page.goto("/workspace/ws-1/settings/rag");
-        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
-        const title = page.getByTestId("ws-settings-domain-title");
-        await expect(title).toBeVisible();
-        await expect(title).not.toHaveText("");
-        // T1.1b（task-179，d5865c57 已进 develop）：工作区域页层头归一到 SettingsLayerHeader
-        // —— 面包屑「设置 › 工作区层 › {域}」+ text-2xl 层标题（旧手写 kicker 已退役）。
-        await expect(page.getByTestId("settings-layer-header")).toBeVisible();
-        await expect(page.getByTestId("settings-breadcrumb")).toBeVisible();
-        // 工作区设置是 **AppLayout 壳内的 tab**（导航页签「工作区设置」），不是 /settings 层壳：
-        // 因此这里工作区 Sidebar 恰好渲染 1 份（V10 只约束 /settings/* 的实例/用户层，见下方用例）。
-        await expect(page.getByTestId("sidebar")).toHaveCount(1);
-        await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
-    });
-
-    test("approval-policy domain segment exposes policy/tool-faces domain tabs", async ({
-        page,
-    }) => {
-        await mockSettingsAPIs(page);
-        await page.goto("/workspace/ws-1/settings/approval-policy");
-        await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
-        const tabs = page.getByTestId("ws-settings-domain-tabs");
-        await expect(tabs).toBeVisible();
-        await expect(page.getByTestId("settings-domain-tab-policy")).toHaveAttribute(
-            "aria-selected",
-            "true",
-        );
-        await page.getByTestId("settings-domain-tab-tool-faces").click();
-        await expect(page.getByTestId("ws-settings-tool-faces")).toBeVisible();
-        await page.getByTestId("settings-domain-tab-policy").click();
-        await expect(page.getByTestId("settings-domain-tab-policy")).toHaveAttribute(
-            "aria-selected",
-            "true",
-        );
-        await expect(page.getByTestId("ws-settings-tool-faces")).toHaveCount(0);
-    });
-
-    test("domain outside the workspace matrix renders 404 view with zero config requests", async ({
-        page,
-    }) => {
-        const configRequests: string[] = [];
-        await mockSettingsAPIs(page, configRequests);
-        await page.goto("/workspace/ws-1/settings/logging");
-        await expect(page.getByTestId("settings-not-found")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
-        // T3.4 口径：域段 404 是路由层判定，零**工作区层** /config 请求（不是空表单）。
-        // 实测：AppLayout 壳内的其它组件会拉 user/instance 层域配置（/config/<domain>），
-        // 与本页 404 判定无关；判据收窄到 /config/workspace/ 前缀才对应「未发域配置请求」。
-        expect(
-            configRequests.filter((p) => p.includes("/config/workspace/")),
-            "404 域段不得发工作区层 /config 请求",
-        ).toEqual([]);
-    });
-
-    test("legacy ?tab= form still renders every tab container", async ({ page }) => {
-        await mockSettingsAPIs(page);
-        await page.goto("/workspace/ws-1/settings?tab=config");
-        // T1.1b 后概览态层头 = SettingsLayerHeader（旧 workspace-settings-heading 退役）。
-        await expect(page.getByTestId("settings-layer-header")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
+        await page.goto("/workspace/ws-1/settings?tab=mcp");
+        // task-253 起工作区设置页自带标题头（不再借用 SettingsLayerHeader 的「设置 › 工作区层」面包屑）。
+        await expect(page.getByTestId("workspace-settings-header")).toBeVisible();
+        await expect(page.getByTestId("workspace-settings-title")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
         // 工作区设置页在 AppLayout 壳内（页签形态），工作区 Sidebar 照常 1 份。
         await expect(page.getByTestId("sidebar")).toHaveCount(1);
-
-        await page.goto("/workspace/ws-1/settings?tab=mcp");
-        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
 
         await page.goto("/workspace/ws-1/settings?tab=credentials");
         await expect(page.getByTestId("ws-settings-credentials")).toBeVisible();
@@ -175,17 +123,9 @@ test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
         // 无域段无 tab = 旧默认入口（general）。
         await page.goto("/workspace/ws-1/settings");
         await expect(page.getByTestId("ws-settings-general")).toBeVisible();
-    });
 
-    test("domain page overview button returns to the ?tab=config form", async ({ page }) => {
-        await mockSettingsAPIs(page);
-        await page.goto("/workspace/ws-1/settings/rag");
-        await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
-        await page.getByTestId("ws-settings-domain-overview").click();
-        await expect(page).toHaveURL(/workspace\/ws-1\/settings\?tab=config$/);
-        await expect(page.getByTestId("settings-layer-header")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
+        // 工作区配置 tab 随层退役：任何 URL 都不该再把它渲染出来。
+        await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
     });
 });
 
@@ -269,16 +209,21 @@ test.describe("PLAN-0752 V12 移动端 375×812（三态记录）", () => {
         await expect(drawer).toHaveCount(0);
         await record("drawerCycle", async () => ({ opened: true, closedAfterCloseClick: true }));
 
-        // 工作区域段页在移动端同样无横向滚动（壳是 AppLayout，不是 SettingsLayout）。
-        await page.goto("/workspace/ws-1/settings/rag");
-        await expect(page.getByTestId("ws-settings-domain-page")).toBeVisible();
+        // (a) 删 —— 「工作区域段页在移动端无横向滚动」取样：域段页随 task-253 退役，改由
+        //     「工作区设置页 tab 形态」承担移动端宽屏取样（见下方 goto /settings 变体）。
+        //     留档证据（v12-workspace-domain-mobile.png）保留在 .local/evidence，不再随跑更新。
+        await page.goto("/workspace/ws-1/settings");
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
+        // 本行与下面两条取样是 task-253 之后**尚未在车道首跑**的新断言（本卡不跑 Playwright）。
+        // 首跑若 workspace-settings-header 因工作区拉取时序不稳而不可见，优先加 waitFor/断言前置等待，不要删断言。
+        await expect(page.getByTestId("workspace-settings-header")).toBeVisible();
         await expectNoHorizontalScroll();
-        await record("horizontalOverflowWorkspaceDomain", async () => {
+        await record("horizontalOverflowWorkspaceSettings", async () => {
             const px = await overflowPx();
             return { overflowPx: px, hasHorizontalOverflow: px > 0 };
         });
-        await record("screenshotWorkspaceDomainMobile", async () => {
-            const file = await shoot("v12-workspace-domain-mobile.png");
+        await record("screenshotWorkspaceSettingsMobile", async () => {
+            const file = await shoot("v12-workspace-settings-mobile.png");
             return { file: path.basename(file), captured: true };
         });
 

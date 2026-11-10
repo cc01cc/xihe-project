@@ -103,7 +103,9 @@ test.describe("PLAN-0560 workspace settings", () => {
         await expect(page.getByTestId("settings-domain-view")).toHaveCount(0);
     });
 
-    test("VIEWER sees read-only general info, config and MCP", async ({ page }) => {
+    // task-253（2026-11-10）：工作区块配置层整体退役 ⇒ 本用例的「config 区块只读」段（含
+    // ws-settings-tab-config 入口与 config-domain-* 面板断言）随删；常规信息与 MCP 两段保留。
+    test("VIEWER sees read-only general info and MCP", async ({ page }) => {
         await page.addInitScript(() => {
             sessionStorage.setItem(
                 "xihe-workspace",
@@ -123,20 +125,8 @@ test.describe("PLAN-0560 workspace settings", () => {
         await expect(page.getByTestId("ws-settings-delete")).toHaveCount(0);
         await expect(page.getByTestId("ws-settings-name")).toBeVisible();
 
-        // 配置区块：无保存按钮；字段以只读文本呈现（无 select/input）。
-        await page.getByTestId("ws-settings-tab-config").click();
-        const domain = page.getByTestId("config-domain-agent-runtime");
-        await expect(domain).toBeVisible();
-        await domain.locator("button").first().click();
-        await expect(
-            page.getByTestId("config-domain-agent-runtime").getByRole("button", { name: "保存" }),
-        ).toHaveCount(0);
-        await expect(
-            page.getByTestId("config-field-agent-runtime-useRegistry").locator("select"),
-        ).toHaveCount(0);
-        await expect(
-            page.getByTestId("config-field-agent-runtime-useRegistry").locator("input"),
-        ).toHaveCount(0);
+        // (a) 删 —— 配置区块只读段：工作区域配置 tab 已随 task-253 退役，没有可点的入口了。
+        // 工作区配置面的只读判定不再有产品对象（实例/用户两层的锁定语义由 config-settings 覆盖）。
 
         // MCP 区块：JSON textarea 禁用、保存按钮不渲染。
         await page.getByTestId("ws-settings-tab-mcp").click();
