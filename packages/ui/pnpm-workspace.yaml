@@ -1,6 +1,9 @@
 # The UI is the only Node package in XH and is its own pnpm root.
 minimumReleaseAge: 10080
-minimumReleaseAgeExclude: []
+minimumReleaseAgeExclude:
+    - dockview
+    - dockview-core
+    - dockview-vue
 
 onlyBuiltDependencies:
     - esbuild

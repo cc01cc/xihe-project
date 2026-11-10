@@ -1,0 +1,25 @@
+/*
+ * PLAN-0756 T4: dockview 主题 → 产品 token 映射。
+ *
+ * 只覆写 dockview 自带的 `--dv-*` CSS 变量到产品 token，**不新增色阶、不引入第二套
+ * 设计语言**（A03 UI 规则）。POC 实测 dockview 自带 CSS 有 116 个 `--dv-*` 变量；
+ * 本表只映射**视觉会露出**的少数（背景/分隔/选中指示/焦点），其余走 dockview 默认。
+ *
+ * `themeLight`（对象，非字符串）已把主题类 `dockview-theme-light` 挂到 `.dv-shell`，
+ * 变量经级联继承；这里覆写到更外层容器即可生效。
+ */
+
+/* dock 区容器（承载 <DockviewVue> 的元素） */
+[data-dockview-host],
+.dockview-host {
+    --dv-group-view-background-color: var(--surface-canvas);
+    --dv-tabs-and-actions-container-background-color: var(--surface-canvas);
+    --dv-separator-border: var(--border-subtle);
+    --dv-tab-divider-color: var(--border-subtle);
+    --dv-active-sash-color: var(--primary);
+    --dv-paneview-active-outline-color: var(--primary);
+    --dv-activegroup-visiblepanel-tab-background-color: var(--surface-canvas);
+    --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface-canvas);
+    --dv-inactivegroup-hiddenpanel-tab-background-color: var(--muted);
+    --dv-tabs-and-actions-container-font-size: 13px;
+}

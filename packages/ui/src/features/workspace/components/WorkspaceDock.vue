@@ -10,6 +10,7 @@ import {
     clampDockWidth,
 } from "../../../composables/useWorkspaceLayout";
 import { useLiveResize } from "../../../composables/useLiveResize";
+import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
 import type { DockTab } from "./workspaceDockTabs";
 
 /**
@@ -47,6 +48,12 @@ const props = withDefaults(
          * only: `mode`/`width` keep their user values and reappear on restore.
          */
         focus?: boolean;
+        /**
+         * PLAN-0756 T1: render the dock area through dockview. Default false keeps the
+         * hand-written dock (jsdom integration tests never mount dockview — it needs a
+         * real layout engine); e2e turns it on via `globalThis.__xhUseDockview`.
+         */
+        useDockview?: boolean;
     }>(),
     { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT, focus: false },
 );
@@ -78,7 +85,12 @@ const { resizingWidth, start: handleResizeStart } = useLiveResize({
     bubble: bubbleRef,
 });
 
-const isPinned = computed(() => props.mode === "pinned"),
+const dockviewEnabled = computed(
+        () =>
+            props.useDockview === true ||
+            (globalThis as { __xhUseDockview?: boolean }).__xhUseDockview === true,
+    ),
+    isPinned = computed(() => props.mode === "pinned"),
     modeLabel = computed(() =>
         isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
     ),
@@ -217,6 +229,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
 
         <div class="flex h-9 shrink-0 items-center gap-1 border-b pl-2 pr-1 text-xs">
             <div
+                v-if="!dockviewEnabled"
                 role="tablist"
                 :aria-label="t('workspace.dockTabs')"
                 class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
@@ -352,7 +365,21 @@ function handleResizeKeydown(event: KeyboardEvent) {
             </button>
         </div>
 
-        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <!-- PLAN-0756 T1: dockview 接管 dock 区内容（宿主自带 tab 条）。 -->
+        <div v-if="dockviewEnabled" class="dockview-host min-h-0 flex-1 overflow-hidden">
+            <WorkspaceDockviewDock
+                :tabs="tabs"
+                :active-tab="activeTab"
+                :mode="mode"
+                @update:active-tab="selectTab"
+                @close-tab="closeTab"
+            >
+                <template v-for="tab in tabs" :key="tab.id" #[tab.id]>
+                    <slot :name="tab.id" />
+                </template>
+            </WorkspaceDockviewDock>
+        </div>
+        <div v-else class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <!-- Sticky panels: mounted on first activation, then hidden but alive. -->
             <div
                 v-for="id in stickyPanels"
