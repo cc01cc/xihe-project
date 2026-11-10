@@ -16,9 +16,9 @@ Agent Worker Registry 支持从 `agents/` 目录下的 markdown 文件动态加�
 
 ### 启用
 
-```bash
-export XIHE_USE_REGISTRY=true
-```
+Agent Worker Registry 由 **CP 业务配置** `agent-runtime.useRegistry` 控制：设置页「配置 → agent-runtime → useRegistry」勾选，或写进配置导入文件（键位见 `config.import.example.jsonc`）。默认 `false`；Agent 在下次配置刷新后生效。
+
+> 历史说明：早期文档给的是 `export XIHE_USE_REGISTRY=true`。该环境变量**没有任何消费者**（registry 门只读 CP 配置 `agent-runtime.useRegistry`），设了也不会生效 —— 在旧文档或旧脚本里看到这一行，直接忽略（BL-543）。
 
 ### Worker 文件格式
 
@@ -61,9 +61,8 @@ watchdog 自动监控 `agents/` 目录（0.5s 防抖）：
 | `POST /internal/v1/agent/registry/workers/{id}/enable` | 启用 worker |
 | `POST /internal/v1/agent/registry/workers/{id}/disable` | 禁用 worker |
 
-### 环境变量
+### CP 配置（域 `agent-runtime`）
 
-| 变量 | 默认值 | 说明 |
+| 键 | 默认值 | 说明 |
 |------|--------|------|
-| `XIHE_USE_REGISTRY` | `false` | 启用 Registry 模式 |
-| `XIHE_AGENT_WORKERS_DIR` | `./agents/` | Worker 文件目录 |
+| `useRegistry` | `false` | 启用 Registry 模式（**不是**环境变量：`XIHE_USE_REGISTRY` 无消费者，见 BL-543） |
