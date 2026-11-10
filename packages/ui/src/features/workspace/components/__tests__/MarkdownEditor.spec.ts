@@ -5,8 +5,8 @@
  * ③ 编辑产出 emit（CM6 → 宿主 SSOT）。
  */
 import { describe, expect, it } from "vitest";
-import { nextTick, ref } from "vue";
-import { mount, type VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
+import { mount } from "@vue/test-utils";
 import MarkdownEditor from "../MarkdownEditor.vue";
 
 describe("PLAN-0755 MarkdownEditor（CM6 宿主）", () => {
