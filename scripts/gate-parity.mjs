@@ -28,8 +28,8 @@ export const WINDOW_ONLY = Object.freeze([
 
 /** SSOT 登记、但有意不在窗口梯次里跑的门（必须给理由与代价）。 */
 export const NOT_IN_WINDOW = Object.freeze([
-  { id: "test:mock", why: "888s，窗 13min 涨到 28min，不值（Lead 2026-11-11）" },
-  { id: "check:mock-baseline", why: "紧随 test:mock 的基线比对，无新报告即无意义" },
+  { id: "test:mock", why: "888s，窗 13min 涨到 28min，不值（Lead 2026-11-11）", consequence: "因此浏览器面在窗口内无自动守卫，由 task-107 定期整轮覆盖" },
+  { id: "check:mock-baseline", why: "紧随 test:mock 的基线比对，无新报告即无意义", consequence: "因此浏览器面基线漂移只由 task-107 整轮暴露" },
   { id: "check:a11y-refs", why: "被 check:a11y-refs:enforce 取代（前者警告级、后者阻断级）" },
 ]);
 
@@ -45,7 +45,7 @@ export function evaluateParity({ ladder, ssot, windowOnly = [], notInWindow = []
   const inLadder = new Set(ladder);
   const inSsot = new Set(ssot);
   const wo = new Set(windowOnly.map((x) => x.id));
-  const niw = new Set(notInWindow.map((x) => x.id));
+  const niw = new Map(notInWindow.map((x) => [x.id, x]));
   const rows = [];
   for (const id of [...inLadder].sort()) {
     if (inSsot.has(id)) rows.push({ id, cell: "1-ladder-and-ssot", ok: true, why: "梯次跑 & SSOT 登记" });
@@ -54,7 +54,7 @@ export function evaluateParity({ ladder, ssot, windowOnly = [], notInWindow = []
   }
   for (const id of [...inSsot].sort()) {
     if (inLadder.has(id)) continue;
-    if (niw.has(id)) rows.push({ id, cell: "3-ssot-not-in-window", ok: true, why: "SSOT 登记但梯次不跑，已具名豁免" });
+    if (niw.has(id)) rows.push({ id, cell: "3-ssot-not-in-window", ok: true, why: "SSOT 登记但梯次不跑，已具名豁免" + (niw.get(id).consequence ? "；后果：" + niw.get(id).consequence : "") });
     else rows.push({ id, cell: "3-ssot-orphan", ok: false, why: "SSOT 登记但梯次不跑，且无 not-in-window 理由" });
   }
   const bad = rows.filter((r) => !r.ok);
