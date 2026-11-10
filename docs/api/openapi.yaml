@@ -2638,7 +2638,7 @@ paths:
       operationId: listApiRequestTemplates
       description: 'BL-320 批 3（**有意保留 / kept-by-design**）：这不是单独注册的路由，而是 `GET /api/v1/config/{domain}` 在 `domain=api-request-templates` 时的**具体示例写法**（带本域专属的 query 与响应说明）。控制器只注册 `/api/v1/config/{domain}`；保留本条目是为了让调用方不必去翻通用路由的 domain 表，**不属于实现缺口**。'
       security: [{ bearerAuth: [] }]
-      parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
+      parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
       responses:
         '200': { description: 'Authorized config string map by default; includeMeta=true returns domain, entries and envOverridden. templates/defaults/model bindings are JSON strings.', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
         '403': { $ref: '#/components/responses/Problem' }
@@ -2648,7 +2648,7 @@ paths:
       operationId: saveApiRequestTemplates
       description: 'BL-320 批 3（**有意保留 / kept-by-design**）：同上，`{layer}` ∈ `instance|user|workspace` 分别对应已注册的 `PUT /api/v1/config/{layer}/{domain}` 且 `domain=api-request-templates` 的具体示例，不是独立路径。'
       security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }]
+      parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: { type: string }, description: 'templates, connectionDefaultTemplates and providerModelBindings are JSON strings. Published versions are immutable; drafts preserve invalid raw source.' } } } }
       responses:
         '200': { description: Saved authorized config envelope }
@@ -2971,7 +2971,7 @@ paths:
         '200': { description: 'Local sink accepted the batch ({"status":"ok"}); central relay is best-effort and server-side' }
         '400': { $ref: '#/components/responses/Problem' }
   /api/v1/config/{domain}:
-    get: { tags: [config], operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] } }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22). PLAN-0554: non-admin layer=instance is 403 except explicit-only template domains; non-admin effective reads omit INSTANCE_ONLY_KEYS and instance-only domains, and filter envOverridden.' }, '403': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [config], operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22). PLAN-0554: non-admin layer=instance is 403 except explicit-only template domains; non-admin effective reads omit INSTANCE_ONLY_KEYS and instance-only domains, and filter envOverridden.' }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/{domain}/meta:
     get:
       tags: [config]
@@ -2981,7 +2981,7 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
-        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }
+        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
       responses:
         '200': { description: 'Map of {domain, layer, keys[]} with no config values', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
@@ -3005,7 +3005,20 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/config/workspace/{domain}:
-    put: { tags: [config], operationId: putWorkspaceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Problem' } } }
+    put:
+      tags: [config]
+      operationId: putWorkspaceConfig
+      deprecated: true
+      summary: (deprecated) Write one workspace-layer config domain
+      description: 'DEPRECATED (2026-11-10 user ruling — PLAN-0763 task-250 / D-800): the workspace config layer is no longer part of the global configuration API; workspace-scoped settings move inside each workspace once that design lands (task-247 / task-253). CP still registers this route, so it stays in the contract marked deprecated instead of being deleted — a delete here would claim behaviour CP does not have. Removal prerequisites: (1) no UI consumer calls the workspace layer (task-253), (2) the workspace settings redesign is live.'
+      x-removal-plan: 'Delete this path together with ConfigController.java:394 in one batch once (1) task-253 has removed every UI workspace-layer call and (2) the workspace settings redesign is live; until then the config read/write routes keep accepting layer=workspace and say so in their own descriptions.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: domain, required: true, schema: { type: string } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid }, description: 'Required while the deprecated workspace layer is still served; the instance and user layers ignore it.' }
+      responses:
+        '200': { description: Updated }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/user/{domain}:
     put: { tags: [config], operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
   /api/v1/config-locks:
