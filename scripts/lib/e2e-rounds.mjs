@@ -28,6 +28,7 @@
  * - Every SQL string is built here, from validated identifiers, so the runner cannot interpolate an
  *   unquoted name into `DROP DATABASE`/`TRUNCATE`.
  */
+import { join } from 'node:path';
 
 /** Highest accepted `XIHE_E2E_RETRY_ROUNDS` value; beyond this a lane is misconfigured, not slow. */
 export const MAX_ROUNDS_CEILING = 5;
@@ -159,7 +160,31 @@ export function roundRunId(runId, round) {
     return round === 1 ? runId : `${runId}-r${round}`;
 }
 
+/**
+ * BL-560: the host root a spec should read artifacts from. The runner passes the
+ * process-level fixed root via XIHE_WORKSPACE_HOST_ROOT; without it, specs that build
+ * the root from the per-round XIHE_E2E_RUN_ID (<root>-r2, ...) read a wrong directory
+ * on round 2+. The runner now always sets the env (e2e-host.mjs:2195-2198); this helper
+ * is the single, tested resolution point so specs and the runner agree on the shape.
+ *
+ * Returns null when the env is absent AND no run id is available, so callers can
+ * decide their own fallback rather than silently guessing.
+ */
+export function resolveSpecHostRoot(env, { projectDir = '', defaultRoot = null } = {}) {
+    const explicit = env?.XIHE_WORKSPACE_HOST_ROOT;
+    if (explicit) return explicit;
+    const runId = env?.XIHE_E2E_RUN_ID;
+    if (runId && projectDir) {
+        // Deliberate: this is the BL-560-deficient path — a per-round id yields a
+        // per-round root that diverges from the runner's fixed root. Kept only so the
+        // self-test can assert the divergence is caught, not silently used.
+        return join(projectDir, '.tmp', 'e2e-host', runId);
+    }
+    return defaultRoot;
+}
+
 /** The introspection query the `truncate` strategy needs (kept here so it is testable text). */
+
 export function buildDatabaseTablesQuery() {
     return "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename";
 }
