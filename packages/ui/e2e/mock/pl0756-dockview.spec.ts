@@ -10,6 +10,13 @@
  *
  * 跑法（lane 内）：`XIHE_UI_PORT=<port> XIHE_E2E_EXTERNAL_SERVER=1 pnpm exec playwright test
  * --config e2e/playwright.config.ts e2e/mock/pl0756-dockview.spec.ts`
+ *
+ * ⚠️ 整块已 `test.describe.skip`：**用户 2026-11-10 裁定「dockview 保留依赖但不用于
+ * MVP」**，`WorkspaceDock.vue` 的 dockview 渲染分支已整段注释、`dockviewEnabled` 恒
+ * false，这些用例当前必然失败（V2b 断言 `.dv-shell` 出现）。文件保留作重新启用时的
+ * 现成验收脚本：恢复 `WorkspaceDock.vue` 渲染分支 + 去掉本文件的 `.skip` 即可复用。
+ * 裁定与重新启用清单见 `plans/PLAN-0756-XH-m7m8-dock-layout-deps/evidence/
+ * dockview-capability-demo.md`。
  */
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
@@ -66,83 +73,91 @@ test.beforeEach(async ({ page }) => {
     await page.addInitScript((key) => localStorage.removeItem(key), LAYOUT_KEY);
 });
 
-test("V2 dock keeps the open tab set and active tab in the layout store", async ({ page }) => {
-    await openDock(page, "code");
+test.describe.skip("PLAN-0756 dockview 集成（用户 2026-11-10 裁定停用，恢复见文件头）", () => {
+    test("V2 dock keeps the open tab set and active tab in the layout store", async ({ page }) => {
+        await openDock(page, "code");
 
-    await expect(page.locator(AUX_PANEL)).toBeVisible();
-    await expect
-        .poll(async () => (await readLayout(page)).dockTabs, { timeout: EXPECT_TIMEOUT_MS })
-        .toContain("code");
-    await expect
-        .poll(async () => (await readLayout(page)).activeDockTab, { timeout: EXPECT_TIMEOUT_MS })
-        .toBe("code");
+        await expect(page.locator(AUX_PANEL)).toBeVisible();
+        await expect
+            .poll(async () => (await readLayout(page)).dockTabs, { timeout: EXPECT_TIMEOUT_MS })
+            .toContain("code");
+        await expect
+            .poll(async () => (await readLayout(page)).activeDockTab, {
+                timeout: EXPECT_TIMEOUT_MS,
+            })
+            .toBe("code");
 
-    expectNoPageFailures(collectPageFailures(page));
-});
-
-test("V2b dockview host renders the dock area when the flag is on", async ({ page }) => {
-    // PLAN-0756 T1：打开 dockview 宿主后 dock 区由 dockview 接管（`.dv-shell` + 面板内容）。
-    await page.addInitScript(() => {
-        (globalThis as { __xhUseDockview?: boolean }).__xhUseDockview = true;
-    });
-    await openDock(page, "code");
-
-    // dockview 根渲染。
-    await expect(page.locator(".dv-shell").first()).toBeAttached({
-        timeout: EXPECT_TIMEOUT_MS,
-    });
-    // dockview 自绘 tab 条：XH 的 dock tab 集投影为 `.dv-tab`（标题非空 = 面板已注册）。
-    const dockTabs = page.locator(".dv-tab");
-    await expect(dockTabs.first()).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-    expect((await dockTabs.first().innerText()).trim().length).toBeGreaterThan(0);
-    // 面板内容经 teleport 挂进 dockview 内容区。
-    await expect(page.locator(".dv-content-container").first()).toBeAttached({
-        timeout: EXPECT_TIMEOUT_MS,
+        expectNoPageFailures(collectPageFailures(page));
     });
 
-    expectNoPageFailures(collectPageFailures(page));
-});
+    test("V2b dockview host renders the dock area when the flag is on", async ({ page }) => {
+        // PLAN-0756 T1：打开 dockview 宿主后 dock 区由 dockview 接管（`.dv-shell` + 面板内容）。
+        await page.addInitScript(() => {
+            (globalThis as { __xhUseDockview?: boolean }).__xhUseDockview = true;
+        });
+        await openDock(page, "code");
 
-test("V3 proportionalLayout:false keeps the persisted width across a viewport shrink", async ({
-    page,
-}) => {
-    await openDock(page, "code");
-    await expect
-        .poll(async () => (await readLayout(page)).dockWidth, { timeout: EXPECT_TIMEOUT_MS })
-        .toBeGreaterThan(0);
+        // dockview 根渲染。
+        await expect(page.locator(".dv-shell").first()).toBeAttached({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        // dockview 自绘 tab 条：XH 的 dock tab 集投影为 `.dv-tab`（标题非空 = 面板已注册）。
+        const dockTabs = page.locator(".dv-tab");
+        await expect(dockTabs.first()).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        expect((await dockTabs.first().innerText()).trim().length).toBeGreaterThan(0);
+        // 面板内容经 teleport 挂进 dockview 内容区。
+        await expect(page.locator(".dv-content-container").first()).toBeAttached({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
 
-    const before = await readLayout(page);
+        expectNoPageFailures(collectPageFailures(page));
+    });
 
-    // 视口收窄（1920 → 1280）：渲染 clamp 生效，但持久宽度不得被写回。
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.waitForSelector(AUX_PANEL, { state: "attached", timeout: EXPECT_TIMEOUT_MS });
+    test("V3 proportionalLayout:false keeps the persisted width across a viewport shrink", async ({
+        page,
+    }) => {
+        await openDock(page, "code");
+        await expect
+            .poll(async () => (await readLayout(page)).dockWidth, { timeout: EXPECT_TIMEOUT_MS })
+            .toBeGreaterThan(0);
 
-    const after = await readLayout(page);
-    expect(after.dockWidth).toBe(before.dockWidth);
-    expectNoPageFailures(collectPageFailures(page));
-});
+        const before = await readLayout(page);
 
-test("V5 dock mode derives from the breakpoint and honours the manual override", async ({
-    page,
-}) => {
-    await openDock(page, "code");
+        // 视口收窄（1920 → 1280）：渲染 clamp 生效，但持久宽度不得被写回。
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.waitForSelector(AUX_PANEL, { state: "attached", timeout: EXPECT_TIMEOUT_MS });
 
-    // ≥1800 → pinned 派生；dockModeManual 未置位。
-    await expect
-        .poll(async () => (await readLayout(page)).dockMode, { timeout: EXPECT_TIMEOUT_MS })
-        .toBe("pinned");
-    await expect
-        .poll(async () => (await readLayout(page)).dockModeManual, { timeout: EXPECT_TIMEOUT_MS })
-        .toBe(false);
+        const after = await readLayout(page);
+        expect(after.dockWidth).toBe(before.dockWidth);
+        expectNoPageFailures(collectPageFailures(page));
+    });
 
-    // 手选优先：切换后 dockModeManual=true 且持久 dockMode 为用户选择。
-    await page.click('[data-testid="dock-mode-toggle"]');
-    await expect
-        .poll(async () => (await readLayout(page)).dockMode, { timeout: EXPECT_TIMEOUT_MS })
-        .toBe("floating");
-    await expect
-        .poll(async () => (await readLayout(page)).dockModeManual, { timeout: EXPECT_TIMEOUT_MS })
-        .toBe(true);
+    test("V5 dock mode derives from the breakpoint and honours the manual override", async ({
+        page,
+    }) => {
+        await openDock(page, "code");
 
-    expectNoPageFailures(collectPageFailures(page));
+        // ≥1800 → pinned 派生；dockModeManual 未置位。
+        await expect
+            .poll(async () => (await readLayout(page)).dockMode, { timeout: EXPECT_TIMEOUT_MS })
+            .toBe("pinned");
+        await expect
+            .poll(async () => (await readLayout(page)).dockModeManual, {
+                timeout: EXPECT_TIMEOUT_MS,
+            })
+            .toBe(false);
+
+        // 手选优先：切换后 dockModeManual=true 且持久 dockMode 为用户选择。
+        await page.click('[data-testid="dock-mode-toggle"]');
+        await expect
+            .poll(async () => (await readLayout(page)).dockMode, { timeout: EXPECT_TIMEOUT_MS })
+            .toBe("floating");
+        await expect
+            .poll(async () => (await readLayout(page)).dockModeManual, {
+                timeout: EXPECT_TIMEOUT_MS,
+            })
+            .toBe(true);
+
+        expectNoPageFailures(collectPageFailures(page));
+    });
 });

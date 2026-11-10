@@ -10,7 +10,28 @@ import {
     clampDockWidth,
 } from "../../../composables/useWorkspaceLayout";
 import { useLiveResize } from "../../../composables/useLiveResize";
-import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
+// ─────────────────────────────────────────────────────────────────────────────
+// dockview 停用（用户 2026-11-10 裁定：保留依赖、不在 MVP 使用）
+//
+// 停用范围：下面这行 `import WorkspaceDockviewDock` 与模板里的 dockview 渲染分支
+// **整段注释**，文件与依赖都保留（`WorkspaceDockviewDock.vue` / `lib/dockview.ts` /
+// `styles/dockview-theme.css` / `dockview-vue` + `dockview-core` 依赖 /
+// `e2e/mock/pl0756-dockview.spec.ts` 均未删除）。
+//
+// `useDockview` prop 与 `globalThis.__xhUseDockview` 注入**当前均无效**：
+// `dockviewEnabled` 已固定为 false，产品路径只有手写 dock 一条。
+//
+// 重新启用三步：
+//   ① 取消本行 import 与模板中 dockview 渲染分支的注释；
+//   ② 接上 dockview 样式表 `import "dockview-vue/dist/styles/dockview.css"`
+//      （BL-564：产品侧至今未引，翻旗后布局会无样式，且须排在
+//      `styles/dockview-theme.css` 之前）；
+//   ③ 定 BL-561 的键盘语义（dock 整体宽度 vs dockview 组边界两套语义先拍板）。
+//
+// 证据与代价评估见 plans/PLAN-0756-XH-m7m8-dock-layout-deps/evidence/
+// dockview-capability-demo.md。
+// ─────────────────────────────────────────────────────────────────────────────
+// import WorkspaceDockviewDock from "./WorkspaceDockviewDock.vue";
 import type { DockTab } from "./workspaceDockTabs";
 
 /**
@@ -85,11 +106,9 @@ const { resizingWidth, start: handleResizeStart } = useLiveResize({
     bubble: bubbleRef,
 });
 
-const dockviewEnabled = computed(
-        () =>
-            props.useDockview === true ||
-            (globalThis as { __xhUseDockview?: boolean }).__xhUseDockview === true,
-    ),
+// dockview 停用（用户 2026-11-10 裁定）：固定 false —— `useDockview` prop 与
+// `globalThis.__xhUseDockview` 注入当前均无效，见文件顶部「dockview 停用」说明。
+const dockviewEnabled = computed(() => false),
     isPinned = computed(() => props.mode === "pinned"),
     modeLabel = computed(() =>
         isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
@@ -365,8 +384,12 @@ function handleResizeKeydown(event: KeyboardEvent) {
             </button>
         </div>
 
-        <!-- PLAN-0756 T1: dockview 接管 dock 区内容（宿主自带 tab 条）。 -->
-        <div v-if="dockviewEnabled" class="dockview-host min-h-0 flex-1 overflow-hidden">
+        <!--
+            PLAN-0756 T1 dockview 渲染分支 —— 停用（用户 2026-11-10 裁定：保留依赖、
+            MVP 不使用）。恢复见 `<script setup>` 顶部「dockview 停用」三步；当前
+            `dockviewEnabled` 恒 false，产品路径只有下面这条手写 dock 分支。
+
+        <div class="dockview-host min-h-0 flex-1 overflow-hidden">
             <WorkspaceDockviewDock
                 :tabs="tabs"
                 :active-tab="activeTab"
@@ -379,7 +402,8 @@ function handleResizeKeydown(event: KeyboardEvent) {
                 </template>
             </WorkspaceDockviewDock>
         </div>
-        <div v-else class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        -->
+        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <!-- Sticky panels: mounted on first activation, then hidden but alive. -->
             <div
                 v-for="id in stickyPanels"
