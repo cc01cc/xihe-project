@@ -126,8 +126,8 @@ async function provisionPlainChatPrincipal(
     auth: AgentAuth,
     name: string,
 ): Promise<string> {
-    // fixture-only: agent-principals 写面自 CP D22/BL-326 起要求显式 workspace 上下文，
-    // 缺头会 409 WORKSPACE_CONTEXT_REQUIRED；BL-328（409499d6）已对同类夹具修过一次，这里同范式补。
+    // fixture-only: 带 X-Workspace-Id = 工作区门（MANAGE_WORKSPACE_AGENTS）。PLAN-0750 M1 起
+    // 缺头 = 用户级门（CREATE_OWN_AGENT ⇒ 201 / 缺原子 403），不再 409；BL-328（409499d6）的历史修复保留。
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",

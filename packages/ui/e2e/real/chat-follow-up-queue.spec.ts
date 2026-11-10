@@ -131,8 +131,8 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
-        // fixture-only: 建 agent-principal 的写面自 D22/BL-326 起要求显式 workspace 上下文
-        // （AgentPrincipalService.java:142/163-169）；缺头 → 409 WORKSPACE_CONTEXT_REQUIRED。
+        // fixture-only: 带 X-Workspace-Id = 工作区门（MANAGE_WORKSPACE_AGENTS）。PLAN-0750 M1 起
+        // 缺头 = 用户级门（CREATE_OWN_AGENT ⇒ 201 / 缺原子 403），不再有 409 上下文前置。
         "X-Workspace-Id": auth.workspaceId,
     };
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });

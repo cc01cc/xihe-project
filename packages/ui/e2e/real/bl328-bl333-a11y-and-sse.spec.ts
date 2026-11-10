@@ -116,8 +116,9 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
         workspaceId: auth.workspaceId,
     });
     // 与照搬版唯一的差异（Lead 要求显式写清）：**加 `X-Workspace-Id`**。
-    // 照搬版没有它，实测 `POST /agent-principals` 直接 409 WORKSPACE_CONTEXT_REQUIRED
+    // 照搬版没有它，当时实测 `POST /agent-principals` 409 WORKSPACE_CONTEXT_REQUIRED
     //（runId host-1793912025131-e8a4）—— 说明那条 spec 的 approval 路径久未跑过。
+    //（历史注记：PLAN-0750 M1 起缺头 = 用户级门 CREATE_OWN_AGENT，201/403，该 409 已成历史。）
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
