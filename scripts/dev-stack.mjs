@@ -55,6 +55,8 @@ import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from './lib/stack-cargo-ta
 import { ensureEnvFromUser } from './lib/user-env.mjs';
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
 import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
+import { buildCommitEnv, describeBuildCommit, resolveBuildCommit } from './lib/build-commit-env.mjs';
+import { CP_NO_REBUILD_FLAG, describeCpNoRebuild, resolveCpNoRebuild, serviceArgs } from './lib/stack-cp-args.mjs';
 import {
   DEFAULT_STALE_AFTER_MS,
   acquireLease,
@@ -156,6 +158,8 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--stack=')) args.stack = arg.slice('--stack='.length);
     else if (arg === '--cwd') args.cwd = argv[(i += 1)];
     else if (arg.startsWith('--cwd=')) args.cwd = arg.slice('--cwd='.length);
+    // G12 反证逃生门（task-154）：把 `--no-rebuild` 透传给 cp 子进程；默认关闭。
+    else if (arg === CP_NO_REBUILD_FLAG) args.cpNoRebuild = true;
     else if (arg === '--timeout') args.timeout = Number(argv[(i += 1)]);
     else if (arg.startsWith('--timeout=')) args.timeout = Number(arg.slice('--timeout='.length));
     else if (arg.startsWith('-')) throw new Error(`unknown option: ${arg}`);
@@ -328,8 +332,11 @@ function formatCpBuild(cpBuild) {
 // 参数错误恒 exit 2（design「退出码与输出契约」）：顶层 throw 会落到 Node 的未捕获异常（exit 1 +
 // 栈帧），既不符合契约也难读 —— 所以在解析这一层就兜住，和下面的 context 错误同一口径。
 let args;
+// G12 反证开关：flag 与 env 只允许一个来源（同时给出直接抛错，见 lib/stack-cp-args.mjs）。
+let cpNoRebuild = { active: false, source: null };
 try {
   args = parseArgs(process.argv.slice(2));
+  cpNoRebuild = resolveCpNoRebuild({ flag: args.cpNoRebuild === true, env: process.env });
 } catch (error) {
   console.error(`[dev-stack] ERROR: ${error.message}`);
   process.exit(2);
@@ -356,7 +363,18 @@ const ports = derived.ports;
 // task-56（BL-527 同类风险）：子进程 env 走**单一出口**并冻结 —— 任何散点赋值
 // （如 `childEnv.X = <对象>`）在这里立刻 TypeError，而不是被 Node `String()` 静默强转成
 // "[object Object]" 传给子进程（那正是 BL-527 把一个 15 字符串写进库的通道）。
-let childEnv = makeChildEnv({ stackId: derived.stackId, env: process.env });
+// G12（task-154）：把本栈 CP build-info 的戳翻成 `XIHE_BUILD_COMMIT`，注入 cp/agent/runtime 三个子进程。
+// env-first（PLAN-0534）契约不变：项目侧仍只读 env，CP/agent/runtime 代码一行不动 —— 用户裁定 (a)
+// 运维面注入，**禁止 (a)(b) 各修一半**（那会造出「两个来源两个值」的新假信号）。
+// 三个服务共用这一个 childEnv ⇒「三处一致」由构造保证，而不是三处各写一遍。
+// 缺失/非法 ⇒ 注入空串（`buildCommitEnv` 恒返回一个键）而不是跳过：跳过会让「没有字段」和「值为空」
+// 两种状态混在一起，运维面就分不清了。
+const stackBuildCommit = resolveBuildCommit({ targetDir: cpBuildFor(projectRoot).targetDir });
+let childEnv = makeChildEnv({
+  stackId: derived.stackId,
+  env: process.env,
+  extra: buildCommitEnv(stackBuildCommit),
+});
 
 /* ------------------------------------------------------- lease (PLAN-0694) */
 
@@ -567,7 +585,9 @@ function printLease(state, { indent = '  ' } = {}) {
 /* ---------------------------------------------------------------- spawn */
 
 function spawnDetached(service, outPath, errPath) {
-  const inner = `node "${stackRun}" ${service}`;
+  // 默认 args 与原先逐字节相同；只有反证开关生效时 cp 才多一个 `--no-rebuild`（见 lib/stack-cp-args.mjs）。
+  const childArgs = serviceArgs({ stackRun, service, noRebuild: cpNoRebuild.active });
+  const inner = `node "${stackRun}" ${childArgs.slice(1).join(' ')}`;
   if (isWindows) {
     const safeCwd = projectRoot.replace(/'/g, "''");
     const script =
@@ -594,7 +614,7 @@ function spawnDetached(service, outPath, errPath) {
   const outFd = openSync(outPath, 'a');
   const errFd = openSync(errPath, 'a');
   assertEnvValues(childEnv, 'spawn:' + service);
-  const child = spawn(process.execPath, [stackRun, service], {
+  const child = spawn(process.execPath, childArgs, {
     cwd: projectRoot,
     env: childEnv,
     detached: true,
@@ -778,6 +798,8 @@ async function start() {
     `[dev-stack] ${args.action} ${derived.stackId} cwd=${projectRoot} ports ui=${ports.ui} cp=${ports.cp} agent=${ports.agent} runtime=${ports.runtime} pg=${ports.postgres}`,
   );
   console.log(`[dev-stack] logs: ${logDir}`);
+console.log(`[dev-stack] ${'XIHE_BUILD_COMMIT'}=${stackBuildCommit.value === '' ? '(空串)' : stackBuildCommit.value} — ${describeBuildCommit(stackBuildCommit)}（注入 cp/agent/runtime 三个子进程；env-first，项目侧只读 env）`);
+if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNoRebuild)}`);
   // D-766 乙案最小版：起栈前把**确定性**的 dev 管理员密码注入子进程环境（CP 的
   // DataSeeder 读 `XIHE_DEV_ADMIN_PASSWORD`），存量库的更新由 waitReady 之后的
   // reset-admin upsert 补上（见 applyDevAdminPassword）。0 产品面改动。
@@ -948,6 +970,10 @@ async function status() {
   // `healthy` 的必要条件：事实（进程活 + 端口听 + PG 在）+ 全部租约字段核对通过。
   const ok = factsOk && lease.checks.allOk;
   const cpBuild = cpBuildFor(projectRoot);
+  // G12（task-154）：`buildCommit` 是**注入口径**（下一次 start 会塞给三个子进程的值），
+  // 与 `cpBuild.runningCommit`（已经跑着的 classes 的戳）并列展示 —— 两者都来自同一次
+  // `readBuildInfo`，不同的是「将要注入」与「正在运行」。unknown 时必须带 reason（缺失/解析失败/非法）。
+  const buildCommit = resolveBuildCommit({ targetDir: cpBuild.targetDir });
   if (args.json) {
     console.log(
       JSON.stringify(
@@ -959,6 +985,7 @@ async function status() {
           pidFileExists: existsSync(pidFile),
           pg: { port: ports.postgres, listening: pgListening },
           cpBuild,
+          buildCommit,
           services: rows,
           factsOk,
           deadServices,
@@ -981,6 +1008,7 @@ async function status() {
       );
     }
     console.log(`  cpBuild  ${formatCpBuild(cpBuild)}`);
+    console.log(`  buildCommit ${describeBuildCommit(buildCommit)}  (注入口径：下一次 start 注入 XIHE_BUILD_COMMIT)`);
     console.log(`  PostgreSQL port ${ports.postgres} listen=${pgListening}`);
     printLease(lease);
     if (leaseRenewed) console.log('  (心跳已刷新：本次核对全绿)');
@@ -1055,6 +1083,7 @@ async function statusAll() {
     }
     const cargoTarget = cargoTargetForStack({ stackId: d.stackId, projectRoot, env: process.env });
     const stackCpBuild = cpBuildFor(projectRoot, d.stackId);
+    const stackCommit = resolveBuildCommit({ targetDir: stackCpBuild.targetDir });
     // PLAN-0694 P0: 同一套核对链路，逐栈判定；`ok` 不再只看「端口在听」。
     const lease = leaseState({ d, p, cpVersion: stackCpBuild.runningCommit ?? null });
     const factsOk = services.every((row) => row.listening) && pgListening;
@@ -1064,6 +1093,7 @@ async function statusAll() {
       pidFileExists: existsSync(stackPidFile),
       cargoTargetDir: cargoTarget ?? null,
       cpBuild: stackCpBuild,
+      buildCommit: stackCommit,
       pg: { port: p.postgres, listening: pgListening, database: d.database, composeProject: d.composeProject },
       services,
       verdict: lease.verdict.verdict,
@@ -1093,6 +1123,7 @@ async function statusAll() {
       );
     }
     console.log(`    cpBuild  ${formatCpBuild(stack.cpBuild)}`);
+    console.log(`    buildCommit ${describeBuildCommit(stack.buildCommit)}  (注入口径)`);
     console.log(`    PostgreSQL port ${stack.pg.port} listen=${stack.pg.listening}`);
     console.log(`    verdict  ${stack.verdict ?? '-'} (${stack.reasons.join(' ')})` +
       ` leaseExists=${stack.lease.exists} state=${stack.lease.state ?? '-'} mismatch=${stack.lease.mismatch.length}` +

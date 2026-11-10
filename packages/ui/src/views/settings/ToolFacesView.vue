@@ -27,6 +27,15 @@ const props = withDefaults(
          * 层/域标题由 SettingsLayout 与域页提供，页内再造一个大标题会破坏 24>18>14 的层级。
          */
         embedded?: boolean;
+        /**
+         * G9（PLAN-0752 / task-153）：把视图范围**锁死**在一个 scope 上。
+         *
+         * <p>工作区层页签传 `workspace`：层只由 URL 表达（`/workspace/:id/settings/:domain`），
+         * 所以工作区层页里不该出现「切到实例视图」的范围选择器 —— 那是另一个层的配置面，
+         * 而实例视图本来就要求 `cap:instance:admin`（`PolicyController.java:60-69` +
+         * `ToolFaceService.java:154-159`）。不传 = 保持原行为。</p>
+         */
+        scopeLock?: PolicyToolFaceQueryScope;
     }>(),
     { embedded: false },
 );
@@ -46,9 +55,13 @@ const BUILTIN_ACTION_CLASSES = [
 const UNCLASSIFIED = "unclassified";
 
 const scopeOptions = computed<PolicyToolFaceQueryScope[]>(() =>
-    authStore.isAdmin ? ["workspace", "instance"] : ["workspace"],
+    props.scopeLock
+        ? [props.scopeLock]
+        : authStore.isAdmin
+          ? ["workspace", "instance"]
+          : ["workspace"],
 );
-const activeScope = ref<PolicyToolFaceQueryScope>("workspace");
+const activeScope = ref<PolicyToolFaceQueryScope>(props.scopeLock ?? "workspace");
 
 const classifyTarget = ref<PolicyToolFaceView | null>(null),
     classifyActionClass = ref(""),
