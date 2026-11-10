@@ -82,7 +82,7 @@ const zhHans = {
             "config-locks": "配置锁定",
             roles: "角色与授权",
             audit: "审计日志",
-            "my-agents": "我的智能体",
+            "agent-principals": "智能体主体",
             "my-credentials": "我的凭据",
             "knowledge-mcp": "知识库 · MCP",
             agents: "智能体绑定",
@@ -135,7 +135,7 @@ const zhHans = {
             "角色只能收窄账号在该智能体上已有的授权：只读只能 WS_VIEWER，读写才能选 WS_EDITOR。",
         bound: "已绑定",
         emptyTitle: "你还没有可绑定的智能体",
-        emptyBody: "去「用户配置 → 我的智能体」创建一个，再回来绑定到本工作区。",
+        emptyBody: "去「用户配置 → 智能体」创建一个，再回来绑定到本工作区。",
         emptyCta: "去创建智能体",
         emptyNote:
             "空态不是终点：指引把「谁能出现在这里」讲清楚（用户层创建的智能体 → 本工作区绑定），避免用户以为需要管理员。",
@@ -228,7 +228,7 @@ const en: PreviewCopy = {
             "config-locks": "Config locks",
             roles: "Roles & grants",
             audit: "Audit log",
-            "my-agents": "My agents",
+            "agent-principals": "Agent principals",
             "my-credentials": "My credentials",
             "knowledge-mcp": "Knowledge base · MCP",
             agents: "Agent bindings",
@@ -286,7 +286,7 @@ const en: PreviewCopy = {
         bound: "Bound",
         emptyTitle: "You have no bindable agents yet",
         emptyBody:
-            "Create one in User configuration → My agents, then come back and bind it to this workspace.",
+            "Create one in User configuration → Agents, then come back and bind it to this workspace.",
         emptyCta: "Create an agent",
         emptyNote:
             "The empty state is not a dead end: it explains who can appear here (agents created at the user layer → bound to this workspace) so users do not assume they need an admin.",

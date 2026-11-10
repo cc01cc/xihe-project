@@ -19,7 +19,7 @@ import { principalNameError } from "../../lib/principalName";
 import SettingsPermissionGate from "./SettingsPermissionGate.vue";
 
 /**
- * PLAN-0750 M3 (T3.1 + T3.2)：用户层「我的智能体」。
+ * PLAN-0750 M3 (T3.1 + T3.2)：用户层「智能体主体」。
  *
  * <p>**这是新增的第二个面，不是工作区那个面的复制品**（矩阵 U2：`WorkspaceAgentsPanel` 的
  * 单门保持原样，不改造）。两面的差别是授权来源，不是样式：</p>
@@ -33,7 +33,7 @@ import SettingsPermissionGate from "./SettingsPermissionGate.vue";
  *       不是 `owner_user_id`）。</li>
  *   <li><b>绑定</b>——卡片上的显式动作（T3.2）。绑定是**工作区侧**的管理能力：
  *       只列出发起人真的持 `MANAGE_WORKSPACE_AGENTS` 的工作区；一个都没有时给
- *       **显式提示**（`my-agents-bind-denied`），而不是渲染一个点了才 403 的按钮。</li>
+ *       **显式提示**（`agent-principals-bind-denied`），而不是渲染一个点了才 403 的按钮。</li>
  * </ul>
  */
 
@@ -122,12 +122,12 @@ async function submitCreate() {
         // 关键：无 workspaceId、无工作区选择（矩阵 U1 / R4）。请求携带的空
         // `X-Workspace-Id` 由 api.createOwnAgentPrincipal 负责，调用方不需要知道。
         await api.createOwnAgentPrincipal({ name: submitted });
-        toast.success(t("myAgents.created", { name: submitted }));
+        toast.success(t("agentPrincipals.created", { name: submitted }));
         createOpen.value = false;
         name.value = "";
         await loadAgents();
     } catch (e) {
-        formError.value = problemDetailText(e, t("myAgents.createFailed"));
+        formError.value = problemDetailText(e, t("agentPrincipals.createFailed"));
     } finally {
         saving.value = false;
     }
@@ -146,7 +146,7 @@ async function loadAgents() {
     try {
         agents.value = await api.listMyAgentPrincipals();
     } catch (e) {
-        loadError.value = problemDetailText(e, t("myAgents.loadFailed"));
+        loadError.value = problemDetailText(e, t("agentPrincipals.loadFailed"));
     } finally {
         loading.value = false;
     }
@@ -239,13 +239,13 @@ async function submitBind() {
         await api.updateWorkspaceAgentCap(workspaceId, target.principalId, []);
         const workspaceName =
             workspaces.value.find((workspace) => workspace.id === workspaceId)?.name || workspaceId;
-        toast.success(t("myAgents.bindSuccess", { workspace: workspaceName }));
+        toast.success(t("agentPrincipals.bindSuccess", { workspace: workspaceName }));
         const names = bindings.value[target.principalId] ?? [];
         if (!names.includes(workspaceName)) names.push(workspaceName);
         bindings.value = { ...bindings.value, [target.principalId]: names };
         bindTarget.value = null;
     } catch (e) {
-        bindError.value = problemDetailText(e, t("myAgents.bindFailed"));
+        bindError.value = problemDetailText(e, t("agentPrincipals.bindFailed"));
     } finally {
         binding.value = false;
     }
@@ -253,8 +253,8 @@ async function submitBind() {
 
 function boundLabel(principalId: string): string {
     const names = bindings.value[principalId] ?? [];
-    if (names.length === 0) return t("myAgents.unbound");
-    return t("myAgents.boundTo", { workspaces: names.join(" / ") });
+    if (names.length === 0) return t("agentPrincipals.unbound");
+    return t("agentPrincipals.boundTo", { workspaces: names.join(" / ") });
 }
 
 async function refresh() {
@@ -265,69 +265,76 @@ onMounted(refresh);
 </script>
 
 <template>
-    <div data-testid="my-agents-panel">
+    <div data-testid="agent-principals-panel">
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    XH / My agents
+                    XH / Agent principals
                 </p>
-                <h1 data-testid="my-agents-heading" class="text-xl font-semibold tracking-tight">
-                    {{ t("myAgents.heading") }}
+                <h1
+                    data-testid="agent-principals-heading"
+                    class="text-xl font-semibold tracking-tight"
+                >
+                    {{ t("agentPrincipals.heading") }}
                 </h1>
-                <p class="mt-1 text-sm text-muted-foreground">{{ t("myAgents.desc") }}</p>
+                <p class="mt-1 text-sm text-muted-foreground">{{ t("agentPrincipals.desc") }}</p>
             </div>
             <div class="flex items-center gap-2">
                 <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    data-testid="my-agents-refresh"
+                    data-testid="agent-principals-refresh"
                     :disabled="loading"
                     @click="refresh"
                 >
                     <RefreshCw aria-hidden="true" />
-                    {{ t("myAgents.refresh") }}
+                    {{ t("agentPrincipals.refresh") }}
                 </Button>
                 <Button
                     v-if="canCreateOwnAgent === true"
                     type="button"
                     size="sm"
-                    data-testid="my-agents-create-button"
+                    data-testid="agent-principals-create-button"
                     @click="openCreate"
                 >
                     <Plus aria-hidden="true" />
-                    {{ t("myAgents.create") }}
+                    {{ t("agentPrincipals.create") }}
                 </Button>
             </div>
         </header>
 
         <!-- 无 CREATE_OWN_AGENT ⇒ 这是**授权**问题，不是"后端缺口"（SettingsPermissionGate 区分两者）。 -->
-        <div v-if="canCreateOwnAgent === false" data-testid="my-agents-create-denied" class="mb-4">
+        <div
+            v-if="canCreateOwnAgent === false"
+            data-testid="agent-principals-create-denied"
+            class="mb-4"
+        >
             <SettingsPermissionGate variant="atom-denied" atom="CREATE_OWN_AGENT" />
         </div>
 
         <!-- 创建表单：**没有工作区选择器**（矩阵 U1）。 -->
         <form
             v-if="createOpen && canCreateOwnAgent === true"
-            data-testid="my-agents-create-form"
+            data-testid="agent-principals-create-form"
             class="mb-6 space-y-3 rounded-lg border border-border bg-card p-4"
             @submit.prevent="submitCreate"
         >
             <div class="space-y-1.5">
                 <label class="text-sm font-medium" for="my-agent-name">{{
-                    t("myAgents.name")
+                    t("agentPrincipals.name")
                 }}</label>
                 <Input
                     id="my-agent-name"
                     v-model="name"
-                    data-testid="my-agents-create-name"
-                    :placeholder="t('myAgents.namePlaceholder')"
+                    data-testid="agent-principals-create-name"
+                    :placeholder="t('agentPrincipals.namePlaceholder')"
                     :maxlength="128"
                     autocomplete="off"
                 />
                 <p
                     v-if="nameErrorMessage"
-                    data-testid="my-agents-create-name-error"
+                    data-testid="agent-principals-create-name-error"
                     class="text-xs text-destructive"
                 >
                     {{ nameErrorMessage }}
@@ -335,7 +342,7 @@ onMounted(refresh);
             </div>
             <p
                 v-if="formError"
-                data-testid="my-agents-create-error"
+                data-testid="agent-principals-create-error"
                 class="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive"
             >
                 {{ formError }}
@@ -344,26 +351,26 @@ onMounted(refresh);
                 <Button
                     type="submit"
                     size="sm"
-                    data-testid="my-agents-create-submit"
+                    data-testid="agent-principals-create-submit"
                     :disabled="createBlocked"
                 >
-                    {{ saving ? t("myAgents.creating") : t("myAgents.submit") }}
+                    {{ saving ? t("agentPrincipals.creating") : t("agentPrincipals.submit") }}
                 </Button>
                 <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    data-testid="my-agents-create-cancel"
+                    data-testid="agent-principals-create-cancel"
                     @click="cancelCreate"
                 >
-                    {{ t("myAgents.cancel") }}
+                    {{ t("agentPrincipals.cancel") }}
                 </Button>
             </div>
         </form>
 
         <div
             v-if="loadError"
-            data-testid="my-agents-error"
+            data-testid="agent-principals-error"
             class="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
         >
             {{ loadError }}
@@ -372,34 +379,34 @@ onMounted(refresh);
         <!-- 绑定权限：一个可管理工作区都没有时**显式说明**，不渲染点了才 403 的按钮。 -->
         <p
             v-if="canBind === false"
-            data-testid="my-agents-bind-denied"
+            data-testid="agent-principals-bind-denied"
             class="mb-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground"
         >
-            {{ t("myAgents.bindNoPermission") }}
+            {{ t("agentPrincipals.bindNoPermission") }}
         </p>
 
         <section class="min-w-0 rounded-lg border border-border bg-card">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
-                <h2 class="text-sm font-medium" data-testid="my-agents-list-heading">
-                    {{ t("myAgents.heading") }}
+                <h2 class="text-sm font-medium" data-testid="agent-principals-list-heading">
+                    {{ t("agentPrincipals.heading") }}
                 </h2>
                 <span class="text-xs text-muted-foreground">{{ agents.length }}</span>
             </div>
             <div v-if="loading" class="p-4 text-sm text-muted-foreground">
-                {{ t("myAgents.loading") }}
+                {{ t("agentPrincipals.loading") }}
             </div>
             <div
                 v-else-if="agents.length === 0"
-                data-testid="my-agents-empty"
+                data-testid="agent-principals-empty"
                 class="p-8 text-center text-sm text-muted-foreground"
             >
-                {{ t("myAgents.empty") }}
+                {{ t("agentPrincipals.empty") }}
             </div>
-            <ul v-else data-testid="my-agents-list" class="divide-y divide-border">
+            <ul v-else data-testid="agent-principals-list" class="divide-y divide-border">
                 <li
                     v-for="agent in agents"
                     :key="agent.principalId"
-                    :data-testid="`my-agents-row-${agent.principalId}`"
+                    :data-testid="`agent-principals-row-${agent.principalId}`"
                     class="flex flex-wrap items-start justify-between gap-3 px-4 py-3 hover:bg-muted/50"
                 >
                     <div class="min-w-0">
@@ -410,25 +417,29 @@ onMounted(refresh);
                             />
                             <span
                                 class="truncate text-sm font-medium"
-                                :data-testid="`my-agents-row-name-${agent.principalId}`"
+                                :data-testid="`agent-principals-row-name-${agent.principalId}`"
                             >
                                 {{ agent.name }}
                             </span>
                             <Badge
                                 v-if="agent.disabled"
                                 variant="outline"
-                                data-testid="my-agents-row-disabled"
+                                data-testid="agent-principals-row-disabled"
                             >
-                                {{ t("myAgents.disabledBadge") }}
+                                {{ t("agentPrincipals.disabledBadge") }}
                             </Badge>
                         </div>
                         <p class="mt-1 text-xs text-muted-foreground">
-                            {{ agent.templateName || t("myAgents.templateFallback") }} ·
-                            {{ t("myAgents.createdAt", { date: formatDate(agent.createdAt) }) }}
+                            {{ agent.templateName || t("agentPrincipals.templateFallback") }} ·
+                            {{
+                                t("agentPrincipals.createdAt", {
+                                    date: formatDate(agent.createdAt),
+                                })
+                            }}
                         </p>
                         <p
                             class="mt-1 text-xs text-muted-foreground"
-                            :data-testid="`my-agents-bound-${agent.principalId}`"
+                            :data-testid="`agent-principals-bound-${agent.principalId}`"
                         >
                             {{ boundLabel(agent.principalId) }}
                         </p>
@@ -439,11 +450,11 @@ onMounted(refresh);
                         variant="outline"
                         size="sm"
                         class="shrink-0"
-                        :data-testid="`my-agents-bind-${agent.principalId}`"
+                        :data-testid="`agent-principals-bind-${agent.principalId}`"
                         @click="openBind(agent)"
                     >
                         <Link2 aria-hidden="true" />
-                        {{ t("myAgents.bind") }}
+                        {{ t("agentPrincipals.bind") }}
                     </Button>
                 </li>
             </ul>
@@ -453,28 +464,28 @@ onMounted(refresh);
             :open="bindTarget !== null"
             @update:open="(value: boolean) => !value && closeBind()"
         >
-            <DialogContent data-testid="my-agents-bind-dialog" class="max-w-md">
+            <DialogContent data-testid="agent-principals-bind-dialog" class="max-w-md">
                 <DialogHeader>
                     <DialogTitle>
-                        {{ t("myAgents.bindTitle", { name: bindTarget?.name ?? "" }) }}
+                        {{ t("agentPrincipals.bindTitle", { name: bindTarget?.name ?? "" }) }}
                     </DialogTitle>
-                    <DialogDescription>{{ t("myAgents.bindDesc") }}</DialogDescription>
+                    <DialogDescription>{{ t("agentPrincipals.bindDesc") }}</DialogDescription>
                 </DialogHeader>
                 <div class="space-y-3">
                     <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="my-agents-bind-workspace">{{
-                            t("myAgents.bindWorkspace")
+                        <label class="text-sm font-medium" for="agent-principals-bind-workspace">{{
+                            t("agentPrincipals.bindWorkspace")
                         }}</label>
                         <Select
                             :model-value="bindWorkspaceId"
                             @update:model-value="(value) => (bindWorkspaceId = String(value))"
                         >
                             <SelectTrigger
-                                id="my-agents-bind-workspace"
-                                data-testid="my-agents-bind-select"
+                                id="agent-principals-bind-workspace"
+                                data-testid="agent-principals-bind-select"
                                 class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                             >
-                                <SelectValue :placeholder="t('myAgents.bindWorkspace')" />
+                                <SelectValue :placeholder="t('agentPrincipals.bindWorkspace')" />
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem
@@ -489,7 +500,7 @@ onMounted(refresh);
                     </div>
                     <p
                         v-if="bindError"
-                        data-testid="my-agents-bind-error"
+                        data-testid="agent-principals-bind-error"
                         class="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive"
                     >
                         {{ bindError }}
@@ -500,19 +511,21 @@ onMounted(refresh);
                         type="button"
                         variant="outline"
                         size="sm"
-                        data-testid="my-agents-bind-cancel"
+                        data-testid="agent-principals-bind-cancel"
                         @click="closeBind"
                     >
-                        {{ t("myAgents.close") }}
+                        {{ t("agentPrincipals.close") }}
                     </Button>
                     <Button
                         type="button"
                         size="sm"
-                        data-testid="my-agents-bind-submit"
+                        data-testid="agent-principals-bind-submit"
                         :disabled="bindBlocked"
                         @click="submitBind"
                     >
-                        {{ binding ? t("myAgents.binding") : t("myAgents.bindSubmit") }}
+                        {{
+                            binding ? t("agentPrincipals.binding") : t("agentPrincipals.bindSubmit")
+                        }}
                     </Button>
                 </DialogFooter>
             </DialogContent>
