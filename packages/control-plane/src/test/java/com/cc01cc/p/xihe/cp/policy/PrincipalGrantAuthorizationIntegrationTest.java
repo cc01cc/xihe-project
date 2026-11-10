@@ -1,11 +1,13 @@
 package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +31,9 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0610 W2 / decision #28: the retired PLAN-0585 grant surface no longer unlocks the two gates
@@ -38,13 +43,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * is replaced by access-role bindings in W3; this test only asserts the retirement contract and the
  * untouched default-deny baseline around agent-principal creation.</p>
  *
- * <p><b>BL-326 (2026-11-05 Lead ruling):</b> agent-principal creation is gated in <b>two layers</b>,
- * and both must stay pinned — (1) <b>precondition</b>: no resolvable workspace context ⇒
- * {@code 409 WORKSPACE_CONTEXT_REQUIRED} (the request never reaches an authorization decision,
- * because without a context there is nothing to decide); (2) <b>atom gate</b>: with a valid context,
- * a subject lacking {@code MANAGE_WORKSPACE_AGENTS} ⇒ {@code 403}. Asserting only the 409 would let
- * the atom gate disappear unnoticed; asserting only the 403 would let the context precondition drift
- * behind it.</p>
+ * <p><b>Creation has two doors (PLAN-0750 M1, G1=(1a), user ruling 2026-11-10).</b> No workspace
+ * context routes to the <b>user-level</b> door, authorized by {@code CREATE_OWN_AGENT} (re-planted by
+ * V148 after BL-312 removed it); an explicit context routes to the <b>workspace-tier</b> door,
+ * authorized by {@code MANAGE_WORKSPACE_AGENTS}. The two are never alias-merged. D-196/BL-336
+ * (revising D22) removed the old unconditional {@code 409 WORKSPACE_CONTEXT_REQUIRED} from
+ * creation and made it <b>scope-aware</b>: it now guards the write paths of an already-existing
+ * workspace-owned principal, which is the negative case pinned at the bottom of this class.</p>
+ *
+ * <p><b>Fixture rule (why {@code ensureUserDefault} is called):</b> the atom gate reads
+ * <b>materialized</b> grants ({@code RequesterAuthority.allowsForUser} →
+ * {@code AuthorizationGrantRepository.findScopedGrants}), so an actor must be bound through the same
+ * production path registration uses. A bare {@code users} row plus a JWT has no grant rows at all and
+ * is refused by the atom gate — which is exactly what the retired assertions were masking.</p>
  */
 class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegrationTest {
 
@@ -55,6 +66,12 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
 
     @Autowired
     private AuthorizationGrantRepository grantRepository;
+
+    @Autowired
+    private GrantDefaultService grantDefaultService;
+
+    @Autowired
+    private AgentPrincipalRepository agentPrincipalRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -101,6 +118,12 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
         jdbcTemplate.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " granted_at) SELECT gen_random_uuid(), r.id, 'user', CAST(? AS UUID), 'instance',"
                 + " NOW() FROM roles r WHERE r.name = 'ADMIN'", userId);
+        // The tier binding alone authorizes nothing: capability atoms are evaluated from
+        // MATERIALIZED grants, so the ADMIN row must be materialized through the same production
+        // entry point registration uses. ensureInstanceTierBinding leaves an existing binding in
+        // place, then materializeSubject turns it into grant rows (ADMIN inherits
+        // CREATE_OWN_AGENT via USER_DEFAULT_ATOMS, so the user-level door is reachable).
+        grantDefaultService.ensureUserDefault(userRepository.findById(userId).orElseThrow());
         authzContext.invalidateAll();
     }
 
@@ -128,15 +151,19 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
     }
 
     @Test
-    void withoutWorkspaceContextTheRequestStopsBeforeTheAtomGate() {
+    void withoutWorkspaceContextCreatesAUserLevelPrincipal() {
         fixture();
-        // Layer 1 of 2 (BL-326): a principal with neither workspace:admin nor the management atoms
-        // still answers 409 WORKSPACE_CONTEXT_REQUIRED — the precondition check fires before any
-        // authorization decision. Contract: docs/api/openapi.yaml → components/responses/
-        // WorkspaceContextRequired ("a request-state conflict, never a 401").
+        // Door 1 of 2 (PLAN-0750 M1): no workspace context ⇒ the user-level door, authorized by
+        // CREATE_OWN_AGENT ⇒ 201. The old unconditional 409 for creation is gone by design
+        // (D-196/BL-336 removed it, a183fd955 contracted the removal and
+        // OpenApiYamlContractTest:707 asserts the operation must not declare it any more).
         User plain = userRepository.saveAndFlush(new User(
                 "grant-auth-plain-" + UUID.randomUUID() + "@test.com", "hash",
                 "Grant auth plain", "grantplain" + shortId()));
+        // Production binding path (registration does exactly this): without materialized grants the
+        // atom gate — not a precondition — would answer 403, which is the failure this class used to
+        // hide behind the retired 409.
+        grantDefaultService.ensureUserDefault(plain);
         String plainToken = TestDataFactory.createGlobalToken(
                 plain.getId().toString(), plain.getEmail(), "USER", 0);
 
@@ -145,11 +172,12 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> created = patchClient.exchange(
                 url("/api/v1/agent-principals"), HttpMethod.POST,
-                new HttpEntity<>(Map.of("name", "noContextProbe"), headers), Map.class);
+                new HttpEntity<>(Map.of("name", "userLevelDoorProbe"), headers), Map.class);
 
-        assertEquals(HttpStatus.CONFLICT, created.getStatusCode(),
-                "no workspace context ⇒ the precondition layer fails closed (409), not the atom gate");
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", created.getBody().get("code"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(),
+                "no workspace context + CREATE_OWN_AGENT ⇒ the user-level door creates (201)");
+        assertNotNull(created.getBody().get("principalId"));
+        assertNull(created.getBody().get("code"), "a 201 never carries a Problem Details code");
     }
 
     @Test
@@ -178,24 +206,58 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
         assertEquals(HttpStatus.FORBIDDEN, created.getStatusCode(),
                 "a workspace MEMBER holds no MANAGE_WORKSPACE_AGENTS: the atom gate must refuse, "
                         + "not the context precondition");
+        // Measured, not assumed: the atom gate answers the generic FORBIDDEN code and names the missing
+        // action class in the detail — unlike the submission-time gate, which has a dedicated code.
+        assertEquals("FORBIDDEN", created.getBody().get("code"));
+        assertTrue(String.valueOf(created.getBody().get("detail")).contains("permission is required"),
+                "the refusal must name the missing action class: " + created.getBody().get("detail"));
     }
 
     @Test
-    void administratorWithoutWorkspaceContextIsToldTheContextIsRequired() {
+    void administratorWithoutWorkspaceContextAlsoUsesTheUserLevelDoor() {
         fixture();
-        // PLAN-0651 M1 `f261a5cf` (D51-11): workspace:admin is now part of ADMIN, so the same request
-        // that used to fall through to 403 now hits the explicit CONTEXT-REQUIRED branch
-        // (AgentPrincipalService:250-262). Pin that new semantics instead of letting it drift back.
+        // ADMIN derives from USER_DEFAULT_ATOMS (SystemAccessRoleCatalog:107-113), so it inherits
+        // CREATE_OWN_AGENT and creates its own principal through the same user-level door. Pinning
+        // this stops a future "instance administration authorizes creation" drift: the atom, not the
+        // role name, is what the gate decides on.
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(adminToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> created = patchClient.exchange(
                 url("/api/v1/agent-principals"), HttpMethod.POST,
-                new HttpEntity<>(Map.of("name", "adminNoContextProbe"), headers), Map.class);
+                new HttpEntity<>(Map.of("name", "adminUserLevelProbe"), headers), Map.class);
 
-        assertEquals(HttpStatus.CONFLICT, created.getStatusCode(),
-                "ADMIN holds workspace:admin but sent no workspace context: explicit 409");
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", created.getBody().get("code"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(),
+                "ADMIN with no workspace context creates through the user-level door (201)");
+        assertNotNull(created.getBody().get("principalId"));
+        assertNull(created.getBody().get("code"), "a 201 never carries a Problem Details code");
+    }
+
+    @Test
+    void workspaceScopedPrincipalStillRequiresTheContextToBeChanged() {
+        fixture();
+        // The 409 did not disappear — it moved (D-196/BL-336): it now guards the write paths of an
+        // existing principal the workspace owns (owner_user_id null, origin USER), never creation.
+        // Keeping this negative case is what stops the scope-aware gate from being dropped unnoticed
+        // while every creation test stays green. The subject row is seeded directly (the D-174 shape,
+        // same as AgentPrincipalVisibilityContractTest.createInstancePrincipal) so the case depends on
+        // the principal scope only, not on which tier may run the workspace create door.
+        AgentPrincipal workspaceOwned = new AgentPrincipal();
+        workspaceOwned.setName("workspaceScopedProbe");
+        workspaceOwned.setCreatedByUserId(adminUserId.toString());
+        String principalId = agentPrincipalRepository.saveAndFlush(workspaceOwned).getId().toString();
+
+        // Same actor, NO workspace context on the write path:
+        HttpHeaders noContext = new HttpHeaders();
+        noContext.setBearerAuth(adminToken);
+        noContext.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> disabled = patchClient.exchange(
+                url("/api/v1/agent-principals/" + principalId + "/disable"), HttpMethod.POST,
+                new HttpEntity<>(Map.of(), noContext), Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, disabled.getStatusCode(),
+                "a workspace-scoped principal cannot be changed without a workspace context (D-196)");
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", disabled.getBody().get("code"));
     }
 
     private ResponseEntity<Map> patch(Object body) {
