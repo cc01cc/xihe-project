@@ -136,6 +136,21 @@ public class McpProxyCatalogService {
                 .toList();
     }
 
+    /**
+     * PLAN-0759 / BL-548 (D2): the OAuth start path reads the stored server-level OAuth
+     * block so stored values win over blank request parameters. Returns the raw row.
+     */
+    public Optional<McpServer> findEnabledRemoteServerRow(String workspaceId, String serverId) {
+        try {
+            return remoteServers.findById(UUID.fromString(serverId))
+                    .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled());
+        } catch (IllegalArgumentException e) {
+            // Non-UUID serverIds come from the mixed mcp-config map keys; they cannot
+            // match a stored row, so treat them as absent rather than failing the start.
+            return Optional.empty();
+        }
+    }
+
     public Optional<RemoteServerView> findEnabledRemoteServer(String workspaceId, String serverId) {
         return remoteServers.findById(UUID.fromString(serverId))
                 .filter(server -> workspaceId.equals(server.getWorkspaceId()) && server.isEnabled())
