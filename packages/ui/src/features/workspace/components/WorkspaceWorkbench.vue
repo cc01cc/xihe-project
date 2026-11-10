@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -137,6 +137,59 @@ function initialLayout(workspaceId: string): WorkspaceLayoutState {
 }
 
 const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
+/**
+ * task-94 (B)：内层 SplitterGroup 的两道 panel 一律用**百分比**，持久化仍是 px。
+ *
+ * 依据：`reka-ui@2.11.0 src/Splitter/utils/units.ts:29-38` —— 组内只要有 px 面板且首次测量
+ * 拿不到 groupSize，`convertPanelConstraintsToPercent` 就返回 null ⇒ `SplitterGroup.vue:341-343`
+ * 直接 return，`layout` 永远是 `[]`；而 `:387-388` 的恢复分支又要求 `prevLayout.length !== 0`
+ * ⇒ 永不恢复。layout 空的时候：① `computePanelFlexBoxStyle` 把 `defaultSize` 当 flex-grow、
+ * 缺省落 `"1"`（`dist/utils/style.js:45-50`），主列被压成 5px；② 重渲染期
+ * `isPanelCollapsed → getPanelSize` 断言（`Panel size not found`）打断渲染 ⇒ dock 状态改了不渲染。
+ * 全用 % 之后 `requiresMeasurement` 为 false，layout 一定能从默认值初始化。
+ *
+ * 换算只在这一处：reka 收/发 %（`treePercentOf` / `treePxOf`），store 与 UI 仍是 px。
+ */
+const splitterGroupRef = ref<{ $el?: HTMLElement } | null>(null);
+const splitterWidth = ref(0);
+let splitterObserver: ResizeObserver | null = null;
+
+/** 量不到几何时的折算基准：默认树宽 : 默认主列宽（与 E 的 240:960 同一比例）。 */
+const SPLITTER_REFERENCE_WIDTH = TREE_WIDTH_DEFAULT + 960;
+
+function releaseSplitterObserver(): void {
+    splitterObserver?.disconnect();
+    splitterObserver = null;
+}
+
+function treePercentOf(px: number): number {
+    const width = splitterWidth.value > 0 ? splitterWidth.value : SPLITTER_REFERENCE_WIDTH;
+    return Math.min(100, Math.max(0, (px / width) * 100));
+}
+
+function treePxOf(percent: number): number {
+    const width = splitterWidth.value > 0 ? splitterWidth.value : SPLITTER_REFERENCE_WIDTH;
+    return (percent / 100) * width;
+}
+
+const treeDefaultPercent = computed(() => treePercentOf(treeWidth.value));
+const treeMinPercent = computed(() => treePercentOf(TREE_WIDTH_MIN));
+const treeMaxPercent = computed(() => treePercentOf(TREE_WIDTH_MAX));
+const treeCollapsedPercent = computed(() => treePercentOf(TREE_COLLAPSED_WIDTH));
+const mainDefaultPercent = computed(() => Math.max(0, 100 - treePercentOf(TREE_WIDTH_DEFAULT)));
+
+onMounted(() => {
+    const element = splitterGroupRef.value?.$el;
+    if (!element || typeof ResizeObserver !== "function") return;
+    splitterObserver = new ResizeObserver((entries) => {
+        const width = entries[0]?.contentRect.width ?? 0;
+        if (width > 0) splitterWidth.value = width;
+    });
+    splitterObserver.observe(element);
+});
+
+onBeforeUnmount(releaseSplitterObserver);
+
 let layoutWriter = createWorkspaceLayoutWriter(props.workspaceId || "");
 
 // Switching workspace swaps the whole per-workspace set (V11: "切 workspace 换一套").
@@ -328,6 +381,8 @@ const treeBridge = useSplitterPanelBridge({
         return null;
     },
     bubble: treeBubbleRef,
+    // task-94 (B)：reka 侧收/发百分比，store 仍是 px。
+    sizeUnit: { toPx: treePxOf, fromPx: treePercentOf },
     handleId: TREE_RESIZE_HANDLE_ID,
     isCollapsed: () => treePanelCollapsed.value,
 });
@@ -609,6 +664,7 @@ defineExpose({ openDockTab });
         -->
         <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
             <SplitterGroup
+                ref="splitterGroupRef"
                 direction="horizontal"
                 class="flex min-h-0 min-w-0 flex-1"
                 @keydown.capture="treeBridge.onKeydownCapture"
@@ -617,12 +673,12 @@ defineExpose({ openDockTab });
                 <SplitterPanel
                     :ref="setTreePanel"
                     as-child
-                    size-unit="px"
+                    size-unit="%"
                     collapsible
-                    :default-size="treeWidth"
-                    :min-size="TREE_WIDTH_MIN"
-                    :max-size="TREE_WIDTH_MAX"
-                    :collapsed-size="TREE_COLLAPSED_WIDTH"
+                    :default-size="treeDefaultPercent"
+                    :min-size="treeMinPercent"
+                    :max-size="treeMaxPercent"
+                    :collapsed-size="treeCollapsedPercent"
                     @resize="treeBridge.onResize"
                 >
                     <div
@@ -692,7 +748,12 @@ defineExpose({ openDockTab });
                 (`useSSE.ts:555-557`), so the column stays mounted and merely stops taking
                 layout space.
             -->
-                <SplitterPanel class="flex min-w-0">
+                <!-- task-94 (B)：主列也用 %（组里只要还剩一个 px 面板，layout 就可能永不初始化）。 -->
+                <SplitterPanel
+                    class="flex min-w-0"
+                    size-unit="%"
+                    :default-size="mainDefaultPercent"
+                >
                     <div
                         v-show="!dockFocus"
                         class="flex min-w-0 flex-1 flex-col bg-surface-content"

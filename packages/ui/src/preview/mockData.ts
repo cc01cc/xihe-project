@@ -14,6 +14,7 @@ import type {
     ProviderRequestFingerprintDiffView,
     ProviderRequestFingerprintView,
     Session,
+    SessionMonitorResponse,
 } from "../types";
 import type { SessionParticipantView } from "../types/participant";
 import type { ApiTypePair, ProviderConnection } from "../types/providerConnection";
@@ -688,4 +689,90 @@ export const mockProviderFingerprintError: ProviderRequestFingerprintView = {
     available: true,
     fingerprint: { status: "error", reasonCode: "FINGERPRINT_TOO_LARGE" },
     request: mockFingerprintRequestMeta,
+};
+/**
+ * task-83 第三腿：`SessionMonitorPanel` 的 fixture（供 preview 挂真面板量行宽）。
+ *
+ * 取值刻意取**真实量级**：UUID 36 字符、`errorCode` 用真实码、时间戳用 ISO。
+ * 理由：这个面板的 `font-mono` 内容主要是 runId / errorCode / revision 这类**长串**，
+ * 若 fixture 用短串，量出来的「不折行」是 fixture 的产物，不是产品的事实。
+ *
+ * `activity[0]` 非空 ⇒ 面板会把 diagnoseRunId 指向它，预览侧因此同时注入
+ * `attemptsFetcher`（返回空 attempts），否则它会去打网络。
+ */
+export const mockSessionMonitor: SessionMonitorResponse = {
+    generatedAt: "2026-11-11T04:30:00.000Z",
+    session: {
+        id: PREVIEW_SESSION_ID,
+        title: "字体栈子集化：等宽第三腿的行宽实量",
+        agentPrincipalId: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        modelProvider: "openai-compatible",
+        modelName: "deepseek-v3.2-exp-20261101",
+        providerConnectionId: "conn-0f9e8d7c-6b5a-4f3e-2d1c-0b9a8f7e6d5c",
+        connectionRevision: 7,
+        createdAt: "2026-11-11T03:10:00.000Z",
+        updatedAt: "2026-11-11T04:29:41.000Z",
+    },
+    activity: [
+        {
+            runId: "1f0a2b3c-4d5e-4f60-8711-9a0b1c2d3e4f",
+            origin: "user_message",
+            status: "running",
+            createdAt: "2026-11-11T04:29:12.000Z",
+            waitingOnRunId: null,
+            waitingToolCallId: null,
+            leaseExpired: false,
+        },
+        {
+            runId: "2a1b3c4d-5e6f-4071-9822-a0b1c2d3e4f5",
+            origin: "tool_call",
+            status: "awaiting_approval",
+            createdAt: "2026-11-11T04:28:40.000Z",
+            waitingOnRunId: "1f0a2b3c-4d5e-4f60-8711-9a0b1c2d3e4f",
+            waitingToolCallId: "call_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+            leaseExpired: true,
+        },
+    ],
+    history: {
+        windowSize: 20,
+        counts: { completed: 18, failed: 2, cancelled: 1 },
+        recent: [
+            {
+                runId: "3b2c4d5e-6f70-4182-9933-b0c1d2e3f4a5",
+                origin: "user_message",
+                terminalOutcome: "completed",
+                errorCode: null,
+                createdAt: "2026-11-11T04:10:02.000Z",
+                terminalAt: "2026-11-11T04:10:58.000Z",
+            },
+            {
+                runId: "4c3d5e6f-7081-4293-8a44-c1d2e3f4a5b6",
+                origin: "tool_call",
+                terminalOutcome: "failed",
+                errorCode: "PROVIDER_TIMEOUT",
+                createdAt: "2026-11-11T04:02:11.000Z",
+                terminalAt: "2026-11-11T04:02:44.000Z",
+            },
+        ],
+    },
+    readiness: {
+        connection: {
+            status: "READY",
+            lastErrorCode: null,
+            lastVerifiedAt: "2026-11-11T04:20:00.000Z",
+        },
+        agent: {
+            status: "ready",
+            llmReady: "ready",
+            verifiedAt: "2026-11-11T04:20:03.000Z",
+            configRevision: "cfg-rev-20261111-0420",
+        },
+        lastObservedRun: {
+            runId: "3b2c4d5e-6f70-4182-9933-b0c1d2e3f4a5",
+            terminalOutcome: "completed",
+            errorCode: null,
+            terminalAt: "2026-11-11T04:10:58.000Z",
+        },
+    },
+    transport: { attemptCount: 12, failedCount: 2, partialCount: 1 },
 };
