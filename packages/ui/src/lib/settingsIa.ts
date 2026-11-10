@@ -17,10 +17,14 @@ import {
  * 所以工作区层是 9 域而不是 10（design.md §3.2，2026-11-10 修正）。</p>
  */
 
-/** 设置区可出现的层。工作区层的路由段不同（`/workspace/:id/settings/:domain`）。 */
+/**
+ * 设置区可出现的层。task-253（用户 2026-11-10 裁定）：**全局设置只有实例 / 用户两层**，
+ * 工作区设置在各工作区内部、本轮不设计，因此这里不再有 workspace 层 ——
+ * 层是路由（/settings/instance/**、/settings/user/**），不是 UI 状态。
+ */
 export type SettingsLayer = ConfigLayer;
 
-export const SETTINGS_LAYERS: readonly SettingsLayer[] = ["instance", "user", "workspace"];
+export const SETTINGS_LAYERS: readonly SettingsLayer[] = ["instance", "user"];
 
 /** 用户层不可写的域（= 用户层矩阵里没有的那些）：logging / approval-policy / job-policy。 */
 export function isInstanceOnlyForUser(domain: ConfigDomain): boolean {
@@ -55,7 +59,7 @@ export function isConfigDomain(value: unknown): value is ConfigDomain {
     return typeof value === "string" && (INSTANCE_DOMAINS as readonly string[]).includes(value);
 }
 
-/** 某域在哪些层可写（顺序：instance → user → workspace，与 LAYER_DOMAINS 一致）。 */
+/** 某域在哪些层可写（顺序：instance → user，与 LAYER_DOMAINS 一致）。 */
 export function layersForDomain(domain: ConfigDomain): SettingsLayer[] {
     return SETTINGS_LAYERS.filter((layer) => LAYER_DOMAINS[layer].includes(domain));
 }
@@ -97,7 +101,6 @@ function domainRouteExistsInMatrix(layer: SettingsLayer, domain: ConfigDomain): 
  * 层是外框，只有**一个**地方决定它：路由 meta 有则用，没有则从这里按路径推导。</p>
  */
 export function settingsLayerForPath(path: string): SettingsLayer {
-    if (path.startsWith("/workspace/")) return "workspace";
     return path.startsWith("/settings/user") ? "user" : "instance";
 }
 
@@ -124,10 +127,7 @@ export function knowledgeRedirectTarget(workspaceId: string | null): {
 }
 
 /** 全局设置页的域路径（只有 instance / user 两层进 `/settings`）。 */
-export function settingsDomainPath(
-    layer: Exclude<SettingsLayer, "workspace">,
-    domain: ConfigDomain,
-): string {
+export function settingsDomainPath(layer: SettingsLayer, domain: ConfigDomain): string {
     return `/settings/${layer}/${domain}`;
 }
 
@@ -137,7 +137,7 @@ export function workspaceSettingsDomainPath(workspaceId: string, domain: ConfigD
 }
 
 /** 层默认页：实例层与非管理员都落到矩阵里的第一个域。 */
-export function defaultLayerPath(layer: Exclude<SettingsLayer, "workspace">): string {
+export function defaultLayerPath(layer: SettingsLayer): string {
     const first = LAYER_DOMAINS[layer][0];
     return first ? settingsDomainPath(layer, first) : "/settings/user/llm-provider";
 }

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import type { ConfigDomain, ConfigKeyMeta } from "../../stores/config";
+import type { ConfigDomain, ConfigKeyMeta, ConfigLayer } from "../../stores/config";
 import { settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -46,8 +46,8 @@ const props = defineProps<{
     note?: string;
     /** PLAN-0554: per-key provenance for this layer/domain. */
     meta?: Record<string, ConfigKeyMeta>;
-    /** PLAN-0554: current layer, used for inheritance wording. */
-    layer?: "instance" | "user" | "workspace";
+    /** PLAN-0554: current layer, used for inheritance wording. task-253：只剩实例/用户两层。 */
+    layer?: ConfigLayer;
 }>();
 
 const emit = defineEmits<{

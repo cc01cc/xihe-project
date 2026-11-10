@@ -4,7 +4,10 @@ import { useI18n } from "vue-i18n";
 import type { SettingsLayer } from "../../lib/settingsIa";
 
 /**
- * PLAN-0752 T1.1b：层标题 + 面包屑，三处（实例 / 用户 / 工作区）归一。
+ * PLAN-0752 T1.1b：层标题 + 面包屑，实例 / 用户两层归一。
+ *
+ * task-253：**工作区层不再是设置区的一层**（全局设置只有实例/用户，工作区设置在各工作区内、
+ * 且不再复用本组件）—— 所以这里只认两层，第三分支随该口径一起删除，不留死代码。
  *
  * <p>视觉重量是**可判定**的（design.md §5.2）：层标题 <code>text-2xl font-semibold</code>
  * （24px/600）、sticky 固定；域标题在域页是 18px，条目 14px——所以「层 > 域 > 条目」不靠
@@ -20,19 +23,13 @@ const props = defineProps<{
 const { t } = useI18n();
 
 const layerTitle = computed(() =>
-    props.layer === "instance"
-        ? t("settings.ia.layerInstance")
-        : props.layer === "user"
-          ? t("settings.ia.layerUser")
-          : t("settings.ia.layerWorkspace"),
+    props.layer === "instance" ? t("settings.ia.layerInstance") : t("settings.ia.layerUser"),
 );
 
 const layerCrumb = computed(() =>
     props.layer === "instance"
         ? t("settings.ia.layerInstanceShort")
-        : props.layer === "user"
-          ? t("settings.ia.layerUserShort")
-          : t("settings.ia.layerWorkspaceShort"),
+        : t("settings.ia.layerUserShort"),
 );
 
 const crumbSeparator = " › ";

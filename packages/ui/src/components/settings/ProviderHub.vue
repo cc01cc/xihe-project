@@ -84,9 +84,13 @@ const configStore = useConfigStore(),
 // llm-provider domain. The default connection is pinned to the top of the
 // list; a stored profile whose connection is no longer visible renders as an
 // amber "kept" entry (drift, spec/ui-surfaces.md S2).
-const currentLayer = computed<"user" | "workspace">(() =>
-        props.scope === "USER" ? "user" : "workspace",
-    ),
+/**
+ * task-253：配置层只剩 instance / user，而本组件只挂在用户层（ConfigLayerPanels 的非实例
+ * 分支），所以这里固定 user —— 原来的 scope==="WORKSPACE" 分支正是工作区层写入。
+ * 注意：连接自身的 `scope`（ProviderConnection.scope）是**另一根轴**（连接归属哪个层），
+ * 不随本次移除变化。
+ */
+const currentLayer = computed(() => "user" as const),
     layerLlmEntries = computed<Record<string, string>>(
         () => configStore.layerConfig[currentLayer.value]?.["llm-provider"] ?? {},
     ),
@@ -216,12 +220,9 @@ async function saveBinding(model: string | null, value: string) {
     if (value && !option) return;
     bindingBusy.value = true;
     try {
-        const layer =
-            model === null ? (connection.scope === "USER" ? "user" : "workspace") : "user";
-        const entries = await readTemplateConfig(
-            layer,
-            connection.workspaceId ?? props.workspaceId,
-        );
+        // task-253：模板配置层固定 user（默认模板与按模型绑定都写用户层）。
+        const layer = "user" as const;
+        const entries = await readTemplateConfig(layer);
         if (model === null) {
             const refs = parseMap<TemplateRef>(entries.connectionDefaultTemplates);
             if (option) refs[connection.id] = refOnly(option);
@@ -236,12 +237,7 @@ async function saveBinding(model: string | null, value: string) {
             else delete refs[connection.id];
             entries.providerModelBindings = JSON.stringify(refs);
         }
-        const workspaceId = connection.workspaceId ?? props.workspaceId;
-        const query =
-            layer === "workspace" && workspaceId
-                ? `?workspaceId=${encodeURIComponent(workspaceId)}`
-                : "";
-        await request(`/config/${layer}/api-request-templates${query}`, {
+        await request(`/config/${layer}/api-request-templates`, {
             method: "PUT",
             body: JSON.stringify(entries),
         });
@@ -300,20 +296,15 @@ async function setAsDefault(connection: ProviderConnection, modelOverride?: stri
     }
     savingDefault.value = true;
     try {
-        await configStore.putLayerConfig(
-            currentLayer.value,
-            "llm-provider",
-            {
-                ...layerLlmEntries.value,
-                profile: JSON.stringify({
-                    providerId: connection.providerId,
-                    connectionKey: connection.connectionKey,
-                    model,
-                }),
-            },
-            props.workspaceId,
-        );
-        await configStore.loadLayerDomains(currentLayer.value, props.workspaceId);
+        await configStore.putLayerConfig(currentLayer.value, "llm-provider", {
+            ...layerLlmEntries.value,
+            profile: JSON.stringify({
+                providerId: connection.providerId,
+                connectionKey: connection.connectionKey,
+                model,
+            }),
+        });
+        await configStore.loadLayerDomains(currentLayer.value);
         toast.success(
             modelOverride
                 ? t("settings.providerHub.toastDefaultModelUpdated")
@@ -372,23 +363,18 @@ async function saveModelParams(model: string) {
     };
     savingParams.value = true;
     try {
-        await configStore.putLayerConfig(
-            currentLayer.value,
-            "llm-provider",
-            {
-                ...layerLlmEntries.value,
-                modelParams: JSON.stringify({
-                    ...storedModelParams.value,
-                    [model]: {
-                        maxTokens: parse(draft.maxTokens),
-                        temperature: parse(draft.temperature),
-                        timeout: parse(draft.timeout),
-                    },
-                }),
-            },
-            props.workspaceId,
-        );
-        await configStore.loadLayerDomains(currentLayer.value, props.workspaceId);
+        await configStore.putLayerConfig(currentLayer.value, "llm-provider", {
+            ...layerLlmEntries.value,
+            modelParams: JSON.stringify({
+                ...storedModelParams.value,
+                [model]: {
+                    maxTokens: parse(draft.maxTokens),
+                    temperature: parse(draft.temperature),
+                    timeout: parse(draft.timeout),
+                },
+            }),
+        });
+        await configStore.loadLayerDomains(currentLayer.value);
         toast.success(t("settings.providerHub.toastParamsSaved"));
     } catch (cause) {
         logger.warn("Model params save failed", cause);
@@ -519,17 +505,14 @@ watch(
 );
 
 watch(
-    () => [activeConnection.value?.id, props.workspaceId] as const,
-    async ([id]) => {
+    () => activeConnection.value?.id,
+    async (id) => {
         const connection = activeConnection.value;
         if (!id || !connection) return;
         try {
             const [options, owner, user] = await Promise.all([
-                listVisibleTemplates(connection.workspaceId ?? props.workspaceId),
-                readTemplateConfig(
-                    connection.scope === "USER" ? "user" : "workspace",
-                    connection.workspaceId ?? props.workspaceId,
-                ),
+                listVisibleTemplates(),
+                readTemplateConfig("user"),
                 readTemplateConfig("user"),
             ]);
             if (activeConnection.value?.id !== id) return;
@@ -709,7 +692,7 @@ async function previewTypeChange() {
             if (editingConnection.value?.id !== connection.id || formType.value !== pair) return;
             typeImpact.value = impact;
         }
-        const options = await listVisibleTemplates(connection?.workspaceId ?? props.workspaceId);
+        const options = await listVisibleTemplates();
         if (formType.value !== pair) return;
         templateOptions.value = options;
     } catch (cause) {

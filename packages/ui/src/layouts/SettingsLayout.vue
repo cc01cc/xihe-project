@@ -6,6 +6,7 @@ import { Menu, X } from "@lucide/vue";
 import BackToChatButton from "../components/settings/BackToChatButton.vue";
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
+import NavRail from "../components/sidebar/NavRail.vue";
 import {
     DOMAIN_LABEL_KEY,
     isConfigDomain,
@@ -47,6 +48,18 @@ watch(
 
 <template>
     <div class="flex min-h-screen bg-background text-foreground">
+        <!--
+            task-253（用户 2026-11-10 裁定 ①）：**全局 rail 在所有页面常驻，设置页也不例外**。
+            旧实现刻意不复用 AppLayout（顶注 V10 的理由仍成立：工作区 Sidebar 不该出现在设置区），
+            但连带把 56px 全局 rail 也省掉了 —— 于是「设置」成了唯一没有模块导航的页面。
+            修法只搬 rail（NavRail 自带 设置/管理员/语言/登出），不搬工作区导航面板：与工作区页
+            的读法一致，也不把工作区侧栏带回来。桌面才显示（与 AppLayout 里 NavRail 的 isMobile
+            判定同一口径），移动端设置区走自己的抽屉。
+        -->
+        <div class="sticky top-0 hidden h-screen shrink-0 lg:block">
+            <NavRail :show-expand="false" />
+        </div>
+
         <aside class="hidden w-[264px] shrink-0 border-r lg:block">
             <div class="sticky top-0 h-screen">
                 <SettingsSidebar />

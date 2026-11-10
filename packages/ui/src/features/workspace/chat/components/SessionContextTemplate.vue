@@ -33,8 +33,15 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const sessionStore = useSessionStore(),
     configStore = useConfigStore();
+/**
+ * task-253：可选项只来自实例/用户两层（`listVisibleTemplates()`），但**会话记录里已存的绑定**
+ * 可能指向历史 workspace 层模板（CP Session 契约只标 deprecated、枚举未删）。UI 不再新增该层
+ * 绑定，读回时仍须如实展示 —— 所以展示侧的 layer 放宽为 string，写入侧仍只发两层。
+ */
+type TemplateDisplay = Omit<TemplateOption, "layer"> & { layer: string };
+
 const options = ref<TemplateOption[]>([]),
-    binding = ref<TemplateOption | null>(null);
+    binding = ref<TemplateDisplay | null>(null);
 const session = ref<ApiSession | null>(null),
     busy = ref(false),
     error = ref<string | null>(null);
@@ -89,7 +96,7 @@ watch(
                     "/sessions/" + encodeURIComponent(sessionId),
                 );
                 const [all] = await Promise.all([
-                    listVisibleTemplates(loaded.workspaceId),
+                    listVisibleTemplates(),
                     configStore.loadProviderConnections(),
                 ]);
                 if (generation !== currentGeneration || props.sessionId !== sessionId) return;

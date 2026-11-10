@@ -35,7 +35,8 @@ const zhHans = {
         instanceSummary: "12 个域 · 2 项实例运维 · 3 项安全与权限",
         userSummary: "9 个域 · 3 项我的资源（与实例层同构，条目数不同）",
         workspaceSummary: "9 个域 · 3 项工作区资源",
-        layerNote: "层是外框：切换层只换左栏与宫格，标题与面包屑固定在上方不动。",
+        layerNote:
+            "层是路由：/settings/instance 与 /settings/user 各自是独立页面，左栏不提供切换器；「实例」「用户」是可折叠分组，当前层默认展开，点条目即跳到该层路由。",
         switchToUser: "切到用户配置",
         switchToInstance: "回到实例配置",
         userLayerFact:
@@ -178,7 +179,7 @@ const en: PreviewCopy = {
         userSummary: "9 domains · 3 my-resources entries (same shape as instance, fewer entries)",
         workspaceSummary: "9 domains · 3 workspace resources",
         layerNote:
-            "The layer is the outer frame: switching layers swaps the rail and the grid; the title and breadcrumb stay pinned.",
+            "The layer is the route: /settings/instance and /settings/user are separate pages and the rail offers no switcher; instance and user are collapsible groups, the current layer is expanded, and clicking an entry navigates to that layer's route.",
         switchToUser: "Switch to user configuration",
         switchToInstance: "Back to instance configuration",
         userLayerFact:

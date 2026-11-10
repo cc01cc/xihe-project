@@ -28,18 +28,18 @@ import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 const props = withDefaults(
     defineProps<{
         layer: ConfigLayer;
-        workspaceId?: string;
         readonly?: boolean;
         /** PLAN-0752 T1.2：只渲染这一个域（域页用）；不传 = 整层（沿用旧行为）。 */
         domain?: ConfigDomain;
     }>(),
-    { workspaceId: undefined, readonly: false, domain: undefined },
+    { readonly: false, domain: undefined },
 );
 
 const emit = defineEmits<{
     // 只有 instance 层引导按钮会发出，目标只会是全局页的另一层（user）。
+    // task-253：原来的 "go-workspace" 引导（跳 /workspace/:id/settings?tab=config）随工作区
+    // 配置 tab 一起移除 —— 那个 tab 已经不存在了，留着按钮就是死链。
     "switch-layer": [layer: "instance" | "user"];
-    "go-workspace": [];
 }>();
 
 const { t } = useI18n(),
@@ -325,7 +325,7 @@ onMounted(() => {
 });
 
 async function reloadLayer() {
-    await configStore.loadLayerDomains(props.layer, props.workspaceId);
+    await configStore.loadLayerDomains(props.layer);
 }
 
 function generateSummary(domain: string): string {
@@ -392,7 +392,7 @@ async function handleSave(domain: string, body: Record<string, string>) {
     }
     savingDomains.value[domain] = true;
     try {
-        await configStore.putLayerConfig(props.layer, domain, body, props.workspaceId);
+        await configStore.putLayerConfig(props.layer, domain, body);
         await reloadLayer();
         if (!panelOwnsFeedback) {
             toast.success(`${domainLabels[domain] || domain} ${t("common.saved")}`);
@@ -412,7 +412,7 @@ async function handleReset(domain: string, key: string) {
         if (props.layer === "instance") {
             await configStore.deleteInstanceKey(domain, key);
         } else {
-            await configStore.putLayerConfig(props.layer, domain, { [key]: "" }, props.workspaceId);
+            await configStore.putLayerConfig(props.layer, domain, { [key]: "" });
         }
         await reloadLayer();
         toast.success(`${key} ${t("common.reset")}`);
@@ -453,19 +453,6 @@ async function handleReset(domain: string, key: string) {
                             >
                                 {{ t("settings.providerInstanceGoUser") }}
                             </button>
-                            <button
-                                data-testid="provider-instance-go-workspace"
-                                class="px-3 py-1 text-xs border rounded hover:bg-muted disabled:opacity-50"
-                                :disabled="!workspaceId"
-                                :title="
-                                    workspaceId
-                                        ? undefined
-                                        : t('settings.providerInstanceNoWorkspace')
-                                "
-                                @click="emit('go-workspace')"
-                            >
-                                {{ t("settings.providerInstanceGoWorkspace") }}
-                            </button>
                         </div>
                         <div
                             class="flex gap-2 items-start border-l-2 border-border pl-3 text-xs text-muted-foreground"
@@ -474,12 +461,7 @@ async function handleReset(domain: string, key: string) {
                             <span>{{ t("settings.providerInstanceNote") }}</span>
                         </div>
                     </template>
-                    <ProviderHub
-                        v-else
-                        :workspace-id="workspaceId"
-                        :scope="layer === 'user' ? 'USER' : 'WORKSPACE'"
-                        :readonly="readonly"
-                    />
+                    <ProviderHub v-else scope="USER" :readonly="readonly" />
                     <ConfigSourceSummary
                         v-if="layer !== 'instance'"
                         domain="llm-provider"
@@ -504,11 +486,10 @@ async function handleReset(domain: string, key: string) {
         </template>
         <template v-else-if="domain === 'api-request-templates'">
             <ContextTemplatesPanel
-                :key="`${layer}:${workspaceId ?? ''}`"
+                :key="layer"
                 :entries="configStore.layerConfig[layer][domain] || {}"
                 :saving="savingDomains[domain] || false"
                 :layer="layer"
-                :workspace-id="workspaceId"
                 :readonly="readonly"
                 :submit="submitTemplates"
                 @save="handleSave(domain, $event)"
@@ -521,8 +502,7 @@ async function handleReset(domain: string, key: string) {
         </template>
         <template v-else-if="domain === 'embedding' && layer !== 'instance'">
             <EmbeddingSettingsPanel
-                :layer="layer === 'user' ? 'user' : 'workspace'"
-                :workspace-id="workspaceId"
+                :layer="layer"
                 :saving="savingDomains[domain] || false"
                 :readonly="readonly"
             />

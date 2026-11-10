@@ -10,16 +10,19 @@ import {
     isInstanceOnlyForUser,
     layersForDomain,
     resolveLayerRoute,
+    SETTINGS_LAYERS,
     settingsDomainPath,
     settingsLayerForPath,
-    workspaceSettingsDomainPath,
     type ConfigDomain,
 } from "../settingsIa";
 
 /**
  * PLAN-0752 M1 / V3：层×域矩阵是路由注册、左栏与 404 判定的**同一份**来源。
- * 这些用例锁死 12 / 9 / 9 与「用户层没有 logging」两个事实，防止下次再靠推理改数
+ * 这些用例锁死 12 / 9 与「用户层没有 logging」两个事实，防止下次再靠推理改数
  * （task-63 的教训：能从 CP 源码读到的，不要从别处反推）。
+ *
+ * task-253（用户 2026-11-10 裁定）：UI 侧只保留实例/用户两层 —— 工作区层从矩阵、路由与
+ * 左栏一起移除（契约侧由 task-250 只标 deprecated）。凡带 workspace 的断言都已删除。
  */
 // PLAN-0752 T4.4（task-91）：知识库旧路径不能落在「用户层知识库页」上。
 describe("knowledgeRedirectTarget", () => {
@@ -38,32 +41,19 @@ describe("knowledgeRedirectTarget", () => {
 });
 
 describe("settings IA matrix", () => {
-    it("keeps the CP layer counts 12 / 9 / 9", () => {
+    it("keeps the CP layer counts 12 / 9 for the two UI layers", () => {
         expect(domainsForLayer("instance")).toHaveLength(12);
         expect(domainsForLayer("user")).toHaveLength(9);
-        expect(domainsForLayer("workspace")).toHaveLength(9);
+        // task-253：工作区层不是设置层，`SETTINGS_LAYERS` 里只能有这两项。
+        expect(SETTINGS_LAYERS).toEqual(["instance", "user"]);
     });
 
-    it("treats logging as instance-only and approval-policy as instance+workspace", () => {
+    it("treats logging/approval-policy/job-policy as instance-only once the workspace layer is gone", () => {
         expect(layersForDomain("logging")).toEqual(["instance"]);
-        expect(layersForDomain("approval-policy")).toEqual(["instance", "workspace"]);
-        expect(layersForDomain("job-policy")).toEqual(["instance", "workspace"]);
+        expect(layersForDomain("approval-policy")).toEqual(["instance"]);
+        expect(layersForDomain("job-policy")).toEqual(["instance"]);
         expect(layersForDomain("agent-profile")).toEqual(["instance", "user"]);
-        expect(layersForDomain("rag")).toEqual(["instance", "user", "workspace"]);
-    });
-
-    it("B4: workspace layer keeps its 9 writable domains (approval-policy/job-policy in, logging/agent-profile out)", () => {
-        // PLAN-0752 M2 B4：工作区层从「tab 内嵌整层」升级为「按域段渲染单域」时，白名单必须原样保留。
-        const workspace = domainsForLayer("workspace");
-        expect(workspace).toHaveLength(9);
-        expect(workspace).toContain("approval-policy");
-        expect(workspace).toContain("job-policy");
-        expect(workspace).not.toContain("logging");
-        expect(workspace).not.toContain("agent-profile");
-        expect(workspace).not.toContain("user-preference");
-        expect(workspaceSettingsDomainPath("ws-1", "approval-policy")).toBe(
-            "/workspace/ws-1/settings/approval-policy",
-        );
+        expect(layersForDomain("rag")).toEqual(["instance", "user"]);
     });
 
     it("marks exactly the three user-layer gaps as instance-only for the user layer", () => {
@@ -112,7 +102,6 @@ describe("settingsLayerForPath (404 兜底路由的层推导)", () => {
         expect(settingsLayerForPath("/settings/instance/rag")).toBe("instance");
         expect(settingsLayerForPath("/settings/user/rag")).toBe("user");
         expect(settingsLayerForPath("/settings/nope")).toBe("instance");
-        expect(settingsLayerForPath("/workspace/ws-1/settings/rag")).toBe("workspace");
     });
 });
 
@@ -120,7 +109,6 @@ describe("path helpers", () => {
     it("puts the layer in the URL", () => {
         expect(settingsDomainPath("instance", "rag")).toBe("/settings/instance/rag");
         expect(settingsDomainPath("user", "rag")).toBe("/settings/user/rag");
-        expect(workspaceSettingsDomainPath("ws-1", "rag")).toBe("/workspace/ws-1/settings/rag");
     });
 
     it("defaults to the first domain of the layer", () => {

@@ -62,6 +62,23 @@
 - 一个根 SPEC 同时只能由一个 active PLAN 承接；不得由 Agent 自动改写 active SPEC。XH PLAN 声明 Spec Impact，并按 `spec/README.md` 同步 DEV、OpenAPI/事件 schema 与测试。
 - SPEC 是 Agent/GitHub-only，不走文档站 frontmatter。详细规则见 `spec/README.md`、`spec/writing-guide.md` 和 [`DEV-030`](docs/i18n/zh-Hans/DEV-030-documentation-layout-and-frontmatter.md)。
 
+### API 契约治理（2026-11-10 用户裁定，见台账 D-800）
+
+- **`docs/api/openapi.yaml` 是 API wire 契约的唯一 SSOT，并且是人工维护的**（CP 源码 springdoc 注解实测为 0；运行时 `/v3/api-docs` 只是反射产物）。**代码与之背离时改代码**，不得拿文档去迁就现状；确属有意变更契约时走 PLAN + 同批改消费者。
+- **改接口的顺序固定**：先改 yaml（`requestBody`、错误码、示例）→ 再改代码 → 最后跑契约门。顺序反了等于先上车后补票。
+- **四条契约门各管一轴，禁止混用**（混用会得出「有缺口」或「已覆盖」的错误结论）：
+
+  | 轴 | 守门人 |
+  | --- | --- |
+  | 语法 + 冻结切片 | `check:openapi`（BL-162，`scripts/validate-openapi.mjs`；**注意它用 oxfmt 当 YAML 解析器，不报重复键**） |
+  | contract ↔ code | `RouteContractParityTest`（BL-320，用 live `RequestMappingHandlerMapping`，带豁免表） |
+  | 规范级自洽（`$ref` 可解析 / `operationId` 唯一 / 无 unused） | `check:openapi:lint`（redocly，dev-only，**report-only 起步**） |
+  | doc ↔ contract | `check:api-docs`（生成器 `--check`，PLAN-0763 M4） |
+
+- **各服务运行时原生文档一律降级为调试/对账产物**：CP 的 `/v3/api-docs` **默认关闭**（`XIHE_SPRINGDOC_ENABLED=true` 或 `dev`/`e2e`/`test` profile 才开，PLAN-0763 M6），Agent（FastAPI）的 `/openapi.json`，不得当文档引用、也不得当「实现侧分母」。实测 springdoc 比 live mapping **少报 15 条路由**，且**完全不收录 `/internal/**`**（yaml 独有 84 条里 64 条是 `/internal/`）。**Agent 的 HTTP 面 SSOT 同样是本 yaml**（`/internal/v1/agent/**` 26 条），其 `/openapi.json` 只用于漂移对账（PLAN-0763）。
+- **配置域 `{domain}`**：合法集合由 `classpath:config-schemas/*.json` 决定（13 个域，`ConfigDomainSchema` 启动加载）。yaml 侧用 `enum` 声明同一集合，另设一道门断言「yaml enum 集合 == schema 文件名集合」。**json 承载每域字段结构、enum 承载域名名单，二者不可互替**；新增域 = 加一份 schema + 加一个 enum 值，门会拦住单边改动。
+- 分组与快照：`openapi.yaml` 用 `tags`（operation 级）+ `x-tagGroups`（两级：public 17 / internal 3）；MCP tool 面见 [`docs/api/mcp-tools.md`](docs/api/mcp-tools.md)（**权威是 `tools/list` 握手，文档是快照**）。契约地图见 [`DEV-034`](docs/i18n/zh-Hans/DEV-034-spec-contract-map.md)。
+
 ## Code Style and Cross-Boundary Rules
 
 - 命名遵循语言惯例；领域术语见 [`DEV-032`](docs/i18n/zh-Hans/DEV-032-terminology.md)。`catch` 必须记录、转换或重抛异常（`exception-audit`）。

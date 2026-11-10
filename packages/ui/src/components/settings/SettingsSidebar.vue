@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
+import { ChevronRight } from "@lucide/vue";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAuthStore } from "../../stores/auth";
 import {
     DOMAIN_LABEL_KEY,
@@ -15,15 +17,20 @@ import {
 import SettingsResourceNav from "./SettingsResourceNav.vue";
 
 /**
- * PLAN-0752 T1.4：设置区左栏（**不**复用工作区 Sidebar）。
+ * 设置区左栏（**不**复用工作区 Sidebar）。task-253 起按用户 2026-11-10 裁定改为
+ * **两个可折叠层分组**：
  *
- * <p>两层结构：L1 分组标题 = 层（实例配置 / 用户配置），L2 分组 = 域 / 实例运维 / 安全与权限。
- * 同一时刻只展开路由所在的那一层——「层是外框、域是二级」这条视觉读法靠它成立。</p>
+ * - **层由路由决定，左栏不提供切换器**：/settings/instance/** 与 /settings/user/** 各自是
+ *   独立页面，URL 可分享、浏览器后退可用。左栏只做两件与「层」有关的事：① 当前层默认展开、
+ *   另一层默认收起（展开只是「看一眼」，点其中条目才发生导航）；② 组内仍按「域 / 实例运维 /
+ *   安全与权限」做第二维分段。
+ * - 「实例运维 / 安全与权限」属于**实例层**，所以它们现在收在实例分组内部；用户层不再顺带
+ *   看到它们（旧实现是并列 section，切到用户层也照显示）。
  *
- * <p>权限面（V15）：实例块（域 + 实例资源）可见性来自 CP 投影的 cap:instance:admin 能力位
- * （auth.hasInstanceAdminCapability），不是角色名判断；ops/安全组另按 `canSeeInstanceOps`
- * 渲染（BL-552）——`roles` 项要求 MANAGE_ROLES 原子，atom-only 用户无能力位也须看到该入口。
- * 两者都 fail-closed：投影没回来就不显示。</p>
+ * 权限面（V15）：实例块（域 + 实例资源）可见性来自 CP 投影的 cap:instance:admin 能力位
+ * （auth.hasInstanceAdminCapability），不是角色名判断；ops/安全组另按 canSeeInstanceOps
+ * 渲染（BL-552）——roles 项要求 MANAGE_ROLES 原子，atom-only 用户无能力位也须看到该入口。
+ * 两者都 fail-closed：投影没回来就不显示。
  */
 const { t } = useI18n();
 const route = useRoute();
@@ -36,7 +43,7 @@ onMounted(() => {
 const canSeeInstanceLayer = computed(() => auth.hasInstanceAdminCapability);
 
 /**
- * BL-552：ops/安全组不能整体挂在能力位下 —— `roles` 项的唯一门是 MANAGE_ROLES 原子
+ * BL-552：ops/安全组不能整体挂在能力位下 —— roles 项的唯一门是 MANAGE_ROLES 原子
  * （PLAN-0651 T4.2 / Lead ruling ①）。atom-only 用户（有原子、无 cap:instance:admin）
  * 必须仍能看到该入口；域与实例资源保持能力位门不变。
  */
@@ -50,6 +57,14 @@ const activeLayer = computed(() => {
 const activeDomain = computed(() =>
     typeof route.meta.settingsDomain === "string" ? route.meta.settingsDomain : "",
 );
+
+/** 当前层默认展开、另一层默认收起；跨层导航时跟着路由翻。 */
+const instanceOpen = ref(activeLayer.value === "instance");
+const userOpen = ref(activeLayer.value === "user");
+watch(activeLayer, (layer) => {
+    instanceOpen.value = layer === "instance";
+    userOpen.value = layer === "user";
+});
 
 const instanceDomains = computed<SettingsNavItem[]>(() =>
     domainsForLayer("instance").map((domain) => ({
@@ -67,7 +82,6 @@ const userDomains = computed<SettingsNavItem[]>(() =>
     })),
 );
 
-/** 运维/安全两组按能力收敛：config-locks 与 roles 各自有前置条件（详见顶注）。 */
 /**
  * PLAN-0752 T4.0：资源组。实例层 4 条全缺口（G1/G2/G3/G4）、用户层 1 条真（我的凭据）+ 2 条缺口，
  * 按 D7 留位标缺口——具体呈现与点击行为在 SettingsResourceNav。
@@ -95,111 +109,139 @@ function isDomainActive(layer: "instance" | "user", domain: string): boolean {
 function isOpsActive(path: string): boolean {
     return route.path === path;
 }
+
+/**
+ * 组标题就是折叠开关。刻意**不**在 CollapsibleTrigger 上再绑 click —— reka 的 trigger 自带
+ * 切换行为，绑第二次会双重翻转（packages/ui/AGENTS.md「Reka UI 交互陷阱」）。
+ */
+const primaryClass =
+    "flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-[11px] font-semibold tracking-wide text-muted-foreground uppercase hover:bg-muted/60";
+const itemBaseClass = "block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm";
+const itemIdleClass = "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
+const itemActiveClass = "bg-muted font-medium text-foreground";
 </script>
 
 <template>
     <nav
         data-testid="settings-sidebar"
-        class="flex h-full flex-col gap-4 overflow-y-auto px-3 py-4"
+        class="flex h-full flex-col gap-2 overflow-y-auto px-3 py-4"
     >
-        <section v-if="canSeeInstanceLayer" aria-labelledby="settings-nav-instance">
-            <p
-                id="settings-nav-instance"
-                data-testid="settings-nav-group-primary"
-                class="px-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
-            >
-                {{ t("settings.ia.layerInstance") }}
-            </p>
-            <p
-                data-testid="settings-nav-group-secondary"
-                class="px-2 pb-1 text-[11px] text-muted-foreground"
-            >
-                {{ t("settings.ia.groupDomains") }}
-            </p>
-            <div data-testid="settings-nav-group-items" class="space-y-0.5">
-                <router-link
-                    v-for="item in instanceDomains"
-                    :key="item.id"
-                    :to="item.path"
-                    :data-testid="`settings-nav-domain-instance-${item.id}`"
-                    class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm"
-                    :class="
-                        isDomainActive('instance', item.id)
-                            ? 'bg-muted font-medium text-foreground'
-                            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                    "
+        <!-- 实例层：当前层默认展开 -->
+        <Collapsible v-if="canSeeInstanceLayer || canSeeInstanceOps" v-model:open="instanceOpen">
+            <section aria-labelledby="settings-nav-instance">
+                <CollapsibleTrigger
+                    id="settings-nav-instance"
+                    data-testid="settings-nav-group-primary"
+                    :class="primaryClass"
                 >
-                    {{ t(item.labelKey) }}
-                </router-link>
-            </div>
-            <SettingsResourceNav
-                :group-label-key="'settings.ia.groupInstanceResources'"
-                :items="instanceResources"
-            />
-        </section>
+                    <ChevronRight
+                        class="size-3 shrink-0 transition-transform"
+                        :class="instanceOpen ? 'rotate-90' : ''"
+                        aria-hidden="true"
+                    />
+                    <span>{{ t("settings.ia.layerInstance") }}</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <template v-if="canSeeInstanceLayer">
+                        <p
+                            data-testid="settings-nav-group-secondary"
+                            class="px-2 pb-1 text-[11px] text-muted-foreground"
+                        >
+                            {{ t("settings.ia.groupDomains") }}
+                        </p>
+                        <div data-testid="settings-nav-group-items" class="space-y-0.5">
+                            <router-link
+                                v-for="item in instanceDomains"
+                                :key="item.id"
+                                :to="item.path"
+                                :data-testid="'settings-nav-domain-instance-' + item.id"
+                                :class="[
+                                    itemBaseClass,
+                                    isDomainActive('instance', item.id)
+                                        ? itemActiveClass
+                                        : itemIdleClass,
+                                ]"
+                            >
+                                {{ t(item.labelKey) }}
+                            </router-link>
+                        </div>
+                        <SettingsResourceNav
+                            :group-label-key="'settings.ia.groupInstanceResources'"
+                            :items="instanceResources"
+                        />
+                    </template>
 
-        <!-- BL-552：ops/安全组按 `canSeeInstanceOps` 渲染，不被实例层能力位整段遮住。 -->
-        <section v-if="canSeeInstanceOps" class="mt-4">
-            <div v-for="group in opsGroups" :key="group.id" class="mt-3">
-                <p
-                    data-testid="settings-nav-group-secondary"
-                    class="px-2 pb-1 text-[11px] text-muted-foreground"
+                    <!-- BL-552：ops/安全组按 canSeeInstanceOps 渲染，不被实例层能力位整段遮住。 -->
+                    <template v-if="canSeeInstanceOps">
+                        <div v-for="group in opsGroups" :key="group.id" class="mt-3">
+                            <p
+                                data-testid="settings-nav-group-secondary"
+                                class="px-2 pb-1 text-[11px] text-muted-foreground"
+                            >
+                                {{ t(group.labelKey) }}
+                            </p>
+                            <div class="space-y-0.5">
+                                <router-link
+                                    v-for="item in group.items"
+                                    :key="item.id"
+                                    :to="item.path"
+                                    :data-testid="'settings-nav-ops-' + item.id"
+                                    :class="[
+                                        itemBaseClass,
+                                        isOpsActive(item.path) ? itemActiveClass : itemIdleClass,
+                                    ]"
+                                >
+                                    {{ t(item.labelKey) }}
+                                </router-link>
+                            </div>
+                        </div>
+                    </template>
+                </CollapsibleContent>
+            </section>
+        </Collapsible>
+
+        <!-- 用户层：非当前层默认收起，「看一眼」时点条目才导航 -->
+        <Collapsible v-model:open="userOpen">
+            <section aria-labelledby="settings-nav-user">
+                <CollapsibleTrigger
+                    id="settings-nav-user"
+                    data-testid="settings-nav-group-primary"
+                    :class="primaryClass"
                 >
-                    {{ t(group.labelKey) }}
-                </p>
-                <div class="space-y-0.5">
-                    <router-link
-                        v-for="item in group.items"
-                        :key="item.id"
-                        :to="item.path"
-                        :data-testid="`settings-nav-ops-${item.id}`"
-                        class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm"
-                        :class="
-                            isOpsActive(item.path)
-                                ? 'bg-muted font-medium text-foreground'
-                                : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                        "
+                    <ChevronRight
+                        class="size-3 shrink-0 transition-transform"
+                        :class="userOpen ? 'rotate-90' : ''"
+                        aria-hidden="true"
+                    />
+                    <span>{{ t("settings.ia.layerUser") }}</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <p
+                        data-testid="settings-nav-group-secondary"
+                        class="px-2 pb-1 text-[11px] text-muted-foreground"
                     >
-                        {{ t(item.labelKey) }}
-                    </router-link>
-                </div>
-            </div>
-        </section>
-
-        <section aria-labelledby="settings-nav-user">
-            <p
-                id="settings-nav-user"
-                data-testid="settings-nav-group-primary"
-                class="px-2 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
-            >
-                {{ t("settings.ia.layerUser") }}
-            </p>
-            <p
-                data-testid="settings-nav-group-secondary"
-                class="px-2 pb-1 text-[11px] text-muted-foreground"
-            >
-                {{ t("settings.ia.groupDomains") }}
-            </p>
-            <div data-testid="settings-nav-group-items" class="space-y-0.5">
-                <router-link
-                    v-for="item in userDomains"
-                    :key="item.id"
-                    :to="item.path"
-                    :data-testid="`settings-nav-domain-user-${item.id}`"
-                    class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm"
-                    :class="
-                        isDomainActive('user', item.id)
-                            ? 'bg-muted font-medium text-foreground'
-                            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                    "
-                >
-                    {{ t(item.labelKey) }}
-                </router-link>
-            </div>
-            <SettingsResourceNav
-                :group-label-key="'settings.ia.groupMyResources'"
-                :items="userResources"
-            />
-        </section>
+                        {{ t("settings.ia.groupDomains") }}
+                    </p>
+                    <div data-testid="settings-nav-group-items" class="space-y-0.5">
+                        <router-link
+                            v-for="item in userDomains"
+                            :key="item.id"
+                            :to="item.path"
+                            :data-testid="'settings-nav-domain-user-' + item.id"
+                            :class="[
+                                itemBaseClass,
+                                isDomainActive('user', item.id) ? itemActiveClass : itemIdleClass,
+                            ]"
+                        >
+                            {{ t(item.labelKey) }}
+                        </router-link>
+                    </div>
+                    <SettingsResourceNav
+                        :group-label-key="'settings.ia.groupMyResources'"
+                        :items="userResources"
+                    />
+                </CollapsibleContent>
+            </section>
+        </Collapsible>
     </nav>
 </template>
