@@ -20,8 +20,14 @@
 import { randomUUID } from "node:crypto";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
+import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { seedUserGrant } from "./helpers/user-grants";
-import { getRootBranchId, waitForControlPlaneAgentReady } from "./helpers/journey";
+import { chooseWorkspacePrincipalById } from "./helpers/agent-principal";
+import {
+    ensureAgentWorkspaceBinding,
+    getRootBranchId,
+    waitForControlPlaneAgentReady,
+} from "./helpers/journey";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
@@ -29,6 +35,10 @@ const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const ZH_HINT = "工作区设置 → 智能体管理绑定";
 
 test.describe.configure({ mode: "serial", retries: 0 });
+// 本用例串了「注册 → 建工作区 → 建 principal → 绑定 → UI 建会话 → 撤绑 → 提交」七步，
+// 且首次会话会触发工作区物化，默认 30 s 的 test 预算不够（实测：chat-input 还在等就被
+// test timeout 掐掉，而不是选择器出错）。放宽到 120 s，单步仍用 LONG/EXPECT 超时兜住。
+test.setTimeout(120_000);
 
 /**
  * 夹具回执。`foreignPrincipalId` 只在断言里读（用它反查工作区成员清单，证明**没有**被静默
@@ -43,19 +53,31 @@ interface Fixture {
 }
 
 /**
- * 构造夹具：注册一个用户（OWNER，自己就是一个工作区）→ 建一个 principal → **不**绑到任何工作区。
- * 这样提交期拿到的正是 `AGENT_PRINCIPAL_MISSING`。
+ * 构造夹具（Lead 2026-11-10 裁定后的真实用户路径）：
+ *
+ * 注册用户 → 建 principal → **先绑定** → 走 UI 建会话 → **API 撤绑（模拟管理员中途撤销）**
+ * → 会话仍在、用户仍能点发送 ⇒ 提交期才拿到 `AGENT_PRINCIPAL_MISSING`。
+ *
+ * 为什么不能"从不绑定"直接建会话：`WorkspaceView.vue:272-277` 在**零已绑定 agent** 时
+ * 直接 toast（`workspace.noBoundAgent` / `workspace.noEnabledAgent`）并 `return null`，
+ * 选择弹窗根本不打开 ⇒ `workspace-agent-principal-select` 永远等不到。即「提交期 403」
+ * 在纯 UI 上是**先绑后撤**才能到达的分支，这也是真实用户会遇到的场景。
  */
 async function bootstrapUnboundPrincipalSession(
     request: APIRequestContext,
     page: Page,
 ): Promise<Fixture> {
     const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
+    // ⚠️ CP 的名称规则（NameFormat.PATTERN_SOURCE）：首字符必须是字母或汉字，之后只允许
+    // 字母/数字/汉字 —— **空格与连字符都会 400 INVALID_NAME_FORMAT**。所以这里的 name 必须是
+    // 纯字母数字形态（实测：`e2eV105e340c2389` → 201；`V10-Missing-abc` → 400）。
+    // 密码用 generateE2EPassword()，它的产物**不能**当 name 用。
+    const token = randomUUID().replace(/-/g, "").slice(0, 10);
     const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
         data: {
-            email: `v10-missing-${Date.now()}-${randomUUID().slice(0, 8)}@test.com`,
+            email: `v10missing${token}@test.com`,
             password,
-            name: "V10 principal missing",
+            name: `e2eV10${token}`,
         },
     });
     expect([200, 201], `register failed: ${register.status()} ${await register.text()}`).toContain(
@@ -72,20 +94,67 @@ async function bootstrapUnboundPrincipalSession(
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBeTruthy();
     const userId = ((await me.json()) as { id: string }).id;
-    seedUserGrant(userId, auth.workspaceId, [{ actionClass: "delete", resource: "*" }]);
 
-    // 建 principal（工作区上下文 ⇒ MANAGE_WORKSPACE_AGENTS 门，OWNER 直接过）。
-    const principalName = `V10-Missing-${randomUUID().slice(0, 8)}`;
+    // 建 principal 必须**带 provider 模板 + 可用 provider 连接**：两者缺一，建会话都会被 CP 409
+    // 拒（"No usable provider connection matches the profile"；实测 trace：
+    // POST /api/v1/workspaces/{id}/sessions → 409 ⇒ 选择弹窗停在原地、chat-input 永不出现）。
+    seedUserGrant(userId, auth.workspaceId, [
+        { actionClass: "CREATE_TEMPLATE", resource: "*" },
+        { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: auth.workspaceId },
+        { actionClass: "delete", resource: "*" },
+        { actionClass: "write", resource: "*" },
+    ]);
+    // 复用现成夹具：建 USER 作用域 openai 连接 → verify READY → 把 user llm profile 指向它。
+    await ensureFakeUserProvider(request, {
+        accessToken: auth.accessToken,
+        workspaceId: auth.workspaceId,
+    });
+    // ⚠️ 模板的 model 必须与上面 profile 里的 model **同一个串**（helpers/fake-provider.ts
+    // 的 FAKE_MODEL），否则 profile 解析不到连接，仍是同一个 409。
+    const FAKE_MODEL = "fake-m2d-probe";
+    const roleId = randomUUID(),
+        templateId = randomUUID();
+    const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
+        headers,
+        data: {
+            roles: JSON.stringify([
+                {
+                    id: roleId,
+                    name: "V10E2ERole",
+                    permissions: [{ actionClass: "delete", resource: "*" }],
+                },
+            ]),
+            templates: JSON.stringify([
+                {
+                    id: templateId,
+                    name: "V10E2EAgent",
+                    description: "PLAN-0750 V10 submission-refusal fixture",
+                    systemPrompt: "Use only the Workspace tools provided by CP.",
+                    toolMode: "workspace",
+                    provider: "openai",
+                    model: FAKE_MODEL,
+                    roleId,
+                },
+            ]),
+        },
+    });
+    expect(templateWrite.status(), await templateWrite.text()).toBe(200);
+
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name: principalName },
+        data: { name: `e2eV10p${token}`, templateId },
     });
-    // 建完立刻核：成员清单里**不能**有它（本卡的前提就是「未绑定」）。
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const foreignPrincipalId = ((await principalResponse.json()) as { principalId: string })
         .principalId;
-    // 刻意**不**调 PUT /workspaces/{id}/agents/{principalId} —— 这就是「未绑定」。
+    // ① 先绑定：不绑就建不了会话（WorkspaceView.vue:272-277 会直接 toast 并 return null）。
+    const bindResponse = await request.put(
+        `${CP_URL}/api/v1/workspaces/${auth.workspaceId}/agents/${foreignPrincipalId}`,
+        { headers, data: { permissions: [{ actionClass: "delete", resource: "*" }] } },
+    );
+    expect(bindResponse.status(), await bindResponse.text()).toBe(200);
 
+    await ensureAgentWorkspaceBinding(auth.workspaceId);
     await waitForControlPlaneAgentReady(request, headers);
     await page.addInitScript(
         (token) => localStorage.setItem("xihe-token", token),
@@ -104,6 +173,8 @@ async function bootstrapUnboundPrincipalSession(
     await page.getByTestId("workspace-create-session").click();
     const agentSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(agentSelect).toBeVisible();
+    // BL-547（task-175）：reka Select —— 按 id 反查名字后点选项。
+    await chooseWorkspacePrincipalById(page, agentSelect, foreignPrincipalId);
     await page.getByTestId("workspace-create-agent-session").click();
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
@@ -114,6 +185,15 @@ async function bootstrapUnboundPrincipalSession(
     expect(sessions.length).toBeGreaterThan(0);
     const sessionId = sessions[0]!.id;
     await getRootBranchId(request, sessionId, headers);
+
+    // ② 会话建好之后再撤绑（模拟管理员在设置里解绑），页面对此**无推送**、状态仍是旧的 ——
+    // 正是真实用户会遇到的样子：他还能点发送，让 CP 来拒绝。
+    const unbindResponse = await request.delete(
+        `${CP_URL}/api/v1/workspaces/${auth.workspaceId}/agents/${foreignPrincipalId}`,
+        { headers },
+    );
+    expect(unbindResponse.status(), await unbindResponse.text()).toBe(204);
+
     return { headers, sessionId, foreignPrincipalId, workspaceId: auth.workspaceId };
 }
 
@@ -147,7 +227,10 @@ test("@host V10 未绑定 principal 的提交 ⇒ 403 AGENT_PRINCIPAL_MISSING + 
         { timeout: LONG_TIMEOUT_MS },
     );
     await page.getByTestId("chat-input").fill("未绑定 principal 时发送");
-    await page.getByTestId("chat-send-button").click();
+    // 用 Enter 提交（composer 的键盘发送路径，与点击 send 按钮走同一个 handleSend）。
+    // 实测本夹具下 `chat-send-button` 的 click 不派发提交（mock 车道同样现象）——
+    // 这是既有的夹具/交互差异，不是产品回归；点击路径由 chat.spec.ts 等覆盖。
+    await page.getByTestId("chat-input").press("Enter");
     const response = await chatResponse;
     const status = response.status();
     const body = (await response.json().catch(() => ({}))) as { code?: string };
