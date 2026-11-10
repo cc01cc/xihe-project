@@ -1422,6 +1422,9 @@ const messages = {
                 layerUserShort: "用户层",
                 layerWorkspaceShort: "工作区层",
                 groupDomains: "域",
+                // H4：组徽标数**入口数**、行徽标才数**字段数**；量词与图例成对出现。
+                entryCount: "{count} 个入口",
+                countLegend: "徽标为该组入口数，不是配置项数",
                 groupOps: "实例运维",
                 groupSecurity: "安全与权限",
                 groupInstanceResources: "实例资源",
@@ -4077,6 +4080,8 @@ const messages = {
                 layerUserShort: "User layer",
                 layerWorkspaceShort: "Workspace layer",
                 groupDomains: "Domains",
+                entryCount: "{count} entries",
+                countLegend: "Badges count navigation entries, not config keys",
                 groupOps: "Instance operations",
                 groupSecurity: "Security & permissions",
                 groupInstanceResources: "Instance resources",

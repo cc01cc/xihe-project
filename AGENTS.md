@@ -137,6 +137,7 @@
 - `ai-chat-ui-design`：AI 聊天界面设计（MessageScroller 流式/自动滚动）
 - `dev-host-verification`：host readiness / M1 / E2E profile 与可恢复清理
 - `team-roles`：常驻团队角色化（DSH 专用；角色分层/命名=角色名/并行上限/测量值班/交接联动）
+- `xh-settings-ui-design`：设置区 UI 判据（层×域两层模型 / 内容列 1152px / 计数与徽标量纲 / 字段级编辑闭环 / vendor 优先；写改设置区页或 settings mock 前读）
 
 ## Permissions
 
