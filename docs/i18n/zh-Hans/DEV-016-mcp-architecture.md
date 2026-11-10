@@ -303,7 +303,7 @@ CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_sta
 1. 源侧：`packages/runtime/src/main.rs` 的 `#[tool(` 计数 = 23，方法名集合 = 握手返回的 `name` 集合；
 2. 运行时侧：对 `/api/v1/mcp` 发 `tools/list`（无会话；`mcp-session-id` 会 403），拿 `result.tools`。
 
-完整脚本与判据见 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6；该节同时列出当前 6 条已知不一致/待澄清项（含 `start_background_process` 的 `truncate_limit` 参数被声明但忽略）。
+完整脚本与判据见 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6；该节同时列出当前 6 条已知不一致/待澄清项（其中「`start_background_process` 的 `truncate_limit` 被声明却忽略」那条已按**从 schema 删参数**修复：后台路径不返回输出，输出由 `read_command_output` 分页读、截断由每 stream 1 MiB 保留预算决定）。
 
 **变更规则**：新增/删除 tool、改 `description`、改 `inputSchema` 都属 tool 面变更，必须同批更新该清单并跑 §6 复核；只改代码不改清单视为文档债。
 
