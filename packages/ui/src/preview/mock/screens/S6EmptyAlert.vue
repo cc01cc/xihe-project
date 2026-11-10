@@ -15,6 +15,14 @@ import { Button } from "@/components/ui/button";
 /**
  * Sheet 06 — the two states that today have no component: empty and permission-denied.
  *
+ * **空态文案判据（C-01 + T-04，先写判据再落字）**：一条合格的空态说明要同时回答三件事，且
+ * **不许用否定句当主句**（旧文案「本域 0 项配置 … 不建也能用」= 先否定数量、再否定需求，读者
+ * 两头都拿不到信息）：
+ *   (a) 这里**本来会有什么**（能力存在，不是没有这个功能）；
+ *   (b) **现在为什么是空的**（本层还没建 / 可从下层继承 / 需要先有前置物）；
+ *   (c) **下一步做什么**（一个主行动 + 一条替代路径）。
+ * 标题也不放计数（「0 项配置」是审计口径，不是用户语言）。
+ *
  * The right half keeps the product's existing **semantic** split intact (PRODUCT RULE, see
  * packages/ui/AGENTS.md "设置信息架构"): `no-atom` = CP never had this atom, the page still loads;
  * `atom-denied` = 403, the body must not mount. The vendored `Alert` only changes the skin —
@@ -28,8 +36,8 @@ import { Button } from "@/components/ui/button";
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="text-xs font-semibold">空态</span>
-                <span class="text-[11px] text-muted-foreground">components/ui/empty（vendor）</span>
+                <span class="mk-caption font-semibold">空态</span>
+                <span class="mk-caption text-muted-foreground">components/ui/empty（vendor）</span>
             </div>
             <div class="flex min-h-0 flex-1 items-center justify-center gap-8 p-10">
                 <div class="w-[560px] rounded-lg border border-border">
@@ -38,10 +46,10 @@ import { Button } from "@/components/ui/button";
                             <EmptyMedia variant="icon">
                                 <FolderOpen class="size-5" />
                             </EmptyMedia>
-                            <EmptyTitle>本域 0 项配置</EmptyTitle>
+                            <EmptyTitle>实例层还没有模板</EmptyTitle>
                             <EmptyDescription>
-                                <span class="font-mono">agent-templates</span>
-                                在实例层还没有任何条目。模板用于给新建智能体提供起手式，不建也能用。
+                                模板是新建智能体时的**起手式**：选一个能少填几项，团队里新人也照着填。
+                                现在这里还是空的 —— 建一个，或创建智能体时直接手填。
                             </EmptyDescription>
                         </EmptyHeader>
                         <EmptyContent>
@@ -56,10 +64,10 @@ import { Button } from "@/components/ui/button";
                     </Empty>
                 </div>
                 <div class="w-[280px] space-y-3">
-                    <p class="text-xs leading-6 text-muted-foreground">
+                    <p class="mk-caption leading-6 text-muted-foreground">
                         空态的标准四件套：**图标 + 标题 + 一句为什么 + 一个可执行动作**。
                     </p>
-                    <p class="text-xs leading-6 text-muted-foreground">
+                    <p class="mk-caption leading-6 text-muted-foreground">
                         现在的 7 处空态（WorkspacePicker / AgentPrincipalsPanel /
                         AgentRoleBindingsSection ×2 / AgentTemplatesPanel / ConfigDomainPanel ×2）
                         都只有一句灰字 <span class="font-mono">t("settings.empty")</span>。
@@ -72,12 +80,12 @@ import { Button } from "@/components/ui/button";
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="text-xs font-semibold">权限不足（两种，不可合并）</span>
-                <span class="text-[11px] text-muted-foreground">components/ui/alert（vendor）</span>
+                <span class="mk-caption font-semibold">权限不足（两种，不可合并）</span>
+                <span class="mk-caption text-muted-foreground">components/ui/alert（vendor）</span>
             </div>
             <div class="min-h-0 flex-1 space-y-6 p-10">
                 <div>
-                    <Badge variant="outline" class="mb-2 font-mono text-[10px]"
+                    <Badge variant="outline" class="mb-2 font-mono mk-caption"
                         >no-atom（信息条，页面照常取数）</Badge
                     >
                     <Alert>
@@ -92,7 +100,7 @@ import { Button } from "@/components/ui/button";
                 </div>
 
                 <div>
-                    <Badge variant="outline" class="mb-2 font-mono text-[10px]"
+                    <Badge variant="outline" class="mb-2 font-mono mk-caption"
                         >atom-denied（403 卡片，主体不挂载）</Badge
                     >
                     <Alert variant="destructive">
@@ -109,7 +117,7 @@ import { Button } from "@/components/ui/button";
                     </Alert>
                 </div>
 
-                <p class="text-xs leading-6 text-muted-foreground">
+                <p class="mk-caption leading-6 text-muted-foreground">
                     两张卡只换了皮：<span class="font-mono">no-atom</span> 仍然只是信息条（页面照常
                     取数），<span class="font-mono">atom-denied</span> 仍然是 403（主体不挂载、不发
                     无谓请求）。合并这两种语义属于回归。

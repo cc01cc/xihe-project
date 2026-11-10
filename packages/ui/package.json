@@ -12,6 +12,7 @@
         "lint:oxlint": "oxlint .",
         "lint:oxfmt": "oxfmt --check .",
         "preview": "vite preview",
+        "preview:mock": "vite --port 5199 --strictPort --host 127.0.0.1",
         "test:unit": "vitest run",
         "test:e2e": "playwright test --config e2e/playwright.config.ts",
         "test:e2e:fixtures": "node --test \"e2e/fixtures/__tests__/*.test.mjs\""

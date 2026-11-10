@@ -164,6 +164,23 @@ dir = "packages/ui"
 env = { XIHE_E2E_PROFILE = "mock", XIHE_E2E_BROWSER_CHANNEL = "chrome-beta", XIHE_MOCK_REPORT = "1" }
 alias = "test:mock"
 
+# task-47（PLAN-0752 后续）：S1 浏览器面**快车道**。全量 test:mock 实测 903 s / 317 用例 / 64 红
+# （2026-11-10，含并发负载放大），只能留 L2；这里钉 29 个文件 —— 实测全绿、203 s test-time、
+# 墙钟 60–90 s，覆盖设置区 IA / 导航 / 主题色阶 / i18n / 无障碍 / workspace 管理 / 轻量会话矩阵。
+#
+# 清单必须**留在这里**，不得只留 .tmp 指针：.tmp 是 gitignored，指针等于没留
+# （规则出处 internal/A03-xihe/docs/mock-baseline-provenance.md）。增删本清单时同批更新本节。
+#
+# 端口硬约束：playwright.config.ts 默认 XIHE_UI_PORT=12630，**落在验证窗口禁用段 12630-12633**，
+# 所以这里不设默认值、未设置即 exit 2（防止窗口期默默占用别人的端口段）。
+[tasks."test:mock:smoke"]
+run = '''
+node -e "const p=Number(process.env.XIHE_UI_PORT||0);if(!p){console.error('[test:mock:smoke] XIHE_UI_PORT 未设置：playwright.config.ts 的默认端口是 12630，它落在验证窗口禁用段 12630-12633 内 ⇒ 窗口期会默默占别人的段。请显式给一个空闲端口，例如 $env:XIHE_UI_PORT=12730。');process.exit(2)}if(p>=12630&&p<=12633){console.error('[test:mock:smoke] XIHE_UI_PORT='+p+' 落在窗口禁用段 12630-12633，请换一个（如 12730）。');process.exit(2)}" && pnpm exec playwright test --config e2e/playwright.config.ts --workers=4 e2e/mock/plan-0752-settings-ia.spec.ts e2e/mock/plan-0560-settings.spec.ts e2e/mock/plan0678-config-surfaces.spec.ts e2e/mock/tab-navigation.spec.ts e2e/mock/theme.spec.ts e2e/mock/i18n-switch.spec.ts e2e/mock/screenshots.spec.ts e2e/mock/viewport-matrix.spec.ts e2e/mock/plan-0631-color.spec.ts e2e/mock/aria-label.spec.ts e2e/mock/toast.spec.ts e2e/mock/login.spec.ts e2e/mock/workspace-management.spec.ts e2e/mock/workspace-members.spec.ts e2e/mock/workspace-files.spec.ts e2e/mock/task-continuity.spec.ts e2e/mock/policy-management.spec.ts e2e/mock/plan0702-mobile-safe-area.spec.ts e2e/mock/prefers-reduced-motion.spec.ts e2e/mock/session-agent-selection.spec.ts e2e/mock/session-matrix-to.spec.ts e2e/mock/session-matrix-roles.spec.ts e2e/mock/session-matrix-mention.spec.ts e2e/mock/audit.spec.ts e2e/mock/knowledge-base.spec.ts e2e/mock/data-controls.spec.ts e2e/mock/export-command.spec.ts e2e/mock/x-demo-card.spec.ts e2e/mock/x-demo-html-selfcheck.spec.ts
+'''
+description = "Mock-lane S1 smoke (29 spec files, 实测 60–90 s) for verification windows — no backend needed (Playwright starts its own Vite dev server). 与全量 test:mock（903 s / 317 用例 / 当前 64 红）互补：全量留 L2，本任务进 verify 类。**XIHE_UI_PORT 必须显式设置**（未设置或落在 12630-12633 直接 exit 2），因为 playwright.config.ts 的默认端口在窗口禁用段内。"
+dir = "packages/ui"
+env = { XIHE_E2E_PROFILE = "mock", XIHE_E2E_BROWSER_CHANNEL = "chrome-beta", XIHE_MOCK_REPORT = "1" }
+alias = "test:mock:smoke"
 # PLAN-0735 / BL-164: mock-lane baseline gate. Reads packages/ui/e2e/.mock-report.json
 # (written by test:mock above via the playwright config JSON reporter) and compares counts
 # + skip titles against packages/ui/e2e/mock-baseline.json. Drift ⇒ exit 1 unless

@@ -18,23 +18,23 @@ import FoldPanel from "./FoldPanel.vue";
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="text-xs font-semibold">A</span>
-                <span class="text-[11px] text-muted-foreground"
+                <span class="mk-caption font-semibold">A</span>
+                <span class="mk-caption text-muted-foreground"
                     >「实例」折起 · 「用户」展开（非当前层，只是看一眼）</span
                 >
             </div>
             <div class="flex min-h-0 flex-1 gap-8 px-10 py-8">
                 <FoldPanel :instance-open="false" :user-open="true" />
                 <div class="min-w-0 flex-1 rounded-lg border border-dashed border-border p-6">
-                    <p class="text-xs leading-6 text-muted-foreground">
+                    <p class="mk-caption leading-6 text-muted-foreground">
                         折起后组标题**仍带计数**（实例 17 / 用户
                         4），所以「这一组有几项」不依赖展开动作。
                     </p>
-                    <p class="mt-3 text-xs leading-6 text-muted-foreground">
+                    <p class="mt-3 mk-caption leading-6 text-muted-foreground">
                         当前选中项在「实例」组内：折起时这一行不可见，因此组标题需要能表达「组内有选中」——
                         这是 §A 与 §B 要对照的地方。
                     </p>
-                    <p class="mt-3 text-xs leading-6 text-muted-foreground">
+                    <p class="mt-3 mk-caption leading-6 text-muted-foreground">
                         左栏没有任何「切换层」控件：层写在地址里（<span class="font-mono"
                             >/settings/instance</span
                         >），展开另一层只多看见几行，点下去才换路由。
@@ -46,22 +46,22 @@ import FoldPanel from "./FoldPanel.vue";
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="text-xs font-semibold">B</span>
-                <span class="text-[11px] text-muted-foreground">「实例」展开 · 「用户」折起</span>
+                <span class="mk-caption font-semibold">B</span>
+                <span class="mk-caption text-muted-foreground">「实例」展开 · 「用户」折起</span>
             </div>
             <div class="flex min-h-0 flex-1 gap-8 px-10 py-8">
                 <FoldPanel :instance-open="true" :user-open="false" />
                 <div class="min-w-0 flex-1 rounded-lg border border-dashed border-border p-6">
-                    <p class="text-xs leading-6 text-muted-foreground">
+                    <p class="mk-caption leading-6 text-muted-foreground">
                         展开态：16px lucide 图标 + 文字 + 右侧计数徽标；选中行是
                         <span class="font-mono">2px</span> 左侧指示条 + 浅底，不是整行填色。
                     </p>
-                    <p class="mt-3 text-xs leading-6 text-muted-foreground">
+                    <p class="mt-3 mk-caption leading-6 text-muted-foreground">
                         <span class="font-mono">CollapsibleTrigger</span>
                         自带切换行为，模板里不得再绑 click（reka-ui 陷阱，见
                         packages/ui/AGENTS.md）。
                     </p>
-                    <p class="mt-3 text-xs leading-6 text-muted-foreground">
+                    <p class="mt-3 mk-caption leading-6 text-muted-foreground">
                         实例组内仍按「域 12 / 实例运维 2 / 安全与权限
                         3」分段——层是第一维，分段是层内第二维。
                     </p>
