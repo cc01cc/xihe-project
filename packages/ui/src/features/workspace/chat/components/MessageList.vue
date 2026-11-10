@@ -53,6 +53,11 @@ const props = defineProps<{
     loadingOlder?: boolean;
     /** PLAN-0670 M2d.3：因 500 条上限被折叠（已从内存丢弃）的最旧消息条数；0 = 无折叠。 */
     foldedCount?: number;
+    /**
+     * PLAN-0760：已展开段触顶（M ≥ 1500）。入口保留但禁用，文案说明上限 ——
+     * 不静默消失（用户需要知道为什么不能再加载）。
+     */
+    expandedReachedLimit?: boolean;
 }>();
 
 /**
@@ -580,22 +585,29 @@ watch(
                             「加载更早」入口；旧 CP（数组响应）不渲染，行为不变。
                         -->
                         <div
-                            v-if="hasOlder || (foldedCount ?? 0) > 0"
+                            v-if="hasOlder || (foldedCount ?? 0) > 0 || expandedReachedLimit"
                             class="flex justify-center py-2"
                         >
                             <button
                                 type="button"
                                 data-testid="load-older-messages"
-                                :disabled="loadingOlder"
+                                :disabled="loadingOlder || expandedReachedLimit"
                                 class="rounded-md border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                                :title="
+                                    expandedReachedLimit
+                                        ? t('chat.expandedLimitReached')
+                                        : undefined
+                                "
                                 @click="emit('loadOlder')"
                             >
                                 {{
                                     loadingOlder
                                         ? t("chat.loadingOlder")
-                                        : (foldedCount ?? 0) > 0
-                                          ? t("chat.foldedOlder", { count: foldedCount })
-                                          : t("chat.loadOlder")
+                                        : expandedReachedLimit
+                                          ? t("chat.expandedLimitReached")
+                                          : (foldedCount ?? 0) > 0
+                                            ? t("chat.foldedOlder", { count: foldedCount })
+                                            : t("chat.loadOlder")
                                 }}
                             </button>
                         </div>

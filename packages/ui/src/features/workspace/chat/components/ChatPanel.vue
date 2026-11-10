@@ -159,12 +159,25 @@ const messages = computed(() => chatStore.getMessages(props.sessionId));
 
 // PLAN-0670 M2d.3：超过 500 条时从最旧端丢弃并累计"已折叠"计数（显式呈现，不静默丢）。
 // 丢弃造成的 scrollHeight 变化由 MessageList 的 captureAnchor/restoreAnchor 补偿。
+// PLAN-0760：双计数（N=最近段 500 + M=已展开段 ≤1500）。
+// 增长来源必须区分：**prepend**（用户主动展开）不得被当成超限丢弃，否则
+// prepend 进表的行当帧被丢回，功能净效果为零（BL-556，A/B 实测 Δ≈500px）。
+// 首屏裁剪走 loadSessionMessages 的内联 trim（唯一真正的超限来源）。
 watch(
     () => messages.value.length,
     (length) => {
-        if (length <= MAX_LOADED_MESSAGES) return;
-        const dropped = chatStore.trimMessages(props.sessionId, MAX_LOADED_MESSAGES);
-        if (dropped > 0) foldedMessageCount.value += dropped;
+        if (length <= MAX_EXPANDED_MESSAGES + MAX_LOADED_MESSAGES) return;
+        // prepend 期间不 trim：本次增长正是用户要展开的内容。
+        if (loadingOlder.value) return;
+        const dropped = chatStore.trimMessages(
+            props.sessionId,
+            MAX_EXPANDED_MESSAGES + MAX_LOADED_MESSAGES,
+        );
+        if (dropped > 0) {
+            // 丢弃的是**已展开段**（数组最旧端在前部），M 与折叠计数同步回落。
+            expandedMessageCount.value = Math.max(0, expandedMessageCount.value - dropped);
+            foldedMessageCount.value += dropped;
+        }
     },
     { flush: "post" },
 );
@@ -233,8 +246,15 @@ const olderCursor = ref<string | null>(null);
 const hasOlderMessages = ref(false);
 const loadingOlder = ref(false);
 const olderExhausted = ref(false);
-/** PLAN-0670 M2d.3（Lead 2026-11-05 批准）：内存内消息上限 500；丢弃最旧必须显式折叠。 */
+/** PLAN-0670 M2d.3（Lead 2026-11-05 批准）：最近段内存上限 500；丢弃最旧必须显式折叠。 */
 const MAX_LOADED_MESSAGES = 500;
+/**
+ * PLAN-0760：已展开段上限。与 N 分离 —— N 是内存治理目标（PLAN-0670），
+ * M 是用户主动 prepend 的更早段，触顶后停止加载（不静默）。2000 档是 BL-382
+ * 已实测过的量级，不引入未知内存风险。
+ */
+const MAX_EXPANDED_MESSAGES = 1_500;
+const expandedMessageCount = ref(0);
 const foldedMessageCount = ref(0);
 
 /**
@@ -420,6 +440,11 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
             }
         }
         chatStore.loadMessages(sessionId, loadedMessages);
+        // PLAN-0760：首屏是唯一真正的「超限」来源 —— 立即内联裁剪到 N（最近段），
+        // 不让 watch 兜底路径处理（否则依赖 flush 时序，且来源语义不清）。
+        // 裁剪量计入折叠计数（PLAN-0670 M2d.3：丢弃必须显式呈现，不静默）。
+        const dropped = chatStore.trimMessages(sessionId, MAX_LOADED_MESSAGES);
+        if (dropped > 0) foldedMessageCount.value += dropped;
         if (derivedState.value?.sessionId === sessionId) {
             void loadWaitingOnProjection(sessionId, derivedState.value.activeChildren);
         }
@@ -458,7 +483,16 @@ async function loadOlderMessages(): Promise<void> {
         if (props.sessionId !== sessionId) return;
         const rawMessages = Array.isArray(page) ? page : (page.messages ?? page.items ?? []);
         const meta = Array.isArray(page) ? null : page;
+        // PLAN-0760：M 触顶后不再发请求。只置 olderExhausted（触发函数开头的守卫），
+        // **不动 hasOlderMessages** —— 动它会被 loadSessionMessages 的重置逻辑改回，
+        // 形成「点击 → false → 重渲染 → true」的循环（实测 60s 超时）。
+        if (expandedMessageCount.value >= MAX_EXPANDED_MESSAGES) {
+            olderExhausted.value = true;
+            return;
+        }
         const restored = chatStore.prependMessages(sessionId, mapRawMessages(rawMessages));
+        // M 只增不减（双计数的核心：prepend 进表的行不得再被当超限丢弃）。
+        expandedMessageCount.value += restored;
         foldedMessageCount.value = Math.max(0, foldedMessageCount.value - restored);
         olderCursor.value = meta?.nextCursor ?? null;
         hasOlderMessages.value = Boolean(meta?.truncated && meta?.nextCursor);
@@ -732,6 +766,7 @@ watch(
         hasOlderMessages.value = false;
         loadingOlder.value = false;
         olderExhausted.value = false;
+        expandedMessageCount.value = 0;
         foldedMessageCount.value = 0;
         derivedStateRequestId += 1;
         waitingOnRequestId += 1;
@@ -1393,6 +1428,7 @@ watch(
             :has-older="hasOlderMessages"
             :loading-older="loadingOlder"
             :folded-count="foldedMessageCount"
+            :expanded-reached-limit="expandedMessageCount >= MAX_EXPANDED_MESSAGES"
             @load-older="loadOlderMessages"
             @approve="approveTool"
             @reject="rejectTool"

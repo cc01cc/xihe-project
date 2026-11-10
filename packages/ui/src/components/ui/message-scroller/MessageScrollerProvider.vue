@@ -24,6 +24,12 @@ const { context, registerMessage } = useMessageScrollerController({
 
 provide(MessageScrollerContextKey, context);
 provide(MessageScrollerItemContextKey, registerMessage);
+
+// PLAN-0760 / BL-556：父组件（MessageList）在 prepend 前声明「下一帧是 prepend」。
+defineExpose({
+    setPendingPrepend: context.setPendingPrepend,
+    getPendingPrepend: context.getPendingPrepend,
+});
 </script>
 
 <template>

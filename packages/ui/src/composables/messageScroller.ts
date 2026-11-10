@@ -78,6 +78,7 @@ export function useMessageScrollerController({
         pendingScrollToMessageRef,
         prependRestoreRef,
         preserveScrollOnPrependRef,
+        pendingPrependRef,
         rootRef,
         scrollEdgeThresholdRef,
         scrollMarginRef,
@@ -208,6 +209,8 @@ export function useMessageScrollerController({
             viewport = viewportRef.value;
 
         if (!anchor || !viewport || !anchor.element.isConnected) {
+            // R4：无有效锚点 ⇒ 本次 prepend 声明已消费，清零避免污染后续 childList 变化。
+            pendingPrependRef.value = false;
             return false;
         }
 
@@ -383,9 +386,14 @@ export function useMessageScrollerController({
             const previousFirstItemIndex = previousFirstItem
                     ? items.indexOf(previousFirstItem)
                     : -1,
-                didPrepend = preserveScrollOnPrependRef.value && previousFirstItemIndex > 0;
-
+                didPrepend =
+                    preserveScrollOnPrependRef.value &&
+                    (previousFirstItemIndex > 0 || pendingPrependRef.value === true);
             if (didPrepend) {
+                // R4（评审必做）：**消费即清** —— 标志只对「下一帧内容变化」有效。
+                // 不清的话，一次 prepend 之后每次 childList 变化都会被判成 prepend，
+                // 走 restorePrependedAnchor() ⇒ 新消息到达时的贴底跟随被截断。
+                pendingPrependRef.value = false;
                 restorePrependedAnchor();
                 return;
             }
@@ -579,6 +587,11 @@ export function useMessageScrollerController({
         handleResize,
         observeVisibility,
         preserveScrollOnPrependRef: preserveScrollOnPrependRef as unknown as { current: boolean },
+        setPendingPrepend: (value: boolean) => {
+            pendingPrependRef.value = value;
+        },
+        /** PLAN-0760：只读观测标志（测试与诊断用，不开放写）。 */
+        getPendingPrepend: () => pendingPrependRef.value,
         scrollToEnd,
         scrollToMessage,
         scrollToStart,

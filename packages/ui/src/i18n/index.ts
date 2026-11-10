@@ -885,6 +885,7 @@ const messages = {
             loadingOlder: "正在加载更早的消息…",
             loadOlderFailed: "加载更早的消息失败",
             foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
+            expandedLimitReached: "已展开到上限（1500 条）",
             loadMessagesFailed: "加载消息失败，请重试",
             contextTruncationNotice:
                 "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
@@ -3474,6 +3475,7 @@ const messages = {
             loadingOlder: "Loading earlier messages…",
             loadOlderFailed: "Failed to load earlier messages",
             foldedOlder: "{count} earlier messages are folded; click to load",
+            expandedLimitReached: "Expanded to the limit (1500 messages)",
             loadMessagesFailed: "Failed to load messages; please retry",
             contextTruncationNotice:
                 "This answer used a truncated history ({dropped} dropped / {kept} kept)",
