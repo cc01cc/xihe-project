@@ -158,7 +158,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/WorkspaceRootCreateRequest' }
       responses:
-        '201': { description: Root created; projection returned, position appended. Shadow repo not yet created (lazy on first capture)., content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRoot' } } } }
+        '201': { description: 'Root created; projection returned, position appended. Shadow repo not yet created (lazy on first capture).', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRoot' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -498,7 +498,7 @@ paths:
         '200': { description: Member list, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MemberView' } } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'WORKSPACE_FORBIDDEN (non-member or VIEWER) / WORKSPACE_READ_ONLY (VIEWER with X-Workspace-Id)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '404': { description: WORKSPACE_NOT_FOUND (unknown/deleted workspace, authorized callers only), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'WORKSPACE_NOT_FOUND (unknown/deleted workspace, authorized callers only)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     post:
       tags: [workspace]
       operationId: addWorkspaceMember
@@ -1383,7 +1383,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: AGENT_SPAWN_DENIED — the caller lacks the SPAWN_AGENT capability atom for this workspace (capability evaluation; no role-name checks), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: SESSION_NOT_FOUND / AGENT_PRINCIPAL_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '409': { description: IDEMPOTENCY_KEY_CONFLICT / DELEGATION_LIMIT_EXCEEDED (depth_exceeded | count_exceeded | delegation_disabled — maxCount=0) / DELEGATION_POLICY_INVALID (unreadable stored policy or broken tree, fail-closed) / SESSION_DELETING, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'IDEMPOTENCY_KEY_CONFLICT / DELEGATION_LIMIT_EXCEEDED (depth_exceeded | count_exceeded | delegation_disabled — maxCount=0) / DELEGATION_POLICY_INVALID (unreadable stored policy or broken tree, fail-closed) / SESSION_DELETING', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/delegation-usage:
     get:
       tags: [session]
@@ -1759,7 +1759,7 @@ paths:
         Historical/user-operation/tool-event Sessions keep their existing identity rules.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: header, name: Idempotency-Key, required: false, schema: { type: string, maxLength: 128 }, description: Reuses an existing run for the same request hash, including branchId; conflicting payloads return 409. }
+        - { in: header, name: Idempotency-Key, required: false, schema: { type: string, maxLength: 128 }, description: 'Reuses an existing run for the same request hash, including branchId; conflicting payloads return 409.' }
       requestBody:
         required: true
         content:
@@ -3316,7 +3316,7 @@ paths:
         '404':
           description: WORKSPACE_NOT_FOUND (missing or no Workspace access; no 403 leak)
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-        '409': { description: JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'JOB_IDEMPOTENCY_CONFLICT (same key, different command/args/cwd/timeoutSecs)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '501': { description: JOB_BACKEND_LAUNCH_PENDING (Runtime launcher/probe unavailable; no fallback and no new process), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '502':
           description: RUNTIME_UNAVAILABLE (dispatch unconfirmed; durable Job state becomes interrupted)
@@ -3865,7 +3865,7 @@ paths:
                 type: object
                 required: [snapshot, events]
                 properties:
-                  snapshot: { description: Existing projection representation, unchanged by this read-view change }
+                  snapshot: { description: 'Existing projection representation, unchanged by this read-view change' }
                   events: { type: array, items: { $ref: '#/components/schemas/ContextEventReadView' } }
                 additionalProperties: true
         '401': { $ref: '#/components/responses/Problem' }
@@ -5394,7 +5394,7 @@ paths:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThread' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope) or THREAD_WRITE_FORBIDDEN (scope not owned)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope) or THREAD_WRITE_FORBIDDEN (scope not owned)', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/conversation-threads/{threadId}:
     get:
       tags: [session]
@@ -5405,8 +5405,8 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThread' } } } }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-        '404': { description: 'THREAD_NOT_FOUND (absent or not visible)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope)', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'THREAD_NOT_FOUND (absent or not visible)', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/conversation-threads/{threadId}/sessions:
     post:
       tags: [session]
@@ -5420,8 +5420,8 @@ paths:
         '200': { description: 'Idempotent attach', content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThreadAttachResult' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { description: 'THREAD_WRITE_FORBIDDEN (not the session owner) or THREAD_SCOPE_UNRESOLVED', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-        '404': { description: 'THREAD_NOT_FOUND or SESSION_NOT_FOUND', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { description: 'THREAD_WRITE_FORBIDDEN (not the session owner) or THREAD_SCOPE_UNRESOLVED', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'THREAD_NOT_FOUND or SESSION_NOT_FOUND', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -5645,7 +5645,7 @@ components:
       type: object
       required: [hash, bytes]
       properties:
-        hash: { type: string, description: sha256 hex over canonical JSON (Python-side, design D3). }
+        hash: { type: string, description: 'sha256 hex over canonical JSON (Python-side, design D3).' }
         bytes: { type: integer }
         count:
           type: integer
@@ -6024,7 +6024,7 @@ components:
          truncated: { type: boolean }
          opaqueNestedRepos: { type: array, items: { type: string } }
          nestedRepoAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointNestedRepoAffected' }, description: 'PLAN-0641 M3 (T4.3): undeclared nested repositories this plan touches, with the two gates each one triggers. Informational on the preview face; the execute face enforces them.' }
-         descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
+         descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: 'Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore' }
     CheckpointNestedRepoAffected:
        type: object
        additionalProperties: false
@@ -6060,7 +6060,7 @@ components:
          durationMs: { type: integer, minimum: 0 }
          suspects: { type: array, items: { type: string } }
          nestedRepoAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointNestedRepoAffected' }, description: 'PLAN-0641 M3 (T4.3): undeclared nested repositories this revert covered, echoed so the client can see which gates were explicitly overridden.' }
-         descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
+         descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: 'Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore' }
     CheckpointCleanupRequest:
        type: object
        additionalProperties: false
@@ -6130,7 +6130,7 @@ components:
             spawnedFromSessionId: { type: string, format: uuid, description: Lineage only; not an authorization root. }
             spawnedFromRunId: { type: string, format: uuid, description: Lineage only; not an authorization root. }
             spawnedAt: { type: string, format: date-time }
-    SessionCreateRequest: { type: object, required: [agentPrincipalId], properties: { workspaceId: { type: [string, 'null'], format: uuid, description: 'PLAN-0647 D-678: optional. Omitted/null together with no X-Workspace-Id means a workspace-less (pure-chat) session; an explicit UUID is an explicit workspace surface (same membership + write-role gate as the path form). The interceptor first-active-workspace fallback is never used for this decision.' }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'], description: 'Optional. When providerConnectionId, modelProvider and modelName are all omitted, CP resolves the default binding (AgentPrincipal.defaultModelProvider/defaultModelName, else the effective llm-provider profile) and persists it; a Session can no longer be created without a binding (400 PROVIDER_REQUIRED). An explicit value always wins over the default resolution.' }, modelName: { type: [string, 'null'], description: 'Optional; resolved together with modelProvider. Explicit values are never overwritten by the default resolution.' }, providerConnectionId: { type: [string, 'null'], description: 'Optional. When omitted but provider/model are given, CP resolves the single usable chat connection; multiple matches fail with 400 PROVIDER_CONNECTION_AMBIGUOUS.' }, agentPrincipalId: { type: string, format: uuid, description: Required at creation; CP writes this principal as the Session PRIMARY participant. }, contextTemplateLayer: { type: string, enum: [instance, user, workspace], description: Optional explicit Context Template selection; all three fields must be supplied together, otherwise the server applies its default resolution. }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
+    SessionCreateRequest: { type: object, required: [agentPrincipalId], properties: { workspaceId: { type: [string, 'null'], format: uuid, description: 'PLAN-0647 D-678: optional. Omitted/null together with no X-Workspace-Id means a workspace-less (pure-chat) session; an explicit UUID is an explicit workspace surface (same membership + write-role gate as the path form). The interceptor first-active-workspace fallback is never used for this decision.' }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'], description: 'Optional. When providerConnectionId, modelProvider and modelName are all omitted, CP resolves the default binding (AgentPrincipal.defaultModelProvider/defaultModelName, else the effective llm-provider profile) and persists it; a Session can no longer be created without a binding (400 PROVIDER_REQUIRED). An explicit value always wins over the default resolution.' }, modelName: { type: [string, 'null'], description: 'Optional; resolved together with modelProvider. Explicit values are never overwritten by the default resolution.' }, providerConnectionId: { type: [string, 'null'], description: 'Optional. When omitted but provider/model are given, CP resolves the single usable chat connection; multiple matches fail with 400 PROVIDER_CONNECTION_AMBIGUOUS.' }, agentPrincipalId: { type: string, format: uuid, description: Required at creation; CP writes this principal as the Session PRIMARY participant. }, contextTemplateLayer: { type: string, enum: [instance, user, workspace], description: 'Optional explicit Context Template selection; all three fields must be supplied together, otherwise the server applies its default resolution.' }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
     SessionForkRequest: { type: object, additionalProperties: false, required: [sourceBranchId, anchorMessageId], properties: { sourceBranchId: { type: string, format: uuid }, anchorMessageId: { type: string, format: uuid } } }
     SessionBranchCreateRequest: { type: object, additionalProperties: false, required: [sourceBranchId, anchorMessageId], properties: { sourceBranchId: { type: string, format: uuid, description: Selected branch path used to validate anchor visibility. }, anchorMessageId: { type: string, format: uuid } } }
     SessionBranchListResponse: { type: object, additionalProperties: false, required: [sessionId, items], properties: { sessionId: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/SessionBranch' } } } }
@@ -6157,11 +6157,11 @@ components:
       description: 'PLAN-0670 M2 pagination envelope (only returned when `limit` or `before` is present; otherwise the legacy bare array is returned). `messages` is ascending by (createdAt, id); `truncated=true` means older messages remain and `nextCursor` is then present. `nextCursor` is omitted (not an empty string) on the last page and is an opaque composite (createdAt, id) cursor.'
       properties:
         messages: { type: array, items: { $ref: '#/components/schemas/SessionMessage' } }
-        limit: { type: integer, minimum: 1, maximum: 200, description: Effective page size (default 50, truncated to 200 when the request asks for more). }
+        limit: { type: integer, minimum: 1, maximum: 200, description: 'Effective page size (default 50, truncated to 200 when the request asks for more).' }
         truncated: { type: boolean, description: 'true when older messages remain (the next page exists).' }
         nextCursor: { type: string, description: 'Opaque cursor for the next (older) page; absent on the last page.' }
     SessionUpdateRequest: { type: object, description: "Metadata-only edits retain the pin. Binding edits require modelProvider/modelName/providerConnectionId/connectionRevision together; omitted template triple resolves the target default once; partial or null bindings fail. Cross-Type changes require confirmedTypeChange.", properties: { title: { type: [string, 'null'] }, modelProvider: { type: string }, modelName: { type: string }, providerConnectionId: { type: string, format: uuid }, connectionRevision: { type: integer, minimum: 1 }, confirmedTypeChange: { type: boolean }, contextTemplateLayer: { type: string, enum: [instance, user, workspace] }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
-    ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND. } } }
+    ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: 'Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND.' } } }
     SessionDerivedStateResponse:
        type: object
        additionalProperties: false
@@ -6604,8 +6604,8 @@ components:
             - type: 'null'
         firstChunkMs: { type: integer, minimum: 0, nullable: true }
         chunkCount: { type: integer, minimum: 0, nullable: true }
-        uploadBytes: { type: integer, nullable: true, description: Fixed null in v1 (unknown, never fabricated) }
-        downloadBytes: { type: integer, nullable: true, description: Fixed null in v1 (unknown, never fabricated) }
+        uploadBytes: { type: integer, nullable: true, description: 'Fixed null in v1 (unknown, never fabricated)' }
+        downloadBytes: { type: integer, nullable: true, description: 'Fixed null in v1 (unknown, never fabricated)' }
         lastProgressStage: { type: string, nullable: true, enum: [attempt_started, first_chunk, streaming, attempt_finished] }
         lastProgressElapsedMs: { type: integer, minimum: 0, nullable: true }
     ChatApprovalDecisionRequest:
@@ -6673,7 +6673,7 @@ components:
       properties:
         status: { type: string, enum: [accepted] }
         requestId: { type: string, format: uuid }
-        approved: { type: boolean, description: Derived from the resolved decision kind, not from the request field }
+        approved: { type: boolean, description: 'Derived from the resolved decision kind, not from the request field' }
         decision: { type: string, enum: [once, session, saved, reject, reject_always], description: Resolved decision kind; on an idempotent replay this is the recorded kind }
         propagated: { type: integer, minimum: 0, description: Number of sibling pending approvals re-solved in the same session after an allow; 0 on reject and on replay }
         modeAtGrant: { type: [string, 'null'], description: Effective session policy mode captured when the row was claimed; null when it could not be resolved }
