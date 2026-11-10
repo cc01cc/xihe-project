@@ -17,10 +17,20 @@
 //   Reformatting it (2-space -> 4-space) would rewrite ~900 whitespace-only
 //   lines and make future re-vendoring diffs unreadable, so it is excluded
 //   rather than owned by our formatter. Update it by re-copying upstream.
+// - `src/assets/fonts/**` holds generated font artifacts (task-72): the woff2
+//   binaries plus the builder-generated `*.charset.json` sidecar. The sidecar
+//   is written by `internal/A03-xihe/scripts/build-font-subset.mjs`, so it is a
+//   machine file, not hand-edited source; formatting it here would make the
+//   lint gate flap every time the subset is regenerated.
 // When upgrading Oxfmt: run `oxfmt --check .` and review any new drift
 // before adopting the new version's defaults here.
 {
-    "ignorePatterns": ["AGENTS.md", "*.md", "src/styles/shadcn-vue-tailwind.css"],
+    "ignorePatterns": [
+        "AGENTS.md",
+        "*.md",
+        "src/styles/shadcn-vue-tailwind.css",
+        "src/assets/fonts/**",
+    ],
     "tabWidth": 4,
     "printWidth": 100,
 }

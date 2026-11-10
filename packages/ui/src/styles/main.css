@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap");
-
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./shadcn-vue-tailwind.css";
@@ -9,6 +7,46 @@
 @import "./diffTheme.css";
 @import "./dockview-theme.css";
 @import "./typeset.css";
+
+/*
+ * 字体（task-72 / D-833）：自托管 Noto Sans SC 子集，一份包决定所有机器。
+ *
+ * 为什么：此前 --font-sans 首位的 "Geist Variable" 依赖 Google Fonts 的远程 @import，
+ * 实测拿到不到就不生效（CDP 平台字体报告 custom=false，即系统字体在画）；中文则退回本机雅黑/思源，
+ * 结果「英文一套字、中文另一套字」，且不同机器表现不同。这里改为同源 woff2 子集：
+ * 中文与拉丁来自**同一字体**的两种脚本，离线可用、跨机器一致。
+ *
+ * 体积：cjk 317.5 KB + latin 18.0 KB（源字体 16.95 MB 按产品实际用字子集化，1,375 码点）。
+ * 覆盖门：internal/A03-xihe/scripts/check-font-subset.mjs（源码新增汉字不在子集里就点名）。
+ * 许可：SIL OFL 1.1，见 ./src/assets/fonts/LICENSE-NOTICE.md。
+ *
+ * font-weight: 100 900 是**声明覆盖范围**：子集保留了 wght 轴（100-900）。
+ * 漏写时浏览器把 face 只登记在 weight=normal，document.fonts 里读到的描述符就是 "normal"（探测见
+ * internal/A03-xihe/scripts/check-font-face.mjs）；届时若再给同族补第二个字重文件会路由到错的 face。
+ */
+@font-face {
+    font-family: "Noto Sans SC";
+    src: url("../assets/fonts/noto-sans-sc-cjk.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+    unicode-range: U+2E80-2FFF, U+3000-303F, U+3040-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+@font-face {
+    font-family: "Noto Sans SC";
+    src: url("../assets/fonts/noto-sans-sc-latin.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+    /* 拉丁片用**精确**码点范围（由 build-font-subset.mjs 生成，随子集刷新）：
+       宽范围会漏掉产品实际用到但不在常见块里的符号（实测：⑦⑧、⌘、①② 等 13 个被漏 ⇒ 静默回落系统字体）。 */
+    unicode-range:
+        U+20-7E, U+A5, U+A7, U+A9, U+B1, U+B7, U+D7, U+394, U+2013-2014, U+201C-201D, U+2022,
+        U+2026, U+2032-2033, U+203A, U+2190-2194, U+21B3, U+21BA, U+21D0, U+21D2, U+2208, U+2212,
+        U+222A, U+2248, U+2260, U+2264-2265, U+22EE-22EF, U+2318, U+2460-2467, U+2500, U+25B6,
+        U+25B8, U+25BC, U+25BE, U+25C0, U+25CF, U+25F7, U+26A0, U+2713, U+FE0F, U+1F4C1, U+1F4C4,
+        U+1F512;
+}
 
 /*
  * PLAN-0631 M2（D31-M2-视觉语言 = B 密集）：默认视觉语言 = B，token 直接落
@@ -111,10 +149,9 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
-    /* Geist Variable 没有中文字形：不显式声明中文回退时，中文会整段落到系统 sans-serif
-       （Windows = 微软雅黑），与 Geist 的字重/x-height 差异明显。这里把中文回退固定下来。 */
-    --font-sans:
-        "Geist Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    /* 首位是上文自托管的 Noto Sans SC 子集（中英同族、离线可用）；后面是**系统 fallback**：
+       字体文件没加载到时不白屏，只是回到本机字体（此时跨机器不一致，但至少可读）。 */
+    --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     --font-heading: var(--font-sans);
     --color-sidebar: var(--sidebar);
     --color-chart-5: var(--chart-5);
