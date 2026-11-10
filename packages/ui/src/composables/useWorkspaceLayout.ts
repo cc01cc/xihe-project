@@ -41,6 +41,14 @@ export const TREE_WIDTH_MAX = 320;
 export const TREE_WIDTH_KEYBOARD_STEP = 16;
 export const TREE_COLLAPSED_WIDTH = 40;
 
+/**
+ * 内层 splitter 的折算基准宽：默认树宽 : 默认主列宽（240 : 960）。
+ * 仅在量不到几何（ResizeObserver 尚未回调、jsdom 恒为 0）时作为 px ↔ % 的 fallback。
+ * 组件与测试**必须引用同一个常量**：任一侧另起一份就会各自演化，同源断言退化成假绿
+ * （联动检查抓不到「分叉」）。见 BL-576 / task-94。
+ */
+export const SPLITTER_REFERENCE_WIDTH = TREE_WIDTH_DEFAULT + 960;
+
 /** Right dock (ruling #3: default closed, 320-480, 360 default). */
 export const DOCK_WIDTH_DEFAULT = 360;
 export const DOCK_WIDTH_MIN = 320;

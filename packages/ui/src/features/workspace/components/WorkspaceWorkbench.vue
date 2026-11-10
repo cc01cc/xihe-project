@@ -6,6 +6,7 @@ import { toast } from "vue-sonner";
 import { FolderTree } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
+    SPLITTER_REFERENCE_WIDTH,
     TREE_COLLAPSED_WIDTH,
     TREE_WIDTH_DEFAULT,
     TREE_WIDTH_KEYBOARD_STEP,
@@ -153,9 +154,6 @@ const layout = ref<WorkspaceLayoutState>(initialLayout(props.workspaceId));
 const splitterGroupRef = ref<{ $el?: HTMLElement } | null>(null);
 const splitterWidth = ref(0);
 let splitterObserver: ResizeObserver | null = null;
-
-/** 量不到几何时的折算基准：默认树宽 : 默认主列宽（与 E 的 240:960 同一比例）。 */
-const SPLITTER_REFERENCE_WIDTH = TREE_WIDTH_DEFAULT + 960;
 
 function releaseSplitterObserver(): void {
     splitterObserver?.disconnect();

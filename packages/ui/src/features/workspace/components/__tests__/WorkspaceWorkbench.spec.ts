@@ -5,6 +5,10 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
+import {
+    SPLITTER_REFERENCE_WIDTH,
+    TREE_WIDTH_DEFAULT,
+} from "../../../../composables/useWorkspaceLayout";
 
 const { toastWarning } = vi.hoisted(() => ({ toastWarning: vi.fn<(message: string) => void>() }));
 
@@ -734,7 +738,19 @@ describe("WorkspaceWorkbench file tree as splitter panel (PLAN-0753 T3)", () => 
         expect(panels[1].element.tagName).toBe("DIV");
         // 折叠语义：collapsible + collapsedSize=40 rail。
         expect(panels[0].attributes("data-panel-collapsible")).toBe("true");
-        expect(panels[0].attributes("data-panel-size")).toBe("240.0");
+        // 注意：reka-ui 的 data-panel-size = inline flex-grow（保留 1 位小数）。layout 为空时它回落到
+        // default-size ⇒ 下面两条都只能证明「默认尺寸配置正确 / 两面板都是百分比」，**都不能**证明
+        // 「layout 已初始化」。它们在 B 之前（px 时代）同样只是回声 default-size，**以前也抓不到 BL-576**，
+        // 所以别读成「以前能抓、这次改坏了」。BL-576 的守卫在 e2e（真实布局），不在这里。
+        const treePct = Number(panels[0].attributes("data-panel-size"));
+        const mainPct = Number(panels[1].attributes("data-panel-size"));
+        // (A) 同源期望值：与组件引用同一个 SPLITTER_REFERENCE_WIDTH（任一侧分叉都会被这条抓住）。
+        //     容差 0.1 = 2× 量化分辨率（toFixed(1) ⇒ 0.05）；不要再收紧，否则会随机红。
+        expect(
+            Math.abs(treePct - (TREE_WIDTH_DEFAULT / SPLITTER_REFERENCE_WIDTH) * 100),
+        ).toBeLessThan(0.1);
+        // (B) percent 模式的约束：两面板百分比之和 = 100（不 pin 具体比例，理由同上注）。
+        expect(Math.abs(treePct + mainPct - 100)).toBeLessThan(0.1);
         expect(panels[0].attributes("data-state")).toBe("expanded");
 
         // handle 走 fallthrough：testid/aria + 桥接路由键。
