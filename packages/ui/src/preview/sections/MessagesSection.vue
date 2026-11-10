@@ -60,6 +60,7 @@ import {
                         v-for="call in mockLongToolCalls"
                         :key="call.id"
                         :tool-call="call"
+                        initial-expanded
                         @approve="() => {}"
                         @reject="() => {}"
                     />

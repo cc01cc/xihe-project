@@ -14,6 +14,11 @@ const props = defineProps<{
     toolCall: ToolCall;
     /** PLAN-0659 T1.2：产出主体徽标；由消息按「线程是否混主体」决定传不传。 */
     actor?: ProcessRowActor;
+    /**
+     * 初始展开态。产品里不传（默认 false ⇒ 行为逐字节不变）；UI 预览用它把参数/结果块
+     * 一次性摊开，好让「长串在真实字体下会不会折行」有东西可量（task-102）。
+     */
+    initialExpanded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -36,7 +41,7 @@ const hiddenDiagnosticsCount = computed(() =>
 
 // Card body: collapsed by default; a tool result carrying diagnostics opens
 // the card so failures are visible without a click (PLAN-0342 decision #7).
-const expanded = ref(false);
+const expanded = ref(props.initialExpanded === true);
 // Raw Arguments/Result fallback has its own toggle and stays collapsed when
 // the structured diagnostics block is present.
 const rawExpanded = ref(false),
