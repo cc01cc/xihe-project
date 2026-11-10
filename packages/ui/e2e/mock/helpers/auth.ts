@@ -835,12 +835,17 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             }
         }
         if (parts.at(-1) === "messages" && route.request().method() === "GET") {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify(messages[sessionId] ?? []),
-            });
-            return;
+            // 分页请求（`?before=`）必须交给调用方注册的窄路由 —— 否则通配兜底会把
+            // 「加载更早」的响应替换成首屏数据，prepend 结果被覆盖（实测 scrollHeight
+            // 从 88530 崩回 698 重载）。通配只应答**首屏**（无 before）。
+            if (!new URL(route.request().url()).searchParams.has("before")) {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify(messages[sessionId] ?? []),
+                });
+                return;
+            }
         }
         const session = sessions.find((item) => item.id === sessionId);
         if (route.request().method() === "GET" && session) {
