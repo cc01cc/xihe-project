@@ -276,8 +276,9 @@ test.describe("PLAN-0554 config provenance", () => {
         await expect(page.getByTestId("settings-nav-group-primary")).toHaveCount(1);
         await expect(page.getByTestId("settings-nav-group-primary")).toHaveText("用户配置");
         // 域链接必须全是用户层 URL —— 既没有 instance 段，也没有退役的 Policy 入口。
+        // task-172：域链接 id 变成层限定 per-domain，「全部域链接」语义用前缀选择器取。
         const hrefs = await page
-            .getByTestId("settings-nav-domain")
+            .locator('[data-testid^="settings-nav-domain-"]')
             .evaluateAll((els) => els.map((el) => el.getAttribute("href") ?? ""));
         expect(hrefs.length).toBeGreaterThan(0);
         expect(hrefs.every((href) => /^\/settings\/user\/[\w-]+$/.test(href))).toBe(true);

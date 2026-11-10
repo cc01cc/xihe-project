@@ -113,7 +113,7 @@ function isOpsActive(path: string): boolean {
                     v-for="item in instanceDomains"
                     :key="item.id"
                     :to="item.path"
-                    data-testid="settings-nav-domain"
+                    :data-testid="`settings-nav-domain-instance-${item.id}`"
                     class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm"
                     :class="
                         isDomainActive('instance', item.id)
@@ -173,7 +173,7 @@ function isOpsActive(path: string): boolean {
                     v-for="item in userDomains"
                     :key="item.id"
                     :to="item.path"
-                    data-testid="settings-nav-domain"
+                    :data-testid="`settings-nav-domain-user-${item.id}`"
                     class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm"
                     :class="
                         isDomainActive('user', item.id)

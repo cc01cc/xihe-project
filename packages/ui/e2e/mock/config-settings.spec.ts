@@ -158,8 +158,10 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
 
         // PLAN-0560：工作区层不在全局设置区（只在 /workspace/:id/settings）——层进 URL 里没有 workspace 段。
+        // task-172：域链接 id 变成层限定 per-domain（`settings-nav-domain-<layer>-<domain>`），
+        // 「全部域链接」语义用前缀选择器取。
         const hrefs = await page
-            .getByTestId("settings-nav-domain")
+            .locator('[data-testid^="settings-nav-domain-"]')
             .evaluateAll((els) => els.map((el) => el.getAttribute("href") ?? ""));
         expect(hrefs.length).toBeGreaterThan(0);
         expect(hrefs.every((href) => /^\/settings\/(instance|user)\/[\w-]+$/.test(href))).toBe(
@@ -506,7 +508,7 @@ test.describe("Config Settings (three layers)", () => {
         const drawer = page.getByTestId("settings-drawer");
         await expect(drawer).toBeVisible();
         await expect(toggle).toHaveAttribute("aria-expanded", "true");
-        await expect(drawer.getByTestId("settings-nav-domain").first()).toBeVisible();
+        await expect(drawer.locator('[data-testid^="settings-nav-domain-"]').first()).toBeVisible();
         await drawer.getByRole("button", { name: "关闭目录" }).click();
         await expect(page.getByTestId("settings-drawer")).toHaveCount(0);
         await expect(toggle).toHaveAttribute("aria-expanded", "false");

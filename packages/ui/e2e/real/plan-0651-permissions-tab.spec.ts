@@ -25,11 +25,11 @@ const ADMIN_PASSWORD = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
 const EVIDENCE = evidenceDir("plan-0651-t42-permissions-tab");
 
 // PLAN-0752：左栏换成层×域（`SettingsSidebar`）。运维/安全项在 task-171 补了 per-item testid
-// `settings-nav-ops-<id>` ⇒ 这两个入口断言绑语义、不再按 URL 定位；域链接仍是共享
-// `settings-nav-domain`（per-domain id 属 phase 2），故 CONFIG_TAB 继续按 href 定位。
+// `settings-nav-ops-<id>`，域链接在 task-172 补了层限定 per-domain testid
+// `settings-nav-domain-<layer>-<domain>`（同名域跨层必须带层）⇒ 三个入口断言绑语义，不再按 URL 定位。
 const ROLES_TAB = '[data-testid="settings-nav-ops-roles"]';
 const LOCKS_TAB = '[data-testid="settings-nav-ops-config-locks"]';
-const CONFIG_TAB = 'a[href="/settings/user/llm-provider"]';
+const CONFIG_TAB = '[data-testid="settings-nav-domain-user-llm-provider"]';
 const SETTINGS_PATH = "/settings/user/llm-provider";
 
 interface PermissionsBody {
