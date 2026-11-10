@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
 
@@ -395,6 +396,72 @@ class ConfigControllerTest extends AbstractH2Test {
         Map<?, ?> servers = (Map<?, ?>) get.getBody().get("mcpServers");
         assertEquals("npx", ((Map<?, ?>) servers.get("docs")).get("command"));
         assertEquals("https://example.com/mcp", ((Map<?, ?>) servers.get("remote1")).get("url"));
+    }
+
+    @Test
+    void mcpConfig_roundTripsRemoteOauthBlock() {
+        String token = userToken();
+        String workspaceId = workspaceIdFor(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        // PLAN-0759 / BL-548: the OAuth client block must survive the PUT->GET
+        // round-trip; before the fix PUT dropped it and GET rebuilt {url,type} only,
+        // so the UI's authorize entry was unreachable.
+        Map<String, Object> oauth = new LinkedHashMap<>();
+        oauth.put("clientId", "client-123");
+        oauth.put("authorizationEndpoint", "https://auth.example.com/authorize");
+        oauth.put("tokenEndpoint", "https://auth.example.com/token");
+        oauth.put("redirectUri", "http://localhost:5173/oauth/callback");
+        oauth.put("scope", "mcp:read mcp:write");
+        Map<String, Object> putBody = Map.of("mcpServers", Map.of(
+            "remote-oauth", Map.of(
+                "url", "https://example.com/mcp",
+                "type", "http",
+                "oauth", oauth)));
+        ResponseEntity<Map> put = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+        assertEquals(HttpStatus.OK, put.getStatusCode());
+
+        ResponseEntity<Map> get = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
+            new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK, get.getStatusCode());
+        Map<?, ?> servers = (Map<?, ?>) get.getBody().get("mcpServers");
+        Map<?, ?> remote = (Map<?, ?>) servers.get("remote-oauth");
+        assertEquals("https://example.com/mcp", remote.get("url"));
+        assertEquals("http", remote.get("type"));
+        Map<?, ?> stored = (Map<?, ?>) remote.get("oauth");
+        assertNotNull(stored, "oauth block must be rebuilt on GET");
+        assertEquals("client-123", stored.get("clientId"));
+        assertEquals("https://auth.example.com/authorize", stored.get("authorizationEndpoint"));
+        assertEquals("https://auth.example.com/token", stored.get("tokenEndpoint"));
+        assertEquals("http://localhost:5173/oauth/callback", stored.get("redirectUri"));
+        assertEquals("mcp:read mcp:write", stored.get("scope"));
+    }
+
+    @Test
+    void mcpConfig_remoteWithoutOauth_hasNoOauthKey() {
+        String token = userToken();
+        String workspaceId = workspaceIdFor(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> putBody = Map.of("mcpServers", Map.of(
+            "plain", Map.of("url", "https://example.com/plain")));
+        ResponseEntity<Map> put = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.PUT,
+            new HttpEntity<>(putBody, headers), Map.class);
+        assertEquals(HttpStatus.OK, put.getStatusCode());
+
+        ResponseEntity<Map> get = restTemplate.exchange(
+            url("/api/v1/workspaces/" + workspaceId + "/mcp-config"), HttpMethod.GET,
+            new HttpEntity<>(headers), Map.class);
+        Map<?, ?> servers = (Map<?, ?>) get.getBody().get("mcpServers");
+        Map<?, ?> plain = (Map<?, ?>) servers.get("plain");
+        assertEquals("https://example.com/plain", plain.get("url"));
+        assertFalse(plain.containsKey("oauth"), "no oauth key when none was supplied");
     }
 
     @Test

@@ -97,16 +97,35 @@ public class McpProxyCatalogService {
 
     public List<RemoteServerConfigView> listEnabledRemoteConfigs(String workspaceId) {
         return remoteServers.findByWorkspaceIdAndEnabledTrue(workspaceId).stream()
-                .map(server -> new RemoteServerConfigView(server.getName(), server.getEndpoint()))
+                .map(McpProxyCatalogService::toRemoteServerConfigView)
                 .toList();
     }
 
-    public void saveRemoteEndpoints(String workspaceId, Map<String, String> endpoints) {
-        for (Map.Entry<String, String> entry : endpoints.entrySet()) {
-            McpServer row = remoteServers.findByWorkspaceIdAndName(workspaceId, entry.getKey())
-                    .orElseGet(() -> new McpServer(workspaceId, entry.getKey(), entry.getValue()));
-            row.setEndpoint(entry.getValue());
+    private static RemoteServerConfigView toRemoteServerConfigView(McpServer server) {
+        return new RemoteServerConfigView(server.getName(), server.getEndpoint(),
+                server.getOauthClientId(), server.getOauthAuthorizationEndpoint(),
+                server.getOauthTokenEndpoint(), server.getOauthRedirectUri(), server.getOauthScope());
+    }
+
+    /**
+     * PLAN-0759 / BL-548: remote endpoint + optional server-level OAuth client
+     * configuration. Both parts are written on the same row but through separate
+     * setters, so a later {@code registerOrValidateRemoteServer} (which only
+     * touches {@code endpoint}) never clears the OAuth block.
+     */
+    public void saveRemoteEndpoints(String workspaceId, Map<String, RemoteEndpointInput> endpoints) {
+        for (Map.Entry<String, RemoteEndpointInput> entry : endpoints.entrySet()) {
+            String name = entry.getKey();
+            RemoteEndpointInput input = entry.getValue();
+            McpServer row = remoteServers.findByWorkspaceIdAndName(workspaceId, name)
+                    .orElseGet(() -> new McpServer(workspaceId, name, input.url()));
+            row.setEndpoint(input.url());
             row.setEnabled(true);
+            row.setOauthClientId(input.oauthClientId());
+            row.setOauthAuthorizationEndpoint(input.oauthAuthorizationEndpoint());
+            row.setOauthTokenEndpoint(input.oauthTokenEndpoint());
+            row.setOauthRedirectUri(input.oauthRedirectUri());
+            row.setOauthScope(input.oauthScope());
             remoteServers.save(row);
         }
     }
@@ -155,7 +174,20 @@ public class McpProxyCatalogService {
     public record StdioConfigView(String name, JsonNode config, Instant updatedAt) {
     }
 
-    public record RemoteServerConfigView(String name, String endpoint) {
+    /**
+     * PLAN-0759: server-level OAuth client configuration carried on the GET wire.
+     * Field names match the UI's {@code RemoteMcpServer.oauth} shape verbatim —
+     * a mismatch silently empties the UI list.
+     */
+    public record RemoteServerConfigView(String name, String endpoint,
+                                          String oauthClientId, String oauthAuthorizationEndpoint,
+                                          String oauthTokenEndpoint, String oauthRedirectUri,
+                                          String oauthScope) {
+    }
+
+    /** PLAN-0759: PUT input for one remote entry; oauth fields all nullable. */
+    public record RemoteEndpointInput(String url, String oauthClientId, String oauthAuthorizationEndpoint,
+                                      String oauthTokenEndpoint, String oauthRedirectUri, String oauthScope) {
     }
 
     public record RemoteServerView(String id, String name, String endpoint, String authMode) {
