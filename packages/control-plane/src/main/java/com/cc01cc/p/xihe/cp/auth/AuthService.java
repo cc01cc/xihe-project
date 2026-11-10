@@ -12,7 +12,6 @@ import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -49,9 +48,8 @@ public class AuthService {
 
     /**
      * Creates the user row and its default grants; returns the persisted user.
-     * PLAN-0526: local single-user registration gives the single-machine user full capability by
-     * seeding the instance SUPER_ADMIN binding in {@code AuthController} (PLAN-0610 W1c), not by a
-     * role column write.
+     * PLAN-0758: the retired local-mode registration path (which used to also seed the
+     * instance SUPER_ADMIN binding in {@code AuthController}) no longer runs here.
      * PLAN-0565 ruling #7: username is required and unique (letter-first);
      * a caller-supplied value is validated (400 USERNAME_INVALID / 409
      * USERNAME_TAKEN), a blank one is derived from the email local part with
@@ -225,33 +223,9 @@ public class AuthService {
         return userRepository.existsById(userId);
     }
 
-    /** PLAN-0526: whether the instance has any user (onboarding bootstrap signal). */
+    /** Whether the instance has any user (onboarding bootstrap signal; {@code bootstrap-status}). */
     public boolean hasAnyUser() {
         return userRepository.count() > 0;
-    }
-
-    /**
-     * PLAN-0526 I2: resolve the single login-able user for local mode. Any role
-     * (including ADMIN) is allowed; only a count other than exactly one is
-     * rejected, so local mode never guesses a target.
-     */
-    @Transactional(readOnly = true)
-    public User requireSingleUser() {
-        List<User> users = userRepository.findAll();
-        if (users.size() != 1) {
-            throw new CpApiException(HttpStatus.CONFLICT, "LOCAL_SINGLE_USER_REQUIRED",
-                    "Local mode requires exactly one user");
-        }
-        return users.get(0);
-    }
-
-    /** PLAN-0526: local-mode password reset (loopback-gated by the caller). */
-    @Transactional
-    public void resetPassword(User user, String rawPassword) {
-        user.setPasswordHash(passwordEncoder.encode(rawPassword));
-        userRepository.save(user);
-        logger.info("Local-mode password reset: id={} email={}", user.getId(),
-                AuthLog.maskEmail(user.getEmail()));
     }
 
     /**

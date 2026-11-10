@@ -30,7 +30,7 @@ updated: 2026-11-10
 1. **单机 dev 栈 + 已 seed 的管理员登录（新手默认）**：一套 `dev:host`（或 `dev:stack`）栈，首跑账号由 CP `DataSeeder` 建（`admin@xihe.local`），登录后按 §3/§4 走空库起步；密码来源见 §3。
 2. **隔离 E2E 栈（复跑 §5 矩阵）**：`scripts/e2e-host.mjs` 每轮自建 PG 容器与随机端口（27xxx 段），见 §5.4。
 
-> **本地模式（`XIHE_LOCAL_MODE`）已放弃（甲方案，2026-11-10）**：不作为首跑路径、不提供启用支持。§3/§5 里仍会出现它，因为 §5 矩阵的 `goldpath-first-run.spec.ts` 跑在 `--first-run=local` 车道上，保留的是**回归证据**；历史设计与残余风险见内部存档 `internal/A03-xihe/docs/localmode-enablement.md`（`status: deprecated`）。
+> **本地模式（`XIHE_LOCAL_MODE`）已移除（PLAN-0758，2026-11-10）**：不作为首跑路径、不提供启用支持。§5 的 `goldpath-first-run.spec.ts` 与三个 goldpath 批次已整批删除；本节保留的是移除后的首跑口径 车道上，保留的是**回归证据**；历史设计与残余风险见内部存档 `internal/A03-xihe/docs/localmode-enablement.md`（`status: deprecated`）。
 
 ## 2. 启动
 
@@ -62,13 +62,13 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 2. 登录后落在 `/workspace` 的**空态**：显示「创建你的第一个工作区」，工作区条目 0，`GET /api/v1/workspaces` 返回**空数组**，`AuthResponse.workspaceId` 为 **`null`**（`AuthController.withFirstWorkspace`，注册与登录同一条路径）。
 3. 该账号是 instance owner + `SUPER_ADMIN`（`InstanceOwnershipService.ensureAssigned` / `GrantDefaultService.ensureInstanceSuperAdmin`，seed 点在 `DataSeeder.java:86-89`），**无需自授权**即可管理 Agent 与设置。
 
-> **注册路径不再是首跑主路径**：`/onboarding` 在非本地模式下仍可用（表单含**密码**；缺密码返回 **400 `INVALID_REQUEST`**，`AuthController.java:113-119`），但**注册不授予 instance owner / `SUPER_ADMIN`** —— 那两步 seed 只在本地模式分支里执行（`AuthController.java:126-136`，前提是 `XIHE_LOCAL_MODE=true`，而本地模式已放弃）。想让某个注册账号成为实例管理员，走授权面，不要靠开本地模式。
+> **注册路径不是首跑主路径**：`/onboarding` 可用（表单含**密码**；缺密码返回 **400 `INVALID_REQUEST`**），但**注册不授予 instance owner / `SUPER_ADMIN`** —— 那两步 seed 只在 `DataSeeder` 的空库路径里执行（PLAN-0758 后 `AuthController.register` 不再种入）。想让某个注册账号成为实例管理员，走授权面。
 
-> **本地模式（`XIHE_LOCAL_MODE`）已放弃（甲方案，2026-11-10）**：它不再是可推荐的首跑路径，也不提供启用支持。当时的四条件门禁、单用户计数、prod fail-fast 与残余风险全部保留在内部存档 `internal/A03-xihe/docs/localmode-enablement.md`（`status: deprecated`）。
+> **本地模式（`XIHE_LOCAL_MODE`）已移除（PLAN-0758，2026-11-10）**：代码、UI、E2E 与批次已整批删除，不再提供启用支持。设计存档保留在 `internal/A03-xihe/docs/localmode-enablement.md`（`status: deprecated`）。
 
-> **不再有"系统自动创建的工作区"**：注册 / 登录 / `local-login` / `refresh` 一律只**读取**该账号的第一个活跃工作区，不创建（`AuthController.withFirstWorkspace`）。既有账号不受影响（有工作区就照常返回第一个）。这也意味着旧缺陷 **BL-171**（首跑落在"聊天必失败"的默认工作区）不再存在——第一步就是用户自己选目录。
+> **不再有"系统自动创建的工作区"**：注册 / 登录 / `refresh` 一律只**读取**该账号的第一个活跃工作区，不创建（`AuthController.withFirstWorkspace`）。既有账号不受影响（有工作区就照常返回第一个）。这也意味着旧缺陷 **BL-171**（首跑落在"聊天必失败"的默认工作区）不再存在——第一步就是用户自己选目录。
 
-> **本地模式豁免注册策略（历史）**：`AuthController.register` 只在**非**本地模式时执行 `registrationPolicy.requireOpen()`（`AuthController.java:108-110`）。所以「`closed` 策略下首账号仍可注册」是设计内行为，不是缺陷；同一豁免也允许在同一实例继续注册第二个账号。**该豁免随 local mode 放弃**，现在只在 §5 的 E2E 车道里还能观察到（判据与边界见 §5.3 第 2 条）。
+> **注册策略（PLAN-0758 后口径）**：`AuthController.register` **无条件**执行 `registrationPolicy.requireOpen()`；「`closed` 策略下首账号仍可注册」是设计内行为，不是缺陷；同一豁免也允许在同一实例继续注册第二个账号。**该豁免随 local mode 放弃**，现在只在 §5 的 E2E 车道里还能观察到（判据与边界见 §5.3 第 2 条）。
 
 ## 4. 从空态到第一条回复
 
@@ -108,9 +108,11 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 
 ### 5.2 判据 → spec 断言映射
 
+> **PLAN-0758 后本表已失效**：`goldpath-first-run.spec.ts` 与三个 goldpath 批次已整批删除（spec 只跑 `firstRun:"local"`，本地模式移除后无替代用例）。下表保留为历史口径快照，**不再是当前验收判据**；当前首跑判据以 §3 与 §4 的启动/空白起步描述为准。
+
 | 判据 | spec 用例（行号） | 关键断言（行号） |
 |---|---|---|
-| C1 | `G1-a`（`goldpath-first-run.spec.ts:492`） | `bootstrap.localMode===true`（:497）、URL 匹配 `/onboarding?redirect=`（:502）、标题「开始使用」（:503）、`#email`/`#name` 可见（:506-507）、`#password` 数量为 0（:508）、提交按钮禁用（:509） |
+| C1 | `G1-a`（`goldpath-first-run.spec.ts:492`，已删） | `bootstrap.localMode===true`（:497）、URL 匹配 `/onboarding?redirect=`（:502）、标题「开始使用」（:503）、`#email`/`#name` 可见（:506-507）、`#password` 数量为 0（:508）、提交按钮禁用（:509） |
 | C2 | `G1-b`（:515） | 注册 **201**（:535）、`initialized===true`（:536）、**`workspace-picker-empty` 可见**（:544）、**`workspace-picker-create` 可见**（:545）、**`workspace-picker-item-*` 计数 0**（:547）、token 非空（:548）、`isInstanceSuper`（:555）、`nav-rail-settings` 可见（:558） |
 | C3 | `G1-b2`（:561） | 空态可见（:573）、创建对话框可见（:577）、`workspace-source-browser` 可见（:586）、preflight 200（:599）、能力可用（:607）、创建 200/201（:622）、URL 为 `/workspace/<id>`（:626）、`workspace-empty-state` 可见（:629）、移动页签同断言（:639） |
 | C4 | `G1-c`（:648） | `#identifier` 数量为 0（:662）、token 非空（:663） |
@@ -125,8 +127,8 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 ### 5.3 已知边界（必读，避免把"没绿"误读成回归）
 
 1. **G4 两条是 `test.fixme`，且在 host 车道不被收集**：`G4-a`（:1069-1082，BL-152 错误文案可读性）与 `G4-b`（:1085-1092，F-09 连接→Agent 就绪）位于 `@gap` describe（:1068），而 host 车道的 Playwright 配置是 `grep: /@host/`（`packages/ui/e2e/playwright.config.ts:42`）⇒ 这两条**既不通过也不 skip，而是不进入 run 列表**；`--grep "@gap"` 也会被 config 的 grep 覆盖。要看它们需改配置或另开车道（本波不做）。
-2. **本地模式豁免注册策略（G1-e 口径）**：`G1-e`（:724）可证伪的断言是「`bootstrap-status` 200（:741）+ `localMode=true`（:742）+ 第二次注册 **201**（:754）」，而**不是**「第二次注册 403」。原因见 §3 的豁免说明；要验严格 403 需**非本地模式**栈（本波未做）。（2026-11-10 补：该豁免随本地模式放弃，只在 E2E 车道仍可观察。）
-3. **BL-169（已裁定：本地模式免密登录的上下文写入是有意行为）**：守卫在本地模式免密自动登录时会写入 tab 上下文（`router/index.ts` → `resolveLocalModeLanding`），所以 C5 的落点可能是**工作区视图**而不是选择面；用例因此接受三态任一。该例外已写入 `packages/ui/AGENTS.md`（I6 例外，`ef73ae12`）。（2026-11-10 补：该例外随本地模式放弃失去正当性，已作为残余风险记入 `localmode-enablement.md` §3.6。）
+2. **注册策略（PLAN-0758 后口径）**：`AuthController.register` 无条件执行 `registrationPolicy.requireOpen()`，`closed` 时公开注册 **403 `REGISTRATION_CLOSED`**；旧「本地模式豁免」口径已随 PLAN-0758 移除。
+3. **BL-169 I6 例外已随 PLAN-0758 移除**：本地模式免密分支删除后 I6 无例外（`packages/ui/AGENTS.md` 的例外条目已标注移除），登录响应消费方一律不得回填 tab 上下文。
 4. **BL-170（已修复，随 0614 M2 合入）**：守卫写入的会话原先不进 Pinia ⇒ 免密进入后首屏看不到管理入口、config/session 预载被跳过。修复：`stores/auth.ts#adoptGuardSession`（`:146`）、守卫采用该会话、`App.vue` 等 `router.isReady()`（`39e6f093`）。C6 依赖此修复。
 5. **BL-171（已收口，由 PLAN-0614）**：旧行为是"注册即建一个 `managed_import` + docker 的默认工作区"，在 docker 后端按冻结/不可用对待后，首跑聊天结构性失败。0614 的空白起步把这条路径**移除**（不再自动建工作区），用户第一步就自己选 `direct_attach`。文档不再描述"默认工作区"。
 6. **BL-172（已修，带回归护栏）**：工作区选择面在"弹回"后永久停在 loading（早退分支不复位 + 弹回不清上下文 ⇒ bounce loop）。修复在 `WorkspacePicker.vue`（`clearTabWorkspace()` / `loading` 复位）与 `WorkspaceView.vue`，并有 2 条单测护栏。
@@ -135,35 +137,17 @@ mise run dev:host:check   # 可选：只读预检 工具/Docker/端口/host root
 ### 5.4 复跑这张矩阵（E2E 车道）
 
 ```powershell
-# 全新隔离栈；每轮自建 PG 容器 + 随机端口，跑完 teardown
-node scripts/e2e-host.mjs --batch=goldpath --retries=0
-node scripts/e2e-host.mjs --batch=goldpath-closed --retries=0
+# 全新隔离栈；每轮自建 PG 容器 + 随机端口，跑完 teardown（批次清单见 scripts/e2e-batches.jsonc）
+node scripts/e2e-host.mjs --batch=<batch> --retries=0
 # 等价的 mise 任务（单个 spec / 手工参数）
-mise run test:e2e:host -- e2e/real/goldpath-first-run.spec.ts   # PLAN-0612 host lane
+mise run test:e2e:host -- e2e/real/<spec>.ts   # PLAN-0612 host lane
 ```
 
-runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全关**，故既有批次行为不变）：
-
-| flag | 语义 | 默认 |
-|---|---|---|
-| `--first-run=local` | 空库 + `XIHE_LOCAL_MODE=true` + `SERVER_ADDRESS=127.0.0.1` + **不 seed admin**。**local mode 已弃用**：参数保留仅因 e2e 兼容，且它仍是 runner 唯一接受的取值 | 关 |
-| `--bootstrap-user=register\|none` | `register` = runner 注册首账号并据此导入 fake LLM profile；`none` = 由 spec 自己注册 | `none` |
-| `--registration-policy=open\|closed` | 注入 `XIHE_AUTH_REGISTRATION_POLICY`（本地模式仍豁免首账号） | `open` |
-
-四个批次（`scripts/e2e-batches.jsonc:144-175`）：
-
-| 批次 | 内容 | 为什么有 skipped |
-|---|---|---|
-| `goldpath-first-run` | G1 全量（virgin 空库） | 无：栈是空的，G1-a..e 都应执行（`closed` 变体由 `goldpath-closed` 承担） |
-| `goldpath` | G1-b2 + G1-d + G2 + G3（+ G4 fixme 不收集） | 4 个 skip：G1-a/G1-b/G1-c 是 virgin 用例（栈已被 `--bootstrap-user=register` 初始化）+ G1-e 需 closed 策略。**执行 9 条** |
-| `goldpath-closed` | G1-a/G1-b/G1-b2/G1-d/G1-e | 8 个 skip：G1-c 需 virgin + G2/G3 需账号车道。**执行 5 条** |
-| `goldpath-web`（可选，未进 smoke） | 用 `--grep G2-e` 跑单用例（~1.5 min） | 观察两轮后再决定是否并入 smoke |
-
-**实测（原文见 `m3-goldpath.md` §3）**：`goldpath` 3 轮 = 9 passed / 4 skipped（22.9s / 22.9s / 24.9s），`goldpath-closed` 3 轮 = 5 passed / 8 skipped（9.2s / 8.8s / 11.2s），全部 exit 0、0 failed / 0 flaky / 0 did-not-run，teardown 均无残留；另有 Lead 1 次独立复跑 `goldpath` = 9 passed / 4 skipped。超出这个范围的不作断言。
+runner 的 gold-path flag 与四个批次已随 PLAN-0758 整批移除：`--first-run=local`、`--bootstrap-user`、`goldpath-first-run`/`goldpath`/`goldpath-closed`/`goldpath-web` 四个批次与 `e2e/real/goldpath-first-run.spec.ts` 均已删除。当前唯一保留的 runner 开关是 `--registration-policy=open|closed`（注入 `XIHE_AUTH_REGISTRATION_POLICY`）。首跑口径以 §3/§4 为准，E2E 复跑入口见 [DEV-020](DEV-020-e2e-test-strategy.md)。
 
 ### 5.5 截图对照（7 张，与断言同源）
 
-> 截图拍摄于 2026-11 的**本地模式车道**（`--first-run=local`）：`01-onboarding.png` 的「只有邮箱/名称、没有密码框」就是该车道形态。本地模式已放弃，判据读法见 §5.1 注。
+> 截图拍摄于 2026-11 的**本地模式车道**（`--first-run=local`，已随 PLAN-0758 移除）：`01-onboarding.png` 的「只有邮箱/名称、没有密码框」是当时的形态，**不再是当前产品形态**（当前注册表单必填密码）。
 
 截图目录（不在 A03 仓库内，按需打开）：[t5.2-screenshots](../../../../plans/archive/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots/)
 
@@ -182,7 +166,7 @@ runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全�
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `dev:host` 起不来，端口被占 | 12630-12634 被其它栈/进程占用 | `mise run dev:host:check`；或换槽位 `--stack 2` |
-| CP 启动即退出，日志提示本地模式需回环 | 只设了 `XIHE_LOCAL_MODE=true`，没设 `SERVER_ADDRESS=127.0.0.1`（或 `XIHE_ENV=prod`） | 补齐三条件（见存档 `localmode-enablement.md` §1）。**local mode 已弃用**：该现象只会在 §5 的 E2E 车道或历史存档语境下遇到 |
+| CP 启动即退出，日志提示本地模式需回环 | 只设了 `XIHE_LOCAL_MODE=true`（该键已随 PLAN-0758 移除，不再有本地模式门禁） | 移除该环境变量。**local mode 已弃用**：该现象只会在 §5 的 E2E 车道或历史存档语境下遇到 |
 | 登录后是空白页面、没有任何工作区 | **正常**（0614 起不再自动创建工作区） | 点「创建你的第一个工作区」（§4 第 1 步） |
 | 创建对话框里目录读不出来 | 路径不是 Runtime 可见的宿主目录，或后端不可用 | 换一个真实存在的宿主目录；先跑 `POST /api/v1/workspaces/capabilities/preflight` 看 `available=false` 的 `reason` |
 | 建工作区返回 `409 BACKEND_DISABLED` | 选了 `managed_import`（docker 后端已完全冻结） | 改选 `direct_attach` |
@@ -190,7 +174,7 @@ runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全�
 | 发消息/建会话返回 `503 BACKEND_DISABLED` | 目标工作区是既有 docker（`managed_import`）工作区，执行后端已冻结 | 新建一个 `direct_attach` 工作区后继续（详见 [DEV-018](DEV-018-known-issues.md)） |
 | 发消息 `503 LLM_NOT_CONFIGURED` | 没有可用模型/连接（`missing_credentials`） | 建连接并 verify 到 `READY`；这是 G4-a 的现状（BL-152），不是本文路径的失败 |
 | 发消息 `409 API_TYPE_REBIND_REQUIRED` | 会话没有钉住「连接 + 模板三元组」 | 用 UI 建会话，或 API 显式带三元组 |
-| `POST /local-login` 404 | 非回环来源 / 非单用户实例（门禁 fail-closed 404） | 用 `127.0.0.1`/`localhost` 打开；确认实例只有一个可登录账号。**`/local-login` 随本地模式弃用**（代码保留仅供 E2E 车道），首跑请用 `/login` |
+| `POST /local-login` 404 | 端点已随 PLAN-0758 移除 | 改用 `POST /api/v1/auth/login`（密码必填）。首跑请用 `/login` |
 | 工作区选择面一直停在"正在加载" | BL-172 的旧症状（已修） | 升级到含 `39e6f093` 的版本；若仍复现，按 §5.3 第 6 条取证 |
 
 ## 7. 与 USER-001 / DEV-002 的分工
@@ -201,4 +185,4 @@ runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全�
 | [USER-001](USER-001-user-guide.md) | 有账号之后的**功能使用**（聊天、多模态、MCP 工具、成员、设置） | §1.4 只保留注册/登录并指向本文的「空白实例首跑」 |
 | [DEV-002](DEV-002-developer-guide.md) | 环境搭建全量、运行模式 A/B/C/D、全栈调试、测试入口 | 不重复首跑判据，只在「模式 A」指向本文 |
 
-术语按 [DEV-032](DEV-032-terminology.md)，本文不引入新术语：「本地模式」即代码/环境变量里的 `localMode`（`XIHE_LOCAL_MODE`，**已放弃**，2026-11-10；本文件只在 §5 的 E2E 车道语境里使用该词）；「首跑 / gold path」指本文描述的「空白实例 → 首条回复」最短路径，取自 PLAN-0611 的计划名，仅在此处定义一次，不作第二个正名扩散。其余词（`bootstrap-status`、`SUPER_ADMIN`、`direct_attach`、`managed_import`、`workspace-picker-*` 为 testid）均为既有词或选择器字面。
+术语按 [DEV-032](DEV-032-terminology.md)，本文不引入新术语：「本地模式」即代码/环境变量里的 `localMode`（`XIHE_LOCAL_MODE`，**已移除**，PLAN-0758，2026-11-10；本文件只在历史口径段落里保留该词）；「首跑 / gold path」指本文描述的「空白实例 → 首条回复」最短路径，取自 PLAN-0611 的计划名，仅在此处定义一次，不作第二个正名扩散。其余词（`bootstrap-status`、`SUPER_ADMIN`、`direct_attach`、`managed_import`、`workspace-picker-*` 为 testid）均为既有词或选择器字面。

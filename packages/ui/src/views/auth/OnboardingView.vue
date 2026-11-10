@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
-import { api } from "../../composables/api";
 import { Sun } from "@lucide/vue";
 
 const { t } = useI18n(),
@@ -14,7 +13,6 @@ const { t } = useI18n(),
 const email = ref(""),
     name = ref(""),
     password = ref(""),
-    localMode = ref(false),
     errorMsg = ref<string | null>(null),
     loading = ref(false),
     emailTouched = ref(false),
@@ -31,30 +29,21 @@ const emailError = computed(() => {
 });
 
 const passwordError = computed(() => {
-    if (localMode.value || !passwordTouched.value || password.value) return null;
+    if (!passwordTouched.value || password.value) return null;
     return t("onboarding.passwordRequired");
-});
-
-onMounted(async () => {
-    try {
-        localMode.value = (await api.bootstrapStatus()).localMode;
-    } catch {
-        // Non-fatal: fall back to requiring a password.
-        localMode.value = false;
-    }
 });
 
 const canSubmit = () =>
     Boolean(email.value.trim()) &&
     EMAIL_PATTERN.test(email.value.trim()) &&
-    (localMode.value || Boolean(password.value)) &&
+    Boolean(password.value) &&
     !loading.value;
 
 async function handleSubmit() {
     // The submit button stays clickable when the form is incomplete so the inline errors can
     // explain what is missing (BL-151: a disabled button plus zero feedback was the bug).
     emailTouched.value = true;
-    passwordTouched.value = !localMode.value;
+    passwordTouched.value = true;
     if (!canSubmit()) return;
     loading.value = true;
     errorMsg.value = null;
@@ -114,7 +103,7 @@ async function handleSubmit() {
                         class="w-full px-3 py-2 rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                 </div>
-                <div v-if="!localMode">
+                <div>
                     <label class="block text-sm font-medium mb-1" for="password">{{
                         t("onboarding.password")
                     }}</label>
@@ -136,7 +125,6 @@ async function handleSubmit() {
                         {{ passwordError }}
                     </p>
                 </div>
-                <p v-else class="text-sm text-muted-foreground">{{ t("onboarding.localHint") }}</p>
 
                 <button
                     type="submit"

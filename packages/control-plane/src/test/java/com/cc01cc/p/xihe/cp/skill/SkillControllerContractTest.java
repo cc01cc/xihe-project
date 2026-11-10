@@ -106,7 +106,7 @@ class SkillControllerContractTest extends AbstractReusableIntegrationTest {
      * refused" from "always refused" — a one-directional matrix says nothing about whether the
      * authorization check evaluates anything at all.
      *
-     * <p>The grant path is copied from {@code LocalModeSuperAdminBootstrapTest}
+     * <p>The grant path mirrors the production write path
      * ({@code grantDefaultService.ensureInstanceSuperAdmin} + {@code authzContext.invalidate}), not
      * invented here.</p>
      */
@@ -114,7 +114,7 @@ class SkillControllerContractTest extends AbstractReusableIntegrationTest {
     void anInstanceAdministratorMayImportIntoTheInstanceLibrary() {
         AuthResponse registered = registerAuth("0628-admin@test.com");
         UUID userId = UUID.fromString(registered.getUser().getId());
-        // Copied from LocalModeSuperAdminBootstrapTest#downgradeTo: instance administration is an
+        // Instance administration is an
         // AccessRoleBinding at instance scope, and the capability projection is cached per user, so
         // the grant is invisible until invalidation. (ensureInstanceSuperAdmin additionally requires
         // the instance-owner singleton, which a fresh DB does not have — hence the explicit binding.)

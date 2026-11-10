@@ -82,7 +82,7 @@ export async function prepareConnection({ env, fetchImpl = fetch, options }) {
   const passwordEnv = String(options['--password-env'] ?? 'XIHE_DEV_ADMIN_PASSWORD').trim();
   const password = env[passwordEnv];
   if (typeof password !== 'string' || password === '') {
-    throw usageError(`请设置环境变量 ${passwordEnv}（密码不进 argv；可用 persistent-stack.json 的 goldpathAccount.password）。`);
+    throw usageError(`请设置环境变量 ${passwordEnv}（密码不进 argv；可用 persistent-stack.json 的 adminPassword）。`);
   }
   const model = String(options['--model'] ?? 'fake-openai').trim();
 

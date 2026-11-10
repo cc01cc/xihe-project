@@ -232,7 +232,6 @@ install 当前冻结（BL-478 前置），由 Lead 在 UI 单测基线转绿后�
 「点 `provider-connection-field-discovery` → 点 `provider-connection-discovery-option-<value>`」：
 
 - `e2e/real/provider-connection-keys.spec.ts`（`selectDiscovery` 助手 + 3 处）
-- `e2e/real/goldpath-first-run.spec.ts`（2 处：原来靠"找带 `manual` 选项的 select"定位，现在没有这个 select 了）
 - `e2e/mock/provider-protocol-groups.spec.ts`（1 处：改为打开弹层读 `role="option"` 文案）
 
 两个 `data-testid` 钩子加在 `ProviderHub.vue` 调用点（触发器 + 每个 `SelectItem`），不改上游组件。

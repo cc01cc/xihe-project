@@ -174,7 +174,7 @@ export interface ApiUserCapabilities {
     workspaceAdminOf: string[];
 }
 
-/** `/auth/me`, the login/register/local-login `user` object. */
+/** `/auth/me`, the login/register `user` object. */
 export interface ApiAuthUser {
     id: string;
     email: string;
@@ -2387,9 +2387,7 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
         isAuthEndpoint =
             path === "/auth/login" ||
             path === "/auth/register" ||
-            path === "/auth/bootstrap-status" ||
-            path === "/auth/local-login" ||
-            path === "/auth/local-password-reset",
+            path === "/auth/bootstrap-status",
         // PLAN-0498 T3.1: a wrong reveal step-up password is a 401 domain outcome,
         // not session expiry — it must stay inline in the reveal dialog.
         isStepUpEndpoint = /^\/credentials\/[^/]+\/reveal$/.test(path);
@@ -2735,26 +2733,12 @@ export const api = {
     me() {
         return request<ApiAuthUser>("/auth/me");
     },
-    // PLAN-0526: loopback-only local mode entry.
+    /**
+     * Onboarding signal. PLAN-0758: the retired `localMode` flag is gone — the
+     * entry resolution now keys on `initialized` alone.
+     */
     bootstrapStatus() {
-        return request<{ initialized: boolean; localMode: boolean }>("/auth/bootstrap-status");
-    },
-    localLogin() {
-        return request<{
-            accessToken: string;
-            refreshToken: string;
-            user: ApiAuthUser;
-            // PLAN-0614: CP returns null when the account has no workspace (registration no longer creates one).
-
-            workspaceId?: string | null;
-            workspace?: ApiWorkspace | null;
-        }>("/auth/local-login", { method: "POST" });
-    },
-    localPasswordReset(newPassword: string) {
-        return request<void>("/auth/local-password-reset", {
-            method: "POST",
-            body: JSON.stringify({ newPassword }),
-        });
+        return request<{ initialized: boolean }>("/auth/bootstrap-status");
     },
     async getSessions(): Promise<SessionListResponse> {
         const payload = await request<unknown>("/sessions"),

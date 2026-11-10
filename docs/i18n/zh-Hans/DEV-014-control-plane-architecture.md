@@ -36,11 +36,11 @@ flowchart LR
 - **MCP 反向代理通道**（`POST /api/v1/mcp`，另有同前缀 GET/DELETE）：JSON-RPC 解析 → 工具名提取 → 权限检查 → 请求改写 → 三层路由转发（详见 DEV-016）。CP 为纯 HTTP 反代，不依赖 MCP SDK。
 - **状态分发通道**：Runtime/Workspace storage watcher → CP Workspace event ingress → UI Workspace SSE；ChatRun 仍独立使用 Session SSE，不把无 Session 文件事件塞入 Chat。
 
-## 1a. 认证入口与单机本地模式（PLAN-0526）
+## 1a. 认证入口
 
-- 认证入口为 `/api/v1/auth/**`（permitAll）：`register`/`login`/`refresh`/`me`。PLAN-0526 新增 `GET /bootstrap-status`（恒 200，`{initialized, localMode}`）、`POST /local-login`、`POST /local-password-reset`，并允许 register 在本地模式省略密码（服务端生成、201）。
-- 单机本地模式由 `LocalModeService` 门禁：仅 `XIHE_LOCAL_MODE=true` + 回环来源 + `Origin`/`Host` 回环时可用，且签发对象必须是**唯一可登录用户（任意角色，含 ADMIN）**（否则 409）；本地模式跳过默认 admin seed，首用户获得实例级 `SUPER_ADMIN` **绑定**（PLAN-0610 起不再用 `ADMIN` 层级表述，见 `AuthController.java:58`）；其余一律 404 且不签发 token。门禁在应用层，`SecurityConfig` 不放开通配。
-- PLAN-0558 登录防护：`/login` 按规范化账号 + 客户端 IP 双维度做固定窗口失败计数，达到阈值返回 429 `AUTH_RATE_LIMITED` + `Retry-After`；未知账号同计数并执行 dummy BCrypt；失败写 AUDIT JSONL，锁定/解锁写 `audit_logs`。计数为 CP 进程内有界表（单实例语义，重启清锁）；`X-Forwarded-For` 默认忽略，仅 `cp.auth.login.trusted-proxies` 命中的 `remoteAddr` 才解析；本地模式与 `/refresh` v1 不限流，`/register` 按 IP 限流且默认豁免回环。
+- 认证入口为 `/api/v1/auth/**`（permitAll）：`register`/`login`/`refresh`/`me`。`GET /bootstrap-status` 恒 200，只回 `{initialized}`（onboarding 判据；PLAN-0758 移除了 `localMode`）。
+- PLAN-0758（D-787）已移除本地模式（`XIHE_LOCAL_MODE`/`LocalModeService`/`local-login`/`local-password-reset`）；register 不再有省略密码的分支，密码必填。首用户由 `DataSeeder` 的 seed admin 提供（只在空库跑），`AuthController.withFirstWorkspace` 仍只读第一个活跃工作区。
+- PLAN-0558 登录防护：`/login` 按规范化账号 + 客户端 IP 双维度做固定窗口失败计数，达到阈值返回 429 `AUTH_RATE_LIMITED` + `Retry-After`；未知账号同计数并执行 dummy BCrypt；失败写 AUDIT JSONL，锁定/解锁写 `audit_logs`。计数为 CP 进程内有界表（单实例语义，重启清锁）；`X-Forwarded-For` 默认忽略，仅 `cp.auth.login.trusted-proxies` 命中的 `remoteAddr` 才解析；`/refresh` v1 不限流，`/register` 按 IP 限流且默认豁免回环。
 - PLAN-0565 账号标识（裁定 #7）+ 决策 v29：`users.username` NOT NULL UNIQUE（V82 回填；字符规则与 agent 主体名/昵称共用 `NameFormat.PATTERN_SOURCE`＝英文字母（含大写）/ 中文汉字 / 数字，不得数字开头、不得含空格与符号，长度按列宽 ≤32）；注册可选自填（留空由 email 本地部分生成默认、冲突加序号，非法 400 `USERNAME_INVALID`/占用 409 `USERNAME_TAKEN`）；`LoginRequest` 字段由 `email` 改为 `identifier`——含 `@` 按 email 解析、否则按 username 解析，登录限流键与失败审计同步改口径（email 值仍 mask、username 公开可明文）。
 - 契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §4/§5 与 `docs/api/inventory.md`。
 - 新手首跑的完整链路（三条件 → onboarding → 建 Agent → 首条回复）与逐条可见判据见 [DEV-033](DEV-033-first-run-gold-path.md)。
@@ -58,7 +58,7 @@ flowchart LR
 - **唯一写者** `service/UserAdminService`：单事务固定序「实例锁（`instance_owner` 单例行）→ 目标 `users` 行锁 → 守卫 → 列写 → 双通道撤销 → durable 审计」；守卫优先级 `SELF_OPERATION_FORBIDDEN` → `INSTANCE_OWNER_PROTECTED` → `LAST_ADMIN`（后两者复用 0580 入口，但 last-admin **只统计可用 ADMIN**）；同状态请求为 200 空操作（不 bump、不审计）；拒绝审计 `user_admin_action_denied` 用独立事务落库，避免被守卫回滚吞掉。
 - **双通道撤销**：access = `users.token_version` + claim `tv`（0580 交付，判定在 `AccessTokenAuthenticator`）；refresh = `users.session_version`（V86）+ claim `sv`（判定在 `AuthService.verifyRefresh`，四步：验签/未过期 → 行存在 → `status=ACTIVE` 且 `deleted_at` 为空 → `sv` 相等）。**禁用/软删/管理员重置密码**在同一事务同时 bump 两列（立即失效，不等 TTL）；**启用**不 bump（旧凭据不复活，需重新登录）；**角色变更只 bump `token_version`**，refresh 仍可用并按 DB 当前角色重签。非活跃账号在 access/refresh/login 三处一律走既有 401 语义，不产生 5xx、不泄露账号状态。
 - **软删**：`deleted_at` + `status=DISABLED` 同写（V86 `ck_users_deleted_status` 兜底），v1 不可逆；`uq_users_email`/`uq_users_username` 保持原样（软删账号继续占用标识，决策 #7）。
-- **注册策略**：`XIHE_AUTH_REGISTRATION_POLICY ∈ {open(默认), closed}`（bootstrap env，非 config 域），非法值启动 fail-fast；`closed` 时 `/auth/register` 在 0558 IP 限流之后、建号之前返回 403 `REGISTRATION_CLOSED`；localMode 不受影响。
+- **注册策略**：`XIHE_AUTH_REGISTRATION_POLICY ∈ {open(默认), closed}`（bootstrap env，非 config 域），非法值启动 fail-fast；`closed` 时 `/auth/register` 在 0558 IP 限流之后、建号之前返回 403 `REGISTRATION_CLOSED`。
 - **D9 硬化**：`/internal/v1/config/effective/{domain}` 在 `userId` 与 `workspaceId` 都非空时校验成员关系，不满足 → 403 `WORKSPACE_FORBIDDEN`（复用既有码），置于 domain 校验之后、合并之前。契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §6 与 `docs/api/inventory.md`。
 
 ## 2. 会话级持久 SSE（PLAN-230）
@@ -176,7 +176,7 @@ flowchart LR
 ## 8b. Workspace 创建、目录选择与执行模式（PLAN-0379/0384）
 
 - **删除（BL-174）**：`DELETE /api/v1/workspaces/{workspaceId}` 的授权是**能力判定**，不再是"仅 owner"：调用者是该工作区 `WS_OWNER`，或持 `cap:workspace:admin`（该工作区作用域、instance 作用域或 `cap:instance:admin`）。`WS_OWNER` 的原子集本就含 `workspace:admin`，故并集等价于"持该工作区管理能力"；**内容原子 `delete` 不构成删除工作区的凭据**（`WS_EDITOR` 可删文件，但删除工作区返回 `403 WORKSPACE_FORBIDDEN`）。自定义角色需要删工作区时授 `workspace:admin`。工作区不存在仍是 `404 WORKSPACE_NOT_FOUND`（不被 403 覆盖）。删除仍为软删（`deleted_at`），WorkspaceStorage 不删，Runtime 通知保持 after-commit best-effort；审计 `workspace_deleted` 追加 `actor` / `owner` / `crossOwner`（actor≠owner 时为 true），使跨归属的管理性删除与 owner 自助删除可区分。路由的角色门（`WorkspaceWriteGuard`）对该路由为 `SERVICE_CHECKED`：由 service 单点判，避免拦截器与 service 两套判决。
-- **首用空白起步（PLAN-0614）**：`POST /api/v1/auth/{register,login,local-login,refresh}` **不再创建任何工作区**——只读该账号第一个活跃工作区（`AuthController.withFirstWorkspace`）；没有则 `AuthResponse.workspaceId=null`、`GET /api/v1/workspaces` 返回空数组，UI 停在选择面空态并引导创建第一个工作区。因此不存在"系统代用户创建的工作区"（I4），旧 BL-171（自动建的默认工作区用冻结 docker 后端）随之消失。首用步骤见 [DEV-033](DEV-033-first-run-gold-path.md)。
+- **首用空白起步（PLAN-0614）**：`POST /api/v1/auth/{register,login,refresh}` **不再创建任何工作区**——只读该账号第一个活跃工作区（`AuthController.withFirstWorkspace`）；没有则 `AuthResponse.workspaceId=null`、`GET /api/v1/workspaces` 返回空数组，UI 停在选择面空态并引导创建第一个工作区。因此不存在"系统代用户创建的工作区"（I4），旧 BL-171（自动建的默认工作区用冻结 docker 后端）随之消失。首用步骤见 [DEV-033](DEV-033-first-run-gold-path.md)。
 - **创建**：`POST /api/v1/workspaces` 接受 `storageMode`（`managed_import`/`direct_attach`）、`executionMode`、`hostPath`（仅 direct-attach）与 `Idempotency-Key`。**`storageMode` 必填、无默认值**（PLAN-0618 决策 #8：省略即 `400 INVALID_REQUEST` 并指向 `direct_attach`；`direct_attach` 必须带 `hostPath`/`executionMode`，"有默认值"本身就是假承诺）。v1 矩阵：`managed_import` 仅 `docker`（**已冻结**，见下条冻结门）；`direct_attach` 仅 `windows-mxc`/`windows-host` 且必带 `hostPath`；`profile`/`image` 仅 docker。direct-attach 在落库前先经 Runtime probe，probe 失败不落库。枚举值 `managed_import` **保留**（解冻后恢复使用）。
 - **创建前能力预检**：`POST /api/v1/workspaces/capabilities/preflight`（USER/ADMIN）入参 `{storageMode: direct_attach, hostPath, executionMode}`，经 CP 复用 Runtime `capabilities/direct-attach/probe` 返回 `BackendCapabilitySnapshot` + `checkedAt`。Runtime 可达时 `available:false`（含 `reason`，如 `MXC_EXECUTABLE_MISSING`）仍是 200；Runtime 不可达/非法响应 → `502 RUNTIME_UNAVAILABLE`。CP 不缓存、不硬编码后端可用性。
 - **能力 reason 保真**：`environment.capability` 与预检都保留 Runtime 返回的具体 `reason`（不再折叠为 `DIRECT_ATTACH_UNAVAILABLE`），UI 据此显示不可用原因。

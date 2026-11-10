@@ -2366,10 +2366,6 @@ const messages = {
             register: "注册",
             noAccount: "没有账号？",
             hasAccount: "已有账号？",
-            localLogin: "本地模式免密登录",
-            localLoggingIn: "正在登录…",
-            localModeHint: "本机单用户模式：回环访问可直接进入，无需密码",
-            localSingleUserRequired: "本机实例不是单用户状态，请使用账号密码登录",
         },
         register: {
             title: "注册",
@@ -5020,11 +5016,6 @@ const messages = {
             register: "Register",
             noAccount: "Don't have an account?",
             hasAccount: "Already have an account?",
-            localLogin: "Enter without a password",
-            localLoggingIn: "Signing in…",
-            localModeHint: "Local single-user mode: loopback access needs no password",
-            localSingleUserRequired:
-                "This local instance is not single-user; sign in with your email and password instead",
         },
         register: {
             title: "Register",

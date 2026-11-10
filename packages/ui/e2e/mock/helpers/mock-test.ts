@@ -62,13 +62,13 @@ export const test = base.extend<MockGateFixtures>({
             const failures: PageFailures = collectPageFailures(page);
             // PLAN-0699 M1（D-701）：mock 车道没有真实后端；未桩的 `/auth/bootstrap-status` 会走
             // Vite proxy 返回 502，console-error 门禁因此把 6 条无关断言判红。用与路由守卫失败回退
-            // 一致的语义（`router/index.ts` 的 `{initialized:true, localMode:false}`）兜底；
-            // 业务 spec 自己后注册的 route 仍按 Playwright 后注册优先覆盖本兜底。
+            // 一致的语义（`router/index.ts` 的 `{initialized:true}`）兜底；业务 spec 自己后注册
+            // 的 route 仍按 Playwright 后注册优先覆盖本兜底。
             await page.route("**/api/v1/auth/bootstrap-status", (route) =>
                 route.fulfill({
                     status: 200,
                     contentType: "application/json",
-                    body: JSON.stringify({ initialized: true, localMode: false }),
+                    body: JSON.stringify({ initialized: true }),
                 }),
             );
             const allow = (Array.isArray(mockAllow) ? mockAllow : DEFAULT_MOCK_ALLOW).map(

@@ -1,14 +1,10 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { api } from "../composables/api";
-import { logger } from "../lib/logger";
 import {
     migrateLegacyWorkspace,
-    readTabWorkspace,
     readTabWorkspaceId,
-    writeTabWorkspace,
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
-import { resolveLocalModeLanding } from "../lib/workspaceLanding";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { defaultLayerPath, knowledgeRedirectTarget } from "../lib/settingsIa";
 import { LAYER_DOMAINS } from "../stores/config";
@@ -206,17 +202,18 @@ const router = createRouter({
 });
 
 /**
- * PLAN-0526: resolved once per page load. On failure we behave exactly like the
- * pre-local-mode login wall, so an unreachable CP never changes the entry.
+ * Resolved once per page load. On failure we behave exactly like the pre-local-mode
+ * login wall, so an unreachable CP never changes the entry (PLAN-0758 keeps only
+ * the `initialized` discriminator).
  */
-let bootstrapCache: { initialized: boolean; localMode: boolean } | null = null;
+let bootstrapCache: { initialized: boolean } | null = null;
 
-async function resolveBootstrap(): Promise<{ initialized: boolean; localMode: boolean }> {
+async function resolveBootstrap(): Promise<{ initialized: boolean }> {
     if (bootstrapCache) return bootstrapCache;
     try {
         bootstrapCache = await api.bootstrapStatus();
     } catch {
-        bootstrapCache = { initialized: true, localMode: false };
+        bootstrapCache = { initialized: true };
     }
     return bootstrapCache;
 }
@@ -228,56 +225,11 @@ router.beforeEach(async (to) => {
 
     if (requiresAuth && !token) {
         const bootstrap = await resolveBootstrap();
-        // PLAN-0612 T6.3：入口三态抽成纯函数（`lib/authEntry.ts`），才能对"非 localMode 仍跳
-        // /login"这类回归做单测；这里的分支顺序与抽取前逐字一致。
+        // PLAN-0612 T6.3：入口判定抽成纯函数（`lib/authEntry.ts`），才能对"仍跳 /login"这类回归
+        // 做单测。PLAN-0758 后只剩 onboarding / login 两态。
         const entry = resolveUnauthenticatedEntry(bootstrap);
         if (entry === "onboarding") {
             return { name: "onboarding", query: { redirect: to.fullPath } };
-        }
-        if (entry === "local-login") {
-            try {
-                // PLAN-0614 决策 #5 / BL-173：落点优先级 = 已有 tab 上下文（记住上次选择）→
-                // localLogin 返回的第一个活跃工作区 → 都没有则停在选择面（空态可操作）。
-                // 以前这里无条件用登录响应覆盖 tab 上下文，用户在本页签选过的工作区会被顶掉。
-                const tabBeforeLogin = readTabWorkspace();
-                const res = await api.localLogin();
-                localStorage.setItem("xihe-token", res.accessToken);
-                localStorage.setItem("xihe-user", JSON.stringify(res.user));
-                const landing = resolveLocalModeLanding({
-                    tabWorkspace: tabBeforeLogin,
-                    loginWorkspace: res.workspace,
-                    loginWorkspaceId: res.workspaceId,
-                    fallbackName: "Default Workspace",
-                });
-                // PLAN-0614：只有拿到工作区才写 tab 上下文；没有工作区时不写（空态由选择面呈现）。
-                // 这是 0608 I6 的已文档化例外（localMode 免密自动登录有意写入）。
-                if (landing) writeTabWorkspace(landing);
-                // PLAN-0611: the guard writes localStorage, but the Pinia store may already exist
-                // (`main.ts` mounts the app before the initial navigation resolves), so its
-                // in-memory token/user would stay "signed out" — `isAuthenticated`/`isAdmin` false
-                // until a manual reload, i.e. no admin surfaces on a first passwordless entry.
-                // Adopt the session so it behaves exactly like a real sign-in. The import is dynamic
-                // on purpose: `stores/auth.ts` imports this router singleton, so a static import
-                // would create a module cycle.
-                try {
-                    const { useAuthStore } = await import("../stores/auth");
-                    useAuthStore().adoptGuardSession(
-                        res.accessToken,
-                        res.user,
-                        landing,
-                        res.refreshToken,
-                    );
-                } catch (error) {
-                    // No active Pinia (unit tests) or a broken store: the localStorage write above
-                    // still lets the guard finish, so log instead of blocking entry.
-                    logger.warn("Failed to adopt the local-mode session into the store", {
-                        error: String(error),
-                    });
-                }
-                return true;
-            } catch {
-                // Gate refused (non-loopback / not single-user) — fall back to login.
-            }
         }
         return { name: "login", query: { redirect: to.fullPath } };
     } else if (

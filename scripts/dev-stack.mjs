@@ -80,7 +80,6 @@ import {
   resetAdminEnv,
   resetAdminWrapperPath,
   resolveDevAdminPasswordSafe,
-  resolveLocalMode,
 } from './lib/dev-admin-password.mjs';
 import { assertEnvValues, makeChildEnv } from './lib/env-values.mjs';
 
@@ -717,19 +716,6 @@ function applyDevAdminPassword(adminPassword) {
   // BL-527 护栏 A：这一层只接受**字符串**密码。事故就是解析结果对象从这里漏进 env 的，
   // 所以入口再断言一次（调用方已用 devAdminPasswordFrom() 取值，这里是第二道闸）。
   const password = assertPasswordString(adminPassword, "applyDevAdminPassword(adminPassword)");
-  // local mode（PLAN-0526）的设计前提是「零用户首启」：此时 upsert 会凭空造出 admin 行，
-  // 破坏首启引导语义，必须跳过。
-  //
-  // 判定必须与 CP 同口径：**OS env 优先，其次 `.env` 链**（D-770 / W-22 verify 发现）。
-  // CP 的 DotenvLoader 把 `.env*` 读进 system properties，所以「只在 `.env.local` 写
-  // XIHE_LOCAL_MODE=true」时 CP 真的进了 local mode —— 这里只读 process.env 就会漏判。
-  const localMode = resolveLocalMode({ env: childEnv, cwd: projectRoot });
-  if (localMode.enabled) {
-    console.log(
-      `[dev-stack] dev admin upsert: skipped (XIHE_LOCAL_MODE=true via ${localMode.source} keeps the first-run zero-user state)`,
-    );
-    return { ok: false, skipped: 'local-mode' };
-  }
   if (!isWindows) {
     console.log('[dev-stack] dev admin upsert: skipped (scripts/reset-admin.ps1 is Windows-only); run `mise run reset-admin` manually');
     return { ok: false, skipped: 'non-windows' };

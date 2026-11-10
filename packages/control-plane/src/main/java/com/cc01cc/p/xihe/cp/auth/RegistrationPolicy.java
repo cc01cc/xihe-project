@@ -18,10 +18,9 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
  * working — a surprising 403 on the register endpoint would be worse than the
  * status quo.
  *
- * <p>Local single-user mode is deliberately exempt: the instance must be able to
- * create its first (only) account even with registration closed, otherwise a
- * fresh machine with {@code XIHE_LOCAL_MODE=true} + {@code closed} would be
- * permanently unusable (I5).
+ * <p>PLAN-0758: the retired local-mode exemption is gone — a fresh instance now
+ * always has the seeded admin (see {@code DataSeeder}), so a closed policy never
+ * strands an empty instance.
  */
 @Service
 public class RegistrationPolicy {
@@ -37,10 +36,9 @@ public class RegistrationPolicy {
     }
 
     /**
-     * Fail-fast on an unrecognised value (precedent: {@code LocalModeService}
-     * validates its env in {@code @PostConstruct}). A typo such as
-     * {@code "Closed"} or {@code "false"} must stop the process instead of
-     * silently falling back to {@code open} and exposing registration.
+     * Fail-fast on an unrecognised value. A typo such as {@code "Closed"} or
+     * {@code "false"} must stop the process instead of silently falling back to
+     * {@code open} and exposing registration.
      */
     @PostConstruct
     public void validate() {

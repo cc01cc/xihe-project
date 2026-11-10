@@ -7,7 +7,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
-import com.cc01cc.p.xihe.cp.auth.LocalModeService;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 
@@ -33,18 +32,16 @@ public class DataSeeder implements CommandLineRunner {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final GrantDefaultService grantDefaultService;
-    private final LocalModeService localModeService;
     private final com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService;
     private final com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                      GrantDefaultService grantDefaultService, LocalModeService localModeService,
+                      GrantDefaultService grantDefaultService,
                       com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
                       com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
-        this.localModeService = localModeService;
         this.instanceOwnershipService = instanceOwnershipService;
         this.systemAccessRoleCatalog = systemAccessRoleCatalog;
     }
@@ -60,12 +57,8 @@ public class DataSeeder implements CommandLineRunner {
         // makes the same catalog present on a schema built from the entities (H2 profile, Flyway
         // disabled) and is a no-op on an already migrated database.
         systemAccessRoleCatalog.ensureSeeded();
-        // PLAN-0526: local mode is a fresh single-user bootstrap — do not seed the
-        // default admin, so the instance starts with zero users and can onboard.
-        if (localModeService.enabled()) {
-            log.info("Local mode enabled: skipping default admin seed");
-            return;
-        }
+        // PLAN-0758: the retired local-mode early return is gone — a fresh instance
+        // always gets the seeded dev admin, so the onboarding path starts from it.
         User admin = userRepository.findByEmail("admin@xihe.local").orElse(null);
         if (admin == null) {
             admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD), "Admin");

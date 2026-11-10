@@ -171,45 +171,6 @@
         "e2e/real/journey-a.spec.ts"
       ]
     },
-    // PLAN-0611 gold path (runner lane flags travel with the batch so one command
-    // is enough; explicit CLI flags still override these defaults).
-    "goldpath-first-run": {
-      "description": "PLAN-0611 G1: virgin localMode instance first run (onboarding -> first account -> workspace)",
-      "llmMode": "missing",
-      "firstRun": "local",
-      "bootstrapUser": "none",
-      "registrationPolicy": "open",
-      "specs": ["e2e/real/goldpath-first-run.spec.ts"]
-    },
-    "goldpath": {
-      "description": "PLAN-0611 G1-c/d + G2 + G3 + G4(fixme) against a bootstrapped localMode account and the fake LLM",
-      "llmMode": "success",
-      "firstRun": "local",
-      "bootstrapUser": "register",
-      "registrationPolicy": "open",
-      "specs": ["e2e/real/goldpath-first-run.spec.ts"]
-    },
-    "goldpath-closed": {
-      "description": "PLAN-0611 G1-e reverse control: closed registration policy on a localMode instance (first account still admitted)",
-      "llmMode": "missing",
-      "firstRun": "local",
-      "bootstrapUser": "none",
-      "registrationPolicy": "closed",
-      "specs": ["e2e/real/goldpath-first-run.spec.ts"]
-    },
-    "headed": {
-      "description": "PLAN-0621 headed walkthrough S1-S8 (needs XIHE_E2E_HEADED=1 + XIHE_E2E_BROWSER_CHANNEL=chrome-beta + XIHE_E2E_EXTERNAL_SERVER=1 against a persistent stack; screenshots go to .tmp/xh-headed-walkthrough/runs/<runId>/, never to the repo)",
-      "llmMode": "mock",
-      "specs": ["e2e/headed"]
-    },
-    "goldpath-web": {
-      "description": "PLAN-0611 single-case candidate for smoke (pass --grep G2-e); keeps the ~1.5 min budget",
-      "llmMode": "success",
-      "firstRun": "local",
-      "bootstrapUser": "register",
-      "registrationPolicy": "open",
-      "specs": ["e2e/real/goldpath-first-run.spec.ts"]
-    },
     // L2 窗口批次化（task-44；协议 SSOT = internal/A03-xihe/docs/l2-window-protocol.md）：
     // 窗口维度是 run（一套隔离栈 + 一个钉靶 SHA），一个 run 可承接多个 PLAN 的验收项。
     // 下面这些字段里只有 description / llmMode / specs 被 e2e-host.mjs 直接读取
