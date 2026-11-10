@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { openContextPanel } from "../helpers/context-panel";
+import { ensureUserDefaultFakeConnection } from "./helpers/agent-principal";
 import {
     CP_URL,
     awaitOperationCompletedForRun,
@@ -101,6 +102,11 @@ test.describe("@host Session branch path", () => {
             },
         );
         expect(binding.status(), await binding.text()).toBe(200);
+        // task-158：instance profile 的严格解析要消费用户自己的 USER 连接，见 helper 注释。
+        await ensureUserDefaultFakeConnection(request, {
+            accessToken: journey.authToken,
+            workspaceId: journey.workspaceId,
+        });
 
         const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers: workspaceHeaders,

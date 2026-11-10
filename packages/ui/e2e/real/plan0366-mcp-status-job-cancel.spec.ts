@@ -9,6 +9,7 @@ import { seedUserGrant } from "./helpers/user-grants";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
+import { ensureUserDefaultFakeConnection } from "./helpers/agent-principal";
 import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-frozen";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
@@ -114,6 +115,11 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
             },
         );
         expect(binding.status(), await binding.text()).toBe(200);
+        // task-158：instance profile 的严格解析要消费用户自己的 USER 连接，见 helper 注释。
+        await ensureUserDefaultFakeConnection(request, {
+            accessToken: sharedAuth,
+            workspaceId: sharedWs,
+        });
 
         const sessionRes = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers: bootHeaders,
