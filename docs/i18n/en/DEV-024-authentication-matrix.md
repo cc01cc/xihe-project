@@ -14,7 +14,7 @@ updated: 2026-10-27
 
 > Audience: developers and reviewers who need to know "who authenticates this request, with which key".
 > Contents: credentials and verification points for seven paths, the key list, and the hard rules.
-> Prerequisite reading: [DEV-014 CP Architecture](DEV-014-control-plane-architecture.md), [DEV-016 MCP Architecture](DEV-016-mcp-architecture.md).
+> Prerequisite reading: [DEV-014 CP Architecture (zh)](../zh-Hans/DEV-014-control-plane-architecture.md), [DEV-016 MCP Architecture](DEV-016-mcp-architecture.md).
 > The target contract lives in `spec/security/authentication.md`; this page is the developer-facing expansion.
 
 ## 1. Summary

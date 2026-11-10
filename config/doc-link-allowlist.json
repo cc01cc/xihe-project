@@ -1,0 +1,10 @@
+{
+  "_rules": [
+    "This file only suppresses findings the checker has ALREADY reported: it never changes what gets scanned.",
+    "Only genuine false positives belong here — a link that is correct for a human but that the gate cannot resolve (e.g. it depends on a layout the gate does not model).",
+    "Every entry needs file (project-relative, forward slashes), url (the exact string the gate printed) and a non-empty reason.",
+    "Entries may only shrink: when an entry stops matching, mise run lint:links fails and asks for it to be deleted. Never add an entry to fake a pass.",
+    "Never weaken the scan scope to make this file unnecessary: every language tree under docs/i18n stays in scope (task-256)."
+  ],
+  "entries": []
+}

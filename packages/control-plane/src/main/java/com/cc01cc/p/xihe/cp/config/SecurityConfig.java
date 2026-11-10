@@ -76,6 +76,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/oauth/callback").permitAll()
                 .requestMatchers("/api/v1/health").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
+                // task-244 / PLAN-0763 D-800: springdoc debug surfaces are OFF by default
+                // (application.properties: springdoc.*.enabled=false). These permits only
+                // matter when a profile or XIHE_SPRINGDOC_ENABLED explicitly turns them on;
+                // with springdoc disabled the handlers do not exist, so the paths answer 404
+                // and the permit is unreachable rather than a standing anonymous hole.
                 .requestMatchers("/v3/api-docs/**").permitAll()
                 .requestMatchers("/swagger-ui/**").permitAll()
                 .requestMatchers("/swagger-ui.html").permitAll()

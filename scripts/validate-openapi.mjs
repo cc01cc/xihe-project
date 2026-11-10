@@ -9,7 +9,13 @@
 //   * a few hand-written *frozen contract slices* (checkpoint revert, session read projection);
 //   * it does NOT parse YAML, resolve $ref, validate against the OpenAPI 3.1 schema, or diff Spring
 //     routes against the documented paths — "implemented route missing from the contract" is NOT
-//     caught here (separate BL).
+//     caught here (BL-320 covers it in RouteContractParityTest).
+//   * it does NOT catch YAML *duplicate keys* either: oxfmt is a formatter, and duplicate keys are
+//     last-key-wins rather than a syntax error (task-246, measured — two such keys shipped here).
+//     Do not add a hand-rolled key scan; that coverage lives in
+//     packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/api/OpenApiDuplicateKeyTest.java
+//     (SnakeYAML compose walk, key path + line, shrink-only baseline), because the repo declares no
+//     YAML parser for Node and this gate must stay dependency-free and offline.
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'

@@ -27,7 +27,7 @@ tags:
 | ① | HTTP routes and request/response schemas | [`docs/api/openapi.yaml`](../../api/openapi.yaml) | [`docs/api/inventory.md`](../../api/inventory.md) (route inventory and semantic baseline) | **Complete** |
 | ② | Event stream SSE / AgentEvent | **no single schema body** | [`spec/protocol/event-stream.md`](../../../spec/protocol/event-stream.md) (lifecycle and ownership, `proposed`·`partial`) + OpenAPI descriptions + code | **Gap**: see §3 |
 | ③ | MCP tool surface | `docs/api/mcp-tools.md` (**in progress**, research-2) | [DEV-016](DEV-016-mcp-architecture.md) | **In progress** |
-| ④ | Persistence (schema / migrations) | [`packages/control-plane/src/main/resources/db/migration/`](../../../packages/control-plane/src/main/resources/db/migration/) | [DEV-019](DEV-019-database-schema.md) (schema quick reference) | **Complete** |
+| ④ | Persistence (schema / migrations) | [`packages/control-plane/src/main/resources/db/migration/`](../../../packages/control-plane/src/main/resources/db/migration/) | [DEV-019 (zh)](../zh-Hans/DEV-019-database-schema.md) (schema quick reference) | **Complete** |
 
 > Status meanings: **Complete** = a single authority exists and compliance can be judged from it; **In progress** = the authoritative file does not exist yet and a supporting surface stands in; **Gap** = no body exists that can freeze payloads, so code is the only source.
 
@@ -82,7 +82,7 @@ A document that **freezes, field by field**, the six session events `token` / `t
 
 ## 5. ④ Persistence
 
-- **Body**: `packages/control-plane/src/main/resources/db/migration/` — the Flyway migration directory **is** the schema source of truth ([DEV-019](DEV-019-database-schema.md) `:19` says so explicitly). Currently `V1..V150`, 142 scripts (verified 2026-11-10).
+- **Body**: `packages/control-plane/src/main/resources/db/migration/` — the Flyway migration directory **is** the schema source of truth ([DEV-019 (zh)](../zh-Hans/DEV-019-database-schema.md) `:19` says so explicitly). Currently `V1..V150`, 142 scripts (verified 2026-11-10).
 - **Supporting**: DEV-019 is a **domain-grouped schema quick reference** (conclusions first, constraints, indexes, local inspection). Good for "what columns does this table have", not for "what did a given migration change".
 - **Known drift**: DEV-019's migration table covers up to `V75` plus `V133/V134` rows; later migrations (e.g. `V148__plan0750_create_own_agent_atom.sql`, `V150__message_reasoning.sql`) exist **only in the directory** and are not listed row by row ⇒ for "when was this schema introduced", use **the migration filename and the directory**.
 
@@ -99,4 +99,4 @@ A document that **freezes, field by field**, the six session events `token` / `t
 - [DEV-001](DEV-001-system-architecture.md): global architecture and module boundaries (this page refines its **contract entry point** and does not repeat the architecture narrative).
 - [DEV-030](DEV-030-documentation-layout-and-frontmatter.md): document ownership and frontmatter rules (this page follows it).
 - `spec/README.md`: project-level SPEC entry (this page does not replace SPEC; it states which SPEC/body owns which contract class).
-- [DEV-018](DEV-018-known-issues.md): Known Issues entry; the missing payload body in ② is **not** registered there (that is a defect ledger — this is a documentation gap), and §3.2 here is its registration point.
+- [DEV-018 (zh)](../zh-Hans/DEV-018-known-issues.md): Known Issues entry; the missing payload body in ② is **not** registered there (that is a defect ledger — this is a documentation gap), and §3.2 here is its registration point.

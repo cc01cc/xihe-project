@@ -789,6 +789,17 @@ uv run python -m xihe_agent.main
 
 Or add Providers through the settings page: OpenAI, DeepSeek, Xiaomi MiMo, Anthropic presets + custom.
 
+### 6.4 springdoc debug surfaces (`/v3/api-docs`, `/swagger-ui/**`) — OFF by default (task-244 / PLAN-0763 D-800)
+
+`docs/api/openapi.yaml` is the single SSOT for the API wire contract; the CP's `/v3/api-docs` and Swagger UI are **debug/reconciliation artifacts** only. They are therefore **off by default** (`application.properties`: `springdoc.api-docs.enabled` / `springdoc.swagger-ui.enabled` = `${XIHE_SPRINGDOC_ENABLED:false}`), so packaged and production-facing deployments no longer expose the full route index anonymously.
+
+- **Enabling locally (one line)**:
+  - PowerShell: `$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`
+  - POSIX shell: `XIHE_SPRINGDOC_ENABLED=true mise run dev:host`
+- **Profiles that enable it automatically**: `dev` / `e2e` / `test` (`application-{dev,e2e}.properties`, `src/test/resources/application-test.properties`). `dev:host` runs the **default profile**, so it needs the env var above or an explicit `--spring.profiles.active=dev`.
+- **What "off" looks like**: `GET /v3/api-docs` and `/swagger-ui.html` return **404** (no handler). The three `permitAll` entries in `SecurityConfig` only matter when the surface is explicitly enabled — they are **not** a standing anonymous hole.
+- **Never use it as the contract or as a denominator**: it **under-reports** routes compared with the live `RequestMappingHandlerMapping` and does not include `/internal/**`; reconciliation always goes through `RouteContractParityTest` (live mapping).
+
 ## 7. Module Version Bump (PLAN-0534)
 
 The four modules version **independently**. Each manifest is the only authority;
