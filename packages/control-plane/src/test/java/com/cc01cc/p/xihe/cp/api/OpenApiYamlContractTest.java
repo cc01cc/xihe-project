@@ -689,4 +689,56 @@ class OpenApiYamlContractTest {
                     "PLAN-0750 M1: the contract must name the user-level create atom");
         }
     }
+
+    /**
+     * PLAN-0750 M1 (task-178, S3): the create operation's wire contract must express the
+     * <b>two-door</b> semantics instead of the former D-174 context precondition.
+     *
+     * <p>Why: G3=(b) + G1=(1a) turned a contextless {@code POST /api/v1/agent-principals} into the
+     * user-level door — it answers {@code 201} with the atom or {@code 403} naming the missing
+     * atom, and <b>never</b> {@code 409 WORKSPACE_CONTEXT_REQUIRED} any more. An explicit workspace
+     * context keeps the workspace-tier door verbatim. The contract must not keep declaring the dead
+     * {@code 409} — clients would keep building "you must pick a workspace" fallbacks off it.</p>
+     *
+     * <p>A/B-proven: re-adding the {@code 409} entry (or dropping either door's marker) turns this
+     * test red, not silent.</p>
+     */
+    @Test
+    void openApiCreateAgentPrincipalDeclaresTwoDoorSemanticsNotContextPrecondition() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        String raw = Files.readString(contract);
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            Map<?, ?> create = (Map<?, ?>) paths.get("/api/v1/agent-principals");
+            assertInstanceOf(Map.class, create, "agent-principals collection is contracted");
+            Map<?, ?> post = (Map<?, ?>) create.get("post");
+            assertInstanceOf(Map.class, post, "create is contracted");
+            Map<?, ?> createResponses = (Map<?, ?>) post.get("responses");
+
+            // Door outcomes: 201 (authorized create) and 403 (missing atom) are contracted…
+            assertTrue(createResponses.containsKey("201"),
+                    "the create must declare 201 (authorized door outcome)");
+            assertTrue(createResponses.containsKey("403"),
+                    "the create must declare 403 (missing-atom refusal)");
+            // …and the context precondition is gone: 409 is no longer a reachable outcome.
+            assertFalse(createResponses.containsKey("409"),
+                    "PLAN-0750 M1 two-door contract: a contextless create is 201/403, never 409 — "
+                            + "the dead WORKSPACE_CONTEXT_REQUIRED declaration must be removed, got "
+                            + createResponses.keySet());
+
+            // Both doors are named in the description, with their carriers:
+            // user-level = no workspace context + CREATE_OWN_AGENT; workspace-tier = explicit
+            // X-Workspace-Id + MANAGE_WORKSPACE_AGENTS.
+            String description = String.valueOf(post.get("description"));
+            assertTrue(description.contains("user-level create") && description.contains("CREATE_OWN_AGENT"),
+                    "the user-level door (no workspace context, CREATE_OWN_AGENT) must be named: "
+                            + description);
+            assertTrue(description.contains("workspace-tier create") && description.contains("MANAGE_WORKSPACE_AGENTS"),
+                    "the workspace-tier door (explicit context, MANAGE_WORKSPACE_AGENTS) must be named: "
+                            + description);
+            assertTrue(description.contains("X-Workspace-Id"),
+                    "G3=(b): the workspace context stays a header carrier, never a body field");
+        }
+    }
 }
