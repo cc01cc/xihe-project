@@ -1,0 +1,15 @@
+# Redocly 配置（dev-only 工具，见 plans/PLAN-0763）。
+# 定位：规范级自洽校验（$ref 可解析 / operationId 唯一 / 无 unused component / tag 规范）。
+# 与另外三条轴严格分工：语法+冻结切片 = check:openapi(BL-162)；contract↔code = RouteContractParityTest(BL-320)；
+# doc↔contract = check:api-docs(生成器 --check)。四轴不许混。
+extends:
+  - recommended
+
+rules:
+  # 本轮先只报告、不阻断：存量 warning 数未知，进门禁前必须先清账（见 PLAN-0763 design）。
+  no-unused-components: warn
+  operation-4xx-response: warn
+
+apis:
+  xihe@latest:
+    root: ./docs/api/openapi.yaml

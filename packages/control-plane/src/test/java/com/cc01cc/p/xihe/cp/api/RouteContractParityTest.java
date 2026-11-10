@@ -128,6 +128,7 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/chat", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/embedding-models", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/health", AGENT_SERVICE);
+        EXEMPT_DOCUMENTED.put("/internal/v1/agent/judge/decide", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/mcp/reinit", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/models", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/rag/documents/{}/delete", AGENT_SERVICE);
@@ -138,6 +139,7 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/registry/workers", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/registry/workers/{}/disable", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/registry/workers/{}/enable", AGENT_SERVICE);
+        EXEMPT_DOCUMENTED.put("/internal/v1/agent/runs/{}/cancel", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/summarize", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/tools", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/user-question/respond", AGENT_SERVICE);
