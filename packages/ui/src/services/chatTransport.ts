@@ -14,6 +14,15 @@ export interface ChatTransportOptions {
     signal?: AbortSignal;
 }
 
+/**
+ * R1（task-101）：连接寿命达到此阈值才算「健康」，健康才把 `reconnectAttempt` 清零。
+ *
+ * 为什么不是「收到过事件就清零」：CP 心跳 15 s（WorkspaceEventManager.java:54），而
+ * 「先回放事件再关流」场景下每次连接都会收到事件 ⇒ 那样退化成每次重连都清零，
+ * 250 ms 的 churn 会原样保留。连接寿命是本层唯一可靠可观测的「健康」证据。
+ */
+export const SSE_HEALTHY_CONNECTION_MS = 30_000;
+
 export interface ChatTransportState {
     isConnected: boolean;
     isConnecting: boolean;
@@ -30,6 +39,8 @@ class ChatTransportImpl {
     private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private intentionalStops = new Set<string>();
     private generations = new Map<string, number>();
+    /** R1（task-101）：本次连接的开流时刻，用来判「连接是否健康」，不是「是否连上」。 */
+    private openedAt = new Map<string, number>();
 
     getState(sessionId: string): ChatTransportState {
         return (
@@ -71,6 +82,7 @@ class ChatTransportImpl {
     stop(sessionId: string): void {
         this.intentionalStops.add(sessionId);
         this.clearReconnectTimer(sessionId);
+        this.openedAt.delete(sessionId);
         this.connectionOptions.delete(sessionId);
         this.lastEventIds.delete(sessionId);
         const controller = this.controllers.get(sessionId);
@@ -146,11 +158,10 @@ class ChatTransportImpl {
                     }
                     if (!this.isCurrent(sessionId, generation, controller)) return;
                     errorReported = false;
-                    this.setState(sessionId, {
-                        isConnected: true,
-                        isConnecting: false,
-                        reconnectAttempt: 0,
-                    });
+                    // R1（task-101）：这里原来无条件把 reconnectAttempt 归零 ⇒ 退避永不增长。
+                    // 现在只记录开流时刻，健康与否等连接结束时结算。
+                    this.openedAt.set(sessionId, Date.now());
+                    this.setState(sessionId, { isConnected: true, isConnecting: false });
                     await options.onopen?.(response);
                 },
                 onmessage: (msg) => {
@@ -206,6 +217,7 @@ class ChatTransportImpl {
                             : "clean_close",
                     });
                     this.setState(sessionId, { isConnected: false, isConnecting: false });
+                    this.settleHealth(sessionId);
                     void options.onclose?.();
                     if (!this.intentionalStops.has(sessionId)) {
                         this.scheduleReconnect(sessionId, options);
@@ -226,6 +238,7 @@ class ChatTransportImpl {
                 });
                 await options.onerror?.(err);
             }
+            this.settleHealth(sessionId);
             if (
                 err.name !== "AbortError" &&
                 !this.isFatalError(err) &&
@@ -238,6 +251,22 @@ class ChatTransportImpl {
                 this.controllers.delete(sessionId);
                 this.setState(sessionId, { isConnected: false, isConnecting: false });
             }
+        }
+    }
+
+    /**
+     * R1（task-101）：连接结束时结算「健康」，健康才清退避计数。
+     *
+     * 只在关闭/失败两处结算 —— 在 `onmessage` 里提前结算会退化成「收到事件就清零」，
+     * 那正是被 CP 回放心跳场景否掉的规则。
+     */
+    private settleHealth(sessionId: string): void {
+        const openedAt = this.openedAt.get(sessionId);
+        this.openedAt.delete(sessionId);
+        // 从未进入 onopen（连接失败）⇒ 不算健康，退避继续增长
+        if (openedAt === undefined) return;
+        if (Date.now() - openedAt >= SSE_HEALTHY_CONNECTION_MS) {
+            this.setState(sessionId, { reconnectAttempt: 0 });
         }
     }
 
