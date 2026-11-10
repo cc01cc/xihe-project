@@ -503,6 +503,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     const logDirs = readdirSync(hostRoot)
         .filter(
             (d) =>
+                d === runBase ||
                 d === e2eRunId ||
                 (d.startsWith(runBase) && /^-r\d+$/.test(d.slice(runBase.length))),
         )

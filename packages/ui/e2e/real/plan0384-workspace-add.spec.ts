@@ -1,5 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { chooseRekaOption } from "./helpers/reka-select";
@@ -50,9 +50,16 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
 
         const runId = process.env.XIHE_E2E_RUN_ID;
         if (!runId) throw new Error("PLAN-0384 host E2E requires the isolated e2e-host runner");
-        hostRoot = path.resolve(process.cwd(), "../../.tmp/e2e-host", runId);
-        if (!existsSync(hostRoot))
-            throw new Error(`isolated host root does not exist: ${hostRoot}`);
+        // BL-547（task-175）：runner 进程内重试会把 host root 改名为 <runId>-rN；原路径
+        // 在重试轮直接不存在。回退扫描同基名的轮次目录（基目录必有）。
+        const hostBase = path.resolve(process.cwd(), "../../.tmp/e2e-host");
+        const runBase = runId.replace(/-r\d+$/, "");
+        hostRoot =
+            [runId, runBase, ...readdirSync(hostBase).filter((d) => d.startsWith(runBase))]
+                .map((d) => path.resolve(hostBase, d))
+                .find((dir) => existsSync(dir)) ?? "";
+        if (!hostRoot)
+            throw new Error(`isolated host root does not exist under ${hostBase} for ${runId}`);
         addDir = path.join(hostRoot, `xihe-e2e-0384-${Date.now()}`);
         mkdirSync(addDir, { recursive: true });
 
