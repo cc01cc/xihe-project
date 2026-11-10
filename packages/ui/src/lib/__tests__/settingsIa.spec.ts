@@ -155,21 +155,27 @@ describe("settings IA resource groups (PLAN-0752 T4.0/T4.1)", () => {
         expect(items.every((item) => !!item.gapNoteKey)).toBe(true);
     });
 
-    it("user layer has exactly one real resource entry and two gapped ones", () => {
+    it("user layer has two real resource entries and one gapped one (PLAN-0750 M3)", () => {
         const items = userResourceGroup();
         expect(items.map((item) => item.id)).toEqual([
             "my-agents",
             "my-credentials",
             "knowledge-mcp",
         ]);
+        // PLAN-0750 M3（矩阵 U3）：用户级创建入口落地后，「我的智能体」从缺口转真入口。
         const real = items.filter((item) => item.path);
-        expect(real).toHaveLength(1);
-        expect(real[0]?.id).toBe("my-credentials");
-        // 已有后端承载的项指向已实现页面
-        expect(real[0]?.path).toBe("/settings/credentials");
-        expect(items.filter((item) => !item.path).map((item) => item.gaps)).toEqual([
-            ["G4"],
-            ["G1", "G3"],
+        expect(real.map((item) => item.id)).toEqual(["my-agents", "my-credentials"]);
+        expect(real.map((item) => item.path)).toEqual([
+            "/settings/my-agents",
+            "/settings/credentials",
         ]);
+        // 缺口机制本身必须留着：knowledge-mcp 仍按 D7 留位（G1/G3）。
+        const gaps = items.filter((item) => !item.path);
+        expect(gaps.map((item) => item.id)).toEqual(["knowledge-mcp"]);
+        expect(gaps.map((item) => item.gaps)).toEqual([["G1", "G3"]]);
+        // 「我的智能体」不再是缺口：既没有 gaps，也没有缺口说明文案键。
+        const myAgents = items.find((item) => item.id === "my-agents");
+        expect(myAgents?.gaps).toBeUndefined();
+        expect(myAgents?.gapNoteKey).toBeUndefined();
     });
 });

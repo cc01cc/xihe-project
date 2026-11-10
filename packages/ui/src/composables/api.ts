@@ -682,6 +682,23 @@ export interface AgentPrincipalCreateResponse {
     allowedModels?: AgentModelRef[] | null;
 }
 
+/**
+ * PLAN-0750 M3 (R3): a row of the **personal** view — `GET /api/v1/agent-principals` with no
+ * `workspaceId` query answers only the caller's own creations (`created_by_user_id`), not the
+ * rows they merely own. Richer than {@link AgentPrincipalOption} because the user-level page
+ * renders createdAt/disabled/model, but never `ownerUserId` (that stays a server-side notion).
+ */
+export interface AgentPrincipalSummary {
+    principalId: string;
+    name: string;
+    templateId: string | null;
+    templateName: string | null;
+    createdAt: string;
+    disabled: boolean;
+    defaultModelProvider?: string | null;
+    defaultModelName?: string | null;
+}
+
 export interface AgentTemplateSummary {
     id: string;
     name: string;
@@ -3153,6 +3170,46 @@ export const api = {
             return [{ principalId, name }];
         });
     },
+    /**
+     * PLAN-0750 M3 / R3: the **personal** view — `GET /api/v1/agent-principals` with no
+     * `workspaceId` query param.
+     *
+     * <p>Deliberately no `?workspaceId=`: the CP branches on that param alone
+     * (`AgentPrincipalService#listPrincipals`), so omitting it is what selects "my creations" rather
+     * than a workspace's agent list. The `X-Workspace-Id` header is irrelevant here — the CP read
+     * path never consults `TenantContext` for this decision — so no header juggling is needed on
+     * this call (contrast {@link createOwnAgentPrincipal}).</p>
+     */
+    async listMyAgentPrincipals(): Promise<AgentPrincipalSummary[]> {
+        const raw = await request<{ principals?: Array<Record<string, unknown>> }>(
+            "/agent-principals",
+        );
+        if (!Array.isArray(raw.principals)) {
+            console.warn("[my-agents] agent principal envelope malformed; treated as empty");
+            return [];
+        }
+        return raw.principals.flatMap((row) => {
+            const principalId = typeof row.principalId === "string" ? row.principalId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!principalId || !name) return [];
+            return [
+                {
+                    principalId,
+                    name,
+                    templateId: typeof row.templateId === "string" ? row.templateId : null,
+                    templateName: typeof row.templateName === "string" ? row.templateName : null,
+                    createdAt: typeof row.createdAt === "string" ? row.createdAt : "",
+                    disabled: typeof row.disabledAt === "string" && row.disabledAt.length > 0,
+                    defaultModelProvider:
+                        typeof row.defaultModelProvider === "string"
+                            ? row.defaultModelProvider
+                            : null,
+                    defaultModelName:
+                        typeof row.defaultModelName === "string" ? row.defaultModelName : null,
+                },
+            ];
+        });
+    },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         const raw = await request<{ agents: Array<Record<string, unknown>> }>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
@@ -3539,6 +3596,61 @@ export const api = {
         }
         return request<AgentPrincipalCreateResponse>("/agent-principals", {
             method: "POST",
+            body: JSON.stringify(body),
+        });
+    },
+    /**
+     * PLAN-0750 M3 / matrix **U1**: create an agent principal **for myself**, with no workspace
+     * context, so the CP takes the `CREATE_OWN_AGENT` door instead of `MANAGE_WORKSPACE_AGENTS`.
+     *
+     * <p><b>Why a separate method and not "just don't send workspaceId".</b> Leaving `workspaceId`
+     * out of the body is necessary but <i>not</i> sufficient, because the workspace context on the
+     * wire is a <b>header</b>, not a body field:</p>
+     *
+     * <ol>
+     *   <li>{@link apiAuthHeaders} auto-injects `X-Workspace-Id` from the tab workspace on **every**
+     *       request when the caller supplied no such key ({@code hasWorkspaceHeader} only checks key
+     *       presence, case-insensitively). The router guard writes that tab workspace whenever a
+     *       route carries a `workspaceId` param, and navigating to `/settings/**` does not clear
+     *       it — so a user who merely visited a workspace in this tab would still send the
+     *       header.</li>
+     *   <li>{@code TenantContextInterceptor} turns any **non-blank** `X-Workspace-Id` into
+     *       `workspaceSource="header"`.</li>
+     *   <li>{@code AgentPrincipalService#currentWorkspaceContext} returns that id for every source
+     *       except `null`/`"default"`, and {@code requireCreationAction} then demands
+     *       `MANAGE_WORKSPACE_AGENTS` <i>in that workspace</i> — a 403 for an ordinary USER, even
+     *       though they hold `CREATE_OWN_AGENT`.</li>
+     * </ol>
+     *
+     * <p>So this method sends the header <b>explicitly blank</b>: the key's presence satisfies
+     * `hasWorkspaceHeader` (suppressing the auto-inject) while the blank value is skipped by the
+     * interceptor's `!isBlank()` guard. The request then resolves to the implicit
+     * "first active workspace" fallback with `source="default"`, which
+     * `currentWorkspaceContext()` maps to `null` ⇒ the user-level door. Production access tokens
+     * are minted without a `workspace_id` claim, so the legacy claim path cannot reintroduce a
+     * context; and if a proxy ever strips the empty header the outcome is identical to "sent
+     * nothing".</p>
+     *
+     * <p><b>Do not fold this into {@link createAgentPrincipal}.</b> The workspace surface
+     * (`WorkspaceAgentsPanel`) relies on the auto-injected header to reach the
+     * `MANAGE_WORKSPACE_AGENTS` door; suppressing it there would silently re-route workspace
+     * creation into user-level creation (matrix U2 keeps that single workspace gate as-is).</p>
+     */
+    createOwnAgentPrincipal(
+        input: AgentPrincipalCreateInput,
+    ): Promise<AgentPrincipalCreateResponse> {
+        const body: Record<string, unknown> = { name: input.name };
+        if (input.templateId) body.templateId = input.templateId;
+        if (input.defaultModelProvider) body.defaultModelProvider = input.defaultModelProvider;
+        if (input.defaultModelName) body.defaultModelName = input.defaultModelName;
+        if (input.allowedModels && input.allowedModels.length > 0) {
+            body.allowedModels = input.allowedModels;
+        }
+        return request<AgentPrincipalCreateResponse>("/agent-principals", {
+            method: "POST",
+            // Matrix U1 — see the method docs: a blank explicit header is the "no workspace
+            // context" marker; it is not a workspace id and must never become one.
+            headers: { "X-Workspace-Id": "" },
             body: JSON.stringify(body),
         });
     },

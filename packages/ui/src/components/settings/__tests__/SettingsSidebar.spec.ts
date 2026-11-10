@@ -180,22 +180,22 @@ describe("SettingsSidebar", () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
-        // 实例层「实例资源」4 条全缺口；用户层「我的资源」2 缺口 + 1 真入口
+        // 实例层「实例资源」4 条全缺口；用户层「我的资源」1 缺口 + 2 真入口（PLAN-0750 M3）
         const groups = wrapper.findAll('[data-testid="settings-nav-resource-group"]');
         expect(groups).toHaveLength(2);
         expect(groups[0]!.text()).toContain("实例资源");
         expect(groups[1]!.text()).toContain("我的资源");
         const gaps = wrapper.findAll('[data-testid^="settings-nav-resource-gap-"]');
-        expect(gaps).toHaveLength(6);
+        // PLAN-0750 M3：my-agents 从缺口转真入口 ⇒ 缺口槽从 6 降到 5（机制保留，见下一条断言）。
+        expect(gaps).toHaveLength(5);
         expect(gaps.map((gap) => gap.attributes("data-gap-codes"))).toEqual([
             "G4",
             "G1",
             "G2",
             "G3",
-            "G4",
             "G1,G3",
         ]);
-        // 唯一有后端承载的资源项是「我的凭据」→ 已实现的凭据页
+        // 有后端承载的资源项：「我的智能体」→ /settings/my-agents，「我的凭据」→ /settings/credentials
         // 只留真入口：排除分组容器本身（它也叫 settings-nav-resource-group）与缺口按钮
         const real = wrapper.findAll('[data-testid^="settings-nav-resource-"]').filter((node) => {
             const id = node.attributes("data-testid") ?? "";
@@ -203,9 +203,11 @@ describe("SettingsSidebar", () => {
                 id !== "settings-nav-resource-group" && !id.startsWith("settings-nav-resource-gap-")
             );
         });
-        expect(real).toHaveLength(1);
-        expect(real[0]!.attributes("data-testid")).toBe("settings-nav-resource-my-credentials");
-        expect(real[0]!.text()).toBe("我的凭据");
+        expect(real.map((node) => node.attributes("data-testid"))).toEqual([
+            "settings-nav-resource-my-agents",
+            "settings-nav-resource-my-credentials",
+        ]);
+        expect(real.map((node) => node.text())).toEqual(["我的智能体", "我的凭据"]);
     });
 
     it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {

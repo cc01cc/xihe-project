@@ -154,6 +154,18 @@ const router = createRouter({
                     meta: { settingsLayer: "user" },
                 },
                 {
+                    // PLAN-0750 M3（矩阵 U3）：用户层「我的智能体」落地页。
+                    // **不是**工作区「工作区设置 → 智能体」的复制品：本页只承担
+                    // ①个人视图列表（R3：CP 只回 created_by=self）
+                    // ②无工作区上下文的创建（U1：走 CREATE_OWN_AGENT，不是 MANAGE_WORKSPACE_AGENTS）
+                    // ③卡片上的「绑定到工作区」动作（R1 的显式绑定面）。
+                    // 工作区侧的创建入口保持只有 WorkspaceAgentsPanel 那一个（U2：不改造单门）。
+                    path: "my-agents",
+                    name: "settings-my-agents",
+                    component: () => import("../views/settings/MyAgentsView.vue"),
+                    meta: { settingsLayer: "user" },
+                },
+                {
                     // PLAN-0752 T4.4（task-91）：知识库**只有工作区承载**（T4.3：CP 无库表、按 workspace 分区），
                     // 而这条 user 层路由没有任何导航指向它 —— 保留它等于留一个「点得到的用户层知识库」幽灵页。
                     // 因此改成工作区重定向：有当前工作区 ⇒ 落到工作区设置的「知识库」tab；没有 ⇒ 回工作区选择面。
