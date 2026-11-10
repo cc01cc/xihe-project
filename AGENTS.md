@@ -75,7 +75,7 @@
   | 规范级自洽（`$ref` 可解析 / `operationId` 唯一 / 无 unused） | `check:openapi:lint`（redocly，dev-only，**report-only 起步**） |
   | doc ↔ contract | `check:api-docs`（生成器 `--check`，PLAN-0763 M4） |
 
-- **`/v3/api-docs` 降级为调试产物**：它不是契约，任何人不得拿它当文档引用，也不得拿它当「实现侧分母」（实测比 live mapping 少报 15 条路由；springdoc 会漏报）。
+- **各服务运行时原生文档一律降级为调试/对账产物**：CP 的 `/v3/api-docs` 与 Agent（FastAPI）的 `/openapi.json` **都不是契约**，不得当文档引用、也不得当「实现侧分母」。实测 springdoc 比 live mapping **少报 15 条路由**，且**完全不收录 `/internal/**`**（yaml 独有 84 条里 64 条是 `/internal/`）。**Agent 的 HTTP 面 SSOT 同样是本 yaml**（`/internal/v1/agent/**` 26 条），其 `/openapi.json` 只用于漂移对账（PLAN-0763）。
 - **配置域 `{domain}`**：合法集合由 `classpath:config-schemas/*.json` 决定（13 个域，`ConfigDomainSchema` 启动加载）。yaml 侧用 `enum` 声明同一集合，另设一道门断言「yaml enum 集合 == schema 文件名集合」。**json 承载每域字段结构、enum 承载域名名单，二者不可互替**；新增域 = 加一份 schema + 加一个 enum 值，门会拦住单边改动。
 - 分组与快照：`openapi.yaml` 用 `tags`（operation 级）+ `x-tagGroups`（两级：public 17 / internal 3）；MCP tool 面见 [`docs/api/mcp-tools.md`](docs/api/mcp-tools.md)（**权威是 `tools/list` 握手，文档是快照**）。契约地图见 [`DEV-034`](docs/i18n/zh-Hans/DEV-034-spec-contract-map.md)。
 
