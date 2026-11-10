@@ -1,6 +1,6 @@
 ---
 name: team-roles
-description: XH 交付线在 DSH 中的常驻团队角色化（正式；仅 DSH）：verify/dev-1/dev-2/ops/research-1/research-2 分层、成员命名=角色名+数字序号、并行上限与编译位、测量窗值班、idle/回收、临时席登记与交接契约联动。在 DSH 下派多成员并行、起常驻位或写交接档时加载。
+description: XH 交付线在 DSH 中的常驻团队工位制（正式；仅 DSH）：模块工位 ui-1/cp-1/agent-1/runtime-1（各管一条常驻模块分支 m/<module>）+ 职能工位 infra-N（交付基础设施：队列/窗口/分支模型/交接校验器/mise.toml/scripts 门脚本，判据是「坏了会让别的结论失真」）/ verify（窗口读数）/ research-N / lead；工位名持久而成员名仅本会话（D-815）、并行上限与编译位、测量窗值班、空岗须写「当前无在办」、idle 回收、临时席登记与交接契约联动。在 DSH 下派多成员并行、起常驻位或写交接档时加载。
 ---
 
 # XH 常驻团队 · 工位制（DSH 专用；正式）
@@ -9,7 +9,7 @@ description: XH 交付线在 DSH 中的常驻团队角色化（正式；仅 DSH�
 >
 > 2026-11-09 由试行转正式（用户裁定）。**2026-11-11 改为工位制（D-810 / D-811 / D-815）**：角色不再是「施工/运维/调研」的功能分层，而是**按模块与交付基础设施划分的工位**。本文件是 XH 团队流程的**唯一正文**；实例参数（谁在岗、lane 槽、资源实测值）见 `one/internal/A03-xihe/docs/team-roster.md`，冲突以本文件为准。
 >
-> ⚠️ **frontmatter 的 `description` 仍是旧角色名**（`verify/dev-1/dev-2/ops/research-1/research-2`）—— 改它是**结构级变更**（需用户批准），本会话只改正文。**正文以本文件为准，frontmatter 是历史描述。**
+> **frontmatter 的 `description` 已于 2026-11-11 同步为工位制口径**（结构级字段变更，Lead 已批 D-819）；`name: team-roles` 未动。
 
 ## 1 工位分层（模块工位 4 + 职能工位 4）
 
