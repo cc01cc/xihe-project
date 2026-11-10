@@ -180,10 +180,11 @@ async function http(method, path, { token, body, timeoutMs = 20000, redirect = "
     const url = path.startsWith("http") ? path : `${CFG.cpUrl}${path}`;
     const headers = { Accept: "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
-    // PLAN-0622: a WORKSPACE-scope write (agent-principal create, workspace-layer
-    // config write) must name the workspace explicitly; the CP's "first active
-    // membership" fallback is a read convenience only and answers 409
-    // WORKSPACE_CONTEXT_REQUIRED on writes.
+    // PLAN-0622: workspace-layer config writes must name the workspace explicitly — the CP's
+    // "first active membership" fallback is a read convenience only and still answers 409
+    // WORKSPACE_CONTEXT_REQUIRED on those. PLAN-0750 M1: an agent-principal create without the
+    // header is the user-level door (CREATE_OWN_AGENT => 201, missing atom => 403), so this
+    // helper sends the header to take the workspace door, never to dodge a precondition.
     if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const response = await fetch(url, {
