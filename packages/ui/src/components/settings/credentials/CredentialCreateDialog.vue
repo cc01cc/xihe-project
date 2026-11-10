@@ -12,6 +12,7 @@ import DialogFooter from "../../ui/dialog/DialogFooter.vue";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../ui/select";
+import { FieldControl, FieldError, FieldLabel, FieldRoot, FormRoot } from "reka-ui";
 import { api, ApiError, type ApiWorkspace } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useCredentialsStore } from "../../../stores/credentials";
@@ -45,7 +46,8 @@ const label = ref(""),
     accessKeyVisible = ref(false),
     secretKeyVisible = ref(false),
     submitting = ref(false),
-    formError = ref("");
+    /** PLAN-0753 M2: server-side errors keyed by field name, cleared by reka on edit. */
+    serverErrors = ref<Record<string, string | string[]>>({});
 
 const workspaces = ref<ApiWorkspace[]>([]),
     workspacesLoading = ref(false);
@@ -63,7 +65,7 @@ function reset() {
     accessKeyVisible.value = false;
     secretKeyVisible.value = false;
     submitting.value = false;
-    formError.value = "";
+    serverErrors.value = {};
 }
 
 watch(
@@ -92,27 +94,26 @@ async function ensureWorkspaces() {
     }
 }
 
-function validate(): string {
-    if (!label.value.trim()) return t("credentials.errLabelRequired");
-    if (kind.value === "token") {
-        if (!token.value) return t("credentials.errTokenRequired");
-    } else if (!accessKey.value || !secretKey.value) {
-        return t("credentials.errKeyPairRequired");
-    }
-    if (ownerType.value === "WORKSPACE" && !workspaceId.value) {
-        return t("credentials.errWorkspaceRequired");
-    }
-    return "";
+/** PLAN-0753 M2: field rules — one per `FieldRoot.validate`, each a pure function of the value. */
+function validateLabel(value: unknown): string | null {
+    const raw = typeof value === "string" ? value : "";
+    return raw.trim() ? null : t("credentials.errLabelRequired");
+}
+function validateToken(value: unknown): string | null {
+    return typeof value === "string" && value ? null : t("credentials.errTokenRequired");
+}
+function validateKeyPair(value: unknown): string | null {
+    const raw = typeof value === "string" ? value : "";
+    return raw ? null : t("credentials.errKeyPairRequired");
+}
+function validateWorkspace(value: unknown): string | null {
+    const raw = typeof value === "string" ? value : "";
+    return raw ? null : t("credentials.errWorkspaceRequired");
 }
 
 async function submit() {
-    const error = validate();
-    if (error) {
-        formError.value = error;
-        return;
-    }
     submitting.value = true;
-    formError.value = "";
+    serverErrors.value = {};
     try {
         await store.create({
             label: label.value.trim(),
@@ -129,7 +130,7 @@ async function submit() {
         emit("created");
         emit("close");
     } catch (e) {
-        formError.value = credentialErrorText(e, t);
+        serverErrors.value = { __form: credentialErrorText(e, t) };
         if (!(e instanceof ApiError)) {
             logger.warn("Credential create failed", e);
         }
@@ -146,25 +147,34 @@ async function submit() {
                 <DialogTitle>{{ t("credentials.createTitle") }}</DialogTitle>
                 <DialogDescription>{{ t("credentials.createDesc") }}</DialogDescription>
             </DialogHeader>
-            <form class="space-y-4" @submit.prevent="submit">
-                <div class="space-y-1.5">
-                    <label class="text-sm font-medium" for="credential-label">{{
-                        t("credentials.label")
-                    }}</label>
-                    <Input
-                        id="credential-label"
-                        v-model="label"
-                        data-testid="credentials-create-label"
-                        :maxlength="128"
-                        autocomplete="off"
+            <FormRoot
+                class="space-y-4"
+                :errors="serverErrors"
+                @form-submit="submit"
+            >
+                <FieldRoot name="label" class="space-y-1.5" :validate="validateLabel" required>
+                    <FieldLabel class="text-sm font-medium">
+                        {{ t("credentials.label") }}
+                    </FieldLabel>
+                    <FieldControl as-child>
+                        <Input
+                            v-model="label"
+                            data-testid="credentials-create-label"
+                            :maxlength="128"
+                            autocomplete="off"
+                        />
+                    </FieldControl>
+                    <FieldError
+                        class="text-xs text-destructive"
+                        data-testid="credentials-create-label-error"
                     />
-                </div>
+                </FieldRoot>
 
                 <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-kind">{{
-                            t("credentials.kind")
-                        }}</label>
+                    <FieldRoot name="kind" class="space-y-1.5">
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.kind") }}
+                        </FieldLabel>
                         <Select
                             :model-value="kind"
                             @update:model-value="
@@ -172,7 +182,6 @@ async function submit() {
                             "
                         >
                             <SelectTrigger
-                                id="credential-kind"
                                 data-testid="credentials-create-kind"
                                 class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                             >
@@ -187,11 +196,11 @@ async function submit() {
                                 }}</SelectItem>
                             </SelectContent>
                         </Select>
-                    </div>
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-tier">{{
-                            t("credentials.tier")
-                        }}</label>
+                    </FieldRoot>
+                    <FieldRoot name="deliveryTier" class="space-y-1.5">
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.tier") }}
+                        </FieldLabel>
                         <Select
                             :model-value="deliveryTier"
                             @update:model-value="
@@ -199,7 +208,6 @@ async function submit() {
                             "
                         >
                             <SelectTrigger
-                                id="credential-tier"
                                 data-testid="credentials-create-tier"
                                 class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                             >
@@ -214,7 +222,7 @@ async function submit() {
                                 }}</SelectItem>
                             </SelectContent>
                         </Select>
-                    </div>
+                    </FieldRoot>
                 </div>
                 <p
                     data-testid="credentials-create-tier-hint"
@@ -228,10 +236,10 @@ async function submit() {
                 </p>
 
                 <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-owner">{{
-                            t("credentials.owner")
-                        }}</label>
+                    <FieldRoot name="ownerType" class="space-y-1.5">
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.owner") }}
+                        </FieldLabel>
                         <Select
                             :model-value="ownerType"
                             @update:model-value="
@@ -239,7 +247,6 @@ async function submit() {
                             "
                         >
                             <SelectTrigger
-                                id="credential-owner"
                                 data-testid="credentials-create-owner"
                                 class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                             >
@@ -254,18 +261,23 @@ async function submit() {
                                 }}</SelectItem>
                             </SelectContent>
                         </Select>
-                    </div>
-                    <div v-if="ownerType === 'WORKSPACE'" class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-workspace">{{
-                            t("credentials.ownerWorkspaceSelect")
-                        }}</label>
+                    </FieldRoot>
+                    <FieldRoot
+                        v-if="ownerType === 'WORKSPACE'"
+                        name="workspaceId"
+                        class="space-y-1.5"
+                        :validate="validateWorkspace"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.ownerWorkspaceSelect") }}
+                        </FieldLabel>
                         <Select
                             :model-value="workspaceId"
                             :disabled="workspacesLoading"
                             @update:model-value="(value) => (workspaceId = String(value))"
                         >
                             <SelectTrigger
-                                id="credential-workspace"
                                 data-testid="credentials-create-workspace"
                                 class="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                             >
@@ -281,21 +293,32 @@ async function submit() {
                                 </SelectItem>
                             </SelectContent>
                         </Select>
-                    </div>
+                        <FieldError
+                            class="text-xs text-destructive"
+                            data-testid="credentials-create-workspace-error"
+                        />
+                    </FieldRoot>
                 </div>
 
-                <div v-if="kind === 'token'" class="space-y-1.5">
-                    <label class="text-sm font-medium" for="credential-token">{{
-                        t("credentials.token")
-                    }}</label>
+                <FieldRoot
+                    v-if="kind === 'token'"
+                    name="token"
+                    class="space-y-1.5"
+                    :validate="validateToken"
+                    required
+                >
+                    <FieldLabel class="text-sm font-medium">
+                        {{ t("credentials.token") }}
+                    </FieldLabel>
                     <div class="flex items-center gap-2">
-                        <Input
-                            id="credential-token"
-                            v-model="token"
-                            data-testid="credentials-create-token"
-                            :type="tokenVisible ? 'text' : 'password'"
-                            autocomplete="off"
-                        />
+                        <FieldControl as-child>
+                            <Input
+                                v-model="token"
+                                data-testid="credentials-create-token"
+                                :type="tokenVisible ? 'text' : 'password'"
+                                autocomplete="off"
+                            />
+                        </FieldControl>
                         <Button
                             type="button"
                             variant="ghost"
@@ -312,20 +335,30 @@ async function submit() {
                             <Eye v-else aria-hidden="true" />
                         </Button>
                     </div>
-                </div>
+                    <FieldError
+                        class="text-xs text-destructive"
+                        data-testid="credentials-create-token-error"
+                    />
+                </FieldRoot>
                 <template v-else>
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-access-key">{{
-                            t("credentials.accessKey")
-                        }}</label>
+                    <FieldRoot
+                        name="accessKey"
+                        class="space-y-1.5"
+                        :validate="validateKeyPair"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.accessKey") }}
+                        </FieldLabel>
                         <div class="flex items-center gap-2">
-                            <Input
-                                id="credential-access-key"
-                                v-model="accessKey"
-                                data-testid="credentials-create-access-key"
-                                :type="accessKeyVisible ? 'text' : 'password'"
-                                autocomplete="off"
-                            />
+                            <FieldControl as-child>
+                                <Input
+                                    v-model="accessKey"
+                                    data-testid="credentials-create-access-key"
+                                    :type="accessKeyVisible ? 'text' : 'password'"
+                                    autocomplete="off"
+                                />
+                            </FieldControl>
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -342,19 +375,29 @@ async function submit() {
                                 <Eye v-else aria-hidden="true" />
                             </Button>
                         </div>
-                    </div>
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-secret-key">{{
-                            t("credentials.secretKey")
-                        }}</label>
+                        <FieldError
+                            class="text-xs text-destructive"
+                            data-testid="credentials-create-access-key-error"
+                        />
+                    </FieldRoot>
+                    <FieldRoot
+                        name="secretKey"
+                        class="space-y-1.5"
+                        :validate="validateKeyPair"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.secretKey") }}
+                        </FieldLabel>
                         <div class="flex items-center gap-2">
-                            <Input
-                                id="credential-secret-key"
-                                v-model="secretKey"
-                                data-testid="credentials-create-secret-key"
-                                :type="secretKeyVisible ? 'text' : 'password'"
-                                autocomplete="off"
-                            />
+                            <FieldControl as-child>
+                                <Input
+                                    v-model="secretKey"
+                                    data-testid="credentials-create-secret-key"
+                                    :type="secretKeyVisible ? 'text' : 'password'"
+                                    autocomplete="off"
+                                />
+                            </FieldControl>
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -371,15 +414,19 @@ async function submit() {
                                 <Eye v-else aria-hidden="true" />
                             </Button>
                         </div>
-                    </div>
+                        <FieldError
+                            class="text-xs text-destructive"
+                            data-testid="credentials-create-secret-key-error"
+                        />
+                    </FieldRoot>
                 </template>
 
                 <p
-                    v-if="formError"
+                    v-if="serverErrors.__form"
                     data-testid="credentials-create-error"
                     class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 >
-                    {{ formError }}
+                    {{ serverErrors.__form }}
                 </p>
 
                 <DialogFooter>
@@ -400,7 +447,7 @@ async function submit() {
                         {{ submitting ? t("credentials.creating") : t("credentials.createSubmit") }}
                     </Button>
                 </DialogFooter>
-            </form>
+            </FormRoot>
         </DialogContent>
     </Dialog>
 </template>

@@ -11,6 +11,7 @@ import DialogDescription from "../../ui/dialog/DialogDescription.vue";
 import DialogFooter from "../../ui/dialog/DialogFooter.vue";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
+import { FieldControl, FieldError, FieldLabel, FieldRoot, FormRoot } from "reka-ui";
 import { ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useCredentialsStore } from "../../../stores/credentials";
@@ -41,7 +42,8 @@ const token = ref(""),
     accessKeyVisible = ref(false),
     secretKeyVisible = ref(false),
     submitting = ref(false),
-    formError = ref("");
+    /** PLAN-0753 M2: server-side errors keyed by field name, cleared by reka on edit. */
+    serverErrors = ref<Record<string, string | string[]>>({});
 
 watch(
     () => props.open,
@@ -54,28 +56,23 @@ watch(
         accessKeyVisible.value = false;
         secretKeyVisible.value = false;
         submitting.value = false;
-        formError.value = "";
+        serverErrors.value = {};
     },
     { immediate: true },
 );
 
-function validate(): string {
-    if (props.kind === "token") {
-        if (!token.value) return t("credentials.errTokenRequired");
-    } else if (!accessKey.value || !secretKey.value) {
-        return t("credentials.errKeyPairRequired");
-    }
-    return "";
+/** PLAN-0753 M2: field rules — one per FieldRoot.validate, pure functions of the value. */
+function validateToken(value: unknown): string | null {
+    return typeof value === "string" && value ? null : t("credentials.errTokenRequired");
+}
+function validateKeyPair(value: unknown): string | null {
+    const raw = typeof value === "string" ? value : "";
+    return raw ? null : t("credentials.errKeyPairRequired");
 }
 
 async function submit() {
-    const error = validate();
-    if (error) {
-        formError.value = error;
-        return;
-    }
     submitting.value = true;
-    formError.value = "";
+    serverErrors.value = {};
     try {
         const payload =
             props.kind === "token"
@@ -86,7 +83,7 @@ async function submit() {
         emit("replaced");
         emit("close");
     } catch (e) {
-        formError.value = credentialErrorText(e, t);
+        serverErrors.value = { __form: credentialErrorText(e, t) };
         if (!(e instanceof ApiError)) {
             logger.warn("Credential replace failed", e);
         }
@@ -103,19 +100,26 @@ async function submit() {
                 <DialogTitle>{{ t("credentials.replaceTitle") }}</DialogTitle>
                 <DialogDescription>{{ t("credentials.replaceDesc") }}</DialogDescription>
             </DialogHeader>
-            <form class="space-y-4" @submit.prevent="submit">
-                <div v-if="kind === 'token'" class="space-y-1.5">
-                    <label class="text-sm font-medium" for="credential-replace-token">{{
-                        t("credentials.token")
-                    }}</label>
+            <FormRoot class="space-y-4" :errors="serverErrors" @form-submit="submit">
+                <FieldRoot
+                    v-if="kind === 'token'"
+                    name="token"
+                    class="space-y-1.5"
+                    :validate="validateToken"
+                    required
+                >
+                    <FieldLabel class="text-sm font-medium">
+                        {{ t("credentials.token") }}
+                    </FieldLabel>
                     <div class="flex items-center gap-2">
-                        <Input
-                            id="credential-replace-token"
-                            v-model="token"
-                            data-testid="credentials-replace-token"
-                            :type="tokenVisible ? 'text' : 'password'"
-                            autocomplete="off"
-                        />
+                        <FieldControl as-child>
+                            <Input
+                                v-model="token"
+                                data-testid="credentials-replace-token"
+                                :type="tokenVisible ? 'text' : 'password'"
+                                autocomplete="off"
+                            />
+                        </FieldControl>
                         <Button
                             type="button"
                             variant="ghost"
@@ -132,20 +136,30 @@ async function submit() {
                             <Eye v-else aria-hidden="true" />
                         </Button>
                     </div>
-                </div>
+                    <FieldError
+                        class="text-xs text-destructive"
+                        data-testid="credentials-replace-token-error"
+                    />
+                </FieldRoot>
                 <template v-else>
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-replace-access-key">{{
-                            t("credentials.accessKey")
-                        }}</label>
+                    <FieldRoot
+                        name="accessKey"
+                        class="space-y-1.5"
+                        :validate="validateKeyPair"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.accessKey") }}
+                        </FieldLabel>
                         <div class="flex items-center gap-2">
-                            <Input
-                                id="credential-replace-access-key"
-                                v-model="accessKey"
-                                data-testid="credentials-replace-access-key"
-                                :type="accessKeyVisible ? 'text' : 'password'"
-                                autocomplete="off"
-                            />
+                            <FieldControl as-child>
+                                <Input
+                                    v-model="accessKey"
+                                    data-testid="credentials-replace-access-key"
+                                    :type="accessKeyVisible ? 'text' : 'password'"
+                                    autocomplete="off"
+                                />
+                            </FieldControl>
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -162,19 +176,29 @@ async function submit() {
                                 <Eye v-else aria-hidden="true" />
                             </Button>
                         </div>
-                    </div>
-                    <div class="space-y-1.5">
-                        <label class="text-sm font-medium" for="credential-replace-secret-key">{{
-                            t("credentials.secretKey")
-                        }}</label>
+                        <FieldError
+                            class="text-xs text-destructive"
+                            data-testid="credentials-replace-access-key-error"
+                        />
+                    </FieldRoot>
+                    <FieldRoot
+                        name="secretKey"
+                        class="space-y-1.5"
+                        :validate="validateKeyPair"
+                        required
+                    >
+                        <FieldLabel class="text-sm font-medium">
+                            {{ t("credentials.secretKey") }}
+                        </FieldLabel>
                         <div class="flex items-center gap-2">
-                            <Input
-                                id="credential-replace-secret-key"
-                                v-model="secretKey"
-                                data-testid="credentials-replace-secret-key"
-                                :type="secretKeyVisible ? 'text' : 'password'"
-                                autocomplete="off"
-                            />
+                            <FieldControl as-child>
+                                <Input
+                                    v-model="secretKey"
+                                    data-testid="credentials-replace-secret-key"
+                                    :type="secretKeyVisible ? 'text' : 'password'"
+                                    autocomplete="off"
+                                />
+                            </FieldControl>
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -191,15 +215,19 @@ async function submit() {
                                 <Eye v-else aria-hidden="true" />
                             </Button>
                         </div>
-                    </div>
+                        <FieldError
+                            class="text-xs text-destructive"
+                            data-testid="credentials-replace-secret-key-error"
+                        />
+                    </FieldRoot>
                 </template>
 
                 <p
-                    v-if="formError"
+                    v-if="serverErrors.__form"
                     data-testid="credentials-replace-error"
                     class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 >
-                    {{ formError }}
+                    {{ serverErrors.__form }}
                 </p>
 
                 <DialogFooter>
@@ -222,7 +250,7 @@ async function submit() {
                         }}
                     </Button>
                 </DialogFooter>
-            </form>
+            </FormRoot>
         </DialogContent>
     </Dialog>
 </template>

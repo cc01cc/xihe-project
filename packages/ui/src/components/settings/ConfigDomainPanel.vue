@@ -6,6 +6,7 @@ import type { ConfigDomain, ConfigKeyMeta } from "../../stores/config";
 import { settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { FieldControl, FieldError, FieldRoot } from "reka-ui";
 
 const { t } = useI18n();
 
@@ -339,23 +340,23 @@ function exitCustomMode(field: DomainField) {
     customMode.value = { ...customMode.value, [field.key]: false };
 }
 
-const validationError = ref("");
+/**
+ * PLAN-0753 M2: per-number-field rule fed to reka FieldRoot. `max` comes from the field
+ * schema, so the rule is generated per field and only mounted when the row is editable
+ * (locked / read-only / inherited rows skip the rule).
+ */
+function numberRule(field: DomainField): ((value: unknown) => string | null) | undefined {
+    if (field.type !== "number" || field.max === undefined) return undefined;
+    const limit = field.max;
+    return (value: unknown) => {
+        const raw = typeof value === "string" ? value : "";
+        if (raw === "") return null;
+        const num = Number(raw);
+        return Number.isInteger(num) && num >= 1 && num <= limit ? null : `${field.label} ≤ ${limit}`;
+    };
+}
 
 function handleSave() {
-    // T3.1 评审修复：`max` 必须参与保存校验（native max 不影响程序化提交）。
-    const invalid = props.schema.filter((field) => {
-        if (field.type !== "number" || field.max === undefined) return false;
-        const raw = editing.value[field.key];
-        if (raw === undefined || raw === "" || isLocked(field.key) || !isWritable(field.key))
-            return false;
-        const num = Number(raw);
-        return !Number.isInteger(num) || num < 1 || num > field.max;
-    });
-    if (invalid.length > 0) {
-        validationError.value = invalid.map((field) => `${field.label} ≤ ${field.max}`).join("，");
-        return;
-    }
-    validationError.value = "";
     const body = Object.fromEntries(
         Object.entries(editing.value).filter(
             ([key, value]) =>
@@ -572,20 +573,35 @@ function handleReset(key: string) {
                     :placeholder="field.type === 'json' ? 'JSON' : ''"
                 />
 
+                <FieldRoot
+                    v-else-if="!readonly && field.type === 'number'"
+                    :name="`config-number-${domain}-${field.key}`"
+                    class="contents"
+                    :validate="numberRule(field)"
+                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                    validation-mode="onChange"
+                >
+                    <FieldControl
+                        v-model="editing[field.key]"
+                        as="input"
+                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                        class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                        type="number"
+                        :max="field.max"
+                        :title="field.max ? `≤ ${field.max}` : undefined"
+                        :data-testid="`config-number-${domain}-${field.key}`"
+                    />
+                    <FieldError
+                        class="shrink-0 text-xs text-destructive"
+                        :data-testid="`config-number-error-${domain}-${field.key}`"
+                    />
+                </FieldRoot>
                 <input
                     v-else-if="!readonly"
                     v-model="editing[field.key]"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
-                    :type="
-                        field.type === 'password'
-                            ? 'password'
-                            : field.type === 'number'
-                              ? 'number'
-                              : 'text'
-                    "
-                    :max="field.type === 'number' ? field.max : undefined"
-                    :title="field.type === 'number' && field.max ? `≤ ${field.max}` : undefined"
+                    :type="field.type === 'password' ? 'password' : 'text'"
                 />
 
                 <span v-else class="min-w-0 flex-1 text-sm truncate">
@@ -647,9 +663,6 @@ function handleReset(key: string) {
                     ↺
                 </button>
             </div>
-            <p v-if="validationError" class="text-xs text-destructive px-1 pb-1" role="alert">
-                {{ validationError }}
-            </p>
             <div v-if="!readonly" class="flex justify-end pt-1">
                 <button
                     class="px-3 py-1 text-xs bg-action text-action-foreground rounded hover:opacity-90 disabled:opacity-50"
