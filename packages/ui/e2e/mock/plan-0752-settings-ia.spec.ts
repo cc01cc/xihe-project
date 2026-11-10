@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
+import { isWorkspaceLayerConfigRequest } from "../../src/lib/settingsIaRequests";
 
 /**
  * PLAN-0752 收尾（task-184）：
@@ -17,6 +18,11 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
  *   expectPlatformScreenshot 是空操作（比较判定留 Linux 轮），本 spec 用
  *   page.screenshot 做留档截图（任意平台可用），并把每个断言槽写成三态记录
  *   （value=捕获留档 / empty=确认为空 / unreadable=读不出）落 JSON，供回填。
+ *
+ * <p>task-230（2026-11-10）：上面「域段 404 + 零工作区层请求」这条原本是**恒真断言** ——
+ * 采集端只存 pathname，判定端比 `/config/workspace/` 前缀，而工作区层的读路径是
+ * `/config/<domain>?layer=workspace`（层在 query），两边都碰不到层 ⇒ filter 恒空。
+ * 现改为采集 pathname+search 并用 `src/lib/settingsIaRequests.ts` 的纯函数判定（该函数有单测）。</p>
  */
 const OUT_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan-0752-closeout");
 const V12_DIR = path.join(OUT_DIR, "v12");
@@ -70,7 +76,12 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
     // Catch-all first: Playwright routes are LIFO, specific routes below win.
     await page.route("**/api/v1/**", async (route: any) => {
         const url = new URL(route.request().url());
-        if (url.pathname.includes("/config/")) configRequests.push(url.pathname);
+        // task-230：收 **pathname + search**。只收 pathname 会丢掉 query，而工作区层的读请求是
+        // /config/<domain>?layer=workspace —— 层在 query 里。丢了它，下游「零工作区层请求」判定
+        // 就恒真（假绿）。
+        if (url.pathname.includes("/config/")) {
+            configRequests.push(`${url.pathname}${url.search}`);
+        }
         await route.fulfill({
             status: 200,
             contentType: "application/json",
@@ -146,12 +157,32 @@ test.describe("PLAN-0752 T2.5 workspace 域段深链", () => {
         await expect(page.getByTestId("settings-not-found")).toBeVisible();
         await expect(page.getByTestId("ws-settings-domain-page")).toHaveCount(0);
         // T3.4 口径：域段 404 是路由层判定，零**工作区层** /config 请求（不是空表单）。
-        // 实测：AppLayout 壳内的其它组件会拉 user/instance 层域配置（/config/<domain>），
-        // 与本页 404 判定无关；判据收窄到 /config/workspace/ 前缀才对应「未发域配置请求」。
+        // AppLayout 壳内的其它组件会拉 user/instance 层域配置（/config/<domain>?layer=user），
+        // 与本页 404 判定无关，所以判据收窄到「工作区层」，而不是字面的「零 /config 请求」。
+        //
+        // task-230：**收窄的实现方式**换掉了。旧写法 `p.includes("/config/workspace/")` 只比对
+        // pathname 片段，而工作区层的读路径是 /config/<domain>?layer=workspace（层在 query）⇒
+        // 该 filter 命中集恒空 ⇒ 断言恒真：它只证明「没发写请求」，绿着但没验到读请求。
+        // 现按纯函数判定（src/lib/settingsIaRequests.ts，有单测），读写两种形态都覆盖。
+        // 失败时把**全部**捕获到的 config 请求打出来：否则「多了一条」只能靠猜来源。
+        const captured = `捕获到的 config 请求：${JSON.stringify(configRequests)}`;
         expect(
-            configRequests.filter((p) => p.includes("/config/workspace/")),
-            "404 域段不得发工作区层 /config 请求",
+            configRequests.filter((requestUrl) => isWorkspaceLayerConfigRequest(requestUrl)),
+            `404 域段不得发工作区层 /config 请求。${captured}`,
         ).toEqual([]);
+        // 「不得请求 /config/logging」这条**不能加**（task-230 实测后撤回，别再加回来）：
+        // App.vue:30 的启动预热 configStore.loadAllDomains() 会拉 CONFIG_DOMAINS（10 个域，
+        // 含 logging；stores/config.ts:52-58），**任何已登录页面**都会发。实测本用例捕获到的
+        // 10 条正好是那 10 个域：
+        //   llm-provider / context-policy / embedding / rag / agent-runtime / agent-profile /
+        //   user-preference / logging / approval-policy / job-policy
+        // 也就是说「有没有 /config/logging」度量的是**应用壳启动预热**，不是本页 404 行为，
+        // 加进来会让任何页面都红。本页判据只能落在「有没有**工作区层**请求」上（上一条）。
+        //
+        // 定性质（task-230 复核裁定）：这次启动预热是**既定产品行为，不是缺陷** —— 它既做首屏
+        // 预热，也兼作后端不可用时回退本地持久化配置的那条路（App.vue:30 的 .catch 注释）。
+        // **不要把它当 bug「修掉」**；若要调整预热范围，走 PLAN 决策，不要用 e2e 断言倒逼产品改。
+        // 依据：isWorkspaceLayerConfigRequest 的读路径口径见 src/lib/settingsIaRequests.ts。
     });
 
     test("legacy ?tab= form still renders every tab container", async ({ page }) => {
