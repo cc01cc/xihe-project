@@ -43,26 +43,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * parser for it (oxfmt only checks syntax). Wiring it there would either add an npm dependency or
  * bind a Node gate to the agent Python venv — both rejected in the card's option analysis.</p>
  *
- * <p><b>Baseline semantics (only-shrinks):</b> the two duplicates known at the time of writing are
- * frozen in {@link #KNOWN_DUPLICATES}. The assertion is {@code findings ⊆ baseline}: a <b>new</b>
- * duplicate fails immediately; a baseline entry that no longer reproduces is reported as stale so
- * it gets deleted (deleting is safe: the file then has fewer duplicates, never more).</p>
+ * <p><b>Baseline semantics (only-shrinks):</b> the two duplicates known at the time of writing were
+ * frozen in {@link #KNOWN_DUPLICATES}; both are now fixed (task-236), so that list is empty and may
+ * only ever shrink further. The assertion is {@code findings ⊆ baseline}: a <b>new</b> duplicate
+ * fails immediately; a baseline entry that no longer reproduces is reported as stale so it gets
+ * deleted (deleting is safe: the file then has fewer duplicates, never more).</p>
  */
 class OpenApiDuplicateKeyTest {
 
     /**
      * BL-320's sibling pattern: frozen, delete-on-fix, never grow.
      *
-     * <p>Both entries are real defects still present on this branch (measured 2026-11-10 with this
-     * detector); task-236 fixes them in `openapi.yaml`. <b>When that lands, delete the matching
-     * line here in the same merge</b> — the test fails with "entries no longer reproduce" otherwise,
-     * which is the point: the baseline may only shrink.</p>
+     * <p><b>Baseline is empty and must stay empty.</b> The two entries frozen when this test landed
+     * — `paths./api/v1/chat.post.responses.503` and
+     * `components.schemas.ChatRunSkillsSnapshotTier.properties`, both measured 2026-11-10 with this
+     * detector — were deleted from `openapi.yaml` by task-236, so the same merge removed them here:
+     * that is the shrink this baseline exists for. The gate is unchanged: a <b>new</b> duplicate
+     * still fails on the `unexpected` side, and an entry added back here fails on the `stale` side
+     * as soon as it stops reproducing.</p>
      */
-    private static final List<String> KNOWN_DUPLICATES = List.of(
-            // /api/v1/chat POST: two '503' response keys (BACKEND_DISABLED description is dropped by YAML last-wins)
-            "paths./api/v1/chat.post.responses.503",
-            // ChatRunSkillsSnapshotTier: two 'properties' keys (surviving set contradicts required + additionalProperties:false)
-            "components.schemas.ChatRunSkillsSnapshotTier.properties");
+    private static final List<String> KNOWN_DUPLICATES = List.of();
 
     private static final Path CONTRACT = Path.of("..", "..", "docs", "api", "openapi.yaml");
 
