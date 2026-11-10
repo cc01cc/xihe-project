@@ -4782,12 +4782,50 @@ mod remote_handler_tests {
 
     const TEST_WS: &str = "ws-test";
 
+    // test-global-state: allow — 全程只写常量 "true"，且 remote_mcp.rs:527/597 只按值比较；
+    // 每个调用点写同一值（幂等），不会让并发测试看到第三种状态。
     #[allow(unsafe_code)]
     fn allow_local_http() {
         // Edition 2024: env mutation is unsafe; confined to this test binary,
         // which has no other readers of this flag.
         unsafe {
             std::env::set_var("XIHE_REMOTE_MCP_ALLOW_INSECURE_LOCAL", "true");
+        }
+    }
+
+    /// BL-262/task-45: `XIHE_CP_URL` is read by the OAuth-mode handler under test, so one test
+    /// pins it to its own fake control plane. Serialise the mutators, and restore on drop — the
+    /// old version left a dead stub URL behind for every *later* test in the process.
+    static PROCESS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct CpUrlPin {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl CpUrlPin {
+        // test-global-state: allow — every caller holds PROCESS_LOCK; drop restores the old value.
+        fn set(url: &str) -> Self {
+            let previous = std::env::var_os("XIHE_CP_URL");
+            // Edition 2024: env mutation is unsafe; see the PROCESS_LOCK contract above.
+            unsafe {
+                std::env::set_var("XIHE_CP_URL", url);
+            }
+            Self { previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for CpUrlPin {
+        // test-global-state: allow — restoration half of `set`, same lock contract.
+        fn drop(&mut self) {
+            // Edition 2024: env mutation is unsafe (see `set`).
+            unsafe {
+                match self.previous.take() {
+                    Some(previous) => std::env::set_var("XIHE_CP_URL", previous),
+                    None => std::env::remove_var("XIHE_CP_URL"),
+                }
+            }
         }
     }
 
@@ -5533,14 +5571,7 @@ mod remote_handler_tests {
     /// non-2xx → remote_mcp_unavailable.
     #[tokio::test]
     async fn oauth_mode_broker_failures_map_per_call_site() {
-        #[allow(unsafe_code)]
-        fn point_cp_at(url: &str) {
-            // Edition 2024: env mutation is unsafe; only the OAuth-mode handler
-            // calls in this module read XIHE_CP_URL.
-            unsafe {
-                std::env::set_var("XIHE_CP_URL", url);
-            }
-        }
+        let _serial = PROCESS_LOCK.lock().await;
         use std::collections::HashMap;
         use std::sync::{Arc, Mutex};
 
@@ -5599,7 +5630,7 @@ mod remote_handler_tests {
             axum::serve(listener, app).await.expect("serve broker stub");
         });
         let cp_url = format!("http://{addr}");
-        point_cp_at(&cp_url);
+        let _cp_url_pin = CpUrlPin::set(&cp_url);
         allow_local_http();
 
         async fn fake_mcp_unauthorized() -> String {
