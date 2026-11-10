@@ -70,6 +70,14 @@ async function boxWidth(locator: ReturnType<Page["getByTestId"]>): Promise<numbe
  * 折叠/展开有 300 ms 过渡（Sidebar.vue: `transition-[flex-grow] duration-300`），
  * 只 poll 一次「> 0」会抓到过渡中途的宽度（实测曾抓到 57，而稳态是 337）⇒
  * 「回到展开宽度」这条断言会拿中途值当基准，差 280 px 假红。
+ *
+ * 为什么是「连续两次采样相同」而不是固定等待一段时长：
+ *   ① 固定等待把**过渡时长的具体值**写进测试（300 ms 只是当前实现），实现改成 150/500 ms 就假红或假绿；
+ *      「连续两次相同」只假设「布局稳定后不再变化」，与时长无关 —— 与 D-889 同一条逻辑（写性质，不写结果值）。
+ *   ② 过渡可能被中途打断或重定向（连续点折叠/展开），固定等待会在被打断时提前返回一个不稳定的值；
+ *      轮询式判据在下一次采样发现变化会继续等。
+ *   ③ 代价（写清楚才不会误用）：若两次采样恰好落在过渡的平缓段，会提前返回一次 —— 所以它只用来取**基准**，
+ *      终态另有离散属性断言兜底（`aria-hidden` / `inert` / `nav-rail-expand` 计数），不靠宽度量测证明「折叠了」。
  */
 async function settledWidth(locator: ReturnType<Page["getByTestId"]>): Promise<number> {
     let previous = -1;
