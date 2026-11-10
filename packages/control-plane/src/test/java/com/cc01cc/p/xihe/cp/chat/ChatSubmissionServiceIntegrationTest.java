@@ -599,7 +599,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "result", "placeholder"));
 
         String messageId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "");
+                fixture.session().getId().toString(), runId, "", null);
         assertNotNull(messageId);
         Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
         assertEquals("", stored.getContent());
@@ -668,7 +668,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "result", "WORKSPACE-PRIVATE-TOOL-BODY"));
 
         String messageId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "");
+                fixture.session().getId().toString(), runId, "", null);
         Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
         assertTrue(stored.getToolCalls().contains(refusalCode),
                 "the durable snapshot must carry " + refusalCode);
@@ -715,7 +715,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "status", "failed", "result", "boom"));
 
         String messageId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "done");
+                fixture.session().getId().toString(), runId, "done", null);
         assertNotNull(messageId);
         Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
         assertFalse(stored.getToolCalls().contains("approval-call"));
@@ -740,7 +740,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "tool_input", Map.of("path", "README.md")));
 
         String messageId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "");
+                fixture.session().getId().toString(), runId, "", null);
         assertNotNull(messageId);
         Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
         var card = objectMapper.readTree(stored.getToolCalls()).path("calls").get(0);
@@ -758,12 +758,55 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "prompt", fixture.principal().getId().toString());
 
         String messageId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "");
+                fixture.session().getId().toString(), runId, "", null);
 
         assertNull(messageId);
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(
                         fixture.session().getId().toString()).stream()
                 .noneMatch(message -> message.getRole() == MessageRole.ASSISTANT));
+    }
+
+    /**
+     * PLAN-0761 (BL-555): reasoning round-trip at the single assistant-write point.
+     *
+     * <p>This is the "measured against the real store" evidence for the new {@code messages.reasoning}
+     * column: the text written through {@code persistAssistantResponse} must come back from
+     * {@code messageRepository} unchanged. It also pins the two behaviours that make the column
+     * additive — a reasoning-only turn (blank assistant text) is persisted, while a blank/blank
+     * reasoning pair is not (the pre-PLAN-0761 null contract).</p>
+     */
+    @Test
+    void persistsReasoningAndReadsItBack() {
+        ChatFixture fixture = createChatFixture("reasoning-roundtrip");
+        saveBoundSession(fixture.session(), fixture.principal());
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(),
+                "prompt", fixture.principal().getId().toString());
+
+        String reasoning = "thinking about the request\nsecond line";
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "final answer", reasoning);
+
+        assertNotNull(messageId);
+        Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        assertEquals("final answer", stored.getContent());
+        assertEquals(reasoning, stored.getReasoning(),
+                "reasoning must survive the write→read round trip verbatim");
+
+        // A reasoning-only turn is persisted too (blank assistant text + non-blank reasoning).
+        String reasoningOnlyId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "", "only thinking");
+        assertNotNull(reasoningOnlyId);
+        Message reasoningOnly = messageRepository.findById(UUID.fromString(reasoningOnlyId)).orElseThrow();
+        assertEquals("", reasoningOnly.getContent());
+        assertEquals("only thinking", reasoningOnly.getReasoning());
+
+        // Blank reasoning is not stored (the column stays NULL for a turn without thinking).
+        String plainId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "plain", "");
+        assertNotNull(plainId);
+        Message plain = messageRepository.findById(UUID.fromString(plainId)).orElseThrow();
+        assertNull(plain.getReasoning(), "blank reasoning must stay NULL, not become an empty string");
     }
 
     private void appendToolEvent(ChatFixture fixture, String runId, String branchId,
@@ -1080,7 +1123,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "admission recorded the responder principal (the attribution source of truth)");
 
         String assistantId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "hello");
+                fixture.session().getId().toString(), runId, "hello", null);
         assertNotNull(assistantId);
         Message stored = messageRepository.findById(UUID.fromString(assistantId)).orElseThrow();
         assertEquals(participantId, stored.getParticipantId(),
@@ -1107,7 +1150,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "fallback-key-" + runId, "fallback-hash", "provider", "model", "none", "accepted"));
 
         String assistantId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "derived run reply");
+                fixture.session().getId().toString(), runId, "derived run reply", null);
         assertNotNull(assistantId);
         assertNull(messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
                 "no run responder ⇒ NULL; A1 removed the Session-column fallback instead of guessing PRIMARY");
@@ -1135,7 +1178,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "no-roster-key-" + runId, "no-roster-hash", "provider", "model", "none", "accepted"));
 
         String assistantId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "reply without roster");
+                fixture.session().getId().toString(), runId, "reply without roster", null);
         assertNotNull(assistantId);
         assertNull(messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
                 "no participant row ⇒ NULL; the read face then omits the field and the UI renders no badge");
@@ -1153,7 +1196,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "read me",
                 fixture.principal().getId().toString());
         String assistantId = submissionService.persistAssistantResponse(
-                fixture.session().getId().toString(), runId, "reply");
+                fixture.session().getId().toString(), runId, "reply", null);
         assertNotNull(assistantId);
 
         String branchId = branchPathService.ensureRootBranchId(fixture.session().getId().toString());

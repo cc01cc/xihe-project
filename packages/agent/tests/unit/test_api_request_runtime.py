@@ -291,6 +291,50 @@ async def test_openai_stream_null_role_and_content_keepalive_tolerated():
         assert final.calls == []
 
 
+async def test_openai_stream_reasoning_content_is_emitted_as_reasoning():
+    """PLAN-0761 (BL-555): OpenAI-compatible reasoning models (DeepSeek-R1, QwQ,
+    MiMo, GLM-think, ...) deliver the thinking chain in `reasoning_content`. Before
+    this the whole non-Anthropic route had no reasoning carrier at all, so the
+    thinking block was lost on every provider except Anthropic.
+    """
+    payload = (
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"think"}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"reasoning_content":null}}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"content":"answer"},'
+        '"finish_reason":"stop"}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        parts = [
+            part
+            async for part in sender.stream(
+                render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+            )
+        ]
+        assert [text for text, _reasoning, _final in parts if text] == ["answer"]
+        assert [reasoning for _text, reasoning, _final in parts if reasoning] == ["think"]
+
+
+async def test_openai_stream_non_string_reasoning_content_is_rejected():
+    """PLAN-0761 (BL-555): `reasoning_content` is optional but, when present, a
+    non-string shape is a provider contract break — never silently dropped."""
+    payload = (
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":7}}]}\n\n'
+    )
+    async with recorder(payload, stream=True) as (base, _captures):
+        sender = ApiSender(chat_type(TYPES[0], 1), grant(TYPES[0], base), "request-1", 3)
+        # ApiSender maps LLM_PROVIDER_INVALID_RESPONSE onto the public
+        # AGENT_STREAM_FAILED code; assert the mapped code, not the wire-internal one.
+        with pytest.raises(ApiRequestError, match="AGENT_STREAM_FAILED"):
+            [
+                part
+                async for part in sender.stream(
+                    render_request(json.dumps(body(TYPES[0], True)), sender.api_type, VALUES)
+                )
+            ]
+
+
 async def test_openai_stream_null_function_fragment_fields_tolerated():
     """Continuation tool-call fragments may repeat `"name": null` and split arguments."""
     payload = (

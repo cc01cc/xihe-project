@@ -524,6 +524,54 @@ describe("ChatPanel branch actions", () => {
         expect(refreshed?.toolCalls).toHaveLength(1);
         wrapper.unmount();
     });
+
+    /**
+     * PLAN-0761 (BL-555): the user-visible symptom is "a session reload loses the thinking".
+     * This pins the history path end-to-end at the panel level — a persisted assistant Message
+     * carrying `reasoning` must re-render as a thinking part after a refresh, and a pre-V150
+     * row (no field) must render none.
+     */
+    it("replays persisted reasoning after a history refresh (PLAN-0761 / BL-555)", async () => {
+        const reasoningId = "99999999-9999-4999-8999-999999999999";
+        const legacyId = "99999999-9999-4999-8999-888888888888";
+        vi.mocked(api.getMessages).mockResolvedValue([
+            {
+                id: reasoningId,
+                sessionId: SESSION_ID,
+                role: "ASSISTANT",
+                content: "persisted answer",
+                reasoning: "思考过程第一行\n思考过程第二行",
+                createdAt: "2026-11-10T00:00:00Z",
+                runId: RUN_ID,
+                runStatus: "succeeded",
+                attachments: [],
+            },
+            {
+                id: legacyId,
+                sessionId: SESSION_ID,
+                role: "ASSISTANT",
+                content: "pre-V150 answer",
+                createdAt: "2026-11-01T00:00:00Z",
+                runId: RUN_ID,
+                runStatus: "succeeded",
+                attachments: [],
+            },
+        ]);
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const messages = useChatStore().getMessages(SESSION_ID);
+        const withReasoning = messages.find((message) => message.id === reasoningId);
+        expect(withReasoning?.parts).toEqual([
+            { type: "reasoning", content: "思考过程第一行\n思考过程第二行" },
+            { type: "text", content: "persisted answer" },
+        ]);
+
+        // A pre-V150 row keeps the "no reasoning ⇒ no thinking block" path.
+        const legacy = messages.find((message) => message.id === legacyId);
+        expect(legacy?.parts ?? []).toEqual([{ type: "text", content: "pre-V150 answer" }]);
+        wrapper.unmount();
+    });
 });
 
 describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {

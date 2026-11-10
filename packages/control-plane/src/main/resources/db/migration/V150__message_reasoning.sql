@@ -1,0 +1,23 @@
+-- PLAN-0761 (BL-555): durable reasoning text on the assistant Message.
+--
+-- Reasoning used to exist only on the live stream: the Agent emits it as
+-- `hint=reasoning` token events (adapters/sse_adapter.py), the CP relay already forwards
+-- those events to the browser, but the relay's text accumulator drops them
+-- (ChatController.collectEventContent) and nothing durable is written. A session reload
+-- therefore lost every thinking block while tool calls survived (PLAN-0572 / V83) — the
+-- asymmetry BL-555 records.
+--
+-- Shape: plain TEXT on the same row as the assistant content, at the same layer as
+-- `tool_calls` (V83). No JSON: the payload is already a redacted string at the Agent
+-- (`StreamingSecretRedactor`, PLAN-0761 collection point), so this column stores the
+-- exact text the live UI rendered — one writer, one reader, no second normalization.
+--
+-- Nullable, no backfill (D-215): rows written before this migration have no reasoning
+-- record and the read side omits the field, so the UI keeps its single "no reasoning ⇒
+-- no thinking block" path instead of inventing an empty one. Historical rows are never
+-- rewritten — reasoning is only accumulated from the implementation date on.
+--
+-- Not a new table and not a generic `metadata` column (that shape was dropped in V32).
+--
+-- Rollback: ALTER TABLE messages DROP COLUMN reasoning; (clean rebuild required)
+ALTER TABLE messages ADD COLUMN reasoning TEXT;

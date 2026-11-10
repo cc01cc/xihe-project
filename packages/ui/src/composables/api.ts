@@ -2622,6 +2622,13 @@ export type ApiSessionMessage = {
      */
     delivery?: { to?: string[]; cc?: string[] } | null;
     attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
+    /**
+     * PLAN-0761 (BL-555): reasoning text persisted on the assistant Message (V150) —
+     * the same text the live Run rendered as a thinking block. Absent (not empty)
+     * for Messages written before V150, so the history mapping keeps its single
+     * "no reasoning ⇒ no thinking block" path.
+     */
+    reasoning?: string | null;
     /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
     toolCalls?: Array<{
         id: string;

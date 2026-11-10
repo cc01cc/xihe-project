@@ -271,6 +271,17 @@ class StreamParser:
             text = delta.get("content") or ""
             _text(text)
             self.message["content"] += text
+            # PLAN-0761 (BL-555): OpenAI-compatible reasoning models (DeepSeek-R1, QwQ,
+            # MiMo, GLM-think, ...) carry the thinking chain in `reasoning_content`; it is
+            # optional in the wire spec, so an absent/None value means "no reasoning this
+            # chunk" and every other non-string shape stays rejected (same rule as
+            # `_array(..., nullable=True)` above). Without this the whole non-Anthropic
+            # route would have no reasoning carrier at all - the exact gap BL-555 records.
+            reasoning_value = delta.get("reasoning_content")
+            if reasoning_value is not None:
+                reasoning = _text(reasoning_value)
+            else:
+                reasoning = ""
             for call in _array(delta.get("tool_calls"), nullable=True):
                 index = call.get("index")
                 if type(index) is not int:
@@ -285,7 +296,7 @@ class StreamParser:
                     target["function"][field] += _text(function.get(field) or "")
             if choice.get("finish_reason"):
                 self.finish = _text(choice["finish_reason"])
-            return text, ""
+            return text, reasoning
         if self.api_type.id == "anthropic-messages":
             kind = data.get("type")
             if event and event != kind:

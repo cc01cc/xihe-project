@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { JobSummary } from "../../../../types";
-import { mergeHistoryToolCalls } from "../components/jobSummaryToolCalls.ts";
+import type { JobSummary, MessagePart } from "../../../../types";
+import { mergeHistoryReasoning, mergeHistoryToolCalls } from "../components/jobSummaryToolCalls.ts";
 
 const job: JobSummary = {
     jobId: "job-1",
@@ -95,5 +95,34 @@ describe("mergeHistoryToolCalls", () => {
             status: "completed",
             refusalCode: "DELEGATION_LIMIT_EXCEEDED",
         });
+    });
+});
+
+/**
+ * PLAN-0761 (BL-555): the history → reasoning-part assembly is the piece that makes a
+ * refresh keep the thinking block. Absent reasoning must add nothing at all, so the
+ * UI keeps its single "no reasoning ⇒ no thinking block" path.
+ */
+describe("mergeHistoryReasoning", () => {
+    it("prepends the persisted thinking block ahead of the parsed text parts", () => {
+        const parts: MessagePart[] = [{ type: "text", content: "answer" }];
+        expect(mergeHistoryReasoning(parts, "思考过程")).toEqual([
+            { type: "reasoning", content: "思考过程" },
+            { type: "text", content: "answer" },
+        ]);
+    });
+
+    it("works on an empty part list (a reasoning-only turn)", () => {
+        expect(mergeHistoryReasoning([], "only thinking")).toEqual([
+            { type: "reasoning", content: "only thinking" },
+        ]);
+    });
+
+    it("adds nothing for a missing, blank or whitespace-only field", () => {
+        const parts: MessagePart[] = [{ type: "text", content: "answer" }];
+        expect(mergeHistoryReasoning(parts, undefined)).toBe(parts);
+        expect(mergeHistoryReasoning(parts, null)).toBe(parts);
+        expect(mergeHistoryReasoning(parts, "")).toBe(parts);
+        expect(mergeHistoryReasoning(parts, "   ")).toBe(parts);
     });
 });

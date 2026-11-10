@@ -437,6 +437,12 @@ class ApiChatModel(BaseChatModel):
     async def _agenerate(
         self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any
     ) -> ChatResult:
+        # PLAN-0761 (BL-555): this non-streaming path deliberately does NOT emit reasoning.
+        # The stream yields (text, reasoning, final) but only the final NativeResponse is
+        # assembled here, so a reasoning-aware caller would silently lose the thinking text
+        # (the Chat main line uses `_astream`, which is the collection point; see
+        # sse_adapter.on_chat_model_stream). Kept explicit so a future "wire complete() into
+        # the chat path" change cannot quietly drop reasoning.
         result = None
         async for _text, _reasoning, final in self._sender.stream(self._dispatch_body(messages)):
             if final is not None:

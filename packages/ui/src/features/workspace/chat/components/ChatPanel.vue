@@ -16,7 +16,7 @@ import {
     type ApiSessionMessage,
 } from "../../../../composables/api";
 import { parseRawToParts } from "../composables/useStreamParser.ts";
-import { mergeHistoryToolCalls } from "./jobSummaryToolCalls.ts";
+import { mergeHistoryReasoning, mergeHistoryToolCalls } from "./jobSummaryToolCalls.ts";
 import { logger } from "../../../../lib/logger";
 import type {
     ApprovalDecisionEnvelope,
@@ -361,7 +361,11 @@ function mapRawMessages(rawMessages: ApiSessionMessage[]): Message[] {
         content: message.content,
         parts:
             message.role.toLowerCase() === "assistant"
-                ? parseRawToParts(message.content)
+                ? // PLAN-0761 (BL-555): reasoning is a separate durable field (V150), not
+                  // something the body can carry — parse the text first, then prepend the
+                  // persisted thinking block so a refresh replays the same order the live
+                  // Run rendered. Absent field (pre-V150 rows) adds nothing.
+                  mergeHistoryReasoning(parseRawToParts(message.content), message.reasoning)
                 : undefined,
         timestamp: message.createdAt,
         runId: message.runId,
