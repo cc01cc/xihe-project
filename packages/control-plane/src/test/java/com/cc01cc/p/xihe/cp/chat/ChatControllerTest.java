@@ -375,7 +375,10 @@ class ChatControllerTest extends AbstractH2Test {
                 chatEntity(request, headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-        assertEquals("FORBIDDEN", response.getBody().get("code"));
+        // PLAN-0750 / G8 (3464f09ce): the submission-time refusal carries the dedicated
+        // AGENT_PRINCIPAL_MISSING code (documented at openapi.yaml:1754) instead of a bare
+        // FORBIDDEN, so the UI can branch to "bind one in Workspace settings".
+        assertEquals("AGENT_PRINCIPAL_MISSING", response.getBody().get("code"));
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());

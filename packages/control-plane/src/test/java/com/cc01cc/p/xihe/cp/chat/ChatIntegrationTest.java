@@ -359,7 +359,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         ResponseEntity<Map> response = postChat(sessionId, "must be rejected");
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-        assertEquals("FORBIDDEN", response.getBody().get("code"));
+        // G8 (3464f09ce): dedicated code, same 403 — see openapi.yaml:1754/1780.
+        assertEquals("AGENT_PRINCIPAL_MISSING", response.getBody().get("code"));
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
@@ -381,7 +382,8 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0689 A4b/A7: there is no first-Chat binding. A client-supplied principal cannot
         // recreate the conversation identity on an unbound Session; admission fails closed.
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-        assertEquals("FORBIDDEN", response.getBody().get("code"));
+        // G8 (3464f09ce): the explicit-principal path fails closed with the same dedicated code.
+        assertEquals("AGENT_PRINCIPAL_MISSING", response.getBody().get("code"));
         assertFalse(sessionParticipantRepository.primaryPrincipalId(UUID.fromString(sessionId)).isPresent(),
                 "no PRIMARY may be created from an explicit request principal");
         assertEquals(0, jdbcTemplate.queryForObject(

@@ -931,7 +931,8 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         UUID rejectedChildId = UUID.randomUUID();
         CpApiException error = assertThrows(CpApiException.class, () -> queueService.admitHead(
                 fixture.sessionId(), context -> childAdmission(fixture, rejectedChildId, context)));
-        assertEquals("FORBIDDEN", error.getCode());
+        // G8 (3464f09ce): the service-level refusal carries the dedicated code too.
+        assertEquals("AGENT_PRINCIPAL_MISSING", error.getCode());
 
         assertTrue(chatRunRepository.findById(rejectedChildId).isEmpty());
         assertEquals(1, runsFor(fixture));
