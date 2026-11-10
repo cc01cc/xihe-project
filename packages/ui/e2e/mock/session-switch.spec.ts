@@ -9,7 +9,9 @@ test.describe("Session switch between chat and workspace", () => {
     const workspaceId = "workspace-1";
 
     test.beforeEach(async ({ page }) => {
-        await setupMockAuth(page);
+        // task-100：下面要断言「两个 workspace 的事件流都被请求过」（`page.on("request")`），
+        // 而默认的 in-page 长连接桩不走网络层 ⇒ 显式退回网络层桩形态。
+        await setupMockAuth(page, { workspaceEvents: "off" });
         await setupMockSessions(page, {
             sessions: [{ id: sessionId, title: sessionTitle, workspaceId }],
             messages: {

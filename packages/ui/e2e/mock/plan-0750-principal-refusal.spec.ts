@@ -76,6 +76,11 @@ async function setupRefusalLane(page: Page, refusal: Refusal): Promise<RecordedR
     // ~280 ms 一次的重连循环，dock 每轮都重渲染。BL-562（reka Splitter 在重渲染窗口内抛
     // 「Panel size not found」）正是被这种 churn 触发的存量为患缺陷，会让本 spec 的公共门禁
     // 随机变红（与用例断言无关）。这里把重连间隔拉到 60 s，让本用例只关心**一次**提交。
+    //
+    // task-100（2026-11-11）：**上面这条绕行现在已经失效且无害** —— 默认夹具
+    // （`installWorkspaceEventStream`）把这条 URL 用 in-page 长连接截住了，churn 的源头已修，
+    // 所以这条 `page.route` 根本不会被触发。保留它**不是**因为还必需，而是删掉要额外验证一次、
+    // 而它现在什么也不做；下次动这个 spec 时可以顺手删。**不要**把它当"必需的桩"照抄到别处。
     await page.route("**/api/v1/workspaces/*/events**", async (route) => {
         await route.fulfill({
             status: 200,

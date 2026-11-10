@@ -5,6 +5,7 @@ import {
     stubSessionProjectionsForAllSessions,
     type SessionProjectionOptions,
 } from "./session-projections";
+import { installWorkspaceEventStream } from "./context-events";
 
 export interface MockSSEStream {
     tokens: string[];
@@ -55,6 +56,17 @@ export interface MockAuthOptions {
      * ——那是另一条用例（权限门）该断言的东西，不该让功能用例替它红。
      */
     capabilities?: Record<string, boolean>;
+    /**
+     * task-100：工作区事件流（`GET /api/v1/workspaces/{id}/events`）的桩形态。
+     * - `"stream"`（默认）：in-page `window.fetch` 覆盖返回**永不关闭**的流
+     *   （`installWorkspaceEventStream`）。真实 CP 就是长连接，有限体会让客户端恒速重连
+     *   —— task-98 实测 101 次 / 30 s。
+     * - `"off"`：不装 in-page 桩，请求照旧走 `page.route`（网络层）。**只有两类 spec 需要**：
+     *   ① 自己用 `page.route` 给这条 URL 回非 200（如 429 上限提示）—— in-page 桩会抢在前面把
+     *   它盖掉；② 靠 `page.on("request")` 观察这条 URL 是否被请求。这类 spec 里会保留旧口径的
+     *   有限体（含它的重连 churn），属**已知代价**，不是回退。
+     */
+    workspaceEvents?: "stream" | "off";
 }
 
 export interface MockSessionRecord {
@@ -81,6 +93,11 @@ export interface MockSessionOptions {
     projections?: SessionProjectionOptions | false;
 }
 
+/** task-100：`XH_FIXTURE_WORKSPACE_EVENTS=off` 只在首次生效时喊一次，避免刷屏。 */
+let warnedLegacyWorkspaceEvents = false;
+/** task-100：`XH_FIXTURE_MONITOR=sse` 同样只喊一次。 */
+let warnedLegacyMonitor = false;
+
 const MOCK_ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";
 /** Default bound Agent principal for fixture Sessions (see `setupMockSessions`). */
 const MOCK_BOUND_PRINCIPAL_ID = "00000000-0000-4000-8000-0000000000a1";
@@ -92,7 +109,64 @@ type MockBranch = {
     createdAt: string;
 };
 
+/**
+ * `SessionMonitorResponse` 的最小合法体（形状照抄 `screenshots.spec.ts` 的同一桩）。
+ * `history` / `readiness` 是产品渲染的必需投影（`SessionMonitorPanel` 读 `data.history.recent`），
+ * 给 `{}` 会在面板里抛 "reading 'recent'"。
+ */
+function sessionMonitorResponse(): Record<string, unknown> {
+    const now = new Date().toISOString();
+    return {
+        generatedAt: now,
+        session: {
+            id: "test-session",
+            title: "Mock Session",
+            agentPrincipalId: null,
+            modelProvider: null,
+            modelName: null,
+            providerConnectionId: null,
+            connectionRevision: null,
+            createdAt: now,
+            updatedAt: now,
+        },
+        activity: [],
+        history: { windowSize: 20, counts: {}, recent: [] },
+        readiness: {
+            connection: null,
+            agent: {
+                status: "unknown",
+                llmReady: "unknown",
+                verifiedAt: null,
+                configRevision: "0",
+            },
+            lastObservedRun: null,
+        },
+        transport: { attemptCount: 0, failedCount: 0, partialCount: 0 },
+    };
+}
+
 export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
+    // task-100：工作区事件流必须是**长连接**。旧桩用 `route.fulfill` 给有限体，响应立刻结束 ⇒
+    // 客户端 clean_close + 恒速重连（task-98 实测 101 次 / 30 s）。Playwright 没有流式 fulfill，
+    // 所以这条流由 in-page `window.fetch` 覆盖提供（见 `installWorkspaceEventStream`）。
+    if (process.env.XH_FIXTURE_WORKSPACE_EVENTS === "off" && !warnedLegacyWorkspaceEvents) {
+        // 显式喊一声：不喊的话，shell 里残留的这个变量会让整批 spec 悄悄跑在**旧夹具**上，
+        // 而报告里看不出任何区别 —— 那就是另一种假绿。
+        warnedLegacyWorkspaceEvents = true;
+        console.warn(
+            "[fixture] XH_FIXTURE_WORKSPACE_EVENTS=off ⇒ 工作区事件流退回 task-100 之前的有限体桩" +
+                "（仅 before/after 对照测量用；产品行为不变）",
+        );
+    }
+    // `XH_FIXTURE_WORKSPACE_EVENTS=off` 是**测量用的对照开关**（task-100）：它把这条流退回
+    // task-100 之前的有限体口径，从而可以在**同一次窗口、同一条命令、同一棵树**上跑出 before
+    // 读数。没有它，before 只能用另一棵树/另一把尺量，前后不可比。产品代码不读这个变量。
+    const workspaceEvents =
+        options.workspaceEvents ??
+        (process.env.XH_FIXTURE_WORKSPACE_EVENTS === "off" ? "off" : "stream");
+    if (workspaceEvents === "stream") {
+        await installWorkspaceEventStream(page);
+    }
     const branchesBySession = new Map<string, MockBranch[]>();
     const branchResponses = new Map<
         string,
@@ -346,21 +420,58 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     await page.route("**/api/v1/**", async (route) => {
         const url = route.request().url();
         if (url.includes("/api/v1/workspaces/") && url.includes("/events")) {
+            if (workspaceEvents === "off") {
+                // 该 spec 明确要自己在网络层处理这条 URL（自有 429 桩 / 观察 request 事件）。
+                // 保留 task-100 之前的有限体口径 —— 代价是这个 spec 内仍有重连 churn。
+                await route.fulfill({
+                    status: 200,
+                    headers: { "Content-Type": "text/event-stream" },
+                    body: "retry: 1000\n\n",
+                });
+                return;
+            }
+            // 正常情况下**到不了这里** —— `installWorkspaceEventStream`（setupMockAuth 开头挂的
+            // in-page fetch 覆盖）已经把这条 URL 截住并返回永不关闭的流。
+            // 这里刻意返回 501 而不是任何有限体：finite body 会立刻结束响应，把 task-98 的
+            // 101 次/30 s 重连风暴原样复活；而**静默**返回一个"看起来能用"的东西，会让
+            // 又一次夹具回归无人发现。狼狈一点，可查一点。
             await route.fulfill({
-                status: 200,
-                headers: { "Content-Type": "text/event-stream" },
-                body: "retry: 1000\n\n",
+                status: 501,
+                contentType: "application/problem+json",
+                body: JSON.stringify({
+                    code: "FIXTURE_UNREACHABLE",
+                    detail: "workspace event stream must be served by installWorkspaceEventStream (in-page fetch)",
+                }),
             });
             return;
         }
-        // PLAN-0577: the per-session chat monitor is an SSE endpoint. Without a
-        // stub it escapes to the dev proxy, and a live CP answers 401, which
-        // makes the API layer log the mock session out mid-test.
+        // `GET /chat/sessions/{id}/monitor` 是 **JSON** 聚合读（`openapi.yaml:2152-2156`，
+        // `SessionMonitorResponse`），不是 SSE。旧桩按 `text/event-stream` 服务它，产品的
+        // `api.getSessionMonitor` 按 JSON 读 ⇒ `session monitor fetch failed: Unexpected token
+        // 'r', "retry: 1000 "`（task-98/§12）。契约站产品这边，所以修的是桩。
+        // 保留 stub 的理由照旧（PLAN-0577）：不桩就逃到 dev proxy，真 CP 回 401，产品会把
+        // mock 会话登出。
         if (url.includes("/api/v1/chat/sessions/") && url.includes("/monitor")) {
+            if (process.env.XH_FIXTURE_MONITOR === "sse") {
+                // 测量用对照（task-100）：把 monitor 退回 task-100 之前的 `text/event-stream` 口径，
+                // 用来量 `session monitor fetch failed` 的 before 值。产品代码不读这个变量。
+                if (!warnedLegacyMonitor) {
+                    warnedLegacyMonitor = true;
+                    console.warn(
+                        "[fixture] XH_FIXTURE_MONITOR=sse ⇒ monitor 端点退回 SSE 桩（仅 before/after 对照测量用）",
+                    );
+                }
+                await route.fulfill({
+                    status: 200,
+                    headers: { "Content-Type": "text/event-stream" },
+                    body: "retry: 1000\n\n",
+                });
+                return;
+            }
             await route.fulfill({
                 status: 200,
-                headers: { "Content-Type": "text/event-stream" },
-                body: "retry: 1000\n\n",
+                contentType: "application/json",
+                body: JSON.stringify(sessionMonitorResponse()),
             });
             return;
         }

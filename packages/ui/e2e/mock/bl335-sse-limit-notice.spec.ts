@@ -26,7 +26,9 @@ test.use({
 const SESSION_ID = "bl335-session";
 
 async function openWorkspace(page: import("@playwright/test").Page) {
-    await setupMockAuth(page);
+    // task-100：本 spec 要在**网络层**给这条 URL 回 429（订阅上限），而默认的 in-page 长连接桩
+    // 会抢在网络层之前把它盖掉 ⇒ 显式退回网络层桩形态。
+    await setupMockAuth(page, { workspaceEvents: "off" });
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-335" }] });
 }
 
