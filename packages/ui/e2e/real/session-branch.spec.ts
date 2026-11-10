@@ -240,7 +240,8 @@ test.describe("@host Session branch path", () => {
         // removed on 2026-11-03. Tests now interact with the visible panel like a user.
         await expandSessionSettings(page);
         const branchSelect = page.getByTestId("session-branch-select");
-        await expect(branchSelect).toHaveValue(rootBranchId);
+        // BL-547（task-175）：reka Select —— 触发器可见文本 = 主路径（选中根分支）。
+        await expectRekaValue(branchSelect, /主路径|Main path/);
 
         const anchorMessage = page.locator('[data-slot="message"][data-align="start"]').last();
         await anchorMessage.hover();
@@ -260,7 +261,16 @@ test.describe("@host Session branch path", () => {
             forkPointMessageId: string;
         };
         expect(createdBranch.parentBranchId).toBe(rootBranchId);
-        await expect(branchSelect).toHaveValue(createdBranch.branchId);
+        // BL-547（task-175）：同上，按短 id 断言当前选中项文本。
+        await expectRekaValue(
+            branchSelect,
+            new RegExp(
+                "分支 " +
+                    createdBranch.branchId.slice(0, 8) +
+                    "|Branch " +
+                    createdBranch.branchId.slice(0, 8),
+            ),
+        );
 
         const branchChatText = `selected-branch-${Date.now()}`,
             beforeBranchChat = submissions.length;
@@ -385,7 +395,8 @@ test.describe("@host Session branch path", () => {
 
         const childBranchId = await getRootBranchId(request, childId, workspaceHeaders);
         const childBranchSelect = page.getByTestId("session-branch-select");
-        await expect(childBranchSelect).toHaveValue(childBranchId);
+        // BL-547（task-175）：reka Select —— 根分支选中态 = 「主路径」文本。
+        await expectRekaValue(childBranchSelect, /主路径|Main path/);
         const childMessagesResponse = await request.get(
             `${CP_URL}/api/v1/sessions/${childId}/messages?branchId=${childBranchId}`,
             { headers: workspaceHeaders },
@@ -535,7 +546,8 @@ test.describe("@host Session branch path", () => {
         const mobileChatSheet = page.getByTestId("mobile-chat-sheet");
         await expect(mobileChatSheet).toBeVisible();
         const mobileBranchSelect = mobileChatSheet.getByTestId("session-branch-select");
-        await expect(mobileBranchSelect).toHaveValue(childBranchId);
+        // BL-547（task-175）：同上（移动端同一 reka Select）。
+        await expectRekaValue(mobileBranchSelect, /主路径|Main path/);
         // Same collapsible settings panel as on desktop: the branch selector only
         // becomes visible once the panel is expanded inside the mobile sheet.
         const mobileSummary = mobileChatSheet.getByTestId("session-settings-summary");

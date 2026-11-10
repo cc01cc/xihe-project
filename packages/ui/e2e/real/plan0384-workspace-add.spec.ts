@@ -172,7 +172,12 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
         await page.locator('[data-testid="workspace-source-path"]').fill(addDir);
         await page.locator('[data-testid="workspace-source-read"]').click();
         await expect(page.locator('[data-testid="workspace-source-browser"]')).toBeVisible();
-        await page.locator('[data-testid="workspace-source-use"]').click();
+        // BL-547（task-175）：点击「使用此目录」必须等按钮 enabled —— 目录读取完成前
+        // `:disabled="sourceLoading || !sourcePath.trim()"` 会吞掉 click（hostPath 缺失 ⇒
+        // 后续 POST payload.hostPath undefined，实测 Received: undefined）。
+        const sourceUse = page.locator('[data-testid="workspace-source-use"]');
+        await expect(sourceUse).toBeEnabled({ timeout: LONG_TIMEOUT_MS });
+        await sourceUse.click();
 
         // V2: execution-mode cards read the real preflight result.
         const mxcStatus = page.locator('[data-testid="workspace-execution-mxc-status"]');
