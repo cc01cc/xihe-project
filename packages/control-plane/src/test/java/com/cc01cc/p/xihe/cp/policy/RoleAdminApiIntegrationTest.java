@@ -114,10 +114,15 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
         assertTrue(byName.get("instance:admin").path("capability").asBoolean());
         assertEquals("instance", byName.get("instance:admin").path("scopeClass").asText());
         assertEquals("both", byName.get("workspace:admin").path("scopeClass").asText());
-        // BL-312 (option B, 2026-11-09): the former PLAN-0622 D8 "create your own agent" atom is
-        // removed from the vocabulary; the roles/catalog face must not list it any more.
-        assertFalse(byName.containsKey("CREATE_OWN_AGENT"),
-                "BL-312: the removed D8 atom is gone from the roles/catalog vocabulary");
+        // PLAN-0750 M1 (G1, user ruling 2026-11-10): the atom is back with user-level semantics —
+        // the roles/catalog face must list it again, as an instance-bindable action atom that is
+        // also agent-principal-forbidden (not a capability).
+        assertTrue(byName.containsKey("CREATE_OWN_AGENT"),
+                "PLAN-0750 M1: the user-level create atom is part of the catalog vocabulary");
+        assertEquals("instance", byName.get("CREATE_OWN_AGENT").path("scopeClass").asText(),
+                "creating one's own principal produced no binding, so the atom is instance-bindable only");
+        assertFalse(byName.get("CREATE_OWN_AGENT").path("capability").asBoolean(),
+                "it is an action atom, not a capability atom");
         assertEquals(PermissionAtomCatalog.capabilityAtoms().size(), atoms.findValues("capability").stream()
                 .filter(JsonNode::asBoolean).count(), "exactly the catalog's capability atoms");
     }

@@ -54,8 +54,8 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
 
     /**
      * spec §4.1 USER row / evidence matrix USER column: the five allow rows plus the BL-345 SELF
-     * atom and the base PLUGIN_INVOKE (BL-312 removed the former D8 CREATE_OWN_AGENT row).
-     * credential atoms stay denied.
+     * atom, the base PLUGIN_INVOKE and the PLAN-0750 M1 (G1) own-agent atom. credential atoms stay
+     * denied.
      */
     private static final Set<String> USER_MATRIX = Set.of(
             "read", "write", "delete", "exec", "network",
@@ -64,7 +64,11 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             "MEMORY_WRITE_SELF",
             // PLAN-0691 T1.3 (M1) spec B-4: invoking an already-bound BUILTIN plugin is in the base
             // set (install ≠ grant; a third-party plugin has no default at all).
-            "PLUGIN_INVOKE");
+            "PLUGIN_INVOKE",
+            // PLAN-0750 M1 (G1, 2026-11-10): an ordinary account may create its own user-level
+            // principal (owner = actor, no Workspace binding). Instance scope, agent-forbidden —
+            // it is NOT the workspace tier (MANAGE_WORKSPACE_AGENTS) and not CREATE_ACCOUNT.
+            "CREATE_OWN_AGENT");
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
@@ -90,11 +94,13 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             "MANAGE_ROLES",
             // BL-345: ADMIN inherits the USER default set (SELF), but not MEMORY_WRITE (any subject).
             "MEMORY_WRITE_SELF",
-            // PLAN-0691 T1.3 (M1): the four plugin atoms make the count 32 (BL-312 removed
-            // CREATE_OWN_AGENT); ADMIN (the fixed instance-administrator set) holds manage + bind,
-            // inherits invoke from USER's set, and never holds PLUGIN_DATA (the data plane belongs
-            // to a binding, not to a person).
-            "PLUGIN_MANAGE", "PLUGIN_BIND", "PLUGIN_INVOKE");
+            // PLAN-0691 T1.3 (M1): the four plugin atoms joined the vocabulary; ADMIN (the fixed
+            // instance-administrator set) holds manage + bind, inherits invoke from USER's set, and
+            // never holds PLUGIN_DATA (the data plane belongs to a binding, not to a person).
+            "PLUGIN_MANAGE", "PLUGIN_BIND", "PLUGIN_INVOKE",
+            // PLAN-0750 M1 (G1): ADMIN derives from USER_DEFAULT_ATOMS in the code catalog, so it
+            // inherits the restored own-agent atom without a second literal.
+            "CREATE_OWN_AGENT");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

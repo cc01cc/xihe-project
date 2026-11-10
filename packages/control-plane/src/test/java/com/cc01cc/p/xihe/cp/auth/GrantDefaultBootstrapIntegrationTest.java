@@ -47,7 +47,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -81,8 +80,12 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
             ToolFaceRegistry.ACTION_DELETE, ToolFaceRegistry.ACTION_EXEC,
             ToolFaceRegistry.ACTION_NETWORK);
 
-    /** BL-312: the removed PLAN-0622 D8 atom, kept as a string literal for the fail-closed probe. */
-    private static final String REMOVED_OWN_AGENT_ATOM = "CREATE_OWN_AGENT";
+    /**
+     * PLAN-0750 M1 (G1 = (1a), user ruling 2026-11-10): the own-agent create atom is back with new
+     * user-level semantics (owner = actor, no Workspace binding). BL-312's removal is superseded —
+     * the atom is a catalog member again, so the probes below assert presence, not fail-closed.
+     */
+    private static final String OWN_AGENT_ATOM = "CREATE_OWN_AGENT";
 
     private static final Set<String> USER_DEFAULT_ATOMS = userDefaultAtoms();
 
@@ -96,6 +99,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // carries, so the USER default carries it too. It is the only plugin atom an agent may hold;
         // WS_VIEWER stays out on purpose (invocation executes a tool face).
         atoms.add(ToolFaceRegistry.ACTION_PLUGIN_INVOKE);
+        // PLAN-0750 M1 (G1): an ordinary account may create its own user-level principal, so the
+        // registration default set carries the own-agent atom again (instance scope, agent-forbidden).
+        atoms.add(OWN_AGENT_ATOM);
         return Set.copyOf(atoms);
     }
 
@@ -212,15 +218,15 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         User seededAdmin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
 
         // PLAN-0610 W1b T1.9: DataSeeder seeds the SUPER_ADMIN instance binding (invariant I1), so
-        // the bootstrap admin materializes every action atom of the vocabulary — 32 after BL-312
-        // removed the former D8 CREATE_OWN_AGENT atom — instead of ADMIN's nine.
+        // the bootstrap admin materializes every action atom of the vocabulary — which is 33 again
+        // since PLAN-0750 M1 (G1) restored the own-agent atom — instead of ADMIN's set.
         Set<String> seededAdminAtoms = roleAtoms("user", seededAdmin.getId());
         List<AuthorizationGrant> seededAdminRows = roleRows("user", seededAdmin.getId());
         assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()), seededAdminAtoms,
                 "the seeded admin owns SUPER_ADMIN: every action atom of the vocabulary, "
                         + "not a hard-coded count");
-        assertFalse(seededAdminAtoms.contains(REMOVED_OWN_AGENT_ATOM),
-                "BL-312: the removed D8 atom is no longer part of the SUPER_ADMIN seed");
+        assertTrue(seededAdminAtoms.contains(OWN_AGENT_ATOM),
+                "PLAN-0750 M1: SUPER_ADMIN carries the restored own-agent atom (parity mandate)");
         assertEquals(PermissionAtomCatalog.actionAtoms().size(), seededAdminRows.size(),
                 "one materialized row per action atom; capability atoms are never rows");
 
@@ -230,11 +236,12 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         Set<String> userAtoms = roleAtoms("user", user.getId());
         assertEquals(USER_DEFAULT_ATOMS, userAtoms,
                 "the USER default is the five allow classes plus MEMORY_WRITE_SELF/PLUGIN_INVOKE "
-                        + "(BL-312 removed the former D8 atom); credential atoms stay out");
+                        + "and the PLAN-0750 M1 own-agent atom; credential atoms stay out");
         assertTrue(userAtoms.containsAll(USER_ALLOW_ATOMS),
                 "the five allow classes are still materialized");
         assertEquals(USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
-                "one instance-tier row per USER atom (seven after BL-312 removed D8's atom)");
+                "one instance-tier row per USER atom (eight since PLAN-0750 M1 restored the"
+                        + " own-agent atom)");
         assertEquals(0, grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId()).size(),
                 "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
         assertEquals("read", roleRows("user", user.getId()).get(0).getReadState());
@@ -260,7 +267,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals("read", agentDefault.getReadState());
         assertEquals(USER_DEFAULT_ATOMS.size(), agentDefault.getPermissions().size(),
                 "round-2 P1-1: the frozen Agent snapshot keeps the whole USER atom array in one row "
-                        + "(seven after BL-312, not five)");
+                        + "(eight since PLAN-0750 M1, not five)");
         assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT));
@@ -283,15 +290,17 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         Set<String> userAtoms = roleAtoms("user", UUID.fromString(userId));
         assertEquals(USER_DEFAULT_ATOMS, userAtoms,
                 "the materialized USER set carries the five allow classes plus MEMORY_WRITE_SELF"
-                        + "/PLUGIN_INVOKE (BL-312 removed the former D8 atom)");
+                        + "/PLUGIN_INVOKE and the PLAN-0750 M1 own-agent atom");
         roleRows("user", UUID.fromString(userId)).forEach(row -> grantIds.add(row.getId()));
 
-        // BL-312 scope contract: the former PLAN-0622 D8 atom is gone from the catalog, so asking
-        // PermissionAtomCatalog for it fails closed (UNKNOWN_ACTION_CLASS); the tier-creation
-        // separation below is what remains of the old D8 assertions.
-        assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
-                () -> PermissionAtomCatalog.atom(REMOVED_OWN_AGENT_ATOM),
-                "BL-312: the removed atom is unknown to the catalog (fail-closed)");
+        // PLAN-0750 M1 (G1) scope contract: the atom resolves again, as an instance-bindable action
+        // atom — NOT a capability, and not bindable in a workspace scope (the create produces no
+        // binding, so a workspace-scoped grant of it would be meaningless).
+        PermissionAtomCatalog.Atom ownAgent = PermissionAtomCatalog.atom(OWN_AGENT_ATOM);
+        assertFalse(ownAgent.capability(), "the own-agent atom is an action atom, not a capability");
+        assertTrue(ownAgent.instanceOnly(), "creating one's own principal is instance-bindable only");
+        assertTrue(ownAgent.agentPrincipalForbidden(),
+                "an agent principal is a grantee, never an account creator");
         for (String tierCreation : List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                 ToolFaceRegistry.ACTION_CREATE_ACCOUNT)) {
             assertFalse(userAtoms.contains(tierCreation),
@@ -304,8 +313,10 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                             request(actionClass, "notes/today.md")),
                     "the minimal set covers " + actionClass + " on the registrant's own workspace");
         }
-        assertFalse(grantAuthorizationService.allowsUserOnly(request(REMOVED_OWN_AGENT_ATOM, "*")),
-                "BL-312: the removed atom evaluates deny for everyone (no grant can carry it)");
+        assertTrue(grantAuthorizationService.allowsUserOnly(request(OWN_AGENT_ATOM, "*")),
+                "PLAN-0750 M1: the registrant may create its own user-level principal — the atom is"
+                        + " part of the USER default set (it never widens the workspace or instance"
+                        + " tier creation rights asserted above)");
         assertFalse(grantAuthorizationService.allowsUserOnly(
                         request("credential_use", "credential:" + UUID.randomUUID())),
                 "credential is outside the minimal set (zero over-privilege, PLAN-0496 atoms)");

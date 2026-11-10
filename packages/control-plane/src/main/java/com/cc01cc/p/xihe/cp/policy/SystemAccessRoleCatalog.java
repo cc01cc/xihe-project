@@ -93,13 +93,21 @@ public class SystemAccessRoleCatalog {
             AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
 
     /**
-     * The registration default set. BL-312 (user ruling 2026-11-09) removed the former
-     * PLAN-0622 D8 own-agent atom from the vocabulary: creating one's own agent principal is not
-     * a registration capability any more (workspace tier = MANAGE_WORKSPACE_AGENTS, instance tier
-     * = CREATE_ACCOUNT).
+     * The registration default set. PLAN-0750 M1 (G1 = (1a), user ruling 2026-11-10) restores the
+     * own-agent creation atom — with the new user-level semantics: owner = the actor and no
+     * Workspace binding is produced. It is deliberately ONE atom, independent of
+     * MANAGE_WORKSPACE_AGENTS (workspace tier) and CREATE_ACCOUNT (instance tier): creating for
+     * someone else still needs those, and the three are never alias-merged (design #3/#7).
+     *
+     * <p>ADMIN and SUPER_ADMIN derive from this list (ADMIN {@code concat(USER_DEFAULT_ATOMS, …)},
+     * SUPER_ADMIN from {@link #superAdminAtoms()}), so they inherit the atom without a second
+     * literal — one expression, no "role missing an atom" hole. AGENT_USER is the bare
+     * {@link #BASE_ATOMS} and therefore never carries it (agent-principal-forbidden).</p>
      */
     private static final List<AtomRef> USER_DEFAULT_ATOMS = concat(BASE_ATOMS,
             List.of(
+                    // PLAN-0750 M1: an ordinary account may create its own user-level principal.
+                    AtomRef.wildcard(ToolFaceRegistry.ACTION_CREATE_OWN_AGENT),
                     // BL-345 (user ruling 2026-11-06): every registered account may write the
                     // memory of a principal it owns. MEMORY_WRITE (any subject) is NOT here.
                     AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF)));
@@ -164,7 +172,8 @@ public class SystemAccessRoleCatalog {
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
-                                + "own-principal memory atom (BL-312 removed CREATE_OWN_AGENT).",
+                                + "own-agent create atom (PLAN-0750 M1) and the own-principal "
+                                + "memory atom.",
                         USER_DEFAULT_ATOMS),
                 new RoleSeed(WS_OWNER_ID, WS_OWNER, "Workspace Owner",
                         "Workspace scope: editor actions plus workspace agent management "

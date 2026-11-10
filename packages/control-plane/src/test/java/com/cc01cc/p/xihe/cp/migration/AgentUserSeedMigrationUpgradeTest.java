@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -92,15 +91,17 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
                 "the agent-forbidden atom is never part of AGENT_USER");
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default:
         // base + SELF. The base set is six atoms since PLAN-0691 T1.3 added PLUGIN_INVOKE (V137);
-        // BL-312 (V147, 2026-11-09) removed the former CREATE_OWN_AGENT seed row, so 6 + 1 = 7 —
-        // the same design-change arithmetic as AGENT_USER's 5 -> 6, not a regression: the SELF atom
-        // is agent-forbidden only.
-        assertEquals(7, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
-                "human USER keeps its registration atoms + the V129 SELF atom (6 base + SELF;"
-                        + " BL-312 removed CREATE_OWN_AGENT)");
-        assertFalse(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
+        // BL-312 (V147, 2026-11-09) removed the former CREATE_OWN_AGENT seed row (7 at that point);
+        // PLAN-0750 M1 (G1, 2026-11-10) restored it with user-level semantics, so the human USER
+        // seed is 6 base + SELF + the own-agent atom = 8. AGENT_USER stays at six: the atom is
+        // agent-principal-forbidden, which is exactly why the two roles differ again.
+        assertEquals(8, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
+                "human USER keeps its registration atoms + the V129 SELF atom + the PLAN-0750 M1"
+                        + " own-agent atom (6 base + SELF + CREATE_OWN_AGENT)");
+        assertTrue(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
                         .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
-                "BL-312: the removed atom is no longer part of the human USER seed");
+                "PLAN-0750 M1: creating one's own user-level principal is a registration capability"
+                        + " again (new semantics: owner = actor, no Workspace binding)");
 
         // Sibling seeded agent roles: neither may carry an agent-principal-forbidden atom.
         for (String roleName : new String[] {"AGENT_SPAWNER", "AGENT_DELEGATOR"}) {
@@ -137,9 +138,9 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
             legacySeed.setSeed(true);
             bindingRepository.save(legacySeed);
             materializer.materializeSubject("agent_principal", agentId, granter.getId(), null);
-            // BL-312: the catalog no longer carries CREATE_OWN_AGENT, so the materializer cannot
-            // produce the legacy shape. Re-create the measured stack-1 row by direct insert — the
-            // migration under test must strip exactly these rows the vocabulary can no longer emit.
+            // The migration under test must strip exactly these rows. Since PLAN-0750 M1 restored
+            // the atom, the materializer emits it for a USER-bound agent by itself; the helper only
+            // fills the row in when the catalog does not (it is idempotent either way).
             insertLegacyForbiddenGrant(agentId, granter.getId());
         }
 
@@ -147,8 +148,8 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemAccessRoleCatalog.USER_ID),
                 "legacy fixture: 40 agent USER seed bindings");
         assertEquals(LEGACY_AGENT_SEEDS, forbiddenGrantCount(agentIds),
-                "legacy fixture: CREATE_OWN_AGENT materialized for every agent (re-created by"
-                        + " direct insert, BL-312)");
+                "legacy fixture: CREATE_OWN_AGENT materialized for every USER-bound agent"
+                        + " (PLAN-0750 M1 restored it to the human USER seed)");
 
         runMigration("V127__plan0651_agent_user_default_role.sql");
         // Upgrade path continues past V127: BL-367's forward migration strips the instance-scope SELF
@@ -228,8 +229,21 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         return total;
     }
 
-    /** The V91-era materialized row shape, re-created because BL-312 removed it from the catalog. */
+    /**
+     * The V91-era materialized row shape. Idempotent since PLAN-0750 M1 (G1) restored the atom:
+     * the fixture's agents are bound to the human USER role, whose seed now carries
+     * CREATE_OWN_AGENT, so {@code materializeSubject} already produces this exact row and an
+     * unconditional INSERT would violate uq_grants_role_atom.
+     */
     private void insertLegacyForbiddenGrant(UUID agentId, UUID granterId) {
+        Integer existing = jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
+                        + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)"
+                        + " AND source='role' AND permissions @> "
+                        + "'[{\"actionClass\": \"CREATE_OWN_AGENT\"}]'::jsonb",
+                Integer.class, agentId.toString());
+        if (existing != null && existing > 0) {
+            return;
+        }
         jdbcTemplate.update("INSERT INTO grants (id, granter_type, granter_id, subject_type,"
                         + " subject_id, permissions, source, scope_type, scope_id, read_state)"
                         + " VALUES (gen_random_uuid(), 'user', CAST(? AS UUID), 'agent_principal',"

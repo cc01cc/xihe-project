@@ -43,11 +43,16 @@ public class ToolFaceRegistry {
     // Kubernetes terms). Instance-only; default SUPER_ADMIN only; every use must be audited.
     // Never a role-name check — the bypass is an atom like any other.
     public static final String ACTION_GRANT_ANY_ATOM = "GRANT_ANY_ATOM";
-    // BL-312 (option B, user ruling 2026-11-09): the former CREATE_OWN_AGENT atom (PLAN-0622 D8) is
-    // removed from the vocabulary entirely — creating one's own agent principal is carried by
-    // MANAGE_WORKSPACE_AGENTS (workspace tier) and CREATE_ACCOUNT (instance tier) only. The seed
-    // rows are deleted by migration V147; the string is gone on purpose so a re-introduction fails
-    // closed at PermissionAtomCatalog.atom(...) instead of resurrecting silently.
+    // PLAN-0750 M1 (G1 = (1a), user ruling 2026-11-10): the atom returns with **new semantics** —
+    // it authorizes creating one's own user-level agent principal (owner = the actor, and no
+    // Workspace binding is produced). It never falls back to a workspace or instance tier action.
+    // BL-312 (2026-11-09) deleted the original PLAN-0622 D8 shape on purpose (it bypassed the
+    // workspace gate); that shape is NOT revived — the three creation actions stay independent and
+    // are never alias-merged. BL-312's seed rows are re-planted by the PLAN-0750 migration, and the
+    // atom is instance-only plus agent-principal-forbidden (an agent is a grantee, never an account
+    // creator). Re-introduction is deliberate: PermissionAtomCatalog.atom(...) still fails closed for
+    // any name that is not in the catalog, so this constant alone does not resurrect anything.
+    public static final String ACTION_CREATE_OWN_AGENT = "CREATE_OWN_AGENT";
     // PLAN-0629 M1 (D29-24/34): the seventeenth action atom — writing an agent subject's memory
     // through the agent tool channel. Default-deny by construction: it is stored in the catalog
     // but seeded into NO default role (USER/ADMIN included), so an account can only use it after
@@ -207,6 +212,10 @@ public class ToolFaceRegistry {
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
                 ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES,
+                // PLAN-0750 M1 (G1): the user-level create atom re-joins the action-class set in the
+                // same batch as its catalog entry, its role seed and its Flyway rows — the vocabulary
+                // is the evaluator's validation set, so a constant without this line is invisible.
+                ACTION_CREATE_OWN_AGENT,
                 ACTION_MEMORY_WRITE, ACTION_MEMORY_WRITE_SELF,
                 // PLAN-0651 M1 (D51-26): management atoms. They join the built-in vocabulary because
                 // it is the catalog's action-class set (PermissionAtomCatalog.actionAtoms() must stay

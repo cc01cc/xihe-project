@@ -29,8 +29,9 @@ class SkillReadFaceTest {
      * reviewed decision.
      */
     // BL-345/V129 (2026-11-06) added MEMORY_WRITE_SELF (28 → 29); PLAN-0691 T1.3 (V137) added the
-    // four plugin atoms (29 → 33); BL-312 (2026-11-09) removed CREATE_OWN_AGENT (33 → 32).
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 32;
+    // four plugin atoms (29 → 33); BL-312 (2026-11-09) removed CREATE_OWN_AGENT (33 → 32);
+    // PLAN-0750 M1 (G1, 2026-11-10) restored it with user-level semantics (32 → 33).
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 33;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {
