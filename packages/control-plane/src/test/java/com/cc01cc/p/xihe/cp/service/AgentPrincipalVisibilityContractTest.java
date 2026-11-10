@@ -100,8 +100,9 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // D-174 (no tiers): GET /agent-principals without workspaceId — N1 holders see everything,
-    // everyone else only their own owned rows (owner column, not a guessed creator grant).
+    // D-174 (no tiers) as amended by PLAN-0750 M2 (G13=(a)): GET /agent-principals without
+    // workspaceId — N1 holders see everything, everyone else the rows THEY CREATED
+    // (created_by_user_id = self; user-level rows carry no owner_user_id, G2=(b)).
     // -----------------------------------------------------------------------------------------
 
     @Test
@@ -367,6 +368,62 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 "D-174: no tier source badge");
     }
 
+    // -----------------------------------------------------------------------------------------
+    // PLAN-0750 M2 (G13=(a)): the personal view filters on created_by_user_id = self. A
+    // user-level principal carries no owner_user_id (G2=(b)), so before this change the lists
+    // hid every freshly created agent. Visibility only — no owner write, no binding, no atom
+    // change (the management arm still sees everything; A/B = flipping the filter back to
+    // owner-only turns these tests red).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void creatorSeesTheirUserLevelPrincipalInThePersonalList() {
+        User alice = newUser("m2-alice");
+        User bob = newUser("m2-bob");
+        grantDefaultService.ensureUserDefault(alice);
+        grantDefaultService.ensureUserDefault(bob);
+        // The real user-level door: no workspace header → CREATE_OWN_AGENT → 201, owner stays
+        // NULL (G2=(b)) — the row is visible to its creator via created_by_user_id alone.
+        ResponseEntity<Map> created = exchange(HttpMethod.POST,
+                "/api/v1/agent-principals", globalToken(alice), Map.of("name", "AliceUserLevel"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
+        principals.add(principalId);
+        assertNull(principalRepository.findById(principalId).orElseThrow().getOwnerUserId(),
+                "G2=(b): the user-level door never writes owner_user_id");
+
+        List<Map<String, Object>> aliceList = personalList(alice);
+        assertTrue(personalIds(aliceList).contains(principalId.toString()),
+                "G13=(a): the creator sees their user-level principal: " + aliceList);
+        List<Map<String, Object>> bobList = personalList(bob);
+        assertFalse(personalIds(bobList).contains(principalId.toString()),
+                "another user's created principal must not leak: " + bobList);
+    }
+
+    @Test
+    void workspaceListKeepsReachOnlySemanticsWhileBoundArmsStayIntact() {
+        User owner = newUser("m2-ws-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("M2 ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID boundRow = createWorkspaceAuthorized(owner, workspace, "MBoundRow");
+        bindViaApi(owner, workspace.getId(), boundRow);
+        UUID userLevel = createUserLevelPrincipal(owner, "MUserLevel");
+
+        List<Map<String, Object>> agents = listAgents(owner, workspace);
+
+        // Regression: the pre-existing union arms (cap bindings) keep their bound=true rows.
+        assertTrue(listed(agents, boundRow) && boundOf(agents, boundRow), agents.toString());
+        // PLAN-0629 reach contract is NOT relaxed by M2: the workspace union stays
+        // reach-gated (bindings ∪ role reach ∪ legacy owner rows) — an unbound user-level row
+        // is discoverable through the personal view (listPrincipals, G13=(a)), not through a
+        // workspace it holds no reach in. Unbind-revocation
+        // (RoleBindingIntegrationTest#unbindRevokesImmediately) depends on this: a removed
+        // binding must take the row off the workspace list again.
+        assertFalse(listed(agents, userLevel),
+                "an unbound user-level row stays out of the reach-gated workspace list: " + agents);
+    }
+
     @Test
     void theListIsOrderedByName() {
         User owner = newUser("order-owner");
@@ -475,6 +532,30 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         UUID principalId = principalRepository.saveAndFlush(principal).getId();
         principals.add(principalId);
         return principalId;
+    }
+
+    /** M2 (G13=(a)) fixture shape: no owner column at all, as the user-level door leaves it. */
+    private UUID createUserLevelPrincipal(User creator, String name) {
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setName(name);
+        principal.setTemplateSnapshot(objectMapper.createObjectNode());
+        principal.setCreatedByUserId(creator.getId().toString());
+        UUID principalId = principalRepository.saveAndFlush(principal).getId();
+        principals.add(principalId);
+        return principalId;
+    }
+
+    private List<Map<String, Object>> personalList(User caller) {
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/agent-principals", globalToken(caller), null);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) response.getBody().get("principals");
+        assertNotNull(rows, "the response must be the frozen {principals:[...]} envelope");
+        return rows;
+    }
+
+    private List<String> personalIds(List<Map<String, Object>> rows) {
+        return rows.stream().map(item -> String.valueOf(item.get("principalId"))).toList();
     }
 
     private void bindViaApi(User actor, UUID workspaceId, UUID principalId) {

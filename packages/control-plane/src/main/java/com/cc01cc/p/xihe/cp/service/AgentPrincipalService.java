@@ -559,6 +559,13 @@ public class AgentPrincipalService {
                 .forEach(principal -> merged.put(principal.getId(),
                         unboundView(principal, toJson(principalEffectiveAtoms(principal.getId(), workspaceId)),
                                 rolesByPrincipal.getOrDefault(principal.getId(), List.of()))));
+        // PLAN-0629 frozen semantics (kept under PLAN-0750 M2): the workspace union is
+        // REACH-GATED — bindings ∪ workspace-role reach ∪ the caller's own legacy owner rows.
+        // G13=(a) deliberately does NOT relax this arm to created_by: (1) instance principals
+        // created by the caller would appear without any reach, and (2) unbind must keep
+        // removing the row (RoleBindingIntegrationTest#unbindRevokesImmediately). A user-level
+        // row carries no owner, so it is discovered through the personal view
+        // (listPrincipals, G13=(a)) and enters a workspace only through the bind surface.
         agentPrincipalRepository.findByOwnerUserId(actorId).stream()
                 .filter(principal -> !merged.containsKey(principal.getId()))
                 .forEach(principal -> merged.put(principal.getId(),
@@ -604,14 +611,19 @@ public class AgentPrincipalService {
                                 java.util.stream.Collectors.toList())));
     }
 
-    /** Lists only owner-visible principals, or all principals for instance management. */
+    /** Lists creator-visible principals, or all principals for instance management. */
     @Transactional(readOnly = true)
     public List<AgentPrincipalView> listPrincipals(String actorUserId, String workspaceIdValue) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         if (workspaceIdValue == null || workspaceIdValue.isBlank()) {
+            // PLAN-0750 M2 (G13=(a)): the personal view filters on created_by_user_id = self —
+            // user-level principals carry no owner_user_id (G2=(b)), so the creator's visibility
+            // rides on the audit creator column. Visibility only: the management atom still sees
+            // everything, and the authorization surface (atoms + bindings) is unchanged.
             List<AgentPrincipal> visible = holdsAgentPrincipalManagementAtom(actorId)
-                    ? agentPrincipalRepository.findAll() : agentPrincipalRepository.findByOwnerUserId(actorId);
+                    ? agentPrincipalRepository.findAll()
+                    : agentPrincipalRepository.findByCreatedByUserId(actorId.toString());
             return visible.stream().map(this::toPrincipalView).toList();
         }
         UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE_CONTEXT");
