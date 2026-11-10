@@ -32,12 +32,11 @@ test.describe("@host Settings — Tier Tabs & Interactions", () => {
         request,
     }) => {
         await registerAndLogin(page, request, "save-toast");
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.locator('[data-testid="settings-config-heading"]')).toBeVisible({
+        await page.goto("/settings/user/agent-profile", { waitUntil: "load" });
+        await expect(page.locator('[data-testid="settings-domain-title"]')).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
 
-        await page.getByTestId("config-tab-user").click();
         const profilePanel = page.getByTestId("config-domain-agent-profile");
         await expect(profilePanel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await profilePanel.locator(":scope > button").click();

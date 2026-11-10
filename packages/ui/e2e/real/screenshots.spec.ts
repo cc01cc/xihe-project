@@ -23,7 +23,11 @@ const allRoutes: Route[] = [
         name: "real-workspace-chat-session",
         requiresAuth: true,
     },
-    { path: "/settings/config", name: "real-settings-config", requiresAuth: true },
+    {
+        path: "/settings/user/llm-provider",
+        name: "real-settings-user-llm-provider",
+        requiresAuth: true,
+    },
     { path: "/settings/knowledge", name: "real-settings-knowledge", requiresAuth: true },
     { path: "/settings/data", name: "real-settings-data", requiresAuth: true },
     { path: "/settings/monitoring", name: "real-settings-monitoring", requiresAuth: true },

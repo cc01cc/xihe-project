@@ -98,7 +98,7 @@ test.describe.serial("@host PLAN-0485 embedding provider settings", () => {
             },
             { token: auth.accessToken, workspaceId: auth.workspaceId },
         );
-        await page.goto(`${UI_URL}/settings/config`);
+        await page.goto(`${UI_URL}/settings/user/embedding`);
 
         const panel = page.getByTestId("embedding-settings");
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });

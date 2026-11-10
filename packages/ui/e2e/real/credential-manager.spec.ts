@@ -269,7 +269,7 @@ test("@host credential manager — UI registration, role block, binding, lease u
     ]);
 
     // --- T4.1 ② 角色凭据区块（含 T4.2 天花板警告）---
-    await page.goto("/settings/config", { waitUntil: "load" });
+    await page.goto("/settings/user/agent-templates", { waitUntil: "load" });
     const panel = page.getByTestId("agent-templates-panel");
     await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await panel.getByTestId("agent-role-name").fill("E2E Credential Role");

@@ -71,11 +71,10 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
     }
 
     async function tightenTokenBudget(page: Page): Promise<void> {
-        await page.goto("/settings/config", { waitUntil: "load" });
-        await expect(page.getByTestId("settings-config-heading")).toBeVisible({
+        await page.goto("/settings/user/agent-runtime", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-domain-title")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        await page.getByTestId("config-tab-user").click();
         const panel = page.getByTestId("config-domain-agent-runtime");
         await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await panel.locator(":scope > button").click();

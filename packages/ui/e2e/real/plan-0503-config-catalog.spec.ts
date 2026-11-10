@@ -168,7 +168,8 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         expect(directoryRevision).not.toBe("");
 
         await injectSession(page, adminAuth);
-        await page.goto(`${UI_URL}/settings/config`);
+        // PLAN-0752：层在 URL 域段里，实例层默认域页 = llm-provider。
+        await page.goto(`${UI_URL}/settings/instance/llm-provider`);
 
         // V4: the stored connection is no longer visible — the panel keeps the
         // value visible, labels it and never silently rewrites it.
@@ -278,8 +279,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         await waitForDirectoryCatalog(request, userConnectionId, "fake-openai");
 
         await injectSession(page, userAuth);
-        await page.goto(`${UI_URL}/settings/config`);
-        await page.getByTestId("config-tab-user").click();
+        await page.goto(`${UI_URL}/settings/user/llm-provider`);
         const panel = page.getByTestId("llm-provider-profile");
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
@@ -319,7 +319,6 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
             profileUnit("openai", connectionKey, "fake-openai"),
         );
         await page.reload();
-        await page.getByTestId("config-tab-user").click();
         await expect(page.getByTestId("llm-profile-connection-select")).toHaveValue(
             userConnectionId,
             { timeout: LONG_TIMEOUT_MS },
@@ -333,8 +332,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         const manualModel = `manual-model-0504-${randomUUID().slice(0, 6)}`;
 
         await injectSession(page, userAuth);
-        await page.goto(`${UI_URL}/settings/config`);
-        await page.getByTestId("config-tab-user").click();
+        await page.goto(`${UI_URL}/settings/user/llm-provider`);
         const panel = page.getByTestId("llm-provider-profile");
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
@@ -377,8 +375,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         const noConnAuth = (await registration.json()) as LoginResult;
 
         await injectSession(page, noConnAuth);
-        await page.goto(`${UI_URL}/settings/config`);
-        await page.getByTestId("config-tab-user").click();
+        await page.goto(`${UI_URL}/settings/user/llm-provider`);
         const panel = page.getByTestId("llm-provider-profile");
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
@@ -421,8 +418,7 @@ test.describe.serial("@host PLAN-0504 llm-provider profile panel", () => {
         expect(seeded.status(), await seeded.text()).toBe(200);
 
         await injectSession(page, userAuth);
-        await page.goto(`${UI_URL}/settings/config`);
-        await page.getByTestId("config-tab-user").click();
+        await page.goto(`${UI_URL}/settings/user/llm-provider`);
 
         const orphanRow = page.getByTestId("provider-orphan-model-ghost-model");
         await expect(orphanRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });

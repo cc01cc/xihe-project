@@ -237,7 +237,7 @@ test.describe.serial("@host PLAN-0505 delete impact and cascade (browser)", () =
             expect(profile.status(), await profile.text()).toBe(200);
 
             // UI: open the settings hub and drive the delete confirm flow.
-            await page.goto("/settings/config");
+            await page.goto("/settings/user/llm-provider");
             const article = page.locator(
                 `[data-testid="provider-connection-${PROVIDER_ID}"][data-connection-key="${CONNECTION_KEY}"]`,
             );

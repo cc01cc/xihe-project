@@ -282,7 +282,9 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640",
             uiPort = process.env.XIHE_UI_PORT || "12630";
-        const redirectUri = `http://localhost:${uiPort}/settings/config`;
+        // PLAN-0752：远程 MCP 列表已迁到工作区设置的 mcp 页签（旧全局配置页已退役）。
+        const mcpTabPath = `/workspace/${auth.workspaceId}/settings?tab=mcp`;
+        const redirectUri = `http://localhost:${uiPort}${mcpTabPath}`;
         const save = await request.put(
             `${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`,
             {
@@ -316,16 +318,20 @@ test.describe("Cross-Module — Full Chain Chat", () => {
             },
             { token: auth.accessToken, user: { ...auth.user, workspaceId: auth.workspaceId } },
         );
-        await page.goto("/settings/config");
+        await page.goto(mcpTabPath);
         const serverRow = page.locator(`[data-testid="remote-mcp-${serverId}"]`);
         await expect(serverRow).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const authorizeButton = serverRow.locator("button");
         await authorizeButton.click();
-        await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: ACTION_TIMEOUT_MS });
+        await page.waitForURL(/\/workspace\/[^/]+\/settings(?:\?|$)/, {
+            timeout: ACTION_TIMEOUT_MS,
+        });
         await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: EXPECT_TIMEOUT_MS });
 
         await authorizeButton.click();
-        await page.waitForURL(/\/settings\/config(?:\?|$)/, { timeout: ACTION_TIMEOUT_MS });
+        await page.waitForURL(/\/workspace\/[^/]+\/settings(?:\?|$)/, {
+            timeout: ACTION_TIMEOUT_MS,
+        });
         await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: EXPECT_TIMEOUT_MS });
     });
 

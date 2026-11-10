@@ -24,10 +24,12 @@ const ADMIN_EMAIL = "admin@xihe.local";
 const ADMIN_PASSWORD = process.env.XIHE_E2E_ADMIN_PASSWORD ?? "";
 const EVIDENCE = evidenceDir("plan-0651-t42-permissions-tab");
 
-const ROLES_TAB = '[data-testid="settings-nav-settings-roles"]';
-const LOCKS_TAB = '[data-testid="settings-nav-settings-config-locks"]';
-const CONFIG_TAB = '[data-testid="settings-nav-settings-config"]';
-const SETTINGS_PATH = "/settings/config";
+// PLAN-0752：左栏换成层×域（`SettingsSidebar`），旧 `settings-nav-settings-*` testid 已随旧
+// 配置页退役，运维项没有 per-item testid ⇒ 用 href 定位（仍是真实可点链接，不是选择器兜底）。
+const ROLES_TAB = 'a[href="/settings/roles"]';
+const LOCKS_TAB = 'a[href="/settings/config-locks"]';
+const CONFIG_TAB = 'a[href="/settings/user/llm-provider"]';
+const SETTINGS_PATH = "/settings/user/llm-provider";
 
 interface PermissionsBody {
     instanceCapabilities?: string[];

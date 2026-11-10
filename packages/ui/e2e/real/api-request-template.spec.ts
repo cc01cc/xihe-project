@@ -172,8 +172,7 @@ for (const wire of cases) {
                     },
                     { token: auth.accessToken, workspaceId: auth.workspaceId },
                 );
-                await page.goto("/settings/config");
-                await page.getByTestId("config-tab-user").click();
+                await page.goto("/settings/user/api-request-templates");
                 const panel = page.getByTestId("api-request-templates-panel");
                 await expect(panel).toBeVisible();
                 await panel.getByTestId("api-request-type").selectOption(wire.apiTypeId + "@1");
@@ -213,6 +212,8 @@ for (const wire of cases) {
                     (item: { name: string }) => item.name === templateName,
                 );
                 expect(template.bodySource).toBe(bodySource);
+                // PLAN-0752：一个域一页，模板面板与 ProviderHub 不再同页 ⇒ 切到 llm-provider 域页。
+                await page.goto("/settings/user/llm-provider");
                 const hub = page.getByTestId("provider-hub");
                 await hub.getByTestId(`provider-connection-${wire.providerId}`).click();
                 const refKey = `user:${template.id}:${template.version}`;
@@ -348,8 +349,7 @@ test("@host PLAN-0642 saving a draft is confirmed only after the real write and 
         },
         { token: auth.accessToken, workspaceId: auth.workspaceId },
     );
-    await page.goto("/settings/config");
-    await page.getByTestId("config-tab-user").click();
+    await page.goto("/settings/user/api-request-templates");
     const panel = page.getByTestId("api-request-templates-panel");
     await expect(panel).toBeVisible();
     await panel.getByTestId("api-request-type").selectOption("openai-chat-completions@1");

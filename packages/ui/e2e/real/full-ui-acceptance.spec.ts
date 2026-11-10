@@ -195,7 +195,7 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
     test("real ProviderHub exposes live catalog and connection form", async ({ page, request }) => {
         const auth = await register(request, "provider-hub");
         await installAuth(page, auth);
-        await page.goto("/settings/config");
+        await page.goto("/settings/user/llm-provider");
         const hub = page.getByTestId("provider-hub");
         await expect(hub).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.getByTestId("provider-hub-connect")).toBeEnabled({
