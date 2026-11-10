@@ -128,6 +128,10 @@ export interface MessageScrollerContextValue {
     setRootElement: (element: HTMLDivElement | null) => void;
     setSpacerElement: (element: HTMLDivElement | null) => void;
     setViewportElement: (element: HTMLDivElement | null) => void;
+    /** PLAN-0760：声明「下一帧内容变化是 prepend」（窗口化下 provider 无法自行判定）。 */
+    setPendingPrepend: (value: boolean) => void;
+    /** PLAN-0760：只读观测该标志（测试用）。 */
+    getPendingPrepend: () => boolean;
     stateStore: MessageScrollerStore<MessageScrollerScrollable>;
     syncAfterScroll: () => void;
     unobserveVisibility: () => void;

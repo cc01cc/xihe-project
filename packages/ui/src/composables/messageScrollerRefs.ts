@@ -52,6 +52,8 @@ export function useMessageScrollerRefs({
         } | null>(null),
         scrollPreviousItemPeekRef = ref(scrollPreviousItemPeek),
         preserveScrollOnPrependRef = ref(true),
+        /** PLAN-0760 / BL-556：调用方声明「下一帧内容变化是 prepend」（窗口化下 provider 无法自行判定）。 */
+        pendingPrependRef = ref(false),
         rootRef = ref<HTMLDivElement | null>(null),
         scrollMarginRef = ref(scrollMargin),
         pendingScrollFrameRef = ref<number | null>(null),
@@ -103,6 +105,7 @@ export function useMessageScrollerRefs({
         pendingScrollToMessageRef,
         prependRestoreRef,
         preserveScrollOnPrependRef,
+        pendingPrependRef,
         rootRef,
         scrollEdgeThresholdRef,
         scrollMarginRef,
