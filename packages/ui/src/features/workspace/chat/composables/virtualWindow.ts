@@ -12,6 +12,13 @@
  *
  * 行高未知时用 `fallbackHeight`（消息行典型高度），渲染后再用真实测量值修正；测量值进
  * `heights` map 后窗口计算自动收敛。
+ *
+ * PLAN-0753 M4（task-185）：生产窗口引擎已迁到 `@tanstack/vue-virtual`（`useVirtualMessageWindow`
+ * 内部用 `useVirtualizer` 测量+滑窗），本文件保留两部分：
+ * 1. 纯函数窗口计算 —— 作为库尚未接管时的**首帧/降级路径**（attach 后、jsdom 单测、库返回空窗口时），
+ *    行为与本迁移前逐字节一致；
+ * 2. `windowFromVirtualItems` —— 把 virtualizer 的 `VirtualItem[]` 映射成同一 `VirtualWindow` 形状，
+ *    保证渲染层（占位 spacer 模型）不感知引擎切换。
  */
 
 export interface VirtualWindow {
@@ -119,4 +126,62 @@ export function buildRowHeights(
 export function scrollCompensation(prevTopPadding: number, nextTopPadding: number): number | null {
     const delta = nextTopPadding - prevTopPadding;
     return delta === 0 ? null : delta;
+}
+
+/**
+ * PLAN-0753 M4：把 virtualizer 的测量结果（measurementsCache）+ 我们自己的 scrollTop/viewportHeight
+ * 映射成渲染层契约（占位 spacer 模型）。
+ *
+ * 为什么不用库的 getVirtualItems()：库里窗口依赖它自己的 scrollOffset，而 scrollOffset 由 observer
+ * 异步写入（attach 后才注册、注册时不读初始偏移）——jsdom 单测与"attach 同帧写入 scrollTop"两条路径
+ * 都会读到旧偏移。这里只取**测量事实**（每行 start/size，未测量的行由 estimateSize 兜底），
+ * 窗口边界用我们自己的滚动读数计算，语义与迁移前 computeVirtualWindow 逐项对应：
+ * - start/end = 可见区间外扩 overscan（与旧实现同一条 clamp 规则）；
+ * - topPadding = start 行顶部偏移；bottomPadding = 总高 − end 前一行底部。
+ */
+export function windowFromMeasurements(
+    measurements: readonly { start: number; size: number }[],
+    totalSize: number,
+    scrollTop: number,
+    viewportHeight: number,
+    overscan: number,
+    count: number,
+): VirtualWindow {
+    if (count === 0 || measurements.length === 0) {
+        return { start: 0, end: 0, topPadding: 0, bottomPadding: 0, totalHeight: totalSize };
+    }
+    const safeTop = Math.max(0, scrollTop);
+    const safeHeight = Math.max(0, viewportHeight);
+    const safeOverscan = Math.max(0, overscan);
+
+    // 首个「底边越过 scrollTop」的行（= 首个可见行）。
+    let firstVisible = 0;
+    while (
+        firstVisible < measurements.length - 1 &&
+        measurements[firstVisible].start + measurements[firstVisible].size <= safeTop
+    ) {
+        firstVisible += 1;
+    }
+    // 首个「顶部到达视口底」的行：旧实现 indexAtOffset(prefix, top+height) 的下标语义即此，
+    // 该行本身仍算可见（end = 该下标 + 1 + overscan），与迁移前 computeVirtualWindow 逐项一致。
+    const viewportBottom = safeTop + safeHeight;
+    let firstBeyond = measurements.length - 1;
+    for (let index = firstVisible; index < measurements.length; index += 1) {
+        if (measurements[index].start >= viewportBottom) {
+            firstBeyond = index;
+            break;
+        }
+    }
+
+    const start = Math.max(0, Math.min(count - 1, firstVisible - safeOverscan));
+    const end = Math.max(start, Math.min(count, firstBeyond + 1 + safeOverscan));
+    const lastRendered = measurements[Math.min(end, measurements.length) - 1];
+    const renderedBottom = lastRendered ? lastRendered.start + lastRendered.size : 0;
+    return {
+        start,
+        end,
+        topPadding: Math.max(0, measurements[start].start),
+        bottomPadding: Math.max(0, totalSize - renderedBottom),
+        totalHeight: totalSize,
+    };
 }
