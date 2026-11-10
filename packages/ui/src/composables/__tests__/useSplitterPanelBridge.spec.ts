@@ -11,18 +11,13 @@ type Panel = SplitterPanelExposed & {
     resize: ReturnType<typeof vi.fn>;
     collapse: ReturnType<typeof vi.fn>;
     expand: ReturnType<typeof vi.fn>;
-    getSize: ReturnType<typeof vi.fn>;
 };
 
-function makePanel(size: number): Panel {
-    let current = size;
+function makePanel(): Panel {
     return {
         collapse: vi.fn<() => void>(),
         expand: vi.fn<() => void>(),
-        getSize: vi.fn<() => number>(() => current),
-        resize: vi.fn<(next: number) => void>((next: number) => {
-            current = next;
-        }),
+        resize: vi.fn<(next: number) => void>(),
         isCollapsed: vi.fn<() => boolean>(() => false),
         isExpanded: vi.fn<() => boolean>(() => true),
     };
@@ -39,7 +34,7 @@ function mountHost(opts: {
     let bridge!: ReturnType<typeof useSplitterPanelBridge>;
     const Host = {
         setup() {
-            panel = makePanel(currentWidth.value + 56);
+            panel = makePanel();
             bridge = useSplitterPanelBridge({
                 clamp: (w) => Math.max(220, Math.min(360, Math.round(w))),
                 currentWidth: () => currentWidth.value,
@@ -79,17 +74,29 @@ function press(wrapper: VueWrapper, key: string, target?: Element): KeyboardEven
 }
 
 describe("useSplitterPanelBridge (PLAN-0753 T3)", () => {
-    it("commits exactly once on pointer release from getSize; drag resize events never commit", () => {
+    it("commits exactly once on release using the last reka-reported size; drag events never commit", () => {
         const host = mountHost({ width: 280 });
         host.bridge.onDragging(true);
         host.bridge.onResize(300 + 56); // mid-drag: bubble feed only
         host.bridge.onResize(320 + 56);
         expect(host.commits).toEqual([]);
-        // reka applied the drag to its own layout: getSize() is the ground truth.
-        host.panel.getSize.mockReturnValue(320 + 56);
+        // BL-562：release 不再回读 panel.getSize() —— reka 的 @resize 就是它自己这一帧的
+        // 最终像素值（px 单位下已过约束夹取），沿用即可，且不会踩 vendor 的 layout 断言。
         host.bridge.onDragging(false);
         expect(host.commits).toEqual([320]); // toWidth(376) = 320; clamp no-op
-        expect(host.panel.getSize).toHaveBeenCalled();
+        expect(host.bridge.resizing.value).toBe(false);
+    });
+
+    it("commits nothing when the drag ends without a single resize event (BL-562)", () => {
+        // 实测形态：在 handle 命中区内 pointerdown 后立刻 pointerup（一次 resize 都没有），
+        // 或 group 尚未量到几何 —— reka 照样发 dragging(true) → dragging(false)。
+        // 旧实现会在这一下回读 getSize()，reka 抛 "Panel size not found" 未捕获错误，
+        // 且会把面板当前宽度当新宽度写回 store。现在既不读也不写。
+        const host = mountHost({ width: 280 });
+        host.bridge.onDragging(true);
+        host.bridge.onDragging(false);
+        expect(host.commits).toEqual([]);
+        expect(host.panel.resize).not.toHaveBeenCalled();
         expect(host.bridge.resizing.value).toBe(false);
     });
 
