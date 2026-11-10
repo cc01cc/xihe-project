@@ -134,6 +134,9 @@ Send state has two layers — transport run and assistant content: a user messag
 
 ## 7. Workspace mobile standalone IA (PLAN-262 decision 15)
 
+> **Mobile: no new adaptation or features during the MVP phase (user ruling 2026-11-10); the existing implementation and test cases stay as they are.**
+> New UI does not add mobile layouts, drawers or breakpoints. The implementation described in this section, and the existing mobile tests that cover it, are kept unchanged and keep running — they are the regression protection for the existing design. Released by the user once the desktop MVP is accepted.
+
 Mobile (`<768px`, Tailwind `md:` breakpoint) is not a responsive compression of the desktop three-column layout but a separate information architecture:
 
 - **Single-column stack**: top bar hamburger button (opens the file-tree Sheet) + breadcrumbs + Environment entry; editor full screen; desktop left/right columns hidden via `hidden md:flex`.
@@ -162,3 +165,87 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 - **Two permission faces, never mixed**: `components/settings/SettingsPermissionGate.vue` — `variant="no-atom"` is an info bar (`data-testid="settings-no-atom-notice"`, the page still loads because CP has no such atom); `variant="atom-denied"` is a 403 card (`data-testid="settings-atom-denied"`, names the missing atom, states "not a backend gap", and the body is not mounted so no useless requests fire). The five-page decision table and request-count assertions live in `internal/A03-xihe/docs/settings-m2-migration-matrix.md` §8.2 (cross-repo, one private layer).
 - **Workspace layer is tabs, not new pages**: `features/workspace/pages/WorkspaceSettingsView.vue` with `general | config | mcp | members | credentials | knowledge` (`data-testid="ws-settings-tab-*`).
 - **Evidence**: PLAN-0752 `tasks.md` M2–M4 are done; browser harnesses live in `one/.tmp/xh/task-{78,81,82,89,91}/verify.cjs` (temp dir, not shipped).
+
+## 10. Layout and region naming contract (user ruling 2026-11-10)
+
+> This section is the **single authoritative text** for region naming and layout. The disciplines below bind **newly written** documents, code and testids from this date onward; existing prose is aligned in batches per §10.7.
+>
+> **Implementation status `partial`**: the splitter interaction described in §10.3 **is implemented** for the three workspace columns (file:line below); the names in §10.1, the two-level global structure in §10.2 and the hover grip are **not implemented yet** (see the "Current state" column and §10.6).
+>
+> **Relationship to PLAN-0582 S2**: the S2 note at `composables/useWorkspaceLayout.ts:18-20` (fixed 56px icon-only / `48<->176` dual state gone) is **superseded by this contract for the global rail only** — the 2026-10-31 ruling governed the **rail inside Workspace**; the 2026-11-10 ruling asks for a dual-state **cross-module global rail**, which is a different bar. The collapse semantics of the Workspace navigation panel (`NavPanel`) **do not change**. That S2 code comment is updated **together with the PLAN-0762 M1 implementation**; this card only touches documentation, not source.
+
+### 10.1 Region naming table (the only sanctioned names)
+
+| Name (zh) | English / code | testid | What qualifies | Current state (2026-11-10) |
+| --- | --- | --- | --- | --- |
+| 全局导航条 | `GlobalRail` | `global-rail` | single, leftmost, switches modules, collapsible (56px icons ↔ icon+label) | **not implemented**: today `NavRail` (`components/sidebar/NavRail.vue`), fixed 56px icon-only, single state |
+| 模块舞台 | `ModuleStage` | `module-stage` | container right of the global rail, holds exactly one module at a time | **not implemented**: served today by the main `SplitterPanel` in `layouts/AppLayout.vue` |
+| 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | in-module section/list navigation | **partial**: `settings-nav-*` already conforms (`components/settings/SettingsResourceNav.vue`); no `workspace-nav` on the Workspace side |
+| 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | collapsible, resizable data column | **not implemented**: four segments today — navigation panel (`sidebar-resizer`) / file tree (`tree-resizer`) / main area (route container `workspace-route-viewport`) / dock (`dock-resizer`, i.e. `ContextPane`) |
+
+**Three disciplines** (mandatory for new content):
+
+1. **No bare "left/right/side bar"**: a qualifier is required (global / module / list / main / context).
+2. **"Bar" only for a collapsible or resizable vertical container**; pure navigation is called a **nav** (`XxxNav`), never a bar.
+3. **Four words, no overlap**: `Rail` = icon strip · `Nav` = navigation list · `Pane` = content column · `Stage` = container.
+
+### 10.2 Three-level layout model and MVP scope
+
+- **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: the main Workspace and Settings** (user ruling 2026-11-10, "these two first"). Extending the module list is **pending a ruling** (§10.6).
+- **Main Workspace**: left (session/task list, `ListPane`) + centre (`MainPane`) + right (`ContextPane`, i.e. today's dock); left and right are collapsible.
+- **Settings**: left = settings navigation (`SettingsNav`, **not** the global rail) + right = content. **MVP is two columns; no right pane** (§10.5).
+
+### 10.3 Collapse and resize interaction spec (sash pattern, explicitly requested 2026-11-10)
+
+**Contract**:
+
+- **Edge drag**: 4–6px hit area (1px visual line), `cursor: col-resize`, **no visible arrow buttons**.
+- **Hover grip**: entering the edge shows a vertical three-dot "⋮" at the column's vertical centre plus a highlighted edge line; both disappear on leave.
+- **Dragging**: live width change plus a px bubble; **clamp to min/max**, and narrow-viewport clamping **affects rendering only, never writes back** the user's value.
+- **Double-click reset**: double-clicking the edge restores that column's default width.
+- **Collapse button toggles state only**: expanding returns to the **remembered width** (not the default); collapsed state and width are **persisted separately**.
+- **Keyboard reachability (must not be dropped)**: `role="separator"` + `aria-valuenow/min/max`, `←/→` ±16px, `Home`/`End` to the bounds. VS Code's sash is keyboard-unreachable; **we must keep this** (WCAG).
+- **Global-rail exception**: it is a two-state "icons ↔ icon+label" control (`shadcn-vue Sidebar` with `collapsible="icon"` + `⌘/Ctrl+B` + `SidebarRail` hover) and **offers no free dragging** — intermediate widths carry no information (VS Code's activity bar is likewise fixed).
+
+**Current state** (item-by-item, HEAD `4204d7be8`):
+
+| Item | Status | Where |
+| --- | --- | --- |
+| Three splitters + a11y | implemented | nav `layouts/AppLayout.vue:379-391` (`sidebar-resizer`), file tree `features/workspace/components/WorkspaceWorkbench.vue:674-686` (`tree-resizer`), dock `features/workspace/components/WorkspaceDock.vue:203-217` (`dock-resizer`): `role="separator"` + `aria-orientation` + `aria-valuenow/min/max` |
+| 4–6px hit area / no arrow buttons | implemented | all three use `w-1` (4px) + `cursor-col-resize` + `hover:bg-primary/20` / `focus-visible:bg-primary/30` |
+| Keyboard ±16 / `Home`·`End` | implemented | constants `composables/useWorkspaceLayout.ts:35/41/48`; the dock handles them explicitly in `WorkspaceDock.vue:180-185` (`Home`→MIN, `End`→MAX); nav and file tree go through `RESIZE_KEYS` in `composables/useSplitterPanelBridge.ts:60` |
+| Live px bubble | implemented (dock) | `WorkspaceDock.vue:219+`, `data-testid="dock-resize-bubble"`, display only, never persisted |
+| Double-click reset | implemented | `@dblclick` at `AppLayout.vue:390` / `WorkspaceWorkbench.vue:685` / `WorkspaceDock.vue:214` |
+| Collapsed state vs width persisted separately | implemented | `composables/useWorkspaceLayout.ts:26-27` (`xihe-layout-global` / `xihe-layout-ws:<id>`), `:88-99` (`navOpen` / `treeCollapsed` / `dockCollapsed` stored apart from their widths) |
+| Narrow-viewport clamp not written back | implemented | `composables/useSplitterPanelBridge.ts:24` (stored-width clamp applied on keyboard/dblclick/release only); same stance for `clampNavWidthForViewport` |
+| **Hover vertical three-dot grip** | **not implemented** | only a comment mentions `GripVertical` (`WorkspaceWorkbench.vue:673`) and `src` never imports it; today the hover state is a background highlight |
+| **Global-rail dual state / `SidebarRail` / `⌘B`** | **not implemented** | the `shadcn-vue Sidebar` family is **not vendored yet** (see §10.6 item 3) |
+
+**Reuse, do not fork**: the single owner of layout geometry is `composables/useWorkspaceLayout.ts` (constants `:24-51`, state interface `:88-99`) plus `composables/useSplitterPanelBridge.ts`; new columns must go through it — **no second layout state**.
+
+### 10.4 Mobile: scope unchanged during MVP
+
+See the banner at the top of §7: **no new mobile adaptation or features during the MVP phase**, while the existing implementation and existing tests are kept and keep running. Not repeated here.
+
+### 10.5 Out of scope: Settings right pane `ContextPane` (BL-566)
+
+A right pane on Settings (domain notes / inheritance chain / provenance) is **out of MVP scope** and registered as **BL-566** (number confirmed by the Lead; registration itself is not part of this card). Current Settings structure is in §9; this section only pins the "not doing it" decision so it is not read as an omission later.
+
+### 10.6 Pending rulings
+
+All three are **undecided**; implementers must not choose on their own:
+
+1. **Which modules join the global rail later**: MVP carries two (main Workspace / Settings); when and what a third module would be is pending a user ruling.
+2. **Right-pane parameters for Settings**: what `ContextPane` carries, its default width and whether it collapses — follows from the "not doing it" decision in §10.5 and is decided after the desktop MVP is accepted.
+3. **`shadcn-vue Sidebar` fixed three-tier width vs today's free 220–360 drag**: `Sidebar` sizes itself through CSS variables (`--sidebar-width` / `--sidebar-width-icon`) in fixed steps, which **conflicts semantically** with the continuous drag model in `useWorkspaceLayout.ts`; whether the global rail adopts `Sidebar` or keeps a hand-rolled dual state is **pending a ruling**.
+
+### 10.7 Existing wording to align (in batches)
+
+This contract takes effect 2026-11-10; **existing prose is deliberately left untouched in this change** (a four-edit card must not become a twenty-edit card). The following spots still use unqualified wording; align them from this list in a later batch and run `mise run lint:links` in the same batch:
+
+| Where (line numbers as of this change) | Current wording | Suggested naming |
+| --- | --- | --- |
+| **:47** (§1 `AppLayout` paragraph) | "two-tier **left nav** + main area" | global rail + in-module nav + module stage |
+| **:142** (§7 "single-column stack" bullet) | "desktop **left/right columns** hidden via `hidden md:flex`" | list pane / context pane |
+| **:164** (§9 skeleton, first bullet) | "`Sidebar`: `SettingsSidebar.vue` …" | in-module navigation (`SettingsNav`) |
+
