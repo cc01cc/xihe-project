@@ -113,6 +113,31 @@ export function compareWithBaseline(summary, baseline) {
     return { problems, unregistered, retired };
 }
 
+/**
+ * task-48（2026-11-11）：**拒收子集报告**。
+ *
+ * 判据两道，任一命中即认定「输入不合格」（exit 2），而不是当 drift（exit 1）——
+ * 因为拿 5 文件子集去和全量基线比，得到的差异既不是回归也不是修好的证据。
+ *   ① 文件是分文件约定里的子集名（`.mock-report.subset.json`）；
+ *   ② 用例总数不足基线的 50%（实测：全量 317 条 vs 单文件/5 文件子集 60 量级）。
+ */
+export function rejectSubsetReport(reportPath, summary, baseline) {
+    if (/\.subset\.json$/.test(reportPath)) {
+        return `子集报告不能用来判基线：${reportPath}`;
+    }
+    const baselineTotal =
+        Math.trunc(Number(baseline?.counts?.expected ?? 0)) +
+        Math.trunc(Number(baseline?.counts?.skipped ?? 0));
+    const actualTotal = summary.expected + summary.skipped;
+    if (baselineTotal > 0 && actualTotal < baselineTotal * 0.5) {
+        return (
+            `报告只覆盖 ${actualTotal} 条用例，不足基线 ${baselineTotal} 条的 50% ` +
+            `（${reportPath}）：这看起来是一次子集跑`
+        );
+    }
+    return null;
+}
+
 function main() {
     let options;
     try {
@@ -131,6 +156,15 @@ function main() {
         return 2;
     }
     const summary = summarizeReport(report);
+    const subsetProblem = rejectSubsetReport(options.report, summary, baseline);
+    if (subsetProblem) {
+        console.error(`E_MOCK_REPORT_SCOPE: ${subsetProblem}`);
+        console.error(
+            "  run the full lane (`mise run test:mock`) and re-check; " +
+                "subset runs write .mock-report.subset.json (task-48)",
+        );
+        return 2;
+    }
     const { problems, unregistered, retired } = compareWithBaseline(summary, baseline);
     const line =
         `[check-mock-baseline] expected=${summary.expected} skipped=${summary.skipped} ` +

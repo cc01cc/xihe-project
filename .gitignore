@@ -2,6 +2,8 @@
 **/target/
 # PLAN-0735: runtime artifact written by test:mock (JSON report snapshot).
 packages/ui/e2e/.mock-report.json
+# task-48: 子集跑（显式列 spec 文件 / test:mock:smoke）的独立报告，不得覆盖全量报告。
+packages/ui/e2e/.mock-report.subset.json
 # D32-26 T2: mvn -Dxihe.build.suffix=-b builds into 	arget-b/; keep every per-runner build dir ignored.
 **/target-*/
 **/Cargo.lock
