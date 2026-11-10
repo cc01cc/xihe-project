@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { keymap, lineNumbers } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { useCodeMirror } from "../../../composables/useCodeMirror";
 
 const props = defineProps<{
     modelValue: string;
@@ -11,44 +14,30 @@ const emit = defineEmits<{
     "update:modelValue": [value: string];
 }>();
 
-const text = ref(props.modelValue);
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const host = ref<HTMLElement | null>(null);
+const { doc, mount } = useCodeMirror({
+    modelValue: computed(() => props.modelValue),
+    readonly: computed(() => props.readonly ?? false),
+    extensions: [lineNumbers(), history(), keymap.of([...defaultKeymap, ...historyKeymap])],
+    onChange: (value) => emit("update:modelValue", value),
+});
 
-watch(
-    () => props.modelValue,
-    (v) => {
-        text.value = v;
-    },
-);
+onMounted(() => mount(host.value));
 
-function onInput(event: Event) {
-    text.value = (event.target as HTMLTextAreaElement).value;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-        emit("update:modelValue", text.value);
-    }, 300);
-}
+/** 代码编辑不接语言包（现状 textarea 也无语法高亮）；`language` 仅用于头部标签。 */
+const languageLabel = computed(() => props.language);
 </script>
 
 <template>
     <div data-testid="workspace-code-editor" class="flex flex-col h-full">
         <div class="flex items-center justify-between px-3 py-1 border-b bg-muted/30 shrink-0">
             <span class="text-[10px] font-mono text-muted-foreground uppercase">{{
-                language
+                languageLabel
             }}</span>
             <span class="text-[10px] text-muted-foreground"
-                >{{ text.split("\n").length }} lines</span
+                >{{ doc.split("\n").length }} lines</span
             >
         </div>
-        <div class="flex-1">
-            <textarea
-                :value="text"
-                class="w-full h-full p-4 font-mono text-sm leading-relaxed bg-background resize-none focus:outline-none"
-                :class="{ 'text-muted-foreground': readonly }"
-                :readonly="readonly"
-                spellcheck="false"
-                @input="onInput"
-            />
-        </div>
+        <div ref="host" class="flex-1 overflow-auto" />
     </div>
 </template>

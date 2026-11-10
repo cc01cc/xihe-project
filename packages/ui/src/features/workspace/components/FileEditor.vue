@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useAuthStore } from "../../../stores/auth";
 import type { OpenFile } from "../../../types";
 import EditorTabBar from "./EditorTabBar.vue";
-import MdEditor from "./MdEditor.vue";
+import MarkdownEditor from "./MarkdownEditor.vue";
 import CodeEditor from "./CodeEditor.vue";
 import ImagePreview from "./ImagePreview.vue";
 import PdfViewer from "../chat/components/PdfViewer.vue";
@@ -176,7 +176,7 @@ function handleLoadFullContent() {
                 </button>
             </div>
             <div class="flex-1 overflow-hidden">
-                <MdEditor
+                <MarkdownEditor
                     :model-value="activeFile.content"
                     :readonly="!canWrite"
                     @update:model-value="handleContentUpdate"

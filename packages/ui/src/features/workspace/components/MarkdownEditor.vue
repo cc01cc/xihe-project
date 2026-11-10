@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import MarkdownRender from "markstream-vue";
+import { computed, onMounted, ref } from "vue";
+import { keymap, lineNumbers } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { markdown } from "@codemirror/lang-markdown";
 import { Bold, Code, Heading, Italic, Link, List } from "@lucide/vue";
+import MarkdownRender from "markstream-vue";
+import { useCodeMirror } from "../../../composables/useCodeMirror";
 
 const props = defineProps<{
     modelValue: string;
@@ -12,19 +16,32 @@ const emit = defineEmits<{
     "update:modelValue": [value: string];
 }>();
 
-const text = ref(props.modelValue),
-    showSource = ref(false);
+const showSource = ref(true);
 
-watch(
-    () => props.modelValue,
-    (v) => {
-        text.value = v;
-    },
-);
+const extensions = computed(() => [
+    lineNumbers(),
+    history(),
+    markdown(),
+    keymap.of([...defaultKeymap, ...historyKeymap]),
+]);
 
-function onInput(event: Event) {
-    text.value = (event.target as HTMLTextAreaElement).value;
-    emit("update:modelValue", text.value);
+const host = ref<HTMLElement | null>(null);
+const { doc, view, mount } = useCodeMirror({
+    modelValue: computed(() => props.modelValue),
+    readonly: computed(() => props.readonly ?? false),
+    extensions: extensions.value,
+    onChange: (value) => emit("update:modelValue", value),
+});
+
+onMounted(() => mount(host.value));
+
+/** 工具条动作：在文档末尾追加片段（与旧 textarea 行为一致）。 */
+function append(snippet: string) {
+    const v = view.value;
+    if (!v) return;
+    const end = v.state.doc.length;
+    v.dispatch({ changes: { from: end, insert: snippet } });
+    v.focus();
 }
 </script>
 
@@ -35,7 +52,7 @@ function onInput(event: Event) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
                 title="粗体"
-                @click="text += '**bold**'"
+                @click="append('**bold**')"
             >
                 <Bold class="size-3.5" aria-hidden="true" />
             </button>
@@ -43,7 +60,7 @@ function onInput(event: Event) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
                 title="斜体"
-                @click="text += '*italic*'"
+                @click="append('*italic*')"
             >
                 <Italic class="size-3.5" aria-hidden="true" />
             </button>
@@ -51,7 +68,7 @@ function onInput(event: Event) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
                 title="标题"
-                @click="text += '\n## heading'"
+                @click="append('\n## heading')"
             >
                 <Heading class="size-3.5" aria-hidden="true" />
             </button>
@@ -59,7 +76,7 @@ function onInput(event: Event) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
                 title="代码"
-                @click="text += '\n```\ncode\n```'"
+                @click="append('\n```\ncode\n```')"
             >
                 <Code class="size-3.5" aria-hidden="true" />
             </button>
@@ -67,7 +84,7 @@ function onInput(event: Event) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
                 title="链接"
-                @click="text += '[text](url)'"
+                @click="append('[text](url)')"
             >
                 <Link class="size-3.5" aria-hidden="true" />
             </button>
@@ -75,7 +92,7 @@ function onInput(event: Event) {
                 class="p-1 rounded hover:bg-accent text-muted-foreground disabled:opacity-30"
                 :disabled="readonly"
                 title="列表"
-                @click="text += '\n- item'"
+                @click="append('\n- item')"
             >
                 <List class="size-3.5" aria-hidden="true" />
             </button>
@@ -88,24 +105,17 @@ function onInput(event: Event) {
             </button>
         </div>
 
-        <div v-if="showSource" class="flex-1 p-0">
-            <textarea
-                :value="text"
-                data-testid="workspace-markdown-source"
-                class="w-full h-full p-4 font-mono text-sm bg-background resize-none focus:outline-none"
-                :readonly="readonly"
-                @input="onInput"
-            />
-        </div>
-        <div v-else class="flex-1 overflow-y-auto p-4 prose prose-sm max-w-none">
-            <MarkdownRender mode="chat" :content="text" :final="true" custom-id="xihe" />
+        <!-- CM6 容器常驻（挂载后不销毁）；预览用 v-show 切换，避免视图重建。 -->
+        <div v-show="showSource" ref="host" class="flex-1 overflow-auto" />
+        <div v-if="!showSource" class="flex-1 overflow-y-auto p-4 prose prose-sm max-w-none">
+            <MarkdownRender mode="chat" :content="doc" :final="true" custom-id="xihe" />
         </div>
 
         <div
             class="px-3 py-1 text-[10px] text-muted-foreground border-t shrink-0 flex justify-between"
         >
-            <span>{{ text.split("\n").length }} lines</span>
-            <span>{{ text.length }} chars</span>
+            <span>{{ doc.split("\n").length }} lines</span>
+            <span>{{ doc.length }} chars</span>
         </div>
     </div>
 </template>

@@ -6,6 +6,7 @@
 @import "markstream-vue/index.tailwind.css" layer(components);
 @import "./scroll-fade.css";
 @import "./shimmer.css";
+@import "./diffTheme.css";
 @import "./typeset.css";
 
 /*
