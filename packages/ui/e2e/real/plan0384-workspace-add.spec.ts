@@ -255,7 +255,10 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             payload = request.postDataJSON() as Record<string, unknown>;
         expect(payload.storageMode).toBe("direct_attach");
         expect(payload.executionMode).toBe(expectedExecutionMode);
-        expect(payload.hostPath).toBe(addDir);
+        // BL-547（task-175）：PLAN-0639 M1 起 direct-attach 的 wire 形态是 roots[]
+        // （roots[0].path = 主根，与 hostPath 同值），hostPath 字段已不存在（实测
+        // payload.hostPath === undefined）。断言改为 roots[0].path。
+        expect((payload.roots as Array<{ path: string }>)[0]?.path).toBe(addDir);
         expect(request.headers()["idempotency-key"]).toBeTruthy();
 
         // V8: the new workspace is selected and its environment becomes readable.
