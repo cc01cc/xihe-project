@@ -1,0 +1,70 @@
+{{!--
+  XH OpenAPI 文档页模板（task-69 / D-827 路 B）
+
+  为什么需要这个文件：
+    @redocly/cli 2.72.1 的 build-docs 已切到 Redoc 3，它不再消费 Redoc 2 的 `theme.colors.*` 那套键。
+    实测：在 .redocly.yaml 里写 theme.openapi（根级 / openapi.theme / openapi.theme.openapi 三种形态全试过），
+    产物命中 0 处；CLI 参数虽然会进 `__redoc_options`，但浏览器里 getComputedStyle 仍是默认值
+    ⇒ 「产物里有这个字符串」≠「页面真的变了」（D-827 判据）。
+    Redoc 3 的主题层是 CSS 变量（--font-family-base / --text-color-primary / --link-color-primary …），
+    所以唯一正确做法是在模板里注入 :root 覆盖。
+
+  字体取舍（Lead 2026-11-11 明确要求写在这里，否则下一个人会以为「文档站忘了用品牌字体」）：
+    产品用的是 `Geist Variable`，但它是 packages/ui 通过 @font-face 加载的 webfont；
+    本产物要求「单文件 + 离线可开」（--inlineBundle），引外链字体与之直接冲突 ⇒ 只能放弃 Geist。
+    代价：文档页的拉丁/数字与产品不完全一致（用 Segoe UI 顶）。
+    若以后要「文档也用 Geist」，唯一不离线的办法是把 Geist 子集 base64 内嵌进 HTML —— 那是另一个决定，不在本批。
+    中文：Noto Sans SC（本机已装 NotoSansSC-VF.ttf）→ Microsoft YaHei 兜底。
+    注意别写 PingFang SC：macOS 字体，本机未装（写了等于没写，浏览器会静默 fallback）。
+
+  色值来源：packages/ui/src/styles/main.css 的设计 token，不新造色。
+--}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf8" />
+  <title>{{title}}</title>
+  <!-- needed for adaptive design -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      padding: 0;
+      margin: 0;
+    }
+  </style>
+  {{{redocHead}}}
+  <style>
+    /* XH 主题：只覆盖 Redoc 3 的 CSS 变量，不碰结构与交互 */
+    :root {
+      /* 字体：纯系统栈，保证离线可开（见文件头「字体取舍」） */
+      --font-family-base: "Noto Sans SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+
+      /* 文字：= --foreground / --muted-foreground */
+      --text-color-primary: #16181d;
+      --text-color-secondary: #64686f;
+
+      /* 链接/强调 = --brand；hover 用同族加深（color-mix 而不是新编色号） */
+      --link-color-primary: #3b5bd0;
+      --link-color-primary-hover: color-mix(in oklab, #3b5bd0 85%, #16181d);
+
+      /* 侧栏 = --muted 底 + --foreground 字 */
+      --sidebar-bg-color: #f1f3f7;
+      --sidebar-text-color: #16181d;
+
+      /* 边框 = --border-subtle */
+      --border-color-primary: rgba(22, 24, 29, 0.09);
+      --sidebar-border-color: rgba(22, 24, 29, 0.09);
+    }
+
+    /* Redoc 3 没有给正文里的 operation 锚点着色：实测基线（无主题）与加主题后都是浏览器默认
+       rgb(0, 0, 238)，一片「默认蓝」不像品牌页。这里显式用品牌色，作用域限定正文锚点，
+       不动侧栏文字色（侧栏走 --sidebar-text-color）。 */
+    #redoc a[href^="#/"] {
+      color: var(--link-color-primary);
+    }
+  </style>
+</head>
+
+<body>
+  {{{redocHTML}}}
+</body>
