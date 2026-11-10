@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mockLongToolCalls, mockLongWrapProbeToolCall, mockLongWindowsPathToolCall } from "../mockData";
+import {
+    mockLongToolCalls,
+    mockLongWrapProbeToolCall,
+    mockLongWindowsPathToolCall,
+} from "../mockData";
 
 /**
  * task-110：长串夹具守卫 —— 「不许被拼短」。
@@ -15,11 +19,21 @@ import { mockLongToolCalls, mockLongWrapProbeToolCall, mockLongWindowsPathToolCa
  */
 const MINIMA: { id: string; args: number; body: number; note: string }[] = [
     { id: "tc-long-args", args: 300, body: 0, note: "实测 args=320" },
-    { id: "tc-long-output", args: 85, body: 330, note: "实测 args=90 / result=353（这张卡的长串在 result 上）" },
+    {
+        id: "tc-long-output",
+        args: 85,
+        body: 330,
+        note: "实测 args=90 / result=353（这张卡的长串在 result 上）",
+    },
     { id: "tc-long-error", args: 195, body: 265, note: "实测 args=208 / error=285" },
     { id: "tc-long-refusal", args: 190, body: 0, note: "实测 args=199" },
     { id: "tc-long-winpath", args: 360, body: 0, note: "实测 args=387（Windows 反斜杠形态）" },
-    { id: "tc-long-wrapprobe", args: 260, body: 0, note: "实测 args=277（压力腿正对照，必须单行）" },
+    {
+        id: "tc-long-wrapprobe",
+        args: 260,
+        body: 0,
+        note: "实测 args=277（压力腿正对照，必须单行）",
+    },
 ];
 
 describe("preview 长串夹具守卫（task-110）", () => {
@@ -27,7 +41,12 @@ describe("preview 长串夹具守卫（task-110）", () => {
         expect(mockLongToolCalls.map((call) => call.id)).toEqual(MINIMA.map((row) => row.id));
         const short = MINIMA.map((row) => {
             const call = mockLongToolCalls.find((entry) => entry.id === row.id);
-            return { id: row.id, len: call ? call.arguments.length : -1, min: row.args, note: row.note };
+            return {
+                id: row.id,
+                len: call ? call.arguments.length : -1,
+                min: row.args,
+                note: row.note,
+            };
         }).filter((row) => row.len < row.min);
         expect(short).toEqual([]);
     });
