@@ -5394,7 +5394,7 @@ paths:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThread' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope) or THREAD_WRITE_FORBIDDEN (scope not owned)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope) or THREAD_WRITE_FORBIDDEN (scope not owned)', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/conversation-threads/{threadId}:
     get:
       tags: [session]
@@ -5405,8 +5405,8 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThread' } } } }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-        '404': { description: 'THREAD_NOT_FOUND (absent or not visible)', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { description: 'THREAD_SCOPE_UNRESOLVED (workspace half-scope)', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'THREAD_NOT_FOUND (absent or not visible)', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/conversation-threads/{threadId}/sessions:
     post:
       tags: [session]
@@ -5420,8 +5420,8 @@ paths:
         '200': { description: 'Idempotent attach', content: { application/json: { schema: { $ref: '#/components/schemas/ConversationThreadAttachResult' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { description: 'THREAD_WRITE_FORBIDDEN (not the session owner) or THREAD_SCOPE_UNRESOLVED', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
-        '404': { description: 'THREAD_NOT_FOUND or SESSION_NOT_FOUND', content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '403': { description: 'THREAD_WRITE_FORBIDDEN (not the session owner) or THREAD_SCOPE_UNRESOLVED', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'THREAD_NOT_FOUND or SESSION_NOT_FOUND', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
