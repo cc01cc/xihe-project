@@ -12,6 +12,7 @@ import {
     seedUserGrantPermissions,
 } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_PROMPT = "Answer using only the scoped workspace material.";
@@ -111,10 +112,11 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
 
     await page.getByTestId("agent-role-name").fill("Browser Reader");
     await page.getByTestId("agent-role-add-permission").click();
-    await page.getByTestId("agent-role-action-0").selectOption("read");
+    // BL-547（task-175）：权限动作是 reka Select（触发器为 button），选项文本 = 动作类名本身。
+    await chooseRekaOption(page, page.getByTestId("agent-role-action-0"), /^read$/);
     await page.getByTestId("agent-role-resource-0").fill("src/*");
     await page.getByTestId("agent-role-add-permission").click();
-    await page.getByTestId("agent-role-action-1").selectOption("write");
+    await chooseRekaOption(page, page.getByTestId("agent-role-action-1"), /^write$/);
     await page.getByTestId("agent-role-resource-1").fill("*");
     const roleWritePromise = page.waitForResponse(
         (response) =>
@@ -127,8 +129,8 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await page.getByTestId("agent-template-name").fill("Browser Workspace Reader");
     await page.getByTestId("agent-template-description").fill("Template created through Settings");
     await page.getByTestId("agent-template-prompt").fill(TEMPLATE_PROMPT);
-    await page.getByTestId("agent-template-tool-mode").selectOption("workspace");
-    await page.getByTestId("agent-template-role").selectOption({ label: "Browser Reader" });
+    await chooseRekaOption(page, page.getByTestId("agent-template-tool-mode"), /^workspace$/);
+    await chooseRekaOption(page, page.getByTestId("agent-template-role"), "Browser Reader");
     await page.getByTestId("agent-template-provider").fill("openai");
     await page.getByTestId("agent-template-model").fill("e2e-model");
     const templateWritePromise = page.waitForResponse(

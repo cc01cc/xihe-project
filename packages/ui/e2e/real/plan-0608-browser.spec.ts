@@ -8,6 +8,7 @@ import {
 } from "./helpers/agent-principal";
 
 import { agentName } from "./helpers/agent-name";
+import { chooseRekaOption } from "./helpers/reka-select";
 import { TEST_TIMEOUT_MS } from "../timeouts";
 // PLAN-0608 M3 — C′ 会话归属的**浏览器侧**证据。
 // 判据映射（编号以 `plans/PLAN-0608-XH-session-workspace-ownership/verify.md` V10 原文为准）：
@@ -108,13 +109,14 @@ async function buildTwoWorkspaceFixture(request: APIRequestContext) {
         `CONSTRUCTION_FAILED: createdAt(target)=${createdAt(targetWs)} 必须晚于 createdAt(fallback)=${createdAt(b.workspaceId)}`,
     ).toBeGreaterThan(Date.parse(createdAt(b.workspaceId)));
 
-    const principalId = await provisionWorkspaceAgentPrincipal(
+    const principalName = agentName("P0608", Date.now().toString(36).slice(-5));
+    await provisionWorkspaceAgentPrincipal(
         request,
         { accessToken: g.accessToken, workspaceId: targetWs },
-        { name: agentName("P0608", Date.now().toString(36).slice(-5)) },
+        { name: principalName },
     );
 
-    return { b, g, fallback, targetWs, principalId };
+    return { b, g, fallback, targetWs, principalName };
 }
 
 type SessionCall = { method: string; path: string; status: number };
@@ -146,11 +148,13 @@ async function tabContext(page: Page): Promise<{ id?: string } | null> {
     return page.evaluate(() => JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "null"));
 }
 
-async function createSessionThroughUi(page: Page, workspaceId: string, principalId: string) {
+async function createSessionThroughUi(page: Page, workspaceId: string, principalName: string) {
     await page.getByTestId("workspace-create-session").click();
     const principalSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(principalSelect).toBeVisible();
-    await principalSelect.selectOption(principalId);
+    // BL-547（task-175）：agent 选择器是 reka Select（触发器是 button），`selectOption` 不适用
+    // —— 点触发器 → 点选项（选项文本 = agent 名 · 模板名，用 agent 名做前缀匹配）。
+    await chooseRekaOption(page, principalSelect, principalName);
     const created = page.waitForResponse(
         (response) =>
             response.request().method() === "POST" &&
@@ -192,7 +196,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         page,
         request,
     }) => {
-        const { b, targetWs, principalId } = await buildTwoWorkspaceFixture(request);
+        const { b, targetWs, principalName } = await buildTwoWorkspaceFixture(request);
         const calls = trackSessionCalls(page);
 
         await loginThroughUi(page, b.email);
@@ -200,7 +204,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         await expect(page).toHaveURL(new RegExp(`/workspace/${targetWs}`));
         expect((await tabContext(page))?.id, "选择后 tab 上下文必须是目标 ws").toBe(targetWs);
 
-        const response = await createSessionThroughUi(page, targetWs, principalId);
+        const response = await createSessionThroughUi(page, targetWs, principalName);
         expect(response.status(), await response.text()).toBe(201);
         const session = (await response.json()) as { id: string; workspaceId: string };
         expect(session.workspaceId, "会话必须落在目标 ws").toBe(targetWs);
@@ -273,10 +277,11 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         const c = await registerAccount(request, "p0608cc");
         await addMember(request, owner, workspaceA, b.username, "EDITOR");
         await addMember(request, owner, workspaceA, c.username, "EDITOR");
-        const principalId = await provisionWorkspaceAgentPrincipal(
+        const principalName = agentName("P0608A", Date.now().toString(36).slice(-5));
+        await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: owner.accessToken, workspaceId: workspaceA },
-            { name: agentName("P0608A", Date.now().toString(36).slice(-5)) },
+            { name: principalName },
         );
 
         const results: { label: string; sessionId: string; workspaceId: string }[] = [];
@@ -293,7 +298,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
             await page.getByTestId(`workspace-picker-item-${workspaceA}`).click();
             await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceA}`));
 
-            const response = await createSessionThroughUi(page, workspaceA, principalId);
+            const response = await createSessionThroughUi(page, workspaceA, principalName);
             expect(response.status(), await response.text()).toBe(201);
             const session = (await response.json()) as { id: string; workspaceId: string };
             results.push({
@@ -392,15 +397,25 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         ).toHaveLength(0);
     });
 
-    test("6. [V4 无输入确定性] 多成员连发 3 次都是 409 且行数不变；零成员按 V4 降级", async ({
+    // task-175 / BL-547（E 组：V4 语义过时）：
+    // 原断言「无上下文连发 3 次 ⇒ 409 WORKSPACE_CONTEXT_REQUIRED」的前提已被两条 plan 取代：
+    //   ① PLAN-0689 B3（G2）把 agentPrincipalId 变成创建必填 ⇒ 空 body 先撞 400 INVALID_REQUEST
+    //      （SessionService.createAgentSession:195）；
+    //   ② PLAN-0647 D-678/D-687 让「完全没有 workspace 输入」直接走 workspaceless 分支
+    //      （SessionCreationService:71-83，**在 memberWorkspaceCount / resolver 之前返回**），
+    //      所以 409 分支对这条路由已不可达 —— 该形态不再有「歧义」而言。
+    // 现行确定性（本用例改为断言它）：缺 agentPrincipalId ⇒ 每次 400 且零副作用；
+    // 带 agentPrincipalId 且无上下文 ⇒ 201 workspaceless，**不静默回退到任何成员 ws**
+    // —— V4 真正要守的是「不得替用户挑一个 workspace」。
+    test("6. [V4 无输入确定性] 缺 agentPrincipalId 连发 3 次都是 400 且行数不变；带 principal 则 workspaceless", async ({
         request,
     }) => {
         test.setTimeout(TEST_TIMEOUT_MS);
-        const { b, fallback } = await buildTwoWorkspaceFixture(request);
-        const headers = { Authorization: `Bearer ${b.accessToken}` };
+        const { b, fallback, targetWs, principalName } = await buildTwoWorkspaceFixture(request);
+        const headers = { Authorization: "Bearer " + b.accessToken };
 
         const countSessions = async () => {
-            const res = await request.get(`${CP_URL}/api/v1/sessions`, {
+            const res = await request.get(CP_URL + "/api/v1/sessions", {
                 headers: { ...headers, "X-Workspace-Id": fallback },
             });
             expect(res.ok(), await res.text()).toBe(true);
@@ -411,21 +426,46 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         const statuses: number[] = [];
         const codes: string[] = [];
         for (let i = 0; i < 3; i += 1) {
-            const res = await request.post(`${CP_URL}/api/v1/sessions`, { headers, data: {} });
+            const res = await request.post(CP_URL + "/api/v1/sessions", { headers, data: {} });
             statuses.push(res.status());
             codes.push(((await res.json()) as { code?: string }).code ?? "");
         }
         const after = await countSessions();
 
-        expect(statuses, `连发 3 次必须都是 409：${JSON.stringify({ statuses, codes })}`).toEqual([
-            409, 409, 409,
+        expect(statuses, "连发 3 次必须都是 400：" + JSON.stringify({ statuses, codes })).toEqual([
+            400, 400, 400,
         ]);
-        expect(codes, "三次都必须是 WORKSPACE_CONTEXT_REQUIRED").toEqual([
-            "WORKSPACE_CONTEXT_REQUIRED",
-            "WORKSPACE_CONTEXT_REQUIRED",
-            "WORKSPACE_CONTEXT_REQUIRED",
+        expect(codes, "三次都必须是 INVALID_REQUEST（缺 agentPrincipalId）").toEqual([
+            "INVALID_REQUEST",
+            "INVALID_REQUEST",
+            "INVALID_REQUEST",
         ]);
-        expect(after, `会话行数必须不变（前 ${before} / 后 ${after}）`).toBe(before);
+        expect(after, "会话行数必须不变（前 " + before + " / 后 " + after + "）").toBe(before);
+
+        // 另一半：显式 principal + 无上下文 ⇒ workspaceless（PLAN-0647），不得落进 B 的任一成员 ws。
+        // fixture 已用 G 身份把 principal 绑进 targetWs（对 B 可见），列表回查取 id 即可。
+        const agentList = await request.get(CP_URL + "/api/v1/workspaces/" + targetWs + "/agents", {
+            headers: { ...headers, "X-Workspace-Id": targetWs },
+        });
+        expect(agentList.ok(), await agentList.text()).toBe(true);
+        const agents = (
+            (await agentList.json()) as { agents: { principalId: string; name: string }[] }
+        ).agents;
+        const bound = agents.find((item) => item.name === principalName) ?? agents[0];
+        expect(
+            bound,
+            "目标 ws 必须有可引用的 agent（fixture principal：" + principalName + "）",
+        ).toBeTruthy();
+        const workspaceless = await request.post(CP_URL + "/api/v1/sessions", {
+            headers,
+            data: { agentPrincipalId: bound.principalId },
+        });
+        expect(workspaceless.status(), await workspaceless.text()).toBe(201);
+        const created = (await workspaceless.json()) as { workspaceId?: string | null };
+        expect(
+            created.workspaceId ?? null,
+            "无上下文的会话必须 workspaceless（不得回退到 " + fallback + " 或 " + targetWs + "）",
+        ).toBeNull();
     });
 
     // 零成员（verify V4 原文允许降级）：登录路径会自动建默认 workspace

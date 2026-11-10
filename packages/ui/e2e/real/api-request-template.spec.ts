@@ -6,6 +6,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { ensureWorkspace } from "./helpers/workspace";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption, expectRekaValue } from "./helpers/reka-select";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 let auth: { accessToken: string; workspaceId: string };
@@ -175,7 +176,13 @@ for (const wire of cases) {
                 await page.goto("/settings/user/api-request-templates");
                 const panel = page.getByTestId("api-request-templates-panel");
                 await expect(panel).toBeVisible();
-                await panel.getByTestId("api-request-type").selectOption(wire.apiTypeId + "@1");
+                // BL-547（task-175）：api-request-type 是 reka Select（触发器为 button）；
+                // 选项文本 = typeKey = `apiTypeId@version`，与旧 selectOption 的值同形。
+                await chooseRekaOption(
+                    page,
+                    panel.getByTestId("api-request-type"),
+                    wire.apiTypeId + "@1",
+                );
                 await panel.getByTestId("api-request-new").click();
                 const templateName = `Wire authored ${wire.apiTypeId}`;
                 await panel.getByTestId("api-request-name").fill(templateName);
@@ -216,7 +223,8 @@ for (const wire of cases) {
                 await page.goto("/settings/user/llm-provider");
                 const hub = page.getByTestId("provider-hub");
                 await hub.getByTestId(`provider-connection-${wire.providerId}`).click();
-                const refKey = `user:${template.id}:${template.version}`;
+                // BL-547：绑定下拉不再用 refKey 值选（reka 选项按可见文本点），refKey 只作
+                // 服务端契约的注记保留在注释里：user:<templateId>:<version>。
                 const defaultSelect = hub.getByRole("combobox", {
                     name: "连接默认请求模板",
                     exact: true,
@@ -227,7 +235,9 @@ for (const wire of cases) {
                         r.url().includes("/config/user/api-request-templates") &&
                         r.request().method() === "PUT",
                 );
-                await defaultSelect.selectOption(refKey);
+                // BL-547：模板绑定下拉同样是 reka Select —— 选项文本 = "名称 v版本"。
+                const templateOption = templateName + " v" + template.version;
+                await chooseRekaOption(page, defaultSelect, templateOption);
                 expect((await defaultSaved).status()).toBe(200);
                 const modelSelect = hub.getByRole("combobox", {
                     name: "wire-model 请求模板",
@@ -239,7 +249,7 @@ for (const wire of cases) {
                         r.url().includes("/config/user/api-request-templates") &&
                         r.request().method() === "PUT",
                 );
-                await modelSelect.selectOption(refKey);
+                await chooseRekaOption(page, modelSelect, templateOption);
                 expect((await overrideSaved).status()).toBe(200);
                 await expect(modelSelect).toBeEnabled();
                 const inheritanceSaved = page.waitForResponse(
@@ -247,12 +257,21 @@ for (const wire of cases) {
                         r.url().includes("/config/user/api-request-templates") &&
                         r.request().method() === "PUT",
                 );
-                await modelSelect.selectOption("");
+                // 「清除以继承」= 选内置默认模板项（旧 `selectOption("")` 的等价物）。
+                await chooseRekaOption(
+                    page,
+                    modelSelect,
+                    /API Type 内置默认模板|API Type built-in default template/,
+                );
                 expect((await inheritanceSaved).status()).toBe(200);
                 await page.reload();
                 await hub.getByTestId(`provider-connection-${wire.providerId}`).click();
-                await expect(defaultSelect).toHaveValue(refKey);
-                await expect(modelSelect).toHaveValue("");
+                // toHaveValue 不适用于 button 触发器：带 _value_ 的断言改为读触发器文本。
+                await expectRekaValue(defaultSelect, templateOption);
+                await expectRekaValue(
+                    modelSelect,
+                    /API Type 内置默认模板|API Type built-in default template/,
+                );
                 await hub.screenshot({
                     scale: "css",
                     path: test.info().outputPath("template-bindings-persisted.png"),

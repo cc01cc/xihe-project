@@ -11,8 +11,11 @@ import { actionableErrors, collectPageErrors } from "./helpers/console";
 import { CP_URL, evidenceDir, registerJourneyUser, type JourneyContext } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 
 const EVIDENCE_DIR = evidenceDir("plan0489-scheduled-tasks");
+/** 目标会话标题：创建对话框的会话选择器（reka Select）按可见文本选，见 BL-547。 */
+const TARGET_SESSION_TITLE = "Plan0489 target session";
 
 // PLAN-0489 T2.2 / V4：定时任务的真实浏览器 E2E（UI 面契约 = spec/ui-surfaces.md U1/U2/U3，
 // 视觉基线 = evidence/PLAN-0489-scheduled-task-UI-preview.html，已由用户审阅通过）。
@@ -232,7 +235,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         // 目标会话必须落在 ctx.workspaceId ⇒ 显式路径形态。
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,
-            title: "Plan0489 target session",
+            title: TARGET_SESSION_TITLE,
             workspaceId: agentAuth.workspaceId,
         });
 
@@ -313,9 +316,8 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         await expect(dialog).toBeVisible();
 
         await page.getByTestId("st-create-cron-expr").fill("0 9 * * *");
-        await page
-            .getByTestId("st-create-session")
-            .selectOption(sessionId, { timeout: LONG_TIMEOUT_MS });
+        // BL-547（task-175）：会话选择器是 reka Select（触发器为 button），selectOption 不适用。
+        await chooseRekaOption(page, page.getByTestId("st-create-session"), TARGET_SESSION_TITLE);
         await page.getByTestId("st-create-prompt").fill("PLAN-0489 cron wake prompt");
 
         const created = page.waitForResponse(
@@ -368,9 +370,8 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         await page.getByTestId("st-create-mode-delay").click();
         await page.getByTestId("st-create-delay-amount").fill("1");
-        await page
-            .getByTestId("st-create-session")
-            .selectOption(sessionId, { timeout: LONG_TIMEOUT_MS });
+        // BL-547（task-175）：会话选择器是 reka Select（触发器为 button），selectOption 不适用。
+        await chooseRekaOption(page, page.getByTestId("st-create-session"), TARGET_SESSION_TITLE);
         await page.getByTestId("st-create-prompt").fill("PLAN-0489 delay wake prompt");
 
         const created = page.waitForResponse(
@@ -649,9 +650,8 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         // 5 字段但 day-of-week=8 非法：客户端只查字段数 → 由服务端 400 拒绝（真实错误链路）。
         await page.getByTestId("st-create-cron-expr").fill("0 9 * * 8");
-        await page
-            .getByTestId("st-create-session")
-            .selectOption(sessionId, { timeout: LONG_TIMEOUT_MS });
+        // BL-547（task-175）：会话选择器是 reka Select（触发器为 button），selectOption 不适用。
+        await chooseRekaOption(page, page.getByTestId("st-create-session"), TARGET_SESSION_TITLE);
         await page.getByTestId("st-create-prompt").fill("PLAN-0489 invalid cron prompt");
 
         const rejected = page.waitForResponse(

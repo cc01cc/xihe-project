@@ -18,6 +18,7 @@ import {
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { chooseRekaOption } from "./helpers/reka-select";
 
 // Chat is an explicitly deterministic wire fixture; embedding uses the actual
 // DashScope service and PostgreSQL. Neither is advertised as a real chat model.
@@ -138,7 +139,12 @@ async function publishAndOpen(
     }, fixture.auth);
     await page.goto("/settings/user/api-request-templates");
     const panel = page.getByTestId("api-request-templates-panel");
-    await panel.getByTestId("api-request-type").selectOption("openai-chat-completions@1");
+    // BL-547（task-175）：api-request-type 是 reka Select（触发器为 button），选项文本 = typeKey。
+    await chooseRekaOption(
+        page,
+        panel.getByTestId("api-request-type"),
+        "openai-chat-completions@1",
+    );
     await panel.getByTestId("api-request-new").click();
     const name = `Context ${randomUUID()}`;
     await panel.getByTestId("api-request-name").fill(name);
