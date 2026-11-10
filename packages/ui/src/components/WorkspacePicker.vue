@@ -99,7 +99,14 @@ onMounted(async () => {
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6" data-testid="workspace-picker">
         <header class="space-y-1">
             <h1 class="text-lg font-semibold">{{ t("workspacePicker.title") }}</h1>
-            <p class="text-sm text-muted-foreground">{{ t("workspacePicker.subtitle") }}</p>
+            <!--
+                BL-540：副标题原文是「你的账号属于多个工作区」，单工作区账号看到的就是假话。
+                选择面本来只在「需要一个选择动作」时才有意义，所以按事实条件渲染：只有真的
+                多于一个工作区才说这句话（0 个走空态、1 个只剩标题、加载/失败时也不预先断言）。
+            -->
+            <p v-if="workspaces.length > 1" class="text-sm text-muted-foreground">
+                {{ t("workspacePicker.subtitle") }}
+            </p>
         </header>
 
         <p v-if="loading" class="text-sm text-muted-foreground">

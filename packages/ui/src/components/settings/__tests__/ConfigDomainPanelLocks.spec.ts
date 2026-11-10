@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { createMemoryHistory, createRouter } from "vue-router";
 import ConfigDomainPanel from "../ConfigDomainPanel.vue";
 import type { ConfigKeyMeta } from "../../../stores/config";
 
@@ -55,9 +56,20 @@ async function mountPanel(entry: ConfigKeyMeta) {
             schema: [{ key: "chunkSize", label: "Chunk Size", type: "text" }],
             meta: { chunkSize: entry },
             layer: "instance",
-            admin: true,
         },
-        global: { plugins: [i18n] },
+        // V6（af6ee270）给组件加了 route.hash 锚点 watch；这段 spec 当时没跟着装 router，
+        // 于是 setup 里 `route.hash` 直接抛错（develop 上就是红的，task-145 顺手补上）。
+        global: {
+            plugins: [
+                i18n,
+                createRouter({
+                    history: createMemoryHistory(),
+                    routes: [
+                        { path: "/settings/:layer/:domain", component: { template: "<div />" } },
+                    ],
+                }),
+            ],
+        },
     });
     await wrapper.find("button").trigger("click");
     return wrapper;

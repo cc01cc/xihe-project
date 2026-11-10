@@ -116,6 +116,33 @@ describe("WorkspacePicker", () => {
         expect(wrapper.find(`[data-testid="workspace-picker-item-${NEW_ID}"]`).exists()).toBe(true);
     });
 
+    // ── BL-540：副标题只在「真的多于一个工作区」时出现 ────────────────────────
+    it("BL-540: 单工作区时不渲染「属于多个工作区」的副标题", async () => {
+        mocks.listWorkspaces.mockResolvedValue([{ id: NEW_ID, name: "Only one" }]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.find(`[data-testid="workspace-picker-item-${NEW_ID}"]`).exists()).toBe(true);
+        expect(wrapper.text(), "单工作区账号不该被告知属于多个工作区").not.toContain(
+            "workspacePicker.subtitle",
+        );
+        expect(wrapper.text()).toContain("workspacePicker.title");
+    });
+
+    it("BL-540: 多工作区时保留副标题（正向对照，避免上一条恒真）", async () => {
+        mocks.listWorkspaces.mockResolvedValue([
+            { id: NEW_ID, name: "First" },
+            { id: "44444444-4444-4444-4444-444444444444", name: "Second" },
+        ]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        expect(wrapper.findAll("li").length).toBe(2);
+        expect(wrapper.text()).toContain("workspacePicker.subtitle");
+    });
+
     // ── PLAN-0614 M2 ─────────────────────────────────────────────────────────
     it("T3.5-①: 无工作区时渲染空态引导，点击打开创建对话框", async () => {
         mocks.listWorkspaces.mockResolvedValue([]);
