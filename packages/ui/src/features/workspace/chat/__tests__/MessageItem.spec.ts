@@ -842,3 +842,53 @@ describe("MessageItem attachment preview (PLAN-0683)", () => {
         wrapper.unmount();
     });
 });
+
+describe("MessageItem Agent principal binding refusal (PLAN-0750 / G8 task-155)", () => {
+    function mountErrorMessage(code: string) {
+        return mount(MessageItem, {
+            props: {
+                message: {
+                    id: `message-${code}`,
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "",
+                    timestamp: "2026-11-10T00:00:00Z",
+                    runId: "run-refused",
+                    runStatus: "failed",
+                    terminalOutcome: "error",
+                    errorCode: code,
+                    error: "An active Agent principal bound to this Workspace is required",
+                    retryable: false,
+                },
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    // Positive: the dedicated code branches to actionable binding guidance, not a bare 403.
+    it("renders binding guidance for AGENT_PRINCIPAL_MISSING", () => {
+        const wrapper = mountErrorMessage("AGENT_PRINCIPAL_MISSING");
+
+        const error = wrapper.get('[data-testid="message-error"]');
+        expect(error.text()).toContain("AGENT_PRINCIPAL_MISSING");
+        expect(error.text()).toContain(i18n.global.t("chat.principalMissing"));
+        expect(wrapper.get('[data-testid="message-principal-missing-hint"]').text()).toContain(
+            i18n.global.t("chat.principalMissingHint"),
+        );
+        // The CP's raw English detail must not reach the visible surface (DEV-011).
+        expect(error.text()).not.toContain("An active Agent principal bound to this Workspace");
+        wrapper.unmount();
+    });
+
+    // Negative: any other 403-style code still takes the generic mapped line, not the guidance.
+    it("keeps the generic copy for other 403 codes", () => {
+        const wrapper = mountErrorMessage("FORBIDDEN");
+
+        const error = wrapper.get('[data-testid="message-error"]');
+        expect(wrapper.find('[data-testid="message-principal-missing"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="message-principal-missing-hint"]').exists()).toBe(false);
+        expect(error.text()).toContain("FORBIDDEN");
+        expect(error.text()).not.toContain(i18n.global.t("chat.principalMissing"));
+        wrapper.unmount();
+    });
+});

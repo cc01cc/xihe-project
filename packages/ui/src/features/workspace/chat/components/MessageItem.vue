@@ -317,6 +317,14 @@ const streamErrorCopy = computed(() => {
     return code ? `${code}: ${copy}` : copy;
 });
 
+// PLAN-0750 / G8 (task-155): a submission refused because the Session has no active Agent
+// principal binding carries the dedicated `AGENT_PRINCIPAL_MISSING` code. Branch to actionable
+// guidance (bind one in Workspace settings → Agent management / ask a workspace admin) instead
+// of the generic 403 line — the bare code keeps the message identifiable for support.
+const principalMissingRefusal = computed(
+    () => props.message.errorCode?.trim() === "AGENT_PRINCIPAL_MISSING",
+);
+
 /**
  * PLAN-0622 Resource Governor：`429 RESOURCE_EXHAUSTED` 不显示 CP 英文 detail，
  * 而是按 `resourceKind` + `retryAfterSeconds` 给本地化、可操作的说明。
@@ -546,6 +554,17 @@ onUnmounted(() => {
                     <span>{{ message.errorCode }}: {{ noProgressReason }}</span>
                     <span data-testid="message-no-progress-hint" class="text-muted-foreground">
                         {{ t("chat.budgetExhaustedHint") }}
+                    </span>
+                </template>
+                <template v-else-if="principalMissingRefusal">
+                    <span data-testid="message-principal-missing"
+                        >{{ message.errorCode }}: {{ t("chat.principalMissing") }}</span
+                    >
+                    <span
+                        data-testid="message-principal-missing-hint"
+                        class="text-muted-foreground"
+                    >
+                        {{ t("chat.principalMissingHint") }}
                     </span>
                 </template>
                 <template v-else>

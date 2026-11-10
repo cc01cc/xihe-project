@@ -61,7 +61,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 - 会话身份由 `session_participants` PRIMARY 承载；V133（PLAN-0689 A7）已删 `sessions.agent_principal_id`，`agent_permissions_snapshot` 保留为 PRIMARY 绑定时刻冻结的 instance cap（D-54）。交互式 `POST /api/v1/sessions` 必须显式携带 `agentPrincipalId`，创建时写入 PRIMARY 行与快照；Chat admission 只接受已有 PRIMARY 的 Session，无 lazy-create、无 principal-null 占位首绑。
 - `sessions.context_template_layer/id/version`（V48，PLAN-0414）是上下文模板的 Session 级钉住绑定：创建时解析或显式选择，`PATCH /api/v1/sessions/{sessionId}/context-template` 只改后续 Run；模型/Agent 字段更新不得扰动该绑定；admission 时整修订复制进 `chat_runs.context_template_snapshot`（在途不变）。配置域与解析优先级见 [DEV-014 §8f](DEV-014-control-plane-architecture.md)。
-- Chat 请求 MUST NOT 携带 per-run `agentPrincipalId`（wire 已删）；回应者由显式 TO > `@` > PRIMARY 解析并落 `chat_runs.agent_principal_id`。principal-null/无 PRIMARY 的空 Session（附件占位/导入历史）首次 Chat 一律 403 fail-closed；旧「row CAS 首绑、缺省 403、异 principal 409」路径已随 A1/A7 删除。
+- Chat 请求 MUST NOT 携带 per-run `agentPrincipalId`（wire 已删）；回应者由显式 TO > `@` > PRIMARY 解析并落 `chat_runs.agent_principal_id`。principal-null/无 PRIMARY 的空 Session（附件占位/导入历史）首次 Chat 一律 403 fail-closed，错误码 **`AGENT_PRINCIPAL_MISSING`**（PLAN-0750 / G8 task-155：提交期专用码，非裸 `FORBIDDEN`——UI 据此渲染「去工作区设置绑定 Agent」引导，见 DEV-014 §8c）；旧「row CAS 首绑、缺省 403、异 principal 409」路径已随 A1/A7 删除。
 - `user_id` 仅表达 owner/visibility，不参与 Agent 授权；binding 缺失/撤销时 Agent 动作 fail-closed，历史 Session 保留。契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)，wire 以 OpenAPI 为准。
 
 ### 1.2 Session 分支（PLAN-0410 / V43）

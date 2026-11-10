@@ -80,6 +80,11 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
             return "对话流中断，请重试";
         case "SESSION_NOT_FOUND":
             return "会话不存在或已删除";
+        // PLAN-0750 / G8 (task-155): dedicated code for a Session with no active Agent
+        // principal binding. MessageItem branches this code to actionable binding guidance;
+        // this line is the generic-code fallback for the toast/SSE copy channel.
+        case "AGENT_PRINCIPAL_MISSING":
+            return "此会话尚未绑定可用的智能体（Agent principal）：请在工作区设置 → 智能体管理绑定，或联系工作区管理员";
         case "PATH_OUT_OF_SCOPE":
             return "路径超出工作区范围，操作已拒绝";
         case "CAPABILITY_UNAVAILABLE":

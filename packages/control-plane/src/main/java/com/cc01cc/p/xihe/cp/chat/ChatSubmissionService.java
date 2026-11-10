@@ -1196,8 +1196,15 @@ public class ChatSubmissionService {
         return session;
     }
 
+    /**
+     * PLAN-0750 / G8 (task-155): the submission-time refusal when the Session has no active Agent
+     * principal binding for this Workspace. Carries the dedicated {@code AGENT_PRINCIPAL_MISSING}
+     * code (reused from the lease-time refusal — same "no principal" semantics) instead of a bare
+     * {@code FORBIDDEN}, so the UI can branch to "bind one in Workspace settings" guidance rather
+     * than a generic 403. Detail is the submission-time operator-facing wording.
+     */
     private static CpApiException agentSessionForbidden() {
-        return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+        return new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_MISSING",
                 "An active Agent principal bound to this Workspace is required");
     }
 

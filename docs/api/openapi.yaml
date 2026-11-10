@@ -1619,8 +1619,9 @@ paths:
         Rollback: set `agent-runtime.maxConcurrentRunsPerSession` back to `1` to restore the frozen single-flight behaviour (PLAN-0645 V3 equivalence) — no code change is needed.
         The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
         `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
-        A new run is rejected with `403 FORBIDDEN` unless the persisted Session resolves to an active Agent principal
-        bound to the current Workspace; identity is never inferred from the Session owner or request fields.
+        A new run is rejected with `403 AGENT_PRINCIPAL_MISSING` unless the persisted Session resolves to an active Agent principal
+        bound to the current Workspace (PLAN-0750 / G8 task-155: dedicated code, not a bare FORBIDDEN —
+        the UI branches to "bind one in Workspace settings" guidance); identity is never inferred from the Session owner or request fields.
         The Chat request contract no longer defines `agentPrincipalId` (removed by PLAN-0689); a stray field is silently ignored with 200 during the BL-444 deprecation window.
         The responder identity is resolved server-side from the Session PRIMARY participant; it is never inferred from request fields.
         Historical/user-operation/tool-event Sessions keep their existing identity rules.
@@ -1642,7 +1643,10 @@ paths:
         '503': { description: 'BACKEND_DISABLED — the session belongs to a workspace on the frozen docker execution backend; the run is refused before dispatch (PLAN-0618 / BL-178)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403':
-          description: Workspace access denied, Session lacks an active Workspace-bound Agent principal, or asParticipantId was supplied without the participant-speak authorization (403 PARTICIPANT_CAP_DENIED, PLAN-0623 D23-08)
+          description: |
+            Workspace access denied, Session lacks an active Workspace-bound Agent principal
+            (403 AGENT_PRINCIPAL_MISSING, PLAN-0750 / G8 task-155), or asParticipantId was supplied
+            without the participant-speak authorization (403 PARTICIPANT_CAP_DENIED, PLAN-0623 D23-08)
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
