@@ -58,7 +58,7 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 
 | 段 | 动作 | action | 作用域 | 说明 |
 |---|---|---|---|---|
-| **创建** | 建 `PERSONAL` | ~~**`CREATE_OWN_AGENT`（新增）**~~（历史：BL-312/V147 已移除该原子） | user | 普通用户建自己的主体；不得用它建 WORKSPACE/INSTANCE 档 |
+| **创建** | 建用户级主体（无 Workspace） | **`CREATE_OWN_AGENT`**（PLAN-0750 M1 / V148 以用户级语义恢复；instance scope，resource `*`） | instance | 普通用户建自己的主体：**无显式 workspace 上下文**即可（`source=default` 视为无上下文），不需要任何工作区管理权；**不得**用它建工作区档（`MANAGE_WORKSPACE_AGENTS` + 显式上下文）或 INSTANCE 档（`CREATE_ACCOUNT`）——三动作独立、永不别名合并。历史：BL-312/V147 曾整体移除该原子（D-174 去档位时其旧形状随之作废） |
 | | 建 `WORKSPACE` | `MANAGE_WORKSPACE_AGENTS` | workspace | 在工作区内建 |
 | | 建 `INSTANCE` | `CREATE_ACCOUNT` | instance（resource `*`） | 仅 ADMIN |
 | **绑定** | 挂到 Workspace | `MANAGE_WORKSPACE_AGENTS` | workspace（具体 UUID，禁 `*`） | 可授予他人 ⇒ 被授予者能在别人的 Workspace 里绑**自己**的 `PERSONAL` 主体；**不能**绑别人的 `PERSONAL` |
