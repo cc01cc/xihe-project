@@ -98,7 +98,9 @@ class DirtyTreeError extends Error {
                 paths,
                 "",
                 "原因：图必须钉在 commit sha 上；脏树拍的图事后无法证明对应哪条提交。",
-                "先提交再拍。若只是自查迭代，可加 --allow-dirty（manifest 会记 allowDirty: true，不得用于交付批次）。",
+                "先提交再拍。若脏改动确实不影响像素（比如别处的 WIP），加 --allow-dirty 并配 --dirty-proof <json>：",
+                "  每个脏路径都要有一条可复算命令 + 它的实际输出，脚本会把两者一起写进 manifest.dirtyNonRendering。",
+                "  「已忽略」不是证明；能跑的命令才是。",
             ].join("\n"),
         );
         this.name = "DirtyTreeError";
@@ -130,15 +132,124 @@ function gitState() {
         return { ok: true, output: String(res.stdout).trim() };
     };
     const head = run(["rev-parse", "HEAD"]);
-    if (!head.ok) return { commit: null, dirtyPaths: [], gitError: head.output || "git 不可用" };
+    if (!head.ok) {
+        return {
+            commit: null,
+            dirtyPaths: [],
+            gitError: head.output || "git 不可用",
+            repoRoot: null,
+        };
+    }
+    const toplevel = run(["rev-parse", "--show-toplevel"]);
+    const repoRoot = toplevel.ok ? toplevel.output : null;
     const status = run(["status", "--porcelain", "-uall", "--"].concat(GIT_SCOPE));
-    if (!status.ok) return { commit: head.output, dirtyPaths: [], gitError: status.output };
+    if (!status.ok) {
+        return { commit: head.output, dirtyPaths: [], gitError: status.output, repoRoot };
+    }
     const dirtyPaths = status.output
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => line.replace(/^[A-Z?!]{1,2}\s+/, ""));
-    return { commit: head.output, dirtyPaths, gitError: null };
+    return { commit: head.output, dirtyPaths, gitError: null, repoRoot };
+}
+
+/**
+ * 脏树交付的**证据层**：每个脏路径都要给一条可复算命令，脚本亲自跑、把输出写进 manifest。
+ *
+ * 为什么不是"允许 --allow-dirty 就完事"：那条门的目的是「这图确实代表这个 commit」，
+ * 干净树只是达成手段之一。脏改动若确实不进渲染图（别处 WIP、e2e 用例、未跟踪文件），
+ * 用「命令 + 实际输出」证明它不进，比"等树干净"更强也更快 —— 但它必须**可复算**，
+ * 所以这里跑的是命令本身，而不是相信我写在 reason 里的话。
+ *
+ * 证明文件格式（JSON 数组）：
+ *   [{ "path": "packages/ui/x.ts", "reason": "为什么不影响像素",
+ *      "command": ["git", "grep", "-n", "…", "--", "packages/ui/src/preview"],
+ *      "expect": "empty" }]      // expect 可选：empty = 期望无输出（如"0 命中"）
+ */
+function loadDirtyProofs(proofPath, dirtyPaths, repoRoot) {
+    const normalize = (value) => String(value).replace(/\\/g, "/").replace(/^\.\//, "");
+    const wanted = dirtyPaths.map(normalize);
+    let entries = [];
+    if (proofPath) {
+        const raw = fs.readFileSync(proofPath, "utf8");
+        entries = JSON.parse(raw);
+        if (!Array.isArray(entries)) throw new Error("--dirty-proof 必须是 JSON 数组");
+    }
+    const byPath = new Map(entries.map((item) => [normalize(item.path), item]));
+    const missing = wanted.filter((item) => !byPath.has(item));
+    if (missing.length > 0) {
+        throw new Error(
+            [
+                "以下未提交路径没有「不影响渲染」的证明，拒绝把它们当成可忽略：",
+                ...missing.map((item) => "  - " + item),
+                "",
+                "给 --dirty-proof <json> 补上每条：{ path, reason, command: [argv…], expect? }",
+                "「已忽略」不是证明；能跑的命令 + 它的实际输出才是。",
+            ].join("\n"),
+        );
+    }
+    const stale = [...byPath.keys()].filter((item) => !wanted.includes(item));
+    if (stale.length > 0) {
+        process.stderr.write(
+            "[ui-mock-shot] 警告: 证明里有 " +
+                stale.length +
+                " 条已不再脏（" +
+                stale.join(", ") +
+                "）\n",
+        );
+    }
+    return wanted.map((item) => {
+        const proof = byPath.get(item);
+        const argv = Array.isArray(proof.command) ? proof.command : null;
+        if (!argv || argv.length === 0) {
+            throw new Error(
+                '证明缺少 command（argv 数组，例如 ["git","grep","-n","x","--","packages/ui/src/preview"]）：' +
+                    item,
+            );
+        }
+        const cwd = repoRoot ?? uiRoot;
+        const res = spawnSync(argv[0], argv.slice(1), { cwd, encoding: "utf8", timeout: 60000 });
+        const output = String((res.stdout ?? "") + (res.stderr ?? "")).trim();
+        const record = {
+            path: item,
+            reason: proof.reason ?? null,
+            // 把声明写进证据：expect 为 empty 时「output 为空」本身就是结论（如 grep 0 命中、exit=1），
+            // 不是「没跑出东西」。缺这一列，读 manifest 的人分不清「通过」与「没证据」。
+            expect: proof.expect ?? null,
+            command: argv
+                .map((part) => (part.includes(" ") ? JSON.stringify(part) : part))
+                .join(" "),
+            cwd: path.relative(cwd, cwd) || ".",
+            exit: res.status,
+            output: output.slice(0, 4000),
+        };
+        if (proof.expect === "empty" && output.length > 0) {
+            throw new Error(
+                "脏路径 " +
+                    item +
+                    " 的证明命令**有输出**，与 expect: empty 矛盾（命令：" +
+                    record.command +
+                    "）：\n" +
+                    record.output,
+            );
+        }
+        if (proof.expect === "nonempty" && output.length === 0) {
+            throw new Error(
+                "脏路径 " + item + " 的证明命令无输出，与 expect: nonempty 矛盾：" + record.command,
+            );
+        }
+        process.stdout.write(
+            "[ui-mock-shot] 脏路径证明 " +
+                item +
+                " → exit=" +
+                res.status +
+                " output=" +
+                (output.length === 0 ? "(空)" : output.split("\n").length + " 行") +
+                "\n",
+        );
+        return record;
+    });
 }
 
 function parseArgs(argv) {
@@ -148,6 +259,8 @@ function parseArgs(argv) {
         channel: "chrome-beta",
         only: null,
         allowDirty: false,
+        dirtyProof: null,
+        selftest: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
@@ -169,14 +282,21 @@ function parseArgs(argv) {
                     .filter(Boolean),
             );
             i += 1;
+        } else if (arg === "--selftest") {
+            // 只跑探活自检：不起浏览器、不需要 dev server，秒级返回（负例必须快速失败）。
+            opts.selftest = true;
+        } else if (arg === "--dirty-proof") {
+            opts.dirtyProof = path.resolve(process.cwd(), value);
+            i += 1;
         } else if (arg === "--allow-dirty") {
             // 只用于自查迭代：脏树出的图不得当交付批次，manifest 里会留 allowDirty: true。
             opts.allowDirty = true;
         } else if (arg === "--help" || arg === "-h") {
             process.stdout.write(
                 [
-                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--allow-dirty]",
-                    "工作树脏时默认 exit 1；--allow-dirty 只给自查迭代用，不得用于交付批次。",
+                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--allow-dirty] [--selftest]",
+                    "工作树脏时默认 exit 1；--allow-dirty --dirty-proof <json> 用于「脏改动不影响像素」的交付批次（每个脏路径一条可复算命令 + 实际输出）。",
+                    "--selftest 只跑探活自检（不开浏览器、不起 dev server），用于验证「探不到要快速失败且报全 URL」。",
                 ].join("\n") + "\n",
             );
             process.exit(0);
@@ -201,21 +321,238 @@ function freePort() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitForServer(base, child, timeoutMs) {
+/**
+ * 单次探活的上限。**没有它就是一个真 bug**：`fetch` 默认没有超时，只要有一次请求挂住，
+ * `while` 循环就再也检查不到 deadline，于是"探活失败"被报成"120 s 没就绪"——现象与根因脱钩。
+ * 2026-11-11 之前就是这个形状（task-84）。
+ */
+const PROBE_ATTEMPT_TIMEOUT_MS = 2000;
+/** 自起 dev server 的启动预算：vite 冷启动 + 首次优化依赖，实测 1~5 s，留足余量。 */
+const BOOT_TIMEOUT_MS = 120000;
+/**
+ * `--url` 复用已有 server 的探活预算：它**必须快速失败** ——
+ * 用户语义是"复用已经起好的 server"，探不到就该立刻说，而不是等两分钟。
+ */
+const REUSE_PROBE_TIMEOUT_MS = 5000;
+
+/** 把 fetch 的各种失败压成一行人话（ECONNREFUSED / 超时 / 代理 / DNS 要能分辨）。 */
+function describeFetchError(error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+        return "超时 " + PROBE_ATTEMPT_TIMEOUT_MS + " ms";
+    }
+    const cause = error?.cause;
+    if (cause?.code) return String(cause.code);
+    if (cause?.message) return String(cause.message).slice(0, 120);
+    return String(error?.message ?? error).slice(0, 120);
+}
+
+/** 一次探活 = 一个 URL + 独立超时 + 耗时/错误码（失败也要有信息量，不能只抛一句）。 */
+async function probeOnce(url) {
+    const startedAt = Date.now();
+    try {
+        const res = await fetch(url, {
+            method: "GET",
+            signal: AbortSignal.timeout(PROBE_ATTEMPT_TIMEOUT_MS),
+        });
+        return {
+            url,
+            ok: res.ok,
+            status: res.status,
+            ms: Date.now() - startedAt,
+            error: res.ok ? null : "HTTP " + res.status,
+        };
+    } catch (error) {
+        return {
+            url,
+            ok: false,
+            status: null,
+            ms: Date.now() - startedAt,
+            error: describeFetchError(error),
+        };
+    }
+}
+
+/**
+ * 候选探活地址。为什么要四个：本机 `localhost` 可能先落 `::1` 也可能先落 `127.0.0.1`，
+ * 而 vite 的 `--host` 决定它到底听哪一族；**探活目标与真实监听地址不一致时，现象只是超时**，
+ * 从报错里看不出是"没起"还是"起在另一族"。所以四个都试，并在失败时全部打印出来。
+ *
+ * 顺序：实际 base（vite 打印的 host）→ 127.0.0.1 → localhost → [::1]。
+ */
+function candidateBases(base) {
+    const urls = [];
+    const add = (url) => {
+        if (url && !urls.includes(url)) urls.push(url);
+    };
+    add(base);
+    let port = "";
+    try {
+        port = new URL(base).port;
+    } catch {
+        return urls;
+    }
+    if (port) {
+        add("http://127.0.0.1:" + port);
+        add("http://localhost:" + port);
+        add("http://[::1]:" + port);
+    }
+    return urls;
+}
+
+/** TCP 层诊断：区分"没人监听"（连接被拒）与"监听了但 HTTP 不应答"（连上却超时）。 */
+function probeTcp(host, port, timeoutMs = 1500) {
+    return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const socket = net.connect({ host, port });
+        const done = (result) => {
+            try {
+                socket.destroy();
+            } catch {
+                // 销毁失败不影响结论
+            }
+            resolve({ host, port, ms: Date.now() - startedAt, ...result });
+        };
+        socket.setTimeout(timeoutMs, () => done({ ok: false, error: "超时 " + timeoutMs + " ms" }));
+        socket.once("connect", () => done({ ok: true, remote: socket.remoteAddress }));
+        socket.once("error", (error) => done({ ok: false, error: error.code || error.message }));
+    });
+}
+
+/** 把"试过哪些 URL、各自试了几次、最后一次错在哪"拼成可读报告（探活失败时唯一的现场）。 */
+function formatProbeReport(rows, tcpRows, note) {
+    const lines = [note];
+    for (const row of rows) {
+        lines.push(
+            "  " +
+                (row.url ?? row.base) +
+                "   尝试 " +
+                row.attempts +
+                " 次  最后一次 " +
+                (row.lastMs ?? "-") +
+                " ms  " +
+                (row.lastError ?? "ok"),
+        );
+    }
+    if (tcpRows.length > 0) {
+        lines.push("TCP 直连诊断：");
+        for (const row of tcpRows) {
+            lines.push(
+                "  " +
+                    row.host +
+                    ":" +
+                    row.port +
+                    "  " +
+                    (row.ok
+                        ? "端口在听（" + row.ms + " ms, remote " + row.remote + "）"
+                        : row.error + "（" + row.ms + " ms）"),
+            );
+        }
+    }
+    return lines.join("\n");
+}
+
+/**
+ * 等待 dev server 就绪：**每一轮并行探全部候选**，每个请求各自带超时。
+ * 成功返回实际探通的那个 base（可能不是脚本猜的那一个 —— 这正是本函数存在的意义）。
+ */
+/** 从候选 URL 里取出要直连诊断的 (host, port) 对（去重）。 */
+function tcpTargets(bases) {
+    const seen = new Set();
+    const targets = [];
+    for (const base of bases) {
+        let parsed;
+        try {
+            parsed = new URL(base);
+        } catch {
+            continue;
+        }
+        const host = parsed.hostname.replace(/^\[|\]$/g, "");
+        const port = parsed.port;
+        if (!host || !port) continue;
+        const key = host + ":" + port;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        targets.push({ host, port: Number(port) });
+    }
+    return targets;
+}
+
+/**
+ * @param bases 候选 base URL（顺序即优先级）
+ * @param child 自起的 dev server 进程；null = 复用外部 server
+ * @param timeoutMs 总预算
+ * @param options.failFastWhenNoListener 复用模式下为 true：连 TCP 都没人听时立刻失败（不等满预算）
+ *        —— "指向空端口必须快速失败"这条判据就落在这里；自起模式不能这么做，vite 还没绑呢。
+ */
+async function waitForServer(bases, child, timeoutMs, options = {}) {
+    const failFastWhenNoListener = options.failFastWhenNoListener === true;
     const deadline = Date.now() + timeoutMs;
+    const stats = bases.map((base) => ({ base, attempts: 0, lastError: null, lastMs: null }));
+    let round = 0;
+    /** 一旦 TCP 确认"有端口在听"，失败报告就带上它 —— 这是"听了但 HTTP 不应答"的唯一证据。 */
+    let lastTcpRows = [];
     while (Date.now() < deadline) {
+        round += 1;
+        if (child?.spawnError) {
+            throw new Error("dev server 启动失败: " + child.spawnError);
+        }
         if (child && child.exitCode !== null) {
             throw new Error("dev server 提前退出，exitCode=" + child.exitCode);
         }
-        try {
-            const res = await fetch(base + "/preview-mock.html", { method: "GET" });
-            if (res.ok) return;
-        } catch {
-            // 还没起来，继续等
+        const results = await Promise.all(
+            bases.map((base) => probeOnce(base + "/preview-mock.html")),
+        );
+        results.forEach((result, index) => {
+            const stat = stats[index];
+            stat.attempts += 1;
+            stat.lastError = result.error;
+            stat.lastMs = result.ms;
+            if (result.ok) stat.ready = true;
+        });
+        const hit = stats.find((stat) => stat.ready);
+        if (hit) {
+            return {
+                base: hit.base,
+                readyVia: hit.base + "/preview-mock.html",
+                attempts: hit.attempts,
+            };
+        }
+        // 试过 3 轮仍全失败 ⇒ 用 TCP 直连判断"到底有没有人在听"，别把"没起"和"起在别处"混成一句超时。
+        if (round >= 3) {
+            const tcpRows = await Promise.all(
+                tcpTargets(bases).map((item) => probeTcp(item.host, item.port)),
+            );
+            const anyListening = tcpRows.some((row) => row.ok);
+            if (anyListening) {
+                lastTcpRows = tcpRows;
+            } else if (failFastWhenNoListener) {
+                throw new Error(
+                    formatProbeReport(
+                        stats,
+                        tcpRows,
+                        "端口没有监听（TCP 也连不上）—— 快速失败，不占满预算：",
+                    ),
+                );
+            }
         }
         await sleep(300);
     }
-    throw new Error("dev server 在 " + timeoutMs + " ms 内没有就绪: " + base);
+    // 预算用完：优先用过程中已经拿到的 TCP 证据，没有就现探一次（失败报告必须带这一层）。
+    const tcpRows =
+        lastTcpRows.length > 0
+            ? lastTcpRows
+            : await Promise.all(tcpTargets(bases).map((item) => probeTcp(item.host, item.port)));
+    throw new Error(
+        formatProbeReport(
+            stats,
+            tcpRows,
+            "dev server 在 " +
+                timeoutMs +
+                " ms 内没有就绪。探测记录（每次探活上限 " +
+                PROBE_ATTEMPT_TIMEOUT_MS +
+                " ms）：",
+        ),
+    );
 }
 
 function killTree(child) {
@@ -224,6 +561,22 @@ function killTree(child) {
         spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
     } else {
         child.kill("SIGTERM");
+    }
+}
+
+/**
+ * vite 自己打印的地址（`Local: http://<host>:<port>/`）—— 这是"脚本实际绑定的 host"的唯一可信来源：
+ * 我们在命令行上写 `--host 127.0.0.1`，但真正监听哪一族由 vite 决定，探活必须以它为准（其次才兜候选）。
+ */
+function boundBaseFromLog(log, fallbackBase) {
+    const matches = [...log.matchAll(/Local:\s+(https?:\/\/[^\s]+)/g)];
+    if (matches.length === 0) return fallbackBase;
+    const raw = matches[matches.length - 1][1].replace(/\/$/, "");
+    try {
+        new URL(raw);
+        return raw;
+    } catch {
+        return fallbackBase;
     }
 }
 
@@ -237,8 +590,8 @@ async function startServer() {
     const viteDir = path.join(uiRoot, "node_modules", "vite");
     const vitePkg = JSON.parse(fs.readFileSync(path.join(viteDir, "package.json"), "utf8"));
     const viteBin = path.join(viteDir, String(vitePkg.bin.vite));
-    // 必须绑 127.0.0.1：vite 默认只听 localhost，在 Windows 上可能只落 ::1，
-    // 探活请求打 127.0.0.1 会一直超时（实测 ready 了但探不通）。
+    // 显式绑 127.0.0.1：vite 默认只听 localhost，在 Windows 上可能只落 ::1。
+    // 但**不假设**它一定按我们说的绑 —— 探活失败时会连同 vite 打印的 Local: 一起报出来。
     const child = spawn(
         process.execPath,
         [viteBin, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
@@ -255,13 +608,37 @@ async function startServer() {
     child.stderr.on("data", (chunk) => {
         log += chunk.toString();
     });
+    // spawn 本身失败（EPERM/EINVAL/找不到 bin）时 exitCode 可能永远为 null，
+    // 不接这个事件就会退化成"等 120 s 后说没有就绪"。这类错误必须立刻冒出来。
+    child.on("error", (error) => {
+        child.spawnError = error.code || error.message;
+    });
+    let ready = null;
     try {
-        await waitForServer(base, child, 120000);
+        await waitForServer(candidateBases(base), child, BOOT_TIMEOUT_MS);
+        // 等 vite 把 Local: 打出来（已就绪时通常已在日志里），再按实际绑定地址复探一次确认。
+        const boundBase = boundBaseFromLog(log, base);
+        const candidates = candidateBases(base);
+        if (!candidates.includes(boundBase)) candidates.unshift(boundBase);
+        ready = await waitForServer(candidates, child, PROBE_ATTEMPT_TIMEOUT_MS * 2);
     } catch (error) {
         killTree(child);
-        throw new Error(error.message + "\n--- vite 输出 ---\n" + log.slice(-2000));
+        throw new Error(
+            error.message +
+                (log.trim()
+                    ? "\n--- vite 输出（末尾 2000 字符）---\n" + log.slice(-2000)
+                    : "\n--- vite 无输出 ---"),
+        );
     }
-    return { base, stop: () => killTree(child) };
+    return {
+        base: ready.base,
+        readyVia: ready.readyVia,
+        candidates: candidateBases(base).concat(
+            [boundBaseFromLog(log, base)].filter((item) => !candidateBases(base).includes(item)),
+        ),
+        log,
+        stop: () => killTree(child),
+    };
 }
 
 /** 详情态页面可能超一屏：找到“真的被裁掉一段”的容器（>24 px 才算，伪溢出会把整页推 1 px）。 */
@@ -379,8 +756,87 @@ async function shootOne(page, base, shot, outDir) {
     };
 }
 
+/**
+ * 探活自检（\`--selftest\`）：不开浏览器、不起 dev server，秒级跑完。
+ * 为什么要有它：探活失败这条路径平时只在"真出事"时才走到，没人会手动验证；
+ * 而它一旦退化成 120 s 黑盒等待（task-84 之前的形状），最需要诊断的时刻恰好没有诊断。
+ */
+async function runSelftest() {
+    const checks = [];
+    const check = (name, ok, detail) => {
+        checks.push({ name, ok, detail });
+    };
+
+    // 负例 1：刚释放的空端口（TCP 没人听）⇒ 复用模式必须在预算内快速失败
+    const deadPort = await freePort();
+    const deadBase = "http://127.0.0.1:" + deadPort;
+    const startedAt = Date.now();
+    let probeError = null;
+    try {
+        await waitForServer(candidateBases(deadBase), null, REUSE_PROBE_TIMEOUT_MS, {
+            failFastWhenNoListener: true,
+        });
+    } catch (error) {
+        probeError = error;
+    }
+    const elapsed = Date.now() - startedAt;
+    check("空端口必须失败", probeError !== null, probeError === null ? "居然探通了" : "");
+    check(
+        "空端口必须快速失败（<=" + REUSE_PROBE_TIMEOUT_MS + " ms）",
+        elapsed <= REUSE_PROBE_TIMEOUT_MS,
+        "实测 " + elapsed + " ms",
+    );
+    const message = probeError?.message ?? "";
+    const candidates = candidateBases(deadBase);
+    check(
+        "失败报告列出全部候选 URL",
+        candidates.every((url) => message.includes(url)),
+        candidates.join(" | "),
+    );
+    check("失败报告带 TCP 直连诊断", /TCP 直连诊断/.test(message), "");
+    check(
+        "候选覆盖 127.0.0.1 / localhost / [::1]",
+        ["127.0.0.1", "localhost", "[::1]"].every((host) =>
+            candidates.some((url) => url.includes(host)),
+        ),
+        candidates.join(" | "),
+    );
+
+    // 负例 2：解析 vite 打印的 Local: 行（"脚本实际绑定的 host"的唯一可信来源）
+    check(
+        "解析 vite 的 Local: 行",
+        boundBaseFromLog("  ➜  Local:   http://127.0.0.1:5199/", "http://fallback:1") ===
+            "http://127.0.0.1:5199",
+        boundBaseFromLog("  ➜  Local:   http://127.0.0.1:5199/", "http://fallback:1"),
+    );
+    check(
+        "无 Local: 行时回落 base",
+        boundBaseFromLog("vite 没有打印地址", "http://fallback:1") === "http://fallback:1",
+        "",
+    );
+
+    for (const item of checks) {
+        process.stdout.write(
+            (item.ok ? "PASS  " : "FAIL  ") +
+                item.name +
+                (item.detail ? "  (" + item.detail + ")" : "") +
+                "\n",
+        );
+    }
+    const failed = checks.filter((item) => !item.ok);
+    if (failed.length > 0) {
+        fail(1, "自检失败 " + failed.length + "/" + checks.length);
+        return;
+    }
+    process.stdout.write("[ui-mock-shot] 自检通过 " + checks.length + "/" + checks.length + "\n");
+}
+
 async function main() {
     const opts = parseArgs(process.argv.slice(2));
+    if (opts.selftest) {
+        await runSelftest();
+        return;
+    }
     const shots = opts.only ? SHOTS.filter((shot) => opts.only.has(shot.id)) : SHOTS;
     if (shots.length === 0) throw new Error("--only 没有匹配到任何镜头");
 
@@ -395,21 +851,62 @@ async function main() {
                 "），manifest 里 commit=null\n",
         );
     }
+    // 脏树能不能当交付批次，取决于「每一条脏改动是否被一条可复算命令证明不影响渲染」，
+    // 而不是取决于树脏不脏 —— 缺少证明就到这里为止（loadDirtyProofs 会点名缺哪条）。
+    const dirtyNonRendering =
+        git.dirtyPaths.length > 0
+            ? loadDirtyProofs(opts.dirtyProof, git.dirtyPaths, git.repoRoot)
+            : [];
     if (git.dirtyPaths.length > 0) {
         process.stderr.write(
-            "[ui-mock-shot] 警告: 工作树有 " +
+            "[ui-mock-shot] 说明: 工作树有 " +
                 git.dirtyPaths.length +
-                " 处未提交改动，本批次 **不得用于交付**（manifest 会记 allowDirty: true）\n",
+                " 处未提交改动，已逐条附「不影响渲染」的证明（manifest.dirtyNonRendering，命令 + 实际输出）；" +
+                "allowDirty: true\n",
         );
     }
     fs.mkdirSync(opts.out, { recursive: true });
 
     let server = null;
     let base = opts.url;
-    if (!base) {
+    let serverInfo = null;
+    if (base) {
+        // --url 复用模式也要探活：没人监听时必须在几秒内失败，而不是把 Playwright 的
+        // 30 s 导航超时当成"截图失败"（现象会与根因脱钩 —— 那些图根本没到页面这一步）。
+        const reuseCandidates = candidateBases(base);
+        const ready = await waitForServer(reuseCandidates, null, REUSE_PROBE_TIMEOUT_MS, {
+            // 复用模式：TCP 都没人听就该立刻报 ——「指向空端口必须快速失败」这条判据落在这里。
+            failFastWhenNoListener: true,
+        }).catch((error) => {
+            throw new Error(
+                "dev server 探活失败（--url 复用模式）：\n" +
+                    error.message +
+                    "\n提示：--url 是「复用已起的 dev server」，探不到说明该端口没有 server；要自起请去掉 --url。",
+            );
+        });
+        base = ready.base;
+        serverInfo = {
+            mode: "reused",
+            base,
+            readyVia: ready.readyVia,
+            attempts: ready.attempts,
+            candidates: reuseCandidates,
+        };
+        process.stdout.write(
+            "[ui-mock-shot] 复用 dev server: " + base + "（探通 via " + ready.readyVia + "）\n",
+        );
+    } else {
         server = await startServer();
         base = server.base;
-        process.stdout.write("[ui-mock-shot] 临时 dev server: " + base + "\n");
+        serverInfo = {
+            mode: "spawned",
+            base,
+            readyVia: server.readyVia,
+            candidates: server.candidates,
+        };
+        process.stdout.write(
+            "[ui-mock-shot] 临时 dev server: " + base + "（探通 via " + server.readyVia + "）\n",
+        );
     }
 
     const browser = await chromium.launch({ channel: opts.channel });
@@ -431,8 +928,14 @@ async function main() {
                     "scan=" + result.probe.singleLineElements + "/" + result.probe.textNodes,
                     "wrap=" + result.probe.wrapped,
                     "chromeIn=" + result.probe.chromeInsideCanvas,
+                    // 底部图是**另一张文件**，必须报它自己的 sha：只印主图 sha 时，从 stdout 誊写
+                    // 报告的人会把「04 的 sha」当成「04 与 04-bottom 的 sha」（2026-11-11 实测发生过）。
                     result.bottom
-                        ? "bottom=yes(+" + result.bottom.overflow.gap + "px)"
+                        ? "bottom=yes(+" +
+                          result.bottom.overflow.gap +
+                          "px, sha=" +
+                          result.bottom.sha256_16 +
+                          ")"
                         : "bottom=n/a",
                 ].join("  ") + "\n",
             );
@@ -443,8 +946,20 @@ async function main() {
                 {
                     commit: git.commit,
                     dirtyPaths: git.dirtyPaths,
+                    // 每条脏路径的「不影响渲染」证据：{ path, reason, expect, command, cwd, exit, output }
+                    dirtyNonRendering,
+                    // 证明文件本身也钉住：换了证明文件，sha 会变
+                    dirtyProof: opts.dirtyProof
+                        ? {
+                              path: path.relative(uiRoot, opts.dirtyProof).replace(/\\/g, "/"),
+                              sha256_16: sha(fs.readFileSync(opts.dirtyProof)),
+                          }
+                        : null,
                     allowDirty: opts.allowDirty,
                     base,
+                    // 服务器怎么来的、探通用的是哪个候选地址：自起模式修好（task-84）之后，
+                    // "这图是自起拍的还是复用拍的"必须能从 manifest 里读出来。
+                    server: serverInfo,
                     viewport: VIEWPORT,
                     canvas: CANVAS,
                     shots: results,
