@@ -75,6 +75,23 @@ const navPanelDefaultSize = computed(() =>
     navPanelCollapsed.value ? RAIL_WIDTH : RAIL_WIDTH + effectiveNavWidth.value,
 );
 const navHandleVisible = computed(() => !isMobile.value && !navPanelCollapsed.value);
+/**
+ * PLAN-0753 T3 / 移动端抽屉存量缺陷修复（task-181 复核）：reka 给 panel 内联
+ * `flexGrow/flexBasis`，组件在 `aside` 上声明的 `width` 被内联 flex 压过；而
+ * `position: fixed` 的 flex 子项不参与布局、收缩包裹 ⇒ 抽屉内容被裁。
+ * 修法：**几何载体从 aside 上移到 panel 包裹层** —— 移动端把 panel#1 声明为
+ * `flex: none`（不参与 split、零占位）+ 显式宽度（抽屉开=min(280,100vw-1rem) /
+ * 关=0）。桌面不声明，宽度仍全归 reka。
+ */
+const navPanelStyle = computed(() => {
+    if (!isMobile.value) return undefined;
+    const drawerWidth = Math.min(navWidth.value, viewportWidth.value - 16);
+    return {
+        flex: "none",
+        width: navOpen.value ? `${drawerWidth}px` : "0px",
+        overflow: "hidden",
+    } as Record<string, string>;
+});
 
 const sidebarRef = ref<{ bubbleRef: HTMLElement | null } | null>(null);
 /** Drag width bubble: filled imperatively by the bridge (no reactive width channel). */
@@ -341,6 +358,7 @@ onUnmounted(() => {
                 :min-size="NAV_PANEL_MIN_SIZE"
                 :max-size="NAV_PANEL_MAX_SIZE"
                 :collapsed-size="RAIL_WIDTH"
+                :style="navPanelStyle"
                 @resize="navBridge.onResize"
             >
                 <Sidebar

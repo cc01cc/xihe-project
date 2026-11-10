@@ -76,16 +76,6 @@ function expandSidebar() {
     emit("update:open", true);
 }
 
-/**
- * PLAN-0753 T3: 桌面宽度归 splitter 的 panel #1（reka 的 flex-grow）所有，这里只保留
- * 移动端抽屉的宽度——`position: fixed` 的元素不是 flex 项，所以抽屉不参与桌面 split。
- */
-const asideStyle = computed(() =>
-    props.isMobile
-        ? { width: isOpen.value ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" }
-        : undefined,
-);
-
 const panelStyle = computed(() => (props.isMobile ? { width: "100%" } : undefined));
 
 async function startNewChat() {
@@ -156,7 +146,6 @@ function handleLogout() {
                   ? 'transition-[width] duration-300'
                   : 'transition-[flex-grow] duration-300',
         ]"
-        :style="asideStyle"
     >
         <NavRail v-if="!isMobile" :show-expand="showRailExpand" @expand="expandSidebar" />
         <!-- 桌面：panel #1 已经是 rail + 面板的整宽，内层用 flex-1 吃掉除去 56px rail 的宽度 -->
