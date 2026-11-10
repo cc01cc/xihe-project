@@ -76,3 +76,36 @@ description: XH 交付线在 DSH 中的常驻团队角色化（正式；仅 DSH�
 | 不建卡只发消息派活 | 面板空、继任无从追踪（任务板是唯一事实源） |
 | 交接档只写授权/队列/定时器 | 继任漏建成员，全部任务退回 one-shot |
 | 测量窗内提交 docs（索引 / skill / runbook） | `--expect-sha` 靶漂移：本会话两次（`eb2927` / `303a5e9`），代价 = 测量执行者重核靶树、重做备份、必要时整档重跑 |
+
+## 8 派槽位与新增文件的强制校验（2026-11-10，F-2 / F-9 / F-14）
+
+### 8.1 派槽位前必须核「注册」而不是「看着像」
+
+```powershell
+git -C <项目> worktree list --porcelain   # 目标路径必须出现在 "worktree " 行
+Test-Path <槽位>/.git                      # False ⇒ 泄漏目录，禁止派活
+```
+
+- **`git -C <任意子目录>` 会向上解析到外壳仓库** ⇒ 在泄漏目录的子目录里跑 `git switch` 会**切换主检出**（F-2 实测：主检出被钉到队列 tip、工作树写脏，直接堵死 promote）。
+- **池表/看板里的 lane 名 ≠ worktree 注册表**；派活前以 `worktree list` 为判据。
+- 机器判据：`scripts/validate-handoff.mjs` **A7**（引用槽位必须是注册 worktree；泄漏槽位须 `--allow-leaked` 并打 WARN；泄漏槽位内有 junction 即红）。
+
+### 8.2 「0 tests + exit 0」是假绿（F-9）
+
+测试模块在 `src/main.rs`（`[[bin]]`，Cargo.toml 无 `[lib]` 段）时，`cargo test --lib <filter>` 会**跑 0 条并 exit 0**。必须按 target 选：`cargo test --bin <bin-name> <filter>`（Runtime 实测：`--lib` 0 条 exit 0 vs `--bin xihe-runtime` 8 passed）。
+
+### 8.3 新增/引入文件必须跑「全局扫描型 spec」（F-14）
+
+判据 = **按「哪些 spec 会扫全树」筛，不按「我改了哪些文件」筛**（逐 lane 只跑受影响 spec 的这一类漏检）：
+
+| 类别 | 必跑 |
+| --- | --- |
+| UI 可达性/文案全局扫描 | `ariaLabels.spec.ts` / `titlePlaceholderLabels.spec.ts`（vendor 组件的上游默认 `aria-label`/`title` 会命中） |
+| i18n 机器键 | 文案键扫描（新增 key 未挂载即红） |
+| 格式 | 整包 `oxfmt --check .`（文件级会漏漂移） |
+| 汇总 | `mise run test:ui` 全量（新增文件后至少一次） |
+
+实测（F-14）：`236ea5875` 新增 `Breadcrumb.vue`/`SidebarRail.vue`（上游默认 `aria-label="breadcrumb"` / `"Toggle Sidebar"`），lane 内受影响面全绿，`test:ui` 全量红 2 spec（develop 基线绿）。
+
+- **A03 主检出任何时候都必须 `git -C A03-xihe status --porcelain -uall` = 0 行**；要落盘的改动一律进 lane，验证完立刻回收（文档/技能类同等适用；窗口期直提撞 `E_DIRECT_DURING_WINDOW`）。
+- 发现主检出被自己改脏：**不要** `git checkout --`（丢内容），交 Lead `git stash push -m "<用途+勿丢>" -- <paths>`，promote 后随 lane 批次提交。

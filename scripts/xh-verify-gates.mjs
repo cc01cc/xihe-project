@@ -40,6 +40,9 @@ export const DEFAULT_GATES = [
   { id: "check:types", kind: "mise", class: "fast" },
   { id: "lint:ui", kind: "mise", class: "fast" },
   { id: "check:openapi", kind: "mise", class: "fast" },
+  // task-27（task-14 A′）：doc ↔ contract（生成器 --check）此前不在任何门清单里；
+  // 需 PyYAML，解释器缺失时按 SKIP 处理（见 PRECONDITIONS["check:api-docs"]）。
+  { id: "check:api-docs", kind: "mise", class: "fast" },
   { id: "check:a11y-refs", kind: "mise", class: "fast" },
   { id: "test:ui", kind: "mise", class: "full" },
   { id: "check:mock-baseline", kind: "mise", class: "fast" },
@@ -47,6 +50,8 @@ export const DEFAULT_GATES = [
   { id: "check:e2e-bypass", kind: "mise", class: "fast" },
   { id: "check:ports", kind: "mise", class: "fast" },
   { id: "check:event-keys", kind: "mise", class: "fast" },
+  // task-27（task-14 A′）：文档链接门也此前不在门清单里（docs/ 与 spec 引用漂移靠人守）。
+  { id: "lint:links", kind: "mise", class: "fast" },
   { id: "test:cp:executed", kind: "mise", class: "full" },
   { id: "lint:log-secrets", kind: "mise", class: "fast" },
 ];
@@ -70,6 +75,28 @@ const PRECONDITIONS = {
   },
   "check:mock-baseline": {
     evaluate: (ctx) => checkMockBaselineReport(ctx),
+  },
+  // task-27：`check:api-docs` 要 PyYAML。解释器缺失 = **环境缺输入 ⇒ SKIP**（写明补齐方式），
+  // 不折成产品红；`--strict` 时由 planGates 降级为 FAIL（窗口里不允许假绿）。
+  // 候选顺序与 `A03-xihe/scripts/gen-api-docs.mjs` 一致：XH_PYTHON → .venv/Scripts/python.exe → .venv/bin/python。
+  "check:api-docs": {
+    evaluate: ({ repoRoot }) => {
+      const candidates = [
+        process.env.XH_PYTHON,
+        join(repoRoot, "packages", "agent", ".venv", "Scripts", "python.exe"),
+        join(repoRoot, "packages", "agent", ".venv", "bin", "python"),
+      ].filter(Boolean);
+      const hit = candidates.find((p) => existsSync(p));
+      return hit
+        ? { ok: true, python: hit }
+        : {
+            ok: false,
+            code: "missing-input",
+            reason:
+              "找不到带 PyYAML 的 Python 解释器（候选 XH_PYTHON / packages/agent/.venv/Scripts/python.exe / .venv/bin/python 全缺）" +
+              " ⇒ 本 checkout 跑不了 check:api-docs：在主检出跑，或带 XH_PYTHON=<主检出>/packages/agent/.venv/Scripts/python.exe 重跑（exit 2 是环境，不是产品红）",
+          };
+    },
   },
 };
 
