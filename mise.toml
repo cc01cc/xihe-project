@@ -601,8 +601,10 @@ alias = "check:standalone"
 # 退出码 0 干净 / 1 越界(E_SHARED_FILE_WRITE) / 2 用法或环境错误（ONE 根找不到、非模块分支、git 读不到）。
 # 用法：`mise run check:branch-scope`（自动取当前分支，模块分支上才有意义）；
 #       `mise run check:branch-scope -- --branch m/cp --json`。**不接 validate**（未在窗口里跑过全量前不引入新红面）。
+#       ⚠️ 入口走 `scripts/run-branch-scope.mjs`（不是直接的 ../internal 相对路径）：worktree 里
+#       `<slot>/../internal` 不存在，实测会让这条门 MODULE_NOT_FOUND（2026-11-11 队列头 c0d8f056 门梯）。
 [tasks."check:branch-scope"]
-run = "node ../internal/A03-xihe/scripts/check-branch-scope.mjs --repo ."
+run = "node scripts/run-branch-scope.mjs --repo ."
 description = "Module-branch write-surface gate: only packages/<module>/**, docs/i18n/** (and docs/api/openapi.yaml for m/cp) may change on m/<module> branches (0 clean / 1 E_SHARED_FILE_WRITE / 2 usage-or-environment)"
 alias = "check:branch-scope"
 
@@ -684,10 +686,16 @@ alias = "pkg:installer"
 run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce"
 description = "Blocking commit-message gate (type/scope, display-width <=72 cols / merge <=100, empty line before body, PLAN-####/BL-###/D-### reference) over a632de77..HEAD; blocking is the script default and this task is a validate dependency (D-216) — pass --report-only for the old never-fails audit"
 # PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate，本地必红（已知存量 264/56，见 task-245 清账）。
+# task-69 / D-827：build-docs 已切 Redoc 3，主题走「模板注入 CSS 变量」而不是 .redocly.yaml 的 theme 块（后者在 Redoc 3 下实测无效）。
+#   -t ../../.redocly/api-docs.hbs ⇒ XH 主题（字体/主色/侧栏），相对路径从 packages/ui 解析；
+#   --openapi.disableTelemetry=true ⇒ 关掉 Redoc 3 的 OpenTelemetry 上报（内部文档页不该向第三方发请求）；
+#   模板里的 CSP 再做一层浏览器级兜底（外联一律拒绝，含 Redoc 硬编码的 logo）。
+#   --inlineBundle ⇒ 把 Redoc 脚本内嵌进产物。缺它时产物含 6 处 https 外链（Redocly CDN），断网打开是白屏 ——
+#   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
 run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../../docs/api/openapi.yaml"
 description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；未接入 validate；本地必红（当前 264 errors / 56 warnings 属已知存量），清账前不得接 validate（task-245）"
 
 [tasks."docs:api:html"]
-run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html"
+run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
 description = "从 openapi.yaml 生成单文件 HTML 文档到 .tmp/api-docs/index.html（gitignored）"
