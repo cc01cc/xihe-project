@@ -154,15 +154,15 @@ const router = createRouter({
                     meta: { settingsLayer: "user" },
                 },
                 {
-                    // PLAN-0750 M3（矩阵 U3）：用户层「我的智能体」落地页。
+                    // PLAN-0750 M3（矩阵 U3）：用户层「智能体主体」落地页。
                     // **不是**工作区「工作区设置 → 智能体」的复制品：本页只承担
                     // ①个人视图列表（R3：CP 只回 created_by=self）
                     // ②无工作区上下文的创建（U1：走 CREATE_OWN_AGENT，不是 MANAGE_WORKSPACE_AGENTS）
                     // ③卡片上的「绑定到工作区」动作（R1 的显式绑定面）。
                     // 工作区侧的创建入口保持只有 WorkspaceAgentsPanel 那一个（U2：不改造单门）。
-                    path: "my-agents",
-                    name: "settings-my-agents",
-                    component: () => import("../views/settings/MyAgentsView.vue"),
+                    path: "agent-principals",
+                    name: "settings-agent-principals",
+                    component: () => import("../views/settings/AgentPrincipalsView.vue"),
                     meta: { settingsLayer: "user" },
                 },
                 {

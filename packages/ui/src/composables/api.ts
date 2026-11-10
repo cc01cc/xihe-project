@@ -3185,7 +3185,7 @@ export const api = {
             "/agent-principals",
         );
         if (!Array.isArray(raw.principals)) {
-            console.warn("[my-agents] agent principal envelope malformed; treated as empty");
+            console.warn("[agent-principals] agent principal envelope malformed; treated as empty");
             return [];
         }
         return raw.principals.flatMap((row) => {

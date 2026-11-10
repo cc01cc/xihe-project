@@ -6,13 +6,13 @@ import { setupMockAuth } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 /**
- * PLAN-0750 M3（verify.md V8 / V12）：用户层「我的智能体」关键路径冒烟。
+ * PLAN-0750 M3（verify.md V8 / V12）：用户层「智能体主体」关键路径冒烟。
  *
  * <p>这条冒烟证的**不是"页面能开"**，而是两个判据在真实浏览器 + 真实请求头上成立：</p>
  *
  * <ol>
- *   <li><b>V12</b>——入口在「用户配置 → 我的资源 → 我的智能体」一级（左栏资源组），
- *       直接进入 `/settings/my-agents` 就是一个能用的页面，不是缺口占位。</li>
+ *   <li><b>V12</b>——入口在「用户配置 → 我的资源 → 智能体主体」一级（左栏资源组），
+ *       直接进入 `/settings/agent-principals` 就是一个能用的页面，不是缺口占位。</li>
  *   <li><b>V8 / 矩阵 U1</b>——创建请求**不带工作区上下文**。这条必须有对照，否则断言是空的：
  *       `setupMockAuth` 会往 sessionStorage 里种 `xihe-workspace`，所以本页每一条请求默认
  *       都会被 `apiAuthHeaders` 自动加上 `X-Workspace-Id`。因此本用例同时抓
@@ -22,7 +22,7 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  *   <li><b>T3.2</b>——没有任何可管理工作区时，绑定动作给**显式提示**而不是一个点了才 403 的按钮。</li>
  * </ol>
  *
- * <p>跑法：`pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/my-agents.spec.ts`。</p>
+ * <p>跑法：`pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/agent-principals.spec.ts`。</p>
  */
 
 const WORKSPACE_ID = "workspace-1";
@@ -42,7 +42,7 @@ async function capture(page: Page, name: string): Promise<string> {
 
 type Captured = { headers: Record<string, string>; body: unknown };
 
-async function setupMyAgentsLane(page: Page): Promise<{
+async function setupAgentPrincipalsLane(page: Page): Promise<{
     creates: Captured[];
     permissionCalls: Array<Record<string, string>>;
 }> {
@@ -134,40 +134,42 @@ async function setupMyAgentsLane(page: Page): Promise<{
     return { creates, permissionCalls };
 }
 
-test.describe("PLAN-0750 M3: user-level my-agents surface", () => {
+test.describe("PLAN-0750 M3: user-level agent-principals surface", () => {
     test.use({ viewport: { width: 1440, height: 900 } });
 
-    test("creates from the user layer without a workspace context (matrix U1)", async ({ page }) => {
-        const { creates, permissionCalls } = await setupMyAgentsLane(page);
+    test("creates from the user layer without a workspace context (matrix U1)", async ({
+        page,
+    }) => {
+        const { creates, permissionCalls } = await setupAgentPrincipalsLane(page);
 
-        await page.goto("/settings/my-agents");
+        await page.goto("/settings/agent-principals");
 
         // V12：用户配置区的真入口，不是缺口缺省行。
-        await expect(page.getByTestId("my-agents-panel")).toBeVisible({
+        await expect(page.getByTestId("agent-principals-panel")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
         await expect(
-            page.locator('[data-testid="settings-nav-resource-my-agents"]'),
+            page.locator('[data-testid="settings-nav-resource-agent-principals"]'),
         ).toBeVisible();
-        await expect(page.getByTestId("my-agents-empty")).toBeVisible();
+        await expect(page.getByTestId("agent-principals-empty")).toBeVisible();
 
         // T3.2：这类账号没有可管理工作区 ⇒ 显式提示，且不渲染绑定按钮。
-        await expect(page.getByTestId("my-agents-bind-denied")).toBeVisible();
-        await capture(page, "plan0750-m3-my-agents-empty");
+        await expect(page.getByTestId("agent-principals-bind-denied")).toBeVisible();
+        await capture(page, "plan0750-m3-agent-principals-empty");
 
         // U1：创建表单里**没有**工作区选择器。
-        await page.getByTestId("my-agents-create-button").click();
-        await expect(page.getByTestId("my-agents-create-form")).toBeVisible();
-        await expect(page.getByTestId("my-agents-create-workspace")).toHaveCount(0);
+        await page.getByTestId("agent-principals-create-button").click();
+        await expect(page.getByTestId("agent-principals-create-form")).toBeVisible();
+        await expect(page.getByTestId("agent-principals-create-workspace")).toHaveCount(0);
 
-        await page.getByTestId("my-agents-create-name").fill("MyAgent");
-        await capture(page, "plan0750-m3-my-agents-create-form");
-        await page.getByTestId("my-agents-create-submit").click();
+        await page.getByTestId("agent-principals-create-name").fill("MyAgent");
+        await capture(page, "plan0750-m3-agent-principals-create-form");
+        await page.getByTestId("agent-principals-create-submit").click();
 
-        await expect(page.getByTestId(`my-agents-row-${CREATED_PRINCIPAL_ID}`)).toBeVisible({
+        await expect(page.getByTestId(`agent-principals-row-${CREATED_PRINCIPAL_ID}`)).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        await capture(page, "plan0750-m3-my-agents-created");
+        await capture(page, "plan0750-m3-agent-principals-created");
 
         // ---- 网络层证据（判据本体） ----
         expect(creates).toHaveLength(1);

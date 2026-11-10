@@ -73,7 +73,7 @@ const navIcon: Record<string, typeof Wrench> = {
     "config-locks": LockKeyhole,
     roles: ShieldCheck,
     audit: ScrollTextIcon,
-    "my-agents": Bot,
+    "agent-principals": Bot,
     "my-credentials": KeyRound,
     "knowledge-mcp": Database,
 };

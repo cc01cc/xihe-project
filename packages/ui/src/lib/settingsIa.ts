@@ -211,11 +211,11 @@ export function instanceResourceGroup(): ResourceNavItem[] {
 }
 
 /**
- * 用户层「我的资源」组（design §3.2 第 4 行：3 条目 = 我的智能体 / 我的凭据 / 知识库·MCP）。
+ * 用户层「我的资源」组（design §3.2 第 4 行：3 条目 = 智能体主体 / 我的凭据 / 知识库·MCP）。
  *
  * <p>承载状态（PLAN-0750 M3 之后）：</p>
  * <ul>
- *   <li><b>我的智能体</b>——真入口 `/settings/my-agents`。用户级创建走 `CREATE_OWN_AGENT`
+ *   <li><b>智能体主体</b>——真入口 `/settings/agent-principals`。用户级创建走 `CREATE_OWN_AGENT`
  *       无工作区上下文（矩阵 U1），列表走 `GET /agent-principals` 无 `workspaceId` 的个人视图
  *       （R3：只回 `created_by=self`）。**不再是缺口**，所以去掉 `gaps`/`gapNoteKey`。</li>
  *   <li><b>我的凭据</b>——真入口 `/settings/credentials`（`owner_type=USER`）。</li>
@@ -227,9 +227,9 @@ export function instanceResourceGroup(): ResourceNavItem[] {
 export function userResourceGroup(): ResourceNavItem[] {
     return [
         {
-            id: "my-agents",
-            labelKey: "settings.ia.resourceMyAgents",
-            path: "/settings/my-agents",
+            id: "agent-principals",
+            labelKey: "settings.ia.resourceAgentPrincipals",
+            path: "/settings/agent-principals",
         },
         {
             id: "my-credentials",

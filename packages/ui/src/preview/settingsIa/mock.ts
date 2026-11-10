@@ -195,7 +195,7 @@ export function domainsFor(layer: SettingsLayer): DomainDef[] {
 /** 左栏二级分组（分组 id → 标签在 copy 表）。实例层：运维 2 / 安全与权限 3；用户层：我的资源 3。 */
 export const opsNav = ["monitoring", "data"] as const;
 export const securityNav = ["config-locks", "roles", "audit"] as const;
-export const resourceNav = ["my-agents", "my-credentials", "knowledge-mcp"] as const;
+export const resourceNav = ["agent-principals", "my-credentials", "knowledge-mcp"] as const;
 export const workspaceResourceNav = ["agents", "credentials", "knowledge"] as const;
 
 /** 工作区角色（V87:131-134）：只有两档，智能体自 V108 起也走 role_bindings。 */
