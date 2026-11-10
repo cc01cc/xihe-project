@@ -487,6 +487,43 @@ describe("ChatPanel branch actions", () => {
         expect(refreshed?.error).toBe("budgetDimension=tokens");
         wrapper.unmount();
     });
+
+    // PLAN-0572 / BL-555 G3：快照截断态随历史 DTO 映射进 Message（渲染侧据此显示 N/M）。
+    it("carries the persisted toolCalls truncation state through a history refresh", async () => {
+        const canonicalId = "aaaaaaaa-1111-4111-8111-111111111111";
+        vi.mocked(api.getMessages).mockResolvedValue([
+            {
+                id: canonicalId,
+                sessionId: SESSION_ID,
+                role: "ASSISTANT",
+                content: "",
+                createdAt: "2026-11-10T00:00:00Z",
+                runId: RUN_ID,
+                runStatus: "succeeded",
+                attachments: [],
+                toolCalls: [
+                    {
+                        id: "tc-persisted-1",
+                        name: "read_file",
+                        arguments: "{}",
+                        status: "completed",
+                    },
+                ],
+                toolCallsTruncated: true,
+                toolCallsTotal: 250,
+            },
+        ]);
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const refreshed = useChatStore()
+            .getMessages(SESSION_ID)
+            .find((message) => message.id === canonicalId);
+        expect(refreshed?.toolCallsTruncated).toBe(true);
+        expect(refreshed?.toolCallsTotal).toBe(250);
+        expect(refreshed?.toolCalls).toHaveLength(1);
+        wrapper.unmount();
+    });
 });
 
 describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {
