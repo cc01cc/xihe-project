@@ -596,6 +596,16 @@ alias = "check:standalone"
 # PLAN-0612: A03 端口事实源 vs ONE 端口分配镜像的 parity。找不到 one 根时**不再静默放行**：
 # 裸脚本只打 SKIP（不写成 OK，json 里 skipped:true），本门带 --require-mirror ⇒ 缺 one 根即 exit 2
 # （task-61 P1-3 / AC-3.1 / AC-3.4：否则这条唯一的镜像校验在脱离 ONE 的工作副本里永远不被触发）。
+# task-67（2026-11-11）：模块分支写面门 —— 「每个共享文件恰好一条分支能写」的机器断言。
+# 判据 SSOT：one/internal/A03-xihe/docs/module-branch-model.md §4；脚本在 ONE 侧（跨仓，与 check:ports 同一形态）。
+# 退出码 0 干净 / 1 越界(E_SHARED_FILE_WRITE) / 2 用法或环境错误（ONE 根找不到、非模块分支、git 读不到）。
+# 用法：`mise run check:branch-scope`（自动取当前分支，模块分支上才有意义）；
+#       `mise run check:branch-scope -- --branch m/cp --json`。**不接 validate**（未在窗口里跑过全量前不引入新红面）。
+[tasks."check:branch-scope"]
+run = "node ../internal/A03-xihe/scripts/check-branch-scope.mjs --repo ."
+description = "Module-branch write-surface gate: only packages/<module>/**, docs/i18n/** (and docs/api/openapi.yaml for m/cp) may change on m/<module> branches (0 clean / 1 E_SHARED_FILE_WRITE / 2 usage-or-environment)"
+alias = "check:branch-scope"
+
 [tasks."check:ports"]
 run = "node scripts/check-ports-parity.mjs --require-mirror"
 description = "Compare the built-in xihe port table with ONE's allocation table (fail-closed: a missing ONE workspace exits 2 instead of looking green; a standalone clone should run the bare script without --require-mirror)"
