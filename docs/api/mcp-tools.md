@@ -18,6 +18,18 @@ The MCP tool surface that the **Runtime** exposes as an MCP server, plus the two
 > re-checked in the same run (protocol echo, session-id rejection, method semantics, `tools/list`
 > extras); the one thing **not** re-run is the Runtime-direct `_meta` path (§5, §6).
 > Provenance: stack-1 was another lane's verify window, so this snapshot was taken on stack-2.
+>
+> **Snapshot numbers**: CP user face **23** tools, CP internal-service face **29** tools, source ↔
+> handshake **0 diff**. The two commands behind those numbers (run from the ONE workspace root, against
+> a stack you own; password/token resolution and stack bring-up/teardown: §6):
+>
+> ```pwsh
+> # static side -> prints "tools: 23 ..."
+> node plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/extract-tools-static.mjs A03-xihe/packages/runtime/src/main.rs .tmp/tools-static.json
+> # handshake side -> prints "user face: 23 ..." and "service face: 29 ..."
+> # (that script reads .env.local; when dev-stack auto-generated the password, use the §6 recipe)
+> node plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/mcp-tools-verify.mjs 12641
+> ```
 
 ## 1. Three faces, one catalog
 
