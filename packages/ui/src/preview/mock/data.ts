@@ -69,11 +69,13 @@ const ICONS: Record<string, typeof Wrench> = {
     "agent-principals": Bot,
     "my-credentials": KeyRound,
     "knowledge-mcp": Database,
-    // 实例层资源组的 4 个缺口位 id 来自 `instanceResourceGroup()`（agents/mcp/credentials/knowledge）——
+    // 实例层资源组的 id 来自 `instanceResourceGroup()`（agents/mcp/credentials/skills/knowledge）——
     // 与用户层那 3 条 id 不同名，所以两张表都要有，否则 `missingNavMeta` 会把它们记成「无图标」。
+    // task-83 起 `skills` 是**真入口**（`/settings/skills`），其余 4 条仍是缺口位。
     agents: Bot,
     mcp: Wrench,
     credentials: KeyRound,
+    skills: ScrollText,
     knowledge: Database,
 };
 
@@ -101,6 +103,7 @@ const LABELS: Record<string, string> = {
     agents: "智能体",
     mcp: "MCP 服务",
     credentials: "凭据",
+    skills: "技能",
     knowledge: "知识库",
 };
 
@@ -152,9 +155,10 @@ export const opsItems: NavItem[] = groupItems("ops").map((nav) =>
 export const securityItems: NavItem[] = groupItems("security").map((nav) =>
     nav.id === "audit" ? { ...nav, gap: true } : nav,
 );
-/** 实例层「资源」组：4 条全缺口（G1–G4），生成自 `instanceResourceGroup()`。 */
+/** 实例层「资源」组：5 条（4 缺口 G1–G4 + task-83 的 skills 真入口），生成自 `instanceResourceGroup()`。 */
 export const instanceResourceItems: NavItem[] = instanceResourceGroup().map((resource) =>
-    item(resource.id, undefined, { gap: true }),
+    // gap 由**资源自身**决定（skills 已落地，不是缺口位），不在这里一刀切 true。
+    item(resource.id, undefined, { gap: resource.gaps !== undefined }),
 );
 /**
  * 用户层入口（Lead 2026-11-10 裁定：全局设置只有实例层与用户层；工作区设置在各工作区内部，
@@ -183,7 +187,7 @@ export const NAV_RECONCILIATION: { segment: string; count: number }[] = [
     { segment: "实例层 · 配置域", count: domains.length },
     { segment: "实例层 · 运维", count: opsItems.length },
     { segment: "实例层 · 安全", count: securityItems.length },
-    { segment: "实例层 · 资源（全缺口位）", count: instanceResourceItems.length },
+    { segment: "实例层 · 资源（4 缺口位 + 1 真入口）", count: instanceResourceItems.length },
     { segment: "用户层 · 配置域", count: domainsForLayer("user").length },
     { segment: "用户层 · 资源", count: userResourceGroup().length },
 ];

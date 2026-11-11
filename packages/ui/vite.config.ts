@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
@@ -49,6 +49,79 @@ function resolveUiLogLevel(env: Record<string, string>): ViteLogLevel {
         : "info";
 }
 
+/**
+ * task-105 · 从 locale 模块里抽出**扁平键清单**（虚拟模块 `virtual:xihe-i18n-keys`）。
+ *
+ * <p>为什么要走虚拟模块而不是让测试 import `src/i18n/index.ts`：那个文件在 import 期就调
+ * `createI18n`，而 15 个 spec 会 `vi.mock("vue-i18n")`（只给 `useI18n`）⇒ 直接 import 真 i18n 会让
+ * 这些 spec 在收集阶段就炸（实测 `No "createI18n" export is defined on the "vue-i18n" mock`）。
+ * 在**构建期**算好键清单，运行期就与 vue-i18n 依赖解耦。</p>
+ *
+ * <p>解析方式是本仓 `scripts/i18n-scan.mjs` 已在用的同一招：去掉首行 import、把
+ * `export const i18n = createI18n(` 换成局部 const，用桩函数求值取 `messages`。</p>
+ */
+function flattenI18nKeys(): string[] {
+    const source = readFileSync(path.resolve(__dirname, "src/i18n/index.ts"), "utf8");
+    const body = source
+        .replace(/^import[^\n]*\n/m, "")
+        .replace("export const i18n = createI18n(", "const i18n = createI18n(");
+    const messages = new Function("createI18n", `${body}\nreturn i18n.global.messages;`)(
+        (options: { messages: Record<string, unknown> }) => ({
+            global: { messages: options.messages },
+        }),
+    ) as Record<string, unknown>;
+    const keys: string[] = [];
+    const walk = (node: unknown, prefix: string): void => {
+        if (typeof node === "string") {
+            if (prefix) keys.push(prefix);
+            return;
+        }
+        if (node && typeof node === "object") {
+            for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+                walk(value, prefix ? `${prefix}.${key}` : key);
+            }
+        }
+    };
+    // 逐 locale 展开（不能从 messages 顶层展开，否则键会带 `zh-CN.` 前缀）
+    for (const localeMessages of Object.values(messages)) walk(localeMessages, "");
+    return keys;
+}
+
+const VIRTUAL_I18N_KEYS = "virtual:xihe-i18n-keys";
+
+/**
+ * task-105 · 单元测试的挂载接线：把 **`.spec.ts` 里** 的 `@vue/test-utils` 改指向
+ * `src/test-utils/vueTestUtils.ts`（那里 `mount`/`shallowMount` 之后自动跑裸 i18n 键断言）。
+ *
+ * <p>为什么用插件而不是给每个 spec 加一行 import：32 处相对导入 = 32 个将来会坏的地方
+ * （2026-11-12 实测过一次：32 个 spec 同时 `../../test-utils/…` 少一级，全部解析失败），
+ * 而断言属于测试基础设施，跟 `flushPromises` 同级 —— 一处接线，新增 spec 自动受保护。</p>
+ *
+ * <p>**只对 `.spec.ts` 生效**（产品代码与 `e2e/` 不受影响）；shim 自身 import 真实包时
+ * importer 就是这个 shim 文件，返回 null 走默认解析，不会自引用。</p>
+ */
+function checkedMountPlugin(): Plugin {
+    const shim = path.resolve(__dirname, "src/test-utils/vueTestUtils.ts");
+    return {
+        name: "xihe-checked-mount",
+        enforce: "pre",
+        resolveId(source, importer) {
+            if (source === VIRTUAL_I18N_KEYS) return `\0${VIRTUAL_I18N_KEYS}`;
+            if (source !== "@vue/test-utils" || !importer) return null;
+            const from = importer.split("?")[0].split("\\").join("/");
+            if (!/\.(spec|test)\.ts$/.test(from)) return null;
+            if (path.resolve(from) === shim) return null;
+            return shim;
+        },
+        load(id) {
+            if (id === `\0${VIRTUAL_I18N_KEYS}`) {
+                return `export default ${JSON.stringify(flattenI18nKeys())};`;
+            }
+            return null;
+        },
+    };
+}
+
 export default defineConfig(({ mode }) => {
     const envDir = new URL("../../", import.meta.url).pathname,
         env = loadEnv(mode, envDir, "");
@@ -80,6 +153,7 @@ export default defineConfig(({ mode }) => {
             vue(),
             tailwindcss(),
             ...(mockApiEnabled ? [mockApiPlugin({ log: (line) => console.log(line) })] : []),
+            checkedMountPlugin(),
         ],
         test: {
             globals: true,

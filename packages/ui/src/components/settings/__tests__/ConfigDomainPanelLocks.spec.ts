@@ -10,9 +10,16 @@ const i18n = createI18n({
     locale: "zh-CN",
     messages: {
         "zh-CN": {
+            // task-105：面板整树会渲染这些键；缺了它们 `t()` 会原样回显键名（裸键护栏会红）。
+            common: {
+                save: "保存",
+            },
             settings: {
                 adminLockedBadge: "由管理员锁定",
                 adminLockReason: "由管理员锁定：{reason}",
+                configCardExpandHint: "展开查看全部设置",
+                configCardFieldCount: "{count} 项",
+                configSourceEnv: "环境变量锁定",
                 configSourceInstance: "instance",
                 configSourceInstanceOnly: "仅 instance",
                 configSourceOverridable: "可被覆盖",
@@ -26,6 +33,7 @@ const i18n = createI18n({
                 driftedHint: "漂移",
                 driftedClear: "清除",
                 driftedOption: "漂移：{value}",
+                resetToDefault: "重置为系统默认",
             },
         },
     },

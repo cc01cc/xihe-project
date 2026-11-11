@@ -29,12 +29,12 @@ import {
  * </ul>
  */
 describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
-    it("实例层 21 = 12 域 + 2 运维 + 3 安全 + 4 资源", () => {
-        expect(NAV_COUNTS).toEqual({ instance: 21, user: 12 });
+    it("实例层 22 = 12 域 + 2 运维 + 3 安全 + 5 资源（task-83 起 skills 是真入口）", () => {
+        expect(NAV_COUNTS).toEqual({ instance: 22, user: 12 });
         expect(domains).toHaveLength(12);
         expect(opsItems).toHaveLength(2);
         expect(securityItems).toHaveLength(3);
-        expect(instanceResourceItems).toHaveLength(4);
+        expect(instanceResourceItems).toHaveLength(5);
     });
 
     it("用户层 12 条 = 9 域 + 3 资源（不是稿上原来的 4）", () => {
@@ -56,18 +56,18 @@ describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
     });
 
     it("每个条目都有图标与标签（缺了稿页要显示「N 条无图标」）", () => {
-        // 这条**已经红过一次**：实例层资源 4 条的 id（agents/mcp/credentials/knowledge）与用户层那 3 条
+        // 这条**已经红过两次**：实例层资源 id（agents/mcp/credentials/skills/knowledge）与用户层那 3 条
         // 不同名，第一次跑就被它顶出来，随后才补的 ICONS/LABELS。
         expect(missingNavMeta).toEqual([]);
     });
 
-    it("对账表逐段可加：实例段之和 21 / 用户段之和 12", () => {
+    it("对账表逐段可加：实例段之和 22 / 用户段之和 12", () => {
         const sum = (needle: string) =>
             NAV_RECONCILIATION.filter((row) => row.segment.includes(needle)).reduce(
                 (total, row) => total + row.count,
                 0,
             );
-        expect(sum("实例层")).toBe(21);
+        expect(sum("实例层")).toBe(22);
         expect(sum("用户层")).toBe(12);
     });
 });
