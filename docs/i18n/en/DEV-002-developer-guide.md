@@ -808,6 +808,17 @@ Or add Providers through the settings page: OpenAI, DeepSeek, Xiaomi MiMo, Anthr
   - POSIX shell: `XIHE_SPRINGDOC_ENABLED=true mise run dev:host`
 - **Profiles that enable it automatically**: `dev` / `e2e` / `test` (`application-{dev,e2e}.properties`, `src/test/resources/application-test.properties`). `dev:host` runs the **default profile**, so it needs the env var above or an explicit `--spring.profiles.active=dev`.
 - **What "off" looks like**: `GET /v3/api-docs` and `/swagger-ui.html` return **404** (no handler). The three `permitAll` entries in `SecurityConfig` only matter when the surface is explicitly enabled — they are **not** a standing anonymous hole.
+- **Both states measured (task-194, 2026-11-11; both columns measured, not inferred)**: a standalone CP on the default profile (`XIHE_CP_PORT=18081`, throwaway database, `stack-1` untouched), same jar, only one env differs:
+  | Path | OFF (default profile) | `XIHE_SPRINGDOC_ENABLED=true` |
+  | --- | --- | --- |
+  | `/v3/api-docs` | **404** (RFC 9457 `not_found` body) | **200** (`{"openapi":"3.1.0"…}`) |
+  | `/v3/api-docs.yaml` | **404** | **200** (YAML) |
+  | `/swagger-ui/index.html` | **404** | **200** (Swagger UI) |
+  | `/swagger-ui.html` | **404** | **302** → `/swagger-ui/index.html` |
+  | `/actuator/health` | **200** `UP` | **200** `UP` |
+  The OFF-state 404 is a **real 404 (no handler)**, not a 500 or an empty JSON body — that is the line between "the surface is absent" and "it exists but errors".
+  `[source]` One correction made along the way: `/v3/api-docs.yaml` used to answer 401 in both states because `SecurityConfig`'s `permitAll("/v3/api-docs/**")` does not cover the `.yaml` suffix (`/**` needs a following segment); task-194 adds `/v3/api-docs.yaml` explicitly to permitAll and to `UiStaticServingFilter`'s bypass list.
+- **How "does not depend on springdoc" is proven**: not by identical numbers — the two states differ by the four springdoc-registered routes (`implemented` `279` vs `275` on develop). The proof form is **`documented` identical in both states + `unexpected` zero on both sides**: the contract side does not move and the gate neither fails open nor fails closed with the switch. `[measured]`
 - **Never use it as the contract or as a denominator**: it **under-reports** routes compared with the live `RequestMappingHandlerMapping` and does not include `/internal/**`; reconciliation always goes through `RouteContractParityTest` (live mapping).
 
 ## 7. Module Version Bump (PLAN-0534)
