@@ -75,3 +75,18 @@ updated: 2026-09-03
 - **禁止直接复制组件代码**：上述项目多为 React/Ant Design，与 xihe 的 Vue + reka-ui 栈不兼容。
 - **禁止引入其完整设计系统**：只提取适合 xihe 的交互模式，并在 xihe 的设计 token 下重新实现。
 - **新增参考项目前需评估**：是否与 xihe 的模块职责匹配，是否会造成技术栈冲突。
+
+## 标准与规范（业界权威条目，2026-11-11 核对）
+
+前面几节是「产品参考」（看别人怎么做）；本节是「标准参考」（判对错的依据）。审阅维度见 `DEV-011` §11。
+
+| 来源 | 用途 | 入口 |
+| --- | --- | --- |
+| Nielsen Norman Group《10 Usability Heuristics》 | 反馈/控制权/一致性/防错/识别优于回忆/错误恢复的判据出处 | https://www.nngroup.com/articles/ten-usability-heuristics/ |
+| W3C WCAG 2.2 Quick Reference | 对比度 4.5:1(1.4.3) / 3:1(1.4.11)、焦点可见(2.4.7)、目标≥24×24(2.5.8)、可访问名(4.1.2) | https://www.w3.org/WAI/WCAG22/quickref/ |
+| Apple Human Interface Guidelines | 触控 44pt、平台一致性、层级与留白基准 | https://developer.apple.com/design/human-interface-guidelines/ |
+| Material 3 | 8dp 网格、状态层（hover/focus/pressed）、触控 48dp、token 体系 | https://m3.material.io/ |
+| IBM Carbon Design System | 企业级表单/表格密度档与可访问性写法（最接近配置面板的产品形态） | https://carbondesignsystem.com/ |
+| Refactoring UI（Wathan & Schoger） | 「层级=字号+字重+色彩」三因子、间距节奏、去边框靠留白 | 书（无公开站点，按章节引） |
+
+**用法约束**：这些是**判据来源**不是抄的对象——数值以条目原文为准，落地换算到 xihe token（`--spacing` 档、`--radius` 档、字阶档）；引条目必须写「哪一条 + 阈值 + 换算后本地值」，抄错数值比不引更糟。

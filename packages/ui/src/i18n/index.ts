@@ -88,6 +88,8 @@ const messages = {
             deleteFailed: "删除会话失败",
             empty: "暂无对话",
             settings: "设置",
+            // PLAN-0762 T2.3 / D-924：模块名只能是「工作台」；「工作区」只是工作台模块内的对象。
+            workbench: "工作台",
             languageMenu: "界面语言",
             workspace: "工作区",
             logout: "退出登录",
@@ -2702,6 +2704,7 @@ const messages = {
             deleteFailed: "Failed to delete the session",
             empty: "No conversations",
             settings: "Settings",
+            workbench: "Workbench",
             workspace: "Workspace",
             logout: "Logout",
             collapse: "Collapse sidebar",

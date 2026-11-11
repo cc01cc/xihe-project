@@ -334,7 +334,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div class="flex h-screen overflow-hidden bg-background text-foreground">
+    <!-- PLAN-0762 T2.2：根容器不再拥有 100vh —— 高度由全局层（App.vue 的 h-screen + ModuleStage）传递，
+         否则 56px 全局条 + 100vh 模块会横向溢出。 -->
+    <div class="flex h-full min-h-0 overflow-hidden bg-background text-foreground">
         <!--
             PLAN-0753 T3 —— 壳的几何交给 reka SplitterGroup：panel #1 是导航
             （aside 从 fixed 变 static flex 子项，宽度由 reka 的 flex-grow 驱动），
