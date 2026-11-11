@@ -2,10 +2,19 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { LogOut, PanelLeftOpen, Settings, ShieldCheck } from "@lucide/vue";
+import { Languages, LogOut, PanelLeftOpen, Settings, ShieldCheck } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
 import { defaultLayerPath } from "../../lib/settingsIa";
+import { SUPPORTED_LOCALES } from "../../i18n/locale";
+import type { Language } from "../../types";
 import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
+import { useSettingsStore } from "../../stores/settings";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 
 /**
  * PLAN-0582 S2 ruling #1/#2: the icon rail is a fixed 56px icon-only column.
@@ -31,6 +40,7 @@ const router = useRouter(),
     route = useRoute();
 const { t } = useI18n();
 const auth = useAuthStore();
+const settings = useSettingsStore();
 
 const currentPath = computed(() => route?.path ?? "");
 const isAdminRoute = computed(
@@ -61,6 +71,24 @@ function navigateSettings() {
 function navigateAdmin() {
     void router.push("/settings/config-locks");
 }
+
+/**
+ * D-896（用户 2026-11-11 裁定）：折叠态只剩图标时，必须让人知道「这是什么、下面有什么」。
+ *
+ * <p>做法：语言切换同时提供 **compact 控件（已修）+ 一个带「语言」标签的二级菜单**，
+ * 两条都可达 —— hover/点击开，**键盘 Tab+Enter 也开**（reka 的 DropdownMenuTrigger 原生支持），
+ * Esc 关闭；触屏走 tap（折叠态下就是点一下图标）。</p>
+ *
+ * <p>菜单内容**从 SSOT 派生**：`SUPPORTED_LOCALES`（`i18n/locale.ts:12`），不写死「中 / EN」两条 ——
+ * 用户原话「以后又不一定只有一种语言」。文案走 `t()`，切语言仍只调 `settings.setLanguage()`。</p>
+ *
+ * <p>用 DropdownMenu 而非 NavigationMenu：后者是站内导航范式，语义是「站点地图」，
+ * 与「语言偏好」不匹配（D-896 点名不用 NavigationMenu）。</p>
+ */
+const LANGUAGE_LABELS: Record<Language, string> = {
+    "zh-CN": "settings.languageZh",
+    "en-US": "settings.languageEn",
+};
 
 function handleLogout() {
     auth.logout();
@@ -119,7 +147,34 @@ function handleLogout() {
                 用户在聊天里没有任何入口。导航栏是每条路由都可见的「用户区」（设置/退出也在这里），
                 所以把紧凑变体放进同一组：不改 locale 状态机，只换一个用户可达的位置。
             -->
+            <!-- D-896：紧凑控件（已修）与二级菜单并存；菜单项由 SUPPORTED_LOCALES 派生，不写死两条。 -->
             <LanguageSwitcher variant="compact" />
+            <DropdownMenu>
+                <DropdownMenuTrigger
+                    :class="[itemClass, inactiveClass]"
+                    data-testid="nav-rail-language-menu"
+                    :aria-label="
+                        t('sidebar.languageMenu') + '：' + t(LANGUAGE_LABELS[settings.language])
+                    "
+                    :title="t('sidebar.languageMenu')"
+                >
+                    <Languages class="size-4" aria-hidden="true" />
+                    <span class="sr-only">{{ t("sidebar.languageMenu") }}</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="right" align="start" class="w-40">
+                    <DropdownMenuItem
+                        v-for="locale in SUPPORTED_LOCALES"
+                        :key="locale"
+                        :data-testid="`nav-rail-language-${locale}`"
+                        @click="settings.setLanguage(locale)"
+                    >
+                        <span>{{ t(LANGUAGE_LABELS[locale]) }}</span>
+                        <span v-if="settings.language === locale" class="ml-auto" aria-label="当前">
+                            ✓
+                        </span>
+                    </DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
             <button
                 type="button"
                 data-testid="nav-rail-settings"
