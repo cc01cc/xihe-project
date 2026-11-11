@@ -949,7 +949,7 @@ paths:
       tags: [credential]
       operationId: listCredentials
       summary: List credential metadata for one owner
-      description: 'PLAN-0496 T3.1: USER owner defaults to the caller; WORKSPACE owner requires membership. Returns sanitized metadata with reference counts — never ciphertext, suffixes or secret values.'
+      description: 'PLAN-0496 T3.1: USER owner defaults to the caller; WORKSPACE owner requires membership. Credentials are always owned by a user or a workspace - there is no INSTANCE credential ownership. An INSTANCE provider connection may reference a USER credential of the admin who created it; that credential row stays visible only to its owner, while the shared connection resolves it server-side through short-lived leases. Returns sanitized metadata with reference counts — never ciphertext, suffixes or secret values.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: query, name: ownerType, required: false, schema: { type: string, enum: [USER, WORKSPACE] } }
@@ -1298,7 +1298,7 @@ paths:
         '400': { description: 'PROVIDER_REQUIRED — no agent default model and no effective llm-provider profile, or PROVIDER_CONNECTION_AMBIGUOUS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { description: 'LLM_PROFILE_CONFLICT — a profile exists but no usable provider connection matches it', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'LLM_PROFILE_CONFLICT - the effective llm-provider profile (providerId, connectionKey) found no enabled + READY connection in the resolution chain user -> workspace -> instance; CP never silently falls back to another owner (the legacy fallback is a disabled transition switch).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/api-request-template:
     patch: { tags: [session], operationId: updateSessionApiRequestTemplate, summary: Set the API request template override of one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/commands:
@@ -2731,17 +2731,40 @@ paths:
       tags: [provider]
       operationId: listProviderConnections
       summary: List provider connections visible to the current user
+      description: >-
+        Masked summaries of the caller's own USER rows and the current WORKSPACE rows; INSTANCE
+        rows (whole-deployment shared defaults) are listed only to callers holding
+        cap:instance:admin (CAP_INSTANCE_ADMIN) and are omitted for ordinary users, while runtime
+        resolution still consumes them. No key, ciphertext, suffix or credential plaintext is ever
+        returned (maskedKey stays null) and the view is read-only for every scope.
+        Resolution chain for an llm-provider profile (providerId, connectionKey): the consuming
+        user's own USER connection first, then the current WORKSPACE connection, then the INSTANCE
+        connection; the first enabled + READY match wins, and an unmatched profile fails with 409
+        LLM_PROFILE_CONFLICT - CP never silently falls back to another owner or to a code default.
+        An instance-layer llm-provider profile resolves its connection by the same order.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
-          description: Masked connection summaries
+          description: Masked connection summaries (USER + WORKSPACE; plus INSTANCE for instance admins)
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnectionListResponse' } } }
         '401': { $ref: '#/components/responses/Problem' }
     post:
       tags: [provider]
       operationId: createProviderConnection
       summary: Create and persist an encrypted provider connection
-      description: Scope is derived from the authenticated user and workspace role; clients cannot self-assign SYSTEM scope.
+      description: >-
+        Creates one logical connection slot. The unique key is
+        (scope, ownerId, providerId, connectionKey), so one provider can carry several connections
+        per owner only under different connectionKey values. USER rows belong to the caller;
+        WORKSPACE rows require a writable workspace role or the MANAGE_PROVIDER_CONNECTIONS
+        capability; INSTANCE rows are whole-deployment shared defaults and require
+        cap:instance:admin (CAP_INSTANCE_ADMIN) - any other caller answers 403 and no row is created.
+        ownerId is derived server-side (the deployment instance identifier for INSTANCE rows) and
+        is never supplied by the client. apiKey and credentialId are mutually exclusive; the key is
+        write-only, lives in the credential vault and is never stored on the connection row or echoed
+        in any response. For an INSTANCE row a quick apiKey still creates a USER-owned lease-tier
+        credential of the creating admin, which is the credential the shared connection leases at
+        run time.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -2754,9 +2777,11 @@ paths:
           description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403':
+          description: 'FORBIDDEN - RFC 9457 ProblemDetails with code "FORBIDDEN" from the security access-denied handler. INSTANCE scope requires cap:instance:admin (CAP_INSTANCE_ADMIN); WORKSPACE scope requires a writable workspace role or MANAGE_PROVIDER_CONNECTIONS. The body never carries key material.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '409':
-          description: 'PROVIDER_CONNECTION_KEY_CONFLICT, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label) when another connection for the same owner and provider already uses the label (case-insensitive, trimmed).'
+          description: 'PROVIDER_CONNECTION_KEY_CONFLICT when the (scope, ownerId, providerId, connectionKey) slot is already taken, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label) when another connection for the same owner and provider already uses the label (case-insensitive, trimmed).'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/provider-connections/{connectionId}:
     parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
@@ -2764,6 +2789,12 @@ paths:
       tags: [provider]
       operationId: updateProviderConnection
       summary: Update provider connection metadata or replace credential
+      description: >-
+        Updates metadata or replaces the linked credential; the owner scope is immutable. INSTANCE
+        rows are shared defaults, so only cap:instance:admin (CAP_INSTANCE_ADMIN) may update, rotate
+        (credentialId or apiKey), disable or re-point them - any other caller answers 403 and the row
+        is unchanged. Revision CAS, connectionKey immutability and label uniqueness are enforced
+        regardless of scope. The replacement secret is write-only and is never echoed.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -2775,7 +2806,9 @@ paths:
         '400':
           description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403':
+          description: 'FORBIDDEN - RFC 9457 ProblemDetails with code "FORBIDDEN". INSTANCE rows require cap:instance:admin (CAP_INSTANCE_ADMIN); a non-admin write changes nothing and the body never carries key material.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409':
           description: 'PROVIDER_CONNECTION_KEY_IMMUTABLE, CONNECTION_REVISION_CHANGED, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label; label uniqueness is per owner + provider, case-insensitive and trimmed).'
@@ -2784,27 +2817,42 @@ paths:
       tags: [provider]
       operationId: deleteProviderConnection
       summary: Disable and remove a provider connection
-      description: 'PLAN-0505: single-transaction cascade — clears providerModelBindings[connectionId] (cross-user user-layer rows), connectionDefaultTemplates[connectionId] and llm-provider.profile rows pointing at the connection; templates bodies are untouched; counts go to the audit log. Rejected while sessions reference the connection.'
+      description: >-
+        PLAN-0505: single-transaction cascade - clears providerModelBindings[connectionId]
+        (cross-user user-layer rows), connectionDefaultTemplates[connectionId] and
+        llm-provider.profile rows pointing at the connection; template bodies are untouched; counts
+        go to the audit log. Rejected while sessions reference the connection. Deleting an INSTANCE
+        row removes the whole-deployment shared default for every consumer and requires
+        cap:instance:admin (CAP_INSTANCE_ADMIN); non-admin callers answer 403.
       security: [{ bearerAuth: [] }]
       responses:
         '204': { description: Deleted }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403':
+          description: 'FORBIDDEN - RFC 9457 ProblemDetails with code "FORBIDDEN". Deleting an INSTANCE row requires cap:instance:admin (CAP_INSTANCE_ADMIN); non-admin callers change nothing.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409':
-          description: CONNECTION_IN_USE — sessionCount reports the referencing session rows (including delete-requested ones)
+          description: CONNECTION_IN_USE - sessionCount reports the referencing session rows (including delete-requested ones)
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ConnectionInUseProblem' } } }
   /api/v1/provider-connections/{connectionId}/verify:
     post:
       tags: [provider]
       operationId: verifyProviderConnection
       summary: Verify a persisted provider connection
+      description: >-
+        Management operation: probes the stored credential against the provider and updates the
+        connection status. INSTANCE rows require cap:instance:admin (CAP_INSTANCE_ADMIN) - the
+        verification uses the shared credential without ever returning it; non-admin callers answer
+        403.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
       responses:
         '200':
           description: Verification finished and connection status updated
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnectionVerifyResponse' } } }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403':
+          description: 'FORBIDDEN - RFC 9457 ProblemDetails with code "FORBIDDEN". INSTANCE rows require cap:instance:admin (CAP_INSTANCE_ADMIN).'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '404': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/Problem' }
   /internal/v1/provider-leases/redeem:
@@ -3215,7 +3263,17 @@ paths:
       tags: [config]
       operationId: getEmbeddingEffectiveProfile
       summary: Read-only effective embedding profile for the settings surface
-      description: 'PLAN-0485: CP serves the pinned V1 contract (modelId/dimension) instead of letting the client re-declare it. profile/profileScope show the whole-unit layer profile; resolved is the non-secret owner view of the same-key READY embedding connection, or null with a stable conflict code. A pure read never fails on a missing profile/connection. A client-supplied workspaceId is authorized for the caller.'
+      description: >-
+        PLAN-0485: CP serves the pinned V1 contract (modelId/dimension) instead of letting the
+        client re-declare it. profile/profileScope show the whole-unit layer profile; resolved is
+        the non-secret owner view of the same-key READY embedding connection, or null with a stable
+        conflict code. Connection lookup keeps the existing owner priority (current WORKSPACE
+        connection first, then the consuming user's USER connection) and now falls through to the
+        INSTANCE shared connection as the last fallback; when a profile exists but no enabled +
+        READY connection matches, resolved is null and code is EMBEDDING_PROFILE_CONFLICT
+        (EMBEDDING_MODEL_UNSUPPORTED for a non-V1 model). When no profile is configured at all,
+        profile/profileScope/resolved are null and code is absent. A pure read never fails on a
+        missing profile or connection. A client-supplied workspaceId is authorized for the caller.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }]
       responses:
@@ -7281,6 +7339,19 @@ components:
          connections: { type: array, items: { $ref: '#/components/schemas/ProviderConnection' } }
     ProviderConnection:
         type: object
+        description: >-
+          One logical provider connection slot. The unique key is (scope, ownerId, providerId,
+          connectionKey). USER is owned by the caller, WORKSPACE by the connection workspace and
+          INSTANCE is a whole-deployment shared default owned by the deployment instance identifier
+          (never a user or workspace id); SYSTEM is a legacy value that is read-only and can no
+          longer be created. INSTANCE rows are managed only with cap:instance:admin
+          (CAP_INSTANCE_ADMIN: create/update/verify/delete) and are listed only to instance admins;
+          ordinary users never see them but runtime resolution still consumes them. Secrets never
+          appear in this view: apiKey is write-only, credentialId is a vault reference and maskedKey
+          is always null. Resolution for an llm-provider profile (providerId, connectionKey): the
+          consuming user's own USER connection, then the current WORKSPACE connection, then the
+          INSTANCE connection - the first enabled + READY match wins; none matches returns 409
+          LLM_PROFILE_CONFLICT, never a silent fallback.
         required: [id, providerId, connectionKey, apiTypeId, apiTypeVersion, operation, label, scope, hasKey, enabled, status, revision, modelDiscovery, manualModels]
         properties:
           id: { type: string, format: uuid, readOnly: true }
@@ -7290,11 +7361,11 @@ components:
           apiTypeVersion: { type: integer, minimum: 1, readOnly: true }
           operation: { type: string, enum: [chat, embedding], readOnly: true }
           label: { type: string, maxLength: 128 }
-          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM], readOnly: true }
-          ownerId: { type: string, readOnly: true }
+          scope: { type: string, enum: [USER, WORKSPACE, INSTANCE, SYSTEM], readOnly: true, description: 'Owner scope. USER = the caller; WORKSPACE = the connection workspace; INSTANCE = a whole-deployment shared default owned by the deployment instance identifier; SYSTEM is legacy read-only and can no longer be created.' }
+          ownerId: { type: string, readOnly: true, description: 'Scope-dependent owner: user id for USER, workspace id for WORKSPACE, deployment instance identifier (stable per deployment, not a user/workspace id) for INSTANCE.' }
           baseUrl: { type: [string, 'null'], format: uri }
           hasKey: { type: boolean, readOnly: true }
-          credentialId: { type: [string, 'null'], format: uuid, readOnly: true, description: 'PLAN-0553: owner-neutral credential reference; null means no key.' }
+          credentialId: { type: [string, 'null'], format: uuid, readOnly: true, description: 'PLAN-0553: owner-neutral reference into the credential vault; null means no key. A USER/WORKSPACE connection links the credential of its owner; an INSTANCE connection links a USER lease-tier credential of the admin who created it, and every consumer resolves that secret server-side through short-lived leases (it is never returned). Credentials themselves stay USER/WORKSPACE-owned: there is no INSTANCE credential ownership.' }
           maskedKey: { type: [string, 'null'], readOnly: true, description: 'Always null; ordinary reads never derive a credential suffix.' }
           modelDiscovery: { type: string, enum: [remote-models, litellm-catalog, curated, manual] }
           manualModels: { type: array, items: { type: string } }
@@ -7317,9 +7388,9 @@ components:
          providerId: { type: string }
          label: { type: string, minLength: 1, maxLength: 128 }
          connectionKey: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
-         scope: { type: string, enum: [USER, WORKSPACE], default: USER, description: 'Scope is still authorization-checked by CP; clients cannot create SYSTEM connections.' }
-         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true, description: 'Quick-creates a USER lease-tier token credential and links it; mutually exclusive with credentialId.' }
-         credentialId: { type: [string, 'null'], format: uuid, description: 'Links an existing credential the caller may use; mutually exclusive with apiKey.' }
+         scope: { type: string, enum: [USER, WORKSPACE, INSTANCE], default: USER, description: 'Owner scope of the new row. INSTANCE = whole-deployment shared default and requires cap:instance:admin (CAP_INSTANCE_ADMIN); WORKSPACE requires a writable workspace role or MANAGE_PROVIDER_CONNECTIONS. The server derives ownerId (the deployment instance identifier for INSTANCE rows); clients cannot create SYSTEM connections.' }
+         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true, description: 'Quick-creates a USER lease-tier token credential and links it; mutually exclusive with credentialId. Even for scope=INSTANCE the credential is USER-owned by the admin caller; the secret is never echoed.' }
+         credentialId: { type: [string, 'null'], format: uuid, description: 'Links an existing credential the caller may use; mutually exclusive with apiKey. For scope=INSTANCE it must be a credential the admin caller may use (their own USER lease-tier credential); the shared connection leases it server-side for every consumer and the credential row stays visible only to its owner.' }
          baseUrl: { type: [string, 'null'], format: uri }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
@@ -7341,8 +7412,8 @@ components:
          connectionDefaultTemplateRef: { $ref: '#/components/schemas/ApiRequestTemplateRef' }
          label: { type: string, minLength: 1, maxLength: 128 }
          connectionKey: { type: [string, 'null'], minLength: 1, maxLength: 64, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', description: 'Omitted preserves the key; null is rejected with PROVIDER_CONNECTION_KEY_INVALID; a different key is rejected with PROVIDER_CONNECTION_KEY_IMMUTABLE.' }
-         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true, description: 'Quick-creates a new USER lease-tier token credential and rebinds it; mutually exclusive with credentialId.' }
-         credentialId: { type: [string, 'null'], format: uuid, description: 'Rebinds the connection to an existing credential the caller may use; mutually exclusive with apiKey.' }
+         apiKey: { type: [string, 'null'], minLength: 1, writeOnly: true, description: 'Quick-creates a new USER lease-tier token credential and rebinds it; mutually exclusive with credentialId. Even for an INSTANCE connection the credential is USER-owned by the admin caller; the secret is never echoed.' }
+         credentialId: { type: [string, 'null'], format: uuid, description: 'Rebinds the connection to an existing credential the caller may use; mutually exclusive with apiKey. For an INSTANCE connection this must be a credential the admin caller may use; the shared connection then leases it server-side for every consumer.' }
          baseUrl: { type: [string, 'null'], format: uri }
          enabled: { type: boolean }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
@@ -7375,7 +7446,7 @@ components:
          apiTypeId: { type: string }
          apiTypeVersion: { type: integer, minimum: 1 }
          operation: { type: string, enum: [chat, embedding] }
-         scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
+         scope: { type: string, enum: [USER, WORKSPACE, INSTANCE, SYSTEM] }
          displayName: { type: string }
          connectionStatus: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
          reasonCode: { type: [string, 'null'] }
@@ -7588,7 +7659,7 @@ components:
          apiTypeId: { type: string }
          apiTypeVersion: { type: integer, minimum: 1 }
          operation: { type: string, enum: [chat, embedding] }
-         scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
+         scope: { type: string, enum: [USER, WORKSPACE, INSTANCE, SYSTEM] }
          displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }
     UserQuestionAnswerRequest:
@@ -7744,7 +7815,7 @@ components:
         apiTypeId: { type: string }
         apiTypeVersion: { type: integer, minimum: 1 }
         connectionKey: { type: string }
-        connectionScope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
+        connectionScope: { type: string, enum: [USER, WORKSPACE, INSTANCE, SYSTEM] }
       additionalProperties: false
     ContextComponentSource:
       type: object
