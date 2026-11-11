@@ -179,7 +179,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 | 中文正名 | 英文/代码 | testid | 判据 | 现状（2026-11-11 回填） |
 | --- | --- | --- | --- | --- |
-| 全局导航条 | `GlobalRail` | `global-rail` | 唯一、最左、切模块、可折叠（56px 图标 ↔ 图标+文字） | **已落地**（`f97bdf039`，T2.1）：`components/sidebar/GlobalRail.vue` —— `SidebarProvider` + `collapsible="icon"` + `SidebarRail` 双态（持久化键 `xihe-global-rail-open`）、testid `global-rail`；`App.vue:65` 常驻。旧 `NavRail.vue` 仅剩 `src/preview/mock/` 预览稿与单测引用，产品壳不再使用 |
+| 全局导航条 | `GlobalRail` | `global-rail` | 唯一、最左、切模块、可折叠（56px 图标 ↔ 图标+文字） | **已落地**（`f97bdf039`，T2.1）：`components/sidebar/GlobalRail.vue` —— `SidebarProvider` + `collapsible="icon"` + `SidebarRail` 双态（持久化键 `xihe-global-rail-open`）、testid `global-rail`；`App.vue:65` 常驻。旧 `components/sidebar/NavRail.vue` **产品零挂载**（唯一 import = 无入口引用的设计稿 `src/preview/mock/screens/S1SettingsAfter.vue` + 单测 `NavRail.spec.ts`），且已违反 D-933（admin 入口）/ D-899（语言入口）⇒ **去留：删除**（task-38 只读判定；删除动作待用户批准，见 `internal/A03-xihe/evidence/2026-11-11-navrail-residue/README.md`） |
 | 模块舞台 | `ModuleStage` | `module-stage` | 全局条右侧容器，一次只装一个模块 | **已落地**（`f97bdf039`，T2.2）：`layouts/ModuleStage.vue:13`（testid `module-stage`），`App.vue:66-68` 包裹唯一 `router-view`；模块内部布局仍归各模块自己的 layout（`AppLayout` / `SettingsLayout`） |
 | 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | 模块内部的分区/列表导航 | **部分**：`settings-nav-*` 已符合（`components/settings/SettingsResourceNav.vue`）；工作区侧无 `workspace-nav` |
 | 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | 可折叠、可调宽的数据列 | **未落地**：现分四段 —— 导航面板（`sidebar-resizer`）/ 文件树（`tree-resizer`）/ 主区（路由容器 `workspace-route-viewport`）/ dock（`dock-resizer`，即 `ContextPane`） |
