@@ -34,7 +34,20 @@ const CP_ORIGIN = resolveCpOrigin(),
     ZH_HEADING = "LLM 提供商",
     EN_HEADING = "LLM Provider",
     DOMAIN_PAGE = "/settings/user/llm-provider",
-    LANGUAGE_KEY = "xihe-language";
+    LANGUAGE_KEY = "xihe-language",
+    // task-125 / D-899：rail 语言控件已撤，唯一切换入口 = 设置页用户层 user-preference 域面板的
+    // language 键（config-select-user-preference-language，方案 B 薄皮肤 → setLanguage）。
+    USER_PREFERENCE_PAGE = "/settings/user/user-preference";
+
+/**
+ * 经设置页切换语言：打开 user-preference 面板的 language 下拉，按 SUPPORTED_LOCALES 顺序点选项。
+ * 选项序由 SSOT 派生（zh-CN 第 0、en-US 第 1），断言不依赖文案（切换后文案本身会随 locale 变）。
+ */
+async function switchLanguageViaSettings(page: Page, optionIndex: number): Promise<void> {
+    await page.goto(USER_PREFERENCE_PAGE, { waitUntil: "load" });
+    await page.getByTestId("config-select-user-preference-language").click();
+    await page.getByRole("option").nth(optionIndex).click();
+}
 
 function resolveCpOrigin(): string {
     const explicit = process.env.XIHE_CP_BASE_URL,
@@ -131,8 +144,8 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
 
     test("fresh boot stays zh-CN and switching back from English restores it", async ({ page }) => {
         await seedContext(page, user);
-        await page.goto(appPage(user), { waitUntil: "load" });
-        await expect(page.getByTestId("app-language-switcher")).toBeVisible({
+        await page.goto(USER_PREFERENCE_PAGE, { waitUntil: "load" });
+        await expect(page.getByTestId("config-select-user-preference-language")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
 
@@ -148,14 +161,12 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         expectPlatformScreenshot(page, "plan-0602-fresh-boot-zh.png");
 
         // Item 5: English → back to Chinese restores all three sinks.
-        await page.goto(appPage(user), { waitUntil: "load" });
-        await page.getByTestId("app-language-en-US").click();
+        await switchLanguageViaSettings(page, 1); // en-US
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
             timeout: ACTION_TIMEOUT_MS,
         });
-        await page.goto(appPage(user), { waitUntil: "load" });
-        await page.getByTestId("app-language-zh-CN").click();
+        await switchLanguageViaSettings(page, 0); // zh-CN
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(ZH_HEADING, {
             timeout: ACTION_TIMEOUT_MS,
@@ -173,16 +184,9 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         page,
     }) => {
         await seedContext(page, user);
-        await page.goto(appPage(user), { waitUntil: "load" });
-        await expect(page.getByTestId("app-language-switcher")).toBeVisible({
-            timeout: LONG_TIMEOUT_MS,
-        });
-
-        await page.getByTestId("app-language-en-US").click();
-        await expect(page.getByTestId("app-language-en-US")).toHaveAttribute(
-            "aria-pressed",
-            "true",
-        );
+        await switchLanguageViaSettings(page, 1); // en-US
+        // 选中态断言：select 的选中标签随 locale 变文案，不适合硬断言；
+        // html lang + localStorage + 域标题三汇已足够证明应用成功。
         expect(await htmlLang(page)).toBe("en-US");
         const stored = await persistedLanguage(page);
         expect(stored, "persisted value must be the raw locale, not JSON-quoted").toBe("en-US");
@@ -205,8 +209,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
 
     test("reload boots straight into English without a zh-CN flash", async ({ page }) => {
         await seedContext(page, user);
-        await page.goto(appPage(user), { waitUntil: "load" });
-        await page.getByTestId("app-language-en-US").click();
+        await switchLanguageViaSettings(page, 1); // en-US
         // 停在域页再 reload：反闪证明与具体页面无关，这里顺带断言域标题已是英文。
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {
@@ -282,8 +285,7 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         context,
     }) => {
         await seedContext(page, user);
-        await page.goto(appPage(user), { waitUntil: "load" });
-        await page.getByTestId("app-language-en-US").click();
+        await switchLanguageViaSettings(page, 1); // en-US
         expect(await htmlLang(page)).toBe("en-US");
 
         const secondTab = await context.newPage();
@@ -321,22 +323,22 @@ test.describe("@host PLAN-0602 runtime language switch", () => {
         expectPlatformScreenshot(page, "plan-0602-fallback-fr.png");
     });
 
-    test("the switcher stays usable at 390px", async ({ page }) => {
+    // task-125 / D-899：紧凑变体（rail + 移动抽屉）已全撤 ⇒ 移动端语言入口同走设置页。
+    // 本用例 = 390px 视口下的设置页窄屏可用性（无横向溢出 + 切换生效）。
+    test("language switching stays usable at 390px via the settings page", async ({ page }) => {
         await seedContext(page, user);
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.goto(appPage(user), { waitUntil: "load" });
-        // 390px 下左栏是抽屉：先打开抽屉，切换器才进入视口。
-        await page.getByTestId("mobile-sidebar-toggle").click();
+        await page.goto(USER_PREFERENCE_PAGE, { waitUntil: "load" });
 
-        const switcher = page.getByTestId("app-language-switcher"),
+        const langSelect = page.getByTestId("config-select-user-preference-language"),
             overflow = await page.evaluate(() => {
                 const doc = document.documentElement;
                 return doc.scrollWidth > doc.clientWidth + 1;
             });
-        await expect(switcher).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(langSelect).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         expect(overflow, "no horizontal overflow at 390px").toBe(false);
 
-        await page.getByTestId("app-language-en-US").click();
+        await switchLanguageViaSettings(page, 1); // en-US
         expect(await htmlLang(page)).toBe("en-US");
         await page.goto(DOMAIN_PAGE, { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toHaveText(EN_HEADING, {

@@ -7,7 +7,6 @@ import { useAuthStore } from "../../stores/auth";
 import { defaultLayerPath } from "../../lib/settingsIa";
 import { SUPPORTED_LOCALES } from "../../i18n/locale";
 import type { Language } from "../../types";
-import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
 import { useSettingsStore } from "../../stores/settings";
 import {
     DropdownMenu,
@@ -143,12 +142,11 @@ function handleLogout() {
 
         <div class="mt-auto flex flex-col items-center gap-1">
             <!--
-                task-36 ③：语言切换原本只在设置页的配置 tab 里（ConfigSettings.vue），
-                用户在聊天里没有任何入口。导航栏是每条路由都可见的「用户区」（设置/退出也在这里），
-                所以把紧凑变体放进同一组：不改 locale 状态机，只换一个用户可达的位置。
+                task-36 ③ 引入的紧凑语言开关：**已移除**（D-899，用户 2026-11-11：
+                「语言切换放到设置里吧」；task-125 ①）。唯一入口 = 设置页 ConfigSettings
+                的 bar 变体（settings-language-*）+ user-preference 面板 language 键（薄皮肤，
+                同一条 setLanguage 状态机，PLAN-0602）。rail 只保留 设置/退出（/管理员）。
             -->
-            <!-- D-896：紧凑控件（已修）与二级菜单并存；菜单项由 SUPPORTED_LOCALES 派生，不写死两条。 -->
-            <LanguageSwitcher variant="compact" />
             <DropdownMenu>
                 <DropdownMenuTrigger
                     :class="[itemClass, inactiveClass]"

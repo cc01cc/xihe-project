@@ -9,6 +9,9 @@ import {
     type ConfigLayer,
 } from "../../stores/config";
 import ConfigDomainPanel, { type DomainField } from "./ConfigDomainPanel.vue";
+import { useSettingsStore } from "../../stores/settings";
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "../../i18n/locale";
+import type { Language } from "../../types";
 import ConfigSourceSummary from "./ConfigSourceSummary.vue";
 import AgentTemplatesPanel from "./AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "./ContextTemplatesPanel.vue";
@@ -42,6 +45,7 @@ const emit = defineEmits<{
     "switch-layer": [layer: "instance" | "user"];
 }>();
 
+const settings = useSettingsStore();
 const { t } = useI18n(),
     configStore = useConfigStore();
 
@@ -66,6 +70,12 @@ const domainLabels: Record<string, string> = {
  * the authoritative source).
  */
 const catalogProviders = ref<ProviderDefinition[]>([]);
+
+/** task-125：语言显示名只有 id → i18n key 映射；清单本体永远是 SUPPORTED_LOCALES。 */
+const LANGUAGE_LABEL_KEY: Record<Language, string> = {
+    "zh-CN": "settings.languageZh",
+    "en-US": "settings.languageEn",
+};
 
 const levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
         label: level,
@@ -248,7 +258,16 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
                 { label: t("settings.system"), value: "system" },
             ],
         },
-        { key: "language", label: t("settings.language"), type: "text" },
+        {
+            key: "language",
+            label: t("settings.language"),
+            type: "select",
+            // task-125 / D-899：选项由 SSOT 派生，不写死两条；与 theme 同为 select（既有惯例）。
+            options: SUPPORTED_LOCALES.map((locale) => ({
+                label: t(LANGUAGE_LABEL_KEY[locale]),
+                value: locale,
+            })),
+        },
     ],
     logging: [
         {
@@ -307,6 +326,17 @@ function schemaFor(domain: string): DomainField[] {
 
 function envLockedFor(domain: string): Record<string, string> {
     return configStore.envOverridden[domain] ?? {};
+}
+
+/**
+ * task-125（D-899，方案 B）：user-preference.language 是 settings store 的**薄皮肤** ——
+ * 显示值取 settings.language（localStorage SSOT，PLAN-0602 唯一状态机），不进 CP payload。
+ * CP config 里的同名键此后无写方（BL-573 的「假可操作性」由本改动关闭）。
+ */
+function entriesFor(domain: string): Record<string, string> {
+    const entries = configStore.layerConfig[props.layer][domain] || {};
+    if (domain !== "user-preference") return entries;
+    return { ...entries, language: settings.language };
 }
 
 async function loadProviderCatalog() {
@@ -390,9 +420,20 @@ async function handleSave(domain: string, body: Record<string, string>) {
         toast.error(jsonError);
         return;
     }
+    // task-125（D-899，方案 B）：user-preference.language 走 setLanguage（PLAN-0602 唯一
+    // 状态机），从 CP payload 剥离 —— 双写必然漂移（启动只读 localStorage，CP 值是死水）。
+    let payload = body;
+    if (domain === "user-preference" && "language" in body) {
+        const { language, ...rest } = body;
+        if (language) settings.setLanguage(language as Language);
+        payload = rest;
+    }
     savingDomains.value[domain] = true;
     try {
-        await configStore.putLayerConfig(props.layer, domain, body);
+        // 只剩 language 被剥离时可能为空 —— 空 PUT 有清库语义风险，跳过（语言已成功应用）。
+        if (Object.keys(payload).length > 0) {
+            await configStore.putLayerConfig(props.layer, domain, payload);
+        }
         await reloadLayer();
         if (!panelOwnsFeedback) {
             toast.success(`${domainLabels[domain] || domain} ${t("common.saved")}`);
@@ -409,6 +450,13 @@ async function handleSave(domain: string, body: Record<string, string>) {
 
 async function handleReset(domain: string, key: string) {
     try {
+        // task-125：language 的重置 = 回默认语言（走同一状态机），不写 CP。
+        if (domain === "user-preference" && key === "language") {
+            settings.setLanguage(DEFAULT_LOCALE);
+            await reloadLayer();
+            toast.success(`${key} ${t("common.reset")}`);
+            return;
+        }
         if (props.layer === "instance") {
             await configStore.deleteInstanceKey(domain, key);
         } else {
@@ -516,7 +564,7 @@ async function handleReset(domain: string, key: string) {
             v-else
             :domain="domain"
             :title="domainLabels[domain] || domain"
-            :entries="configStore.layerConfig[layer][domain] || {}"
+            :entries="entriesFor(domain)"
             :summary="generateSummary(domain)"
             :schema="schemaFor(domain)"
             :env-locked="envLockedFor(domain)"
