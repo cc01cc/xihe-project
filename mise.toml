@@ -715,7 +715,7 @@ alias = "pkg:installer"
 [tasks."check:commit-msg"]
 run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce"
 description = "Blocking commit-message gate (type/scope, display-width <=72 cols / merge <=100, empty line before body, PLAN-####/BL-###/D-### reference) over a632de77..HEAD; blocking is the script default and this task is a validate dependency (D-216) — pass --report-only for the old never-fails audit"
-# PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate，本地必红（已知存量 264/56，见 task-245 清账）。
+# PLAN-0763：规范级自洽校验（redocly）与 API HTML 预览。dev-only；lint 未接入 validate（task-133/D-909 后 error=0，warnings 126 = 存量 56 + internal summary 降格 70；public 面 error 归 0）。
 # task-69 / D-827：build-docs 已切 Redoc 3，主题走「模板注入 CSS 变量」而不是 .redocly.yaml 的 theme 块（后者在 Redoc 3 下实测无效）。
 #   -t ../../.redocly/api-docs.hbs ⇒ XH 主题（字体/主色/侧栏），相对路径从 packages/ui 解析；
 #   --openapi.disableTelemetry=true ⇒ 关掉 Redoc 3 的 OpenTelemetry 上报（内部文档页不该向第三方发请求）；
@@ -724,7 +724,7 @@ description = "Blocking commit-message gate (type/scope, display-width <=72 cols
 #   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
 run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../../docs/api/openapi.yaml"
-description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；未接入 validate；本地必红（当前 264 errors / 56 warnings 属已知存量），清账前不得接 validate（task-245）"
+description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；未接入 validate；task-133 后 errors=0 / warnings=126（存量 56 + internal summary 降格 70），task-245 剩余 warnings 清账后再议接 validate"
 
 [tasks."docs:api:html"]
 run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
