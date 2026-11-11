@@ -84,6 +84,15 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
     /** BL-320 backlog: implemented-but-uncontracted routes, frozen until the batches land. */
     private static final Map<String, String> KNOWN_GAPS = new LinkedHashMap<>();
 
+    /**
+     * Planned surface (D-932): contracted paths with no implementation <b>yet</b>, admitted by a PLAN
+     * and tracked to a batch. This is the extra side's counterpart of {@link #KNOWN_GAPS} — the
+     * opposite direction ("documented but not implemented") and the opposite lifecycle: entries are
+     * added <b>with</b> the contract change and must be removed when the code lands, so an entry here
+     * never means "forgotten", it means "scheduled".
+     */
+    private static final Map<String, String> PLANNED_APIS = new LinkedHashMap<>();
+
     /** Matched shape, differing path-variable names (informational: runtime-equal, client-visible). */
     private static final Map<String, String> PARAM_NAME_EXEMPT = new LinkedHashMap<>();
 
@@ -183,25 +192,24 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         List<String> extra = difference(documented.keySet(), implemented.keySet());
 
         List<String> unexpectedMissing = notExempt(missing, EXEMPT_IMPLEMENTED, KNOWN_GAPS);
-        List<String> unexpectedExtra = notExempt(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS);
+        List<String> unexpectedExtra = notExempt(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS, PLANNED_APIS);
 
         // Operational summary for the report: the diff itself is never hidden, it is bucketed.
         // Buckets are counted per candidate (classify), not per distinct shape (countIn): two methods
         // on one path share a shape, and counting shapes made total != bucketA + bucketB + unexpected
         // (observed 59 vs 58+0 on 2026-11-11). The assertion below keeps that arithmetic honest.
         int[] missingBuckets = classify(missing, EXEMPT_IMPLEMENTED, KNOWN_GAPS);
-        int[] extraBuckets = classify(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS);
+        int[] extraBuckets = classify(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS, PLANNED_APIS);
         System.out.println("[bl320] implemented=" + implemented.size() + " documented=" + documented.size()
                 + " | missing: total=" + missing.size() + " framework=" + missingBuckets[0]
                 + " frozen-gap=" + missingBuckets[1] + " unexpected=" + unexpectedMissing.size()
                 + " | extra: total=" + extra.size() + " cross-service/kept-by-design=" + extraBuckets[0]
-                + " frozen-gap=" + extraBuckets[1] + " unexpected=" + unexpectedExtra.size()
+                + " frozen-gap=" + extraBuckets[1] + " planned=" + extraBuckets[2]
+                + " unexpected=" + unexpectedExtra.size()
                 + " | param-name-exempt=" + PARAM_NAME_EXEMPT.size());
 
-        assertBucketsAccountForTotal("missing", missing.size(), missingBuckets[0], missingBuckets[1],
-                unexpectedMissing.size());
-        assertBucketsAccountForTotal("extra", extra.size(), extraBuckets[0], extraBuckets[1],
-                unexpectedExtra.size());
+        assertBucketsAccountForTotal("missing", missing.size(), missingBuckets, unexpectedMissing.size());
+        assertBucketsAccountForTotal("extra", extra.size(), extraBuckets, unexpectedExtra.size());
 
         assertEquals(List.of(), unexpectedMissing, () -> report(
                 "route(s) implemented but missing from docs/api/openapi.yaml", unexpectedMissing, missing,
@@ -336,12 +344,18 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
     }
 
     /** Buckets are keyed by <b>shape</b>; candidates are {@code METHOD shape} keys — compare the shape. */
-    private static List<String> notExempt(List<String> candidates, Map<String, String> exempt,
-            Map<String, String> alsoAllowed) {
+    private static List<String> notExempt(List<String> candidates, Map<String, String>... exempt) {
         List<String> residual = new ArrayList<>();
         for (String candidate : candidates) {
             String shape = parse(pathOf(candidate)).shape();
-            if (!exempt.containsKey(shape) && !alsoAllowed.containsKey(shape)) {
+            boolean allowed = false;
+            for (Map<String, String> bucket : exempt) {
+                if (bucket.containsKey(shape)) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
                 residual.add(candidate);
             }
         }
@@ -361,32 +375,34 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
     }
 
     /**
-     * Per-candidate classification against two shape-keyed buckets, in the <b>same</b> order of
-     * precedence {@link #notExempt} uses. Counting candidates (not distinct shapes) is what makes
-     * {@code total == bucketA + bucketB + unexpected} hold; {@link #countIn} deduplicates shapes and
-     * therefore under-counts when two methods share one path (e.g. GET + PUT on the same shape).
+     * Per-candidate classification against shape-keyed buckets, in the <b>same</b> order of
+     * precedence {@link #notExempt} uses (first match wins, so buckets must not overlap in practice —
+     * an overlapping shape would be counted once, in the earliest bucket). Counting candidates (not
+     * distinct shapes) is what makes {@code total == sum(buckets) + unexpected} hold;
+     * {@link #countIn} deduplicates shapes and therefore under-counts when two methods share one path
+     * (e.g. GET + PUT on the same shape).
      */
-    private static int[] classify(List<String> candidates, Map<String, String> bucketA,
-            Map<String, String> bucketB) {
-        int inA = 0;
-        int inB = 0;
+    private static int[] classify(List<String> candidates, Map<String, String>... buckets) {
+        int[] counts = new int[buckets.length];
         for (String candidate : candidates) {
             String shape = parse(pathOf(candidate)).shape();
-            if (bucketA.containsKey(shape)) {
-                inA++;
-            } else if (bucketB.containsKey(shape)) {
-                inB++;
+            for (int i = 0; i < buckets.length; i++) {
+                if (buckets[i].containsKey(shape)) {
+                    counts[i]++;
+                    break;
+                }
             }
         }
-        return new int[] { inA, inB };
+        return counts;
     }
 
-    /** Invariant: every candidate lands in exactly one bucket, so the four printed numbers add up. */
-    private static void assertBucketsAccountForTotal(String axis, int total, int inA, int inB,
+    /** Invariant: every candidate lands in exactly one bucket, so the printed numbers add up. */
+    private static void assertBucketsAccountForTotal(String axis, int total, int[] bucketCounts,
             int unexpected) {
-        assertEquals(total, inA + inB + unexpected,
-                () -> axis + " bucketing does not add up: total=" + total + " bucketA=" + inA
-                        + " bucketB=" + inB + " unexpected=" + unexpected);
+        int sum = java.util.Arrays.stream(bucketCounts).sum();
+        assertEquals(total, sum + unexpected,
+                () -> axis + " bucketing does not add up: total=" + total + " buckets="
+                        + java.util.Arrays.toString(bucketCounts) + " unexpected=" + unexpected);
     }
     private static int countIn(List<String> candidates, Map<String, String> bucket) {
         return intersectShapes(candidates, bucket.keySet()).size();
