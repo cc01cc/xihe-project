@@ -21,7 +21,7 @@ export const cmTheme = EditorView.theme({
     ".cm-gutters": {
         backgroundColor: "var(--muted)",
         color: "var(--muted-foreground)",
-        borderRight: "1px solid var(--border-subtle)",
+        borderRight: "1px solid var(--border)",
     },
     ".cm-activeLine": { backgroundColor: "var(--accent)" },
     ".cm-activeLineGutter": { backgroundColor: "var(--accent)" },
@@ -46,8 +46,8 @@ export const cmHighlight = HighlightStyle.define([
     { tag: t.heading, color: "var(--primary)", fontWeight: "700" },
     { tag: t.strong, fontWeight: "700", color: "var(--foreground)" },
     { tag: t.emphasis, fontStyle: "italic", color: "var(--foreground)" },
-    { tag: t.link, color: "var(--link)", textDecoration: "underline" },
-    { tag: t.url, color: "var(--link)" },
+    { tag: t.link, color: "var(--primary)", textDecoration: "underline" },
+    { tag: t.url, color: "var(--primary)" },
     {
         tag: t.monospace,
         color: "var(--card-foreground)",
@@ -56,8 +56,8 @@ export const cmHighlight = HighlightStyle.define([
     },
     { tag: t.processingInstruction, color: "var(--muted-foreground)" },
     { tag: t.comment, color: "var(--muted-foreground)", fontStyle: "italic" },
-    { tag: t.keyword, color: "var(--brand)" },
-    { tag: t.string, color: "var(--brand-accent)" },
+    { tag: t.keyword, color: "var(--primary)" },
+    { tag: t.string, color: "var(--primary)" },
     { tag: t.quote, color: "var(--muted-foreground)" },
 ]);
 

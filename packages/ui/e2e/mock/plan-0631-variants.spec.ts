@@ -21,7 +21,7 @@
  * 这个 spec 同时是**质量门**，不是"截图完事"：
  * - 0 console error / 0 pageerror（默认态 + A/C × 两个页面，各自断言）；
  * - **默认 = B**：无 `?variant=` 时断言无属性，且关键 token 等于 B —— 正文 14px/行高 1.55、
- *   圆角主档 10px、`--spacing` = 0.875 步进（0.21875rem）、强调色 `#3b5bd0`。
+ *   圆角主档 10px、`--spacing` = 0.875 步进（0.21875rem）、强调色 = 官方 neutral 的 `--primary`（C2′ 的 `#3b5bd0` 已随 task-48 M2 下线）。
  *   数值依据 **2026-11-06 用户裁定 A″ 整体固化**（正文 14px·1.55 + 圆角 10px + 中性冷白/蓝拆分）。
  *   **用 `getComputedStyle` 断言，不做截图比对**（Windows 上截图断言会被跳过，
  *   截图只作为报告产物）；
@@ -74,9 +74,16 @@ const DEFAULT_B = {
     spacing: "0.21875rem",
     radius: "0.625rem",
     textSm: "0.875rem",
-    brand: "#3b5bd0",
-    foreground: "#16181d",
-    mutedForeground: "#64686f",
+    /*
+     * task-48 M2：颜色不再是本 spec 断言的对象。原 `brand: "#3b5bd0"` / `foreground: "#16181d"`
+     * / `mutedForeground: "#64686f"` 是 C2′ 自有色板的值，已随「统一 shadcn-vue 官方配色」下线。
+     * 现在默认 = 官方 neutral 的 light 值；字段名保留 `brand*` 只会误导，故改成 primary*，
+     * 取 `--primary` / `--primary-foreground` 两个官方 token 的**原样字符串**（getComputedStyle
+     * 对自定义属性返回作者写入的文本，不做色彩空间归一，所以这里必须写 oklch 原串）。
+     */
+    primary: "oklch(0.205 0 0)",
+    foreground: "oklch(0.145 0 0)",
+    mutedForeground: "oklch(0.556 0 0)",
 } as const;
 
 /**
@@ -551,8 +558,8 @@ async function measure(
                     background: token("--background"),
                     foreground: token("--foreground"),
                     mutedForeground: token("--muted-foreground"),
-                    brand: token("--brand"),
-                    brandForeground: token("--brand-foreground"),
+                    brand: token("--primary"),
+                    brandForeground: token("--primary-foreground"),
                     ring: token("--ring"),
                     textSm: token("--text-sm"),
                     spacing: token("--spacing"),
@@ -862,7 +869,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
         expect(result.tokens.radius, "B --radius = 10px（A″ 固化）").toBe(DEFAULT_B.radius);
         expect(result.tokens.textSm, "B 正文阶梯 14px").toBe(DEFAULT_B.textSm);
-        expect(result.tokens.brand, "B 唯一强调色 = brand token").toBe(DEFAULT_B.brand);
+        expect(result.tokens.brand, "B 唯一强调色 = 官方 --primary").toBe(DEFAULT_B.primary);
         expect(result.tokens.foreground, "B 正文色").toBe(DEFAULT_B.foreground);
         expect(result.tokens.mutedForeground, "B 次级文字色").toBe(DEFAULT_B.mutedForeground);
 
@@ -954,7 +961,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             1,
         );
         expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
-        expect(result.tokens.brand, "B 唯一强调色 = brand token").toBe(DEFAULT_B.brand);
+        expect(result.tokens.brand, "B 唯一强调色 = 官方 --primary").toBe(DEFAULT_B.primary);
         expect(bodyContrast, "正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         expect(brandContrast, "强调色上的文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
@@ -1005,7 +1012,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         );
         expect(migrated.variant, "迁移后不投影属性 = 默认 B").toBeNull();
         expect(migrated.text.fontSizePx).toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
-        expect(migrated.tokens.brand).toBe(DEFAULT_B.brand);
+        expect(migrated.tokens.brand).toBe(DEFAULT_B.primary);
 
         // `?variant=b` 是「默认」的别名：不投影属性，渲染仍是 B。
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?variant=b`, {

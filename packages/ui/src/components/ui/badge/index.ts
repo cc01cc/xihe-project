@@ -8,16 +8,16 @@ export const badgeVariants = cva(
         variants: {
             variant: {
                 default:
-                    "border-action-border bg-action text-action-foreground [a]:hover:bg-action/80",
+                    "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/80",
                 /* PLAN-0631 色彩方案：中性徽标（底/字/边）独立成 token，C1/C2/C3 只覆盖它。 */
                 secondary:
-                    "border-badge-border bg-badge text-badge-foreground [a]:hover:bg-badge/80",
+                    "border-transparent bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
                 destructive:
                     "border-transparent bg-destructive/10 [a]:hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 text-destructive dark:bg-destructive/20",
                 outline:
                     "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
                 ghost: "border-transparent hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
-                link: "border-transparent text-link underline-offset-4 hover:underline",
+                link: "border-transparent text-primary underline-offset-4 hover:underline",
             },
         },
         defaultVariants: {

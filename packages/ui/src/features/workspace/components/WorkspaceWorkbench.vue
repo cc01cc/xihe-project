@@ -682,7 +682,7 @@ defineExpose({ openDockTab });
                 >
                     <div
                         data-testid="workspace-file-rail"
-                        class="relative flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface-canvas"
+                        class="relative flex h-full shrink-0 flex-col border-r border-border bg-surface-canvas"
                         :class="{
                             'is-resizing': treeResizing,
                         }"
@@ -757,7 +757,7 @@ defineExpose({ openDockTab });
                 >
                     <div
                         v-show="!dockFocus"
-                        class="flex min-w-0 flex-1 flex-col bg-surface-content"
+                        class="flex min-w-0 flex-1 flex-col bg-card"
                         :data-main-hidden="dockFocus ? 'true' : 'false'"
                         @mousedown="handleMainColumnPointerDown"
                     >

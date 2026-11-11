@@ -56,7 +56,7 @@ const itemClass =
     "flex size-10 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 // Ruling P2-1: the current module is the only rail state that carries the accent.
 const inactiveClass = "text-sidebar-foreground hover:bg-sidebar-accent";
-const activeClass = "bg-brand/10 font-medium text-brand";
+const activeClass = "bg-primary/10 font-medium text-primary";
 
 /**
  * task-113：不再 push 旧入口 `/settings/config`（它只剩 redirect，且 redirect 会丢 query）。

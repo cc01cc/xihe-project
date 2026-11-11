@@ -276,7 +276,7 @@ onBeforeUnmount(stopPolling);
                     </button>
                     <button
                         type="button"
-                        class="rounded bg-action px-3 py-1.5 text-sm text-action-foreground disabled:opacity-50"
+                        class="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
                         data-testid="workspace-import-start"
                         :disabled="!path || importing"
                         @click="startImport"

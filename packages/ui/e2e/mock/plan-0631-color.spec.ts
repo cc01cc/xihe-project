@@ -1084,7 +1084,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             page: "picker",
             shot,
             ghostDowngrade: {
-                before: "bg-action 实心（主按钮层级）",
+                before: "bg-primary 实心（主按钮层级）",
                 after: "透明底 + 1px --border 边框 + font-normal（L2 中性可操作）",
             },
             contrast: { createButton: createContrast },

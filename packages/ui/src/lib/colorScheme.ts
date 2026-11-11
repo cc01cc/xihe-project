@@ -1,49 +1,95 @@
 /**
- * PLAN-0631 色彩方案开关。**默认色彩 = C2′（蓝仅小面积，用户 2026-11-03 圈选）**，
- * token 已落在 `styles/main.css` 的 `:root`，没有 `data-xh-color` 属性时渲染的就是 C2′。
+ * 配色方案开关（task-48 / PLAN-0762 T3.1，用户 2026-11-11 裁定：**统一用 shadcn-vue 官方 5 个
+ * base color，禁止自行调色**）。
  *
- * 这个开关现在只为**对比**保留 C1/C3 覆盖（`src/styles/themes/color-c{1,3}-*.css`），
- * 由 `<html>` 上的 `data-xh-color` 属性激活；**仅对比用，非发布候选**。
- * C2 已升格为默认（C2′），`?color=c2` 与未知值一律解析为默认（不设属性）。
+ * 五个方案 = 官方 `components.json → tailwind.baseColor` 的全集
+ * （`neutral / gray / slate / stone / zinc`），取值来自
+ * `https://www.shadcn-vue.com/r/colors/<base>.json` 的 `cssVarsV4`，原样落在
+ * `styles/themes/color-shadcn-<base>.css`；唯一偏离官方值的是 `--ring` / `--sidebar-ring`
+ * （官方值对 `--background` 实测 2.58–2.63:1 < WCAG 3:1，改用 `--primary`，见各文件内注释
+ * 与 `internal/A03-xihe/evidence/2026-11-11-color-shadcn-unify/m2-impl.md`）。
  *
- * 与 `visualVariant.ts`（A/C 视觉语言覆盖）是**两条正交的轴**：
- * - 视觉语言管密度/圆角/字号（B 是默认，A/C 是 opt-in 覆盖）；
- * - 色彩方案只管颜色 token（密度/圆角/字号一律沿用当前视觉语言）。
- * 两者可以同时生效（`?variant=a&color=c1`），互不读取对方的状态。
+ * 与 `visualVariant.ts`（A/C 视觉语言覆盖：密度/圆角/字号）是**两条正交的轴**：
+ * 本文件只管颜色 token，不碰字号与几何；两者可同时生效（`?variant=a&color=slate`）。
  *
- * 生效方式：只有 URL `?color=c1|c3` 一次性投影到 `<html data-xh-color>`；
- * **不再持久化**（见下方迁移说明）。
+ * 状态存在哪里：
+ * - 生效面 = `<html data-xh-color="<scheme>">`（**恒被设置**，包括默认 neutral —— 属性即当前值，
+ *   便于 devtools 与 E2E 直接读，不再有"没有属性 = 默认"的隐式态）；
+ * - 持久面 = localStorage `xihe-color-scheme`（同一个键从"旧候选对比"继承下来，语义变了：
+ *   以前"只删不读"，现在读 5 值并回写归一化后的值）；
+ * - 明暗仍由 `useTheme` 的 `xihe-theme` 独占（`<html class="dark">`），本文件不读不写。
  *
- * 迁移（旧持久化键）：候选对比阶段曾把 `?color=` 写进 localStorage
- * `xihe-color-scheme`。默认语义从"现状"变成"C2′"后，残留的旧值会让界面停留在
- * 已废弃的外观上，因此启动时**一律清除该键**（`clearLegacyStoredColorScheme`）——
- * 不清就无法保证"无参数 = C2′"。清除而不是映射：C1/C3 仍可从 URL 显式进入，
- * 映射会伪造一次用户选择。（做法与 `visualVariant.ts` 的 `xihe-visual-variant` 相同。）
+ * 旧值迁移（**必须给明确映射，不许报错、不许停留在废弃外观**）：候选对比期写进同一个键的是
+ * `c1` / `c2` / `c2′` / `c3`，它们对应的调色板（`color-c1-neutral.css` / `color-c3-muted.css` 与
+ * 旧 `:root` 的 C2′）已整体下线。映射规则：
  *
- * 边界：
- * - C1/C3 只覆盖浅色（两份变量集都用 `:not(.dark)` 限定）；深色主题 = C2′ 的深色
- *   回落（main.css `.dark` 段），不受 `?color=` 影响。
- * - 这里**只写 `<html>` 属性**，不碰颜色/字号本身，也不碰 `useTheme` 的 `xihe-theme`
- *   （dark/light/system 仍是唯一明暗入口）。
+ * | 旧值 | 新值 | 说明 |
+ * | --- | --- | --- |
+ * | `c1` | `neutral` | 自有蓝灰板已下线，落官方默认方案 |
+ * | `c2` / `c2′` / `c2p` | `neutral` | 旧默认色板，同样落默认 |
+ * | `c3` | `neutral` | 自有弱灰板已下线 |
+ * | `default` / `off` / `none` | `neutral` | 历史清除值 |
+ * | 其他未知串 | `neutral` | 不抛错、不写日志噪音；下次写入即被归一 |
+ *
+ * 也就是说：**旧值不再可见（用户看到的是官方 neutral），但不会报错**，且键会被就地改写为
+ * 归一化后的值，第二次启动起走正常分支（不留"每次启动都迁移"的隐藏分支）。
  */
 
 export const COLOR_SCHEME_STORAGE_KEY = "xihe-color-scheme";
 export const COLOR_SCHEME_ATTRIBUTE = "data-xh-color";
 
-/** opt-in 覆盖集合（C1/C3）。C2′ 是默认，不需要属性，因此不在这个集合里。 */
-export const COLOR_SCHEMES = ["c1", "c3"] as const;
+/** 官方 5 个 base color（`components.json → tailwind.baseColor` 的全集，顺序即选择器顺序）。 */
+export const COLOR_SCHEMES = ["neutral", "gray", "slate", "stone", "zinc"] as const;
 export type ColorScheme = (typeof COLOR_SCHEMES)[number];
 
-const CLEAR_VALUES = new Set(["default", "off", "none"]);
+/**
+ * 默认方案 —— **单一常量**：用户看完五个方案后圈定哪个，只改这一行（以及
+ * `components.json` 的 `tailwind.baseColor`，二者必须一致）。别在组件里另写默认值。
+ */
+export const DEFAULT_COLOR_SCHEME: ColorScheme = "neutral";
 
-function isColorScheme(value: string | null | undefined): value is ColorScheme {
-    return value === "c1" || value === "c3";
+/** 历史清除值：等价于"没选过"，落默认。 */
+const CLEAR_VALUES = new Set(["default", "off", "none", ""]);
+
+/** 旧候选值 → 新方案（见文件头映射表）。 */
+const LEGACY_VALUES: Record<string, ColorScheme> = {
+    c1: DEFAULT_COLOR_SCHEME,
+    c2: DEFAULT_COLOR_SCHEME,
+    "c2′": DEFAULT_COLOR_SCHEME,
+    "c2'": DEFAULT_COLOR_SCHEME,
+    c2p: DEFAULT_COLOR_SCHEME,
+    c3: DEFAULT_COLOR_SCHEME,
+};
+
+export function isColorScheme(value: string | null | undefined): value is ColorScheme {
+    return typeof value === "string" && (COLOR_SCHEMES as readonly string[]).includes(value);
+}
+
+export interface NormalizedColorScheme {
+    /** 归一化后真正生效的方案。 */
+    scheme: ColorScheme;
+    /** 触发归一化的原始串（`null` = 本来就合法或没存过）；供诊断/测试断言"确实迁移了"。 */
+    migratedFrom: string | null;
 }
 
 /**
- * 解析最终生效的 opt-in 覆盖。`search` 传 `location.search`。
- * 纯函数：不读全局、不写存储；`c2`（已是默认）/`default`/`off`/`none`/未知值一律
- * 返回 `null`（= 默认 C2′），这样旧链接不会因参数拼写落到某个已废弃的方案上。
+ * 把任意持久化/URL 串归一化成 5 个方案之一。纯函数：不读全局、不写存储。
+ * 规则见文件头映射表：合法值原样返回，旧候选值与未知串一律落默认并回报 `migratedFrom`。
+ */
+export function normalizeColorScheme(raw: string | null | undefined): NormalizedColorScheme {
+    const value = (raw ?? "").trim().toLowerCase();
+    if (isColorScheme(value)) return { scheme: value, migratedFrom: null };
+    if (CLEAR_VALUES.has(value)) {
+        return { scheme: DEFAULT_COLOR_SCHEME, migratedFrom: value === "" ? null : value };
+    }
+    // 未知串（含旧候选 c1/c2/c3、旧默认名、大小写/空白变体）一律落默认，并标为已迁移。
+    return { scheme: LEGACY_VALUES[value] ?? DEFAULT_COLOR_SCHEME, migratedFrom: raw ?? null };
+}
+
+/**
+ * 解析 URL `?color=` 一次性覆盖（截图/对比入口，不持久化）。`search` 传 `location.search`。
+ * 未知值返回 `null`（= 忽略参数、用持久化值），旧候选值同样返回 `null`：旧链接不该把界面
+ * 拉回已下线的调色板。
  */
 export function resolveColorScheme(search: string): ColorScheme | null {
     const fromQuery = new URLSearchParams(search).get("color")?.trim().toLowerCase() ?? "";
@@ -51,7 +97,7 @@ export function resolveColorScheme(search: string): ColorScheme | null {
     return isColorScheme(fromQuery) ? fromQuery : null;
 }
 
-/** 把色彩方案投影到 `<html data-xh-color>`；传 `null` 即回到默认 C2′。 */
+/** 把方案投影到 `<html data-xh-color>`。传 `null` 即移除属性（= 落 `:root` 默认，等价 neutral）。 */
 export function applyColorScheme(scheme: ColorScheme | null): void {
     if (typeof document === "undefined") return;
     const root = document.documentElement;
@@ -59,28 +105,60 @@ export function applyColorScheme(scheme: ColorScheme | null): void {
     else root.removeAttribute(COLOR_SCHEME_ATTRIBUTE);
 }
 
-/**
- * 旧持久化键的一次性迁移：只删不读、也不再写。
- * 旧值（`c1`/`c2`/`c3`/…）在默认语义变化后都可能让界面停留在废弃外观上，
- * 因此不区分取值一律清除；C1/C3 仍可用 `?color=` 显式进入。
- */
-function clearLegacyStoredColorScheme(): void {
+function readStorage(): string | null {
     try {
-        if (typeof localStorage === "undefined") return;
-        localStorage.removeItem(COLOR_SCHEME_STORAGE_KEY);
+        if (typeof localStorage === "undefined") return null;
+        return localStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
     } catch {
-        // Storage 访问可能抛（隐私模式/配额/策略）；迁移失败不影响本次渲染。
+        // Storage 可能抛（隐私模式/配额/策略）：读不到就当没存过，不影响本次渲染。
+        return null;
     }
 }
 
+function writeStorage(scheme: ColorScheme): void {
+    try {
+        if (typeof localStorage === "undefined") return;
+        localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, scheme);
+    } catch {
+        // 写失败不阻断交互：本次会话仍生效（属性已设置），只是下次启动回默认。
+    }
+}
+
+/** 读持久化方案（已归一化，但不回写、不投影 —— 纯读，便于测试）。 */
+export function getStoredColorScheme(): ColorScheme {
+    return normalizeColorScheme(readStorage()).scheme;
+}
+
 /**
- * 启动钩子：`main.ts` 在挂载前调用，保证首屏就是最终色彩（无闪烁）。
- * 返回实际生效的覆盖（`null` = 默认 C2′），便于诊断日志/测试断言。
+ * 用户在设置里选了方案：持久化 + 立即生效。返回归一化后的值（供调用方回显）。
+ * 传非 5 值（含旧候选值）不会报错，按映射表归一后照常落库。
  */
-export function initColorScheme(): ColorScheme | null {
-    const search = typeof location === "undefined" ? "" : location.search;
-    const scheme = resolveColorScheme(search);
+export function setStoredColorScheme(value: string): ColorScheme {
+    const { scheme } = normalizeColorScheme(value);
+    writeStorage(scheme);
     applyColorScheme(scheme);
-    clearLegacyStoredColorScheme();
+    return scheme;
+}
+
+/**
+ * 启动钩子：`main.ts` 在挂载前调用，保证首屏就是最终配色（无闪烁）。优先级：
+ * 1. URL `?color=<5 值>`（一次性、不持久化）；
+ * 2. localStorage（旧候选值就地归一 + 回写）；
+ * 3. `DEFAULT_COLOR_SCHEME`。
+ * 返回实际生效的方案，便于诊断日志与测试断言。
+ */
+export function initColorScheme(): ColorScheme {
+    const search = typeof location === "undefined" ? "" : location.search;
+    const fromQuery = resolveColorScheme(search);
+    if (fromQuery) {
+        applyColorScheme(fromQuery);
+        return fromQuery;
+    }
+
+    const stored = readStorage();
+    const { scheme, migratedFrom } = normalizeColorScheme(stored);
+    applyColorScheme(scheme);
+    // 就地归一：旧键（c1/c2/c3/未知串）第一次启动就改写成 5 值之一，之后不再走迁移分支。
+    if (migratedFrom !== null) writeStorage(scheme);
     return scheme;
 }

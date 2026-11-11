@@ -449,7 +449,7 @@ async function save(publish: boolean) {
                     <button
                         type="button"
                         data-testid="api-request-publish"
-                        class="rounded-md bg-action px-3 py-2 text-xs text-action-foreground disabled:opacity-60"
+                        class="rounded-md bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-60"
                         :disabled="busy"
                         @click="save(true)"
                     >

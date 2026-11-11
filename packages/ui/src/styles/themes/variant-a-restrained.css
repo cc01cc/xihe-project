@@ -24,45 +24,12 @@
  * - 强调色 #1f4ed8 上的白字 ≈ 6.7:1；焦点环同色，≥3:1（非文本对比）。
  */
 html[data-xh-variant="a"]:not(.dark) {
-    /* —— 表面：近白两层 —— */
-    --background: #ffffff;
-    --surface-canvas: #fafafa;
-    --surface-content: #ffffff;
-    --card: #ffffff;
-    --card-foreground: #16181d;
-    --popover: #ffffff;
-    --popover-foreground: #16181d;
-
-    /* —— 文字 —— */
-    --foreground: #16181d;
-    --muted-foreground: #5c626b;
-    --secondary-foreground: #1c1f26;
-    --accent-foreground: #1c1f26;
-    --sidebar-foreground: #16181d;
-    --sidebar-accent-foreground: #1c1f26;
-
-    /* —— 唯一强调色 —— */
-    --brand: #1f4ed8;
-    --brand-foreground: #ffffff;
-    --primary: var(--brand);
-    --primary-foreground: var(--brand-foreground);
-    --ring: var(--brand);
-    --sidebar-ring: var(--brand);
-
-    /* —— 边框：静态分隔近白，hover/输入保留可见档 —— */
-    --border-subtle: #f1f2f4;
-    --border: #eef0f3;
-    --border-strong: #dfe3e9;
-    --input: #dfe3e9;
-    --sidebar-border: #f1f2f4;
-
-    /* —— 中性交互底（不引入第二色相） —— */
-    --secondary: #f5f6f8;
-    --muted: #f5f6f8;
-    --accent: #f4f5f7;
-    --sidebar-accent: #f4f5f7;
-    --sidebar: var(--surface-canvas);
-
+    /*
+     * task-48 M2：本文件**不再覆盖任何颜色 token**（原 background / surface-canvas / surface-content /
+     * brand / primary / border 系列的覆盖声明已下线，配色统一由 styles/themes/color-shadcn 系列承担）。
+     * 视觉语言轴现在只剩
+     * 几何：圆角 / 密度 / 字号 / 行高 —— 与 DEV 里"visualVariant 管密度圆角字号"的说法一致。
+     */
     /* —— 圆角：主档 8px；消息气泡用弹层档 12px（不做胶囊） —— */
     --radius: 0.5rem;
     --radius-control: 0.5rem;

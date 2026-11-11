@@ -689,7 +689,7 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         position: "right",
         component: "button",
         props: {
-            class: "shrink-0 h-8 px-2 inline-flex items-center gap-1 rounded-lg border border-brand bg-action text-brand hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors",
+            class: "shrink-0 h-8 px-2 inline-flex items-center gap-1 rounded-lg border border-primary bg-primary text-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors",
             disabled: !delegationPermission.canDelegate.value,
             title: delegationPermission.reason(),
             "data-testid": "chat-delegate-button",
@@ -704,7 +704,7 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         position: "right",
         component: "button",
         props: {
-            class: "shrink-0 size-8 flex items-center justify-center rounded-lg bg-action text-action-foreground hover:opacity-90 disabled:opacity-50 transition-opacity",
+            class: "shrink-0 size-8 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity",
             disabled: props.isStreaming ? false : sendDisabled.value,
             "data-testid": props.isStreaming ? "chat-stop-button" : "chat-send-button",
             "aria-label": props.isStreaming ? t("chat.stop") : t("chat.send"),
@@ -1470,7 +1470,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                         :class="
                             queuePaused
                                 ? 'border border-border bg-background text-foreground hover:bg-accent'
-                                : 'bg-action text-action-foreground hover:opacity-90'
+                                : 'bg-primary text-primary-foreground hover:opacity-90'
                         "
                         @click="handleSend"
                     >

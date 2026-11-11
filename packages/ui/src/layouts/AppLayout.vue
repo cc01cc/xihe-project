@@ -403,7 +403,7 @@ onUnmounted(() => {
                 :class="navResizing ? 'transition-none' : 'transition-[flex-grow] duration-300'"
             >
                 <main
-                    class="min-h-0 min-w-0 flex-1 bg-surface-content"
+                    class="min-h-0 min-w-0 flex-1 bg-card"
                     :class="
                         workspaceTabBarVisible
                             ? 'flex flex-col overflow-hidden'

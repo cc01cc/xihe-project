@@ -1444,6 +1444,22 @@ const messages = {
             approvalAutoOffFailed: "关闭自动放行失败，自动放行仍然开启，请重试",
         },
         settings: {
+            colorScheme: {
+                title: "配色方案",
+                hint: "五个方案 = shadcn-vue 官方的五个基色，色值原样照抄、不做自定义调色；选中后立即生效并记住。",
+                previewLabel: "当前方案实样",
+                modeLabel: "明暗",
+                modeLight: "浅色",
+                modeDark: "深色",
+                modeSystem: "跟随系统",
+                options: {
+                    neutral: "中性 Neutral",
+                    gray: "灰 Gray",
+                    slate: "石板 Slate",
+                    stone: "暖石 Stone",
+                    zinc: "锌 Zinc",
+                },
+            },
             eyebrow: {
                 credentials: "XH / 凭据",
                 agentPrincipals: "XH / 智能体主体",
@@ -4242,6 +4258,22 @@ const messages = {
             approvalAutoOffFailed: "Could not turn off auto allow; it is still on. Please retry.",
         },
         settings: {
+            colorScheme: {
+                title: "Color scheme",
+                hint: "The five schemes are shadcn-vue's five base colors with their official values unchanged; picking one applies immediately and is remembered.",
+                previewLabel: "Current palette",
+                modeLabel: "Light / dark",
+                modeLight: "Light",
+                modeDark: "Dark",
+                modeSystem: "System",
+                options: {
+                    neutral: "Neutral",
+                    gray: "Gray",
+                    slate: "Slate",
+                    stone: "Stone",
+                    zinc: "Zinc",
+                },
+            },
             eyebrow: {
                 credentials: "XH / Credentials",
                 agentPrincipals: "XH / Agent principals",

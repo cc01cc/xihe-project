@@ -524,7 +524,7 @@ onBeforeUnmount(stopPolling);
                         </p>
                     </div>
                     <button
-                        class="px-4 py-2 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
+                        class="px-4 py-2 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                         :disabled="preparing"
                         data-testid="workspace-prepare-button"
                         @click="handlePrepare"

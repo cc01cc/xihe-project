@@ -1399,7 +1399,7 @@ watch(
             data-testid="chat-run-queued"
             role="status"
             aria-live="polite"
-            class="mx-4 mt-2 rounded-lg border border-border bg-surface-content px-3 py-2"
+            class="mx-4 mt-2 rounded-lg border border-border bg-card px-3 py-2"
         >
             <MarkerIcon>
                 <Clock class="size-3.5" aria-hidden="true" />
@@ -1417,7 +1417,7 @@ watch(
             data-testid="chat-approval-waiting"
             role="status"
             aria-live="polite"
-            class="mx-4 mt-2 rounded-lg border border-border bg-surface-content px-3 py-2"
+            class="mx-4 mt-2 rounded-lg border border-border bg-card px-3 py-2"
         >
             <MarkerIcon>
                 <ShieldAlert class="size-3.5" aria-hidden="true" />

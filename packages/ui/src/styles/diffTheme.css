@@ -9,11 +9,11 @@
  * 只写 `var(--token)`，不引第二套色值。
  */
 .diff-tailwindcss-wrapper[data-theme="light"] .diff-style-root {
-    --diff-add-content--: color-mix(in srgb, var(--brand) 10%, transparent);
+    --diff-add-content--: color-mix(in srgb, var(--primary) 10%, transparent);
     --diff-del-content--: color-mix(in srgb, var(--destructive) 12%, transparent);
-    --diff-add-lineNumber--: color-mix(in srgb, var(--brand) 22%, transparent);
+    --diff-add-lineNumber--: color-mix(in srgb, var(--primary) 22%, transparent);
     --diff-del-lineNumber--: color-mix(in srgb, var(--destructive) 24%, transparent);
-    --diff-border--: var(--border-subtle);
+    --diff-border--: var(--border);
     --diff-plain-content--: var(--background);
     --diff-hunk-content--: var(--muted);
     --diff-hunk-content-color: var(--muted-foreground);
@@ -48,7 +48,7 @@
 .diff-line-syntax-raw .hljs-number,
 .diff-line-syntax-raw .hljs-operator,
 .diff-line-syntax-raw .hljs-quote {
-    color: var(--link);
+    color: var(--primary);
 }
 
 .diff-line-syntax-raw .hljs-comment,

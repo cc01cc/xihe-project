@@ -317,7 +317,7 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         await flushPromises();
         expect(wrapper.find('[data-testid="config-tab-user"]').classes()).toContain(
             // PLAN-0631 色彩方案：选中指示从 --primary 改为 --brand（蓝只在"身份"位置）。
-            "border-brand",
+            "border-primary",
         );
         wrapper.unmount();
     });

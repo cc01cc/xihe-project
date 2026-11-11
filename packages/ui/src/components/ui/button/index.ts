@@ -9,7 +9,7 @@ export const buttonVariants = cva(
             variant: {
                 /* PLAN-0631 色彩方案：主操作填充 = `--action`（默认值即 `--primary`）。 */
                 default:
-                    "border-action-border bg-action text-action-foreground [a]:hover:bg-action/80",
+                    "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/80",
                 outline:
                     "border-border bg-background hover:bg-muted hover:text-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 aria-expanded:bg-muted aria-expanded:text-foreground",
                 secondary:
@@ -17,7 +17,7 @@ export const buttonVariants = cva(
                 ghost: "border-transparent hover:bg-muted hover:text-foreground dark:hover:bg-muted/50 aria-expanded:bg-muted aria-expanded:text-foreground",
                 destructive:
                     "border-transparent bg-destructive/10 hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/20 text-destructive focus-visible:border-destructive/40 dark:hover:bg-destructive/30",
-                link: "border-transparent text-link underline-offset-4 hover:underline",
+                link: "border-transparent text-primary underline-offset-4 hover:underline",
             },
             size: {
                 default:

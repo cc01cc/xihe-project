@@ -122,12 +122,12 @@ const panelClass = computed(() => {
     // overlay or to be pinned beside, so it becomes the only flex child that grows.
     if (props.focus) {
         return [
-            "flex h-full min-w-0 flex-1 flex-col border-l border-border-subtle bg-surface-canvas",
+            "flex h-full min-w-0 flex-1 flex-col border-l border-border bg-surface-canvas",
             "relative z-auto shadow-none",
         ];
     }
     return [
-        "flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas",
+        "flex h-full shrink-0 flex-col border-l border-border bg-surface-canvas",
         isPinned.value
             ? "relative z-auto shadow-none"
             : "absolute inset-y-0 right-0 z-20 shadow-xl",
@@ -355,7 +355,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
                 type="button"
                 data-testid="dock-mode-toggle"
                 class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="isPinned ? 'text-brand' : ''"
+                :class="isPinned ? 'text-primary' : ''"
                 :aria-pressed="isPinned"
                 :aria-label="modeLabel"
                 :title="`${modeLabel} · ${t('workspace.dockModeToggleHint')}`"
@@ -373,7 +373,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
                 type="button"
                 data-testid="dock-focus-toggle"
                 class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="focus ? 'text-brand' : ''"
+                :class="focus ? 'text-primary' : ''"
                 :aria-pressed="focus"
                 :aria-label="focusLabel"
                 :title="`${focusLabel} · ${t('workspace.dockFocusHint')}`"

@@ -1049,7 +1049,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     v-if="authStore.isAdmin || canCreatePrincipal === false"
                     to="/settings/roles"
                     data-testid="agent-grant-panel-link"
-                    class="mt-1 inline-block text-xs text-link underline"
+                    class="mt-1 inline-block text-xs text-primary underline"
                 >
                     {{ t("workspace.agentGrantPanelLink") }}
                 </router-link>
@@ -1242,7 +1242,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
             <button
                 type="submit"
                 data-testid="agent-principal-create"
-                class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
+                class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
                 :disabled="createBlocked"
             >
                 {{ t("workspace.createAgentPrincipal") }}
@@ -1320,7 +1320,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
             <button
                 type="button"
                 data-testid="agent-principal-bind"
-                class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
+                class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
                 :disabled="saving || canManageWorkspaceAgents !== true"
                 @click="bindCreatedPrincipal"
             >
@@ -1549,7 +1549,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         <button
                             type="button"
                             :data-testid="`workspace-agent-save-cap-${agent.principalId}`"
-                            class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground"
+                            class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground"
                             :disabled="saving || canManageWorkspaceAgents !== true"
                             @click="saveCap(agent)"
                         >
@@ -1632,7 +1632,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </label>
                                 <button
                                     type="button"
-                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
                                     :data-testid="`agent-memory-create-open-${agent.principalId}`"
                                     :disabled="memoryWriteBusy || !memoryEnabled"
                                     @click="openMemoryCreate"
@@ -1685,7 +1685,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                         </button>
                                         <button
                                             type="button"
-                                            class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                            class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
                                             :data-testid="`agent-memory-create-save-${agent.principalId}`"
                                             :disabled="
                                                 memoryWriteBusy || !memoryCreateContent.trim()
@@ -1757,7 +1757,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             <div v-if="canWriteMemories === true" class="flex justify-center">
                                 <button
                                     type="button"
-                                    class="rounded-md bg-action px-3 py-1 text-xs text-action-foreground"
+                                    class="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground"
                                     :data-testid="`agent-memory-empty-cta-${agent.principalId}`"
                                     @click="openMemoryCreate"
                                 >
@@ -1865,7 +1865,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                             </button>
                                             <button
                                                 type="button"
-                                                class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                                class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
                                                 :data-testid="`agent-memory-edit-save-${memory.id}`"
                                                 :disabled="
                                                     memoryWriteBusy || !memoryEditContent.trim()
@@ -2079,7 +2079,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </Select>
                                 <button
                                     type="button"
-                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
                                     :disabled="rbacBusy || !selectedRoleId"
                                     :data-testid="`agent-role-bind-${agent.principalId}`"
                                     @click="bindSelectedRole(agent)"
@@ -2236,7 +2236,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </Select>
                                 <button
                                     type="button"
-                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
                                     :disabled="rbacBusy || !selectedSkillId"
                                     :data-testid="`agent-skill-bind-${agent.principalId}`"
                                     @click="bindSelectedSkill(agent)"

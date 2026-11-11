@@ -23,9 +23,9 @@ useSettingsStore().initLanguage();
 // 这里只把 opt-in 覆盖 `?variant=a|c` 投影到 `<html data-xh-variant>`（仅对比/回归用），
 // 并清掉旧版持久化的 `xihe-visual-variant` 键，保证"无参数 = B"。
 initVisualVariant();
-// PLAN-0631 色彩方案：**默认 = C2′**（token 在 styles/main.css :root）；这里只把
-// opt-in 覆盖 `?color=c1|c3`（仅对比用）投影到 `<html data-xh-color>`，并清掉旧版
-// 持久化的 `xihe-color-scheme` 键，保证"无参数 = C2′"。色彩与视觉语言正交。
+// task-48 M2（配色统一到 shadcn-vue 官方 5 个 base color）：启动期把 localStorage
+// `xihe-color-scheme`（旧候选值就地归一成 5 值之一）+ 可选 `?color=<5 值>` 投影到
+// `<html data-xh-color>`，保证首屏即最终配色（无闪烁）。色彩与视觉语言正交。
 initColorScheme();
 app.use(router);
 app.use(i18n);

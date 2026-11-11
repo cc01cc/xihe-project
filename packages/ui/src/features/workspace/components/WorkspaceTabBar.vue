@@ -257,7 +257,7 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
     <nav
         data-testid="workspace-tab-bar"
         :aria-label="t('workspace.tabBarLabel')"
-        class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-surface-content px-2"
+        class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"
     >
         <Tabs v-model="activeTab" class="min-w-0 flex-1">
             <TabsList variant="line" class="p-0">
@@ -279,7 +279,7 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
                         class="group inline-flex shrink-0 items-center rounded-md"
                         :class="
                             tab.id === activeId
-                                ? 'bg-brand/10 text-brand'
+                                ? 'bg-primary/10 text-primary'
                                 : 'text-muted-foreground hover:bg-accent'
                         "
                     >

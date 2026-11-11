@@ -218,7 +218,7 @@ watch(
                         class="px-3 py-2 text-sm"
                         :class="
                             tab === 'roles'
-                                ? 'border-b-2 border-brand font-medium'
+                                ? 'border-b-2 border-primary font-medium'
                                 : 'text-muted-foreground'
                         "
                         @click="tab = 'roles'"
@@ -231,7 +231,7 @@ watch(
                         class="px-3 py-2 text-sm"
                         :class="
                             tab === 'bindings'
-                                ? 'border-b-2 border-brand font-medium'
+                                ? 'border-b-2 border-primary font-medium'
                                 : 'text-muted-foreground'
                         "
                         @click="tab = 'bindings'"

@@ -434,7 +434,7 @@ function cancelRoleEdit() {
                     type="submit"
                     data-testid="agent-template-save"
                     :disabled="saving || malformedConfig"
-                    class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
+                    class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
                 >
                     {{ saving ? t("common.saving") : t("common.save") }}
                 </button>

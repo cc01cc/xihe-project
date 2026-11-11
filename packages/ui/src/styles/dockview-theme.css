@@ -14,8 +14,8 @@
 .dockview-host {
     --dv-group-view-background-color: var(--surface-canvas);
     --dv-tabs-and-actions-container-background-color: var(--surface-canvas);
-    --dv-separator-border: var(--border-subtle);
-    --dv-tab-divider-color: var(--border-subtle);
+    --dv-separator-border: var(--border);
+    --dv-tab-divider-color: var(--border);
     --dv-active-sash-color: var(--primary);
     --dv-paneview-active-outline-color: var(--primary);
     --dv-activegroup-visiblepanel-tab-background-color: var(--surface-canvas);

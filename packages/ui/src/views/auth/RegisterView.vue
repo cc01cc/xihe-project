@@ -161,7 +161,7 @@ async function handleSubmit() {
                 <button
                     type="submit"
                     :disabled="busy || !email || !password || passwordMismatch"
-                    class="w-full px-4 py-2 rounded-lg bg-action text-action-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+                    class="w-full px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
                     {{
                         phase === "submitting"
@@ -174,7 +174,7 @@ async function handleSubmit() {
 
                 <p class="text-sm text-center text-muted-foreground">
                     {{ t("login.hasAccount") }}
-                    <router-link to="/login" class="text-link hover:underline">{{
+                    <router-link to="/login" class="text-primary hover:underline">{{
                         t("login.login")
                     }}</router-link>
                 </p>

@@ -6,6 +6,7 @@ import { Info } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
 import { useConfigStore, type ConfigLayer } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
+import ColorSchemePanel from "../../components/settings/ColorSchemePanel.vue";
 import SettingsForbiddenView from "./SettingsForbiddenView.vue";
 import SettingsNotFoundView from "./SettingsNotFoundView.vue";
 import ToolFacesView from "./ToolFacesView.vue";
@@ -321,6 +322,14 @@ watch(
             面板卸载 ⇒ 重挂」形成自持循环（dev-3 实测 63 轮/秒）；卸载闸门一旦存在，任何回写方都会复现，
             所以这一层用「常挂 + 隐藏」把该类缺陷整体挡掉。
         -->
+        <!--
+            task-48 M2：配色方案（5 个 shadcn-vue base color + 明暗）挂在「用户偏好」域页。
+            它是**纯客户端偏好**（localStorage `xihe-color-scheme` + `<html data-xh-color>`），
+            不是 CP 配置键，所以不进 `ConfigLayerPanels` 的字段树（那里每个字段都要有
+            GET /config/{domain}/meta 的 source 与 PUT 通道；硬塞进去会让「未保存/继承」语义说谎）。
+        -->
+        <ColorSchemePanel v-if="resolved.domain === 'user-preference'" />
+
         <div
             v-show="!pending && !(activeTab === 'tool-faces' && toolFacesTab)"
             class="mt-4"

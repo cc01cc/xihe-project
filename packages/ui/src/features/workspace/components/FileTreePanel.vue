@@ -228,7 +228,7 @@ function upload() {
         <!-- Panel head: workspace identity + file actions + the built-in collapse -->
         <div
             data-testid="workspace-tree-head"
-            class="flex h-9 shrink-0 items-center gap-1 border-b border-border-subtle px-2"
+            class="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2"
         >
             <span
                 data-testid="workspace-tree-title"
@@ -285,7 +285,7 @@ function upload() {
         <p
             v-if="ws.workspaceRoots.length > 16"
             data-testid="roots-cost-hint"
-            class="shrink-0 border-b border-border-subtle px-2 py-1 text-[11px] text-muted-foreground"
+            class="shrink-0 border-b border-border px-2 py-1 text-[11px] text-muted-foreground"
         >
             {{ t("workspace.nestedReposCostHint") }}
         </p>
@@ -302,7 +302,7 @@ function upload() {
                     :placeholder="t('workspace.filterFiles')"
                     :aria-label="t('workspace.filterFiles')"
                     data-testid="workspace-tree-filter"
-                    class="w-full rounded border bg-surface-content py-1 pl-7 pr-6 text-xs placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="w-full rounded border bg-card py-1 pl-7 pr-6 text-xs placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <button
                     v-if="searchQuery"
@@ -322,7 +322,7 @@ function upload() {
                 data-testid="workspace-create-file-input"
                 :placeholder="t('workspace.createFilePlaceholder')"
                 :aria-label="t('workspace.createFilePlaceholder')"
-                class="w-full rounded border bg-surface-content px-2 py-1 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="w-full rounded border bg-card px-2 py-1 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 autofocus
                 @keydown.enter.prevent="confirmCreateFile"
                 @keydown.esc.prevent="cancelCreateFile"
@@ -338,7 +338,7 @@ function upload() {
         <div
             v-if="undeclaredNestedRepos.length > 0"
             data-testid="nested-repos-panel"
-            class="shrink-0 border-b border-border-subtle px-2 py-1.5"
+            class="shrink-0 border-b border-border px-2 py-1.5"
         >
             <p
                 class="flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
@@ -361,7 +361,7 @@ function upload() {
                             >{{ repo.path }}</span
                         >
                         <span
-                            class="shrink-0 rounded bg-surface-content px-1 text-[10px] text-muted-foreground"
+                            class="shrink-0 rounded bg-card px-1 text-[10px] text-muted-foreground"
                             data-testid="nested-repo-type"
                             >{{ nestedRepoTypeLabel(repo.type) }}</span
                         >
@@ -462,7 +462,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-empty-create-file"
-                class="inline-flex items-center gap-1 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 @click="startCreateFile"
             >
                 {{ t("workspace.createFile") }}
@@ -470,7 +470,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-empty-upload"
-                class="rounded-md border border-border-subtle px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 @click="upload"
             >
                 {{ t("workspace.uploadFile") }}

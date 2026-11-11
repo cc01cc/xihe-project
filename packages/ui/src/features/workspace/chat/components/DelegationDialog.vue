@@ -118,7 +118,7 @@ function submit() {
                         <SelectTrigger
                             id="delegation-principal"
                             data-testid="delegation-principal-select"
-                            class="h-8 rounded-lg border border-input bg-action px-2.5 text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+                            class="h-8 rounded-lg border border-input bg-primary px-2.5 text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
                         >
                             <SelectValue :placeholder="t('chat.delegation.principalPlaceholder')" />
                         </SelectTrigger>
@@ -170,7 +170,7 @@ function submit() {
                     </p>
                     <p
                         v-if="approvalPending"
-                        class="text-xs text-brand"
+                        class="text-xs text-primary"
                         data-testid="delegation-approval-pending"
                     >
                         {{ t("chat.delegation.approvalPendingHint") }}

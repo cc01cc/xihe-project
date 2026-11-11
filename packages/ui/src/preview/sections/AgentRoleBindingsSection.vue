@@ -193,7 +193,7 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
             <p
                 v-if="notice"
                 data-testid="preview-agent-role-bindings-notice"
-                class="rounded border border-brand/40 bg-brand/10 px-2 py-1 text-xs text-brand-accent"
+                class="rounded border border-primary/40 bg-primary/10 px-2 py-1 text-xs text-primary"
             >
                 {{ notice }}
             </p>

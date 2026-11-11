@@ -39,7 +39,7 @@ const { t } = useI18n(),
             class="rounded border px-2 py-1 transition-colors"
             :class="
                 settings.language === locale
-                    ? 'border-brand bg-brand/10 font-medium'
+                    ? 'border-primary bg-primary/10 font-medium'
                     : 'border-transparent hover:bg-accent'
             "
             @click="settings.setLanguage(locale)"

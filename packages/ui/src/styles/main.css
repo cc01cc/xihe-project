@@ -66,8 +66,11 @@
  */
 @import "./themes/variant-a-restrained.css";
 @import "./themes/variant-c-current-plus.css";
-@import "./themes/color-c1-neutral.css";
-@import "./themes/color-c3-muted.css";
+@import "./themes/color-shadcn-neutral.css";
+@import "./themes/color-shadcn-gray.css";
+@import "./themes/color-shadcn-slate.css";
+@import "./themes/color-shadcn-stone.css";
+@import "./themes/color-shadcn-zinc.css";
 
 /* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
 .xihe-chat-markdown p,
@@ -103,12 +106,7 @@
     --color-foreground: var(--foreground);
     /* PLAN-0582 S2: two surface layers + one brand accent (review P0-2 / P2-1). */
     --color-surface-canvas: var(--surface-canvas);
-    --color-surface-content: var(--surface-content);
-    --color-border-subtle: var(--border-subtle);
     /* PLAN-0631 M0：hover 加深档（--border-strong），仅"可点行/卡片 hover"语义用。 */
-    --color-border-strong: var(--border-strong);
-    --color-brand: var(--brand);
-    --color-brand-foreground: var(--brand-foreground);
     --color-card: var(--card);
     --color-card-foreground: var(--card-foreground);
     --color-popover: var(--popover);
@@ -120,16 +118,6 @@
      * 默认 = C2′：action = 白底描边、bubble = 品牌蓝实心（用户反馈①③）；
      * C1/C3 在各自文件里覆盖这些 token（仅对比用）。
      */
-    --color-action: var(--action);
-    --color-action-foreground: var(--action-foreground);
-    --color-action-border: var(--action-border);
-    --color-action-hover: var(--action-hover);
-    --color-bubble: var(--bubble);
-    --color-bubble-foreground: var(--bubble-foreground);
-    --color-link: var(--link);
-    --color-badge: var(--badge);
-    --color-badge-foreground: var(--badge-foreground);
-    --color-badge-border: var(--badge-border);
     --color-secondary: var(--secondary);
     --color-secondary-foreground: var(--secondary-foreground);
     --color-muted: var(--muted);
@@ -141,7 +129,7 @@
     --color-border: var(--border);
     --color-input: var(--input);
     --color-ring: var(--ring);
-    --color-sidebar-background: var(--sidebar);
+    --color-sidebar: var(--sidebar);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar-primary: var(--sidebar-primary);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
@@ -153,7 +141,6 @@
        字体文件没加载到时不白屏，只是回到本机字体（此时跨机器不一致，但至少可读）。 */
     --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     --font-heading: var(--font-sans);
-    --color-sidebar: var(--sidebar);
     --color-chart-5: var(--chart-5);
     --color-chart-4: var(--chart-4);
     --color-chart-3: var(--chart-3);
@@ -205,7 +192,7 @@
 
     * {
         scrollbar-width: thin;
-        scrollbar-color: var(--border-strong) transparent;
+        scrollbar-color: var(--border) transparent;
     }
 }
 
@@ -267,6 +254,16 @@
  */
 :root {
     /*
+     * task-48 M2：颜色 token 已迁出本文件 —— 5 个 shadcn base color 方案在
+     * styles/themes/color-shadcn-{neutral,gray,slate,stone,zinc}.css（neutral 是默认）。
+     * 本块只保留**非颜色** token（层级 z / 移动安全区 / 字号 / 行高 / 圆角 / 间距）。
+     *
+     * --surface-canvas 是本仓的历史别名（全局条与设置左栏底色），统一指向官方 --sidebar，
+     * 这样它跟着方案自动变，不再自带一套灰阶。
+     */
+    --surface-canvas: var(--sidebar);
+
+    /*
      * PLAN-0702 / BL-327: mobile safe-area insets. Defined once at the root; components consume the
      * vars. env(safe-area-inset-*) is 0 on desktop browsers, so no layout change when absent.
      * `useMobileSafeArea` overrides the bottom var to 0px while the on-screen keyboard is open.
@@ -281,18 +278,6 @@
      * 对照度：正文 #16181d/#fbfbfc 16.9:1、次要 #64686f/#f5f6f8 5.18:1、
      * 填充蓝 #3b5bd0 白字 5.84:1（详见 .local/evidence/xh-ui-refresh/token-experiment.md）。
      */
-    --background: #fbfbfc;
-    --foreground: #16181d;
-    --surface-canvas: #f5f6f8;
-    --surface-content: #ffffff;
-    --border-subtle: rgba(22, 24, 29, 0.09);
-    --brand: #3b5bd0;
-    --brand-accent: #4c6ef5;
-    --brand-foreground: #ffffff;
-    --card: #ffffff;
-    --card-foreground: #16181d;
-    --popover: #ffffff;
-    --popover-foreground: #16181d;
     /* BL-518 / PLAN-0714：overlay 层级 token（改层级只改这里；组件只消费 var）。 */
     --z-modal-backdrop: 60;
     --z-popover: 70;
@@ -300,62 +285,12 @@
     /* vue-sonner 库内硬编码 999999999（lib/index.css:43）；此 token 仅用于文档对齐。 */
     --z-toast: 999999999;
     /*
-     * PLAN-0631 M0：accent 进 --primary。M2（B）：唯一强调色 #2450c8，
-     * 白字压其上实测 6.87:1（WCAG AA✓）。--brand 保留为同源别名
-     * （既有 bg-brand 消费点不动）；新组件一律 bg-primary。
-     */
-    --primary: var(--brand);
-    --primary-foreground: var(--brand-foreground);
-    /*
-     * PLAN-0631 色彩方案语义角色。默认 = C2′（用户 2026-11-03 圈选，反馈①②③）：
-     *   action = 主操作填充（按钮 / CTA）        → 白底 #ffffff + 深字 + 1px 弱化描边
-     *   bubble = 自己的消息气泡                  → 品牌蓝实心（不跟随 action，反馈③）
-     *   link   = 文本链接与文本强调               → var(--brand)
-     *   badge  = 中性徽标（底 / 字 / 边）         → var(--secondary)
-     * C1/C3 只覆盖这些 + 既有 primary/brand/ring/destructive（仅对比用）。
-     * 描边 #c9cfd6：对白色底 1.57:1（旧 C2 的 #8b93a1 是 3.09:1）——用户反馈①
-     * 要求"弱化而非消失"；白底按钮另有 13px 深字（16.70:1）承担可识别性。
-     */
-    --action: #ffffff;
-    --action-foreground: #16181d;
-    --action-border: #c9cfd6;
-    --action-hover: #f1f3f7;
-    --bubble: var(--brand);
-    --bubble-foreground: var(--brand-foreground);
-    --link: var(--brand-accent);
-    --badge: var(--secondary);
-    --badge-foreground: var(--secondary-foreground);
-    --badge-border: transparent;
-    --secondary: #f1f3f7;
-    --secondary-foreground: #16181d;
-    --muted: #f1f3f7;
-    --muted-foreground: #64686f;
-    --foreground-subtle: #6b6f76;
-    --accent: #f1f3f7;
-    --accent-foreground: #16181d;
-    /*
-     * 卡片浮起：A″ 新增。卡片/浮层用「圆角 + 阴影」取代 1px 硬描边分层
-     * （对应的 `--border` 已降到 9% 黑，行分隔仍可见）。
-     */
-    --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px -16px rgba(16, 24, 40, 0.18);
-    --destructive: oklch(0.577 0.245 27.325);
-    /*
-     * PLAN-0631 M0 边框三级（使用规则）：
-     *   --border        默认 1px 分隔（组件不感知层级时的唯一选择）；
-     *   --border-strong hover/聚焦加深档（可点行、卡片 hover 边框）——不得用于静态装饰；
-     *   --border-subtle 两级表面之间的 1px 分隔（分组列表内行间），最弱。
-     * M2（B）：边框显式一档（#d5d9e0），静态分隔也看得见 —— 分隔靠线而不只靠留白。
-     * A″（PLAN-0673 实验）：降到 9% 黑（≈1.16:1），并用 `--shadow-card` 承担卡片分层。
-     */
-    --border: var(--border-subtle);
-    --border-strong: rgba(22, 24, 29, 0.16);
-    --input: rgba(22, 24, 29, 0.12);
-    --ring: var(--brand-accent);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+ * task-48 M2（配色统一到 shadcn-vue 官方 5 个 base color）：
+ * 原「色彩方案语义角色」注释（C2′ 的 action/bubble/link/badge 四段 + C1/C3 覆盖说明 + 边框三级
+ * --border-strong/--border-subtle）已随 token 一并下线 —— 现在颜色只有一套语义角色，取值全部来自
+ * styles/themes/color-shadcn-{neutral,gray,slate,stone,zinc}.css，本文件不再定义任何颜色 token。
+ * 唯一保留的自有颜色别名是 --surface-canvas（→ 官方 --sidebar），见文件顶部 :root。
+ */
     /* A″ 主档 10px；`rounded-sm` 档（calc(radius - 4px)）= 6px，小控件不再方正。 */
     --radius: 0.625rem;
     /* 消息气泡（BubbleContent 的 rounded-3xl）：B = 8px，不做胶囊。 */
@@ -373,14 +308,6 @@
     --text-base--line-height: 1.5;
     /* 气泡正文用 `leading-relaxed`（`--tw-leading` 优先于 `--text-sm--line-height`）。 */
     --leading-relaxed: 1.55;
-    --sidebar: var(--surface-canvas);
-    --sidebar-foreground: #16181d;
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: #f1f3f7;
-    --sidebar-accent-foreground: #16181d;
-    --sidebar-border: rgba(22, 24, 29, 0.09);
-    --sidebar-ring: var(--brand-accent);
 }
 
 /*
@@ -394,75 +321,10 @@ html:not([data-xh-variant]) tr {
 }
 
 /*
- * C2′（默认色彩 = 蓝仅小面积）：`Button` 组件有 `border-action-border` 通道，但业务里
- * 还有直接写 `<button class="bg-action">` 的 CTA（发送、审批、各处确认），它们没有
- * border token 消费点。这里用 `outline` 补 1px 内描边（不参与布局），
- * `:not(:focus-visible)` 保证键盘焦点时让位给全局 2px 焦点环；hover 只上浅灰底。
- * 选择器带 `html:not([data-xh-color])`：C1/C3 是 opt-in 覆盖，它们的按钮外观由
- * 各自文件全权决定（这两条的描边/hover 只在默认 C2′ 下生效）。
- * 消息气泡**不在这两条规则里**：它走 --bubble（品牌蓝实心），用户 2026-11-03
- * 反馈③明确"气泡不要描边、不要中性化"。
+ * task-48 M2：原「C2′ 白底按钮 1px 描边 + hover 浅灰底」的两条补偿规则已删除 ——
+ * 它们靠 `[class*="bg-action"]` 与 `html:not([data-xh-color])` 命中，而两张牌都随 M2 消失：
+ * `bg-action` 类名已全量塌陷成 `bg-primary`（34 文件 / 61 处），`data-xh-color` 现在恒被设置
+ * （5 个方案之一，含默认 neutral）。主按钮外观自此完全由官方 `--primary` / `--border` 决定。
  */
-html:not([data-xh-color]) :is(button, a)[class*="bg-action"]:not(:focus-visible) {
-    outline: 1px solid var(--action-border);
-    outline-offset: -1px;
-}
 
-html:not([data-xh-color]) :is(button, a)[class*="bg-action"]:hover {
-    background-color: var(--action-hover);
-}
-
-.dark {
-    --background: #111318;
-    --foreground: #f1f3f6;
-    --surface-canvas: #181b22;
-    --surface-content: #1d2129;
-    --border-subtle: rgba(255, 255, 255, 0.1);
-    --brand: #3b5bd0;
-    --brand-accent: #849cff;
-    --brand-foreground: #ffffff;
-    --card: #222730;
-    --card-foreground: #f1f3f6;
-    --popover: #222730;
-    --popover-foreground: #f1f3f6;
-    --shadow-card:
-        0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 28px -14px rgba(0, 0, 0, 0.72),
-        inset 0 1px 0 rgba(255, 255, 255, 0.045);
-    --primary: var(--brand);
-    --primary-foreground: var(--brand-foreground);
-    /*
-     * C2′ 的 action/bubble 在浅色 :root 里是字面值（白底描边），深色下必须显式回落：
-     * action 跟随 --primary（深色主按钮维持品牌蓝实心，描边透明），
-     * bubble 用 var() 在"使用处"代入，自动跟随深色 --brand，无需重复声明。
-     */
-    --action: var(--primary);
-    --action-foreground: var(--primary-foreground);
-    --action-border: transparent;
-    --action-hover: #303744;
-    --secondary: #292e38;
-    --secondary-foreground: #f1f3f6;
-    --muted: #292e38;
-    --muted-foreground: #b4bdca;
-    --foreground-subtle: #a5afbd;
-    --accent: #303744;
-    --accent-foreground: #f1f3f6;
-    --link: var(--brand-accent);
-    --destructive: #ff7770;
-    --border: var(--border-subtle);
-    --border-strong: rgba(255, 255, 255, 0.18);
-    --input: rgba(255, 255, 255, 0.16);
-    --ring: var(--brand-accent);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: var(--surface-canvas);
-    --sidebar-foreground: #f1f3f6;
-    --sidebar-primary: var(--brand);
-    --sidebar-primary-foreground: var(--brand-foreground);
-    --sidebar-accent: #292e38;
-    --sidebar-accent-foreground: #f1f3f6;
-    --sidebar-border: var(--border-subtle);
-    --sidebar-ring: var(--brand-accent);
-}
+/* task-48 M2：原 .dark 颜色块已搬进 styles/themes/color-shadcn-*.css 的 `.dark` 选择器。 */
