@@ -2,10 +2,12 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { Menu, X } from "@lucide/vue";
+import { Menu, Search, X } from "@lucide/vue";
 import BackToChatButton from "../components/settings/BackToChatButton.vue";
+import SettingsCommandPalette from "../components/settings/SettingsCommandPalette.vue";
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
+import { Button } from "../components/ui/button";
 import {
     DOMAIN_LABEL_KEY,
     isConfigDomain,
@@ -37,10 +39,16 @@ const domainLabel = computed(() => {
 });
 
 const drawerOpen = ref(false);
+/**
+ * PLAN-0762 T3.4：⌘K 面板的开合状态归布局（**唯一实例**）—— 面板自己注册 ⌘K 监听并
+ * 通过 `update:open` 回报；不要在任何子组件里再挂第二份，否则同一个键会被处理两次。
+ */
+const paletteOpen = ref(false);
 watch(
     () => route.fullPath,
     () => {
         drawerOpen.value = false;
+        paletteOpen.value = false;
     },
 );
 </script>
@@ -134,10 +142,30 @@ watch(
             </div>
 
             <SettingsLayerHeader :layer="layer" :domain="domainLabel">
-                <!-- task-156：桌面（lg+）rail 已有「工作台」同动作 ⇒ 页内返回聊天只留移动端
-                     （移动端 rail 不渲染，没有第二个入口）。 -->
-                <div class="mt-2 lg:hidden">
-                    <BackToChatButton />
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <!-- T3.4：可见入口（键盘 ⌘K 之外的那条路；触屏/鼠标用户也够得到）。
+                         按钮与 ⌘K 都只改同一个 `paletteOpen`。 -->
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="settings-commandk-trigger"
+                        class="h-7 gap-1.5 text-xs font-normal"
+                        :aria-label="t('settings.commandk.trigger')"
+                        @click="paletteOpen = true"
+                    >
+                        <Search class="size-3.5" aria-hidden="true" />
+                        {{ t("settings.commandk.trigger") }}
+                        <kbd
+                            class="ml-1 rounded border px-1 font-mono text-[10px] text-muted-foreground"
+                            aria-hidden="true"
+                            >⌘K</kbd
+                        >
+                    </Button>
+                    <!-- task-156：桌面（lg+）rail 已有「工作台」同动作 ⇒ 页内返回聊天只留移动端
+                         （移动端 rail 不渲染，没有第二个入口）。 -->
+                    <div class="lg:hidden">
+                        <BackToChatButton />
+                    </div>
                 </div>
             </SettingsLayerHeader>
 
@@ -146,5 +174,7 @@ watch(
                 <router-view />
             </main>
         </div>
+
+        <SettingsCommandPalette v-model:open="paletteOpen" :layer="layer" />
     </div>
 </template>

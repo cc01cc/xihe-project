@@ -1430,6 +1430,20 @@ const messages = {
                 createOwnAgent: "创建个人智能体",
                 writeInstanceContent: "写入实例内容",
             },
+            // PLAN-0762 T3.4：⌘K 搜配置域（域清单来自 lib/settingsIa.ts 的单一矩阵）。
+            commandk: {
+                trigger: "搜索配置域",
+                title: "搜索配置域",
+                description: "按名称搜索配置域并跳转：⌘K / Ctrl+K 打开，Esc 关闭。",
+                placeholder: "搜索配置域…",
+                groupCurrent: "本层 · {layer}",
+                groupOther: "其他层 · {layer}（会切换层）",
+                crossLayerBadge: "→ {layer}",
+                empty: "没有匹配的配置域",
+                emptyHint: "可以只输入层名（实例 / 用户 / 工作区默认）来看该层全部域。",
+                clear: "清除搜索",
+                openDefault: "打开本层默认页",
+            },
             ia: {
                 breadcrumbRoot: "设置",
                 breadcrumbLabel: "面包屑",
@@ -4188,6 +4202,22 @@ const messages = {
                 credentialManage: "Credential management",
                 createOwnAgent: "Create your own agents",
                 writeInstanceContent: "Write instance content",
+            },
+            // PLAN-0762 T3.4：⌘K searches config domains (domain list comes from the settingsIa matrix).
+            commandk: {
+                trigger: "Search config domains",
+                title: "Search config domains",
+                description:
+                    "Search config domains by name and jump: ⌘K / Ctrl+K opens, Esc closes.",
+                placeholder: "Search config domains…",
+                groupCurrent: "This layer · {layer}",
+                groupOther: "Other layers · {layer} (switches layer)",
+                crossLayerBadge: "→ {layer}",
+                empty: "No matching config domain",
+                emptyHint:
+                    "Try a layer name (Instance / User / Workspace default) to list that layer's domains.",
+                clear: "Clear search",
+                openDefault: "Open this layer's default page",
             },
             ia: {
                 breadcrumbRoot: "Settings",

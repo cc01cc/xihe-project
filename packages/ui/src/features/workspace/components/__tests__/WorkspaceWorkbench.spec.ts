@@ -8,6 +8,8 @@ import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
 import {
     SPLITTER_REFERENCE_WIDTH,
     TREE_WIDTH_DEFAULT,
+    TREE_WIDTH_MAX,
+    TREE_WIDTH_MIN,
 } from "../../../../composables/useWorkspaceLayout";
 
 const { toastWarning } = vi.hoisted(() => ({ toastWarning: vi.fn<(message: string) => void>() }));
@@ -792,6 +794,15 @@ describe("WorkspaceWorkbench file tree as splitter panel (PLAN-0753 T3)", () => 
 
         // 双击复位默认宽（240）。
         await handle.trigger("dblclick");
-        await expectStored(() => expect(storedLayout().treeWidth).toBe(240));
+        await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_DEFAULT));
+
+        // task-32 / PLAN-0762 M4：Home/End 到边界。与 sidebar 同走 `useSplitterPanelBridge.ts:139`
+        // （映射在 `WorkspaceWorkbench.vue:378-379`：Home→MIN、End→MAX）；此前这条共用实现只有 dock
+        // 有逐键断言（`WorkspaceDock.spec.ts:230-234`）。数值引常量，不写字面量。
+        await handle.trigger("keydown", { key: "Home" });
+        await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_MIN));
+
+        await handle.trigger("keydown", { key: "End" });
+        await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_MAX));
     });
 });

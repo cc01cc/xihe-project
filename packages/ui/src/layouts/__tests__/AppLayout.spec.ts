@@ -7,6 +7,7 @@ import { api } from "../../composables/api";
 import type * as apiModule from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
 import { useSessionStore } from "../../stores/session";
+import { NAV_WIDTH_MAX, NAV_WIDTH_MIN } from "../../composables/useWorkspaceLayout";
 import AppLayout from "../AppLayout.vue";
 
 vi.mock("../../composables/api", async (importOriginal) => {
@@ -262,6 +263,18 @@ describe("AppLayout navigation IA (PLAN-0582 S1/S2 → PLAN-0753 T3 splitter)", 
         await wrapper.get('[data-testid="sidebar-resizer"]').trigger("dblclick");
         await flushPromises();
         expect(readNavWidth()).toBe(280);
+
+        // task-32 / PLAN-0762 M4：Home/End 到边界。语义在 `useSplitterPanelBridge.ts:139`
+        // 的统一入口 + `AppLayout.vue:119-120` 的映射（Home→MIN、End→MAX）—— dock 的同一对
+        // 键早就有逐键断言（`WorkspaceDock.spec.ts:230-234`），共用的实现此前只有 dock 一侧被测。
+        // 数值引 `useWorkspaceLayout` 常量，不写字面量：改范围时这条会跟着一起动。
+        await wrapper.get('[data-testid="sidebar-resizer"]').trigger("keydown", { key: "Home" });
+        await flushPromises();
+        expect(readNavWidth()).toBe(NAV_WIDTH_MIN);
+
+        await wrapper.get('[data-testid="sidebar-resizer"]').trigger("keydown", { key: "End" });
+        await flushPromises();
+        expect(readNavWidth()).toBe(NAV_WIDTH_MAX);
     });
 
     it("clears the user-scoped layout keys when the session is logged out", async () => {
