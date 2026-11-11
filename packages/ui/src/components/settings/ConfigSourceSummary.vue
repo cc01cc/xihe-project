@@ -21,6 +21,8 @@ function sourceText(item: ConfigKeyMeta): string {
             return t("settings.configSourceEnv");
         case "workspace":
             return t("settings.configSourceWorkspace");
+        case "workspace-default":
+            return t("settings.configSourceWorkspaceDefault");
         case "user":
             return t("settings.configSourceUser");
         case "instance":

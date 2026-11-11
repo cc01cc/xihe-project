@@ -18,6 +18,7 @@ import {
     Lock,
     ScrollText,
     Search,
+    Layers,
     Server,
     Settings2,
     ShieldCheck,
@@ -84,7 +85,9 @@ const canSeeInstanceOps = computed(() => canSeeInstanceLayer.value || auth.canMa
 
 const activeLayer = computed(() => {
     const layer = route.meta.settingsLayer;
-    return layer === "instance" || layer === "user" ? layer : "instance";
+    return layer === "instance" || layer === "user" || layer === "workspace-default"
+        ? layer
+        : "instance";
 });
 
 const activeDomain = computed(() =>
@@ -93,9 +96,11 @@ const activeDomain = computed(() =>
 
 /** 当前层默认展开、另一层默认收起；跨层导航时跟着路由翻。 */
 const instanceOpen = ref(activeLayer.value === "instance");
+const workspaceDefaultOpen = ref(activeLayer.value === "workspace-default");
 const userOpen = ref(activeLayer.value === "user");
 watch(activeLayer, (layer) => {
     instanceOpen.value = layer === "instance";
+    workspaceDefaultOpen.value = layer === "workspace-default";
     userOpen.value = layer === "user";
 });
 
@@ -104,6 +109,14 @@ const instanceDomains = computed<SettingsNavItem[]>(() =>
         id: domain,
         labelKey: DOMAIN_LABEL_KEY[domain],
         path: settingsDomainPath("instance", domain),
+    })),
+);
+
+const workspaceDefaultDomains = computed<SettingsNavItem[]>(() =>
+    domainsForLayer("workspace-default").map((domain) => ({
+        id: domain,
+        labelKey: DOMAIN_LABEL_KEY[domain],
+        path: settingsDomainPath("workspace-default", domain),
     })),
 );
 
@@ -148,6 +161,7 @@ const instanceEntryCount = computed(
         opsGroups.value.reduce((sum, group) => sum + group.items.length, 0),
 );
 const userEntryCount = computed(() => userDomains.value.length + userResources.value.length);
+const workspaceDefaultEntryCount = computed(() => workspaceDefaultDomains.value.length);
 
 /** task-175：条目图标（skill A13）。键 = 域 id / ops id；未知项回落 Circle。 */
 const DOMAIN_ICONS: Record<string, Component> = {
@@ -171,13 +185,18 @@ const OPS_ICONS: Record<string, Component> = {
     roles: KeyRound,
     audit: FileSearch,
 };
-const LAYER_ICONS: Record<string, Component> = { instance: Server, user: User };
+const LAYER_ICONS: Record<string, Component> = {
+    instance: Server,
+    // PLAN-0766：共享层用 Layers（"层的默认值"语义，与 Server/User 两个具体归属区分）。
+    "workspace-default": Layers,
+    user: User,
+};
 
 function iconFor(map: Record<string, Component>, id: string): Component {
     return map[id] ?? Circle;
 }
 
-function isDomainActive(layer: "instance" | "user", domain: string): boolean {
+function isDomainActive(layer: "instance" | "workspace-default" | "user", domain: string): boolean {
     return activeLayer.value === layer && activeDomain.value === domain;
 }
 
@@ -313,6 +332,65 @@ const layerHeaderClass =
             </SidebarGroup>
         </Collapsible>
 
+        <!-- PLAN-0766（task-160）：共享工作区默认层。它不是"某个工作区"的设置，而是对所有
+             没有显式 workspace 覆盖的工作区生效的部署级默认值；入口形态与实例/用户层一致。 -->
+        <Collapsible v-model:open="workspaceDefaultOpen">
+            <SidebarGroup class="p-0">
+                <CollapsibleTrigger
+                    id="settings-nav-workspace-default"
+                    data-testid="settings-nav-group-workspace-default"
+                    :class="layerHeaderClass"
+                >
+                    <ChevronRight
+                        class="size-4 shrink-0 transition-transform"
+                        :class="workspaceDefaultOpen ? 'rotate-90' : ''"
+                        aria-hidden="true"
+                    />
+                    <component
+                        :is="LAYER_ICONS['workspace-default']"
+                        class="size-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                    />
+                    <span class="truncate">{{ t("settings.ia.layerWorkspaceDefault") }}</span>
+                    <span
+                        data-testid="settings-nav-count-workspace-default"
+                        :class="countBadgeClass"
+                    >
+                        {{ t("settings.ia.entryCount", { count: workspaceDefaultEntryCount }) }}
+                    </span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                    <SidebarGroupLabel
+                        as="p"
+                        data-testid="settings-nav-group-secondary"
+                        :class="sectionLabelClass"
+                    >
+                        {{ t("settings.ia.groupWorkspaceDefaultDomains") }}
+                    </SidebarGroupLabel>
+                    <SidebarMenu data-testid="settings-nav-group-items" class="gap-0.5">
+                        <SidebarMenuItem v-for="item in workspaceDefaultDomains" :key="item.id">
+                            <router-link
+                                :to="item.path"
+                                :data-testid="'settings-nav-domain-workspace-default-' + item.id"
+                                :class="[
+                                    itemBaseClass,
+                                    isDomainActive('workspace-default', item.id)
+                                        ? itemActiveClass
+                                        : itemIdleClass,
+                                ]"
+                            >
+                                <component
+                                    :is="iconFor(DOMAIN_ICONS, item.id)"
+                                    :class="itemIconClass"
+                                    aria-hidden="true"
+                                />
+                                <span class="min-w-0 truncate">{{ t(item.labelKey) }}</span>
+                            </router-link>
+                        </SidebarMenuItem>
+                    </SidebarMenu>
+                </CollapsibleContent>
+            </SidebarGroup>
+        </Collapsible>
         <!-- 用户层：非当前层默认收起，「看一眼」时点条目才导航 -->
         <Collapsible v-model:open="userOpen">
             <SidebarGroup class="p-0">

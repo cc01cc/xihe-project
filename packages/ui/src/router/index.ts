@@ -97,7 +97,23 @@ const router = createRouter({
                     props: { layer: "user" as const, domain },
                     meta: { settingsLayer: "user" as const, settingsDomain: domain },
                 })),
+                // PLAN-0766（task-160）：共享工作区默认层。域集来自 stores/config 的
+                // WORKSPACE_WRITABLE 镜像（8 个 UI 域；service-only 的 context-templates 不在 config API 里）。
+                ...LAYER_DOMAINS["workspace-default"].map((domain) => ({
+                    path: `workspace-default/${domain}`,
+                    name: `settings-workspace-default-domain-${domain}`,
+                    component: () => import("../views/settings/SettingsDomainView.vue"),
+                    props: { layer: "workspace-default" as const, domain },
+                    meta: {
+                        settingsLayer: "workspace-default" as const,
+                        settingsDomain: domain,
+                    },
+                })),
                 // 旧路径 redirect（V2）：层不进 URL 时代的入口
+                {
+                    path: "workspace-default",
+                    redirect: () => defaultLayerPath("workspace-default"),
+                },
                 {
                     path: "config",
                     redirect: () => defaultLayerPath("instance"),

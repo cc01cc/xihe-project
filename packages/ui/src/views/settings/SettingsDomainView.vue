@@ -9,7 +9,13 @@ import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
 import SettingsForbiddenView from "./SettingsForbiddenView.vue";
 import SettingsNotFoundView from "./SettingsNotFoundView.vue";
 import ToolFacesView from "./ToolFacesView.vue";
-import { DOMAIN_LABEL_KEY, isInstanceOnlyForUser, resolveLayerRoute } from "../../lib/settingsIa";
+import {
+    DOMAIN_LABEL_KEY,
+    WORKSPACE_DEFAULT_CONFIG_ATOM,
+    isInstanceOnlyForUser,
+    resolveLayerRoute,
+} from "../../lib/settingsIa";
+import LayerPrecedenceBadges from "../../components/settings/LayerPrecedenceBadges.vue";
 import { logger } from "../../lib/logger";
 
 /**
@@ -23,7 +29,7 @@ import { logger } from "../../lib/logger";
  */
 const props = defineProps<{
     /** 路由 props：只在矩阵里存在的组合才会挂上这个组件（router/index.ts 逐域注册）。 */
-    layer: "instance" | "user";
+    layer: ConfigLayer;
     domain: string;
 }>();
 
@@ -56,6 +62,23 @@ const instanceOnly = computed(
 
 const blocked = ref(false);
 const fetchError = ref(false);
+
+/**
+ * PLAN-0766 T3.3：workspace-default 层**可读人人、可写仅原子持有者**。没有
+ * `MANAGE_WORKSPACE_DEFAULT_CONFIG` 时不是 403 死页（CP 仍允许读），而是「只读 + 说明」：
+ * 页面照常取数，控件禁用，信息条点名缺哪个原子。权限判据只认原子投影
+ * （auth.hasInstanceAtom），**不写 isInstanceAdmin 之类的角色名特判**。
+ */
+const workspaceDefaultReadonly = computed(
+    () =>
+        resolved.value.ok &&
+        resolved.value.layer === "workspace-default" &&
+        !auth.hasInstanceAtom?.(WORKSPACE_DEFAULT_CONFIG_ATOM),
+);
+const panelReadonly = computed(
+    () =>
+        resolved.value.ok && resolved.value.layer !== "instance" && workspaceDefaultReadonly.value,
+);
 
 /**
  * 三态而不是两态（task-112）：数据回来前 `keyCount` 必然是 0，若照常渲染「本域 0 项配置」+ 空表单，
@@ -144,6 +167,8 @@ async function load() {
 
 onMounted(() => {
     syncTabFromQuery();
+    // 原子投影按会话取一次；缺投影时 fail-closed（readonly 生效），CP 仍是权威。
+    void auth.ensureSelfPermissions?.();
     void load();
 });
 watch(
@@ -211,6 +236,23 @@ watch(
             </button>
         </div>
 
+        <!-- PLAN-0766 T3.2：四层徽标 + 覆盖顺序说明（存量工作区即时生效）。 -->
+        <LayerPrecedenceBadges v-if="resolved.ok" class="mt-3" :layer="layer" />
+
+        <div
+            v-if="workspaceDefaultReadonly"
+            data-testid="settings-no-atom-notice"
+            class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[11px]"
+        >
+            <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            <div class="min-w-0 flex-1">
+                <p class="font-medium">{{ t("settings.ia.wsDefaultReadonlyTitle") }}</p>
+                <p class="mt-0.5 leading-relaxed text-muted-foreground">
+                    {{ t("settings.ia.wsDefaultReadonlyDetail") }}
+                </p>
+            </div>
+        </div>
+
         <p v-if="fetchError" class="mt-3 text-sm text-muted-foreground">
             {{ t("settings.saveFailed") }}
         </p>
@@ -271,6 +313,7 @@ watch(
             <ConfigLayerPanels
                 :layer="layer"
                 :domain="resolved.domain"
+                :readonly="panelReadonly"
                 @editable-count="editableCount = $event"
             />
         </div>

@@ -12,6 +12,8 @@ import { ref } from "vue";
  */
 const state = {
     capability: true,
+    /** PLAN-0766 T3.3：workspace-default 的写权限门（能力原子，不是角色名）。 */
+    atom: true,
     /** task-112/121：pending 的经济判据是「该层是否已有载荷」，故 layerConfig 必须可变。 */
     layerConfig: ref<Record<string, Record<string, Record<string, string>>>>({
         instance: { logging: { level: "INFO" } },
@@ -37,6 +39,8 @@ vi.mock("../../../stores/auth", () => ({
         get hasInstanceAdminCapability() {
             return state.capability;
         },
+        hasInstanceAtom: () => state.atom,
+        ensureSelfPermissions: () => Promise.resolve(true),
     }),
 }));
 
@@ -76,6 +80,18 @@ const messages = {
                 approvalTabPolicy: "审批策略",
                 navToolFaces: "工具分类",
                 forbiddenTitle: "这一层需要实例管理员能力",
+                layerInstance: "实例配置",
+                layerWorkspaceDefault: "工作区默认值",
+                layerUser: "用户配置",
+                wsDefaultReadonlyTitle: "只读",
+                wsDefaultReadonlyDetail: "缺少 MANAGE_WORKSPACE_DEFAULT_CONFIG",
+                fourLayerOrderLabel: "生效顺序",
+                fourLayerLowToHigh: "（低 → 高）",
+                fourLayerWorkspace: "工作区",
+                fourLayerWorkspaceDefault: "工作区默认",
+                fourLayerUser: "个人",
+                fourLayerInstance: "实例",
+                fourLayerDetail: "工作区 → 工作区默认 → 个人 → 实例",
                 forbiddenBody: "不加载配置",
                 backToUserLayer: "去用户层",
                 notFoundTitle: "这个页面不存在",
@@ -87,7 +103,11 @@ const messages = {
     },
 };
 
-function mountView(layer: "instance" | "user", domain: string, stubs: { panels?: unknown } = {}) {
+function mountView(
+    layer: "instance" | "workspace-default" | "user",
+    domain: string,
+    stubs: { panels?: unknown } = {},
+) {
     const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });
     return mount(SettingsDomainView, {
         props: { layer, domain },
@@ -311,5 +331,53 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         expect(wrapper.find('[data-testid="panels-stub"]').element).toBe(node);
         // 页面自身只取一次数；子组件不得因重挂而重复取数。
         expect(state.loadLayerDomains).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ---- PLAN-0766（task-160）：共享 workspace-default 层的页面行为 ----
+describe("SettingsDomainView workspace-default layer", () => {
+    beforeEach(() => {
+        state.capability = true;
+        state.atom = true;
+        state.routeQuery = {};
+        state.layerLoading.value = false;
+        state.layerConfig.value = {
+            instance: { rag: { chunkSize: "512" } },
+            "workspace-default": { rag: { chunkSize: "1024" } },
+            user: {},
+        };
+        state.loadLayerDomains.mockClear();
+        state.loadLayerDomains.mockImplementation(() => Promise.resolve());
+    });
+
+    it("renders the workspace-default domain page with four-layer precedence badges", async () => {
+        const wrapper = mountView("workspace-default", "rag");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-domain-view"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-domain-title"]').text()).toContain("检索增强");
+        const badges = wrapper.findAll('[data-testid^="layer-badge-"]');
+        expect(badges.map((badge) => badge.text())).toEqual([
+            "工作区",
+            "工作区默认",
+            "个人",
+            "实例",
+        ]);
+        expect(
+            wrapper.get('[data-testid="layer-badge-workspace-default"]').attributes("data-active"),
+        ).toBe("true");
+        expect(wrapper.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(false);
+        expect(state.loadLayerDomains).toHaveBeenCalledWith("workspace-default");
+    });
+
+    it("fails open to read-only (not 403) when the atom is missing", async () => {
+        state.atom = false;
+        const wrapper = mountView("workspace-default", "rag");
+        await flushPromises();
+        // 页面照常取数（CP 允许任何已认证用户读该层），只是控件只读 + 信息条说明。
+        expect(wrapper.find('[data-testid="settings-domain-view"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(true);
+        // 无 prop 声明的 stub 把 attrs 透传到根元素；布尔属性存在即为 ""（不是 "true"）。
+        expect(wrapper.find('[data-testid="panels-stub"]').attributes("readonly")).toBeDefined();
+        expect(state.loadLayerDomains).toHaveBeenCalledWith("workspace-default");
     });
 });

@@ -22,15 +22,24 @@ const props = defineProps<{
 
 const { t } = useI18n();
 
-const layerTitle = computed(() =>
-    props.layer === "instance" ? t("settings.ia.layerInstance") : t("settings.ia.layerUser"),
-);
+/**
+ * PLAN-0766（task-160）：层标题/面包屑必须认第三层。用映射表而不是三元链 ——
+ * 上一版写成 instance ? ... : user，新增层时会安安静静地显示成「用户配置」
+ * （第一次截图实测就是这么错的：/settings/workspace-default/rag 顶着「用户配置」）。
+ */
+const LAYER_TITLE_KEYS: Record<SettingsLayer, string> = {
+    instance: "settings.ia.layerInstance",
+    "workspace-default": "settings.ia.layerWorkspaceDefault",
+    user: "settings.ia.layerUser",
+};
+const LAYER_CRUMB_KEYS: Record<SettingsLayer, string> = {
+    instance: "settings.ia.layerInstanceShort",
+    "workspace-default": "settings.ia.layerWorkspaceDefault",
+    user: "settings.ia.layerUserShort",
+};
 
-const layerCrumb = computed(() =>
-    props.layer === "instance"
-        ? t("settings.ia.layerInstanceShort")
-        : t("settings.ia.layerUserShort"),
-);
+const layerTitle = computed(() => t(LAYER_TITLE_KEYS[props.layer]));
+const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
 
 const crumbSeparator = " › ";
 </script>

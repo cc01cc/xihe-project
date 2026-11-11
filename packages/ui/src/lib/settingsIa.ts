@@ -24,7 +24,14 @@ import {
  */
 export type SettingsLayer = ConfigLayer;
 
-export const SETTINGS_LAYERS: readonly SettingsLayer[] = ["instance", "user"];
+/**
+ * 全局设置可出现的三层。PLAN-0766（task-160）：在实例/用户两层之间插入共享的
+ * `workspace-default` 层（wire 值与路由段同名，小写）。它不是 per-workspace 层
+ * （那层已由 task-253 从 UI 退役），而是部署级的一份默认值行集：对没有显式 workspace
+ * 覆盖的所有工作区生效，可读任意已认证用户、可写仅 `MANAGE_WORKSPACE_DEFAULT_CONFIG`
+ * 持有者（能力原子求值，不是角色名判断）。
+ */
+export const SETTINGS_LAYERS: readonly SettingsLayer[] = ["instance", "workspace-default", "user"];
 
 /** 用户层不可写的域（= 用户层矩阵里没有的那些）：logging / approval-policy / job-policy。 */
 export function isInstanceOnlyForUser(domain: ConfigDomain): boolean {
@@ -101,6 +108,7 @@ function domainRouteExistsInMatrix(layer: SettingsLayer, domain: ConfigDomain): 
  * 层是外框，只有**一个**地方决定它：路由 meta 有则用，没有则从这里按路径推导。</p>
  */
 export function settingsLayerForPath(path: string): SettingsLayer {
+    if (path.startsWith("/settings/workspace-default")) return "workspace-default";
     return path.startsWith("/settings/user") ? "user" : "instance";
 }
 
@@ -126,7 +134,7 @@ export function knowledgeRedirectTarget(workspaceId: string | null): {
         : { name: "workspace-home" };
 }
 
-/** 全局设置页的域路径（只有 instance / user 两层进 `/settings`）。 */
+/** 全局设置页的域路径（instance / workspace-default / user 三层都进 `/settings`）。 */
 export function settingsDomainPath(layer: SettingsLayer, domain: ConfigDomain): string {
     return `/settings/${layer}/${domain}`;
 }
@@ -140,6 +148,13 @@ export function workspaceSettingsDomainPath(workspaceId: string, domain: ConfigD
 export function defaultLayerPath(layer: SettingsLayer): string {
     const first = LAYER_DOMAINS[layer][0];
     return first ? settingsDomainPath(layer, first) : "/settings/user/llm-provider";
+}
+
+/** PLAN-0766 T3.3：写 workspace-default 层的唯一能力原子（CP 用自己的 catalog 求值，UI 不复制名单）。 */
+export const WORKSPACE_DEFAULT_CONFIG_ATOM = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
+
+export function isWorkspaceDefaultLayer(layer: SettingsLayer): boolean {
+    return layer === "workspace-default";
 }
 
 export interface SettingsNavItem {
