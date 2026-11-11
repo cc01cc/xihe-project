@@ -186,13 +186,22 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         List<String> unexpectedExtra = notExempt(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS);
 
         // Operational summary for the report: the diff itself is never hidden, it is bucketed.
+        // Buckets are counted per candidate (classify), not per distinct shape (countIn): two methods
+        // on one path share a shape, and counting shapes made total != bucketA + bucketB + unexpected
+        // (observed 59 vs 58+0 on 2026-11-11). The assertion below keeps that arithmetic honest.
+        int[] missingBuckets = classify(missing, EXEMPT_IMPLEMENTED, KNOWN_GAPS);
+        int[] extraBuckets = classify(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS);
         System.out.println("[bl320] implemented=" + implemented.size() + " documented=" + documented.size()
-                + " | missing: total=" + missing.size() + " framework=" + countIn(missing, EXEMPT_IMPLEMENTED)
-                + " frozen-gap=" + KNOWN_GAPS.size() + " unexpected=" + unexpectedMissing.size()
-                + " | extra: total=" + extra.size() + " cross-service/kept-by-design="
-                + countIn(extra, EXEMPT_DOCUMENTED) + " frozen-gap=" + countIn(extra, KNOWN_GAPS)
-                + " unexpected=" + unexpectedExtra.size()
+                + " | missing: total=" + missing.size() + " framework=" + missingBuckets[0]
+                + " frozen-gap=" + missingBuckets[1] + " unexpected=" + unexpectedMissing.size()
+                + " | extra: total=" + extra.size() + " cross-service/kept-by-design=" + extraBuckets[0]
+                + " frozen-gap=" + extraBuckets[1] + " unexpected=" + unexpectedExtra.size()
                 + " | param-name-exempt=" + PARAM_NAME_EXEMPT.size());
+
+        assertBucketsAccountForTotal("missing", missing.size(), missingBuckets[0], missingBuckets[1],
+                unexpectedMissing.size());
+        assertBucketsAccountForTotal("extra", extra.size(), extraBuckets[0], extraBuckets[1],
+                unexpectedExtra.size());
 
         assertEquals(List.of(), unexpectedMissing, () -> report(
                 "route(s) implemented but missing from docs/api/openapi.yaml", unexpectedMissing, missing,
@@ -351,6 +360,34 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         return new ArrayList<>(hits);
     }
 
+    /**
+     * Per-candidate classification against two shape-keyed buckets, in the <b>same</b> order of
+     * precedence {@link #notExempt} uses. Counting candidates (not distinct shapes) is what makes
+     * {@code total == bucketA + bucketB + unexpected} hold; {@link #countIn} deduplicates shapes and
+     * therefore under-counts when two methods share one path (e.g. GET + PUT on the same shape).
+     */
+    private static int[] classify(List<String> candidates, Map<String, String> bucketA,
+            Map<String, String> bucketB) {
+        int inA = 0;
+        int inB = 0;
+        for (String candidate : candidates) {
+            String shape = parse(pathOf(candidate)).shape();
+            if (bucketA.containsKey(shape)) {
+                inA++;
+            } else if (bucketB.containsKey(shape)) {
+                inB++;
+            }
+        }
+        return new int[] { inA, inB };
+    }
+
+    /** Invariant: every candidate lands in exactly one bucket, so the four printed numbers add up. */
+    private static void assertBucketsAccountForTotal(String axis, int total, int inA, int inB,
+            int unexpected) {
+        assertEquals(total, inA + inB + unexpected,
+                () -> axis + " bucketing does not add up: total=" + total + " bucketA=" + inA
+                        + " bucketB=" + inB + " unexpected=" + unexpected);
+    }
     private static int countIn(List<String> candidates, Map<String, String> bucket) {
         return intersectShapes(candidates, bucket.keySet()).size();
     }
