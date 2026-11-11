@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
+import { BookOpen, Bot, Circle, KeyRound, Plug, Users } from "@lucide/vue";
 import { Badge } from "../ui/badge";
+import { SidebarGroupLabel, SidebarMenu, SidebarMenuItem } from "../ui/sidebar";
 import type { ResourceNavItem } from "../../lib/settingsIa";
 
 const { t } = useI18n();
@@ -16,12 +18,30 @@ const props = defineProps<{
  * D7（PLAN-0752，用户 2026-11-10）：后端没实现的资源**留位、不隐藏**；
  * P0-N-09（settings-ui-issue-inventory）：缺口项**不得与真链接同形**。
  *
- * <p>本卡（task-156）把两者合起来的形态定为「不可点的一行 + 说明」：缺口项不再是
+ * <p>task-156 把两者合起来的形态定为「不可点的一行 + 说明」：缺口项不再是
  * button（D7 早期「点击弹说明」会让它看起来可点），说明改为**组级可见 hint** +
  * 条目 title 携带缺口细节；真入口才渲染 router-link。外观用「无 hover + 禁用光标 +
  * 虚线徽标」与真链接区分（灰度截图下也能分辨，N-09 判据）。</p>
+ *
+ * <p>task-175：视觉层级与 SettingsSidebar 对齐 —— 组标签 12px / 条目 pl-6 三级缩进 /
+ * 选中指示条 / 条目图标（skill A13）；缺口徽标与组级 hint 提至 12px（DEV-011 辅助字阶）。</p>
  */
 const gapItems = computed(() => props.items.filter((item) => !item.path));
+
+/** task-175：资源条目图标；未知 id 回落 Circle。 */
+const RESOURCE_ICONS: Record<string, Component> = {
+    agents: Bot,
+    mcp: Plug,
+    credentials: KeyRound,
+    knowledge: BookOpen,
+    "agent-principals": Users,
+    "my-credentials": KeyRound,
+    "knowledge-mcp": BookOpen,
+};
+
+function iconFor(id: string): Component {
+    return RESOURCE_ICONS[id] ?? Circle;
+}
 
 function gapTitle(item: ResourceNavItem): string {
     const badge = item.gaps?.length
@@ -33,22 +53,24 @@ function gapTitle(item: ResourceNavItem): string {
 </script>
 
 <template>
-    <div data-testid="settings-nav-resource-group" class="mt-3">
-        <p
+    <div data-testid="settings-nav-resource-group" class="mt-1">
+        <SidebarGroupLabel
+            as="p"
             data-testid="settings-nav-group-secondary"
-            class="px-2 pb-1 text-[11px] text-muted-foreground"
+            class="h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium text-muted-foreground"
         >
             {{ t(groupLabelKey) }}
-        </p>
-        <div class="space-y-0.5">
-            <template v-for="item in items" :key="item.id">
+        </SidebarGroupLabel>
+        <SidebarMenu class="gap-0.5">
+            <SidebarMenuItem v-for="item in items" :key="item.id">
                 <router-link
                     v-if="item.path"
                     :to="item.path"
                     :data-testid="'settings-nav-resource-' + item.id"
-                    class="block min-h-[32px] truncate rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    class="flex min-h-[32px] items-center gap-2 truncate rounded-md border-l-2 border-l-transparent py-1.5 pl-6 pr-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 >
-                    {{ t(item.labelKey) }}
+                    <component :is="iconFor(item.id)" class="size-4 shrink-0" aria-hidden="true" />
+                    <span class="min-w-0 truncate">{{ t(item.labelKey) }}</span>
                 </router-link>
                 <!-- 缺口项：不可点（无 click、aria-disabled），说明分别在组级 hint 与 title。 -->
                 <div
@@ -57,10 +79,11 @@ function gapTitle(item: ResourceNavItem): string {
                     :data-gap-codes="(item.gaps ?? []).join(',')"
                     :title="gapTitle(item)"
                     aria-disabled="true"
-                    class="flex min-h-[32px] w-full cursor-not-allowed select-none items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground/60"
+                    class="flex min-h-[32px] w-full cursor-not-allowed select-none items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left text-sm text-muted-foreground/60"
                 >
+                    <component :is="iconFor(item.id)" class="size-4 shrink-0" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate">{{ t(item.labelKey) }}</span>
-                    <Badge variant="outline" class="shrink-0 border-dashed text-[11px]">
+                    <Badge variant="outline" class="shrink-0 border-dashed text-xs">
                         {{
                             (item.gaps ?? []).length
                                 ? t("settings.ia.backendGapBadge", {
@@ -70,12 +93,12 @@ function gapTitle(item: ResourceNavItem): string {
                         }}
                     </Badge>
                 </div>
-            </template>
-        </div>
+            </SidebarMenuItem>
+        </SidebarMenu>
         <p
             v-if="gapItems.length"
             data-testid="settings-nav-gap-hint"
-            class="mt-1 px-2 text-[11px] leading-relaxed text-muted-foreground"
+            class="mt-1 px-2 pl-6 text-xs leading-relaxed text-muted-foreground"
         >
             {{ t("settings.ia.backendGapHint") }}
         </p>
