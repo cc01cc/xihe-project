@@ -142,7 +142,8 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         const tab = wrapper.find('[data-testid="ws-settings-credentials"]');
         expect(tab.exists()).toBe(true);
         // 真功能：面板在（列表已发请求，自身渲染 heading），不是「缺口说明」占位
-        expect(tab.find('[data-testid="credentials-heading"]').exists()).toBe(true);
+        // task-189：页面标题统一为 settings-page-title（h2），旧 credentials-heading 已并入。
+        expect(tab.find('[data-testid="settings-page-title"]').exists()).toBe(true);
         expect(tab.find('[data-testid="credentials-scope-note"]').exists()).toBe(true);
         // 「不是缺口占位」按**权限门的形态**判，而不是按文案里有没有「后端缺口」四个字判：
         // PLAN-0752 M4 的 403 卡有意写「提示：本页不会被标记为『后端缺口』——后端已实现」，

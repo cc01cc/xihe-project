@@ -296,6 +296,19 @@ describe("RolesView role list", () => {
         expect(wrapper.text()).not.toContain("API error");
         expect(wrapper.find('[data-testid="settings-error-panel"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="roles-error"]').exists()).toBe(false);
+        // task-189（P1-4）：gap/error 与 empty 互斥 —— 不渲染空态，也不渲染两枚「新建角色」。
+        expect(wrapper.find('[data-testid="roles-empty"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="roles-create"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="roles-empty-create"]').exists()).toBe(false);
+    });
+
+    it("renders the page title as h2 with the shared testid (task-189 P1-2)", async () => {
+        mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
+        mockedApi.listRoles.mockResolvedValue([role({ system: true })]);
+        const wrapper = await mountView();
+        const title = wrapper.get('[data-testid="settings-page-title"]');
+        expect(title.element.tagName).toBe("H2");
+        expect(wrapper.findAll("h1")).toHaveLength(0);
     });
 });
 

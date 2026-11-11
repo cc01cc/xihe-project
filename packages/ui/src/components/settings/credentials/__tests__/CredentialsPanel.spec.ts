@@ -126,6 +126,25 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
         expect(bodyEl('[data-testid="credentials-empty"]')?.textContent).toContain("暂无凭据");
     });
 
+    it("localizes a failed load and reissues the request from the error surface (task-189)", async () => {
+        mockedApi.listCredentials.mockRejectedValue(new Error("API error 404"));
+
+        const wrapper = await mountPanel();
+        const errorBox = wrapper.get('[data-testid="credentials-error"]');
+        // 原始 message 不得直渲；统一错误面给本地化文案 + 重试出口。
+        expect(errorBox.text()).toContain(i18n.global.t("credentials.loadFailed"));
+        expect(errorBox.text()).not.toContain("API error 404");
+        expect(wrapper.find('[data-testid="settings-error-panel"]').exists()).toBe(true);
+
+        const before = mockedApi.listCredentials.mock.calls.length;
+        await wrapper.get('[data-testid="settings-error-retry"]').trigger("click");
+        await flushPromises();
+        // 重试必须真的重发（不是只换文案）。
+        expect(mockedApi.listCredentials.mock.calls.length).toBeGreaterThan(before);
+        const { toast } = await import("vue-sonner");
+        expect(toast.error).toHaveBeenCalledWith(i18n.global.t("credentials.refreshFailed"));
+    });
+
     it("opens the detail dialog from a row and shows the delete reference report", async () => {
         mockedApi.listCredentials.mockResolvedValue({
             credentials: [credential()],

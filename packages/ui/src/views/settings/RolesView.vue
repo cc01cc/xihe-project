@@ -110,6 +110,8 @@ async function loadWorkspaces() {
 }
 
 function openCreate() {
+    // task-189：目录未加载时打开编辑器只会得到一个无法完成的表单 —— 直接拦在入口。
+    if (!catalog.value) return;
     resetFeedback();
     editorRole.value = null;
     editorOpen.value = true;
@@ -191,7 +193,7 @@ watch(
                     data-testid="roles-forbidden"
                     class="mx-auto mt-16 max-w-md rounded-xl border bg-card p-6 text-center"
                 >
-                    <h1 class="text-base font-semibold">{{ t("settings.rolesForbiddenTitle") }}</h1>
+                    <h2 class="text-base font-semibold">{{ t("settings.rolesForbiddenTitle") }}</h2>
                     <p class="mt-1 text-sm text-muted-foreground">
                         {{ t("settings.rolesForbiddenBody") }}
                     </p>
@@ -200,7 +202,10 @@ watch(
 
             <template v-else>
                 <header class="mb-4">
-                    <h1 class="text-lg font-semibold">{{ t("settings.rolesTitle") }}</h1>
+                    <!-- task-189：页面标题降为 h2（层标题 settings-layer-title 是唯一 h1）。 -->
+                    <h2 data-testid="settings-page-title" class="text-lg font-semibold">
+                        {{ t("settings.rolesTitle") }}
+                    </h2>
                     <p class="mt-1 text-sm text-muted-foreground">
                         {{ t("settings.rolesSubtitle") }}
                     </p>
@@ -255,12 +260,24 @@ watch(
                     {{ notice }}
                 </p>
 
-                <section v-if="tab === 'roles'" data-testid="roles-list-section" class="space-y-3">
+                <!-- task-189：gap/error 与 empty 互斥 —— 加载失败时只留错误面，不渲染空态与新建入口。 -->
+                <section
+                    v-if="tab === 'roles' && !loadCause"
+                    data-testid="roles-list-section"
+                    class="space-y-3"
+                >
                     <div class="flex items-center justify-between">
                         <p class="text-xs text-muted-foreground">
                             {{ t("settings.rolesListHint") }}
                         </p>
-                        <Button data-testid="roles-create" @click="openCreate">
+                        <Button
+                            data-testid="roles-create"
+                            :disabled="!catalog"
+                            :title="
+                                !catalog ? t('settings.rolesCreateDisabledNoCatalog') : undefined
+                            "
+                            @click="openCreate"
+                        >
                             <Plus class="size-4" aria-hidden="true" />
                             {{ t("settings.rolesCreate") }}
                         </Button>
@@ -282,7 +299,16 @@ watch(
                             </EmptyDescription>
                         </EmptyHeader>
                         <EmptyContent>
-                            <Button data-testid="roles-empty-create" @click="openCreate">
+                            <Button
+                                data-testid="roles-empty-create"
+                                :disabled="!catalog"
+                                :title="
+                                    !catalog
+                                        ? t('settings.rolesCreateDisabledNoCatalog')
+                                        : undefined
+                                "
+                                @click="openCreate"
+                            >
                                 <Plus class="size-4" aria-hidden="true" />
                                 {{ t("settings.rolesCreate") }}
                             </Button>
@@ -357,7 +383,7 @@ watch(
                 </section>
 
                 <RoleBindingsPanel
-                    v-else
+                    v-else-if="!loadCause"
                     :roles="roles"
                     :workspaces="workspaces"
                     @notice="notice = $event"
