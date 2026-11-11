@@ -2,10 +2,12 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, RefreshCw } from "@lucide/vue";
+import { toast } from "vue-sonner";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import CredentialCreateDialog from "./CredentialCreateDialog.vue";
 import SettingsPermissionGate from "../SettingsPermissionGate.vue";
+import SettingsErrorSurface from "../SettingsErrorSurface.vue";
 import CredentialDetailDialog from "./CredentialDetailDialog.vue";
 import CredentialLinkDialog from "./CredentialLinkDialog.vue";
 import CredentialReplaceDialog from "./CredentialReplaceDialog.vue";
@@ -72,10 +74,20 @@ function refreshAfterChange() {
     void store.load(props.ownerType);
 }
 
+/**
+ * task-189（P1-1）：刷新必须「真的重发 + 有可见反馈」。store.load 本身会重新请求，
+ * 这里补上成功/失败两种 toast —— 旧版失败时页面只是把同一条 404 原样再画一遍，
+ * 用户看不出刷新到底有没有发生。
+ */
 async function refresh() {
     reloading.value = true;
     try {
         await store.load(props.ownerType);
+        if (store.error) {
+            toast.error(t("credentials.refreshFailed"));
+        } else {
+            toast.success(t("credentials.refreshDone"));
+        }
     } finally {
         reloading.value = false;
     }
@@ -104,9 +116,10 @@ onMounted(async () => {
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     XH / Credentials
                 </p>
-                <h1 data-testid="credentials-heading" class="text-xl font-semibold tracking-tight">
+                <!-- task-189（P1-2）：页面标题是 h2；层标题（settings-layer-title）才是唯一 h1。 -->
+                <h2 data-testid="settings-page-title" class="text-xl font-semibold tracking-tight">
                     {{ t("credentials.heading") }}
-                </h1>
+                </h2>
                 <p class="mt-1 text-sm text-muted-foreground">{{ t("credentials.desc") }}</p>
                 <p
                     v-if="scopeNote"
@@ -147,12 +160,16 @@ onMounted(async () => {
             <SettingsPermissionGate variant="atom-denied" atom="credential_manage" />
         </div>
 
-        <div
-            v-if="store.error"
-            data-testid="credentials-error"
-            class="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-        >
-            {{ store.error.message }}
+        <!-- task-189（P1-1）：接 168 统一错误面 —— 本地化文案 + 重试出口，绝不渲染 ApiError.message 原文。
+             外层保留 credentials-error 作为本页定位点（SettingsErrorSurface 内部自带 settings-error-panel /
+             settings-error-retry 两个 testid）。 -->
+        <div v-if="store.error" data-testid="credentials-error" class="mb-4">
+            <SettingsErrorSurface
+                :cause="store.error"
+                :message="t('credentials.loadFailed')"
+                :retry="refresh"
+                retry-key="settings.errorSurface.retry"
+            />
         </div>
 
         <section class="min-w-0 rounded-lg border border-border bg-card">

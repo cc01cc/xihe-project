@@ -171,9 +171,9 @@ watch(domain, () => {
                         <path d="M8 10V7a4 4 0 0 1 8 0v3" />
                     </svg>
                 </div>
-                <h1 class="text-base font-semibold">
+                <h2 class="text-base font-semibold">
                     {{ t("settings.configLockForbiddenTitle") }}
-                </h1>
+                </h2>
                 <p class="mt-1 text-sm text-muted-foreground">
                     {{ t("settings.configLockForbiddenBody") }}
                 </p>
@@ -182,7 +182,10 @@ watch(domain, () => {
 
         <template v-else>
             <header class="mb-4">
-                <h1 class="text-lg font-semibold">{{ t("settings.configLockTitle") }}</h1>
+                <!-- PLAN-0766 后续 task-189：页面标题必须是 h2（层标题才是唯一 h1），并统一 testid。 -->
+                <h2 data-testid="settings-page-title" class="text-lg font-semibold">
+                    {{ t("settings.configLockTitle") }}
+                </h2>
                 <p class="mt-1 text-sm text-muted-foreground">
                     {{ t("settings.configLockSubtitle") }}
                 </p>
