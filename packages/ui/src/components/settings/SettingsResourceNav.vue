@@ -3,7 +3,7 @@ import { computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { BookOpen, Bot, Circle, KeyRound, Plug, Users } from "@lucide/vue";
 import { Badge } from "../ui/badge";
-import { SidebarGroupLabel, SidebarMenu, SidebarMenuItem } from "../ui/sidebar";
+import { SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import type { ResourceNavItem } from "../../lib/settingsIa";
 
 const { t } = useI18n();
@@ -63,23 +63,36 @@ function gapTitle(item: ResourceNavItem): string {
         </SidebarGroupLabel>
         <SidebarMenu class="gap-0.5">
             <SidebarMenuItem v-for="item in items" :key="item.id">
-                <router-link
+                <!-- PLAN-0762 T3.1：真链接走 `SidebarMenuButton as-child` + router-link —— 语义与
+                     样式仍由条目自己决定（class 落在被克隆的 `<a>` 上），组件族只提供 hover/选中/
+                     `data-active` 约定。**不传 `tooltip`**：两层 asChild 会让 `TooltipTrigger` 的
+                     `data-slot` 顶掉 `sidebar-menu-button`（实测见 SettingsSidebar 模板注释）。 -->
+                <SidebarMenuButton
                     v-if="item.path"
-                    :to="item.path"
-                    :data-testid="'settings-nav-resource-' + item.id"
+                    as-child
                     class="flex min-h-[32px] items-center gap-2 truncate rounded-md border-l-2 border-l-transparent py-1.5 pl-6 pr-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 >
-                    <component :is="iconFor(item.id)" class="size-4 shrink-0" aria-hidden="true" />
-                    <span class="min-w-0 truncate">{{ t(item.labelKey) }}</span>
-                </router-link>
-                <!-- 缺口项：不可点（无 click、aria-disabled），说明分别在组级 hint 与 title。 -->
-                <div
+                    <router-link :to="item.path" :data-testid="'settings-nav-resource-' + item.id">
+                        <component
+                            :is="iconFor(item.id)"
+                            class="size-4 shrink-0"
+                            aria-hidden="true"
+                        />
+                        <span class="min-w-0 truncate">{{ t(item.labelKey) }}</span>
+                    </router-link>
+                </SidebarMenuButton>
+                <!-- 缺口项：不可点（无 click、aria-disabled），说明分别在组级 hint 与 title。
+                     N-09 要求「禁用光标 + title 可达」⇒ 必须把 vendor 的
+                     `aria-disabled:pointer-events-none` 顶回 `auto`（twMerge 同一 variant 组后写者胜），
+                     否则 title 提示在缺口项上永远弹不出来。 -->
+                <SidebarMenuButton
                     v-else
+                    as="div"
                     :data-testid="'settings-nav-resource-gap-' + item.id"
                     :data-gap-codes="(item.gaps ?? []).join(',')"
                     :title="gapTitle(item)"
                     aria-disabled="true"
-                    class="flex min-h-[32px] w-full cursor-not-allowed select-none items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left text-sm text-muted-foreground/60"
+                    class="flex min-h-[32px] w-full cursor-not-allowed select-none items-center gap-2 rounded-md py-1.5 pl-6 pr-2 text-left text-sm text-muted-foreground/60 aria-disabled:pointer-events-auto"
                 >
                     <component :is="iconFor(item.id)" class="size-4 shrink-0" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate">{{ t(item.labelKey) }}</span>
@@ -92,7 +105,7 @@ function gapTitle(item: ResourceNavItem): string {
                                 : t("settings.ia.backendGapBadgeGeneric")
                         }}
                     </Badge>
-                </div>
+                </SidebarMenuButton>
             </SidebarMenuItem>
         </SidebarMenu>
         <p

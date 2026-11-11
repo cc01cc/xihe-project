@@ -1419,6 +1419,17 @@ const messages = {
             approvalAutoOffFailed: "关闭自动放行失败，自动放行仍然开启，请重试",
         },
         settings: {
+            eyebrow: {
+                credentials: "XH / 凭据",
+                agentPrincipals: "XH / 智能体主体",
+                audit: "XH / 操作审计",
+                policy: "XH / 权限规则",
+            },
+            permissionAtom: {
+                credentialManage: "凭据管理",
+                createOwnAgent: "创建个人智能体",
+                writeInstanceContent: "写入实例内容",
+            },
             ia: {
                 breadcrumbRoot: "设置",
                 breadcrumbLabel: "面包屑",
@@ -1466,7 +1477,7 @@ const messages = {
                     "内容按你的归属自动收窄 —— 看到空列表不代表没权限，也不代表数据丢了；看不到别人的条目是设计如此，这里不会出现 403。",
                 atomDeniedTitle: "权限不足",
                 atomDeniedBody:
-                    "缺少 {atom}。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
+                    "缺少「{atom}」权限（{code}）。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
                 atomDeniedNotGap:
                     "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
                 gapNoteAgent:
@@ -1769,7 +1780,9 @@ const messages = {
                 saveDraft: "保存草稿",
                 format: "格式化",
                 publish: "校验并发布",
-                chooseType: "选择 API Type 后新建模板",
+                fallbackEmpty: "尚未选中模板：新建一个，或从左侧选择已有版本",
+                statusDraft: "草稿",
+                statusPublished: "已发布",
                 rebindRequired: "需显式重新绑定请求模板",
                 switchConfirm: "协议将改变，请确认目标连接、模型与请求模板。取消不会保存。",
                 chooseTemplate: "选择请求模板",
@@ -4165,6 +4178,17 @@ const messages = {
             approvalAutoOffFailed: "Could not turn off auto allow; it is still on. Please retry.",
         },
         settings: {
+            eyebrow: {
+                credentials: "XH / Credentials",
+                agentPrincipals: "XH / Agent principals",
+                audit: "XH / Audit",
+                policy: "XH / Policy",
+            },
+            permissionAtom: {
+                credentialManage: "Credential management",
+                createOwnAgent: "Create your own agents",
+                writeInstanceContent: "Write instance content",
+            },
             ia: {
                 breadcrumbRoot: "Settings",
                 breadcrumbLabel: "Breadcrumb",
@@ -4213,7 +4237,7 @@ const messages = {
                     "content is narrowed by ownership — an empty list does not mean you lack permission, and it does not mean data was lost; other people's entries are invisible by design and you will not see a 403 here.",
                 atomDeniedTitle: "Insufficient permission",
                 atomDeniedBody:
-                    "Missing {atom}. This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
+                    "Missing the “{atom}” permission ({code}). This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
                 atomDeniedNotGap:
                     "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
                 gapNoteAgent:
@@ -4533,7 +4557,10 @@ const messages = {
                 saveDraft: "Save draft",
                 format: "Format",
                 publish: "Validate and publish",
-                chooseType: "Choose an API Type to create a template",
+                fallbackEmpty:
+                    "No template selected: create one, or pick an existing version on the left",
+                statusDraft: "Draft",
+                statusPublished: "Published",
                 rebindRequired: "Explicit request template rebind required",
                 switchConfirm:
                     "The protocol will change. Confirm the target connection, model and request template. Cancel saves nothing.",

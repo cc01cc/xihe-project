@@ -5,6 +5,7 @@ import { toast } from "vue-sonner";
 import { Bot, Link2, Plus, RefreshCw } from "@lucide/vue";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
 import { Input } from "../ui/input";
 import Dialog from "../ui/dialog/Dialog.vue";
 import DialogContent from "../ui/dialog/DialogContent.vue";
@@ -269,7 +270,7 @@ onMounted(refresh);
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    XH / Agent principals
+                    {{ t("settings.eyebrow.agentPrincipals") }}
                 </p>
                 <h1
                     data-testid="agent-principals-heading"
@@ -395,13 +396,15 @@ onMounted(refresh);
             <div v-if="loading" class="p-4 text-sm text-muted-foreground">
                 {{ t("agentPrincipals.loading") }}
             </div>
-            <div
-                v-else-if="agents.length === 0"
-                data-testid="agent-principals-empty"
-                class="p-8 text-center text-sm text-muted-foreground"
-            >
-                {{ t("agentPrincipals.empty") }}
-            </div>
+            <Empty v-else-if="agents.length === 0" data-testid="agent-principals-empty" class="p-8">
+                <!-- 创建表单在上方常驻 ⇒ 这里不重复给按钮（PLAN-0762 T1.4）。 -->
+                <EmptyHeader class="gap-1">
+                    <EmptyMedia variant="icon">
+                        <Bot class="size-4" aria-hidden="true" />
+                    </EmptyMedia>
+                    <EmptyDescription>{{ t("agentPrincipals.empty") }}</EmptyDescription>
+                </EmptyHeader>
+            </Empty>
             <ul v-else data-testid="agent-principals-list" class="divide-y divide-border">
                 <li
                     v-for="agent in agents"

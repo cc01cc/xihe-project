@@ -11,6 +11,7 @@ import {
 import { roleErrorMessage } from "./roleErrorMessages";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
+import { Empty, EmptyDescription, EmptyHeader } from "../ui/empty";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { LoaderCircle, X } from "@lucide/vue";
 /** T5.2: agent role bindings live here so RoleBindingsPanel stays small. CP owns the gate;
@@ -240,13 +241,18 @@ watch(selectedPrincipalId, (next, previous) => {
             </Select>
         </label>
 
-        <p
+        <Empty
             v-if="!loading && agents.length === 0"
             data-testid="agent-role-bindings-empty"
-            class="text-xs text-muted-foreground"
+            class="items-start gap-2 p-3 text-left"
         >
-            {{ t("settings.rolesBindingsAgentNoAgents") }}
-        </p>
+            <!-- 表单内提示，不是空页面：走精简形态（无 EmptyMedia 图标、无操作入口）。 -->
+            <EmptyHeader class="items-start gap-1">
+                <EmptyDescription class="text-xs">{{
+                    t("settings.rolesBindingsAgentNoAgents")
+                }}</EmptyDescription>
+            </EmptyHeader>
+        </Empty>
         <p v-else-if="loading" class="text-xs text-muted-foreground">
             {{ t("settings.rolesBindingsAgentLoading") }}
         </p>

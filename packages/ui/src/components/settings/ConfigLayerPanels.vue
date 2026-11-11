@@ -545,7 +545,7 @@ async function handleReset(domain: string, key: string) {
                     <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                         {{ t("settings.providerPartitionKicker") }}
                     </div>
-                    <h3 class="text-sm font-semibold">
+                    <h3 class="text-base font-semibold" data-testid="provider-hub-section-title">
                         {{ t("settings.providerPartitionTitle") }}
                     </h3>
                     <p class="text-xs text-muted-foreground">

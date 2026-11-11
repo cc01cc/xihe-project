@@ -282,7 +282,7 @@ onMounted(() => {
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    XH / Audit
+                    {{ t("settings.eyebrow.audit") }}
                 </p>
                 <h1
                     data-testid="settings-audit-heading"

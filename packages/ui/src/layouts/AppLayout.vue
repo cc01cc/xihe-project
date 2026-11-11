@@ -6,6 +6,7 @@ import { PanelLeftOpen } from "@lucide/vue";
 import { useWindowSize } from "@vueuse/core";
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
 import Sidebar from "../components/sidebar/Sidebar.vue";
+import SashGrip from "../components/shared/SashGrip.vue";
 import WorkspaceTabBar from "../features/workspace/components/WorkspaceTabBar.vue";
 import SseSubscriberLimitNotice from "../features/workspace/components/SseSubscriberLimitNotice.vue";
 import { createUserChannelSse } from "../features/workspace/chat/useUserChannelSSE";
@@ -377,6 +378,10 @@ onUnmounted(() => {
                 不 fork SplitterResizeHandle）。aria-valuenow/min/max 是**首帧初值**（像素）：
                 group 测量到几何后，reka 的 useWindowSplitterPanelGroupBehavior 会用 0–100
                 百分比 remove/set 这三个属性（同标度自洽，dev-3 裁定 ③）。
+
+                PLAN-0762 M4 (T4.1)：⋮ 抓手的视觉在 SashGrip 里，`z-10` 只为让 24px 圆浮在
+                两侧 panel 之上；热区仍是 `w-1`（4px），reka 自己的 `hitAreaMargins` 是另一层，
+                改宽度会同时改"拖不动"的边界，禁止。
             -->
             <SplitterResizeHandle
                 v-if="navHandleVisible"
@@ -387,10 +392,12 @@ onUnmounted(() => {
                 :aria-valuenow="navWidth"
                 :aria-valuemin="NAV_WIDTH_MIN"
                 :aria-valuemax="NAV_WIDTH_MAX"
-                class="relative -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+                class="group/sash relative z-10 -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
                 @dragging="navBridge.onDragging"
                 @dblclick="navBridge.onDblclick"
-            />
+            >
+                <SashGrip testid="sidebar-resizer-grip" />
+            </SplitterResizeHandle>
             <SplitterPanel
                 class="flex min-h-0 min-w-0"
                 :class="navResizing ? 'transition-none' : 'transition-[flex-grow] duration-300'"

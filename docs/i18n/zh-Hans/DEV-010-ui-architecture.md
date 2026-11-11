@@ -171,16 +171,16 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 > 本节是**区域命名与布局契约的唯一正文**（2026-11-10 用户确认命名方案后落盘）。纪律自本日起对**新写的**文档、代码与 testid 生效；存量正文按 §10.7 分批对齐。
 >
-> **实现状态 `partial`**：§10.3 的分隔条交互在工作区三列**已实现**（下给 `file:line`）；§10.1 的正名、§10.2 的全局两级结构与悬停「三点抓手」**尚未落地**（逐行见「现状」列与 §10.6）。
+> **实现状态 `partial`**（2026-11-11 回填）：§10.3 的分隔条交互在工作区三列**已实现**（下给 `file:line`）；§10.1 的 `GlobalRail` / `ModuleStage` 正名与 §10.2 的全局两级结构**已落地**（`f97bdf039`，T2.1/T2.2）；`ListPane` / `MainPane` / `ContextPane` 三列正名与悬停「三点抓手」**尚未落地**（逐行见「现状」列与 §10.6）。
 >
 > **与 PLAN-0582 S2 的关系**：`composables/useWorkspaceLayout.ts:18-20` 的 S2 注释（fixed 56px icon-only / `48<->176` dual state gone）**就全局导航条而言被本节 supersede** —— 2026-10-31 的 S2 约束的是**工作区内部那条 rail**；2026-11-10 用户要的是**跨模块的全局条**要双态，两者不是同一条。工作区导航面板（`NavPanel`）的折叠语义**不变**。该 S2 代码注释在 **PLAN-0762 M1 落地时同批更新**；本卡只改文档，不动源码。
 
 ### 10.1 区域命名表（唯一正名）
 
-| 中文正名 | 英文/代码 | testid | 判据 | 现状（2026-11-10） |
+| 中文正名 | 英文/代码 | testid | 判据 | 现状（2026-11-11 回填） |
 | --- | --- | --- | --- | --- |
-| 全局导航条 | `GlobalRail` | `global-rail` | 唯一、最左、切模块、可折叠（56px 图标 ↔ 图标+文字） | **未落地**：现名 `NavRail`（`components/sidebar/NavRail.vue`），固定 56px 纯图标、无双态 |
-| 模块舞台 | `ModuleStage` | `module-stage` | 全局条右侧容器，一次只装一个模块 | **未落地**：现由 `layouts/AppLayout.vue` 主区的 `SplitterPanel` 承接 |
+| 全局导航条 | `GlobalRail` | `global-rail` | 唯一、最左、切模块、可折叠（56px 图标 ↔ 图标+文字） | **已落地**（`f97bdf039`，T2.1）：`components/sidebar/GlobalRail.vue` —— `SidebarProvider` + `collapsible="icon"` + `SidebarRail` 双态（持久化键 `xihe-global-rail-open`）、testid `global-rail`；`App.vue:65` 常驻。旧 `NavRail.vue` 仅剩 `src/preview/mock/` 预览稿与单测引用，产品壳不再使用 |
+| 模块舞台 | `ModuleStage` | `module-stage` | 全局条右侧容器，一次只装一个模块 | **已落地**（`f97bdf039`，T2.2）：`layouts/ModuleStage.vue:13`（testid `module-stage`），`App.vue:66-68` 包裹唯一 `router-view`；模块内部布局仍归各模块自己的 layout（`AppLayout` / `SettingsLayout`） |
 | 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | 模块内部的分区/列表导航 | **部分**：`settings-nav-*` 已符合（`components/settings/SettingsResourceNav.vue`）；工作区侧无 `workspace-nav` |
 | 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | 可折叠、可调宽的数据列 | **未落地**：现分四段 —— 导航面板（`sidebar-resizer`）/ 文件树（`tree-resizer`）/ 主区（路由容器 `workspace-route-viewport`）/ dock（`dock-resizer`，即 `ContextPane`） |
 
@@ -221,7 +221,7 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 | 折叠态与宽度分开持久化 | 已实现 | `composables/useWorkspaceLayout.ts:26-27`（`xihe-layout-global` / `xihe-layout-ws:<id>`）、`:88-99`（`navOpen` / `treeCollapsed` / `dockCollapsed` 与各自宽度分开） |
 | 窄屏夹取不写回 | 已实现 | `composables/useSplitterPanelBridge.ts:24`（stored-width clamp 只作用于 keyboard/dblclick/release）；`clampNavWidthForViewport` 同口径 |
 | **hover 竖向三点抓手** | **未落地** | 仅注释提到 `GripVertical`（`WorkspaceWorkbench.vue:673`），`src` 无实际引入；现状是 hover 背景高亮 |
-| **全局条双态 / `SidebarRail` / `⌘B`** | **未落地** | `shadcn-vue Sidebar` 组件族**尚未 vendor**（见 §10.6 第 3 条） |
+| **全局条双态 / `SidebarRail` / `⌘B`** | **已落地**（`f97bdf039`） | `components/ui/sidebar/` 已 vendor **26 个文件（24 个 `.vue` + `index.ts`/`utils.ts`）**（计数命令见证据）—— **原理由「`shadcn-vue Sidebar` 组件族尚未 vendor」已不成立**；`SidebarProvider.vue:57-62` 即 `⌘/Ctrl+B`，`SidebarRail.vue` hover 切换，`GlobalRail.vue:62-71` 在用；单测 `components/__tests__/GlobalRail.spec.ts:118-130` |
 
 **复用而非新建**：布局几何的唯一 owner 是 `composables/useWorkspaceLayout.ts`（常量 `:24-51`、状态接口 `:88-99`）与 `composables/useSplitterPanelBridge.ts`；新增列一律走这套，**不另建第二份布局状态**。
 
@@ -235,11 +235,11 @@ workspace 文件管理 UI 基于 reka-ui 无头原语 + 仓库内本地拷贝式
 
 ### 10.6 待裁定
 
-以下三项**均未裁定**，实施方不得自行选择：
+下列三项中标「待裁定」的实施方不得自行选择；已裁定项就地标注裁定来源与日期（见第 3 条）：
 
 1. **全局条后续模块清单**：MVP 只放「工作台 / 设置页」两个；第三个模块何时进、进什么，待用户裁定。（模块命名 D-924）
 2. **设置页右栏参数**：`ContextPane` 挂什么、默认宽、是否可折叠 —— 与 §10.5 的「不做」配套，等桌面 MVP 验收后另定。
-3. **`shadcn-vue Sidebar` 三档固定宽 vs 现有 220–360 自由拖拽**：`Sidebar` 宽度走 CSS 变量（`--sidebar-width` / `--sidebar-width-icon`）三档固定，与 `useWorkspaceLayout.ts` 的连续拖拽模型**语义冲突**；全局条采 `Sidebar` 还是保留自研双态，**待裁定**。
+3. ~~**`shadcn-vue Sidebar` 三档固定宽 vs 现有 220–360 自由拖拽**~~ → **已裁定：全局条采 `Sidebar`**（来源：PLAN-0762「已消解冲突」+ 决策 1，2026-11-10 用户裁定「可全量用 `Sidebar`、可固定宽」；落地 `f97bdf039`，2026-11-11）。**边界（不得扩读）**：仅全局条与设置页左导航走 `Sidebar` 的 CSS 变量档宽；**工作区内部 220–360 连续拖拽模型不变**，三列几何仍归 `useWorkspaceLayout.ts` 单一 owner。
 
 ### 10.7 存量表述待对齐（分批）
 

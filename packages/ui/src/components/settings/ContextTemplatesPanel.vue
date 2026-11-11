@@ -149,6 +149,20 @@ function insertVariable(name: string) {
     input?.focus();
 }
 /**
+ * P2-2 ③：模板状态是 CP 枚举（`draft`/`published`），中文界面里不许直出裸英文。
+ * 未登记的值**原样返回**（新增状态不会显示成空白或错误中文）。
+ */
+const STATUS_LABEL_KEYS: Record<string, string> = {
+    draft: "settings.apiRequest.statusDraft",
+    published: "settings.apiRequest.statusPublished",
+};
+function statusLabel(status: string | null | undefined): string {
+    if (!status) return "—";
+    const key = STATUS_LABEL_KEYS[status];
+    return key ? t(key) : status;
+}
+
+/**
  * 只做排版：`JSON.parse` → `JSON.stringify(…, null, 2)`（两空格缩进）。
  * 语义不变：`${xh.*}` 等字符串值原样保留，不增删字段，不自动补默认值。
  * 非法 JSON 就地报错且**不改写原文**（不静默、不「尽力修复」）。
@@ -212,7 +226,7 @@ async function save(publish: boolean) {
     const currentGeneration = generation;
     const next = nextRevision(publish ? "published" : "draft");
     if (!next) {
-        error.value = t("settings.apiRequest.chooseType");
+        error.value = t("settings.apiRequest.fallbackEmpty");
         return;
     }
     error.value = "";
@@ -315,7 +329,7 @@ async function save(publish: boolean) {
                 >
                     {{ item.name }}
                     <span class="text-xs text-muted-foreground"
-                        >v{{ item.version }} · {{ item.status }}</span
+                        >v{{ item.version }} · {{ statusLabel(item.status) }}</span
                     >
                 </button>
                 <p v-if="latest.length === 0" class="p-3 text-xs text-muted-foreground">
@@ -343,8 +357,10 @@ async function save(publish: boolean) {
                             <SelectValue>
                                 v{{ selected?.version }} ·
                                 {{
-                                    revisions.find((item) => item.version === selected?.version)
-                                        ?.status ?? "draft"
+                                    statusLabel(
+                                        revisions.find((item) => item.version === selected?.version)
+                                            ?.status ?? "draft",
+                                    )
                                 }}
                             </SelectValue>
                         </SelectTrigger>
@@ -354,7 +370,7 @@ async function save(publish: boolean) {
                                 :key="item.version"
                                 :value="String(item.version)"
                             >
-                                v{{ item.version }} · {{ item.status }}
+                                v{{ item.version }} · {{ statusLabel(item.status) }}
                             </SelectItem>
                         </SelectContent>
                     </Select>
@@ -449,9 +465,23 @@ async function save(publish: boolean) {
                     </span>
                 </div>
             </div>
-            <p v-else class="p-4 text-sm text-muted-foreground">
-                {{ t("settings.apiRequest.chooseType") }}
-            </p>
+            <!-- P2-2 ①②：空态不再只说「去选 API Type」（`selectedType` 早在 onMounted 就填了首个类型，
+                 叫用户去选等于让他找一个已经填好的控件），而是说清「没选中模板」并就地给新建入口。 -->
+            <div v-else class="space-y-2 p-4">
+                <p class="text-sm text-muted-foreground">
+                    {{ t("settings.apiRequest.fallbackEmpty") }}
+                </p>
+                <button
+                    v-if="!readonly && types.length > 0"
+                    type="button"
+                    data-testid="api-request-new-empty"
+                    class="rounded-md border px-3 py-1 text-xs"
+                    :disabled="saving"
+                    @click="create"
+                >
+                    {{ t("settings.apiRequest.new") }}
+                </button>
+            </div>
         </div>
         <p v-if="error" role="alert" class="p-3 text-xs text-destructive">{{ error }}</p>
     </section>

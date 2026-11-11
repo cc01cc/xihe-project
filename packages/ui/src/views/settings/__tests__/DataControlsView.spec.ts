@@ -67,8 +67,13 @@ const mockedApi = vi.mocked(api, true),
                     noAtomTitle: "本页没有权限原子：",
                     noAtomBody: "内容按你的归属自动收窄，这里不会出现 403。",
                     atomDeniedTitle: "权限不足",
-                    atomDeniedBody: "缺少 {atom}。这是授权问题，不是功能缺失。",
+                    atomDeniedBody: "缺少「{atom}」权限（{code}）。这是授权问题，不是功能缺失。",
                     atomDeniedNotGap: "本页不是后端缺口。",
+                },
+                permissionAtom: {
+                    credentialManage: "凭据管理",
+                    createOwnAgent: "创建个人智能体",
+                    writeInstanceContent: "写入实例内容",
                 },
                 checkpointRetention: "快照保留",
                 checkpointRetentionDesc:
@@ -175,6 +180,8 @@ describe("DataControlsView", () => {
 
         expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(true);
         expect(wrapper.text()).toContain("WRITE_INSTANCE_CONTENT");
+        // task-22 / P2-4：中文权限名与机器码同时在屏
+        expect(wrapper.text()).toContain("写入实例内容");
         expect(mockedApi.getWorkspaceCheckpointRetention).not.toHaveBeenCalled();
         // 主体不挂载：导出/导入按钮与保留区块都不在 DOM
         expect(wrapper.text()).not.toContain("导出设置");

@@ -209,7 +209,7 @@ watch(domain, () => {
                         </SelectItem>
                     </SelectContent>
                 </Select>
-                <span class="text-xs text-muted-foreground">
+                <span v-if="catalog" class="text-xs text-muted-foreground">
                     {{ t("settings.configLockCount", { count: lockedCount }) }}
                 </span>
                 <button
@@ -236,7 +236,9 @@ watch(domain, () => {
                 {{ notice }}
             </p>
 
-            <div class="overflow-x-auto border rounded-lg">
+            <!-- task-22 / P2-5：拿不到目录（gap/error）时不渲染空表与「已锁定 0 个键」——
+                 「取不到」不能被推成「该域没有键」，计数只由真实目录推出。 -->
+            <div v-if="catalog" class="overflow-x-auto border rounded-lg">
                 <table class="w-full text-sm" data-testid="config-lock-table">
                     <thead class="bg-muted/60 text-xs text-muted-foreground">
                         <tr>

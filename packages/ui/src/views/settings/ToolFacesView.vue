@@ -161,7 +161,7 @@ onMounted(() => {
                     v-if="!props.embedded"
                     class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground"
                 >
-                    XH / Policy
+                    {{ t("settings.eyebrow.policy") }}
                 </p>
                 <h1
                     data-testid="settings-tool-faces-heading"

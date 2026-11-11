@@ -51,10 +51,19 @@ watch(
         设置左栏固定 264（不做 220–360 拖拽：那是工作区三栏的模型，设置区无 handle 也从无此需求），
         但宽度必须变量化 —— 否则下次又要出现 920/1010 那类各自算一个数的局部字面量。
         悬停/折叠状态用 data-* 属性表达（vendor Sidebar 的 ③ 模式），CSS 侧可据此选择器化。
+
+        PLAN-0762 T3.1（(A) 方案）追加：`--sidebar-width` 只是上面这个单一口径的**别名** ——
+        vendor `Sidebar` 读它（`ui/sidebar/Sidebar.vue:28/:70/:84`），而**不**取
+        `useWorkspaceLayout.navWidth`（工作区导航 220–360 的模型，设置区无拖拽 handle）。
+        `SettingsSidebar` 现在用 `collapsible="none"` + `w-full`，该变量尚未被消费；留着是为了
+        将来切 `offcanvas`/`icon` 折叠时只改一个 prop，而不是再去引第二个宽度数字。
     -->
     <div
         class="flex h-full min-h-0 bg-background text-foreground"
-        :style="{ '--settings-sidebar-width': '264px' }"
+        :style="{
+            '--settings-sidebar-width': '264px',
+            '--sidebar-width': 'var(--settings-sidebar-width)',
+        }"
     >
         <!--
             PLAN-0762 T2.1（task-253 的进一步收敛）：全局 rail 已提升到 App.vue 的全局层

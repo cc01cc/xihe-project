@@ -234,4 +234,48 @@ describe("SettingsSidebar", () => {
         expect(withRoles.text()).toContain("角色与授权");
         expect(withRoles.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
     });
+
+    /**
+     * PLAN-0762 T3.1 / (A)：**真用** `Sidebar` 组件族，但**不挂第二个 `SidebarProvider`**。
+     * 这一条只看「产品有没有退化成手写 DOM / 有没有把 provider 带回来」两件事——
+     * 机制级旁路（⌘B、cookie、宽度、tooltip）由 `settings-sidebar-context.spec.ts` 钉。
+     * `16rem` 是 `SidebarProvider.vue:84` 的写死宽度，出现即说明有人把 provider 包回来了。
+     */
+    it("T3.1: renders the vendored Sidebar family without mounting a SidebarProvider", () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        clearCookies();
+        const before = document.cookie;
+
+        const wrapper = mountSidebar("instance", "rag");
+
+        expect(wrapper.find('[data-testid="settings-sidebar"]').exists()).toBe(true);
+        expect(wrapper.find('[data-slot="sidebar"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-slot="sidebar-menu"]').length).toBeGreaterThan(0);
+        // 每个条目都必须**保住 vendor 标记**：`as-child` + tooltip 会让 TooltipTrigger 的
+        // `data-slot` 顶掉 `sidebar-menu-button`（浏览器实测 17 条丢 13 条）⇒ 这里逐条钉住，
+        // 将来谁给条目加回 `tooltip` 会立刻红。
+        for (const link of wrapper.findAll('[data-testid^="settings-nav-domain-"]')) {
+            expect(link.attributes("data-slot")).toBe("sidebar-menu-button");
+        }
+        expect(wrapper.findAll('[data-slot="sidebar-menu-button"]').length).toBeGreaterThanOrEqual(
+            17,
+        );
+        // 选中态走 vendor 的 data-active 约定（同时保留条目自身的 2px 指示条 class）
+        const active = wrapper.find('[data-active="true"]');
+        expect(active.exists()).toBe(true);
+        expect(active.classes().join(" ")).toContain("bg-muted");
+
+        // (A) 的两条外部可观测证据：没有 provider 的 16rem wrapper、没有 cookie 写入
+        expect(wrapper.html()).not.toContain("16rem");
+        expect(document.cookie).toBe(before);
+        expect(document.cookie).not.toContain("sidebar_state");
+    });
 });
+
+function clearCookies() {
+    for (const part of document.cookie.split(";")) {
+        const name = part.split("=")[0]?.trim();
+        if (name) document.cookie = `${name}=; path=/; max-age=0`;
+    }
+}

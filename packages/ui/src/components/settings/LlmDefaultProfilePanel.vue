@@ -226,7 +226,9 @@ onMounted(load);
 <template>
     <div class="space-y-3" data-testid="llm-instance-default">
         <div class="space-y-1">
-            <h4 class="text-sm font-semibold">{{ t("settings.llmInstanceDefaultTitle") }}</h4>
+            <h4 class="text-sm font-semibold" data-testid="instance-default-title">
+                {{ t("settings.llmInstanceDefaultTitle") }}
+            </h4>
             <p class="text-xs text-muted-foreground">
                 {{ t("settings.llmInstanceDefaultDesc") }}
             </p>

@@ -11,6 +11,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import { LayoutTemplate } from "@lucide/vue";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "../ui/empty";
 
 type Permission = { actionClass: string; resource?: string };
 type Role = { id: string; name: string; permissions: Permission[] };
@@ -495,12 +497,19 @@ function cancelRoleEdit() {
                     </button>
                 </div>
             </article>
-            <p
+            <Empty
                 v-if="templates.length === 0"
-                class="rounded-md border border-dashed p-3 text-sm text-muted-foreground"
+                data-testid="agent-templates-empty"
+                class="border border-dashed p-3"
             >
-                {{ t("settings.agentTemplateEmpty") }}
-            </p>
+                <!-- 原文案与「下方新建表单即出口」的结构不变：只换渲染件。 -->
+                <EmptyHeader class="gap-1">
+                    <EmptyMedia variant="icon">
+                        <LayoutTemplate class="size-4" aria-hidden="true" />
+                    </EmptyMedia>
+                    <EmptyDescription>{{ t("settings.agentTemplateEmpty") }}</EmptyDescription>
+                </EmptyHeader>
+            </Empty>
         </div>
 
         <form

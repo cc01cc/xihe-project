@@ -37,6 +37,7 @@ import {
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
+import SashGrip from "../../../components/shared/SashGrip.vue";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
 import FileTreePanel from "./FileTreePanel.vue";
@@ -724,7 +725,7 @@ defineExpose({ openDockTab });
                         />
                     </div>
                 </SplitterPanel>
-                <!-- testid/aria 走 fallthrough（与导航 handle 同口径；GripVertical 的把手视觉留在 rail 内）。 -->
+                <!-- testid/aria 走 fallthrough（与导航 handle 同口径）；⋮ 抓手是 SashGrip 子件（PLAN-0762 M4）。 -->
                 <SplitterResizeHandle
                     v-if="!treePanelCollapsed"
                     id="tree-resize-handle"
@@ -734,10 +735,12 @@ defineExpose({ openDockTab });
                     :aria-valuenow="treeWidth"
                     :aria-valuemin="TREE_WIDTH_MIN"
                     :aria-valuemax="TREE_WIDTH_MAX"
-                    class="relative -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+                    class="group/sash relative z-10 -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
                     @dragging="treeBridge.onDragging"
                     @dblclick="treeBridge.onDblclick"
-                />
+                >
+                    <SashGrip testid="tree-resizer-grip" />
+                </SplitterResizeHandle>
 
                 <!--
                 Center: the routed main content (chat / environment / settings).

@@ -134,6 +134,9 @@ describe("ConfigLocksView", () => {
         expect(wrapper.text()).not.toContain("MOCK_ENDPOINT_MISSING");
         expect(wrapper.text()).not.toContain("API error");
         expect(wrapper.find('[data-testid="config-lock-error"]').exists()).toBe(false);
+        // task-22 / P2-5：gap 态不得渲染空表与「已锁定 N 个键」——「取不到」不是「没有」。
+        expect(wrapper.find('[data-testid="config-lock-table"]').exists()).toBe(false);
+        expect(wrapper.text()).not.toContain("已锁定");
     });
 
     it("renders 403 for non-admin without loading the catalog", async () => {

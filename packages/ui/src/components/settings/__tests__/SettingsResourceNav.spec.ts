@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
+import { computed, defineComponent, h, ref } from "vue";
 import { createI18n } from "vue-i18n";
+import { provideSidebarContext } from "@/components/ui/sidebar/utils";
 
 /**
  * PLAN-0752 T4.0/T4.1：左栏「资源」组。
@@ -41,8 +43,33 @@ import { userResourceGroup } from "../../../lib/settingsIa";
 import SettingsResourceNav from "../SettingsResourceNav.vue";
 
 function mountNav() {
-    return mount(SettingsResourceNav, {
-        props: { groupLabelKey: "settings.ia.groupMyResources", items: userResourceGroup() },
+    // PLAN-0762 T3.1：资源组现在用 `SidebarMenuButton`（setup 里就 `useSidebar()`，
+    // reka `createContext` 无 fallback）⇒ 单独挂载必须自带 context。产品里由
+    // `SettingsSidebar` 手工 provide（见 `settings-sidebar-context.spec.ts`），这里复刻最小壳。
+    const Host = defineComponent({
+        setup() {
+            const open = ref(true);
+            provideSidebarContext({
+                state: computed(() => (open.value ? "expanded" : "collapsed")),
+                open,
+                setOpen: (value: boolean) => {
+                    open.value = value;
+                },
+                isMobile: ref(false),
+                openMobile: ref(false),
+                setOpenMobile: () => {},
+                toggleSidebar: () => {
+                    open.value = !open.value;
+                },
+            });
+            return () =>
+                h(SettingsResourceNav, {
+                    groupLabelKey: "settings.ia.groupMyResources",
+                    items: userResourceGroup(),
+                });
+        },
+    });
+    return mount(Host, {
         global: { plugins: [i18n] },
         attachTo: document.body,
     });

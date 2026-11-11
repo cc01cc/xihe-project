@@ -170,17 +170,16 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 
 > This section is the **single authoritative text** for region naming and layout. The disciplines below bind **newly written** documents, code and testids from this date onward; existing prose is aligned in batches per §10.7.
 >
-> **Implementation status `partial`**: the splitter interaction described in §10.3 **is implemented** for the three workspace columns (file:line below); the names in §10.1, the two-level global structure in §10.2 and the hover grip are **not implemented yet** (see the "Current state" column and §10.6).
+> **Implementation status `partial`** (backfilled 2026-11-11): the splitter interaction described in §10.3 **is implemented** for the three workspace columns (file:line below); the `GlobalRail` / `ModuleStage` names in §10.1 and the two-level global structure in §10.2 **have landed** (`f97bdf039`, T2.1/T2.2); the `ListPane` / `MainPane` / `ContextPane` column names and the hover grip are **not implemented yet** (see the "Current state" column and §10.6).
 >
 > **Relationship to PLAN-0582 S2**: the S2 note at `composables/useWorkspaceLayout.ts:18-20` (fixed 56px icon-only / `48<->176` dual state gone) is **superseded by this contract for the global rail only** — the 2026-10-31 ruling governed the **rail inside Workspace**; the 2026-11-10 ruling asks for a dual-state **cross-module global rail**, which is a different bar. The collapse semantics of the Workspace navigation panel (`NavPanel`) **do not change**. That S2 code comment is updated **together with the PLAN-0762 M1 implementation**; this card only touches documentation, not source.
 
 ### 10.1 Region naming table (the only sanctioned names)
 
-| Name (zh) | English / code | testid | What qualifies | Current state (2026-11-10) |
+| Name (zh) | English / code | testid | What qualifies | Current state (backfilled 2026-11-11) |
 | --- | --- | --- | --- | --- |
-| 全局导航条 | `GlobalRail` | `global-rail` | single, leftmost, switches modules, collapsible (56px icons ↔ icon+label) | **not implemented**: today `NavRail` (`components/sidebar/NavRail.vue`), fixed 56px icon-only, single state |
-| 模块舞台 | `ModuleStage` | `module-stage` | container right of the global rail, holds exactly one module at a time | **not implemented**: served today by the main `SplitterPanel` in `layouts/AppLayout.vue` |
-| | | | | The **Workbench** module hosts sessions (including sessions with no workspace) plus workspaces (list/switch/new/import/members); "workspace" is an object inside it, not a module name. |
+| 全局导航条 | `GlobalRail` | `global-rail` | single, leftmost, switches modules, collapsible (56px icons ↔ icon+label) | **landed** (`f97bdf039`, T2.1): `components/sidebar/GlobalRail.vue` — `SidebarProvider` + `collapsible="icon"` + `SidebarRail` dual state (persisted as `xihe-global-rail-open`), testid `global-rail`; mounted in `App.vue:65`. The old `NavRail.vue` survives only in `src/preview/mock/` and unit tests, not in the product shell |
+| 模块舞台 | `ModuleStage` | `module-stage` | container right of the global rail, holds exactly one module at a time | **landed** (`f97bdf039`, T2.2): `layouts/ModuleStage.vue:13` (testid `module-stage`), wrapping the single `router-view` in `App.vue:66-68`; in-module layout stays with each module's own layout (`AppLayout` / `SettingsLayout`) |
 | 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | in-module section/list navigation | **partial**: `settings-nav-*` already conforms (`components/settings/SettingsResourceNav.vue`); no `workspace-nav` on the Workspace side |
 | 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | collapsible, resizable data column | **not implemented**: four segments today — navigation panel (`sidebar-resizer`) / file tree (`tree-resizer`) / main area (route container `workspace-route-viewport`) / dock (`dock-resizer`, i.e. `ContextPane`) |
 
@@ -193,6 +192,7 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 ### 10.2 Three-level layout model and MVP scope
 
 - **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: the main Workbench and Settings** (user ruling 2026-11-10, "these two first"). Extending the module list is **pending a ruling** (§10.6).
+- **Workbench module**: hosts sessions (including sessions that belong to no workspace) plus workspaces (list / switch / new / import / members). "Workspace" is an object under the Workbench module, not a module name.
 - **Main Workspace**: left (session/task list, `ListPane`) + centre (`MainPane`) + right (`ContextPane`, i.e. today's dock); left and right are collapsible.
 - **Settings**: left = settings navigation (`SettingsNav`, **not** the global rail) + right = content. **MVP is two columns; no right pane** (§10.5).
 
@@ -220,7 +220,7 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 | Collapsed state vs width persisted separately | implemented | `composables/useWorkspaceLayout.ts:26-27` (`xihe-layout-global` / `xihe-layout-ws:<id>`), `:88-99` (`navOpen` / `treeCollapsed` / `dockCollapsed` stored apart from their widths) |
 | Narrow-viewport clamp not written back | implemented | `composables/useSplitterPanelBridge.ts:24` (stored-width clamp applied on keyboard/dblclick/release only); same stance for `clampNavWidthForViewport` |
 | **Hover vertical three-dot grip** | **not implemented** | only a comment mentions `GripVertical` (`WorkspaceWorkbench.vue:673`) and `src` never imports it; today the hover state is a background highlight |
-| **Global-rail dual state / `SidebarRail` / `⌘B`** | **not implemented** | the `shadcn-vue Sidebar` family is **not vendored yet** (see §10.6 item 3) |
+| **Global-rail dual state / `SidebarRail` / `⌘B`** | **landed** (`f97bdf039`) | `components/ui/sidebar/` is vendored (**26 files: 24 `.vue` + `index.ts`/`utils.ts`**, counting command in the evidence) — **the old reason "the `shadcn-vue Sidebar` family is not vendored yet" no longer holds**; `SidebarProvider.vue:57-62` is the `⌘/Ctrl+B` handler, `SidebarRail.vue` toggles on hover, and `GlobalRail.vue:62-71` uses both; unit test `components/__tests__/GlobalRail.spec.ts:118-130` |
 
 **Reuse, do not fork**: the single owner of layout geometry is `composables/useWorkspaceLayout.ts` (constants `:24-51`, state interface `:88-99`) plus `composables/useSplitterPanelBridge.ts`; new columns must go through it — **no second layout state**.
 
@@ -234,11 +234,11 @@ A right pane on Settings (domain notes / inheritance chain / provenance) is **ou
 
 ### 10.6 Pending rulings
 
-All three are **undecided**; implementers must not choose on their own:
+Among the three items below, anything still marked **pending** must not be decided by implementers; where an item is already ruled, the ruling's source and date are recorded in place (see item 3):
 
 1. **Which modules join the global rail later**: MVP carries two (main Workspace / Settings); when and what a third module would be is pending a user ruling.
 2. **Right-pane parameters for Settings**: what `ContextPane` carries, its default width and whether it collapses — follows from the "not doing it" decision in §10.5 and is decided after the desktop MVP is accepted.
-3. **`shadcn-vue Sidebar` fixed three-tier width vs today's free 220–360 drag**: `Sidebar` sizes itself through CSS variables (`--sidebar-width` / `--sidebar-width-icon`) in fixed steps, which **conflicts semantically** with the continuous drag model in `useWorkspaceLayout.ts`; whether the global rail adopts `Sidebar` or keeps a hand-rolled dual state is **pending a ruling**.
+3. ~~**`shadcn-vue Sidebar` fixed three-tier width vs today's free 220–360 drag**~~ → **ruled: the global rail adopts `Sidebar`** (source: PLAN-0762 "Resolved conflicts" + decision 1, user ruling 2026-11-10 that `Sidebar` may be used throughout at fixed widths; landed `f97bdf039`, 2026-11-11). **Boundary (do not widen it)**: only the global rail and the Settings left nav use `Sidebar`'s CSS-variable steps; **the in-workspace 220–360 continuous drag model is unchanged**, and the three columns' geometry still has `useWorkspaceLayout.ts` as its single owner.
 
 ### 10.7 Existing wording to align (in batches)
 

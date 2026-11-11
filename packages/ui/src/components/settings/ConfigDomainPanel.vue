@@ -7,6 +7,7 @@ import { settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { FieldControl, FieldError, FieldRoot } from "reka-ui";
+import { FieldDescription, FieldLabel } from "../ui/field";
 
 const { t } = useI18n();
 
@@ -102,6 +103,28 @@ function isWritable(key: string): boolean {
 }
 
 /**
+ * PLAN-0762 T1.5：字段块改走 `Field` 组件族。
+ *
+ * <p>**分工**（实测，不是取舍）：`src/components/ui/field` 是 shadcn-vue 的静态展示族，
+ * 导出 `Field`/`FieldLabel`/`FieldDescription`/`FieldError` 等，**没有** `FieldRoot`/`FieldControl`；
+ * 带 value 绑定与校验上下文的 `FieldRoot`/`FieldControl`/`FieldError` 只有 `reka-ui` 提供。
+ * 所以标签用 vendor `FieldLabel`（`<label>`，`for` 指向控件）、描述用 vendor
+ * `FieldDescription`，number 字段那套 reka 校验链**原样保留**（行为与 `config-number-error-*`
+ * testid 都不动）。可寻址性不变：`config-field-*` / `config-source-*` / `config-source-jump-*`
+ * 全部保号，文案不改。
+ */
+
+/** 该字段这一行是否真的渲染了可交互控件（只读/锁定态只有一个取值 span）。 */
+function hasControl(field: DomainField): boolean {
+    return !props.readonly && !isLocked(field.key);
+}
+
+/** 控件 id —— `FieldLabel` 的 `for` 指向它，点标签即聚焦控件（PLAN-0762 T1.5）。 */
+function controlId(field: DomainField): string {
+    return `config-ctl-${props.domain}-${field.key}`;
+}
+
+/**
  * PLAN-0752 T3.2「同域内不同键不同层」——逐键层属不是整域一个徽标。
  *
  * 判定来源是 CP 的 `ConfigService`，UI 不复制键清单：
@@ -138,6 +161,18 @@ function isLayerReadonlyKey(key: string): boolean {
  */
 function fieldReadonly(field: DomainField): boolean {
     return props.readonly === true || isLayerReadonly(field);
+}
+
+/**
+ * task-23 / P2-6：JSON / textarea 类字段是**多行值**，只读态不能按单行截断。
+ *
+ * <p>实测（`evidence/2026-11-11-settings-p2/p02-probe.json`）：同一字段在可编辑态是
+ * `<textarea rows="3">`（74 px、318 字符完整可见），但整域只读或实例专属键落到下层时，
+ * `v-else` 分支用 `truncate` 的单行 span 呈现 ⇒ 200+ 字符的 JSON 只看得见第一行。
+ * 所以只给这两类放开换行；其余类型保持单行截断（行高一致、表格不塌）。</p>
+ */
+function isMultilineValueField(field: DomainField): boolean {
+    return field.type === "json" || field.type === "textarea";
 }
 
 function sourceText(key: string): string {
@@ -446,10 +481,11 @@ function handleReset(key: string) {
                 "
             >
                 <div class="min-w-0 w-1/3 text-muted-foreground">
-                    <span class="flex items-center gap-1">
-                        <span class="block text-xs text-muted-foreground truncate">{{
-                            field.label
-                        }}</span>
+                    <FieldLabel
+                        :for="hasControl(field) ? controlId(field) : undefined"
+                        class="flex items-center gap-1 text-xs font-normal text-muted-foreground"
+                    >
+                        <span class="block truncate">{{ field.label }}</span>
                         <span
                             v-if="isInstanceOnlyField(field)"
                             :data-testid="`config-key-layer-badge-${domain}-${field.key}`"
@@ -458,8 +494,8 @@ function handleReset(key: string) {
                             :aria-label="t('settings.configKeyInstanceOnlyHint')"
                             >{{ t("settings.configKeyInstanceOnlyBadge") }}</span
                         >
-                    </span>
-                    <span
+                    </FieldLabel>
+                    <FieldDescription
                         v-if="meta?.[field.key]"
                         :data-testid="`config-source-${domain}-${field.key}`"
                         class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground"
@@ -489,7 +525,7 @@ function handleReset(key: string) {
                         <span v-if="sourceHint(field.key)" class="min-w-0 truncate">
                             {{ sourceHint(field.key) }}
                         </span>
-                    </span>
+                    </FieldDescription>
                 </div>
 
                 <template v-if="isLocked(field.key)">
@@ -535,6 +571,7 @@ function handleReset(key: string) {
                     <input
                         v-if="field.allowCustom && customMode[field.key]"
                         v-model="editing[field.key]"
+                        :id="controlId(field)"
                         :data-testid="`config-custom-${domain}-${field.key}`"
                         :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                         class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
@@ -557,6 +594,7 @@ function handleReset(key: string) {
                         "
                     >
                         <SelectTrigger
+                            :id="controlId(field)"
                             :data-testid="`config-select-${domain}-${field.key}`"
                             class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         >
@@ -592,6 +630,7 @@ function handleReset(key: string) {
                     v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
                     v-model="editing[field.key]"
                     rows="3"
+                    :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                     :class="field.type === 'json' ? 'font-mono' : ''"
@@ -609,6 +648,7 @@ function handleReset(key: string) {
                     <FieldControl
                         v-model="editing[field.key]"
                         as="input"
+                        :id="controlId(field)"
                         :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                         class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                         type="number"
@@ -624,12 +664,22 @@ function handleReset(key: string) {
                 <input
                     v-else-if="!readonly"
                     v-model="editing[field.key]"
+                    :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
                     :type="field.type === 'password' ? 'password' : 'text'"
                 />
 
-                <span v-else class="min-w-0 flex-1 text-sm truncate">
+                <!-- task-23 / P2-6：多行值（JSON/textarea）的只读取值不再单行截断；其余类型保持 truncate。 -->
+                <span
+                    v-else
+                    class="min-w-0 flex-1 text-sm"
+                    :class="
+                        isMultilineValueField(field)
+                            ? 'whitespace-pre-wrap break-all max-h-24 overflow-y-auto'
+                            : 'truncate'
+                    "
+                >
                     {{
                         field.type === "password"
                             ? editing[field.key]

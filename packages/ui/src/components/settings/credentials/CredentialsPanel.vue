@@ -114,7 +114,7 @@ onMounted(async () => {
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
                 <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    XH / Credentials
+                    {{ t("settings.eyebrow.credentials") }}
                 </p>
                 <!-- task-189（P1-2）：页面标题是 h2；层标题（settings-layer-title）才是唯一 h1。 -->
                 <h2 data-testid="settings-page-title" class="text-xl font-semibold tracking-tight">

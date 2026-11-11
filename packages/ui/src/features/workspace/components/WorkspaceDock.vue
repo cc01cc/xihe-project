@@ -10,6 +10,7 @@ import {
     clampDockWidth,
 } from "../../../composables/useWorkspaceLayout";
 import { useLiveResize } from "../../../composables/useLiveResize";
+import SashGrip from "../../../components/shared/SashGrip.vue";
 // ─────────────────────────────────────────────────────────────────────────────
 // dockview 停用（用户 2026-11-10 裁定：保留依赖、不在 MVP 使用）
 //
@@ -219,6 +220,12 @@ function handleResizeKeydown(event: KeyboardEvent) {
         :style="focus ? undefined : { width: `${width}px` }"
     >
         <!-- Focus fills the row, so a resize handle (and its width) has no meaning. -->
+        <!--
+            PLAN-0762 M4 (T4.1)：⋮ 抓手走 SashGrip（与 reka 两处同一定义）。本 handle 是手写的，
+            所以 `data-state` 得自己给 —— 取值与 reka `SplitterResizeHandle` 同口径
+            （`inactive | drag`，悬停由 CSS `group-hover` 覆盖），抓手的显示规则因此三处一致。
+            热区仍是 `w-1`（4px），改宽度会让"拖不动"变成新 bug，禁止。
+        -->
         <div
             v-if="!focus"
             role="separator"
@@ -229,11 +236,14 @@ function handleResizeKeydown(event: KeyboardEvent) {
             :aria-valuemax="DOCK_WIDTH_MAX"
             tabindex="0"
             data-testid="dock-resizer"
-            class="absolute left-0 top-0 bottom-0 w-1 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+            :data-state="resizingWidth !== null ? 'drag' : 'inactive'"
+            class="group/sash absolute left-0 top-0 bottom-0 w-1 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
             @dblclick="resetWidth"
             @mousedown="handleResizeStart"
             @keydown="handleResizeKeydown"
-        />
+        >
+            <SashGrip testid="dock-resizer-grip" />
+        </div>
 
         <!-- P2-2: the live width bubble; display-only, never persisted. -->
         <span
