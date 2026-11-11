@@ -40,7 +40,10 @@ const messages = {
         settings: {
             domainRag: "检索增强（RAG）",
             saveFailed: "保存失败",
-            ia: { domainKeysCount: "本域 {count} 项配置" },
+            ia: {
+                domainKeysCount: "本域 {count} 个配置键",
+                domainEditableCount: "当前页可编辑 {count} 项",
+            },
         },
         common: { loading: "加载中…" },
     },
@@ -79,7 +82,7 @@ beforeEach(() => {
 });
 
 describe("SettingsDomainView 层落定判据（task-122）", () => {
-    it("空值层也算落定：9 个域全空 ⇒ 不显示加载面，画「本域 0 项配置」", async () => {
+    it("空值层也算落定：9 个域全空 ⇒ 不显示加载面，也不显示「0 个配置键」（C-01）", async () => {
         respondWithEmptyDomains();
         const wrapper = mountView();
         await flushPromises();
@@ -90,9 +93,10 @@ describe("SettingsDomainView 层落定判据（task-122）", () => {
         expect(store.layerConfig.user["rag"]).toEqual({});
 
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域 0 项配置",
-        );
+        // task-157 / DEV-011 §1 P0-C-01：没有键就不写「本域 0 个配置键」，更不写旧口径「0 项配置」。
+        expect(wrapper.find('[data-testid="settings-domain-summary"]').exists()).toBe(false);
+        expect(wrapper.text()).not.toContain("本域 0 个配置键");
+        expect(wrapper.text()).not.toContain("本域 0 项配置");
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
     });
 

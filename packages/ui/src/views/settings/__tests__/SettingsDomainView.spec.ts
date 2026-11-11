@@ -67,7 +67,8 @@ const messages = {
             domainApprovalPolicy: "审批策略",
             saveFailed: "保存失败",
             ia: {
-                domainKeysCount: "本域 {count} 项配置",
+                domainKeysCount: "本域 {count} 个配置键",
+                domainEditableCount: "当前页可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail: "{domain} 不在用户层的可写域清单里",
@@ -94,6 +95,8 @@ function mountView(layer: "instance" | "user", domain: string, stubs: { panels?:
             plugins: [i18n],
             stubs: {
                 ConfigLayerPanels: stubs.panels ?? {
+                    name: "ConfigLayerPanels",
+                    emits: ["editable-count"],
                     template: '<div data-testid="panels-stub" />',
                 },
                 ToolFacesView: { template: '<div data-testid="tool-faces-stub" />' },
@@ -228,7 +231,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         // task-121：面板**不卸载**（v-show 隐藏），只在视觉上让位给加载面 —— 卸载会诱发 mount 循环。
         expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(false);
-        expect(wrapper.text()).not.toContain("本域 0 项配置");
+        expect(wrapper.text()).not.toContain("本域 0 个配置键");
     });
 
     it("renders the summary and the panel once the layer resolves", async () => {
@@ -241,12 +244,34 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
 
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域 1 项配置",
+            "本域 1 个配置键",
         );
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
     });
 
     // 循环回归：旧实现 `pending = layerLoading` 会让这里重新出现 loading 面并卸载面板。
+    it("承接面板上报的可编辑字段数（M>0 显示次量纲，主文案是键数）", async () => {
+        state.layerConfig.value = {
+            instance: { logging: { level: "INFO", levelAgent: "INFO" } },
+            user: {},
+        };
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+
+        // 默认桩不上报 ⇒ 只显示主文案（键数 2）。
+        expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
+            "本域 2 个配置键",
+        );
+        expect(wrapper.find('[data-testid="settings-domain-editable-count"]').exists()).toBe(false);
+
+        // 面板上报 2 个可编辑字段 ⇒ 右侧次量纲出现，且量纲文案不是「项配置」。
+        wrapper.findComponent({ name: "ConfigLayerPanels" }).vm.$emit("editable-count", 2);
+        await wrapper.vm.$nextTick();
+        const editable = wrapper.find('[data-testid="settings-domain-editable-count"]');
+        expect(editable.text()).toContain("当前页可编辑 2 项");
+        wrapper.unmount();
+    });
+
     it("keeps the panel tree mounted when a reload flips the global loading flag", async () => {
         state.layerConfig.value = { instance: { logging: { level: "INFO" } }, user: {} };
         const wrapper = mountView("instance", "logging");
@@ -259,7 +284,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域 1 项配置",
+            "本域 1 个配置键",
         );
     });
     // 循环回归（dev-3 trace）：子组件在挂载/重载时回写全局 `layerLoading`。判据是**面板子树不被重建** ——

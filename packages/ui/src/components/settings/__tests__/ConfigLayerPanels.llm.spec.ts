@@ -101,6 +101,8 @@ describe("ConfigLayerPanels llm-provider 域分派（PLAN-0764 T1.6）", () => {
         expect(wrapper.findComponent(DomainPanelStub).exists()).toBe(false);
         // 引导块及其跳转按钮仍在（连接管理入口），但不再是唯一内容。
         expect(wrapper.find("[data-testid='provider-instance-go-user']").exists()).toBe(true);
+        // task-157：实例 llm-provider 页的「可编辑字段数」= 3（provider/model/连接槽位）。
+        expect(wrapper.emitted("editable-count")?.at(-1)).toEqual([3]);
     });
 
     it("user 层仍渲染 ProviderHub(scope=USER) 连接管理，不动", async () => {
@@ -108,5 +110,7 @@ describe("ConfigLayerPanels llm-provider 域分派（PLAN-0764 T1.6）", () => {
         expect(wrapper.findComponent(ProviderHubStub).exists()).toBe(true);
         expect(wrapper.findComponent(ProviderHubStub).props("scope")).toBe("USER");
         expect(wrapper.findComponent(LlmDefaultPanelStub).exists()).toBe(false);
+        // task-157：连接管理页没有行内字段 ⇒ 次量纲 M=0（不显示），不与「字段」口径混。
+        expect(wrapper.emitted("editable-count")?.at(-1)).toEqual([0]);
     });
 });

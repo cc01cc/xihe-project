@@ -1467,7 +1467,8 @@ const messages = {
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",
-                domainKeysCount: "本域 {count} 项配置",
+                domainKeysCount: "本域 {count} 个配置键",
+                domainEditableCount: "当前页可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail:
@@ -4149,7 +4150,8 @@ const messages = {
                 navConfigLocks: "Config locks",
                 navRoles: "Roles & grants",
                 navAudit: "Audit log",
-                domainKeysCount: "{count} keys in this domain",
+                domainKeysCount: "{count} config keys in this domain",
+                domainEditableCount: "{count} editable fields on this page",
                 switchToUserLayer: "Switch to the user layer",
                 layerOnlyInstance: "This domain is configurable only at the instance layer",
                 layerOnlyInstanceDetail:

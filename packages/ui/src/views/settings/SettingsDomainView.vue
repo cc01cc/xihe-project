@@ -73,9 +73,24 @@ const layerSettled = computed(
     () => Object.keys(configStore.layerConfig[layer.value] ?? {}).length > 0,
 );
 const pending = computed(() => !layerSettled.value && !fetchError.value);
-/** 失败时同样不渲染「0 项配置」——「取数失败」也不是「没有配置」。 */
+/**
+ * 失败时同样不渲染计数——「取数失败」也不是「没有配置」。
+ *
+ * task-157 两量纲（D-926 E 维）：页头主文案只陈述「本域 N 个配置键」（N = 本层 entries 键数，
+ * 不含继承/生效值）；右侧次量纲「当前页可编辑 M 项」由面板上报（M = 本页允许编辑的**字段**数）。
+ * N=0 时连主文案也不显示（DEV-011 §1 P0-C-01：不再出现「本域 0 项配置」与说明卡并存的矛盾）。
+ */
 const showSummary = computed(
-    () => activeTab.value === "policy" && !pending.value && !fetchError.value,
+    () => activeTab.value === "policy" && !pending.value && !fetchError.value && keyCount.value > 0,
+);
+/** M>0 才显示；纯引导页/连接管理页没有可编辑字段 ⇒ 不显示次量纲。 */
+const editableCount = ref(0);
+const showEditableCount = computed(
+    () =>
+        activeTab.value === "policy" &&
+        !pending.value &&
+        !fetchError.value &&
+        editableCount.value > 0,
 );
 
 /**
@@ -154,15 +169,25 @@ watch(
             >
                 {{ t("settings.ia.domainKeysCount", { count: keyCount }) }}
             </p>
-            <button
-                v-if="instanceOnly"
-                type="button"
-                data-testid="settings-switch-layer"
-                class="ml-auto rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                @click="blocked = true"
-            >
-                {{ t("settings.ia.switchToUserLayer") }}
-            </button>
+            <!-- 右侧次量纲：当前页可编辑字段数（M>0 才显示；与主文案的「键数」量纲不同）。 -->
+            <div class="ml-auto flex items-center gap-3">
+                <p
+                    v-if="showEditableCount"
+                    data-testid="settings-domain-editable-count"
+                    class="text-xs text-muted-foreground"
+                >
+                    {{ t("settings.ia.domainEditableCount", { count: editableCount }) }}
+                </p>
+                <button
+                    v-if="instanceOnly"
+                    type="button"
+                    data-testid="settings-switch-layer"
+                    class="rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    @click="blocked = true"
+                >
+                    {{ t("settings.ia.switchToUserLayer") }}
+                </button>
+            </div>
         </div>
 
         <div
@@ -243,7 +268,11 @@ watch(
             :aria-busy="pending"
             :inert="pending || undefined"
         >
-            <ConfigLayerPanels :layer="layer" :domain="resolved.domain" />
+            <ConfigLayerPanels
+                :layer="layer"
+                :domain="resolved.domain"
+                @editable-count="editableCount = $event"
+            />
         </div>
     </section>
 </template>
