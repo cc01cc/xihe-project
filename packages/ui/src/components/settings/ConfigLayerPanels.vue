@@ -23,6 +23,7 @@ import { getProviderInfo } from "../../types/provider";
 import type { ProviderDefinition } from "../../types/providerConnection";
 import { listProviderCatalog } from "../../services/providerConnectionService";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
+import { DOMAIN_LABEL_KEY } from "../../lib/settingsIa";
 
 /**
  * PLAN-0560 T2.4: 域清单 + 摘要 + 保存/重置 + ProviderHub/embedding/templates 分派，
@@ -53,20 +54,18 @@ const settings = useSettingsStore();
 const { t } = useI18n(),
     configStore = useConfigStore();
 
-const domainLabels: Record<string, string> = {
-    "llm-provider": t("settings.domainLlmProvider"),
-    "context-policy": t("settings.domainContextPolicy"),
-    embedding: t("settings.domainEmbedding"),
-    rag: t("settings.domainRag"),
-    "agent-runtime": t("settings.domainAgentRuntime"),
-    "agent-profile": t("settings.domainAgentProfile"),
-    "user-preference": t("settings.domainUserPreference"),
-    logging: t("settings.domainLogging"),
-    "approval-policy": t("settings.domainApprovalPolicy"),
-    "agent-templates": t("settings.domainAgentTemplates"),
-    "api-request-templates": t("settings.domainContextTemplates"),
-    "job-policy": t("settings.domainJobPolicy"),
-};
+/**
+ * task-47：域名文案**调用时**求值。
+ *
+ * 原实现是 `const domainLabels: Record<string, string> = { …: t(…) }` —— setup 期只求值一次，
+ * 页面内切语言不会重算，于是 `en-US` 界面保存后 toast 出现混合文案「用户偏好 Saved」
+ * （中文域名 + 英文动词）。key 表统一取 `lib/settingsIa.ts#DOMAIN_LABEL_KEY`
+ * （域标签的唯一 key 来源，左栏/面包屑/域页 h2 共用），这里不再复制第二份。
+ */
+function domainLabel(domain: string): string {
+    const key = DOMAIN_LABEL_KEY[domain as ConfigDomain];
+    return key ? t(key) : domain;
+}
 
 /**
  * PLAN-0503 T2.1: the provider list comes from the CP catalog; the builtin
@@ -500,7 +499,7 @@ async function handleSave(domain: string, body: Record<string, string>) {
         }
         await reloadLayer();
         if (!panelOwnsFeedback) {
-            toast.success(`${domainLabels[domain] || domain} ${t("common.saved")}`);
+            toast.success(`${domainLabel(domain)} ${t("common.saved")}`);
         }
     } catch (e) {
         if (!panelOwnsFeedback) {
@@ -627,7 +626,7 @@ async function handleReset(domain: string, key: string) {
         <ConfigDomainPanel
             v-else
             :domain="domain"
-            :title="domainLabels[domain] || domain"
+            :title="domainLabel(domain)"
             :entries="entriesFor(domain)"
             :summary="generateSummary(domain)"
             :schema="schemaFor(domain)"
