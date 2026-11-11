@@ -498,6 +498,13 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     return respond(200, mergedEntries("instance", domain));
                 }
 
+                // task-157：approval-policy 域「工具分类」页签（ToolFacesView）需要的唯一 mock
+                // 端点。响应按 PolicyToolFaceView 的数组形状（PLAN-0328 M1）返回空目录 ——
+                // mock lane 没有真实工具注册表，空数组即「暂无工具记录」，不虚构分类行。
+                if (path === "/policy/tool-faces" && (req.method ?? "GET") === "GET") {
+                    return respond(200, []);
+                }
+
                 options.log?.(`[mock-api] 未 mock 的端点：${path}`);
                 return respond(404, { code: "MOCK_ENDPOINT_MISSING", endpoint: path });
             });

@@ -1441,8 +1441,7 @@ const messages = {
                 resourceKnowledgeMcp: "知识库 · MCP",
                 backendGapBadge: "后端缺口 {code}",
                 backendGapBadgeGeneric: "后端缺口",
-                gapDialogTitle: "{item}：暂无后端承载",
-                gapDialogDismiss: "知道了",
+                backendGapHint: "灰显条目为后端缺口，暂不可用；悬停可查看说明。",
                 noAtomTitle: "本页没有权限原子：",
                 noAtomBody:
                     "内容按你的归属自动收窄 —— 看到空列表不代表没权限，也不代表数据丢了；看不到别人的条目是设计如此，这里不会出现 403。",
@@ -1468,7 +1467,8 @@ const messages = {
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",
-                domainKeysCount: "本域 {count} 项配置",
+                domainKeysCount: "本域 {count} 个配置键",
+                domainEditableCount: "当前页可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail:
@@ -1507,7 +1507,7 @@ const messages = {
             providerInstanceGoUser: "前往用户层管理连接",
             llmInstanceDefaultTitle: "实例默认模型",
             llmInstanceDefaultDesc:
-                "实例层只保存默认的 provider 与 model（整组 profile）；连接与密钥仍由使用者的个人/工作区连接提供。",
+                "选好 provider、模型与连接槽位后保存，即成为本实例的默认；实际解析仍走使用者自己的连接。",
             llmInstanceProviderLabel: "提供方",
             llmInstanceProviderPlaceholder: "选择提供方",
             llmInstanceNoProviders:
@@ -1515,10 +1515,10 @@ const messages = {
             llmInstanceModelLabel: "默认模型",
             llmInstanceModelPlaceholder: "填写模型名，或从目录建议中选择",
             llmInstanceModelNoCatalog: "该提供方暂无可用模型目录（仍可手填模型名）",
-            llmInstanceConnectionKeyLabel: "连接槽（connectionKey）",
+            llmInstanceConnectionKeyLabel: "连接槽位",
             llmInstanceConnectionKeyHelp:
-                "使用者侧需存在同 provider、同槽名的连接；实例层不存连接与密钥。",
-            llmInstanceConnectionKeyInvalid: "连接槽名只允许小写字母/数字/短横线（≤64 字符）",
+                "默认 default；需与使用者侧同名连接槽位一致（否则运行期 409，不回落）。",
+            llmInstanceConnectionKeyInvalid: "连接槽位名只允许小写字母/数字/短横线（≤64 字符）",
             llmInstanceCurrent: "当前实例默认：{provider} / {model}（连接槽 {key}）",
             llmInstanceUnset:
                 "未设置：工作区/个人层有 profile 时优先，三层都空才轮到代码内置默认。",
@@ -4123,8 +4123,8 @@ const messages = {
                 resourceKnowledgeMcp: "Knowledge base · MCP",
                 backendGapBadge: "Backend gap {code}",
                 backendGapBadgeGeneric: "Backend gap",
-                gapDialogTitle: "{item}: no backend yet",
-                gapDialogDismiss: "Got it",
+                backendGapHint:
+                    "Dimmed entries are backend gaps and unavailable; hover for details.",
                 noAtomTitle: "This page has no permission atom:",
                 noAtomBody:
                     "content is narrowed by ownership — an empty list does not mean you lack permission, and it does not mean data was lost; other people's entries are invisible by design and you will not see a 403 here.",
@@ -4150,7 +4150,8 @@ const messages = {
                 navConfigLocks: "Config locks",
                 navRoles: "Roles & grants",
                 navAudit: "Audit log",
-                domainKeysCount: "{count} keys in this domain",
+                domainKeysCount: "{count} config keys in this domain",
+                domainEditableCount: "{count} editable fields on this page",
                 switchToUserLayer: "Switch to the user layer",
                 layerOnlyInstance: "This domain is configurable only at the instance layer",
                 layerOnlyInstanceDetail:
@@ -4190,7 +4191,7 @@ const messages = {
             providerInstanceGoUser: "Go to the user layer to manage connections",
             llmInstanceDefaultTitle: "Instance default model",
             llmInstanceDefaultDesc:
-                "The instance layer stores only the default provider and model (one profile unit); connections and credentials stay with each user's personal/workspace connections.",
+                "Pick a provider, model and connection slot, then save to set the instance default; resolution still uses the consumer's own connections.",
             llmInstanceProviderLabel: "Provider",
             llmInstanceProviderPlaceholder: "Select a provider",
             llmInstanceNoProviders:
@@ -4199,11 +4200,11 @@ const messages = {
             llmInstanceModelPlaceholder: "Type a model name or pick a catalog suggestion",
             llmInstanceModelNoCatalog:
                 "No model catalog for this provider (you can still type a model name)",
-            llmInstanceConnectionKeyLabel: "Connection slot (connectionKey)",
+            llmInstanceConnectionKeyLabel: "Connection slot",
             llmInstanceConnectionKeyHelp:
-                "Each user needs a connection with the same provider and slot name; this layer stores no connection or credential.",
+                "Defaults to default; it must match a slot name on the consuming side (otherwise the runtime returns 409, no fallback).",
             llmInstanceConnectionKeyInvalid:
-                "Connection slot allows lowercase letters/digits/hyphens (≤64 chars)",
+                "Slot name allows lowercase letters/digits/hyphens (≤64 chars)",
             llmInstanceCurrent:
                 "Current instance default: {provider} / {model} (connection slot {key})",
             llmInstanceUnset:

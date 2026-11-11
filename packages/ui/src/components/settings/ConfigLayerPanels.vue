@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -44,6 +44,8 @@ const emit = defineEmits<{
     // task-253：原来的 "go-workspace" 引导（跳 /workspace/:id/settings?tab=config）随工作区
     // 配置 tab 一起移除 —— 那个 tab 已经不存在了，留着按钮就是死链。
     "switch-layer": [layer: "instance" | "user"];
+    /** task-157：当前域页的可编辑字段数（SettingsDomainView 的页头次量纲 M）。 */
+    "editable-count": [count: number];
 }>();
 
 const settings = useSettingsStore();
@@ -324,6 +326,47 @@ function schemaFor(domain: string): DomainField[] {
 function envLockedFor(domain: string): Record<string, string> {
     return configStore.envOverridden[domain] ?? {};
 }
+
+/**
+ * task-157：页头「当前页可编辑 M 项」的唯一口径。
+ *
+ * <p>数的是「这个域页允许编辑的字段数」，不是当前渲染出的输入框数 —— 通用表单卡默认折叠
+ * （ConfigDomainPanel 的 expanded=false），照 DOM 数会恒为 0；「可编辑」是能力，不是可见性。
+ * 锁定（env / 管理员 / 只读 meta）与「实例专属键落到下层」都要扣掉，与 ConfigDomainPanel
+ * 的 fieldReadonly / isLocked / isWritable 三个判据同源。</p>
+ *
+ * <p>专用面板没有统一 schema，按各自面板的字段级控件数固定折算（见注释）；连接管理页
+ * （user llm-provider 的 ProviderHub）没有行内字段，记 0 —— 连接是「条目」不是「字段」，
+ * 两种量纲不混（与 preview/mock/screens/DomainCanvas.vue:37-39 一致）。</p>
+ */
+const editableFieldCount = computed<number>(() => {
+    const domain = props.domain;
+    if (!domain || props.readonly) return 0;
+    if (domain === "llm-provider") {
+        // 实例层：provider 选择 / 默认模型 / 连接槽位 三个字段（LlmDefaultProfilePanel）。
+        // 用户层：ProviderHub = 连接管理列表，没有行内字段。
+        return props.layer === "instance" ? 3 : 0;
+    }
+    if (domain === "embedding") return 1; // 连接选择（EmbeddingSettingsPanel）
+    if (domain === "agent-templates") return 7; // 名称/描述/prompt/工具模式/角色/provider/model
+    if (domain === "api-request-templates") return 3; // 类型选择/名称/正文
+    const meta = configStore.layerMeta[props.layer]?.[domain] ?? {};
+    const envLocked = envLockedFor(domain);
+    return (domainSchemas.value[domain] ?? []).filter((field) => {
+        const item = meta[field.key];
+        if (item?.locked || item?.adminLocked) return false;
+        if (item && item.writable === false) return false;
+        if (field.key in envLocked) return false;
+        if (
+            props.layer !== "instance" &&
+            (field.instanceOnly === true || item?.overridable === false)
+        ) {
+            return false;
+        }
+        return true;
+    }).length;
+});
+watchEffect(() => emit("editable-count", editableFieldCount.value));
 
 /**
  * task-125（D-899，方案 B）：user-preference.language 是 settings store 的**薄皮肤** ——

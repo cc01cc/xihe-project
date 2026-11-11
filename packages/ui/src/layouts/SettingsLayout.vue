@@ -125,7 +125,9 @@ watch(
             </div>
 
             <SettingsLayerHeader :layer="layer" :domain="domainLabel">
-                <div class="mt-2">
+                <!-- task-156：桌面（lg+）rail 已有「工作台」同动作 ⇒ 页内返回聊天只留移动端
+                     （移动端 rail 不渲染，没有第二个入口）。 -->
+                <div class="mt-2 lg:hidden">
                     <BackToChatButton />
                 </div>
             </SettingsLayerHeader>
