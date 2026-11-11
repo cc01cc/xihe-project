@@ -365,6 +365,11 @@ describe("SettingsDomainView workspace-default layer", () => {
         expect(
             wrapper.get('[data-testid="layer-badge-workspace-default"]').attributes("data-active"),
         ).toBe("true");
+        // task-31：只读信息条已改名，不再复用小写的 no-atom 锚点（两者语义相反）。
+        expect(wrapper.find('[data-testid="settings-ws-default-readonly-notice"]').exists()).toBe(
+            false,
+        );
+        // 旧 id 属 `SettingsPermissionGate` 的「本页没有权限原子」语义，本视图任何时候都不该出现。
         expect(wrapper.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(false);
         expect(state.loadLayerDomains).toHaveBeenCalledWith("workspace-default");
     });
@@ -375,7 +380,10 @@ describe("SettingsDomainView workspace-default layer", () => {
         await flushPromises();
         // 页面照常取数（CP 允许任何已认证用户读该层），只是控件只读 + 信息条说明。
         expect(wrapper.find('[data-testid="settings-domain-view"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(true);
+        const notice = wrapper.get('[data-testid="settings-ws-default-readonly-notice"]');
+        expect(notice.text()).toContain("MANAGE_WORKSPACE_DEFAULT_CONFIG");
+        // 语义相反（原子存在、只是未持有）⇒ 不得命中 Gate 的 no-atom 锚点。
+        expect(wrapper.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(false);
         // 无 prop 声明的 stub 把 attrs 透传到根元素；布尔属性存在即为 ""（不是 "true"）。
         expect(wrapper.find('[data-testid="panels-stub"]').attributes("readonly")).toBeDefined();
         expect(state.loadLayerDomains).toHaveBeenCalledWith("workspace-default");

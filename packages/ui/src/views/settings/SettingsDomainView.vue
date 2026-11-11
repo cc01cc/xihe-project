@@ -258,9 +258,20 @@ watch(
         <!-- PLAN-0766 T3.2：四层徽标 + 覆盖顺序说明（存量工作区即时生效）。 -->
         <LayerPrecedenceBadges v-if="resolved.ok" class="mt-3" :layer="layer" />
 
+        <!--
+            task-31：本信息条**不是** `SettingsPermissionGate` 的 `no-atom`，两者语义相反，故 testid 必须分开：
+              · Gate `settings-no-atom-notice` ＝「CP 侧本页**根本没有**权限原子」（audit / monitoring /
+                knowledge 这类页）⇒ 本页不做额外权限筛选，也不会出现 403；
+              · 本处 `settings-ws-default-readonly-notice` ＝「原子**存在**，但当前账号未持有
+                `MANAGE_WORKSPACE_DEFAULT_CONFIG`」⇒ 只读 + 点名缺哪个原子，同样不是 403。
+            路由层面两者互斥（本页只服务 `/settings/{instance,user,workspace-default}/{配置域}`，
+            而 Gate 的 no-atom 挂在 `/settings/{audit,monitoring,knowledge}` 等独立视图），
+            但**互斥只是路由的偶然结果，不是可依赖的不变式**；要守的是「一个 testid 只表达一种语义」——
+            否则 e2e 里 `getByTestId("settings-no-atom-notice")` 命中的可能是相反的含义。
+        -->
         <div
             v-if="workspaceDefaultReadonly"
-            data-testid="settings-no-atom-notice"
+            data-testid="settings-ws-default-readonly-notice"
             class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[11px]"
         >
             <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
