@@ -17,6 +17,10 @@ import { logger } from "../lib/logger";
  *
  * S2 (user rulings 2026-10-31):
  * - the icon rail is a fixed 56px icon-only strip; the 48<->176 dual state is gone;
+ *   **注（PLAN-0762 T2.5 / D-924 2026-11-11）：这条只约束"工作区内部"的视觉语义；就全局条
+ *   （GlobalRail）而言它已被 PLAN-0762 supersede —— 全局条要双态（56px 图标 ↔ 图标+文字，
+ *   Sidebar collapsible="icon" + ⌘/Ctrl+B + SidebarRail hover），那是跨模块的导航条，
+ *   与这里拥有的 navOpen / navWidth 不是同一条状态。工作区 NavPanel 的折叠语义不变。**
  * - the workspace entry lives only in the navigation panel head, not in the rail;
  * - the right dock defaults to collapsed and is 320-480 wide (360 default);
  * - below 1800px the dock is an absolutely positioned overlay instead of a flex

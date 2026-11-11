@@ -7,6 +7,7 @@ import {
     FolderTree,
     LogOut,
     PanelLeftClose,
+    PanelLeftOpen,
     Plus,
     Search,
     Settings,
@@ -16,7 +17,8 @@ import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
 import SessionList from "../../features/workspace/chat/components/SessionList.vue";
 import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
-import NavRail from "./NavRail.vue";
+// PLAN-0762 T2.1：NavRail 已提升为全局层（components/sidebar/GlobalRail.vue，App.vue 常驻），
+// 本组件不再自带 rail —— 它只负责工作区模块的导航面板。
 import { workspacePath } from "../../lib/routes";
 import { useSessionStore } from "../../stores/session";
 import { defaultLayerPath } from "../../lib/settingsIa";
@@ -64,12 +66,15 @@ const isWorkspacePage = computed(() => {
 const isOpen = computed(() => Boolean(props.open) && !props.forceCollapsed);
 
 /**
- * P-class fix: only the 56px rail survives a desktop collapse, so the re-open
- * control has to live there. It must not appear while the panel is open (the
- * panel head already owns the collapse control) nor while the shell yielded the
- * panel automatically (`forceCollapsed`) — that is not a user choice to undo.
+ * PLAN-0762 T2.1：全局条移到 App.vue 之后，桌面折叠态不再靠 rail 的展开按钮回归 ——
+ * 折叠后本组件渲染一条 56px 的"折叠条"（只含展开控件），宽度由 AppLayout 的
+ * SplitterPanel `collapsed-size=RAIL_WIDTH` 决定，语义与原 P-class 修复一致：
+ * 面板关闭时仍然有可见、可点的重新打开入口；自动让位（forceCollapsed）不是用户选择，
+ * 此时**不**渲染该条。
  */
-const showRailExpand = computed(() => !props.isMobile && !isOpen.value && !props.forceCollapsed);
+const showCollapsedStrip = computed(
+    () => !props.isMobile && !isOpen.value && !props.forceCollapsed,
+);
 
 function expandSidebar() {
     emit("update:open", true);
@@ -146,9 +151,26 @@ function handleLogout() {
                   : 'transition-[flex-grow] duration-300',
         ]"
     >
-        <NavRail v-if="!isMobile" :show-expand="showRailExpand" @expand="expandSidebar" />
-        <!-- 桌面：panel #1 已经是 rail + 面板的整宽，内层用 flex-1 吃掉除去 56px rail 的宽度 -->
+        <!-- 桌面折叠态：56px 折叠条（只含展开控件）。全局条在 App.vue，不在这里。 -->
         <div
+            v-if="showCollapsedStrip"
+            data-testid="sidebar-collapsed-strip"
+            class="flex h-full w-full flex-col items-center justify-start py-3"
+        >
+            <button
+                type="button"
+                data-testid="sidebar-expand"
+                :aria-label="t('sidebar.expand')"
+                :title="t('sidebar.expand')"
+                class="rounded-md p-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                @click="expandSidebar"
+            >
+                <PanelLeftOpen class="size-4" aria-hidden="true" />
+            </button>
+        </div>
+        <!-- 桌面：panel #1 的剩余宽度全部归导航面板（全局条不在其中）。折叠态改渲染上面的折叠条。 -->
+        <div
+            v-else
             id="sidebar-panel"
             data-testid="sidebar-panel"
             :aria-hidden="!isMobile && !open ? 'true' : undefined"
