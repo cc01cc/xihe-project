@@ -2737,12 +2737,12 @@ paths:
         cap:instance:admin (CAP_INSTANCE_ADMIN) and are omitted for ordinary users, while runtime
         resolution still consumes them. No key, ciphertext, suffix or credential plaintext is ever
         returned (maskedKey stays null) and the view is read-only for every scope.
-        An llm-provider profile is resolved as one whole unit through the layer chain workspace
-        profile -> user profile -> instance profile (the first configured layer wins, no key-level
-        merge). The connection belongs to the layer that supplied the profile (workspace profile ->
-        WORKSPACE, user profile -> the consuming user's USER connection, instance profile -> the
-        consuming user's USER connection); a missing layer connection falls back to the INSTANCE
-        connection as the last resort, and no other layer's connection is searched. The first
+        Profile source precedence: workspace profile > user profile > instance profile (one whole
+        profile unit, the first configured layer wins, no key-level merge). The connection follows
+        the profile owner: a workspace profile uses the current WORKSPACE connection, a user profile
+        uses the consuming user's USER connection, and an instance profile uses the consuming user's
+        USER connection; when that owner layer has no enabled + READY connection, the INSTANCE
+        connection is the last fallback - no other layer's connection is searched. The first
         enabled + READY match wins; an unmatched profile fails with 409 LLM_PROFILE_CONFLICT - CP
         never silently falls back to another owner or to a code default.
       security: [{ bearerAuth: [] }]
