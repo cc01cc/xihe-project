@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { launcherAlive } from './stack-identity.mjs';
 
 // PLAN-0656 R3/R5: orphan-process sweep, shared by `dev-stack.mjs` and `stack-run.mjs`.
 //
@@ -147,12 +148,17 @@ export function readStackPidRecord(projectRoot, derived) {
 /** Is the service currently managed by a live dev-stack supervisor (do NOT sweep it)? */
 export function recordedServiceAlive(projectRoot, derived, service) {
   const record = readStackPidRecord(projectRoot, derived);
-  const pid = record?.services?.[service]?.pid;
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  // task-36：身份读法收敛到 `lib/stack-identity.mjs` —— 这里不再自己决定「读哪个 pid 字段」。
+  // **口径不变**：只问 **launcher（wrapper）是否还在**（`launcherAlive`），
+  // 不用 `recordAlive`（那是 `status` 的「服务活没活着」，两个身份任一即可）——
+  // 本守卫问的是「这套服务树是不是我们管着的」，两者混用会让 `stack-run` 在
+  // 「wrapper 死了但 listener 还挂着」时误判成健康而抢不到端口。
+  return launcherAlive(record?.services?.[service], (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }

@@ -70,6 +70,16 @@ import {
   setLeasePhase,
 } from './lib/stack-lease.mjs';
 import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
+import {
+  IDENTITY_SOURCE,
+  findLauncherAncestorPid,
+  isOurWrapper,
+  launcherPidOf,
+  listenerPidOf,
+  makeRecordEntry,
+  recordAlive,
+  resolveServiceIdentity,
+} from './lib/stack-identity.mjs';
 import { buildAdoptedRecord, deadRecordedServices } from './lib/stack-adopt.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 import {
@@ -221,144 +231,33 @@ function processAlive(pid) {
   }
 }
 
-/** 进程的父 id 与命令行（一次 PowerShell 查询拿两个字段；task-30 的祖先链反查要它）。 */
-// task-30 性能：祖先反查要逐层查，逐层起一次 PowerShell 实测把 `acquire` 拖到 **32s**
-// （4 服务 × 最多 5 层 × ~1.5s）。改成**每次进程三种操作只拉一张表**（~1-2s），其余全在内存里查。
-// 3 秒 TTL：同一个 CLI 调用里可能 spawn 之后又查，表要能被刷新；再长就宁可重拉。
-const PROCESS_TABLE_TTL_MS = 3000;
-let processTableCache = { at: 0, table: null };
+// task-36：**身份读法已收敛到 `lib/stack-identity.mjs`**（单一 SSOT）。
+// 本文件不再自己定义「谁是这个服务的 launcher / 它还活着吗」—— task-30 已经付过一次学费：
+// dev-stack / lease / stack-run 三处各读各的，任一处改语义就静默影响另两处。
+// 这里只保留**判定为"是我们的人"之后**的动作（复用、树杀、展示）。
 
-function processTable() {
-  if (!isWindows) return new Map();
-  if (processTableCache.table && Date.now() - processTableCache.at < PROCESS_TABLE_TTL_MS) {
-    return processTableCache.table;
-  }
-  const table = new Map();
-  const result = spawnSync(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress',
-    ],
-    { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
-  );
-  if (result.status === 0) {
-    try {
-      const parsed = JSON.parse(String(result.stdout || '').trim() || 'null');
-      const list = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
-      for (const row of list) {
-        const pid = Number(row?.ProcessId);
-        if (!Number.isInteger(pid) || pid <= 0) continue;
-        table.set(pid, {
-          parentPid: Number(row?.ParentProcessId) || 0,
-          commandLine: String(row?.CommandLine ?? ''),
-        });
-      }
-    } catch {
-      // 解析失败就返回空表：调用方会退化成「查不到身份」，绝不猜。
-    }
-  }
-  processTableCache = { at: Date.now(), table };
-  return table;
-}
-
-function processInfo(pid) {
-  return processTable().get(Number(pid)) ?? null;
-}
-
-function commandLine(pid) {
-  return processInfo(pid)?.commandLine ?? '';
-}
-
-/** The recorded PID is the cmd.exe wrapper started by `start`; never kill pid-reused strangers. */
+/** 记录里的 pid 是不是我们自己的 wrapper（命令行含 `stack-run.mjs`）。 */
 function looksLikeOurWrapper(pid) {
-  if (!isWindows) return true;
-  const line = commandLine(pid);
-  return /stack-run\.mjs/i.test(line);
-}
-
-/* ------------------------------ pid record identity (task-30 / BL-582 family) */
-
-// task-30：pid 记录有两个写入口，却长期只有一种字段——
-//   `start` 写 **launcher**（cmd.exe 包装），`acquire` 写 **listener**（java/python/node）。
-// 而 `start` 的复用判断要求命令行含 `stack-run.mjs` ⇒ **每次 acquire 之后的下一次 start 必然
-// 认不出自己人**，走 orphan sweep 把整栈杀掉重起（实测：task-28 只想重起 cp，结果四个全被重起）。
-//
-// 修法：记录同时保留两个身份，`pid` **恒为 launcher**（树杀、复用判断、lease 的 launcher 字段都以它为准），
-// `listenerPid` 只作展示与 `status` 交叉核对 —— 与 `lease.json` 的 `{launcher, listener}` 同形。
-// 旧形态（只有单 pid）**不要求先清状态**：从**当前端口监听者**往上找 wrapper，找到就当场自愈。
-
-/** launcher 身份（新记录读 launcherPid，旧记录退回 pid）。 */
-function launcherPidOf(entry) {
-  if (!entry) return null;
-  if (Number.isInteger(entry.launcherPid) && entry.launcherPid > 0) return entry.launcherPid;
-  return Number.isInteger(entry.pid) && entry.pid > 0 ? entry.pid : null;
-}
-
-/** listener 身份（旧记录没有这个字段 ⇒ null，不猜）。 */
-function listenerPidOf(entry) {
-  if (!entry) return null;
-  return Number.isInteger(entry.listenerPid) && entry.listenerPid > 0 ? entry.listenerPid : null;
-}
-
-/** 记录里的服务还活着吗：launcher 或 listener 任一在跑即算活着。 */
-function recordAlive(entry) {
-  return [launcherPidOf(entry), listenerPidOf(entry)].some((pid) => pid !== null && processAlive(pid));
+  return isOurWrapper(pid);
 }
 
 /**
- * 从 listener 往上找我们自己的 launcher：命令行含 `stack-run.mjs` 的**最高**一层
- * （最高层才能一次 `taskkill /T` 收掉整棵树：cmd → node → mvn → java）。
+ * `start` / `stop` 共用的身份解析：把**端口监听者事实**喂给 lib 的判定函数，
+ * 返回调用点用的形状 `{launcher, listener, via}`；证据不足（unverified）一律返回 null。
  *
- * **只从当前端口监听者出发**，不从记录里的 pid 出发 —— 记录里的 pid 可能已被无关进程复用，
- * 从它往上爬会把别人的进程树误认成我们自己的。
- */
-function findLauncherAncestor(startPid, maxDepth = 6) {
-  let current = Number(startPid);
-  let found = null;
-  for (let depth = 0; depth < maxDepth && current > 0; depth += 1) {
-    const info = processInfo(current);
-    if (!info) break;
-    if (/stack-run\.mjs/i.test(info.commandLine)) found = current;
-    current = info.parentPid;
-  }
-  return found;
-}
-
-/**
- * 判定「这个服务当前确实是我们自己的进程树」，返回 `{launcher, listener}`；不确定就返回 null。
- *
- * 两条独立证据，任一成立即可：
- *  ① 记录里的 launcher 还活着且命令行是 stack-run.mjs（快路径，1 次进程查询）；
- *  ② 当前**端口监听者**（fresh fact）的祖先链里有 stack-run.mjs（自愈旧记录 / acquire 写的 listener）。
- *
- * 反例保护：别人的**同画像**进程占着端口时，② 找不到 wrapper ⇒ 返回 null ⇒ 走 orphan sweep
- * 的画像判定（该杀或明确拒绝），**绝不会被静默复用**。
+ * `via` 就是 lib 的 `identitySource`，会出现在日志里 —— 「这条结论是怎么来的」必须可见。
  */
 function resolveOwnLauncher(service, entry, facts = listenFacts()) {
-  const recorded = launcherPidOf(entry);
-  if (recorded !== null && processAlive(recorded) && looksLikeOurWrapper(recorded)) {
-    const listener = listenerPidOf(entry) ?? facts.own.find((item) => item.port === ports[service])?.pid ?? null;
-    return { launcher: recorded, listener, via: 'record' };
-  }
-  const ownListener = facts.own.find((item) => item.port === ports[service])?.pid ?? null;
-  if (ownListener !== null) {
-    const launcher = findLauncherAncestor(ownListener);
-    if (launcher !== null) return { launcher, listener: ownListener, via: 'ancestor-of-listener' };
-  }
-  return null;
-}
-
-/** 新形态的 pid 记录条目（`pid` 与 `launcherPid` 同值，保持旧读者可用）。 */
-function recordEntry({ launcherPid, listenerPid = null, port, startedAt }) {
-  return {
-    pid: launcherPid,
-    launcherPid,
-    listenerPid,
-    port,
-    startedAt: startedAt ?? new Date().toISOString(),
-  };
+  const ownListenerPid = facts.own.find((item) => item.port === ports[service])?.pid ?? null;
+  const identity = resolveServiceIdentity({
+    entry,
+    listenerPid: ownListenerPid,
+    isAlive: processAlive,
+    isWrapper: looksLikeOurWrapper,
+    findLauncherAncestor: findLauncherAncestorPid,
+  });
+  if (identity.identitySource === IDENTITY_SOURCE.unverified) return null;
+  return { launcher: identity.launcherPid, listener: identity.listenerPid, via: identity.identitySource };
 }
 
 /* ------------------------------------------------- orphan sweep (PLAN-0656 R3) */
@@ -550,8 +449,10 @@ function currentCpVersion() {
 function observedPids(record, listeners, p = ports) {
   const pids = {};
   for (const service of SERVICES) {
-    const launcher = record?.services?.[service]?.pid ?? null;
-    const listener = listeners.own.find((entry) => entry.port === p[service])?.pid ?? null;
+    const entry = record?.services?.[service];
+    // task-36：launcher/listener 都从 SSOT 读法取，不在租约这里另定一套「哪个字段是 launcher」。
+    const launcher = launcherPidOf(entry);
+    const listener = listenerPidOf(entry) ?? listeners.own.find((item) => item.port === p[service])?.pid ?? null;
     if (launcher === null && listener === null) continue;
     pids[service] = { launcher, listener };
   }
@@ -1088,7 +989,7 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
     // 是不是 wrapper —— acquire 写进记录的是 listener，那样判必然失配并触发整栈重启。
     const own = prior ? resolveOwnLauncher(service, prior, reuseFacts) : null;
     if (own) {
-      record.services[service] = recordEntry({
+      record.services[service] = makeRecordEntry({
         launcherPid: own.launcher,
         listenerPid: own.listener,
         port: ports[service],
@@ -1123,7 +1024,7 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
     const pid = await spawnDetached(service, outPath, errPath, exitPath);
     if (!pid) throw new Error(`${service}: launcher failed; see ${outPath} / ${errPath}`);
     launchers[service] = { pid, exitPath, outPath, errPath };
-    record.services[service] = recordEntry({ launcherPid: pid, port: ports[service] });
+    record.services[service] = makeRecordEntry({ launcherPid: pid, port: ports[service] });
     writeJson(pidFile, record);
     console.log(`[dev-stack] started ${service} (pid ${pid}) port=${ports[service]} log=${outPath}`);
   }
@@ -1241,7 +1142,7 @@ async function status() {
       pid: launcherPidOf(saved),
       launcherPid: launcherPidOf(saved),
       listenerPid: listenerPidOf(saved),
-      alive: recordAlive(saved),
+      alive: recordAlive(saved, processAlive),
       listening: probe.listening,
       httpStatus: probe.status,
       ready: probe.ready,
@@ -1366,7 +1267,7 @@ async function statusAll() {
         // task-30：与 `status` 同口径 —— pid=launcher，listener 单列，alive 两个身份任一在跑即为真。
         pid: launcherPidOf(saved),
         listenerPid: listenerPidOf(saved),
-        alive: recordAlive(saved),
+        alive: recordAlive(saved, processAlive),
         listening: probe.listening,
         httpStatus: probe.status,
         ready: probe.ready,
@@ -1457,7 +1358,7 @@ async function stop() {
       const recorded = launcherPidOf(saved);
       const recordedListener = listenerPidOf(saved);
       if (recorded === null && recordedListener === null) continue;
-      if (!recordAlive(saved)) {
+      if (!recordAlive(saved, processAlive)) {
         console.log(`[dev-stack] ${service} pid ${recorded ?? recordedListener} not running`);
         continue;
       }
@@ -1582,7 +1483,7 @@ async function acquire() {
     const listener = Number.isInteger(entry.listenerPid) ? entry.listenerPid : Number.isInteger(entry.pid) ? entry.pid : null;
     const previousLauncher = launcherPidOf(previous?.services?.[service]);
     const launcher =
-      findLauncherAncestor(listener) ??
+      findLauncherAncestorPid(listener) ??
       (previousLauncher !== null && processAlive(previousLauncher) && looksLikeOurWrapper(previousLauncher)
         ? previousLauncher
         : null);
