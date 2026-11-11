@@ -172,4 +172,4 @@
 - **测试超时**：`internal/A03-xihe/docs/test-timeout-budget.md`（action/expect 10 s、test 30 s、boot 120 s；>10 s 必须 `timeout-exempt`；预算门 `mise run lint:e2e`）。
 - **测试成本/context 根因**：`internal/A03-xihe/docs/test-suite-cost.md` §1–§7；复用设计 `test-context-reuse-design.md`。
 - **dev 热循环与 lane 同步**：`internal/A03-xihe/docs/dev-hot-loop.md` —— **§11（lane 同步，merge→分类→hot/mvn/restart）仍有效**；§1–§10 已按 D-818 ① 判废弃，状态看该文 §0 判定表。
-- **团队角色/并行上限**：`internal/A03-xihe/docs/team-roster.md`（常驻 6、≤2 编译、测量值班 16:00–18:00）。
+- **团队角色/并行度**：`internal/A03-xihe/docs/team-roster.md`（常驻 6 工位；**不设编译位上限**——lane 独立分支+独立构建目录，并行度按写面冲突与机器余量算（D-936，2026-11-11）；测量值班 16:00–18:00 独占）。
