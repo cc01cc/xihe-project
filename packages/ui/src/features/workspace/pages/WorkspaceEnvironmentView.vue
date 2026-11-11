@@ -171,43 +171,55 @@ const TERMINAL_JOB_STATUSES: ReadonlySet<string> = new Set([
     "interrupted",
 ]);
 
-const JOB_STATUS_LABELS: Partial<Record<WorkspaceJobStatus, string>> = {
-    pending: "等待中",
-    running: "运行中",
-    succeeded: "已完成",
-    cancelled: "已取消",
-    timeout: "已超时",
-    orphaned: "已孤立",
-    interrupted: "已中断",
+/**
+ * task-49：枚举展示文案走 i18n，且**在调用时求值**（`t()` 在这里是函数体，不是 setup 期常量 ——
+ * 参考 `task-47` 的教训：把 `t()` 的返回值存进常量会让界面冻结在挂载时的语言）。
+ *
+ * 三张键表的**值域与 `docs/api/openapi.yaml` 的 `WorkspaceJob` 逐项一致**
+ * （`status` yaml `:8055`、`cancelReason` `:8060`、`cleanupStatus` `:8065`）。
+ * 用完整的 `Record<…>` 而不是 `Partial<…>`：契约加枚举值而这里没跟随时 `vue-tsc` 直接红，
+ * 不必等人去比对 yaml。未知值一律回落 wire 原值（**不自造展示值**）。
+ */
+const JOB_STATUS_KEY: Record<WorkspaceJobStatus, string> = {
+    pending: "workspace.environmentJobStatus.pending",
+    running: "workspace.environmentJobStatus.running",
+    succeeded: "workspace.environmentJobStatus.succeeded",
+    cancelled: "workspace.environmentJobStatus.cancelled",
+    timeout: "workspace.environmentJobStatus.timeout",
+    orphaned: "workspace.environmentJobStatus.orphaned",
+    interrupted: "workspace.environmentJobStatus.interrupted",
 };
 
-const JOB_CANCEL_REASON_LABELS: Partial<Record<WorkspaceJobCancelReason, string>> = {
-    user_cancel: "用户取消",
-    scope_run_end: "Run 结束",
-    scope_session_stop: "Session 停止",
-    workspace_destroy: "工作区销毁",
-    runtime_restart: "Runtime 重启",
-    destroy_orphan: "销毁时清理孤儿",
-    job_missing: "Job 记录缺失",
+const JOB_CANCEL_REASON_KEY: Record<WorkspaceJobCancelReason, string> = {
+    user_cancel: "workspace.environmentJobCancelReason.userCancel",
+    scope_run_end: "workspace.environmentJobCancelReason.scopeRunEnd",
+    scope_session_stop: "workspace.environmentJobCancelReason.scopeSessionStop",
+    workspace_destroy: "workspace.environmentJobCancelReason.workspaceDestroy",
+    runtime_restart: "workspace.environmentJobCancelReason.runtimeRestart",
+    destroy_orphan: "workspace.environmentJobCancelReason.destroyOrphan",
+    job_missing: "workspace.environmentJobCancelReason.jobMissing",
 };
 
-const JOB_CLEANUP_STATUS_LABELS: Partial<Record<WorkspaceJobCleanupStatus, string>> = {
-    not_started: "清理未开始",
-    running: "清理中",
-    completed: "清理完成",
-    failed: "清理失败",
+const JOB_CLEANUP_STATUS_KEY: Record<WorkspaceJobCleanupStatus, string> = {
+    not_started: "workspace.environmentJobCleanupStatus.notStarted",
+    running: "workspace.environmentJobCleanupStatus.running",
+    completed: "workspace.environmentJobCleanupStatus.completed",
+    failed: "workspace.environmentJobCleanupStatus.failed",
 };
 
 function jobStatusLabel(status: string): string {
-    return JOB_STATUS_LABELS[status as WorkspaceJobStatus] ?? status;
+    const key = JOB_STATUS_KEY[status as WorkspaceJobStatus];
+    return key ? t(key) : status;
 }
 
 function jobCancelReasonLabel(reason: string): string {
-    return JOB_CANCEL_REASON_LABELS[reason as WorkspaceJobCancelReason] ?? reason;
+    const key = JOB_CANCEL_REASON_KEY[reason as WorkspaceJobCancelReason];
+    return key ? t(key) : reason;
 }
 
 function jobCleanupStatusLabel(status: string): string {
-    return JOB_CLEANUP_STATUS_LABELS[status as WorkspaceJobCleanupStatus] ?? status;
+    const key = JOB_CLEANUP_STATUS_KEY[status as WorkspaceJobCleanupStatus];
+    return key ? t(key) : status;
 }
 
 function isTerminalJob(status: string): boolean {

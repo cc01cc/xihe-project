@@ -886,6 +886,31 @@ const messages = {
             settingsBack: "返回工作区",
             toolbarMore: "更多",
             environmentState: "环境状态",
+            // task-49：WorkspaceJob 三个枚举的展示文案（值域与 openapi.yaml 的 WorkspaceJob 一致）。
+            environmentJobStatus: {
+                pending: "等待中",
+                running: "运行中",
+                succeeded: "已完成",
+                cancelled: "已取消",
+                timeout: "已超时",
+                orphaned: "已孤立",
+                interrupted: "已中断",
+            },
+            environmentJobCancelReason: {
+                userCancel: "用户取消",
+                scopeRunEnd: "回合结束",
+                scopeSessionStop: "Session 停止",
+                workspaceDestroy: "工作区销毁",
+                runtimeRestart: "Runtime 重启",
+                destroyOrphan: "销毁时清理孤儿",
+                jobMissing: "Job 记录缺失",
+            },
+            environmentJobCleanupStatus: {
+                notStarted: "清理未开始",
+                running: "清理中",
+                completed: "清理完成",
+                failed: "清理失败",
+            },
         },
         chat: {
             titleChat: "对话",
@@ -3635,6 +3660,31 @@ const messages = {
             settingsBack: "Back to workspace",
             toolbarMore: "More",
             environmentState: "Environment",
+            // task-49: WorkspaceJob enum labels (value set mirrors `WorkspaceJob` in openapi.yaml).
+            environmentJobStatus: {
+                pending: "Pending",
+                running: "Running",
+                succeeded: "Succeeded",
+                cancelled: "Cancelled",
+                timeout: "Timed out",
+                orphaned: "Orphaned",
+                interrupted: "Interrupted",
+            },
+            environmentJobCancelReason: {
+                userCancel: "Cancelled by user",
+                scopeRunEnd: "Turn ended",
+                scopeSessionStop: "Session stopped",
+                workspaceDestroy: "Workspace destroyed",
+                runtimeRestart: "Runtime restarted",
+                destroyOrphan: "Orphan cleanup on destroy",
+                jobMissing: "Job record missing",
+            },
+            environmentJobCleanupStatus: {
+                notStarted: "Cleanup not started",
+                running: "Cleaning up",
+                completed: "Cleanup completed",
+                failed: "Cleanup failed",
+            },
         },
         chat: {
             titleChat: "Chat",

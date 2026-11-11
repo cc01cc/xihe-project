@@ -5,6 +5,12 @@ import WorkspaceEnvironmentView from "../pages/WorkspaceEnvironmentView.vue";
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import { i18n } from "../../../i18n";
+import { applyLocale } from "../../../i18n/locale";
+import type {
+    WorkspaceJobCancelReason,
+    WorkspaceJobCleanupStatus,
+    WorkspaceJobStatus,
+} from "../../../types";
 import { toast } from "vue-sonner";
 import {
     openSelectAt,
@@ -589,5 +595,153 @@ describe("WorkspaceEnvironmentView runtime release (PLAN-0391)", () => {
         expect(wrapper.get('[data-testid="workspace-runtime-reason"]').text()).toContain(
             "已手动释放",
         );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// task-49：WorkspaceJob 三个枚举（状态 / 取消原因 / 清理状态）的展示文案必须走 i18n。
+// 此前三张表把中文写死 ⇒ en-US 界面照样显示中文（不是"切语言不重算"，是根本没有译文）。
+//
+// 值域与 `docs/api/openapi.yaml` 的 `WorkspaceJob` 逐项一致：
+//   status 7 值（yaml `:8055`）· cancelReason 7 值（`:8060`）· cleanupStatus 4 值（`:8065`）。
+// 这里用 union 类型标注 —— 契约删值 ⇒ 本文件 TS 红；契约加值 ⇒ 组件侧 `Record<…>` 红。
+// ---------------------------------------------------------------------------
+const JOB_STATUS_VALUES: WorkspaceJobStatus[] = [
+    "pending",
+    "running",
+    "succeeded",
+    "cancelled",
+    "timeout",
+    "orphaned",
+    "interrupted",
+];
+const CANCEL_REASON_VALUES: WorkspaceJobCancelReason[] = [
+    "user_cancel",
+    "scope_run_end",
+    "scope_session_stop",
+    "workspace_destroy",
+    "runtime_restart",
+    "destroy_orphan",
+    "job_missing",
+];
+const CLEANUP_STATUS_VALUES: WorkspaceJobCleanupStatus[] = [
+    "not_started",
+    "running",
+    "completed",
+    "failed",
+];
+
+/** 从指定 locale 的 message 树取原串（不经全局 locale，避免断言依赖"当前语言"）。 */
+function messageIn(locale: string, key: string): string {
+    const messages = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
+    const value = key
+        .split(".")
+        .reduce<unknown>(
+            (acc, part) => (acc as Record<string, unknown> | undefined)?.[part],
+            messages,
+        );
+    return typeof value === "string" ? value : "";
+}
+
+/** 枚举 wire 值 → i18n key 的末段（`user_cancel` → `userCancel`，与组件键表同一命名约定）。 */
+function camel(value: string): string {
+    return value.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase());
+}
+
+/** CJK 判据：en-US 下这三个字段出现任何一条即"没译文"。 */
+const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
+
+/** 覆盖三套枚举值的 job 列表（每个值至少一条）。 */
+function jobsCoveringEnums() {
+    const terminal = new Set(["succeeded", "cancelled", "timeout", "orphaned", "interrupted"]),
+        startedCleanup = CLEANUP_STATUS_VALUES.filter((value) => value !== "not_started"),
+        rows = JOB_STATUS_VALUES.map((status, index) =>
+            job({
+                jobId: `job-status-${status}`,
+                status,
+                cancelReason: terminal.has(status)
+                    ? CANCEL_REASON_VALUES[index % CANCEL_REASON_VALUES.length]
+                    : null,
+                cleanupStatus: terminal.has(status)
+                    ? null
+                    : startedCleanup[index % startedCleanup.length],
+            }),
+        );
+    rows.push(
+        ...CANCEL_REASON_VALUES.map((reason) =>
+            job({
+                jobId: `job-reason-${reason}`,
+                status: "cancelled",
+                cancelReason: reason,
+                cleanupStatus: null,
+            }),
+        ),
+    );
+    rows.push(
+        ...startedCleanup.map((cleanupStatus) =>
+            job({
+                jobId: `job-cleanup-${cleanupStatus}`,
+                status: "running",
+                cancelReason: null,
+                cleanupStatus,
+            }),
+        ),
+    );
+    return rows;
+}
+
+describe("WorkspaceEnvironmentView job enum i18n (task-49)", () => {
+    it("en-US 界面：三个枚举字段都不得出现 CJK", async () => {
+        applyLocale("en-US");
+        mockedApi.getWorkspaceJobs.mockResolvedValue(jobsCoveringEnums() as never);
+
+        const wrapper = await mountView(),
+            statuses = wrapper.findAll('[data-testid="workspace-job-status"]').map((n) => n.text()),
+            secondary = wrapper
+                .findAll('[data-testid="workspace-job-secondary"]')
+                .map((n) => n.text());
+
+        // 每行 job 都有状态位（17 行：7 状态 + 7 取消原因 + 3 清理状态）
+        expect(statuses).toHaveLength(jobsCoveringEnums().length);
+        for (const text of statuses) expect(text).not.toMatch(CJK);
+        for (const text of secondary) expect(text).not.toMatch(CJK);
+
+        // 期望集合由 i18n 键现算（不写死文案）
+        const expected = new Set(
+            JOB_STATUS_VALUES.map((value) =>
+                messageIn("en-US", `workspace.environmentJobStatus.${camel(value)}`),
+            ),
+        );
+        expect(expected.size).toBe(JOB_STATUS_VALUES.length);
+        for (const text of statuses) expect(expected.has(text)).toBe(true);
+        expect(new Set(statuses).size).toBe(expected.size);
+        for (const value of CANCEL_REASON_VALUES) {
+            expect(
+                messageIn("en-US", `workspace.environmentJobCancelReason.${camel(value)}`),
+            ).toBeTruthy();
+        }
+        for (const value of CLEANUP_STATUS_VALUES) {
+            expect(
+                messageIn("en-US", `workspace.environmentJobCleanupStatus.${camel(value)}`),
+            ).toBeTruthy();
+        }
+    });
+
+    it("zh-CN 界面：同一批 job 用中文文案，且与英文文案不同（证明真的翻译过）", async () => {
+        applyLocale("zh-CN");
+        mockedApi.getWorkspaceJobs.mockResolvedValue(jobsCoveringEnums() as never);
+
+        const wrapper = await mountView(),
+            statuses = wrapper.findAll('[data-testid="workspace-job-status"]').map((n) => n.text());
+
+        const zhExpected = JOB_STATUS_VALUES.map((value) =>
+            messageIn("zh-CN", `workspace.environmentJobStatus.${camel(value)}`),
+        );
+        expect([...new Set(statuses)].sort()).toEqual([...new Set(zhExpected)].sort());
+
+        for (const value of JOB_STATUS_VALUES) {
+            const key = `workspace.environmentJobStatus.${camel(value)}`;
+            expect(messageIn("zh-CN", key)).not.toBe(messageIn("en-US", key));
+        }
     });
 });
