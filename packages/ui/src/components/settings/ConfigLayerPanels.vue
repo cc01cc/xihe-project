@@ -80,14 +80,29 @@ const LANGUAGE_LABEL_KEY: Record<Language, string> = {
     "en-US": "settings.languageEn",
 };
 
-const levelOptions = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
-        label: level,
+/** task-170 / F-11：日志级别是 CP 值（INFO/...），正文给中文名，值仍用原文。 */
+const LOG_LEVEL_LABEL_KEY: Record<string, string> = {
+    TRACE: "settings.logLevelTrace",
+    DEBUG: "settings.logLevelDebug",
+    INFO: "settings.logLevelInfo",
+    WARN: "settings.logLevelWarn",
+    ERROR: "settings.logLevelError",
+};
+function levelLabel(level: string): string {
+    // CP 的 enum 同时允许大写与小写（logging.json: INFO/info），词表按大写键归一。
+    const key = LOG_LEVEL_LABEL_KEY[level.toUpperCase()];
+    return key ? t(key) : level;
+}
+function levelOptions(): Array<{ label: string; value: string }> {
+    return ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].map((level) => ({
+        label: levelLabel(level),
         value: level,
-    })),
-    boolOptions = [
-        { label: "true", value: "true" },
-        { label: "false", value: "false" },
-    ];
+    }));
+}
+const boolOptions = [
+    { label: "true", value: "true" },
+    { label: "false", value: "false" },
+];
 
 function providerDisplayName(providerId: string): string {
     return (
@@ -273,31 +288,31 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
             key: "logLevel",
             label: t("settings.fieldLogLevel"),
             type: "select",
-            options: levelOptions,
+            options: levelOptions(),
         },
         {
             key: "levelAgent",
             label: t("settings.fieldLevelAgent"),
             type: "select",
-            options: levelOptions,
+            options: levelOptions(),
         },
         {
             key: "levelCp",
             label: t("settings.fieldLevelCp"),
             type: "select",
-            options: levelOptions,
+            options: levelOptions(),
         },
         {
             key: "levelRuntime",
             label: t("settings.fieldLevelRuntime"),
             type: "select",
-            options: levelOptions,
+            options: levelOptions(),
         },
         {
             key: "levelUi",
             label: t("settings.fieldLevelUi"),
             type: "select",
-            options: levelOptions,
+            options: levelOptions(),
         },
         {
             key: "centralTelemetryEnabled",
@@ -414,8 +429,9 @@ function generateSummary(domain: string): string {
         return [cs && `chunk: ${cs}`, tk && `topK: ${tk}`].filter(Boolean).join(", ");
     }
     if (domain === "logging") {
+        // task-170 / F-11：折叠态摘要不许转储裸 key:value（原先唯一可见内容就是 "level: INFO"）。
         const level = entries["logLevel"] || entries["levelAgent"];
-        return level ? `level: ${level}` : "";
+        return level ? t("settings.logSummary", { level: levelLabel(level) }) : "";
     }
     if (domain === "agent-profile") {
         return entries["userName"] || "";

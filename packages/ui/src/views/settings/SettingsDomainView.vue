@@ -45,6 +45,17 @@ const domainLabel = computed(() =>
     resolved.value.ok ? t(DOMAIN_LABEL_KEY[resolved.value.domain]) : "",
 );
 
+/**
+ * task-170（用户审阅补充）：内部术语域（如 agent-runtime）只靠域名读不出「这页是干嘛的」，
+ * 给一句白话副标题；只登记确实需要解释的域，其余域不加噪声。
+ */
+const DOMAIN_HINT_KEY: Record<string, string> = {
+    "agent-runtime": "settings.domainAgentRuntimeHint",
+};
+const domainHintKey = computed(() =>
+    resolved.value.ok ? DOMAIN_HINT_KEY[resolved.value.domain] : undefined,
+);
+
 /** 实例层需要 CP 的 cap:instance:admin（auth.hasInstanceAdminCapability），不是角色名判断。 */
 const forbidden = computed(
     () =>
@@ -214,6 +225,13 @@ watch(
                 </button>
             </div>
         </div>
+        <p
+            v-if="domainHintKey"
+            data-testid="settings-domain-hint"
+            class="mt-2 text-xs text-muted-foreground"
+        >
+            {{ t(domainHintKey) }}
+        </p>
 
         <div
             v-if="blocked && instanceOnly"

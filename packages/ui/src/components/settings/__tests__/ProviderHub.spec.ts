@@ -207,7 +207,7 @@ describe("ProviderHub master-detail", () => {
             "other-type@1",
         );
         expect(detail.find('[data-slot="select-trigger"]').exists()).toBe(true);
-        expect(detail.text()).toContain("Configured · hidden");
+        expect(detail.text()).toContain(i18n.global.t("settings.providerHub.credentialConfigured"));
         expect(wrapper.text()).not.toContain("个人连接对同一 Provider 优先");
         expect(wrapper.get('[data-testid="provider-master-detail"]').classes()).toContain("grid");
         wrapper.unmount();

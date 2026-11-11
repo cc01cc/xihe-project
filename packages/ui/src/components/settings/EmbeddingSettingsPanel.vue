@@ -70,6 +70,24 @@ const currentProfileConnectionId = computed(() => {
     );
 });
 
+/** F-07：`pinned-contract` 是 CP 内部来源值，正文必须给能读的说法；未知值原样显示。 */
+function modelSourceText(source: string | null | undefined): string {
+    if (!source) return "";
+    if (source === "pinned-contract") return t("settings.embeddingModelSourcePinned");
+    return source;
+}
+
+/** F-07：`profileScope` 是 meta 机器值（instance/user），正文用「实例层/用户层」。 */
+function profileScopeText(scope: string | null | undefined): string {
+    const KEY: Record<string, string> = {
+        instance: "settings.ia.layerInstanceShort",
+        user: "settings.ia.layerUserShort",
+        workspace: "settings.ia.layerWorkspaceShort",
+    };
+    const key = scope ? KEY[scope] : undefined;
+    return key ? t(key) : (scope ?? "");
+}
+
 async function load() {
     loading.value = true;
     try {
@@ -218,11 +236,16 @@ onMounted(load);
                         <dt class="text-muted-foreground">
                             {{ t("settings.embeddingEffectiveScope") }}
                         </dt>
-                        <dd>{{ effective.profileScope }}</dd>
+                        <dd>{{ profileScopeText(effective.profileScope) }}</dd>
                         <dt class="text-muted-foreground">
                             {{ t("settings.embeddingModelSource") }}
                         </dt>
-                        <dd>{{ effective.resolved?.modelSource ?? effective.profile.model }}</dd>
+                        <dd>
+                            {{
+                                modelSourceText(effective.resolved?.modelSource) ||
+                                effective.profile.model
+                            }}
+                        </dd>
                     </template>
                 </dl>
 

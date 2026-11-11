@@ -8,6 +8,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { logger } from "../../lib/logger";
+import { formatApiType } from "../../lib/apiTypeLabels";
 import { ApiError, request } from "../../composables/api";
 import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
@@ -67,11 +68,19 @@ const discoveryOptions = computed<
     { value: "manual", label: t("settings.providerHub.discoveryManual") },
 ]);
 
-const discoveryLabel = computed(
-    () =>
-        discoveryOptions.value.find((option) => option.value === form.modelDiscovery)?.label ??
-        form.modelDiscovery,
-);
+/** F-07：`modelDiscovery` 是 CP 机器值（curated/...），展示必须走同一份选项标签。 */
+function discoveryLabelOf(mode: ProviderDefinition["modelDiscovery"]): string {
+    return discoveryOptions.value.find((option) => option.value === mode)?.label ?? mode;
+}
+
+/** F-07：`operation` 同上（chat/embedding）。 */
+function operationLabel(operation: string): string {
+    if (operation === "chat") return t("settings.providerHub.operationChat");
+    if (operation === "embedding") return t("settings.providerHub.operationEmbedding");
+    return operation;
+}
+
+const discoveryLabel = computed(() => discoveryLabelOf(form.modelDiscovery));
 
 // PLAN-0523 T3.5: single-source connection list lives in the config store.
 const configStore = useConfigStore(),
@@ -1296,10 +1305,14 @@ onMounted(() => {
                                 {{ t("settings.providerHub.apiTypeReadonly") }}
                             </dt>
                             <dd data-testid="provider-connection-readonly-type" class="break-all">
-                                {{ activeConnection.apiTypeId }}@{{
-                                    activeConnection.apiTypeVersion
+                                {{
+                                    formatApiType(
+                                        activeConnection.apiTypeId,
+                                        activeConnection.apiTypeVersion,
+                                        t,
+                                    )
                                 }}
-                                · {{ activeConnection.operation }}
+                                · {{ operationLabel(activeConnection.operation) }}
                             </dd>
                         </div>
                         <div>
@@ -1409,7 +1422,7 @@ onMounted(() => {
                         <p class="mt-1 text-xs text-muted-foreground">
                             {{
                                 t("settings.providerHub.modelDiscovery", {
-                                    mode: activeConnection.modelDiscovery,
+                                    mode: discoveryLabelOf(activeConnection.modelDiscovery),
                                 })
                             }}
                         </p>
@@ -1908,7 +1921,8 @@ onMounted(() => {
                                     {{ provider.description || provider.displayName }}
                                 </span>
                                 <span class="mt-0.5 block text-[10px] text-muted-foreground">
-                                    {{ adapterLabel(provider) }} · {{ provider.modelDiscovery }}
+                                    {{ adapterLabel(provider) }} ·
+                                    {{ discoveryLabelOf(provider.modelDiscovery) }}
                                 </span>
                                 <span
                                     class="mt-0.5 flex flex-wrap items-center gap-1"
@@ -1997,15 +2011,23 @@ onMounted(() => {
                     <div class="mb-5">
                         <strong class="block text-sm">{{ selectedProvider.displayName }}</strong>
                         <span class="text-xs text-muted-foreground"
-                            >{{ adapterLabel(selectedProvider) }} · {{ form.modelDiscovery }} ·
+                            >{{ adapterLabel(selectedProvider) }} · {{ discoveryLabel }} ·
                             {{
                                 editingConnection
-                                    ? `${editingConnection.apiTypeId}@${editingConnection.apiTypeVersion}`
-                                    : `${selectedProvider.defaultApiType.apiTypeId}@${selectedProvider.defaultApiType.version}`
+                                    ? formatApiType(
+                                          editingConnection.apiTypeId,
+                                          editingConnection.apiTypeVersion,
+                                          t,
+                                      )
+                                    : formatApiType(
+                                          selectedProvider.defaultApiType.apiTypeId,
+                                          selectedProvider.defaultApiType.version,
+                                          t,
+                                      )
                             }}</span
                         >
                         <label class="mt-3 block text-xs"
-                            >API Type
+                            >{{ t("common.apiType") }}
                             <Select v-model="form.apiType" @update:model-value="previewTypeChange">
                                 <SelectTrigger
                                     data-testid="provider-connection-api-type"
@@ -2020,7 +2042,7 @@ onMounted(() => {
                                         :key="pair.apiTypeId + '@' + pair.version"
                                         :value="pair.apiTypeId + '@' + pair.version"
                                     >
-                                        {{ pair.apiTypeId }}@{{ pair.version }}
+                                        {{ formatApiType(pair.apiTypeId, pair.version, t) }}
                                     </SelectItem>
                                 </SelectContent>
                             </Select>
@@ -2036,7 +2058,7 @@ onMounted(() => {
                                 v-for="pair in selectedProvider.supportedApiTypes"
                                 :key="'cap-' + pair.apiTypeId + '@' + pair.version"
                             >
-                                {{ pair.apiTypeId }}@{{ pair.version }} ·
+                                {{ formatApiType(pair.apiTypeId, pair.version, t) }} ·
                                 {{
                                     pair.capability?.tools
                                         ? t("settings.providerHub.apiTypeToolsSupported")
