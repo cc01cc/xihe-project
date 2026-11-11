@@ -380,18 +380,39 @@ function handleReset(key: string) {
 
 <template>
     <div :data-testid="`config-domain-${domain}`" class="border rounded-lg mb-2 overflow-hidden">
+        <!--
+            task-169 / F-10（用户审阅：「折叠卡只有一个远距箭头，页面像没加载」）：
+            折叠态把箭头搬到标签**同行**（原先在 1080 px 卡的最右端，离标签 ~1000 px），
+            并在标题下补一行**摘要**（有级联摘要显示摘要，没有就显示「展开查看全部设置」），
+            让默认态先给内容线索再谈展开。计数徽标数的是**本卡字段数**（H4 行徽标口径）。
+        -->
         <button
-            class="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+            :data-testid="`config-domain-toggle-${domain}`"
+            :aria-expanded="expanded"
+            class="w-full flex items-start gap-2 px-4 py-3 text-left text-sm font-medium hover:bg-muted/50 transition-colors"
             @click="toggle"
         >
-            <span class="truncate">{{ title }}</span>
-            <span class="flex min-w-0 items-center gap-2 shrink-0">
+            <span class="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true">{{
+                expanded ? "▾" : "▸"
+            }}</span>
+            <span class="min-w-0 flex-1">
+                <span class="flex items-center gap-2">
+                    <span class="truncate">{{ title }}</span>
+                    <span
+                        v-if="!expanded && schema.length > 0"
+                        :data-testid="`config-domain-field-count-${domain}`"
+                        class="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                    >
+                        {{ t("settings.configCardFieldCount", { count: schema.length }) }}
+                    </span>
+                </span>
                 <span
-                    v-if="!expanded && summary"
-                    class="text-xs text-muted-foreground truncate max-w-[200px]"
-                    >{{ summary }}</span
+                    v-if="!expanded"
+                    :data-testid="`config-domain-preview-${domain}`"
+                    class="mt-0.5 block truncate text-xs font-normal text-muted-foreground"
                 >
-                <span class="text-muted-foreground">{{ expanded ? "▾" : "▸" }}</span>
+                    {{ summary || t("settings.configCardExpandHint") }}
+                </span>
             </span>
         </button>
         <!-- PLAN-0752 T3.5：域级摘要行（数字来自 CP meta，UI 不自己算） -->

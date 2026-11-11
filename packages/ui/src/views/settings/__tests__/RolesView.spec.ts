@@ -259,6 +259,21 @@ describe("RolesView role list", () => {
         expect(customRow.find('[data-testid="role-system-badge"]').exists()).toBe(false);
     });
 
+    it("F-19: renders an empty state with a create path when there are no roles", async () => {
+        mockedApi.listRoles.mockResolvedValue([]);
+        const wrapper = await mountView();
+
+        // 0 行时不再渲染只有表头 + 一片空白的 table。
+        expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(false);
+        const empty = wrapper.get('[data-testid="roles-empty"]');
+        expect(empty.text()).toContain(i18n.global.t("settings.rolesEmptyTitle"));
+        expect(empty.text()).toContain(i18n.global.t("settings.rolesEmptyBody"));
+
+        // 出口：空态里的新建按钮打开同一个编辑器。
+        await clickBody('[data-testid="roles-empty-create"]');
+        expect(await bodyEl('[data-testid="role-editor-name"]')).toBeTruthy();
+    });
+
     it("shows the unified error surface when the role list cannot be loaded (F-18)", async () => {
         mockedApi.listRoles.mockRejectedValue(problemError(403, "FORBIDDEN"));
         const wrapper = await mountView();

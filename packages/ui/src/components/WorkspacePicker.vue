@@ -7,12 +7,14 @@
  * a 409 had nowhere to go but a toast. The picker makes "not chosen yet" a real
  * state and gives the user a working path to any workspace they belong to.
  */
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { api, ApiError, type ApiWorkspace } from "../composables/api";
 import { clearTabWorkspace, readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
 import { logger } from "../lib/logger";
+import { FolderPlus } from "@lucide/vue";
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
 import WorkspaceCreateDialog from "../features/workspace/components/WorkspaceCreateDialog.vue";
 
 const { t } = useI18n();
@@ -24,6 +26,17 @@ const error = ref<string | null>(null);
 const selecting = ref<string | null>(null);
 /** PLAN-0614 T2.1: 空态直接给"创建你的第一个工作区"入口（复用既有对话框，不新增页面/路由）。 */
 const createOpen = ref(false);
+/** task-169 / F-02：列表页三件套 —— 新建入口（header）+ 搜索过滤 + 空态出口。 */
+const query = ref("");
+const filteredWorkspaces = computed(() => {
+    const q = query.value.trim().toLowerCase();
+    if (!q) return workspaces.value;
+    return workspaces.value.filter(
+        (workspace) =>
+            (workspace.name ?? "").toLowerCase().includes(q) ||
+            workspace.id.toLowerCase().includes(q),
+    );
+});
 
 async function openWorkspace(workspace: ApiWorkspace): Promise<void> {
     if (selecting.value) return;
@@ -97,64 +110,107 @@ onMounted(async () => {
 
 <template>
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6" data-testid="workspace-picker">
-        <header class="space-y-1">
-            <h1 class="text-lg font-semibold">{{ t("workspacePicker.title") }}</h1>
-            <!--
+        <header class="flex items-start justify-between gap-3">
+            <div class="min-w-0 space-y-1">
+                <h1 class="text-lg font-semibold">{{ t("workspacePicker.title") }}</h1>
+                <!--
                 BL-540：副标题原文是「你的账号属于多个工作区」，单工作区账号看到的就是假话。
                 选择面本来只在「需要一个选择动作」时才有意义，所以按事实条件渲染：只有真的
                 多于一个工作区才说这句话（0 个走空态、1 个只剩标题、加载/失败时也不预先断言）。
             -->
-            <p v-if="workspaces.length > 1" class="text-sm text-muted-foreground">
-                {{ t("workspacePicker.subtitle") }}
-            </p>
+                <p v-if="workspaces.length > 1" class="text-sm text-muted-foreground">
+                    {{ t("workspacePicker.subtitle") }}
+                </p>
+            </div>
+            <!-- task-169 / F-02：有工作区时也要有一个「新建」入口（原先只有空态才有）。 -->
+            <button
+                v-if="!loading && !error && workspaces.length > 0"
+                type="button"
+                class="shrink-0 rounded-lg border px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+                data-testid="workspace-picker-new"
+                @click="createOpen = true"
+            >
+                {{ t("workspacePicker.create") }}
+            </button>
         </header>
 
         <p v-if="loading" class="text-sm text-muted-foreground">
             {{ t("workspacePicker.loading") }}
         </p>
         <p v-else-if="error" class="text-sm text-destructive" role="alert">{{ error }}</p>
-        <div
-            v-else-if="workspaces.length === 0"
-            class="flex flex-col items-start gap-3"
-            data-testid="workspace-picker-empty"
-        >
-            <p class="text-sm text-muted-foreground">{{ t("workspacePicker.empty") }}</p>
-            <!--
+        <template v-else>
+            <input
+                v-if="workspaces.length > 1"
+                v-model="query"
+                type="search"
+                :placeholder="t('workspacePicker.searchPlaceholder')"
+                :aria-label="t('workspacePicker.searchPlaceholder')"
+                data-testid="workspace-picker-search"
+                class="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+            />
+            <Empty v-if="workspaces.length === 0" data-testid="workspace-picker-empty">
+                <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                        <FolderPlus class="size-4" aria-hidden="true" />
+                    </EmptyMedia>
+                    <EmptyTitle>{{ t("workspacePicker.empty") }}</EmptyTitle>
+                </EmptyHeader>
+                <EmptyContent>
+                    <!--
                 PLAN-0631 反馈②（注意力预算 2026-11-03 用户裁定）：「新建工作区」低频、
                 可逆、位置固定，不配主按钮层级 —— 降级为中性 ghost（透明底 + 1px 边 +
                 常规字重），不用 --action 填充。对话框里的「创建」确认按钮保持主层级。
             -->
-            <button
-                type="button"
-                class="rounded-lg border px-4 py-2.5 text-sm font-normal text-foreground transition-colors hover:bg-accent"
-                data-testid="workspace-picker-create"
-                @click="createOpen = true"
-            >
-                {{ t("workspacePicker.createFirst") }}
-            </button>
-        </div>
+                    <button
+                        type="button"
+                        class="rounded-lg border px-4 py-2.5 text-sm font-normal text-foreground transition-colors hover:bg-accent"
+                        data-testid="workspace-picker-create"
+                        @click="createOpen = true"
+                    >
+                        {{ t("workspacePicker.createFirst") }}
+                    </button>
+                </EmptyContent>
+            </Empty>
 
-        <ul v-else class="flex flex-col gap-2">
-            <li v-for="workspace in workspaces" :key="workspace.id">
+            <!-- 搜索无结果 ≠ 没有工作区：给「清除搜索」出口，别让用户以为数据没了。 -->
+            <div
+                v-else-if="filteredWorkspaces.length === 0"
+                class="flex items-center justify-between gap-3 rounded-lg border-dashed border px-4 py-3"
+                data-testid="workspace-picker-search-empty"
+            >
+                <p class="text-sm text-muted-foreground">{{ t("workspacePicker.searchEmpty") }}</p>
                 <button
                     type="button"
-                    class="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
-                    :disabled="selecting !== null"
-                    :data-testid="`workspace-picker-item-${workspace.id}`"
-                    @click="openWorkspace(workspace)"
+                    class="shrink-0 text-sm underline underline-offset-4"
+                    data-testid="workspace-picker-clear-search"
+                    @click="query = ''"
                 >
-                    <span class="flex flex-col">
-                        <span class="text-sm font-medium">{{
-                            workspace.name || workspace.id
-                        }}</span>
-                        <span class="text-xs text-muted-foreground">{{ workspace.id }}</span>
-                    </span>
-                    <span v-if="workspace.workspaceRole" class="text-xs text-muted-foreground">
-                        {{ workspace.workspaceRole }}
-                    </span>
+                    {{ t("workspacePicker.clearSearch") }}
                 </button>
-            </li>
-        </ul>
+            </div>
+
+            <ul v-else class="flex flex-col gap-2">
+                <li v-for="workspace in filteredWorkspaces" :key="workspace.id">
+                    <button
+                        type="button"
+                        class="flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
+                        :disabled="selecting !== null"
+                        :data-testid="`workspace-picker-item-${workspace.id}`"
+                        @click="openWorkspace(workspace)"
+                    >
+                        <span class="flex flex-col">
+                            <span class="text-sm font-medium">{{
+                                workspace.name || workspace.id
+                            }}</span>
+                            <span class="text-xs text-muted-foreground">{{ workspace.id }}</span>
+                        </span>
+                        <span v-if="workspace.workspaceRole" class="text-xs text-muted-foreground">
+                            {{ workspace.workspaceRole }}
+                        </span>
+                    </button>
+                </li>
+            </ul>
+        </template>
 
         <!-- PLAN-0614 T2.1：空态入口复用既有创建对话框（不新增页面/路由）。 -->
         <WorkspaceCreateDialog

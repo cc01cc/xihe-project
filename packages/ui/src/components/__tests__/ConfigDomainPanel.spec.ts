@@ -17,6 +17,8 @@ const i18n = createI18n({
                 configKeyInstanceOnlyBadge: "Instance only",
                 configKeyInstanceOnlyHint:
                     "This key only takes effect at the instance layer: user and workspace layers neither inherit nor can modify it",
+                configCardFieldCount: "{count} fields",
+                configCardExpandHint: "Expand to see all settings",
             },
             common: { save: "Save" },
         },
@@ -67,6 +69,35 @@ async function expandPanel(wrapper: ReturnType<typeof mountPanel>) {
 }
 
 describe("ConfigDomainPanel", () => {
+    it("TC-F10: the collapsed card shows the chevron beside the title, a field count and a preview line", async () => {
+        const wrapper = mountPanel({ entries: {} });
+        const toggle = wrapper.get('[data-testid="config-domain-toggle-test"]');
+
+        // 折叠态：箭头与标签同行（不再是一个远在 1080 px 卡右端的 ▸）
+        expect(toggle.attributes("aria-expanded")).toBe("false");
+        expect(toggle.text()).toContain("▸");
+        expect(toggle.text()).toContain("Test Domain");
+        // 摘要行：没有级联摘要时回落成「展开查看全部设置」
+        expect(toggle.get('[data-testid="config-domain-preview-test"]').text()).toBe(
+            "Expand to see all settings",
+        );
+        // 计数徽标 = 本卡字段数（H4 行徽标口径）
+        expect(toggle.get('[data-testid="config-domain-field-count-test"]').text()).toBe(
+            "4 fields",
+        );
+
+        // 给了 summary 就显示 summary（用户偏好那类域有内容可给）
+        const withSummary = mountPanel({ entries: {}, summary: "deepseek / model" });
+        expect(withSummary.get('[data-testid="config-domain-preview-test"]').text()).toBe(
+            "deepseek / model",
+        );
+
+        await expandPanel(wrapper);
+        expect(
+            wrapper.get('[data-testid="config-domain-toggle-test"]').attributes("aria-expanded"),
+        ).toBe("true");
+        expect(wrapper.find('[data-testid="config-domain-preview-test"]').exists()).toBe(false);
+    });
     it("TC1: renders all schema fields when entries is empty", async () => {
         const wrapper = mountPanel({ entries: {} });
         await expandPanel(wrapper);
