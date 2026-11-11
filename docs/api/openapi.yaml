@@ -2391,6 +2391,12 @@ paths:
         when only built-in defaults apply. `ruleCounts` lists only layers that hold at least one
         rule. Domains are the built-in action classes plus every action class configured by
         persisted instance/user/workspace-default/workspace rules.
+        **Known gap (PLAN-0766, next phase)**: the shared `workspace-default` layer is enumerated
+        here for forward compatibility, but this view (the legacy `policy_rules` table) has no
+        producer for it yet — the default layer currently lands only through the config surface's
+        `approval-policy` domain (`PUT /api/v1/config/workspace-default/approval-policy`), which
+        CP's runtime policy context already honours. Wiring the rules-table view to that layer is a
+        PLAN-0766 follow-up item, not a promise of this response.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -7247,7 +7253,15 @@ components:
       required: [actionClass, effectiveLayer, configuredLayers, ruleCounts]
       properties:
         actionClass: { type: string, minLength: 1, maxLength: 64 }
-        effectiveLayer: { type: string, enum: [builtin, instance, user, workspace-default, workspace] }
+        effectiveLayer:
+          type: string
+          enum: [builtin, instance, user, workspace-default, workspace]
+          description: >-
+            Highest layer that configures the domain, or `builtin`. `workspace-default` is
+            forward-compatible only: this view reads the legacy `policy_rules` table, which has no
+            workspace-default producer yet — the shared default layer currently reaches runtime
+            policy only through the config surface's `approval-policy` domain. Listing the value
+            here does not promise the view emits it (PLAN-0766 follow-up, see listPolicyDomains).
         configuredLayers:
           type: array
           items: { type: string, enum: [instance, user, workspace-default, workspace] }
