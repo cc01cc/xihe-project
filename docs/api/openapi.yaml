@@ -3201,7 +3201,6 @@ paths:
             Accept-Ranges: { description: 'Always `bytes`', schema: { type: string } }
             Content-Range: { description: '`bytes */<real total>`', schema: { type: string } }
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-    delete: { tags: [attachment], operationId: deleteFile, summary: Delete one workspace file, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/upload:
     post: { tags: [attachment], operationId: uploadFile, summary: Upload a workspace file, security: [{ bearerAuth: [] }], description: WorkspaceStorage file upload (maximum 64 MiB; Chat attachments use a separate route and limit). Refused with 503 BACKEND_DISABLED while the workspace runs on the frozen docker backend (PLAN-0612)., responses: { '201': { description: Uploaded }, '413': { description: Workspace file exceeds 64 MiB limit }, '503': { description: BACKEND_DISABLED (docker execution backend frozen; use direct_attach) } } }
   /api/v1/rag/stats:

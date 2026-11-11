@@ -162,15 +162,12 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         EXEMPT_DOCUMENTED.put("/api/v1/config/api-request-templates", KEPT_BY_DESIGN);
         EXEMPT_DOCUMENTED.put("/api/v1/config/{}/api-request-templates", KEPT_BY_DESIGN);
 
-        // ---- BL-320 批 5（PLAN-0763 M5 过渡）：METHOD+path 升级后新浮出的契约债，两条都在
-        //      task-236 的 openapi.yaml 写域内修，修完必须删行——drift 断言即过期机制。
-        //      ① setWorkspaceAgentCap 的 METHOD 轴错位：契约把 PUT 写在 collection 路径 /agents，
-        //        代码实现在 item 路径（WorkspaceAgentController.java:240），一对两形状同一债；
-        //      ② /api/v1/files/{fileId} 的 delete 契约残留：CP legacy 删除路由已按设计移除
-        //        （WorkspaceFileController 类注释），yaml 仍声明 deleteFile（openapi.yaml:3174） ----
-        KNOWN_GAPS.put("/api/v1/workspaces/{}/agents", "bl320-batch5-task236-yaml-move");
-        KNOWN_GAPS.put("/api/v1/workspaces/{}/agents/{}", "bl320-batch5-task236-yaml-move");
-        KNOWN_GAPS.put("/api/v1/files/{}", "bl320-batch5-task236-stale-delete");
+        // ---- BL-320 冻结清单当前**为空**：批 1 把 8 条真缺契约补进 openapi.yaml，批 2 把
+        //      principal-grants 退役面记为 deprecated 契约；批 5（PLAN-0763 M5）由 METHOD+path
+        //      升级抓到的两条债（setWorkspaceAgentCap 轴错位、files/{fileId} 的 delete 残留）
+        //      已在 task-134 修清并从本表删除。空表是**目标态**，不是"没有机制"：新缺口必须按
+        //      \`BL-320 批 N\` 逐条登记在这里，而不是去放宽断言 ----
+        // KNOWN_GAPS.put("<shape>", "<batch token>");
 
         // ---- 参数名豁免当前**为空**：批 2 已把 /api/v1/workspaces/{wsId}/mcp/servers 统一为
         //      {workspaceId}。若再出现"同形状不同变量名"，必须逐条登记并写清"为何运行时等价" ----
