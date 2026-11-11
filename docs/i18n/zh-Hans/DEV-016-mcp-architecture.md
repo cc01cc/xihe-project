@@ -307,7 +307,7 @@ CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_sta
 
 **复核记录**：
 
-- **2026-11-11**（base `84221184d`，dev 栈 DOWN）：静态侧重抽 23 个 `#[tool(` 注册点（`:455`–`:806`），名字集与本节 0 冲突、必需参数 0 不一致（对齐表见 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`）；握手字节级对比 blocked-on-stack（全部候选端口不监听，探测记录同目录 `stack-probe.md`）。栈恢复后跑同目录 `mcp-tools-verify.mjs` 即可完成握手侧复核。§7#1（`truncate_limit`）已确认 task-241 修复（摘除 + 三态 Rust 测试钉死，`main.rs:7382-7446`）。
+- **2026-11-11**（base `84ec2462618f`，dev 栈 DOWN）：静态侧重抽 23 个 `#[tool(` 注册点（`:455`–`:806`），名字集 / 必需参数 / 返回类型（13 `Json` / 10 `String`）三路与本节及工具清单 0 不一致（对齐表见 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`）；本轮 14:2x 复测候选端口（12631/12633/12640–44）仍全部不监听 ⇒ 握手字节级对比继续 blocked-on-stack（探测记录同目录 `stack-probe.md`）。栈恢复后跑同目录 `mcp-tools-verify.mjs` 即可完成握手侧复核。§7#1（`truncate_limit`）已确认 task-241 修复（摘除 + 三态 Rust 测试钉死，`main.rs:7382-7450`）。
 
 **变更规则**：新增/删除 tool、改 `description`、改 `inputSchema` 都属 tool 面变更，必须同批更新该清单并跑 §6 复核；只改代码不改清单视为文档债。
 

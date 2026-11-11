@@ -7,13 +7,16 @@ The MCP tool surface that the **Runtime** exposes as an MCP server, plus the two
 > cross-checked line by line against the registration site in source. If they disagree, the handshake
 > wins and this file is the thing that is wrong. Regeneration and re-verification: §6.
 >
-> Snapshot: **2026-11-10**, dev stack `stack-1` (CP :12631, Runtime :12633), Runtime `rmcp 3.7.0`,
-> `A03-xihe` develop. Probe: 23 tools on the Runtime surface, 23 on the CP user face,
-> 29 on the CP internal-service face (§2).
+> Snapshot (live handshake): **2026-11-10**, dev stack `stack-1` (CP :12631, Runtime :12633),
+> Runtime `rmcp 3.7.0`, `A03-xihe` develop. Probe: 23 tools on the Runtime surface, 23 on the CP
+> user face, 29 on the CP internal-service face (§2).
 >
-> Last static re-verification: **2026-11-11**, base `84221184d` — 23 registration sites re-extracted,
-> name set and required-params aligned 0-mismatch against this table (§2). The byte-level
-> source↔handshake description diff is **blocked-on-stack** (no dev stack listening); re-run recipe §6.
+> Last static re-verification: **2026-11-11**, base `84ec2462618f` — 23 registration sites re-extracted;
+> name set, required params and structured-vs-text return types aligned 0-mismatch against this table
+> (§2). **The live `tools/list` re-run is blocked-on-stack**: the 2026-11-11 ~14:2x probe found no
+> listener on CP :12631 / Runtime :12633 / :12640–12644, so this run re-confirms only the static side —
+> §5's handshake-only claims (protocol echo, `_meta` requirement, `cacheScope`) still rest on the
+> 2026-11-10 transcript. Run §6 as the first step once a stack is back.
 
 ## 1. Three faces, one catalog
 
@@ -36,13 +39,13 @@ The CP-owned tools are gated on `access.internalService()` in `populateSystemToo
 
 | Check | Result |
 |---|---|
-| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `84221184d`) |
+| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `84ec2462618f`) |
 | Runtime `tools/list` (direct, stateless mode) | **23** tools |
 | CP user face `tools/list` (`admin@xihe.local`) | **23** tools |
 | CP internal-service face `tools/list` | **29** tools = 23 + 6 CP-owned |
 | Name set source ↔ handshake | identical (0 only-in-source, 0 only-in-handshake) |
 | `description` string source ↔ handshake | identical for all 23 (0 diffs, as of 2026-11-10 snapshot) |
-| Static re-extraction ↔ this table (2026-11-11, stack down) | names 23/23; required-params 0 mismatch |
+| Static re-extraction ↔ this table (2026-11-11, base `84ec2462618f`, stack down) | names 23/23; required-params 0 mismatch; return types 13 structured / 10 text match the §3 split |
 
 ## 3. The 23 Runtime tools
 
@@ -50,7 +53,8 @@ Every tool advertises `name`, `description` and `inputSchema` (JSON Schema draft
 nested objects). **13 of the 23 also advertise `outputSchema`** (structured JSON results); the other 10
 (`read_file`, `write_file`, `delete_file`, `delete_directory`, `move_file`, `copy_file`, `mkdir`,
 `extract_pdf_text`, `start_background_process`, `cancel_background_process`) return plain text and carry
-no `outputSchema` — callers must not expect a structured result from those. Required parameters are
+no `outputSchema` — callers must not expect a structured result from those. The static side agrees with
+this split: 13 handlers return `Json<…>`, the other 10 return a plain `String`. Required parameters are
 marked **bold** below. "Face" is the CP policy face from `ToolFaceRegistry`
 (`actionClass`/`shape`), which is what decides read-vs-write authorization and approval gating.
 
@@ -102,9 +106,11 @@ marked **bold** below. "Face" is the CP policy face from `ToolFaceRegistry`
 
 ## 4. CP-owned tools (service face only, +6)
 
-Registered in `McpProxyController.populateSystemTools` (`:605-622`) with their schemas built in
-`gitStatusToolDefinition` / `gitDiffToolDefinition` / `gitLogToolDefinition` (`:844-897`) and the
-sub-agent / credential / skill definitions alongside. They never reach the user face.
+Registered in `McpProxyController.populateSystemTools` (`:601`, the `internalService()` gate block at
+`:605-622`) with their schemas built in `gitStatusToolDefinition` (`:842-852`) /
+`gitDiffToolDefinition` (`:861-875`) / `gitLogToolDefinition` (`:884-906`) and
+`spawnAgentToolDefinition` (`:779`) / `acquireCredentialToolDefinition` (`:796`) /
+`skillReadToolDefinition` (`:816-834`) alongside. They never reach the user face.
 
 | Tool | Parameters | Policy face | Notes |
 |---|---|---|---|
@@ -147,6 +153,10 @@ model can only reach them through the CP face (`DEV-016` §3.2.1).
   (the CP injects these in `normalizeRuntimeBody`). Re-verify through the CP face (§6), not by hand.
 
 ## 6. How to regenerate / re-verify this catalog
+
+**Status 2026-11-11: blocked-on-stack.** No listener on CP :12631 / Runtime :12633 / :12640–:12644
+at ~14:2x, so only the source side below could run. When a stack is back, run both sides, then
+replace the header snapshot block and delete this status paragraph.
 
 **Source side** (must be 23; names are the `async fn` after each `#[tool(...)]`):
 
@@ -200,7 +210,7 @@ handshake script, port probe, alignment table) live in
 
 | # | Observation | Severity | Status |
 |---|---|---|---|
-| 1 | `start_background_process` used to advertise `truncate_limit` while its handler ignored it. | low | **fixed (task-241), re-verified 2026-11-11 on `84221184d`**: the field was removed from `StartBackgroundProcessRequest` (inert on the background path — output is retained per stream up to 1 MiB, `job_engine/mod.rs:33 STREAM_CAP_BYTES`, read back via `read_command_output` which reports `truncated`); `execute_command` keeps the parameter because there it sizes the inline wire preview (`container_runtime.rs:744-748`); Rust tests pin both (`main.rs:7382-7446`); historical callers still passing the field are tolerated (serde ignores unknown fields). |
+| 1 | `start_background_process` used to advertise `truncate_limit` while its handler ignored it. | low | **fixed (task-241), re-verified 2026-11-11 on `84ec2462618f`**: the field was removed from `StartBackgroundProcessRequest` (inert on the background path — output is retained per stream up to 1 MiB, `job_engine/mod.rs:33 STREAM_CAP_BYTES`, read back via `read_command_output` which reports `truncated`); `execute_command` keeps the parameter because there it sizes the inline wire preview (`src/container_runtime.rs:450`, truncation applied `:620-640`); Rust tests pin both (`main.rs:7382-7450`); historical callers still passing the field are tolerated (serde ignores unknown fields). |
 | 2 | `DEV-016` §1 states the protocol is `2026-07-28`; the Runtime `initialize` result advertises `2025-11-25` (rmcp 3.7.0). The CP *enforces* `2026-07-28` on the wire, so this is a doc-vs-negotiation wording gap, not a broken handshake. | doc | clarified in this file; DEV-016 now points here |
 | 3 | `DEV-016` §3.2.1 can read as "the git tools are in every `tools/list`". They are injected only when `access.internalService()` is true, i.e. the user face never sees them. | doc | clarified in DEV-016 §10 |
 | 4 | `DEV-016` §1 note "Runtime 侧按该协议全程无会话" holds only with `MCP-Protocol-Version: 2026-07-28` + `_meta`; without the header the endpoint is sessionful (`400 Session ID is required`). | doc | clarified in DEV-016 §10 |
