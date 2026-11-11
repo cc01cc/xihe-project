@@ -50,9 +50,10 @@ The CP-owned tools are gated on `access.internalService()` in `populateSystemToo
 
 ## 2. Measured evidence
 
-Evidence files are archived under `plans/PLAN-0763-XH-api-contract-docs/evidence/` (repo-relative; the
-2026-11-11 stack-2 run). The extractor and handshake scripts themselves live in the
-`evidence/m3-tools-snapshot/` subdirectory (§6).
+Evidence files are archived under `plans/PLAN-0763-XH-api-contract-docs/evidence/` (paths are relative
+to the ONE workspace root — `plans/` belongs to the ONE repo, not this one; the run is the 2026-11-11
+stack-2 one). The extractor and handshake scripts themselves live in the `evidence/m3-tools-snapshot/`
+subdirectory (§6).
 
 | Check | Result | Evidence |
 |---|---|---|
