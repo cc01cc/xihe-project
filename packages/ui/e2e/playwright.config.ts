@@ -1,10 +1,29 @@
 import { defineConfig, type ReporterDescription } from "@playwright/test";
 import { SERVER_START_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./timeouts";
+import { mockApiEnvFor, resolveExpectedChain } from "./helpers/chain";
 
 const UI_PORT = process.env.XIHE_UI_PORT || "12630",
     externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === "1";
 const e2eProfile = process.env.XIHE_E2E_PROFILE || "all",
     headed = process.env.XIHE_E2E_HEADED === "1";
+
+/**
+ * task-80：**链路声明 + 自证**。
+ *
+ * mock 车道的 `webServer.command` 是 `pnpm dev`，而 `/settings|/workspace/**` 的 HTML 入口
+ * 由 vite 的 mock 中间件是否挂载决定（`XIHE_UI_MOCK_API=1`）。此前这个开关靠**调用者 shell 里恰好有**
+ * ⇒ 同一个命令可能跑在 `index.html` 上，也可能跑在 `preview-real.html` 上，报告里看不出来
+ * （`green-light-audit.md` §A4.3 的 6 passed 事故）。
+ *
+ * 现在：期望链路由 `resolveExpectedChain()` 决定（显式 `XIHE_E2E_EXPECT_CHAIN` 优先，
+ * 否则从 `XIHE_UI_MOCK_API` 推导），并由本文件的 `webServer.env` **显式**写成对应值 ——
+ * 不再继承 shell 里的模糊态；随后 `globalSetup` 用一次真实请求证明实际链路，不符即整轮 fail-fast。
+ */
+const expectedChain = resolveExpectedChain();
+const baseEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([, value]) => value !== undefined),
+) as Record<string, string>;
+
 const browserChannel = process.env.XIHE_E2E_BROWSER_CHANNEL;
 const viewport = (() => {
     const match = /^(\d+)x(\d+)$/.exec(process.env.XIHE_E2E_VIEWPORT ?? "");
@@ -59,6 +78,13 @@ export default defineConfig({
     },
     grep: e2eProfile === "host" ? /@host/ : undefined,
     grepInvert: e2eProfile === "compose" ? /@host/ : undefined,
+    // 链路自证：mock 车道必跑；显式声明了链路（可用于 external server 的反向验证）也跑。
+    globalSetup:
+        !externalServer && e2eProfile === "mock"
+            ? "./chain-proof.setup.ts"
+            : process.env.XIHE_E2E_EXPECT_CHAIN
+              ? "./chain-proof.setup.ts"
+              : undefined,
     webServer: externalServer
         ? undefined
         : {
@@ -69,5 +95,7 @@ export default defineConfig({
               // 复用会让测试跑在「别人 worktree 的代码」上却报本车道的结果（假绿）；
               // 端口被占时应显式失败并换一个已登记 stack 端口，而不是静默复用。
               reuseExistingServer: false,
+              // task-80：显式注入（而不是继承 shell），让"实际服务哪个 HTML"与"声明链路"同源。
+              env: { ...baseEnv, XIHE_UI_MOCK_API: mockApiEnvFor(expectedChain.chain) },
           },
 });
