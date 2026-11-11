@@ -50,17 +50,23 @@ The CP-owned tools are gated on `access.internalService()` in `populateSystemToo
 
 ## 2. Measured evidence
 
-| Check | Result |
-|---|---|
-| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `4b5a7a3d44ab`) |
-| Runtime `tools/list` (direct to `/internal/v1/runtime/workspaces/{id}/mcp`, stateless `_meta` path) | **23** tools — 2026-11-10 measurement, **not** re-run on 2026-11-11 (see §6) |
-| CP user face `tools/list` (`admin@xihe.local`, stack-2 :12641) | **23** tools (2026-11-11) |
-| CP internal-service face `tools/list` (`XIHE_AGENT_API_TOKEN` bearer) | **29** tools = 23 + 6 CP-owned (2026-11-11) |
-| Name set source ↔ handshake | identical (0 only-in-source, 0 only-in-handshake) (2026-11-11) |
-| `description` string source ↔ handshake | identical for all 23, byte-level (2026-11-11) |
-| `inputSchema` property keys / required / leaf types source ↔ handshake | 0 diff after resolving `$defs` (2026-11-11) |
-| `outputSchema` split source ↔ handshake | 13 structured / 10 text, identical list (§3) (2026-11-11) |
-| `tools/list` result extras | `cacheScope: "private"`, `ttlMs: 0`, `resultType: "complete"`, no `nextCursor` (2026-11-11) |
+Evidence files are archived under `plans/PLAN-0763-XH-api-contract-docs/evidence/` (paths are relative
+to the ONE workspace root — `plans/` belongs to the ONE repo, not this one; the run is the 2026-11-11
+stack-2 one). The extractor and handshake scripts themselves live in the `evidence/m3-tools-snapshot/`
+subdirectory (§6).
+
+| Check | Result | Evidence |
+|---|---|---|
+| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `4b5a7a3d44ab`) | `m3-tools-static.json` |
+| Runtime `tools/list` (direct to `/internal/v1/runtime/workspaces/{id}/mcp`, stateless `_meta` path) | **23** tools — 2026-11-10 measurement, **not** re-run on 2026-11-11 (see §6) | `m3-tools-snapshot/stack-probe.md` (prior run) |
+| CP user face `tools/list` (`admin@xihe.local`, stack-2 :12641) | **23** tools (2026-11-11) | `m3-handshake-stack2.json` |
+| CP internal-service face `tools/list` (`XIHE_AGENT_API_TOKEN` bearer) | **29** tools = 23 + 6 CP-owned (2026-11-11) | `m3-handshake-stack2.json` |
+| Name set source ↔ handshake | identical (0 only-in-source, 0 only-in-handshake) (2026-11-11) | `m3-alignment-report.json` |
+| `description` string source ↔ handshake | identical for all 23, byte-level (2026-11-11) | `m3-alignment-report.json` |
+| `inputSchema` property keys / required / leaf types source ↔ handshake | 0 diff after resolving `$defs` (2026-11-11) | `m3-alignment-report.json` |
+| `outputSchema` split source ↔ handshake | 13 structured / 10 text, identical list (§3) (2026-11-11) | `m3-alignment-report.json`, `m3-handshake-stack2.json` |
+| `tools/list` result extras | `cacheScope: "private"`, `ttlMs: 0`, `resultType: "complete"`, no `nextCursor` (2026-11-11) | `m3-handshake-stack2.json` |
+| Protocol assertions in §5 (session-id 403, GET/DELETE 405, version mismatch `-32600`, `initialize` `2025-11-25`) | all re-confirmed (2026-11-11) | `m3-probes-protocol.json`, `m3-handshake-stack2.json` |
 
 ## 3. The 23 Runtime tools
 
@@ -277,8 +283,11 @@ an auth or endpoint problem. A `403 MCP_SESSION_INVALID` is expected if you copi
 build — check `dev-stack status --json` / `mise run dev:host:status`) or someone edited one side only.
 If only `inputSchema` differs, that is a **true bug**: report it with the file:line of the registration
 and both sides of the schema — do not "fix" this snapshot to match, because the snapshot is the
-evidence. The re-verification artifacts (static extractor, handshake script, alignment table) live in
-`plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/`.
+evidence. The reusable scripts (static extractor, handshake probe) live in
+`plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/`; the archived outputs of the
+2026-11-11 stack-2 run are `m3-tools-static.json`, `m3-handshake-stack2.json`,
+`m3-alignment-report.json` and `m3-probes-protocol.json` one level up, in
+`plans/PLAN-0763-XH-api-contract-docs/evidence/` (§2 maps each check to its file).
 
 ## 7. Known discrepancies (as of the snapshot)
 
