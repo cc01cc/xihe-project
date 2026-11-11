@@ -42,7 +42,15 @@
                         );
                     }
                     localStorage.setItem("xihe-language", "zh-CN");
-                    localStorage.setItem("xihe-theme", '"light"');
+                    // task-75：**只在键不存在时**写默认值。此前是无条件写 `"light"`
+                    // （JSON 引号形态），而这段脚本在每次 HTML 加载时都跑 —— 于是"点深色→刷新"
+                    // 在 mock 车道里永远回浅色，任何主题持久化验证都会假失败
+                    // （细节见 internal/A03-xihe/evidence/2026-11-11-color-shadcn-unify/green-light-audit.md）。
+                    // 语义保留"新环境默认浅色、截图可复现"，但不覆盖用户/产品已写入的值；
+                    // 形态用规范**裸值**（与产品 SSOT 一致），不再制造 JSON 引号形态。
+                    if (!localStorage.getItem("xihe-theme")) {
+                        localStorage.setItem("xihe-theme", "light");
+                    }
                     document.documentElement.lang = "zh-CN";
                 } catch (e) {}
             })();

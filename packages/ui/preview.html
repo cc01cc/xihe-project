@@ -8,7 +8,13 @@
         <script>
             (function () {
                 try {
-                    var theme = JSON.parse(localStorage.getItem("xihe-theme") || '"system"');
+                    // task-75：`xihe-theme` 规范形态是**裸值**（`dark`），历史上出现过 JSON
+                    // 引号形态（`"dark"`）。只认一种就会出现"存了深色、首屏却浅色"——两种都认。
+                    var raw = localStorage.getItem("xihe-theme");
+                    var theme = raw === null ? "system" : raw;
+                    if (theme.charAt(0) === '"') {
+                        theme = JSON.parse(theme);
+                    }
                     if (
                         theme === "dark" ||
                         (theme === "system" &&
