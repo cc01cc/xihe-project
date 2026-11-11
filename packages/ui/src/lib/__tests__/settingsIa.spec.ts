@@ -183,13 +183,33 @@ describe("instance ops groups", () => {
     });
 });
 describe("settings IA resource groups (PLAN-0752 T4.0/T4.1)", () => {
-    it("instance layer keeps 4 resource slots, all marked with an audit gap code", () => {
+    it("instance layer keeps 4 gap slots and exactly one real entry (skills, task-83)", () => {
         const items = instanceResourceGroup();
-        expect(items.map((item) => item.id)).toEqual(["agents", "mcp", "credentials", "knowledge"]);
-        // D7：留位标缺口，不隐藏 —— 4 条都没有 path（没有后端承载就没有可跳的页面）
-        expect(items.every((item) => item.path === undefined)).toBe(true);
-        expect(items.flatMap((item) => item.gaps ?? [])).toEqual(["G4", "G1", "G2", "G3"]);
-        expect(items.every((item) => !!item.gapNoteKey)).toBe(true);
+        expect(items.map((item) => item.id)).toEqual([
+            "agents",
+            "mcp",
+            "credentials",
+            "skills",
+            "knowledge",
+        ]);
+        // D7：留位标缺口，不隐藏 —— 4 条缺口都没有 path（没有后端承载就没有可跳的页面）
+        const gapped = items.filter((item) => (item.gaps ?? []).length > 0);
+        expect(gapped.map((item) => item.id)).toEqual([
+            "agents",
+            "mcp",
+            "credentials",
+            "knowledge",
+        ]);
+        expect(gapped.every((item) => item.path === undefined)).toBe(true);
+        expect(gapped.flatMap((item) => item.gaps ?? [])).toEqual(["G4", "G1", "G2", "G3"]);
+        expect(gapped.every((item) => !!item.gapNoteKey)).toBe(true);
+        // task-83：技能是这一组里唯一后端已就绪的（`GET /skills` 默认 instance scope）⇒
+        // 真入口，且**不带**缺口标记（与用户层 agent-principals「转真就摘缺口」一致）。
+        const real = items.filter((item) => item.path);
+        expect(real.map((item) => item.id)).toEqual(["skills"]);
+        expect(real.map((item) => item.path)).toEqual(["/settings/skills"]);
+        expect(real[0]?.gaps).toBeUndefined();
+        expect(real[0]?.gapNoteKey).toBeUndefined();
     });
 
     it("user layer has two real resource entries and one gapped one (PLAN-0750 M3)", () => {
