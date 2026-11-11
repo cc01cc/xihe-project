@@ -251,6 +251,11 @@ test.describe("PLAN-0753 M4：千条级长会话窗口化滚动留证", () => {
         await expect
             .poll(async () => (await readSample(page)).scrollTop, { timeout: EXPECT_TIMEOUT_MS })
             .toBeGreaterThan(beforeBottom.scrollHeight - beforeBottom.clientHeight - 40);
+        // task-118：窗口 bottomPadding = totalHeight − prefix[end]，重算在下一帧才发生；
+        // 先 poll 等到归零再读数断言 —— 否则「产品未重算」与「测试先采样一步」不可分（D-861）。
+        await expect
+            .poll(async () => (await readSample(page)).bottomSpacer, { timeout: EXPECT_TIMEOUT_MS })
+            .toBeLessThan(2);
         const atEnd = await readSample(page);
         expect(atEnd.bottomSpacer, "贴底时下占位应归零").toBeLessThan(2);
         await expect(
