@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 import type { ServerResponse } from "node:http";
 import { CONFIG_SCHEMA_CATALOG } from "../../lib/configSchemaCatalog";
 import { MOCK_VALUES } from "./data/mockValues";
+import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 
 /**
  * task-137 rev2（Lead 2026-11-11 拍板）：**真实 UI + mock 数据** —— 数据在**网络层** mock。
@@ -197,6 +198,18 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 }
                 if (path === "/workspaces/current" && (req.method ?? "GET") === "GET") {
                     return respond(200, { workspace: MOCK_WORKSPACE });
+                }
+                // task-49（Lead 2026-11-11 扩授权）：工作区环境页的读取面。
+                // 原先只 mock 了 /workspaces 与 /workspaces/current ⇒ 环境页吃 404、Job 三列不渲染。
+                // 这里**只增**两条读端点，既有两条的返回结构不动；夹具见 data/workspaceEnvironment.ts。
+                const environmentMatch = path.match(/^\/workspaces\/([^/]+)\/environment$/);
+                if (environmentMatch && (req.method ?? "GET") === "GET") {
+                    options.log?.("[mock-api] GET workspace environment → fixtures");
+                    return respond(200, mockWorkspaceEnvironment(environmentMatch[1]));
+                }
+                const jobsMatch = path.match(/^\/workspaces\/([^/]+)\/jobs$/);
+                if (jobsMatch && (req.method ?? "GET") === "GET") {
+                    return respond(200, mockWorkspaceJobs(jobsMatch[1]));
                 }
                 if (path === "/user-events") {
                     // 最小 SSE stub：首帧 event: connected 后保持连接。**不能回 404** ——
