@@ -74,27 +74,67 @@ function quoteArg(value) {
   return /[\s"]/u.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function launch({ command, args, cwd, env }) {
+function launch({ command, args, cwd, env, guard }) {
   const isWindows = process.platform === "win32";
   const direct = command === process.execPath || /\.exe$/i.test(command);
   // Windows: a console child of a console-less parent (agent runner, detached
   // E2E, CI) otherwise pops a new terminal window for every service. Interactive
   // dev can opt back in with XIHE_DEV_SHOW_CONSOLE=1.
   const hideWindow = process.env.XIHE_DEV_SHOW_CONSOLE !== "1";
+  // task-11 C: a guard needs to read the child's output, so it tees both streams back to ours.
+  // Without a guard this stays exactly "inherit" (byte-for-byte the old behaviour).
+  const stdio = guard ? ["inherit", "pipe", "pipe"] : "inherit";
   const child = isWindows && !direct
     ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", [command, ...args].map(quoteArg).join(" ")], {
         cwd,
         env,
-        stdio: "inherit",
+        stdio,
         windowsHide: hideWindow,
       })
-    : spawn(command, args, { cwd, env, stdio: "inherit", windowsHide: hideWindow });
+    : spawn(command, args, { cwd, env, stdio, windowsHide: hideWindow });
 
   child.once("error", (error) => {
     console.error(`[stack] ERROR: failed to launch ${command}: ${error.message}`);
     process.exit(1);
   });
+
+  // task-11 C: fail as soon as the log proves the application refused to start, instead of letting
+  // the caller (dev-stack) poll a port for the full readiness budget. `exit code` alone is not
+  // enough on the dev runway — that is the whole point of this probe.
+  let failFast = false;
+  if (guard) {
+    const TAIL_LIMIT = 8192;
+    let tail = "";
+    const scan = (chunk) => {
+      // Keep a bounded tail: the marker line and its neighbours are what matters, not the whole log.
+      tail = (tail + chunk.toString()).slice(-TAIL_LIMIT);
+      if (failFast) return;
+      const rule = guard.rules.find((candidate) => candidate.pattern.test(tail));
+      if (!rule) return;
+      failFast = true;
+      console.error(`[stack] ERROR: ${rule.message}`);
+      // Take the whole tree down: `mvn` still owns the JVM that `spring-boot:run` forked.
+      if (isWindows) {
+        spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+      } else {
+        child.kill("SIGTERM");
+      }
+      process.exit(1);
+    };
+    // Tee (not swallow): the console output and dev-stack's per-service log files must not change.
+    child.stdout?.on("data", (chunk) => {
+      process.stdout.write(chunk);
+      scan(chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      process.stderr.write(chunk);
+      scan(chunk);
+    });
+  }
+
   child.once("exit", (code, signal) => {
+    // The probe already decided (and exited 1); do not let the late exit event rewrite that.
+    if (failFast) return;
     if (signal) {
       console.error(`[stack] ${command} terminated by ${signal}`);
       process.exit(1);
@@ -128,10 +168,44 @@ function describeTarget(target, derived, hostRoot) {
   );
 }
 
+// task-11 C（D-949 第 24 条）：dev 形态的「进程已退出即提前失败」探针。
+//
+// A 让正常失败回到退出码（见 targets.cp 的 -Dspring.devtools.restart.enabled=false）；但
+// **只看退出码不足以兜住 devtools**：只要 restart 又被打开（或 devtools 行为再变），`mvn
+// spring-boot:run` 就会在应用已 fail-fast 之后仍然 exit 0。所以再从**日志**兜一层：见到
+// `[IDENTITY] ... result=fail-fast` 立即判失败，不等 dev-stack 的 readiness 超时（默认 600s）。
+//
+// 只在 cp 上开：agent/runtime/ui 没有这条吞异常的路径，它们的 stdio 保持 inherit 原样。
+const CP_FAIL_FAST_GUARD = {
+  rules: [
+    {
+      // InstanceIdentityService.java:124 / :143 的固定日志行：`[IDENTITY] event=instance_identity_mismatch result=fail-fast`
+      // （该行按设计不含 UUID/身份值，匹配它不会把敏感值带进日志判断）。
+      pattern: /\[IDENTITY\][^\n]*result=fail-fast/u,
+      message:
+        "cp fail-fast detected in the log ([IDENTITY] ... result=fail-fast): the application refused to start"
+        + " (deployment identity conflict). Failing now instead of waiting for the readiness timeout.",
+    },
+  ],
+};
+
 const targets = {
   pg: () => ({ command: "docker", args: ["compose", "up", "-d", "--wait", "postgres"], cwd: projectRoot }),
   cp: (effectiveEnv) => ({
     command: "mvn",
+    // dev 形态必须让 ApplicationRunner 的失败可见（task-11 / D-949 第 24 条）：
+    // spring-boot-devtools 的 RestartLauncher 把 forked `main` 抛出的 Throwable 存进 error 字段后
+    // return（不重抛、不 System.exit），Restarter.restart() 只 return launcher.getError() ⇒ 应用打出
+    // 「Application run failed」之后 `mvn spring-boot:run` 仍然 exit 0 / BUILD SUCCESS。于是
+    // InstanceIdentityInitializer 的 fail-fast 契约在 dev 跑道上静默失效（M1-3 的 C7① 正是被它挡住）。
+    // 关掉 devtools restart 让失败回到进程退出码；代价 = 失去 dev 热重启（本项目 CP 改代码本来就靠重启）。
+    // prod 形态（`java -jar`，无 devtools）本已正确，不经过本分支，行为不变。
+    //
+    // 注入形态见本文件 `if (target === "cp")` 块：`JAVA_TOOL_OPTIONS` 追加
+    // `-Dspring.devtools.restart.enabled=false`（JVM 在 main 前落成系统属性）。
+    // 注意 mvn 命令行上的 `-Dspring.devtools.restart.enabled=false` **无效**（只到 Maven 自己），
+    // 四种形态的实测记录见该块注释。
+    //
     // -Dxihe.target.dir：把 CP 的构建输出（target/）放到快卷上。
     // 背景：H: 是 ReFS，每文件写 56-170ms，CP 冷编译在 H: 上要 ~8 分钟；C: 上 ~15s。
     // BL-253 L3：值来自本脚本的派生（每栈每 commit 一个目录），显式 env 仍最优先。
@@ -142,6 +216,7 @@ const targets = {
         : []),
     ],
     cwd: join(projectRoot, "packages", "control-plane"),
+    guard: CP_FAIL_FAST_GUARD,
   }),
   agent: () => ({ command: "uv", args: ["run", "python", "-m", "xihe_agent.main"], cwd: join(projectRoot, "packages", "agent") }),
   runtime: () => ({ command: "cargo", args: ["run", "--bin", "xihe-runtime"], cwd: join(projectRoot, "packages", "runtime") }),
@@ -165,6 +240,11 @@ if (!target || target === "--help" || target === "-h") {
   console.log("       injected into the subprocess env of the target that consumes the key.");
   console.log("       cp gate (PLAN-0662): compares classes/META-INF/build-info.properties `commit` with");
   console.log("       git HEAD; stale/missing ⇒ rebuild from HEAD. --no-rebuild keeps the old classes (WARN).");
+  console.log("       cp dev runway (task-11): devtools restart is disabled by appending");
+  console.log("       -Dspring.devtools.restart.enabled=false to JAVA_TOOL_OPTIONS (a real JVM property;");
+  console.log("       mvn's own -D does NOT reach the forked app JVM — measured 2026-11-11).");
+  console.log("       so an ApplicationRunner failure reaches the exit code; the log is also scanned for");
+  console.log("       `[IDENTITY] ... result=fail-fast` and fails at once instead of hanging on readiness.");
   process.exit(target ? 0 : 2);
 }
 
@@ -399,6 +479,26 @@ if (target === "cp") {
   const cpDir = join(projectRoot, "packages", "control-plane"),
     head = gitHead({ cwd: projectRoot }),
     noRebuild = rest.includes("--no-rebuild");
+  // task-11 A（D-949 第 24 条）：dev 跑道关掉 devtools restart，让 ApplicationRunner 的失败回到退出码。
+  //
+  // 为什么是 JAVA_TOOL_OPTIONS —— 四种形态逐一实测（2026-11-11 20:45–20:50；判据 = 日志线程名
+  // `[restartedMain]` vs `[main]` + `mvn` 退出码）：
+  //   ① mvn 命令行 `-Dspring.devtools.restart.enabled=false` ⇒ 仍 restartedMain / BUILD SUCCESS（**无效**）
+  //      —— 那只是 Maven 自己的属性，不进 fork 出的应用 JVM。
+  //   ② env `SPRING_DEVTOOLS_RESTART_ENABLED=false`           ⇒ 仍 restartedMain / BUILD SUCCESS（**无效**）
+  //      —— devtools 在 ApplicationStartingEvent 就判这个开关，早于 config 文件与命令行参数装配。
+  //   ③ 程序参数 `--spring.devtools.restart.enabled=false`    ⇒ 仍 restartedMain / BUILD SUCCESS（**无效**）
+  //   ④ `-Dspring-boot.run.jvmArguments=...`                  ⇒ [main] / BUILD FAILURE / exit 1（有效）
+  //      但 pom 的 run goal **已配** jvmArguments（datasource url、hibernate dialect、XIHE_LOAD_DOTENV 等），
+  //      命令行会整体覆盖它 ⇒ 静默丢掉那些 flag。不能用。
+  //   ⑤ JAVA_TOOL_OPTIONS（本方案）                            ⇒ [main] / BUILD FAILURE / exit 1（有效）
+  //      JVM 在 main 之前把 -D 落成系统属性；子进程继承 env；不碰 pom 的 jvmArguments。
+  // 已有 JAVA_TOOL_OPTIONS 时**追加**而不是覆盖（别人的调优参数不能被我们抹掉）。
+  const toolOptions = (env.JAVA_TOOL_OPTIONS ?? "").trim();
+  const restartOff = "-Dspring.devtools.restart.enabled=false";
+  if (!toolOptions.includes(restartOff)) {
+    env.JAVA_TOOL_OPTIONS = toolOptions ? `${toolOptions} ${restartOff}` : restartOff;
+  }
   // BL-253 L3: derive this stack's own build dir **before** Maven runs, so two stacks never
   // compile into one directory again. Priority: explicit XIHE_CP_TARGET_DIR (rollback channel,
   // untouched) → `<root>/<stackId>/<sha12>[-dirty]`. Setting it on the effective env here is what
