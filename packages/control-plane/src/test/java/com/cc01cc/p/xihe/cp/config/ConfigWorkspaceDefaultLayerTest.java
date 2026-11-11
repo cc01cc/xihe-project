@@ -107,12 +107,38 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
 
     @Test
     void put_apiRequestTemplatesDomain_isRejectedEvenThoughExplicitOnly() {
-        // api-request-templates is EXPLICIT_ONLY but NOT one of the nine WORKSPACE_WRITABLE
-        // domains, so the workspace-default layer must refuse it (instance-only stays instance-only).
+        // api-request-templates is EXPLICIT_ONLY but NOT one of the eight WORKSPACE_WRITABLE ∩
+        // UI_DOMAINS domains, so the workspace-default layer must refuse it
+        // (instance-only stays instance-only).
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/api/v1/config/workspace-default/api-request-templates"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("connectionDefaultTemplates", "{}"), authHeaders(adminToken())),
             Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"));
+    }
+
+    @Test
+    void put_contextTemplatesDomain_answers400BecauseItHasNoGenericConfigReadFace() {
+        // task-183: context-templates owns a dedicated template API but has NO generic config
+        // read face (no meta view), so accepting a workspace-default write here would persist a
+        // layer no generic read surface could serve. Same 400 shape as api-request-templates.
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/workspace-default/context-templates"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("templates", "[]"), authHeaders(adminToken())), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"));
+    }
+
+    @Test
+    void delete_contextTemplatesDomain_answers400Too() {
+        // README-183 requirement 1 covers DELETE as well: the service guards the layer before the
+        // template-specific checks, so a clear on this domain cannot slip past the narrowed set.
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/workspace-default/context-templates/templates"), HttpMethod.DELETE,
+            new HttpEntity<>(authHeaders(adminToken())), Map.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
         assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"));

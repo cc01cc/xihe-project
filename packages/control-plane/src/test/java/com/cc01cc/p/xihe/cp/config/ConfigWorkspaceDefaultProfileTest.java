@@ -14,8 +14,10 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * D-928 / PLAN-0766 M2: service-level semantics of the shared layer — the five-hop
@@ -103,10 +105,27 @@ class ConfigWorkspaceDefaultProfileTest {
                 Map.of("connectionDefaultTemplates", "{}"), "admin", null, null));
         assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", templates.getCode());
 
-        // one of the nine is writable and resolves for any consumer.
+        // one of the eight is writable and resolves for any consumer.
         configService.putLayer("workspace-default", "job-policy",
             Map.of("defaultTimeoutSecs", "60"), "admin", null, null);
         assertEquals("60", configService.resolve("job-policy", "defaultTimeoutSecs", userA, wsA));
+    }
+
+    @Test
+    void workspaceDefaultWritableSet_isTheUiIntersection_andWorkspaceLayerIsNotNarrowed() {
+        // task-183 requirement 1: workspace-default writes are WORKSPACE_WRITABLE ∩ UI_DOMAINS.
+        for (String domain : java.util.List.of("llm-provider", "context-policy", "embedding", "rag",
+                "agent-runtime", "approval-policy", "agent-templates", "job-policy")) {
+            assertTrue(ConfigService.isLayerWritable("workspace-default", domain), domain);
+        }
+        assertFalse(ConfigService.isLayerWritable("workspace-default", "context-templates"));
+        assertFalse(ConfigService.isLayerWritable("workspace-default", "api-request-templates"));
+        assertFalse(ConfigService.isLayerWritable("workspace-default", "pricing"));
+
+        // task-183 requirement 4: the *workspace* layer keeps its own nine-domain set,
+        // including the service-only context-templates domain — not narrowed by this card.
+        assertTrue(ConfigService.isLayerWritable("workspace", "context-templates"));
+        assertTrue(ConfigService.isLayerWritable("workspace", "api-request-templates"));
     }
 
     @Test
