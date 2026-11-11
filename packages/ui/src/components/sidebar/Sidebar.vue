@@ -20,7 +20,6 @@ import NavRail from "./NavRail.vue";
 import { workspacePath } from "../../lib/routes";
 import { useSessionStore } from "../../stores/session";
 import { defaultLayerPath } from "../../lib/settingsIa";
-import LanguageSwitcher from "../settings/LanguageSwitcher.vue";
 
 const props = defineProps<{
     /**
@@ -239,10 +238,9 @@ function handleLogout() {
                 v-if="isMobile"
                 class="shrink-0 space-y-1 border-t border-sidebar-border px-3 py-3"
             >
-                <!-- task-36 ③：移动端没有导航栏，语言入口落在用户区（设置/退出所在的那块）。 -->
-                <div class="px-3 pb-1">
-                    <LanguageSwitcher variant="compact" />
-                </div>
+                <!-- task-36 ③ 的移动端紧凑语言开关：**已移除**（D-899，用户「语言切换放到设置里吧」；
+                     Lead 裁定不分 rail/抽屉：移动端保留 = 两个入口）。移动端同走
+                     设置页 · 用户层 · user-preference（/settings/user/user-preference）。 -->
                 <div class="flex items-center gap-2 px-3 py-2 text-sm text-sidebar-foreground/70">
                     <CircleUser class="size-4" aria-hidden="true" />
                     <span class="truncate">{{ auth.userName }}</span>
