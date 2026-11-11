@@ -72,7 +72,7 @@ const messages = {
             saveFailed: "保存失败",
             ia: {
                 domainKeysCount: "本域 {count} 个配置键",
-                domainEditableCount: "当前页可编辑 {count} 项",
+                domainEditableCount: "可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail: "{domain} 不在用户层的可写域清单里",
@@ -270,7 +270,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
     });
 
     // 循环回归：旧实现 `pending = layerLoading` 会让这里重新出现 loading 面并卸载面板。
-    it("承接面板上报的可编辑字段数（M>0 显示次量纲，主文案是键数）", async () => {
+    it("承接面板上报的可编辑字段数（M>0 只出标题右侧徽标，主文案是键数）", async () => {
         state.layerConfig.value = {
             instance: { logging: { level: "INFO", levelAgent: "INFO" } },
             user: {},
@@ -278,17 +278,24 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         const wrapper = mountView("instance", "logging");
         await flushPromises();
 
-        // 默认桩不上报 ⇒ 只显示主文案（键数 2）。
+        // 默认桩不上报 ⇒ 只显示主文案（键数 2），徽标不出现。
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
             "本域 2 个配置键",
         );
         expect(wrapper.find('[data-testid="settings-domain-editable-count"]').exists()).toBe(false);
 
-        // 面板上报 2 个可编辑字段 ⇒ 右侧次量纲出现，且量纲文案不是「项配置」。
+        // 面板上报 2 个可编辑字段 ⇒ 标题右侧徽标出现（task-78：整句降级为极小数徽标）。
         wrapper.findComponent({ name: "ConfigLayerPanels" }).vm.$emit("editable-count", 2);
         await wrapper.vm.$nextTick();
         const editable = wrapper.find('[data-testid="settings-domain-editable-count"]');
-        expect(editable.text()).toContain("当前页可编辑 2 项");
+        expect(editable.exists()).toBe(true);
+        expect(editable.text()).toBe("可编辑 2 项");
+        // 量纲判据（task-78）：不再是整句，也不再和「键数」混成一句话。
+        expect(editable.text()).not.toContain("当前页");
+        // 位置判据：徽标紧跟在域标题之后（标题右侧），不在右侧工具组里。
+        expect(
+            wrapper.find('[data-testid="settings-domain-title"]').element.nextElementSibling,
+        ).toBe(editable.element);
         wrapper.unmount();
     });
 

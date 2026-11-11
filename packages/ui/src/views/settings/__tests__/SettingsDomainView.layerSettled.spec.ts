@@ -42,7 +42,7 @@ const messages = {
             saveFailed: "保存失败",
             ia: {
                 domainKeysCount: "本域 {count} 个配置键",
-                domainEditableCount: "当前页可编辑 {count} 项",
+                domainEditableCount: "可编辑 {count} 项",
             },
         },
         common: { loading: "加载中…" },

@@ -112,13 +112,17 @@ const pending = computed(() => !layerSettled.value && !fetchError.value);
  * 失败时同样不渲染计数——「取数失败」也不是「没有配置」。
  *
  * task-157 两量纲（D-926 E 维）：页头主文案只陈述「本域 N 个配置键」（N = 本层 entries 键数，
- * 不含继承/生效值）；右侧次量纲「当前页可编辑 M 项」由面板上报（M = 本页允许编辑的**字段**数）。
+ * 不含继承/生效值）；可编辑字段数 M 由面板上报（M = 本页允许编辑的**字段**数）。
  * N=0 时连主文案也不显示（DEV-011 §1 P0-C-01：不再出现「本域 0 项配置」与说明卡并存的矛盾）。
+ *
+ * task-78：M 从「右侧整句次量纲」降级为**标题右侧极小号徽标**（用户点名第 5 条）。
+ * 保留而不删的理由 = 字段行只在域卡展开后存在（`ConfigDomainPanel.vue:462`），默认折叠 ⇒
+ * 用户看不见也数不出，M 是唯一线索。
  */
 const showSummary = computed(
     () => activeTab.value === "policy" && !pending.value && !fetchError.value && keyCount.value > 0,
 );
-/** M>0 才显示；纯引导页/连接管理页没有可编辑字段 ⇒ 不显示次量纲。 */
+/** M>0 才显示；纯引导页/连接管理页没有可编辑字段 ⇒ 不显示徽标（task-78）。 */
 const editableCount = ref(0);
 const showEditableCount = computed(
     () =>
@@ -199,6 +203,23 @@ watch(
             <h2 data-testid="settings-domain-title" class="text-lg font-medium">
                 {{ domainLabel }}
             </h2>
+            <!--
+                task-78（用户点名的第 5 条）：这句「本页 N 个可编辑字段」原来是一整句元信息放在
+                右侧，用户不会因为知道"共有 3 个"而改变操作 ⇒ 降级为**标题右侧的极小号计数徽标**。
+                为什么不整句删：`ConfigDomainPanel` 的字段行只在**展开后**存在（`:462 v-if="expanded"`），
+                默认折叠 ⇒ 用户**默认看不见**字段、数不出来，"这一域有多少可编辑字段"就只剩这一处
+                线索（判据按"用户实际能看到什么"算，不按 DOM 里有没有算）。分类与证据见
+                `evidence/2026-11-12-copy-sweep/domain-editable-count.md`。
+                量纲保留「可编辑 N 项」而不是裸数字：域卡标题上的徽标数的是**该卡字段数**（含锁定的），
+                两者量纲不同，裸数字会读成同一件事。
+            -->
+            <span
+                v-if="showEditableCount"
+                data-testid="settings-domain-editable-count"
+                class="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] leading-none tabular-nums text-muted-foreground"
+            >
+                {{ t("settings.ia.domainEditableCount", { count: editableCount }) }}
+            </span>
             <p
                 v-if="showSummary"
                 data-testid="settings-domain-summary"
@@ -206,15 +227,8 @@ watch(
             >
                 {{ t("settings.ia.domainKeysCount", { count: keyCount }) }}
             </p>
-            <!-- 右侧次量纲：当前页可编辑字段数（M>0 才显示；与主文案的「键数」量纲不同）。 -->
+            <!-- 右侧只留层切换入口（task-78：可编辑字段数已降级为标题徽标） -->
             <div class="ml-auto flex items-center gap-3">
-                <p
-                    v-if="showEditableCount"
-                    data-testid="settings-domain-editable-count"
-                    class="text-xs text-muted-foreground"
-                >
-                    {{ t("settings.ia.domainEditableCount", { count: editableCount }) }}
-                </p>
                 <button
                     v-if="instanceOnly"
                     type="button"
