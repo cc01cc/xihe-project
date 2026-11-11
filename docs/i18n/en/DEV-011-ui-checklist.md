@@ -154,4 +154,4 @@ status: active
 Keep only new criteria and counter-examples in the doc; screenshots stay as evidence under .tmp/<batch>/ and are reported by path.
 ```
 
-**Sources (checked 2026-11-11)**: Nielsen Norman Group "10 Usability Heuristics" (headings verified by fetch) · W3C WCAG 2.2 Quick Reference · Apple Human Interface Guidelines · Material 3 · IBM Carbon · Refactoring UI. See `DEV-012-ui-ux-references`.
+**Sources (checked 2026-11-11)**: Nielsen Norman Group "10 Usability Heuristics" (headings verified by fetch) · W3C WCAG 2.2 Quick Reference · Apple Human Interface Guidelines · Material 3 · IBM Carbon · Refactoring UI. See the standards table above (zh source list: `DEV-012-ui-ux-references`, zh-only).

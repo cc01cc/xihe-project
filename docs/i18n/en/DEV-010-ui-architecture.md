@@ -180,6 +180,7 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 | --- | --- | --- | --- | --- |
 | 全局导航条 | `GlobalRail` | `global-rail` | single, leftmost, switches modules, collapsible (56px icons ↔ icon+label) | **not implemented**: today `NavRail` (`components/sidebar/NavRail.vue`), fixed 56px icon-only, single state |
 | 模块舞台 | `ModuleStage` | `module-stage` | container right of the global rail, holds exactly one module at a time | **not implemented**: served today by the main `SplitterPanel` in `layouts/AppLayout.vue` |
+| | | | | The **Workbench** module hosts sessions (including sessions with no workspace) plus workspaces (list/switch/new/import/members); "workspace" is an object inside it, not a module name. |
 | 模块内导航 | `SettingsNav` / `WorkspaceNav` | `settings-nav` / `workspace-nav` | in-module section/list navigation | **partial**: `settings-nav-*` already conforms (`components/settings/SettingsResourceNav.vue`); no `workspace-nav` on the Workspace side |
 | 内容列 | `ListPane` / `MainPane` / `ContextPane` | `list-pane` / `main-pane` / `context-pane` | collapsible, resizable data column | **not implemented**: four segments today — navigation panel (`sidebar-resizer`) / file tree (`tree-resizer`) / main area (route container `workspace-route-viewport`) / dock (`dock-resizer`, i.e. `ContextPane`) |
 
@@ -191,7 +192,7 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 
 ### 10.2 Three-level layout model and MVP scope
 
-- **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: the main Workspace and Settings** (user ruling 2026-11-10, "these two first"). Extending the module list is **pending a ruling** (§10.6).
+- **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: the main Workbench and Settings** (user ruling 2026-11-10, "these two first"). Extending the module list is **pending a ruling** (§10.6).
 - **Main Workspace**: left (session/task list, `ListPane`) + centre (`MainPane`) + right (`ContextPane`, i.e. today's dock); left and right are collapsible.
 - **Settings**: left = settings navigation (`SettingsNav`, **not** the global rail) + right = content. **MVP is two columns; no right pane** (§10.5).
 
