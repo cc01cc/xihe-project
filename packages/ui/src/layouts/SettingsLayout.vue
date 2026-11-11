@@ -6,7 +6,6 @@ import { Menu, X } from "@lucide/vue";
 import BackToChatButton from "../components/settings/BackToChatButton.vue";
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
-import NavRail from "../components/sidebar/NavRail.vue";
 import {
     DOMAIN_LABEL_KEY,
     isConfigDomain,
@@ -54,20 +53,14 @@ watch(
         悬停/折叠状态用 data-* 属性表达（vendor Sidebar 的 ③ 模式），CSS 侧可据此选择器化。
     -->
     <div
-        class="flex min-h-screen bg-background text-foreground"
+        class="flex h-full min-h-0 bg-background text-foreground"
         :style="{ '--settings-sidebar-width': '264px' }"
     >
         <!--
-            task-253（用户 2026-11-10 裁定 ①）：**全局 rail 在所有页面常驻，设置页也不例外**。
-            旧实现刻意不复用 AppLayout（顶注 V10 的理由仍成立：工作区 Sidebar 不该出现在设置区），
-            但连带把 56px 全局 rail 也省掉了 —— 于是「设置」成了唯一没有模块导航的页面。
-            修法只搬 rail（NavRail 自带 设置/管理员/语言/登出），不搬工作区导航面板：与工作区页
-            的读法一致，也不把工作区侧栏带回来。桌面才显示（与 AppLayout 里 NavRail 的 isMobile
-            判定同一口径），移动端设置区走自己的抽屉。
+            PLAN-0762 T2.1（task-253 的进一步收敛）：全局 rail 已提升到 App.vue 的全局层
+            （GlobalRail，所有模块常驻、可折叠），本布局不再自带 NavRail —— 设置页只保留
+            「设置模块内的左导航（SettingsSidebar）+ 内容列」，不把工作区侧栏带回来（V10 仍成立）。
         -->
-        <div class="sticky top-0 hidden h-screen shrink-0 lg:block">
-            <NavRail :show-expand="false" />
-        </div>
 
         <aside
             data-testid="settings-sidebar-scope"
@@ -77,7 +70,7 @@ watch(
             class="hidden shrink-0 border-r lg:block"
             :style="{ width: 'var(--settings-sidebar-width)' }"
         >
-            <div class="sticky top-0 h-screen">
+            <div class="sticky top-0 h-full">
                 <SettingsSidebar />
             </div>
         </aside>
@@ -117,7 +110,7 @@ watch(
             </div>
         </div>
 
-        <div class="min-w-0 flex-1">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col">
             <div class="flex items-center gap-2 px-4 pt-3 lg:hidden">
                 <button
                     type="button"
@@ -137,7 +130,8 @@ watch(
                 </div>
             </SettingsLayerHeader>
 
-            <main class="mx-auto w-full max-w-6xl px-6 py-6">
+            <!-- 全局层把 100vh 收走了：设置内容列自己滚动，页面（含长域页）不被裁切。 -->
+            <main class="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-6 py-6">
                 <router-view />
             </main>
         </div>

@@ -292,11 +292,15 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         wrapper.unmount();
     });
 
-    it("实例层只显示引导节，不渲染连接管理", async () => {
+    it("实例层渲染默认偏好编辑器，不渲染连接管理", async () => {
         const wrapper = await mountView();
         // 默认激活 instance tab（管理员）。
+        // PLAN-0764 T1.6（task-150）：引导块 → 可编辑的「实例默认模型」偏好。
         const partition = wrapper.find('[data-testid="provider-partition"]');
-        expect(partition.text()).toContain("实例层不管理连接");
+        expect(partition.text()).toContain("实例默认模型");
+        // 话术必须写明解析不到连接时 409、不静默回落。
+        expect(partition.text()).toContain("LLM_PROFILE_CONFLICT");
+        expect(wrapper.find('[data-testid="llm-instance-default"]').exists()).toBe(true);
         expect(wrapper.find("provider-hub-stub").exists()).toBe(false);
         wrapper.unmount();
     });

@@ -4,7 +4,6 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import Sidebar from "../sidebar/Sidebar.vue";
-import NavRail from "../sidebar/NavRail.vue";
 import { useSessionStore } from "../../stores/session";
 import { useAuthStore } from "../../stores/auth";
 import { useAgentStore } from "../../stores/agent";
@@ -241,11 +240,13 @@ describe("Sidebar", () => {
         expect(wrapper.text()).toContain("今天");
     });
 
-    it("renders settings and logout buttons", async () => {
+    it("no longer owns module entries: settings/logout moved to the global rail", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
-        expect(wrapper.text()).toContain("设置");
-        expect(wrapper.text()).toContain("退出登录");
+        // PLAN-0762 T2.1：设置 / 登出属于全局条（GlobalRail，App.vue 常驻），模块面板不再提供，
+        // 避免「同一入口两处按钮」（DEV-011 按钮意义判据）。
+        expect(wrapper.text()).not.toContain("设置");
+        expect(wrapper.text()).not.toContain("退出登录");
     });
 
     it("shows the pending approval count on the matching session row", async () => {
@@ -273,21 +274,20 @@ describe("Sidebar", () => {
         expect(wrapper.find('[data-testid="session-pending-badge"]').text()).toContain("待审批");
     });
 
-    it("keeps the icon rail mounted and the panel inert when collapsed on desktop", async () => {
+    it("renders a collapsed strip with an expand control when collapsed on desktop", async () => {
         mockAuth();
         const wrapper = await mountSidebar({ open: false });
 
-        // PLAN-0753 T3: 桌面宽度归壳层 splitter 的 panel #1（reka flex-grow）；旧的
-        // `aside width: 56px` 几何断言随迁移换成 AppLayout 的面板语义（data-state +
-        // collapsedSize）。这里只锁组件语义：rail 仍在、面板 inert、handle 已离开 aside。
+        // PLAN-0762 T2.1：全局 rail 已提升到 App.vue 的全局层（GlobalRail），本组件不再自带
+        // NavRail；桌面折叠态改渲染 56px 折叠条（宽度由壳层 splitter 的 collapsedSize 决定），
+        // 「面板关闭后仍有可点的重新打开入口」这条 P-class 语义保持不变。
         expect(wrapper.find("aside").attributes("style")).toBeUndefined();
-        expect(wrapper.findComponent(NavRail).exists()).toBe(true);
-        expect(wrapper.find("[data-testid='sidebar-panel']").attributes("aria-hidden")).toBe(
-            "true",
-        );
-        // R-C: the rail itself must stay reachable while the panel is inert.
+        expect(wrapper.find('[data-testid="nav-rail"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="sidebar-expand"]').exists()).toBe(true);
+        // 折叠态面板整块不渲染（v-else），不是渲染了再隐藏。
+        expect(wrapper.find('[data-testid="sidebar-panel"]').exists()).toBe(false);
         expect(wrapper.find("aside").attributes("aria-hidden")).toBeUndefined();
-        expect(wrapper.find('[data-testid="nav-rail"]').attributes("inert")).toBeUndefined();
         // handle 上移到壳层（两个 splitter panel 之间），不再挂载在 aside 内。
         expect(wrapper.find('[data-testid="sidebar-resizer"]').exists()).toBe(false);
     });
@@ -300,7 +300,10 @@ describe("Sidebar", () => {
         // 「零宽」由壳层 `navPanelStyle` 的 `width: 0px` 持有（见 AppLayout.spec 移动端用例）。
         expect(wrapper.find("aside").attributes("style")).toBeUndefined();
         expect(wrapper.find("aside").attributes("aria-hidden")).toBe("true");
-        expect(wrapper.findComponent(NavRail).exists()).toBe(false);
+        // PLAN-0762 T2.1：全局 rail 不在任何模块布局内（移动端也不渲染），移动端设置/工作台
+        // 仍走各自的抽屉入口。
+        expect(wrapper.find('[data-testid="global-rail"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(false);
     });
 
     it("moves the workspace identity to the panel header and drops the lone bottom entry", async () => {
@@ -392,7 +395,10 @@ describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
         const wrapper = await mountSidebar({ open: true, forceCollapsed: true });
         // PLAN-0753 T3: 收起由壳层的 collapse() 驱动（panelSizeBeforeCollapseRef 记住
         // 原宽），Sidebar 不再写 aside 宽度 —— 宽度归 splitter panel。
-        expect(wrapper.findComponent(NavRail).exists()).toBe(true);
+        // PLAN-0762 T2.1：让位不是用户选择 ⇒ 不渲染"折叠条"的重新打开入口，面板保持渲染但 inert。
+        expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(false);
+        // 让位：面板仍渲染（不是用户折叠），但没有"折叠条"的重新打开入口。
+        expect(wrapper.find('[data-testid="sidebar-panel"]').exists()).toBe(true);
         expect(wrapper.get('[data-testid="sidebar"]').attributes("style")).toBeUndefined();
         // Render-only: no state write happens on its own.
         expect(wrapper.emitted("update:open")).toBeUndefined();
