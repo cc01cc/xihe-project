@@ -971,6 +971,7 @@ function devAdminStatus() {
   const recorded = readJson(devAdminStateFile());
   return {
     user: described.user,
+    // `source` = **活视图**：如果现在再起一次栈，会取哪一层（用当前 shell 的 env 求值）。
     source: described.source,
     envFile: described.envFile,
     stack: derived.stackId,
@@ -978,19 +979,29 @@ function devAdminStatus() {
     persistedPath: described.persistedPath,
     hasFile: described.hasFile,
     wouldGenerate: described.wouldGenerate,
-    // 从未启动过 ⇒ not-run。`upsertAt` 让读的人能判断这条读数有多旧。
+    // PLAN-0770：`upsert`/`bootSource` 来自**上一次 start 落的状态文件**，与上面的活视图是
+    // 两个时间基。混在一起会被读成矛盾（例：带 XIHE_DEV_ADMIN_PASSWORD 起栈后，status 的活视图
+    // 显示 source=file，而这次起栈实际用的是 env）⇒ 必须分开报，并带 bootAt 判断新鲜度。
     upsert: recorded?.upsert ?? 'not-run',
     upsertAt: recorded?.at ?? null,
     upsertReason: recorded?.reason ?? null,
+    bootSource: recorded?.source ?? null,
+    bootAt: recorded?.at ?? null,
   };
 }
 
 function formatDevAdminStatus(info) {
   const via = info.source === 'env-file' && info.envFile ? `(${info.envFile})` : '';
+  // 只在两个时间基不一致时加尾注，避免每行都挂噪音。
+  const boot =
+    info.bootSource && info.bootSource !== info.source
+      ? ` bootSource=${info.bootSource}(上次起栈${info.bootAt ? ` ${info.bootAt}` : ''})`
+      : '';
   return (
     `  dev-admin user=${info.user} source=${info.source}${via} stack=${info.stack} db=${info.database} `
     + `hasFile=${info.hasFile} persisted=${info.persistedPath ?? 'none'} upsert=${info.upsert}`
     + (info.upsertReason ? `(${info.upsertReason})` : '')
+    + boot
   );
 }
 

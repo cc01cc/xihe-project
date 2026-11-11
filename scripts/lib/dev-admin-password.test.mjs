@@ -25,7 +25,7 @@ import {
     writeDevAdminPasswordFile,
 } from "./dev-admin-password.mjs";
 
-// D-766 乙案最小版：钉住「env 优先级 + 生成持久化 + 不打印密码值」三条验收口径。
+// D-766 乙案最小版 + PLAN-0770 B′：钉住「四层优先级（OS env > 文件 > .env 链 > 生成）+ 不 materialize + 不打印密码值」。
 // 全部在 os.tmpdir() 的临时 checkout 里跑，不读开发者机器上真实的 .env / .local。
 
 const SECRET = "s3cret-from-env-chain-9f2a";
@@ -59,7 +59,7 @@ describe("generateDevAdminPassword", () => {
     });
 });
 
-describe("resolveDevAdminPassword 优先级（D-766 乙案）", () => {
+describe("resolveDevAdminPassword 优先级（B′：OS env > 持久文件 > .env 链 > 生成）", () => {
     test("① 显式 env 最高：压过 .env 链与已持久文件", (t) => {
         const root = fakeRoot(t, { envLines: `${ADMIN_PASSWORD_ENV}=${SECRET}\n` });
         const file = writeDevAdminPasswordFile(devAdminPasswordFile(root), FILE_SECRET);
@@ -89,17 +89,25 @@ describe("resolveDevAdminPassword 优先级（D-766 乙案）", () => {
         }
     });
 
-    test("② 本机已配置值（.env 链）压过已持久文件", (t) => {
+    test("③ `.env` 链**只做首次种子**：持久文件存在时链值不生效（B′ 核心）", (t) => {
         const root = fakeRoot(t, { envLines: `${ADMIN_PASSWORD_ENV}=${SECRET}\n` });
         writeDevAdminPasswordFile(devAdminPasswordFile(root), FILE_SECRET);
         const result = resolveDevAdminPassword({ projectRoot: root, env: {} });
-        assert.equal(result.source, "env-file");
-        assert.equal(result.password, SECRET);
-        assert.equal(result.file, null);
-        assert.equal(result.persisted, "none");
+        assert.equal(result.source, "file");
+        assert.equal(result.password, FILE_SECRET, "文件即真相：.env 链不得覆盖已持久的值");
+        // 也**不**把链值写进文件（无 materialize）
+        assert.equal(readDevAdminPasswordFile(devAdminPasswordFile(root)), FILE_SECRET);
     });
 
-    test("③ 已持久文件在第二次起栈时复用（密码跨重启稳定）", (t) => {
+    test("③ 无文件时 `.env` 链生效，但**不**材料化到文件（不 materialize）", (t) => {
+        const root = fakeRoot(t, { envLines: `${ADMIN_PASSWORD_ENV}=${SECRET}\n` });
+        const result = resolveDevAdminPassword({ projectRoot: root, env: {} });
+        assert.equal(result.source, "env-file");
+        assert.equal(result.password, SECRET);
+        assert.equal(existsSync(devAdminPasswordFile(root)), false, "链命中不该顺手写一份凭据文件");
+    });
+
+    test("② 已持久文件在第二次起栈时复用（密码跨重启稳定）", (t) => {
         const root = fakeRoot(t);
         const first = resolveDevAdminPassword({ projectRoot: root, env: {} });
         assert.equal(first.source, "generated");
@@ -112,7 +120,7 @@ describe("resolveDevAdminPassword 优先级（D-766 乙案）", () => {
         assert.equal(second.password, first.password, "second start must reuse the persisted value");
     });
 
-    test("④ 生成一次并持久到 gitignored 路径（`.local/dev/admin-password`）", (t) => {
+    test("④ 都没有时生成一次并持久到 gitignored 路径（`.local/dev/admin-password`）", (t) => {
         const root = fakeRoot(t);
         const result = resolveDevAdminPassword({ projectRoot: root, env: {} });
         assert.equal(result.source, "generated");

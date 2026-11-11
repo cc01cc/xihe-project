@@ -421,7 +421,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 
 `node scripts/dev-stack.mjs start`（模式 A2 / `mise run dev:stack`）自 D-766 起**自己决定** dev 管理员密码并注入子进程环境，不必先手工 `mise run reset-admin`（实现：`scripts/lib/dev-admin-password.mjs`；**0 产品面改动**，CP 侧仍只认 `XIHE_DEV_ADMIN_PASSWORD`，见 PLAN-0547）。
 
-- **来源优先级**（高 → 低）：① 显式 `XIHE_DEV_ADMIN_PASSWORD`（调用方/CI 指定，不落盘）；② 本机 `.env` 链已配置值（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义、fill-gaps，OS env 不被覆盖）；③ `.local/dev/admin-password` 里已持久的值；④ 首次生成 24 字节 base64url（32 字符）并持久到同一路径（目录 `0700` / 文件 `0600`，`.local/` 已在 `.gitignore`），此后跨重启稳定复用。空 / 纯空白值一律视为未配置（`.env.example` 的空占位不会被当成空密码）。
+- **来源优先级**（高 → 低，**B′ 四层序**，2026-11-11 用户裁定；与 Spring Boot / AWS CLI / Ansible / Docker Compose 的「显式 override > 持久文件（真相）> 打包默认」同构）：① 显式 OS env `XIHE_DEV_ADMIN_PASSWORD`（调用方/CI 指定，**不落盘**）；② `.local/dev/admin-password` 里已持久的值（目录 `0700` / 文件 `0600`，`.local/` 已在 `.gitignore`）—— **持久单源 = 真相**；③ 本机 `.env` 链（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义、fill-gaps）—— **仅首次种子**，② 存在时不参与；④ 前三层都没有时生成 24 字节 base64url（32 字符）并持久到 ② 的路径，此后跨重启稳定复用。空 / 纯空白值一律视为未配置（`.env.example` 的空占位不会被当成空密码）。
 - **注入点**：`start` 在 spawn 之前把值写进 supervisor 的子进程 env（`childEnv.XIHE_DEV_ADMIN_PASSWORD`）⇒ CP 的 `DataSeeder` 对**空库**直接按该密码建 `admin@xihe.local`（原有 `childEnv` 的其它键——`XIHE_STACK_ID`/`XIHE_ENV`——行为不变）。
 - **upsert 时机**：四个服务 `waitReady` 通过、租约翻 `started` **之后**，复用既有 `scripts/reset-admin.ps1`（内部 `ResetAdmin.java`）**只做 UPDATE**——`DataSeeder` **只建不更**，**存量库**靠这一步拿到同一个密码；不新写 SQL。**BL-523 起该入口不再自建账号**：`admin@xihe.local` 行不存在时显式失败（exit 3）并提示 `mise run dev:reset` 或重启该栈让 `DataSeeder` 建行（旧 INSERT 分支写 `users.role`，而 V89 已删该列，必然 SQL 报错；自建行还会缺 instance owner / SUPER_ADMIN 绑定）。
 - **跳过条件**（都会打印跳过原因）：非 Windows（`reset-admin.ps1` 仅 Windows，提示手动 `mise run reset-admin`）；栈未 ready。
@@ -430,10 +430,10 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - **与旧描述的关系**：模式 A（`mise run dev:host`）**不走这条路径**，其「随机密码且不打印、需手动 `reset-admin`」结论仍然成立（见模式 B 段落上的 supersede 注）。
 - **怎么确认「当前这套栈用的是哪一层」（PLAN-0770 INV-3）**：`node scripts/dev-stack.mjs status --stack <n>` 现在会多打一行非密元数据——
   ```
-  dev-admin user=admin@xihe.local source=env-file(.env.local) stack=stack-2 db=xihe_2 hasFile=true persisted=.local/dev/admin-password upsert=ok
+  dev-admin user=admin@xihe.local source=file stack=stack-2 db=xihe_2 hasFile=true persisted=.local/dev/admin-password upsert=ok
   ```
-  `--json` 同名字段在 `devAdmin` 块里（`{user, source, envFile, stack, database, persistedPath, hasFile, upsert, upsertAt, upsertReason}`）；`node scripts/stack-run.mjs env-json --stack <n>` 的 `devAdmin` 块同源同口径（供 PowerShell 侧消费）。`source` 四值：`env`（OS env）/ `env-file`（`.env` 链，`via` 后缀指明是哪个文件）/ `file`（`.local/dev/admin-password`）/ `missing`（三层都没有，**下次起栈会生成并落盘**）。`upsert` 是**上一次 `start` 的落库结果**（`ok`/`failed`/`skipped`/`not-run` + 原因），`status` 自己不做 upsert（读命令不产生副作用）。**这四类读数都不含密码值、长度或 hash。**
-- **文件被 `.env.local` 遮蔽是当前语义**：优先级①/②命中时 ③ 不参与 ⇒ 即使 `hasFile=true`，真正生效的仍是 env 链的值；`status` 会同时显示两者，正是为了让「看到多份文件时哪份生效」变成可核对事实。**恢复/轮换**：`mise run reset-admin`（内部带 `-WriteBack`）成功后会把**同一个值**写回 `.local/dev/admin-password`（打印 `written=<相对路径>`，不打印值），让 DB 与文件不再漂。**直接调 `scripts/reset-admin.ps1` 默认不写回**——`start` 的起栈 upsert 也走这个 wrapper，默认写回等于每次起栈都改写持久文件，那属另一种语义，未启用。
+  `--json` 同名字段在 `devAdmin` 块里（`{user, source, envFile, stack, database, persistedPath, hasFile, wouldGenerate, upsert, upsertAt, upsertReason, bootSource, bootAt}`）；`node scripts/stack-run.mjs env-json --stack <n>` 的 `devAdmin` 块同源同口径（供 PowerShell 侧消费）。`source` 五值：`env`（OS env，显式覆盖）/ `file`（`.local/dev/admin-password`，真相）/ `env-file`（`.env` 链，`via` 后缀指明是哪个文件；仅无文件时）/ `generated`（本次生成并落盘，只出现在 `start` 日志）/ `missing`（三层都没有；`status` 的活视图，**下次起栈会生成并落盘**）。`upsert`/`bootSource` 是**上一次 `start` 的落库结果**（`ok`/`failed`/`skipped`/`not-run` + 原因；`bootSource` 是那次起栈实际用的层），而 `source` 是**活视图**（现在再起一次会用哪层）—— 两个时间基不同，不一致时行尾会补 `bootSource=…(上次起栈 <时间>)`。`status` 自己不做 upsert（读命令不产生副作用）。**这四类读数都不含密码值、长度或 hash。**
+- **`.env` 链只做首次种子（B′）**：只要该 checkout 已有持久文件，**改了 `.env.local` 不再生效** —— 看 `status` 的 `source` 确认（`file` = 文件在生效；`env-file` = 还没有文件、走种子）。这也正是「一个 checkout 一份持久源」的落地方式；要换密码用 `mise run reset-admin`，不要改 `.env.local`。**恢复/轮换**：`mise run reset-admin`（内部带 `-WriteBack`）成功后会把**同一个值**写回 `.local/dev/admin-password`（打印 `written=<相对路径>`，不打印值），让 DB 与文件不再漂。**直接调 `scripts/reset-admin.ps1` 默认不写回**——`start` 的起栈 upsert 也走这个 wrapper，默认写回等于每次起栈都改写持久文件，那属另一种语义，未启用。
 
 ### springdoc 调试面（`/v3/api-docs`、`/swagger-ui/**`）—— 默认关闭（task-244 / PLAN-0763 D-800）
 

@@ -10,12 +10,21 @@
  * `scripts/reset-admin.ps1`（内部 ResetAdmin.java）完成，日志只取 `formatDevAdminPassword()`
  * 的非密元数据（来源 / 字符数 / 落盘路径）。
  *
- * 优先级（D-766 乙案）：
- *   1. 显式 env `XIHE_DEV_ADMIN_PASSWORD`（调用方/CI 指定，最高）
- *   2. 本机已配置值：`.env → .env.$XIHE_ENV → .env.local` 链（复用 `env-file.mjs`，
- *      与 CP 侧 DotenvLoader / `xihe` CLI 同一口径；fill-gaps，OS env 不覆盖）
- *   3. `.local/dev/admin-password`（gitignored，0700/0600 owner-only）里已持久的值
- *   4. 生成一次（24 字节 base64url = 32 字符）并持久到同一路径，此后稳定复用
+ * 优先级（**B′ 四层序**，2026-11-11 用户裁定；与 Spring Boot / AWS CLI / Ansible /
+ * Docker Compose 的「显式 override > 持久文件（真相）> 打包默认」同构）：
+ *   1. 显式 OS env `XIHE_DEV_ADMIN_PASSWORD`（调用方/CI 指定，最高；不落盘）
+ *   2. `.local/dev/admin-password`（gitignored，0700/0600 owner-only）—— **持久单源 = 真相**
+ *   3. `.env → .env.$XIHE_ENV → .env.local` 链（复用 `env-file.mjs`，与 CP 侧 DotenvLoader /
+ *      `xihe` CLI 同一口径；fill-gaps）—— **仅首次种子**，不覆盖 ②
+ *   4. 生成一次（24 字节 base64url = 32 字符）并持久到 ② 的路径，此后稳定复用
+ *
+ * B′ 与旧序（D-766 乙案）的唯一差别：②③ **对调**。旧的 `.env` 优先会让持久文件被永久遮蔽
+ * （实测主检 `source=env-file` 且 `hasFile=true`，改了 `.env.local` 悄悄换掉登录密码），
+ * 现在**文件存在即文件生效**，改 `.env.local` 不再影响已持久化的 checkout。
+ * 显式 OS env 仍在最前，CI/临时验证的覆盖通道保留。
+ *
+ * **不做 materialize**：③ 命中且 ② 不存在时只使用该值，**不**把 ③ 写进 ②（用户裁定；
+ * 否则"看一眼/起一次栈"就会凭空改写持久源）。
  *
  * 落盘权限：`mode: 0o600`（owner-only）。Windows/NTFS 上 mode 位基本是建议值，真正的
  * 访问控制在 ACL 上；仓库内不写机器路径，文件位置一律由调用方给的项目根派生。
@@ -66,7 +75,7 @@ export function writeDevAdminPasswordFile(
 }
 
 /**
- * 按 D-766 优先级解析本次 dev 管理员密码。
+ * 按 **B′ 四层序**解析本次 dev 管理员密码（① OS env → ② 持久文件 → ③ `.env` 链 → ④ 生成）。
  *
  * @param {object} options
  * @param {string} options.projectRoot checkout 根（持久文件与 .env 链都相对它）
@@ -74,8 +83,9 @@ export function writeDevAdminPasswordFile(
  * @param {string} [options.cwd] `.env` 链的查找起点，默认 projectRoot
  * @param {string} [options.file] 覆盖持久文件路径（测试用）
  * @param {() => string} [options.generate] 覆盖生成器（测试用）
- * @returns {{password: string, source: "env"|"env-file"|"file"|"generated", length: number,
- *   file: string|null, persisted: "none"|"reused"|"created"}}
+ * @param {boolean} [options.persist] `false` = 只读观察（status/诊断），绝不生成/落盘
+ * @returns {{password: string|null, source: "env"|"file"|"env-file"|"generated"|"missing",
+ *   length: number, file: string|null, persisted: "none"|"reused"|"created"}}
  */
 export function resolveDevAdminPassword({
     projectRoot,
@@ -87,11 +97,19 @@ export function resolveDevAdminPassword({
 } = {}) {
     const target = file ?? devAdminPasswordFile(projectRoot);
 
+    // ① 显式 OS env（调用方/CI）：最高优先级，且**不落盘**（一次性的 override 不该被持久化）。
     const explicit = normalize(env?.[ADMIN_PASSWORD_ENV]);
     if (explicit !== "") {
         return { password: explicit, source: "env", length: explicit.length, file: null, persisted: "none" };
     }
 
+    // ② 持久文件 = 单源真相（B′）：存在即生效，**不被 .env 链覆盖**。
+    const stored = readDevAdminPasswordFile(target);
+    if (stored !== null) {
+        return { password: stored, source: "file", length: stored.length, file: target, persisted: "reused" };
+    }
+
+    // ③ `.env` 链：**仅首次种子**（② 不存在时才轮到它；命中后也不写进 ②）。
     const configured = chainValue(ADMIN_PASSWORD_ENV, cwd);
     if (configured !== "") {
         return {
@@ -103,11 +121,6 @@ export function resolveDevAdminPassword({
         };
     }
 
-    const stored = readDevAdminPasswordFile(target);
-    if (stored !== null) {
-        return { password: stored, source: "file", length: stored.length, file: target, persisted: "reused" };
-    }
-
     // PLAN-0770：`persist: false` 是**只读观察**（status/诊断用）——绝不因为"看一眼来源"
     // 就凭空生成并落盘一份凭据。命不中任何一层时报 `source: "missing"`，由调用方显示
     // "尚未材料化"，而不是让读操作产生副作用。
@@ -115,6 +128,7 @@ export function resolveDevAdminPassword({
         return { password: null, source: "missing", length: 0, file: target, persisted: "none" };
     }
 
+    // ④ 生成并落盘（此后 ② 生效）。
     const password = generate();
     writeDevAdminPasswordFile(target, password);
     return { password, source: "generated", length: password.length, file: target, persisted: "created" };
