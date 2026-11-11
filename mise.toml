@@ -395,6 +395,10 @@ description = "Run Agent lint (ruff + mypy)"
 dir = "packages/agent"
 alias = "lint:agent"
 
+[tasks."check:mise-env"]
+run = "node scripts/check-mise-env.mjs"
+description = "env 变量登记门（task-131 v1 report-only）：properties 里 XIHE_* 未登记 ⇒ WARN"
+
 [tasks."lint:cp"]
 run = "mvn checkstyle:check"
 description = "Run CP lint (Checkstyle)"
