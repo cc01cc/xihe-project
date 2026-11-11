@@ -221,14 +221,54 @@ function processAlive(pid) {
   }
 }
 
-function commandLine(pid) {
-  if (!isWindows) return '';
+/** 进程的父 id 与命令行（一次 PowerShell 查询拿两个字段；task-30 的祖先链反查要它）。 */
+// task-30 性能：祖先反查要逐层查，逐层起一次 PowerShell 实测把 `acquire` 拖到 **32s**
+// （4 服务 × 最多 5 层 × ~1.5s）。改成**每次进程三种操作只拉一张表**（~1-2s），其余全在内存里查。
+// 3 秒 TTL：同一个 CLI 调用里可能 spawn 之后又查，表要能被刷新；再长就宁可重拉。
+const PROCESS_TABLE_TTL_MS = 3000;
+let processTableCache = { at: 0, table: null };
+
+function processTable() {
+  if (!isWindows) return new Map();
+  if (processTableCache.table && Date.now() - processTableCache.at < PROCESS_TABLE_TTL_MS) {
+    return processTableCache.table;
+  }
+  const table = new Map();
   const result = spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`],
-    { encoding: 'utf8', windowsHide: true },
+    [
+      '-NoProfile',
+      '-Command',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress',
+    ],
+    { encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
   );
-  return result.status === 0 ? String(result.stdout || '') : '';
+  if (result.status === 0) {
+    try {
+      const parsed = JSON.parse(String(result.stdout || '').trim() || 'null');
+      const list = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+      for (const row of list) {
+        const pid = Number(row?.ProcessId);
+        if (!Number.isInteger(pid) || pid <= 0) continue;
+        table.set(pid, {
+          parentPid: Number(row?.ParentProcessId) || 0,
+          commandLine: String(row?.CommandLine ?? ''),
+        });
+      }
+    } catch {
+      // 解析失败就返回空表：调用方会退化成「查不到身份」，绝不猜。
+    }
+  }
+  processTableCache = { at: Date.now(), table };
+  return table;
+}
+
+function processInfo(pid) {
+  return processTable().get(Number(pid)) ?? null;
+}
+
+function commandLine(pid) {
+  return processInfo(pid)?.commandLine ?? '';
 }
 
 /** The recorded PID is the cmd.exe wrapper started by `start`; never kill pid-reused strangers. */
@@ -236,6 +276,89 @@ function looksLikeOurWrapper(pid) {
   if (!isWindows) return true;
   const line = commandLine(pid);
   return /stack-run\.mjs/i.test(line);
+}
+
+/* ------------------------------ pid record identity (task-30 / BL-582 family) */
+
+// task-30：pid 记录有两个写入口，却长期只有一种字段——
+//   `start` 写 **launcher**（cmd.exe 包装），`acquire` 写 **listener**（java/python/node）。
+// 而 `start` 的复用判断要求命令行含 `stack-run.mjs` ⇒ **每次 acquire 之后的下一次 start 必然
+// 认不出自己人**，走 orphan sweep 把整栈杀掉重起（实测：task-28 只想重起 cp，结果四个全被重起）。
+//
+// 修法：记录同时保留两个身份，`pid` **恒为 launcher**（树杀、复用判断、lease 的 launcher 字段都以它为准），
+// `listenerPid` 只作展示与 `status` 交叉核对 —— 与 `lease.json` 的 `{launcher, listener}` 同形。
+// 旧形态（只有单 pid）**不要求先清状态**：从**当前端口监听者**往上找 wrapper，找到就当场自愈。
+
+/** launcher 身份（新记录读 launcherPid，旧记录退回 pid）。 */
+function launcherPidOf(entry) {
+  if (!entry) return null;
+  if (Number.isInteger(entry.launcherPid) && entry.launcherPid > 0) return entry.launcherPid;
+  return Number.isInteger(entry.pid) && entry.pid > 0 ? entry.pid : null;
+}
+
+/** listener 身份（旧记录没有这个字段 ⇒ null，不猜）。 */
+function listenerPidOf(entry) {
+  if (!entry) return null;
+  return Number.isInteger(entry.listenerPid) && entry.listenerPid > 0 ? entry.listenerPid : null;
+}
+
+/** 记录里的服务还活着吗：launcher 或 listener 任一在跑即算活着。 */
+function recordAlive(entry) {
+  return [launcherPidOf(entry), listenerPidOf(entry)].some((pid) => pid !== null && processAlive(pid));
+}
+
+/**
+ * 从 listener 往上找我们自己的 launcher：命令行含 `stack-run.mjs` 的**最高**一层
+ * （最高层才能一次 `taskkill /T` 收掉整棵树：cmd → node → mvn → java）。
+ *
+ * **只从当前端口监听者出发**，不从记录里的 pid 出发 —— 记录里的 pid 可能已被无关进程复用，
+ * 从它往上爬会把别人的进程树误认成我们自己的。
+ */
+function findLauncherAncestor(startPid, maxDepth = 6) {
+  let current = Number(startPid);
+  let found = null;
+  for (let depth = 0; depth < maxDepth && current > 0; depth += 1) {
+    const info = processInfo(current);
+    if (!info) break;
+    if (/stack-run\.mjs/i.test(info.commandLine)) found = current;
+    current = info.parentPid;
+  }
+  return found;
+}
+
+/**
+ * 判定「这个服务当前确实是我们自己的进程树」，返回 `{launcher, listener}`；不确定就返回 null。
+ *
+ * 两条独立证据，任一成立即可：
+ *  ① 记录里的 launcher 还活着且命令行是 stack-run.mjs（快路径，1 次进程查询）；
+ *  ② 当前**端口监听者**（fresh fact）的祖先链里有 stack-run.mjs（自愈旧记录 / acquire 写的 listener）。
+ *
+ * 反例保护：别人的**同画像**进程占着端口时，② 找不到 wrapper ⇒ 返回 null ⇒ 走 orphan sweep
+ * 的画像判定（该杀或明确拒绝），**绝不会被静默复用**。
+ */
+function resolveOwnLauncher(service, entry, facts = listenFacts()) {
+  const recorded = launcherPidOf(entry);
+  if (recorded !== null && processAlive(recorded) && looksLikeOurWrapper(recorded)) {
+    const listener = listenerPidOf(entry) ?? facts.own.find((item) => item.port === ports[service])?.pid ?? null;
+    return { launcher: recorded, listener, via: 'record' };
+  }
+  const ownListener = facts.own.find((item) => item.port === ports[service])?.pid ?? null;
+  if (ownListener !== null) {
+    const launcher = findLauncherAncestor(ownListener);
+    if (launcher !== null) return { launcher, listener: ownListener, via: 'ancestor-of-listener' };
+  }
+  return null;
+}
+
+/** 新形态的 pid 记录条目（`pid` 与 `launcherPid` 同值，保持旧读者可用）。 */
+function recordEntry({ launcherPid, listenerPid = null, port, startedAt }) {
+  return {
+    pid: launcherPid,
+    launcherPid,
+    listenerPid,
+    port,
+    startedAt: startedAt ?? new Date().toISOString(),
+  };
 }
 
 /* ------------------------------------------------- orphan sweep (PLAN-0656 R3) */
@@ -957,18 +1080,36 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   // task-21: 每个本次 spawn 的服务记一份「launcher 身份」——pid 判死活，exitPath 读退出码，
   // 两份日志用于判定 fail-fast 契约。只对**本次起的**服务登记：复用已在跑的服务没有 launcher 可判。
   const launchers = {};
+  // task-30: 端口事实只采一次，供「这个端口上的进程是不是我们自己的」判定复用。
+  const reuseFacts = listenFacts();
   for (const service of SERVICES) {
     const prior = previous.services?.[service];
-    if (prior?.pid && processAlive(prior.pid) && looksLikeOurWrapper(prior.pid)) {
-      record.services[service] = prior;
-      console.log(`[dev-stack] ${service} already running (pid ${prior.pid})`);
+    // task-30: 复用判断认 **launcher 身份**（记录里的 launcherPid，旧记录退回 pid），不再单看 `pid`
+    // 是不是 wrapper —— acquire 写进记录的是 listener，那样判必然失配并触发整栈重启。
+    const own = prior ? resolveOwnLauncher(service, prior, reuseFacts) : null;
+    if (own) {
+      record.services[service] = recordEntry({
+        launcherPid: own.launcher,
+        listenerPid: own.listener,
+        port: ports[service],
+        startedAt: prior.startedAt,
+      });
+      const recovered = own.via === 'ancestor-of-listener' ? ', identity recovered from the port listener' : '';
+      console.log(
+        `[dev-stack] ${service} already running (launcher ${own.launcher}`
+          + `${own.listener ? `, listener ${own.listener}` : ''}${recovered})`,
+      );
       continue;
     }
     if (await isPortListening(ports[service])) {
       // PLAN-0656 R3: a leftover process of THIS stack (e.g. the runtime orphaned by a
       // crashed stop) is cleaned here instead of failing the whole start; foreign
       // occupants are only reported, so the original error below still surfaces.
-      sweepOrphanProcesses({ derived, reason: 'start' });
+      //
+      // task-30 反例实测发现：这里以前是**全栈扫**（不传 services），于是「agent 端口被外人占着」
+      // 会把 cp/runtime/ui 三个**健康兄弟**也按画像杀掉 —— 拒绝路径带连坐。`classifyListener`
+      // 本来就支持按服务收窄（lib 注释：healthy siblings 不是这个 guard 的事），这里传 [service]。
+      sweepOrphanProcesses({ derived, reason: 'start', services: [service] });
       if (!(await waitForPortFree(ports[service]))) {
         throw new Error(
           `${service}: port ${ports[service]} is already in use by another process; stop it or use a different --stack`,
@@ -982,7 +1123,7 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
     const pid = await spawnDetached(service, outPath, errPath, exitPath);
     if (!pid) throw new Error(`${service}: launcher failed; see ${outPath} / ${errPath}`);
     launchers[service] = { pid, exitPath, outPath, errPath };
-    record.services[service] = { pid, port: ports[service], startedAt: new Date().toISOString() };
+    record.services[service] = recordEntry({ launcherPid: pid, port: ports[service] });
     writeJson(pidFile, record);
     console.log(`[dev-stack] started ${service} (pid ${pid}) port=${ports[service]} log=${outPath}`);
   }
@@ -1012,7 +1153,8 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   const rows = SERVICES.map((service) => ({
     service,
     port: ports[service],
-    pid: record.services[service]?.pid ?? null,
+    pid: launcherPidOf(record.services[service]),
+    listenerPid: listenerPidOf(record.services[service]),
     listening: state[service]?.listening ?? false,
     httpStatus: state[service]?.status ?? null,
     ready: state[service]?.ready ?? false,
@@ -1095,8 +1237,11 @@ async function status() {
     rows.push({
       service,
       port: ports[service],
-      pid: saved?.pid ?? null,
-      alive: saved?.pid ? processAlive(saved.pid) : false,
+      // task-30：`pid` 仍是 launcher（旧读者不受影响），listener 单列；alive 两个身份任一在跑即为真。
+      pid: launcherPidOf(saved),
+      launcherPid: launcherPidOf(saved),
+      listenerPid: listenerPidOf(saved),
+      alive: recordAlive(saved),
       listening: probe.listening,
       httpStatus: probe.status,
       ready: probe.ready,
@@ -1149,7 +1294,9 @@ async function status() {
     for (const row of rows) {
       console.log(
         `  ${row.service.padEnd(8)} pid=${String(row.pid ?? '-').padEnd(7)} alive=${row.alive} ` +
-          `port=${String(row.port).padEnd(6)} listen=${row.listening} http=${row.httpStatus ?? '-'} ready=${row.ready}`,
+          `port=${String(row.port).padEnd(6)} listen=${row.listening} http=${row.httpStatus ?? '-'} ready=${row.ready}`
+          // task-30：listener 与 launcher 不同才显示，避免四行都挂一串等值噪音。
+          + (row.listenerPid && row.listenerPid !== row.pid ? ` listener=${row.listenerPid}` : ''),
       );
     }
     console.log(`  cpBuild  ${formatCpBuild(cpBuild)}`);
@@ -1216,8 +1363,10 @@ async function statusAll() {
       services.push({
         service,
         port: p[service],
-        pid: saved?.pid ?? null,
-        alive: saved?.pid ? processAlive(saved.pid) : false,
+        // task-30：与 `status` 同口径 —— pid=launcher，listener 单列，alive 两个身份任一在跑即为真。
+        pid: launcherPidOf(saved),
+        listenerPid: listenerPidOf(saved),
+        alive: recordAlive(saved),
         listening: probe.listening,
         httpStatus: probe.status,
         ready: probe.ready,
@@ -1305,29 +1454,35 @@ async function stop() {
   } else {
     for (const service of SERVICES) {
       const saved = record.services?.[service];
-      if (!saved?.pid) continue;
-      if (!processAlive(saved.pid)) {
-        console.log(`[dev-stack] ${service} pid ${saved.pid} not running`);
+      const recorded = launcherPidOf(saved);
+      const recordedListener = listenerPidOf(saved);
+      if (recorded === null && recordedListener === null) continue;
+      if (!recordAlive(saved)) {
+        console.log(`[dev-stack] ${service} pid ${recorded ?? recordedListener} not running`);
         continue;
       }
-      if (!looksLikeOurWrapper(saved.pid)) {
-        console.error(`[dev-stack] WARN: pid ${saved.pid} (${service}) does not look like our wrapper; skipping kill`);
+      // task-30：先解析身份（记录里的 launcher，或从端口监听者往上找 wrapper）。旧记录只写 listener，
+      // 以前会走 "does not look like our wrapper; skipping kill" 而跳过 —— 现在能收掉整棵树。
+      const own = resolveOwnLauncher(service, saved);
+      const targetPid = own?.launcher ?? recorded ?? recordedListener;
+      if (!own && !looksLikeOurWrapper(targetPid)) {
+        console.error(`[dev-stack] WARN: pid ${targetPid} (${service}) does not look like our wrapper; skipping kill`);
         continue;
       }
       if (isWindows) {
-        spawnSync('taskkill', ['/PID', String(saved.pid), '/T', '/F'], { stdio: 'inherit', windowsHide: true });
+        spawnSync('taskkill', ['/PID', String(targetPid), '/T', '/F'], { stdio: 'inherit', windowsHide: true });
       } else {
         try {
-          process.kill(-saved.pid, 'SIGTERM');
+          process.kill(-targetPid, 'SIGTERM');
         } catch {
           try {
-            process.kill(saved.pid, 'SIGTERM');
+            process.kill(targetPid, 'SIGTERM');
           } catch {
             /* already gone */
           }
         }
       }
-      console.log(`[dev-stack] stopped ${service} (pid ${saved.pid}, tree)`);
+      console.log(`[dev-stack] stopped ${service} (pid ${targetPid}, tree${own?.via === 'ancestor-of-listener' ? ', launcher resolved from listener' : ''})`);
     }
   }
 
@@ -1418,6 +1573,26 @@ async function acquire() {
     previous,
     isAlive: processAlive,
   });
+  // task-30：buildAdoptedRecord 写的是 **listener** pid（认领时唯一能确认的事实），
+  // 这正是「acquire 之后 start 认不出自己人」的来源。这里按端口监听者反查 launcher 补回双身份，
+  // 让下一次 `start` 走快路径复用；查不到 launcher 就保留 listener 作 pid（旧行为，不猜）。
+  for (const service of SERVICES) {
+    const entry = record.services?.[service];
+    if (!entry) continue;
+    const listener = Number.isInteger(entry.listenerPid) ? entry.listenerPid : Number.isInteger(entry.pid) ? entry.pid : null;
+    const previousLauncher = launcherPidOf(previous?.services?.[service]);
+    const launcher =
+      findLauncherAncestor(listener) ??
+      (previousLauncher !== null && processAlive(previousLauncher) && looksLikeOurWrapper(previousLauncher)
+        ? previousLauncher
+        : null);
+    record.services[service] = {
+      ...entry,
+      pid: launcher ?? entry.pid,
+      launcherPid: launcher,
+      listenerPid: listener,
+    };
+  }
   writeJson(pidFile, record);
   const written = writeLease({ record });
   // 写完立刻按同一链路自审一次：认领也得经得起核对，不是「写了就算」。
