@@ -97,8 +97,13 @@ public class ResetAdmin {
 
         if (dryRun) {
             // 只报来源，不连库、不回显值 —— 用于核对三条输入通道是否按预期生效。
-            System.out.println("[reset-admin] dry-run: password-source = " + source
-                    + (password == null ? "（将生成 24 字节随机密码）" : "（length=" + password.length() + "，值不打印）"));
+            // password == null 时**不能**报 "generated"：本工具自己确实会随机生成，但经 wrapper
+            // （scripts/reset-admin.ps1）调用时真正的来源是单源链（PLAN-0770 B′），那条由 wrapper 打印。
+            // 这里若写 generated，读的人会把"没传值"误读成"这次要随机生成一个新密码"——实测已发生。
+            String origin = password == null
+                    ? "not-provided（未传入：经 wrapper 调用时真实来源见其 dry-run 行；直接调用本工具会生成一次性随机密码）"
+                    : source + "（length=" + password.length() + "，值不打印）";
+            System.out.println("[reset-admin] dry-run: password-source = " + origin);
             return;
         }
 

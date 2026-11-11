@@ -79,10 +79,13 @@ describe("ResetAdmin 输入优先级（stdin > env > --password，BL-523）", { 
         assert.ok(!r.stdout.includes(SECRET), "the value must never be printed");
     });
 
-    test("三路都缺 ⇒ 生成随机密码（不落盘、不打印）", () => {
+    test("三路都缺 ⇒ 报 not-provided（不得谎报 generated；真实来源由 wrapper 决定）", () => {
         const r = dryRun({});
         assert.equal(r.status, 0, r.stderr);
-        assert.match(r.stdout, /password-source = generated/);
+        assert.match(r.stdout, /password-source = not-provided/);
+        // PLAN-0770：dry-run 若报 generated，会被读成"这次要随机生成一个新密码"，
+        // 而经 wrapper 调用时真实来源是单源链（B′）—— 实测已误导过一次。
+        assert.ok(!/password-source = generated/.test(r.stdout), "dry-run 不得把'没传值'报成'将随机生成'");
     });
 });
 
@@ -116,7 +119,10 @@ describe("reset-admin.ps1 包装层（BL-523：-Password 不再进 argv）", () 
 
     test("java 参数里没有 --password；-Password 转成 env 并 WARN", () => {
         assert.ok(!wrapper.includes('"--password"'), "no --password may reach java argv any more");
-        assert.match(wrapper, /\$env:XIHE_RESET_ADMIN_PASSWORD = \$Password/);
+        // PLAN-0770 M4 起，-Password 先落到 $resolvedPassword，再由末尾统一注入 env（同一语义、单一注入点）。
+        // 旧断言直接匹配 `$env:... = $Password`，从 31e76497 起已不成立（本轮补测才发现一直红）。
+        assert.match(wrapper, /\$resolvedPassword = \$Password/);
+        assert.match(wrapper, /\$env:XIHE_RESET_ADMIN_PASSWORD = \$resolvedPassword/);
         assert.match(wrapper, /已废弃/);
     });
 
