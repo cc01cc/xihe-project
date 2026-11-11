@@ -28,6 +28,17 @@ public class ProviderConnectionAudit {
     @Column(name = "owner_id", nullable = false, length = 64)
     private String ownerId;
 
+    /** The profile/owner layer that supplied this connection (USER/WORKSPACE/INSTANCE). */
+    @Column(nullable = false, length = 16)
+    private String source;
+
+    /** The consuming user/workspace recorded on secret-free INSTANCE consumption rows. */
+    @Column(name = "consumer_user_id", length = 64)
+    private String consumerUserId;
+
+    @Column(name = "consumer_workspace_id", length = 64)
+    private String consumerWorkspaceId;
+
     @Column(name = "provider_id", nullable = false, length = 128)
     private String providerId;
 
@@ -72,6 +83,12 @@ public class ProviderConnectionAudit {
     public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
     public String getOwnerId() { return ownerId; }
     public void setOwnerId(String ownerId) { this.ownerId = ownerId; }
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
+    public String getConsumerUserId() { return consumerUserId; }
+    public void setConsumerUserId(String consumerUserId) { this.consumerUserId = consumerUserId; }
+    public String getConsumerWorkspaceId() { return consumerWorkspaceId; }
+    public void setConsumerWorkspaceId(String consumerWorkspaceId) { this.consumerWorkspaceId = consumerWorkspaceId; }
     public String getProviderId() { return providerId; }
     public void setProviderId(String providerId) { this.providerId = providerId; }
     public String getAction() { return action; }

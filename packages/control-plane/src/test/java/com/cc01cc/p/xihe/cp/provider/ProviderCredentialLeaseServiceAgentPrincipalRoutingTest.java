@@ -41,16 +41,18 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
     private static final String MODEL = "gpt-4o";
 
     private ProviderCredentialAccess credentialAccess;
+    private ProviderConnectionService connectionService;
     private ProviderCredentialLeaseService leases;
     private ProviderConnection connection;
 
     @BeforeEach
     void setUp() {
         credentialAccess = mock(ProviderCredentialAccess.class);
+        connectionService = mock(ProviderConnectionService.class);
         leases = new ProviderCredentialLeaseService(
                 mock(ProviderCredentialLeaseRepository.class),
                 mock(ProviderConnectionRepository.class),
-                mock(ProviderConnectionService.class),
+                connectionService,
                 mock(ProviderCatalogService.class),
                 mock(ApiInputTypeService.class),
                 new ObjectMapper(),
@@ -87,6 +89,23 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
         verify(credentialAccess).requireUsable(connection.getCredentialId(), USER, WORKSPACE);
         verify(credentialAccess, never()).requireUsableForAgentPrincipal(any(), anyString(), anyString(),
                 anyString(), any(Boolean.class));
+    }
+
+    @Test
+    void anInstanceConnectionRoutesToTheSharedCredentialGate() {
+        // D-922: the consumer does not own the admin's credential; only the connection gate plus
+        // the credential shape apply.
+        connection.setOwnerType(ProviderConnection.OWNER_INSTANCE);
+        connection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+
+        leases.issue(USER, WORKSPACE, SESSION, RUN, CONNECTION, "openai", MODEL, 7L);
+
+        verify(credentialAccess).requireUsableForSharedConnection(connection.getCredentialId());
+        verify(credentialAccess, never()).requireUsable(eq(connection.getCredentialId()),
+                anyString(), anyString());
+        verify(credentialAccess, never()).requireUsableForAgentPrincipal(any(), anyString(), anyString(),
+                anyString(), any(Boolean.class));
+        verify(connectionService).recordConsumptionAudit(connection, USER, WORKSPACE);
     }
 
     @Test

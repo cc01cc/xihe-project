@@ -1058,14 +1058,15 @@ public class ConfigService {
         if (legacyConnectionFallback) {
             return legacyReadyProfileConnection(profile, userId, workspaceId);
         }
+        // D-922 / task-152: the layer's own connection first, INSTANCE only as the last fallback.
         if ("workspace".equals(layer)) {
-            return workspaceId != null && providerConnectionService.findReadyByKey(
-                    ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
+            return workspaceId != null && providerConnectionService.findReadyForProfileScope(
+                    "workspace", userId == null ? null : userId.toString(), workspaceId.toString(),
                     profile.providerId(), profile.connectionKey()).isPresent();
         }
         if ("user".equals(layer)) {
-            return userId != null && providerConnectionService.findReadyByKey(
-                    ProviderConnection.OWNER_USER, userId.toString(),
+            return userId != null && providerConnectionService.findReadyForProfileScope(
+                    "user", userId.toString(), workspaceId == null ? null : workspaceId.toString(),
                     profile.providerId(), profile.connectionKey()).isPresent();
         }
         return false;
@@ -1203,17 +1204,17 @@ public class ConfigService {
 
     private ProviderConnection strictResolveConnection(LlmProfile profile, String profileScope,
                                                        UUID userId, UUID workspaceId) {
-        if ("workspace".equals(profileScope)) {
-            return workspaceId == null ? null : providerConnectionService.findReadyByKey(
-                    ProviderConnection.OWNER_WORKSPACE, workspaceId.toString(),
-                    profile.providerId(), profile.connectionKey()).orElse(null);
+        // D-922 / task-152: the connection belongs to the profile's layer (workspace profile ->
+        // WORKSPACE, user or instance profile -> consuming USER per T1.5); INSTANCE is the last
+        // fallback. There is no cross-layer workspace<->user search.
+        if (!"workspace".equals(profileScope) && !"user".equals(profileScope)
+                && !"instance".equals(profileScope)) {
+            return null;
         }
-        if ("user".equals(profileScope) || "instance".equals(profileScope)) {
-            return userId == null ? null : providerConnectionService.findReadyByKey(
-                    ProviderConnection.OWNER_USER, userId.toString(),
-                    profile.providerId(), profile.connectionKey()).orElse(null);
-        }
-        return null;
+        return providerConnectionService.findReadyForProfileScope(profileScope,
+                userId == null ? null : userId.toString(),
+                workspaceId == null ? null : workspaceId.toString(),
+                profile.providerId(), profile.connectionKey()).orElse(null);
     }
 
     private ProviderConnection legacyResolveConnection(LlmProfile profile, UUID userId,
@@ -1271,9 +1272,9 @@ public class ConfigService {
             return true;
         }
         if ("user".equals(hit.layer())) {
-            return "USER".equalsIgnoreCase(ownerType) && ownerId.equals(hit.userId());
+            return "USER".equalsIgnoreCase(ownerType) && ownerId != null && ownerId.equals(hit.userId());
         }
-        return "WORKSPACE".equalsIgnoreCase(ownerType) && ownerId.equals(hit.workspaceId());
+        return "WORKSPACE".equalsIgnoreCase(ownerType) && ownerId != null && ownerId.equals(hit.workspaceId());
     }
 
     /**

@@ -21,6 +21,10 @@ public class ProviderConnection {
 
     public static final String OWNER_WORKSPACE = "WORKSPACE";
     public static final String OWNER_USER = "USER";
+    /** D-922: instance-shared connections live at instance scope, administered by cap:instance:admin. */
+    public static final String OWNER_INSTANCE = "INSTANCE";
+    /** D-922: the single deployment-wide owner id stored on INSTANCE rows (one CP deployment per database). */
+    public static final String INSTANCE_OWNER_ID = "instance";
 
     public static final String STATUS_UNVERIFIED = "UNVERIFIED";
     public static final String STATUS_VERIFYING = "VERIFYING";

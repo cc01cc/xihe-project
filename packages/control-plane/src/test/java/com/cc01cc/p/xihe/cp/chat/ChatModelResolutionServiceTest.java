@@ -91,6 +91,25 @@ class ChatModelResolutionServiceTest {
     }
 
     @Test
+    void principalIntentResolvesWithAnInstanceOnlyConnection() {
+        Session session = session();
+        ProviderConnection instance = connection("p-intent");
+        instance.setOwnerType(ProviderConnection.OWNER_INSTANCE);
+        instance.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        when(agentPrincipals.defaultModel(any(), any()))
+                .thenReturn(new AgentPrincipalService.DefaultModel("p-intent", "m-intent"));
+        when(templates.effectiveConnections(USER, WORKSPACE, "p-intent"))
+                .thenReturn(List.of(instance));
+
+        ChatModelResolutionService.Resolution resolved = service.resolve(session, PRINCIPAL);
+
+        assertEquals("p-intent", resolved.provider());
+        assertEquals("m-intent", resolved.model());
+        assertEquals("agent-principal", resolved.source());
+        assertEquals(instance.getId().toString(), resolved.providerConnectionId());
+    }
+
+    @Test
     void fallsBackToTheEffectiveLlmProfileWhenThePrincipalHasNoIntent() {
         Session session = session();
         when(agentPrincipals.defaultModel(any(), any()))

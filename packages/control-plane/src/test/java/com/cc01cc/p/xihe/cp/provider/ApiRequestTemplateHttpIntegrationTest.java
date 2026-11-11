@@ -486,6 +486,35 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void instanceConnectionIsTheLastFallbackCandidate() throws Exception {
+        var instance = new com.cc01cc.p.xihe.cp.entity.ProviderConnection();
+        instance.setId(UUID.randomUUID());
+        instance.setOwnerType(com.cc01cc.p.xihe.cp.entity.ProviderConnection.OWNER_INSTANCE);
+        instance.setOwnerId(com.cc01cc.p.xihe.cp.entity.ProviderConnection.INSTANCE_OWNER_ID);
+        instance.setProviderId("custom-openai-compatible");
+        instance.setLabel("Inst Fallback");
+        instance.setConnectionKey("inst-fallback");
+        instance.setApiTypeId("openai-chat-completions");
+        instance.setApiTypeVersion(1);
+        instance.setEnabled(true);
+        instance.setStatus(com.cc01cc.p.xihe.cp.entity.ProviderConnection.STATUS_READY);
+        instance.setRevision(1L);
+        connections.save(instance);
+
+        assertEquals(java.util.List.of("inst-fallback"),
+                templates.effectiveConnections(userId, workspaceId, "custom-openai-compatible").stream()
+                        .map(com.cc01cc.p.xihe.cp.entity.ProviderConnection::getConnectionKey).toList(),
+                "with no USER/WORKSPACE chat candidate the shared INSTANCE connection is usable");
+
+        createConnection("custom-openai-compatible", "USER", "own-chat", "manual",
+                java.util.List.of("m1"), null, null, "https://provider.invalid/v1", "isolated-test-only");
+        assertEquals(java.util.List.of("own-chat"),
+                templates.effectiveConnections(userId, workspaceId, "custom-openai-compatible").stream()
+                        .map(com.cc01cc.p.xihe.cp.entity.ProviderConnection::getConnectionKey).toList(),
+                "a USER candidate demotes the INSTANCE fallback out of the slot set");
+    }
+
+    @Test
     void credentialKeysAreRejectedAndImpactPreviewMatchesCrossScopeRemovals() throws Exception {
         for (String body : java.util.List.of(
                 "{\"model\":\"${xh.model}\",\"messages\":[\"${xh.user_input}\"],\"apiKey\":\"leak\"}",

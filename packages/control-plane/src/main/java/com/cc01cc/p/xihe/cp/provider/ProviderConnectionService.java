@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.provider;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -14,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -107,6 +110,12 @@ public class ProviderConnectionService {
             connections.addAll(repository.findByOwnerTypeAndOwnerId(
                     ProviderConnection.OWNER_WORKSPACE, workspaceId));
         }
+        // D-922: INSTANCE rows are visible only to cap:instance:admin; runtime resolution still
+        // consumes them for every consumer through the profile chain.
+        if (isInstanceAdmin()) {
+            connections.addAll(repository.findByOwnerTypeAndOwnerId(
+                    ProviderConnection.OWNER_INSTANCE, ProviderConnection.INSTANCE_OWNER_ID));
+        }
         return connections;
     }
 
@@ -156,6 +165,31 @@ public class ProviderConnectionService {
                         && ProviderConnection.STATUS_READY.equals(connection.getStatus()));
     }
 
+    /**
+     * D-922 / task-152: profile connection resolution. The connection belongs to the layer that
+     * supplied the profile (workspace profile -> WORKSPACE, user or instance profile -> the
+     * consuming user's USER scope per T1.5); a missing layer connection falls through to the
+     * INSTANCE shared connection as the last resort. It never searches the other personal or
+     * workspace layer (that would be the BL-581 divergence).
+     */
+    @Transactional(readOnly = true)
+    public Optional<ProviderConnection> findReadyForProfileScope(
+            String profileScope, String userId, String workspaceId,
+            String provider, String connectionKey) {
+        Optional<ProviderConnection> own = Optional.empty();
+        if ("workspace".equals(profileScope) && workspaceId != null && !workspaceId.isBlank()) {
+            own = findReadyByKey(ProviderConnection.OWNER_WORKSPACE, workspaceId, provider, connectionKey);
+        } else if (("user".equals(profileScope) || "instance".equals(profileScope))
+                && userId != null && !userId.isBlank()) {
+            own = findReadyByKey(ProviderConnection.OWNER_USER, userId, provider, connectionKey);
+        }
+        if (own.isPresent()) {
+            return own;
+        }
+        return findReadyByKey(ProviderConnection.OWNER_INSTANCE,
+                ProviderConnection.INSTANCE_OWNER_ID, provider, connectionKey);
+    }
+
     @Transactional
     public ProviderConnection create(ConnectionInput input) {
         return create(input, null, null);
@@ -195,7 +229,7 @@ public class ProviderConnectionService {
                 ? pair.path("modelDiscovery").asText("remote-models")
                 : input.modelDiscovery());
         requireUniqueLabel(scope, ownerId, input.providerId(), label, null);
-        UUID linkedCredentialId = resolveCredentialLink(apiKey, credentialId, userId,
+        UUID linkedCredentialId = resolveCredentialLink(apiKey, credentialId, scope, userId,
                 TenantContext.getWorkspaceId(), label);
 
         ProviderConnection connection = new ProviderConnection();
@@ -252,7 +286,11 @@ public class ProviderConnectionService {
         }
         if (credentialId != null) {
             UUID linked = requireCredentialId(credentialId);
-            credentialAccess.requireUsable(linked, requireUserId(), TenantContext.getWorkspaceId());
+            if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
+                requireInstanceOwnCredential(linked, requireUserId());
+            } else {
+                credentialAccess.requireUsable(linked, requireUserId(), TenantContext.getWorkspaceId());
+            }
             connection.setCredentialId(linked);
         }
         if (apiKey != null) {
@@ -303,8 +341,12 @@ public class ProviderConnectionService {
             return markReady(connection, previousStatus);
         }
 
-        String apiKey = credentialAccess.decryptForUse(
-                connection.getCredentialId(), requireUserId(), TenantContext.getWorkspaceId());
+        // D-922: an INSTANCE connection verifies the admin-owned credential by shape only (the
+        // consumer is not the credential owner); user/workspace connections keep the owner gate.
+        String apiKey = ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                ? credentialAccess.decryptForDelivery(connection.getCredentialId())
+                : credentialAccess.decryptForUse(
+                        connection.getCredentialId(), requireUserId(), TenantContext.getWorkspaceId());
         String baseUrl = connection.getBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) {
             return markVerificationFailure(connection, "LLM_PROVIDER_BASE_URL_MISSING", previousStatus);
@@ -354,9 +396,11 @@ public class ProviderConnectionService {
             throw new SessionBlockedException(connection.getId().toString(), sessionCount);
         }
         var counts = requestTemplates.cleanupReferences(connection);
+        UUID profileOwnerId = ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                ? null : UUID.fromString(connection.getOwnerId());
         int removedProfiles = configService.getObject().cleanupProfiles(
                 connection.getProviderId(), connection.getConnectionKey(),
-                connection.getOwnerType(), UUID.fromString(connection.getOwnerId()),
+                connection.getOwnerType(), profileOwnerId,
                 TenantContext.getUserId());
         revokeLeases(connection.getId().toString());
         audit(connection, "DELETED", connection.getStatus(), "DELETED");
@@ -394,9 +438,11 @@ public class ProviderConnectionService {
         ensureCanManage(connection);
         java.util.Map<String, Object> impact =
                 new java.util.LinkedHashMap<>(requestTemplates.deleteImpact(connection));
+        UUID profileOwnerId = ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                ? null : UUID.fromString(connection.getOwnerId());
         var profileHits = configService.getObject().profileImpact(
                 connection.getProviderId(), connection.getConnectionKey(),
-                connection.getOwnerType(), UUID.fromString(connection.getOwnerId()));
+                connection.getOwnerType(), profileOwnerId);
         impact.put("profileCount", profileHits.size());
         impact.put("profileScopes", profileHits.stream()
                 .map(com.cc01cc.p.xihe.cp.config.ConfigService.ProfileHit::layer).distinct().toList());
@@ -427,6 +473,13 @@ public class ProviderConnectionService {
                 && connection.getOwnerId().equals(TenantContext.getWorkspaceId())) {
             return connection;
         }
+        if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
+            if (ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())
+                    && isInstanceAdmin()) {
+                return connection;
+            }
+            throw forbidden("Instance provider connection is not accessible");
+        }
         throw new IllegalArgumentException("Provider connection is not accessible");
     }
 
@@ -444,7 +497,12 @@ public class ProviderConnectionService {
         boolean visible = (ProviderConnection.OWNER_USER.equals(connection.getOwnerType())
                 && connection.getOwnerId().equals(userId))
                 || (ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())
-                && connection.getOwnerId().equals(workspaceId));
+                && connection.getOwnerId().equals(workspaceId))
+                // D-922: an INSTANCE connection is usable by any authenticated consumer bound to
+                // it (listing/writing stays admin-only).
+                || (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                && ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())
+                && userId != null && !userId.isBlank());
         if (!visible || !connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
             throw new IllegalArgumentException("Provider connection is not ready or not accessible");
         }
@@ -469,6 +527,14 @@ public class ProviderConnectionService {
                     || !(WorkspaceRole.canWrite(role)
                     || canManageProviderConnections())) {
                 throw new IllegalArgumentException("Workspace provider connection is not writable");
+            }
+            return;
+        }
+        // D-922: the INSTANCE write surface is cap:instance:admin only; non-admins get 403.
+        if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
+            if (!ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())
+                    || !isInstanceAdmin()) {
+                throw forbidden("Instance provider connection is not writable");
             }
             return;
         }
@@ -521,6 +587,29 @@ public class ProviderConnectionService {
      * {@code WorkspaceRole.canWrite(role)} judgement is kept (D51-28) so a plain EDITOR keeps
      * today's reach even without an explicit atom grant.
      */
+    private boolean isInstanceAdmin() {
+        return requesterAuthority.holdsCapabilityAtom(PermissionAtomCatalog.CAP_INSTANCE_ADMIN);
+    }
+
+    private static CpApiException forbidden(String detail) {
+        return new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", detail);
+    }
+
+    /**
+     * D-922: an INSTANCE connection may only link the calling admin's own USER lease-tier
+     * credential, so the consumer leases a credential whose owner is an instance administrator.
+     */
+    private void requireInstanceOwnCredential(UUID credentialId, String userId) {
+        com.cc01cc.p.xihe.cp.entity.Credential credential =
+                credentialAccess.findUsable(credentialId).orElse(null);
+        if (credential == null
+                || !com.cc01cc.p.xihe.cp.entity.Credential.OWNER_USER.equals(credential.getOwnerType())
+                || userId == null || !userId.equalsIgnoreCase(credential.getOwnerId())) {
+            throw new IllegalArgumentException(
+                    "Instance connections must link the admin's own active lease-tier USER credential");
+        }
+    }
+
     private boolean canManageProviderConnections() {
         String actor = TenantContext.getUserId();
         if (actor == null) {
@@ -542,6 +631,12 @@ public class ProviderConnectionService {
         if (ProviderConnection.OWNER_USER.equals(scope)) {
             return userId;
         }
+        if (ProviderConnection.OWNER_INSTANCE.equals(scope)) {
+            if (!isInstanceAdmin()) {
+                throw forbidden("Instance provider connections require cap:instance:admin");
+            }
+            return ProviderConnection.INSTANCE_OWNER_ID;
+        }
         if (ProviderConnection.OWNER_WORKSPACE.equals(scope)) {
             String workspaceId = TenantContext.getWorkspaceId();
             String role = TenantContext.getWorkspaceRole();
@@ -559,7 +654,8 @@ public class ProviderConnectionService {
         String normalized = scope == null || scope.isBlank()
                 ? ProviderConnection.OWNER_USER : scope.trim().toUpperCase(Locale.ROOT);
         if (!ProviderConnection.OWNER_USER.equals(normalized)
-                && !ProviderConnection.OWNER_WORKSPACE.equals(normalized)) {
+                && !ProviderConnection.OWNER_WORKSPACE.equals(normalized)
+                && !ProviderConnection.OWNER_INSTANCE.equals(normalized)) {
             throw new IllegalArgumentException("Unsupported provider connection scope");
         }
         return normalized;
@@ -635,7 +731,7 @@ public class ProviderConnectionService {
      * (owner/use/manage checked by the credential domain) or quick-create a
      * USER lease-tier token from the dialog's apiKey. It never stores a secret.
      */
-    private UUID resolveCredentialLink(String apiKey, String credentialId,
+    private UUID resolveCredentialLink(String apiKey, String credentialId, String scope,
                                        String userId, String workspaceId, String label) {
         if (apiKey != null) {
             return credentialService.create(
@@ -650,7 +746,11 @@ public class ProviderConnectionService {
         }
         if (credentialId != null) {
             UUID linked = requireCredentialId(credentialId);
-            credentialAccess.requireUsable(linked, userId, workspaceId);
+            if (ProviderConnection.OWNER_INSTANCE.equals(scope)) {
+                requireInstanceOwnCredential(linked, userId);
+            } else {
+                credentialAccess.requireUsable(linked, userId, workspaceId);
+            }
             return linked;
         }
         return null;
@@ -697,6 +797,7 @@ public class ProviderConnectionService {
         entry.setProviderConnectionId(connection.getId().toString());
         entry.setOwnerType(connection.getOwnerType());
         entry.setOwnerId(connection.getOwnerId());
+        entry.setSource(connection.getOwnerType());
         entry.setProviderId(connection.getProviderId());
         entry.setAction(action);
         String changedBy = TenantContext.getUserId();
@@ -705,6 +806,37 @@ public class ProviderConnectionService {
         entry.setToStatus(toStatus);
         entry.setCredentialPresent(credentialAccess.isUsable(connection.getCredentialId()));
         entry.setCredentialLast4(null);
+        entry.setConnectionRevision(connection.getRevision());
+        auditRepository.save(entry);
+    }
+
+    /**
+     * D-922 (task-152 F2): one secret-free consumption row per lease issued against an INSTANCE
+     * connection. The consumer (user/workspace) and source=INSTANCE are stored explicitly so usage
+     * is readable from provider_connection_audit instead of inferred from the lease table; USER and
+     * WORKSPACE connections keep their historical management-only audit surface.
+     */
+    @Transactional
+    public void recordConsumptionAudit(ProviderConnection connection, String userId, String workspaceId) {
+        if (!ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                || !ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())) {
+            return;
+        }
+        ProviderConnectionAudit entry = new ProviderConnectionAudit();
+        entry.setId(UUID.randomUUID());
+        entry.setProviderConnectionId(connection.getId().toString());
+        entry.setOwnerType(connection.getOwnerType());
+        entry.setOwnerId(connection.getOwnerId());
+        entry.setSource(ProviderConnection.OWNER_INSTANCE);
+        entry.setProviderId(connection.getProviderId());
+        entry.setAction("LEASED");
+        entry.setChangedBy(userId == null || userId.isBlank() ? "internal-service" : userId);
+        entry.setFromStatus(null);
+        entry.setToStatus(null);
+        entry.setCredentialPresent(credentialAccess.isUsable(connection.getCredentialId()));
+        entry.setCredentialLast4(null);
+        entry.setConsumerUserId(userId == null || userId.isBlank() ? null : userId);
+        entry.setConsumerWorkspaceId(workspaceId == null || workspaceId.isBlank() ? null : workspaceId);
         entry.setConnectionRevision(connection.getRevision());
         auditRepository.save(entry);
     }

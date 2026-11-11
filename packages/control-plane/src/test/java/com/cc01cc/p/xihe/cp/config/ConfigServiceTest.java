@@ -687,6 +687,63 @@ class ConfigServiceTest {
     }
 
     @Test
+    void resolveLlmProfile_userProfileFallsBackToInstanceConnection() {
+        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+            "default", true, "READY");
+        configService.putLayer("user", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "user", userA, null);
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("INSTANCE", resolved.connectionOwnerType());
+        assertEquals(ProviderConnection.INSTANCE_OWNER_ID, resolved.connectionOwnerId());
+        assertEquals("user", resolved.profileScope());
+    }
+
+    @Test
+    void resolveLlmProfile_userProfilePrefersOwnOverInstanceConnection() {
+        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+            "default", true, "READY");
+        saveRawProfile("user", userA, null, profile("deepseek", "default", "deepseek-chat"));
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("USER", resolved.connectionOwnerType());
+        assertEquals(userA.toString(), resolved.connectionOwnerId());
+    }
+
+    @Test
+    void resolveLlmProfile_workspaceProfilePrefersWorkspaceOverInstanceConnection() {
+        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
+        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+            "default", true, "READY");
+        configService.putLayer("workspace", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "user", null, wsA);
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("WORKSPACE", resolved.connectionOwnerType());
+        assertEquals(wsA.toString(), resolved.connectionOwnerId());
+    }
+
+    @Test
+    void resolveLlmProfile_instanceProfileFallsBackToInstanceConnection() {
+        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+            "default", true, "READY");
+        configService.putLayer("instance", "llm-provider",
+            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+            "admin", null, null);
+
+        ConfigService.ResolvedLlmProfile resolved =
+            configService.resolveLlmProfile(userA, wsA);
+        assertEquals("INSTANCE", resolved.connectionOwnerType());
+        assertEquals("instance", resolved.profileScope());
+    }
+
+    @Test
     void resolveLlmProfile_legacyFallbackRestoresWorkspaceThenUser() {
         saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
         saveRawProfile("user", userA, null, profile("deepseek", "default", "deepseek-chat"));

@@ -1298,7 +1298,7 @@ paths:
         '400': { description: 'PROVIDER_REQUIRED — no agent default model and no effective llm-provider profile, or PROVIDER_CONNECTION_AMBIGUOUS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { description: 'LLM_PROFILE_CONFLICT - the effective llm-provider profile (providerId, connectionKey) found no enabled + READY connection in the resolution chain user -> workspace -> instance; CP never silently falls back to another owner (the legacy fallback is a disabled transition switch).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'LLM_PROFILE_CONFLICT - the effective llm-provider profile (providerId, connectionKey) found no enabled + READY connection in the profile layer chain workspace -> user -> instance, where the connection belongs to the layer that supplied the profile and only falls back to the INSTANCE connection; CP never searches another layer connection and never silently falls back to another owner (the legacy fallback is a disabled transition switch).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/api-request-template:
     patch: { tags: [session], operationId: updateSessionApiRequestTemplate, summary: Set the API request template override of one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/commands:
@@ -2737,11 +2737,14 @@ paths:
         cap:instance:admin (CAP_INSTANCE_ADMIN) and are omitted for ordinary users, while runtime
         resolution still consumes them. No key, ciphertext, suffix or credential plaintext is ever
         returned (maskedKey stays null) and the view is read-only for every scope.
-        Resolution chain for an llm-provider profile (providerId, connectionKey): the consuming
-        user's own USER connection first, then the current WORKSPACE connection, then the INSTANCE
-        connection; the first enabled + READY match wins, and an unmatched profile fails with 409
-        LLM_PROFILE_CONFLICT - CP never silently falls back to another owner or to a code default.
-        An instance-layer llm-provider profile resolves its connection by the same order.
+        Profile source precedence: workspace profile > user profile > instance profile (one whole
+        profile unit, the first configured layer wins, no key-level merge). The connection follows
+        the profile owner: a workspace profile uses the current WORKSPACE connection, a user profile
+        uses the consuming user's USER connection, and an instance profile uses the consuming user's
+        USER connection; when that owner layer has no enabled + READY connection, the INSTANCE
+        connection is the last fallback - no other layer's connection is searched. The first
+        enabled + READY match wins; an unmatched profile fails with 409 LLM_PROFILE_CONFLICT - CP
+        never silently falls back to another owner or to a code default.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -3267,13 +3270,18 @@ paths:
         PLAN-0485: CP serves the pinned V1 contract (modelId/dimension) instead of letting the
         client re-declare it. profile/profileScope show the whole-unit layer profile; resolved is
         the non-secret owner view of the same-key READY embedding connection, or null with a stable
-        conflict code. Connection lookup keeps the existing owner priority (current WORKSPACE
-        connection first, then the consuming user's USER connection) and now falls through to the
-        INSTANCE shared connection as the last fallback; when a profile exists but no enabled +
-        READY connection matches, resolved is null and code is EMBEDDING_PROFILE_CONFLICT
-        (EMBEDDING_MODEL_UNSUPPORTED for a non-V1 model). When no profile is configured at all,
-        profile/profileScope/resolved are null and code is absent. A pure read never fails on a
-        missing profile or connection. A client-supplied workspaceId is authorized for the caller.
+        conflict code. An embedding profile is resolved as one whole unit through the layer chain
+        workspace profile -> user profile -> instance profile (the first configured layer wins,
+        no key-level merge). The connection belongs to the layer that supplied the profile
+        (workspace profile -> WORKSPACE, user profile -> the consuming user's USER connection,
+        instance profile -> the consuming user's USER connection); a missing layer connection
+        falls back to the INSTANCE shared connection as the last resort, and no other layer's
+        connection is searched. When a profile exists but no enabled + READY connection matches,
+        resolved is null and code is EMBEDDING_PROFILE_CONFLICT (EMBEDDING_MODEL_UNSUPPORTED for
+        a non-V1 model); when no profile is configured at all, resolution fails with 409
+        EMBEDDING_PROFILE_REQUIRED, while this read returns null profile/profileScope/resolved
+        with no code. A pure read never fails on a missing profile or connection. A
+        client-supplied workspaceId is authorized for the caller.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }]
       responses:
@@ -7348,10 +7356,14 @@ components:
           (CAP_INSTANCE_ADMIN: create/update/verify/delete) and are listed only to instance admins;
           ordinary users never see them but runtime resolution still consumes them. Secrets never
           appear in this view: apiKey is write-only, credentialId is a vault reference and maskedKey
-          is always null. Resolution for an llm-provider profile (providerId, connectionKey): the
-          consuming user's own USER connection, then the current WORKSPACE connection, then the
-          INSTANCE connection - the first enabled + READY match wins; none matches returns 409
-          LLM_PROFILE_CONFLICT, never a silent fallback.
+          is always null. An llm-provider profile (providerId, connectionKey) is resolved as one
+          whole unit through the layer chain workspace profile -> user profile -> instance profile
+          (the first configured layer wins, no key-level merge). The connection belongs to the
+          layer that supplied the profile (workspace profile -> WORKSPACE, user profile -> the
+          consuming user's USER connection, instance profile -> the consuming user's USER
+          connection); a missing layer connection falls back to the INSTANCE connection as the
+          last resort, and no other layer's connection is searched. The first enabled + READY
+          match wins; none matches returns 409 LLM_PROFILE_CONFLICT, never a silent fallback.
         required: [id, providerId, connectionKey, apiTypeId, apiTypeVersion, operation, label, scope, hasKey, enabled, status, revision, modelDiscovery, manualModels]
         properties:
           id: { type: string, format: uuid, readOnly: true }

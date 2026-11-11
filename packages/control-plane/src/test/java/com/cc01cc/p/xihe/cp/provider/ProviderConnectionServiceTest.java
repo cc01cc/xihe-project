@@ -1,7 +1,10 @@
 package com.cc01cc.p.xihe.cp.provider;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnectionAudit;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionAuditRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
@@ -9,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.time.Instant;
@@ -26,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -593,5 +598,161 @@ class ProviderConnectionServiceTest {
         assertEquals("manual", updated.getModelDiscovery());
         connection.setManualModels("invalid-json");
         assertThrows(IllegalStateException.class, () -> service.view(connection));
+    }
+
+    // ------------------------------------------------------------------
+    // D-922 / task-152: INSTANCE scope (admin-only write surface, instance
+    // owner id, audit source, no secret echo)
+    // ------------------------------------------------------------------
+
+    private void stubCatalogForInstanceCreate() {
+        ObjectNode definition = new ObjectMapper().createObjectNode();
+        definition.put("id", "deepseek");
+        definition.put("defaultBaseUrl", "https://api.deepseek.com/v1");
+        definition.putObject("credential").put("required", true);
+        when(catalog.require("deepseek")).thenReturn(definition);
+        when(catalog.supportedPair("deepseek", "openai-chat-completions", 1)).thenReturn(definition);
+        when(catalog.requiresCredential("deepseek")).thenReturn(true);
+        when(catalog.defaultApiType("deepseek")).thenReturn(
+                new ProviderCatalogService.ApiTypeRef("openai-chat-completions", 1, "chat"));
+        when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                "INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek", "shared"))
+                .thenReturn(Optional.empty());
+    }
+
+    private static ProviderConnection instanceConnection() {
+        ProviderConnection connection = new ProviderConnection();
+        connection.setId(UUID.randomUUID());
+        connection.setOwnerType(ProviderConnection.OWNER_INSTANCE);
+        connection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        connection.setProviderId("deepseek");
+        connection.setConnectionKey("shared");
+        connection.setApiTypeId("openai-chat-completions");
+        connection.setApiTypeVersion(1);
+        connection.setEnabled(true);
+        connection.setStatus(ProviderConnection.STATUS_READY);
+        connection.setRevision(1L);
+        return connection;
+    }
+
+    @Test
+    void createInstanceWithoutCapabilityReturns403() {
+        TenantContext.setUserId("user-1");
+        stubCatalogForInstanceCreate();
+
+        CpApiException denied = assertThrows(CpApiException.class, () -> service.create(
+                new ProviderConnectionService.ConnectionInput(
+                        "deepseek", "Shared DeepSeek", "INSTANCE", "sk-shared", null, null,
+                        List.of(), null, "shared")));
+
+        assertEquals(403, denied.getStatus().value());
+        assertEquals("FORBIDDEN", denied.getCode());
+    }
+
+    @Test
+    void createInstanceStoresInstanceOwnerAndAuditsAdminActor() {
+        TenantContext.setUserId("admin-1");
+        when(requesterAuthority.holdsCapabilityAtom(PermissionAtomCatalog.CAP_INSTANCE_ADMIN))
+                .thenReturn(true);
+        stubCatalogForInstanceCreate();
+
+        ProviderConnection created = service.create(new ProviderConnectionService.ConnectionInput(
+                "deepseek", "Shared DeepSeek", "INSTANCE", "sk-shared", null, null,
+                List.of(), null, "shared"));
+
+        assertEquals(ProviderConnection.OWNER_INSTANCE, created.getOwnerType());
+        assertEquals(ProviderConnection.INSTANCE_OWNER_ID, created.getOwnerId());
+        ArgumentCaptor<ProviderConnectionAudit> audit =
+                ArgumentCaptor.forClass(ProviderConnectionAudit.class);
+        verify(auditRepository).save(audit.capture());
+        assertEquals(ProviderConnection.OWNER_INSTANCE, audit.getValue().getOwnerType());
+        assertEquals(ProviderConnection.INSTANCE_OWNER_ID, audit.getValue().getOwnerId());
+        assertEquals("admin-1", audit.getValue().getChangedBy());
+        assertEquals("CREATED", audit.getValue().getAction());
+    }
+
+    @Test
+    void listVisibleHidesInstanceRowsFromNonAdmin() {
+        TenantContext.setUserId("user-1");
+        when(repository.findByOwnerTypeAndOwnerId("USER", "user-1")).thenReturn(List.of());
+
+        List<ProviderConnection> visible = service.listVisibleEntities();
+
+        assertTrue(visible.isEmpty());
+    }
+
+    @Test
+    void listVisibleIncludesInstanceRowsForAdmin() {
+        TenantContext.setUserId("admin-1");
+        when(requesterAuthority.holdsCapabilityAtom(PermissionAtomCatalog.CAP_INSTANCE_ADMIN))
+                .thenReturn(true);
+        when(repository.findByOwnerTypeAndOwnerId("USER", "admin-1")).thenReturn(List.of());
+        when(repository.findByOwnerTypeAndOwnerId(
+                ProviderConnection.OWNER_INSTANCE, ProviderConnection.INSTANCE_OWNER_ID))
+                .thenReturn(List.of(instanceConnection()));
+
+        List<ProviderConnection> visible = service.listVisibleEntities();
+
+        assertEquals(1, visible.size());
+        assertEquals(ProviderConnection.OWNER_INSTANCE, visible.get(0).getOwnerType());
+    }
+
+    @Test
+    void updateInstanceRowWithoutCapabilityReturns403() {
+        TenantContext.setUserId("user-1");
+        ProviderConnection instance = instanceConnection();
+        when(repository.findById(instance.getId())).thenReturn(Optional.of(instance));
+
+        CpApiException denied = assertThrows(CpApiException.class, () -> service.update(
+                instance.getId().toString(),
+                new ProviderConnectionService.ConnectionInput(
+                        null, null, null, null, "", null, null, null, null)));
+        assertEquals(403, denied.getStatus().value());
+        assertEquals("FORBIDDEN", denied.getCode());
+    }
+
+    @Test
+    void viewNeverEchoesCredentialSecret() {
+        ProviderConnection instance = instanceConnection();
+        instance.setCredentialId(UUID.randomUUID());
+        when(credentialAccess.isUsable(any())).thenReturn(true);
+
+        var view = service.view(instance);
+
+        assertTrue(view.hasKey());
+        assertNull(view.maskedKey());
+        assertNotNull(view.credentialId());
+    }
+
+    // D-922 F2: consumption audit must be explicit, secret-free, and instance-only.
+
+    @Test
+    void recordConsumptionAuditWritesExplicitConsumerAndSourceForInstance() {
+        ProviderConnection instance = instanceConnection();
+
+        service.recordConsumptionAudit(instance, "user-1", "workspace-1");
+
+        ArgumentCaptor<ProviderConnectionAudit> audit =
+                ArgumentCaptor.forClass(ProviderConnectionAudit.class);
+        verify(auditRepository).save(audit.capture());
+        assertEquals(ProviderConnection.OWNER_INSTANCE, audit.getValue().getSource());
+        assertEquals("user-1", audit.getValue().getConsumerUserId());
+        assertEquals("workspace-1", audit.getValue().getConsumerWorkspaceId());
+        assertEquals("user-1", audit.getValue().getChangedBy());
+        assertEquals("LEASED", audit.getValue().getAction());
+        assertEquals(instance.getId().toString(), audit.getValue().getProviderConnectionId());
+        assertNull(audit.getValue().getCredentialLast4());
+    }
+
+    @Test
+    void recordConsumptionAuditKeepsNonInstanceConnectionsManagementOnly() {
+        ProviderConnection userOwned = new ProviderConnection();
+        userOwned.setId(UUID.randomUUID());
+        userOwned.setOwnerType(ProviderConnection.OWNER_USER);
+        userOwned.setOwnerId("user-1");
+
+        service.recordConsumptionAudit(userOwned, "user-1", "workspace-1");
+
+        verify(auditRepository, never()).save(any());
     }
 }

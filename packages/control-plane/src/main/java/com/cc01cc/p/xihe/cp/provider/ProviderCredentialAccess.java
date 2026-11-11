@@ -116,6 +116,15 @@ public class ProviderCredentialAccess {
         return decryptToken(requireUsableShape(credentialId));
     }
 
+    /**
+     * D-922: an INSTANCE connection leases the credential owned by an instance administrator. The
+     * consumer already passed the connection gate (it may not own the credential), so only the
+     * lease-tier shape is validated here — never the consumer's ownership.
+     */
+    public void requireUsableForSharedConnection(UUID credentialId) {
+        requireUsableShape(credentialId);
+    }
+
     /** Connection view/audit helper; never returns a secret. */
     public boolean isUsable(UUID credentialId) {
         if (credentialId == null) {

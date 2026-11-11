@@ -198,6 +198,66 @@ class EmbeddingProfileServiceTest {
     }
 
     @Test
+    void userProfileUsesUserConnectionBeforeInstanceFallback() {
+        when(configs.findByWorkspaceIdAndDomainAndConfigKey(WORKSPACE, "embedding", "profile"))
+                .thenReturn(Optional.empty());
+        when(configs.findByUserIdAndDomainAndConfigKey(USER, "embedding", "profile"))
+                .thenReturn(Optional.of(config(profileJson())));
+        when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
+        ProviderConnection userConnection = readyConnection();
+        userConnection.setOwnerType("USER");
+        userConnection.setOwnerId(USER.toString());
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("USER"), eq(USER.toString()), eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.of(userConnection));
+
+        EmbeddingProfileService.ResolvedProfile resolved = service.resolve(USER, WORKSPACE);
+        assertEquals("user", resolved.profileScope());
+        assertEquals("USER", resolved.connectionOwnerType());
+    }
+
+    @Test
+    void userProfileFallsBackToInstanceConnection() {
+        when(configs.findByWorkspaceIdAndDomainAndConfigKey(WORKSPACE, "embedding", "profile"))
+                .thenReturn(Optional.empty());
+        when(configs.findByUserIdAndDomainAndConfigKey(USER, "embedding", "profile"))
+                .thenReturn(Optional.of(config(profileJson())));
+        when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
+        ProviderConnection instanceConnection = readyConnection();
+        instanceConnection.setOwnerType("INSTANCE");
+        instanceConnection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("INSTANCE"), eq(ProviderConnection.INSTANCE_OWNER_ID),
+                eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.of(instanceConnection));
+
+        EmbeddingProfileService.ResolvedProfile resolved = service.resolve(USER, WORKSPACE);
+        assertEquals("user", resolved.profileScope());
+        assertEquals("INSTANCE", resolved.connectionOwnerType());
+    }
+
+    @Test
+    void workspaceProfileFallsBackToInstanceConnection() {
+        when(configs.findByWorkspaceIdAndDomainAndConfigKey(WORKSPACE, "embedding", "profile"))
+                .thenReturn(Optional.of(config(profileJson())));
+        when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
+        ProviderConnection instanceConnection = readyConnection();
+        instanceConnection.setOwnerType("INSTANCE");
+        instanceConnection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("INSTANCE"), eq(ProviderConnection.INSTANCE_OWNER_ID),
+                eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.of(instanceConnection));
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("WORKSPACE"), eq(WORKSPACE.toString()), eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.empty());
+
+        EmbeddingProfileService.ResolvedProfile resolved = service.resolve(USER, WORKSPACE);
+        assertEquals("workspace", resolved.profileScope());
+        assertEquals("INSTANCE", resolved.connectionOwnerType());
+    }
+
+    @Test
     void envModelOverrideMustMatchV1Model() {
         when(configs.findByWorkspaceIdAndDomainAndConfigKey(WORKSPACE, "embedding", "profile"))
                 .thenReturn(Optional.of(config(profileJson())));
