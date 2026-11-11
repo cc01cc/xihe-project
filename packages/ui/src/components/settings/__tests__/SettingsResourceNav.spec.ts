@@ -6,7 +6,7 @@ import { createI18n } from "vue-i18n";
  * PLAN-0752 T4.0/T4.1：左栏「资源」组。
  *
  * 锁三件事：①后端缺口项**必须留在列表里**（D7：留位标缺口，不隐藏）
- * ②缺口项点击**不跳转**、给说明（不是 404、也不是没反应）
+ * ②缺口项**不可点**（task-156 / P0-N-09：不再是 button），说明走组级 hint + title
  * ③有后端承载的项（我的凭据）是真链接。
  */
 const messages = {
@@ -19,8 +19,7 @@ const messages = {
                 resourceKnowledgeMcp: "知识库 · MCP",
                 backendGapBadge: "后端缺口 {code}",
                 backendGapBadgeGeneric: "后端缺口",
-                gapDialogTitle: "{item}：暂无后端承载",
-                gapDialogDismiss: "知道了",
+                backendGapHint: "灰显条目为后端缺口，暂不可用；悬停可查看说明。",
                 gapNoteKnowledgeMcp: "用户层没有知识库实体，也没有用户级 MCP 服务器",
             },
         },
@@ -79,29 +78,34 @@ describe("SettingsResourceNav (PLAN-0752 T4.0)", () => {
         expect(wrapper.find('[data-testid="settings-nav-resource-my-credentials"]').text()).toBe(
             "我的凭据",
         );
-        // 缺口项是 button（没有 href / 没有 to），点击不走路由
+        // 缺口项是不可点的一行（没有 href / 没有 to、aria-disabled），点击不走路由
         const gap = wrapper.find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]');
-        expect(gap.element.tagName).toBe("BUTTON");
+        expect(gap.element.tagName).toBe("DIV");
+        expect(gap.attributes("aria-disabled")).toBe("true");
         expect(wrapper.find('[data-testid="settings-nav-resource-knowledge-mcp"]').exists()).toBe(
             false,
         );
         wrapper.unmount();
     });
 
-    it("opens an explanation instead of navigating when a gap entry is clicked", async () => {
+    it("does not navigate or open anything for a gap entry; explains via title + group hint", async () => {
         const wrapper = mountNav();
         pushed.mockClear();
-        await wrapper
-            .find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]')
-            .trigger("click");
+        const gap = wrapper.find('[data-testid="settings-nav-resource-gap-knowledge-mcp"]');
+        await gap.trigger("click");
 
-        const dialog = document.querySelector('[data-testid="settings-gap-dialog-knowledge-mcp"]');
-        expect(dialog).not.toBeNull();
-        expect(dialog?.textContent ?? "").toContain("知识库 · MCP：暂无后端承载");
-        expect(dialog?.textContent ?? "").toContain("后端缺口 G1 / G3");
-        expect(dialog?.textContent ?? "").toContain("用户层没有知识库实体");
-        // 不跳转：既没 push，也没渲染成链接
+        // task-156 / P0-N-09：不可点 —— 既没有弹窗，也没有 push，更没有链接。
+        expect(
+            document.querySelector('[data-testid="settings-gap-dialog-knowledge-mcp"]'),
+        ).toBeNull();
         expect(pushed).not.toHaveBeenCalled();
+        // 说明不再依赖点击：组级可见 hint + 条目 title 带缺口细节。
+        expect(wrapper.find('[data-testid="settings-nav-gap-hint"]').text()).toContain(
+            "灰显条目为后端缺口",
+        );
+        const title = gap.attributes("title") ?? "";
+        expect(title).toContain("后端缺口 G1 / G3");
+        expect(title).toContain("用户层没有知识库实体");
         wrapper.unmount();
     });
 });
