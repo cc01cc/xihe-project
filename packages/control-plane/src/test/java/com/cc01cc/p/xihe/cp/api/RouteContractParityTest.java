@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
@@ -15,7 +16,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
@@ -35,6 +38,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * {@code {fileId:[a-fA-F0-9\\-]{36}}}) canonicalizes to {@code {}}, trailing/duplicate slashes are
  * collapsed. Variable <i>names</i> are compared separately for matched pairs, because they are part
  * of the generated-client surface even though Spring matches on position.</p>
+ *
+ * <p>PLAN-0763 M5 (task-240 audit): comparison keys are {@code METHOD + shape}, not bare shape.
+ * {@code implementedRoutes()} expands each mapping's methods condition
+ * ({@code RequestMappingInfo.getMethodsCondition()}) across its patterns; {@code documentedRoutes()}
+ * iterates each path item's operation keys. "A method the contract claims on a path nobody serves"
+ * (405 at runtime) and "a method the code serves that the contract never mentions" both surface now.
+ * The exemption tables stay keyed by <b>shape</b> on purpose: an exempted shape exempts every method
+ * on it — the same effective semantics as before the upgrade, when method was never compared.</p>
  *
  * <p>Four explicit lists keep the test honest. Nothing here is a regex sweep; every entry is a
  * literal with a reason token:</p>
@@ -151,10 +162,15 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         EXEMPT_DOCUMENTED.put("/api/v1/config/api-request-templates", KEPT_BY_DESIGN);
         EXEMPT_DOCUMENTED.put("/api/v1/config/{}/api-request-templates", KEPT_BY_DESIGN);
 
-        // ---- BL-320 冻结清单当前**为空**：批 1 把 8 条真缺契约补进 openapi.yaml，批 2 把
-        //      principal-grants 退役面记为 deprecated 契约。空表是**目标态**，不是"没有机制"：
-        //      新缺口必须按 `BL-320 批 N` 逐条登记在这里，而不是去放宽断言 ----
-        // KNOWN_GAPS.put("<shape>", "<batch token>");
+        // ---- BL-320 批 5（PLAN-0763 M5 过渡）：METHOD+path 升级后新浮出的契约债，两条都在
+        //      task-236 的 openapi.yaml 写域内修，修完必须删行——drift 断言即过期机制。
+        //      ① setWorkspaceAgentCap 的 METHOD 轴错位：契约把 PUT 写在 collection 路径 /agents，
+        //        代码实现在 item 路径（WorkspaceAgentController.java:240），一对两形状同一债；
+        //      ② /api/v1/files/{fileId} 的 delete 契约残留：CP legacy 删除路由已按设计移除
+        //        （WorkspaceFileController 类注释），yaml 仍声明 deleteFile（openapi.yaml:3174） ----
+        KNOWN_GAPS.put("/api/v1/workspaces/{}/agents", "bl320-batch5-task236-yaml-move");
+        KNOWN_GAPS.put("/api/v1/workspaces/{}/agents/{}", "bl320-batch5-task236-yaml-move");
+        KNOWN_GAPS.put("/api/v1/files/{}", "bl320-batch5-task236-stale-delete");
 
         // ---- 参数名豁免当前**为空**：批 2 已把 /api/v1/workspaces/{wsId}/mcp/servers 统一为
         //      {workspaceId}。若再出现"同形状不同变量名"，必须逐条登记并写清"为何运行时等价" ----
@@ -163,37 +179,42 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
 
     @Test
     void implementedRoutesAndDocumentedPathsMatchInBothDirections() throws Exception {
-        Map<String, String> implemented = mapToSample(implementedPaths());
-        Map<String, String> documented = mapToSample(documentedPaths());
+        Map<String, String> implemented = mapToSample(implementedRoutes());
+        Map<String, String> documented = mapToSample(documentedRoutes());
 
         List<String> missing = difference(implemented.keySet(), documented.keySet());
         List<String> extra = difference(documented.keySet(), implemented.keySet());
 
         List<String> unexpectedMissing = notExempt(missing, EXEMPT_IMPLEMENTED, KNOWN_GAPS);
-        List<String> unexpectedExtra = notExempt(extra, EXEMPT_DOCUMENTED, Map.of());
+        List<String> unexpectedExtra = notExempt(extra, EXEMPT_DOCUMENTED, KNOWN_GAPS);
 
         // Operational summary for the report: the diff itself is never hidden, it is bucketed.
         System.out.println("[bl320] implemented=" + implemented.size() + " documented=" + documented.size()
                 + " | missing: total=" + missing.size() + " framework=" + countIn(missing, EXEMPT_IMPLEMENTED)
                 + " frozen-gap=" + KNOWN_GAPS.size() + " unexpected=" + unexpectedMissing.size()
                 + " | extra: total=" + extra.size() + " cross-service/kept-by-design="
-                + countIn(extra, EXEMPT_DOCUMENTED) + " unexpected=" + unexpectedExtra.size()
+                + countIn(extra, EXEMPT_DOCUMENTED) + " frozen-gap=" + countIn(extra, KNOWN_GAPS)
+                + " unexpected=" + unexpectedExtra.size()
                 + " | param-name-exempt=" + PARAM_NAME_EXEMPT.size());
 
         assertEquals(List.of(), unexpectedMissing, () -> report(
                 "route(s) implemented but missing from docs/api/openapi.yaml", unexpectedMissing, missing,
                 implemented, EXEMPT_IMPLEMENTED, KNOWN_GAPS));
         assertEquals(List.of(), unexpectedExtra, () -> report(
-                "path(s) documented in docs/api/openapi.yaml but implemented by no CP controller",
-                unexpectedExtra, extra, documented, EXEMPT_DOCUMENTED, Map.of()));
+                "route(s) documented in docs/api/openapi.yaml but implemented by no CP controller",
+                unexpectedExtra, extra, documented, EXEMPT_DOCUMENTED, KNOWN_GAPS));
 
         // The frozen backlog must not drift: a fixed gap has to be deleted from KNOWN_GAPS (else the
-        // list silently rots into "everything is a known gap").
-        assertEquals(new TreeSet<>(KNOWN_GAPS.keySet()), new TreeSet<>(intersect(missing, KNOWN_GAPS.keySet())),
+        // list silently rots into "everything is a known gap"). M5: a gap may sit on either side —
+        // "contract claims a method nobody serves" is the same debt as "code serves a method the
+        // contract never mentions" (the setWorkspaceAgentCap pair is one such single debt).
+        Set<String> gapHits = new TreeSet<>(intersectShapes(missing, KNOWN_GAPS.keySet()));
+        gapHits.addAll(intersectShapes(extra, KNOWN_GAPS.keySet()));
+        assertEquals(new TreeSet<>(KNOWN_GAPS.keySet()), gapHits,
                 "KNOWN_GAPS drifted — fixed gaps must be removed from the list, new ones must be bucketed "
                         + "explicitly (see .local/evidence/bl-320-route-contract-parity.md)");
 
-        assertVariableNamesMatch(documentedPaths(), implementedPaths());
+        assertVariableNamesMatch(documentedRoutes(), implementedRoutes());
     }
 
     // ------------------------------------------------------------------ parameter names
@@ -218,10 +239,10 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
                         + "PARAM_NAME_EXEMPT entry with a reason:\n  " + String.join("\n  ", mismatches));
     }
 
-    private static Map<String, List<String>> variablesByName(List<String> rawPaths) {
+    private static Map<String, List<String>> variablesByName(List<String> rawRoutes) {
         Map<String, List<String>> byName = new LinkedHashMap<>();
-        for (String raw : rawPaths) {
-            Parsed parsed = parse(raw);
+        for (String raw : rawRoutes) {
+            Parsed parsed = parse(pathOf(raw));
             byName.put(parsed.shape(), parsed.variables());
         }
         return byName;
@@ -229,31 +250,76 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
 
     // ------------------------------------------------------------------ sources
 
-    private List<String> implementedPaths() {
-        List<String> paths = new ArrayList<>();
+    /** OpenAPI path-item keys that are operations (the rest: summary/description/parameters/$ref/servers). */
+    private static final Set<String> OPENAPI_OPERATIONS =
+            Set.of("get", "post", "put", "delete", "options", "head", "patch", "trace");
+
+    /**
+     * Implemented side of the comparison: one {@code "METHOD /pattern"} entry per declared method per
+     * pattern. Every CP handler declares methods explicitly, so {@code ANY} is a fail-loud fallback,
+     * not an expected state — if it ever appears in the diff, the mapping that produced it must be
+     * given an explicit reason token like everything else.
+     */
+    private List<String> implementedRoutes() {
+        List<String> routes = new ArrayList<>();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlerMapping.getHandlerMethods().entrySet()) {
-            paths.addAll(entry.getKey().getPatternValues());
+            RequestMappingInfo info = entry.getKey();
+            Set<RequestMethod> methods = info.getMethodsCondition().getMethods();
+            for (String pattern : info.getPatternValues()) {
+                if (methods.isEmpty()) {
+                    routes.add("ANY " + pattern);
+                } else {
+                    for (RequestMethod method : methods) {
+                        routes.add(method.name() + " " + pattern);
+                    }
+                }
+            }
         }
-        return paths;
+        return routes;
     }
 
-    private List<String> documentedPaths() throws Exception {
+    /** Documented side: one {@code "METHOD /path"} entry per operation under {@code paths}. */
+    private List<String> documentedRoutes() throws Exception {
         Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        List<String> routes = new ArrayList<>();
         try (InputStream input = Files.newInputStream(contract)) {
             Map<?, ?> document = new Yaml().load(input);
             Map<?, ?> paths = (Map<?, ?>) document.get("paths");
-            return paths.keySet().stream().map(String::valueOf).toList();
+            for (Map.Entry<?, ?> item : paths.entrySet()) {
+                Map<?, ?> operations = (Map<?, ?>) item.getValue();
+                for (Map.Entry<?, ?> operation : operations.entrySet()) {
+                    String verb = String.valueOf(operation.getKey()).toLowerCase(Locale.ROOT);
+                    if (OPENAPI_OPERATIONS.contains(verb)) {
+                        routes.add(verb.toUpperCase(Locale.ROOT) + " " + item.getKey());
+                    }
+                }
+            }
         }
+        return routes;
     }
 
     // ------------------------------------------------------------------ comparison helpers
 
-    private static Map<String, String> mapToSample(List<String> rawPaths) {
-        Map<String, String> byShape = new LinkedHashMap<>();
-        for (String raw : rawPaths) {
-            byShape.putIfAbsent(parse(raw).shape(), raw.trim());
+    /**
+     * Comparison key = {@code METHOD + shape} (route keys are {@code "METHOD /raw/path"}); the sample
+     * keeps the first raw spelling for the report.
+     */
+    private static Map<String, String> mapToSample(List<String> rawRoutes) {
+        Map<String, String> byKey = new LinkedHashMap<>();
+        for (String raw : rawRoutes) {
+            byKey.putIfAbsent(methodOf(raw) + " " + parse(pathOf(raw)).shape(), raw.trim());
         }
-        return byShape;
+        return byKey;
+    }
+
+    private static String methodOf(String rawRoute) {
+        int space = rawRoute.indexOf(' ');
+        return space < 0 ? "ANY" : rawRoute.substring(0, space).trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String pathOf(String rawRoute) {
+        int space = rawRoute.indexOf(' ');
+        return space < 0 ? rawRoute : rawRoute.substring(space + 1);
     }
 
     /** Sorted shapes present on the left and absent on the right. */
@@ -263,41 +329,46 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         return new ArrayList<>(diff);
     }
 
+    /** Buckets are keyed by <b>shape</b>; candidates are {@code METHOD shape} keys — compare the shape. */
     private static List<String> notExempt(List<String> candidates, Map<String, String> exempt,
             Map<String, String> alsoAllowed) {
         List<String> residual = new ArrayList<>();
         for (String candidate : candidates) {
-            if (!exempt.containsKey(candidate) && !alsoAllowed.containsKey(candidate)) {
+            String shape = parse(pathOf(candidate)).shape();
+            if (!exempt.containsKey(shape) && !alsoAllowed.containsKey(shape)) {
                 residual.add(candidate);
             }
         }
         return residual;
     }
 
-    private static List<String> intersect(List<String> candidates, java.util.Set<String> allowed) {
-        List<String> hits = new ArrayList<>();
+    /** Shapes of the candidates that the shape-keyed bucket allows (sorted, deduplicated). */
+    private static List<String> intersectShapes(List<String> candidates, java.util.Set<String> allowedShapes) {
+        SortedSet<String> hits = new TreeSet<>();
         for (String candidate : candidates) {
-            if (allowed.contains(candidate)) {
-                hits.add(candidate);
+            String shape = parse(pathOf(candidate)).shape();
+            if (allowedShapes.contains(shape)) {
+                hits.add(shape);
             }
         }
-        return hits;
+        return new ArrayList<>(hits);
     }
 
     private static int countIn(List<String> candidates, Map<String, String> bucket) {
-        return intersect(candidates, bucket.keySet()).size();
+        return intersectShapes(candidates, bucket.keySet()).size();
     }
 
-    private static String report(String headline, List<String> unexpected, List<String> allShapes,
+    private static String report(String headline, List<String> unexpected, List<String> allKeys,
             Map<String, String> samples, Map<String, String> exemptA, Map<String, String> exemptB) {
         StringBuilder message = new StringBuilder(headline).append('=').append(unexpected.size()).append('\n');
-        for (String shape : unexpected) {
-            message.append("  - ").append(shape).append("   (sample: ").append(samples.get(shape)).append(")\n");
+        for (String key : unexpected) {
+            message.append("  - ").append(key).append("   (sample: ").append(samples.get(key)).append(")\n");
         }
-        message.append("  full diff (").append(allShapes.size()).append("):\n");
-        for (String shape : allShapes) {
+        message.append("  full diff (").append(allKeys.size()).append("):\n");
+        for (String key : allKeys) {
+            String shape = parse(pathOf(key)).shape();
             String reason = exemptA.getOrDefault(shape, exemptB.getOrDefault(shape, "UNEXPLAINED"));
-            message.append("    ").append(shape).append("  [").append(reason).append("]\n");
+            message.append("    ").append(key).append("  [").append(reason).append("]\n");
         }
         return message.toString();
     }
