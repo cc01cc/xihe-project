@@ -70,7 +70,14 @@ function handleLogout() {
             class="border-r border-sidebar-border"
         >
             <SidebarContent>
-                <SidebarGroup>
+                <!--
+                    task-50 B2：折起态（icon 栏）内距 14px =（56 − 28）/ 2。
+                    为什么不是 `p-3`：本仓 `--spacing` 是 **3.5px 步进**（`main.css:302` `0.21875rem`），
+                    `p-3`=10.5px 会留 3.5px 偏移；按钮是 vendor `size-8!` = 8 步 = **28px**。
+                    为什么要改：vendor 的 `p-2` 是给 48px 栏设计的常量，我们覆盖成 56px 后
+                    「宽度」和「内距」各自合理、相乘才错 ⇒ 图标中心偏 −5px（改前实测）。
+                -->
+                <SidebarGroup class="group-data-[collapsible=icon]:p-4">
                     <SidebarGroupContent>
                         <SidebarMenu>
                             <SidebarMenuItem>
@@ -78,31 +85,36 @@ function handleLogout() {
                                     data-testid="global-rail-module-workbench"
                                     :is-active="workbenchActive"
                                     :aria-current="workbenchActive ? 'page' : undefined"
-                                    class="border-l-2 border-transparent data-[active=true]:border-brand"
+                                    class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
                                     :tooltip="t('sidebar.workbench')"
                                     @click="goWorkbench"
                                 >
                                     <Briefcase class="size-4 shrink-0" aria-hidden="true" />
-                                    <span class="truncate">{{ t("sidebar.workbench") }}</span>
+                                    <span class="truncate group-data-[collapsible=icon]:hidden">{{
+                                        t("sidebar.workbench")
+                                    }}</span>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
                         </SidebarMenu>
                     </SidebarGroupContent>
                 </SidebarGroup>
             </SidebarContent>
-            <SidebarFooter>
+            <!-- task-50 B2：footer 与顶部组同一内距，折起态两个图标各自居中，不出现「一个偏左一个居中」。 -->
+            <SidebarFooter class="group-data-[collapsible=icon]:p-4">
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton
                             data-testid="global-rail-module-settings"
                             :is-active="settingsActive"
                             :aria-current="settingsActive ? 'page' : undefined"
-                            class="border-l-2 border-transparent data-[active=true]:border-brand"
+                            class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
                             :tooltip="t('sidebar.settings')"
                             @click="goSettings"
                         >
                             <Settings class="size-4 shrink-0" aria-hidden="true" />
-                            <span class="truncate">{{ t("sidebar.settings") }}</span>
+                            <span class="truncate group-data-[collapsible=icon]:hidden">{{
+                                t("sidebar.settings")
+                            }}</span>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                     <SidebarMenuItem>
@@ -112,7 +124,9 @@ function handleLogout() {
                             @click="handleLogout"
                         >
                             <LogOut class="size-4 shrink-0" aria-hidden="true" />
-                            <span class="truncate">{{ t("sidebar.logout") }}</span>
+                            <span class="truncate group-data-[collapsible=icon]:hidden">{{
+                                t("sidebar.logout")
+                            }}</span>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                 </SidebarMenu>

@@ -275,13 +275,22 @@ const layerHeaderClass =
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-semibold text-foreground hover:bg-muted/60",
     countBadgeClass =
         "ml-auto shrink-0 rounded px-1.5 py-px font-mono text-xs font-normal ring-1 ring-border ring-inset",
-    /** 二级组标签（域 / 资源 / 运维·安全）：12px，与层组标题、条目三级可辨。 */
-    sectionLabelClass = "h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium text-muted-foreground",
-    /** 条目：pl-6 三级缩进；选中 = 左侧 2px 指示条 + 浅底（透明 border 保底防跳动）。 */
+    /** 二级组标签（域 / 资源 / 运维·安全）：12px + uppercase + tracking（task-50 C1）。 */
+    sectionLabelClass =
+        "h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+    /**
+     * 条目：`pl-6` 三级缩进；13px（task-50 C1：与 14px 层组标题拉开一档）。
+     * task-50：删掉 `border-l-2 border-l-transparent` —— 6px 圆角 + 2px 竖线 = 用户看到的「半截括号」。
+     * 选中态不再靠边框：vendor `SidebarMenuButton` 自带 `data-active:bg-sidebar-accent`
+     * `data-active:text-sidebar-accent-foreground` `data-active:font-medium`（`[实测]` 注入判别色后
+     * 选中行背景确为 `--sidebar-accent`），因此本栏只需要补一个 shadcn 原生维度：选中图标上 `--sidebar-primary`。
+     */
     itemBaseClass =
-        "flex min-h-[32px] items-center gap-2 truncate rounded-md border-l-2 border-l-transparent py-1.5 pl-6 pr-2 text-sm",
-    itemIdleClass = "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-    itemActiveClass = "border-l-primary bg-muted font-medium text-foreground",
+        "flex min-h-[32px] items-center gap-2 truncate rounded-md py-1.5 pl-6 pr-2 text-[13px]",
+    itemIdleClass =
+        "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+    itemActiveClass =
+        "bg-sidebar-accent font-medium text-sidebar-accent-foreground [&_svg]:text-sidebar-primary",
     itemIconClass = "size-4 shrink-0";
 </script>
 
@@ -430,7 +439,7 @@ const layerHeaderClass =
 
             <!-- PLAN-0766（task-160）：共享工作区默认层。它不是"某个工作区"的设置，而是对所有
              没有显式 workspace 覆盖的工作区生效的部署级默认值；入口形态与实例/用户层一致。 -->
-            <Collapsible v-model:open="workspaceDefaultOpen">
+            <Collapsible v-model:open="workspaceDefaultOpen" class="mt-[16px]">
                 <SidebarGroup class="p-0">
                     <CollapsibleTrigger
                         id="settings-nav-workspace-default"
@@ -499,7 +508,7 @@ const layerHeaderClass =
                 </SidebarGroup>
             </Collapsible>
             <!-- 用户层：非当前层默认收起，「看一眼」时点条目才导航 -->
-            <Collapsible v-model:open="userOpen">
+            <Collapsible v-model:open="userOpen" class="mt-[16px]">
                 <SidebarGroup class="p-0">
                     <CollapsibleTrigger
                         id="settings-nav-user"

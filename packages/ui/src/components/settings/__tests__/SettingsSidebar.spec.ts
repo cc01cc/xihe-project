@@ -124,7 +124,12 @@ describe("SettingsSidebar", () => {
         // 未挂 router 插件时 router-link 是未解析元素，to 以原生属性渲染（组件产出的值仍可断言）
         expect(links[0]!.attributes("to")).toBe("/settings/instance/llm-provider");
         expect(links[12]!.attributes("to")).toBe("/settings/user/llm-provider");
-        expect(links[0]!.classes().join(" ")).toContain("bg-muted");
+        // task-50 A 案：选中底色走 `--sidebar-accent` 组，且不再有 2px 左竖条（「半截括号」）。
+        expect(links[0]!.classes().join(" ")).toContain("bg-sidebar-accent");
+        expect(links[0]!.classes().join(" ")).toContain("text-sidebar-accent-foreground");
+        expect(links[0]!.classes().join(" ")).not.toContain("border-l-2");
+        // task-50 C1：条目 13px，与 14px 层组标题拉开一档
+        expect(links[0]!.classes().join(" ")).toContain("text-[13px]");
 
         // task-172：per-domain id 必须带层 —— 12 实例域与 9 用户域有 9 个同名（llm-provider /
         // embedding / rag …），不带层会撞 id（getByTestId 在 strict mode 直接抛）。
@@ -261,10 +266,13 @@ describe("SettingsSidebar", () => {
         expect(wrapper.findAll('[data-slot="sidebar-menu-button"]').length).toBeGreaterThanOrEqual(
             17,
         );
-        // 选中态走 vendor 的 data-active 约定（同时保留条目自身的 2px 指示条 class）
+        // 选中态走 vendor 的 `data-active` 语义（`bg-sidebar-accent` / `text-sidebar-accent-foreground`）；
+        // task-50 A 案去掉了条目自带的 2px 左竖条（用户看到的「半截括号」）。
         const active = wrapper.find('[data-active="true"]');
         expect(active.exists()).toBe(true);
-        expect(active.classes().join(" ")).toContain("bg-muted");
+        expect(active.classes().join(" ")).toContain("bg-sidebar-accent");
+        expect(active.classes().join(" ")).toContain("text-sidebar-accent-foreground");
+        expect(active.classes().join(" ")).not.toContain("border-l-primary");
 
         // (A) 的两条外部可观测证据：没有 provider 的 16rem wrapper、没有 cookie 写入
         expect(wrapper.html()).not.toContain("16rem");
