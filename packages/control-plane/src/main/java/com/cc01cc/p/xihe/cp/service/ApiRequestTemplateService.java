@@ -637,6 +637,19 @@ public class ApiRequestTemplateService {
             }
             slots.put(connection.getProviderId() + ":" + connection.getConnectionKey(), connection);
         }
+        // D-922 (task-152 F1): the shared INSTANCE connection is only a last-resort fallback -
+        // it is considered when no USER/WORKSPACE chat candidate exists for this provider.
+        if (slots.isEmpty()) {
+            for (ProviderConnection connection : connections.findByOwnerTypeAndOwnerId(
+                    ProviderConnection.OWNER_INSTANCE, ProviderConnection.INSTANCE_OWNER_ID)) {
+                if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())
+                        || !"chat".equals(types.operation(connection.getApiTypeId(), connection.getApiTypeVersion()))
+                        || provider != null && !provider.equals(connection.getProviderId())) {
+                    continue;
+                }
+                slots.put(connection.getProviderId() + ":" + connection.getConnectionKey(), connection);
+            }
+        }
         return List.copyOf(slots.values());
     }
 

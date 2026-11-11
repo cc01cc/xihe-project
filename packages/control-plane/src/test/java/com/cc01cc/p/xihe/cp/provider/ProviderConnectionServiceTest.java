@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -721,5 +722,37 @@ class ProviderConnectionServiceTest {
         assertTrue(view.hasKey());
         assertNull(view.maskedKey());
         assertNotNull(view.credentialId());
+    }
+
+    // D-922 F2: consumption audit must be explicit, secret-free, and instance-only.
+
+    @Test
+    void recordConsumptionAuditWritesExplicitConsumerAndSourceForInstance() {
+        ProviderConnection instance = instanceConnection();
+
+        service.recordConsumptionAudit(instance, "user-1", "workspace-1");
+
+        ArgumentCaptor<ProviderConnectionAudit> audit =
+                ArgumentCaptor.forClass(ProviderConnectionAudit.class);
+        verify(auditRepository).save(audit.capture());
+        assertEquals(ProviderConnection.OWNER_INSTANCE, audit.getValue().getSource());
+        assertEquals("user-1", audit.getValue().getConsumerUserId());
+        assertEquals("workspace-1", audit.getValue().getConsumerWorkspaceId());
+        assertEquals("user-1", audit.getValue().getChangedBy());
+        assertEquals("LEASED", audit.getValue().getAction());
+        assertEquals(instance.getId().toString(), audit.getValue().getProviderConnectionId());
+        assertNull(audit.getValue().getCredentialLast4());
+    }
+
+    @Test
+    void recordConsumptionAuditKeepsNonInstanceConnectionsManagementOnly() {
+        ProviderConnection userOwned = new ProviderConnection();
+        userOwned.setId(UUID.randomUUID());
+        userOwned.setOwnerType(ProviderConnection.OWNER_USER);
+        userOwned.setOwnerId("user-1");
+
+        service.recordConsumptionAudit(userOwned, "user-1", "workspace-1");
+
+        verify(auditRepository, never()).save(any());
     }
 }

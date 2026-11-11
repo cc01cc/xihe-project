@@ -41,16 +41,18 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
     private static final String MODEL = "gpt-4o";
 
     private ProviderCredentialAccess credentialAccess;
+    private ProviderConnectionService connectionService;
     private ProviderCredentialLeaseService leases;
     private ProviderConnection connection;
 
     @BeforeEach
     void setUp() {
         credentialAccess = mock(ProviderCredentialAccess.class);
+        connectionService = mock(ProviderConnectionService.class);
         leases = new ProviderCredentialLeaseService(
                 mock(ProviderCredentialLeaseRepository.class),
                 mock(ProviderConnectionRepository.class),
-                mock(ProviderConnectionService.class),
+                connectionService,
                 mock(ProviderCatalogService.class),
                 mock(ApiInputTypeService.class),
                 new ObjectMapper(),
@@ -103,6 +105,7 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
                 anyString(), anyString());
         verify(credentialAccess, never()).requireUsableForAgentPrincipal(any(), anyString(), anyString(),
                 anyString(), any(Boolean.class));
+        verify(connectionService).recordConsumptionAudit(connection, USER, WORKSPACE);
     }
 
     @Test

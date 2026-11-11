@@ -230,6 +230,8 @@ public class ProviderCredentialLeaseService {
         lease.setModel(model);
         lease.setExpiresAt(Instant.now().plus(ttl == null ? DEFAULT_TTL : ttl));
         repository.save(lease);
+        // D-922 (task-152 F2): explicit secret-free consumption audit for instance connections.
+        connectionService.recordConsumptionAudit(connection, userId, workspaceId);
         return new IssuedLease(token, lease.getExpiresAt());
     }
 

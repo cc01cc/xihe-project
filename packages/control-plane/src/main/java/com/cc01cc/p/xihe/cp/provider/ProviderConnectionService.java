@@ -797,6 +797,7 @@ public class ProviderConnectionService {
         entry.setProviderConnectionId(connection.getId().toString());
         entry.setOwnerType(connection.getOwnerType());
         entry.setOwnerId(connection.getOwnerId());
+        entry.setSource(connection.getOwnerType());
         entry.setProviderId(connection.getProviderId());
         entry.setAction(action);
         String changedBy = TenantContext.getUserId();
@@ -805,6 +806,37 @@ public class ProviderConnectionService {
         entry.setToStatus(toStatus);
         entry.setCredentialPresent(credentialAccess.isUsable(connection.getCredentialId()));
         entry.setCredentialLast4(null);
+        entry.setConnectionRevision(connection.getRevision());
+        auditRepository.save(entry);
+    }
+
+    /**
+     * D-922 (task-152 F2): one secret-free consumption row per lease issued against an INSTANCE
+     * connection. The consumer (user/workspace) and source=INSTANCE are stored explicitly so usage
+     * is readable from provider_connection_audit instead of inferred from the lease table; USER and
+     * WORKSPACE connections keep their historical management-only audit surface.
+     */
+    @Transactional
+    public void recordConsumptionAudit(ProviderConnection connection, String userId, String workspaceId) {
+        if (!ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                || !ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())) {
+            return;
+        }
+        ProviderConnectionAudit entry = new ProviderConnectionAudit();
+        entry.setId(UUID.randomUUID());
+        entry.setProviderConnectionId(connection.getId().toString());
+        entry.setOwnerType(connection.getOwnerType());
+        entry.setOwnerId(connection.getOwnerId());
+        entry.setSource(ProviderConnection.OWNER_INSTANCE);
+        entry.setProviderId(connection.getProviderId());
+        entry.setAction("LEASED");
+        entry.setChangedBy(userId == null || userId.isBlank() ? "internal-service" : userId);
+        entry.setFromStatus(null);
+        entry.setToStatus(null);
+        entry.setCredentialPresent(credentialAccess.isUsable(connection.getCredentialId()));
+        entry.setCredentialLast4(null);
+        entry.setConsumerUserId(userId == null || userId.isBlank() ? null : userId);
+        entry.setConsumerWorkspaceId(workspaceId == null || workspaceId.isBlank() ? null : workspaceId);
         entry.setConnectionRevision(connection.getRevision());
         auditRepository.save(entry);
     }
