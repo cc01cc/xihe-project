@@ -133,6 +133,20 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
     }
 
     @Test
+    void put_contextTemplatesDomain_answers400DomainNotWorkspaceWritableEvenWhenBodyFailsTemplateSchema() {
+        // task-196 regression (real-stack F1): a body that the template schema would reject must
+        // still answer the LAYER verdict, not the template validator's code. Before the guard moved
+        // to writeLayer's entry, {"anything":"x"} answered 400 INVALID_CONTEXT_TEMPLATE while the
+        // status matched and only the code was wrong.
+        ResponseEntity<Map> resp = restTemplate.exchange(
+            url("/api/v1/config/workspace-default/context-templates"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("anything", "x"), authHeaders(adminToken())), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"));
+    }
+
+    @Test
     void delete_contextTemplatesDomain_answers400Too() {
         // README-183 requirement 1 covers DELETE as well: the service guards the layer before the
         // template-specific checks, so a clear on this domain cannot slip past the narrowed set.
