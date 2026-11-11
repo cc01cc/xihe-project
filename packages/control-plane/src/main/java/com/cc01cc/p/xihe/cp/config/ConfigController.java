@@ -456,6 +456,17 @@ public class ConfigController {
             String layer, String domain, Map<String, String> body, String changedBy,
         UUID userId, UUID workspaceId) {
         try {
+            // D-928 / PLAN-0766 (task-196): the layer-level domain guard must run BEFORE the
+            // template-service dispatch. Otherwise a non-writable domain reaches the template
+            // schema validator first and answers 400 INVALID_CONTEXT_TEMPLATE — same status, wrong
+            // verdict — while DELETE (no template dispatch) already answers
+            // DOMAIN_NOT_WORKSPACE_WRITABLE. One gate, one place: do not re-add this check inside
+            // the template services (two copies would drift).
+            if (!ConfigService.isLayerWritable(layer, domain)) {
+                return ProblemDetailsHandler.problemResponse(
+                        HttpStatus.BAD_REQUEST, "DOMAIN_NOT_WORKSPACE_WRITABLE",
+                        "Domain is not writable at the " + layer + " layer: " + domain);
+            }
             if ("agent-templates".equals(domain)) {
                 UUID actorId = currentUserId();
                 if (actorId == null) {
