@@ -105,4 +105,51 @@ test.describe("C1: provider binding guide before send", () => {
 
         expect(bindAttempts).toBe(2);
     });
+
+    /**
+     * task-154：引导弹窗的「去设置」曾 `router.push({ name: "settings-config" })`，而该路由名
+     * 自 `6002ea603`（task-253/PLAN-0752 设置区收敛两层）起已不存在 ⇒ 点击后弹窗消失、
+     * **什么都没发生**（`push` 对未知 name 同步 throw，被 `void` 丢弃，连日志都没有）。
+     *
+     * 判据刻意分两层：①URL 落到真实域路由；②**目标页真的渲染出内容**。只断言 URL 会重蹈
+     * "判据级覆盖"——URL 对了但页面白屏/403/空壳同样会绿，而那正是用户看到的东西。
+     */
+    test("「去设置」落到用户层 llm-provider 域页，并真的渲染出连接管理（task-154）", async ({
+        page,
+    }) => {
+        await setupMockAuth(page);
+        await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "C1 guide" }] });
+        await page.route(`**/api/v1/sessions/${SESSION_ID}/bind-defaults`, (route) =>
+            route.fulfill({
+                status: 400,
+                contentType: "application/problem+json",
+                body: JSON.stringify({
+                    type: "https://xihe.dev/problems/provider_required",
+                    title: "Bad Request",
+                    status: 400,
+                    code: "PROVIDER_REQUIRED",
+                    detail: "No provider binding: set an agent default model",
+                    requestId: "req-c1-guide-settings",
+                }),
+            }),
+        );
+
+        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        const textarea = page.locator('[data-testid="chat-input"]');
+        await expect(textarea).toBeVisible();
+        await textarea.fill("hello from settings entry");
+        await textarea.press("Enter");
+
+        await expect(page.locator('[data-testid="provider-binding-guide-body"]')).toBeVisible();
+        await page.locator('[data-testid="provider-binding-guide-settings"]').click();
+
+        // ① URL：真实域路由（instance|user|workspace-default/<domain>），不是已删的 /settings/config。
+        await expect(page).toHaveURL(/\/settings\/user\/llm-provider/);
+        // ② 目标页渲面：域页外壳 + llm-provider 分区 + 连接管理面（ProviderHub）。
+        await expect(page.locator('[data-testid="settings-domain-view"]')).toBeVisible();
+        await expect(page.locator('[data-testid="provider-partition"]')).toBeVisible();
+        await expect(page.locator('[data-testid="provider-hub"]')).toBeVisible();
+        // ③ 弹窗已关（旧缺陷的表象是"弹窗消失了但什么也没发生"，这条钉住"消失"是正常收尾）。
+        await expect(page.locator('[data-testid="provider-binding-guide-body"]')).toBeHidden();
+    });
 });

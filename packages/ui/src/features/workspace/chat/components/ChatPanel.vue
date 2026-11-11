@@ -18,6 +18,7 @@ import {
 import { parseRawToParts } from "../composables/useStreamParser.ts";
 import { mergeHistoryReasoning, mergeHistoryToolCalls } from "./jobSummaryToolCalls.ts";
 import { logger } from "../../../../lib/logger";
+import { settingsDomainPath } from "../../../../lib/settingsIa";
 import type {
     ApprovalDecisionEnvelope,
     AttachmentFile,
@@ -148,9 +149,25 @@ function closeProviderBindingGuide(): void {
     if (pending?.[0]) inputComponent.value?.setDraft?.(pending[0]);
 }
 
-function openProviderSettings(): void {
+/**
+ * 「去设置」：落**用户层 llm-provider 域页**（连接建在用户层；实例层只提供通往用户层的入口）。
+ *
+ * 路径必须由 `settingsIa.settingsDomainPath()` 构造 —— 旧实现写的是路由名 `settings-config`，
+ * 该 name 在 `6002ea603`（task-253/PLAN-0752 设置区收敛两层）删路由后就不存在了，于是
+ * 「去设置」变成**点了没反应的按钮**（task-153 审出、task-154 修）。手写路由名/手写路径
+ * 正是它静默失效的机制，别再写回来；路由表变了应当由 helper 跟着变。
+ *
+ * `await` + `catch` 同样是为了不再静默：旧代码 `void router.push(...)` 把 rejected promise
+ * 直接丢弃（`push` 对未知 name 是**同步 throw**，`void` 连 catch 都挂不上），连一行日志都没有。
+ */
+async function openProviderSettings(): Promise<void> {
     providerBindingGuide.value = null;
-    void router.push({ name: "settings-config" });
+    try {
+        await router.push(settingsDomainPath("user", "llm-provider"));
+    } catch (cause) {
+        // 导航失败（守卫抛错/路由表再次漂移）必须留痕，否则下一次同样是"弹窗关了、什么都没发生"。
+        logger.error("Failed to open provider settings", cause);
+    }
 }
 
 const suggestions = computed(() =>
