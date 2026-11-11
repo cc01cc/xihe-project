@@ -111,7 +111,7 @@ const LAYER_LABEL: Record<MockLayer, string> = {
 
         <div class="mt-6 space-y-6">
             <FieldSet v-for="group in domain.groups" :key="group.label">
-                <FieldLegend class="mk-subtitle">{{ group.label }}</FieldLegend>
+                <FieldLegend class="mk-body font-semibold">{{ group.label }}</FieldLegend>
                 <FieldGroup class="mt-3 gap-5">
                     <Field v-for="field in group.fields" :key="field.key">
                         <div class="flex items-center gap-2">

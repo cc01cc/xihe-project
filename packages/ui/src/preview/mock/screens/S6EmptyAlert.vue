@@ -36,7 +36,7 @@ import { Button } from "@/components/ui/button";
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="mk-caption font-semibold">空态</span>
+                <span class="mk-body font-semibold">空态</span>
                 <span class="mk-caption text-muted-foreground">components/ui/empty（vendor）</span>
             </div>
             <div class="flex min-h-0 flex-1 items-center justify-center gap-8 p-10">
@@ -68,9 +68,16 @@ import { Button } from "@/components/ui/button";
                         空态的标准四件套：**图标 + 标题 + 一句为什么 + 一个可执行动作**。
                     </p>
                     <p class="mk-caption leading-6 text-muted-foreground">
-                        现在的 7 处空态（WorkspacePicker / AgentPrincipalsPanel /
-                        AgentRoleBindingsSection ×2 / AgentTemplatesPanel / ConfigDomainPanel ×2）
-                        都只有一句灰字 <span class="font-mono">t("settings.empty")</span>。
+                        这些面板的空态现在大多只是一句灰字：<span class="font-mono"
+                            >ConfigDomainPanel</span
+                        >
+                        在域列表与值编辑器两处用
+                        <span class="font-mono">t("settings.empty")</span>，
+                        <span class="font-mono">WorkspacePicker</span> /
+                        <span class="font-mono">AgentPrincipalsPanel</span> /
+                        <span class="font-mono">AgentRoleBindingsSection</span> /
+                        <span class="font-mono">AgentTemplatesPanel</span>
+                        各用自己的 empty key——标准四件套要替换的就是这种单句灰字。
                     </p>
                 </div>
             </div>
@@ -80,7 +87,7 @@ import { Button } from "@/components/ui/button";
             <div
                 class="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-5"
             >
-                <span class="mk-caption font-semibold">权限不足（两种，不可合并）</span>
+                <span class="mk-body font-semibold">权限不足（两种，不可合并）</span>
                 <span class="mk-caption text-muted-foreground">components/ui/alert（vendor）</span>
             </div>
             <div class="min-h-0 flex-1 space-y-6 p-10">

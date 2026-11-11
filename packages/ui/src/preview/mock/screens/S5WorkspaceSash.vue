@@ -51,7 +51,7 @@ const dockWidth = 360;
 
             <!-- 文件树列 -->
             <div class="flex w-[240px] shrink-0 flex-col bg-muted/20">
-                <div class="border-b border-border px-3 py-2 mk-caption font-medium">文件</div>
+                <div class="border-b border-border px-3 py-2 mk-body font-semibold">文件</div>
                 <div class="space-y-1 p-2">
                     <div v-for="i in 12" :key="i" class="h-6 rounded bg-background/60" />
                 </div>
@@ -62,7 +62,7 @@ const dockWidth = 360;
             <!-- 主列 -->
             <div class="flex min-w-0 flex-1 flex-col bg-background">
                 <div class="flex items-center gap-2 border-b border-border px-4 py-2">
-                    <span class="mk-caption font-medium">会话 · 主列（硬底线 640px）</span>
+                    <span class="mk-body font-semibold">会话 · 主列（硬底线 640px）</span>
                     <span class="ml-auto font-mono mk-caption text-muted-foreground">flex-1</span>
                 </div>
                 <div class="min-h-0 flex-1 space-y-3 p-5">
