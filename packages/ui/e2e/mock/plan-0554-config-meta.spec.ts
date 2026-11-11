@@ -278,8 +278,33 @@ test.describe("PLAN-0554 config provenance", () => {
         await page.goto("/settings/user/rag", { waitUntil: "load" });
 
         // 旧：页签里只有 user（无 instance / workspace 签）；新：侧栏只渲染「用户配置」一段层分组。
-        await expect(page.getByTestId("settings-nav-group-primary")).toHaveCount(1);
-        await expect(page.getByTestId("settings-nav-group-primary")).toHaveText("用户配置");
+        // 058220aa0 给层分组加了入口数徽标（SettingsSidebar.vue:117/244），组标题从此是两段文本
+        //（「用户配置」+「N 个入口」）⇒ 原来写死的 toHaveText("用户配置") 必然漂移。
+        // 改法按 D-889：断言**性质**，不写某次渲染的**结果值**（12）。
+        const primaryGroup = page.getByTestId("settings-nav-group-primary");
+        await expect(primaryGroup).toHaveCount(1);
+        await expect(primaryGroup).toContainText("用户配置");
+        await expect(primaryGroup).not.toContainText("实例配置");
+        // 徽标数字的真性质：**等于该组实际渲染的入口数**（域链接 + 资源链接，资源含缺口占位）。
+        // 这样写的好处：域/资源矩阵变（增加域、缺口补齐）时，徽标和链接一起变，断言仍成立；
+        // 而写死 12 会把「矩阵变了」误报成「产品坏了」。
+        const badgeNumber = Number(
+            ((await page.getByTestId("settings-nav-count-user").innerText()) || "").match(
+                /\d+/,
+            )?.[0],
+        );
+        const renderedEntries = await page
+            .locator(
+                '[data-testid^="settings-nav-domain-user-"], [data-testid^="settings-nav-resource-"]',
+            )
+            .evaluateAll((elements) =>
+                elements
+                    .map((element) => element.getAttribute("data-testid") ?? "")
+                    // 资源**分组容器**也带前缀，它不是入口，必须排除，否则恒差 1。
+                    .filter((testId) => testId !== "settings-nav-resource-group"),
+            );
+        expect(renderedEntries.length).toBeGreaterThan(0);
+        expect(Number.isNaN(badgeNumber) ? -1 : badgeNumber).toBe(renderedEntries.length);
         // 域链接必须全是用户层 URL —— 既没有 instance 段，也没有退役的 Policy 入口。
         // task-172：域链接 id 变成层限定 per-domain，「全部域链接」语义用前缀选择器取。
         const hrefs = await page
