@@ -130,7 +130,10 @@ public final class PermissionAtomCatalog {
             // plugin is the one plugin verb an agent may hold by default.
             ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
             ToolFaceRegistry.ACTION_PLUGIN_BIND,
-            ToolFaceRegistry.ACTION_PLUGIN_DATA);
+            ToolFaceRegistry.ACTION_PLUGIN_DATA,
+            // D-928 / PLAN-0766: deployment-wide default management is an instance-domain act,
+            // same family as WRITE_INSTANCE_CONTENT.
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG);
 
     private static final List<String> ACTION_ATOM_NAMES = List.of(
             ToolFaceRegistry.ACTION_READ,
@@ -186,7 +189,10 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
             ToolFaceRegistry.ACTION_PLUGIN_BIND,
             ToolFaceRegistry.ACTION_PLUGIN_INVOKE,
-            ToolFaceRegistry.ACTION_PLUGIN_DATA);
+            ToolFaceRegistry.ACTION_PLUGIN_DATA,
+            // D-928 / PLAN-0766 (task-158/159): the workspace-default layer write face. 33 + 1 = 34
+            // action atoms; the matching role seeds land in Flyway V153.
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -218,6 +224,9 @@ public final class PermissionAtomCatalog {
             // stay `both`: binding is a workspace act and an invocation carries a workspace id.
             ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
             ToolFaceRegistry.ACTION_PLUGIN_DATA,
+            // D-928 / PLAN-0766: the workspace-default layer is one deployment-wide row set, so
+            // its management atom is instance-bindable only (decision #27).
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 

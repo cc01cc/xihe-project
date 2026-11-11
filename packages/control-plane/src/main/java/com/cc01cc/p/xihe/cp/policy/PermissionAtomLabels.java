@@ -109,6 +109,9 @@ public final class PermissionAtomLabels {
                 "调用已绑定插件", "Invoke a bound plugin");
         put(labels, ToolFaceRegistry.ACTION_PLUGIN_DATA,
                 "读写插件数据面", "Read/write the plugin data plane");
+        // D-928 / PLAN-0766 (task-158/159): the shared workspace-default layer write face.
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
+                "管理工作区默认配置", "Manage workspace-default config");
         return labels;
     }
 

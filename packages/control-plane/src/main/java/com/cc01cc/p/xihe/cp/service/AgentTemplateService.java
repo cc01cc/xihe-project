@@ -113,6 +113,8 @@ public class AgentTemplateService {
         if (workspaceUuid != null) {
             readableScopes.add(new ConfigScope("workspace", null, workspaceUuid));
         }
+        // PLAN-0766: the shared default layer is readable by every authenticated caller.
+        readableScopes.add(new ConfigScope("workspace-default", null, null));
         readableScopes.add(new ConfigScope("user", actorId, null));
         // PLAN-0610 W4a (round-3 P1-4): the instance layer is a capability, not a role name. The
         // legacy `users.role == ADMIN` read is gone; a SUPER_ADMIN holder satisfies instance:admin
@@ -169,6 +171,7 @@ public class AgentTemplateService {
                 scope = new ConfigScope("instance", null, null);
             }
             case "user" -> scope = new ConfigScope("user", actorId, null);
+            case "workspace-default" -> scope = new ConfigScope("workspace-default", null, null);
             case "workspace" -> {
                 if (workspaceId == null) {
                     throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
@@ -284,9 +287,19 @@ public class AgentTemplateService {
                 requireUserAction(actorId, workspaceId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
                         actionResource);
             }
+            case "workspace-default" -> {
+                // PLAN-0766: the route is gated by the MANAGE_WORKSPACE_DEFAULT_CONFIG atom; the
+                // layer itself is one deployment-wide row set (both scope ids stay null).
+                if (userId != null || workspaceId != null) {
+                    throw new ConfigService.ConfigAccessException(
+                            "Workspace-default template scope is invalid");
+                }
+            }
             default -> throw new ConfigService.ConfigAccessException("Template layer is not writable");
         }
-        requireUserAction(actorId, workspaceId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, actionResource);
+        if (!"workspace-default".equals(layer)) {
+            requireUserAction(actorId, workspaceId, ToolFaceRegistry.ACTION_CREATE_TEMPLATE, actionResource);
+        }
     }
 
     private void requireUserAction(UUID actorId, UUID workspaceId, String actionClass, String resource) {
@@ -430,6 +443,7 @@ public class AgentTemplateService {
         details.set("permissionDiff", rolePermissionDiff(before, after, layer, userId, workspaceId));
         String scopeId = switch (layer) {
             case "instance" -> "instance";
+            case "workspace-default" -> "workspace-default";
             case "user" -> userId.toString();
             case "workspace" -> workspaceId.toString();
             default -> throw new IllegalArgumentException("Unknown config layer: " + layer);

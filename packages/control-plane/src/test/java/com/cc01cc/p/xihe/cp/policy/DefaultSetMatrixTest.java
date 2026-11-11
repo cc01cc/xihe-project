@@ -92,6 +92,9 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // MANAGE_ROLES is part of its default set. The subset guard (PLAN-0673 M1) still bounds
             // what it can delegate, and GRANT_ANY_ATOM stays SUPER_ADMIN-only (D-166).
             "MANAGE_ROLES",
+            // D-928 / PLAN-0766 (task-158 contract, migration V153): the shared workspace-default
+            // layer write atom is part of the fixed instance-administrator set.
+            "MANAGE_WORKSPACE_DEFAULT_CONFIG",
             // BL-345: ADMIN inherits the USER default set (SELF), but not MEMORY_WRITE (any subject).
             "MEMORY_WRITE_SELF",
             // PLAN-0691 T1.3 (M1): the four plugin atoms joined the vocabulary; ADMIN (the fixed
