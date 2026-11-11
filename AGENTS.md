@@ -75,6 +75,15 @@
   | 规范级自洽（`$ref` 可解析 / `operationId` 唯一 / 无 unused） | `check:openapi:lint`（redocly，dev-only，**report-only 起步**） |
   | doc ↔ contract | `check:api-docs`（生成器 `--check`，PLAN-0763 M4） |
 
+- **`RouteContractParityTest` 豁免规则（task-9）**：它对比 live `RequestMappingHandlerMapping` 与 `openapi.yaml`，五类读数 `implemented / documented / missing / extra / unexpected`。`unexpected` **必须为 0**；新增路由未登记契约即红（不是警告）。三类豁免只认字面量条目，禁止正则扫描：
+  | 豁免表 | 收纳 | 注释要求 |
+  | --- | --- | --- |
+  | `EXEMPT_IMPLEMENTED`（missing 侧） | 框架/容器/springdoc 自行注册的路由，永不面向客户端（如 `/v3/api-docs`、`/error`） | 每条注释写「谁注册的」与其消费者不存在（不是「暂时没文档」） |
+  | `EXEMPT_DOCUMENTED`（extra 侧） | **另一服务**实现的路径（契约横跨全平台：runtime Rust 的 `/internal/v1/runtime/**`、agent Python 的 `/internal/v1/agent/**`），以及少数被设计保留的写法 | 每条注释写「哪个服务/哪种设计」，跨服务须点名该服务包 |
+  | `KNOWN_GAPS`（missing 侧） | BL-320 的**存量缺口**，逐条冻结；自清洁（补进契约后须同步删除条目，测试会断言集合相等） | 每条注释写缺口归属与批次；**不得把新缺口塞进来** |
+  实测（2026-11-11，`develop 5da8cc2dd`，`mvn test -Dtest=RouteContractParityTest`）：`implemented=219 documented=270`；missing `total=5 framework=5 frozen-gap=0 unexpected=0`；extra `total=56 cross-service/kept-by-design=56 unexpected=0`；`param-name-exempt=0`。两侧 `unexpected` 均为 0。
+
+
 - **env 变量登记（`XIHE_*`）见 `one/.agents/skills/xc-cross-cutting-checklist/SKILL.md` §env 变量登记**（check-mise-env 门的 SSOT；新增变量须同批登记）
 - **各服务运行时原生文档一律降级为调试/对账产物**：CP 的 `/v3/api-docs` **默认关闭**（`XIHE_SPRINGDOC_ENABLED=true` 或 `dev`/`e2e`/`test` profile 才开，PLAN-0763 M6），Agent（FastAPI）的 `/openapi.json`，不得当文档引用、也不得当「实现侧分母」。实测 springdoc 比 live mapping **少报 15 条路由**，且**完全不收录 `/internal/**`**（yaml 独有 84 条里 64 条是 `/internal/`）。**Agent 的 HTTP 面 SSOT 同样是本 yaml**（`/internal/v1/agent/**` 26 条），其 `/openapi.json` 只用于漂移对账（PLAN-0763）。
 - **配置域 `{domain}`**：合法集合由 `classpath:config-schemas/*.json` 决定（13 个域，`ConfigDomainSchema` 启动加载）。yaml 侧用 `enum` 声明同一集合，另设一道门断言「yaml enum 集合 == schema 文件名集合」。**json 承载每域字段结构、enum 承载域名名单，二者不可互替**；新增域 = 加一份 schema + 加一个 enum 值，门会拦住单边改动。
