@@ -32,7 +32,9 @@ html[data-xh-color="neutral"] {
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
     --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
+    /* 2026-11-12：控件边界提到 WCAG 1.4.11 的 3:1（原 0.922 对白仅 1.26:1）。
+   0.66 的线性亮度 0.2875 ⇒ 对 #fff 3.11:1，留一点 8 位取整余量。--border 不动：装饰线豁免。 */
+    --input: oklch(0.66 0 0);
     --ring: var(--primary);
     --chart-1: oklch(0.646 0.222 41.116);
     --chart-2: oklch(0.6 0.118 184.704);
@@ -68,7 +70,8 @@ html[data-xh-color="neutral"].dark {
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
+    /* 暗色同一判据：sRGB 空间合成，15% 白压 #0a0a0a ≈ #2f2f2f ⇒ 仅 1.48:1；35% ≈ #5d5d5d ⇒ 3.05:1。 */
+    --input: oklch(1 0 0 / 35%);
     --ring: var(--primary);
     --chart-1: oklch(0.488 0.243 264.376);
     --chart-2: oklch(0.696 0.17 162.48);
