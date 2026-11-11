@@ -348,7 +348,7 @@ const layerHeaderClass =
                         <template v-if="canSeeInstanceLayer">
                             <SidebarGroupLabel
                                 as="p"
-                                data-testid="settings-nav-group-secondary"
+                                data-testid="settings-nav-group-domains-instance"
                                 :class="sectionLabelClass"
                             >
                                 {{ t("settings.ia.groupDomains") }}
@@ -392,7 +392,7 @@ const layerHeaderClass =
                             <div v-for="group in opsGroups" :key="group.id" class="mt-1">
                                 <SidebarGroupLabel
                                     as="p"
-                                    data-testid="settings-nav-group-secondary"
+                                    :data-testid="'settings-nav-group-ops-' + group.id"
                                     :class="sectionLabelClass"
                                 >
                                     {{ t(group.labelKey) }}
@@ -461,7 +461,7 @@ const layerHeaderClass =
                     <CollapsibleContent>
                         <SidebarGroupLabel
                             as="p"
-                            data-testid="settings-nav-group-secondary"
+                            data-testid="settings-nav-group-domains-user"
                             :class="sectionLabelClass"
                         >
                             {{ t("settings.ia.groupDomains") }}
@@ -535,7 +535,7 @@ const layerHeaderClass =
                     <CollapsibleContent>
                         <SidebarGroupLabel
                             as="p"
-                            data-testid="settings-nav-group-secondary"
+                            data-testid="settings-nav-group-domains-workspace-default"
                             :class="sectionLabelClass"
                         >
                             {{ t("settings.ia.groupWorkspaceDefaultDomains") }}

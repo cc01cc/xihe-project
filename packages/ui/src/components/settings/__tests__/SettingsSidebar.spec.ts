@@ -91,6 +91,7 @@ const messages = {
                 resourceMcp: "MCP 服务器",
                 resourceCredentials: "凭据",
                 resourceKnowledge: "知识库",
+                resourceSkills: "技能",
                 resourceAgentPrincipals: "智能体主体",
                 resourceMyCredentials: "我的凭据",
                 resourceKnowledgeMcp: "知识库 · MCP",
@@ -217,11 +218,15 @@ describe("SettingsSidebar", () => {
                 id !== "settings-nav-resource-group" && !id.startsWith("settings-nav-resource-gap-")
             );
         });
+        // task-87：ui-2 的 task-83（31d4544a）在实例层新增「技能」真入口 ⇒ 这里从 2 条变 3 条。
+        // 本用例测的是「资源组落在两层 + 缺口槽可见 + 只留真入口」的**清单语义**，
+        // 不是锚点叫什么名字；testid 收口（task-87）没有改变清单，失败来自上游数据变多。
         expect(real.map((node) => node.attributes("data-testid"))).toEqual([
+            "settings-nav-resource-skills",
             "settings-nav-resource-agent-principals",
             "settings-nav-resource-my-credentials",
         ]);
-        expect(real.map((node) => node.text())).toEqual(["智能体主体", "我的凭据"]);
+        expect(real.map((node) => node.text())).toEqual(["技能", "智能体主体", "我的凭据"]);
     });
 
     it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {
@@ -293,6 +298,37 @@ describe("SettingsSidebar", () => {
             "settings-nav-user",
             "settings-nav-workspace-default",
         ]);
+        wrapper.unmount();
+    });
+
+    it("分组标题 testid：作用域化锚点在同一渲染树里唯一，层无关锚点按层计次", async () => {
+        // 判据是**机器计数**，不是注释：左栏曾把同一个常量 testid 挂在 5 处
+        // （4 处本组标题 + ResourceNav 被渲染 2 次），任何 getByTestId 都可能命中错的那个。
+        // 定性结论：这些标题**语义相同**（层内二级组标签），故作用域化而不是拆成语义名。
+        //
+        // task-87 修正判据（cp-1 第一版把两类锚点混在一起判唯一，必然假红）：
+        //   · 层无关锚点（primary / items / ops-* / group*Resources）每渲染一层就各有一份，跨层重复是设计意图
+        //     —— 同一事实在本文件 123 行「primary 期望 2 个」里早已断言；要求它们全局唯一等于逼着把层信息塞进 id，
+        //     而分层靠的是 #settings-nav-<layer> 容器。
+        //   · 作用域化锚点（domains-* 这类标识"某层里的某个组"的）必须树内唯一。
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("instance", "rag");
+        // 两层都展开：只有跨层同时在场，唯一性判据才真的覆盖到"ResourceNav 被渲染 2 次"这个原始缺陷。
+        await wrapper.find("#settings-nav-user").trigger("click");
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="settings-nav-group-secondary"]').length).toBe(0);
+        const ids = wrapper
+            .findAll('[data-testid^="settings-nav-group-"]')
+            .map((el) => el.attributes("data-testid") ?? "");
+        const LAYER_AGNOSTIC =
+            /^settings-nav-group-(primary|items|ops-.*|groupInstanceResources|groupMyResources)$/;
+        const scoped = ids.filter((id) => !LAYER_AGNOSTIC.test(id));
+        expect(scoped.length).toBeGreaterThan(0);
+        // ① 作用域化锚点：树内唯一（原缺陷的机器判据，保留）
+        expect(new Set(scoped).size).toBe(scoped.length);
+        // ② 层无关锚点：允许重复，但重复次数必须等于渲染出来的层数（2），不是随便重复
+        expect(ids.filter((id) => id === "settings-nav-group-primary")).toHaveLength(2);
         wrapper.unmount();
     });
 });

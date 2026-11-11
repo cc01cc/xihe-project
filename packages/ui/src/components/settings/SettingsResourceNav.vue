@@ -56,7 +56,7 @@ function gapTitle(item: ResourceNavItem): string {
     <div data-testid="settings-nav-resource-group" class="mt-1">
         <SidebarGroupLabel
             as="p"
-            data-testid="settings-nav-group-secondary"
+            :data-testid="`settings-nav-group-${((groupLabelKey ?? '') as string).split('.').pop() || 'resources'}`"
             class="h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium text-muted-foreground"
         >
             {{ t(groupLabelKey) }}
