@@ -38,8 +38,13 @@ public class InstanceOwnerController {
     /** Wire view; {@code null} fields mean "the instance has no owner yet". */
     public record OwnerView(String ownerUserId, String assignedAt, boolean isCurrentUser) {}
 
-    /** Transfer body: target account plus the caller's password (re-authentication). */
-    public record TransferRequest(String targetUserId, String password) {}
+    /**
+     * Transfer body: target account plus the caller's password (re-authentication).
+     * {@code reason} (PLAN-0767 M1-5) is optional on the wire and required only on the emergency
+     * face (unowned instance or an unusable owner pointer); the normal owner-to-owner transfer
+     * ignores it.
+     */
+    public record TransferRequest(String targetUserId, String password, String reason) {}
 
     private final InstanceOwnershipService ownership;
     private final ClientIpResolver clientIpResolver;
@@ -63,6 +68,10 @@ public class InstanceOwnerController {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "targetUserId and password are required");
         }
+        if (request.reason() != null && request.reason().length() > 200) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "reason must be at most 200 characters");
+        }
         UUID targetUserId;
         try {
             targetUserId = UUID.fromString(request.targetUserId().trim());
@@ -71,7 +80,8 @@ public class InstanceOwnerController {
                     "targetUserId must be a UUID", e);
         }
         InstanceOwnershipService.OwnerState state = ownership.transfer(
-                callerId(), targetUserId, request.password(), clientIpResolver.resolve(httpRequest));
+                callerId(), targetUserId, request.password(), clientIpResolver.resolve(httpRequest),
+                request.reason());
         return ResponseEntity.ok(view(state, callerId()));
     }
 

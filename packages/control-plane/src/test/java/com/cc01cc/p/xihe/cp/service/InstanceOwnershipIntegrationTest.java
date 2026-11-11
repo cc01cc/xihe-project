@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
@@ -407,6 +408,147 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         assertEquals(before, transferState());
     }
 
+    // ── PLAN-0767 M1-5: emergency face (unowned pointer / externally broken owner) ─────────
+
+    /**
+     * Spec §6 door 2, residual case (a): the {@code instance_owner} pointer is empty (fresh DB,
+     * restored DB, H2 row missing). An instance ADMIN may claim it with a reason; without a reason
+     * the request is refused before any write, and the claim is audited as
+     * {@code instance_owner_emergency_transferred} with {@code from=<none>}.
+     */
+    @Test
+    void emergencyClaimRequiresReasonAndClaimsAnUnownedInstance() throws Exception {
+        String adminToken = register("m15-unowned@test.com");
+        String adminId = userIdOf(adminToken);
+        promote(adminId);
+        adminToken = login("m15-unowned@test.com");
+        assertNull(currentOwnerId(), "the fixture starts unowned");
+
+        int emergencyAuditsBefore = auditCount("instance_owner_emergency_transferred");
+        ResponseEntity<String> noReason = putOwner(adminToken, adminId, PASSWORD);
+        assertEquals(HttpStatus.BAD_REQUEST, noReason.getStatusCode(), noReason.getBody());
+        assertTrue(noReason.getBody().contains("INVALID_REQUEST"), noReason.getBody());
+        assertNull(currentOwnerId(), "a refused emergency claim must not move the pointer");
+        assertEquals(emergencyAuditsBefore, auditCount("instance_owner_emergency_transferred"),
+                "a refused emergency claim must not write the emergency audit");
+
+        ResponseEntity<String> ok = putOwner(adminToken, adminId, PASSWORD, "recover unowned instance");
+        assertEquals(HttpStatus.OK, ok.getStatusCode(), ok.getBody());
+        assertEquals(adminId, currentOwnerId());
+        assertEquals("SUPER_ADMIN", roleOf(adminId));
+        assertTrue(activeSuperAdminBindings() >= 1, "the emergency claim must leave a usable SUPER_ADMIN");
+        assertEquals(emergencyAuditsBefore + 1, auditCount("instance_owner_emergency_transferred"));
+
+        Map<String, Object> audit = jdbc.queryForMap(
+                "SELECT user_id, resource_id, details FROM audit_logs"
+                        + " WHERE action = 'instance_owner_emergency_transferred'"
+                        + " ORDER BY created_at DESC LIMIT 1");
+        assertEquals(UUID.fromString(adminId), audit.get("user_id"));
+        assertEquals(adminId, audit.get("resource_id"));
+        String details = String.valueOf(audit.get("details"));
+        assertTrue(details.contains("from=<none>"), details);
+        assertTrue(details.contains("reason=recover unowned instance"), details);
+        assertFalse(details.contains(PASSWORD), "the audit must never contain the password");
+    }
+
+    /**
+     * Spec §6 door 2, residual case (b): the pointer is non-null but references an account disabled
+     * outside the guarded lifecycle (only a manual DB edit can do this). A different instance ADMIN
+     * repairs it with a reason; the broken owner is demoted to ADMIN and the new owner gets
+     * SUPER_ADMIN, so the I5 count stays >= 1.
+     */
+    @Test
+    void emergencyTransferRepairsAnOwnerDisabledOutsideTheLifecycle() throws Exception {
+        String ownerToken = register("m15-broken-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        grantInstanceRole(ownerId, "SUPER_ADMIN");
+        assignOwner(ownerId);
+
+        String adminToken = register("m15-repair-admin@test.com");
+        String adminId = userIdOf(adminToken);
+        promote(adminId);
+        adminToken = login("m15-repair-admin@test.com");
+
+        // Only a manual edit can produce this state: the guarded lifecycle refuses to disable/delete
+        // the owner (UserAdminService guard + fk_instance_owner_user ON DELETE RESTRICT).
+        jdbc.update("UPDATE users SET status = 'DISABLED' WHERE id = CAST(? AS UUID)", ownerId);
+        int emergencyAuditsBefore = auditCount("instance_owner_emergency_transferred");
+
+        ResponseEntity<String> ok = putOwner(adminToken, adminId, PASSWORD,
+                "owner account disabled by hand");
+        assertEquals(HttpStatus.OK, ok.getStatusCode(), ok.getBody());
+        assertEquals(adminId, currentOwnerId());
+        assertEquals("SUPER_ADMIN", roleOf(adminId));
+        assertEquals("ADMIN", roleOf(ownerId), "the broken owner is demoted, not left as a tier hole");
+        assertTrue(activeSuperAdminBindings() >= 1, "I5: a usable SUPER_ADMIN must remain");
+        assertEquals(emergencyAuditsBefore + 1, auditCount("instance_owner_emergency_transferred"));
+
+        Map<String, Object> audit = jdbc.queryForMap(
+                "SELECT user_id, resource_id, details FROM audit_logs"
+                        + " WHERE action = 'instance_owner_emergency_transferred'"
+                        + " ORDER BY created_at DESC LIMIT 1");
+        assertEquals(UUID.fromString(adminId), audit.get("user_id"));
+        assertEquals(adminId, audit.get("resource_id"));
+        String details = String.valueOf(audit.get("details"));
+        assertTrue(details.contains("from=" + ownerId), details);
+        assertTrue(details.contains("reason=owner account disabled by hand"), details);
+        assertFalse(details.contains(PASSWORD), "the audit must never contain the password");
+    }
+
+    /**
+     * Spec §7: the only instance-layer resource at M1 is the {@code provider_connections} INSTANCE
+     * row. A normal transfer and an emergency repair must leave all 23 columns of every INSTANCE row
+     * byte-identical (full-row diff, not a count) and must not append a provider-connection audit row.
+     */
+    @Test
+    void transferAndEmergencyRepairLeaveInstanceResourcesByteIdentical() throws Exception {
+        String connectionId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO provider_connections (id, owner_type, owner_id, provider_id,"
+                        + " connection_key, api_type_id, api_type_version, label, enabled, status,"
+                        + " model_discovery, revision, created_at, updated_at)"
+                        + " VALUES (CAST(? AS UUID), 'INSTANCE', 'instance', 'deepseek',"
+                        + " 'instance-default', 'openai-compatible', 1, 'instance seed', TRUE,"
+                        + " 'READY', 'remote-models', 4, NOW(), NOW())",
+                connectionId);
+        try {
+            String ownerToken = register("m15-res-owner@test.com");
+            String ownerId = userIdOf(ownerToken);
+            promote(ownerId);
+            grantInstanceRole(ownerId, "SUPER_ADMIN");
+            assignOwner(ownerId);
+            ownerToken = login("m15-res-owner@test.com");
+
+            String targetId = userIdOf(register("m15-res-target@test.com"));
+            promote(targetId);
+            String rescueToken = register("m15-res-rescue@test.com");
+            String rescueId = userIdOf(rescueToken);
+            promote(rescueId);
+            rescueToken = login("m15-res-rescue@test.com");
+
+            String resourcesBefore = instanceConnectionSnapshot();
+            int connectionAuditsBefore = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM provider_connection_audit", Integer.class);
+
+            ResponseEntity<String> normal = putOwner(ownerToken, targetId, PASSWORD);
+            assertEquals(HttpStatus.OK, normal.getStatusCode(), normal.getBody());
+            assertEquals(resourcesBefore, instanceConnectionSnapshot(),
+                    "a normal transfer must not touch an INSTANCE provider connection");
+
+            jdbc.update("UPDATE users SET status = 'DISABLED' WHERE id = CAST(? AS UUID)", targetId);
+            ResponseEntity<String> emergency = putOwner(rescueToken, rescueId, PASSWORD,
+                    "recover after owner was disabled");
+            assertEquals(HttpStatus.OK, emergency.getStatusCode(), emergency.getBody());
+            assertEquals(resourcesBefore, instanceConnectionSnapshot(),
+                    "an emergency repair must not touch an INSTANCE provider connection");
+            assertEquals(connectionAuditsBefore, jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM provider_connection_audit", Integer.class),
+                    "no provider-connection audit row may appear");
+        } finally {
+            jdbc.update("DELETE FROM provider_connections WHERE id = CAST(? AS UUID)", connectionId);
+        }
+    }
+
     /** T4.3: a target without an instance ADMIN tier binding is still 409 (capability judgement). */
     @Test
     void transferRequiresTheTargetToHoldTheInstanceAdminCapability() throws Exception {
@@ -693,6 +835,30 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
         return api.exchange(url("/api/v1/instance/owner"), HttpMethod.PUT,
                 new HttpEntity<>(Map.of("targetUserId", targetUserId, "password", password),
                         authHeaders(token)), String.class);
+    }
+
+    /** PLAN-0767 M1-5: the emergency face carries a reason (required only when the pointer is unusable). */
+    private ResponseEntity<String> putOwner(String token, String targetUserId, String password,
+                                            String reason) {
+        return api.exchange(url("/api/v1/instance/owner"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("targetUserId", targetUserId, "password", password,
+                        "reason", reason), authHeaders(token)), String.class);
+    }
+
+    /**
+     * PLAN-0767 spec §7 sampling: every column of every INSTANCE provider connection, with UUID /
+     * jsonb / timestamp values cast to text so the comparison is a stable full-row, column-by-column
+     * diff (a count or a non-null check would pass even when a transfer rewrote a row).
+     */
+    private String instanceConnectionSnapshot() throws Exception {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT id::text AS id, owner_type, owner_id, provider_id, connection_key,"
+                        + " api_type_id, api_type_version, label, base_url, credential_id::text,"
+                        + " enabled, status, model_discovery, manual_models::text, revision,"
+                        + " max_inflight, max_queue, window_token_budget, window_seconds,"
+                        + " last_verified_at::text, last_error_code, created_at::text, updated_at::text"
+                        + " FROM provider_connections WHERE owner_type = 'INSTANCE' ORDER BY id");
+        return objectMapper.writeValueAsString(rows);
     }
 }
 

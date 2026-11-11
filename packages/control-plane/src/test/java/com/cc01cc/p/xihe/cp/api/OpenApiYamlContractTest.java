@@ -371,6 +371,19 @@ class OpenApiYamlContractTest {
                     "UserCapabilities schema is contracted");
             assertTrue(schemas.containsKey("InstanceOwnerTransferRequest"),
                     "InstanceOwnerTransferRequest schema is contracted");
+
+            // PLAN-0767 M1-5: the emergency face adds an optional reason (required only when the
+            // pointer is empty/unusable) and its own audit row; the wire stays backward compatible.
+            Map<?, ?> transferRequest = (Map<?, ?>) schemas.get("InstanceOwnerTransferRequest");
+            Map<?, ?> transferProperties = (Map<?, ?>) transferRequest.get("properties");
+            assertTrue(transferProperties.containsKey("reason"),
+                    "the emergency face carries a required-when-emergency reason");
+            assertEquals(List.of("targetUserId", "password"), transferRequest.get("required"),
+                    "reason stays optional on the wire; only the emergency face requires it");
+            assertEquals(200, ((Map<?, ?>) transferProperties.get("reason")).get("maxLength"));
+            assertTrue(String.valueOf(((Map<?, ?>) ownerPath.get("put")).get("description"))
+                            .contains("instance_owner_emergency_transferred"),
+                    "the emergency face and its audit row are contracted");
         }
     }
 

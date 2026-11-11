@@ -93,14 +93,43 @@ public class InstanceOwnershipService {
      */
     @Transactional
     public OwnerState transfer(String actorUserId, UUID targetUserId, String rawPassword, String clientIp) {
+        return transfer(actorUserId, targetUserId, rawPassword, clientIp, null);
+    }
+
+    /**
+     * PUT /api/v1/instance/owner (contract §4, PLAN-0767 M1-5 spec §6 door 2). Two faces share one
+     * transaction and one target-validation/password block:
+     *
+     * <ol>
+     *   <li><b>normal face</b> — a usable owner pointer exists: only that owner may transfer, and
+     *       {@code reason} is ignored (the frozen PLAN-0580 semantics, including the idempotent
+     *       {@code from == to} replay);</li>
+     *   <li><b>emergency face</b> — the pointer is empty (fresh/restored DB) or points at an account
+     *       that is no longer usable (manually disabled or soft-deleted; the guarded lifecycle cannot
+     *       produce it): any caller that passed the URL capability gate
+     *       ({@code cap:instance:admin}) may claim/repair ownership, but must supply a non-blank
+     *       {@code reason}. The pointer then moves with {@code instance_owner_emergency_transferred}
+     *       (detail {@code from=<none>|<uuid> to=… reason=…}) instead of the normal audit row.</li>
+     * </ol>
+     *
+     * <p>Both faces keep the frozen lock order ({@code instance_owner} → users), re-verify the
+     * actor's password (the old owner's password when it is the normal face) and commit binding
+     * handover + pointer + audit atomically. The response view is unchanged.</p>
+     */
+    @Transactional
+    public OwnerState transfer(String actorUserId, UUID targetUserId, String rawPassword,
+                               String clientIp, String reason) {
         dbLockTimeout.apply();
         InstanceOwner owner = lockSingleton();
-        OwnerState state = new OwnerState(owner.getOwnerUserId(), owner.getAssignedAt());
-        if (state.ownerUserId() == null) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "NOT_INSTANCE_OWNER",
-                    "Only the current instance owner can transfer ownership");
-        }
-        if (!state.belongsTo(actorUserId)) {
+        UUID previousOwner = owner.getOwnerUserId();
+        OwnerState state = new OwnerState(previousOwner, owner.getAssignedAt());
+        boolean emergency = previousOwner == null || isUnusableOwner(previousOwner);
+        if (emergency) {
+            if (reason == null || reason.isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "reason is required when the instance has no usable owner");
+            }
+        } else if (!state.belongsTo(actorUserId)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "NOT_INSTANCE_OWNER",
                     "Only the current instance owner can transfer ownership");
         }
@@ -129,19 +158,41 @@ public class InstanceOwnershipService {
 
         reauthenticateOwner(actorUserId, rawPassword, clientIp);
 
-        UUID previousOwner = owner.getOwnerUserId();
+        UUID actorId = UUID.fromString(actorUserId);
         // I5: binding handover + pointer + audit are one transaction. If any step fails
-        // (LAST_SUPER_ADMIN guard, lock timeout) none of the four changes (design §3.6).
-        grantDefaultService.transferInstanceSuperAdmin(previousOwner, target.getId(),
-                UUID.fromString(actorUserId));
-        owner.assignTo(target.getId(), UUID.fromString(actorUserId));
-        owners.save(owner);
-        audit.recordDurableChange(actorUserId, null, "instance_owner_transferred", RESOURCE_TYPE,
-                target.getId().toString(),
-                "from=" + previousOwner + " to=" + target.getId());
-        logger.info("[LIFECYCLE] service=cp event=instance_owner_transferred from={} to={}",
-                previousOwner, target.getId());
+        // (LAST_SUPER_ADMIN guard, lock timeout, audit failure) none of the writes survive.
+        if (emergency) {
+            if (previousOwner == null) {
+                grantDefaultService.assignInstanceSuperAdminWhenUnowned(target.getId(), actorId);
+            } else {
+                grantDefaultService.transferInstanceSuperAdmin(previousOwner, target.getId(), actorId);
+            }
+            owner.assignTo(target.getId(), actorId);
+            owners.save(owner);
+            String fromDetail = previousOwner == null ? "<none>" : previousOwner.toString();
+            audit.recordDurableChange(actorUserId, null, "instance_owner_emergency_transferred",
+                    RESOURCE_TYPE, target.getId().toString(),
+                    "from=" + fromDetail + " to=" + target.getId() + " reason=" + reason.trim());
+            logger.info("[LIFECYCLE] service=cp event=instance_owner_emergency_transferred"
+                            + " from={} to={} reason={}", fromDetail, target.getId(), reason.trim());
+        } else {
+            grantDefaultService.transferInstanceSuperAdmin(previousOwner, target.getId(), actorId);
+            owner.assignTo(target.getId(), actorId);
+            owners.save(owner);
+            audit.recordDurableChange(actorUserId, null, "instance_owner_transferred", RESOURCE_TYPE,
+                    target.getId().toString(),
+                    "from=" + previousOwner + " to=" + target.getId());
+            logger.info("[LIFECYCLE] service=cp event=instance_owner_transferred from={} to={}",
+                    previousOwner, target.getId());
+        }
         return new OwnerState(owner.getOwnerUserId(), owner.getAssignedAt());
+    }
+
+    /** True when the pointer references an account that can no longer authenticate (corrupt state). */
+    private boolean isUnusableOwner(UUID ownerUserId) {
+        return users.findById(ownerUserId)
+                .map(user -> user.getStatus() != UserStatus.ACTIVE || user.getDeletedAt() != null)
+                .orElse(true);
     }
 
     /**
