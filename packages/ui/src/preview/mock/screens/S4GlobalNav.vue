@@ -1,14 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { ChevronsLeft, ChevronsRight, Languages } from "@lucide/vue";
-import { SUPPORTED_LOCALES } from "@/i18n/locale";
-import type { Language } from "@/types";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { ChevronsLeft, ChevronsRight } from "@lucide/vue";
 import {
     Sidebar,
     SidebarContent,
@@ -51,18 +43,11 @@ const collapsedOpen = ref(false);
 const expandedOpen = ref(true);
 
 /**
- * D-896（用户 2026-11-11 裁定，PLAN-0762 决策 bbc2d189）：折叠态只剩图标时，必须让人知道
- * 「这是什么、下面有什么」；且语言项不得写死「中 / EN」两条（「以后又不一定只有一种语言」）。
- *
- * <p>④a **可见切换键**：两态用**同一个控件、同一个位置**（面板顶栏右侧），图标按当前态指向
- * 「接下来会变成什么」—— 展开态 ChevronsLeft / 折叠态 ChevronsRight；不做两套控件，
- * 用户只需学一个语义。</p>
- *
- * <p>④b **悬浮二级菜单**：菜单项 = 展开态列表的**同一份数据**（`modules`）且顺序一致 ——
- * 「菜单里第 2 项」必须等于「列表里第 2 项」。hover / 点击 / tap 开；键盘 Tab+Enter 开、Esc 关。</p>
- *
- * <p>④c **语言由 SSOT 派生**：`SUPPORTED_LOCALES`（i18n/locale.ts:12）。稿上能数到几条语言，
- * 答案永远是 `SUPPORTED_LOCALES.length`，不存在第二处字面量。</p>
+ * D-896（2026-11-11，bbc2d189）：④a 可见切换键 —— **保留**（两态同位同图标）。
+ * BL-578（2026-11-11，用户「悬浮二级菜单放 bl 先不做，太丑了」）：④b 悬浮二级菜单 —— **已撤回**
+ * （被否的是视觉呈现，三通道实现实测成立，代码在 git 历史 af99170ca..d9231064f 可回查）。
+ * D-899（2026-11-11，用户「语言切换放到设置里吧」）：④c rail 语言菜单 —— **已撤回**，
+ * 落点 = 设置页 · 用户层 · user-preference 域（见 S1 稿）。
  */
 const toggleCollapsed = () => {
     collapsedOpen.value = !collapsedOpen.value;
@@ -70,26 +55,6 @@ const toggleCollapsed = () => {
 const toggleExpanded = () => {
     expandedOpen.value = !expandedOpen.value;
 };
-
-/** ④b hover：用户点名「悬浮」也要能开二级菜单（点击/键盘是可达性底线，不是替代）。
- * reka DropdownMenu 只由 trigger 交互开 ⇒ 这里用 ref 手动控制，并与 click/keyboard 不互斥。
- */
-const moduleMenuOpen = ref(false);
-function openModuleMenu() {
-    moduleMenuOpen.value = true;
-}
-function closeModuleMenu() {
-    moduleMenuOpen.value = false;
-}
-
-/** 语言显示名：只有 id → i18n key 的映射，没有「两条语言」的清单。 */
-const LANGUAGE_LABEL_KEY: Record<Language, string> = {
-    "zh-CN": "settings.languageZh",
-    "en-US": "settings.languageEn",
-};
-
-/** 稿侧不做真实切换，只把语言显示出来（产品侧走 settings.setLanguage）。 */
-const localeLabel = (locale: Language) => LANGUAGE_LABEL_KEY[locale] ?? locale;
 </script>
 
 <template>
@@ -131,79 +96,27 @@ const localeLabel = (locale: Language) => LANGUAGE_LABEL_KEY[locale] ?? locale;
                                 <SidebarGroupContent>
                                     <SidebarMenu>
                                         <SidebarMenuItem v-for="m in modules" :key="m.id">
-                                            <!-- ④b 二级菜单：与展开态列表同源同序（modules）；hover/点击/tap 开，
-                                                 键盘 Tab+Enter 开、Esc 关（reka 原生）。 -->
-                                            <DropdownMenu v-model:open="moduleMenuOpen">
-                                                <DropdownMenuTrigger
-                                                    :is-active="m.id === 'settings'"
-                                                    :tooltip="m.label"
-                                                    class="justify-center"
-                                                    @pointerenter="openModuleMenu"
-                                                    @pointerleave="closeModuleMenu"
-                                                >
-                                                    <component :is="m.icon" class="size-5" />
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent
-                                                    side="right"
-                                                    align="start"
-                                                    class="w-44"
-                                                >
-                                                    <p
-                                                        class="px-2 py-1 mk-caption text-muted-foreground"
-                                                    >
-                                                        全局条 · 模块（折叠态）
-                                                    </p>
-                                                    <DropdownMenuItem
-                                                        v-for="entry in modules"
-                                                        :key="entry.id"
-                                                        :data-testid="`s4-collapsed-menu-${entry.id}`"
-                                                        :inset="true"
-                                                    >
-                                                        <component
-                                                            :is="entry.icon"
-                                                            class="size-4"
-                                                        />
-                                                        <span>{{ entry.label }}</span>
-                                                    </DropdownMenuItem>
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
+                                            <!-- ④b 悬浮二级菜单：**已撤回**（BL-578，用户 2026-11-11：
+                                                 「悬浮二级菜单放 bl 先不做，太丑了」）。
+                                                 被否的是视觉呈现；三通道实现（hover/click/键盘）实测成立，
+                                                 代码留在 git 历史（af99170ca → d9231064f 之间）可回查。
+                                                 当前折叠态 = 纯图标按钮 + vendor tooltip。 -->
+                                            <SidebarMenuButton
+                                                :is-active="m.id === 'settings'"
+                                                :tooltip="m.label"
+                                                class="justify-center"
+                                            >
+                                                <component :is="m.icon" class="size-5" />
+                                            </SidebarMenuButton>
                                         </SidebarMenuItem>
                                     </SidebarMenu>
                                 </SidebarGroupContent>
                             </SidebarGroup>
                         </SidebarContent>
                         <SidebarFooter class="px-0.5 pb-2">
-                            <!-- ④c 语言：折叠态也要能换语言，且项由 SUPPORTED_LOCALES 派生（不写死两条）。 -->
-                            <SidebarMenu>
-                                <SidebarMenuItem>
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger
-                                            tooltip="界面语言"
-                                            data-testid="s4-collapsed-lang-trigger"
-                                            class="justify-center"
-                                        >
-                                            <Languages class="size-5" />
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent
-                                            side="right"
-                                            align="start"
-                                            class="w-44"
-                                        >
-                                            <p class="px-2 py-1 mk-caption text-muted-foreground">
-                                                界面语言（{{ SUPPORTED_LOCALES.length }} 种）
-                                            </p>
-                                            <DropdownMenuItem
-                                                v-for="locale in SUPPORTED_LOCALES"
-                                                :key="locale"
-                                                :data-testid="`s4-collapsed-lang-${locale}`"
-                                                :inset="true"
-                                            >
-                                                <span>{{ localeLabel(locale) }}</span>
-                                            </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                </SidebarMenuItem>
-                            </SidebarMenu>
+                            <!-- 语言切换：**已从全局条移除**（D-899，用户 2026-11-11：
+                                 「语言切换放到设置里吧」）。落点 = 设置页 · 用户层 · user-preference 域
+                                 （S1 稿已画出）；rail 只保留 账号/设置/退出。 -->
                             <SidebarMenu>
                                 <SidebarMenuItem>
                                     <SidebarMenuButton tooltip="账号" class="justify-center">

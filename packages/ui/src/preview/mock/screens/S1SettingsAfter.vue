@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, ref, type Ref } from "vue";
 import { ArrowLeft, ChevronRight, Globe, Search, ShieldCheck } from "@lucide/vue";
+import { SUPPORTED_LOCALES } from "@/i18n/locale";
+import type { Language } from "@/types";
 import {
     Sidebar,
     SidebarContent,
@@ -136,6 +138,14 @@ const LAYER_TEXT = {
     },
 } as const;
 const layerText = computed(() => LAYER_TEXT[currentLayer.value]);
+
+// D-899：稿侧语言选择的本地展示态（产品侧 = settings.setLanguage → applyLocale）。
+const mockLanguage = ref<Language>("zh-CN");
+const LOCALE_SHORT: Record<Language, string> = {
+    "zh-CN": "中",
+    "en-US": "EN",
+};
+const localeShort = (locale: Language) => LOCALE_SHORT[locale] ?? locale;
 
 // 实例层入口数 = 域 + 运维 + 安全 + 资源（缺口位也是「留位入口」）—— 与产品
 // `SettingsSidebar.vue:111 instanceEntryCount` 同口径；此前这里少算资源 4 条，于是稿上是 17、产品是 21。
@@ -406,6 +416,42 @@ function userTotal(): number {
                                                 </SidebarMenuButton>
                                             </SidebarMenuItem>
                                         </SidebarMenu>
+                                        <!-- D-899（用户 2026-11-11：「语言切换放到设置里吧」）：
+                                             界面语言入口画在**用户层**（语义 = 用户偏好，不是实例层设置；
+                                             稿若画在实例层会制造「实例层能设语言」的错误印象）。
+                                             产品落点 = user-preference 域的 language 键 + applyLocale
+                                             （i18n/locale.ts，PLAN-0602 唯一入口）；选项由 SUPPORTED_LOCALES 派生。 -->
+                                        <div
+                                            class="mx-1 mt-2 rounded-md border border-sidebar-border p-2"
+                                        >
+                                            <p class="mk-body font-semibold">界面语言</p>
+                                            <div
+                                                class="mt-1 flex items-center gap-0.5 rounded-md border border-sidebar-border p-0.5"
+                                                role="group"
+                                                aria-label="界面语言"
+                                            >
+                                                <button
+                                                    v-for="locale in SUPPORTED_LOCALES"
+                                                    :key="locale"
+                                                    type="button"
+                                                    class="min-h-6 min-w-8 rounded px-2 py-1 text-[11px] leading-none"
+                                                    :class="
+                                                        mockLanguage === locale
+                                                            ? 'bg-sidebar-accent font-medium text-sidebar-foreground'
+                                                            : 'text-muted-foreground'
+                                                    "
+                                                    @click="mockLanguage = locale"
+                                                >
+                                                    {{ localeShort(locale) }}
+                                                </button>
+                                            </div>
+                                            <p
+                                                class="pt-1 mk-caption leading-4 text-muted-foreground"
+                                            >
+                                                用户层偏好 · 产品落点 user-preference.language +
+                                                applyLocale · 目标态
+                                            </p>
+                                        </div>
                                         <p
                                             class="px-2 pt-1 mk-body leading-5 text-muted-foreground"
                                         >
