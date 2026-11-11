@@ -25,6 +25,23 @@ const CAPABILITIES = {
     canCreateWorkspace: true,
 };
 
+/** task-149：mock lane 的「当前工作区」（字段对齐 ApiWorkspace，storageMode 用产品默认 direct_attach）。 */
+const MOCK_WORKSPACE = {
+    id: "mock-ws-main",
+    name: "Xihe 主工作区",
+    description: "mock lane 工作区（真实 API 形状）",
+    ownerId: "mock-user",
+    storageBackend: "direct",
+    storageMode: "direct_attach",
+    executionMode: "host",
+    workspaceRole: "OWNER",
+    canWrite: true,
+    hostPath: null,
+    roots: [{ id: "mock-root-main", alias: "主根", position: 0, path: null }],
+    createdAt: "2026-11-01T09:00:00Z",
+    updatedAt: "2026-11-11T09:00:00Z",
+};
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
     res.statusCode = status;
     res.setHeader("content-type", "application/json; charset=utf-8");
@@ -168,6 +185,46 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                             { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
                         ],
                     });
+                }
+
+                // task-149：运行期端点（dev-2 inventory §9 判为「已登记、缺口在 mock 层」）。
+                // /workspaces 与 /workspaces/current 是产品 api.ts 在用的读取面；
+                // 返回一条「当前工作区」，让设置页 / 工作区相关能力探测不再吃 404。
+                if (path === "/workspaces" && (req.method ?? "GET") === "GET") {
+                    return respond(200, [MOCK_WORKSPACE]);
+                }
+                if (path === "/workspaces/current" && (req.method ?? "GET") === "GET") {
+                    return respond(200, { workspace: MOCK_WORKSPACE });
+                }
+                if (path === "/user-events") {
+                    // 最小 SSE stub：首帧 event: connected 后保持连接。**不能回 404** ——
+                    // 客户端的 fetch-event-source 对 404 会进无限退避重连，把日志刷满。
+                    res.statusCode = 200;
+                    res.setHeader("content-type", "text/event-stream; charset=utf-8");
+                    res.setHeader("cache-control", "no-cache, no-transform");
+                    res.setHeader("connection", "keep-alive");
+                    res.setHeader("x-accel-buffering", "no");
+                    res.write(": mock lane user-events stub\n\n");
+                    res.write("event: connected\ndata: {}\n\n");
+                    const heartbeat = setInterval(() => {
+                        try {
+                            res.write(": ping\n\n");
+                        } catch {
+                            // 客户端已经断开：由下面的 close 清理，这里不需要额外动作。
+                        }
+                    }, 15000);
+                    req.on("close", () => {
+                        clearInterval(heartbeat);
+                        res.end();
+                    });
+                    options.log?.("[mock-api] SSE /user-events → connected（stub 保活）");
+                    return;
+                }
+                if (path === "/telemetry/logs" && (req.method ?? "GET") === "POST") {
+                    // 空实现：不落盘、不转发，只把 body 读完回 200，避免请求挂着。
+                    req.on("data", () => {});
+                    req.on("end", () => respond(200, { status: "ok" }));
+                    return;
                 }
 
                 // embedding 面板（EmbeddingSettingsPanel）依赖的 3 个契约端点（D-916 补）：

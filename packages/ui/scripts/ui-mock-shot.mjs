@@ -106,6 +106,9 @@ const SHOTS = [
         app: true,
         expand: "[data-testid=config-domain-user-preference] button",
     },
+    // task-146 修复后补的第 7 张：实例层 embedding 面板现在显示真实 profile 解析结果
+    // （嵌入连接 / 模型 / 维度 / 生效层 / 模型来源 + 生效来源表），无需展开分组。
+    { id: "07", name: "embedding", path: "/settings/instance/embedding", app: true },
 ];
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
@@ -697,7 +700,9 @@ async function shootOne(page, base, shot, outDir) {
     const targetUrl = shot.app
         ? base + shot.path
         : base + "/preview-mock.html" + (shot.query ?? "");
-    await page.goto(targetUrl, { waitUntil: "networkidle" });
+    // 真页面有 /user-events 的 SSE 长连接（task-149 stub 会保持连接）⇒ networkidle 永不满足，
+    // 所以 app 镜头等 DOM 就绪 + 显式等 #app 挂载；mock 画布镜头仍用 networkidle。
+    await page.goto(targetUrl, { waitUntil: shot.app ? "domcontentloaded" : "networkidle" });
     if (shot.app) {
         await page.waitForFunction(
             () => (document.querySelector("#app")?.children.length ?? 0) > 0,
