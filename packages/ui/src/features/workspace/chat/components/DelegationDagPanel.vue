@@ -192,7 +192,7 @@ watch(
                 <p
                     v-if="rootBudget"
                     class="truncate text-[10px] text-muted-foreground"
-                    data-testid="delegation-budget"
+                    data-testid="delegation-dag-budget"
                 >
                     {{
                         t("chat.delegation.dagBudget", {

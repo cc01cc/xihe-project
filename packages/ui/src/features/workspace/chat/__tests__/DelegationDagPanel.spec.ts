@@ -114,7 +114,7 @@ describe("DelegationDagPanel (PLAN-0659 T1.4)", () => {
         expect(nodes[1]?.attributes("data-node-active")).toBe("true");
         expect(nodes[2]?.attributes("data-node-terminal")).toBe("success");
 
-        expect(wrapper.get('[data-testid="delegation-budget"]').text()).toBe(
+        expect(wrapper.get('[data-testid="delegation-dag-budget"]').text()).toBe(
             i18n.global.t("chat.delegation.dagBudget", {
                 used: 2,
                 max: 5,

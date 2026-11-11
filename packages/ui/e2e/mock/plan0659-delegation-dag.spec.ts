@@ -170,8 +170,11 @@ test.describe("PLAN-0659 T1.4 — 委派 DAG", () => {
         await expect(statuses.nth(0)).toHaveText("运行中");
         await expect(statuses.nth(1)).toHaveText("成功");
 
-        // 根预算 = delegation-usage 投影。
-        await expect(page.getByTestId("delegation-budget")).toHaveText("预算 2/5 · 深度 0/3");
+        // 根预算 = delegation-usage 投影。作用域化到 DAG 面板内：同一会话的委派弹窗
+        // 也渲染一份预算（`delegation-budget`），裸用会在两者同框时撞 strict mode。
+        await expect(
+            page.getByTestId("delegation-dag").getByTestId("delegation-dag-budget"),
+        ).toHaveText("预算 2/5 · 深度 0/3");
         await expect(page.getByTestId("delegation-dag-empty")).toHaveCount(0);
 
         await captureEvidence(page, "t1.4-delegation-dag");
