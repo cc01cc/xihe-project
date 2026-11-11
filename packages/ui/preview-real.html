@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+        <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+        <title>xihe - 真实 UI · mock 数据预览（dev-only）</title>
+        <script>
+            /**
+             * task-137 rev2（dev-only 入口）：渲染**产品真页面**，只在网络层 mock 数据
+             * （vite 中间件 src/preview/mock/api-server.ts，XIHE_UI_MOCK_API=1 才挂载）。
+             *
+             * 产品代码零分支：真 App（/src/main.ts）不认 mock；这里只负责两件 dev-only 的事 ——
+             * ①注入 mock 登录态（真 router 的 guard 只查 localStorage 的 xihe-token）；
+             * ②固定语言 zh-CN（设置区稿面要中文；产品语言 SSOT 在 xihe-language）。
+             */
+            (function () {
+                try {
+                    if (!localStorage.getItem("xihe-token")) {
+                        localStorage.setItem("xihe-token", "mock-lane-token");
+                    }
+                    // 缓存 user（含 capability 投影）必须与 token 同时存在：真页面首帧按
+                    // capabilities 判定「实例层可见」，缺失时 forbidden 会在 capability 回填前
+                    // 让域页 load() 提前 return，页面永久停在「加载中...」；真产品里这份缓存由
+                    // 登录流程写入，mock lane 由这里补，随后 /auth/me 会用权威值覆盖。
+                    if (!localStorage.getItem("xihe-user")) {
+                        localStorage.setItem(
+                            "xihe-user",
+                            JSON.stringify({
+                                id: "mock-user",
+                                email: "mock@xihe.dev",
+                                name: "张安",
+                                username: "mock",
+                                capabilities: {
+                                    isInstanceAdmin: true,
+                                    isInstanceSuper: true,
+                                    workspaceAdminOf: [],
+                                },
+                            }),
+                        );
+                    }
+                    localStorage.setItem("xihe-language", "zh-CN");
+                    localStorage.setItem("xihe-theme", '"light"');
+                    document.documentElement.lang = "zh-CN";
+                } catch (e) {}
+            })();
+        </script>
+    </head>
+    <body>
+        <div id="app"></div>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
+</html>

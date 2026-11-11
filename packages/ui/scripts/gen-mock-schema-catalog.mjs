@@ -1,5 +1,15 @@
 /**
+ * DEPRECATED(task-137-rev2)：D-914 ① 交付改为「真产品页面 + 网络层 mock」，本文件属更早的「静态设计稿单页」路线，已不再渲染也不再产出交付图；**保留不删**（Lead 口径：零删除，退役由 PLAN-0764 M1 合并时统一处理）。指标：task-137 rev2 的真实入口是 preview-real.html + src/preview/mock/api-server.ts。
+ */
+/**
  * gen-mock-schema-catalog.mjs — task-127：从 CP config-schemas 生成 mock 域清单（schema-catalog.ts）。
+ *
+ * **DEPRECATED（task-137，Lead 2026-11-11 定死契约）**：schema 展平已并入**产品侧**生成器 ——
+ *   `node scripts/gen-config-schema.mjs` → `src/lib/configSchemaCatalog.ts`
+ *   （导出 `CONFIG_SCHEMA_CATALOG: Record<domain, SchemaField[]>`，dev-4 的 PLAN-0764 落地）。
+ * 该模块进树后：mock 改为 import `CONFIG_SCHEMA_CATALOG`（中文 label 仍走 fieldLabels.ts），
+ * 本脚本与 `src/preview/mock/data/schema-catalog.ts` 一并删除；在此之前它仍是 mock 快照的唯一来源
+ * （停用会让单页稿与对账脚本失去 schema 事实）。两套展平规则不得长期并存 —— 存在期 ≤ PLAN-0764 合并。
  *
  * Why：单页稿要求「设置区所有配置域的字段级真实内容，按 config-schemas，禁占位」。
  * 21 域 × 嵌套字段手抄必然漂移（D-889）；生成器让「稿上每个字段的来源」可复算。
