@@ -55,7 +55,12 @@ import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from './lib/stack-cargo-ta
 import { ensureEnvFromUser } from './lib/user-env.mjs';
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
 import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
-import { buildCommitEnv, describeBuildCommit, resolveBuildCommit } from './lib/build-commit-env.mjs';
+import {
+  buildCommitEnv,
+  buildCommitForBoot,
+  describeBuildCommit,
+  resolveBuildCommit,
+} from './lib/build-commit-env.mjs';
 import { CP_NO_REBUILD_FLAG, describeCpNoRebuild, resolveCpNoRebuild, serviceArgs } from './lib/stack-cp-args.mjs';
 import {
   DEFAULT_STALE_AFTER_MS,
@@ -385,7 +390,16 @@ const ports = derived.ports;
 // 三个服务共用这一个 childEnv ⇒「三处一致」由构造保证，而不是三处各写一遍。
 // 缺失/非法 ⇒ 注入空串（`buildCommitEnv` 恒返回一个键）而不是跳过：跳过会让「没有字段」和「值为空」
 // 两种状态混在一起，运维面就分不清了。
-const stackBuildCommit = resolveBuildCommit({ targetDir: cpBuildFor(projectRoot).targetDir });
+//
+// task-61（止血）：`cpBuildFor()` 在有 `.current` 指针时给的是**上一次** start 用过的目录，而 CP 的
+// 重建发生在**之后**（`stack-run.mjs` 的 stale 门，重建集 = `stale|missing|dirty`）⇒ 直接读那个
+// 目录的戳，等于把「上一次的构建」当成「这次要跑的构建」注入。实测后果：进程跑 `850a011cb…`，
+// 注入 `be2cd4e9…`，而 `GET /api/v1/version`（设置 → 监控 的数据源）把它当当前构建展示给用户。
+// 取舍**宁缺勿假**：只有 `verdict === 'fresh'`（⇒ 不会重建 ⇒ 指针里的 sha 必等于将要运行的构建）
+// 才注入；其余一律注入空串，消费方按既有 `null` 契约显示"未注入"，`reason` 说明是哪种非 fresh。
+// 真正的「构建后注入」是 A 案（`stack-run cp` mvn 结束后注入 + agent/runtime 重解析 `.current`），另案排期。
+const stackCpBuildAtStart = cpBuildFor(projectRoot);
+const stackBuildCommit = buildCommitForBoot({ cpBuild: stackCpBuildAtStart });
 let childEnv = makeChildEnv({
   stackId: derived.stackId,
   env: process.env,
@@ -1011,7 +1025,7 @@ async function start() {
     `[dev-stack] ${args.action} ${derived.stackId} cwd=${projectRoot} ports ui=${ports.ui} cp=${ports.cp} agent=${ports.agent} runtime=${ports.runtime} pg=${ports.postgres}`,
   );
   console.log(`[dev-stack] logs: ${logDir}`);
-console.log(`[dev-stack] ${'XIHE_BUILD_COMMIT'}=${stackBuildCommit.value === '' ? '(空串)' : stackBuildCommit.value} — ${describeBuildCommit(stackBuildCommit)}（注入 cp/agent/runtime 三个子进程；env-first，项目侧只读 env）`);
+console.log(`[dev-stack] ${'XIHE_BUILD_COMMIT'}=${stackBuildCommit.value === '' ? '(空串)' : stackBuildCommit.value} — ${describeBuildCommit(stackBuildCommit)}（注入 cp/agent/runtime 三个子进程；env-first，项目侧只读 env；verdict=${stackCpBuildAtStart.verdict} ⇒ ${stackBuildCommit.status === 'ok' ? '不重建，注入的 sha 即将要运行的构建' : '本次可能重建，故不注入旧 sha（task-61 宁缺勿假）'}）`);
 if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNoRebuild)}`);
   // D-766 乙案最小版：起栈前把**确定性**的 dev 管理员密码注入子进程环境（CP 的
   // DataSeeder 读 `XIHE_DEV_ADMIN_PASSWORD`），存量库的更新由 waitReady 之后的
