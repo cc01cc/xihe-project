@@ -6,9 +6,16 @@ import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 /**
  * P-class fix coverage: the desktop navigation panel used to be a one-way door.
- * The collapse control sits in the panel head, which becomes 0px + inert, and the
- * only other re-open control (`mobile-sidebar-toggle`) renders for `isMobile`
- * only. The 56px rail survives the collapse, so it now hosts the re-open control.
+ * The collapse control sits in the panel head, and the only other re-open control
+ * (`mobile-sidebar-toggle`) renders for `isMobile` only.
+ *
+ * PLAN-0762 T2.1（`f97bdf039`，2026-11-11）之后机制又变了一次：全局 56px 条上移到 `App.vue`
+ * 的 `GlobalRail`，工作区面板折叠时不再以 0 宽留在 DOM，而是**改渲染**折叠条
+ * `sidebar-collapsed-strip`（`Sidebar.vue:155-170`，`v-if`；面板走 `v-else` 不进 DOM），
+ * 重开控件 = 同一条上的 `sidebar-expand`。自动让位（`forceCollapsed`）不渲染该条 ——
+ * 那时面板保留但被 `aria-hidden`/`inert` 关掉。
+ *
+ * 行号口径：本文件引用的源码行号均截至 `a813ffab01d2`；不带 SHA 的行号会漂。
  */
 async function collectPageErrors(page: Page): Promise<string[]> {
     const errors: string[] = [];
@@ -77,7 +84,7 @@ async function boxWidth(locator: ReturnType<Page["getByTestId"]>): Promise<numbe
  *   ② 过渡可能被中途打断或重定向（连续点折叠/展开），固定等待会在被打断时提前返回一个不稳定的值；
  *      轮询式判据在下一次采样发现变化会继续等。
  *   ③ 代价（写清楚才不会误用）：若两次采样恰好落在过渡的平缓段，会提前返回一次 —— 所以它只用来取**基准**，
- *      终态另有离散属性断言兜底（`aria-hidden` / `inert` / `nav-rail-expand` 计数），不靠宽度量测证明「折叠了」。
+ *      终态另有离散断言兜底（`sidebar-expand` 的计数 + 折叠条可见性），不靠宽度量测证明「折叠了」。
  */
 async function settledWidth(locator: ReturnType<Page["getByTestId"]>): Promise<number> {
     let previous = -1;
@@ -95,12 +102,11 @@ async function settledWidth(locator: ReturnType<Page["getByTestId"]>): Promise<n
     return await boxWidth(locator);
 }
 
-async function collapseThenReopenFromRail(page: Page): Promise<void> {
+async function collapseThenReopenFromCollapsedStrip(page: Page): Promise<void> {
     // `aside` alone is ambiguous: the workspace dock (`workspace-aux-panel`, PLAN-0582) is an
     // <aside> too, so the shell's navigation panel must be addressed by its stable testid.
     const sidebar = page.getByTestId("sidebar"),
-        panel = page.getByTestId("sidebar-panel"),
-        rail = page.getByTestId("nav-rail");
+        panel = page.getByTestId("sidebar-panel");
     await expect(sidebar).toHaveCount(1);
     await expect(panel).toBeVisible();
     // 展开态：面板占实际宽度，且没有被 inert/aria-hidden 关掉（折叠语义的正面）。
@@ -109,52 +115,70 @@ async function collapseThenReopenFromRail(page: Page): Promise<void> {
     await expect(panel).not.toHaveAttribute("aria-hidden", "true");
     expect(await panel.evaluate((element) => (element as HTMLElement).inert)).toBe(false);
 
-    // The collapse control lives in the panel head (S2 ruling #1); the first `<button>` inside
-    // the shell is a rail item, so it must be addressed by testid as well.
+    // The collapse control lives in the panel head (S2 ruling #1).
     await page.getByTestId("sidebar-collapse").click();
 
-    // Collapsed state as the user sees it: 面板缩成一条缝、并转为 inert，rail 存活。
-    // 实测（1440x900）：rail = 49 px · 面板残宽 ≈ 6.9 px · 壳宽 ≈ 56.9 px —— 与旧实现写死的
-    // 「width: 56px」是同一个可见结果，但通道换了（flex-grow 而不是 inline style）。
-    // 所以断言改成**相对几何**：面板必须远窄于展开态、且窄于它躲在其后的 rail；壳宽 ≈ rail + 残宽。
-    // 不写死 0 / 56 / 49 —— 那三个数是当前实现的快照，写死就是把下一次布局调整变成假红。
-    await expect
-        .poll(async () => await boxWidth(panel))
-        .toBeLessThanOrEqual(Math.ceil(expandedWidth * 0.1));
-    await expect(panel).toHaveAttribute("aria-hidden", "true");
-    expect(await panel.evaluate((element) => (element as HTMLElement).inert)).toBe(true);
-    await expect(rail).toBeVisible();
-    const railWidth = await boxWidth(rail);
-    expect(railWidth).toBeGreaterThan(0);
-    const collapsedPanelWidth = await boxWidth(panel);
-    const collapsedShellWidth = await boxWidth(sidebar);
-    expect(collapsedPanelWidth).toBeLessThan(railWidth);
-    expect(Math.abs(collapsedShellWidth - (railWidth + collapsedPanelWidth))).toBeLessThanOrEqual(
-        2,
-    );
+    // 折叠态（PLAN-0762 T2.1）：面板不再以 0 宽留在 DOM —— `Sidebar.vue` 改渲染 56px 折叠条
+    // （`sidebar-collapsed-strip`，`v-if`；面板走 `v-else` 不进 DOM）。所以判据从旧实现的
+    // 「aria-hidden/inert + 残宽≈0」改成「面板不可见 + 折叠条可见 + 折叠条比展开态窄」。
+    // 仍不写死 56：宽度由壳层 splitter 的 `collapsedSize` 决定，写死就是把下一次布局调整变成
+    // 假红（同 D-889 的写法：写性质，不写结果值）。
+    const strip = page.getByTestId("sidebar-collapsed-strip");
+    await expect(strip).toBeVisible();
+    await expect(panel).toBeHidden(); // 对「元素不在 DOM」同样成立
+    // 宽度要**等到达稳态再取**：折叠有 300 ms 过渡，点击后第一帧的折叠条还是展开宽，
+    // 直接取值会把过渡中途当终态（与 `settledWidth` 注释里那次 57 vs 337 同一个坑）。
+    await expect.poll(async () => await boxWidth(strip)).toBeLessThan(expandedWidth);
+    const stripWidth = await boxWidth(strip);
+    expect(stripWidth).toBeGreaterThan(0);
+    await expect.poll(async () => await boxWidth(sidebar)).toBeLessThan(expandedWidth);
 
-    // The rail is the only surface that survives a collapse, so the re-open control must be
-    // there — reachable, correctly labelled, and not duplicating the panel-head control.
-    const reopen = page.getByTestId("nav-rail-expand");
+    // 折叠条是折叠后唯一存活的入口面，重开控件必须在那上面 —— 可达、标签正确、
+    // 且不与面板头控件共存（两个控件同时可见就是新缺陷，不是「多一条路」）。
+    const reopen = page.getByTestId("sidebar-expand");
     await expect(reopen).toBeVisible();
     await expect(reopen).toHaveAttribute("aria-label", "展开侧边栏");
-    await expect(reopen).toHaveAttribute("aria-expanded", "false");
-    await expect(reopen).toHaveAttribute("aria-controls", "sidebar-panel");
+    await expect(reopen).toHaveAttribute("title", "展开侧边栏");
+    // 旧 `NavRail` 的展开按钮带 `aria-controls`/`aria-expanded`，折叠条这版只有 label/title
+    // （`Sidebar.vue:160-169`）⇒ 这里只断它确实位于折叠条内，不断言那两个属性。
+    await expect(strip.getByTestId("sidebar-expand")).toHaveCount(1);
 
     await reopen.click();
 
     // Re-open must restore the panel (not just clear aria-hidden), and the collapsed-only
     // control must disappear so the two controls never coexist. 「恢复」用两条独立的读数证明：
-    // ① 面板重新有宽度 ② 回到折叠前的宽度（±2 px，容过渡与取整）；宽度不是 0 只说明「有东西」，
-    // 不说明「回到了原样」，所以两条都要。
-    await expect(panel).not.toHaveAttribute("aria-hidden", "true");
+    // ① 面板重新可见且有宽度 ② 回到折叠前的宽度（±2 px，容过渡与取整）；宽度不是 0 只说明
+    // 「有东西」，不说明「回到了原样」，所以两条都要。
+    await expect(panel).toBeVisible();
     await expect.poll(async () => await boxWidth(panel)).toBeGreaterThan(0);
     expect(Math.abs((await settledWidth(panel)) - expandedWidth)).toBeLessThanOrEqual(2);
     expect(await panel.evaluate((element) => (element as HTMLElement).inert)).toBe(false);
     await expect(reopen).toHaveCount(0);
     await expect(page.getByTestId("sidebar-collapse")).toHaveAttribute("aria-expanded", "true");
-    // 展开后壳宽必须大于 rail 宽（否则「恢复」只是把 panel 变回 0 又没露出 rail 之外的区域）。
-    expect(await boxWidth(sidebar)).toBeGreaterThan(railWidth);
+    // 展开后壳宽必须大于折叠条宽（否则「恢复」只是把面板变回 0 又没露出条之外的区域）。
+    expect(await boxWidth(sidebar)).toBeGreaterThan(stripWidth);
+}
+
+/**
+ * D-933（用户 2026-11-11 裁定）：全局条上的 admin 入口**直接移除、不设替代入口** ——
+ * `config-locks`/`roles` 归设置区安全组（导航按能力过滤）。所以这条断言的是「不存在」，
+ * 不是「换个元素继续找入口」：谁把 `NavRail`（或等价 admin 独立入口）挂回来，这里必红。
+ *
+ * 为什么挂在既有用例上而不新开一条：`mise run check:mock-baseline` 以 `expected`/`skipped`
+ * 计数对齐 `e2e/mock-baseline.json`，**新增用例 = 计数漂移**；本卡边界只动两个 spec 文件、
+ * 不动基线，所以两个折叠用例各带一次这条断言（默认视口 + 1440）。
+ */
+async function expectNoAdminEntryOnGlobalRail(page: Page): Promise<void> {
+    const rail = page.getByTestId("global-rail");
+    await expect(rail).toBeVisible();
+    // 旧 NavRail 的两个 testid 整体不得再出现在页面上（组件本体仍在树里，但产品零挂载）。
+    await expect(page.getByTestId("nav-rail")).toHaveCount(0);
+    await expect(page.getByTestId("nav-rail-admin")).toHaveCount(0);
+    // 全局条恰好三个入口（工作台 / 设置 / 登出）；多一个就说明模块面被偷偷扩了。
+    await expect(page.getByTestId("global-rail-module-workbench")).toHaveCount(1);
+    await expect(page.getByTestId("global-rail-module-settings")).toHaveCount(1);
+    await expect(page.getByTestId("global-rail-logout")).toHaveCount(1);
+    await expect(rail.getByTestId(/^global-rail-module-/)).toHaveCount(2);
 }
 
 test.describe("Session Management", () => {
@@ -209,26 +233,28 @@ test.describe("Session Management", () => {
         await expectPlatformScreenshot(page, "session-time-groups.png");
     });
 
-    test("sidebar collapse hides the navigation panel and the rail re-opens it", async ({
+    test("sidebar collapse hides the navigation panel and the collapsed strip re-opens it", async ({
         page,
     }) => {
         const pageErrors = await collectPageErrors(page);
         await stubSessionProjections(page);
         await page.goto("/workspace/workspace-1/chat/sid-1");
 
-        await collapseThenReopenFromRail(page);
+        await collapseThenReopenFromCollapsedStrip(page);
+        await expectNoAdminEntryOnGlobalRail(page);
         expect(pageErrors).toEqual([]);
     });
 
     test.describe("1440 viewport", () => {
         test.use({ viewport: { width: 1440, height: 900 } });
 
-        test("collapse and rail re-open work at 1440 as well", async ({ page }) => {
+        test("collapse and strip re-open work at 1440 as well", async ({ page }) => {
             const pageErrors = await collectPageErrors(page);
             await stubSessionProjections(page);
             await page.goto("/workspace/workspace-1/chat/sid-1");
 
-            await collapseThenReopenFromRail(page);
+            await collapseThenReopenFromCollapsedStrip(page);
+            await expectNoAdminEntryOnGlobalRail(page);
             expect(pageErrors).toEqual([]);
         });
     });

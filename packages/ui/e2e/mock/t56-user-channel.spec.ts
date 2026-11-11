@@ -477,10 +477,12 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         });
         expect((await readUserChannel(page)).connections, "still exactly one").toHaveLength(1);
 
-        // 登出入口：mock 车道的侧栏只渲染 56px 导航条（面板默认收起），所以用 rail 上的
-        // `nav-rail-logout`（`NavRail.vue:124`）。它与面板版 `sidebar-logout` 共用同一个
-        // `auth.logout()` → 同一个 SPA 跳转 → 同一个壳卸载路径。
-        await page.getByTestId("nav-rail-logout").click();
+        // 登出入口：全局条常驻（`App.vue:65` 的 `GlobalRail`），footer 的登出按钮
+        // `global-rail-logout`（`GlobalRail.vue:110`，截至 `a813ffab01d2`）在任何视口都存在；
+        // 面板版 `sidebar-logout`（`Sidebar.vue:279`）只在工作区面板展开时才有 ——
+        // 所以这里取全局条那条，而不是指望面板是展开的。
+        // 两条入口共用同一个 `auth.logout()` → 同一个 SPA 跳转 → 同一个壳卸载路径。
+        await page.getByTestId("global-rail-logout").click();
 
         // 登出后的落点由路由守卫决定：mock 车道里是 `/onboarding?redirect=…`（不是 `/login`），
         // 关键是**离开了登录后的壳**（AppLayout 卸载）——所以断言"壳里的元素消失"而不是某个具体 URL。
