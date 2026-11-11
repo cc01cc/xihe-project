@@ -73,9 +73,10 @@ const isDefault = computed(() => colorScheme.value === DEFAULT_COLOR_SCHEME);
             <div
                 v-for="option in options"
                 :key="option.value"
-                class="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
+                class="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-2"
                 :class="colorScheme === option.value ? 'bg-muted' : ''"
                 :data-testid="'settings-color-scheme-' + option.value"
+                @click="setColorScheme(option.value)"
             >
                 <RadioGroupItem :id="'color-scheme-' + option.value" :value="option.value" />
                 <Label
@@ -120,8 +121,9 @@ const isDefault = computed(() => colorScheme.value === DEFAULT_COLOR_SCHEME);
                 <div
                     v-for="option in modeOptions"
                     :key="option.value"
-                    class="flex items-center gap-2"
+                    class="flex cursor-pointer items-center gap-2"
                     :data-testid="'settings-color-mode-' + option.value"
+                    @click="setColorMode(option.value)"
                 >
                     <RadioGroupItem :id="'color-mode-' + option.value" :value="option.value" />
                     <Label
