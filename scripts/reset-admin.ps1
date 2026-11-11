@@ -70,7 +70,7 @@ if ($Password) {
     $passwordSource = "env"
 } elseif ($DryRun) {
     # 只读观察：dry-run 不得解析出值、更不得落盘（读命令无副作用）。
-    # java 侧那条 "password-source = generated" 只表示 wrapper 没传值，**不代表**真会随机生成；
+    # java 侧那条 "password-source = not-provided" 只表示 wrapper 没传值，**不代表**真会随机生成；
     # 真正的来源由单源链决定 ⇒ 在 java 之后补一条权威行（读的人最后看到的是它）。
     $prevRoot = $env:XIHE_CHECKOUT_ROOT
     $env:XIHE_CHECKOUT_ROOT = $root
@@ -100,10 +100,10 @@ if ($DryRun) { $javaArgs += "--dry-run" }
 java @javaArgs
 if ($LASTEXITCODE -ne 0) { Write-Error "java 执行失败 (exit=$LASTEXITCODE)"; exit $LASTEXITCODE }
 
-# java 的 dry-run 只报它自己看到的输入（没传值 ⇒ generated），会误导读者以为这次会随机生成密码。
+# java 的 dry-run 只报它自己看到的输入（没传值 ⇒ not-provided），会误导读者以为这次会随机生成密码。
 # 真正执行的来源是单源链，因此在这一行之前不解释、在这一行之后补权威结论。
 if ($DryRun -and $dryDesc) {
-    Write-Host ("[reset-admin] dry-run: 实际来源 source={0} hasFile={1}（上面 java 的 generated 只表示未传值，本轮不会生成）；值不打印" -f $dryDesc.source, $dryDesc.hasFile)
+    Write-Host ("[reset-admin] dry-run: 实际来源 source={0} hasFile={1}（上面 java 的 not-provided 只表示未传值，本轮不会生成）；值不打印" -f $dryDesc.source, $dryDesc.hasFile)
 }
 
 # PLAN-0770 M4：**成功后**同批写回持久文件，让「DB 里的密码」与「checkout 的单源文件」不漂。

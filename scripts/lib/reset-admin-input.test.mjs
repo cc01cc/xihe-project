@@ -130,4 +130,16 @@ describe("reset-admin.ps1 包装层（BL-523：-Password 不再进 argv）", () 
         assert.match(wrapper, /\[switch\]\$DryRun/);
         assert.match(wrapper, /\$javaArgs \+= "--dry-run"/);
     });
+
+    // D-952 F1（2026-11-12，task-85）：java 侧早已改成 `password-source = not-provided`，
+    // wrapper 的括号文案却还写「上面 java 的 generated 只表示未传值」——**指着一个并不存在的词**，
+    // 照它去读输出会找不到（PLAN-0770 §4.6.4「读命令自报错源」那个坑的指代版）。
+    // 静态文本断言是唯一能钉住"两处用同一个词"的方式：谁单边改词，这条就红。
+    test("dry-run 文案与 java 侧同词：wrapper 不出现 generated，且指向 not-provided", () => {
+        assert.ok(!/\bgenerated\b/u.test(wrapper), "wrapper 不得再提 java 侧已不存在的 generated（要指就指 not-provided）");
+        assert.match(wrapper, /上面 java 的 not-provided 只表示未传值/u);
+        const java = readFileSync(SOURCE, "utf8");
+        assert.match(java, /"not-provided/u, "java 侧必须仍产出 not-provided —— wrapper 的文案指向它");
+        assert.ok(!/password-source = generated/u.test(java), "java 侧不得再产出 password-source = generated");
+    });
 });
