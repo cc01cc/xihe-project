@@ -436,11 +436,13 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **为什么是 filter 而不是资源处理器/兜底 Controller**：SPA 外壳必须在登录前可读（UI 自身渲染登录页），而 `SecurityConfig` 以 `anyRequest().authenticated()` 收尾；`@RequestMapping("/{*path}")` 这类兜底还会抢在 actuator 的 handler mapping 之前。filter 挂在安全链之前（`HIGHEST_PRECEDENCE + 100`），把改动**只**关在"配置了静态根"这一情形里。
 - **不吞 API**：`/api`、`/internal`、`/actuator`、`/v3/api-docs`、`/swagger-ui`、`/swagger-ui.html`、`/error` 按**段边界**匹配后原样回原链路 ⇒ 401 仍 401、404 仍 404，绝不返回 `index.html`。（安装版实测：`GET /` → 200 且是 SPA；`GET /api/v1/workspaces` 无 token → **401**；`GET /api/v1/does-not-exist` 无 token → **401**——未认证先于路由解析，带 token 的未知路由才是 404。）
 
-#### springdoc 调试面：本地怎么开、为什么默认关（task-131）
+#### springdoc 调试面：本地怎么开、为什么默认关（task-131 / task-194 / task-201）
 
-- `docs/api/openapi.yaml` 是 wire 契约的唯一 SSOT；CP 的 `/v3/api-docs` 与 Swagger UI 只是调试/对账产物，**出厂默认关闭**。
-- **本地打开**：`XIHE_SPRINGDOC_ENABLED=true`（PowerShell `$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`；POSIX `XIHE_SPRINGDOC_ENABLED=true mise run dev:host`）。
-- **为什么默认关**：打包/生产面向的 CP 不得匿名暴露调试面；关闭时 handler 不存在 ⇒ 404（fail-closed 而不是活洞）。详见 DEV-002 §springdoc 调试面。
+- **契约归属**：`docs/api/openapi.yaml` 是 API wire 契约的**唯一 SSOT 且人工维护**（D-800）；CP 的 `/v3/api-docs` 与 Swagger UI 只是**反射产物**，只有调试/对账价值，**出厂默认关闭**（`application.properties`：`springdoc.*.enabled=${XIHE_SPRINGDOC_ENABLED:false}`）。
+- **为什么不能反过来当契约或分母（本节的重点，架构理由而非运维细节）**：springdoc 由运行时反射生成，**它读的是代码，不是契约的输入**——实测它比 live `RequestMappingHandlerMapping` **少报 15 条路由**，且**完全不收录 `/internal/**`**（服务间面在 yaml 里独有 84 条中占 64 条）。因此「springdoc 里有/没有这个端点」**永远不能**作为契约完整性的判据；契约守恒与对账一律以 `RouteContractParityTest`（读 live mapping）为准。
+- **本地怎么开（一行 env）**：`XIHE_SPRINGDOC_ENABLED=true`（PowerShell `$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`；POSIX `XIHE_SPRINGDOC_ENABLED=true mise run dev:host`）；`dev` / `e2e` / `test` 三个 profile 已各自置 true。
+- **为什么默认关**：①打包/生产面向的 CP 不得匿名暴露整份路由索引；②它是**调试面**而不是产品面，默认关闭不会让任何消费者失效（全仓 `packages/**`、`scripts/**`、`packages/ui/e2e/**` 无一处抓取它）。关闭时 handler 根本不存在，面是**不存在**而不是被挡住——这正是「fail-closed」与「活洞」的分界。
+- **两态的确切状态码（`/v3/api-docs`、`.yaml`、`swagger-ui`）与实测口径**：见 [DEV-002 §springdoc 调试面](DEV-002-developer-guide.md)（本节不重复状态码表，避免两处漂移）。
 - **SPA fallback 只给"无扩展名"的路径**：`/workspaces/abc/sessions/def` → `index.html`；`/assets/missing.js` → **404**。若把缺失资源答成 index.html，浏览器会拿到 `text/html` 当 JS 执行，把"少打包一个文件"伪装成运行期语法错误。
 - **路径穿越**：请求路径解码一次后拒绝 `\0` 与 `\`，任一段为 `..` 即 400，且结果必须仍在 canonical 静态根内（符号链接解析后再比对）——读不到安装目录之外。四类编码变体（`/../`、`%2e%2e`、`%2E%2E`、`%5c`）都有断言。
 - **缓存策略**：`index.html` `no-store`（否则升级后仍引用旧 hash 资源名），其余静态资源 `public, max-age=31536000, immutable`；`X-Content-Type-Options: nosniff`。
