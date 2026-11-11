@@ -418,7 +418,7 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 // PLAN-0766（task-160）：加共享 workspace-default 层；wire 值小写，与契约
                 // b05aad952 的 PUT /config/workspace-default/{domain} 一致（CP 侧随 task-159 注册）。
                 const writeMatch = path.match(
-                    /^\/config\/(instance|user|workspace|workspace-default)\/([a-z0-9-]+)$/,
+                    /^\/config\/(instance|user|workspace-default)\/([a-z0-9-]+)$/,
                 );
                 if (writeMatch && (req.method ?? "GET") === "PUT") {
                     const [, layer, domain] = writeMatch;

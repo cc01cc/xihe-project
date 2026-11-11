@@ -51,7 +51,7 @@ function makeRouter() {
     });
 }
 
-async function mountForLayer(layer: "instance" | "user" | "workspace") {
+async function mountForLayer(layer: "instance" | "user") {
     const wrapper = mount(ConfigDomainPanel, {
         props: {
             domain: "rag",
@@ -79,20 +79,6 @@ describe("ConfigDomainPanel 重置按钮的层可见性（BL-542）", () => {
             wrapper.find('[data-testid="config-drift-clear-rag-mode"]').exists(),
             "实例层的漂移清理保留",
         ).toBe(true);
-        wrapper.unmount();
-    });
-
-    it("TC-R2: 工作区层没有 ↺，但漂移徽标仍显示（提示不收回）", async () => {
-        const wrapper = await mountForLayer("workspace");
-        expect(resetButtons(wrapper).length, "工作区层不得出现 ↺ —— 它只会写空串").toBe(0);
-        expect(
-            wrapper.find('[data-testid="config-drift-rag-mode"]').exists(),
-            "漂移徽标必须保留，用户仍看得到值不在候选集",
-        ).toBe(true);
-        expect(
-            wrapper.find('[data-testid="config-drift-clear-rag-mode"]').exists(),
-            "漂移清理与 ↺ 同源，同样收起",
-        ).toBe(false);
         wrapper.unmount();
     });
 

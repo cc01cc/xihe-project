@@ -94,7 +94,7 @@ const configStore = useConfigStore(),
 // list; a stored profile whose connection is no longer visible renders as an
 // amber "kept" entry (drift, spec/ui-surfaces.md S2).
 /**
- * task-253：配置层只剩 instance / user，而本组件只挂在用户层（ConfigLayerPanels 的非实例
+ * task-253：全局设置面配置层为 instance / workspace-default / user，本组件只挂在用户层（ConfigLayerPanels 的非实例
  * 分支），所以这里固定 user —— 原来的 scope==="WORKSPACE" 分支正是工作区层写入。
  * 注意：连接自身的 `scope`（ProviderConnection.scope）是**另一根轴**（连接归属哪个层），
  * 不随本次移除变化。

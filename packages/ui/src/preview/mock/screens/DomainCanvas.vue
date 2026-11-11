@@ -43,7 +43,8 @@ const fieldCount = computed(() =>
 );
 
 /** 当前层是否可写；不可写时给出它应该从哪一层继承（取比当前层更宽的第一层）。 */
-const ORDER: MockLayer[] = ["instance", "workspace", "user"];
+/** 低 → 高：实例 → 个人 → 工作区默认 → 工作区（CP 解析链的反向；[源码] ConfigService.java:105-112）。 */
+const ORDER: MockLayer[] = ["instance", "user", "workspace-default", "workspace"];
 function writableHere(field: { writableAt: MockLayer[]; state?: string }): boolean {
     // [ui-2 看图缺陷 5] gap 字段后端没有编辑面 ⇒ 不许再宣称「本层可改」
     if (field.state === "gap") return false;
@@ -57,7 +58,10 @@ function inheritedFrom(field: { writableAt: MockLayer[]; state?: string }): stri
     if (field.state === "gap") return null;
     if (writableHere(field)) return null;
     const here = ORDER.indexOf(layer.value);
-    const source = field.writableAt.find((item) => ORDER.indexOf(item) < here);
+    // 取「比当前层低、且离当前层最近」的那一层 —— 数组顺序只表示可写性，不能当优先级用。
+    const source = field.writableAt
+        .filter((item) => ORDER.indexOf(item) < here)
+        .sort((a, b) => ORDER.indexOf(b) - ORDER.indexOf(a))[0];
     return source ?? null;
 }
 
@@ -74,8 +78,9 @@ function helpBody(help: string): string {
 }
 const LAYER_LABEL: Record<MockLayer, string> = {
     instance: "实例层",
+    "workspace-default": "工作区默认层",
     workspace: "工作区层",
-    user: "用户层",
+    user: "个人层",
 };
 </script>
 

@@ -139,11 +139,6 @@ export function settingsDomainPath(layer: SettingsLayer, domain: ConfigDomain): 
     return `/settings/${layer}/${domain}`;
 }
 
-/** 工作区层域路径（工作区上下文在路径段里，不再加层段）。 */
-export function workspaceSettingsDomainPath(workspaceId: string, domain: ConfigDomain): string {
-    return `/workspace/${encodeURIComponent(workspaceId)}/settings/${domain}`;
-}
-
 /** 层默认页：实例层与非管理员都落到矩阵里的第一个域。 */
 export function defaultLayerPath(layer: SettingsLayer): string {
     const first = LAYER_DOMAINS[layer][0];

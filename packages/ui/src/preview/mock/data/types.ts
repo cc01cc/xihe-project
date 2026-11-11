@@ -19,8 +19,8 @@
  * 下一个数键的人一定还会犯 —— 这条是给他们的。
  */
 
-/** 字段可在哪些层写；自上而下的可写层清单。 */
-export type MockLayer = "instance" | "workspace" | "user";
+/** 字段可在哪些层写；自上而下的可写层清单（PLAN-0766 起含共享的工作区默认层）。 */
+export type MockLayer = "instance" | "workspace-default" | "workspace" | "user";
 
 export interface MockField {
     /** 真实配置键，如 `chunkSize`。 */
@@ -124,6 +124,28 @@ const WORKSPACE_WRITABLE_DOMAINS = new Set([
     "context-templates",
     "job-policy",
 ]);
+/**
+ * PLAN-0766（task-183）：工作区默认层的可写集 = `WORKSPACE_WRITABLE ∩ UI_DOMAINS`
+ * —— `context-templates` 是服务专属面（通用 API 无 meta 视图），不接受该层写入。
+ * [源码] `ConfigService.java:77-80,114-117`。
+ */
+const UI_DOMAINS = new Set([
+    "llm-provider",
+    "context-policy",
+    "embedding",
+    "rag",
+    "agent-runtime",
+    "agent-profile",
+    "user-preference",
+    "logging",
+    "approval-policy",
+    "agent-templates",
+    "api-request-templates",
+    "job-policy",
+]);
+const WORKSPACE_DEFAULT_WRITABLE_DOMAINS = new Set(
+    [...WORKSPACE_WRITABLE_DOMAINS].filter((domain) => UI_DOMAINS.has(domain)),
+);
 const USER_WRITABLE_DOMAINS = new Set([
     "llm-provider",
     "context-policy",
@@ -155,11 +177,11 @@ export interface DomainResolveOverride {
  */
 export const RESOLVE_OVERRIDES: Record<string, DomainResolveOverride> = {
     embedding: {
-        chain: ["workspace", "user"],
+        chain: ["workspace", "workspace-default", "user"],
         source: "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/EmbeddingProfileService.java:97-104",
     },
     "llm-provider": {
-        chain: ["workspace", "user", "instance"],
+        chain: ["workspace", "workspace-default", "user", "instance"],
         source: "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/config/ConfigService.java:1152-1174",
     },
 };
@@ -220,7 +242,8 @@ export function setWritableAtOf(domain: string): MockLayer[] {
     // explicit-only 域：每层各存一份，不继承 —— 三层都"可写"，但没有合并语义。
     if (EXPLICIT_ONLY_DOMAINS.has(domain)) return ["instance", "workspace", "user"];
     const layers: MockLayer[] = ["instance"];
-    if (WORKSPACE_WRITABLE_DOMAINS.has(domain)) layers.push("workspace");
     if (USER_WRITABLE_DOMAINS.has(domain)) layers.push("user");
+    if (WORKSPACE_DEFAULT_WRITABLE_DOMAINS.has(domain)) layers.push("workspace-default");
+    if (WORKSPACE_WRITABLE_DOMAINS.has(domain)) layers.push("workspace");
     return layers;
 }
