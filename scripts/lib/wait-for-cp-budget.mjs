@@ -31,22 +31,26 @@ export const WAIT_TIMEOUT_ENV = "XIHE_WAIT_FOR_CP_TIMEOUT";
 /** New rebuild-path-only override. */
 export const REBUILD_TIMEOUT_ENV = "XIHE_WAIT_FOR_CP_REBUILD_TIMEOUT";
 
-/** Reuse path: the stack boots classes that are already stamped from HEAD. */
+/**
+ * Reuse path: the stack boots classes that are already stamped from HEAD (no clean compile).
+ * Measured 2026-11-11 (task-180, stack-2): **37.43 s** end-to-end (`CP ready ... after 37.43s
+ * (budget 60.0s, reuse path)`) ⇒ 60 s keeps a 1.6× margin for a warm restart's mvn + Spring boot.
+ */
 export const REUSE_BUDGET_SECONDS = 60;
 
 /**
  * Rebuild path: `clean compile` + the boot's own test-compile (+ possible cargo contention).
  *
- * Evidence used to pick 240 s (task-180, 2026-11-11) — only the first number is measured:
- *   measured  `mvn -o -q -DskipTests clean test-compile` = **22.5 s** (C: build dir, warm maven
- *             repo, no competing compile);
- *   estimated the boot's test-compile + Spring context + Flyway + web-server readiness and
- *             the cargo-contention factor are NOT yet measured end-to-end — the real-start
- *             evidence (rebuild path) records the actual end-to-end time; if that lands far
- *             from ~240 s this constant gets re-tuned with the measured value, not a guess;
- *   observed  the old fixed 60 s window was not enough for the rebuild path on 2026-11-11
- *             (task-178 event ①: ECONNREFUSED after 60.0 s while runtime was cargo-compiling).
- * 240 s is therefore a deliberate upper bound (~22.5 s × 10), not a claim about the real total.
+ * Measured evidence for 240 s (task-180, 2026-11-11, t233 worktree / stack-2):
+ *   **end-to-end rebuild = 77.26 s** — `[wait-for-cp] CP ready ... after 77.26s (budget 240.0s,
+ *   rebuild path)`, with runtime cargo **cold-compiling in parallel** (near worst-case CPU
+ *   contention on this machine; wall start→CP health 200 = 89.2 s). Evidence:
+ *   `H:/zeogit/one/.tmp/xh/task-180/{SUMMARY.md,rebuild.log}`; the old fixed 60 s window died
+ *   exactly here on 2026-11-11 (task-178 event ①: ECONNREFUSED after 60.0 s);
+ *   support  `mvn -o -q -DskipTests clean test-compile` = 22.5 s solo (C: build dir, warm maven
+ *             repo, no competing compile) — the compile phase alone, not the end-to-end number;
+ *   lead ruling: keep 240 = 77.26 s × **3.1** upper bound — the only cost is failure-detection
+ *             latency, and a CP that never becomes ready still fails loudly at the budget.
  */
 export const DEFAULT_REBUILD_BUDGET_SECONDS = 240;
 
