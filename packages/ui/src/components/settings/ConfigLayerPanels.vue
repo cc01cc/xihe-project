@@ -16,6 +16,7 @@ import ConfigSourceSummary from "./ConfigSourceSummary.vue";
 import AgentTemplatesPanel from "./AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "./ContextTemplatesPanel.vue";
 import EmbeddingSettingsPanel from "./EmbeddingSettingsPanel.vue";
+import LlmDefaultProfilePanel from "./LlmDefaultProfilePanel.vue";
 import ProviderHub from "./ProviderHub.vue";
 import { logger } from "../../lib/logger";
 import { getProviderInfo } from "../../types/provider";
@@ -476,14 +477,18 @@ async function handleReset(domain: string, key: string) {
                         {{ t("settings.providerPartitionTitle") }}
                     </h3>
                     <p class="text-xs text-muted-foreground">
-                        {{ t("settings.providerPartitionDesc") }}
+                        {{
+                            layer === "instance"
+                                ? t("settings.providerPartitionDescInstance")
+                                : t("settings.providerPartitionDesc")
+                        }}
                     </p>
                 </div>
                 <div class="px-4 py-3 space-y-3">
                     <template v-if="layer === 'instance'">
-                        <p class="text-sm text-muted-foreground">
-                            {{ t("settings.providerInstanceGuidance") }}
-                        </p>
+                        <!-- PLAN-0764 T1.6（task-150）：实例层从引导块改为「默认偏好」编辑器；
+                             连接仍留在个人/工作区层，实例只存 provider+connectionKey+model 整单元。 -->
+                        <LlmDefaultProfilePanel :layer="layer" :readonly="readonly" />
                         <div class="flex flex-wrap gap-2">
                             <button
                                 data-testid="provider-instance-go-user"
@@ -492,12 +497,6 @@ async function handleReset(domain: string, key: string) {
                             >
                                 {{ t("settings.providerInstanceGoUser") }}
                             </button>
-                        </div>
-                        <div
-                            class="flex gap-2 items-start border-l-2 border-border pl-3 text-xs text-muted-foreground"
-                        >
-                            <span aria-hidden="true">i</span>
-                            <span>{{ t("settings.providerInstanceNote") }}</span>
                         </div>
                     </template>
                     <ProviderHub v-else scope="USER" :readonly="readonly" />
