@@ -304,6 +304,7 @@ function readRunLog(name: string): string {
     } catch (error) {
         throw new Error(
             `cannot read ${name} from the isolated run logs: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
         );
     }
 }
