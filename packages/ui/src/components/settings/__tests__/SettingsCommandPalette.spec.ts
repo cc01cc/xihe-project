@@ -9,6 +9,7 @@ import {
     settingsDomainPath,
     type SettingsLayer,
 } from "../../../lib/settingsIa";
+import { SUPPORTED_LOCALES } from "../../../i18n/locale";
 
 /**
  * PLAN-0762 T3.4：⌘K 搜配置域。
@@ -59,6 +60,8 @@ async function click(selector: string) {
     await flushPromises();
 }
 
+type UiLocale = "zh-CN" | "en-US";
+
 function pressK(modifier: "meta" | "ctrl") {
     document.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -86,6 +89,138 @@ afterEach(() => {
     wrapper?.unmount();
     wrapper = undefined;
     document.body.innerHTML = "";
+});
+
+// ---------------------------------------------------------------------------
+// task-46：搜索面必须是「当前语言标签 ∪ 另一语言标签 ∪ 域名 key」。
+// 期望集一律由 `domainsForLayer(layer)`（矩阵）+ i18n 两侧 message 现算 —— **不写死条数**：
+// 域增减时这里跟着动，不会变成假红（域变少）或假绿（域变多但没人测）。
+// ---------------------------------------------------------------------------
+
+function labelIn(localeName: string, key: string): string {
+    const messages = i18n.global.getLocaleMessage(localeName) as Record<string, unknown>;
+    const value = key
+        .split(".")
+        .reduce<unknown>(
+            (acc, part) => (acc as Record<string, unknown> | undefined)?.[part],
+            messages,
+        );
+    return typeof value === "string" ? value : "";
+}
+
+function otherLocaleOf(uiLocale: UiLocale): string {
+    return SUPPORTED_LOCALES.find((item) => item !== uiLocale) ?? uiLocale;
+}
+
+/** 契约：任一字段（当前语言标签 / 另一语言标签 / 域名 key）**包含**该查询即命中。 */
+function expectedHits(layer: SettingsLayer, query: string, uiLocale: UiLocale): string[] {
+    const other = otherLocaleOf(uiLocale);
+    const needle = query.toLowerCase();
+    return domainsForLayer(layer).filter((domain) => {
+        const labelKey = DOMAIN_LABEL_KEY[domain];
+        return [labelIn(uiLocale, labelKey), labelIn(other, labelKey), domain].some((field) =>
+            field.toLowerCase().includes(needle),
+        );
+    });
+}
+
+async function withLocale<T>(locale: UiLocale, run: () => Promise<T>): Promise<T> {
+    const previous = i18n.global.locale.value as UiLocale;
+    i18n.global.locale.value = locale;
+    await flushPromises();
+    try {
+        return await run();
+    } finally {
+        i18n.global.locale.value = previous;
+        await flushPromises();
+    }
+}
+
+async function typeSearch(value: string) {
+    const input = q<HTMLInputElement>('[data-slot="command-input"]');
+    expect(input).toBeTruthy();
+    input!.value = value;
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+}
+
+function itemText(testid: string): string {
+    const node = q(`[data-testid="${testid}"]`);
+    return (node?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+describe("SettingsCommandPalette 搜索面（task-46 中英互搜）", () => {
+    it("中文界面输 `log` 必须命中「日志」（期望集由矩阵算出，不写死条数）", async () => {
+        await withLocale("zh-CN", async () => {
+            mountPalette("instance");
+            await flushPromises();
+            await typeSearch("log");
+
+            const expected = expectedHits("instance", "log", "zh-CN");
+            // 前提：矩阵里确实有 logging（否则这条测不到东西，属测试自检）
+            expect(expected).toContain("logging");
+            const shown = qa('[data-testid^="commandk-item-instance:"]').map((el) =>
+                (el.getAttribute("data-testid") ?? "").replace("commandk-item-instance:", ""),
+            );
+            expect(shown.sort()).toEqual(
+                expected.filter((domain) => domainsForLayer("instance").includes(domain)).sort(),
+            );
+            // 命中项显示的是**中文标签**，不是 key
+            expect(itemText("commandk-item-instance:logging")).toContain("日志");
+        });
+    });
+
+    it("英文界面输「日志」必须命中 logging", async () => {
+        await withLocale("en-US", async () => {
+            mountPalette("instance");
+            await flushPromises();
+            await typeSearch("日志");
+
+            expect(expectedHits("instance", "日志", "en-US")).toContain("logging");
+            const item = q('[data-testid="commandk-item-instance:logging"]');
+            expect(item).toBeTruthy();
+            // 英文界面显示英文标签，中文标签只作搜索别名
+            expect(itemText("commandk-item-instance:logging")).toContain("Logging");
+        });
+    });
+
+    it("同一域被 key 与标签同时命中时只有一条（不得出现重复条目）", async () => {
+        await withLocale("zh-CN", async () => {
+            mountPalette("instance");
+            await flushPromises();
+
+            // "log" 同时命中 域名 key `logging` 与英文标签 `Logging` ⇒ 仍只能 1 条
+            await typeSearch("log");
+            expect(qa('[data-testid="commandk-item-instance:logging"]')).toHaveLength(1);
+
+            await typeSearch("logging");
+            expect(qa('[data-testid="commandk-item-instance:logging"]')).toHaveLength(1);
+
+            await typeSearch("日志");
+            expect(qa('[data-testid="commandk-item-instance:logging"]')).toHaveLength(1);
+        });
+    });
+
+    it("别名对像素与无障碍隐身：sr-only + aria-hidden，可见文本里没有 key", async () => {
+        await withLocale("zh-CN", async () => {
+            mountPalette("instance");
+            await flushPromises();
+
+            const aliases = qa("[data-commandk-alias]");
+            expect(aliases.length).toBeGreaterThan(0);
+            for (const node of aliases.slice(0, 5)) {
+                expect(node.className).toContain("sr-only");
+                expect(node.getAttribute("aria-hidden")).toBe("true");
+            }
+            // 可见标签仍是纯中文（= 当前 locale 的标签，不写死文案）：条目里除别名外不得出现域名 key
+            const item = q('[data-testid="commandk-item-instance:logging"]');
+            const labelSpan = item?.querySelector("span:not([data-commandk-alias])");
+            expect((labelSpan?.textContent ?? "").trim()).toBe(
+                i18n.global.t(DOMAIN_LABEL_KEY.logging),
+            );
+            expect(labelSpan?.textContent ?? "").not.toContain("logging");
+        });
+    });
 });
 
 describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {

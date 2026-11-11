@@ -20,6 +20,7 @@ import {
     settingsDomainPath,
     type SettingsLayer,
 } from "../../lib/settingsIa";
+import { SUPPORTED_LOCALES } from "../../i18n/locale";
 
 /**
  * PLAN-0762 T3.4：`⌘K` / `Ctrl+K` 搜索**配置域**并跳转。
@@ -49,8 +50,37 @@ const props = defineProps<{
 
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
 
-const { t } = useI18n();
+const { t, locale, getLocaleMessage } = useI18n();
 const router = useRouter();
+
+/**
+ * 另一语言的标签（task-46）：中文界面要能用 `log` 搜到「日志」，英文界面要能用「日志」搜到
+ * `Logging` —— 候选集必须同时含**两种语言的标签 + 域名 key**，否则搜索面只有一个语言。
+ *
+ * <p>为什么不直接用 `t(key, { locale })`：vue-i18n 的 `t` 第二参在「命名插值 / 复数」之间有
+ * 重载歧义，这里只需要**取原始字符串**，直接读该 locale 的 message 树最不含糊（域标签是纯文本、
+ * 无插值）。取不到就返回空串，绝不回退成 key 本身（否则 `settings.domainLogging` 会变成噪音命中）。</p>
+ */
+function labelIn(localeName: string, key: string): string {
+    const messages = getLocaleMessage(localeName) as Record<string, unknown>;
+    const value = key
+        .split(".")
+        .reduce<unknown>(
+            (acc, part) => (acc as Record<string, unknown> | undefined)?.[part],
+            messages,
+        );
+    return typeof value === "string" ? value : "";
+}
+
+/** 非当前语言（`SUPPORTED_LOCALES` 是唯一来源，不在组件里另写一份语言清单）。 */
+const otherLocale = computed(
+    () => SUPPORTED_LOCALES.find((item) => item !== locale.value) ?? locale.value,
+);
+
+/** 搜索别名：`域名 key + 另一语言标签`（当前语言标签由 `label` 单独渲染）。 */
+function searchAlias(domain: string, labelKey: string): string {
+    return `${domain} ${labelIn(otherLocale.value, labelKey)}`.trim();
+}
 
 /** 层名文案键（与 `SettingsLayerHeader.vue` 的 `LAYER_TITLE_KEYS` 同键；这不是域清单）。 */
 const LAYER_LABEL_KEY: Record<SettingsLayer, string> = {
@@ -64,6 +94,8 @@ interface PaletteEntry {
     value: string;
     label: string;
     path: string;
+    /** 视觉隐藏的搜索别名（见 `searchAlias`），只喂 vendor 的 textContent 过滤器。 */
+    alias: string;
 }
 
 const currentItems = computed<PaletteEntry[]>(() =>
@@ -71,6 +103,7 @@ const currentItems = computed<PaletteEntry[]>(() =>
         value: `${props.layer}:${domain}`,
         label: t(DOMAIN_LABEL_KEY[domain]),
         path: settingsDomainPath(props.layer, domain),
+        alias: searchAlias(domain, DOMAIN_LABEL_KEY[domain]),
     })),
 );
 
@@ -82,6 +115,7 @@ const crossLayerGroups = computed(() =>
             value: `${layer}:${domain}`,
             label: t(DOMAIN_LABEL_KEY[domain]),
             path: settingsDomainPath(layer, domain),
+            alias: searchAlias(domain, DOMAIN_LABEL_KEY[domain]),
         })),
     })),
 );
@@ -171,7 +205,13 @@ useEventListener("keydown", (event: KeyboardEvent) => {
                     :data-testid="`commandk-item-${item.value}`"
                     @select="go(item.path)"
                 >
-                    {{ item.label }}
+                    <span>{{ item.label }}</span>
+                    <!-- task-46 搜索别名：域名 key + 另一语言标签。`sr-only` 让它不出现在像素上，
+                         `aria-hidden` 让它不出现在无障碍名里 —— 它只喂 vendor 的 textContent 索引
+                         （`Command.vue:49-52` 用 `item.textContent` 建 `allItems`）。 -->
+                    <span class="sr-only" aria-hidden="true" data-commandk-alias>{{
+                        item.alias
+                    }}</span>
                 </CommandItem>
             </CommandGroup>
 
@@ -186,6 +226,9 @@ useEventListener("keydown", (event: KeyboardEvent) => {
                         @select="go(item.path)"
                     >
                         <span class="mr-auto">{{ item.label }}</span>
+                        <span class="sr-only" aria-hidden="true" data-commandk-alias>{{
+                            item.alias
+                        }}</span>
                         <span
                             class="ml-2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
                             :data-testid="`commandk-badge-${item.value}`"
