@@ -20,7 +20,13 @@
             })();
             (function () {
                 try {
-                    var theme = JSON.parse(localStorage.getItem("xihe-theme") || '"system"');
+                    // `task-65`：`xihe-theme` 的规范形态是**裸值**（`dark`），历史上有过 JSON 引号形态
+                    // （`"dark"`）。两种都要认 —— 只认一种就会出现"用户选了深色、刷新回浅色"。
+                    var raw = localStorage.getItem("xihe-theme");
+                    var theme = raw === null ? "system" : raw;
+                    if (theme.charAt(0) === '"') {
+                        theme = JSON.parse(theme);
+                    }
                     if (
                         theme === "dark" ||
                         (theme === "system" &&

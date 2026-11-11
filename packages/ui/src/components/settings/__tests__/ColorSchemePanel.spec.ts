@@ -124,4 +124,28 @@ describe("ColorSchemePanel", () => {
         ).not.toContain("DEFAULT");
         expect(DEFAULT_COLOR_SCHEME).toBe("neutral");
     });
+
+    /**
+     * task-48 P2 残项（`task-65` 补钉）：整行都是可点区域。
+     *
+     * 修前只有行内的 radio 与 label 绑定了切换，而行容器有边框 + 内距 ⇒ 看起来整行可点、
+     * 实际只有 14px 圆点响应 —— M3 第一版截图脚本正是"点行中央"拿到 10 张全 neutral，
+     * 才暴露出这个不一致。这里直接点**行容器本身**（不碰 radio/label），断言切换生效。
+     */
+    it("点方案行内空白（行容器）也切换，不只是圆点", async () => {
+        const wrapper = mountPanel();
+
+        await wrapper.find('[data-testid="settings-color-scheme-zinc"]').trigger("click");
+
+        expect(localStorage.getItem(COLOR_SCHEME_STORAGE_KEY)).toBe("zinc");
+        expect(document.documentElement.getAttribute(COLOR_SCHEME_ATTRIBUTE)).toBe("zinc");
+    });
+
+    it("点明暗行内空白（行容器）也切换", async () => {
+        const wrapper = mountPanel();
+
+        await wrapper.find('[data-testid="settings-color-mode-dark"]').trigger("click");
+
+        expect(setColorMode).toHaveBeenCalledWith("dark");
+    });
 });
