@@ -545,3 +545,61 @@ describe("useConfigStore", () => {
         });
     });
 });
+
+/**
+ * task-155：从**死页** `views/settings/ConfigSettings.vue` 的 spec 迁来的**域注册矩阵**断言。
+ *
+ * 为什么搬：死页生产 0 import、router 未路由（判定见
+ * `internal/A03-xihe/evidence/2026-11-12-dead-page-config-settings/`），计划删除；但它的 spec 里有
+ * **4 组**断言断的是 `stores/config.ts` 的域矩阵 —— 与渲染无关，删页就丢。搬前活覆盖：
+ * `job-policy` 已有等价覆盖（见 `loadLayerDomains` 用例）；`agent-templates` **只有 2/3**
+ * （本节补"个人层也可写"）；`api-request-templates` / `agent-runtime` **0 覆盖**（本节迁入）。
+ * 另补 `llm-provider`（死页从未断言过它的**注册**，只有渲面用例）与 `approval-policy`
+ * （死页只以"个人层不渲面板"隐含表达矩阵事实）。逐域对照见
+ * `internal/A03-xihe/evidence/2026-11-12-configstore-domain-assertions/` §2。
+ *
+ * 判据：本组只断"矩阵事实"（哪个域在哪层可写、在不在合并视图），**不断渲染**；
+ * 渲染面由 `SettingsDomainView` / `ProviderHub` 的 spec 负责。矩阵 SSOT 是 `stores/config.ts`，
+ * 与 CP `ConfigService` 的 `*_WRITABLE_DOMAINS` 对账由 PLAN-0752/0766 的文档矩阵承担。
+ */
+describe("域注册矩阵（task-155：从死页 ConfigSettings.spec 迁移）", () => {
+    it("api-request-templates：实例/个人可写，但不在合并视图（PLAN-0414 explicit-only）", () => {
+        expect(INSTANCE_DOMAINS).toContain("api-request-templates");
+        expect(LAYER_DOMAINS.instance).toContain("api-request-templates");
+        expect(LAYER_DOMAINS.user).toContain("api-request-templates");
+        // CP 侧对 merged effective 直接拒（PLAN-0414）⇒ 合并视图域表里必须没有它。
+        expect(CONFIG_DOMAINS).not.toContain("api-request-templates");
+    });
+
+    it("agent-runtime：实例/个人可写，工作区默认层同样登记", () => {
+        expect(LAYER_DOMAINS.instance).toContain("agent-runtime");
+        expect(LAYER_DOMAINS.user).toContain("agent-runtime");
+        // PLAN-0766：workspace-default 是 9 − 1 = 8 域（不含 service-only 的 context-templates）。
+        expect(LAYER_DOMAINS["workspace-default"]).toContain("agent-runtime");
+    });
+
+    it("llm-provider：三层都可写且保留在合并视图", () => {
+        expect(INSTANCE_DOMAINS).toContain("llm-provider");
+        expect(LAYER_DOMAINS.instance).toContain("llm-provider");
+        expect(LAYER_DOMAINS.user).toContain("llm-provider");
+        expect(LAYER_DOMAINS["workspace-default"]).toContain("llm-provider");
+        // 与 api-request-templates 相反：它是可在合并视图读的域（agent/context 模板才 explicit-only）。
+        expect(CONFIG_DOMAINS).toContain("llm-provider");
+    });
+
+    it("agent-templates：实例/个人可写，但不在合并视图（补齐死页第 3 条）", () => {
+        // 上文 `mergedConfig persistence` 只断了 INSTANCE_DOMAINS/CONFIG_DOMAINS 两向，
+        // 「个人层也可写」这一向此前**全仓没有任何断言** ⇒ 删死页会静默丢掉它。
+        expect(LAYER_DOMAINS.instance).toContain("agent-templates");
+        expect(LAYER_DOMAINS.user).toContain("agent-templates");
+        expect(CONFIG_DOMAINS).not.toContain("agent-templates");
+    });
+
+    it("approval-policy：实例/工作区默认可写，个人层不可写（死页第 5 条，全仓此前无矩阵断言）", () => {
+        // 死页 `ConfigSettings.spec.ts:195` 以"个人层不渲染 approval-policy 面板"的渲面形式表达了
+        // 同一事实；矩阵级断言此前全仓没有 ⇒ 删掉死页后「个人层不许写审批策略」就只剩文档，没有机器判据。
+        expect(LAYER_DOMAINS.instance).toContain("approval-policy");
+        expect(LAYER_DOMAINS["workspace-default"]).toContain("approval-policy");
+        expect(LAYER_DOMAINS.user).not.toContain("approval-policy");
+    });
+});
