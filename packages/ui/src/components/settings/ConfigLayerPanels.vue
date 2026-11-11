@@ -123,10 +123,6 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
         { key: "defaultTimeoutSecs", label: t("settings.fieldDefaultTimeoutSecs"), type: "number" },
         { key: "maxTimeoutSecs", label: t("settings.fieldMaxTimeoutSecs"), type: "number" },
     ],
-    embedding: [
-        { key: "model", label: t("settings.fieldModel"), type: "text" },
-        { key: "dimensions", label: t("settings.fieldDimensions"), type: "number" },
-    ],
     rag: [
         { key: "chunkSize", label: t("settings.fieldChunkSize"), type: "number" },
         { key: "chunkOverlap", label: t("settings.fieldChunkOverlap"), type: "number" },
@@ -373,11 +369,6 @@ function generateSummary(domain: string): string {
             tk = entries["topK"];
         return [cs && `chunk: ${cs}`, tk && `topK: ${tk}`].filter(Boolean).join(", ");
     }
-    if (domain === "embedding") {
-        const model = entries["model"],
-            dims = entries["dimensions"];
-        return [model, dims && `(${dims}d)`].filter(Boolean).join(" ");
-    }
     if (domain === "logging") {
         const level = entries["logLevel"] || entries["levelAgent"];
         return level ? `level: ${level}` : "";
@@ -548,7 +539,9 @@ async function handleReset(domain: string, key: string) {
                 :meta="configStore.layerMeta[layer]['api-request-templates'] || {}"
             />
         </template>
-        <template v-else-if="domain === 'embedding' && layer !== 'instance'">
+        <!-- PLAN-0764 T1.5：实例层同样走专用面板（profile 单元）；旧通用表单的 model/dimensions
+             两键不在 CP schema 里（validateEmbeddingLayer 只收 profile），是必 400 的错配。 -->
+        <template v-else-if="domain === 'embedding'">
             <EmbeddingSettingsPanel
                 :layer="layer"
                 :saving="savingDomains[domain] || false"

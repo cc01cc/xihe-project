@@ -19,7 +19,8 @@ import java.util.UUID;
  *
  * A layer profile is one complete unit of exactly providerId + connectionKey +
  * model (round-4 item 1); layers never merge fields and a partial profile fails
- * closed. Workspace overrides User as a whole; both absent resolves to nothing.
+ * closed. Workspace overrides User, and both override Instance as a whole;
+ * no layer present resolves to nothing (workspace → user → instance).
  * `XIHE_EMBEDDING_MODEL` stays env-first, but only the V1 model is compatible
  * (round-4 item 1 and design §Configuration Migration).
  */
@@ -104,6 +105,13 @@ public class EmbeddingProfileService {
         LayerProfile user = userId == null ? null : readLayer("user", userId);
         if (user != null) {
             return checkEnv(new EffectiveProfile(user, "user"));
+        }
+        // D-918 / BL-581: instance is the last whole-unit fallback. Without this
+        // branch an instance default could be written (and be visible to the
+        // generic effective view) but never reach the run-time resolver.
+        LayerProfile instance = readInstanceLayer();
+        if (instance != null) {
+            return checkEnv(new EffectiveProfile(instance, "instance"));
         }
         return checkEnv(new EffectiveProfile(null, null));
     }
@@ -198,6 +206,18 @@ public class EmbeddingProfileService {
             return null;
         }
         return parseProfile(raw);
+    }
+
+    /**
+     * D-918 / BL-581: the instance layer has no owner id, so it cannot share
+     * {@link #readLayer(String, UUID)}; the instance profile is stored under the
+     * same single key ({@code profile}) and is parsed with the same whole-unit rule.
+     */
+    private LayerProfile readInstanceLayer() {
+        return configs.findByLayerAndDomainAndConfigKey("instance", DOMAIN, "profile")
+                .map(ConfigEntity::getConfigValue)
+                .map(this::parseProfile)
+                .orElse(null);
     }
 
     private ProviderConnection findOwningConnection(String ownerType, String ownerId, LayerProfile profile) {
