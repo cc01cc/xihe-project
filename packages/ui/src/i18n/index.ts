@@ -1501,13 +1501,13 @@ const messages = {
             providerPartitionDesc:
                 "自上而下：先在连接管理新建连接并就地设定默认（默认连接置顶、每连接默认模型置顶、每模型参数就地配置）。",
             providerPartitionDescInstance:
-                "实例层只保存默认的 provider 与 model；连接与密钥由使用者的个人/工作区连接提供。",
+                "实例层只保存默认的 provider、模型与连接槽位；连接归属随配置供给层（实例配置用消费用户的连接，不可用时回退共享实例连接）。",
             providerInstanceNote:
-                "连接仍由使用者的个人/工作区连接提供；本层只给默认 provider+model。使用者侧没有匹配连接时，运行期返回 409 LLM_PROFILE_CONFLICT（不静默回落）。",
+                "模型配置按 工作区 > 用户 > 实例 的顺序取第一组存在的配置；连接归属提供该配置的那一层，仅当该层连接不可用时才回退到实例共享连接，不会改用其他层的个人或工作区连接。",
             providerInstanceGoUser: "前往用户层管理连接",
             llmInstanceDefaultTitle: "实例默认模型",
             llmInstanceDefaultDesc:
-                "选好 provider、模型与连接槽位后保存，即成为本实例的默认；实际解析仍走使用者自己的连接。",
+                "选好 provider、模型与连接槽位后保存，即成为本实例的默认；连接归属随配置供给层（实例配置用消费用户的连接，不可用时回退共享实例连接）。",
             llmInstanceProviderLabel: "提供方",
             llmInstanceProviderPlaceholder: "选择提供方",
             llmInstanceNoProviders:
@@ -1611,7 +1611,7 @@ const messages = {
                 selectConnection: "选择或创建连接以查看详情与 Models。",
                 scopeNoteTitle: "连接作用域",
                 scopeNoteBody:
-                    "按 profile 所在层解析具体连接，不回退：工作区 profile 只匹配工作区连接，个人 profile 只匹配个人连接，实例 profile 落到消费用户的个人连接。API key 由 Control Plane 加密存储，不会出现在浏览器存储或日志中。",
+                    "模型配置按 工作区 > 用户 > 实例 的顺序取第一组存在的配置；连接归属提供该配置的那一层，仅当该层连接不可用时才回退到实例共享连接，不会改用其他层的个人或工作区连接。API key 由 Control Plane 加密存储，不会出现在浏览器存储或日志中。",
                 deleteTitle: "删除 Provider 连接",
                 deleteConfirmDesc: "确认删除「{label}」？此操作不可撤销。",
                 deleteImpactLoading: "正在加载删除影响预览...",
@@ -1861,7 +1861,7 @@ const messages = {
             embeddingTestFailed: "嵌入测试失败",
             embeddingScopeUser: "个人",
             embeddingScopeWorkspace: "工作区",
-            embeddingInstanceNote: "实例层只设默认 profile；连接在用户作用域解析",
+            embeddingInstanceNote: "实例层只设默认 profile；连接归属随供给层，末位回退共享实例连接",
             domainUserPreference: "用户偏好",
             domainWorkspaceConfig: "工作区配置",
             domainMcp: "MCP 服务",
@@ -4185,13 +4185,13 @@ const messages = {
             providerPartitionDesc:
                 "Top-down: create connections in Connections and set defaults in place (default connection pinned, each connection's default model pinned, per-model parameters inline).",
             providerPartitionDescInstance:
-                "The instance layer stores only the default provider and model; connections and credentials come from the user's personal/workspace connections.",
+                "The instance layer stores only the default provider, model and connection slot; the connection follows the layer that supplied the profile (an instance profile uses the consuming user's connection, falling back to the shared instance connection when unavailable).",
             providerInstanceNote:
-                "Connections are still provided by the user's own personal/workspace connections; this layer only sets the default provider+model. If no matching connection resolves, the runtime returns 409 LLM_PROFILE_CONFLICT (no silent fallback).",
+                "Profiles resolve as a whole unit in the order workspace > user > instance; the connection belongs to the layer that supplied the profile, falling back to the shared instance connection only when that layer's connection is unavailable - connections from other layers are never used.",
             providerInstanceGoUser: "Go to the user layer to manage connections",
             llmInstanceDefaultTitle: "Instance default model",
             llmInstanceDefaultDesc:
-                "Pick a provider, model and connection slot, then save to set the instance default; resolution still uses the consumer's own connections.",
+                "Pick a provider, model and connection slot, then save to set the instance default; the connection follows the supplying layer (an instance profile uses the consuming user's connection, with the shared instance connection as the fallback).",
             llmInstanceProviderLabel: "Provider",
             llmInstanceProviderPlaceholder: "Select a provider",
             llmInstanceNoProviders:
@@ -4301,7 +4301,7 @@ const messages = {
                 selectConnection: "Select or create a connection to view details and models.",
                 scopeNoteTitle: "Connection scope",
                 scopeNoteBody:
-                    "Resolve the concrete connection by the layer that owns the profile, without fallback: a workspace profile matches only workspace connections, a user profile only user connections, and an instance profile resolves to the consuming user's user connection. API keys are encrypted by the Control Plane and never appear in browser storage or logs.",
+                    "Profiles resolve as a whole unit in the order workspace > user > instance; the connection belongs to the layer that supplied the profile, falling back to the shared instance connection only when that layer's connection is unavailable - connections from other layers are never used. API keys are encrypted by the Control Plane and never appear in browser storage or logs.",
                 deleteTitle: "Delete Provider Connection",
                 deleteConfirmDesc: 'Delete "{label}"? This action cannot be undone.',
                 deleteImpactLoading: "Loading delete impact preview...",
@@ -4568,7 +4568,7 @@ const messages = {
             embeddingScopeUser: "User",
             embeddingScopeWorkspace: "Workspace",
             embeddingInstanceNote:
-                "The instance layer sets the default profile only; the connection resolves in the user scope.",
+                "The instance layer sets only the default profile; the connection follows the supplying layer, with the shared instance connection as the last-resort fallback.",
             domainUserPreference: "User Preference",
             domainWorkspaceConfig: "Workspace Config",
             domainMcp: "MCP Servers",

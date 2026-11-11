@@ -298,8 +298,9 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         // PLAN-0764 T1.6（task-150）：引导块 → 可编辑的「实例默认模型」偏好。
         const partition = wrapper.find('[data-testid="provider-partition"]');
         expect(partition.text()).toContain("实例默认模型");
-        // 话术必须写明解析不到连接时 409、不静默回落。
-        expect(partition.text()).toContain("LLM_PROFILE_CONFLICT");
+        // task-152 定稿话术（task-167）：整组层序 + 连接归属供给层 + 末位共享实例兜底。
+        expect(partition.text()).toContain("工作区 > 用户 > 实例");
+        expect(partition.text()).toContain("实例共享连接");
         expect(wrapper.find('[data-testid="llm-instance-default"]').exists()).toBe(true);
         expect(wrapper.find("provider-hub-stub").exists()).toBe(false);
         wrapper.unmount();

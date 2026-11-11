@@ -20,9 +20,11 @@ import type { ProviderDefinition } from "../../types/providerConnection";
  * PLAN-0764 T1.6（task-150）：实例层的 llm-provider「默认偏好」编辑器。
  *
  * 只写一个完整的 profile 单元（providerId + connectionKey + model，D-913③：不扩
- * ProviderScope，不做 INSTANCE 连接）。连接与密钥仍由使用者的个人/工作区连接提供；
- * 实例 profile 在运行期按消费用户 USER scope 解析，解析不到即 409
- * LLM_PROFILE_CONFLICT（不静默回落，ConfigService:1211-1217）。
+ * ProviderScope）。task-152 定稿 resolver（llm/embedding 共用单 helper）：profile 整组
+ * 按 workspace > user > instance 取第一组存在的配置，不做键级合并；连接归属提供该
+ * profile 的那一层（workspace→WORKSPACE、user/instance→消费用户 USER，owner 规则而
+ * 非优先序）；该层连接不可用时唯一末位兜底是共享 INSTANCE 连接，不跨层搜索；全无
+ * 匹配 llm 返回 409 LLM_PROFILE_CONFLICT（不静默回落）。
  */
 const props = withDefaults(
     defineProps<{
