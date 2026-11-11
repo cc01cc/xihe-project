@@ -1498,12 +1498,32 @@ const messages = {
             providerPartitionTitle: "LLM 连接与默认身份",
             providerPartitionDesc:
                 "自上而下：先在连接管理新建连接并就地设定默认（默认连接置顶、每连接默认模型置顶、每模型参数就地配置）。",
-            providerInstanceGuidance: "实例层不管理连接；连接与层默认配置均位于工作区/个人层。",
+            providerPartitionDescInstance:
+                "实例层只保存默认的 provider 与 model；连接与密钥由使用者的个人/工作区连接提供。",
             providerInstanceNote:
-                "连接按 User/Workspace 作用域创建；如需实例级默认，请先在工作区/个人层新建连接。",
-            providerInstanceGoUser: "前往用户层新建连接",
-            providerInstanceGoWorkspace: "前往工作区层新建连接",
-            providerInstanceNoWorkspace: "未选择工作区，无法前往工作区层",
+                "连接仍由使用者的个人/工作区连接提供；本层只给默认 provider+model。使用者侧没有匹配连接时，运行期返回 409 LLM_PROFILE_CONFLICT（不静默回落）。",
+            providerInstanceGoUser: "前往用户层管理连接",
+            llmInstanceDefaultTitle: "实例默认模型",
+            llmInstanceDefaultDesc:
+                "实例层只保存默认的 provider 与 model（整组 profile）；连接与密钥仍由使用者的个人/工作区连接提供。",
+            llmInstanceProviderLabel: "提供方",
+            llmInstanceProviderPlaceholder: "选择提供方",
+            llmInstanceNoProviders:
+                "目录未加载或没有支持对话的提供方；可先在用户层新建连接后再回来。",
+            llmInstanceModelLabel: "默认模型",
+            llmInstanceModelPlaceholder: "填写模型名，或从目录建议中选择",
+            llmInstanceModelNoCatalog: "该提供方暂无可用模型目录（仍可手填模型名）",
+            llmInstanceConnectionKeyLabel: "连接槽（connectionKey）",
+            llmInstanceConnectionKeyHelp:
+                "使用者侧需存在同 provider、同槽名的连接；实例层不存连接与密钥。",
+            llmInstanceConnectionKeyInvalid: "连接槽名只允许小写字母/数字/短横线（≤64 字符）",
+            llmInstanceCurrent: "当前实例默认：{provider} / {model}（连接槽 {key}）",
+            llmInstanceUnset:
+                "未设置：工作区/个人层有 profile 时优先，三层都空才轮到代码内置默认。",
+            llmInstanceClear: "清除并恢复继承",
+            llmInstanceSaved: "实例默认模型已保存",
+            llmInstanceCleared: "已清除实例默认模型，恢复继承",
+            llmInstanceSaveFailed: "实例默认模型保存失败",
             providerHub: {
                 defaultPlaceholder: "如：default",
                 limitsTitle: "资源限额（并发 / 队列 / 配额）",
@@ -4160,13 +4180,35 @@ const messages = {
             providerPartitionTitle: "LLM Connections & Default Identity",
             providerPartitionDesc:
                 "Top-down: create connections in Connections and set defaults in place (default connection pinned, each connection's default model pinned, per-model parameters inline).",
-            providerInstanceGuidance:
-                "The instance layer does not manage connections; connections and layer defaults live in the workspace/user layers.",
+            providerPartitionDescInstance:
+                "The instance layer stores only the default provider and model; connections and credentials come from the user's personal/workspace connections.",
             providerInstanceNote:
-                "Connections are created per User/Workspace scope; create them in the workspace/user layers first.",
-            providerInstanceGoUser: "Go to user layer to create a connection",
-            providerInstanceGoWorkspace: "Go to workspace layer to create a connection",
-            providerInstanceNoWorkspace: "No workspace selected; cannot open the workspace layer",
+                "Connections are still provided by the user's own personal/workspace connections; this layer only sets the default provider+model. If no matching connection resolves, the runtime returns 409 LLM_PROFILE_CONFLICT (no silent fallback).",
+            providerInstanceGoUser: "Go to the user layer to manage connections",
+            llmInstanceDefaultTitle: "Instance default model",
+            llmInstanceDefaultDesc:
+                "The instance layer stores only the default provider and model (one profile unit); connections and credentials stay with each user's personal/workspace connections.",
+            llmInstanceProviderLabel: "Provider",
+            llmInstanceProviderPlaceholder: "Select a provider",
+            llmInstanceNoProviders:
+                "Catalog not loaded or no chat-capable provider; create a connection in the user layer first.",
+            llmInstanceModelLabel: "Default model",
+            llmInstanceModelPlaceholder: "Type a model name or pick a catalog suggestion",
+            llmInstanceModelNoCatalog:
+                "No model catalog for this provider (you can still type a model name)",
+            llmInstanceConnectionKeyLabel: "Connection slot (connectionKey)",
+            llmInstanceConnectionKeyHelp:
+                "Each user needs a connection with the same provider and slot name; this layer stores no connection or credential.",
+            llmInstanceConnectionKeyInvalid:
+                "Connection slot allows lowercase letters/digits/hyphens (≤64 chars)",
+            llmInstanceCurrent:
+                "Current instance default: {provider} / {model} (connection slot {key})",
+            llmInstanceUnset:
+                "Not set: the workspace/personal profile wins first; the built-in default applies only when all layers are empty.",
+            llmInstanceClear: "Clear and inherit again",
+            llmInstanceSaved: "Instance default model saved",
+            llmInstanceCleared: "Instance default model cleared; inheritance restored",
+            llmInstanceSaveFailed: "Failed to save the instance default model",
             providerHub: {
                 defaultPlaceholder: "e.g. default",
                 limitsTitle: "Resource limits (concurrency / queue / budget)",
