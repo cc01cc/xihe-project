@@ -3,6 +3,7 @@ import vue from "@vitejs/plugin-vue";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { readFileSync } from "node:fs";
+import { mockApiPlugin } from "./src/preview/mock/api-server";
 
 const pkgVersion = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"))
     .version as string;
@@ -57,6 +58,9 @@ export default defineConfig(({ mode }) => {
         pickEnv(env, "XIHE_CP_URL") ||
         `http://localhost:${pickEnv(env, "XIHE_CP_PORT") || "12631"}`;
     const uiLogLevel = resolveUiLogLevel(env);
+    // task-137 rev2：mock 数据 lane。只有显式 XIHE_UI_MOCK_API=1 才挂中间件（正常 dev 不受影响）；
+    // 产品代码零分支 —— 真页面跑在真 router 上，数据来自这里拦的 /api/v1。
+    const mockApiEnabled = pickEnv(env, "XIHE_UI_MOCK_API") === "1";
     const releaseChannelRaw = (pickEnv(env, "XIHE_RELEASE_CHANNEL") || "dev").toLowerCase();
     const releaseChannel = (RELEASE_CHANNELS as readonly string[]).includes(releaseChannelRaw)
         ? releaseChannelRaw
@@ -72,7 +76,11 @@ export default defineConfig(({ mode }) => {
             "import.meta.env.VITE_XIHE_SERVICE_VERSION": JSON.stringify(pkgVersion),
             "import.meta.env.VITE_XIHE_RELEASE_CHANNEL": JSON.stringify(releaseChannel),
         },
-        plugins: [vue(), tailwindcss()],
+        plugins: [
+            vue(),
+            tailwindcss(),
+            ...(mockApiEnabled ? [mockApiPlugin({ log: (line) => console.log(line) })] : []),
+        ],
         test: {
             globals: true,
             environment: "jsdom",

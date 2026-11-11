@@ -1938,9 +1938,11 @@ const messages = {
             fieldProfile: "Profile",
             fieldDbUrl: "数据库 URL",
             fieldJwtSecret: "JWT Secret",
-            fieldChunkSize: "Chunk Size",
-            fieldTopK: "Top K",
-            fieldChunkOverlap: "Chunk Overlap",
+            // task-137（D-914 中文适配）：rag 3 键曾留英文（TODO(i18n) 未落位），补译；
+            // fieldMinScore 原本就有中文（"最低分"），不动。
+            fieldChunkSize: "切片长度",
+            fieldTopK: "检索条数",
+            fieldChunkOverlap: "切片重叠",
             fieldMinScore: "最低分",
             fieldWorkersDir: "Workers 目录",
             fieldCompactionDefaults: "压缩默认值（JSON）",

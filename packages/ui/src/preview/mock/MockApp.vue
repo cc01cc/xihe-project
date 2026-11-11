@@ -1,16 +1,34 @@
+<!--
+  DEPRECATED(task-137-rev2)：D-914 ① 交付改为「真产品页面 + 网络层 mock」，本文件属更早的「静态设计稿单页」路线，已不再渲染也不再产出交付图；**保留不删**（Lead 口径：零删除，退役由 PLAN-0764 M1 合并时统一处理）。指标：task-137 rev2 的真实入口是 preview-real.html + src/preview/mock/api-server.ts。
+-->
 <script setup lang="ts">
+import MockWindow from "./screens/MockWindow.vue";
 import MockSinglePage from "./screens/MockSinglePage.vue";
 
 /**
  * task-127（D-903）：**单页合一** —— 用户裁定「mock 稿一个页面就够了，顶上那么多按钮切场景是什么」。
  * SHEETS/hash 切换器已撤（git 历史可查 task-126 前的实现）；旧场景屏 S1..S6 保留在
- * screens/ 目录但不再被入口引用。入口 = 本组件 → MockSinglePage 单页。
+ * screens/ 目录但不再被入口引用。入口 = 本组件 → MockWindow（真窗口构图）→ MockSinglePage 单页。
+ *
+ * task-137（B）：整窗构图 —— rail 56 + 设置左栏 256 + 内容列 + 聊天条 + 右 dock 360。
+ * `?winlong=1` ⇒ 窗口高度随内容撑开（单页长图取景）；默认 = 窗口固定 1920×1080（整窗视口图取景）。
  */
+const params = new URLSearchParams(window.location.search);
+const winlong = params.get("winlong") === "1";
 </script>
 
 <template>
-    <div data-mock-canvas class="min-h-screen bg-background text-foreground">
-        <MockSinglePage />
+    <div data-mock-canvas class="min-h-screen bg-muted/20 p-6 text-foreground">
+        <MockWindow :tall="winlong">
+            <MockSinglePage />
+        </MockWindow>
+        <!-- 稿外注（不进窗口画面）：来源与判据。窗口截图取元素，天然不含这行。 -->
+        <p class="mk-caption mx-auto mt-3 w-[1920px] text-muted-foreground">
+            Xihe 设置区 · 单页设计稿（task-137 / task-127 / D-903）· 字段中文 label 复用产品 i18n
+            键、无键走 curated 词典（74 字段 100% 覆盖）· 值/类型来源 = CP config-schemas（生成物
+            schema-catalog.ts）· 用户层按 D-911 折叠展开 · 字阶四档（24/16/14/12）· 整窗 = rail 56 +
+            设置左栏 256 + 内容列 + 聊天条 + 右 dock 360
+        </p>
     </div>
 </template>
 

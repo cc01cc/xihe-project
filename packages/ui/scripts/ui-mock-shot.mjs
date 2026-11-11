@@ -72,7 +72,41 @@ const SHOT_CSS_FULL = [
  * MockSinglePage），交付图 = 单页整图一张（fullPage 收全高）；query 为空 ⇒ 干净基址天然正确。
  * 退役的场景稿条目（?notes=0&domain=…#N 与 #4/#5/#6 整屏）留在 git 历史，勿复用。
  */
-const SHOTS = [{ id: "01", name: "single-page-full", query: "", fullPage: true }];
+const SHOTS = [
+    // task-137 rev2（D-914）：交付对象是**真产品页面**（真路由 + 真组件），
+    // 图只作审计留证。整窗 = 设置默认落地页（实例层第一个域），1920×1080 整屏。
+    { id: "01", name: "window", path: "/settings", app: true },
+    // llm-provider 取用户层：实例层只展示默认身份 + 「实例层不管理连接」，用户层才是连接管理主界面。
+    { id: "02", name: "llm-provider", path: "/settings/user/llm-provider", app: true },
+    {
+        id: "03",
+        name: "agent-runtime",
+        path: "/settings/instance/agent-runtime",
+        app: true,
+        expand: "[data-testid=config-domain-agent-runtime] button",
+    },
+    {
+        id: "04",
+        name: "context-policy",
+        path: "/settings/instance/context-policy",
+        app: true,
+        expand: "[data-testid=config-domain-context-policy] button",
+    },
+    {
+        id: "05",
+        name: "logging",
+        path: "/settings/instance/logging",
+        app: true,
+        expand: "[data-testid=config-domain-logging] button",
+    },
+    {
+        id: "06",
+        name: "user-preference",
+        path: "/settings/user/user-preference",
+        app: true,
+        expand: "[data-testid=config-domain-user-preference] button",
+    },
+];
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
 
@@ -656,10 +690,35 @@ const findScroller = () => {
 };
 
 async function shootOne(page, base, shot, outDir) {
-    await page.goto(base + "/preview-mock.html" + shot.query, { waitUntil: "networkidle" });
-    await page.waitForFunction(() => document.querySelectorAll("[data-mock-canvas]").length === 1);
-    // fullPage（单页长图）用不钳高的变体，整屏镜头仍用钳到 1080 的 SHOT_CSS。
-    await page.addStyleTag({ content: shot.fullPage ? SHOT_CSS_FULL : SHOT_CSS });
+    if (shot.app) {
+        // 真页面：1920×1080 视口，等真 App 挂载 + 首屏数据落定（不是空壳）。
+        await page.setViewportSize({ width: CANVAS.width, height: CANVAS.height });
+    }
+    const targetUrl = shot.app
+        ? base + shot.path
+        : base + "/preview-mock.html" + (shot.query ?? "");
+    await page.goto(targetUrl, { waitUntil: "networkidle" });
+    if (shot.app) {
+        await page.waitForFunction(
+            () => (document.querySelector("#app")?.children.length ?? 0) > 0,
+            {
+                timeout: 20000,
+            },
+        );
+        await page.evaluate(() => document.fonts.ready);
+        if (shot.expand) {
+            // 域面板默认折叠；审计图要看字段级内容 ⇒ 点开再拍（这也是 B 轻量版要证的一种交互）。
+            await page.click(shot.expand, { timeout: 10000 });
+            await page.waitForTimeout(500);
+        }
+        await page.waitForTimeout(600);
+    } else {
+        await page.waitForFunction(
+            () => document.querySelectorAll("[data-mock-canvas]").length === 1,
+        );
+        // fullPage（单页长图）用不钳高的变体，整屏镜头仍用钳到 1080 的 SHOT_CSS。
+        await page.addStyleTag({ content: shot.fullPage ? SHOT_CSS_FULL : SHOT_CSS });
+    }
     await page.evaluate(() => document.fonts.ready);
     await page.evaluate(() => {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -670,14 +729,19 @@ async function shootOne(page, base, shot, outDir) {
     await page.mouse.move(VIEWPORT.width - 200, VIEWPORT.height - 100);
     await page.waitForTimeout(400);
 
-    const canvas = page.locator("[data-mock-canvas]");
+    // 三种取景：整窗元素（element）/ 单页长图（fullPage 画布）/ 整屏画布（默认 1920×1080）。
+    const target = shot.element
+        ? page.locator(shot.element)
+        : shot.app
+          ? null // 真页面：整屏（视口）截图，元素截图会被滚动条挤成 1910 宽
+          : page.locator("[data-mock-canvas]");
     const shotOpts = shot.fullPage
         ? { fullPage: true, animations: "disabled" }
         : { animations: "disabled" };
     let stable = null;
     let previous = null;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-        const buf = await canvas.screenshot(shotOpts);
+        const buf = target ? await target.screenshot(shotOpts) : await page.screenshot(shotOpts);
         const digest = sha(buf);
         if (previous && previous.digest === digest) {
             stable = { buf, digest, attempts: attempt + 1 };
@@ -695,15 +759,17 @@ async function shootOne(page, base, shot, outDir) {
     const mainFile = path.join(outDir, shot.id + "-" + shot.name + ".png");
     fs.writeFileSync(mainFile, stable.buf);
     const size = { width: stable.buf.readUInt32BE(16), height: stable.buf.readUInt32BE(20) };
-    // fullPage 只校验宽下限（高 = 内容真实高度，宽 = 视口盒 2000px）；整屏镜头维持 1920×1080 契约。
+    // fullPage 只校验宽下限（高 = 内容真实高度，宽 = 视口盒 2000px）；
+    // element（整窗）与整屏镜头维持 1920×1080 契约。
     const widthOk = shot.fullPage ? size.width >= CANVAS.width : size.width === CANVAS.width;
     if (!widthOk || (!shot.fullPage && size.height !== CANVAS.height)) {
         throw new Error(shot.id + " 画布尺寸不对：" + size.width + "x" + size.height);
     }
 
     const probe = await page.evaluate(() => {
-        const canvasEl = document.querySelector("[data-mock-canvas]");
-        const nodes = [...canvasEl.querySelectorAll("[data-single-line]")];
+        const canvasEl =
+            document.querySelector("[data-mock-canvas]") ?? document.querySelector("#app");
+        const nodes = canvasEl ? [...canvasEl.querySelectorAll("[data-single-line]")] : [];
         let textNodes = 0;
         let wrapped = 0;
         for (const el of nodes) {
@@ -735,7 +801,8 @@ async function shootOne(page, base, shot, outDir) {
         };
     });
 
-    const overflow = shot.fullPage ? null : await page.evaluate(findScroller);
+    const overflow =
+        shot.fullPage || shot.element || shot.app ? null : await page.evaluate(findScroller);
     let bottomFile = null;
     if (overflow) {
         await page.waitForTimeout(300);

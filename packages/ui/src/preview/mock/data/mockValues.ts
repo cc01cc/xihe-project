@@ -76,8 +76,27 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
             "anthropic/claude-sonnet-4-5": { softThresholdPct: 0.75, hardThresholdPct: 0.92 },
             "openai/gpt-4o": { softThresholdPct: 0.7, hardThresholdPct: 0.9 },
         },
+        // 面板吃整块 JSON（schema 是 dotted 键），两个编辑器各要一份聚合值。
+        defaults: {
+            fingerprintEnabled: true,
+            softThresholdPct: 0.72,
+            hardThresholdPct: 0.9,
+            keepRecentMessages: 6,
+            agentsMdMaxBytes: 65536,
+            envMaxBytes: 16384,
+            maxInputTokens: 128000,
+            pruneWindowChars: 24000,
+            recoveryBand: 0.1,
+            maxConsecutiveIneffective: 3,
+            summaryProvider: "llm",
+            summaryModel: "gpt-4o-mini",
+            summaryTimeoutMs: 30000,
+        },
     },
     embedding: {
+        // 通用配置面板（ConfigLayerPanels）字段名；dotted profile 键给 ProviderHub/解析链用。
+        model: "text-embedding-3-small",
+        dimensions: 768,
         "profile.providerId": "openai",
         "profile.connectionKey": "conn-embed-primary",
         "profile.model": "text-embedding-3-small",
@@ -112,6 +131,30 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
         chunkOverlap: 64,
         topK: 6,
         minScore: 0.35,
+    },
+    // 两域此前缺 fixtures（GET entries=0 触发证据门红）：补真实感样例，字段形状待 dev-2 清单登记。
+    "context-templates": {
+        templates: [
+            {
+                id: "default",
+                name: "默认上下文模板",
+                description: "工作区默认对话上下文装配（会话历史 + 文件摘要 + 记忆片段）",
+                maxTokens: 32000,
+            },
+        ],
+        defaultTemplate: "default",
+        userDefault: "default",
+        providerModelDefaults: {},
+    },
+    pricing: {
+        models: {
+            "anthropic/claude-sonnet-4-5": {
+                inputPerMillion: 3,
+                outputPerMillion: 15,
+                currency: "USD",
+            },
+            "openai/gpt-image-1": { imageUnit: 0.04, currency: "USD" },
+        },
     },
     "user-preference": {
         theme: "dark",
