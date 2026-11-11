@@ -1437,7 +1437,7 @@ const messages = {
                 description: "按名称搜索配置域并跳转：⌘K / Ctrl+K 打开，Esc 关闭。",
                 placeholder: "搜索配置域…",
                 groupCurrent: "本层 · {layer}",
-                groupOther: "其他层 · {layer}（会切换层）",
+                groupOther: "其他层 · {layer}",
                 crossLayerBadge: "→ {layer}",
                 empty: "没有匹配的配置域",
                 emptyHint: "可以只输入层名（实例 / 用户 / 工作区默认）来看该层全部域。",
@@ -4211,7 +4211,7 @@ const messages = {
                     "Search config domains by name and jump: ⌘K / Ctrl+K opens, Esc closes.",
                 placeholder: "Search config domains…",
                 groupCurrent: "This layer · {layer}",
-                groupOther: "Other layers · {layer} (switches layer)",
+                groupOther: "Other layers · {layer}",
                 crossLayerBadge: "→ {layer}",
                 empty: "No matching config domain",
                 emptyHint:

@@ -131,7 +131,10 @@ describe("SettingsCommandPalette（T3.4 ⌘K 搜配置域）", () => {
         const badge = q('[data-testid="commandk-badge-instance:logging"]');
         expect(badge).toBeTruthy();
         expect(badge!.textContent ?? "").toContain("实例配置");
-        expect(document.body.textContent ?? "").toContain("会切换层");
+        // task-43：「跨层」只由**跟随条目**的徽标表达一次；分组标题不再挂「（会切换层）」括注。
+        // 反向断言是这条的钉子 —— 谁把括注加回去，这里就红（语义重复属 D-926 五维 P1）。
+        expect(document.body.textContent ?? "").not.toContain("会切换层");
+        expect(document.body.textContent ?? "").not.toContain("switches layer");
     });
 
     it("选中条目走 settingsDomainPath 并关闭面板", async () => {
