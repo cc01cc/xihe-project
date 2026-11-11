@@ -546,6 +546,11 @@ export function main(argv = process.argv.slice(2), deps = {}) {
   const runId = winRes.effectiveRunId ?? randomUUID();
   if (winRes.note) log(winRes.note);
   log(`window=${winRes.window} run-id=${runId}`);
+  // task-104 债②：把本轮 runId 注入环境，让 test:cp → mvn → surefire → 被测 runtime 继承，
+  // 容器才会带 xihe.e2e.run-id 标签（workspace.rs:250 仅在 env 存在时才写）。
+  // 调用方显式给值时不动（显式标识属于调用方，同 --run-id 口径）。
+  if (!env.XIHE_E2E_RUN_ID) process.env.XIHE_E2E_RUN_ID = runId;
+  log(`XIHE_E2E_RUN_ID=${process.env.XIHE_E2E_RUN_ID}（容器标签来源，task-104 债②）`);
   const head = gitCommit(repoRoot);
 
   // 门表：默认门（mise）+ 目录里登记的 pkg 门（若 gates 里带 kind:"pkg"）；--fast 只保留轻门
