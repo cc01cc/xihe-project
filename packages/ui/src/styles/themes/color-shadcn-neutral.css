@@ -16,7 +16,7 @@ html[data-xh-color="neutral"] {
      * 要求的 3:1 ⇒ 这里改用 --primary（浅色 ≈17:1、深色 ≈15:1）。这是**唯一**偏离官方色值之处，
      * 其余 30 个键一律照抄 shadcn-vue registry 的 cssVarsV4。改回官方只需把下面两行换成官方值。
      */
-    --background: oklch(1 0 0);
+    --background: oklch(0.97 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
@@ -26,9 +26,9 @@ html[data-xh-color="neutral"] {
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
+    --muted: oklch(0.93 0 0);
+    --muted-foreground: oklch(0.53 0 0);
+    --accent: oklch(0.93 0 0);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
     --border: oklch(0.922 0 0);
@@ -45,7 +45,7 @@ html[data-xh-color="neutral"] {
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent: oklch(0.94 0 0);
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: var(--primary);

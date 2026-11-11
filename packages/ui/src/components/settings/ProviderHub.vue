@@ -1013,7 +1013,7 @@ onMounted(() => {
             <div class="text-xs font-semibold uppercase tracking-widest text-primary">
                 {{ t("settings.providerHub.kicker") }}
             </div>
-            <h3 class="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
+            <h3 class="mt-1 text-xl font-semibold tracking-tight">
                 {{ t("settings.providerHub.title") }}
             </h3>
             <p class="mt-1.5 text-sm text-muted-foreground">{{ t("settings.providerHub.desc") }}</p>
