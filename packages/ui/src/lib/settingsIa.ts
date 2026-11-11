@@ -31,7 +31,21 @@ export type SettingsLayer = ConfigLayer;
  * 覆盖的所有工作区生效，可读任意已认证用户、可写仅 `MANAGE_WORKSPACE_DEFAULT_CONFIG`
  * 持有者（能力原子求值，不是角色名判断）。
  */
-export const SETTINGS_LAYERS: readonly SettingsLayer[] = ["instance", "workspace-default", "user"];
+export const SETTINGS_LAYERS_LOW_TO_HIGH: readonly SettingsLayer[] = [
+    "user",
+    "workspace-default",
+    "instance",
+];
+
+/**
+ * **显示顺序 = 层进顺序取反序（高 → 低）**：instance → user → workspace-default。
+ *
+ * task-77：唯一真相在上面那个 `SETTINGS_LAYERS_LOW_TO_HIGH`（低 → 高：personal <
+ * workspace-default < instance，与 `LlmDefaultProfilePanel` 的取值优先级
+ * `workspace > workspace-default > personal > instance` 同义）。这里只做 `reverse()`，
+ * **禁止**在本文件或渲染处再手写第二份字面量数组。
+ */
+export const SETTINGS_LAYERS: readonly SettingsLayer[] = [...SETTINGS_LAYERS_LOW_TO_HIGH].reverse();
 
 /** 用户层不可写的域（= 用户层矩阵里没有的那些）：logging / approval-policy / job-policy。 */
 export function isInstanceOnlyForUser(domain: ConfigDomain): boolean {
@@ -66,7 +80,7 @@ export function isConfigDomain(value: unknown): value is ConfigDomain {
     return typeof value === "string" && (INSTANCE_DOMAINS as readonly string[]).includes(value);
 }
 
-/** 某域在哪些层可写（顺序：instance → user，与 LAYER_DOMAINS 一致）。 */
+/** 某域在哪些层可写（**顺序 = 显示顺序（高 → 低）**，与左栏组顺序同源：`SETTINGS_LAYERS`）。 */
 export function layersForDomain(domain: ConfigDomain): SettingsLayer[] {
     return SETTINGS_LAYERS.filter((layer) => LAYER_DOMAINS[layer].includes(domain));
 }
