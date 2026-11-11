@@ -115,6 +115,36 @@ class InstanceOwnerTransferAtomicityTest extends AbstractIntegrationTest {
         assertEquals(owner.getId().toString(), currentOwnerId());
     }
 
+    /**
+     * PLAN-0767 M1-5: the emergency face is one transaction too. The emergency audit row is written
+     * after the binding handover and the pointer UPDATE, so injecting a failure there proves those
+     * writes (including the new null-from SUPER_ADMIN assignment) roll back instead of committing
+     * without an audit trail.
+     */
+    @Test
+    void aFailureOnTheEmergencyAuditRollsBackTheClaimEntirely() {
+        doThrow(new IllegalStateException("injected audit failure"))
+                .when(auditLogger)
+                .recordDurableChange(any(), any(), eq("instance_owner_emergency_transferred"), any(),
+                        any(), any());
+        User target = newUser("atomic-emergency-target");
+        grantTier(target, "ADMIN");
+        authzContext.invalidateAll();
+        int assignedAuditsBefore = auditCount("authorization_instance_super_admin_assigned");
+        int epochBefore = tokenVersion(target);
+
+        assertThrows(IllegalStateException.class,
+                () -> ownershipService.transfer(target.getId().toString(), target.getId(), PASSWORD,
+                        "127.0.0.1", "recover unowned instance"));
+
+        assertEquals(null, currentOwnerId(), "the pointer write rolls back with the audit");
+        assertEquals(epochBefore, tokenVersion(target), "the epoch bump rolls back");
+        assertEquals(assignedAuditsBefore, auditCount("authorization_instance_super_admin_assigned"),
+                "the binding audit row rolls back with the binding it describes");
+        authzContext.invalidateAll();
+        assertFalse(authzContext.isInstanceSuper(target.getId()));
+    }
+
     // ── fixtures ────────────────────────────────────────────────────────────
 
     private User newUser(String label) {

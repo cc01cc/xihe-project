@@ -272,9 +272,35 @@ public class GrantDefaultService {
         if (fromUserId == null || toUserId == null) {
             throw new IllegalArgumentException("The outgoing and incoming owner ids are required");
         }
+        applyInstanceTierHandover(fromUserId, toUserId, actorUserId);
+    }
+
+    /**
+     * Emergency variant of {@link #transferInstanceSuperAdmin} (PLAN-0767 M1-5, spec §6 door 2):
+     * the {@code instance_owner} pointer is empty, so there is no outgoing owner to demote, lock or
+     * rematerialize. Everything else runs through the same core — ascending user locks, the
+     * write-then-count {@code LAST_SUPER_ADMIN} guard and the durable authorization audit — so the
+     * two public faces cannot drift apart. The caller ({@code InstanceOwnershipService}) owns the
+     * pointer write and the {@code instance_owner_emergency_transferred} audit row.
+     */
+    @Transactional
+    public void assignInstanceSuperAdminWhenUnowned(UUID toUserId, UUID actorUserId) {
+        if (toUserId == null) {
+            throw new IllegalArgumentException("The incoming owner id is required");
+        }
+        applyInstanceTierHandover(null, toUserId, actorUserId);
+    }
+
+    /**
+     * Single core for both faces. {@code fromUserId == null} means "unowned instance": no demotion,
+     * no lock on a former owner and no rematerialization of it; the incoming account is promoted and
+     * rematerialized exactly as on the transfer path.
+     */
+    private void applyInstanceTierHandover(UUID fromUserId, UUID toUserId, UUID actorUserId) {
         dbLockTimeout.apply();
-        List<UUID> orderedSubjects = new ArrayList<>(
-                new LinkedHashSet<>(List.of(fromUserId, toUserId)));
+        List<UUID> orderedSubjects = new ArrayList<>(fromUserId == null
+                ? new LinkedHashSet<>(List.of(toUserId))
+                : new LinkedHashSet<>(List.of(fromUserId, toUserId)));
         orderedSubjects.sort(UUID::compareTo);
         for (UUID subjectId : orderedSubjects) {
             userLock.lockAndFind(subjectId)
@@ -287,7 +313,7 @@ public class GrantDefaultService {
                 .orElseThrow(() -> new IllegalStateException(
                         "System role ADMIN is missing (V87 must have been applied)"));
 
-        boolean handover = !fromUserId.equals(toUserId);
+        boolean handover = fromUserId != null && !fromUserId.equals(toUserId);
         Set<UUID> tierRoleIds = roleRepository
                 .findByNameIn(SystemAccessRoleCatalog.INSTANCE_TIER_ROLES)
                 .stream()
@@ -298,14 +324,24 @@ public class GrantDefaultService {
         }
         replaceInstanceTierBinding(toUserId, superAdmin, tierRoleIds, actorUserId);
 
-        materializer.materializeSubjectWithEpochBump(SUBJECT_USER, fromUserId, actorUserId, null);
-        if (handover) {
+        if (fromUserId != null) {
+            materializer.materializeSubjectWithEpochBump(SUBJECT_USER, fromUserId, actorUserId, null);
+        }
+        if (handover || fromUserId == null) {
             materializer.materializeSubjectWithEpochBump(SUBJECT_USER, toUserId, actorUserId, null);
         }
-        auditLogger.recordDurableChange(actorUserId == null ? null : actorUserId.toString(), null,
-                "authorization_instance_super_admin_transferred", "user", toUserId.toString(),
-                "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance from=" + fromUserId
-                        + " to=" + toUserId);
+        String fromDetail = fromUserId == null ? "<none>" : fromUserId.toString();
+        if (fromUserId == null) {
+            auditLogger.recordDurableChange(actorUserId == null ? null : actorUserId.toString(), null,
+                    "authorization_instance_super_admin_assigned", "user", toUserId.toString(),
+                    "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance from=<none> to="
+                            + toUserId);
+        } else {
+            auditLogger.recordDurableChange(actorUserId == null ? null : actorUserId.toString(), null,
+                    "authorization_instance_super_admin_transferred", "user", toUserId.toString(),
+                    "role=" + SystemAccessRoleCatalog.SUPER_ADMIN + " scope=instance from=" + fromUserId
+                            + " to=" + toUserId);
+        }
 
         long activeSuperAdmins = bindingRepository.countActiveUserBindingsForRole(
                 superAdmin.getId(), UserStatus.ACTIVE);
@@ -313,8 +349,13 @@ public class GrantDefaultService {
             throw new CpApiException(HttpStatus.CONFLICT, "LAST_SUPER_ADMIN",
                     "The instance must keep at least one usable SUPER_ADMIN");
         }
-        logger.info("[POLICY] event=instance_super_admin_transferred from={} to={} activeHolders={}",
-                fromUserId, toUserId, activeSuperAdmins);
+        if (fromUserId == null) {
+            logger.info("[POLICY] event=instance_super_admin_assigned from={} to={} activeHolders={}",
+                    fromDetail, toUserId, activeSuperAdmins);
+        } else {
+            logger.info("[POLICY] event=instance_super_admin_transferred from={} to={} activeHolders={}",
+                    fromUserId, toUserId, activeSuperAdmins);
+        }
     }
 
     /** Replaces the subject's instance tier binding with {@code role} (one tier row per user). */
