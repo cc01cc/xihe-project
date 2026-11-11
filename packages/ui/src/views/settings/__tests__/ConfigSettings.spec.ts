@@ -299,7 +299,7 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         const partition = wrapper.find('[data-testid="provider-partition"]');
         expect(partition.text()).toContain("实例默认模型");
         // task-152 定稿话术（task-167）：整组层序 + 连接归属供给层 + 末位共享实例兜底。
-        expect(partition.text()).toContain("工作区 > 用户 > 实例");
+        expect(partition.text()).toContain("工作区 > 工作区默认 > 个人 > 实例");
         expect(partition.text()).toContain("实例共享连接");
         expect(wrapper.find('[data-testid="llm-instance-default"]').exists()).toBe(true);
         expect(wrapper.find("provider-hub-stub").exists()).toBe(false);

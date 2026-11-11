@@ -38,6 +38,8 @@ function sourceLabel(item: ConfigKeyMeta): string {
             return t("settings.configSourceEnvShort");
         case "workspace":
             return t("settings.ia.layerWorkspaceShort");
+        case "workspace-default":
+            return t("settings.ia.layerWorkspaceDefaultShort");
         case "user":
             return t("settings.ia.layerUserShort");
         case "instance":

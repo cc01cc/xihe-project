@@ -46,8 +46,9 @@ const isPick = computed(() => panel.value?.primaryAction === "pick");
 /** 层名中文化：英文 `user` 直接上屏是缺陷（用户层要读成「用户层」）。 */
 const LAYER_NAME: Record<MockLayer, string> = {
     instance: "实例层",
+    "workspace-default": "工作区默认层",
     workspace: "工作区层",
-    user: "用户层",
+    user: "个人层",
 };
 const selectedRow = computed(
     () => panel.value?.rows.find((row) => row.id === props.selectedRowId) ?? panel.value?.rows[0],

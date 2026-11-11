@@ -26,7 +26,8 @@ import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 
 /**
  * PLAN-0560 T2.4: 域清单 + 摘要 + 保存/重置 + ProviderHub/embedding/templates 分派，
- * 从 ConfigSettings 抽出，供全局 Instance/User 与工作区设置页（workspace 层）共用。
+ * 从 ConfigSettings 抽出，供全局设置域页共用；工作区设置页的配置 tab 已随 task-253 移除，
+ * 这里不再有 workspace 层分支（工作区层是每工作区的覆盖层，由工作区面承接）。
  * 只搬代码，不改 data-testid。
  */
 const props = withDefaults(

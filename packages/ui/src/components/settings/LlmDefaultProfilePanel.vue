@@ -21,7 +21,7 @@ import type { ProviderDefinition } from "../../types/providerConnection";
  *
  * 只写一个完整的 profile 单元（providerId + connectionKey + model，D-913③：不扩
  * ProviderScope）。task-152 定稿 resolver（llm/embedding 共用单 helper）：profile 整组
- * 按 workspace > user > instance 取第一组存在的配置，不做键级合并；连接归属提供该
+ * 按 workspace > workspace-default > user > instance 取第一组存在的配置，不做键级合并；连接归属提供该
  * profile 的那一层（workspace→WORKSPACE、user/instance→消费用户 USER，owner 规则而
  * 非优先序）；该层连接不可用时唯一末位兜底是共享 INSTANCE 连接，不跨层搜索；全无
  * 匹配 llm 返回 409 LLM_PROFILE_CONFLICT（不静默回落）。

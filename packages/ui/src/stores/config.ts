@@ -9,10 +9,10 @@ import { listProviderConnections } from "../services/providerConnectionService";
 import { parseLlmProfileValue } from "../services/llmProviderProfile";
 
 /**
- * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**移除 per-workspace layer** ——
- * 全局设置不再有 workspace 层，工作区内部设置本轮不设计、也不再走全局 config 的 workspace 层。
- * 这里收窄不是文档美化：任何还想传 "workspace" 的调用点会在 typecheck 当场失败，
- * 是「彻底移除」的编译期保证（契约侧由 task-250 只标 deprecated，不删）。
+ * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**全局设置不再暴露 workspace 层** ——
+ * 工作区层是每工作区的覆盖层，编辑面在工作区设置页，不在全局设置左栏。
+ * 这里收窄不是文档美化：任何还想在全局设置传 "workspace" 的调用点会在 typecheck 当场失败，
+ * 是「全局面不写 workspace 层」的编译期保证（CP 契约侧该层仍在，只按 deprecated 处理）。
  *
  * PLAN-0766（D-928/D-931，task-160）：新增的是**共享的 workspace-default 层**，不是
  * per-workspace 层。wire 值小写 `workspace-default`（契约 b05aad952: GET
@@ -24,7 +24,8 @@ export type ConfigLayer = "instance" | "workspace-default" | "user";
 
 /**
  * 配置值的**来源**（GET /config/{domain}/meta 回填的 provenance），与上面的层**不是同一个轴**：
- * CP 仍可能报 source=workspace（历史行、或 CP 侧其它写入口），UI 只负责如实显示它。
+ * workspace 层仍在 CP（每工作区的覆盖层），只是全局设置不写它；CP 仍可能报
+ * source=workspace（该层的行为、历史行或 CP 侧其它写入口），UI 只负责如实显示它。
  * 所以这里保留 "workspace" 这个取值，不随 ConfigLayer 一起收窄。
  */
 export type ConfigSource =

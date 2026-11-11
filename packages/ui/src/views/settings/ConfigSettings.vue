@@ -13,8 +13,9 @@ const { t } = useI18n(),
     configStore = useConfigStore(),
     authStore = useAuthStore();
 
-// PLAN-0560：全局设置只保留 Instance/User 两层；Workspace 配置移至各工作区
-// 设置页（/workspace/:workspaceId/settings）。旧 ?tab=workspace 不做兼容（决策 #6）。
+// PLAN-0560 + task-253：全局设置左栏只有 Instance/User 两个页签（另有共享的 workspace-default
+// 层，走 /settings/workspace-default 域页路由，不在本页签里）；工作区层是每工作区的覆盖层，
+// 编辑面在工作区设置页。旧 ?tab=workspace 不做兼容（决策 #6）。
 type LayerTab = "instance" | "user";
 // BL-392: the instance layer (and the import/export action it owns) is still gated on CP by the
 // `cap:instance:admin` **capability**, not by an action atom — `ConfigController`'s N2/N3 atoms are

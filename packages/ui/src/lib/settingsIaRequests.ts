@@ -21,22 +21,22 @@ import { LAYER_DOMAINS, type ConfigDomain, type ConfigLayer } from "../stores/co
 
 const NON_DOMAIN_SEGMENTS = new Set(["export", "import"]);
 
-/** 是否为设置区矩阵里**当前仍在用**的层（task-253 之后只有 `instance` / `user`）。 */
+/** 是否为设置区矩阵里**全局设置面仍在用**的层（task-253 后是 `instance` / `workspace-default` / `user`）。 */
 export function isConfigLayer(value: unknown): value is ConfigLayer {
     return typeof value === "string" && LAYER_DOMAINS[value as ConfigLayer] !== undefined;
 }
 
 /**
- * 解析用的层值：**含已退役的 `workspace`**。
+ * 解析用的层值：**含不在全局设置面的 `workspace`**。
  *
- * <p>task-253 把 UI 的 `ConfigLayer` 收敛为 `instance | user`，但 CP 契约侧工作区层只是
- * deprecated、尚未删除，历史/遗留请求里仍可能出现它。防复活守卫必须能**识别**这种请求 ——
- * 若解析只用 `isConfigLayer` 判，`layer === "workspace"` 会永远 false，守卫变成死断言
- * （绿着但什么都没验）。</p>
+ * <p>task-253 把全局设置面的 `ConfigLayer` 收敛为 `instance | workspace-default | user`；
+ * workspace 层本身仍在 CP（每工作区的覆盖层），但全局设置不得再对它发起请求。防复活守卫
+ * 必须能**识别**这种请求 —— 若解析只用 `isConfigLayer` 判，`layer === "workspace"` 会永远
+ * false，守卫变成死断言（绿着但什么都没验）。</p>
  */
 export type RequestLayer = ConfigLayer | "workspace";
 
-/** 已退役、但仍需被守卫识别的层值。加新值时同步 `RequestLayer`。 */
+/** 不在全局设置面、但仍需被守卫识别的层值。加新值时同步 `RequestLayer`。 */
 const RETIRED_LAYERS: readonly string[] = ["workspace"];
 
 function isRequestLayer(value: unknown): value is RequestLayer {

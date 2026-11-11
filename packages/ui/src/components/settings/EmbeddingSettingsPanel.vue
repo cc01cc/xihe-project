@@ -77,12 +77,13 @@ function modelSourceText(source: string | null | undefined): string {
     return source;
 }
 
-/** F-07：`profileScope` 是 meta 机器值（instance/user），正文用「实例层/用户层」。 */
+/** F-07：`profileScope` 是 meta 机器值（instance/user/workspace-default），正文用「实例层/个人层」。 */
 function profileScopeText(scope: string | null | undefined): string {
     const KEY: Record<string, string> = {
         instance: "settings.ia.layerInstanceShort",
         user: "settings.ia.layerUserShort",
         workspace: "settings.ia.layerWorkspaceShort",
+        "workspace-default": "settings.ia.layerWorkspaceDefaultShort",
     };
     const key = scope ? KEY[scope] : undefined;
     return key ? t(key) : (scope ?? "");
