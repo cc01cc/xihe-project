@@ -7,6 +7,10 @@ import { writableAtOf, type MockDomain } from "../data/types";
  * —— 列表态 / 详情态的版式原由设计稿 `screens/DomainPanelCanvas.vue` 渲染，该文件已随 `38c5b833` 删除；
  * 本文件现在只留数据。
  *
+ * 徽标：面板域的资源计数由统一派生函数 `badgeOf()` 计算（量资源条数，单位取 `panel.unit`）；
+ * 本文件**不提供第二个派生实现** —— 早先的 `panelBadgeOf()` 要求写死 unit，导致没有该 unit 的面板域
+ * （如 `llm-provider`）长期显示「—」；该函数已删除，勿重新引入。
+ *
  * 三条硬纪律的落点：
  * 1. 真组件：本文件不含任何标记，版式全部由 canvas 用 @/components/ui/** 渲染；
  * 2. 结论句标来源：summary / help 里凡是「结论」都带 [源码 file:line] / [文档] / [推导]；
