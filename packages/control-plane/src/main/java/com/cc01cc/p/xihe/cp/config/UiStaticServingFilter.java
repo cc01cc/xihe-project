@@ -57,11 +57,12 @@ public class UiStaticServingFilter extends OncePerRequestFilter {
 
     /**
      * Paths owned by the API, actuator, springdoc or the error dispatch. These are handed back to
-     * the original chain verbatim. `/swagger-ui.html` is listed separately because the segment
-     * boundary check below would otherwise not match the suffixed form.
+     * the original chain verbatim. `/swagger-ui.html` and `/v3/api-docs.yaml` are listed separately
+     * because the segment boundary check below would otherwise not match the suffixed form
+     * (task-194: same reason SecurityConfig needs the explicit `.yaml` permit).
      */
     private static final List<String> API_PREFIXES = List.of(
-            "/api", "/internal", "/actuator", "/v3/api-docs", "/swagger-ui.html", "/swagger-ui", "/error");
+            "/api", "/internal", "/actuator", "/v3/api-docs", "/v3/api-docs.yaml", "/swagger-ui.html", "/swagger-ui", "/error");
 
     private static final Map<String, String> CONTENT_TYPES = Map.ofEntries(
             Map.entry("html", "text/html; charset=utf-8"),
