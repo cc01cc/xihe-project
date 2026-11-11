@@ -32,20 +32,21 @@ export type SettingsLayer = ConfigLayer;
  * 持有者（能力原子求值，不是角色名判断）。
  */
 export const SETTINGS_LAYERS_LOW_TO_HIGH: readonly SettingsLayer[] = [
+    "instance",
     "user",
     "workspace-default",
-    "instance",
 ];
 
 /**
- * **显示顺序 = 层进顺序取反序（高 → 低）**：instance → user → workspace-default。
+ * **显示顺序 = 层进顺序（低 → 高，当前层在最后）**：instance → user → workspace-default。
  *
- * task-77：唯一真相在上面那个 `SETTINGS_LAYERS_LOW_TO_HIGH`（低 → 高：personal <
- * workspace-default < instance，与 `LlmDefaultProfilePanel` 的取值优先级
- * `workspace > workspace-default > personal > instance` 同义）。这里只做 `reverse()`，
- * **禁止**在本文件或渲染处再手写第二份字面量数组。
+ * task-77：唯一真相在上面那个 `SETTINGS_LAYERS_LOW_TO_HIGH`（低 → 高：instance < personal <
+ * workspace-default，与 `LlmDefaultProfilePanel` 的取值优先级
+ * `workspace > workspace-default > personal > instance` 同义）。左栏自上而下就是升序，
+ * 所以这里只做一次拷贝 —— **禁止**在本文件或渲染处再手写第二份字面量数组；右栏徽标要
+ * 高 → 低显示时，由消费方对这个数组取反序。
  */
-export const SETTINGS_LAYERS: readonly SettingsLayer[] = [...SETTINGS_LAYERS_LOW_TO_HIGH].reverse();
+export const SETTINGS_LAYERS: readonly SettingsLayer[] = [...SETTINGS_LAYERS_LOW_TO_HIGH];
 
 /** 用户层不可写的域（= 用户层矩阵里没有的那些）：logging / approval-policy / job-policy。 */
 export function isInstanceOnlyForUser(domain: ConfigDomain): boolean {

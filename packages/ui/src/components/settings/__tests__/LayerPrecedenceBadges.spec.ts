@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import LayerPrecedenceBadges from "../LayerPrecedenceBadges.vue";
 import { i18n } from "../../../i18n";
+import { SETTINGS_LAYERS } from "../../../lib/settingsIa";
 
 /**
  * PLAN-0766 T3.2：四层徽标必须同时画「工作区 / 工作区默认 / 个人 / 实例」并标注当前层，
@@ -45,5 +46,17 @@ describe("LayerPrecedenceBadges", () => {
         expect(text).toContain("生效顺序");
         expect(text).toContain("环境变量与管理员锁定");
         expect(text).toContain("立即生效");
+    });
+
+    it("徽标次序（去掉 workspace）= SETTINGS_LAYERS（高 → 低），与左栏同源", () => {
+        // 顺序真相只有一处：settingsIa 的 SETTINGS_LAYERS；徽标不许再自带一份字面量顺序。
+        const wrapper = mount(LayerPrecedenceBadges, {
+            props: { layer: "user" },
+            global: { plugins: [i18n] },
+        });
+        const ids = wrapper
+            .findAll('[data-testid^="layer-badge-"]')
+            .map((el) => (el.attributes("data-testid") ?? "").replace("layer-badge-", ""));
+        expect(ids).toEqual(["workspace", ...[...SETTINGS_LAYERS].reverse()]);
     });
 });

@@ -433,6 +433,74 @@ const layerHeaderClass =
 
             <!-- PLAN-0766（task-160）：共享工作区默认层。它不是"某个工作区"的设置，而是对所有
              没有显式 workspace 覆盖的工作区生效的部署级默认值；入口形态与实例/用户层一致。 -->
+            <!-- 层序：左栏按高 → 低显示（instance → personal → workspace default），故个人层排在默认层之前。 -->
+            <Collapsible v-model:open="userOpen" class="mt-[16px]">
+                <SidebarGroup class="p-0">
+                    <CollapsibleTrigger
+                        id="settings-nav-user"
+                        data-testid="settings-nav-group-primary"
+                        :class="layerHeaderClass"
+                    >
+                        <ChevronRight
+                            class="size-4 shrink-0 transition-transform"
+                            :class="userOpen ? 'rotate-90' : ''"
+                            aria-hidden="true"
+                        />
+                        <component
+                            :is="LAYER_ICONS.user"
+                            class="size-4 shrink-0 text-muted-foreground"
+                            aria-hidden="true"
+                        />
+                        <span class="min-w-0 flex-1 truncate">{{
+                            t("settings.ia.layerUser")
+                        }}</span>
+                        <span data-testid="settings-nav-count-user" :class="countBadgeClass">
+                            {{ t("settings.ia.entryCount", { count: userEntryCount }) }}
+                        </span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                        <SidebarGroupLabel
+                            as="p"
+                            data-testid="settings-nav-group-secondary"
+                            :class="sectionLabelClass"
+                        >
+                            {{ t("settings.ia.groupDomains") }}
+                        </SidebarGroupLabel>
+                        <SidebarMenu data-testid="settings-nav-group-items" class="gap-0.5">
+                            <SidebarMenuItem v-for="item in userDomains" :key="item.id">
+                                <SidebarMenuButton
+                                    as-child
+                                    :is-active="isDomainActive('user', item.id)"
+                                    :class="[
+                                        itemBaseClass,
+                                        isDomainActive('user', item.id)
+                                            ? itemActiveClass
+                                            : itemIdleClass,
+                                    ]"
+                                >
+                                    <router-link
+                                        :to="item.path"
+                                        :data-testid="'settings-nav-domain-user-' + item.id"
+                                    >
+                                        <component
+                                            :is="iconFor(DOMAIN_ICONS, item.id)"
+                                            :class="itemIconClass"
+                                            aria-hidden="true"
+                                        />
+                                        <span class="min-w-0 truncate">{{ t(item.labelKey) }}</span>
+                                    </router-link>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                        </SidebarMenu>
+                        <SettingsResourceNav
+                            :group-label-key="'settings.ia.groupMyResources'"
+                            :items="userResources"
+                        />
+                    </CollapsibleContent>
+                </SidebarGroup>
+            </Collapsible>
+
+            <!-- 层序：同上，默认层排在个人层之后；顺序真相见 lib/settingsIa.ts 的 SETTINGS_LAYERS_LOW_TO_HIGH。 -->
             <Collapsible v-model:open="workspaceDefaultOpen" class="mt-[16px]">
                 <SidebarGroup class="p-0">
                     <CollapsibleTrigger
@@ -500,72 +568,6 @@ const layerHeaderClass =
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
                         </SidebarMenu>
-                    </CollapsibleContent>
-                </SidebarGroup>
-            </Collapsible>
-            <!-- 用户层：非当前层默认收起，「看一眼」时点条目才导航 -->
-            <Collapsible v-model:open="userOpen" class="mt-[16px]">
-                <SidebarGroup class="p-0">
-                    <CollapsibleTrigger
-                        id="settings-nav-user"
-                        data-testid="settings-nav-group-primary"
-                        :class="layerHeaderClass"
-                    >
-                        <ChevronRight
-                            class="size-4 shrink-0 transition-transform"
-                            :class="userOpen ? 'rotate-90' : ''"
-                            aria-hidden="true"
-                        />
-                        <component
-                            :is="LAYER_ICONS.user"
-                            class="size-4 shrink-0 text-muted-foreground"
-                            aria-hidden="true"
-                        />
-                        <span class="min-w-0 flex-1 truncate">{{
-                            t("settings.ia.layerUser")
-                        }}</span>
-                        <span data-testid="settings-nav-count-user" :class="countBadgeClass">
-                            {{ t("settings.ia.entryCount", { count: userEntryCount }) }}
-                        </span>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                        <SidebarGroupLabel
-                            as="p"
-                            data-testid="settings-nav-group-secondary"
-                            :class="sectionLabelClass"
-                        >
-                            {{ t("settings.ia.groupDomains") }}
-                        </SidebarGroupLabel>
-                        <SidebarMenu data-testid="settings-nav-group-items" class="gap-0.5">
-                            <SidebarMenuItem v-for="item in userDomains" :key="item.id">
-                                <SidebarMenuButton
-                                    as-child
-                                    :is-active="isDomainActive('user', item.id)"
-                                    :class="[
-                                        itemBaseClass,
-                                        isDomainActive('user', item.id)
-                                            ? itemActiveClass
-                                            : itemIdleClass,
-                                    ]"
-                                >
-                                    <router-link
-                                        :to="item.path"
-                                        :data-testid="'settings-nav-domain-user-' + item.id"
-                                    >
-                                        <component
-                                            :is="iconFor(DOMAIN_ICONS, item.id)"
-                                            :class="itemIconClass"
-                                            aria-hidden="true"
-                                        />
-                                        <span class="min-w-0 truncate">{{ t(item.labelKey) }}</span>
-                                    </router-link>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
-                        </SidebarMenu>
-                        <SettingsResourceNav
-                            :group-label-key="'settings.ia.groupMyResources'"
-                            :items="userResources"
-                        />
                     </CollapsibleContent>
                 </SidebarGroup>
             </Collapsible>

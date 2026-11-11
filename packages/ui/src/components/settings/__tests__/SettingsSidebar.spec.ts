@@ -279,6 +279,22 @@ describe("SettingsSidebar", () => {
         expect(document.cookie).toBe(before);
         expect(document.cookie).not.toContain("sidebar_state");
     });
+
+    it("层组次序 = 高 → 低（instance → user → workspace-default）", async () => {
+        // 锚在语义 id（settings-nav-*）上，不锚 class/testid 组名：
+        // `settings-nav-group-primary` 被实例组与个人组复用，拿它排序会得到错误次序。
+        // 顺序真相 = lib/settingsIa.ts#SETTINGS_LAYERS（= SETTINGS_LAYERS_LOW_TO_HIGH 的反序）。
+        state.capability = true;
+        const wrapper = mountSidebar("instance");
+        await flushPromises();
+        const ids = wrapper.findAll('[id^="settings-nav-"]').map((el) => el.attributes("id"));
+        expect(ids.slice(0, 3)).toEqual([
+            "settings-nav-instance",
+            "settings-nav-user",
+            "settings-nav-workspace-default",
+        ]);
+        wrapper.unmount();
+    });
 });
 
 function clearCookies() {

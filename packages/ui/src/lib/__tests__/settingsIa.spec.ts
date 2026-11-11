@@ -11,6 +11,7 @@ import {
     layersForDomain,
     resolveLayerRoute,
     SETTINGS_LAYERS,
+    SETTINGS_LAYERS_LOW_TO_HIGH,
     settingsDomainPath,
     settingsLayerForPath,
     type ConfigDomain,
@@ -48,7 +49,22 @@ describe("settings IA matrix", () => {
         // service-only 域（config API 只收 12 个 UI 域）⇒ UI 矩阵是 9 − 1 = 8，且不含
         // per-workspace 的旧 workspace 层（task-253 已退役）。
         expect(domainsForLayer("workspace-default")).toHaveLength(8);
-        expect(SETTINGS_LAYERS).toEqual(["instance", "workspace-default", "user"]);
+        // task-77：断言**语义顺序**，不再断言字面量（旧写法 `["instance","workspace-default","user"]`
+        // 因 reverse 后恰好相等而长期假绿）。判据：低 → 高为 instance < personal < workspace-default
+        // （与取值优先级 `workspace > workspace-default > personal > instance` 同义）。
+        expect(SETTINGS_LAYERS_LOW_TO_HIGH).toEqual(["instance", "user", "workspace-default"]);
+        expect(SETTINGS_LAYERS).toEqual([...SETTINGS_LAYERS_LOW_TO_HIGH]);
+        expect(SETTINGS_LAYERS_LOW_TO_HIGH.indexOf("instance")).toBeLessThan(
+            SETTINGS_LAYERS_LOW_TO_HIGH.indexOf("user"),
+        );
+        expect(SETTINGS_LAYERS_LOW_TO_HIGH.indexOf("user")).toBeLessThan(
+            SETTINGS_LAYERS_LOW_TO_HIGH.indexOf("workspace-default"),
+        );
+        // 左栏自上而下 = 升序：instance 在最上、workspace-default 在最下。
+        expect(SETTINGS_LAYERS[0]).toBe("instance");
+        expect(SETTINGS_LAYERS.indexOf("user")).toBeLessThan(
+            SETTINGS_LAYERS.indexOf("workspace-default"),
+        );
     });
 
     it("treats logging/approval-policy/job-policy as instance-only once the workspace layer is gone", () => {
@@ -56,7 +72,8 @@ describe("settings IA matrix", () => {
         expect(layersForDomain("approval-policy")).toEqual(["instance", "workspace-default"]);
         expect(layersForDomain("job-policy")).toEqual(["instance", "workspace-default"]);
         expect(layersForDomain("agent-profile")).toEqual(["instance", "user"]);
-        expect(layersForDomain("rag")).toEqual(["instance", "workspace-default", "user"]);
+        // 顺序 = 显示顺序（低 → 高，取 SETTINGS_LAYERS 的过滤结果）：instance → user → workspace-default
+        expect(layersForDomain("rag")).toEqual(["instance", "user", "workspace-default"]);
     });
 
     it("routes only the eight writable domains on the workspace-default layer", () => {
