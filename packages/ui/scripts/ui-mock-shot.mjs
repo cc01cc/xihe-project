@@ -56,40 +56,23 @@ const SHOT_CSS = [
     "*::-webkit-scrollbar { width: 0 !important; height: 0 !important; }",
 ].join("\n");
 
-/** 交付镜头：3 个专用面板域的列表态 + 详情态（层固定 user，?notes=0），以及 4 张整屏（#1..#6 按 hash 选屏）。 */
-const SHOTS = [
-    { id: "01", name: "embedding-list", query: "?notes=0&domain=embedding&layer=user#1" },
-    {
-        id: "02",
-        name: "embedding-detail",
-        query: "?notes=0&domain=embedding&detail=1&layer=user#1",
-    },
-    {
-        id: "03",
-        name: "agent-templates-list",
-        query: "?notes=0&domain=agent-templates&layer=user#1",
-    },
-    {
-        id: "04",
-        name: "agent-templates-detail",
-        query: "?notes=0&domain=agent-templates&detail=1&layer=user#1",
-    },
-    {
-        id: "05",
-        name: "api-request-templates-list",
-        query: "?notes=0&domain=api-request-templates&layer=user#1",
-    },
-    {
-        id: "06",
-        name: "api-request-templates-detail",
-        query: "?notes=0&domain=api-request-templates&detail=1&layer=user#1",
-    },
-    // 整屏按 hash 选屏（MockApp.readSheet）：#1 设置页整屏 / #4 全局导航 / #5 三栏 sash / #6 空态与权限。
-    { id: "07", name: "workspace-sash", query: "?notes=0#5" },
-    { id: "08", name: "empty-alert", query: "?notes=0#6" },
-    { id: "09", name: "global-nav", query: "?notes=0#4" },
-    { id: "10", name: "settings-instance", query: "?notes=0#1" },
-];
+/**
+ * fullPage（task-127 单页整图）变体：**不钉 1080 高** —— 前三行是把整屏画布压到 1080 的钳制，
+ * 单页长图要的是内容真实高度。只保留「动画/光标/滚动条」三条稳定化规则。
+ */
+const SHOT_CSS_FULL = [
+    "[data-mock-canvas] * { transition: none !important; animation: none !important; caret-color: transparent !important; }",
+    "[data-mock-canvas] { scrollbar-width: none !important; }",
+    "html, body { overflow: hidden !important; scrollbar-width: none !important; }",
+    "*::-webkit-scrollbar { width: 0 !important; height: 0 !important; }",
+].join("\n");
+
+/**
+ * 交付镜头（task-127 / D-903 起）：**单页合一**。SHEETS/hash 切换器已撤（MockApp 直渲
+ * MockSinglePage），交付图 = 单页整图一张（fullPage 收全高）；query 为空 ⇒ 干净基址天然正确。
+ * 退役的场景稿条目（?notes=0&domain=…#N 与 #4/#5/#6 整屏）留在 git 历史，勿复用。
+ */
+const SHOTS = [{ id: "01", name: "single-page-full", query: "", fullPage: true }];
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
 
@@ -675,7 +658,8 @@ const findScroller = () => {
 async function shootOne(page, base, shot, outDir) {
     await page.goto(base + "/preview-mock.html" + shot.query, { waitUntil: "networkidle" });
     await page.waitForFunction(() => document.querySelectorAll("[data-mock-canvas]").length === 1);
-    await page.addStyleTag({ content: SHOT_CSS });
+    // fullPage（单页长图）用不钳高的变体，整屏镜头仍用钳到 1080 的 SHOT_CSS。
+    await page.addStyleTag({ content: shot.fullPage ? SHOT_CSS_FULL : SHOT_CSS });
     await page.evaluate(() => document.fonts.ready);
     await page.evaluate(() => {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -687,10 +671,13 @@ async function shootOne(page, base, shot, outDir) {
     await page.waitForTimeout(400);
 
     const canvas = page.locator("[data-mock-canvas]");
+    const shotOpts = shot.fullPage
+        ? { fullPage: true, animations: "disabled" }
+        : { animations: "disabled" };
     let stable = null;
     let previous = null;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-        const buf = await canvas.screenshot({ animations: "disabled" });
+        const buf = await canvas.screenshot(shotOpts);
         const digest = sha(buf);
         if (previous && previous.digest === digest) {
             stable = { buf, digest, attempts: attempt + 1 };
@@ -708,7 +695,9 @@ async function shootOne(page, base, shot, outDir) {
     const mainFile = path.join(outDir, shot.id + "-" + shot.name + ".png");
     fs.writeFileSync(mainFile, stable.buf);
     const size = { width: stable.buf.readUInt32BE(16), height: stable.buf.readUInt32BE(20) };
-    if (size.width !== CANVAS.width || size.height !== CANVAS.height) {
+    // fullPage 只校验宽下限（高 = 内容真实高度，宽 = 视口盒 2000px）；整屏镜头维持 1920×1080 契约。
+    const widthOk = shot.fullPage ? size.width >= CANVAS.width : size.width === CANVAS.width;
+    if (!widthOk || (!shot.fullPage && size.height !== CANVAS.height)) {
         throw new Error(shot.id + " 画布尺寸不对：" + size.width + "x" + size.height);
     }
 
@@ -746,7 +735,7 @@ async function shootOne(page, base, shot, outDir) {
         };
     });
 
-    const overflow = await page.evaluate(findScroller);
+    const overflow = shot.fullPage ? null : await page.evaluate(findScroller);
     let bottomFile = null;
     if (overflow) {
         await page.waitForTimeout(300);
