@@ -745,3 +745,134 @@ describe("WorkspaceEnvironmentView job enum i18n (task-49)", () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// task-52：整页 i18n（骨架 / 状态 / 原因 / 提示四块）。
+// 此前页面骨架（eyebrow、副标题、加载态、三张卡的标题与字段名）与 recovery 文案、
+// Job 启动原因都写死中文 ⇒ en-US 界面下只有枚举字段是英文，其余整片中文。
+// 判据：①en-US 整页渲染文本**不得含 CJK**；②四块逐块与 `getLocaleMessage("en-US")` 现算值相等
+// ③zh 与 en 每一条词条都不同（证明真的翻译过，而不是两侧复制同一串）。
+// ---------------------------------------------------------------------------
+/** 本卡新增/复用的全部 environment 词条键（50 个新键；不含 task-49 的三张枚举表）。 */
+const ENVIRONMENT_MESSAGE_KEYS = [
+    "environmentEyebrow",
+    "environmentSubtitle",
+    "environmentLoading",
+    "environmentWorkspaceId",
+    "environmentUnmaterializedTitle",
+    "environmentUnmaterializedHint",
+    "environmentPrepare",
+    "environmentPreparePreparing",
+    "environmentStorageTitle",
+    "environmentExecutionTitle",
+    "environmentRuntimeTitle",
+    "environmentJobsTitle",
+    "environmentFieldBackend",
+    "environmentFieldStorageMode",
+    "environmentFieldStorageRef",
+    "environmentFieldHostPath",
+    "environmentFieldStatus",
+    "environmentFieldExecutionMode",
+    "environmentFieldCapability",
+    "environmentFieldGeneration",
+    "environmentFieldSpecHash",
+    "environmentFieldDevice",
+    "environmentFieldLastHeartbeat",
+    "environmentFieldReleaseStatus",
+    "environmentValueUnknown",
+    "environmentValueNone",
+    "environmentValueNotObserved",
+    "environmentCapabilityAvailable",
+    "environmentCapabilityUnavailable",
+    "environmentCapabilityReasonUnknown",
+    "environmentBackendUnknown",
+    "environmentJobCapabilityUnknown",
+    "environmentJobCapabilityUnavailable",
+    "environmentJobCapabilityReasonMissing",
+    "environmentJobCapabilitySandboxed",
+    "environmentJobCapabilityUnrestricted",
+    "environmentJobCapabilityUnknownIsolation",
+    "environmentJobCount",
+    "environmentJobsEmpty",
+    "environmentRecovery.ready",
+    "environmentRecovery.materializing",
+    "environmentRecovery.paused",
+    "environmentRecovery.stopped",
+    "environmentRecovery.destroying",
+    "environmentRecovery.degraded",
+    "environmentRecovery.blocked",
+    "environmentRecovery.stale",
+    "environmentRecovery.unbound",
+    "environmentRecovery.pending",
+    "environmentRecovery.unknown",
+] as const;
+
+/** 极简插值：把 `{name}` 换成入参（只用于断言期望值，不参与产品渲染）。 */
+function interpolate(template: string, params: Record<string, string | number>): string {
+    return template.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`));
+}
+
+describe("WorkspaceEnvironmentView full-page i18n (task-52)", () => {
+    it("en-US 界面：整页不得出现 CJK，且四块区域分别取 en-US 词条", async () => {
+        applyLocale("en-US");
+        // 带 jobCapability 的宿主后端工作区：让「原因」块落到可插值的那条文案上。
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            jobCapability: {
+                available: true,
+                canStart: true,
+                canIsolateFilesystem: true,
+                backendKind: "windows-mxc",
+                unavailableReason: null,
+            },
+        } as never);
+        mockedApi.getWorkspaceJobs.mockResolvedValue([] as never);
+
+        const wrapper = await mountView();
+
+        // ① 整页无 CJK —— 这是本卡的反向断言：漏一个键就会有一行中文漏出来。
+        expect(wrapper.text()).not.toMatch(CJK);
+
+        // ② 四块区域逐块与现算期望值对齐（不写死英文文案）。
+        const heading = wrapper.get('[data-testid="workspace-environment-heading"]').text();
+        expect(heading).toBe(messageIn("en-US", "workspace.environmentState"));
+
+        const recovery = wrapper.get('[data-testid="workspace-environment-recovery"]').text();
+        expect(recovery).toBe(messageIn("en-US", "workspace.environmentRecovery.ready"));
+
+        const startHint = wrapper.get('[data-testid="workspace-job-start-hint"]').text();
+        expect(startHint).toBe(
+            interpolate(messageIn("en-US", "workspace.environmentJobCapabilitySandboxed"), {
+                backend: "windows-mxc",
+            }),
+        );
+
+        // 提示块：无 durable Job 时的空态文案
+        expect(wrapper.get('[data-testid="workspace-jobs-panel"]').text()).toContain(
+            messageIn("en-US", "workspace.environmentJobsEmpty"),
+        );
+
+        // 骨架标题逐个在场（证明模板真的走了 t()，而不是恰好没有中文）
+        for (const key of [
+            "environmentEyebrow",
+            "environmentStorageTitle",
+            "environmentExecutionTitle",
+            "environmentRuntimeTitle",
+        ]) {
+            expect(wrapper.text()).toContain(messageIn("en-US", `workspace.${key}`));
+        }
+    });
+
+    it("zh-CN 界面：每条 environment 词条都有中文译文，且与 en-US 不同", () => {
+        for (const suffix of ENVIRONMENT_MESSAGE_KEYS) {
+            const key = `workspace.${suffix}`,
+                zh = messageIn("zh-CN", key),
+                en = messageIn("en-US", key);
+
+            expect(zh, key).not.toBe("");
+            expect(en, key).not.toBe("");
+            expect(zh, key).toMatch(CJK);
+            expect(zh, key).not.toBe(en);
+        }
+    });
+});

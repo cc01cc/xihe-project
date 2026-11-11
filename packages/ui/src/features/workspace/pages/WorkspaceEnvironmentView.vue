@@ -41,51 +41,48 @@ const route = useRoute(),
         return fromRoute || auth.currentWorkspaceId || "";
     });
 
-const STATUS_META: Record<string, { cls: string; recovery: string }> = {
+const STATUS_META: Record<string, { cls: string; recoveryKey: string }> = {
     ready: {
         cls: "border-emerald-500/40 text-emerald-700 dark:text-emerald-300",
-        recovery: "工作区已就绪，无需操作。",
+        recoveryKey: "workspace.environmentRecovery.ready",
     },
     materializing: {
         cls: "border-sky-500/40 text-sky-700 dark:text-sky-300",
-        recovery: "正在准备中（可能拉取沙盒镜像），请稍候并点击刷新查看进度。",
+        recoveryKey: "workspace.environmentRecovery.materializing",
     },
     // PLAN-0345: explicit 6-state entries — paused/stopped/destroying must not
     // fall into the unknown fallback (T3.1 UI assertion).
     paused: {
         cls: "border-sky-500/40 text-sky-700 dark:text-sky-300",
-        recovery: "已暂停（沙盒进程冻结保留）。下次使用会自动恢复，文件不会丢失。",
+        recoveryKey: "workspace.environmentRecovery.paused",
     },
     stopped: {
         cls: "border-amber-500/40 text-amber-700 dark:text-amber-300",
-        recovery: "已停止（长时间空闲回收）。再次使用会自动重新准备，文件不会丢失。",
+        recoveryKey: "workspace.environmentRecovery.stopped",
     },
     destroying: {
         cls: "border-red-500/40 text-red-700 dark:text-red-300",
-        recovery: "销毁中：沙盒正在清理。稍后可重新 Prepare workspace。",
+        recoveryKey: "workspace.environmentRecovery.destroying",
     },
     degraded: {
         cls: "border-amber-500/40 text-amber-700 dark:text-amber-300",
-        recovery: "部分降级：检查 Runtime 日志与 Docker 状态，文件不会丢失。",
+        recoveryKey: "workspace.environmentRecovery.degraded",
     },
     blocked: {
         cls: "border-red-500/40 text-red-700 dark:text-red-300",
-        recovery:
-            "已阻塞：确认 Docker Desktop 正在运行且 WSL2 集成已启用；检查宿主机目录可写；修复后点击刷新或重新 Prepare。",
+        recoveryKey: "workspace.environmentRecovery.blocked",
     },
     stale: {
         cls: "border-amber-500/40 text-amber-700 dark:text-amber-300",
-        recovery:
-            "状态过期：Runtime 心跳中断，点击刷新重新获取；长时间 stale 请检查 Runtime 进程。",
+        recoveryKey: "workspace.environmentRecovery.stale",
     },
     unbound: {
         cls: "border-amber-500/40 text-amber-700 dark:text-amber-300",
-        recovery:
-            "尚未物化：点击下方 Prepare workspace 手动准备，或直接使用文件/对话功能自动准备。",
+        recoveryKey: "workspace.environmentRecovery.unbound",
     },
     pending: {
         cls: "border-amber-500/40 text-amber-700 dark:text-amber-300",
-        recovery: "等待中：点击下方 Prepare workspace 手动准备，或直接使用文件/对话功能自动准备。",
+        recoveryKey: "workspace.environmentRecovery.pending",
     },
 };
 
@@ -94,7 +91,7 @@ const statusMeta = computed(() => {
     return (
         STATUS_META[s] ?? {
             cls: "border-amber-500/40 text-amber-700 dark:text-amber-300",
-            recovery: "未知状态：点击刷新重试；持续异常请检查 Runtime 与 Docker。",
+            recoveryKey: "workspace.environmentRecovery.unknown",
         }
     );
 });
@@ -252,18 +249,25 @@ const jobCapability = computed(() => environment.value?.jobCapability),
     );
 const jobStartReason = computed(() => {
     const capability = jobCapability.value;
-    if (!capability) return "Job 启动能力未知（Runtime 未上报）";
+    if (!capability) return t("workspace.environmentJobCapabilityUnknown");
     if (!jobStartAvailable.value) {
-        return `Job 启动不可用：${capability.unavailableReason ?? "后端未上报原因"}`;
+        return t("workspace.environmentJobCapabilityUnavailable", {
+            reason:
+                capability.unavailableReason ??
+                t("workspace.environmentJobCapabilityReasonMissing"),
+        });
     }
-    const backend = capability.backendKind || environment.value?.executionMode || "未知后端";
+    const backend =
+        capability.backendKind ||
+        environment.value?.executionMode ||
+        t("workspace.environmentBackendUnknown");
     if (capability.canIsolateFilesystem === true) {
-        return `可启动 Job · ${backend}（沙盒隔离）`;
+        return t("workspace.environmentJobCapabilitySandboxed", { backend });
     }
     if (capability.canIsolateFilesystem === false) {
-        return `可启动 Job · ${backend}（无隔离，可访问工作区外资源）`;
+        return t("workspace.environmentJobCapabilityUnrestricted", { backend });
     }
-    return `可启动 Job · ${backend}（隔离能力未知）`;
+    return t("workspace.environmentJobCapabilityUnknownIsolation", { backend });
 });
 
 // `hostPath` is a privileged projection. A null/safe projection must never be
@@ -435,16 +439,16 @@ onBeforeUnmount(stopPolling);
         <div class="mx-auto max-w-5xl">
             <header class="mb-8 border-b pb-5">
                 <p class="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                    工作区
+                    {{ t("workspace.environmentEyebrow") }}
                 </p>
                 <h1
                     data-testid="workspace-environment-heading"
                     class="mt-2 text-2xl font-semibold tracking-tight"
                 >
-                    环境状态
+                    {{ t("workspace.environmentState") }}
                 </h1>
                 <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-                    查看当前执行配置、存储绑定和 Runtime 运行状态。
+                    {{ t("workspace.environmentSubtitle") }}
                 </p>
             </header>
 
@@ -456,12 +460,12 @@ onBeforeUnmount(stopPolling);
                     @click="loadEnvironment()"
                 >
                     <RefreshCw class="mr-1 inline-block size-3.5" aria-hidden="true" />
-                    刷新
+                    {{ t("common.refresh") }}
                 </button>
             </div>
 
             <div v-if="loading" class="rounded-lg border p-6 text-sm text-muted-foreground">
-                正在加载环境...
+                {{ t("workspace.environmentLoading") }}
             </div>
             <div
                 v-else-if="error"
@@ -487,7 +491,9 @@ onBeforeUnmount(stopPolling);
                     class="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-5"
                 >
                     <div>
-                        <p class="text-sm text-muted-foreground">工作区 ID</p>
+                        <p class="text-sm text-muted-foreground">
+                            {{ t("workspace.environmentWorkspaceId") }}
+                        </p>
                         <p class="mt-1 break-all font-mono text-sm">
                             {{ environment.workspaceId }}
                         </p>
@@ -505,7 +511,7 @@ onBeforeUnmount(stopPolling);
                     class="rounded-lg border p-4 text-sm text-muted-foreground"
                     data-testid="workspace-environment-recovery"
                 >
-                    {{ statusMeta.recovery }}
+                    {{ t(statusMeta.recoveryKey) }}
                 </p>
 
                 <div
@@ -514,10 +520,11 @@ onBeforeUnmount(stopPolling);
                     data-testid="workspace-prepare-card"
                 >
                     <div>
-                        <p class="text-sm font-medium">此工作区尚未物化</p>
+                        <p class="text-sm font-medium">
+                            {{ t("workspace.environmentUnmaterializedTitle") }}
+                        </p>
                         <p class="mt-1 max-w-xl text-xs text-muted-foreground">
-                            首次物化将创建宿主机目录并启动沙盒容器（可能需拉取镜像，约 1–2 分钟）。
-                            也可以直接使用文件/对话功能，系统会自动准备。
+                            {{ t("workspace.environmentUnmaterializedHint") }}
                         </p>
                         <p v-if="prepareError" class="mt-2 text-xs text-destructive">
                             {{ prepareError }}
@@ -534,7 +541,11 @@ onBeforeUnmount(stopPolling);
                             class="mr-1 inline-block size-3 animate-spin"
                             aria-hidden="true"
                         />
-                        {{ preparing ? "Preparing…" : "Prepare workspace" }}
+                        {{
+                            preparing
+                                ? t("workspace.environmentPreparePreparing")
+                                : t("workspace.environmentPrepare")
+                        }}
                     </button>
                 </div>
 
@@ -617,18 +628,24 @@ onBeforeUnmount(stopPolling);
 
                 <div class="grid gap-5 md:grid-cols-2">
                     <article class="rounded-lg border p-5">
-                        <h2 class="font-medium">存储</h2>
+                        <h2 class="font-medium">{{ t("workspace.environmentStorageTitle") }}</h2>
                         <dl class="mt-4 space-y-3 text-sm">
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">后端</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldBackend") }}
+                                </dt>
                                 <dd>{{ environment.storageBackend }}</dd>
                             </div>
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">存储方式</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldStorageMode") }}
+                                </dt>
                                 <dd>{{ environment.storageMode }}</dd>
                             </div>
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">引用</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldStorageRef") }}
+                                </dt>
                                 <dd class="break-all font-mono text-right">
                                     {{ environment.storageRef }}
                                 </dd>
@@ -638,7 +655,9 @@ onBeforeUnmount(stopPolling);
                                 data-testid="workspace-host-path"
                                 class="flex justify-between gap-4"
                             >
-                                <dt class="text-muted-foreground">宿主机目录</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldHostPath") }}
+                                </dt>
                                 <dd class="break-all font-mono text-right">
                                     {{ disclosedHostPath }}
                                 </dd>
@@ -646,10 +665,12 @@ onBeforeUnmount(stopPolling);
                         </dl>
                     </article>
                     <article class="rounded-lg border p-5">
-                        <h2 class="font-medium">执行配置</h2>
+                        <h2 class="font-medium">{{ t("workspace.environmentExecutionTitle") }}</h2>
                         <dl class="mt-4 space-y-3 text-sm">
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">状态</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldStatus") }}
+                                </dt>
                                 <dd>
                                     {{
                                         (environment.executionSpec ?? environment.assignment)
@@ -659,7 +680,9 @@ onBeforeUnmount(stopPolling);
                             </div>
                             <div class="space-y-1">
                                 <div class="flex items-start justify-between gap-4">
-                                    <dt class="shrink-0 text-muted-foreground">执行模式</dt>
+                                    <dt class="shrink-0 text-muted-foreground">
+                                        {{ t("workspace.environmentFieldExecutionMode") }}
+                                    </dt>
                                     <dd v-if="isDirectAttachStorage" class="min-w-0 text-right">
                                         <Select
                                             :model-value="
@@ -694,9 +717,10 @@ onBeforeUnmount(stopPolling);
                                                     disabled
                                                     data-testid="workspace-execution-mode-legacy"
                                                 >
-                                                    {{ currentExecutionMode || "未知" }}（{{
-                                                        t("workspace.executionModeLegacy")
-                                                    }}）
+                                                    {{
+                                                        currentExecutionMode ||
+                                                        t("workspace.environmentValueUnknown")
+                                                    }}（{{ t("workspace.executionModeLegacy") }}）
                                                 </SelectItem>
                                                 <SelectItem
                                                     v-for="mode in DIRECT_ATTACH_EXECUTION_MODES"
@@ -720,7 +744,10 @@ onBeforeUnmount(stopPolling);
                                         class="min-w-0 text-right"
                                         data-testid="workspace-execution-mode-fixed"
                                     >
-                                        {{ currentExecutionMode || "未知" }}
+                                        {{
+                                            currentExecutionMode ||
+                                            t("workspace.environmentValueUnknown")
+                                        }}
                                         <span class="ml-1 text-xs text-muted-foreground">
                                             {{ managedExecutionModeLabel }}
                                         </span>
@@ -735,7 +762,9 @@ onBeforeUnmount(stopPolling);
                                 </div>
                             </div>
                             <div v-if="environment.capability" class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">能力探测</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldCapability") }}
+                                </dt>
                                 <dd
                                     :class="
                                         environment.capability.available
@@ -746,13 +775,23 @@ onBeforeUnmount(stopPolling);
                                 >
                                     {{
                                         environment.capability.available
-                                            ? `${environment.capability.maturity} / 可用`
-                                            : `不可用：${environment.capability.reason ?? "未知原因"}`
+                                            ? t("workspace.environmentCapabilityAvailable", {
+                                                  maturity: environment.capability.maturity,
+                                              })
+                                            : t("workspace.environmentCapabilityUnavailable", {
+                                                  reason:
+                                                      environment.capability.reason ??
+                                                      t(
+                                                          "workspace.environmentCapabilityReasonUnknown",
+                                                      ),
+                                              })
                                     }}
                                 </dd>
                             </div>
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">代数</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldGeneration") }}
+                                </dt>
                                 <dd>
                                     {{
                                         (environment.executionSpec ?? environment.assignment)
@@ -761,40 +800,56 @@ onBeforeUnmount(stopPolling);
                                 </dd>
                             </div>
                             <div class="flex justify-between gap-4">
-                                <dt class="text-muted-foreground">配置摘要</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldSpecHash") }}
+                                </dt>
                                 <dd class="break-all font-mono text-right">
                                     {{
                                         (environment.executionSpec ?? environment.assignment)
-                                            ?.sandboxSpecHash || "无"
+                                            ?.sandboxSpecHash || t("workspace.environmentValueNone")
                                     }}
                                 </dd>
                             </div>
                         </dl>
                     </article>
                     <article class="rounded-lg border p-5 md:col-span-2">
-                        <h2 class="font-medium">运行时</h2>
+                        <h2 class="font-medium">{{ t("workspace.environmentRuntimeTitle") }}</h2>
                         <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-3">
                             <div>
-                                <dt class="text-muted-foreground">状态</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldStatus") }}
+                                </dt>
                                 <dd class="mt-1">{{ environment.runtime.status }}</dd>
                             </div>
                             <div>
-                                <dt class="text-muted-foreground">设备</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldDevice") }}
+                                </dt>
                                 <dd class="mt-1 break-all font-mono">
-                                    {{ environment.runtime.deviceId || "未观测到" }}
+                                    {{
+                                        environment.runtime.deviceId ||
+                                        t("workspace.environmentValueNotObserved")
+                                    }}
                                 </dd>
                             </div>
                             <div>
-                                <dt class="text-muted-foreground">最近心跳</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldLastHeartbeat") }}
+                                </dt>
                                 <dd class="mt-1 break-all">
-                                    {{ environment.runtime.lastHeartbeatAt || "未观测到" }}
+                                    {{
+                                        environment.runtime.lastHeartbeatAt ||
+                                        t("workspace.environmentValueNotObserved")
+                                    }}
                                 </dd>
                             </div>
                             <div
                                 v-if="environment.runtime.reason"
                                 data-testid="workspace-runtime-reason"
                             >
-                                <dt class="text-muted-foreground">释放状态</dt>
+                                <dt class="text-muted-foreground">
+                                    {{ t("workspace.environmentFieldReleaseStatus") }}
+                                </dt>
                                 <dd class="mt-1">
                                     {{ releaseReasonLabel(environment.runtime.reason) }}
                                 </dd>
@@ -806,7 +861,7 @@ onBeforeUnmount(stopPolling);
                         data-testid="workspace-jobs-panel"
                     >
                         <div class="flex flex-wrap items-center justify-between gap-3">
-                            <h2 class="font-medium">Workspace Jobs</h2>
+                            <h2 class="font-medium">{{ t("workspace.environmentJobsTitle") }}</h2>
                             <div class="flex items-center gap-3">
                                 <span
                                     class="rounded border px-2 py-1 text-xs text-muted-foreground"
@@ -819,13 +874,13 @@ onBeforeUnmount(stopPolling);
                                 >
                                     {{ jobStartReason }}
                                 </span>
-                                <span class="text-xs text-muted-foreground"
-                                    >{{ jobs.length }} 条</span
-                                >
+                                <span class="text-xs text-muted-foreground">{{
+                                    t("workspace.environmentJobCount", { count: jobs.length })
+                                }}</span>
                             </div>
                         </div>
                         <p v-if="jobs.length === 0" class="mt-3 text-sm text-muted-foreground">
-                            暂无 durable Job
+                            {{ t("workspace.environmentJobsEmpty") }}
                         </p>
                         <ul v-else class="mt-3 divide-y text-sm">
                             <li
@@ -842,7 +897,10 @@ onBeforeUnmount(stopPolling);
                                         data-testid="workspace-job-secondary"
                                     >
                                         {{ job.source }} · {{ job.scope }} ·
-                                        {{ job.backendKind ?? "未知后端" }}
+                                        {{
+                                            job.backendKind ??
+                                            t("workspace.environmentBackendUnknown")
+                                        }}
                                         <template v-if="jobDetailText(job)">
                                             · {{ jobDetailText(job) }}</template
                                         >
