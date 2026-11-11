@@ -43,7 +43,16 @@ import DomainCanvas from "./DomainCanvas.vue";
 import DomainPanelCanvas from "./DomainPanelCanvas.vue";
 import { CORE_DOMAINS } from "../data/domains-core";
 import { ALL_DOMAINS, activeDomainId } from "../data/all-domains";
-import { domains, opsItems, securityItems, userItems } from "../data";
+import {
+    NAV_COUNTS,
+    NAV_RECONCILIATION,
+    domains,
+    instanceResourceItems,
+    missingNavMeta,
+    opsItems,
+    securityItems,
+    userItems,
+} from "../data";
 
 /**
  * Sheet 01 — settings shell after the switch to the vendored `Sidebar`.
@@ -128,8 +137,10 @@ const LAYER_TEXT = {
 } as const;
 const layerText = computed(() => LAYER_TEXT[currentLayer.value]);
 
+// 实例层入口数 = 域 + 运维 + 安全 + 资源（缺口位也是「留位入口」）—— 与产品
+// `SettingsSidebar.vue:111 instanceEntryCount` 同口径；此前这里少算资源 4 条，于是稿上是 17、产品是 21。
 function instanceTotal(): number {
-    return domains.length + opsItems.length + securityItems.length;
+    return domains.length + opsItems.length + securityItems.length + instanceResourceItems.length;
 }
 function userTotal(): number {
     return userItems.length;
@@ -170,6 +181,41 @@ function userTotal(): number {
 
                 <ScrollArea class="min-h-0 flex-1">
                     <SidebarContent class="px-1">
+                        <!-- H4 量纲说明（2026-11-11 用户亲审稿后补）：组徽标数是「入口数」= 域 + 资源 + 运维/安全项；
+                             行徽标数是「配置项数」。同一列出现两个量纲时必须靠量词区分，否则读者无法判断谁在数什么。 -->
+                        <p class="px-2 pt-1 pb-2 mk-caption leading-tight text-muted-foreground">
+                            组徽标 = 入口数（域 + 资源 + 运维/安全项）；行徽标 = 配置项数
+                        </p>
+                        <!-- 对账表：每段条目数由生成结果现算（NAV_RECONCILIATION），不写死。放在页面上而非只写进汇报，
+                             下一轮评审不必读代码、也不必问谁，自己在稿上就能核「21 / 12 逐段对不对」。 -->
+                        <div
+                            class="mx-1 mb-2 rounded-md border border-sidebar-border bg-muted/30 px-2 py-1.5 mk-caption leading-4 text-muted-foreground"
+                        >
+                            <p class="font-medium text-foreground">对账表（生成式，逐段现算）</p>
+                            <ul class="mt-1 space-y-0.5">
+                                <li
+                                    v-for="row in NAV_RECONCILIATION"
+                                    :key="row.segment"
+                                    class="flex items-baseline justify-between gap-2"
+                                >
+                                    <span class="truncate">{{ row.segment }}</span>
+                                    <span class="font-mono text-foreground">{{ row.count }}</span>
+                                </li>
+                            </ul>
+                            <p
+                                class="mt-1 flex items-baseline justify-between gap-2 border-t border-sidebar-border pt-1 font-medium text-foreground"
+                            >
+                                <span>实例层 = {{ NAV_COUNTS.instance }}</span>
+                                <span>用户层 = {{ NAV_COUNTS.user }}</span>
+                            </p>
+                            <p
+                                v-if="missingNavMeta.length"
+                                class="mt-1 font-medium text-destructive"
+                            >
+                                {{ missingNavMeta.length }} 条无图标/标签：
+                                {{ missingNavMeta.join("、") }}
+                            </p>
+                        </div>
                         <!-- 组 1：实例层（当前层，默认展开） -->
                         <Collapsible v-model:open="instanceOpen">
                             <SidebarGroup>
@@ -223,7 +269,8 @@ function userTotal(): number {
                                     <p
                                         class="px-2 pb-1 mk-caption uppercase tracking-wide text-muted-foreground"
                                     >
-                                        实例运维 <span class="font-mono">2</span>
+                                        实例运维
+                                        <span class="font-mono">{{ opsItems.length }}</span>
                                     </p>
                                     <SidebarGroupContent>
                                         <SidebarMenu>
@@ -271,7 +318,8 @@ function userTotal(): number {
                                     <p
                                         class="px-2 pb-1 mk-caption uppercase tracking-wide text-muted-foreground"
                                     >
-                                        安全与权限 <span class="font-mono">3</span>
+                                        安全与权限
+                                        <span class="font-mono">{{ securityItems.length }}</span>
                                     </p>
                                     <SidebarGroupContent>
                                         <SidebarMenu>
