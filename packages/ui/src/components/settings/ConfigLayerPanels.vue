@@ -420,6 +420,18 @@ function generateSummary(domain: string): string {
     if (domain === "agent-profile") {
         return entries["userName"] || "";
     }
+    if (domain === "user-preference") {
+        // task-169 / F-10：折叠态摘要行（原先用户偏好折叠后只剩域名 + 远距箭头）。
+        // theme 是 CP config 值；language 取自 settings store（D-899 唯一状态机，不在 CP 里）。
+        const THEME_LABEL_KEY: Record<string, string> = {
+            light: "settings.light",
+            dark: "settings.dark",
+            system: "settings.system",
+        };
+        const theme = entries["theme"],
+            themeLabel = theme && THEME_LABEL_KEY[theme] ? t(THEME_LABEL_KEY[theme]) : "";
+        return [themeLabel, t(LANGUAGE_LABEL_KEY[settings.language])].filter(Boolean).join(" · ");
+    }
     return "";
 }
 

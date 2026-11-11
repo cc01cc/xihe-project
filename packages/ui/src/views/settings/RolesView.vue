@@ -24,7 +24,15 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
-import { LoaderCircle, Pencil, Plus, Trash2 } from "@lucide/vue";
+import { LoaderCircle, Pencil, Plus, ShieldCheck, Trash2 } from "@lucide/vue";
+import {
+    Empty,
+    EmptyContent,
+    EmptyDescription,
+    EmptyHeader,
+    EmptyMedia,
+    EmptyTitle,
+} from "../../components/ui/empty";
 
 /**
  * PLAN-0610 W5b: `/settings/roles` — the access-role definition surface plus the binding panel.
@@ -261,6 +269,25 @@ watch(
                     <div v-if="loading" class="text-xs text-muted-foreground">
                         {{ t("settings.rolesLoading") }}
                     </div>
+
+                    <!-- task-169 / F-19：表格原先在 0 行时只剩表头 + 一片空白。空态给文案 + 出口。 -->
+                    <Empty v-else-if="roles.length === 0" data-testid="roles-empty" class="mt-1">
+                        <EmptyHeader>
+                            <EmptyMedia variant="icon">
+                                <ShieldCheck class="size-4" aria-hidden="true" />
+                            </EmptyMedia>
+                            <EmptyTitle>{{ t("settings.rolesEmptyTitle") }}</EmptyTitle>
+                            <EmptyDescription>
+                                {{ t("settings.rolesEmptyBody") }}
+                            </EmptyDescription>
+                        </EmptyHeader>
+                        <EmptyContent>
+                            <Button data-testid="roles-empty-create" @click="openCreate">
+                                <Plus class="size-4" aria-hidden="true" />
+                                {{ t("settings.rolesCreate") }}
+                            </Button>
+                        </EmptyContent>
+                    </Empty>
 
                     <table v-else class="w-full text-left text-sm" data-testid="roles-table">
                         <thead class="text-xs text-muted-foreground">

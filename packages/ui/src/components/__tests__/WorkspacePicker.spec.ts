@@ -187,4 +187,76 @@ describe("WorkspacePicker", () => {
             params: { workspaceId: NEW_ID },
         });
     });
+    // ── task-169 / F-02：列表页三件套（新建入口 / 搜索 / 空态出口）─────────────
+    it("F-02: 有工作区时 header 也提供「新建工作区」入口；单工作区不显示搜索", async () => {
+        mocks.listWorkspaces.mockResolvedValue([
+            { id: "11111111-1111-1111-1111-111111111111", name: "Only one" },
+        ]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+
+        const headerCreate = wrapper.get('[data-testid="workspace-picker-new"]');
+        expect(headerCreate.text()).toBe("workspacePicker.create");
+        await headerCreate.trigger("click");
+        expect(wrapper.get('[data-testid="create-dialog-stub"]').attributes("data-open")).toBe(
+            "true",
+        );
+        // 只有一个工作区时不需要搜索面。
+        expect(wrapper.find('[data-testid="workspace-picker-search"]').exists()).toBe(false);
+    });
+
+    it("F-02: 多工作区时按名称或 ID 过滤列表", async () => {
+        mocks.listWorkspaces.mockResolvedValue([
+            { id: "11111111-1111-1111-1111-111111111111", name: "Alpha" },
+            { id: "44444444-4444-4444-4444-444444444444", name: "Beta" },
+        ]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+        expect(wrapper.findAll("li").length).toBe(2);
+
+        const search = wrapper.get('[data-testid="workspace-picker-search"]');
+        await search.setValue("beta");
+        expect(wrapper.findAll("li").length).toBe(1);
+        expect(
+            wrapper
+                .find('[data-testid="workspace-picker-item-44444444-4444-4444-4444-444444444444"]')
+                .exists(),
+        ).toBe(true);
+        expect(
+            wrapper
+                .find('[data-testid="workspace-picker-item-11111111-1111-1111-1111-111111111111"]')
+                .exists(),
+        ).toBe(false);
+
+        // ID 子串同样能命中（用户可以从日志/URL 里抄 ID 来搜）。
+        await search.setValue("11111111");
+        expect(wrapper.findAll("li").length).toBe(1);
+        expect(
+            wrapper
+                .find('[data-testid="workspace-picker-item-11111111-1111-1111-1111-111111111111"]')
+                .exists(),
+        ).toBe(true);
+    });
+
+    it("F-02: 搜索无命中给「无匹配」文案与清除搜索出口", async () => {
+        mocks.listWorkspaces.mockResolvedValue([
+            { id: "11111111-1111-1111-1111-111111111111", name: "Alpha" },
+            { id: "44444444-4444-4444-4444-444444444444", name: "Beta" },
+        ]);
+
+        const wrapper = mountPicker();
+        await flushPromises();
+        const search = wrapper.get('[data-testid="workspace-picker-search"]');
+        await search.setValue("zzz-not-there");
+
+        expect(wrapper.findAll("li").length).toBe(0);
+        const empty = wrapper.get('[data-testid="workspace-picker-search-empty"]');
+        expect(empty.text()).toContain("workspacePicker.searchEmpty");
+        // 空结果 ≠ 没有工作区：出口是清除搜索，不是再点「新建」。
+        await wrapper.get('[data-testid="workspace-picker-clear-search"]').trigger("click");
+        expect(wrapper.findAll("li").length).toBe(2);
+        expect(wrapper.find('[data-testid="workspace-picker-search-empty"]').exists()).toBe(false);
+    });
 });
