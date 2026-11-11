@@ -539,7 +539,8 @@ describe("useConfigStore", () => {
 
             store.clearForUserSwitch();
 
-            expect(store.layerConfig).toEqual({ instance: {}, user: {} });
+            // PLAN-0766：workspace-default 也是全局层的成员，切换/登出时必须一起清。
+            expect(store.layerConfig).toEqual({ instance: {}, "workspace-default": {}, user: {} });
             expect(store.envOverridden).toEqual({});
         });
     });

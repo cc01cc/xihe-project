@@ -182,6 +182,8 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                             { actionClass: "MANAGE_ROLES", resource: "*" },
                             { actionClass: "MANAGE_AGENTS", resource: "*" },
                             { actionClass: "MANAGE_INSTANCE_CONFIG", resource: "*" },
+                            // PLAN-0766（task-160）：写入共享 workspace-default 层的唯一原子（CP 侧随 task-159 落地）。
+                            { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
                             { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
                         ],
                     });
@@ -413,8 +415,10 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
 
                 // 写路径（D-914 B 轻量版）：真组件保存走 PUT /config/{layer}/{domain}，
                 // 这里只按产品契约收下 map 并落内存（不校验、不回 400）。
+                // PLAN-0766（task-160）：加共享 workspace-default 层；wire 值小写，与契约
+                // b05aad952 的 PUT /config/workspace-default/{domain} 一致（CP 侧随 task-159 注册）。
                 const writeMatch = path.match(
-                    /^\/config\/(instance|user|workspace)\/([a-z0-9-]+)$/,
+                    /^\/config\/(instance|user|workspace|workspace-default)\/([a-z0-9-]+)$/,
                 );
                 if (writeMatch && (req.method ?? "GET") === "PUT") {
                     const [, layer, domain] = writeMatch;
@@ -464,6 +468,18 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     return;
                 }
 
+                // PLAN-0766：清掉 workspace-default 层的单个键（回落到 user/instance/code）。
+                const wsDefaultDelete = path.match(
+                    /^\/config\/workspace-default\/([a-z0-9-]+)\/([A-Za-z0-9_.-]+)$/,
+                );
+                if (wsDefaultDelete && (req.method ?? "GET") === "DELETE") {
+                    const [, domain, key] = wsDefaultDelete;
+                    const memory = memoryFor("workspace-default", domain);
+                    delete memory[key];
+                    options.log?.(`[mock-api] DELETE /config/workspace-default/${domain}/${key}`);
+                    return respond(200, { deleted: true });
+                }
+
                 // 配置域：GET /config/{domain}（全量）、带 layer 的 entries、meta。
                 const configMatch = path.match(/^\/config\/([a-z0-9-]+)(?:\/meta)?$/);
                 if (configMatch) {
@@ -474,9 +490,22 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         // 决定渲染可编辑控件还是只读行。空 keys ⇒ 全只读 ⇒ B 轻量版编辑不了，
                         // 所以这里按 schema 生成 meta（值本身仍来自 fixtures 层）。
                         const layer = url.searchParams.get("layer") ?? "instance";
+                        const workspaceDefaultMemory = memoryFor("workspace-default", domain);
                         const keys = Object.keys(entriesFor(domain)).map((key) => ({
                             key,
-                            source: layer === "instance" ? "code" : "instance",
+                            // 来源按「该键在本层有没有显式值」判：workspace-default 有值 ⇒ 来源就是它，
+                            // 否则沿用继承来的 instance fixture（证明「只显示生效值的来源」）。
+                            source:
+                                layer === "workspace-default"
+                                    ? Object.prototype.hasOwnProperty.call(
+                                          workspaceDefaultMemory,
+                                          key,
+                                      )
+                                        ? "workspace-default"
+                                        : "instance"
+                                    : layer === "instance"
+                                      ? "code"
+                                      : "instance",
                             locked: false,
                             writable: true,
                             reason: null,

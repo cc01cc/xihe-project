@@ -1,4 +1,5 @@
 import { request } from "../composables/api";
+import type { ConfigLayer } from "../stores/config";
 import type { ProviderConnection } from "../types/providerConnection";
 
 export interface EmbeddingResolvedProfile {
@@ -51,7 +52,8 @@ export function fetchEmbeddingEffective(workspaceId?: string): Promise<Embedding
 
 /** task-253：工作区层移除后，embedding profile 只能写实例/用户两层。 */
 export function saveEmbeddingProfile(
-    layer: "user" | "instance",
+    // PLAN-0766：embedding 是 9 个可写 workspace-default 域之一 ⇒ 签名跟随 ConfigLayer。
+    layer: ConfigLayer,
     profile: EmbeddingProfileInput | null,
 ): Promise<void> {
     const body: Record<string, string> = {};

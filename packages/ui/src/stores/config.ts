@@ -9,19 +9,32 @@ import { listProviderConnections } from "../services/providerConnectionService";
 import { parseLlmProfileValue } from "../services/llmProviderProfile";
 
 /**
- * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**移除 workspace 层** —— 全局设置
- * 只有实例/用户两层，工作区内部设置本轮不设计、也不再走全局 config 的 workspace 层。
- * 这里收窄成两值不是文档美化：任何还想传 "workspace" 的调用点会在 typecheck 当场失败，
+ * UI 可读写的配置层。task-253（用户 2026-11-10 裁定）：**移除 per-workspace layer** ——
+ * 全局设置不再有 workspace 层，工作区内部设置本轮不设计、也不再走全局 config 的 workspace 层。
+ * 这里收窄不是文档美化：任何还想传 "workspace" 的调用点会在 typecheck 当场失败，
  * 是「彻底移除」的编译期保证（契约侧由 task-250 只标 deprecated，不删）。
+ *
+ * PLAN-0766（D-928/D-931，task-160）：新增的是**共享的 workspace-default 层**，不是
+ * per-workspace 层。wire 值小写 `workspace-default`（契约 b05aad952: GET
+ * `/config/{domain}?layer=workspace-default`、`PUT /config/workspace-default/{domain}`）。
+ * 它是部署级的一份行集，对没有显式 workspace 覆盖的所有工作区生效；层序
+ * workspace > workspace-default > user > instance（env / 管理员钉仍在所有 DB 层之上）。
  */
-export type ConfigLayer = "instance" | "user";
+export type ConfigLayer = "instance" | "workspace-default" | "user";
 
 /**
  * 配置值的**来源**（GET /config/{domain}/meta 回填的 provenance），与上面的层**不是同一个轴**：
  * CP 仍可能报 source=workspace（历史行、或 CP 侧其它写入口），UI 只负责如实显示它。
  * 所以这里保留 "workspace" 这个取值，不随 ConfigLayer 一起收窄。
  */
-export type ConfigSource = "env" | "workspace" | "user" | "instance" | "code" | "none";
+export type ConfigSource =
+    | "env"
+    | "workspace"
+    | "workspace-default"
+    | "user"
+    | "instance"
+    | "code"
+    | "none";
 
 /** PLAN-0554: per-key provenance returned by GET /config/{domain}/meta. */
 export interface ConfigKeyMeta {
@@ -97,6 +110,20 @@ export function isDomainReadableWithoutAdmin(domain: ConfigDomain): boolean {
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
     instance: INSTANCE_DOMAINS,
+    // PLAN-0766：CP `WORKSPACE_WRITABLE_DOMAINS` 是 9 域（b05aad952 ConfigService.java:94），
+    // 但 `context-templates` 是 service-only 域 —— 契约明写 config API 只收 12 个 UI 域，
+    // 其余（context-templates / pricing）返回 INVALID_DOMAIN。所以 UI 侧矩阵是 9 − 1 = 8 域，
+    // 这里刻意不列 context-templates，避免左栏出现一个点进去必然失败的入口。
+    "workspace-default": [
+        "llm-provider",
+        "context-policy",
+        "embedding",
+        "rag",
+        "agent-runtime",
+        "approval-policy",
+        "agent-templates",
+        "job-policy",
+    ],
     user: [
         "llm-provider",
         "context-policy",
@@ -133,6 +160,7 @@ export const useConfigStore = defineStore("config", () => {
     /** Per-layer raw entries for the two settings entries (T2.17; task-253 去掉 workspace). */
     const layerConfig = ref<Record<ConfigLayer, Record<string, Record<string, string>>>>({
         instance: {},
+        "workspace-default": {},
         user: {},
     });
     const layerLoading = ref(false);
@@ -141,6 +169,7 @@ export const useConfigStore = defineStore("config", () => {
     /** PLAN-0554: layer -> domain -> key -> provenance metadata. */
     const layerMeta = ref<Record<ConfigLayer, Record<string, Record<string, ConfigKeyMeta>>>>({
         instance: {},
+        "workspace-default": {},
         user: {},
     });
 
@@ -310,11 +339,19 @@ export const useConfigStore = defineStore("config", () => {
         });
     }
 
-    /** PLAN-0554: clear one instance-layer default (falls back to code default). */
-    async function deleteInstanceKey(domain: string, key: string): Promise<void> {
-        await request(`/config/instance/${domain}/${encodeURIComponent(key)}`, {
+    /**
+     * PLAN-0766：清掉某层的一个键（workspace-default 用 `DELETE /config/workspace-default/{domain}/{key}`，
+     * 契约 b05aad952 里与 PUT 同批登记；清空后该键回落到 user/instance/code default）。
+     */
+    async function deleteLayerKey(layer: ConfigLayer, domain: string, key: string): Promise<void> {
+        await request(`/config/${layer}/${domain}/${encodeURIComponent(key)}`, {
             method: "DELETE",
         });
+    }
+
+    /** PLAN-0554: clear one instance-layer default (falls back to code default). */
+    async function deleteInstanceKey(domain: string, key: string): Promise<void> {
+        await deleteLayerKey("instance", domain, key);
     }
 
     /** Admin export (instance layer, T2.21/T2.25). */
@@ -431,9 +468,9 @@ export const useConfigStore = defineStore("config", () => {
         sessionModels.value = {};
         modelFavorites.value = [];
         modelError.value = null;
-        layerConfig.value = { instance: {}, user: {} };
+        layerConfig.value = { instance: {}, "workspace-default": {}, user: {} };
         envOverridden.value = {};
-        layerMeta.value = { instance: {}, user: {} };
+        layerMeta.value = { instance: {}, "workspace-default": {}, user: {} };
         providerConnections.value = [];
         providerConnectionsLoaded.value = false;
         providerConnectionsError.value = false;

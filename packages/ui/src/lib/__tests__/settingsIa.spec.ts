@@ -41,21 +41,53 @@ describe("knowledgeRedirectTarget", () => {
 });
 
 describe("settings IA matrix", () => {
-    it("keeps the CP layer counts 12 / 9 for the two UI layers", () => {
+    it("keeps the CP layer counts 12 / 9 plus the 8-domain shared workspace-default layer", () => {
         expect(domainsForLayer("instance")).toHaveLength(12);
         expect(domainsForLayer("user")).toHaveLength(9);
-        // task-253：工作区层不是设置层，`SETTINGS_LAYERS` 里只能有这两项。
-        expect(SETTINGS_LAYERS).toEqual(["instance", "user"]);
+        // PLAN-0766（task-160）：CP 的 WORKSPACE_WITABLE 是 9 域，但 context-templates 是
+        // service-only 域（config API 只收 12 个 UI 域）⇒ UI 矩阵是 9 − 1 = 8，且不含
+        // per-workspace 的旧 workspace 层（task-253 已退役）。
+        expect(domainsForLayer("workspace-default")).toHaveLength(8);
+        expect(SETTINGS_LAYERS).toEqual(["instance", "workspace-default", "user"]);
     });
 
     it("treats logging/approval-policy/job-policy as instance-only once the workspace layer is gone", () => {
         expect(layersForDomain("logging")).toEqual(["instance"]);
-        expect(layersForDomain("approval-policy")).toEqual(["instance"]);
-        expect(layersForDomain("job-policy")).toEqual(["instance"]);
+        expect(layersForDomain("approval-policy")).toEqual(["instance", "workspace-default"]);
+        expect(layersForDomain("job-policy")).toEqual(["instance", "workspace-default"]);
         expect(layersForDomain("agent-profile")).toEqual(["instance", "user"]);
-        expect(layersForDomain("rag")).toEqual(["instance", "user"]);
+        expect(layersForDomain("rag")).toEqual(["instance", "workspace-default", "user"]);
     });
 
+    it("routes only the eight writable domains on the workspace-default layer", () => {
+        // PLAN-0766 T3.1/T3.3：路由注册与左栏共用同一矩阵 ⇒ 这里锁死「哪些域有页」。
+        expect(resolveLayerRoute("workspace-default", "llm-provider")).toEqual({
+            ok: true,
+            layer: "workspace-default",
+            domain: "llm-provider",
+        });
+        // 不可写域 = 矩阵里没有 ⇒ 路由不注册 ⇒ 同一条路径落到 404 兜底。
+        expect(resolveLayerRoute("workspace-default", "agent-profile")).toEqual({
+            ok: false,
+            reason: "domain-not-in-layer",
+        });
+        expect(resolveLayerRoute("workspace-default", "logging")).toEqual({
+            ok: false,
+            reason: "domain-not-in-layer",
+        });
+    });
+
+    it("derives the workspace-default layer from the URL and lands on its first domain", () => {
+        expect(settingsLayerForPath("/settings/workspace-default/rag")).toBe("workspace-default");
+        expect(settingsLayerForPath("/settings/user/rag")).toBe("user");
+        expect(settingsLayerForPath("/settings/anything-else")).toBe("instance");
+        expect(settingsDomainPath("workspace-default", "rag")).toBe(
+            "/settings/workspace-default/rag",
+        );
+        expect(defaultLayerPath("workspace-default")).toBe(
+            "/settings/workspace-default/llm-provider",
+        );
+    });
     it("marks exactly the three user-layer gaps as instance-only for the user layer", () => {
         const instanceOnly = domainsForLayer("instance").filter((domain) =>
             isInstanceOnlyForUser(domain),

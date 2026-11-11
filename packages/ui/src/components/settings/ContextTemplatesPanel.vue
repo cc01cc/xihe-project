@@ -28,6 +28,13 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ save: [entries: Record<string, string>] }>();
 const { t } = useI18n();
+/**
+ * api-request-templates 只有 instance/user 两层显式读（契约 readTemplateConfig 的 type），
+ * 而它的面板只在这两层出现；这里把共享的 ConfigLayer 收窄成面板真正会用的两个值。
+ */
+const templateLayer = computed<"instance" | "user">(() =>
+    props.layer === "instance" ? "instance" : "user",
+);
 const templates = ref<ApiRequestTemplate[]>([]);
 const types = ref<ApiInputType[]>([]);
 const builtins = ref<ApiRequestTemplate[]>([]);
@@ -184,7 +191,7 @@ function nextRevision(status: ApiRequestTemplate["status"]): ApiRequestTemplate 
  */
 async function refreshTemplatesFromServer() {
     try {
-        const entries = await readTemplateConfig(props.layer);
+        const entries = await readTemplateConfig(templateLayer.value);
         templates.value = parseTemplates(entries.templates);
         if (props.layer === "instance") {
             builtins.value = templates.value.filter((item) => item.status === "published");
