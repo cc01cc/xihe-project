@@ -226,6 +226,10 @@ The CP-owned tools (`spawn_agent`, `acquire_credential`, `skill_read`, `git_stat
 
 The runnable script and acceptance criteria are in [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6, together with the six discrepancies/clarifications of the moment (the entry where `start_background_process` advertised a `truncate_limit` it ignored is now fixed by dropping the parameter: the background path returns no output, so output is read page-wise through `read_command_output` and truncated by the per-stream 1 MiB retention budget).
 
+**Re-verification log**:
+
+- **2026-11-11** (base `84221184d`, dev stack down): the 23 `#[tool(` registration sites (`:455`–`:806`) were re-extracted — name set matches this section 0-conflict, required-params 0-mismatch (alignment table: `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`). The byte-level source↔handshake description diff is blocked-on-stack (no candidate port listening; probe record in the same dir). Once a stack is back, run `mcp-tools-verify.mjs` from that directory for the handshake side. §7#1 (`truncate_limit`) confirmed fixed by task-241 (removed + three Rust tests pinning the behavior, `main.rs:7382-7446`).
+
 **Change rule**: adding/removing a tool, or changing a `description` or `inputSchema`, is a tool-surface change — update the catalog in the same batch and re-run the §6 check. Code without the catalog update is documentation debt.
 
 **Three easy-to-misread points**:
