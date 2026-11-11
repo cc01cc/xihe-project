@@ -128,3 +128,30 @@ status: active
 > **Assertion trap (measured 2026-11-10) | redirects drop the query string**: since `6002ea60` (PLAN-0752 M1) `/settings/config` is `redirect: () => defaultLayerPath("instance")`, which **does not carry the query** ⇒ `goto("/settings/config?tab=tool-faces")` silently loses its parameter, so a test can **land on the right page while asserting a different state** (an old read-only view vs the domain page's default tab). **Rules**: ① before asserting, check whether the path is a component route or a redirect in `router/index.ts`, and whether the redirect forwards `query`/`params`; ② for tests aimed at legacy entries, also assert the landed URL (`page.url()`) or the target page testid instead of content alone; ③ during migration, point tests straight at the final address (and in new code never push a legacy literal — reuse the SSOT helper from `lib/settingsIa`).
 
 > **Assertion trap (measured 2026-11-10) | Vue boolean attributes bound as `:attr="cond"`**: Vue has two attribute paths — a name that exists as a DOM property (`key in el`) goes through `patchDOMProp`, which coerces booleans correctly; everything else goes through `patchAttr`, whose boolean check is the **seven-name** `isSpecialBooleanAttr` list (`itemscope,allowfullscreen,formnovalidate,ismap,nomodule,novalidate,readonly`, `@vue/shared` 3.5.44) — **not** `isBooleanAttr`. A boolean attribute outside that list receives `false` and is rendered as `attr="false"`, and HTML only checks a boolean attribute's **presence** ⇒ the control stays disabled forever while looking "set to false". **Measured in this repo's jsdom**: `inert: false` ⇒ `inert="false"` (attribute still present; task-122 failed with `expected 'false' to be undefined`); `disabled` / `hidden` / `readonly` / `required` / `multiple: false` ⇒ attribute correctly removed (they are DOM properties and take the other path). **Executable rules**: ① always bind `:attr="cond || undefined"` (or `cond ? '' : undefined`) — never bet on whether a given attribute has a DOM implementation in the current environment; ② the unit test must assert the attribute is **absent** in the false state — `expect(el.hasAttribute("inert")).toBe(false)`; `toHaveAttribute` alone passes on `attr="false"` because the attribute really is there; ③ for new HTML attributes (`inert` / `popover` / `commandfor` / `anchor`) write rule-① style instead of copying today's browser behaviour — "does it have a DOM property" shifts with browser and jsdom versions.
+
+## 11. UI review dimensions (screenshot review, user ruling 2026-11-11, D-926 / D-927)
+
+> The user's words: after UI work is done, review it from screenshots first — "button layout and whether each button means something; fonts, icons, overall interaction and static elements".
+> This section expands that into **six checkable dimensions**; only judgements decidable from a screenshot are listed — anything else belongs to E2E/unit tests.
+
+**Preconditions**: shoot from a committed tree (never a dirty one) · fixed viewports (1600×1000 primary, plus one pass each at 1920×1080 and 390×844) · real data (the mock must round-trip reads/writes first).
+
+| Dim | What to look at | Source | Checkable criterion | Typical failure |
+| --- | --- | --- | --- | --- |
+| **A Feedback** | Does every clickable element produce an observable result; are loading/disabled/error states present | Nielsen H1/H3/H9; WCAG 4.1.3 | state changes within a frame (spinner/label/navigation); disabled looks disabled and is really inert; error copy says what to do | click does nothing; enabled but broken; "an error occurred" |
+| **B Consistency** | Same semantics → same icon/control/format | Nielsen H4; design tokens (Carbon/Material) | same action, same icon and size; spacing/radius/border come from tokens; one date/number/unit format | two icons for one action; 8px here, 10px there |
+| **C Hierarchy & typography** | Type scale, line height, long values, CJK+Latin | Refactoring UI (size+weight+colour); 8pt grid | three visually distinct steps (e.g. 24/16/14); body line-height ≥1.5; digits/code monospaced; long values truncate or wrap | four heading levels at one size; a long id breaks the card; baselines jump |
+| **D Accessibility** | Contrast, focus, keyboard, target size, accessible name | WCAG 2.2 AA: 1.4.3 (4.5:1) / 1.4.11 (3:1) / 2.4.7 / 2.5.8 (≥24×24) / 4.1.2 | sane tab order with visible focus ring; icon buttons carry aria-label; status never colour-only | pale grey small text; unlabeled icon button; invisible focus |
+| **E Content & truth** | Copy, counts, empty states, i18n | Nielsen H2/H10 | counts/badges match visible data; empty states offer an exit; no hardcoded strings; sample values have real shapes | "8 settings in this domain" with zero fields; empty state with no action |
+| **F Layout & adaptivity** | Overflow, scrolling, collapsed states, breakpoints | Apple HIG (44pt) / Material (48dp) targets | no horizontal overflow at 1280/1600/1920; scrollbars do not cover content; collapsed panel keeps a readable entry; mobile targets ≥44px | overflow at 320px; no way back after collapsing; stacked mobile buttons |
+
+**Severity**: **P0 blocker** (inert control / contradictory data / unreachable path) · **P1 obvious** (hierarchy, consistency, WCAG AA violation) · **P2 polish** (spacing, weight, minor differences). P0/P1 become tasks; P2 accumulates.
+
+**Experience loop (the reason this section exists)**: route findings two ways —
+```
+1. the criterion was unclear => write it back here (criterion + counter-example) so the next batch cannot repeat it;
+2. the implementation deviated => file a task; writing it in a doc is not a fix.
+Keep only new criteria and counter-examples in the doc; screenshots stay as evidence under .tmp/<batch>/ and are reported by path.
+```
+
+**Sources (checked 2026-11-11)**: Nielsen Norman Group "10 Usability Heuristics" (headings verified by fetch) · W3C WCAG 2.2 Quick Reference · Apple Human Interface Guidelines · Material 3 · IBM Carbon · Refactoring UI. See `DEV-012-ui-ux-references`.
