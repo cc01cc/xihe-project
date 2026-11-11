@@ -577,14 +577,23 @@ function printLease(state, { indent = '  ' } = {}) {
 
 /* ---------------------------------------------------------------- spawn */
 
-function spawnDetached(service, outPath, errPath) {
+function spawnDetached(service, outPath, errPath, exitPath) {
   // 默认 args 与原先逐字节相同；只有反证开关生效时 cp 才多一个 `--no-rebuild`（见 lib/stack-cp-args.mjs）。
   const childArgs = serviceArgs({ stackRun, service, noRebuild: cpNoRebuild.active });
   const inner = `node "${stackRun}" ${childArgs.slice(1).join(' ')}`;
   if (isWindows) {
     const safeCwd = projectRoot.replace(/'/g, "''");
+    // task-21: 让 launcher 自己把退出码落盘 —— `Start-Process -PassThru` 拿到的 pid 是
+    // cmd.exe，它的退出码在**分离**进程里读不到（不是我们的 child）。三个细节都是实测踩出来的：
+    //   ① `cmd /v:on` + `!ERRORLEVEL!`：延迟展开，在第二条命令执行时才取值；
+    //      `%ERRORLEVEL%` 会在整行解析时就定型，永远读到 0。
+    //   ② `&` 而不是 `&&`：失败时**更要**写退出码。
+    //   ③ 落盘文件必须在 spawn 前删掉，否则会把上一轮的退出码当成这一轮的。
+    if (exitPath) rmSync(exitPath, { force: true });
+    const exitSuffix = exitPath ? ` & echo !ERRORLEVEL!> "${exitPath.replace(/'/g, "''")}"` : '';
+    const cmdFlags = exitPath ? "'/v:on','/d','/s','/c'" : "'/d','/s','/c'";
     const script =
-      `$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d','/s','/c','${inner.replace(/'/g, "''")} 1> "${outPath.replace(/'/g, "''")}" 2> "${errPath.replace(/'/g, "''")}"' ` +
+      `$p = Start-Process -FilePath 'cmd.exe' -ArgumentList ${cmdFlags},'${inner.replace(/'/g, "''")} 1> "${outPath.replace(/'/g, "''")}" 2> "${errPath.replace(/'/g, "''")}"${exitSuffix}' ` +
       `-WorkingDirectory '${safeCwd}' -WindowStyle Hidden -PassThru; $p.Id`;
     return new Promise((done) => {
       assertEnvValues(childEnv, 'spawn:powershell-launcher');
@@ -594,13 +603,20 @@ function spawnDetached(service, outPath, errPath) {
         windowsHide: true,
       });
       let stdout = '';
+      let stderr = '';
       child.stdout.on('data', (chunk) => {
         stdout += chunk;
+      });
+      // task-21: 包装层自己的 stderr 以前被丢掉；launcher 起不来时那是唯一线索，留着报错用。
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
       });
       child.once('error', () => done(null));
       child.once('exit', () => {
         const pid = Number(stdout.trim().split(/\r?\n/).pop());
-        done(Number.isInteger(pid) && pid > 0 ? pid : null);
+        if (Number.isInteger(pid) && pid > 0) return done(pid);
+        if (stderr.trim()) console.error(`[dev-stack] launcher stderr (${service}): ${stderr.trim()}`);
+        done(null);
       });
     });
   }
@@ -630,7 +646,7 @@ async function probeService(service, d = derived, p = ports) {
   return { service, port: p[service], listening, status, ready };
 }
 
-async function waitReady(timeoutSeconds, servicesToWait) {
+async function waitReady(timeoutSeconds, servicesToWait, launchers = {}) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   const state = {};
   while (Date.now() < deadline) {
@@ -638,7 +654,14 @@ async function waitReady(timeoutSeconds, servicesToWait) {
     for (const service of servicesToWait) {
       const result = await probeService(service);
       state[service] = result;
-      if (!result.ready) allReady = false;
+      if (result.ready) continue;
+      allReady = false;
+      // task-21: 端口没 ready 时先问「launcher 还活着吗」。还活着 = 真的还在启动（等下去合理）；
+      // 已经退出 = 这次启动注定失败，继续轮询只是白等（实测身份冲突白等满 600s）。
+      const launcher = launchers[service];
+      if (launcher?.pid && !processAlive(launcher.pid)) {
+        return { ready: false, state, failure: await classifyStartFailure(service, launcher, result) };
+      }
     }
     if (allReady) return { ready: true, state };
     if (!args.json) {
@@ -648,8 +671,114 @@ async function waitReady(timeoutSeconds, servicesToWait) {
     await sleep(3000);
   }
   for (const service of servicesToWait) state[service] ??= await probeService(service);
-  return { ready: servicesToWait.every((s) => state[s].ready), state };
+  const ready = servicesToWait.every((s) => state[s].ready);
+  // 第三种情况：**真超时** —— 端口没起，但 launcher 进程还活着（在编译/在启动）。
+  const stuck = servicesToWait.filter((s) => !state[s].ready && launchers[s]?.pid && processAlive(launchers[s].pid));
+  return {
+    ready,
+    state,
+    failure: ready
+      ? null
+      : {
+          reason: 'readiness-timeout',
+          service: stuck[0] ?? null,
+          stuckServices: stuck,
+          exitCode: null,
+          failFast: false,
+          logLine: null,
+        },
+  };
 }
+
+/* ------------------------------------------- launcher exit / failure class (task-21) */
+
+// task-21：`start` 原来只靠「端口在 N 秒内没 ready」判失败 ⇒ 真原因被藏起来（launcher 早就退出了，
+// 它还在原地轮询端口）。下面把三件事**分开**，因为它们的处置完全不同：
+//   ① launcher 非 0 退出        → 应用/构建失败，看日志，重跑无意义
+//   ② launcher 0 退出但日志 fail-fast → 契约性拒绝启动（如 instance_identity_mismatch）
+//   ③ launcher 还活着但端口没起 → 真超时（编译慢/机器忙），加大 --timeout 有意义
+const FAIL_FAST_LOG_PATTERN = /\[IDENTITY\][^\n]*result=fail-fast/u;
+const LAUNCHER_LOG_TAIL_BYTES = 65536;
+
+/** launcher 退出码；读不到（没落盘/被杀/非 Windows）返回 null。 */
+async function readLauncherExitCode(exitPath) {
+  if (!exitPath) return null;
+  // 竞态：cmd 先执行 `& echo !ERRORLEVEL!>` 再退出，两者相隔毫秒级；判死那一刻文件可能还没落地。
+  // 追最多 ~2s（20 × 100ms），追上就带上真退出码，追不上就如实报 null，不猜。
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const raw = readFileSync(exitPath, 'utf8').trim();
+      if (/^-?\d+$/u.test(raw)) return Number(raw);
+    } catch {
+      // 文件还没写出来 —— 继续等
+    }
+    await sleep(100);
+  }
+  return null;
+}
+
+/** 日志尾部（fail-fast 一定在结尾附近，读整份 CP 日志没必要）。 */
+function readLogTail(file, maxBytes = LAUNCHER_LOG_TAIL_BYTES) {
+  try {
+    const buf = readFileSync(file);
+    return (buf.length > maxBytes ? buf.subarray(buf.length - maxBytes) : buf).toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+async function classifyStartFailure(service, launcher, probe) {
+  const exitCode = await readLauncherExitCode(launcher.exitPath);
+  // 顺序有讲究：应用日志走 stdout（cp.out.log），而 task-11 的探针把
+  // `([IDENTITY] ... result=fail-fast)` 这句**抄进了自己的错误提示**并输出到 stderr。
+  // 先读 err 会命中探针那句自指文本，拿到的 logLine 就不是应用真日志行 —— 实测踩到过。
+  const logText = readLogTail(launcher.outPath) + readLogTail(launcher.errPath);
+  const match = logText.match(FAIL_FAST_LOG_PATTERN);
+  const failFast = Boolean(match);
+  const reason =
+    exitCode !== null && exitCode !== 0
+      ? 'launcher-exit-nonzero'
+      : failFast
+        ? 'launcher-fail-fast'
+        : exitCode === 0
+          ? 'launcher-exit-zero'
+          : 'launcher-exit-unknown';
+  return {
+    reason,
+    service,
+    port: probe?.port ?? ports[service],
+    exitCode,
+    failFast,
+    // 只取命中的那一行（该行按设计不含身份值），不把整段日志塞进 verdict。
+    logLine: match ? (match[0] ?? '').slice(0, 200) : null,
+    logs: { out: launcher.outPath, err: launcher.errPath },
+  };
+}
+
+/** 一行人类可读的失败分类（`start` / `status` 共用口径）。 */
+function describeStartFailure(failure) {
+  if (!failure) return null;
+  const { reason, service, port } = failure;
+  const where = service ? `${service} (port ${port})` : 'the stack';
+  if (reason === 'readiness-timeout') {
+    const stuck = (failure.stuckServices ?? []).join(', ') || service || 'unknown';
+    return `readiness timeout: ${stuck} never became ready, but ${stuck} launcher process is still alive — `
+      + 'this is a slow start (compile/busy box), not a crash; raise --timeout if needed';
+  }
+  if (reason === 'launcher-exit-nonzero') {
+    return `${where} launcher exited with code ${failure.exitCode} before the port became ready`
+      + (failure.failFast ? `; log shows the fail-fast contract: ${failure.logLine}` : '');
+  }
+  if (reason === 'launcher-fail-fast') {
+    return `${where} launcher exited 0 but the log shows the fail-fast contract: ${failure.logLine}`
+      + ' (the process swallowed its own exit code)';
+  }
+  if (reason === 'launcher-exit-zero') {
+    return `${where} launcher exited 0 before the port became ready (service stopped itself; check the log)`;
+  }
+  return `${where} launcher exited before the port became ready (exit code not captured on this platform)`;
+}
+
 
 /* ------------------------------------------------------------------- pg */
 
@@ -825,6 +954,9 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   const claimed = claimStarting({ record });
   console.log(`[dev-stack] lease: phase=starting claimed before spawn (${claimed.path})`);
 
+  // task-21: 每个本次 spawn 的服务记一份「launcher 身份」——pid 判死活，exitPath 读退出码，
+  // 两份日志用于判定 fail-fast 契约。只对**本次起的**服务登记：复用已在跑的服务没有 launcher 可判。
+  const launchers = {};
   for (const service of SERVICES) {
     const prior = previous.services?.[service];
     if (prior?.pid && processAlive(prior.pid) && looksLikeOurWrapper(prior.pid)) {
@@ -846,8 +978,10 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
     }
     const outPath = join(logDir, `${service}.out.log`);
     const errPath = join(logDir, `${service}.err.log`);
-    const pid = await spawnDetached(service, outPath, errPath);
+    const exitPath = join(logDir, `${service}.launcher-exit.txt`);
+    const pid = await spawnDetached(service, outPath, errPath, exitPath);
     if (!pid) throw new Error(`${service}: launcher failed; see ${outPath} / ${errPath}`);
+    launchers[service] = { pid, exitPath, outPath, errPath };
     record.services[service] = { pid, port: ports[service], startedAt: new Date().toISOString() };
     writeJson(pidFile, record);
     console.log(`[dev-stack] started ${service} (pid ${pid}) port=${ports[service]} log=${outPath}`);
@@ -856,7 +990,9 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   console.log(`[dev-stack] pid file: ${pidFile}`);
   console.log(`[dev-stack] note: CP compiles on boot (~60-120s); Runtime uses the cargo cache; waiting for readiness ...`);
 
-  const { ready, state } = await waitReady(args.timeout, SERVICES);
+  const readyWaitBegan = Date.now();
+  const { ready, state, failure } = await waitReady(args.timeout, SERVICES, launchers);
+  const readyWaitSeconds = Math.round((Date.now() - readyWaitBegan) / 1000);
   // PLAN-0694 P0: 起栈后写租约——记录「谁、在哪、哪些 pid、CP 什么版本」的**声明**。
   // 写完不做自证；能不能算健康由 `status` 拿独立事实逐字段核对（核对不上就是 stale）。
   // task-75：这一步同时把 phase 从 starting 翻成 started —— **翻转点就在 waitReady 之后**，
@@ -891,6 +1027,9 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
           projectRoot,
           pg,
           ready,
+          // task-21: 失败必须带「分类 + launcher 退出码」，否则调用方只有 ready=false 可用，
+          // 真原因（应用拒绝启动 / 编译慢 / 进程自己退了）全被抹平成同一个形状。
+          failure,
           services: rows,
           logDir,
           leasePath: written.path,
@@ -913,11 +1052,35 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
           `listen=${row.listening} http=${row.httpStatus ?? '-'} ready=${row.ready}`,
       );
     }
-    console.log(`[dev-stack] ${ready ? 'all four services are ready' : `not ready within ${args.timeout}s`}`);
+    // task-21：早退 ≠ 超时。launcher 已经死了还说 "not ready within Ns" 会把真原因又藏回超时口径里。
+    const earlyExit = !ready && failure && failure.reason !== 'readiness-timeout';
+    console.log(
+      `[dev-stack] ${
+        ready
+          ? 'all four services are ready'
+          : earlyExit
+            ? `failed after ${readyWaitSeconds}s (${failure.reason}), not a timeout`
+            : `not ready within ${args.timeout}s`
+      }`,
+    );
   }
   if (!ready) {
-    console.error(`[dev-stack] readiness timeout; inspect ${logDir}/*.err.log and retry status`);
+    // task-21：把分类、退出码、具体日志文件一次说清；`status` 之后还能从 pid 记录里复读。
+    const described = describeStartFailure(failure);
+    console.error(`[dev-stack] start FAILED (${failure?.reason ?? 'unknown'}): ${described}`);
+    if (failure?.logs) {
+      console.error(`[dev-stack]   log: ${failure.logs.out}`);
+      console.error(`[dev-stack]   log: ${failure.logs.err}`);
+    } else {
+      console.error(`[dev-stack]   logs: ${logDir}/*.err.log`);
+    }
+    record.startFailure = { ...failure, at: new Date().toISOString() };
+    writeJson(pidFile, record);
     process.exitCode = 2;
+  } else if (record.startFailure) {
+    // 起来了就清掉上一轮的失败痕迹，避免 `status` 读到过期的死因。
+    delete record.startFailure;
+    writeJson(pidFile, record);
   }
 }
 
@@ -969,6 +1132,8 @@ async function status() {
           services: rows,
           factsOk,
           deadServices,
+          // task-21: 上一次 start 的死因（分类 + launcher 退出码），没失败过就是 null。
+          startFailure: record?.startFailure ?? null,
           verdict: lease.verdict.verdict,
           reasons: lease.verdict.reasons,
           leaseRenewed,
@@ -1003,6 +1168,13 @@ async function status() {
       console.log(
         `[dev-stack] lease exists but there is no pid record (${pidFile}): task-76 之前的认领只写了租约；`
           + '重跑一次 `dev-stack acquire --stack N` 即补齐',
+      );
+    }
+    // task-21: 上一次 start 为什么没起来（**分类 + launcher 退出码**）。没有这一行，读的人只能从
+    // 「端口没起」倒推，而这正是 600s 空等掩盖真相的同一类病。
+    if (!ok && record?.startFailure) {
+      console.log(
+        `[dev-stack] last start FAILED (${record.startFailure.reason}): ${describeStartFailure(record.startFailure)}`,
       );
     }
     console.log(
