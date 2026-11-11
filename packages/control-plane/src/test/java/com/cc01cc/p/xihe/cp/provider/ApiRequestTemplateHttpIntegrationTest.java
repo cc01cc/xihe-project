@@ -46,6 +46,7 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     @Autowired private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository connections;
     @Autowired private ApiRequestTemplateService templates;
     @Autowired private ApiRequestValidator apiRequestValidator;
+    @Autowired private com.cc01cc.p.xihe.cp.service.InstanceIdentityService identity;
     @Autowired private ProviderCredentialLeaseService leases;
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired private ProviderCatalogService catalog;
@@ -490,7 +491,7 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         var instance = new com.cc01cc.p.xihe.cp.entity.ProviderConnection();
         instance.setId(UUID.randomUUID());
         instance.setOwnerType(com.cc01cc.p.xihe.cp.entity.ProviderConnection.OWNER_INSTANCE);
-        instance.setOwnerId(com.cc01cc.p.xihe.cp.entity.ProviderConnection.INSTANCE_OWNER_ID);
+        instance.setOwnerId(identity.ownerId());
         instance.setProviderId("custom-openai-compatible");
         instance.setLabel("Inst Fallback");
         instance.setConnectionKey("inst-fallback");

@@ -37,6 +37,9 @@ class ConfigServiceTest {
     private ConfigService configService;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.service.InstanceIdentityService instanceIdentity;
+
+    @Autowired
     private ConfigJpaRepository repo;
 
     @Autowired
@@ -688,7 +691,7 @@ class ConfigServiceTest {
 
     @Test
     void resolveLlmProfile_userProfileFallsBackToInstanceConnection() {
-        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+        saveConnection("INSTANCE", instanceIdentity.ownerId(), "deepseek",
             "default", true, "READY");
         configService.putLayer("user", "llm-provider",
             Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
@@ -697,14 +700,14 @@ class ConfigServiceTest {
         ConfigService.ResolvedLlmProfile resolved =
             configService.resolveLlmProfile(userA, wsA);
         assertEquals("INSTANCE", resolved.connectionOwnerType());
-        assertEquals(ProviderConnection.INSTANCE_OWNER_ID, resolved.connectionOwnerId());
+        assertEquals(instanceIdentity.ownerId(), resolved.connectionOwnerId());
         assertEquals("user", resolved.profileScope());
     }
 
     @Test
     void resolveLlmProfile_userProfilePrefersOwnOverInstanceConnection() {
         saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
-        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+        saveConnection("INSTANCE", instanceIdentity.ownerId(), "deepseek",
             "default", true, "READY");
         saveRawProfile("user", userA, null, profile("deepseek", "default", "deepseek-chat"));
 
@@ -717,7 +720,7 @@ class ConfigServiceTest {
     @Test
     void resolveLlmProfile_workspaceProfilePrefersWorkspaceOverInstanceConnection() {
         saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
-        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+        saveConnection("INSTANCE", instanceIdentity.ownerId(), "deepseek",
             "default", true, "READY");
         configService.putLayer("workspace", "llm-provider",
             Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
@@ -731,7 +734,7 @@ class ConfigServiceTest {
 
     @Test
     void resolveLlmProfile_instanceProfileFallsBackToInstanceConnection() {
-        saveConnection("INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek",
+        saveConnection("INSTANCE", instanceIdentity.ownerId(), "deepseek",
             "default", true, "READY");
         configService.putLayer("instance", "llm-provider",
             Map.of("profile", profile("deepseek", "default", "deepseek-chat")),

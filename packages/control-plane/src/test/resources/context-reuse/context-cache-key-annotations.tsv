@@ -16,6 +16,7 @@
 @ActiveProfiles	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	profile-variant
+@ActiveProfiles	com/cc01cc/p/xihe/cp/config/ConfigWorkspaceDefaultProfileTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/config/ProviderRequestFingerprintConfigTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/context/ContextSourceLiveChainTest.java	profile-variant
 @ActiveProfiles	com/cc01cc/p/xihe/cp/credentials/CredentialRotationIntegrationTest.java	profile-variant
@@ -33,6 +34,7 @@
 @DirtiesContext	com/cc01cc/p/xihe/cp/AbstractIntegrationTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	isolation
+@DirtiesContext	com/cc01cc/p/xihe/cp/config/ConfigWorkspaceDefaultProfileTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/config/ProviderRequestFingerprintConfigTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/context/ContextSourceLiveChainTest.java	isolation
 @DirtiesContext	com/cc01cc/p/xihe/cp/credentials/CredentialRotationIntegrationTest.java	isolation
@@ -128,6 +130,7 @@
 @SpringBootTest	com/cc01cc/p/xihe/cp/chat/SessionWorkspaceBindingNegativeTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigLockServiceTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigServiceTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/config/ConfigWorkspaceDefaultProfileTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/config/ProviderRequestFingerprintConfigTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/context/ContextSourceLiveChainTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/context/ContextToolHistoryLiveChainTest.java	suite-context

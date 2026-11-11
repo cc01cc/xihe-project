@@ -25,9 +25,10 @@ import java.util.Set;
 class PluginBindingAuthorizationTest {
 
     // 29 before PLAN-0691 + the four plugin atoms = 33, minus the BL-312 removal = 32, plus the
-    // PLAN-0750 M1 (G1) restore = 33. SkillReadFaceTest and P0ManagementAtomSeedMigrationTest
+    // PLAN-0750 M1 (G1) restore = 33, plus PLAN-0766 (task-158 / V153)
+    // MANAGE_WORKSPACE_DEFAULT_CONFIG = 34. SkillReadFaceTest and P0ManagementAtomSeedMigrationTest
     // freeze the same number from the other two directions.
-    private static final int ACTION_ATOM_COUNT = 33;
+    private static final int ACTION_ATOM_COUNT = 34;
 
     @Test
     void pluginAtomsJoinTheCatalogWithTheSpecifiedScopes() {

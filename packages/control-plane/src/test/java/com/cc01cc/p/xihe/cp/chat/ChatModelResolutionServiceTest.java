@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestInstanceIdentity;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
@@ -95,7 +96,7 @@ class ChatModelResolutionServiceTest {
         Session session = session();
         ProviderConnection instance = connection("p-intent");
         instance.setOwnerType(ProviderConnection.OWNER_INSTANCE);
-        instance.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        instance.setOwnerId(TestInstanceIdentity.OWNER_ID);
         when(agentPrincipals.defaultModel(any(), any()))
                 .thenReturn(new AgentPrincipalService.DefaultModel("p-intent", "m-intent"));
         when(templates.effectiveConnections(USER, WORKSPACE, "p-intent"))

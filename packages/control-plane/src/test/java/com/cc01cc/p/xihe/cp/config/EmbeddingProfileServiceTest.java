@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import com.cc01cc.p.xihe.cp.support.TestInstanceIdentity;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService;
@@ -29,7 +30,8 @@ class EmbeddingProfileServiceTest {
     private final EnvOverlayRegistry envOverlay = mock(EnvOverlayRegistry.class);
     private final ProviderCredentialLeaseService leaseService = mock(ProviderCredentialLeaseService.class);
     private final EmbeddingProfileService service = new EmbeddingProfileService(
-            configs, connections, envOverlay, leaseService, new ObjectMapper());
+            configs, connections, envOverlay, leaseService, new ObjectMapper(),
+            TestInstanceIdentity.mock());
 
     private static final UUID USER = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID WORKSPACE = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -225,9 +227,9 @@ class EmbeddingProfileServiceTest {
         when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
         ProviderConnection instanceConnection = readyConnection();
         instanceConnection.setOwnerType("INSTANCE");
-        instanceConnection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        instanceConnection.setOwnerId(TestInstanceIdentity.OWNER_ID);
         when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
-                eq("INSTANCE"), eq(ProviderConnection.INSTANCE_OWNER_ID),
+                eq("INSTANCE"), eq(TestInstanceIdentity.OWNER_ID),
                 eq("dashscope-qwen"), eq("embedding")))
                 .thenReturn(Optional.of(instanceConnection));
 
@@ -243,9 +245,9 @@ class EmbeddingProfileServiceTest {
         when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
         ProviderConnection instanceConnection = readyConnection();
         instanceConnection.setOwnerType("INSTANCE");
-        instanceConnection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        instanceConnection.setOwnerId(TestInstanceIdentity.OWNER_ID);
         when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
-                eq("INSTANCE"), eq(ProviderConnection.INSTANCE_OWNER_ID),
+                eq("INSTANCE"), eq(TestInstanceIdentity.OWNER_ID),
                 eq("dashscope-qwen"), eq("embedding")))
                 .thenReturn(Optional.of(instanceConnection));
         when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(

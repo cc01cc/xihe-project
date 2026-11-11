@@ -59,12 +59,14 @@ public class ApiRequestTemplateService {
      */
     private final org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates;
     private final RequesterAuthority requesterAuthority;
+    private final InstanceIdentityService instanceIdentity;
 
     public ApiRequestTemplateService(ConfigJpaRepository configs, ConfigAuditRepository audits, ProviderConnectionRepository connections,
                                      EntityManager em, ObjectMapper json, ApiInputTypeService types,
                                      ApiRequestValidator validator, org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces, DbLockTimeout timeout,
                                      org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates,
-                                     RequesterAuthority requesterAuthority) {
+                                     RequesterAuthority requesterAuthority,
+                                      InstanceIdentityService instanceIdentity) {
         this.configs = configs;
         this.audits = audits;
         this.connections = connections;
@@ -76,6 +78,7 @@ public class ApiRequestTemplateService {
         this.timeout = timeout;
         this.contextTemplates = contextTemplates;
         this.requesterAuthority = requesterAuthority;
+        this.instanceIdentity = instanceIdentity;
     }
 
     public static CpApiException invalid(String message) {
@@ -354,7 +357,7 @@ public class ApiRequestTemplateService {
             ProviderConnection connection = connections.findById(UUID.fromString(entry.getKey())).orElseThrow();
             String owner = layer.equals("user") ? String.valueOf(user)
                     : layer.equals("workspace") ? String.valueOf(workspace)
-                    : ProviderConnection.INSTANCE_OWNER_ID;
+                    : instanceIdentity.ownerId();
             if (!connection.getOwnerType().equalsIgnoreCase(layer) || !connection.getOwnerId().equals(owner)) {
                 throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Default must be in Connection owner scope");
             }
@@ -379,7 +382,7 @@ public class ApiRequestTemplateService {
         // D-922: an INSTANCE connection is consumable by any bound consumer; listing and writes
         // are gated separately by the instance:admin capability.
         if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
-                && ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())) {
+                && instanceIdentity.isInstanceOwnerId(connection.getOwnerId())) {
             return;
         }
         if (!(connection.getOwnerType().equals("USER") && connection.getOwnerId().equals(user))
@@ -641,7 +644,7 @@ public class ApiRequestTemplateService {
         // it is considered when no USER/WORKSPACE chat candidate exists for this provider.
         if (slots.isEmpty()) {
             for (ProviderConnection connection : connections.findByOwnerTypeAndOwnerId(
-                    ProviderConnection.OWNER_INSTANCE, ProviderConnection.INSTANCE_OWNER_ID)) {
+                    ProviderConnection.OWNER_INSTANCE, instanceIdentity.ownerId())) {
                 if (!connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())
                         || !"chat".equals(types.operation(connection.getApiTypeId(), connection.getApiTypeVersion()))
                         || provider != null && !provider.equals(connection.getProviderId())) {
