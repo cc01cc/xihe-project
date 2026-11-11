@@ -57,7 +57,8 @@ $javaArgs = @("--class-path=$classpath", (Join-Path $cpDir "scripts/ResetAdmin.j
 #
 # PLAN-0770 M4：**没有显式密码时**，不再让 java 自己随机生成（那样这把钥匙只存在于一次输出里，
 # 下一次 reset 就漂了）——改由 `lib/dev-admin-password.mjs --ensure` 按单一优先级链解析
-# （env → .env 链 → 持久文件 → 生成）并**材料化**到 `<checkout>/.local/dev/admin-password`。
+# （B′：OS env → 持久文件 → .env 链（仅首次种子）→ 生成）并落盘到 `<checkout>/.local/dev/admin-password`
+# （只有最后一层「生成」会写盘；`.env` 链命中时**不**材料化 —— 用户裁定，见 PLAN-0770 D3）。
 $resolvedPassword = $null
 $passwordSource = "unknown"
 if ($Password) {
@@ -67,6 +68,23 @@ if ($Password) {
 } elseif ($env:XIHE_RESET_ADMIN_PASSWORD) {
     $resolvedPassword = $env:XIHE_RESET_ADMIN_PASSWORD.Trim()
     $passwordSource = "env"
+} elseif ($DryRun) {
+    # 只读观察：dry-run 不得解析出值、更不得落盘（读命令无副作用）。
+    # java 侧那条 "password-source = generated" 只表示 wrapper 没传值，**不代表**真会随机生成；
+    # 真正的来源由单源链决定 ⇒ 在 java 之后补一条权威行（读的人最后看到的是它）。
+    $prevRoot = $env:XIHE_CHECKOUT_ROOT
+    $env:XIHE_CHECKOUT_ROOT = $root
+    try {
+        $dryDesc = (node (Join-Path $root "scripts/lib/dev-admin-password.mjs") --describe) | ConvertFrom-Json
+        $passwordSource = "single-source:" + $dryDesc.source
+    }
+    catch {
+        $dryDesc = $null
+        Write-Warning "[reset-admin] dry-run 无法读取单源解析结果（--describe 失败）：$($_.Exception.Message)"
+    }
+    finally {
+        if ($null -eq $prevRoot) { Remove-Item Env:XIHE_CHECKOUT_ROOT -ErrorAction SilentlyContinue } else { $env:XIHE_CHECKOUT_ROOT = $prevRoot }
+    }
 } elseif (-not $DryRun) {
     $resolvedPassword = (node (Join-Path $root "scripts/lib/dev-admin-password.mjs") --ensure)
     if ($LASTEXITCODE -ne 0 -or -not $resolvedPassword) {
@@ -82,10 +100,17 @@ if ($DryRun) { $javaArgs += "--dry-run" }
 java @javaArgs
 if ($LASTEXITCODE -ne 0) { Write-Error "java 执行失败 (exit=$LASTEXITCODE)"; exit $LASTEXITCODE }
 
+# java 的 dry-run 只报它自己看到的输入（没传值 ⇒ generated），会误导读者以为这次会随机生成密码。
+# 真正执行的来源是单源链，因此在这一行之前不解释、在这一行之后补权威结论。
+if ($DryRun -and $dryDesc) {
+    Write-Host ("[reset-admin] dry-run: 实际来源 source={0} hasFile={1}（上面 java 的 generated 只表示未传值，本轮不会生成）；值不打印" -f $dryDesc.source, $dryDesc.hasFile)
+}
+
 # PLAN-0770 M4：**成功后**同批写回持久文件，让「DB 里的密码」与「checkout 的单源文件」不漂。
 # 只在**显式 -WriteBack**、成功、且非 DryRun 时写；失败路径不动现有文件。值经 stdin 传给
 # helper（不进 argv），只打印路径。默认不写：dev-stack 的起栈 upsert 也走本 wrapper，
-# 默认写回等于把「每次 start 都材料化」偷偷落地（INV-1 选项 A 仍待用户裁定）。
+# 默认写回等于把「每次 start 都材料化」偷偷落地（用户已裁定 B′：文件即真相、env 链只做种子，
+# 且**不做** materialize ⇒ 起栈路径不写回）。
 if ($WriteBack -and -not $DryRun -and $resolvedPassword) {
     $written = $resolvedPassword | node (Join-Path $root "scripts/lib/dev-admin-password.mjs") --write-stdin
     if ($LASTEXITCODE -eq 0 -and $written) {
