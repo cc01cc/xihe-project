@@ -437,7 +437,18 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
   - PowerShell：`$env:XIHE_SPRINGDOC_ENABLED='true'; mise run dev:host`
   - POSIX shell：`XIHE_SPRINGDOC_ENABLED=true mise run dev:host`
 - **已自动开启的 profile**：`dev` / `e2e` / `test`（`application-{dev,e2e}.properties`、`src/test/resources/application-test.properties`）。`dev:host` 走的是**默认 profile**，所以它需要上面那行 env，或显式 `--spring.profiles.active=dev`。
-- **关闭时的样子**：`GET /v3/api-docs` 与 `/swagger-ui.html` 返回 **404**（handler 不存在）。`SecurityConfig` 里那三条 `permitAll` 只在该面被显式开启时才有意义，**不是常开的匿名口子**。
+- **关闭时的样子**：`GET /v3/api-docs` 与 `/swagger-ui.html` 返回 **404**（handler 不存在）。`SecurityConfig` 里那几条 `permitAll`（含显式补的 `/v3/api-docs.yaml`）只在该面被显式开启时才有意义，**不是常开的匿名口子**。
+- **实测两态（task-194，2026-11-11；下两态均为实测，非推断）**：默认 profile 起独立 CP（`XIHE_CP_PORT=18081` + 一次性库，**未动 `stack-1`**），同一个 jar 只差一个 env：
+  | 路径 | 关闭（默认 profile） | `XIHE_SPRINGDOC_ENABLED=true` |
+  | --- | --- | --- |
+  | `/v3/api-docs` | **404**（RFC 9457 `not_found` 体） | **200**（`{"openapi":"3.1.0"…}`） |
+  | `/v3/api-docs.yaml` | **404** | **200**（YAML 正文） |
+  | `/swagger-ui/index.html` | **404** | **200**（Swagger UI） |
+  | `/swagger-ui.html` | **404** | **302** → `/swagger-ui/index.html` |
+  | `/actuator/health` | **200** `UP` | **200** `UP` |
+  关态的 404 是**真 404（handler 不存在）**，不是 500 也不是空 JSON —— 这正是「关闭=没这个面」与「开着但报错」的分界。
+  `[源码]` 顺带修正的一处：`/v3/api-docs.yaml` 曾两态都 401，因为 `SecurityConfig` 的 `permitAll("/v3/api-docs/**")` 不覆盖 `.yaml` 后缀（`/**` 需后续路径段）；task-194 已把 `/v3/api-docs.yaml` 显式加入 permitAll 与 `UiStaticServingFilter` 的 bypass 列表（`SecurityConfig.java`、`UiStaticServingFilter.java`）。
+- **「不依赖 springdoc」怎么证**：不是靠数字相同——两态 `implemented` 本身就差 4（springdoc 自注册的 4 条路由，develop 实测 `279` vs `275`）。证明形式是 **两态 `documented` 相同 + `unexpected` 双侧 0**：契约侧不随开关移动，判定侧既不 fail-open 也不 fail-closed。`[实测]`
 - **不要拿它当契约或分母**：它比 live `RequestMappingHandlerMapping` **少报路由**，也不收录 `/internal/**`；对账与守恒一律以 `RouteContractParityTest`（live mapping）为准。
 
 ## 5. 测试入口

@@ -259,7 +259,12 @@ defineExpose({ error });
                 <Button variant="ghost" @click="emit('close')">{{
                     t("settings.rolesCancel")
                 }}</Button>
-                <Button data-testid="role-editor-submit" :disabled="saving" @click="submit">
+                <Button
+                    data-testid="role-editor-submit"
+                    :disabled="saving || !catalog"
+                    :title="!catalog ? t('settings.rolesCreateDisabledNoCatalog') : undefined"
+                    @click="submit"
+                >
                     <LoaderCircle v-if="saving" class="animate-spin" aria-hidden="true" />
                     {{ t("settings.rolesSave") }}
                 </Button>
