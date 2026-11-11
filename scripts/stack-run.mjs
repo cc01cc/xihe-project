@@ -15,7 +15,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
 import {
@@ -31,6 +31,8 @@ import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack
 import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { ensureEnvFromUser } from "./lib/user-env.mjs";
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
+// PLAN-0770 INV-3：dev 管理员凭据的来源可观测（只读、非密）。与 dev-stack 共用同一条解析链。
+import { describeDevAdminSource } from "./lib/dev-admin-password.mjs";
 import { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } from "./lib/stack-ports.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -295,7 +297,15 @@ if (target === "env-json") {
     XIHE_WORKSPACE_HOST_ROOT: hostRootResolved,
     ...(cargoTargetDir ? { CARGO_TARGET_DIR: cargoTargetDir } : {}),
   };
-  process.stdout.write(`${JSON.stringify({ ...derived, env, hostRootResolved, cargoTargetDir: cargoTargetDir ?? null }, null, 2)}\n`);
+  // PLAN-0770：附上 dev 管理员凭据的来源元数据（**非密**：身份 / 层级 / 相对路径 / 布尔），
+  // 让 `env-json` 的消费者（reset-admin.ps1、运维脚本）能一并回答「这套栈的钥匙从哪来」。
+  // 只读：不生成、不落盘、不含值/长度/hash。
+  const devAdmin = describeDevAdminSource({
+    checkoutRoot: projectRoot,
+    env: process.env,
+    relative: (absolute) => relative(projectRoot, absolute).replace(/\\/g, "/"),
+  });
+  process.stdout.write(`${JSON.stringify({ ...derived, env, hostRootResolved, cargoTargetDir: cargoTargetDir ?? null, devAdmin }, null, 2)}\n`);
   process.exit(0);
 }
 

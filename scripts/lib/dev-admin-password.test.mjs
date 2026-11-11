@@ -14,6 +14,8 @@ import {
     RESET_ADMIN_PASSWORD_ENV,
     resetAdminEnv,
     devAdminPasswordFile,
+    describeDevAdminSource,
+    devAdminEmail,
     formatDevAdminPassword,
     generateDevAdminPassword,
     readDevAdminPasswordFile,
@@ -145,12 +147,13 @@ describe("resolveDevAdminPassword 优先级（D-766 乙案）", () => {
 });
 
 describe("formatDevAdminPassword（只打非密元数据）", () => {
-    test("包含来源/字符数，绝不包含密码值", (t) => {
+    test("包含来源，绝不包含密码值（PLAN-0770 D4：**连长度也不打**）", (t) => {
         const root = fakeRoot(t);
         const result = resolveDevAdminPassword({ projectRoot: root, env: { [ADMIN_PASSWORD_ENV]: SECRET } });
         const line = formatDevAdminPassword(result);
         assert.match(line, /source=env\b/);
-        assert.match(line, /length=26\b/);
+        // D4：长度是派生量（可用于缩小暴力面）⇒ 元数据行里不许出现。
+        assert.ok(!/length=/.test(line), `log line must not leak the length: ${line}`);
         assert.ok(!line.includes(SECRET), `log line leaked the password: ${line}`);
         assert.ok(!line.includes(SECRET.slice(0, 8)), "not even a prefix may leak");
         assert.match(line, /value=not-logged/);
@@ -282,5 +285,71 @@ describe("BL-527 护栏：密码值必须是 string（禁止对象被强转进�
         const ok = resolveDevAdminPasswordSafe({ projectRoot: root, env: {} });
         assert.equal(typeof devAdminPasswordFrom(ok), "string");
         assert.equal(devAdminPasswordFrom(ok), ok.password);
+    });
+});
+
+// PLAN-0770 M1/M3/M4：来源可观测的契约（只读 / 非密 / 单一链条）+ 不物化。
+describe("describeDevAdminSource（PLAN-0770 INV-3：只读、非密、单一链条）", () => {
+    test("文件命中 ⇒ source=file，且带出持久路径与 hasFile", (t) => {
+        const root = fakeRoot(t);
+        writeDevAdminPasswordFile(devAdminPasswordFile(root), FILE_SECRET);
+        const info = describeDevAdminSource({ checkoutRoot: root, env: {} });
+        assert.equal(info.source, "file");
+        assert.equal(info.hasFile, true);
+        assert.ok(info.persistedPath && info.persistedPath.endsWith("admin-password"));
+        assert.equal(info.wouldGenerate, false);
+    });
+
+    test("OS env 命中 ⇒ source=env", (t) => {
+        const root = fakeRoot(t);
+        const info = describeDevAdminSource({ checkoutRoot: root, env: { [ADMIN_PASSWORD_ENV]: SECRET } });
+        assert.equal(info.source, "env");
+        assert.equal(info.hasFile, false);
+    });
+
+    test("`.env` 链命中 ⇒ source=env-file 且报出**是哪个文件**", (t) => {
+        const root = fakeRoot(t, { envLines: `${ADMIN_PASSWORD_ENV}=${SECRET}\n` });
+        const info = describeDevAdminSource({ checkoutRoot: root, env: {} });
+        assert.equal(info.source, "env-file");
+        // 来源文件必须由链加载器自己给出（第二份链条 = 同一事实多处写）。
+        assert.ok(info.envFile && info.envFile.endsWith(".env"), `expected the .env file, got ${info.envFile}`);
+    });
+
+    test("都没有 ⇒ source=missing，且**不生成、不落盘**（读操作不许有副作用）", (t) => {
+        const root = fakeRoot(t);
+        const info = describeDevAdminSource({ checkoutRoot: root, env: {} });
+        assert.equal(info.source, "missing");
+        assert.equal(info.hasFile, false);
+        assert.equal(info.wouldGenerate, true);
+        assert.equal(existsSync(devAdminPasswordFile(root)), false, "describe 不许因为看一眼就造出一份凭据");
+    });
+
+    test("输出零外泄：序列化后不含值、不含长度、不含前缀", (t) => {
+        const root = fakeRoot(t);
+        writeDevAdminPasswordFile(devAdminPasswordFile(root), FILE_SECRET);
+        const info = describeDevAdminSource({ checkoutRoot: root, env: {} });
+        const text = JSON.stringify(info);
+        assert.ok(!text.includes(FILE_SECRET), `描述里出现了值: ${text}`);
+        assert.ok(!text.includes(FILE_SECRET.slice(0, 6)), "前缀也不行");
+        assert.ok(!("password" in info) && !("length" in info), `字段面过宽: ${Object.keys(info).join(",")}`);
+    });
+
+    test("devAdminEmail：默认 admin@xihe.local，可被 XIHE_DEV_ADMIN_EMAIL 覆盖", () => {
+        assert.equal(devAdminEmail({}), "admin@xihe.local");
+        assert.equal(devAdminEmail({ XIHE_DEV_ADMIN_EMAIL: " ops@xihe.local " }), "ops@xihe.local");
+    });
+});
+
+describe("resolveDevAdminPassword({persist:false})（只读解析）", () => {
+    test("命不中时返回 source=missing 且不写文件；persist 默认仍为 true（起栈路径行为不变）", (t) => {
+        const root = fakeRoot(t);
+        const dry = resolveDevAdminPassword({ projectRoot: root, env: {}, persist: false });
+        assert.equal(dry.source, "missing");
+        assert.equal(dry.password, null);
+        assert.equal(existsSync(devAdminPasswordFile(root)), false);
+
+        const wet = resolveDevAdminPassword({ projectRoot: root, env: {} });
+        assert.equal(wet.source, "generated");
+        assert.equal(existsSync(devAdminPasswordFile(root)), true);
     });
 });

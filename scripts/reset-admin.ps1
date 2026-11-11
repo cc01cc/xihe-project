@@ -9,7 +9,12 @@ param(
     [string]$Password,
     [string]$Email = "admin@xihe.local",
     [string]$StackId,
-    [switch]$DryRun
+    [switch]$DryRun,
+    # PLAN-0770 M4：成功后把生效值写回 `.local/dev/admin-password`。
+    # **默认关闭**，只有操作员显式重置（`mise run reset-admin`）才打开 —— 因为 `dev-stack`
+    # 起栈时的 upsert 也走这个 wrapper，若默认开启就等于在**每次 start** 里把 env 值
+    # 材料化进文件（"哪份是真相"被静默改写），这件事仍待用户裁定（PLAN-0770 INV-1 选项 A）。
+    [switch]$WriteBack
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,11 +54,44 @@ $classpath = (Get-Content $cpCache -Raw).Trim()
 $javaArgs = @("--class-path=$classpath", (Join-Path $cpDir "scripts/ResetAdmin.java"), "--email", $Email)
 # BL-523: 密码不进 argv（进程表/shell 历史可见）。-Password 仅为兼容保留，改为经 env 传给 java；
 # 优先级与 java 侧一致：stdin > env > --password（后者已废弃、wrapper 不再使用）。
+#
+# PLAN-0770 M4：**没有显式密码时**，不再让 java 自己随机生成（那样这把钥匙只存在于一次输出里，
+# 下一次 reset 就漂了）——改由 `lib/dev-admin-password.mjs --ensure` 按单一优先级链解析
+# （env → .env 链 → 持久文件 → 生成）并**材料化**到 `<checkout>/.local/dev/admin-password`。
+$resolvedPassword = $null
+$passwordSource = "unknown"
 if ($Password) {
     Write-Warning "[reset-admin] -Password 已废弃（明文进 shell 历史）；已改为经 env 传递，请改用 stdin 或 XIHE_RESET_ADMIN_PASSWORD"
-    $env:XIHE_RESET_ADMIN_PASSWORD = $Password
+    $resolvedPassword = $Password
+    $passwordSource = "argv"
+} elseif ($env:XIHE_RESET_ADMIN_PASSWORD) {
+    $resolvedPassword = $env:XIHE_RESET_ADMIN_PASSWORD.Trim()
+    $passwordSource = "env"
+} elseif (-not $DryRun) {
+    $resolvedPassword = (node (Join-Path $root "scripts/lib/dev-admin-password.mjs") --ensure)
+    if ($LASTEXITCODE -ne 0 -or -not $resolvedPassword) {
+        Write-Error "[reset-admin] 解析 dev 管理员密码失败（--ensure 非 0）"
+        exit 2
+    }
+    $resolvedPassword = $resolvedPassword.Trim()
+    $passwordSource = "single-source"
 }
+if ($resolvedPassword) { $env:XIHE_RESET_ADMIN_PASSWORD = $resolvedPassword }
 if ($DryRun) { $javaArgs += "--dry-run" }
 
 java @javaArgs
 if ($LASTEXITCODE -ne 0) { Write-Error "java 执行失败 (exit=$LASTEXITCODE)"; exit $LASTEXITCODE }
+
+# PLAN-0770 M4：**成功后**同批写回持久文件，让「DB 里的密码」与「checkout 的单源文件」不漂。
+# 只在**显式 -WriteBack**、成功、且非 DryRun 时写；失败路径不动现有文件。值经 stdin 传给
+# helper（不进 argv），只打印路径。默认不写：dev-stack 的起栈 upsert 也走本 wrapper，
+# 默认写回等于把「每次 start 都材料化」偷偷落地（INV-1 选项 A 仍待用户裁定）。
+if ($WriteBack -and -not $DryRun -and $resolvedPassword) {
+    $written = $resolvedPassword | node (Join-Path $root "scripts/lib/dev-admin-password.mjs") --write-stdin
+    if ($LASTEXITCODE -eq 0 -and $written) {
+        Write-Host "[reset-admin] written=.local/dev/admin-password (source=$passwordSource；值不打印)"
+    }
+    else {
+        Write-Warning "[reset-admin] 写回 .local/dev/admin-password 失败（DB 已更新，文件未同步 —— 下次 start 会以现有来源为准）"
+    }
+}

@@ -30,7 +30,7 @@ function findRepoRoot(startDir) {
     }
 }
 
-function parseEnvFile(text, lookup) {
+function parseEnvFile(text, lookup, origins, file) {
     // KEY=VALUE lines; '#' comments; optional surrounding quotes are stripped.
     // Interpolation (${VAR}) is NOT supported — keep parity with DotenvLoader's parser.
     const out = new Map();
@@ -48,17 +48,22 @@ function parseEnvFile(text, lookup) {
         }
         out.set(key, value);
         lookup.set(key, value);
+        // PLAN-0770: 记录"这个键是哪个文件给的" —— 只记路径，不记值。
+        // 来源可观测必须问**同一个加载器**，不能让调用方自己再解释一遍链顺序（第二份链条）。
+        if (origins) origins.set(key, file);
     }
     return out;
 }
 
 /**
  * Loads the .env chain and fills gaps in `env` (an object-like bag; defaults to
- * process.env). Returns { count, files } — count of newly filled keys, never values.
+ * process.env). Returns { count, files, origins } — count of newly filled keys, never values.
+ * `origins` (PLAN-0770) maps key → the file that supplied it, so callers can report
+ * "这个值来自 `.env.local`" without re-implementing the chain order.
  */
 export function loadEnvFileChain({ env = process.env, cwd = process.cwd() } = {}) {
     const root = findRepoRoot(cwd);
-    if (!root) return { count: 0, files: [] };
+    if (!root) return { count: 0, files: [], origins: new Map() };
     const envName = env.XIHE_ENV || "dev";
     const files = [
         path.join(root, ".env"),
@@ -72,10 +77,11 @@ export function loadEnvFileChain({ env = process.env, cwd = process.cwd() } = {}
     }
     let count = 0;
     const loaded = [];
+    const origins = new Map();
     for (const file of files) {
         if (!fs.existsSync(file)) continue;
         loaded.push(file);
-        const filled = parseEnvFile(fs.readFileSync(file, "utf8"), lookup);
+        const filled = parseEnvFile(fs.readFileSync(file, "utf8"), lookup, origins, file);
         for (const [k, v] of filled) {
             const current = env[k];
             if (current === undefined || current === "") {
@@ -84,7 +90,7 @@ export function loadEnvFileChain({ env = process.env, cwd = process.cwd() } = {}
             }
         }
     }
-    return { count, files: loaded };
+    return { count, files: loaded, origins };
 }
 
 function main() {

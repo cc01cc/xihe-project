@@ -599,8 +599,8 @@ alias = "dev:host:start:ui"
 # alias = "image:workspace:build"
 
 [tasks."reset-admin"]
-run = "pwsh -NoProfile -File scripts/reset-admin.ps1"
-description = "Reset dev admin@xihe.local password (random if not specified; PLAN-229)"
+run = "pwsh -NoProfile -File scripts/reset-admin.ps1 -WriteBack"
+description = "Reset dev admin@xihe.local password (random if not specified; PLAN-229; PLAN-0770: -WriteBack 把生效值写回 .local/dev/admin-password)"
 alias = "reset-admin"
 
 [tasks.clean]

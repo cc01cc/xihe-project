@@ -49,7 +49,7 @@ import { existsSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, r
 import http from 'node:http';
 import net from 'node:net';
 import { hostname } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from './lib/stack-cargo-target.mjs';
 import { ensureEnvFromUser } from './lib/user-env.mjs';
@@ -85,6 +85,7 @@ import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs
 import {
   assertPasswordString,
   buildResetAdminCommand,
+  describeDevAdminSource,
   devAdminPasswordFrom,
   formatDevAdminPassword,
   resetAdminEnv,
@@ -904,7 +905,7 @@ function applyDevAdminPassword(adminPassword) {
       .find((line) => line.startsWith("[reset-admin]") && /source=/.test(line) && !line.includes("XIHE_RESET_ADMIN_PASSWORD"));
     if (javaLine) console.log(`[dev-stack] ${javaLine}`);
     console.log(
-      `[dev-stack] dev admin upsert: ok stack=${derived.stackId} length=${password.length} (value not logged, ${elapsed}ms)`,
+      `[dev-stack] dev admin upsert: ok stack=${derived.stackId} (value not logged, ${elapsed}ms)`,
     );
     return { ok: true };
   }
@@ -923,6 +924,74 @@ function applyDevAdminPassword(adminPassword) {
     console.warn(text.split(/\r?\n/).slice(-3).join('\n'));
   }
   return { ok: false };
+}
+
+/* ----------------------------------- dev admin single source (PLAN-0770) */
+
+/**
+ * 上一次 `start` 的 dev-admin 对齐结果（**非密**）：`status` 用它回答
+ * `upsert=ok|failed|skipped|not-run`。status 自己**不做** upsert（读命令不产生副作用）。
+ */
+function devAdminStateFile() {
+  return join(logDir, 'dev-admin-state.json');
+}
+
+function writeDevAdminState({ source, upsert, reason }) {
+  const state = {
+    stackId: derived.stackId,
+    database: derived.database,
+    source,
+    upsert,
+    ...(reason ? { reason } : {}),
+    at: new Date().toISOString(),
+  };
+  try {
+    writeJson(devAdminStateFile(), state);
+  } catch (error) {
+    console.warn(
+      `[dev-stack] dev admin state: could not record (${error?.code ?? 'ERROR'}) — status will show upsert=unknown`,
+    );
+  }
+  return state;
+}
+
+/**
+ * `status` 用的 dev-admin 元数据（PLAN-0770 INV-3）。
+ *
+ * 三条硬约束：①**只读**（不生成、不落盘 —— 看一眼来源不该造出一份凭据）；
+ * ②来源判定**复用** `describeDevAdminSource()`（单一链条，不在 status 里重排优先级）；
+ * ③只输出非密元数据（身份、层级名、相对路径、布尔）。
+ */
+function devAdminStatus() {
+  const described = describeDevAdminSource({
+    checkoutRoot: projectRoot,
+    env: process.env,
+    relative: (absolute) => relative(projectRoot, absolute).replace(/\\/g, '/'),
+  });
+  const recorded = readJson(devAdminStateFile());
+  return {
+    user: described.user,
+    source: described.source,
+    envFile: described.envFile,
+    stack: derived.stackId,
+    database: derived.database,
+    persistedPath: described.persistedPath,
+    hasFile: described.hasFile,
+    wouldGenerate: described.wouldGenerate,
+    // 从未启动过 ⇒ not-run。`upsertAt` 让读的人能判断这条读数有多旧。
+    upsert: recorded?.upsert ?? 'not-run',
+    upsertAt: recorded?.at ?? null,
+    upsertReason: recorded?.reason ?? null,
+  };
+}
+
+function formatDevAdminStatus(info) {
+  const via = info.source === 'env-file' && info.envFile ? `(${info.envFile})` : '';
+  return (
+    `  dev-admin user=${info.user} source=${info.source}${via} stack=${info.stack} db=${info.database} `
+    + `hasFile=${info.hasFile} persisted=${info.persistedPath ?? 'none'} upsert=${info.upsert}`
+    + (info.upsertReason ? `(${info.upsertReason})` : '')
+  );
 }
 
 async function start() {
@@ -1044,13 +1113,25 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   // D-766 乙案最小版：CP 起来（DB 已迁移、admin 行可能已存在）之后再做 upsert ——
   // 存量库靠这一步拿到本轮注入的密码（DataSeeder 只建不更）。租约先翻 started，
   // 不让这一段 java 耗时把「phase=starting」窗口拉长。
+  //
+  // PLAN-0770 M2：对齐本身已在做（`ResetAdmin.java:139-146` 是纯 UPDATE，天然幂等）；
+  // 这里补的是**结果可观测** —— 三种跳过原因与成败都落 state 文件，`status` 直接读，
+  // 不再需要翻起栈日志才知道「上次对齐到底做没做」。
+  const devAdminSource = devAdmin.ok ? devAdmin.source : 'unavailable';
+  let devAdminUpsert;
   if (!devAdminPassword) {
     console.log('[dev-stack] dev admin upsert: skipped (no injected password; see the WARN above)');
+    devAdminUpsert = { upsert: 'skipped', reason: 'no-password' };
   } else if (!ready) {
     console.log('[dev-stack] dev admin upsert: skipped (stack is not ready)');
+    devAdminUpsert = { upsert: 'skipped', reason: 'stack-not-ready' };
   } else {
-    applyDevAdminPassword(devAdminPassword);
+    const applied = applyDevAdminPassword(devAdminPassword);
+    devAdminUpsert = applied.ok
+      ? { upsert: 'ok' }
+      : { upsert: 'failed', reason: applied.skipped ?? 'upsert-failed' };
   }
+  writeDevAdminState({ source: devAdminSource, ...devAdminUpsert });
   const rows = SERVICES.map((service) => ({
     service,
     port: ports[service],
@@ -1163,6 +1244,8 @@ async function status() {
   // 与 `cpBuild.runningCommit`（已经跑着的 classes 的戳）并列展示 —— 两者都来自同一次
   // `readBuildInfo`，不同的是「将要注入」与「正在运行」。unknown 时必须带 reason（缺失/解析失败/非法）。
   const buildCommit = resolveBuildCommit({ targetDir: cpBuild.targetDir });
+  // PLAN-0770 INV-3：一条命令回答「当前这套栈的 dev 管理员凭据取自哪一层、上次对齐结果」。
+  const devAdmin = devAdminStatus();
   if (args.json) {
     console.log(
       JSON.stringify(
@@ -1175,6 +1258,9 @@ async function status() {
           pg: { port: ports.postgres, listening: pgListening },
           cpBuild,
           buildCommit,
+          // PLAN-0770：`{user, source, envFile, stack, database, persistedPath, hasFile, upsert}`。
+          // 契约：**不含密码值、不含长度、不含 hash/前后缀**（D4 值零外泄）。
+          devAdmin,
           services: rows,
           factsOk,
           deadServices,
@@ -1203,6 +1289,7 @@ async function status() {
     console.log(`  cpBuild  ${formatCpBuild(cpBuild)}`);
     console.log(`  buildCommit ${describeBuildCommit(buildCommit)}  (注入口径：下一次 start 注入 XIHE_BUILD_COMMIT)`);
     console.log(`  PostgreSQL port ${ports.postgres} listen=${pgListening}`);
+    console.log(formatDevAdminStatus(devAdmin));
     printLease(lease);
     if (leaseRenewed) console.log('  (心跳已刷新：本次核对全绿)');
     // task-76: 「租约还在、记录也还在，但进程已死」要说清楚是哪几个，

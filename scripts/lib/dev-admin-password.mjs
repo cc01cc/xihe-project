@@ -83,6 +83,7 @@ export function resolveDevAdminPassword({
     cwd = projectRoot,
     file,
     generate = generateDevAdminPassword,
+    persist = true,
 } = {}) {
     const target = file ?? devAdminPasswordFile(projectRoot);
 
@@ -107,6 +108,13 @@ export function resolveDevAdminPassword({
         return { password: stored, source: "file", length: stored.length, file: target, persisted: "reused" };
     }
 
+    // PLAN-0770：`persist: false` 是**只读观察**（status/诊断用）——绝不因为"看一眼来源"
+    // 就凭空生成并落盘一份凭据。命不中任何一层时报 `source: "missing"`，由调用方显示
+    // "尚未材料化"，而不是让读操作产生副作用。
+    if (!persist) {
+        return { password: null, source: "missing", length: 0, file: target, persisted: "none" };
+    }
+
     const password = generate();
     writeDevAdminPasswordFile(target, password);
     return { password, source: "generated", length: password.length, file: target, persisted: "created" };
@@ -120,13 +128,56 @@ export function resolveDevAdminPassword({
  * 链读失败（权限/编码）⇒ 视为未配置、不向上抛：调用方都在起栈路径上，读不到配置不该打断 `start`。
  */
 function chainValue(name, cwd) {
+    return chainOrigin(name, cwd).value;
+}
+
+/**
+ * `.env` 链里某个键的**值与来源文件**（PLAN-0770）。来源取自 `env-file.mjs` 自己的
+ * `origins` 映射 —— 不在本模块重排链顺序（第二份链条 = 同一事实多处写）。
+ */
+function chainOrigin(name, cwd) {
     try {
         const fromFiles = {};
-        loadEnvFileChain({ env: fromFiles, cwd });
-        return normalize(fromFiles[name]);
+        const { origins } = loadEnvFileChain({ env: fromFiles, cwd });
+        return { value: normalize(fromFiles[name]), file: origins?.get(name) ?? null };
     } catch {
-        return "";
+        return { value: "", file: null };
     }
+}
+
+/**
+ * **只读**来源描述（PLAN-0770 INV-3）：给 `status` / `--json` 用，回答「当前 checkout 的
+ * dev 管理员凭据现在会取自哪一层」，而**不**产生任何副作用（不生成、不落盘）。
+ *
+ * 契约（D4 值零外泄）：返回的每个字段都必须能回答「它能不能反推密码」——
+ * 这里只有身份（user）、层级名、相对路径、是否存在的布尔。
+ *
+ * @param {object} options
+ * @param {string} options.checkoutRoot
+ * @param {Record<string,string|undefined>} [options.env]
+ * @param {(p:string)=>string} [options.relative] 由调用方注入相对化（避免本模块依赖 cwd）
+ * @returns {{user:string, source:"env"|"env-file"|"file"|"missing",
+ *   envFile:string|null, persistedPath:string|null, hasFile:boolean, wouldGenerate:boolean}}
+ */
+export function describeDevAdminSource({ checkoutRoot, env = process.env, relative = (p) => p } = {}) {
+    const target = devAdminPasswordFile(checkoutRoot);
+    const hasFile = readDevAdminPasswordFile(target) !== null;
+    const resolved = resolveDevAdminPassword({ projectRoot: checkoutRoot, env, persist: false });
+    const envOrigin = resolved.source === "env-file" ? chainOrigin(ADMIN_PASSWORD_ENV, checkoutRoot).file : null;
+    return {
+        user: devAdminEmail(env),
+        source: resolved.source,
+        envFile: envOrigin === null ? null : relative(envOrigin),
+        persistedPath: hasFile ? relative(target) : null,
+        hasFile,
+        wouldGenerate: resolved.source === "missing",
+    };
+}
+
+/** dev 管理员 email：`XIHE_DEV_ADMIN_EMAIL` 可覆盖，否则与 `DataSeeder`/`reset-admin` 同一缺省值。 */
+export function devAdminEmail(env = process.env) {
+    const value = normalize(env?.XIHE_DEV_ADMIN_EMAIL);
+    return value !== "" ? value : "admin@xihe.local";
 }
 
 /**
@@ -237,11 +288,82 @@ export function resetAdminEnv({ env = process.env, password }) {
 }
 
 /**
- * 非密元数据行（**绝不**含密码值）：来源 / 字符数 / 落盘路径。
+ * 非密元数据行（**绝不**含密码值）：来源 / 落盘路径。
  * 任何新增字段都必须先回答「它能不能反推密码」。
+ *
+ * PLAN-0770 D4：**连长度都不报**（长度也是派生量，可按长度缩小搜索空间）。
+ * 老版本打过 `length=36`，已按用户裁定的凭据卫生口径删除。
  */
 export function formatDevAdminPassword(result) {
-    const parts = [`source=${result.source}`, `length=${result.length}`, "value=not-logged"];
+    const parts = [`source=${result.source}`, "value=not-logged"];
     if (result.file) parts.push(`file=${result.file}`, `persisted=${result.persisted}`);
     return `[dev-stack] dev admin password: ${parts.join(" ")}`;
+}
+
+/* ------------------------------------------------------------------ CLI */
+
+// PLAN-0770 M4：`reset-admin.ps1` 成功后要把同一把钥匙写回持久文件（单源不漂），
+// 但它不该自己再实现一遍「24B base64url 生成 + 优先级链」——那正是第二份链条。
+// 因此这里开两个**值只走 stdout/stdin** 的子命令（与 `env-file.mjs --print` 同一先例）：
+//   --ensure      按优先级解析；命中 env/env-file 时把它**材料化**到持久文件；都没有则生成并落盘。
+//                 打印值到 stdout（调用方捕获，不落日志、不进 argv）。
+//   --write-stdin 从 stdin 读一个已知值并落盘，打印**相对/绝对路径**（不打印值）。
+//   --describe    输出 JSON 非密元数据（身份/来源/路径/布尔），给诊断用。
+function readStdinValue() {
+    try {
+        const text = readFileSync(0, "utf8");
+        return normalize(text);
+    } catch {
+        return "";
+    }
+}
+
+function main(argv = process.argv.slice(2)) {
+    const checkoutRoot = process.env.XIHE_CHECKOUT_ROOT || process.cwd();
+    const arg = argv[0] ?? "";
+    if (arg === "--ensure") {
+        const resolved = resolveDevAdminPassword({ projectRoot: checkoutRoot, env: process.env });
+        if (!resolved.password) {
+            process.stderr.write("[dev-admin] 无法解析 dev 管理员密码（生成失败）\n");
+            process.exit(1);
+        }
+        // **不在 --ensure 里 materialize**（PLAN-0770 INV-1 选项 A 仍待用户裁定）：
+        // 命中 env/env-file 时只回报值，不把 env 值写进持久文件 —— 那会改变"哪份是真相"，
+        // 属于 B 类语义变更。真正的写回只发生在 `reset-admin` 成功后（M4，显式动作）。
+        process.stderr.write(`[dev-admin] resolved source=${resolved.source} (not materialized)\n`);
+        process.stdout.write(`${resolved.password}\n`);
+        process.exit(0);
+    }
+    if (arg === "--write-stdin") {
+        const value = readStdinValue();
+        if (value === "") {
+            process.stderr.write("[dev-admin] stdin 为空，不写文件\n");
+            process.exit(1);
+        }
+        assertPasswordString(value, "dev-admin --write-stdin");
+        const file = writeDevAdminPasswordFile(devAdminPasswordFile(checkoutRoot), value);
+        process.stdout.write(`${file}\n`);
+        process.exit(0);
+    }
+    if (arg === "--describe") {
+        const described = describeDevAdminSource({ checkoutRoot, env: process.env });
+        process.stdout.write(`${JSON.stringify(described, null, 2)}\n`);
+        process.exit(0);
+    }
+    process.stderr.write("usage: node dev-admin-password.mjs --ensure | --write-stdin | --describe\n");
+    process.exit(2);
+}
+
+function isMainModule() {
+    try {
+        const self = resolve(decodeURIComponent(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, "$1"));
+        const invoked = resolve(process.argv[1] ?? "");
+        return self.toLowerCase() === invoked.toLowerCase();
+    } catch {
+        return false;
+    }
+}
+
+if (isMainModule()) {
+    main();
 }
