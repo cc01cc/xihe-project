@@ -227,6 +227,17 @@ export function instanceResourceGroup(): ResourceNavItem[] {
             gapNoteKey: "settings.ia.gapNoteCredentials",
         },
         {
+            // task-83：**不是缺口** —— 这是四类实例资源里唯一后端已就绪的一项：
+            // `GET /api/v1/skills` 的 `definitionScope` 默认就是 `instance`，openapi 原文
+            // 「Instance-scope definitions are visible to every authenticated caller」；
+            // `/skills/{skillId}`、`/skills/{skillId}/bindings`、`/skills/import` 也都在（PLAN-0628/0680）。
+            // 所以给**真入口**，不带 `gaps`/`gapNoteKey` —— 与用户层 `agent-principals`
+            // 「转真就摘缺口」的写法保持一致，不沿用灰显那一套（缺口机制本身仍供 knowledge-mcp 留位）。
+            id: "skills",
+            labelKey: "settings.ia.resourceSkills",
+            path: "/settings/skills",
+        },
+        {
             id: "knowledge",
             labelKey: "settings.ia.resourceKnowledge",
             gaps: ["G3"],

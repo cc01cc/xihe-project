@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 import type { ServerResponse } from "node:http";
 import { CONFIG_SCHEMA_CATALOG } from "../../lib/configSchemaCatalog";
 import { MOCK_VALUES } from "./data/mockValues";
+import { mockSkillDefinition, mockSkillDefinitions } from "./data/skills";
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 
 /**
@@ -210,6 +211,30 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 const jobsMatch = path.match(/^\/workspaces\/([^/]+)\/jobs$/);
                 if (jobsMatch && (req.method ?? "GET") === "GET") {
                     return respond(200, mockWorkspaceJobs(jobsMatch[1]));
+                }
+                // task-83：实例层 Skills 页的读面（`GET /skills` 默认 definitionScope=instance）。
+                // 列表**不带 body**；正文只在 `?includeBody=true` 时给 —— 与 openapi 一致，
+                // 免得页面在 mock lane 上养成「列表就有正文」的错误假设。
+                if (path === "/skills" && (req.method ?? "GET") === "GET") {
+                    return respond(200, mockSkillDefinitions());
+                }
+                const skillMatch = path.match(/^\/skills\/([^/]+)$/);
+                if (skillMatch && (req.method ?? "GET") === "GET") {
+                    const includeBody = url.searchParams.get("includeBody") === "true";
+                    const detail = mockSkillDefinition(
+                        decodeURIComponent(skillMatch[1]),
+                        includeBody,
+                    );
+                    if (!detail) {
+                        return respond(404, {
+                            type: "about:blank",
+                            title: "Not Found",
+                            status: 404,
+                            code: "SKILL_NOT_FOUND",
+                            requestId: "mock-request",
+                        });
+                    }
+                    return respond(200, detail);
                 }
                 if (path === "/user-events") {
                     // 最小 SSE stub：首帧 event: connected 后保持连接。**不能回 404** ——

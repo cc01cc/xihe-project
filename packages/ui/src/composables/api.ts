@@ -650,6 +650,38 @@ export interface AgentSkillSummary {
 }
 
 /**
+ * task-83：实例层 Skills 页的**定义视图**（openapi `SkillView` 的 UI 投影）。
+ *
+ * <p>为什么与 `AgentSkillSummary` 分开：那个是「可绑定候选」的最小投影（工作区面板在用），
+ * 本页要展示 `oversize / trusted / bodyTokensEst / sourcePath / version / attachments`
+ * 这类只读元数据；塞进同一个类型会让绑定面被动扩展字段（改一处惊两处）。</p>
+ *
+ * <p>**body 不在这里**：列表接口本来就不返回它（openapi：`The body is never included here`），
+ * 要正文必须显式 `?includeBody=true` 走 `SkillDefinitionDetail`。</p>
+ */
+export interface SkillDefinitionSummary {
+    skillId: string;
+    name: string;
+    definitionScope: { type: string; workspaceId?: string | null } | null;
+    description: string;
+    /** `codePointCount/2` 的估算值（服务端算，UI 只读；**不是**精确 token 数）。 */
+    bodyTokensEst: number;
+    /** `bodyTokensEst` 超过阈值：服务端只**标记**，从不拒绝/截断（D28-15）。 */
+    oversize: boolean;
+    trusted: boolean;
+    sourcePath: string;
+    contentHash: string;
+    version: number;
+    attachments: Array<{ path: string; sizeBytes: number; sha256: string; kind?: string }>;
+    updatedAt: string | null;
+}
+
+/** 单条定义（`?includeBody=true` 才有 `body`）。 */
+export interface SkillDefinitionDetail extends SkillDefinitionSummary {
+    body: string | null;
+}
+
+/**
  * 记忆写入入参（`{content, pinned}`；`type` 随 CP 删列一并去掉）。
  *
  * 写成功与否**不看响应体**：成功后调用方重新 GET 列表（权威源是 CP 的读取面），
@@ -2715,6 +2747,68 @@ function parseSkillSummaries(
     });
 }
 
+/** `SkillView` → `SkillDefinitionSummary`；缺 `skillId`/`name` 的行丢弃（fail-closed，与上同口径）。 */
+function parseSkillDefinition(row: Record<string, unknown>): SkillDefinitionSummary | null {
+    const skillId = typeof row.skillId === "string" ? row.skillId : "";
+    const name = typeof row.name === "string" ? row.name : "";
+    if (!skillId || !name) return null;
+    const scope = row.definitionScope as { type?: unknown; workspaceId?: unknown } | undefined;
+    const definitionScope =
+        scope && typeof scope.type === "string"
+            ? {
+                  type: scope.type,
+                  workspaceId: typeof scope.workspaceId === "string" ? scope.workspaceId : null,
+              }
+            : null;
+    const attachments = Array.isArray(row.attachments)
+        ? (row.attachments as Array<Record<string, unknown>>).flatMap((a) =>
+              typeof a.path === "string"
+                  ? [
+                        {
+                            path: a.path,
+                            sizeBytes: typeof a.sizeBytes === "number" ? a.sizeBytes : 0,
+                            sha256: typeof a.sha256 === "string" ? a.sha256 : "",
+                            kind: typeof a.kind === "string" ? a.kind : undefined,
+                        },
+                    ]
+                  : [],
+          )
+        : [];
+    return {
+        skillId,
+        name,
+        definitionScope,
+        description: typeof row.description === "string" ? row.description : "",
+        bodyTokensEst: typeof row.bodyTokensEst === "number" ? row.bodyTokensEst : 0,
+        oversize: row.oversize === true,
+        trusted: row.trusted === true,
+        sourcePath: typeof row.sourcePath === "string" ? row.sourcePath : "",
+        contentHash: typeof row.contentHash === "string" ? row.contentHash : "",
+        version: typeof row.version === "number" ? row.version : 0,
+        attachments,
+        updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : null,
+    };
+}
+
+function parseSkillDefinitions(
+    raw: { items?: Array<Record<string, unknown>> } | null | undefined,
+): SkillDefinitionSummary[] {
+    if (!Array.isArray(raw?.items)) return [];
+    return raw.items.flatMap((row) => {
+        const parsed = parseSkillDefinition(row);
+        return parsed ? [parsed] : [];
+    });
+}
+
+function parseSkillDefinitionDetail(
+    raw: Record<string, unknown> | null | undefined,
+): SkillDefinitionDetail | null {
+    if (!raw) return null;
+    const base = parseSkillDefinition(raw);
+    if (!base) return null;
+    return { ...base, body: typeof raw.body === "string" ? raw.body : null };
+}
+
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -3455,6 +3549,31 @@ export const api = {
             `/skills?definitionScope=workspace&workspaceId=${encodeURIComponent(workspaceId)}`,
         );
         return parseSkillSummaries(raw);
+    },
+    /**
+     * task-83：实例层 Skills 页的列表面（`GET /api/v1/skills`，`definitionScope` **默认 instance**）。
+     *
+     * <p>契约事实（openapi `listSkills`）：instance 定义对**任何已认证调用者**可见；列表**不返回 body**。
+     * 与 `getSkills()` 的区别：那条是「可绑定候选」三字段投影，这条保留页面要展示的只读元数据。</p>
+     */
+    async listSkillDefinitions(): Promise<SkillDefinitionSummary[]> {
+        const raw = await request<{ items?: Array<Record<string, unknown>> }>("/skills");
+        return parseSkillDefinitions(raw);
+    },
+    /**
+     * task-83：单条定义；`includeBody` 为真才取正文（openapi：正文是最大列，默认不返回）。
+     * 不存在/不可见一律 404（服务端不区分，避免变成存在性探针）⇒ 这里回 `null`。
+     */
+    async getSkillDefinition(
+        skillId: string,
+        includeBody = false,
+    ): Promise<SkillDefinitionDetail | null> {
+        const suffix = includeBody ? "?includeBody=true" : "";
+        const raw = await request<Record<string, unknown>>(
+            `/skills/${encodeURIComponent(skillId)}${suffix}`,
+        );
+        const detail = parseSkillDefinitionDetail(raw);
+        return detail;
     },
     async createAgentMemory(
         workspaceId: string,

@@ -146,6 +146,16 @@ const router = createRouter({
                     meta: { settingsLayer: "instance" },
                 },
                 {
+                    // task-83：实例层「技能」读面。后端已就绪（`GET /api/v1/skills` 默认 instance scope），
+                    // 所以这不是缺口占位，而是真页面。
+                    // 只读：导入（`POST /skills/import`，需实例管理员）与绑定（`POST /skill-bindings`）
+                    // 是写面，本卡不铺开（判断与理由见 task-83 汇报）。
+                    path: "skills",
+                    name: "settings-skills",
+                    component: () => import("../views/settings/SkillsView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
+                {
                     path: "config-locks",
                     name: "settings-config-locks",
                     component: () => import("../views/settings/ConfigLocksView.vue"),
