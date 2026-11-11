@@ -2105,6 +2105,26 @@ const messages = {
                 lockTimeout: "服务正忙，请稍后重试。",
                 generic: "操作失败，请稍后重试。",
             },
+            /**
+             * task-168（F-18）：设置区统一错误面。两类形态：
+             * ① 404 / MOCK_ENDPOINT_MISSING ⇒ 后端缺口（中性虚线卡 + 解释弹窗，对齐左侧导航
+             *    缺口条目的标缺口模式，不重试、不渲染 code/detail）；
+             * ② 其余错误 ⇒ 本地化文案 + 重试/刷新出口，不渲染 problem.detail 原文。
+             */
+            errorSurface: {
+                gapTitle: "该内容暂不可用",
+                gapBody:
+                    "该页面依赖的后端服务尚未提供。这不是配置或网络问题，无需重试；实现合入后会自动恢复。左侧导航中的灰色虚线条目标记同类缺口。",
+                gapMore: "查看说明",
+                gapDialogTitle: "什么是后端缺口？",
+                gapDialogBody:
+                    "后端缺口是产品已经列出、但服务端尚未实现的能力。页面不会因此报错退出；待服务端实现合入后，本页面自动恢复可用。",
+                dialogDismiss: "知道了",
+                generic: "请求失败，请稍后重试；若多次失败请联系管理员。",
+                forbidden: "没有权限查看此内容。",
+                retry: "重试",
+                refresh: "刷新",
+            },
             configLockTitle: "配置锁定",
             configLockSubtitle:
                 "锁定后 workspace 与 user 层不能再覆盖该键；顺序 env > 管理员锁定 > workspace > user > instance > code default。",
@@ -4823,6 +4843,27 @@ const messages = {
                     "This role contains capability atoms an agent may never hold; the binding was refused.",
                 lockTimeout: "The service is busy; retry shortly.",
                 generic: "The operation failed; retry shortly.",
+            },
+            /**
+             * task-168 (F-18): unified settings error surface. Two shapes:
+             * ① 404 / MOCK_ENDPOINT_MISSING ⇒ backend gap (neutral dashed card + explainer
+             *    dialog, mirroring the nav gap pattern; no retry, no code/detail rendered);
+             * ② anything else ⇒ localized copy + retry/refresh outlet; never the raw detail.
+             */
+            errorSurface: {
+                gapTitle: "This content is unavailable",
+                gapBody:
+                    "This page depends on a backend capability that is not implemented yet. It is not a configuration or network problem and needs no retry; it recovers once the implementation lands. Dimmed dashed entries in the left nav mark the same kind of gap.",
+                gapMore: "What does this mean?",
+                gapDialogTitle: "What is a backend gap?",
+                gapDialogBody:
+                    "A backend gap is a capability the product lists but the server has not implemented yet. The page does not break because of it; it becomes available automatically once the server side lands.",
+                dialogDismiss: "Got it",
+                generic:
+                    "The request failed; retry, or contact an administrator if it keeps failing.",
+                forbidden: "You do not have permission to view this content.",
+                retry: "Retry",
+                refresh: "Refresh",
             },
             configLockTitle: "Config locks",
             configLockSubtitle:

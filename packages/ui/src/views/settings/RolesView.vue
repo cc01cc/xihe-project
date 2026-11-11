@@ -11,6 +11,7 @@ import {
 import { useAuthStore } from "../../stores/auth";
 import { logger } from "../../lib/logger";
 import { roleErrorMessage } from "../../components/settings/roleErrorMessages";
+import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import RoleEditorDialog from "../../components/settings/RoleEditorDialog.vue";
 import RoleBindingsPanel from "../../components/settings/RoleBindingsPanel.vue";
 import { Badge } from "../../components/ui/badge";
@@ -57,6 +58,7 @@ const tab = ref<Tab>("roles"),
     workspaces = ref<ApiWorkspace[]>([]),
     loading = ref(false),
     error = ref(""),
+    loadCause = ref<unknown | null>(null),
     notice = ref("");
 
 const editorOpen = ref(false),
@@ -72,6 +74,7 @@ function resetFeedback() {
 
 async function loadAll() {
     loading.value = true;
+    loadCause.value = null;
     resetFeedback();
     try {
         const [loadedCatalog, loadedRoles] = await Promise.all([
@@ -81,7 +84,8 @@ async function loadAll() {
         catalog.value = loadedCatalog;
         roles.value = loadedRoles;
     } catch (cause) {
-        error.value = roleErrorMessage(cause, t);
+        // task-168（F-18）：加载错误走统一错误面（缺口态给解释弹窗），不直渲 detail。
+        loadCause.value = cause;
     } finally {
         loading.value = false;
     }
@@ -223,6 +227,11 @@ watch(
                     </button>
                 </div>
 
+                <SettingsErrorSurface
+                    :cause="loadCause"
+                    :retry="loadAll"
+                    retry-key="settings.errorSurface.refresh"
+                />
                 <p
                     v-if="error"
                     data-testid="roles-error"

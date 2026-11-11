@@ -3,7 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
-import { api } from "../../../composables/api";
+import { api, ApiError } from "../../../composables/api";
 import { setSelectValue } from "../../../test-utils/select";
 import type * as apiModule from "../../../composables/api";
 import type {
@@ -432,12 +432,27 @@ describe("AuditView audit read surface (PLAN-0466)", () => {
         expect(wrapper.text()).toContain("1 / 2");
     });
 
-    it("surfaces list errors and keeps the empty detail state", async () => {
+    it("surfaces list errors through the unified error surface (F-18)", async () => {
         vi.mocked(api.listAuditEntries).mockRejectedValue(new Error("503 unavailable"));
         const wrapper = await mountOnly();
 
-        expect(wrapper.text()).toContain("503 unavailable");
+        const panel = wrapper.get('[data-testid="settings-error-panel"]');
+        expect(panel.text()).toContain(i18n.global.t("settings.errorSurface.generic"));
+        // 原始负载不得直渲页面。
+        expect(wrapper.text()).not.toContain("503 unavailable");
         expect(wrapper.find('[data-testid="settings-audit-no-selection"]').exists()).toBe(true);
+    });
+
+    it("treats a 404 on the audit endpoints as a backend gap (F-18)", async () => {
+        vi.mocked(api.listAuditEntries).mockRejectedValue(
+            new ApiError({ status: 404, code: "MOCK_ENDPOINT_MISSING", requestId: "t" }),
+        );
+        const wrapper = await mountOnly();
+
+        const gap = wrapper.get('[data-testid="settings-error-gap"]');
+        expect(gap.text()).toContain(i18n.global.t("settings.ia.backendGapBadgeGeneric"));
+        expect(wrapper.text()).not.toContain("MOCK_ENDPOINT_MISSING");
+        expect(wrapper.text()).not.toContain("API error");
     });
 
     it("shows the empty state when the filtered set is empty", async () => {

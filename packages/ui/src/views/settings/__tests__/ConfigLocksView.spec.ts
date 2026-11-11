@@ -105,6 +105,25 @@ describe("ConfigLocksView", () => {
         );
     });
 
+    it("404 走统一错误面的后端缺口态，不直渲 code/detail (F-18)", async () => {
+        const { ApiError } = await import("../../../composables/api");
+        request.mockImplementation((path: string) => {
+            if (path.startsWith("/config-locks")) {
+                return Promise.reject(
+                    new ApiError({ status: 404, code: "MOCK_ENDPOINT_MISSING", requestId: "t" }),
+                );
+            }
+            return Promise.resolve({});
+        });
+        const wrapper = await mountView();
+
+        const gap = wrapper.get('[data-testid="settings-error-gap"]');
+        expect(gap.text()).toContain(i18n.global.t("settings.ia.backendGapBadgeGeneric"));
+        expect(wrapper.text()).not.toContain("MOCK_ENDPOINT_MISSING");
+        expect(wrapper.text()).not.toContain("API error");
+        expect(wrapper.find('[data-testid="config-lock-error"]').exists()).toBe(false);
+    });
+
     it("renders 403 for non-admin without loading the catalog", async () => {
         admin.value = false;
         const wrapper = await mountView();

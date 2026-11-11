@@ -259,13 +259,28 @@ describe("RolesView role list", () => {
         expect(customRow.find('[data-testid="role-system-badge"]').exists()).toBe(false);
     });
 
-    it("shows a localized message when the role list cannot be loaded", async () => {
+    it("shows the unified error surface when the role list cannot be loaded (F-18)", async () => {
         mockedApi.listRoles.mockRejectedValue(problemError(403, "FORBIDDEN"));
         const wrapper = await mountView();
 
-        expect(wrapper.get('[data-testid="roles-error"]').text()).toBe(
-            i18n.global.t("settings.rolesError.forbidden"),
-        );
+        // 加载错误不再进 roles-error（那是保存/删除错误的本地化面），走统一错误面。
+        expect(wrapper.find('[data-testid="roles-error"]').exists()).toBe(false);
+        const panel = wrapper.get('[data-testid="settings-error-panel"]');
+        expect(panel.text()).toContain(i18n.global.t("settings.errorSurface.forbidden"));
+        expect(panel.text()).not.toContain("FORBIDDEN");
+        expect(panel.text()).not.toContain("API error");
+    });
+
+    it("treats a 404 on the roles endpoints as a backend gap, not a raw error (F-18)", async () => {
+        mockedApi.listRoles.mockRejectedValue(problemError(404, "MOCK_ENDPOINT_MISSING"));
+        const wrapper = await mountView();
+
+        const gap = wrapper.get('[data-testid="settings-error-gap"]');
+        expect(gap.text()).toContain(i18n.global.t("settings.ia.backendGapBadgeGeneric"));
+        expect(wrapper.text()).not.toContain("MOCK_ENDPOINT_MISSING");
+        expect(wrapper.text()).not.toContain("API error");
+        expect(wrapper.find('[data-testid="settings-error-panel"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="roles-error"]').exists()).toBe(false);
     });
 });
 

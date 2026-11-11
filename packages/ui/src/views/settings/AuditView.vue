@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
 import { TriangleAlert, Repeat2 } from "@lucide/vue";
 import {
@@ -178,6 +179,16 @@ async function loadEntries(page = 0) {
     });
 }
 
+/** 错误面「刷新」出口：保留当前筛选与页码重取，不重置到第一页。 */
+function retryLoad() {
+    void auditStore.load({
+        type: typeFilter.value || undefined,
+        status: statusFilter.value || undefined,
+        page: auditStore.page,
+        size: 20,
+    });
+}
+
 async function selectEntry(target: AuditEntry) {
     selectedEntryId.value = target.id;
     await auditStore.loadDetail(target.type, target.id);
@@ -344,12 +355,11 @@ onMounted(() => {
             </div>
         </header>
 
-        <div
-            v-if="auditStore.error"
-            class="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-        >
-            {{ auditStore.error }}
-        </div>
+        <SettingsErrorSurface
+            :cause="auditStore.error"
+            :retry="retryLoad"
+            retry-key="settings.errorSurface.refresh"
+        />
 
         <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
             <section class="min-w-0 rounded-lg border border-border bg-card">
