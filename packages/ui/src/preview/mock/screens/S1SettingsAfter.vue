@@ -168,7 +168,7 @@ function userTotal(): number {
                     </div>
                     <button
                         type="button"
-                        class="flex h-8 w-full items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 mk-caption text-muted-foreground"
+                        class="flex h-8 w-full items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 mk-body text-muted-foreground"
                     >
                         <Search class="size-3.5" aria-hidden="true" />
                         <span>搜索设置项</span>
@@ -407,7 +407,7 @@ function userTotal(): number {
                                             </SidebarMenuItem>
                                         </SidebarMenu>
                                         <p
-                                            class="px-2 pt-1 mk-caption leading-4 text-muted-foreground"
+                                            class="px-2 pt-1 mk-body leading-5 text-muted-foreground"
                                         >
                                             点条目跳
                                             /settings/user/*：偏好设置在此层是「我自己的偏好」，
@@ -508,7 +508,9 @@ function userTotal(): number {
                                 <div class="mt-6 rounded-lg border border-border p-6">
                                     <FieldGroup>
                                         <FieldSet>
-                                            <FieldLegend>分块与召回</FieldLegend>
+                                            <FieldLegend class="mk-body font-semibold"
+                                                >分块与召回</FieldLegend
+                                            >
                                             <FieldGroup>
                                                 <Field>
                                                     <FieldLabel for="chunk">分块大小</FieldLabel>

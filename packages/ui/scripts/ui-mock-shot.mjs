@@ -56,7 +56,7 @@ const SHOT_CSS = [
     "*::-webkit-scrollbar { width: 0 !important; height: 0 !important; }",
 ].join("\n");
 
-/** 六个交付镜头：3 个专用面板域的列表态 + 详情态（层固定 user，?notes=0）。 */
+/** 交付镜头：3 个专用面板域的列表态 + 详情态（层固定 user，?notes=0），以及 4 张整屏（#1..#6 按 hash 选屏）。 */
 const SHOTS = [
     { id: "01", name: "embedding-list", query: "?notes=0&domain=embedding&layer=user#1" },
     {
@@ -84,6 +84,11 @@ const SHOTS = [
         name: "api-request-templates-detail",
         query: "?notes=0&domain=api-request-templates&detail=1&layer=user#1",
     },
+    // 整屏按 hash 选屏（MockApp.readSheet）：#1 设置页整屏 / #4 全局导航 / #5 三栏 sash / #6 空态与权限。
+    { id: "07", name: "workspace-sash", query: "?notes=0#5" },
+    { id: "08", name: "empty-alert", query: "?notes=0#6" },
+    { id: "09", name: "global-nav", query: "?notes=0#4" },
+    { id: "10", name: "settings-instance", query: "?notes=0#1" },
 ];
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
