@@ -290,12 +290,12 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         const rows = page.locator('[data-testid="scheduled-task-row"]');
         await expect(rows).toHaveCount(2);
         const firstRow = rows.first();
-        await expect(firstRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(firstRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "调度中",
         );
-        await expect(firstRow.locator('[data-testid="scheduled-task-creator-type"]')).toContainText(
-            "human",
-        );
+        await expect(
+            firstRow.locator('[data-testid="scheduled-task-creator-type-row"]'),
+        ).toContainText("human");
         await expect(firstRow.locator("td").nth(5)).toContainText(user.name);
 
         await page.screenshot({
@@ -348,7 +348,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         const cronRow = taskRow(page, "0 9 * * *");
         await expect(cronRow).toHaveCount(1);
-        await expect(cronRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(cronRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "调度中",
         );
         await expect(cronRow.locator("td").nth(2)).toContainText("会话唤醒");
@@ -401,7 +401,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         const delayRow = taskRow(page, "延迟一次");
         await expect(delayRow).toHaveCount(1);
-        await expect(delayRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(delayRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "调度中",
         );
 
@@ -425,25 +425,25 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         await expect(page.getByTestId("scheduled-tasks-filter-pending")).toContainText("3");
 
         const delayRow = taskRow(page, "延迟一次");
-        await expect(delayRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(delayRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "错过 · 待处理",
         );
-        await expect(delayRow.locator('[data-testid="scheduled-task-reason"]')).toContainText(
+        await expect(delayRow.locator('[data-testid="scheduled-task-reason-row"]')).toContainText(
             "超过宽限期未执行",
         );
-        await expect(delayRow.locator('[data-testid="scheduled-task-missed-count"]')).toContainText(
-            /×[1-9]/,
-        );
+        await expect(
+            delayRow.locator('[data-testid="scheduled-task-missed-count-row"]'),
+        ).toContainText(/×[1-9]/);
         // U3 三个处置入口对 missed 行可用（创建者身份 → canManage 启用）。
-        await expect(delayRow.getByTestId("scheduled-task-rerun")).toBeEnabled();
-        await expect(delayRow.getByTestId("scheduled-task-postpone")).toBeEnabled();
-        await expect(delayRow.getByTestId("scheduled-task-remove")).toBeEnabled();
+        await expect(delayRow.getByTestId("scheduled-task-rerun-row")).toBeEnabled();
+        await expect(delayRow.getByTestId("scheduled-task-postpone-row")).toBeEnabled();
+        await expect(delayRow.getByTestId("scheduled-task-remove-row")).toBeEnabled();
 
         await expect(
-            taskRow(page, "0 4 * * *").locator('[data-testid="scheduled-task-status"]'),
+            taskRow(page, "0 4 * * *").locator('[data-testid="scheduled-task-status-row"]'),
         ).toContainText("错过 · 待处理");
         await expect(
-            taskRow(page, "0 5 * * *").locator('[data-testid="scheduled-task-status"]'),
+            taskRow(page, "0 5 * * *").locator('[data-testid="scheduled-task-status-row"]'),
         ).toContainText("错过 · 待处理");
 
         await page.screenshot({
@@ -462,7 +462,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         test.setTimeout(TEST_TIMEOUT_MS);
         await gotoListPage(page);
         const rerunRow = taskRow(page, "0 4 * * *");
-        await expect(rerunRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(rerunRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "错过 · 待处理",
         );
 
@@ -481,7 +481,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
                 response.url().includes(`/scheduled-tasks/${rerunTaskId}/rerun`),
         );
         // 同步双击：第一次点击置 store.mutatingTaskId → 按钮禁用 + 守卫短路，第二次不得发请求。
-        await rerunRow.getByTestId("scheduled-task-rerun").evaluate((el) => {
+        await rerunRow.getByTestId("scheduled-task-rerun-row").evaluate((el) => {
             const button = el as HTMLElement;
             button.click();
             button.click();
@@ -503,7 +503,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
                 { timeout: LONG_TIMEOUT_MS },
             )
             .toMatch(/^(scheduled|missed)$/);
-        await expect(rerunRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(rerunRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             STATUS_LABELS[settled],
         );
         expect(rerunRequests, "mutating guard must allow exactly one rerun POST").toHaveLength(1);
@@ -538,11 +538,11 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
     }) => {
         await gotoListPage(page);
         const delayRow = taskRow(page, "延迟一次");
-        await expect(delayRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(delayRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "错过 · 待处理",
         );
 
-        await delayRow.getByTestId("scheduled-task-postpone").click();
+        await delayRow.getByTestId("scheduled-task-postpone-row").click();
         const dialog = page.getByTestId("scheduled-task-postpone-dialog");
         await expect(dialog).toBeVisible();
         await page.getByTestId("st-postpone-at").fill(localDateTimeValue(2 * 3_600_000));
@@ -561,7 +561,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         await expect(dialog).toBeHidden();
         await expect(toastWith(page, "已推迟")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(delayRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(delayRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "调度中",
         );
         await expect(delayRow.locator("td").nth(4)).not.toContainText("—");
@@ -579,11 +579,11 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
     }) => {
         await gotoListPage(page);
         const removeRow = taskRow(page, "0 5 * * *");
-        await expect(removeRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(removeRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "错过 · 待处理",
         );
 
-        await removeRow.getByTestId("scheduled-task-remove").click();
+        await removeRow.getByTestId("scheduled-task-remove-row").click();
         const confirm = page.getByTestId("scheduled-task-remove-confirm");
         await expect(confirm).toBeVisible();
         const removed = page.waitForResponse(
@@ -600,7 +600,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         await expect(confirm).toBeHidden();
         await expect(toastWith(page, "已移除")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(removeRow.locator('[data-testid="scheduled-task-status"]')).toContainText(
+        await expect(removeRow.locator('[data-testid="scheduled-task-status-row"]')).toContainText(
             "已取消",
         );
 
@@ -708,8 +708,10 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         const card = page.locator('[data-testid="scheduled-task-card"]').first();
         await expect(card).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(card.locator('[data-testid="scheduled-task-status"]')).toBeVisible();
-        await expect(card.locator('[data-testid="scheduled-task-creator-type"]')).toBeVisible();
+        await expect(card.locator('[data-testid="scheduled-task-status-card"]')).toBeVisible();
+        await expect(
+            card.locator('[data-testid="scheduled-task-creator-type-card"]'),
+        ).toBeVisible();
         // 窄视口切换为堆叠卡片，桌面表格整体隐藏。
         await expect(page.locator("table")).toBeHidden();
 

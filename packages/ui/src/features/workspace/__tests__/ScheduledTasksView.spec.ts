@@ -139,22 +139,51 @@ describe("ScheduledTasksView list rendering", () => {
         );
 
         const wrapper = await mountView(),
-            // 前三个徽标来自桌面表格，后三个来自同一数据的移动端卡片（响应式双渲染）。
-            statuses = wrapper.findAll('[data-testid="scheduled-task-status"]').slice(0, 3),
-            creators = wrapper.findAll('[data-testid="scheduled-task-creator-type"]').slice(0, 3);
+            // 表格与卡片是 CSS 断点双渲染（两套 DOM 同时在树里）⇒ 同名内层 testid 必须靠容器后缀区分：
+            // -row = 桌面表格，-card = 移动卡片。裸用 'scheduled-task-status' 会命中两个。
+            statuses = wrapper.findAll('[data-testid="scheduled-task-status-row"]'),
+            creators = wrapper.findAll('[data-testid="scheduled-task-creator-type-row"]');
 
         expect(statuses.map((node) => node.text())).toEqual([
             "调度中",
             "错过 · 待处理",
             "已过期 · 待处理",
         ]);
-        expect(wrapper.get('[data-testid="scheduled-task-missed-count"]').text()).toContain("×2");
-        expect(wrapper.get('[data-testid="scheduled-task-reason"]').text()).toContain("宽限期");
+        expect(wrapper.get('[data-testid="scheduled-task-missed-count-row"]').text()).toContain(
+            "×2",
+        );
+        // 移动卡片侧同样渲染：同一数据两套 DOM，各用各的后缀。
+        expect(wrapper.findAll('[data-testid="scheduled-task-status-card"]')).toHaveLength(3);
+        expect(wrapper.findAll('[data-testid="scheduled-task-creator-type-card"]')).toHaveLength(3);
+        expect(wrapper.get('[data-testid="scheduled-task-reason-row"]').text()).toContain("宽限期");
         expect(creators[0]?.text()).toBe("human");
         expect(creators[1]?.text()).toBe("智能体");
         // scheduled row shows the cron expression and timezone under next fire.
         expect(wrapper.text()).toContain("0 9 * * *");
         expect(wrapper.text()).toContain("UTC");
+    });
+
+    it("两套断点 DOM 里没有同名内层 testid（CSS 互斥的伪装）", async () => {
+        // 根因：表格是 `hidden md:block`、卡片是 `md:hidden` —— 互斥由**CSS 断点**表达，
+        // 两套 DOM 同时挂在树里。所以 `scheduled-task-status` 这类内层名必须带容器后缀
+        // （-row / -card），否则任何 getByTestId 都命中 2 个（JSdom 与浏览器都一样）。
+        // 判据是**DOM 计数**，不是「可见的只有一个」——后者验的是视觉，缺陷恰在 DOM 层。
+        mockedApi.listScheduledTasks.mockResolvedValue(listPage([task()]) as never);
+        const wrapper = await mountView();
+
+        // 前提：两侧真的都渲染了（否则下面的唯一性会假绿）
+        expect(wrapper.findAll('[data-testid="scheduled-task-row"]')).toHaveLength(1);
+        expect(wrapper.findAll('[data-testid="scheduled-task-card"]')).toHaveLength(1);
+
+        const ids = wrapper
+            .findAll('[data-testid^="scheduled-task-"]')
+            .map((el) => el.attributes("data-testid") ?? "");
+        const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+        expect(dupes).toEqual([]);
+        // 内层名两侧都在、且各自唯一 —— 直接点名两个最关键的，防「改名改到只剩一侧」
+        expect(ids).toContain("scheduled-task-status-row");
+        expect(ids).toContain("scheduled-task-status-card");
+        wrapper.unmount();
     });
 
     it("shows the empty state with a create entry when there are no tasks", async () => {
@@ -219,12 +248,12 @@ describe("ScheduledTasksView disposition", () => {
         );
 
         const wrapper = await mountView(),
-            rerun = wrapper.get('[data-testid="scheduled-task-rerun"]');
+            rerun = wrapper.get('[data-testid="scheduled-task-rerun-row"]');
 
         expect(rerun.attributes("disabled")).toBeDefined();
         expect(rerun.attributes("title")).toContain("MANAGE_SCHEDULED_TASK");
         expect(
-            wrapper.get('[data-testid="scheduled-task-remove"]').attributes("disabled"),
+            wrapper.get('[data-testid="scheduled-task-remove-row"]').attributes("disabled"),
         ).toBeDefined();
     });
 
@@ -237,7 +266,7 @@ describe("ScheduledTasksView disposition", () => {
         );
 
         const wrapper = await mountView();
-        await wrapper.get('[data-testid="scheduled-task-rerun"]').trigger("click");
+        await wrapper.get('[data-testid="scheduled-task-rerun-row"]').trigger("click");
         await flushPromises();
 
         expect(mockedApi.rerunScheduledTask).toHaveBeenCalledWith("ws-1", "task-1");
@@ -257,7 +286,7 @@ describe("ScheduledTasksView disposition", () => {
         } as never);
 
         const wrapper = await mountView();
-        await wrapper.get('[data-testid="scheduled-task-remove"]').trigger("click");
+        await wrapper.get('[data-testid="scheduled-task-remove-row"]').trigger("click");
         await nextTick();
 
         expect(
@@ -286,7 +315,7 @@ describe("ScheduledTasksView disposition", () => {
         } as never);
 
         const wrapper = await mountView();
-        await wrapper.get('[data-testid="scheduled-task-cancel"]').trigger("click");
+        await wrapper.get('[data-testid="scheduled-task-cancel-row"]').trigger("click");
         await nextTick();
 
         (
@@ -308,7 +337,7 @@ describe("ScheduledTasksView disposition", () => {
         );
 
         const wrapper = await mountView();
-        await wrapper.get('[data-testid="scheduled-task-postpone"]').trigger("click");
+        await wrapper.get('[data-testid="scheduled-task-postpone-row"]').trigger("click");
         await nextTick();
 
         const input = document.body.querySelector(

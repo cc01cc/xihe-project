@@ -464,7 +464,7 @@ function openCreate() {
                                     <span
                                         class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium"
                                         :class="STATUS_BADGE_CLS[task.status]"
-                                        data-testid="scheduled-task-status"
+                                        data-testid="scheduled-task-status-row"
                                     >
                                         <span
                                             class="size-1.5 rounded-full bg-current"
@@ -475,7 +475,7 @@ function openCreate() {
                                     <span
                                         v-if="task.status === 'missed' && task.missedCount > 0"
                                         class="ml-1.5 inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[11px] text-amber-700 dark:text-amber-300"
-                                        data-testid="scheduled-task-missed-count"
+                                        data-testid="scheduled-task-missed-count-row"
                                     >
                                         ×{{ task.missedCount }}
                                     </span>
@@ -487,7 +487,7 @@ function openCreate() {
                                                 ? 'text-destructive'
                                                 : 'text-amber-700 dark:text-amber-300'
                                         "
-                                        data-testid="scheduled-task-reason"
+                                        data-testid="scheduled-task-reason-row"
                                     >
                                         {{ reasonText(task) }}
                                     </p>
@@ -507,7 +507,7 @@ function openCreate() {
                                                 ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
                                                 : ''
                                         "
-                                        data-testid="scheduled-task-creator-type"
+                                        data-testid="scheduled-task-creator-type-row"
                                     >
                                         {{ creatorLabel(task) }}
                                     </span>
@@ -527,7 +527,7 @@ function openCreate() {
                                                     !canManage(task) || !!store.mutatingTaskId
                                                 "
                                                 :title="canManage(task) ? undefined : manageHint"
-                                                data-testid="scheduled-task-rerun"
+                                                data-testid="scheduled-task-rerun-row"
                                                 @click="() => void handleRerun(task)"
                                             >
                                                 {{ t("workspace.scheduledTasks.actionRerun") }}
@@ -539,7 +539,7 @@ function openCreate() {
                                                     !canManage(task) || !!store.mutatingTaskId
                                                 "
                                                 :title="canManage(task) ? undefined : manageHint"
-                                                data-testid="scheduled-task-postpone"
+                                                data-testid="scheduled-task-postpone-row"
                                                 @click="postponeTarget = task"
                                             >
                                                 {{ t("workspace.scheduledTasks.actionPostpone") }}
@@ -551,7 +551,7 @@ function openCreate() {
                                                     !canManage(task) || !!store.mutatingTaskId
                                                 "
                                                 :title="canManage(task) ? undefined : manageHint"
-                                                data-testid="scheduled-task-remove"
+                                                data-testid="scheduled-task-remove-row"
                                                 @click="removeTarget = task"
                                             >
                                                 {{ t("workspace.scheduledTasks.actionRemove") }}
@@ -563,7 +563,7 @@ function openCreate() {
                                             size="sm"
                                             :disabled="!canManage(task) || !!store.mutatingTaskId"
                                             :title="canManage(task) ? undefined : manageHint"
-                                            data-testid="scheduled-task-cancel"
+                                            data-testid="scheduled-task-cancel-row"
                                             @click="cancelTarget = task"
                                         >
                                             {{ t("workspace.scheduledTasks.actionCancel") }}
@@ -590,7 +590,7 @@ function openCreate() {
                             <span
                                 class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium"
                                 :class="STATUS_BADGE_CLS[task.status]"
-                                data-testid="scheduled-task-status"
+                                data-testid="scheduled-task-status-card"
                             >
                                 <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
                                 {{ statusLabel(task.status) }}
@@ -624,7 +624,7 @@ function openCreate() {
                                                 ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
                                                 : ''
                                         "
-                                        data-testid="scheduled-task-creator-type"
+                                        data-testid="scheduled-task-creator-type-card"
                                     >
                                         {{ creatorLabel(task) }}
                                     </span>
@@ -639,11 +639,11 @@ function openCreate() {
                                     ? 'text-destructive'
                                     : 'text-amber-700 dark:text-amber-300'
                             "
-                            data-testid="scheduled-task-reason"
+                            data-testid="scheduled-task-reason-card"
                         >
                             <span
                                 v-if="task.status === 'missed' && task.missedCount > 0"
-                                data-testid="scheduled-task-missed-count"
+                                data-testid="scheduled-task-missed-count-card"
                             >
                                 ×{{ task.missedCount }}
                             </span>
@@ -656,7 +656,7 @@ function openCreate() {
                                     size="sm"
                                     :disabled="!canManage(task) || !!store.mutatingTaskId"
                                     :title="canManage(task) ? undefined : manageHint"
-                                    data-testid="scheduled-task-rerun"
+                                    data-testid="scheduled-task-rerun-card"
                                     @click="() => void handleRerun(task)"
                                 >
                                     {{ t("workspace.scheduledTasks.actionRerun") }}
@@ -666,7 +666,7 @@ function openCreate() {
                                     size="sm"
                                     :disabled="!canManage(task) || !!store.mutatingTaskId"
                                     :title="canManage(task) ? undefined : manageHint"
-                                    data-testid="scheduled-task-postpone"
+                                    data-testid="scheduled-task-postpone-card"
                                     @click="postponeTarget = task"
                                 >
                                     {{ t("workspace.scheduledTasks.actionPostpone") }}
@@ -676,7 +676,7 @@ function openCreate() {
                                     size="sm"
                                     :disabled="!canManage(task) || !!store.mutatingTaskId"
                                     :title="canManage(task) ? undefined : manageHint"
-                                    data-testid="scheduled-task-remove"
+                                    data-testid="scheduled-task-remove-card"
                                     @click="removeTarget = task"
                                 >
                                     {{ t("workspace.scheduledTasks.actionRemove") }}
@@ -688,7 +688,7 @@ function openCreate() {
                                 size="sm"
                                 :disabled="!canManage(task) || !!store.mutatingTaskId"
                                 :title="canManage(task) ? undefined : manageHint"
-                                data-testid="scheduled-task-cancel"
+                                data-testid="scheduled-task-cancel-card"
                                 @click="cancelTarget = task"
                             >
                                 {{ t("workspace.scheduledTasks.actionCancel") }}
