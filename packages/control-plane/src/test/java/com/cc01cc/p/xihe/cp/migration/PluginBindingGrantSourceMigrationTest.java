@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
+import com.cc01cc.p.xihe.cp.support.TestContainerLabels;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
@@ -55,7 +56,8 @@ class PluginBindingGrantSourceMigrationTest {
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
             .withDatabaseName("xihe_cp_v139")
             .withUsername("test")
-            .withPassword("test");
+            .withPassword("test")
+            .withLabels(TestContainerLabels.runId());
 
     /** Stop right before V139 (V138 belongs to another lane and may not exist yet). */
     private static final String VERSION_BEFORE = "137";

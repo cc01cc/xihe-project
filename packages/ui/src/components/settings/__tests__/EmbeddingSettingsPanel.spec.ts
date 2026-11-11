@@ -142,7 +142,7 @@ describe("EmbeddingSettingsPanel", () => {
         expect(wrapper.find("[data-testid='embedding-contract']").text()).toContain("768");
     });
 
-    it("shows sanitized test result and error path only via code", async () => {
+    it("本地化测试状态与错误文案，不直出 status/errorCode (F-07/R3)", async () => {
         mockedConnections.mockResolvedValue({
             connections: [connection({ id: "embed-1" })],
         } as never);
@@ -164,9 +164,16 @@ describe("EmbeddingSettingsPanel", () => {
         await wrapper.find("button[data-testid='embedding-test']").trigger("click");
         await flushPromises();
         const result = wrapper.find("[data-testid='embedding-test-result']").text();
-        expect(result).toContain("error");
-        expect(result).toContain("EMBEDDING_PROVIDER_UNREACHABLE");
-        expect(toast.error).toHaveBeenCalled();
+        // task-14 / F-07：状态值走 i18n（本 spec 把 t 换成 key），错误码走统一中文文案。
+        expect(result).toContain("settings.embeddingTestFailed");
+        expect(result).toContain("操作失败，请稍后重试");
+        expect(result).not.toContain("status: error");
+        const toastCalls = vi
+            .mocked(toast.error)
+            .mock.calls.map(([message]) => String(message))
+            .join("\n");
+        expect(toastCalls).toContain("操作失败，请稍后重试");
+        expect(toastCalls).not.toBe("EMBEDDING_PROVIDER_UNREACHABLE");
     });
 
     it("writes the instance-layer profile through layer=instance", async () => {

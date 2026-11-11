@@ -237,4 +237,28 @@ describe("LlmDefaultProfilePanel（PLAN-0764 T1.6）", () => {
                 .disabled,
         ).toBe(true);
     });
+
+    it("保存失败按 problem.code 本地化，不直出原始报文或状态码 (F-07/R2)", async () => {
+        const store = seedStore();
+        const { ApiError } = await import("../../../composables/api");
+        vi.spyOn(store, "putLayerConfig").mockRejectedValue(
+            new ApiError({
+                status: 409,
+                code: "LLM_PROFILE_CONFLICT",
+                detail: "409 LLM_PROFILE_CONFLICT: provider+model has no usable connection",
+                requestId: "req-r2",
+            }),
+        );
+        const wrapper = mountPanel("instance");
+        await flushPromises();
+        await setOnlySelectValue(wrapper, "anthropic");
+        await wrapper.find("[data-testid='llm-instance-model']").setValue("claude-sonnet-4-5");
+        await wrapper.find("[data-testid='llm-instance-connection-key']").setValue("default");
+        await wrapper.find("[data-testid='llm-instance-save']").trigger("click");
+        await flushPromises();
+
+        const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
+        expect(calls.join("\n")).toContain("没有可用连接");
+        expect(calls.join("\n")).not.toMatch(/LLM_PROFILE_CONFLICT|provider\+model|\b409\b/);
+    });
 });

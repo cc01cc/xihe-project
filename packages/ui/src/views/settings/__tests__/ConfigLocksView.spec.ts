@@ -63,6 +63,18 @@ const catalog = {
             revision: 0,
             valuePresent: false,
         },
+        {
+            key: "pinnedKey",
+            lockable: false,
+            notLockableReason: "INSTANCE_ONLY",
+            locked: false,
+            reason: null,
+            mode: null,
+            updatedBy: null,
+            updatedAt: null,
+            revision: 0,
+            valuePresent: false,
+        },
     ],
 };
 
@@ -97,7 +109,7 @@ describe("ConfigLocksView", () => {
         expect(wrapper.find('[data-testid="config-lock-badge-chunkSize"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="config-lock-row-topK"]').text()).toContain("未锁定");
         expect(wrapper.find('[data-testid="config-lock-not-lockable-minScore"]').text()).toContain(
-            "env 覆盖",
+            "环境变量覆盖",
         );
         expect(request).toHaveBeenCalledWith(
             expect.stringContaining("/config-locks?domain=rag"),
@@ -152,6 +164,22 @@ describe("ConfigLocksView", () => {
             value: "7",
             revision: 0,
         });
+    });
+
+    it("层名与状态词全中文：不出现 instance / code default 裸词 (F-07/R1)", async () => {
+        const wrapper = await mountView();
+        expect(wrapper.find('[data-testid="config-lock-not-lockable-pinnedKey"]').text()).toContain(
+            "仅实例层",
+        );
+        expect(wrapper.text()).not.toMatch(/\binstance\b/);
+        expect(wrapper.text()).not.toContain("code default");
+
+        await wrapper.find('[data-testid="config-lock-select-chunkSize"]').trigger("click");
+        const form = wrapper.get('[data-testid="config-lock-form"]');
+        expect(form.text()).toContain("值写入实例层");
+        expect(form.text()).toContain("恢复为继承代码默认值");
+        expect(form.text()).not.toMatch(/\binstance\b/);
+        expect(form.text()).not.toContain("code default");
     });
 
     it("unlocks with clearValue and the row revision", async () => {

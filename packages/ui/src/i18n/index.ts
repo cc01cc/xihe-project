@@ -1536,7 +1536,7 @@ const messages = {
             llmInstanceModelNoCatalog: "该提供方暂无可用模型目录（仍可手填模型名）",
             llmInstanceConnectionKeyLabel: "连接槽位",
             llmInstanceConnectionKeyHelp:
-                "默认 default；需与使用者侧同名连接槽位一致（否则运行期 409，不回落）。",
+                "默认 default；需与使用者侧同名连接槽位一致（否则运行期会报连接冲突、不回落）。",
             llmInstanceConnectionKeyInvalid: "连接槽位名只允许小写字母/数字/短横线（≤64 字符）",
             llmInstanceCurrent: "当前实例默认：{provider} / {model}（连接槽 {key}）",
             llmInstanceUnset:
@@ -1691,8 +1691,8 @@ const messages = {
                 scopeWorkspaceTitle: "工作区共享",
                 scopeWorkspaceDesc: "工作区内授权用户可用。",
                 fieldDiscovery: "模型发现",
-                discoveryRemote: "Provider /models",
-                discoveryLitellm: "LiteLLM Catalog",
+                discoveryRemote: "从 Provider 拉取模型列表",
+                discoveryLitellm: "LiteLLM 模型目录",
                 discoveryCurated: "Provider 预置模型",
                 discoveryManual: "手动输入模型",
                 discoveryHint: "XH 会先验证连接可用，再让模型进入选择器。",
@@ -2180,10 +2180,10 @@ const messages = {
             configLockLock: "锁定",
             configLockEdit: "编辑",
             configLockFormTitle: "锁定 {key}",
-            configLockValueHint: "值写入 instance 层；本页是该键锁定值的唯一写入口。",
+            configLockValueHint: "值写入实例层；本页是该键锁定值的唯一写入口。",
             configLockReason: "锁定原因（必填，≤200 字）",
             configLockReasonHint: "原因会展示给能看到该键的用户，请勿写入凭据或内部敏感信息。",
-            configLockClearValue: "解除时同时清除 instance 值，恢复为继承 code default",
+            configLockClearValue: "解除时同时清除实例层值，恢复为继承代码默认值",
             configLockSave: "保存锁定",
             configLockUnlock: "解除锁定",
             configLockCancel: "取消",
@@ -2191,8 +2191,8 @@ const messages = {
             configLockRemoved: "已解除锁定",
             configLockForbiddenTitle: "需要管理员权限",
             configLockForbiddenBody: "配置锁定仅 ADMIN 可用；普通配置页仍会显示被锁定的键与原因。",
-            configLockReasonINSTANCE_ONLY: "仅 instance",
-            configLockReasonENV_LOCKED: "env 覆盖",
+            configLockReasonINSTANCE_ONLY: "仅实例层",
+            configLockReasonENV_LOCKED: "环境变量覆盖",
             configLockReasonWHOLE_UNIT: "整单元配置",
             configLockReasonSECRET_KEY: "凭据键",
             configLockReasonNOT_OVERRIDABLE: "不可被覆盖",
@@ -4285,7 +4285,7 @@ const messages = {
                 "No model catalog for this provider (you can still type a model name)",
             llmInstanceConnectionKeyLabel: "Connection slot",
             llmInstanceConnectionKeyHelp:
-                "Defaults to default; it must match a slot name on the consuming side (otherwise the runtime returns 409, no fallback).",
+                "Defaults to default; it must match a slot name on the consuming side (otherwise the runtime reports a connection conflict, no fallback).",
             llmInstanceConnectionKeyInvalid:
                 "Slot name allows lowercase letters/digits/hyphens (≤64 chars)",
             llmInstanceCurrent:

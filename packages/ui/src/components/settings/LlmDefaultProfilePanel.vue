@@ -9,6 +9,8 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import { ApiError } from "../../composables/api";
+import { mappedErrorCopy } from "../../lib/errorMessages";
 import { logger } from "../../lib/logger";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { listApiInputTypes, listProviderCatalog } from "../../services/providerConnectionService";
@@ -40,6 +42,15 @@ const emit = defineEmits<{
 
 const { t } = useI18n(),
     configStore = useConfigStore();
+
+/**
+ * task-14 / F-07：错误 toast 优先用 `problem.code` 的本地化文案（`LLM_PROFILE_CONFLICT`
+ * 已有译文），绝不把 CP 的原始 problem 报文直出给用户。未映射的 code 回退本页通用失败句。
+ */
+function errorCopy(cause: unknown, fallbackKey: string): string {
+    const code = cause instanceof ApiError ? cause.problem.code : undefined;
+    return mappedErrorCopy(code) ?? t(fallbackKey);
+}
 
 /** 目录加载失败不阻塞编辑：提供方退化为「目录未加载」提示，模型/连接槽仍可手填。 */
 const providers = ref<ProviderDefinition[]>([]);
@@ -184,7 +195,7 @@ async function handleSave() {
         emit("saved");
     } catch (cause) {
         logger.warn("LLM instance default save failed", cause);
-        toast.error(cause instanceof Error ? cause.message : t("settings.llmInstanceSaveFailed"));
+        toast.error(errorCopy(cause, "settings.llmInstanceSaveFailed"));
     } finally {
         localSaving.value = false;
     }
@@ -203,7 +214,7 @@ async function handleClear() {
         emit("saved");
     } catch (cause) {
         logger.warn("LLM instance default clear failed", cause);
-        toast.error(cause instanceof Error ? cause.message : t("settings.llmInstanceSaveFailed"));
+        toast.error(errorCopy(cause, "settings.llmInstanceSaveFailed"));
     } finally {
         localSaving.value = false;
     }

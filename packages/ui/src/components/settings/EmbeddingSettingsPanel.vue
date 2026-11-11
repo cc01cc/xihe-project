@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { ApiError } from "../../composables/api";
+import { humanizeErrorCode } from "../../lib/errorMessages";
 import {
     embeddingConnections,
     fetchEmbeddingEffective,
@@ -145,7 +146,8 @@ async function handleTest() {
         if (result.status === "ok") {
             toast.success(t("settings.embeddingTestOk"));
         } else {
-            toast.error(result.errorCode ?? t("settings.embeddingTestFailed"));
+            // task-14 / F-07：CP 的 errorCode 不直出，走统一 error→中文文案（未知码保留在括号里供支持排查）。
+            toast.error(humanizeErrorCode(result.errorCode));
         }
     } catch (cause) {
         logger.warn("Embedding test failed", cause);
@@ -154,7 +156,7 @@ async function handleTest() {
                 ? cause.problem.code || "EMBEDDING_PROVIDER_UNREACHABLE"
                 : "EMBEDDING_PROVIDER_UNREACHABLE";
         testResult.value = { status: "error", errorCode: code };
-        toast.error(code);
+        toast.error(humanizeErrorCode(code));
     } finally {
         testing.value = false;
     }
@@ -286,7 +288,11 @@ onMounted(load);
                 >
                     <div>
                         {{ t("settings.embeddingTestStatus") }}:
-                        {{ testResult.status }}
+                        {{
+                            testResult.status === "ok"
+                                ? t("settings.embeddingTestOk")
+                                : t("settings.embeddingTestFailed")
+                        }}
                     </div>
                     <div v-if="testResult.model">
                         {{ t("settings.embeddingModel") }}: {{ testResult.model }}
@@ -298,7 +304,7 @@ onMounted(load);
                         requestId: {{ testResult.requestId }}
                     </div>
                     <div v-if="testResult.errorCode" class="text-red-600">
-                        {{ testResult.errorCode }}
+                        {{ humanizeErrorCode(testResult.errorCode) }}
                     </div>
                 </div>
             </template>

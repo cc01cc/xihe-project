@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.integration;
 
+import com.cc01cc.p.xihe.cp.support.TestContainerLabels;
 import org.flywaydb.core.Flyway;
 import org.testcontainers.containers.PostgreSQLContainer;
 
@@ -115,7 +116,9 @@ public final class TestDatabaseProvider {
                 PostgreSQLContainer<?> started = new PostgreSQLContainer<>(IMAGE)
                         .withDatabaseName(BOOT_DATABASE)
                         .withUsername(USERNAME)
-                        .withPassword(PASSWORD);
+                        .withPassword(PASSWORD)
+                        // task-104 债②：带本轮 run id（缺省无标签 ⇒ 与打标前逐项一致）。
+                        .withLabels(TestContainerLabels.runId());
                 started.start();
                 container = started;
             }

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.support.TestContainerLabels;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
@@ -47,7 +48,8 @@ class AgentScopeGrantsMigrationTest {
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
             .withDatabaseName("xihe_cp_v108")
             .withUsername("test")
-            .withPassword("test");
+            .withPassword("test")
+            .withLabels(TestContainerLabels.runId());
 
     private static final String MIGRATION =
             "db/migration/V108__agent_principal_role_bindings_backfill.sql";

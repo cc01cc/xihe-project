@@ -62,8 +62,8 @@ const { t } = useI18n();
 const discoveryOptions = computed<
     Array<{ value: ProviderDefinition["modelDiscovery"]; label: string }>
 >(() => [
-    { value: "remote-models", label: "Provider /models" },
-    { value: "litellm-catalog", label: "LiteLLM Catalog" },
+    { value: "remote-models", label: t("settings.providerHub.discoveryRemote") },
+    { value: "litellm-catalog", label: t("settings.providerHub.discoveryLitellm") },
     { value: "curated", label: t("settings.providerHub.discoveryCurated") },
     { value: "manual", label: t("settings.providerHub.discoveryManual") },
 ]);
