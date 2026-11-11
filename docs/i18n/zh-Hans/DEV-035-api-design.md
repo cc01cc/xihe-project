@@ -1,5 +1,3 @@
-# DEV-035 - API 设计标准
-
 ---
 title: DEV-035 - API 设计标准
 category: dev-guide
@@ -15,6 +13,8 @@ tags:
   - contract
   - standard
 ---
+
+# DEV-035 - API 设计标准
 
 > **三态标注**：【已落地】= 现状已如此且有 file:line 实证（见 01-fragments-inventory.md）；
 > 【业界建议】= 从 RFC/Zalando/AIP/Microsoft 取经的新增条目；【需裁定】= 与现状冲突或涉及取舍，**归用户**。

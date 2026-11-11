@@ -48,6 +48,7 @@ sidebar_order: 0
 - [DEV-032: 术语规范（一词多义与多词一义）](DEV-032-terminology.md)
 - [DEV-033: 新手首跑（gold path）](DEV-033-first-run-gold-path.md)
 - [DEV-034: 四类规范契约地图](DEV-034-spec-contract-map.md)
+- [DEV-035: API 设计标准](DEV-035-api-design.md)
 
 ## 项目级 SPEC（Agent/GitHub-only）
 

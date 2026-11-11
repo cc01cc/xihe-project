@@ -28,6 +28,7 @@ General-purpose Agent tool platform.
 - [DEV-032: Terminology (Polysemy and Synonyms)](DEV-032-terminology.md)
 - [DEV-033: First Run (Gold Path)](DEV-033-first-run-gold-path.md)
 - [DEV-034: Contract Map for the Four Spec Surfaces](DEV-034-spec-contract-map.md)
+- [DEV-035: API Design Standard](DEV-035-api-design.md)
 - [RFC-001: Session Domain Model](RFC-001-session-domain-model.md)
 - [ADR-001: Session Store Boundary](ADR-001-session-store-boundary.md)
 
