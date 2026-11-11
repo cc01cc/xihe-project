@@ -66,18 +66,24 @@ paths:
     post:
       tags: [auth]
       operationId: register
+      summary: Register a new user account
+      security: []
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } } }
       responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '400': { $ref: '#/components/responses/Problem' }, '429': { $ref: '#/components/responses/RateLimited' } }
   /api/v1/auth/login:
     post:
       tags: [auth]
       operationId: login
+      summary: Log in and obtain an access token
+      security: []
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResponse' } } } }, '401': { $ref: '#/components/responses/Problem' }, '429': { $ref: '#/components/responses/RateLimited' } }
   /api/v1/auth/refresh:
     post:
       tags: [auth]
       operationId: refresh
+      summary: Refresh an expired access token
+      security: []
       parameters:
         - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid }, description: 'PLAN-0559: optional workspace to echo in workspaceId. Access tokens are user-level; this header never rebinds a token.' }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } }
@@ -95,28 +101,32 @@ paths:
     get:
       tags: [auth]
       operationId: currentUser
+      summary: Get the current authenticated user
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
   /api/v1/auth/bootstrap-status:
     get:
       tags: [auth]
       operationId: authBootstrapStatus
+      summary: Check whether the instance still needs bootstrap
+      security: []
       responses: { '200': { description: 'Onboarding status {initialized} (always 200, ungated)' } }
   /api/v1/workspaces/current:
-    get: { tags: [workspace], operationId: getCurrentWorkspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Current workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [workspace], operationId: getCurrentWorkspace, summary: Get the caller's current workspace, security: [{ bearerAuth: [] }], responses: { '200': { description: Current workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces:
-    get: { tags: [workspace], operationId: listWorkspaces, security: [{ bearerAuth: [] }], responses: { '200': { description: Active workspaces for current user, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Workspace' } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [workspace], operationId: listWorkspaces, summary: List workspaces visible to the caller, security: [{ bearerAuth: [] }], responses: { '200': { description: Active workspaces for current user, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Workspace' } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
     post:
       tags: [workspace]
       operationId: createWorkspace
+      summary: Create a new workspace
       security: [{ bearerAuth: [] }]
       parameters: [{ in: header, name: Idempotency-Key, required: false, schema: { type: string, maxLength: 128 } }]
       requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceCreateRequest' } } } }
       responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'BACKEND_DISABLED (effective storageMode=managed_import needs the frozen docker backend; create direct_attach with hostPath + windows-host/windows-mxc) or another create conflict' } }
   /api/v1/workspaces/{workspaceId}:
-    get: { tags: [workspace], operationId: getWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    patch: { tags: [workspace], operationId: updateWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    delete: { tags: [workspace], operationId: deleteWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '204': { description: Logically deleted }, '404': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [workspace], operationId: getWorkspace, summary: Get one workspace by id, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    patch: { tags: [workspace], operationId: updateWorkspace, summary: Update workspace settings, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    delete: { tags: [workspace], operationId: deleteWorkspace, summary: Delete a workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '204': { description: Logically deleted }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/nested-repos:
     get:
       tags: [workspace]
@@ -233,6 +243,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/agents/{principalId}:
     put:
       tags: [agent]
       operationId: setWorkspaceAgentCap
@@ -259,7 +270,6 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
-  /api/v1/workspaces/{workspaceId}/agents/{principalId}:
     delete:
       tags: [agent]
       operationId: unbindWorkspaceAgent
@@ -564,14 +574,14 @@ paths:
         '404': { description: 'WORKSPACE_NOT_FOUND / MEMBER_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { description: LAST_OWNER, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/imports:
-    get: { tags: [workspace], operationId: listWorkspaceImports, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace import jobs }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
-    post: { tags: [workspace], operationId: createWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [sourcePath, idempotencyKey], properties: { sourcePath: { type: string }, excludeRules: { type: array, items: { type: string } }, idempotencyKey: { type: string } } } } } }, responses: { '202': { description: Import accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { description: BACKEND_DISABLED (workspace runs on the frozen docker execution backend; migrate to direct_attach) } } }
+    get: { tags: [workspace], operationId: listWorkspaceImports, summary: List imports of one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace import jobs }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    post: { tags: [workspace], operationId: createWorkspaceImport, summary: Start a new workspace import, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [sourcePath, idempotencyKey], properties: { sourcePath: { type: string }, excludeRules: { type: array, items: { type: string } }, idempotencyKey: { type: string } } } } } }, responses: { '202': { description: Import accepted }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { description: BACKEND_DISABLED (workspace runs on the frozen docker execution backend; migrate to direct_attach) } } }
   /api/v1/workspaces/import-sources:
-    get: { tags: [workspace], operationId: listWorkspaceImportSources, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: path, required: true, schema: { type: string } }], responses: { '200': { description: Runtime-visible source directory entries }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [workspace], operationId: listWorkspaceImportSources, summary: List available workspace import sources, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: path, required: true, schema: { type: string } }], responses: { '200': { description: Runtime-visible source directory entries }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '502': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}:
-    get: { tags: [workspace], operationId: getWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [workspace], operationId: getWorkspaceImport, summary: Get one workspace import by id, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}/cancel:
-    post: { tags: [workspace], operationId: cancelWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
+    post: { tags: [workspace], operationId: cancelWorkspaceImport, summary: Cancel a running workspace import, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/agent-principals/{principalId}/roles:
     get:
       tags: [agent]
@@ -1111,8 +1121,8 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions:
-    get: { tags: [session], operationId: listSessions, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: Sessions, content: { application/json: { schema: { type: object, required: [sessions], properties: { sessions: { type: array, items: { $ref: '#/components/schemas/SessionSummary' } } } } } } }, '400': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } } }
-    post: { tags: [session], operationId: createSession, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { description: 'BACKEND_DISABLED — the workspace runs on the frozen docker execution backend, so session creation is refused before any row is written (create a direct_attach workspace instead; PLAN-0618 / BL-178)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+    get: { tags: [session], operationId: listSessions, summary: List chat sessions, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: Sessions, content: { application/json: { schema: { type: object, required: [sessions], properties: { sessions: { type: array, items: { $ref: '#/components/schemas/SessionSummary' } } } } } } }, '400': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } } }
+    post: { tags: [session], operationId: createSession, summary: Create a new chat session, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { description: 'BACKEND_DISABLED — the workspace runs on the frozen docker execution backend, so session creation is refused before any row is written (create a direct_attach workspace instead; PLAN-0618 / BL-178)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/workspaces/{workspaceId}/sessions:
     post:
       tags: [session]
@@ -1138,6 +1148,7 @@ paths:
     get:
       tags: [session]
       operationId: getFollowUpQueue
+      summary: Get the follow-up queue of one session
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -1148,6 +1159,7 @@ paths:
     post:
       tags: [session]
       operationId: enqueueFollowUp
+      summary: Enqueue a follow-up item
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
@@ -1164,6 +1176,7 @@ paths:
     delete:
       tags: [session]
       operationId: withdrawFollowUp
+      summary: Withdraw one follow-up item
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
@@ -1177,6 +1190,7 @@ paths:
     post:
       tags: [session]
       operationId: continueFollowUpQueue
+      summary: Continue processing the follow-up queue
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -1189,6 +1203,7 @@ paths:
     get:
       tags: [session]
       operationId: listSessionBranches
+      summary: List branches of one session
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
@@ -1201,6 +1216,7 @@ paths:
     post:
       tags: [session]
       operationId: createSessionBranch
+      summary: Create a new session branch
       description: sourceBranchId selects the visible path used to validate the anchor. parentBranchId is the branch that owns the anchor Message/Run under V43 and may therefore be an ancestor of sourceBranchId.
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1251,9 +1267,9 @@ paths:
         '500': { description: INTERNAL_ERROR; fork publication failed after request validation, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '503': { description: FORK_CLEANUP_PENDING; child remains unpublished and can be retried with the same key, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}:
-    get: { tags: [session], operationId: getSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    patch: { tags: [session], operationId: updateSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    delete: { tags: [session], operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+    get: { tags: [session], operationId: getSession, summary: Get one session by id, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    patch: { tags: [session], operationId: updateSession, summary: Update session metadata, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    delete: { tags: [session], operationId: deleteSession, summary: Delete one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/bind-defaults:
     post:
       tags: [session]
@@ -1275,11 +1291,12 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { description: 'LLM_PROFILE_CONFLICT — a profile exists but no usable provider connection matches it', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/api-request-template:
-    patch: { tags: [session], operationId: updateSessionApiRequestTemplate, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+    patch: { tags: [session], operationId: updateSessionApiRequestTemplate, summary: Set the API request template override of one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/commands:
     get:
       tags: [session]
       operationId: listSessionCommands
+      summary: List commands recorded in one session
       description: |
         PLAN-0635 M3 (D35-02 ruling A): the session command registry. Availability is decided on
         the server by reusing the ordinary policy engine through an existing tool face; the
@@ -1319,6 +1336,7 @@ paths:
     get:
       tags: [session]
       operationId: exportSessionMarkdown
+      summary: Export one session as Markdown
       description: |
         PLAN-0635 M3: the real /export. Generates a Markdown document from the existing session
         message read surface (no Agent, no provider, no run). Export is a **bounded artifact**, not
@@ -1345,6 +1363,7 @@ paths:
     get:
       tags: [session]
       operationId: getSessionDerivedState
+      summary: Get derived state of one session
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -1403,6 +1422,7 @@ paths:
     post:
       tags: [session]
       operationId: compactSessionContext
+      summary: Compact the context of one session
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
@@ -1422,18 +1442,22 @@ paths:
     post:
       tags: [auth]
       operationId: startOAuthSession
+      summary: Start an OAuth session for a provider
       security: [{ bearerAuth: [] }]
       responses: { '200': { description: Created }, '400': { $ref: '#/components/responses/Problem' } }
   /api/v1/oauth/callback:
     get:
       tags: [auth]
       operationId: oauthCallback
+      summary: OAuth redirect callback
+      security: []
       parameters: [{ in: query, name: state, required: true, schema: { type: string } }, { in: query, name: code, required: true, schema: { type: string } }]
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Problem' } }
   /api/v1/oauth/revoke:
     post:
       tags: [auth]
       operationId: revokeOAuthSession
+      summary: Revoke an OAuth session
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -1500,8 +1524,8 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
               example: { type: "https://xihe.dev/problems/approval-required", title: "Approval required", status: 409, code: "APPROVAL_REQUIRED", detail: "Tool execution requires approval before dispatch", requestId: "req-..." }
-    get: { tags: [mcp], operationId: mcpStream, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP SSE stream, content: { text/event-stream: {} } } } }
-    delete: { tags: [mcp], operationId: mcpDisconnect, security: [{ bearerAuth: [] }], responses: { '204': { description: Disconnected } } }
+    get: { tags: [mcp], operationId: mcpStream, summary: Open the MCP event stream, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP SSE stream, content: { text/event-stream: {} } } } }
+    delete: { tags: [mcp], operationId: mcpDisconnect, summary: Disconnect the MCP stream, security: [{ bearerAuth: [] }], responses: { '204': { description: Disconnected } } }
   /internal/v1/attachments/{attachmentId}/content:
     get:
       tags: [service-misc]
@@ -1519,7 +1543,6 @@ paths:
           content:
             '*/*':
               schema: { type: string, format: binary }
-              description: 'The stored MIME type (image/*, text/*, …) — set from the resolved row, never guessed from the path.'
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/config/effective/{domain}:
@@ -2626,6 +2649,7 @@ paths:
     post:
       tags: [config]
       operationId: validateApiRequestTemplate
+      summary: Validate an API request template
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: apiTypeId, required: true, schema: { type: string } }, { in: path, name: version, required: true, schema: { type: integer, minimum: 1 } }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [bodySource], properties: { bodySource: { type: string } } } } } }
@@ -2636,6 +2660,7 @@ paths:
     get:
       tags: [config]
       operationId: listApiRequestTemplates
+      summary: List API request templates of the caller's scope
       description: 'BL-320 批 3（**有意保留 / kept-by-design**）：这不是单独注册的路由，而是 `GET /api/v1/config/{domain}` 在 `domain=api-request-templates` 时的**具体示例写法**（带本域专属的 query 与响应说明）。控制器只注册 `/api/v1/config/{domain}`；保留本条目是为了让调用方不必去翻通用路由的 domain 表，**不属于实现缺口**。'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
@@ -2646,6 +2671,7 @@ paths:
     put:
       tags: [config]
       operationId: saveApiRequestTemplates
+      summary: Save API request templates for one layer
       description: 'BL-320 批 3（**有意保留 / kept-by-design**）：同上，`{layer}` ∈ `instance|user|workspace` 分别对应已注册的 `PUT /api/v1/config/{layer}/{domain}` 且 `domain=api-request-templates` 的具体示例，不是独立路径。'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }]
@@ -2659,6 +2685,7 @@ paths:
     get:
       tags: [provider]
       operationId: getProviderApiTypeChangeImpact
+      summary: Preview the impact of changing a provider connection's API type
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }, { in: query, name: apiTypeId, required: true, schema: { type: string } }, { in: query, name: version, required: true, schema: { type: integer, minimum: 1 } }]
       responses:
@@ -2863,9 +2890,9 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/health:
-    get: { tags: [system], operationId: health, responses: { '200': { description: Healthy } } }
+    get: { tags: [system], operationId: health, summary: Liveness probe, security: [], responses: { '200': { description: Healthy } } }
   /api/v1/status:
-    get: { tags: [system], operationId: serviceStatus, security: [{ bearerAuth: [] }], responses: { '200': { description: Service status } } }
+    get: { tags: [system], operationId: serviceStatus, summary: Service status, security: [{ bearerAuth: [] }], responses: { '200': { description: Service status } } }
   /api/v1/version:
     get:
       tags: [system]
@@ -2922,11 +2949,12 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/logs:
-    post: { tags: [system], operationId: ingestLogs, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
+    post: { tags: [system], operationId: ingestLogs, summary: Ingest a client-side log bundle, security: [{ bearerAuth: [] }], responses: { '200': { description: Accepted } } }
   /api/v1/telemetry/logs:
     post:
       tags: [system]
       operationId: ingestTelemetry
+      summary: Ingest telemetry events
       security: [{ bearerAuth: [] }]
       description: >
         Client telemetry ingress (PLAN-0522). The batch is validated against server-side caps and
@@ -2971,7 +2999,7 @@ paths:
         '200': { description: 'Local sink accepted the batch ({"status":"ok"}); central relay is best-effort and server-side' }
         '400': { $ref: '#/components/responses/Problem' }
   /api/v1/config/{domain}:
-    get: { tags: [config], operationId: getConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22). PLAN-0554: non-admin layer=instance is 403 except explicit-only template domains; non-admin effective reads omit INSTANCE_ONLY_KEYS and instance-only domains, and filter envOverridden.' }, '403': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [config], operationId: getConfig, summary: Get merged config of one domain, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22). PLAN-0554: non-admin layer=instance is 403 except explicit-only template domains; non-admin effective reads omit INSTANCE_ONLY_KEYS and instance-only domains, and filter envOverridden.' }, '403': { $ref: '#/components/responses/Problem' } } }
   /api/v1/config/{domain}/meta:
     get:
       tags: [config]
@@ -2988,7 +3016,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/instance/{domain}:
-    put: { tags: [config], operationId: putInstanceConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: 'Updated' }, '403': { $ref: '#/components/responses/Problem' }, '409': { description: 'CONFIG_ENV_LOCKED for env-mapped keys; CONFIG_KEY_LOCKED when an administrator locked the key (PLAN-0556) - locked values are writable only through /api/v1/config-locks' } } }
+    put: { tags: [config], operationId: putInstanceConfig, summary: Write instance-layer config of one domain, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: 'Updated' }, '403': { $ref: '#/components/responses/Problem' }, '409': { description: 'CONFIG_ENV_LOCKED for env-mapped keys; CONFIG_KEY_LOCKED when an administrator locked the key (PLAN-0556) - locked values are writable only through /api/v1/config-locks' } } }
   /api/v1/config/instance/{domain}/{key}:
     delete:
       tags: [config]
@@ -3020,7 +3048,7 @@ paths:
         '200': { description: Updated }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/user/{domain}:
-    put: { tags: [config], operationId: putUserConfig, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+    put: { tags: [config], operationId: putUserConfig, summary: Write user-layer config of one domain, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
   /api/v1/config-locks:
     get:
       tags: [config]
@@ -3092,14 +3120,15 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
   /api/v1/config/import:
-    post: { tags: [config], operationId: importConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }], responses: { '200': { description: Imported (merge semantics) } } }
+    post: { tags: [config], operationId: importConfig, summary: Import a config bundle, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }], responses: { '200': { description: Imported (merge semantics) } } }
   /api/v1/config/export:
-    get: { tags: [config], operationId: exportConfig, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: JSON configuration (plaintext secrets unless includeSecrets=false) } } }
+    get: { tags: [config], operationId: exportConfig, summary: Export the config bundle, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: JSON configuration (plaintext secrets unless includeSecrets=false) } } }
   # /api/v1/providers removed (PLAN-0307 T2.22): use /api/v1/provider-connections + /api/v1/provider-catalog
   /api/v1/sessions/{sessionId}/messages:
     get:
       tags: [session]
       operationId: listMessages
+      summary: List messages of one session
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
@@ -3129,16 +3158,17 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '413': { description: 'PAGINATION_REQUIRED (PLAN-0670 M2b) — the legacy full read was refused because the session exceeds 2000 messages (same cap as the BL-279 A1 export guard); the body carries messages (actual count) and limit (the cap) and asks the caller to page with limit/before. Refused before any message row is read.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
-    delete: { tags: [session], operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying / SESSION_DELETING while a delete intent is recorded (V47), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+    delete: { tags: [session], operationId: deleteMessage, summary: Delete one message, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying / SESSION_DELETING while a delete intent is recorded (V47), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/attachments:
-    post: { tags: [attachment], operationId: uploadAttachments, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Upload result } } }
+    post: { tags: [attachment], operationId: uploadAttachments, summary: Upload attachments to one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Upload result } } }
   /api/v1/sessions/{sessionId}/attachments/{fileId}:
-    get: { tags: [attachment], operationId: getAttachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: Attachment metadata } } }
-    delete: { tags: [attachment], operationId: deleteAttachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+    get: { tags: [attachment], operationId: getAttachment, summary: Get one session attachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: Attachment metadata } } }
+    delete: { tags: [attachment], operationId: deleteAttachment, summary: Delete one session attachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/{fileId}:
     get:
       tags: [attachment]
       operationId: getFile
+      summary: Get one workspace file
       security: [{ bearerAuth: [] }]
       description: >-
         Attachment/workspace file content. A single RFC 9110 `bytes` range is supported
@@ -3171,21 +3201,22 @@ paths:
             Accept-Ranges: { description: 'Always `bytes`', schema: { type: string } }
             Content-Range: { description: '`bytes */<real total>`', schema: { type: string } }
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
-    delete: { tags: [attachment], operationId: deleteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+    delete: { tags: [attachment], operationId: deleteFile, summary: Delete one workspace file, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/upload:
-    post: { tags: [attachment], operationId: uploadFile, security: [{ bearerAuth: [] }], description: WorkspaceStorage file upload (maximum 64 MiB; Chat attachments use a separate route and limit). Refused with 503 BACKEND_DISABLED while the workspace runs on the frozen docker backend (PLAN-0612)., responses: { '201': { description: Uploaded }, '413': { description: Workspace file exceeds 64 MiB limit }, '503': { description: BACKEND_DISABLED (docker execution backend frozen; use direct_attach) } } }
+    post: { tags: [attachment], operationId: uploadFile, summary: Upload a workspace file, security: [{ bearerAuth: [] }], description: WorkspaceStorage file upload (maximum 64 MiB; Chat attachments use a separate route and limit). Refused with 503 BACKEND_DISABLED while the workspace runs on the frozen docker backend (PLAN-0612)., responses: { '201': { description: Uploaded }, '413': { description: Workspace file exceeds 64 MiB limit }, '503': { description: BACKEND_DISABLED (docker execution backend frozen; use direct_attach) } } }
   /api/v1/rag/stats:
-    get: { tags: [rag], operationId: ragStats, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
+    get: { tags: [rag], operationId: ragStats, summary: Get RAG index statistics, security: [{ bearerAuth: [] }], responses: { '200': { description: RAG statistics } } }
   /api/v1/rag/ingest:
-    post: { tags: [rag], operationId: ragIngest, security: [{ bearerAuth: [] }], responses: { '200': { description: Ingest result } } }
+    post: { tags: [rag], operationId: ragIngest, summary: Ingest documents into the RAG index, security: [{ bearerAuth: [] }], responses: { '200': { description: Ingest result } } }
   /api/v1/rag/search:
-    post: { tags: [rag], operationId: ragSearch, security: [{ bearerAuth: [] }], responses: { '200': { description: Search result } } }
+    post: { tags: [rag], operationId: ragSearch, summary: Search the RAG index, security: [{ bearerAuth: [] }], responses: { '200': { description: Search result } } }
   /api/v1/rag/documents/{docId}:
-    delete: { tags: [rag], operationId: ragDelete, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
+    delete: { tags: [rag], operationId: ragDelete, summary: Delete one document from the RAG index, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: docId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/workspaces/{workspaceId}/mcp-config:
      get:
        tags: [mcp]
        operationId: getMcpConfig
+       summary: Get the MCP config of one workspace
        security: [{ bearerAuth: [] }]
        parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
        responses:
@@ -3207,6 +3238,7 @@ paths:
      put:
        tags: [mcp]
        operationId: putMcpConfig
+       summary: Replace the MCP config of one workspace
        security: [{ bearerAuth: [] }]
        parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
        requestBody:
@@ -3229,13 +3261,13 @@ paths:
          '400': { $ref: '#/components/responses/Problem' }
   # PLAN-0307 T0.3: structured stdio servers (Claude Desktop compatible values); mixed mcp-config above is split by field.
   /api/v1/workspaces/{workspaceId}/stdio-servers:
-     get: { tags: [mcp], operationId: getWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Stdio servers with generation/hash } } }
-     put: { tags: [mcp], operationId: putWorkspaceStdioServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated (optimistic lock) }, '400': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
+     get: { tags: [mcp], operationId: getWorkspaceStdioServers, summary: Get stdio server definitions of one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Stdio servers with generation/hash } } }
+     put: { tags: [mcp], operationId: putWorkspaceStdioServers, summary: Replace stdio server definitions of one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Updated (optimistic lock) }, '400': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' } } }
   # PLAN-0366 T1.1: stdio MCP session status (0347 Runtime SessionSnapshot proxied with an explicit camelCase key mapping; state keeps Runtime lowercase literals).
   /api/v1/workspaces/{workspaceId}/mcp/servers:
-     get: { tags: [mcp], operationId: getWorkspaceMcpServers, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: 'Stdio MCP session snapshots: servers[{serverId,state,attempt,lastError,sinceMs,epoch}] + count; state literals are starting/ready/restarting/failed/stopped', content: { application/json: { schema: { $ref: '#/components/schemas/McpServerStatusList' } } } }, '404': { description: 'WORKSPACE_NOT_FOUND (CP inaccessible or Runtime passthrough)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'WORKSPACE_DESTROYING or WORKSPACE_BUSY passed through from Runtime', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'RUNTIME_UNAVAILABLE (Runtime unreachable, timeout, unparseable, or unknown error code)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { description: 'WORKSPACE_MATERIALIZATION_FAILED passed through from Runtime (first query may trigger materialization; retry)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+     get: { tags: [mcp], operationId: getWorkspaceMcpServers, summary: List resolved MCP servers of one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: 'Stdio MCP session snapshots: servers[{serverId,state,attempt,lastError,sinceMs,epoch}] + count; state literals are starting/ready/restarting/failed/stopped', content: { application/json: { schema: { $ref: '#/components/schemas/McpServerStatusList' } } } }, '404': { description: 'WORKSPACE_NOT_FOUND (CP inaccessible or Runtime passthrough)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '409': { description: 'WORKSPACE_DESTROYING or WORKSPACE_BUSY passed through from Runtime', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '502': { description: 'RUNTIME_UNAVAILABLE (Runtime unreachable, timeout, unparseable, or unknown error code)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '503': { description: 'WORKSPACE_MATERIALIZATION_FAILED passed through from Runtime (first query may trigger materialization; retry)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/workspaces/{workspaceId}/environment:
-     get: { tags: [workspace], operationId: getWorkspaceEnvironment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvironment' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+     get: { tags: [workspace], operationId: getWorkspaceEnvironment, summary: Get environment variables of one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace environment status, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvironment' } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
   # PLAN-0384 T1.3/V2: public capability preflight so the create/import UI can
   # show the real execution backend before a Workspace is persisted.
   /api/v1/workspaces/capabilities/preflight:
@@ -3275,7 +3307,7 @@ paths:
           description: 'RUNTIME_UNAVAILABLE (Runtime unreachable or invalid JSON)'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/workspaces/{workspaceId}/jobs:
-    get: { tags: [job], operationId: listWorkspaceJobs, description: 'Workspace-scoped durable Job response (PLAN-0390 + PLAN-0465 T2.1); canonical identity is `jobId` (= `workspace_jobs.id`, decision #7). Each item carries the full WorkspaceJob response view.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job response, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [job], operationId: listWorkspaceJobs, summary: List jobs of one workspace, description: 'Workspace-scoped durable Job response (PLAN-0390 + PLAN-0465 T2.1); canonical identity is `jobId` (= `workspace_jobs.id`, decision #7). Each item carries the full WorkspaceJob response view.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace-scoped durable Job response, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WorkspaceJob' } } } } }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' } } }
     post:
       tags: [job]
       operationId: startWorkspaceJob
@@ -3323,9 +3355,9 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '503': { description: BACKEND_DISABLED (workspace runs on the frozen docker execution backend; no host fallback), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/execution-mode:
-     patch: { tags: [workspace], operationId: updateWorkspaceExecutionMode, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [executionMode], properties: { executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } } } } }, responses: { '200': { description: Updated execution mode }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
+     patch: { tags: [workspace], operationId: updateWorkspaceExecutionMode, summary: Update the execution mode of one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [executionMode], properties: { executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } } } } }, responses: { '200': { description: Updated execution mode }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/materialize:
-      post: { tags: [workspace], operationId: materializeWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: Conflict passed through from Runtime (e.g. WORKSPACE_DESTROYING during destroy window; PLAN-0345) }, '502': { $ref: '#/components/responses/Problem' }, '503': { description: BACKEND_DISABLED (workspace runs on the frozen docker execution backend) } } }
+      post: { tags: [workspace], operationId: materializeWorkspace, summary: Materialize one workspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '202': { description: Materialization accepted; poll environment for progress }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: Conflict passed through from Runtime (e.g. WORKSPACE_DESTROYING during destroy window; PLAN-0345) }, '502': { $ref: '#/components/responses/Problem' }, '503': { description: BACKEND_DISABLED (workspace runs on the frozen docker execution backend) } } }
   /api/v1/workspaces/{workspaceId}/runtime/release:
       post: { tags: [workspace], operationId: releaseWorkspaceRuntime, summary: Release workspace execution resources (any accessible member), description: 'PLAN-0391: user-triggered release of the workspace runtime (watcher + in-memory instance + Job process tree). Requires an Idempotency-Key; refused with 409 WORKSPACE_BUSY while a Job is active or another release is in flight. Distinct from materialize (reuse is automatic).', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: header, name: Idempotency-Key, required: true, schema: { type: string, maxLength: 128 } }], responses: { '202': { description: Release accepted (durable operation created) }, '200': { description: Idempotent replay of an existing release operation }, '400': { description: IDEMPOTENCY_KEY_REQUIRED or INVALID_REQUEST }, '404': { $ref: '#/components/responses/Problem' }, '409': { description: WORKSPACE_BUSY (active Job / in-flight release) or WORKSPACE_DESTROYING }, '502': { $ref: '#/components/responses/Problem' }, '503': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspaces/{workspaceId}/checkpoints:
@@ -3622,7 +3654,7 @@ paths:
   /internal/v1/agent/embedding-models:
     get: { tags: [service-agent], operationId: agentEmbeddingModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Embedding models } } }
   /internal/v1/agent/health:
-    get: { tags: [service-agent], operationId: agentHealth, responses: { '200': { description: Agent health, content: { application/json: { schema: { type: object, required: [status, configState], properties: { status: { type: string }, configState: { type: string, enum: [pending, loading, ready, failed], description: 'PLAN-0632 D32-27: process config readiness. Only `ready` means process config is usable; pending/loading/failed make chat fail closed with CONFIG_UNAVAILABLE. A probe never triggers a load.' }, mcpInitialized: { type: boolean }, toolsCount: { type: integer } }, additionalProperties: true } } } } } }
+    get: { tags: [service-agent], operationId: agentHealth, security: [{ bearerAuth: [] }], responses: { '200': { description: Agent health, content: { application/json: { schema: { type: object, required: [status, configState], properties: { status: { type: string }, configState: { type: string, enum: [pending, loading, ready, failed], description: 'PLAN-0632 D32-27: process config readiness. Only `ready` means process config is usable; pending/loading/failed make chat fail closed with CONFIG_UNAVAILABLE. A probe never triggers a load.' }, mcpInitialized: { type: boolean }, toolsCount: { type: integer } }, additionalProperties: true } } } } } }
   /internal/v1/agent/tools:
     get: { tags: [service-agent], operationId: agentTools, security: [{ bearerAuth: [] }], responses: { '200': { description: Agent tools, content: { application/json: { schema: { type: object, required: [tools], properties: { tools: { type: array, items: { type: object } }, customTools: { type: array, items: { type: object } } } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/approval/respond:
@@ -3844,7 +3876,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/context/{sessionId}/sources:
-    get: { tags: [config], operationId: getContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: 'U1 metadata only (sourceKey/status/hashPrefix/envBranch/envHead); never body' }, '404': { $ref: '#/components/responses/Problem' } } }
+    get: { tags: [config], operationId: getContextSources, summary: Get context sources of one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: 'U1 metadata only (sourceKey/status/hashPrefix/envBranch/envHead); never body' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/context/{sessionId}/replay:
     post:
       tags: [service-misc]
@@ -4265,6 +4297,7 @@ paths:
     get:
       tags: [job]
       operationId: getWorkspaceJobOutput
+      summary: Get the output of one workspace job
       security: [{ bearerAuth: [] }]
       description: 'PLAN-0465 T2.1 canonical durable job output resume (decision #7: path key = domain `jobId`). Byte-cursor pagination over the container-side job output file; UTF-8 boundaries are guaranteed by the Runtime. Access = Workspace membership; ownership is (jobId, workspaceId) double-keyed (foreign/missing collapse to 404 without leaking existence).'
       parameters:
@@ -4278,6 +4311,7 @@ paths:
     post:
       tags: [job]
       operationId: cancelWorkspaceJob
+      summary: Cancel one workspace job
       security: [{ bearerAuth: [] }]
       description: |
         PLAN-0465 T2.1 canonical single-job cancel (decision #7: path key =
@@ -4506,6 +4540,7 @@ paths:
     get:
       tags: [admin]
       operationId: listAuditEntries
+      summary: List audit entries
       security: [{ bearerAuth: [] }]
       description: >-
         PLAN-0466 T1.2: paged read of the four-domain audit view `v_audit_entries`
@@ -4531,6 +4566,7 @@ paths:
     get:
       tags: [admin]
       operationId: getAuditEntryDetail
+      summary: Get one audit entry by type and id
       security: [{ bearerAuth: [] }]
       description: >-
         PLAN-0466 T1.2: one entry projected from `v_audit_entries` plus that
@@ -5386,6 +5422,8 @@ paths:
     post:
       tags: [session]
       operationId: createConversationThread
+      summary: Create a conversation thread
+      security: [{ bearerAuth: [] }]
       description: 'PLAN-0646 MVP (D-671): create a conversation thread. scopeType is user|agent|workspace; workspace passes the DB CHECK but fails closed in the MVP (V4 deferred).'
       parameters:
         - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid }, description: 'PLAN-0559: workspace context of the request.' }
@@ -5399,6 +5437,8 @@ paths:
     get:
       tags: [session]
       operationId: readConversationThread
+      summary: Read one conversation thread
+      security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
         - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }
@@ -5411,6 +5451,8 @@ paths:
     post:
       tags: [session]
       operationId: attachConversationThreadSession
+      summary: Attach a session to a conversation thread
+      security: [{ bearerAuth: [] }]
       description: 'Owner-only attach; same thread again is an idempotent 200 (changed=false), a different thread overwrites without cascading.'
       parameters:
         - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }

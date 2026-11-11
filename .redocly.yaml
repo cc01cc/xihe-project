@@ -2,13 +2,28 @@
 # 定位：规范级自洽校验（$ref 可解析 / operationId 唯一 / 无 unused component / tag 规范）。
 # 与另外三条轴严格分工：语法+冻结切片 = check:openapi(BL-162)；contract↔code = RouteContractParityTest(BL-320)；
 # doc↔contract = check:api-docs(生成器 --check)。四轴不许混。
+#
+# 口径两档（D-909 已裁定 public 严 / internal 宽，task-133 落地 2026-11-11）：
+#   public 面（x-tagGroups=public 的路径）—— error 级规则全部保持；现存 public error 已修到 0
+#   （79 条 summary + 10 条 security-defined + 1 条 path-parameters-defined + 0 条 struct-public）。
+#   internal 面——按 D-909 放宽，降格清单（写死在这里，改档先改注释再改 severity）：
+#     ① operation-summary → warn：internal 70 个端点缺 summary 属服务间面叙述从简（public 79 条已补齐，
+#        该规则剩余告警实测全部落在 internal；redocly 无 path 级 severity，只能全局降格 + 本注释兜底口径）；
+#     ② operation-4xx-response → warn（继承原 report-only 定位）：internal 21 + public 19 条补 4xx 描述
+#        归 task-245 清账，不进本档 error；
+#     ③ operation-2xx-response / no-unused-components / info-license / no-ambiguous-paths → warn 不动
+#        （report-only 定位不变，check:openapi:lint 不进 validate）。
+#   security-defined 与 struct 两档都不放宽：security 两类面全绿（10 条已补声明），
+#   struct 唯一一条（internal attachments 200 媒体级 description）已直接修复。
 extends:
   - recommended
 
 rules:
-  # 本轮先只报告、不阻断：存量 warning 数未知，进门禁前必须先清账（见 PLAN-0763 design）。
-  no-unused-components: warn
+  # —— internal 档降格（清单见文件头 ① ② ③，改档先改注释）——
+  operation-summary: warn
   operation-4xx-response: warn
+  # —— report-only 不变（D-909 / task-245 清账前维持 warn）——
+  no-unused-components: warn
 
 apis:
   xihe@latest:

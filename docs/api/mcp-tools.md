@@ -10,6 +10,10 @@ The MCP tool surface that the **Runtime** exposes as an MCP server, plus the two
 > Snapshot: **2026-11-10**, dev stack `stack-1` (CP :12631, Runtime :12633), Runtime `rmcp 3.7.0`,
 > `A03-xihe` develop. Probe: 23 tools on the Runtime surface, 23 on the CP user face,
 > 29 on the CP internal-service face (§2).
+>
+> Last static re-verification: **2026-11-11**, base `84221184d` — 23 registration sites re-extracted,
+> name set and required-params aligned 0-mismatch against this table (§2). The byte-level
+> source↔handshake description diff is **blocked-on-stack** (no dev stack listening); re-run recipe §6.
 
 ## 1. Three faces, one catalog
 
@@ -32,12 +36,13 @@ The CP-owned tools are gated on `access.internalService()` in `populateSystemToo
 
 | Check | Result |
 |---|---|
-| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:438`–`:782`, `#[tool_router] impl` at `:422`) |
+| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `84221184d`) |
 | Runtime `tools/list` (direct, stateless mode) | **23** tools |
 | CP user face `tools/list` (`admin@xihe.local`) | **23** tools |
 | CP internal-service face `tools/list` | **29** tools = 23 + 6 CP-owned |
 | Name set source ↔ handshake | identical (0 only-in-source, 0 only-in-handshake) |
-| `description` string source ↔ handshake | identical for all 23 (0 diffs) |
+| `description` string source ↔ handshake | identical for all 23 (0 diffs, as of 2026-11-10 snapshot) |
+| Static re-extraction ↔ this table (2026-11-11, stack down) | names 23/23; required-params 0 mismatch |
 
 ## 3. The 23 Runtime tools
 
@@ -187,13 +192,15 @@ console.log(res.result.tools.length, res.result.tools.map((t) => t.name).sort().
 
 **Diff the two sides.** Name sets must be identical; `description` must be byte-identical; a mismatch
 means either the source registration and the running binary are out of sync (stale build — check
-`mise run dev:host:status`) or someone edited one side only.
+`mise run dev:host:status`) or someone edited one side only. The 2026-11-11 re-verification artifacts (static extractor,
+handshake script, port probe, alignment table) live in
+`plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/`.
 
 ## 7. Known discrepancies (as of the snapshot)
 
 | # | Observation | Severity | Status |
 |---|---|---|---|
-| 1 | `start_background_process` advertised `truncate_limit` but its handler destructured it as `_truncate` and ignored it (`main.rs:726-737`). `execute_command` honors it. | low | **fixed (task-241) by removing the parameter**: the background path returns no output at all, so there is nothing for a per-call preview limit to size — output is retained per stream up to 1 MiB (`job_engine/mod.rs:33 STREAM_CAP_BYTES`) and read back through `read_command_output`, which reports `truncated`. `execute_command` keeps the parameter because there it really does size the inline wire preview (`container_runtime.rs:744-748`). Historical callers still passing it are tolerated (serde ignores unknown fields). |
+| 1 | `start_background_process` used to advertise `truncate_limit` while its handler ignored it. | low | **fixed (task-241), re-verified 2026-11-11 on `84221184d`**: the field was removed from `StartBackgroundProcessRequest` (inert on the background path — output is retained per stream up to 1 MiB, `job_engine/mod.rs:33 STREAM_CAP_BYTES`, read back via `read_command_output` which reports `truncated`); `execute_command` keeps the parameter because there it sizes the inline wire preview (`container_runtime.rs:744-748`); Rust tests pin both (`main.rs:7382-7446`); historical callers still passing the field are tolerated (serde ignores unknown fields). |
 | 2 | `DEV-016` §1 states the protocol is `2026-07-28`; the Runtime `initialize` result advertises `2025-11-25` (rmcp 3.7.0). The CP *enforces* `2026-07-28` on the wire, so this is a doc-vs-negotiation wording gap, not a broken handshake. | doc | clarified in this file; DEV-016 now points here |
 | 3 | `DEV-016` §3.2.1 can read as "the git tools are in every `tools/list`". They are injected only when `access.internalService()` is true, i.e. the user face never sees them. | doc | clarified in DEV-016 §10 |
 | 4 | `DEV-016` §1 note "Runtime 侧按该协议全程无会话" holds only with `MCP-Protocol-Version: 2026-07-28` + `_meta`; without the header the endpoint is sessionful (`400 Session ID is required`). | doc | clarified in DEV-016 §10 |
