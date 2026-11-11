@@ -359,9 +359,21 @@ watch([workspaceId, routeSessionId], () => {
 //
 // task-116 补漏：这条判据 2026-11-02 只覆盖了 agent 管理弹窗；`MobileChatSheet` 同样常挂在页面里
 // （只按 `sessionId` gate，不看视口），而它的触发器是 `md:hidden` —— CSS 隐藏触发器不等于收回
-// 已打开的内容。现在把视口显式传进去，由组件自己在跨断点时关闭 sheet。
+// 已打开的内容。
+//
+// task-124（D-979 第二种假绿）：**收口拆成两层**，且顺序不能颠倒 ——
+// ① **结构性互斥**是主判据：下面模板里三台替身（文件 / 改动·监控·成员 / 会话）都由
+//    `v-if`/`isMobileNow` 决定**存不存在**，桌面视口下它们结构上不在 DOM 里 ⇒ 不依赖"记得写 watch"；
+// ② **状态归位**是这个 watch 的唯一职责（下面几个 `= false`）：防止"回到移动视口后旧 sheet 又自己
+//    弹开"。**它不再是防重复的主力**，删掉它不会产生重复（只会留下关着的旧状态）。
+// 依赖核实（task-124，结构性改造前置）：`showMobileFiles`/`showMobileChanges` 只喂 `:open` 与
+// `WorkspaceWorkbench :mobile-changes-open`/`:mobile-aux-tab`；两台 sheet 内**无** focus 归还、
+// **无** `Teleport`、**无** `onMounted` 副作用（`grep` 见证据）⇒ 结构性移除不会破坏交互。
 watch(isMobileViewport, (mobile) => {
-    if (!mobile) showAgentManagementDialog.value = false;
+    if (mobile) return;
+    showAgentManagementDialog.value = false;
+    showMobileFiles.value = false;
+    showMobileChanges.value = false;
 });
 </script>
 
@@ -568,13 +580,17 @@ watch(isMobileViewport, (mobile) => {
             @close="showAgentManagementDialog = false"
         />
 
+        <!-- task-124：结构性互斥 —— 桌面视口下这台替身**根本不存在**（原先只靠 `md:hidden`
+             藏触发器，已打开的内容仍会留在 DOM 里）。`showMobileFiles` 只作打开状态。 -->
         <MobileWorkspaceSheet
+            v-if="isMobileViewport"
             :open="showMobileFiles"
             @close="showMobileFiles = false"
             @add-workspace="showCreateDialog = true"
         />
 
         <MobileChangesSheet
+            v-if="isMobileViewport"
             :open="showMobileChanges"
             :session-id="sessionId"
             :workspace-id="workspaceId"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useMediaQuery } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import Sheet from "../../../components/ui/sheet/Sheet.vue";
 import SheetContent from "../../../components/ui/sheet/SheetContent.vue";
@@ -13,19 +14,30 @@ import { useAgentStore } from "../../../stores/agent";
 import { useSessionStore } from "../../../stores/session";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 
+/**
+ * 注意 `withDefaults(..., { isMobile: undefined })` **不是摆设**：Vue 对运行时类型为 `Boolean` 的
+ * props 有"缺省即 `false`"的类型转换（boolean casting）。若不显式声明 default，父组件**不传**
+ * 这个 prop 时拿到的是 `false`（不是 `undefined`），"未表态"与"明确桌面"就再也区分不开，
+ * 兜底逻辑会永远走进"桌面"分支。
+ */
 const props = withDefaults(
     defineProps<{
         sessionId: string;
         /**
-         * 视口是否仍处于移动断点（默认 true：直接挂载本组件的单测/E2E 都按移动语义）。
+         * 视口是否仍处于移动断点。**不设默认值**：`undefined` = 调用方未表态，由组件自取视口真值
+         * （见下方 `isMobileNow`）。显式传值只作**覆盖**。
          *
          * task-116：本组件是 **dock 的移动替身**，不是第二套面板宿主 —— 它的 `ChatPanel`
          * 会再挂一份 `SessionContextPanel`，而正文节点的 `data-testid="session-settings-expanded"`
          * 与桌面 dock 里那份同名。桌面分支的 dock 与本组件同时在场 ⇒ 同名节点 2 个。
+         *
+         * task-124（D-979）：默认值曾经是 `true`，于是"桌面父组件漏传"= 静默失效（永远当作移动端，
+         * 永远收不了口）。改成 `undefined` + 组件内 `useMediaQuery` 兜底后，**漏传不再是静默退化**：
+         * 真栈浏览器里按真实视口判定，单测/jsdom 里退回 `true` 保持既有移动语义。
          */
         isMobile?: boolean;
     }>(),
-    { isMobile: true },
+    { isMobile: undefined },
 );
 
 const agentStore = useAgentStore(),
@@ -61,7 +73,7 @@ watch(
     { immediate: true },
 );
 /**
- * task-116 收口：跨断点必须把替身撤掉。
+ * task-116 / task-124 收口：跨断点必须把替身撤掉 —— 而且必须是**结构性**的。
  *
  * 第 3 种「看着互斥其实不互斥」：`md:hidden` 只隐藏**触发器**（本组件模板根 `div` 与浮动按钮），
  * 不收回**已经打开的内容** —— reka 的 `SheetContent` 在 `open` 为真时照常渲染（且被 teleport 到
@@ -69,18 +81,50 @@ watch(
  * `ChatPanel(isMobile=true)` → `SessionContextPanel`；② 桌面分支 `WorkspaceWorkbench` 的 dock
  * `#context` 槽 → 另一份 `SessionContextPanel`。两份正文都带 `session-settings-expanded`。
  *
- * 判据与 `WorkspaceView` 里 agent 管理弹窗那条一致（`:356-358`「once the viewport is wide enough
- * for the dock, drop it so a resize can never leave two hosts eligible」），只是那条当时漏了本组件。
- * 机器判据：`__tests__/sessionSettingsExpandedHosts.spec.ts`。
+ * **两层，职责分开**（task-124）：
+ * 1. **渲染层 = 结构性互斥**：模板里 `SheetContent` 由 `isMobileNow` 门控 ⇒ 桌面视口下正文
+ *    **结构上不存在**，与"有没有人记得写 watch"无关。这是**不变量**。（`open` 不参与这道闸门，
+ *    开关仍由 reka `Sheet` 自己管 —— 见模板注释。）
+ * 2. **状态层 = 副作用收口**（下面这个 watch）：跨断点时把 `open`/`membersOpen` 归位，让焦点归还
+ *    与关闭动画按原逻辑走。
+ *
+ * ⚠️ 残留（不是漏，是刻意）：**桌面视口下 `open` 仍可能为 `true`**（例如 `toggle()` 被程序调用）。
+ * 它不再渲染正文，只表示"这个替身的内部开关状态"。判断重复时看 DOM 里的
+ * `session-settings-expanded` 个数，不要拿 `open` 当真值。
+ *
+ * 机器判据：`__tests__/sessionSettingsExpandedSameScreen.spec.ts`（同屏计数，真挂正文）。
  */
-watch(
-    () => props.isMobile,
-    (mobile) => {
-        if (mobile) return;
-        open.value = false;
-        membersOpen.value = false;
-    },
+/**
+ * 自取视口的**能力探测**：光看 `typeof window.matchMedia === "function"` 会被 jsdom 骗 ——
+ * jsdom 提供 `matchMedia` 桩，但**任何查询都恒返回 `matches: false`**（不评估查询）。所以探一条
+ * 恒真查询 `(min-width: 0px)`：
+ * - 真浏览器 ⇒ `true` ⇒ 视口可自取；
+ * - jsdom 桩 / 项目里那种"只回答特定查询"的假实现 ⇒ `false` ⇒ **不采信**，退回移动语义。
+ *
+ * 这条探测是 task-124 的关键：没有它，"jsdom 里 `useMediaQuery` 恒 false（永远桌面）"会让所有
+ * **直接挂载本组件、不传 `isMobile`** 的既有 spec 静默变成桌面语义 —— 那是拿默认值换一批假绿。
+ */
+const mediaQueriesEvaluate = (() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    try {
+        return window.matchMedia("(min-width: 0px)").matches === true;
+    } catch {
+        return false;
+    }
+})();
+const viewportIsMobile = mediaQueriesEvaluate ? useMediaQuery("(max-width: 767px)") : null;
+/**
+ * 生效中的"是否移动断点"：prop 显式给了就用 prop（应用内的权威来源，`WorkspaceView` 一直传）；
+ * 没给才自取视口，视口也取不到（jsdom/假 matchMedia）就按**移动端**——保持本组件的历史语义。
+ */
+const isMobileNow = computed(
+    () => props.isMobile ?? (viewportIsMobile ? viewportIsMobile.value : true),
 );
+watch(isMobileNow, (mobile) => {
+    if (mobile) return;
+    open.value = false;
+    membersOpen.value = false;
+});
 const agentPrincipalId = computed(
     () =>
         sessionStore.sessions.find((session) => session.id === props.sessionId)?.agentPrincipalId ??
@@ -140,7 +184,16 @@ defineExpose({ toggle });
             `data-[side=bottom]:h-[75vh]` 让 tailwind-merge 顶掉基础串的 `h-auto`（同组冲突、
             后者胜），再补 `max-h-[75vh]` 作无对抗类的硬兜底。
         -->
+            <!--
+                task-124：**结构性互斥**的唯一闸门 —— 只看"这个视口还需不需要移动替身"。
+                `open` 的开关仍由 reka `Sheet` 自己管（真 `SheetContent` 只在 open 为真时挂载并
+                teleport；这里不再叠一层 `open`，否则 `SheetContent` 会晚一个 tick 才出现，
+                把"打开后才有人 emit pointerDownOutside"的既有调用方变成时序陷阱）。
+                桌面视口下这个替身**结构上不存在** ⇒ 不可能再挂一份 `SessionContextPanel`，
+                与"父组件有没有记得传 `isMobile`"无关（漏传由 `isMobileNow` 自取视口兜底）。
+            -->
             <SheetContent
+                v-if="isMobileNow"
                 side="bottom"
                 class="h-[min(75dvh,calc(100dvh-2rem))] max-h-[min(75dvh,calc(100dvh-2rem))] p-0 gap-0 data-[side=bottom]:h-[min(75dvh,calc(100dvh-2rem))]"
                 data-testid="mobile-chat-sheet"

@@ -261,7 +261,7 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
         wrapper.unmount();
     });
 
-    it.fails("文件替身跨断点未收回：`workspace-tree-head` 在同一 DOM 里出现 2 个", async () => {
+    it("文件替身跨断点必须收回：`workspace-tree-head` 在同一 DOM 里恰好 1 个（task-124 转正）", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
@@ -274,7 +274,7 @@ describe("移动替身的跨断点收口（task-122 / D-978 形态③）", () =>
         wrapper.unmount();
     });
 
-    it.fails("监控/改动替身跨断点未收回：`mobile-changes-sheet` 在桌面分支起来后仍挂载", async () => {
+    it("监控/改动替身跨断点必须收回：`mobile-changes-sheet` 在桌面分支起来后不再挂载（task-124 转正）", async () => {
         useSessionStore().currentSessionId = SESSION_A;
         const wrapper = mountView();
         await settle();
