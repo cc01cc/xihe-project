@@ -38,7 +38,8 @@ class ApiRequestTemplateServiceMergeTest {
     ApiRequestTemplateServiceMergeTest() {
         when(contextProvider.getObject()).thenReturn(contextTemplates);
         service = new ApiRequestTemplateService(null, null, null, null, json, null, null, null, null,
-                contextProvider, mock(RequesterAuthority.class));
+                contextProvider, mock(RequesterAuthority.class),
+                com.cc01cc.p.xihe.cp.support.TestInstanceIdentity.mock());
     }
 
     private void contextManifest(JsonNode components) {

@@ -37,6 +37,7 @@ public class EmbeddingProfileService {
     private final ProviderConnectionRepository connections;
     private final EnvOverlayRegistry envOverlay;
     private final ObjectMapper json;
+    private final com.cc01cc.p.xihe.cp.service.InstanceIdentityService instanceIdentity;
 
     /** Validated, complete single-layer profile as stored under one config key. */
     public record LayerProfile(String providerId, String connectionKey, String model) {
@@ -147,7 +148,7 @@ public class EmbeddingProfileService {
         }
         if (connection == null) {
             connection = findOwningConnection("INSTANCE",
-                    ProviderConnection.INSTANCE_OWNER_ID, profile);
+                    instanceIdentity.ownerId(), profile);
         }
         if (connection == null) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
@@ -198,12 +199,14 @@ public class EmbeddingProfileService {
                                    ProviderConnectionRepository connections,
                                    EnvOverlayRegistry envOverlay,
                                    com.cc01cc.p.xihe.cp.provider.ProviderCredentialLeaseService leaseService,
-                                   ObjectMapper json) {
+                                   ObjectMapper json,
+                                   com.cc01cc.p.xihe.cp.service.InstanceIdentityService instanceIdentity) {
         this.configs = configs;
         this.connections = connections;
         this.envOverlay = envOverlay;
         this.leaseService = leaseService;
         this.json = json;
+        this.instanceIdentity = instanceIdentity;
     }
 
     /** Instance-shaped layers (instance, workspace-default) read by layer only. */

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.provider;
 
+import com.cc01cc.p.xihe.cp.support.TestInstanceIdentity;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
@@ -56,7 +57,7 @@ class ProviderConnectionServiceTest {
     private final ProviderConnectionService service = new ProviderConnectionService(
             repository, auditRepository, leaseRepository, catalog, apiTypes, credentialService,
             credentialAccess, new ObjectMapper(), requestTemplates, configService, modelLimitRepository,
-            requesterAuthority);
+            requesterAuthority, TestInstanceIdentity.mock());
 
     @org.junit.jupiter.api.BeforeEach
     void wireLockedConnectionDelegation() {
@@ -553,7 +554,7 @@ class ProviderConnectionServiceTest {
         ProviderConnectionService pairService = new ProviderConnectionService(
                 repository, auditRepository, leaseRepository, realCatalog, apiTypes, credentialService,
                 credentialAccess, mapper, requestTemplates, configService, modelLimitRepository,
-                requesterAuthority);
+                requesterAuthority, TestInstanceIdentity.mock());
         when(repository.saveAndFlush(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -616,7 +617,7 @@ class ProviderConnectionServiceTest {
         when(catalog.defaultApiType("deepseek")).thenReturn(
                 new ProviderCatalogService.ApiTypeRef("openai-chat-completions", 1, "chat"));
         when(repository.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
-                "INSTANCE", ProviderConnection.INSTANCE_OWNER_ID, "deepseek", "shared"))
+                "INSTANCE", TestInstanceIdentity.OWNER_ID, "deepseek", "shared"))
                 .thenReturn(Optional.empty());
     }
 
@@ -624,7 +625,7 @@ class ProviderConnectionServiceTest {
         ProviderConnection connection = new ProviderConnection();
         connection.setId(UUID.randomUUID());
         connection.setOwnerType(ProviderConnection.OWNER_INSTANCE);
-        connection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        connection.setOwnerId(TestInstanceIdentity.OWNER_ID);
         connection.setProviderId("deepseek");
         connection.setConnectionKey("shared");
         connection.setApiTypeId("openai-chat-completions");
@@ -661,12 +662,12 @@ class ProviderConnectionServiceTest {
                 List.of(), null, "shared"));
 
         assertEquals(ProviderConnection.OWNER_INSTANCE, created.getOwnerType());
-        assertEquals(ProviderConnection.INSTANCE_OWNER_ID, created.getOwnerId());
+        assertEquals(TestInstanceIdentity.OWNER_ID, created.getOwnerId());
         ArgumentCaptor<ProviderConnectionAudit> audit =
                 ArgumentCaptor.forClass(ProviderConnectionAudit.class);
         verify(auditRepository).save(audit.capture());
         assertEquals(ProviderConnection.OWNER_INSTANCE, audit.getValue().getOwnerType());
-        assertEquals(ProviderConnection.INSTANCE_OWNER_ID, audit.getValue().getOwnerId());
+        assertEquals(TestInstanceIdentity.OWNER_ID, audit.getValue().getOwnerId());
         assertEquals("admin-1", audit.getValue().getChangedBy());
         assertEquals("CREATED", audit.getValue().getAction());
     }
@@ -688,7 +689,7 @@ class ProviderConnectionServiceTest {
                 .thenReturn(true);
         when(repository.findByOwnerTypeAndOwnerId("USER", "admin-1")).thenReturn(List.of());
         when(repository.findByOwnerTypeAndOwnerId(
-                ProviderConnection.OWNER_INSTANCE, ProviderConnection.INSTANCE_OWNER_ID))
+                ProviderConnection.OWNER_INSTANCE, TestInstanceIdentity.OWNER_ID))
                 .thenReturn(List.of(instanceConnection()));
 
         List<ProviderConnection> visible = service.listVisibleEntities();

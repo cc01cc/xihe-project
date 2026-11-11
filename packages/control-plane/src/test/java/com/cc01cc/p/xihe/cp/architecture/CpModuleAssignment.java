@@ -126,6 +126,12 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("InstanceOwner")) {
             return "auth";
         }
+        // PLAN-0767 M1: the deployment identity singleton (entity/repository/service/controller)
+        // sits on the same instance-level identity surface as the owner pointer; consumers
+        // (provider, config) point at it and it points only at audit/telemetry, so no new slice.
+        if (name.startsWith("InstanceIdentity")) {
+            return "auth";
+        }
         if (name.startsWith("AuditLog")) {
             return "audit";
         }

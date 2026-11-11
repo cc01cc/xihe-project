@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.provider;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.service.InstanceIdentityService;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
@@ -63,6 +64,7 @@ public class ProviderConnectionService {
     private final HttpClient httpClient;
     private final com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository;
     private final RequesterAuthority requesterAuthority;
+    private final InstanceIdentityService instanceIdentity;
 
     public ProviderConnectionService(
             ProviderConnectionRepository repository,
@@ -76,7 +78,8 @@ public class ProviderConnectionService {
             com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates,
             org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService,
             com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository,
-            RequesterAuthority requesterAuthority) {
+            RequesterAuthority requesterAuthority,
+            InstanceIdentityService instanceIdentity) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
@@ -89,6 +92,7 @@ public class ProviderConnectionService {
         this.configService = configService;
         this.modelLimitRepository = modelLimitRepository;
         this.requesterAuthority = requesterAuthority;
+        this.instanceIdentity = instanceIdentity;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -114,7 +118,7 @@ public class ProviderConnectionService {
         // consumes them for every consumer through the profile chain.
         if (isInstanceAdmin()) {
             connections.addAll(repository.findByOwnerTypeAndOwnerId(
-                    ProviderConnection.OWNER_INSTANCE, ProviderConnection.INSTANCE_OWNER_ID));
+                    ProviderConnection.OWNER_INSTANCE, instanceIdentity.ownerId()));
         }
         return connections;
     }
@@ -190,7 +194,7 @@ public class ProviderConnectionService {
             return own;
         }
         return findReadyByKey(ProviderConnection.OWNER_INSTANCE,
-                ProviderConnection.INSTANCE_OWNER_ID, provider, connectionKey);
+                instanceIdentity.ownerId(), provider, connectionKey);
     }
 
     @Transactional
@@ -477,7 +481,7 @@ public class ProviderConnectionService {
             return connection;
         }
         if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
-            if (ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())
+            if (instanceIdentity.isInstanceOwnerId(connection.getOwnerId())
                     && isInstanceAdmin()) {
                 return connection;
             }
@@ -504,7 +508,7 @@ public class ProviderConnectionService {
                 // D-922: an INSTANCE connection is usable by any authenticated consumer bound to
                 // it (listing/writing stays admin-only).
                 || (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
-                && ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())
+                && instanceIdentity.isInstanceOwnerId(connection.getOwnerId())
                 && userId != null && !userId.isBlank());
         if (!visible || !connection.isEnabled() || !ProviderConnection.STATUS_READY.equals(connection.getStatus())) {
             throw new IllegalArgumentException("Provider connection is not ready or not accessible");
@@ -535,7 +539,7 @@ public class ProviderConnectionService {
         }
         // D-922: the INSTANCE write surface is cap:instance:admin only; non-admins get 403.
         if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
-            if (!ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())
+            if (!instanceIdentity.isInstanceOwnerId(connection.getOwnerId())
                     || !isInstanceAdmin()) {
                 throw forbidden("Instance provider connection is not writable");
             }
@@ -638,7 +642,7 @@ public class ProviderConnectionService {
             if (!isInstanceAdmin()) {
                 throw forbidden("Instance provider connections require cap:instance:admin");
             }
-            return ProviderConnection.INSTANCE_OWNER_ID;
+            return instanceIdentity.ownerId();
         }
         if (ProviderConnection.OWNER_WORKSPACE.equals(scope)) {
             String workspaceId = TenantContext.getWorkspaceId();
@@ -822,7 +826,7 @@ public class ProviderConnectionService {
     @Transactional
     public void recordConsumptionAudit(ProviderConnection connection, String userId, String workspaceId) {
         if (!ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
-                || !ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())) {
+                || !instanceIdentity.isInstanceOwnerId(connection.getOwnerId())) {
             return;
         }
         ProviderConnectionAudit entry = new ProviderConnectionAudit();

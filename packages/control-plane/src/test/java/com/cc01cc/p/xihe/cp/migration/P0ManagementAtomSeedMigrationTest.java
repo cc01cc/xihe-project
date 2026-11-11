@@ -172,12 +172,14 @@ class P0ManagementAtomSeedMigrationTest {
         // V129/V130 added MEMORY_WRITE_SELF (27 → 28); PLAN-0691 T1.3 added the four plugin atoms
         // (29 → 33); BL-312 (2026-11-09) removed the former D8 CREATE_OWN_AGENT atom (33 → 32);
         // PLAN-0750 M1 (G1, 2026-11-10) restored it with user-level semantics (32 → 33).
+        // PLAN-0766 (task-158 / V153, 2026-11-11) added MANAGE_WORKSPACE_DEFAULT_CONFIG (33 → 34).
         // Update together with SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
-        assertEquals(33, PermissionAtomCatalog.actionAtoms().size(),
+        assertEquals(34, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
                         + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
-                        + " removal = 32, plus the PLAN-0750 M1 restore = 33; the same arithmetic"
-                        + " is frozen in SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
+                        + " removal = 32, plus the PLAN-0750 M1 restore = 33, plus PLAN-0766"
+                        + " MANAGE_WORKSPACE_DEFAULT_CONFIG = 34; the same arithmetic is frozen in"
+                        + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());
         assertEquals(PermissionAtomCatalog.actionAtoms().size(),
                 ToolFaceRegistry.builtinActionClasses().size(),

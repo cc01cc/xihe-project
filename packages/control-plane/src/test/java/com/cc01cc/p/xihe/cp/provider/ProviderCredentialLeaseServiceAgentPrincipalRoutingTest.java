@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.provider;
 
+import com.cc01cc.p.xihe.cp.support.TestInstanceIdentity;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderCredentialLeaseRepository;
@@ -96,7 +97,7 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
         // D-922: the consumer does not own the admin's credential; only the connection gate plus
         // the credential shape apply.
         connection.setOwnerType(ProviderConnection.OWNER_INSTANCE);
-        connection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+        connection.setOwnerId(TestInstanceIdentity.OWNER_ID);
 
         leases.issue(USER, WORKSPACE, SESSION, RUN, CONNECTION, "openai", MODEL, 7L);
 

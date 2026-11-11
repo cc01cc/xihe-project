@@ -74,8 +74,6 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
     private static final String SPRINGDOC = "springdoc";              // springdoc framework endpoints
     private static final String BOOT_ERROR = "spring-boot-error";     // BasicErrorController
     private static final String KEPT_BY_DESIGN = "kept-by-design";     // contract convenience spelling, intentionally kept
-    /** D-932 / PLAN-0767 M1: planted contract, CP implementation lands in M1-3. */
-    private static final String PLAN_0767_M1 = "PLAN-0767-M1";
 
     /** Implemented by CP but intentionally not contracted (framework surfaces). */
     private static final Map<String, String> EXEMPT_IMPLEMENTED = new LinkedHashMap<>();
@@ -172,10 +170,6 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         //      响应/不可变修订语义写清楚 —— 删掉反而是把"契约更详细"当缺陷。契约里已各自标注 ----
         EXEMPT_DOCUMENTED.put("/api/v1/config/api-request-templates", KEPT_BY_DESIGN);
         EXEMPT_DOCUMENTED.put("/api/v1/config/{}/api-request-templates", KEPT_BY_DESIGN);
-
-        // ---- 计划内契约（D-932，PLAN-0767 M1）：yaml 先行、CP 实现后置。条目随契约变更加入，
-        //      代码落地的那一刻删除 —— 它永远表示"已排期"，不表示"忘了实现" ----
-        PLANNED_APIS.put("/api/v1/instance/identity", PLAN_0767_M1);
 
         // ---- BL-320 冻结清单当前**为空**：批 1 把 8 条真缺契约补进 openapi.yaml，批 2 把
         //      principal-grants 退役面记为 deprecated 契约；批 5（PLAN-0763 M5）由 METHOD+path
