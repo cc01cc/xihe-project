@@ -13,9 +13,20 @@ import { useAgentStore } from "../../../stores/agent";
 import { useSessionStore } from "../../../stores/session";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 
-const props = defineProps<{
-    sessionId: string;
-}>();
+const props = withDefaults(
+    defineProps<{
+        sessionId: string;
+        /**
+         * 视口是否仍处于移动断点（默认 true：直接挂载本组件的单测/E2E 都按移动语义）。
+         *
+         * task-116：本组件是 **dock 的移动替身**，不是第二套面板宿主 —— 它的 `ChatPanel`
+         * 会再挂一份 `SessionContextPanel`，而正文节点的 `data-testid="session-settings-expanded"`
+         * 与桌面 dock 里那份同名。桌面分支的 dock 与本组件同时在场 ⇒ 同名节点 2 个。
+         */
+        isMobile?: boolean;
+    }>(),
+    { isMobile: true },
+);
 
 const agentStore = useAgentStore(),
     sessionStore = useSessionStore(),
@@ -48,6 +59,27 @@ watch(
         if (id) void membersStore.ensureLoaded(id);
     },
     { immediate: true },
+);
+/**
+ * task-116 收口：跨断点必须把替身撤掉。
+ *
+ * 第 3 种「看着互斥其实不互斥」：`md:hidden` 只隐藏**触发器**（本组件模板根 `div` 与浮动按钮），
+ * 不收回**已经打开的内容** —— reka 的 `SheetContent` 在 `open` 为真时照常渲染（且被 teleport 到
+ * body）。于是「移动端打开会话设置 → 视口拉宽到 ≥768」会同时留下：① 本 sheet 内的
+ * `ChatPanel(isMobile=true)` → `SessionContextPanel`；② 桌面分支 `WorkspaceWorkbench` 的 dock
+ * `#context` 槽 → 另一份 `SessionContextPanel`。两份正文都带 `session-settings-expanded`。
+ *
+ * 判据与 `WorkspaceView` 里 agent 管理弹窗那条一致（`:356-358`「once the viewport is wide enough
+ * for the dock, drop it so a resize can never leave two hosts eligible」），只是那条当时漏了本组件。
+ * 机器判据：`__tests__/sessionSettingsExpandedHosts.spec.ts`。
+ */
+watch(
+    () => props.isMobile,
+    (mobile) => {
+        if (mobile) return;
+        open.value = false;
+        membersOpen.value = false;
+    },
 );
 const agentPrincipalId = computed(
     () =>

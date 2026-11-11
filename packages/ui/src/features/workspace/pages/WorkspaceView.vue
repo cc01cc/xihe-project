@@ -354,8 +354,12 @@ watch([workspaceId, routeSessionId], () => {
     void selectSessionForWorkspace();
 });
 
-// The mobile modal is only a dock substitute: once the viewport is wide enough for the
-// dock, drop it so a resize can never leave two hosts eligible at the same time.
+// 移动端宿主都是 dock 的**替身**：一旦视口宽到能放 dock，就撤掉替身 —— 两个宿主同时活着时，
+// 它们各自挂的 `SessionContextPanel` 会把 `session-settings-expanded` 变成 2 个节点。
+//
+// task-116 补漏：这条判据 2026-11-02 只覆盖了 agent 管理弹窗；`MobileChatSheet` 同样常挂在页面里
+// （只按 `sessionId` gate，不看视口），而它的触发器是 `md:hidden` —— CSS 隐藏触发器不等于收回
+// 已打开的内容。现在把视口显式传进去，由组件自己在跨断点时关闭 sheet。
 watch(isMobileViewport, (mobile) => {
     if (!mobile) showAgentManagementDialog.value = false;
 });
@@ -579,7 +583,7 @@ watch(isMobileViewport, (mobile) => {
             @close="showMobileChanges = false"
         />
 
-        <MobileChatSheet v-if="sessionId" :session-id="sessionId" />
+        <MobileChatSheet v-if="sessionId" :session-id="sessionId" :is-mobile="isMobileViewport" />
 
         <BaseModal
             :show="showAgentSelection"
