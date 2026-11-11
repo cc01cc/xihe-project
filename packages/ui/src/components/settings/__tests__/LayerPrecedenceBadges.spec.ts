@@ -43,7 +43,7 @@ describe("LayerPrecedenceBadges", () => {
         });
         const text = wrapper.text();
         expect(text).toContain("生效顺序");
-        expect(text).toContain("env 与管理员钉");
+        expect(text).toContain("环境变量与管理员锁定");
         expect(text).toContain("立即生效");
     });
 });

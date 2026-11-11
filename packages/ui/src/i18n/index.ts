@@ -885,6 +885,63 @@ const messages = {
             settingsDeleteImpactSessions: "会话与消息随工作区一并失效",
             settingsBack: "返回工作区",
             toolbarMore: "更多",
+            environmentEyebrow: "工作区",
+            environmentSubtitle: "查看当前执行配置、存储绑定和 Runtime 运行状态。",
+            environmentLoading: "正在加载环境...",
+            environmentWorkspaceId: "工作区 ID",
+            environmentUnmaterializedTitle: "此工作区尚未物化",
+            environmentUnmaterializedHint:
+                "首次物化将创建宿主机目录并启动沙盒容器（可能需拉取镜像，约 1–2 分钟）。也可以直接使用文件/对话功能，系统会自动准备。",
+            environmentPrepare: "准备工作区",
+            environmentPreparePreparing: "准备中…",
+            environmentStorageTitle: "存储",
+            environmentExecutionTitle: "执行配置",
+            environmentRuntimeTitle: "运行时",
+            environmentJobsTitle: "工作区 Job",
+            environmentFieldBackend: "后端",
+            environmentFieldStorageMode: "存储方式",
+            environmentFieldStorageRef: "引用",
+            environmentFieldHostPath: "宿主机目录",
+            environmentFieldStatus: "状态",
+            environmentFieldExecutionMode: "执行模式",
+            environmentFieldCapability: "能力探测",
+            environmentFieldGeneration: "代数",
+            environmentFieldSpecHash: "配置摘要",
+            environmentFieldDevice: "设备",
+            environmentFieldLastHeartbeat: "最近心跳",
+            environmentFieldReleaseStatus: "释放状态",
+            environmentValueUnknown: "未知",
+            environmentValueNone: "无",
+            environmentValueNotObserved: "未观测到",
+            environmentCapabilityAvailable: "{maturity} / 可用",
+            environmentCapabilityUnavailable: "不可用：{reason}",
+            environmentCapabilityReasonUnknown: "未知原因",
+            environmentBackendUnknown: "未知后端",
+            environmentJobCapabilityUnknown: "Job 启动能力未知（Runtime 未上报）",
+            environmentJobCapabilityUnavailable: "Job 启动不可用：{reason}",
+            environmentJobCapabilityReasonMissing: "后端未上报原因",
+            environmentJobCapabilitySandboxed: "可启动 Job · {backend}（沙盒隔离）",
+            environmentJobCapabilityUnrestricted:
+                "可启动 Job · {backend}（无隔离，可访问工作区外资源）",
+            environmentJobCapabilityUnknownIsolation: "可启动 Job · {backend}（隔离能力未知）",
+            environmentJobCount: "{count} 条",
+            environmentJobsEmpty: "暂无 durable Job",
+            environmentRecovery: {
+                ready: "工作区已就绪，无需操作。",
+                materializing: "正在准备中（可能拉取沙盒镜像），请稍候并点击刷新查看进度。",
+                paused: "已暂停（沙盒进程冻结保留）。下次使用会自动恢复，文件不会丢失。",
+                stopped: "已停止（长时间空闲回收）。再次使用会自动重新准备，文件不会丢失。",
+                destroying: "销毁中：沙盒正在清理。稍后可重新准备工作区。",
+                degraded: "部分降级：检查 Runtime 日志与 Docker 状态，文件不会丢失。",
+                blocked:
+                    "已阻塞：确认 Docker Desktop 正在运行且 WSL2 集成已启用；检查宿主机目录可写；修复后点击刷新或重新准备。",
+                stale: "状态过期：Runtime 心跳中断，点击刷新重新获取；长时间 stale 请检查 Runtime 进程。",
+                unbound:
+                    "尚未物化：点击下方「准备工作区」手动准备，或直接使用文件/对话功能自动准备。",
+                pending:
+                    "等待中：点击下方「准备工作区」手动准备，或直接使用文件/对话功能自动准备。",
+                unknown: "未知状态：点击刷新重试；持续异常请检查 Runtime 与 Docker。",
+            },
             environmentState: "环境状态",
             // task-49：WorkspaceJob 三个枚举的展示文案（值域与 openapi.yaml 的 WorkspaceJob 一致）。
             environmentJobStatus: {
@@ -1446,7 +1503,7 @@ const messages = {
         settings: {
             colorScheme: {
                 title: "配色方案",
-                hint: "五个方案 = shadcn-vue 官方的五个基色，色值原样照抄、不做自定义调色；选中后立即生效并记住。",
+                hint: "选中后立即生效，并记住你的选择。",
                 previewLabel: "当前方案实样",
                 modeLabel: "明暗",
                 modeLight: "浅色",
@@ -1503,16 +1560,15 @@ const messages = {
                 wsDefaultReadonlyDetail:
                     "该层只有持有 MANAGE_WORKSPACE_DEFAULT_CONFIG 能力的账号可写；你仍可查看当前默认值。需要修改时，请联系实例管理员或为你的角色显式授予该能力。",
                 fourLayerOrderLabel: "生效顺序",
-                fourLayerLowToHigh: "（低 → 高；env 与管理员钉在所有库层之上）",
+                fourLayerLowToHigh: "（高 → 低；环境变量与管理员锁定优先于以上各层）",
                 fourLayerWorkspace: "工作区",
                 fourLayerWorkspaceDefault: "工作区默认",
                 fourLayerUser: "个人",
                 fourLayerInstance: "实例",
                 fourLayerDetail:
                     "同域同键按「工作区 → 工作区默认 → 个人 → 实例」取值；修改工作区默认值对没有显式覆盖的工作区立即生效。",
-                // H4：组徽标数**入口数**、行徽标才数**字段数**；量词与图例成对出现。
+                // H4：组徽标数**入口数**、行徽标才数**字段数**。
                 entryCount: "{count} 个入口",
-                countLegend: "徽标为该组入口数，不是配置项数",
                 groupOps: "实例运维",
                 groupSecurity: "安全与权限",
                 groupInstanceResources: "实例资源",
@@ -1526,7 +1582,7 @@ const messages = {
                 resourceKnowledgeMcp: "知识库 · MCP",
                 backendGapBadge: "后端缺口 {code}",
                 backendGapBadgeGeneric: "后端缺口",
-                backendGapHint: "灰显条目为后端缺口，暂不可用；悬停可查看说明。",
+                backendGapHint: "灰显条目暂不可用，悬停查看原因。",
                 noAtomTitle: "本页不做额外权限筛选：",
                 noAtomBody:
                     "内容按你的归属自动收窄 —— 看到空列表不代表没权限，也不代表数据丢了；看不到别人的条目是设计如此，这里不会出现 403。",
@@ -3675,6 +3731,71 @@ const messages = {
             settingsDeleteImpactSessions: "Sessions and messages become invalid with the workspace",
             settingsBack: "Back to workspace",
             toolbarMore: "More",
+            environmentEyebrow: "Workspace",
+            environmentSubtitle:
+                "View the current execution config, storage binding and Runtime status.",
+            environmentLoading: "Loading environment…",
+            environmentWorkspaceId: "Workspace ID",
+            environmentUnmaterializedTitle: "This workspace is not materialized yet",
+            environmentUnmaterializedHint:
+                "Materializing creates the host directory and starts the sandbox container (this may pull an image and take 1–2 minutes). You can also just use files/chat and the system prepares it automatically.",
+            environmentPrepare: "Prepare workspace",
+            environmentPreparePreparing: "Preparing…",
+            environmentStorageTitle: "Storage",
+            environmentExecutionTitle: "Execution config",
+            environmentRuntimeTitle: "Runtime",
+            environmentJobsTitle: "Workspace jobs",
+            environmentFieldBackend: "Backend",
+            environmentFieldStorageMode: "Storage mode",
+            environmentFieldStorageRef: "Reference",
+            environmentFieldHostPath: "Host directory",
+            environmentFieldStatus: "Status",
+            environmentFieldExecutionMode: "Execution mode",
+            environmentFieldCapability: "Capability probe",
+            environmentFieldGeneration: "Generation",
+            environmentFieldSpecHash: "Spec digest",
+            environmentFieldDevice: "Device",
+            environmentFieldLastHeartbeat: "Last heartbeat",
+            environmentFieldReleaseStatus: "Release status",
+            environmentValueUnknown: "Unknown",
+            environmentValueNone: "none",
+            environmentValueNotObserved: "Not observed",
+            environmentCapabilityAvailable: "{maturity} / available",
+            environmentCapabilityUnavailable: "Unavailable: {reason}",
+            environmentCapabilityReasonUnknown: "reason unknown",
+            environmentBackendUnknown: "Unknown backend",
+            environmentJobCapabilityUnknown:
+                "Job start capability unknown (not reported by Runtime)",
+            environmentJobCapabilityUnavailable: "Job start unavailable: {reason}",
+            environmentJobCapabilityReasonMissing: "reason not reported by the backend",
+            environmentJobCapabilitySandboxed: "Jobs can start · {backend} (sandboxed)",
+            environmentJobCapabilityUnrestricted:
+                "Jobs can start · {backend} (no isolation; can reach resources outside the workspace)",
+            environmentJobCapabilityUnknownIsolation:
+                "Jobs can start · {backend} (isolation capability unknown)",
+            environmentJobCount: "{count} jobs",
+            environmentJobsEmpty: "No durable jobs yet",
+            environmentRecovery: {
+                ready: "Workspace is ready; no action needed.",
+                materializing:
+                    "Preparing (may pull the sandbox image). Please wait and refresh to see progress.",
+                paused: "Paused (sandbox processes are frozen and preserved). It resumes automatically on next use; files are not lost.",
+                stopped:
+                    "Stopped (reclaimed after long idle). It prepares again automatically on next use; files are not lost.",
+                destroying:
+                    "Destroying: the sandbox is being cleaned up. You can prepare the workspace again shortly.",
+                degraded:
+                    "Partially degraded: check the Runtime logs and Docker status; files are not lost.",
+                blocked:
+                    "Blocked: make sure Docker Desktop is running with WSL2 integration enabled, and that the host directory is writable; then refresh or prepare again.",
+                stale: "Stale: the Runtime heartbeat stopped. Refresh to re-read; if it stays stale, check the Runtime process.",
+                unbound:
+                    "Not materialized yet: use Prepare workspace below, or just start using files/chat and it prepares automatically.",
+                pending:
+                    "Pending: use Prepare workspace below, or just start using files/chat and it prepares automatically.",
+                unknown:
+                    "Unknown state: refresh to retry; if it persists, check Runtime and Docker.",
+            },
             environmentState: "Environment",
             // task-49: WorkspaceJob enum labels (value set mirrors `WorkspaceJob` in openapi.yaml).
             environmentJobStatus: {
@@ -4260,7 +4381,7 @@ const messages = {
         settings: {
             colorScheme: {
                 title: "Color scheme",
-                hint: "The five schemes are shadcn-vue's five base colors with their official values unchanged; picking one applies immediately and is remembered.",
+                hint: "Picking one applies immediately and is remembered.",
                 previewLabel: "Current palette",
                 modeLabel: "Light / dark",
                 modeLight: "Light",
@@ -4318,9 +4439,9 @@ const messages = {
                 wsDefaultReadonlyTitle: "Read-only: missing MANAGE_WORKSPACE_DEFAULT_CONFIG",
                 wsDefaultReadonlyDetail:
                     "Only accounts holding the MANAGE_WORKSPACE_DEFAULT_CONFIG capability can write this layer; you can still read the current defaults. Ask an instance administrator to grant it.",
-                fourLayerOrderLabel: "Effective order",
+                fourLayerOrderLabel: "Precedence",
                 fourLayerLowToHigh:
-                    "(low → high; env and administrator pins sit above every database layer)",
+                    "(low → high; environment variables and administrator locks override all layers)",
                 fourLayerWorkspace: "Workspace",
                 fourLayerWorkspaceDefault: "Workspace default",
                 fourLayerUser: "Personal",
@@ -4328,7 +4449,6 @@ const messages = {
                 fourLayerDetail:
                     "For the same domain and key the order is workspace → workspace default → personal → instance; changing a workspace default takes effect immediately for workspaces without an explicit override.",
                 entryCount: "{count} entries",
-                countLegend: "Badges count navigation entries, not config keys",
                 groupOps: "Instance operations",
                 groupSecurity: "Security & permissions",
                 groupInstanceResources: "Instance resources",
@@ -4342,8 +4462,7 @@ const messages = {
                 resourceKnowledgeMcp: "Knowledge base · MCP",
                 backendGapBadge: "Backend gap {code}",
                 backendGapBadgeGeneric: "Backend gap",
-                backendGapHint:
-                    "Dimmed entries are backend gaps and unavailable; hover for details.",
+                backendGapHint: "Dimmed entries are unavailable; hover for details.",
                 noAtomTitle: "This page applies no extra permission filter:",
                 noAtomBody:
                     "content is narrowed by ownership — an empty list does not mean you lack permission, and it does not mean data was lost; other people's entries are invisible by design and you will not see a 403 here.",

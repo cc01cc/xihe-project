@@ -69,7 +69,7 @@ watch(
     <div
         class="flex h-full min-h-0 bg-background text-foreground"
         :style="{
-            '--settings-sidebar-width': '264px',
+            '--settings-sidebar-width': '300px',
             '--sidebar-width': 'var(--settings-sidebar-width)',
         }"
     >
@@ -107,7 +107,7 @@ watch(
                 class="absolute inset-y-0 left-0 flex flex-col border-r bg-background shadow-lg"
                 :style="{
                     width: 'var(--settings-sidebar-width)',
-                    '--settings-sidebar-width': '280px',
+                    '--settings-sidebar-width': '300px',
                 }"
             >
                 <div class="flex items-center justify-between border-b px-3 py-2">

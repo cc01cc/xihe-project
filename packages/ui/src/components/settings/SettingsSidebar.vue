@@ -274,7 +274,7 @@ function isOpsActive(path: string): boolean {
 const layerHeaderClass =
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-semibold text-foreground hover:bg-muted/60",
     countBadgeClass =
-        "ml-auto shrink-0 rounded px-1.5 py-px font-mono text-xs font-normal ring-1 ring-border ring-inset",
+        "shrink-0 rounded px-1.5 py-px font-mono text-xs font-normal ring-1 ring-border ring-inset",
     /** 二级组标签（域 / 资源 / 运维·安全）：12px + uppercase + tracking（task-50 C1）。 */
     sectionLabelClass =
         "h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground",
@@ -316,14 +316,6 @@ const layerHeaderClass =
             data-testid="settings-sidebar"
             class="flex h-full flex-col gap-2 overflow-y-auto px-3 py-4"
         >
-            <!-- H4 图例：首次出现处说明徽标量纲，避免「17 个入口 vs 14 项字段」被读成同一件事。
-             task-175：辅助文字按 DEV-011 提到 12px。 -->
-            <p
-                data-testid="settings-nav-count-legend"
-                class="px-2 text-xs leading-tight text-muted-foreground/70"
-            >
-                {{ t("settings.ia.countLegend") }}
-            </p>
             <!-- 实例层：当前层默认展开 -->
             <Collapsible
                 v-if="canSeeInstanceLayer || canSeeInstanceOps"
@@ -345,7 +337,9 @@ const layerHeaderClass =
                             class="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                         />
-                        <span class="truncate">{{ t("settings.ia.layerInstance") }}</span>
+                        <span class="min-w-0 flex-1 truncate">{{
+                            t("settings.ia.layerInstance")
+                        }}</span>
                         <span data-testid="settings-nav-count-instance" :class="countBadgeClass">
                             {{ t("settings.ia.entryCount", { count: instanceEntryCount }) }}
                         </span>
@@ -456,7 +450,9 @@ const layerHeaderClass =
                             class="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                         />
-                        <span class="truncate">{{ t("settings.ia.layerWorkspaceDefault") }}</span>
+                        <span class="min-w-0 flex-1 truncate">{{
+                            t("settings.ia.layerWorkspaceDefault")
+                        }}</span>
                         <span
                             data-testid="settings-nav-count-workspace-default"
                             :class="countBadgeClass"
@@ -525,7 +521,9 @@ const layerHeaderClass =
                             class="size-4 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                         />
-                        <span class="truncate">{{ t("settings.ia.layerUser") }}</span>
+                        <span class="min-w-0 flex-1 truncate">{{
+                            t("settings.ia.layerUser")
+                        }}</span>
                         <span data-testid="settings-nav-count-user" :class="countBadgeClass">
                             {{ t("settings.ia.entryCount", { count: userEntryCount }) }}
                         </span>
