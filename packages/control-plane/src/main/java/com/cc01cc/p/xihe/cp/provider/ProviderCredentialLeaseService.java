@@ -173,7 +173,11 @@ public class ProviderCredentialLeaseService {
                     "STALE_PROVIDER_CONNECTION", "Provider connection revision is stale");
         }
         connectionService.requireUsableForOwner(providerConnectionId, userId, workspaceId);
-        if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
+        if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())) {
+            // D-922: the admin-owned credential backing an INSTANCE connection is leasable by
+            // any consumer bound to that connection; shape-only check, no ownership borrow.
+            credentialAccess.requireUsableForSharedConnection(connection.getCredentialId());
+        } else if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
             credentialAccess.requireUsable(connection.getCredentialId(), userId, workspaceId);
         } else {
             String credentialId = connection.getCredentialId() == null

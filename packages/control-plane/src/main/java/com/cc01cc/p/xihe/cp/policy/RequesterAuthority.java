@@ -61,6 +61,15 @@ public class RequesterAuthority {
         return subjectId != null && holdsActionAtom(subjectId, actionClass, null);
     }
 
+    /**
+     * Capability atoms are answered by the capability kernel (decision #23), not by the grant
+     * table. This is the SpEL/service entry point for {@code cap:instance:admin} checks.
+     */
+    public boolean holdsCapabilityAtom(String atom) {
+        UUID subjectId = currentSubjectId();
+        return subjectId != null && authzContext.capabilitiesFor(subjectId).holdsCapability(atom, null);
+    }
+
     /** True when the subject's effective atoms for {@code workspaceId} contain the atom. */
     public boolean holdsActionAtom(UUID subjectId, String actionClass, UUID workspaceId) {
         if (subjectId == null || actionClass == null) {

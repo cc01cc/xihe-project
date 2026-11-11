@@ -131,11 +131,20 @@ public class EmbeddingProfileService {
                     "EMBEDDING_PROFILE_REQUIRED", "No embedding profile is configured");
         }
         LayerProfile profile = effective.profile();
-        ProviderConnection workspaceConnection = workspaceId == null ? null : findOwningConnection(
-                "WORKSPACE", workspaceId.toString(), profile);
-        ProviderConnection connection = workspaceConnection != null
-                ? workspaceConnection
-                : findOwningConnection("USER", userId.toString(), profile);
+        // D-922 / task-152: resolve inside the layer that supplied the profile (workspace profile
+        // -> WORKSPACE, user or instance profile -> consuming USER per T1.5) and only then fall
+        // back to the INSTANCE shared connection. No cross-layer workspace<->user search.
+        ProviderConnection connection = null;
+        if ("workspace".equals(effective.profileScope()) && workspaceId != null) {
+            connection = findOwningConnection("WORKSPACE", workspaceId.toString(), profile);
+        } else if (("user".equals(effective.profileScope()) || "instance".equals(effective.profileScope()))
+                && userId != null) {
+            connection = findOwningConnection("USER", userId.toString(), profile);
+        }
+        if (connection == null) {
+            connection = findOwningConnection("INSTANCE",
+                    ProviderConnection.INSTANCE_OWNER_ID, profile);
+        }
         if (connection == null) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
                     "EMBEDDING_PROFILE_CONFLICT", "No usable embedding connection matches the profile");

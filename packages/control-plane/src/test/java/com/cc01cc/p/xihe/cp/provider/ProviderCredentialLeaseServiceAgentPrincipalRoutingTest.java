@@ -90,6 +90,22 @@ class ProviderCredentialLeaseServiceAgentPrincipalRoutingTest {
     }
 
     @Test
+    void anInstanceConnectionRoutesToTheSharedCredentialGate() {
+        // D-922: the consumer does not own the admin's credential; only the connection gate plus
+        // the credential shape apply.
+        connection.setOwnerType(ProviderConnection.OWNER_INSTANCE);
+        connection.setOwnerId(ProviderConnection.INSTANCE_OWNER_ID);
+
+        leases.issue(USER, WORKSPACE, SESSION, RUN, CONNECTION, "openai", MODEL, 7L);
+
+        verify(credentialAccess).requireUsableForSharedConnection(connection.getCredentialId());
+        verify(credentialAccess, never()).requireUsable(eq(connection.getCredentialId()),
+                anyString(), anyString());
+        verify(credentialAccess, never()).requireUsableForAgentPrincipal(any(), anyString(), anyString(),
+                anyString(), any(Boolean.class));
+    }
+
+    @Test
     void aPrincipalRoutesToTheAgentArmWithTheCapDecision() {
         ArrayNode cap = new ObjectMapper().createArrayNode();
         ObjectNode atom = cap.addObject();

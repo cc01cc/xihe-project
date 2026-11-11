@@ -352,7 +352,9 @@ public class ApiRequestTemplateService {
         }
         defaults.fields().forEachRemaining(entry -> {
             ProviderConnection connection = connections.findById(UUID.fromString(entry.getKey())).orElseThrow();
-            String owner = layer.equals("user") ? String.valueOf(user) : String.valueOf(workspace);
+            String owner = layer.equals("user") ? String.valueOf(user)
+                    : layer.equals("workspace") ? String.valueOf(workspace)
+                    : ProviderConnection.INSTANCE_OWNER_ID;
             if (!connection.getOwnerType().equalsIgnoreCase(layer) || !connection.getOwnerId().equals(owner)) {
                 throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Default must be in Connection owner scope");
             }
@@ -374,6 +376,12 @@ public class ApiRequestTemplateService {
     }
 
     public void requireVisible(ProviderConnection connection, String user, String workspace) {
+        // D-922: an INSTANCE connection is consumable by any bound consumer; listing and writes
+        // are gated separately by the instance:admin capability.
+        if (ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                && ProviderConnection.INSTANCE_OWNER_ID.equals(connection.getOwnerId())) {
+            return;
+        }
         if (!(connection.getOwnerType().equals("USER") && connection.getOwnerId().equals(user))
                 && !(connection.getOwnerType().equals("WORKSPACE") && connection.getOwnerId().equals(workspace))) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Connection is not accessible");
@@ -420,8 +428,8 @@ public class ApiRequestTemplateService {
             source = "provider-model";
         }
         if (ref == null) {
-            String layer = connection.getOwnerType().toLowerCase(java.util.Locale.ROOT);
-            UUID owner = UUID.fromString(connection.getOwnerId());
+            String layer = ownerLayer(connection);
+            UUID owner = ownerUuid(connection);
             ref = object(raw(layer, layer.equals("user") ? owner : null, layer.equals("workspace") ? owner : null)
                     .getOrDefault("connectionDefaultTemplates", "{}")).get(connection.getId().toString());
             source = "connection-default";
@@ -661,8 +669,8 @@ public class ApiRequestTemplateService {
 
     @Transactional
     public int changeConnectionDefault(ProviderConnection connection, JsonNode ref) {
-        String layer = connection.getOwnerType().toLowerCase(java.util.Locale.ROOT);
-        UUID owner = UUID.fromString(connection.getOwnerId());
+        String layer = ownerLayer(connection);
+        UUID owner = ownerUuid(connection);
         UUID user = layer.equals("user") ? owner : null;
         UUID workspace = layer.equals("workspace") ? owner : null;
         // Connection row is already locked by the mutation owner.
@@ -671,12 +679,16 @@ public class ApiRequestTemplateService {
                 .filter(r -> object(r.getConfigValue()).has(connection.getId().toString()))
                 .sorted(Comparator.comparing(r -> r.getUserId().toString())).toList();
         Set<String> scopes = new TreeSet<>();
-        scopes.add(layer + ":" + owner);
+        scopes.add(layer + ":" + (owner == null ? "instance" : owner));
         for (ConfigEntity row : overrides) {
             scopes.add("user:" + row.getUserId());
         }
         for (String scope : scopes) {
             String[] parts = scope.split(":", 2);
+            if ("instance".equals(parts[0])) {
+                lockScope("instance", null, null);
+                continue;
+            }
             UUID scopeOwner = UUID.fromString(parts[1]);
             lockScope(parts[0], parts[0].equals("user") ? scopeOwner : null,
                     parts[0].equals("workspace") ? scopeOwner : null);
@@ -727,8 +739,8 @@ public class ApiRequestTemplateService {
                         .put("version", template.path("version").asInt()));
             }
         }
-        String layer = connection.getOwnerType().toLowerCase(java.util.Locale.ROOT);
-        UUID owner = UUID.fromString(connection.getOwnerId());
+        String layer = ownerLayer(connection);
+        UUID owner = ownerUuid(connection);
         for (JsonNode template : array(raw(layer, layer.equals("user") ? owner : null, layer.equals("workspace") ? owner : null)
                 .getOrDefault("templates", "[]"))) {
             if (template.path("status").asText().equals("published") && template.path("apiTypeId").asText().equals(type)
@@ -783,8 +795,8 @@ public class ApiRequestTemplateService {
     }
 
     private ObjectNode ownerDefaultTemplates(ProviderConnection connection) {
-        String layer = connection.getOwnerType().toLowerCase(java.util.Locale.ROOT);
-        UUID owner = UUID.fromString(connection.getOwnerId());
+        String layer = ownerLayer(connection);
+        UUID owner = ownerUuid(connection);
         return object(raw(layer, layer.equals("user") ? owner : null,
                 layer.equals("workspace") ? owner : null).getOrDefault("connectionDefaultTemplates", "{}"));
     }
@@ -794,7 +806,10 @@ public class ApiRequestTemplateService {
     }
 
     private UUID ownerUuid(ProviderConnection connection) {
-        return UUID.fromString(connection.getOwnerId());
+        // D-922: INSTANCE rows carry the deployment instance id in owner_id; the instance config
+        // layer has no per-owner id, so it resolves as (layer=instance, user=null, workspace=null).
+        return ProviderConnection.OWNER_INSTANCE.equals(connection.getOwnerType())
+                ? null : UUID.fromString(connection.getOwnerId());
     }
 
     /**
@@ -834,12 +849,17 @@ public class ApiRequestTemplateService {
         String connectionId = connection.getId().toString();
         List<ConfigEntity> overrides = bindingRows(connectionId);
         Set<String> scopes = new TreeSet<>();
-        scopes.add(ownerLayer(connection) + ":" + ownerUuid(connection));
+        UUID connectionOwner = ownerUuid(connection);
+        scopes.add(ownerLayer(connection) + ":" + (connectionOwner == null ? "instance" : connectionOwner));
         for (ConfigEntity row : overrides) {
             scopes.add("user:" + row.getUserId());
         }
         for (String scope : scopes) {
             String[] parts = scope.split(":", 2);
+            if ("instance".equals(parts[0])) {
+                lockScope("instance", null, null);
+                continue;
+            }
             UUID scopeOwner = UUID.fromString(parts[1]);
             lockScope(parts[0], parts[0].equals("user") ? scopeOwner : null,
                     parts[0].equals("workspace") ? scopeOwner : null);
