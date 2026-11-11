@@ -3126,8 +3126,10 @@ paths:
         bounds from this document.
 
         layer=instance is ADMIN only; user/workspace/workspace-default are layer-filtered and
-        exclude instance-only keys. workspace-default (PLAN-0766) is additionally writable only on
-        the nine WORKSPACE_WRITABLE domains via the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom.
+        exclude instance-only keys. workspace-default (PLAN-0766 / task-183) is writable on
+        exactly its eight WORKSPACE_WRITABLE ∩ UI_DOMAINS domains via the
+        MANAGE_WORKSPACE_DEFAULT_CONFIG action atom; context-templates is a service-only domain
+        with no generic config API face and is excluded (400 DOMAIN_NOT_WORKSPACE_WRITABLE).
         Only the 12 UI domains are accepted; service-only context-templates/pricing return
         INVALID_DOMAIN. workspace layer requires workspaceId or X-Workspace-Id.
       security: [{ bearerAuth: [] }]
@@ -3196,17 +3198,20 @@ paths:
       operationId: putWorkspaceDefaultConfig
       summary: Write the shared workspace-default layer of one domain
       description: >-
-        PLAN-0766 (D-928 / D-931): one deployment-wide row set per key that applies to every
-        workspace without an explicit value; database precedence is workspace > workspace-default >
-        user > instance, with env overlays and administrator lock pins still above every database
-        layer and code defaults last. Writable on exactly the nine WORKSPACE_WRITABLE domains
-        (llm-provider, context-policy, embedding, rag, agent-runtime, approval-policy,
-        agent-templates, context-templates, job-policy) through the MANAGE_WORKSPACE_DEFAULT_CONFIG
-        action atom (capability evaluation, no role-name check; default grant set is the instance
-        admin role and can be extended by explicit grants); other domains answer 400
-        DOMAIN_NOT_WORKSPACE_WRITABLE. Same body, unit-value and whole-unit clear rules as
-        putInstanceConfig (empty body clears an EXPLICIT_ONLY whole unit; blank llm-provider unit
-        values clear that layer row). Omitted keys are untouched.
+        PLAN-0766 (D-928 / D-931, narrowed by task-183): one deployment-wide row set per key that
+        applies to every workspace without an explicit value; database precedence is workspace >
+        workspace-default > user > instance, with env overlays and administrator lock pins still
+        above every database layer and code defaults last. Writable on exactly the eight
+        WORKSPACE_WRITABLE ∩ UI_DOMAINS domains (llm-provider, context-policy, embedding, rag,
+        agent-runtime, approval-policy, agent-templates, job-policy) through the
+        MANAGE_WORKSPACE_DEFAULT_CONFIG action atom (capability evaluation, no role-name check;
+        default grant set is the instance admin role and can be extended by explicit grants);
+        context-templates is a service-only domain with no generic config API face (its own
+        dedicated template API owns it) and is therefore NOT writable here, exactly like
+        api-request-templates; other domains answer 400 DOMAIN_NOT_WORKSPACE_WRITABLE. Same body,
+        unit-value and whole-unit clear rules as putInstanceConfig (empty body clears an
+        EXPLICIT_ONLY whole unit; blank llm-provider unit values clear that layer row). Omitted
+        keys are untouched.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
@@ -3220,7 +3225,7 @@ paths:
           description: Written
           content: { application/json: { schema: { $ref: '#/components/schemas/ConfigWriteResult' } } }
         '400':
-          description: 'DOMAIN_NOT_WORKSPACE_WRITABLE (domain outside the nine writable domains), INVALID_REQUEST (unknown domain, malformed unit JSON, schema validation failure, or an imageProfile write outside the instance layer), or CONFIG_OWNERSHIP_VIOLATION (provider credentials belong to provider_connections).'
+          description: 'DOMAIN_NOT_WORKSPACE_WRITABLE (domain outside the eight writable domains — context-templates and api-request-templates are excluded), INVALID_REQUEST (unknown domain, malformed unit JSON, schema validation failure, or an imageProfile write outside the instance layer), or CONFIG_OWNERSHIP_VIOLATION (provider credentials belong to provider_connections).'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
         '403':
           description: 'FORBIDDEN - the caller does not hold the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom.'
@@ -3233,7 +3238,7 @@ paths:
       tags: [config]
       operationId: deleteWorkspaceDefaultConfig
       summary: Clear one workspace-default-layer row so the chain inherits again
-      description: 'Deletes the workspace-default row of one key and falls back to the next layer (user, then instance, then code default). Idempotent when the row does not exist. Holds the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom. Env-locked keys return 409 CONFIG_ENV_LOCKED; administrator-locked keys return 409 CONFIG_KEY_LOCKED (unlock with clearValue instead, PLAN-0556).'
+      description: 'Deletes the workspace-default row of one key and falls back to the next layer (user, then instance, then code default). Idempotent when the row does not exist. Holds the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom. A domain outside the eight writable domains answers 400 DOMAIN_NOT_WORKSPACE_WRITABLE (context-templates and api-request-templates included, task-183). Env-locked keys return 409 CONFIG_ENV_LOCKED; administrator-locked keys return 409 CONFIG_KEY_LOCKED (unlock with clearValue instead, PLAN-0556).'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
@@ -3249,7 +3254,7 @@ paths:
       operationId: putWorkspaceConfig
       deprecated: true
       summary: (deprecated) Write one workspace-layer config domain
-      description: 'DEPRECATED (2026-11-10 user ruling — PLAN-0763 task-250 / D-800): the workspace config layer is no longer part of the global configuration API; workspace-scoped settings move inside each workspace once that design lands (task-247 / task-253). CP still registers this route, so it stays in the contract marked deprecated instead of being deleted — a delete here would claim behaviour CP does not have. Removal prerequisites: (1) no UI consumer calls the workspace layer (task-253), (2) the workspace settings redesign is live. Distinct from this retired per-workspace layer, PLAN-0766 (D-928 / D-931) adds the shared workspace-default layer (wire value workspace-default): one deployment-wide row set per key that applies to every workspace without an explicit value; database precedence is workspace > workspace-default > user > instance, with env overlays and administrator lock pins still above every database layer and code defaults last. It is writable on exactly the nine WORKSPACE_WRITABLE domains (llm-provider, context-policy, embedding, rag, agent-runtime, approval-policy, agent-templates, context-templates, job-policy) through the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom (capability evaluation, no role-name check; default grant set is the instance admin role and can be extended by explicit grants); writes on other domains answer 400 DOMAIN_NOT_WORKSPACE_WRITABLE, a caller without the atom answers 403 FORBIDDEN, and env-locked / administrator-locked keys answer 409 CONFIG_ENV_LOCKED / CONFIG_KEY_LOCKED like every other layer. Whole-unit (EXPLICIT_ONLY) domains keep whole-layer write semantics. The write routes are PUT /api/v1/config/workspace-default/{domain} and DELETE /api/v1/config/workspace-default/{domain}/{key} below, registered in the same batch as this contract (PLAN-0766 M2 / task-159). The layer is also readable through GET /api/v1/config/{domain}?layer=workspace-default and surfaces in effective per-key provenance (source=workspace-default).'
+      description: 'DEPRECATED (2026-11-10 user ruling — PLAN-0763 task-250 / D-800): the workspace config layer is no longer part of the global configuration API; workspace-scoped settings move inside each workspace once that design lands (task-247 / task-253). CP still registers this route, so it stays in the contract marked deprecated instead of being deleted — a delete here would claim behaviour CP does not have. Removal prerequisites: (1) no UI consumer calls the workspace layer (task-253), (2) the workspace settings redesign is live. Distinct from this retired per-workspace layer, PLAN-0766 (D-928 / D-931) adds the shared workspace-default layer (wire value workspace-default): one deployment-wide row set per key that applies to every workspace without an explicit value; database precedence is workspace > workspace-default > user > instance, with env overlays and administrator lock pins still above every database layer and code defaults last. It is writable on exactly the eight WORKSPACE_WRITABLE ∩ UI_DOMAINS domains (llm-provider, context-policy, embedding, rag, agent-runtime, approval-policy, agent-templates, job-policy; context-templates is service-only with no generic config API face and is excluded, task-183) through the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom (capability evaluation, no role-name check; default grant set is the instance admin role and can be extended by explicit grants); writes on other domains answer 400 DOMAIN_NOT_WORKSPACE_WRITABLE, a caller without the atom answers 403 FORBIDDEN, and env-locked / administrator-locked keys answer 409 CONFIG_ENV_LOCKED / CONFIG_KEY_LOCKED like every other layer. Whole-unit (EXPLICIT_ONLY) domains keep whole-layer write semantics. The write routes are PUT /api/v1/config/workspace-default/{domain} and DELETE /api/v1/config/workspace-default/{domain}/{key} below, registered in the same batch as this contract (PLAN-0766 M2 / task-159). The layer is also readable through GET /api/v1/config/{domain}?layer=workspace-default and surfaces in effective per-key provenance (source=workspace-default).'
       x-removal-plan: 'Delete this path together with ConfigController.java:394 in one batch once (1) task-253 has removed every UI workspace-layer call and (2) the workspace settings redesign is live; until then the config read/write routes keep accepting layer=workspace and say so in their own descriptions.'
       security: [{ bearerAuth: [] }]
       parameters:
