@@ -1573,7 +1573,10 @@ const messages = {
                 groupSecurity: "安全与权限",
                 groupInstanceResources: "实例资源",
                 groupMyResources: "我的资源",
-                resourceAgents: "智能体",
+                // task-88（用户裁定 A）：实例层叫「平台智能体」，不叫「智能体」也不叫「智能体主体」。
+                // 理由：实例层 = 全平台可用的那些；用户层 = 你个人的主体身份（`resourceAgentPrincipals`）。
+                // 改文案不改 key/id —— 别名换名会让 testid 与路由一起漂移，收益为零。
+                resourceAgents: "平台智能体",
                 resourceMcp: "MCP 服务器",
                 resourceCredentials: "凭据",
                 resourceSkills: "技能",
@@ -1593,7 +1596,7 @@ const messages = {
                 atomDeniedNotGap:
                     "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
                 gapNoteAgent:
-                    "智能体在 CP 没有注册实体表（只有分类表与工作区绑定），实例层没有承载；入口先留位，等后端补注册实体后再接。",
+                    "实例级注册表待实现（D-951 排期）：本入口现在点不进页面。能看的是工作区层（工作区设置 → 智能体）与用户层（设置 → 智能体主体）；实例级注册表补齐后，这里会变成可管理的「平台智能体」。",
                 gapNoteMcp:
                     "MCP 服务器只有工作区归属（mcp_remote_servers / mcp_stdio_servers 的 workspace_id 非空），实例层与个人层没有承载；接口也只有工作区面。",
                 gapNoteCredentials:
@@ -4481,7 +4484,7 @@ const messages = {
                 groupSecurity: "Security & permissions",
                 groupInstanceResources: "Instance resources",
                 groupMyResources: "My resources",
-                resourceAgents: "Agents",
+                resourceAgents: "Platform agents",
                 resourceMcp: "MCP servers",
                 resourceCredentials: "Credentials",
                 resourceSkills: "Skills",
@@ -4501,7 +4504,7 @@ const messages = {
                 atomDeniedNotGap:
                     "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
                 gapNoteAgent:
-                    "The control plane has no agent registry table (only tool-face classification and workspace bindings), so the instance layer has nothing to carry. The entry stays here until the backend adds a registry.",
+                    "The instance-level registry is not implemented yet (scheduled as D-951), so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the user layer (Settings → Agent principals). Once the registry lands, this becomes a manageable Platform agents page.",
                 gapNoteMcp:
                     "MCP servers are workspace-owned only (mcp_remote_servers / mcp_stdio_servers have a non-null workspace_id) and the API surface is workspace-only, so neither the instance nor the personal layer can host one.",
                 gapNoteCredentials:

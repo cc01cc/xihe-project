@@ -209,6 +209,22 @@ export interface ResourceNavItem {
 export function instanceResourceGroup(): ResourceNavItem[] {
     return [
         {
+            /**
+             * task-88（用户裁定 A：留着、改名、并且要实现掉）：
+             *
+             * <p><b>名字为什么分开</b>：实例层 = **全平台可用**的那批智能体（平台智能体 / Platform agents）；
+             * 用户层 = **你个人的主体身份**（`agent-principals` / 智能体主体）。两者曾共用「智能体」
+             * 一个词，于是左栏出现两个都叫「智能体」的条目 —— 用户报的重名病就是它。</p>
+             *
+             * <p><b>不要也叫 "Agent principals"</b>：那正是要消掉的重名（用户层已经有 `agent-principals`）。</p>
+             *
+             * <p><b>为什么 id 仍是 `agents`</b>：`id` 决定 `data-testid`（`settings-nav-resource-agents`、
+             * `settings-nav-resource-gap-agents`）与缺口弹窗的锚点；改 id 会牵动 E2E 与断言，收益为零。
+             * 文字与 id 解耦，改名只动 i18n。</p>
+             *
+             * <p><b>本卡只改名与缺口文案</b>：实例级注册表**待实现**（D-951 排期），所以仍带
+             * `gaps: ["G4"]`（灰显留位，D7：留位不隐藏）。真正实现另有卡，等实例级 principal 语义裁定。</p>
+             */
             id: "agents",
             labelKey: "settings.ia.resourceAgents",
             gaps: ["G4"],
