@@ -125,6 +125,49 @@ class EmbeddingProfileServiceTest {
     }
 
     @Test
+    void instanceFallbackWhenUserAbsent() {
+        when(configs.findByWorkspaceIdAndDomainAndConfigKey(WORKSPACE, "embedding", "profile"))
+                .thenReturn(Optional.empty());
+        when(configs.findByUserIdAndDomainAndConfigKey(USER, "embedding", "profile"))
+                .thenReturn(Optional.empty());
+        when(configs.findByLayerAndDomainAndConfigKey("instance", "embedding", "profile"))
+                .thenReturn(Optional.of(config(profileJson())));
+        when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("WORKSPACE"), eq(WORKSPACE.toString()), eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.empty());
+        ProviderConnection userConnection = readyConnection();
+        userConnection.setOwnerType("USER");
+        userConnection.setOwnerId(USER.toString());
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("USER"), eq(USER.toString()), eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.of(userConnection));
+
+        // D-918 / BL-581: the instance default is the last whole-unit fallback and the
+        // connection still resolves in the consuming user's own scope.
+        EmbeddingProfileService.ResolvedProfile resolved = service.resolve(USER, WORKSPACE);
+        assertEquals("instance", resolved.profileScope());
+        assertEquals("USER", resolved.connectionOwnerType());
+    }
+
+    @Test
+    void workspaceWinsOverInstance() {
+        when(configs.findByWorkspaceIdAndDomainAndConfigKey(WORKSPACE, "embedding", "profile"))
+                .thenReturn(Optional.of(config(profileJson())));
+        when(configs.findByUserIdAndDomainAndConfigKey(USER, "embedding", "profile"))
+                .thenReturn(Optional.empty());
+        when(configs.findByLayerAndDomainAndConfigKey("instance", "embedding", "profile"))
+                .thenReturn(Optional.of(config(
+                        "{\"providerId\":\"other\",\"connectionKey\":\"other\",\"model\":\"" + MODEL + "\"}")));
+        when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
+        when(connections.findByOwnerTypeAndOwnerIdAndProviderIdAndConnectionKey(
+                eq("WORKSPACE"), eq(WORKSPACE.toString()), eq("dashscope-qwen"), eq("embedding")))
+                .thenReturn(Optional.of(readyConnection()));
+
+        assertEquals("workspace", service.resolve(USER, WORKSPACE).profileScope());
+    }
+
+    @Test
     void noProfileAnywhereFailsClosed() {
         when(envOverlay.activeOverrides("embedding")).thenReturn(Map.of());
         when(configs.findByWorkspaceIdAndDomainAndConfigKey(any(), any(), any()))

@@ -169,6 +169,40 @@ describe("EmbeddingSettingsPanel", () => {
         expect(toast.error).toHaveBeenCalled();
     });
 
+    it("writes the instance-layer profile through layer=instance", async () => {
+        mockedConnections.mockResolvedValue({
+            connections: [connection({ id: "embed-1" })],
+        } as never);
+        const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "instance" } });
+        await flushPromises();
+        await setOnlySelectValue(wrapper, "embed-1");
+        await wrapper.find("button[data-testid='embedding-save']").trigger("click");
+        await flushPromises();
+        // PLAN-0764 T1.5：实例层同样发 profile 单元（CP validateEmbeddingLayer 只认 {profile}）。
+        expect(mockedSave).toHaveBeenCalledWith("instance", {
+            providerId: "dashscope-qwen",
+            connectionKey: "embedding",
+            model: "tongyi-embedding-vision-flash-2026-03-06",
+        });
+        expect(wrapper.emitted("saved")).toBeTruthy();
+    });
+
+    it("shows the instance note only on the instance layer", async () => {
+        mockedConnections.mockResolvedValue({
+            connections: [connection({ id: "embed-1" })],
+        } as never);
+        const instance = mount(EmbeddingSettingsPanel, { props: { layer: "instance" } });
+        await flushPromises();
+        expect(instance.find("[data-testid='embedding-instance-note']").exists()).toBe(true);
+        expect(instance.find("[data-testid='embedding-instance-note']").text()).toContain(
+            "settings.embeddingInstanceNote",
+        );
+
+        const user = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
+        await flushPromises();
+        expect(user.find("[data-testid='embedding-instance-note']").exists()).toBe(false);
+    });
+
     it("disables save without a connection and clear without profile", async () => {
         const wrapper = mount(EmbeddingSettingsPanel, { props: { layer: "user" } });
         await flushPromises();

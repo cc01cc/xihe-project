@@ -23,7 +23,8 @@ import {
 } from "@/components/ui/select";
 
 const props = defineProps<{
-    // task-253：工作区层已从 UI 移除；本面板只挂在实例/用户层（父组件在实例层不渲染它）。
+    // task-253：工作区层已从 UI 移除。PLAN-0764 T1.5：实例层也渲染本面板（写 profile 单元），
+    // 连接仍按消费用户 scope 解析（CP strictResolveConnection），实例层只负责默认身份。
     layer: ConfigLayer;
     saving?: boolean;
     readonly?: boolean;
@@ -148,6 +149,13 @@ onMounted(load);
         <div class="px-4 py-3 text-sm font-medium bg-muted/30">
             {{ t("settings.domainEmbedding") }}
         </div>
+        <p
+            v-if="layer === 'instance'"
+            class="px-4 pb-1 text-xs text-muted-foreground"
+            data-testid="embedding-instance-note"
+        >
+            {{ t("settings.embeddingInstanceNote") }}
+        </p>
         <div class="px-4 pb-4 space-y-3">
             <div v-if="loading" class="text-sm text-muted-foreground">
                 {{ t("common.loading") }}
@@ -182,7 +190,11 @@ onMounted(load);
                                 :value="connection.id"
                             >
                                 {{ connection.label || connection.connectionKey }}
-                                ({{ connection.scope === "USER" ? "个人" : "工作区" }})
+                                ({{
+                                    connection.scope === "USER"
+                                        ? t("settings.embeddingScopeUser")
+                                        : t("settings.embeddingScopeWorkspace")
+                                }})
                             </SelectItem>
                         </SelectContent>
                     </Select>
