@@ -76,6 +76,20 @@ UI 配置入口分两处（PLAN-0560）：全局 `/settings/config` 承载**实�
 
 **PLAN-0554 逐键来源与实例默认值**：`GET /api/v1/config/{domain}/meta?layer=<instance|user|workspace>` 返回 `key/source/locked/writable/reason/instanceEligible/defaultPresent/overridable`，不含配置值。`instance` 仅 ADMIN；`user/workspace` 只返回该层可写域内、非 `INSTANCE_ONLY_KEYS` 的键；`pricing`/`context-templates` 等服务端专用域返回 `INVALID_DOMAIN`；`workspace` 缺上下文返回 `INVALID_LAYER_CONTEXT`。`source` 取值 `env|workspace|user|instance|code|none`（有 code default 才 `code`；模板域 explicit-only 无当前层值为 `none`）；`overridable` 仅在更具体层可写时为 true（`logging` 为 false）。`PUT /config/{layer}/{domain}` 对 env 锁定键返回 409 `CONFIG_ENV_LOCKED`；`DELETE /api/v1/config/instance/{domain}/{key}`（ADMIN）清除实例默认并回落 code default，同样拒绝 env 锁定键；导入跳过 env 锁定键并累计 warning。非 ADMIN `layer=instance` 一律 403，但 explicit-only 模板域（`agent-templates`/`api-request-templates`/`context-templates`）保留只读 builtin 访问；非 ADMIN effective read 过滤 `INSTANCE_ONLY_KEYS` 与 instance-only 域（如 `pricing`/`logging`），`envOverridden` 同步过滤。
 
+### 1.1 配置域 vs 资源：两套范围语义（2026-11-11 固化，D-934 前口径整理）
+
+**配置域可继承，资源不可继承**——这是两个独立的范围模型，不要混用：
+
+| | 配置域（domain） | 资源（resource） |
+| --- | --- | --- |
+| 数据形态 | 层 × 域的键值配置 | 实体记录（凭据/角色/智能体主体/MCP server/知识库） |
+| 范围语义 | **层回退链**解析出唯一生效值：`env/锁 pin > workspace > workspace-default > user > instance > code defaults`（PLAN-0766 起四层） | **归属（owner）+ 能力原子授权**：不存在"生效值"，只有"归谁、谁能看/谁能用" |
+| 共享方式 | 上层未配置自动回落下层（继承） | **靠授权，不靠回退**：实例级全局资源（角色）= 全实例共享定义、全员可绑定使用；owner 型资源（凭据 `USER/WORKSPACE`、智能体主体）= 按归属隔离，他人默认不可见 |
+| 权限控制 | 层写面按能力原子（如 `MANAGE_WORKSPACE_DEFAULT_CONFIG`） | 读写面按能力原子逐资源求值，禁止角色名特判 |
+
+判据：要给"一次运行"一个值 ⇒ 配置域；要管理"一个对象"的归属与授权 ⇒ 资源。资源的归属类型见 `internal/A03-xihe/docs/resource-layer-permission-audit.md` §F（G1–G4 为实例层资源后端缺口，D-934 已排期实现）；配置层新增（workspace-default）不改变资源模型。
+
+
 ## 2. 启动环境变量（.env 文件链 + CLI --set）
 
 仅基础设施启动变量走进程启动环境变量（指服务启动前由 Shell、mise、`.env` 文件链或 `--set` 注入进程的变量，修改后通常需重启）。**模块内 dotenv loader 是唯一加载器**（`DotenvLoader.java` / `dotenv_loader.rs` / `dotenv_loader.py` 同一时序）：
