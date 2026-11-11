@@ -497,6 +497,34 @@ class InstanceOwnershipIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
+     * Design §8.2 (Lead ruling, 2026-11-11): re-submitting the transfer with target == current owner
+     * stays a 200 idempotent replay (pointer and tier unchanged, audit rows written, epoch bumped
+     * once) — the emergency tightening must not turn a legitimate replay into 400/403.
+     */
+    @Test
+    void transferToTheCurrentOwnerStaysAnIdempotentNoOp() throws Exception {
+        String ownerToken = register("m15-same-owner@test.com");
+        String ownerId = userIdOf(ownerToken);
+        promote(ownerId);
+        grantInstanceRole(ownerId, "SUPER_ADMIN");
+        assignOwner(ownerId);
+        ownerToken = login("m15-same-owner@test.com");
+
+        int epochBefore = tokenVersion(ownerId);
+        int ownerAuditsBefore = auditCount("instance_owner_transferred");
+        int policyAuditsBefore = auditCount("authorization_instance_super_admin_transferred");
+        ResponseEntity<String> replay = putOwner(ownerToken, ownerId, PASSWORD);
+        assertEquals(HttpStatus.OK, replay.getStatusCode(), replay.getBody());
+        assertEquals(ownerId, currentOwnerId());
+        assertEquals(List.of("SUPER_ADMIN"), instanceTierRoles(ownerId),
+                "the replay must not create a second tier binding or demote the owner");
+        assertEquals(epochBefore + 1, tokenVersion(ownerId),
+                "the binding rewrite still bumps the owner epoch exactly once");
+        assertEquals(ownerAuditsBefore + 1, auditCount("instance_owner_transferred"));
+        assertEquals(policyAuditsBefore + 1, auditCount("authorization_instance_super_admin_transferred"));
+    }
+
+    /**
      * Spec §7: the only instance-layer resource at M1 is the {@code provider_connections} INSTANCE
      * row. A normal transfer and an emergency repair must leave all 23 columns of every INSTANCE row
      * byte-identical (full-row diff, not a count) and must not append a provider-connection audit row.
