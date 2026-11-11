@@ -91,15 +91,25 @@ beforeEach(() => {
 });
 
 describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
-    it("renders the global rail with exactly the two MVP modules and a rail handle", async () => {
-        patchAuth();
+    it("renders the global rail with workbench only in the main area and a rail handle (D-933)", async () => {
+        patchAuth(true); // 即便管理员：D-933 —— 管理按钮已直接移除，不设替代入口。
         const wrapper = await mountRail();
         expect(wrapper.get('[data-testid="global-rail"]').exists()).toBe(true);
         expect(wrapper.get('[data-testid="global-rail-module-workbench"]').text()).toContain(
             "工作台",
         );
+        // 主区只留工作台：设置与登出一起收在 footer，设置居登出上方。
         expect(wrapper.get('[data-testid="global-rail-module-settings"]').text()).toContain("设置");
-        // 不加第三个模块：非管理员看不到管理入口（管理员只作为工具面存在，不是模块）。
+        const footer = wrapper.get('[data-testid="global-rail"] [data-slot="sidebar-footer"]');
+        expect(footer.get('[data-testid="global-rail-module-settings"]').exists()).toBe(true);
+        expect(footer.get('[data-testid="global-rail-logout"]').exists()).toBe(true);
+        const footerOrder = footer
+            .findAll("[data-testid]")
+            .map((node) => node.attributes("data-testid"));
+        expect(footerOrder.indexOf("global-rail-module-settings")).toBeLessThan(
+            footerOrder.indexOf("global-rail-logout"),
+        );
+        // 管理入口对任何角色都不再渲染（含管理员）。
         expect(wrapper.find('[data-testid="global-rail-admin"]').exists()).toBe(false);
         // SidebarRail = 悬停双态入口（shadcn-vue collapsible="icon"）。
         expect(wrapper.find('[data-sidebar="rail"]').exists()).toBe(true);
@@ -144,14 +154,22 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         expect(pushSpy).toHaveBeenLastCalledWith("/login");
     });
 
-    it("marks the active module and keeps admin as a capability-gated utility entry", async () => {
+    it("marks the active module; config-locks/roles count as settings after D-933", async () => {
         patchAuth(true);
         routeState.path = "/settings/instance/logging";
         const wrapper = await mountRail();
         expect(
             wrapper.get('[data-testid="global-rail-module-settings"]').attributes("data-active"),
         ).toBe("true");
-        expect(wrapper.find('[data-testid="global-rail-admin"]').exists()).toBe(true);
+        // D-933 回归守卫：config-locks 不再有独立 admin 态，归设置模块激活。
+        routeState.path = "/settings/config-locks";
+        const wrapperLocks = await mountRail();
+        expect(
+            wrapperLocks
+                .get('[data-testid="global-rail-module-settings"]')
+                .attributes("data-active"),
+        ).toBe("true");
+        expect(wrapperLocks.find('[data-testid="global-rail-admin"]').exists()).toBe(false);
 
         routeState.path = "/workspace/ws-1";
         const wrapper2 = await mountRail();
