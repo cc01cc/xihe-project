@@ -221,7 +221,7 @@ function userTotal(): number {
                             <SidebarGroup>
                                 <SidebarGroupLabel as-child>
                                     <CollapsibleTrigger
-                                        class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 mk-caption uppercase tracking-wide hover:bg-sidebar-accent"
+                                        class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 mk-subtitle hover:bg-sidebar-accent"
                                     >
                                         <ChevronRight
                                             class="size-3 transition-transform"
@@ -267,7 +267,7 @@ function userTotal(): number {
 
                                     <SidebarSeparator class="my-1" />
                                     <p
-                                        class="px-2 pb-1 mk-caption uppercase tracking-wide text-muted-foreground"
+                                        class="px-2 pt-1 pb-1 mk-body font-semibold uppercase tracking-wide text-muted-foreground"
                                     >
                                         实例运维
                                         <span class="font-mono">{{ opsItems.length }}</span>
@@ -316,7 +316,7 @@ function userTotal(): number {
 
                                     <SidebarSeparator class="my-1" />
                                     <p
-                                        class="px-2 pb-1 mk-caption uppercase tracking-wide text-muted-foreground"
+                                        class="px-2 pt-1 pb-1 mk-body font-semibold uppercase tracking-wide text-muted-foreground"
                                     >
                                         安全与权限
                                         <span class="font-mono">{{ securityItems.length }}</span>
@@ -371,7 +371,7 @@ function userTotal(): number {
                             <SidebarGroup>
                                 <SidebarGroupLabel as-child>
                                     <CollapsibleTrigger
-                                        class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 mk-caption uppercase tracking-wide hover:bg-sidebar-accent"
+                                        class="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 mk-subtitle hover:bg-sidebar-accent"
                                     >
                                         <ChevronRight
                                             class="size-3 transition-transform"

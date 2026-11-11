@@ -71,7 +71,7 @@ function itemTestId(locale: Language): string {
 
     <div
         v-else
-        class="flex items-center gap-1"
+        class="flex items-center gap-0.5 rounded-md border border-sidebar-border p-0.5"
         role="group"
         :aria-label="t('settings.languageLabel')"
         :data-testid="rootTestId"
@@ -84,11 +84,13 @@ function itemTestId(locale: Language): string {
             :aria-pressed="settings.language === locale"
             :aria-label="t(LABELS[locale])"
             :title="t(LABELS[locale])"
-            class="rounded border px-1.5 py-0.5 text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="min-h-6 min-w-8 rounded px-2 py-1 text-[11px] leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :class="
                 settings.language === locale
-                    ? 'border-brand bg-brand/10 font-medium text-brand'
-                    : 'border-transparent text-sidebar-foreground hover:bg-sidebar-accent'
+                    ? // 注意力预算（DEV-011 §10）：语言切换低频、可逆、不会误操作 ⇒ 用中性底 + 字重区分，
+                      // 不占 L3 强调色。原先的 brand 描边+brand 文字把它抬到了主 CTA 的视觉级别。
+                      'bg-sidebar-accent font-medium text-sidebar-foreground'
+                    : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
             "
             @click="settings.setLanguage(locale)"
         >
