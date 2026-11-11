@@ -50,6 +50,54 @@ function mergedEntries(layer: string, domain: string): Record<string, string> {
     return { ...base, ...memoryFor(layer, domain) };
 }
 
+/** 写路径 body → CP 的 string map：嵌套对象展开成点号键（含 profile:{...}）。 */
+function flattenWrite(
+    source: Record<string, unknown>,
+    prefix = "",
+    out: Record<string, string> = {},
+): Record<string, string> {
+    for (const [rawKey, value] of Object.entries(source)) {
+        const key = prefix ? `${prefix}.${rawKey}` : rawKey;
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+            flattenWrite(value as Record<string, unknown>, key, out);
+            continue;
+        }
+        out[key] =
+            value === null || value === undefined
+                ? ""
+                : typeof value === "string"
+                  ? value
+                  : JSON.stringify(value);
+    }
+    return out;
+}
+
+interface MockEmbeddingProfile {
+    providerId: string;
+    connectionKey: string;
+    model: string;
+}
+
+/** 读回 profile：优先 profile（JSON 字符串），退化到点号键（fixtures 形状）。 */
+function parseEmbeddingProfile(entries: Record<string, string>): MockEmbeddingProfile | null {
+    const raw = entries.profile;
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw) as Partial<MockEmbeddingProfile>;
+            if (parsed?.providerId && parsed?.connectionKey && parsed?.model) {
+                return parsed as MockEmbeddingProfile;
+            }
+        } catch {
+            // 不是 JSON 就落回点号键；不是错误，不需要日志噪音。
+        }
+    }
+    const providerId = entries["profile.providerId"];
+    const connectionKey = entries["profile.connectionKey"];
+    const model = entries["profile.model"];
+    if (providerId && connectionKey && model) return { providerId, connectionKey, model };
+    return null;
+}
+
 /** 把 schema 字段的 mock 值拍平成 CP `GET /config/{domain}` 的 string map。 */
 function entriesFor(domain: string): Record<string, string> {
     const fields = CONFIG_SCHEMA_CATALOG[domain] ?? [];
@@ -125,25 +173,39 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 // embedding 面板（EmbeddingSettingsPanel）依赖的 3 个契约端点（D-916 补）：
                 // 有效 profile 解析 / 连接测试 / （写路径复用 PUT /config/instance/embedding）。
                 if (path === "/config/embedding/effective") {
+                    // 由「写入后的层数据」解析，不再返回静态 fixture —— 否则 PUT 成功后
+                    // 页面仍显示旧 profile（task-146 的另一条验收：PUT 后 effective 也要读到新值）。
+                    const instanceProfile = parseEmbeddingProfile(
+                        mergedEntries("instance", "embedding"),
+                    );
+                    const userProfile = parseEmbeddingProfile(mergedEntries("user", "embedding"));
+                    const profile = userProfile ?? instanceProfile;
+                    const profileScope = userProfile ? "user" : instanceProfile ? "instance" : null;
+                    const contract = { modelId: "text-embedding-3-small", dimension: 768 };
+                    if (!profile || !profileScope) {
+                        return respond(200, {
+                            profile: null,
+                            profileScope: null,
+                            resolved: null,
+                            contract,
+                            code: "EMBEDDING_PROFILE_UNSET",
+                        });
+                    }
                     return respond(200, {
-                        profile: {
-                            providerId: "openai",
-                            connectionKey: "conn-embed-primary",
-                            model: "text-embedding-3-small",
-                        },
-                        profileScope: "instance",
+                        profile,
+                        profileScope,
                         resolved: {
-                            providerId: "openai",
-                            connectionKey: "conn-embed-primary",
-                            providerConnectionId: "conn-embed-primary",
+                            providerId: profile.providerId,
+                            connectionKey: profile.connectionKey,
+                            providerConnectionId: profile.connectionKey,
                             connectionOwnerScope: "instance",
                             connectionRevision: 1,
-                            modelId: "text-embedding-3-small",
-                            dimension: 768,
-                            profileScope: "instance",
+                            modelId: profile.model,
+                            dimension: contract.dimension,
+                            profileScope,
                             modelSource: "pinned-contract",
                         },
-                        contract: { modelId: "text-embedding-3-small", dimension: 768 },
+                        contract,
                     });
                 }
                 if (path === "/config/embedding/test" && (req.method ?? "GET") === "POST") {
@@ -299,20 +361,42 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 );
                 if (writeMatch && (req.method ?? "GET") === "PUT") {
                     const [, layer, domain] = writeMatch;
-                    let body: Record<string, string> = {};
                     let raw = "";
                     req.on("data", (chunk) => {
                         raw += String(chunk);
                     });
                     req.on("end", () => {
+                        let parsed: Record<string, unknown> = {};
                         try {
-                            body = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+                            parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
                         } catch {
-                            body = {};
+                            parsed = {};
                         }
-                        Object.assign(memoryFor(layer, domain), body);
+                        // 平铺体（logging 那种）原样落库；嵌套体（{profile:{…}}）展开成点号键 ——
+                        // 不展开就会出现「PUT 200 但 GET ?layer 仍是 fixture 值」的假保真（task-146）。
+                        const flat = flattenWrite(parsed);
+                        if (
+                            domain === "embedding" &&
+                            (Object.keys(flat).length === 0 || flat.profile === "")
+                        ) {
+                            // 「清除并恢复继承」产品发 {}：必须把本层 profile 的点号键一起清掉，
+                            // 否则 fixtures 的旧点号键还会被解析成旧值。
+                            flat.profile = "";
+                            flat["profile.providerId"] = "";
+                            flat["profile.connectionKey"] = "";
+                            flat["profile.model"] = "";
+                        } else if (domain === "embedding" && flat.profile) {
+                            const profile = parseEmbeddingProfile({ profile: flat.profile });
+                            if (profile) {
+                                flat["profile.providerId"] = profile.providerId;
+                                flat["profile.connectionKey"] = profile.connectionKey;
+                                flat["profile.model"] = profile.model;
+                                flat.model = profile.model;
+                            }
+                        }
+                        Object.assign(memoryFor(layer, domain), flat);
                         options.log?.(
-                            `[mock-api] PUT /config/${layer}/${domain} → ${Object.keys(body).length} 键`,
+                            `[mock-api] PUT /config/${layer}/${domain} → ${Object.keys(flat).length} 键`,
                         );
                         return respond(200, {
                             domain,
