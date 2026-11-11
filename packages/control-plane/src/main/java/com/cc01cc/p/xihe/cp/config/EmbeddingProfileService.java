@@ -19,8 +19,8 @@ import java.util.UUID;
  *
  * A layer profile is one complete unit of exactly providerId + connectionKey +
  * model (round-4 item 1); layers never merge fields and a partial profile fails
- * closed. Workspace overrides User, and both override Instance as a whole;
- * no layer present resolves to nothing (workspace → user → instance).
+ * closed. Workspace overrides the shared workspace-default default, User
+ * overrides Instance, layers never merge (workspace → workspace-default → user → instance).
  * `XIHE_EMBEDDING_MODEL` stays env-first, but only the V1 model is compatible
  * (round-4 item 1 and design §Configuration Migration).
  */
@@ -95,25 +95,25 @@ public class EmbeddingProfileService {
         return new LayerProfile(providerId, connectionKey, model);
     }
 
-    /** Effective whole-layer profile: workspace wins whole, else user; no merge. */
+    /**
+     * Effective whole-layer profile, no merge. D-928 / PLAN-0766: the hop order
+     * (workspace > workspace-default > user > instance) comes from
+     * {@link ConfigLayerResolver} — the same list the llm-provider chain walks.
+     */
     public EffectiveProfile effectiveProfile(UUID userId, UUID workspaceId) {
-        LayerProfile workspace = workspaceId == null
-                ? null : readLayer("workspace", workspaceId);
-        if (workspace != null) {
-            return checkEnv(new EffectiveProfile(workspace, "workspace"));
-        }
-        LayerProfile user = userId == null ? null : readLayer("user", userId);
-        if (user != null) {
-            return checkEnv(new EffectiveProfile(user, "user"));
-        }
-        // D-918 / BL-581: instance is the last whole-unit fallback. Without this
-        // branch an instance default could be written (and be visible to the
-        // generic effective view) but never reach the run-time resolver.
-        LayerProfile instance = readInstanceLayer();
-        if (instance != null) {
-            return checkEnv(new EffectiveProfile(instance, "instance"));
-        }
-        return checkEnv(new EffectiveProfile(null, null));
+        ConfigLayerResolver.LayerHit<LayerProfile> hit = ConfigLayerResolver.firstConfigured(layer -> {
+            if (ConfigLayerResolver.LAYER_WORKSPACE.equals(layer)) {
+                return workspaceId == null ? null : readLayer("workspace", workspaceId);
+            }
+            if (ConfigLayerResolver.LAYER_USER.equals(layer)) {
+                return userId == null ? null : readLayer("user", userId);
+            }
+            // D-918 / BL-581: instance is the last whole-unit fallback, now preceded by the
+            // shared workspace-default layer. Without the tail branch a lower default could
+            // be written (and visible to the generic effective view) but never resolve.
+            return readInstanceLikeLayer(layer);
+        });
+        return checkEnv(new EffectiveProfile(hit.value(), hit.layer()));
     }
 
     public record EffectiveProfile(LayerProfile profile, String profileScope) {
@@ -135,7 +135,11 @@ public class EmbeddingProfileService {
         // -> WORKSPACE, user or instance profile -> consuming USER per T1.5) and only then fall
         // back to the INSTANCE shared connection. No cross-layer workspace<->user search.
         ProviderConnection connection = null;
-        if ("workspace".equals(effective.profileScope()) && workspaceId != null) {
+        if (("workspace".equals(effective.profileScope())
+                || "workspace-default".equals(effective.profileScope())) && workspaceId != null) {
+            // PLAN-0766 (task-158 contract): a workspace-default profile owns its connection
+            // in the current WORKSPACE layer — the default layer is the workspace layer's
+            // absent substitute, not a new owner rule.
             connection = findOwningConnection("WORKSPACE", workspaceId.toString(), profile);
         } else if (("user".equals(effective.profileScope()) || "instance".equals(effective.profileScope()))
                 && userId != null) {
@@ -202,6 +206,13 @@ public class EmbeddingProfileService {
         this.json = json;
     }
 
+    /** Instance-shaped layers (instance, workspace-default) read by layer only. */
+    private LayerProfile readInstanceLikeLayer(String layer) {
+        Optional<ConfigEntity> entity =
+                configs.findByLayerAndDomainAndConfigKey(layer, DOMAIN, "profile");
+        return entity.map(e -> parseProfile(e.getConfigValue())).orElse(null);
+    }
+
     private LayerProfile readLayer(String layer, UUID ownerId) {
         Optional<ConfigEntity> entity;
         if ("workspace".equals(layer)) {
@@ -217,16 +228,8 @@ public class EmbeddingProfileService {
         return parseProfile(raw);
     }
 
-    /**
-     * D-918 / BL-581: the instance layer has no owner id, so it cannot share
-     * {@link #readLayer(String, UUID)}; the instance profile is stored under the
-     * same single key ({@code profile}) and is parsed with the same whole-unit rule.
-     */
     private LayerProfile readInstanceLayer() {
-        return configs.findByLayerAndDomainAndConfigKey("instance", DOMAIN, "profile")
-                .map(ConfigEntity::getConfigValue)
-                .map(this::parseProfile)
-                .orElse(null);
+        return readInstanceLikeLayer("instance");
     }
 
     private ProviderConnection findOwningConnection(String ownerType, String ownerId, LayerProfile profile) {

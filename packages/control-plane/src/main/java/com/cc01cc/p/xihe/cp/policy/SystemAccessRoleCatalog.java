@@ -147,6 +147,11 @@ public class SystemAccessRoleCatalog {
                                         // human default at all (the data plane belongs to a binding).
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_MANAGE),
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_BIND),
+                                        // D-928 / PLAN-0766 (task-158 contract): the workspace-default
+                                        // layer write atom sits in the fixed instance-administrator
+                                        // set; the matching seed rows land in Flyway V153.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG),
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS),
                                         AtomRef.wildcard(

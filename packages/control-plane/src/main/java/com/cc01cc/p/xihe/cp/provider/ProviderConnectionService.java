@@ -177,7 +177,10 @@ public class ProviderConnectionService {
             String profileScope, String userId, String workspaceId,
             String provider, String connectionKey) {
         Optional<ProviderConnection> own = Optional.empty();
-        if ("workspace".equals(profileScope) && workspaceId != null && !workspaceId.isBlank()) {
+        // PLAN-0766 (task-158 contract): a workspace-default profile owns its connection in the
+        // current WORKSPACE layer; only a missing workspace connection falls through to INSTANCE.
+        if (("workspace".equals(profileScope) || "workspace-default".equals(profileScope))
+                && workspaceId != null && !workspaceId.isBlank()) {
             own = findReadyByKey(ProviderConnection.OWNER_WORKSPACE, workspaceId, provider, connectionKey);
         } else if (("user".equals(profileScope) || "instance".equals(profileScope))
                 && userId != null && !userId.isBlank()) {

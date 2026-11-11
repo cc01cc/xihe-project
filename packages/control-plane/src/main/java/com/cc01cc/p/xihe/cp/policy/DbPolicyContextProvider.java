@@ -195,6 +195,8 @@ public class DbPolicyContextProvider implements PolicyContextProvider {
         }
         return switch (source) {
             case "workspace" -> PolicyLayer.WORKSPACE;
+            // PLAN-0766: the shared default layer reports its own layer between user/workspace.
+            case "workspace-default" -> PolicyLayer.WORKSPACE_DEFAULT;
             case "user" -> PolicyLayer.USER;
             case "instance", "env" -> PolicyLayer.INSTANCE;
             default -> null;

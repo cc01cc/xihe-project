@@ -134,6 +134,9 @@ public class ConfigService {
             case "instance" -> true;
             case "user" -> USER_WRITABLE_DOMAINS.contains(domain) || isExplicitOnlyDomain(domain);
             case "workspace" -> WORKSPACE_WRITABLE_DOMAINS.contains(domain) || isExplicitOnlyDomain(domain);
+            // D-928 / PLAN-0766: exactly the nine WORKSPACE_WRITABLE domains — no explicit-only
+            // extension, so api-request-templates stays instance-only.
+            case "workspace-default" -> WORKSPACE_WRITABLE_DOMAINS.contains(domain);
             default -> false;
         };
     }
@@ -318,19 +321,21 @@ public class ConfigService {
                 return lockedValue;
             }
         }
-        String workspaceValue = workspaceId == null ? null
-            : keyOf(repo.findByWorkspaceIdAndDomainAndConfigKey(workspaceId, domain, key));
-        if (workspaceValue != null) {
-            return workspaceValue;
-        }
-        String userValue = userId == null ? null
-            : keyOf(repo.findByUserIdAndDomainAndConfigKey(userId, domain, key));
-        if (userValue != null) {
-            return userValue;
-        }
-        String instanceValue = keyOf(repo.findByLayerAndDomainAndConfigKey("instance", domain, key));
-        if (instanceValue != null) {
-            return instanceValue;
+        // D-928 / PLAN-0766: the hop order lives in ConfigLayerResolver
+        // (workspace > workspace-default > user > instance).
+        ConfigLayerResolver.LayerHit<String> hit = ConfigLayerResolver.firstConfigured(layer -> {
+            if (ConfigLayerResolver.LAYER_WORKSPACE.equals(layer)) {
+                return workspaceId == null ? null
+                        : keyOf(repo.findByWorkspaceIdAndDomainAndConfigKey(workspaceId, domain, key));
+            }
+            if (ConfigLayerResolver.LAYER_USER.equals(layer)) {
+                return userId == null ? null
+                        : keyOf(repo.findByUserIdAndDomainAndConfigKey(userId, domain, key));
+            }
+            return keyOf(repo.findByLayerAndDomainAndConfigKey(layer, domain, key));
+        });
+        if (hit.value() != null) {
+            return hit.value();
         }
         Map<String, String> defaults = CODE_DEFAULTS.getOrDefault(domain, Map.of());
         return defaults.get(key);
@@ -470,25 +475,15 @@ public class ConfigService {
         List<ConfigEntity> rows = new ArrayList<>();
         String source = "default";
 
-        List<ConfigEntity> instanceRows = rowsForLayer("instance", domain, null, null);
-        rows.addAll(instanceRows);
-        instanceRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
-        if (!instanceRows.isEmpty()) {
-            source = "instance";
-        }
-
-        List<ConfigEntity> userRows = rowsForLayer("user", domain, userId, null);
-        rows.addAll(userRows);
-        userRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
-        if (!userRows.isEmpty()) {
-            source = "user";
-        }
-
-        List<ConfigEntity> workspaceRows = rowsForLayer("workspace", domain, null, workspaceId);
-        rows.addAll(workspaceRows);
-        workspaceRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
-        if (!workspaceRows.isEmpty()) {
-            source = "workspace";
+        // D-928 / PLAN-0766: merge low-to-high through the shared resolver order so the
+        // workspace-default hop cannot drift from the single-key resolve() chain.
+        for (String layer : ConfigLayerResolver.DB_LAYERS_LOW_TO_HIGH) {
+            List<ConfigEntity> layerRows = rowsForLayer(layer, domain, userId, workspaceId);
+            rows.addAll(layerRows);
+            layerRows.forEach(e -> merged.put(e.getConfigKey(), e.getConfigValue()));
+            if (!layerRows.isEmpty()) {
+                source = layer;
+            }
         }
 
         // PLAN-0556: an admin-locked key resolves to its instance pin, which
@@ -496,7 +491,8 @@ public class ConfigService {
         Map<String, String> lockedKeys = adminLockReasons(domain);
         if (!lockedKeys.isEmpty()) {
             Map<String, String> instanceValues = new LinkedHashMap<>();
-            instanceRows.forEach(e -> instanceValues.put(e.getConfigKey(), e.getConfigValue()));
+            rowsForLayer("instance", domain, null, null)
+                    .forEach(e -> instanceValues.put(e.getConfigKey(), e.getConfigValue()));
             for (String lockedKey : lockedKeys.keySet()) {
                 String pinned = instanceValues.get(lockedKey);
                 if (pinned != null) {
@@ -521,12 +517,16 @@ public class ConfigService {
     public List<ConfigKeyMeta> meta(String layer, String domain, UUID userId, UUID workspaceId) {
         boolean instanceLayer = "instance".equals(layer);
         boolean userLayer = "user".equals(layer);
+        boolean workspaceDefaultLayer = "workspace-default".equals(layer);
         boolean workspaceLayer = "workspace".equals(layer);
         boolean explicitOnly = EXPLICIT_ONLY_DOMAINS.contains(domain);
 
         Map<String, String> instance = rowsToMap(rowsForLayer("instance", domain, null, null));
-        Map<String, String> user = userLayer || workspaceLayer
+        Map<String, String> user = userLayer || workspaceDefaultLayer || workspaceLayer
             ? rowsToMap(rowsForLayer("user", domain, userId, null))
+            : Map.of();
+        Map<String, String> workspaceDefault = workspaceDefaultLayer || workspaceLayer
+            ? rowsToMap(rowsForLayer("workspace-default", domain, null, null))
             : Map.of();
         Map<String, String> workspace = workspaceLayer
             ? rowsToMap(rowsForLayer("workspace", domain, null, workspaceId))
@@ -541,6 +541,8 @@ public class ConfigService {
                 keys.addAll(instance.keySet());
             } else if (userLayer) {
                 keys.addAll(user.keySet());
+            } else if (workspaceDefaultLayer) {
+                keys.addAll(workspaceDefault.keySet());
             } else if (workspaceLayer) {
                 keys.addAll(workspace.keySet());
             }
@@ -551,8 +553,14 @@ public class ConfigService {
             keys.addAll(user.keySet());
             keys.addAll(instance.keySet());
             keys.addAll(defaults.keySet());
+        } else if (workspaceDefaultLayer) {
+            keys.addAll(workspaceDefault.keySet());
+            keys.addAll(user.keySet());
+            keys.addAll(instance.keySet());
+            keys.addAll(defaults.keySet());
         } else if (workspaceLayer) {
             keys.addAll(workspace.keySet());
+            keys.addAll(workspaceDefault.keySet());
             keys.addAll(user.keySet());
             keys.addAll(instance.keySet());
             keys.addAll(defaults.keySet());
@@ -567,8 +575,8 @@ public class ConfigService {
             boolean locked = env.containsKey(key);
             boolean adminLockedKey = adminLocked.containsKey(key);
             String source = locked ? "env"
-                : explicitOnly ? explicitSource(layer, key, instance, user, workspace)
-                : sourceFor(layer, key, instance, user, workspace, defaults);
+                : explicitOnly ? explicitSource(layer, key, instance, user, workspaceDefault, workspace)
+                : sourceFor(layer, key, instance, user, workspaceDefault, workspace, defaults);
             boolean domainWritable = isLayerWritable(layer, domain);
             boolean instanceOnly = !instanceLayer && isInstanceOnlyKey(domain, key);
             boolean writable = domainWritable && !locked && !instanceOnly && !adminLockedKey;
@@ -597,12 +605,14 @@ public class ConfigService {
     }
 
     private static String explicitSource(String layer, String key,
-                                         Map<String, String> instance,
-                                         Map<String, String> user,
-                                         Map<String, String> workspace) {
+                                          Map<String, String> instance,
+                                          Map<String, String> user,
+                                          Map<String, String> workspaceDefault,
+                                          Map<String, String> workspace) {
         return switch (layer) {
             case "instance" -> instance.containsKey(key) ? "instance" : "none";
             case "user" -> user.containsKey(key) ? "user" : "none";
+            case "workspace-default" -> workspaceDefault.containsKey(key) ? "workspace-default" : "none";
             case "workspace" -> workspace.containsKey(key) ? "workspace" : "none";
             default -> "none";
         };
@@ -611,6 +621,7 @@ public class ConfigService {
     private static String sourceFor(String layer, String key,
                                     Map<String, String> instance,
                                     Map<String, String> user,
+                                    Map<String, String> workspaceDefault,
                                     Map<String, String> workspace,
                                     Map<String, String> defaults) {
         return switch (layer) {
@@ -619,7 +630,12 @@ public class ConfigService {
             case "user" -> user.containsKey(key) ? "user"
                 : instance.containsKey(key) ? "instance"
                 : defaults.containsKey(key) ? "code" : "none";
+            case "workspace-default" -> workspaceDefault.containsKey(key) ? "workspace-default"
+                : user.containsKey(key) ? "user"
+                : instance.containsKey(key) ? "instance"
+                : defaults.containsKey(key) ? "code" : "none";
             case "workspace" -> workspace.containsKey(key) ? "workspace"
+                : workspaceDefault.containsKey(key) ? "workspace-default"
                 : user.containsKey(key) ? "user"
                 : instance.containsKey(key) ? "instance"
                 : defaults.containsKey(key) ? "code" : "none";
@@ -664,6 +680,7 @@ public class ConfigService {
     private List<ConfigEntity> rowsForLayer(String layer, String domain, UUID userId, UUID workspaceId) {
         List<ConfigEntity> rows = new ArrayList<>(switch (layer) {
             case "instance" -> repo.findByLayerAndDomain("instance", domain);
+            case "workspace-default" -> repo.findByLayerAndDomain("workspace-default", domain);
             case "user" -> userId == null ? List.of() : repo.findByUserIdAndDomain(userId, domain);
             case "workspace" -> workspaceId == null ? List.of() : repo.findByWorkspaceIdAndDomain(workspaceId, domain);
             default -> List.of();
@@ -712,6 +729,14 @@ public class ConfigService {
         }
         if (!bypassAdminLock) {
             rejectAdminLocked(domain, entries.keySet());
+        }
+        // D-928 / PLAN-0766: the domain guard runs before any layer-specific dispatch so a
+        // non-writable domain can never reach the template services through this layer.
+        if (ConfigLayerResolver.LAYER_WORKSPACE_DEFAULT.equals(layer)
+                && !WORKSPACE_WRITABLE_DOMAINS.contains(domain)) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "DOMAIN_NOT_WORKSPACE_WRITABLE",
+                    "Domain is not writable at the workspace-default layer: " + domain);
         }
         if ("api-request-templates".equals(domain)) {
             apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
@@ -956,6 +981,15 @@ public class ConfigService {
                     }
                 }
             }
+            case "workspace-default" -> {
+                // D-928 / PLAN-0766: exactly the nine WORKSPACE_WRITABLE domains, with its own
+                // 400 code (task-158 contract) instead of the generic 403 mapping.
+                if (!WORKSPACE_WRITABLE_DOMAINS.contains(domain)) {
+                    throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "DOMAIN_NOT_WORKSPACE_WRITABLE",
+                            "Domain is not writable at the workspace-default layer: " + domain);
+                }
+            }
             default -> throw new IllegalArgumentException("Unknown config layer: " + layer);
         }
     }
@@ -1043,7 +1077,7 @@ public class ConfigService {
     }
 
     private static boolean requiresReadyConnection(String layer) {
-        return "user".equals(layer) || "workspace".equals(layer);
+        return "user".equals(layer) || "workspace".equals(layer) || "workspace-default".equals(layer);
     }
 
     /**
@@ -1062,6 +1096,13 @@ public class ConfigService {
         if ("workspace".equals(layer)) {
             return workspaceId != null && providerConnectionService.findReadyForProfileScope(
                     "workspace", userId == null ? null : userId.toString(), workspaceId.toString(),
+                    profile.providerId(), profile.connectionKey()).isPresent();
+        }
+        // PLAN-0766: a workspace-default profile resolves like a workspace profile (owner =
+        // the current WORKSPACE connection); INSTANCE stays the only fallback.
+        if ("workspace-default".equals(layer)) {
+            return workspaceId != null && providerConnectionService.findReadyForProfileScope(
+                    "workspace-default", userId == null ? null : userId.toString(), workspaceId.toString(),
                     profile.providerId(), profile.connectionKey()).isPresent();
         }
         if ("user".equals(layer)) {
@@ -1155,23 +1196,21 @@ public class ConfigService {
      * instance; layers never merge fields and a blank row counts as absent.
      */
     public EffectiveLlmProfile effectiveLlmProfile(UUID userId, UUID workspaceId) {
-        for (String layer : List.of("workspace", "user", "instance")) {
-            if ("workspace".equals(layer) && workspaceId == null) {
-                continue;
+        ConfigLayerResolver.LayerHit<LlmProfile> hit = ConfigLayerResolver.firstConfigured(layer -> {
+            if (ConfigLayerResolver.LAYER_WORKSPACE.equals(layer) && workspaceId == null) {
+                return null;
             }
-            if ("user".equals(layer) && userId == null) {
-                continue;
+            if (ConfigLayerResolver.LAYER_USER.equals(layer) && userId == null) {
+                return null;
             }
-            Optional<ConfigEntity> row = findExisting(
-                    layer, "llm-provider", "profile", userId, workspaceId);
-            if (row.isPresent()) {
-                String raw = row.get().getConfigValue();
-                if (raw != null && !raw.isBlank()) {
-                    return new EffectiveLlmProfile(parseLlmProfile(raw), layer);
-                }
+            Optional<ConfigEntity> row = findExisting(layer, "llm-provider", "profile", userId, workspaceId);
+            if (row.isEmpty()) {
+                return null;
             }
-        }
-        return new EffectiveLlmProfile(null, null);
+            String raw = row.get().getConfigValue();
+            return raw == null || raw.isBlank() ? null : parseLlmProfile(raw);
+        });
+        return new EffectiveLlmProfile(hit.value(), hit.layer());
     }
 
     /**
@@ -1207,8 +1246,8 @@ public class ConfigService {
         // D-922 / task-152: the connection belongs to the profile's layer (workspace profile ->
         // WORKSPACE, user or instance profile -> consuming USER per T1.5); INSTANCE is the last
         // fallback. There is no cross-layer workspace<->user search.
-        if (!"workspace".equals(profileScope) && !"user".equals(profileScope)
-                && !"instance".equals(profileScope)) {
+        if (!"workspace".equals(profileScope) && !"workspace-default".equals(profileScope)
+                && !"user".equals(profileScope) && !"instance".equals(profileScope)) {
             return null;
         }
         return providerConnectionService.findReadyForProfileScope(profileScope,
@@ -1268,7 +1307,9 @@ public class ConfigService {
      * their owner scope matches the deleted connection's owner.
      */
     private boolean profileOwnedByDeletedConnection(ProfileHit hit, String ownerType, UUID ownerId) {
-        if ("instance".equals(hit.layer())) {
+        if ("instance".equals(hit.layer()) || "workspace-default".equals(hit.layer())) {
+            // PLAN-0766: the workspace-default layer is one deployment-wide row set, global
+            // in exactly the same sense as the instance layer.
             return true;
         }
         if ("user".equals(hit.layer())) {
@@ -1309,6 +1350,13 @@ public class ConfigService {
                 if (profileOwnedByDeletedConnection(hit, ownerType, ownerId)) {
                     hits.add(hit);
                 }
+            }
+        }
+        // PLAN-0766: the shared default layer is global (same shape as the instance layer).
+        for (ConfigEntity row : repo.findByLayerAndDomain("workspace-default", "llm-provider")) {
+            if ("profile".equals(row.getConfigKey())
+                    && profileTargetsConnection(row.getConfigValue(), providerId, connectionKey)) {
+                hits.add(new ProfileHit("workspace-default", null, null));
             }
         }
         return hits;
@@ -1410,6 +1458,7 @@ public class ConfigService {
                                                 UUID userId, UUID workspaceId) {
         return switch (layer) {
             case "instance" -> repo.findByLayerAndDomainAndConfigKey("instance", domain, key);
+            case "workspace-default" -> repo.findByLayerAndDomainAndConfigKey("workspace-default", domain, key);
             case "user" -> repo.findByUserIdAndDomainAndConfigKey(userId, domain, key);
             case "workspace" -> repo.findByWorkspaceIdAndDomainAndConfigKey(workspaceId, domain, key);
             default -> Optional.empty();

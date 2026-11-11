@@ -271,7 +271,7 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Config domain has no UI metadata");
         }
-        if (!Set.of("instance", "user", "workspace").contains(layer)) {
+        if (!Set.of("instance", "user", "workspace-default", "workspace").contains(layer)) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_LAYER", "Unknown config layer");
         }
@@ -325,6 +325,7 @@ public class ConfigController {
         }
         return switch (layer) {
             case "instance" -> configService.layerEntries("instance", domain, null, null);
+            case "workspace-default" -> configService.layerEntries("workspace-default", domain, null, null);
             case "user" -> userId == null
                     ? null
                     : configService.layerEntries("user", domain, userId, null);
@@ -366,6 +367,51 @@ public class ConfigController {
         }
         try {
             configService.deleteKey("instance", domain, key, "admin", null, null);
+            return ResponseEntity.ok(Map.of("status", "ok"));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        } catch (ConfigService.ConfigAccessException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration delete is not allowed");
+        } catch (IllegalArgumentException e) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", e.getMessage());
+        }
+    }
+
+    /**
+     * D-928 / PLAN-0766 M2: writes to the shared workspace-default layer carry the
+     * {@code MANAGE_WORKSPACE_DEFAULT_CONFIG} action atom (task-158 contract, D-931) —
+     * never a role-name check. Non-writable domains fail closed with 400
+     * {@code DOMAIN_NOT_WORKSPACE_WRITABLE} from the service layer.
+     */
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_WORKSPACE_DEFAULT_CONFIG')")
+    @PutMapping("/api/v1/config/workspace-default/{domain}")
+    public ResponseEntity<Map<String, Object>> putWorkspaceDefaultConfig(
+            @PathVariable String domain,
+            @RequestBody Map<String, String> body) {
+        return writeLayer("workspace-default", domain, body, "admin", null, null);
+    }
+
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_WORKSPACE_DEFAULT_CONFIG')")
+    @DeleteMapping("/api/v1/config/workspace-default/{domain}/{key}")
+    public ResponseEntity<Map<String, Object>> deleteWorkspaceDefaultConfig(
+            @PathVariable String domain,
+            @PathVariable String key) {
+        if (!ConfigService.DOMAINS.contains(domain)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_DOMAIN", "Unknown config domain");
+        }
+        if (key == null || key.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Config key is required");
+        }
+        if (configService.envOverriddenKeys(domain).contains(key)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.CONFLICT, "CONFIG_ENV_LOCKED", "Env-locked config key cannot be deleted");
+        }
+        try {
+            configService.deleteKey("workspace-default", domain, key, "admin", null, null);
             return ResponseEntity.ok(Map.of("status", "ok"));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());

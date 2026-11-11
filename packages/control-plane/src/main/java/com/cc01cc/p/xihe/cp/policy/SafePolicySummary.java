@@ -35,7 +35,7 @@ public final class SafePolicySummary {
 
     private static final Set<String> EFFECTS = Set.of("allow", "ask", "deny");
     private static final Set<String> SOURCE_LAYERS = Set.of(
-            "builtin", "instance", "user", "workspace", "session", "per_call");
+            "builtin", "instance", "user", "workspace-default", "workspace", "session", "per_call");
     private static final Set<String> SHAPES = Set.of("structured", "interpreter", "opaque");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

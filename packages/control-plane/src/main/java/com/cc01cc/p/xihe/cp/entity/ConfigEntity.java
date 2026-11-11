@@ -24,7 +24,7 @@ public class ConfigEntity {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, length = 16)
+    @Column(nullable = false, length = 24)
     private String layer;
 
     @Column(name = "user_id")

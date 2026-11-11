@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.ConfigDomainSchema;
+import com.cc01cc.p.xihe.cp.config.ConfigLayerResolver;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -140,11 +141,13 @@ public class ContextTemplateService {
      * a silent empty manifest is exactly what kept BL-281's memory invisible.</p>
      */
     public TemplateBinding defaultBinding(UUID userId, UUID workspaceId) {
-        for (String layer : List.of("workspace", "user", "instance")) {
-            if ("workspace".equals(layer) && workspaceId == null) {
+        // PLAN-0766: the hop order comes from ConfigLayerResolver, the same list the
+        // llm/embedding profile chains walk (workspace > workspace-default > user > instance).
+        for (String layer : ConfigLayerResolver.DB_LAYERS_HIGH_TO_LOW) {
+            if (ConfigLayerResolver.LAYER_WORKSPACE.equals(layer) && workspaceId == null) {
                 continue;
             }
-            if ("user".equals(layer) && userId == null) {
+            if (ConfigLayerResolver.LAYER_USER.equals(layer) && userId == null) {
                 continue;
             }
             ObjectNode config = parseEntries(readLayer(layer, userId, workspaceId));
@@ -220,7 +223,9 @@ public class ContextTemplateService {
     }
 
     private void validateLayerShape(String layer, ObjectNode config) {
-        if ("workspace".equals(layer)
+        // PLAN-0766: the shared workspace-default layer is workspace-shaped for v1 — it may
+        // hold templates but cannot define defaults.
+        if (("workspace".equals(layer) || "workspace-default".equals(layer))
                 && (config.has("defaultTemplate") || config.has("userDefault")
                 || (config.path("providerModelDefaults").isArray()
                 && !config.path("providerModelDefaults").isEmpty()))) {
@@ -416,8 +421,8 @@ public class ContextTemplateService {
     }
 
     private static void requireLayer(String layer) {
-        if (!List.of("instance", "user", "workspace").contains(layer)) {
-            throw invalid("layer must be instance, user or workspace");
+        if (!ConfigLayerResolver.DB_LAYERS_LOW_TO_HIGH.contains(layer)) {
+            throw invalid("layer must be one of instance, user, workspace-default, workspace");
         }
     }
 

@@ -80,6 +80,8 @@ public class ToolFaceRegistry {
     public static final String ACTION_USE_WORKSPACE_RUNTIME = "USE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_RUNTIME = "MANAGE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
+    /** D-928 / PLAN-0766: write access to the shared workspace-default config layer. */
+    public static final String ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
     // PLAN-0691 T1.3 (M1): the plugin binding capability face. Four atoms, one per verb, named in
     // the UPPER_SNAKE style of every other action atom (the spec's `plugin:manage` spelling is the
     // external capability wording; see spec/authz-plugin-atoms.md). Naming rule is not cosmetic:
@@ -235,7 +237,11 @@ public class ToolFaceRegistry {
                 // batch as their catalog entries and their Flyway seed rows (V137). They are not
                 // attached to any tool face: a plugin's tool face is created at bind time, so the
                 // vocabulary entry is what the evaluator validates against.
-                ACTION_PLUGIN_MANAGE, ACTION_PLUGIN_BIND, ACTION_PLUGIN_INVOKE, ACTION_PLUGIN_DATA);
+                ACTION_PLUGIN_MANAGE, ACTION_PLUGIN_BIND, ACTION_PLUGIN_INVOKE, ACTION_PLUGIN_DATA,
+                // D-928 / PLAN-0766 (task-158/159): the workspace-default write atom joins the
+                // action-class set in the same batch as its catalog entry and its Flyway seed
+                // rows (V153) — GrantIntersectionEvaluator validates against this vocabulary.
+                ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

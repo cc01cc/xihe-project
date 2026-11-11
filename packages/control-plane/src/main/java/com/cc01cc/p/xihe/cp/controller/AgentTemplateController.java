@@ -23,7 +23,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/agent-templates")
 public class AgentTemplateController {
 
-    private static final Set<String> LAYERS = Set.of("instance", "user", "workspace");
+    private static final Set<String> LAYERS = Set.of("instance", "user", "workspace-default", "workspace");
 
     private final AgentTemplateService agentTemplateService;
     private final ObjectMapper objectMapper;

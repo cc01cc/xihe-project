@@ -26,7 +26,7 @@ public class ConfigAuditEntity {
     @Column(length = 32)
     private String environment;
 
-    @Column(length = 16)
+    @Column(length = 24)
     private String layer;
 
     @Column(length = 32)

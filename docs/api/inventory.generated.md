@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**331** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 231 · 服务间 100
+- 规模：**333** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 233 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（331 / 331 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（333 / 333 个操作带 tag）。
 
-## public（231 operations · 公开 · 17 tags）
+## public（233 operations · 公开 · 17 tags）
 
 ### auth（11）
 
@@ -179,7 +179,7 @@
 | `GET /api/v1/user-events` | `userEvents` | `bearerAuth` | Subscribe to the user-level persistent SSE channel | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/events` | `workspaceEvents` | `bearerAuth` | Subscribe to workspace-scoped file and lifecycle SSE | 公开 |
 
-### config（25）
+### config（27）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -196,6 +196,8 @@
 | `PUT /api/v1/config/instance/{domain}` | `putInstanceConfig` | `bearerAuth` | Write instance-layer config of one domain | 公开 |
 | `DELETE /api/v1/config/instance/{domain}/{key}` | `deleteInstanceConfig` | `bearerAuth` | Clear one instance-layer default (PLAN-0554) | 公开 |
 | `PUT /api/v1/config/user/{domain}` | `putUserConfig` | `bearerAuth` | Write user-layer config of one domain | 公开 |
+| `PUT /api/v1/config/workspace-default/{domain}` | `putWorkspaceDefaultConfig` | `bearerAuth` | Write the shared workspace-default layer of one domain | 公开 |
+| `DELETE /api/v1/config/workspace-default/{domain}/{key}` | `deleteWorkspaceDefaultConfig` | `bearerAuth` | Clear one workspace-default-layer row so the chain inherits again | 公开 |
 | `PUT /api/v1/config/workspace/{domain}` | `putWorkspaceConfig` | `bearerAuth` | (deprecated) Write one workspace-layer config domain | 公开 |
 | `GET /api/v1/config/{domain}` | `getConfig` | `bearerAuth` | Get config of one domain (merged effective, or one explicit layer) | 公开 |
 | `GET /api/v1/config/{domain}/meta` | `getConfigMeta` | `bearerAuth` | Read per-key config provenance for one layer (PLAN-0554) | 公开 |

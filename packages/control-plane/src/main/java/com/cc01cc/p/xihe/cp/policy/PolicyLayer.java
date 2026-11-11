@@ -7,9 +7,11 @@ public enum PolicyLayer {
     BUILTIN(0),
     INSTANCE(1),
     USER(2),
-    WORKSPACE(3),
-    SESSION(4),
-    PER_CALL(5);
+    // PLAN-0766: the shared workspace-default config layer sits between user and workspace.
+    WORKSPACE_DEFAULT(3),
+    WORKSPACE(4),
+    SESSION(5),
+    PER_CALL(6);
 
     public static final String UNCLASSIFIED_ACTION = "unclassified";
 
