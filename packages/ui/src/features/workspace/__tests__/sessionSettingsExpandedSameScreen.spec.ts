@@ -28,8 +28,13 @@ import SessionContextPanel from "../components/SessionContextPanel.vue";
  *
  * ## 判据
  * `session-settings-expanded` 在同一棵 DOM 里 **≤ 1**；跨断点后仍成立。
- * 反向验证（撤回 task-124 的 `v-if="open && isMobileNow"`）⇒ 该断言必须红，读数 `expected 2 to be
- * less than or equal to 1`。
+ * 反向验证（撤回 task-124 的 `v-if="isMobileNow"`，即让桌面视口也渲染 `SheetContent`）⇒ 该断言必须红，
+ * 读数 `expected 2 to be less than or equal to 1`。
+ *
+ * **闸门只叠 `isMobileNow`，刻意不叠 `open`**（实现见 `MobileChatSheet.vue:195-196`）：
+ * 叠上 `open` 会让 `SheetContent` 晚一个 tick 才出现（`open` 变 false 与 DOM 卸载不同步），
+ * 而本判据断言的是 **DOM 里不存在**；`open` 属状态层，桌面视口下仍允许为真（只为焦点归还/关闭动画）。
+ * **看到这里不要"顺手补上 `open`"** —— 那不是遗漏，是刻意的。
  */
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

@@ -23,9 +23,11 @@ import { useSessionStore } from "../../../stores/session";
  * 被判的是"宿主有没有收回"，不是面板内部实现。
  *
  * ## 本卡的结论（读数的来源见下）
- * - **文件替身**：跨断点后 `workspace-tree-head` = **2** ⇒ 真重复（`it.fails` 钉住）。
+ * - **文件替身**：跨断点后 `workspace-tree-head` 曾是 **2**（真重复）—— 当时用 `it.fails` 作**钉子**钉住；
+ *   `task-124` 修复后**转正为 `it`**，现在是"必须恰好 1 个"的判据（保留这条历史：这里曾预期失败）。
  * - **监控/改动替身**：跨断点后 `mobile-changes-sheet` **仍挂载**、桌面 dock 也起了 ⇒ **宿主共存**成立；
- *   同名节点是否出现取决于桌面 dock 是否正好展开到同一面板（默认 collapsed）⇒ 用 `it.fails` 钉"未收回"。
+ *   同名节点是否出现取决于桌面 dock 是否正好展开到同一面板（默认 collapsed）⇒ 当初用 `it.fails` 钉"未收回"，
+ *   `task-124` 修复后同样**转正为 `it`**。
  * - **成员替身**：收口已由 task-116 的 `MobileChatSheet.isMobile` 提供 ⇒ 本卡只补"覆盖到它"的判据（绿）。
  */
 
