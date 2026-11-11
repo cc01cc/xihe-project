@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**333** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 233 · 服务间 100
+- 规模：**334** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 234 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（333 / 333 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（334 / 334 个操作带 tag）。
 
-## public（233 operations · 公开 · 17 tags）
+## public（234 operations · 公开 · 17 tags）
 
 ### auth（11）
 
@@ -27,7 +27,7 @@
 | `POST /api/v1/oauth/revoke` | `revokeOAuthSession` | `bearerAuth` | Revoke an OAuth session | 公开 |
 | `POST /api/v1/oauth/sessions` | `startOAuthSession` | `bearerAuth` | Start an OAuth session for a provider | 公开 |
 
-### admin（17）
+### admin（18）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -35,6 +35,7 @@
 | `GET /api/v1/audit/entries/{type}/{id}` | `getAuditEntryDetail` | `bearerAuth` | Get one audit entry by type and id | 公开 |
 | `GET /api/v1/bindings` | `listRoleBindings` | `bearerAuth` | Read the binding set of one scope (PLAN-0610 W3-2a) | 公开 |
 | `PUT /api/v1/bindings` | `replaceRoleBindings` | `bearerAuth` | Replace the binding set of one scope (PLAN-0610 W3-2a) | 公开 |
+| `GET /api/v1/instance/identity` | `getInstanceIdentity` | `bearerAuth` | Read the deployment instance identity (PLAN-0767 M1) | 公开 |
 | `GET /api/v1/principal-grants/{username}` | `readPrincipalGrants` | `bearerAuth` | [RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的只读入口 | 公开 |
 | `PATCH /api/v1/principal-grants/{username}` | `patchPrincipalGrants` | `bearerAuth` | [RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的写入入口 | 公开 |
 | `GET /api/v1/roles` | `listRoles` | `bearerAuth` | List access-role definitions (PLAN-0610 W3-2a; PLAN-0667 gap-1 read path) | 公开 |

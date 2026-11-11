@@ -375,6 +375,50 @@ class OpenApiYamlContractTest {
     }
 
     /**
+     * PLAN-0767 M1-2 (D-932 contract-first): the instance identity read route is contracted
+     * before CP implements it (M1-3). The response is the M1-1 spec §5 shape —
+     * {instanceId, createdAt, schemaVersion(nullable)} with additionalProperties:false: no module
+     * versions (they stay on GET /api/v1/version), no ownerPrincipalId and no env override state.
+     */
+    @Test
+    void openApiContainsInstanceIdentityRouteAndSpecShapedSchema() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+            assertTrue(paths.containsKey("/api/v1/instance/identity"),
+                    "GET /api/v1/instance/identity is contracted (contract-first, PLAN-0767 M1)");
+
+            Map<?, ?> identityPath = (Map<?, ?>) paths.get("/api/v1/instance/identity");
+            Map<?, ?> get = (Map<?, ?>) identityPath.get("get");
+            assertInstanceOf(Map.class, get, "the identity read operation is contracted");
+            assertEquals("getInstanceIdentity", get.get("operationId"));
+            Map<?, ?> responses = (Map<?, ?>) get.get("responses");
+            assertTrue(responses.containsKey("200"), "identity read contracts a 200");
+            assertTrue(responses.containsKey("401"), "unauthenticated callers get 401 from the JWT filter");
+            assertTrue(responses.containsKey("403"), "authenticated callers without READ_INSTANCE_CONTENT get 403");
+
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+            Map<?, ?> view = (Map<?, ?>) schemas.get("InstanceIdentityView");
+            assertInstanceOf(Map.class, view, "InstanceIdentityView schema is contracted");
+            Map<?, ?> properties = (Map<?, ?>) view.get("properties");
+            for (String field : List.of("instanceId", "createdAt", "schemaVersion")) {
+                assertTrue(properties.containsKey(field), "InstanceIdentityView must carry " + field);
+            }
+            assertFalse(properties.containsKey("moduleVersions"),
+                    "module versions stay on GET /api/v1/version (spec §5 / §8.3)");
+            assertFalse(properties.containsKey("ownerPrincipalId"),
+                    "ownership is a separate audited surface, not part of the identity card");
+            assertFalse(properties.containsKey("envOverride"),
+                    "the boot-time env override state is not exposed on a READ_INSTANCE_CONTENT read");
+            assertEquals(Boolean.FALSE, view.get("additionalProperties"),
+                    "the identity card is closed (additionalProperties: false)");
+            List<?> required = (List<?>) view.get("required");
+            assertTrue(required.contains("instanceId") && required.contains("createdAt"));
+        }
+    }
+
+    /**
      * PLAN-0581 T3.1 / verify V9: the user-management surface must be contracted in
      * the same wave as the implementation — six {@code /api/v1/users*} operations,
      * the admin view without credential/epoch columns, the status enum and the

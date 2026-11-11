@@ -4869,6 +4869,17 @@ paths:
         '200': { description: Audit entry detail (internal tier), content: { application/json: { schema: { $ref: '#/components/schemas/InternalAuditEntryDetailResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { description: AUDIT_ENTRY_NOT_FOUND (unknown id), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/identity:
+    get:
+      tags: [admin]
+      operationId: getInstanceIdentity
+      summary: Read the deployment instance identity (PLAN-0767 M1)
+      description: 'D-932 contract-first (PLAN-0767 M1): the deployment identity card, gated by the READ_INSTANCE_CONTENT action atom (an authenticated caller without it gets 403 FORBIDDEN; a missing/invalid credential gets 401 from the JWT filter — no new error code). Response is exactly {instanceId, createdAt, schemaVersion}. instanceId is the immutable UUID anchor of instance-layer resources (the database row is the authority; XIHE_DEPLOYMENT_ID only seeds the first boot and a mismatch fails startup, it never rewrites the identity). createdAt is the first-boot instant. schemaVersion is nullable and stays null during M1 (the read DTO does not produce it until M2): consumers must treat null as "not reported yet", not as an error. Module versions are NOT repeated here — GET /api/v1/version already serves them and the UI identity card combines both responses. The response deliberately carries no ownerPrincipalId (ownership is its own surface, GET/PUT /api/v1/instance/owner, and transfers are audited) and no boot-time env override state (an internal deployment detail that a READ_INSTANCE_CONTENT holder must not learn).'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'Instance identity view', content: { application/json: { schema: { $ref: '#/components/schemas/InstanceIdentityView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/instance/owner:
     get:
       tags: [auth]
@@ -6166,6 +6177,15 @@ components:
       properties:
         targetUserId: { type: string, format: uuid }
         password: { type: string, description: 'The current owner''s login password (re-authentication, never stored or logged)' }
+    InstanceIdentityView:
+      type: object
+      additionalProperties: false
+      required: [instanceId, createdAt]
+      description: 'PLAN-0767 M1 (D-935): the immutable deployment identity. instanceId is the anchor for instance-layer resources, createdAt is its first-boot instant, schemaVersion is the nullable Flyway schema version (null during M1, filled from M2). Module versions come from GET /api/v1/version; ownerPrincipalId and the boot-time env override state are deliberately absent (spec §5 / §8.3).'
+      properties:
+        instanceId: { type: string, format: uuid, description: 'Immutable UUID; the database row is the authority (env only seeds the first boot)' }
+        createdAt: { type: string, format: date-time, description: 'First-boot instant when the identity row was written' }
+        schemaVersion: { type: [string, 'null'], description: 'Flyway schema version; null during M1 (not reported yet) and filled from M2 — null is not an error' }
     RoleAtomView:
       type: object
       description: 'PLAN-0610 W3-2a: one permission atom of the access-role vocabulary, projected from PermissionAtomCatalog (the SSOT). scopeClass=instance atoms may only be bound at instance scope; scopeClass=both atoms are bindable in either scope (decision #27).'
