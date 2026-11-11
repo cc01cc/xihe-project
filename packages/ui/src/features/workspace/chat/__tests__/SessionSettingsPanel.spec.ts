@@ -146,7 +146,7 @@ describe("SessionSettingsPanel collapsed summary", () => {
         // 2026-11-03: on desktop the panel is now NOT MOUNTED at all (the dock owns it);
         // asserting "exists but hidden" would have kept the duplicate-instance bug alive —
         // 真机 e2e 曾因桌面端多挂一份隐藏面板导致所有内部 testid 命中 2 个元素。
-        expect(wrapper.find('[data-testid="session-settings-expanded"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="session-settings-mobile-sheet"]').exists()).toBe(false);
         wrapper.unmount();
     });
 
@@ -156,7 +156,7 @@ describe("SessionSettingsPanel collapsed summary", () => {
         const wrapper = mountPanel({ selectedBranchId: CHILD_BRANCH_ID });
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="session-settings-expanded"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="session-settings-mobile-sheet"]').exists()).toBe(false);
         // 1) auto approval warning + one-click remediation stay visible.
         const autoBanner = wrapper.get('[data-testid="session-policy-auto-banner"]');
         expect(autoBanner.isVisible()).toBe(true);
@@ -218,13 +218,18 @@ describe("SessionSettingsPanel expansion", () => {
 
         await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
 
-        const expanded = wrapper.get('[data-testid="session-settings-expanded"]');
+        const expanded = wrapper.get('[data-testid="session-settings-mobile-sheet"]');
         expect(expanded.isVisible()).toBe(true);
         expect(
             wrapper.get('[data-testid="session-settings-summary"]').attributes("aria-expanded"),
         ).toBe("true");
         // The four partitions live in SessionContextPanel only — mobile hosts the same
         // component instead of a second copy (no duplicated DOM, single set of testids).
+        // NOTE (task-90): this spec STUBS SessionContextPanel, so it structurally cannot see
+        // a testid that both the wrapper and that component carry — which is exactly how the
+        // 2-instance bug survived here. The uniqueness invariant is asserted against the real
+        // composition in `sessionSettingsExpandedUnique.spec.ts`; this line only covers the
+        // shell (`session-settings-mobile-sheet`).
         expect(expanded.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
         // Mobile must not ask for a dock panel it cannot show.
         expect(wrapper.emitted("open-context-panel")).toBeUndefined();
@@ -234,7 +239,7 @@ describe("SessionSettingsPanel expansion", () => {
             wrapper.get('[data-testid="session-settings-summary"]').attributes("aria-expanded"),
         ).toBe("false");
         expect(
-            wrapper.get('[data-testid="session-settings-expanded"]').attributes("style"),
+            wrapper.get('[data-testid="session-settings-mobile-sheet"]').attributes("style"),
         ).toContain("display: none");
         wrapper.unmount();
     });

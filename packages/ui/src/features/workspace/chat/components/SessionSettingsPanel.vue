@@ -303,13 +303,24 @@ async function closeAutoApproval() {
             (`session-context-panel`, `session-policy-mode`, `u1-toggle`, `session-branch-select` …)
             and Playwright strict mode failed the specs. Mounting it only for the mobile sheet
             keeps one instance in the DOM at any viewport.
+
+            2026-11-12 (task-90): that fix removed the *desktop* duplicate but left a
+            *mobile* one — this wrapper also carried `data-testid="session-settings-expanded"`
+            and `id="session-settings-panel-<id>"`, i.e. the exact pair the nested
+            `SessionContextPanel` body carries (see its header comment). wrapper → body was
+            then 2 nodes for both attributes. This wrapper is a scroll/disclosure shell
+            (`max-h-[60vh] overflow-y-auto border-t` + `v-show`/`inert`), **not** a second
+            settings surface ⇒ it is the one that gets scoped names; the body keeps the
+            semantic testid because that is what the e2e specs and the two unit specs mean by
+            "the expanded settings". Uniqueness is machine-asserted, not commented:
+            `chat/__tests__/sessionSettingsExpandedUnique.spec.ts`.
         -->
         <template v-if="isMobile">
             <div
                 v-show="open"
                 :id="panelId"
                 :inert="!open"
-                data-testid="session-settings-expanded"
+                data-testid="session-settings-mobile-sheet"
                 class="max-h-[60vh] overflow-y-auto border-t"
             >
                 <SessionContextPanel :session-id="sessionId" />

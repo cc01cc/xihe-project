@@ -22,6 +22,17 @@ import {
  *
  * `data-testid="session-settings-expanded"` stays on this body: it *is* the expanded
  * settings surface, just relocated.
+ *
+ * **Duplication guard (task-90)**: this body is the ONE node that may carry
+ * `session-settings-expanded`. The mobile sheet wrapper in `SessionSettingsPanel.vue`
+ * used to carry the same testid *and* the same `id` (`session-settings-panel-<id>`),
+ * so at 390px the two mounted nested (wrapper → this body) and every strict-mode
+ * locator resolved to 2 elements. The wrapper is a scroll/disclosure shell, not a
+ * second settings surface ⇒ it got its own names (`session-settings-mobile-sheet` /
+ * `session-settings-panel-<id>`) and this body's id moved to
+ * `session-settings-body-<id>`. Uniqueness is asserted by
+ * `chat/__tests__/sessionSettingsExpandedUnique.spec.ts` (count === 1 through the
+ * real composition) — a comment is not the judgment.
  */
 const props = defineProps<{ sessionId: string | null }>();
 
@@ -46,7 +57,7 @@ const { branchOptions, selectedBranchId, branchSelectionDisabled, selectBranch }
 
         <div
             v-else
-            :id="`session-settings-panel-${sessionId}`"
+            :id="`session-settings-body-${sessionId}`"
             data-testid="session-settings-expanded"
             class="divide-y divide-border"
         >

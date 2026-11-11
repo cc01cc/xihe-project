@@ -91,7 +91,12 @@ describe("SessionContextPanel (PLAN-0626 M2)", () => {
         const wrapper = mountPanel();
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="session-settings-expanded"]').exists()).toBe(true);
+        // task-90: exactly one node carries `session-settings-expanded`, and its DOM id is
+        // unique (it used to collide with the mobile sheet wrapper's id).
+        expect(wrapper.findAll('[data-testid="session-settings-expanded"]')).toHaveLength(1);
+        expect(wrapper.get('[data-testid="session-settings-expanded"]').attributes("id")).toBe(
+            `session-settings-body-${SESSION_ID}`,
+        );
         for (const section of ["approval", "template", "context", "branch"]) {
             expect(
                 wrapper.find(`[data-testid="session-settings-section-${section}"]`).exists(),
