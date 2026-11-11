@@ -288,7 +288,7 @@ Tool 清单是**运行时属性**，不是静态契约：它由 `packages/runtim
 
 **口径（务必按这条读）**：该文档是**快照**；**权威永远是活的 `tools/list` 结果**。两者不一致时以握手为准，并把文档改回来。快照附带：逐条 `name`/`description`/`inputSchema` 摘要、副作用、CP 策略面（`ToolFaceRegistry`）、以及**重新生成/复核命令**。
 
-**三个面，一份目录**（2026-11-10 dev stack `stack-1` 实测）：
+**三个面，一份目录**（2026-11-11 dev stack `stack-2` 实测，base `4b5a7a3d44ab`；2026-11-10 在 `stack-1` 的首次测量同值）：
 
 | 面 | 调用方 | Tool 数 | 说明 |
 |---|---|---|---|
@@ -301,13 +301,14 @@ CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_sta
 **复核（两条都要跑，逐条对齐）**：
 
 1. 源侧：`packages/runtime/src/main.rs` 的 `#[tool(` 计数 = 23，方法名集合 = 握手返回的 `name` 集合；
-2. 运行时侧：对 `/api/v1/mcp` 发 `tools/list`（无会话；`mcp-session-id` 会 403），拿 `result.tools`。
+2. 运行时侧：对 `/api/v1/mcp` 发 `tools/list`（无会话；`mcp-session-id` 会 403），拿 `result.tools`。二选一记两个坑：**新起栈的库是空的，先建一个 workspace 再取 `tools/list`**（否则租户过滤先回 `401`，那是缺工作区上下文，不是认证或端点问题）；服务面（29）用 `.env.dev` 的 `XIHE_AGENT_API_TOKEN` 作 Bearer 复跑同一请求。
 
 完整脚本与判据见 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6；该节同时列出当前 6 条已知不一致/待澄清项（其中「`start_background_process` 的 `truncate_limit` 被声明却忽略」那条已按**从 schema 删参数**修复：后台路径不返回输出，输出由 `read_command_output` 分页读、截断由每 stream 1 MiB 保留预算决定）。
 
 **复核记录**：
 
-- **2026-11-11**（base `84ec2462618f`，dev 栈 DOWN）：静态侧重抽 23 个 `#[tool(` 注册点（`:455`–`:806`），名字集 / 必需参数 / 返回类型（13 `Json` / 10 `String`）三路与本节及工具清单 0 不一致（对齐表见 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`）；本轮 14:2x 复测候选端口（12631/12633/12640–44）仍全部不监听 ⇒ 握手字节级对比继续 blocked-on-stack（探测记录同目录 `stack-probe.md`）。栈恢复后跑同目录 `mcp-tools-verify.mjs` 即可完成握手侧复核。§7#1（`truncate_limit`）已确认 task-241 修复（摘除 + 三态 Rust 测试钉死，`main.rs:7382-7450`）。
+- **2026-11-11**（base `4b5a7a3d44ab`，dev stack `stack-2`，握手实拉成功）：`tools/list` 两路实测 —— 用户面 **23**、内部服务面 **29**（= 23 + 6 CP 自有）；源侧重抽 23 个注册点（`:455`–`:806`）与握手逐条对齐：`name` 集合、`description`（23/23 字节级相同）、`inputSchema` 的属性名/必需项/叶子类型、`outputSchema` 的 13/10 划分全部 **0 差异**（`$defs` 解析后比较；握手把嵌套对象序列化成 `$ref`，静态抽取是内联，这是序列化差异不是 schema 差异）。同轮复核 §5 协议断言：入站 `mcp-session-id` → `403 MCP_SESSION_INVALID`；带工作区上下文的 `GET`/`DELETE` → `405`；`MCP-Protocol-Version: 2026-07-28` 与 `params.protocolVersion=2025-11-25` 不一致 → `400 -32600`；`initialize` 回显 `2025-11-25`；`tools/list` 结果仅含 `tools`/`resultType`/`cacheScope`/`ttlMs`（无 `nextCursor`）。`inputSchema` 侧未发现真 bug（唯一「差异」是 `apply_patch.patches.items` 的 `$ref` 序列化形态）。证据与可复跑脚本见 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/` 及 `docs/api/mcp-tools.md` §6。
+- **2026-11-11（更早一轮，已被上一条取代）**（base `84ec2462618f`，dev 栈 DOWN）：静态侧重抽 23 个 `#[tool(` 注册点（`:455`–`:806`），名字集 / 必需参数 / 返回类型（13 `Json` / 10 `String`）三路与本节及工具清单 0 不一致（对齐表见 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`）；本轮 14:2x 复测候选端口（12631/12633/12640–44）仍全部不监听 ⇒ 握手字节级对比继续 blocked-on-stack（探测记录同目录 `stack-probe.md`）。栈恢复后跑同目录 `mcp-tools-verify.mjs` 即可完成握手侧复核。§7#1（`truncate_limit`）已确认 task-241 修复（摘除 + 三态 Rust 测试钉死，`main.rs:7382-7450`）。
 
 **变更规则**：新增/删除 tool、改 `description`、改 `inputSchema` 都属 tool 面变更，必须同批更新该清单并跑 §6 复核；只改代码不改清单视为文档债。
 

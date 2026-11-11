@@ -7,16 +7,29 @@ The MCP tool surface that the **Runtime** exposes as an MCP server, plus the two
 > cross-checked line by line against the registration site in source. If they disagree, the handshake
 > wins and this file is the thing that is wrong. Regeneration and re-verification: §6.
 >
-> Snapshot (live handshake): **2026-11-10**, dev stack `stack-1` (CP :12631, Runtime :12633),
-> Runtime `rmcp 3.7.0`, `A03-xihe` develop. Probe: 23 tools on the Runtime surface, 23 on the CP
-> user face, 29 on the CP internal-service face (§2).
+> Snapshot (live handshake): **2026-11-11**, dev stack `stack-2` (CP :12641, Runtime :12643), Runtime
+> `rmcp 3.7.0`, base `4b5a7a3d44ab` (`dev-stack status`: `verdict=fresh`, `runningCommit == headCommit`).
+> Probe: 23 tools on the Runtime surface, 23 on the CP user face, 29 on the CP internal-service face
+> (§2).
 >
-> Last static re-verification: **2026-11-11**, base `84ec2462618f` — 23 registration sites re-extracted;
-> name set, required params and structured-vs-text return types aligned 0-mismatch against this table
-> (§2). **The live `tools/list` re-run is blocked-on-stack**: the 2026-11-11 ~14:2x probe found no
-> listener on CP :12631 / Runtime :12633 / :12640–12644, so this run re-confirms only the static side —
-> §5's handshake-only claims (protocol echo, `_meta` requirement, `cacheScope`) still rest on the
-> 2026-11-10 transcript. Run §6 as the first step once a stack is back.
+> Last static re-extraction: **2026-11-11**, same base — 23 `#[tool(` sites; names, `description`
+> strings (byte-identical), `inputSchema` property keys, required params and the 13/10
+> structured-vs-text split all matched this table 0-diff (§2, §3). §5's handshake-only claims were
+> re-checked in the same run (protocol echo, session-id rejection, method semantics, `tools/list`
+> extras); the one thing **not** re-run is the Runtime-direct `_meta` path (§5, §6).
+> Provenance: stack-1 was another lane's verify window, so this snapshot was taken on stack-2.
+>
+> **Snapshot numbers**: CP user face **23** tools, CP internal-service face **29** tools, source ↔
+> handshake **0 diff**. The two commands behind those numbers (run from the ONE workspace root, against
+> a stack you own; password/token resolution and stack bring-up/teardown: §6):
+>
+> ```pwsh
+> # static side -> prints "tools: 23 ..."
+> node plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/extract-tools-static.mjs A03-xihe/packages/runtime/src/main.rs .tmp/tools-static.json
+> # handshake side -> prints "user face: 23 ..." and "service face: 29 ..."
+> # (that script reads .env.local; when dev-stack auto-generated the password, use the §6 recipe)
+> node plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/mcp-tools-verify.mjs 12641
+> ```
 
 ## 1. Three faces, one catalog
 
@@ -39,13 +52,15 @@ The CP-owned tools are gated on `access.internalService()` in `populateSystemToo
 
 | Check | Result |
 |---|---|
-| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `84ec2462618f`) |
-| Runtime `tools/list` (direct, stateless mode) | **23** tools |
-| CP user face `tools/list` (`admin@xihe.local`) | **23** tools |
-| CP internal-service face `tools/list` | **29** tools = 23 + 6 CP-owned |
-| Name set source ↔ handshake | identical (0 only-in-source, 0 only-in-handshake) |
-| `description` string source ↔ handshake | identical for all 23 (0 diffs, as of 2026-11-10 snapshot) |
-| Static re-extraction ↔ this table (2026-11-11, base `84ec2462618f`, stack down) | names 23/23; required-params 0 mismatch; return types 13 structured / 10 text match the §3 split |
+| `#[tool(...)]` registration sites in `packages/runtime/src/main.rs` | **23** (`:455`–`:806`, `#[tool_router] impl` at `:439`, base `4b5a7a3d44ab`) |
+| Runtime `tools/list` (direct to `/internal/v1/runtime/workspaces/{id}/mcp`, stateless `_meta` path) | **23** tools — 2026-11-10 measurement, **not** re-run on 2026-11-11 (see §6) |
+| CP user face `tools/list` (`admin@xihe.local`, stack-2 :12641) | **23** tools (2026-11-11) |
+| CP internal-service face `tools/list` (`XIHE_AGENT_API_TOKEN` bearer) | **29** tools = 23 + 6 CP-owned (2026-11-11) |
+| Name set source ↔ handshake | identical (0 only-in-source, 0 only-in-handshake) (2026-11-11) |
+| `description` string source ↔ handshake | identical for all 23, byte-level (2026-11-11) |
+| `inputSchema` property keys / required / leaf types source ↔ handshake | 0 diff after resolving `$defs` (2026-11-11) |
+| `outputSchema` split source ↔ handshake | 13 structured / 10 text, identical list (§3) (2026-11-11) |
+| `tools/list` result extras | `cacheScope: "private"`, `ttlMs: 0`, `resultType: "complete"`, no `nextCursor` (2026-11-11) |
 
 ## 3. The 23 Runtime tools
 
@@ -57,6 +72,11 @@ no `outputSchema` — callers must not expect a structured result from those. Th
 this split: 13 handlers return `Json<…>`, the other 10 return a plain `String`. Required parameters are
 marked **bold** below. "Face" is the CP policy face from `ToolFaceRegistry`
 (`actionClass`/`shape`), which is what decides read-vs-write authorization and approval gating.
+
+The handshake serializes nested objects into `$defs` and references them (`apply_patch.patches.items`
+is `$ref: "#/$defs/ApplyPatchEntry"`, and its `hunks.items` is `$ref` to `ApplyPatchHunk`), so a byte
+comparison against a static extractor must resolve `$defs` first — inlined vs `$ref` is a
+serialization difference, not a schema difference.
 
 ### 3.1 Read (face `read` / `STRUCTURED`)
 
@@ -139,13 +159,21 @@ model can only reach them through the CP face (`DEV-016` §3.2.1).
   documented one.
 - **Stateless inbound.** The CP logical endpoint `/api/v1/mcp` is stateless: it does not issue, echo or
   forward `mcp-session-id`, and any inbound `mcp-session-id` is rejected with
-  `403 MCP_SESSION_INVALID` (verified). `GET`/`DELETE` are not supported (`405`).
-- **Wire protocol version.** The CP pins `2026-07-28`: the `MCP-Protocol-Version` header and
-  `params.protocolVersion` must agree, otherwise the CP answers `-32600 Invalid Request`. The Runtime's
-  `initialize` result, however, advertises `protocolVersion: "2025-11-25"` (that is rmcp 3.7.0's own
-  supported version).
+  `403 MCP_SESSION_INVALID` (verified 2026-11-11; the check runs before identity resolution, so it
+  answers 403 even without a workspace context). `GET`/`DELETE` answer
+  `405 MCP_STREAM_NOT_SUPPORTED` / `405 MCP_SESSION_NOT_SUPPORTED` **once the caller has a workspace
+  context**; without one the tenant filter answers `401 AUTHORIZATION_REQUIRED` first — do not read
+  that 401 as "endpoint missing".
+- **Wire protocol version.** The CP pins `2026-07-28` for the logical entry: when the
+  `MCP-Protocol-Version` header is present it must agree with `params.protocolVersion`, otherwise the
+  CP answers `400` + `-32600 Invalid Request` (verified 2026-11-11: header `2026-07-28` + params
+  `2025-11-25` ⇒ `-32600`; header `2026-07-28` + params `2026-07-28` ⇒ `200`). Omitting the header with
+  `params.protocolVersion` = `2026-07-28` also succeeds, so the header is a disagreement check, not a
+  hard requirement. The Runtime's `initialize` result advertises `protocolVersion: "2025-11-25"`
+  (rmcp 3.7.0's own supported version) — re-confirmed 2026-11-11 through the CP face.
 - **`tools/list` result extras**: `cacheScope: "private"`, `ttlMs: 0`, `resultType: "complete"`, and no
-  `nextCursor` (the catalog fits in a single page).
+  `nextCursor` (the catalog fits in a single page) — verified 2026-11-11; the result carries exactly
+  `tools`, `resultType`, `cacheScope`, `ttlMs` and nothing else.
 - **Runtime direct calls need stateless `_meta`.** `/internal/v1/runtime/workspaces/{id}/mcp` is
   sessionful by default ("Session ID is required"); it becomes stateless only when the request carries
   `MCP-Protocol-Version: 2026-07-28`, and then `params._meta` must contain
@@ -154,9 +182,23 @@ model can only reach them through the CP face (`DEV-016` §3.2.1).
 
 ## 6. How to regenerate / re-verify this catalog
 
-**Status 2026-11-11: blocked-on-stack.** No listener on CP :12631 / Runtime :12633 / :12640–:12644
-at ~14:2x, so only the source side below could run. When a stack is back, run both sides, then
-replace the header snapshot block and delete this status paragraph.
+**Last verified run: 2026-11-11, stack-2** (CP :12641, base `4b5a7a3d44ab`) — source side and handshake
+both ran; §2 is that run. The recipe below is the one that actually ran, including the two traps that
+cost the first attempt: a **fresh stack database has no workspace** (create one before `tools/list`, or
+the tenant filter answers `401`), and **never borrow stack-1 while another lane's verify window is
+running** — start your own slot.
+
+**Stack discipline.** Starting a stack is a shared-resource operation: use your own slot and clean it up.
+
+```pwsh
+cd A03-xihe
+$env:XIHE_STACK_ID = 'stack-2'                              # stack-1 may be someone's verify window
+node scripts/dev-stack.mjs start --stack 2 --with-pg --timeout 900
+node scripts/dev-stack.mjs status --stack 2 --json          # expect ok=true, verdict=fresh, runningCommit==HEAD
+# ... handshake against CP http://localhost:12641 (below) ...
+node scripts/dev-stack.mjs stop --stack 2 --with-pg         # zero-residual teardown; volumes are kept
+node scripts/dev-stack.mjs status --all --json              # expect no stack-2 listeners left
+```
 
 **Source side** (must be 23; names are the `async fn` after each `#[tool(...)]`):
 
@@ -167,55 +209,87 @@ Select-String -Path src/main.rs -Pattern '#\[tool\(|^\s*async fn \w+\(' | ForEac
 ```
 
 **Runtime side** — handshake through the CP logical entry (the recipe that needs no `_meta` surgery).
-Run this as a one-off script; it logs in with the dev admin password from `.env.local` and prints the
-tool names. Nothing secret is printed.
+Run this as a one-off script; it resolves the dev admin password the same way `dev-stack` does (D-766:
+env → `.env` chain → `.local/dev/admin-password`) and prints only counts and names. No secret is printed.
+The workspace-create branch is required on a fresh stack (first run), and is a no-op afterwards.
 
 ```js
-// node mcp-tools-verify.mjs   (Node 24; run from the A03 checkout)
-import { readFileSync } from "node:fs";
-const A03 = process.cwd();                       // A03-xihe checkout
-const CP = "http://localhost:12631";             // stack-1 CP
-const pw = readFileSync(A03 + "/.env.local", "utf8")
-    .split(/\r?\n/).map((l) => l.match(/^\s*XIHE_DEV_ADMIN_PASSWORD\s*=\s*(.*)$/))
-    .filter(Boolean)[0][1].trim();
+// node mcp-tools-verify.mjs [CP_PORT]   (Node 24; run from the A03 checkout/worktree)
+import { existsSync, readFileSync } from "node:fs";
+const CP = "http://localhost:" + (process.argv[2] || "12641");   // your stack's CP port
+const cwd = process.cwd();
+function envValue(name) {
+    for (const f of [".env", ".env.dev", ".env.local"]) {
+        const p = cwd + "/" + f;
+        if (!existsSync(p)) continue;
+        const line = readFileSync(p, "utf8").split(/\r?\n/).find((l) => l.startsWith(name + "="));
+        if (line && line.slice(name.length + 1).trim()) return line.slice(name.length + 1).trim();
+    }
+    return null;
+}
+const pw = process.env.XIHE_DEV_ADMIN_PASSWORD
+    || envValue("XIHE_DEV_ADMIN_PASSWORD")
+    || readFileSync(cwd + "/.local/dev/admin-password", "utf8").trim();
 const login = await (await fetch(CP + "/api/v1/auth/login", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ identifier: "admin@xihe.local", password: pw }),
 })).json();
-const ws = (await (await fetch(CP + "/api/v1/workspaces", {
+const listWs = async () => (await (await fetch(CP + "/api/v1/workspaces", {
     headers: { authorization: "Bearer " + login.accessToken },
-})).json())[0].id;
-const res = await (await fetch(CP + "/api/v1/mcp", {
+})).json())[0]?.id;
+let ws = await listWs();
+if (!ws) {   // fresh stack DB: create the probe workspace inside this stack's own root
+    const hostPath = cwd + "/.xihe-stacks/2/workspaces/mcp-tools-probe";
+    const res = await fetch(CP + "/api/v1/workspaces", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + login.accessToken },
+        body: JSON.stringify({
+            name: "mcp-tools-probe", storageMode: "direct_attach", hostPath, executionMode: "windows-host",
+        }),
+    });
+    if (!res.ok) throw new Error("workspace create failed: " + res.status);
+    ws = await listWs();
+}
+const list = async (token) => (await (await fetch(CP + "/api/v1/mcp", {
     method: "POST",
     headers: {
-        authorization: "Bearer " + login.accessToken,
+        authorization: "Bearer " + token,
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "X-Workspace-Id": ws,
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-})).json();
-console.log(res.result.tools.length, res.result.tools.map((t) => t.name).sort().join(","));
-// user face: expect 23. For the 29-tool service face, repeat with the internal service token
-// (Bearer cp.agent-api-token) instead of the user token.
+})).json()).result;
+const user = await list(login.accessToken);            // expect 23
+const service = await list(envValue("XIHE_AGENT_API_TOKEN"));   // expect 29 (+6 CP-owned)
+console.log("user face:", user.tools.length, "| service face:", service.tools.length);
+console.log(user.tools.map((t) => t.name).sort().join(","));
 ```
 
-**Diff the two sides.** Name sets must be identical; `description` must be byte-identical; a mismatch
-means either the source registration and the running binary are out of sync (stale build — check
-`mise run dev:host:status`) or someone edited one side only. The 2026-11-11 re-verification artifacts (static extractor,
-handshake script, port probe, alignment table) live in
+Troubleshooting a failed run: `401 AUTHORIZATION_REQUIRED` from the logical entry means the request had
+no resolvable workspace context (missing/stale `X-Workspace-Id`, or a fresh DB with no workspace) — not
+an auth or endpoint problem. A `403 MCP_SESSION_INVALID` is expected if you copied a client that sends
+`mcp-session-id`; drop that header.
+
+**Diff the two sides.** Name sets must be identical; `description` must be byte-identical;
+`inputSchema` must agree on property names, `required` lists and leaf types **after resolving `$defs`**
+(§3). A mismatch means either the source registration and the running binary are out of sync (stale
+build — check `dev-stack status --json` / `mise run dev:host:status`) or someone edited one side only.
+If only `inputSchema` differs, that is a **true bug**: report it with the file:line of the registration
+and both sides of the schema — do not "fix" this snapshot to match, because the snapshot is the
+evidence. The re-verification artifacts (static extractor, handshake script, alignment table) live in
 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/`.
 
 ## 7. Known discrepancies (as of the snapshot)
 
 | # | Observation | Severity | Status |
 |---|---|---|---|
-| 1 | `start_background_process` used to advertise `truncate_limit` while its handler ignored it. | low | **fixed (task-241), re-verified 2026-11-11 on `84ec2462618f`**: the field was removed from `StartBackgroundProcessRequest` (inert on the background path — output is retained per stream up to 1 MiB, `job_engine/mod.rs:33 STREAM_CAP_BYTES`, read back via `read_command_output` which reports `truncated`); `execute_command` keeps the parameter because there it sizes the inline wire preview (`src/container_runtime.rs:450`, truncation applied `:620-640`); Rust tests pin both (`main.rs:7382-7450`); historical callers still passing the field are tolerated (serde ignores unknown fields). |
+| 1 | `start_background_process` used to advertise `truncate_limit` while its handler ignored it. | low | **fixed (task-241), re-verified 2026-11-11 on `4b5a7a3d44ab`**: the field was removed from `StartBackgroundProcessRequest` (inert on the background path — output is retained per stream up to 1 MiB, `job_engine/mod.rs:33 STREAM_CAP_BYTES`, read back via `read_command_output` which reports `truncated`); `execute_command` keeps the parameter because there it sizes the inline wire preview (`src/container_runtime.rs:450`, truncation applied `:620-640`); Rust tests pin both (`main.rs:7382-7450`); historical callers still passing the field are tolerated (serde ignores unknown fields). |
 | 2 | `DEV-016` §1 states the protocol is `2026-07-28`; the Runtime `initialize` result advertises `2025-11-25` (rmcp 3.7.0). The CP *enforces* `2026-07-28` on the wire, so this is a doc-vs-negotiation wording gap, not a broken handshake. | doc | clarified in this file; DEV-016 now points here |
 | 3 | `DEV-016` §3.2.1 can read as "the git tools are in every `tools/list`". They are injected only when `access.internalService()` is true, i.e. the user face never sees them. | doc | clarified in DEV-016 §10 |
 | 4 | `DEV-016` §1 note "Runtime 侧按该协议全程无会话" holds only with `MCP-Protocol-Version: 2026-07-28` + `_meta`; without the header the endpoint is sessionful (`400 Session ID is required`). | doc | clarified in DEV-016 §10 |
-| 5 | Omitting `X-Workspace-Id` still returned the same 23 tools in the single-workspace dev stack; whether that is a fallback or a single-owner shortcut is unverified for multi-workspace instances. | unverified | do not document the header as optional |
-| 6 | Runtime tool schemas omit `additionalProperties:false`; CP-owned schemas set it. Unknown arguments are therefore tolerated in one place and rejected in the other. | low | open question for the tool-surface owner |
+| 5 | Omitting `X-Workspace-Id` still returned the same 23 tools in the single-workspace dev stack (re-confirmed 2026-11-11 on stack-2 with exactly one workspace: `200`, 23 tools); whether that is a fallback or a single-owner shortcut is unverified for multi-workspace instances. | unverified | do not document the header as optional |
+| 6 | Runtime tool schemas omit `additionalProperties:false` (re-confirmed 2026-11-11: none of the 23 carry it); CP-owned schemas set it. Unknown arguments are therefore tolerated in one place and rejected in the other. | low | open question for the tool-surface owner |
 
 ## 8. Related documents
 
