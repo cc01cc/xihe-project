@@ -228,7 +228,7 @@ The runnable script and acceptance criteria are in [`docs/api/mcp-tools.md`](../
 
 **Re-verification log**:
 
-- **2026-11-11** (base `84221184d`, dev stack down): the 23 `#[tool(` registration sites (`:455`–`:806`) were re-extracted — name set matches this section 0-conflict, required-params 0-mismatch (alignment table: `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`). The byte-level source↔handshake description diff is blocked-on-stack (no candidate port listening; probe record in the same dir). Once a stack is back, run `mcp-tools-verify.mjs` from that directory for the handshake side. §7#1 (`truncate_limit`) confirmed fixed by task-241 (removed + three Rust tests pinning the behavior, `main.rs:7382-7446`).
+- **2026-11-11** (base `84ec2462618f`, dev stack down): the 23 `#[tool(` registration sites (`:455`–`:806`) were re-extracted — name set, required params and return types (13 `Json` / 10 `String`) all match this section and the catalog 0-mismatch (alignment table: `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`). The 14:2x re-probe still found no candidate port listening (12631/12633/12640–44), so the byte-level source↔handshake description diff remains blocked-on-stack (probe record in the same dir). Once a stack is back, run `mcp-tools-verify.mjs` from that directory for the handshake side. §7#1 (`truncate_limit`) confirmed fixed by task-241 (removed + three Rust tests pinning the behavior, `main.rs:7382-7450`).
 
 **Change rule**: adding/removing a tool, or changing a `description` or `inputSchema`, is a tool-surface change — update the catalog in the same batch and re-run the §6 check. Code without the catalog update is documentation debt.
 
