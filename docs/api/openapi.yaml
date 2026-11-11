@@ -933,10 +933,10 @@ paths:
       tags: [agent]
       operationId: listAgentTemplates
       summary: Read one caller-readable Agent template config layer
-      description: layer selects a single raw config layer (instance=ADMIN only, user=caller only, workspace=Workspace member only) with the fail-closed rules of AgentTemplateService; workspaceId is optional for the workspace layer and falls back to the tenant workspace context. Never returns a merged-effective or cross-layer view, roles[], or secret fields; denied responses carry no template content.
+      description: layer selects a single raw config layer (instance=ADMIN only, user=caller only, workspace=Workspace member only, workspace-default=any authenticated caller - the shared workspace default layer of PLAN-0766) with the fail-closed rules of AgentTemplateService; workspaceId is optional for the workspace layer and falls back to the tenant workspace context. Never returns a merged-effective or cross-layer view, roles[], or secret fields; denied responses carry no template content.
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }
+        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace, workspace-default] } }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid, description: Required for the workspace layer when the token carries no workspace context; ignored for other layers. } }
       responses:
         '200': { description: 'Raw templates[] entries of the requested layer', content: { application/json: { schema: { $ref: '#/components/schemas/AgentTemplateListView' } } } }
@@ -1298,7 +1298,7 @@ paths:
         '400': { description: 'PROVIDER_REQUIRED — no agent default model and no effective llm-provider profile, or PROVIDER_CONNECTION_AMBIGUOUS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { description: 'LLM_PROFILE_CONFLICT - the effective llm-provider profile (providerId, connectionKey) found no enabled + READY connection in the profile layer chain workspace -> user -> instance, where the connection belongs to the layer that supplied the profile and only falls back to the INSTANCE connection; CP never searches another layer connection and never silently falls back to another owner (the legacy fallback is a disabled transition switch).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'LLM_PROFILE_CONFLICT - the effective llm-provider profile (providerId, connectionKey) found no enabled + READY connection in the profile layer chain workspace -> workspace-default -> user -> instance, where the connection belongs to the layer that supplied the profile (workspace and workspace-default profiles use the WORKSPACE connection) and only falls back to the INSTANCE connection; CP never searches another layer connection and never silently falls back to another owner (the legacy fallback is a disabled transition switch).', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/api-request-template:
     patch: { tags: [session], operationId: updateSessionApiRequestTemplate, summary: Set the API request template override of one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/commands:
@@ -2390,7 +2390,7 @@ paths:
         layers. `effectiveLayer` is the highest layer that configures the domain, or `builtin`
         when only built-in defaults apply. `ruleCounts` lists only layers that hold at least one
         rule. Domains are the built-in action classes plus every action class configured by
-        persisted instance/user/workspace rules.
+        persisted instance/user/workspace-default/workspace rules.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -2672,7 +2672,7 @@ paths:
       summary: List API request templates of the caller's scope
       description: 'BL-320 批 3（**有意保留 / kept-by-design**）：这不是单独注册的路由，而是 `GET /api/v1/config/{domain}` 在 `domain=api-request-templates` 时的**具体示例写法**（带本域专属的 query 与响应说明）。控制器只注册 `/api/v1/config/{domain}`；保留本条目是为了让调用方不必去翻通用路由的 domain 表，**不属于实现缺口**。'
       security: [{ bearerAuth: [] }]
-      parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
+      parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace, workspace-default] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
       responses:
         '200': { description: 'Authorized config string map by default; includeMeta=true returns domain, entries and envOverridden. templates/defaults/model bindings are JSON strings.', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
         '403': { $ref: '#/components/responses/Problem' }
@@ -2683,7 +2683,7 @@ paths:
       summary: Save API request templates for one layer
       description: 'BL-320 批 3（**有意保留 / kept-by-design**）：同上，`{layer}` ∈ `instance|user|workspace` 分别对应已注册的 `PUT /api/v1/config/{layer}/{domain}` 且 `domain=api-request-templates` 的具体示例，不是独立路径。'
       security: [{ bearerAuth: [] }]
-      parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }]
+      parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace, workspace-default] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: { type: string }, description: 'templates, connectionDefaultTemplates and providerModelBindings are JSON strings. Published versions are immutable; drafts preserve invalid raw source.' } } } }
       responses:
         '200': { description: Saved authorized config envelope }
@@ -2737,14 +2737,15 @@ paths:
         cap:instance:admin (CAP_INSTANCE_ADMIN) and are omitted for ordinary users, while runtime
         resolution still consumes them. No key, ciphertext, suffix or credential plaintext is ever
         returned (maskedKey stays null) and the view is read-only for every scope.
-        Profile source precedence: workspace profile > user profile > instance profile (one whole
-        profile unit, the first configured layer wins, no key-level merge). The connection follows
-        the profile owner: a workspace profile uses the current WORKSPACE connection, a user profile
-        uses the consuming user's USER connection, and an instance profile uses the consuming user's
-        USER connection; when that owner layer has no enabled + READY connection, the INSTANCE
-        connection is the last fallback - no other layer's connection is searched. The first
-        enabled + READY match wins; an unmatched profile fails with 409 LLM_PROFILE_CONFLICT - CP
-        never silently falls back to another owner or to a code default.
+        Profile source precedence: workspace profile > workspace-default profile > user profile >
+        instance profile (one whole profile unit, the first configured layer wins, no key-level
+        merge). The connection follows the profile owner: a workspace or workspace-default profile
+        uses the current WORKSPACE connection, a user profile uses the consuming user's USER
+        connection, and an instance profile uses the consuming user's USER connection; when that
+        owner layer has no enabled + READY connection, the INSTANCE connection is the last fallback -
+        no other layer's connection is searched. The first enabled + READY match wins; an unmatched
+        profile fails with 409 LLM_PROFILE_CONFLICT - CP never silently falls back to another owner
+        or to a code default.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -3069,8 +3070,8 @@ paths:
         - in: query
           name: layer
           required: false
-          schema: { type: string, enum: [instance, user, workspace] }
-          description: 'Omit to read the merged effective view (env > workspace > user > instance > code defaults); set it to read one raw layer. DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).'
+          schema: { type: string, enum: [instance, user, workspace, workspace-default] }
+          description: 'Omit to read the merged effective view (env > workspace > workspace-default > user > instance > code defaults); set it to read one raw layer. workspace-default is the shared workspace default layer (PLAN-0766 / D-928): one deployment-wide row set per key that applies to every workspace without an explicit value, readable by any authenticated caller. DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).'
         - { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
       responses:
@@ -3118,13 +3119,15 @@ paths:
         this contract: CP's meta view does not return them today (CP 待实现) - clients must not infer
         bounds from this document.
 
-        layer=instance is ADMIN only; user/workspace are layer-filtered and exclude instance-only
-        keys. Only the 12 UI domains are accepted; service-only context-templates/pricing return
+        layer=instance is ADMIN only; user/workspace/workspace-default are layer-filtered and
+        exclude instance-only keys. workspace-default (PLAN-0766) is additionally writable only on
+        the nine WORKSPACE_WRITABLE domains via the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom.
+        Only the 12 UI domains are accepted; service-only context-templates/pricing return
         INVALID_DOMAIN. workspace layer requires workspaceId or X-Workspace-Id.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
-        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }
+        - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace, workspace-default] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
       responses:
         '200': { description: 'Map of {domain, layer, keys[]} with no config values', content: { application/json: { schema: { $ref: '#/components/schemas/ConfigMetaView' } } } }
@@ -3187,7 +3190,7 @@ paths:
       operationId: putWorkspaceConfig
       deprecated: true
       summary: (deprecated) Write one workspace-layer config domain
-      description: 'DEPRECATED (2026-11-10 user ruling — PLAN-0763 task-250 / D-800): the workspace config layer is no longer part of the global configuration API; workspace-scoped settings move inside each workspace once that design lands (task-247 / task-253). CP still registers this route, so it stays in the contract marked deprecated instead of being deleted — a delete here would claim behaviour CP does not have. Removal prerequisites: (1) no UI consumer calls the workspace layer (task-253), (2) the workspace settings redesign is live.'
+      description: 'DEPRECATED (2026-11-10 user ruling — PLAN-0763 task-250 / D-800): the workspace config layer is no longer part of the global configuration API; workspace-scoped settings move inside each workspace once that design lands (task-247 / task-253). CP still registers this route, so it stays in the contract marked deprecated instead of being deleted — a delete here would claim behaviour CP does not have. Removal prerequisites: (1) no UI consumer calls the workspace layer (task-253), (2) the workspace settings redesign is live. Distinct from this retired per-workspace layer, PLAN-0766 (D-928 / D-931) adds the shared workspace-default layer (wire value workspace-default): one deployment-wide row set per key that applies to every workspace without an explicit value; database precedence is workspace > workspace-default > user > instance, with env overlays and administrator lock pins still above every database layer and code defaults last. It is writable on exactly the nine WORKSPACE_WRITABLE domains (llm-provider, context-policy, embedding, rag, agent-runtime, approval-policy, agent-templates, context-templates, job-policy) through the MANAGE_WORKSPACE_DEFAULT_CONFIG action atom (capability evaluation, no role-name check; default grant set is the instance admin role and can be extended by explicit grants); writes on other domains answer 400 INVALID_REQUEST, a caller without the atom answers 403 FORBIDDEN, and env-locked / administrator-locked keys answer 409 CONFIG_ENV_LOCKED / CONFIG_KEY_LOCKED like every other layer. Whole-unit (EXPLICIT_ONLY) domains keep whole-layer write semantics. The concrete write routes PUT /api/v1/config/workspace-default/{domain} and DELETE /api/v1/config/workspace-default/{domain}/{key} are contracted in the same batch as their CP registration (PLAN-0766 M2, task-159); until then the layer is readable through GET /api/v1/config/{domain}?layer=workspace-default and surfaces in effective per-key provenance (source=workspace-default).'
       x-removal-plan: 'Delete this path together with ConfigController.java:394 in one batch once (1) task-253 has removed every UI workspace-layer call and (2) the workspace settings redesign is live; until then the config read/write routes keep accepting layer=workspace and say so in their own descriptions.'
       security: [{ bearerAuth: [] }]
       parameters:
@@ -3271,12 +3274,12 @@ paths:
         client re-declare it. profile/profileScope show the whole-unit layer profile; resolved is
         the non-secret owner view of the same-key READY embedding connection, or null with a stable
         conflict code. An embedding profile is resolved as one whole unit through the layer chain
-        workspace profile -> user profile -> instance profile (the first configured layer wins,
-        no key-level merge). The connection belongs to the layer that supplied the profile
-        (workspace profile -> WORKSPACE, user profile -> the consuming user's USER connection,
-        instance profile -> the consuming user's USER connection); a missing layer connection
-        falls back to the INSTANCE shared connection as the last resort, and no other layer's
-        connection is searched. When a profile exists but no enabled + READY connection matches,
+        workspace profile -> workspace-default profile -> user profile -> instance profile (the
+        first configured layer wins, no key-level merge). The connection belongs to the layer that
+        supplied the profile (workspace and workspace-default profiles -> WORKSPACE, user profile ->
+        the consuming user's USER connection, instance profile -> the consuming user's USER
+        connection); a missing layer connection falls back to the INSTANCE shared connection as the
+        last resort, and no other layer's connection is searched. When a profile exists but no enabled + READY connection matches,
         resolved is null and code is EMBEDDING_PROFILE_CONFLICT (EMBEDDING_MODEL_UNSUPPORTED for
         a non-V1 model); when no profile is configured at all, resolution fails with 409
         EMBEDDING_PROFILE_REQUIRED, while this read returns null profile/profileScope/resolved
@@ -6005,14 +6008,14 @@ components:
       required: [domain, layer, keys]
       properties:
         domain: { type: string }
-        layer: { type: string, enum: [instance, user, workspace] }
+        layer: { type: string, enum: [instance, user, workspace, workspace-default] }
         keys: { type: array, items: { $ref: '#/components/schemas/ConfigKeyMeta' } }
     ConfigKeyMeta:
       type: object
       required: [key, source, locked, writable, reason, instanceEligible, defaultPresent, overridable, adminLocked]
       properties:
         key: { type: string }
-        source: { type: string, description: 'Resolved provenance of the value (instance|user|workspace|env|default).' }
+        source: { type: string, description: 'Resolved provenance of the value (instance|user|workspace-default|workspace|env|default).' }
         locked: { type: boolean }
         writable: { type: boolean }
         reason: { type: [string, 'null'], enum: [ENV_LOCKED, ADMIN_LOCKED, LAYER_NOT_WRITABLE, null], description: 'Why a key is not writable in this layer; null when writable. CP also defines INSTANCE_ONLY internally, but instance-only keys are filtered out of non-instance layers, so that value is not observable today.' }
@@ -6245,7 +6248,7 @@ components:
     ModelLimit: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 }, maxInflight: { type: [integer, 'null'], minimum: 1, description: 'null = inherit the connection limit.' }, windowTokenBudget: { type: [integer, 'null'], format: int64, minimum: 1 }, windowSeconds: { type: [integer, 'null'], minimum: 1 } } }
     ResourceExhaustedProblem: { type: object, allOf: [{ $ref: '#/components/schemas/ProblemDetails' }, { type: object, required: [code, retryAfterSeconds], properties: { code: { type: string, enum: [RESOURCE_EXHAUSTED] }, retryAfterSeconds: { type: integer, minimum: 1, description: 'Mirrors the Retry-After header.' }, resourceKind: { type: string, enum: [CONNECTION, MODEL, FILE_WRITE, PROCESS, JOB, MCP], description: 'PLAN-0622: which resource class refused admission.' }, scope: { type: string, description: 'Resource key scope (for example connection:<uuid> or workspace:<uuid>/server:<id>).' } } }] }
     WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }
-    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user layers. }, templates: { type: array, description: 'Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response.', items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
+    AgentTemplateListView: { type: object, required: [layer, workspaceId, templates], properties: { layer: { type: string, enum: [instance, user, workspace, workspace-default] }, workspaceId: { type: [string, 'null'], format: uuid, description: Present only for the workspace layer; null for instance/user/workspace-default layers. }, templates: { type: array, description: 'Raw agent-templates.templates[] entries of exactly one layer, returned as stored. Roles and secret-like fields are never part of this response.', items: { type: object, additionalProperties: false, required: [id, name, description, systemPrompt, toolMode, roleId], properties: { id: { type: string, format: uuid }, name: { type: string }, description: { type: string }, systemPrompt: { type: string }, toolMode: { type: string, enum: [none, workspace] }, provider: { type: string }, model: { type: string }, roleId: { type: string, format: uuid } } } } } }
     CheckpointChangedFile:
        type: object
        additionalProperties: false
@@ -6453,7 +6456,7 @@ components:
         truncated: { type: boolean, description: 'true when older messages remain (the next page exists).' }
         nextCursor: { type: string, description: 'Opaque cursor for the next (older) page; absent on the last page.' }
     SessionUpdateRequest: { type: object, description: "Metadata-only edits retain the pin. Binding edits require modelProvider/modelName/providerConnectionId/connectionRevision together; omitted template triple resolves the target default once; partial or null bindings fail. Cross-Type changes require confirmedTypeChange.", properties: { title: { type: [string, 'null'] }, modelProvider: { type: string }, modelName: { type: string }, providerConnectionId: { type: string, format: uuid }, connectionRevision: { type: integer, minimum: 1 }, confirmedTypeChange: { type: boolean }, contextTemplateLayer: { type: string, enum: [instance, user, workspace] }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
-    ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: 'Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND.' } } }
+    ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace, workspace-default] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: 'Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND.' } } }
     SessionDerivedStateResponse:
        type: object
        additionalProperties: false
@@ -7191,10 +7194,10 @@ components:
       required: [actionClass, effectiveLayer, configuredLayers, ruleCounts]
       properties:
         actionClass: { type: string, minLength: 1, maxLength: 64 }
-        effectiveLayer: { type: string, enum: [builtin, instance, user, workspace] }
+        effectiveLayer: { type: string, enum: [builtin, instance, user, workspace-default, workspace] }
         configuredLayers:
           type: array
-          items: { type: string, enum: [instance, user, workspace] }
+          items: { type: string, enum: [instance, user, workspace-default, workspace] }
         ruleCounts:
           type: object
           additionalProperties: { type: integer, minimum: 0 }
@@ -7251,7 +7254,7 @@ components:
       required: [effect, sourceLayer, matchedRule, reason, mode, actionClass, shape]
       properties:
         effect: { type: string, enum: [allow, ask, deny] }
-        sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
+        sourceLayer: { type: string, enum: [builtin, instance, user, workspace-default, workspace, session, per_call] }
         matchedRule: { type: [string, 'null'], minLength: 1 }
         reason: { type: string, minLength: 1 }
         mode: { type: [string, 'null'], enum: [manual, auto] }
@@ -7357,13 +7360,14 @@ components:
           ordinary users never see them but runtime resolution still consumes them. Secrets never
           appear in this view: apiKey is write-only, credentialId is a vault reference and maskedKey
           is always null. An llm-provider profile (providerId, connectionKey) is resolved as one
-          whole unit through the layer chain workspace profile -> user profile -> instance profile
-          (the first configured layer wins, no key-level merge). The connection belongs to the
-          layer that supplied the profile (workspace profile -> WORKSPACE, user profile -> the
-          consuming user's USER connection, instance profile -> the consuming user's USER
-          connection); a missing layer connection falls back to the INSTANCE connection as the
-          last resort, and no other layer's connection is searched. The first enabled + READY
-          match wins; none matches returns 409 LLM_PROFILE_CONFLICT, never a silent fallback.
+          whole unit through the layer chain workspace profile -> workspace-default profile -> user
+          profile -> instance profile (the first configured layer wins, no key-level merge). The
+          connection belongs to the layer that supplied the profile (workspace and workspace-default
+          profiles -> WORKSPACE, user profile -> the consuming user's USER connection, instance
+          profile -> the consuming user's USER connection); a missing layer connection falls back
+          to the INSTANCE connection as the last resort, and no other layer's connection is
+          searched. The first enabled + READY match wins; none matches returns 409
+          LLM_PROFILE_CONFLICT, never a silent fallback.
         required: [id, providerId, connectionKey, apiTypeId, apiTypeVersion, operation, label, scope, hasKey, enabled, status, revision, modelDiscovery, manualModels]
         properties:
           id: { type: string, format: uuid, readOnly: true }
@@ -7406,7 +7410,7 @@ components:
          baseUrl: { type: [string, 'null'], format: uri }
          modelDiscovery: { type: [string, 'null'], enum: [remote-models, litellm-catalog, curated, manual] }
          manualModels: { type: array, items: { type: string }, maxItems: 256 }
-    ApiRequestTemplateRef: { type: object, additionalProperties: false, required: [layer, templateId, version], properties: { layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1 } } }
+    ApiRequestTemplateRef: { type: object, additionalProperties: false, required: [layer, templateId, version], properties: { layer: { type: string, enum: [instance, user, workspace, workspace-default] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1 } } }
     ApiRequestTemplate: { type: object, required: [id, version, name, apiTypeId, apiTypeVersion, bodySource, status], properties: { id: { type: string, format: uuid }, version: { type: integer, minimum: 1 }, name: { type: string }, description: { type: string }, apiTypeId: { type: string }, apiTypeVersion: { type: integer, minimum: 1 }, bodySource: { type: string, description: 'Strict JSON provider body. Only ${xh.*} slots declared in spec/fixtures/xh-variables.json are legal; substitution is single-pass and $${...} emits a literal. PLAN-0632 Gate G-0 slots: user_input, agent_instructions, skill_catalog, agent_memory, model ($.model only), rag_context (RAG data-role positions only), tools and conversation_history (structural splice only). An undeclared variable is rejected at publish and again at render time; it is never rendered as an empty string. Adding a slot requires changing both sides plus that fixture.' }, status: { type: string, enum: [draft, published] } } }
     ApiRequestTemplateValidation: { type: object, required: [valid, diagnostics], properties: { valid: { type: boolean }, diagnostics: { type: array, items: { type: object, required: [code, path, message], properties: { code: { type: string }, path: { type: string }, message: { type: string } } } } } }
     ApiTypeChangeImpact: { type: object, required: [connectionRevision, currentType, targetType, compatibleTemplates, incompatibleOverrides, sessionRebindCount], properties: { connectionRevision: { type: integer }, currentType: { $ref: '#/components/schemas/ApiTypePair' }, targetType: { $ref: '#/components/schemas/ApiTypePair' }, compatibleTemplates: { type: array, items: { $ref: '#/components/schemas/ApiRequestTemplateRef' } }, incompatibleOverrides: { type: array, items: { type: object, required: [scope, count], properties: { scope: { type: string }, count: { type: integer } } } }, sessionRebindCount: { type: integer } } }
@@ -7817,7 +7821,7 @@ components:
       description: Exact admission snapshot; the historical carrier field name is retained, but legacy Markdown snapshots are audit-only.
       required: [layer, templateId, version, source, template, providerConnectionId, connectionRevision, apiTypeId, apiTypeVersion, connectionKey, connectionScope]
       properties:
-        layer: { type: string, enum: [instance, user, workspace] }
+        layer: { type: string, enum: [instance, user, workspace, workspace-default] }
         templateId: { type: string, format: uuid }
         version: { type: integer, minimum: 1 }
         source: { type: string }
@@ -7892,7 +7896,7 @@ components:
       properties:
         contract: { type: object, required: [modelId, dimension], properties: { modelId: { type: string }, dimension: { type: integer } }, description: 'Pinned V1 embedding contract served by CP.' }
         profile: { type: ['object', 'null'], properties: { providerId: { type: string }, connectionKey: { type: string }, model: { type: string } } }
-        profileScope: { type: ['string', 'null'], enum: [instance, user, workspace, null] }
+        profileScope: { type: ['string', 'null'], enum: [instance, user, workspace-default, workspace, null] }
         resolved: { type: ['object', 'null'], description: 'Non-secret owner view of the same-key READY embedding connection; null when absent or conflicting (code carries the stable conflict code).' }
         code: { type: string }
     EmbeddingTestResult:
@@ -8371,7 +8375,7 @@ components:
       required: [effect, sourceLayer, matchedRule, reason, mode, allowedBy, actionClass, shape, reused]
       properties:
         effect: { type: string, enum: [allow, ask, deny] }
-        sourceLayer: { type: string, enum: [builtin, instance, user, workspace, session, per_call] }
+        sourceLayer: { type: string, enum: [builtin, instance, user, workspace-default, workspace, session, per_call] }
         matchedRule: { type: [string, 'null'], minLength: 1 }
         reason: { type: string, minLength: 1 }
         mode: { type: [string, 'null'], enum: [manual, auto] }
