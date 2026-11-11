@@ -15,7 +15,7 @@ import {
     UserCog,
     Wrench,
 } from "@lucide/vue";
-// 域全集与派生计数只在 `data/all-domains.ts` 一处（此前这里与 S1SettingsAfter.vue 各拼一份 ⇒ 必然漂）
+// 域全集与派生计数只在 `data/all-domains.ts` 一处（此前有两处各拼一份 ⇒ 必然漂；旧双拼实现已随 38c5b833 删除）
 import { badgeOf } from "./data/all-domains";
 // task-121 ①：**清单**不再手写 —— 层/域矩阵与资源、运维分组的唯一正文在 `lib/settingsIa.ts`。
 // 2026-11-11 用户亲审：「用户层的域怎么就这么几个？」—— 稿上手写 4 条，真值 9 域 + 3 资源 = 12。

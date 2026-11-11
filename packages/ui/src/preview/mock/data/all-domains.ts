@@ -1,7 +1,7 @@
 // 域全集 + 派生计数：**唯一来源**。
 //
 // WHY 单一模块（task-81）：此前「域全集」有两处各拼一份，必然漂 ——
-//   ① `screens/S1SettingsAfter.vue` 用 DEDICATED + CORE + A/B 去重，给 `?domain=` 查详情；
+//   ① 设计稿那一版用 DEDICATED + CORE + A/B 去重，给 `?domain=` 查详情（`screens/S1SettingsAfter.vue`，已随 `38c5b833` 删除）；
 //   ② `data.ts` 的 `badgeOf()` 只查 `domains-core.ts` 的 `CORE_DOMAINS`。
 // 后果实测：A/B 组 5 个域 + agent-runtime 在左栏**有徽标位却永远渲染 `—`**（②查不到），
 // 而 `?domain=agent-runtime` 在①里根本不存在 ⇒ 静默落回 rag（画错域的假绿）。

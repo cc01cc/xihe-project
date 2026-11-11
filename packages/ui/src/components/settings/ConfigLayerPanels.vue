@@ -352,7 +352,7 @@ function envLockedFor(domain: string): Record<string, string> {
  *
  * <p>专用面板没有统一 schema，按各自面板的字段级控件数固定折算（见注释）；连接管理页
  * （user llm-provider 的 ProviderHub）没有行内字段，记 0 —— 连接是「条目」不是「字段」，
- * 两种量纲不混（与 preview/mock/screens/DomainCanvas.vue:37-39 一致）。</p>
+ * 两种量纲不混。</p>
  */
 const editableFieldCount = computed<number>(() => {
     const domain = props.domain;

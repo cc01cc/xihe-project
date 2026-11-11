@@ -14,7 +14,7 @@ import { writableAtOf, type MockDomain } from "./types";
  * ## 为什么只有这 4 行
  * - `embedding` / `agent-templates` / `api-request-templates` 三个域**已不在本文件**：它们是
  *   专用面板域，整块编辑由 `panels/domains-dedicated.ts` 负责。同 id 的表单版会让 `?domain=`
- *   先命中表单、拿不到面板域（[实测] `screens/S1SettingsAfter.vue:96-101` 的 `TAKEN_IDS`）。
+ *   先命中表单、拿不到面板域（旧设计稿的 `TAKEN_IDS` 去重；该稿已随 `38c5b833` 删除）。
  * - `approval-policy.toolFaces` 是**唯一**允许的 gap 行：它覆盖在 `tool_faces` 表上
  *   （[源码] `DbPolicyContextProvider.java:22-23`），不是配置键，但用户会来这页找
  *   「这个工具算哪类动作」——藏起来只会让人以为产品没有这个面。

@@ -3,8 +3,9 @@ import { writableAtOf, type MockDomain } from "../data/types";
 /**
  * 专用面板域（整块编辑）三份数据：embedding / agent-templates / api-request-templates。
  *
- * 分工（Lead 2026-11-11）：llm-provider 归 dev-3；本文件只写这三个域，且**只写数据、不建画布**
- * —— 列表态 / 详情态的版式由 screens/DomainPanelCanvas.vue（dev-3）统一渲染。
+ * 分工（Lead 2026-11-11）：llm-provider 归另一份面板负责；本文件只写这三个域，且**只写数据、不建画布**
+ * —— 列表态 / 详情态的版式原由设计稿 `screens/DomainPanelCanvas.vue` 渲染，该文件已随 `38c5b833` 删除；
+ * 本文件现在只留数据。
  *
  * 三条硬纪律的落点：
  * 1. 真组件：本文件不含任何标记，版式全部由 canvas 用 @/components/ui/** 渲染；
