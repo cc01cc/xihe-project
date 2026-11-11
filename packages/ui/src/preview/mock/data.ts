@@ -29,7 +29,7 @@ import {
 /**
  * Mock data for the task-233 sheets.
  *
- * Counts are the **CP matrix facts** already used by `src/preview/settingsIa/mock.ts` (instance 12
+ * Counts are the **CP matrix facts** already used by `src/lib/settingsIa.ts` (instance 12
  * domains + 2 ops + 3 security), re-stated here so these sheets do not depend on that module's
  * `SettingsLayer` shape. Nothing is invented; nothing is fetched.
  */
