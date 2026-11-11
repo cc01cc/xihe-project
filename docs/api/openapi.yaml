@@ -102,8 +102,17 @@ paths:
       tags: [auth]
       operationId: currentUser
       summary: Get the current authenticated user
+      description: >-
+        Returns the account view plus the coarse capability projection. The authoritative per-atom
+        projection is GET /api/v1/me/permissions; this object only carries isInstanceAdmin /
+        isInstanceSuper / workspaceAdminOf. The retired role string is never returned (PLAN-0610
+        W3-2b decision #22).
       security: [{ bearerAuth: [] }]
-      responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Problem' } }
+      responses:
+        '200':
+          description: Current user
+          content: { application/json: { schema: { $ref: '#/components/schemas/AuthUser' } } }
+        '401': { $ref: '#/components/responses/Problem' }
   /api/v1/auth/bootstrap-status:
     get:
       tags: [auth]
@@ -2999,24 +3008,113 @@ paths:
         '200': { description: 'Local sink accepted the batch ({"status":"ok"}); central relay is best-effort and server-side' }
         '400': { $ref: '#/components/responses/Problem' }
   /api/v1/config/{domain}:
-    get: { tags: [config], operationId: getConfig, summary: Get merged config of one domain, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }, { in: query, name: layer, required: false, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }, { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }, { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: 'Resolved configuration (env > workspace > user > instance > defaults); layer selects one layer; includeMeta wraps {domain, entries, envOverridden} where envOverridden lists env-effective locked values (decision #22). PLAN-0554: non-admin layer=instance is 403 except explicit-only template domains; non-admin effective reads omit INSTANCE_ONLY_KEYS and instance-only domains, and filter envOverridden.' }, '403': { $ref: '#/components/responses/Problem' } } }
+    get:
+      tags: [config]
+      operationId: getConfig
+      summary: Get config of one domain (merged effective, or one explicit layer)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: domain, required: true, schema: { type: string } }
+        - in: query
+          name: layer
+          required: false
+          schema: { type: string, enum: [instance, user, workspace] }
+          description: 'Omit to read the merged effective view (env > workspace > user > instance > code defaults); set it to read one raw layer. DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).'
+        - { in: query, name: includeMeta, required: false, schema: { type: boolean, default: false } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: >-
+            Resolved configuration. Without includeMeta the body is a flat key -> string map of the
+            selected/merged view; with includeMeta=true it is GetConfigWithMeta ({domain, entries,
+            envOverridden}), where envOverridden lists env-effective locked values (decision #22).
+            D-919 / D-906 (1): the merged read (no layer) is the authority of the user-preference
+            default chain - read it for the effective default and use layer=user to detect whether
+            the user has an override. PLAN-0554: non-admin layer=instance is 403 except explicit-only
+            template domains; non-admin effective reads omit INSTANCE_ONLY_KEYS and instance-only
+            domains, and filter envOverridden.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: object, additionalProperties: { type: string } }
+                  - { $ref: '#/components/schemas/GetConfigWithMeta' }
+        '400':
+          description: 'INVALID_DOMAIN when {domain} is not in the schema-backed domain set (json carries field structure, enum carries the domain list); INVALID_REQUEST when agent-templates / context-templates / api-request-templates are read without an explicit layer.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/{domain}/meta:
     get:
       tags: [config]
       operationId: getConfigMeta
       summary: Read per-key config provenance for one layer (PLAN-0554)
-      description: 'Returns key/source/locked/writable/reason/instanceEligible/defaultPresent/overridable plus PLAN-0556 adminLocked/lockReason. No values are returned. locked means an env overlay wins; adminLocked means an administrator pinned the instance value (env still outranks it) and reason becomes ADMIN_LOCKED. layer=instance is ADMIN only; user/workspace are layer-filtered and exclude instance-only keys. Only the 12 UI domains are accepted; service-only context-templates/pricing return INVALID_DOMAIN. workspace layer requires workspaceId or X-Workspace-Id.'
+      description: >-
+        Returns per-key provenance for one layer: key/source/locked/writable/reason/instanceEligible/
+        defaultPresent/overridable plus PLAN-0556 adminLocked/lockReason. No values are returned.
+        locked means an env overlay wins; adminLocked means an administrator pinned the instance
+        value (env still outranks it) and reason becomes ADMIN_LOCKED.
+
+        Ceiling keys: the 12 instance-only agent-runtime keys (PLAN-0764 M0 guardrail gloss) are
+        instructions, runMaxTurnsCeiling, runMaxElapsedSecondsCeiling, runMaxTokensCeiling,
+        loopRepeatEscalateCeiling, loopErrorRunEscalateCeiling, loopStaleResultEscalateCeiling,
+        loopWindowSizeCeiling, wakeChainMaxDepth, maxConcurrentRunsPerSession,
+        delegationMaxCountCeiling and delegationMaxDepthCeiling. They appear only on the instance
+        layer, with writable=true and overridable=false; the user/workspace layers omit them entirely
+        (CP filters instance-only keys before assembling the per-layer list). Therefore
+        overridable=false on the instance layer is the contracted signal for "instance-only ceiling:
+        cannot be inherited by the user layer"; a client must use that flag instead of maintaining
+        its own ceiling key list. Per-key bounds and units (min/max/unit) are NOT machine-readable in
+        this contract: CP's meta view does not return them today (CP 待实现) - clients must not infer
+        bounds from this document.
+
+        layer=instance is ADMIN only; user/workspace are layer-filtered and exclude instance-only
+        keys. Only the 12 UI domains are accepted; service-only context-templates/pricing return
+        INVALID_DOMAIN. workspace layer requires workspaceId or X-Workspace-Id.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: domain, required: true, schema: { type: string } }
         - { in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'Map of {domain, layer, keys[]} with no config values', content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '200': { description: 'Map of {domain, layer, keys[]} with no config values', content: { application/json: { schema: { $ref: '#/components/schemas/ConfigMetaView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/instance/{domain}:
-    put: { tags: [config], operationId: putInstanceConfig, summary: Write instance-layer config of one domain, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: 'Updated' }, '403': { $ref: '#/components/responses/Problem' }, '409': { description: 'CONFIG_ENV_LOCKED for env-mapped keys; CONFIG_KEY_LOCKED when an administrator locked the key (PLAN-0556) - locked values are writable only through /api/v1/config-locks' } } }
+    put:
+      tags: [config]
+      operationId: putInstanceConfig
+      summary: Write instance-layer config of one domain
+      description: >-
+        Body replaces the listed keys of the instance layer for this domain; values are strings. A
+        unit domain serializes its whole unit as one JSON string: llm-provider profile / imageProfile /
+        imageProvider / modelParams, embedding profile, agent-templates templates and
+        api-request-templates templates / connectionDefaultTemplates / providerModelBindings.
+        imageProfile is instance-layer only - a write outside the instance layer answers 400
+        INVALID_REQUEST. embedding accepts exactly the whole profile unit on each layer (other key
+        sets answer 400 INVALID_REQUEST) and an empty body clears the layer profile so the layer
+        inherits again; blank llm-provider unit values clear that layer row (whole-unit clear
+        semantics). Omitted keys are untouched.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: domain, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: { type: string } }
+      responses:
+        '200':
+          description: Written
+          content: { application/json: { schema: { $ref: '#/components/schemas/ConfigWriteResult' } } }
+        '400':
+          description: 'INVALID_REQUEST - unknown domain, malformed unit JSON, schema validation failure, or an imageProfile write outside the instance layer.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '403':
+          description: 'FORBIDDEN (action-atom gate) or CONFIG_OWNERSHIP_VIOLATION (provider credentials belong to provider_connections).'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
+        '409':
+          description: 'CONFIG_ENV_LOCKED for env-mapped keys; CONFIG_KEY_LOCKED when an administrator locked the key (PLAN-0556) - locked values are writable only through /api/v1/config-locks.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/config/instance/{domain}/{key}:
     delete:
       tags: [config]
@@ -3048,7 +3146,26 @@ paths:
         '200': { description: Updated }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/user/{domain}:
-    put: { tags: [config], operationId: putUserConfig, summary: Write user-layer config of one domain, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: domain, required: true, schema: { type: string } }], responses: { '200': { description: Updated } } }
+    put:
+      tags: [config]
+      operationId: putUserConfig
+      summary: Write user-layer config of one domain
+      description: >-
+        Same body, unit-value and whole-unit clear rules as putInstanceConfig; the row is owned by
+        the authenticated caller. imageProfile is rejected on this layer (400 INVALID_REQUEST).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: domain, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: { type: string } }
+      responses:
+        '200':
+          description: Written
+          content: { application/json: { schema: { $ref: '#/components/schemas/ConfigWriteResult' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config-locks:
     get:
       tags: [config]
@@ -3120,9 +3237,30 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
   /api/v1/config/import:
-    post: { tags: [config], operationId: importConfig, summary: Import a config bundle, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }], responses: { '200': { description: Imported (merge semantics) } } }
+    post:
+      tags: [config]
+      operationId: importConfig
+      summary: Import an instance config bundle
+      description: >-
+        Management plane (instance layer only). The request body is the raw JSONC bundle as text,
+        not a nested JSON object. Import merges domain entries; env-locked keys are skipped with a
+        warning and are never overwritten. Bodies over 1 MiB answer 413.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: layer, required: false, schema: { type: string, enum: [instance], default: instance } }
+      requestBody:
+        required: true
+        description: Raw JSONC bundle text.
+        content: { application/json: { schema: { type: string } } }
+      responses:
+        '200':
+          description: Import report
+          content: { application/json: { schema: { $ref: '#/components/schemas/ConfigImportReport' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
   /api/v1/config/export:
-    get: { tags: [config], operationId: exportConfig, summary: Export the config bundle, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: JSON configuration (plaintext secrets unless includeSecrets=false) } } }
+    get: { tags: [config], operationId: exportConfig, summary: Export the config bundle, security: [{ bearerAuth: [] }], parameters: [{ in: query, name: layer, required: false, schema: { type: string, enum: [instance] } }, { in: query, name: includeSecrets, required: false, schema: { type: boolean, default: true } }], responses: { '200': { description: 'Raw JSONC configuration text (plaintext secrets unless includeSecrets=false); CP serves it with Cache-Control: no-store.' } } }
   # /api/v1/providers removed (PLAN-0307 T2.22): use /api/v1/provider-connections + /api/v1/provider-catalog
   /api/v1/sessions/{sessionId}/messages:
     get:
@@ -5789,6 +5927,58 @@ components:
         instanceCapabilities: { type: array, items: { type: string }, description: 'capability atoms such as instance:super / instance:admin' }
         instancePermissions: { type: array, items: { $ref: '#/components/schemas/MePermissionsAtom' } }
         workspaces: { type: array, items: { $ref: '#/components/schemas/MePermissionsWorkspace' } }
+    GetConfigWithMeta:
+      type: object
+      required: [domain, entries, envOverridden]
+      properties:
+        domain: { type: string }
+        entries: { type: object, additionalProperties: { type: string }, description: 'Key -> string value of the selected/merged view; unit-domain values (llm-provider / embedding / agent-templates / api-request-templates) are JSON strings.' }
+        envOverridden: { type: object, additionalProperties: { type: string }, description: 'Key -> env-effective value for keys an env overlay wins.' }
+    ConfigMetaView:
+      type: object
+      required: [domain, layer, keys]
+      properties:
+        domain: { type: string }
+        layer: { type: string, enum: [instance, user, workspace] }
+        keys: { type: array, items: { $ref: '#/components/schemas/ConfigKeyMeta' } }
+    ConfigKeyMeta:
+      type: object
+      required: [key, source, locked, writable, reason, instanceEligible, defaultPresent, overridable, adminLocked]
+      properties:
+        key: { type: string }
+        source: { type: string, description: 'Resolved provenance of the value (instance|user|workspace|env|default).' }
+        locked: { type: boolean }
+        writable: { type: boolean }
+        reason: { type: [string, 'null'], enum: [ENV_LOCKED, ADMIN_LOCKED, LAYER_NOT_WRITABLE, null], description: 'Why a key is not writable in this layer; null when writable. CP also defines INSTANCE_ONLY internally, but instance-only keys are filtered out of non-instance layers, so that value is not observable today.' }
+        instanceEligible: { type: boolean, description: 'Only meaningful on the instance layer: true when the domain is not an instance-dedicated domain.' }
+        defaultPresent: { type: boolean }
+        overridable: { type: boolean, description: 'Instance layer only: false => the key is INSTANCE_ONLY (ceiling) or the domain is instance-only, so the user/workspace layer cannot override it.' }
+        adminLocked: { type: boolean, description: 'PLAN-0556 administrator lock.' }
+        lockReason: { type: [string, 'null'] }
+    ConfigWriteResult:
+      type: object
+      required: [status, keys]
+      properties:
+        status: { type: string, enum: [ok] }
+        keys: { type: integer, minimum: 0, description: 'Number of top-level keys written.' }
+    ConfigImportReport:
+      type: object
+      required: [status, imported, skipped, warnings]
+      properties:
+        status: { type: string, enum: [ok] }
+        imported: { type: integer, description: 'Number of values imported.' }
+        skipped: { type: integer, description: 'Number of values skipped (env-locked keys and invalid entries).' }
+        warnings: { type: array, items: { type: string } }
+    AuthUser:
+      type: object
+      required: [id, email]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        username: { type: string }
+        name: { type: [string, 'null'] }
+        workspaceId: { type: [string, 'null'], format: uuid, description: 'First active workspace of the account, or null while it has none (PLAN-0614 decision #2).' }
+        capabilities: { $ref: '#/components/schemas/UserCapabilities' }
     UserAdminView:
       type: object
       description: 'PLAN-0581 admin view of an account (list rows and detail share the shape). Deliberately carries no password_hash, token_version or session_version.'

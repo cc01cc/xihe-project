@@ -192,12 +192,12 @@
 | `GET /api/v1/config/embedding/effective` | `getEmbeddingEffectiveProfile` | `bearerAuth` | Read-only effective embedding profile for the settings surface | 公开 |
 | `POST /api/v1/config/embedding/test` | `testEmbeddingProfile` | `bearerAuth` | Probe the resolved embedding profile through the Agent | 公开 |
 | `GET /api/v1/config/export` | `exportConfig` | `bearerAuth` | Export the config bundle | 公开 |
-| `POST /api/v1/config/import` | `importConfig` | `bearerAuth` | Import a config bundle | 公开 |
+| `POST /api/v1/config/import` | `importConfig` | `bearerAuth` | Import an instance config bundle | 公开 |
 | `PUT /api/v1/config/instance/{domain}` | `putInstanceConfig` | `bearerAuth` | Write instance-layer config of one domain | 公开 |
 | `DELETE /api/v1/config/instance/{domain}/{key}` | `deleteInstanceConfig` | `bearerAuth` | Clear one instance-layer default (PLAN-0554) | 公开 |
 | `PUT /api/v1/config/user/{domain}` | `putUserConfig` | `bearerAuth` | Write user-layer config of one domain | 公开 |
 | `PUT /api/v1/config/workspace/{domain}` | `putWorkspaceConfig` | `bearerAuth` | (deprecated) Write one workspace-layer config domain | 公开 |
-| `GET /api/v1/config/{domain}` | `getConfig` | `bearerAuth` | Get merged config of one domain | 公开 |
+| `GET /api/v1/config/{domain}` | `getConfig` | `bearerAuth` | Get config of one domain (merged effective, or one explicit layer) | 公开 |
 | `GET /api/v1/config/{domain}/meta` | `getConfigMeta` | `bearerAuth` | Read per-key config provenance for one layer (PLAN-0554) | 公开 |
 | `PUT /api/v1/config/{layer}/api-request-templates` | `saveApiRequestTemplates` | `bearerAuth` | Save API request templates for one layer | 公开 |
 | `GET /api/v1/context/{sessionId}/sources` | `getContextSources` | `bearerAuth` | Get context sources of one session | 公开 |
