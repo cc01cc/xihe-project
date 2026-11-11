@@ -305,6 +305,10 @@ CP 自有工具（`spawn_agent`、`acquire_credential`、`skill_read`、`git_sta
 
 完整脚本与判据见 [`docs/api/mcp-tools.md`](../../api/mcp-tools.md) §6；该节同时列出当前 6 条已知不一致/待澄清项（其中「`start_background_process` 的 `truncate_limit` 被声明却忽略」那条已按**从 schema 删参数**修复：后台路径不返回输出，输出由 `read_command_output` 分页读、截断由每 stream 1 MiB 保留预算决定）。
 
+**复核记录**：
+
+- **2026-11-11**（base `84221184d`，dev 栈 DOWN）：静态侧重抽 23 个 `#[tool(` 注册点（`:455`–`:806`），名字集与本节 0 冲突、必需参数 0 不一致（对齐表见 `plans/PLAN-0763-XH-api-contract-docs/evidence/m3-tools-snapshot/alignment.md`）；握手字节级对比 blocked-on-stack（全部候选端口不监听，探测记录同目录 `stack-probe.md`）。栈恢复后跑同目录 `mcp-tools-verify.mjs` 即可完成握手侧复核。§7#1（`truncate_limit`）已确认 task-241 修复（摘除 + 三态 Rust 测试钉死，`main.rs:7382-7446`）。
+
 **变更规则**：新增/删除 tool、改 `description`、改 `inputSchema` 都属 tool 面变更，必须同批更新该清单并跑 §6 复核；只改代码不改清单视为文档债。
 
 **三条容易读错的地方**：
