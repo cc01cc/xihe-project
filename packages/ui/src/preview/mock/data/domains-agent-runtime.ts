@@ -1,7 +1,7 @@
 import { writableAtOf, type MockDomain } from "./types";
 
 /**
- * agent-runtime（智能体运行时）—— 单域数据，供设置页域内容区渲染。
+ * agent-runtime（智能体执行参数）—— 单域数据，供设置页域内容区渲染。
  *
  * ## 键集口径
  * 键**只**取自 `packages/control-plane/src/main/resources/config-schemas/agent-runtime.json`
@@ -49,7 +49,7 @@ import { writableAtOf, type MockDomain } from "./types";
 export const domains: MockDomain[] = [
     {
         id: "agent-runtime",
-        label: "智能体运行时",
+        label: "智能体执行参数",
         summary:
             "运行预算、循环检测与并发阀门：多数阈值由实例层定硬上限、用户与工作区只能往下调；另有 12 个键只能在实例层改。",
         layerDerivedOnly: true,

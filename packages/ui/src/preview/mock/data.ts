@@ -82,7 +82,7 @@ const LABELS: Record<string, string> = {
     "context-policy": "上下文策略",
     embedding: "向量化",
     rag: "RAG 检索",
-    "agent-runtime": "智能体运行时",
+    "agent-runtime": "智能体执行参数",
     "agent-profile": "智能体档案",
     "user-preference": "偏好设置",
     logging: "日志",

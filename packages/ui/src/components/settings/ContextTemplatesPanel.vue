@@ -13,6 +13,7 @@ import {
 } from "../../services/apiRequestTemplates";
 import type { ApiInputType } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
+import { formatApiType } from "../../lib/apiTypeLabels";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 const props = defineProps<{
@@ -284,7 +285,7 @@ async function save(publish: boolean) {
                 </SelectTrigger>
                 <SelectContent>
                     <SelectItem v-for="type in types" :key="typeKey(type)" :value="typeKey(type)">
-                        {{ typeKey(type) }}
+                        {{ formatApiType(type.apiTypeId, type.version, t) }}
                     </SelectItem>
                 </SelectContent>
             </Select>
@@ -323,7 +324,7 @@ async function save(publish: boolean) {
             </nav>
             <div v-if="selected" class="min-w-0 space-y-3 p-4">
                 <div class="flex flex-wrap items-center gap-2 text-xs">
-                    <span>{{ selected.apiTypeId }}@{{ selected.apiTypeVersion }}</span>
+                    <span>{{ formatApiType(selected.apiTypeId, selected.apiTypeVersion, t) }}</span>
                     <Select
                         :model-value="String(selected?.version ?? '')"
                         @update:model-value="
