@@ -101,6 +101,8 @@ mx-auto w-full max-w-6xl px-6
 
 ## 5. 验收清单（可直接贴进 PR）
 
+> 截图审阅按六维走：见 `references/review-dimensions.md`（判据正文 = `DEV-011` §11，标准来源 = `DEV-012`「标准与规范」；P0 阻断 / P1 明显 / P2 打磨）。
+
 - [ ] **A1 键集**：页面渲染的字段 == `config-schemas/<domain>.json` 的 `properties` 键集；新增键前先改 CP schema 并给出三层消费方。
 - [ ] **A2 层模型**：层只由路由 `meta.settingsLayer` / `lib/settingsIa.ts` 决定；组件内无第二份层判定；未"恢复"工作区配置层。
 - [ ] **A3 单 Provider**：壳层只有一个 `SidebarProvider`；无第二份折叠状态、无第二份快捷键常量。
