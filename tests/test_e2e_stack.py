@@ -180,7 +180,14 @@ class TestModuleCommunication:
         assert r.status_code == 200
 
     def test_cp_openapi_docs_available(self):
-        """CP OpenAPI 文档可访问。"""
+        """CP OpenAPI 文档可访问（springdoc 面默认关，开了开关才断言可达）。
+
+        与 CP 的 XIHE_SPRINGDOC_ENABLED 同一开关（application.properties）：
+        关 ⇒ skip（默认面就该 404），开 ⇒ 断言 200。不另开口子。
+        """
+        import os
+        if os.environ.get("XIHE_SPRINGDOC_ENABLED", "").lower() not in ("true", "1", "yes"):
+            pytest.skip("springdoc 面默认关闭（XIHE_SPRINGDOC_ENABLED 未开）")
         r = httpx.get(f"{CP_URL}/v3/api-docs", timeout=5)
         assert r.status_code == 200
         data = r.json()
