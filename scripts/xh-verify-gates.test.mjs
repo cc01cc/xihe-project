@@ -380,3 +380,31 @@ describe("task-27 A′：DEFAULT_GATES 补两条缺门", () => {
     }
   });
 });
+
+// —— task-105：resolveWindow 四象限（窗有/无 × run-id 缺省/相等/不等）——
+test("resolveWindow 四象限", async () => {
+  const { resolveWindow } = await import("./xh-verify-gates.mjs");
+  const A = ["VW-20261111-11"];
+  // ① 窗存在 + run-id 缺省 ⇒ 采用窗 id
+  assert.deepEqual(
+    (({ ok, window, effectiveRunId }) => ({ ok, window, effectiveRunId }))(resolveWindow({ activeWindowIds: A })),
+    { ok: true, window: "VW-20261111-11", effectiveRunId: "VW-20261111-11" },
+  );
+  // ② 窗存在 + run-id == 窗 id ⇒ 允许
+  assert.equal(resolveWindow({ activeWindowIds: A, runId: "VW-20261111-11" }).ok, true);
+  // ③ 窗存在 + run-id != 窗 id ⇒ exit 2 且点名两个值
+  const r3 = resolveWindow({ activeWindowIds: A, runId: "other" });
+  assert.equal(r3.ok, false);
+  assert.equal(r3.code, 2);
+  assert.match(r3.message, /other/);
+  assert.match(r3.message, /VW-20261111-11/);
+  // ④ 窗不存在 + run-id 缺省 ⇒ window "none"（断言，不是缺失）
+  const r4 = resolveWindow({});
+  assert.equal(r4.ok, true);
+  assert.equal(r4.window, "none");
+  // ⑤ 窗不存在 + 给了 run-id ⇒ 不覆盖调用方值，仍 window "none"
+  const r5 = resolveWindow({ runId: "caller-id" });
+  assert.equal(r5.window, "none");
+  assert.equal(r5.effectiveRunId, "caller-id");
+  assert.match(r5.note, /不具窗内效力/);
+});
