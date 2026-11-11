@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 
 import { i18n } from "../../../i18n";
+import { expectNoRawI18nKey } from "../../../test-utils/i18nKeys";
 import SkillsPanel from "../SkillsPanel.vue";
 import type { SkillDefinitionDetail, SkillDefinitionSummary } from "../../../composables/api";
 
@@ -66,6 +67,8 @@ describe("SkillsPanel（task-83）", () => {
         expect(item.text()).toContain("commit-msg-review");
         expect(item.text()).toContain("实例");
         expect(item.text()).toContain("≈412");
+        // task-93：整页不许出现裸 i18n 键（夹具缺键 / 用了不存在的键都会在这里红）
+        expectNoRawI18nKey(wrapper.html());
         // 列表阶段绝不能请求正文
         expect(getSkillDefinition).not.toHaveBeenCalled();
     });

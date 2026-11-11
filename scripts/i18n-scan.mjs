@@ -58,7 +58,7 @@ const USAGE = `用法：
   --root <dir>  扫描指定根目录（默认：脚本所在仓库根）
   --help        打印本说明
 
-检查项：两侧键集合差集 / 同键 {placeholder} 漂移 / 源码静态 t("…") 引用 / 未闭合或字面花括号 / 漏译。
+检查项：两侧键集合差集 / 同键 {placeholder} 漂移 / 源码静态 t("…") 引用 / **键样字面量闭合**（task-93）/ 未闭合或字面花括号 / 漏译。
 退出码：0 通过（无输出）；1 发现问题；2 脚本自身或仓库结构问题。`;
 
 const posix = (value) => value.split(sep).join("/");
@@ -155,6 +155,27 @@ function collectSourceFiles(dir, files = []) {
 /** `t("a.b.c")` 静态引用；模板字符串/变量拼接无法静态判定，不计入（也不假报）。 */
 const STATIC_CALL = /\bt\(\s*(["'`])([\w.-]+)\1/g;
 
+/**
+ * 键样字面量（task-93）：`["']` 包起来的、形如 `root.a.b` 的字符串。
+ *
+ * <p>为什么要有这一条：`t()` 的实参常常不是字面量而是**变量**（`t(item.labelKey)`、`t(TABLE[x])`、
+ * `t(helper(code))`），`STATIC_CALL` 看不见它们。但那些变量的**取值几乎总是以字面量形式写在同一份
+ * 源码里**（常量数组、查表、helper 的 `return`、三元分支）—— 所以换个方向查：**长得像键的字面量
+ * 必须两侧都存在**。这样漏写 i18n 键时，红的是"字面量"，不必去追调用链。</p>
+ */
+const KEY_LITERAL = /(["'`])((?:[a-z][\w]*)(?:\.[\w-]+)+)\1/g;
+
+/**
+ * 去注释：块注释、`<!-- -->`、行注释。行注释规则要求 `//` 前面不是引号/冒号，
+ * 免得把 `https://…` 当成注释切掉（本仓源码里有 URL 与 JSON 样板）。
+ */
+function stripComments(text) {
+    return text
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:"'`])\/\/[^\n]*/g, "$1");
+}
+
 function lineOf(text, index) {
     let line = 1;
     for (let i = 0; i < index; i++) if (text[i] === "\n") line++;
@@ -234,6 +255,41 @@ function scan(root) {
         }
     }
 
+    // 检查 4（task-93）：键样字面量闭合。母集 = 两侧 locale 的顶层命名空间（`settings` / `chat` / …），
+    // 只有 root 命中的字面量才进判据，其它带点的字符串（文件名、日志、JSON 路径）不参与。
+    const localeRoots = new Set([...primaryKeys.keys()].map((key) => key.split(".")[0]));
+    let keyLiterals = 0;
+    for (const file of files) {
+        const text = stripComments(readFileSync(file, "utf8"));
+        const rel = posix(relative(root, file));
+        const seen = new Set();
+        for (const match of text.matchAll(KEY_LITERAL)) {
+            const key = match[2];
+            if (!localeRoots.has(key.split(".")[0])) continue;
+            // 模板属性绑定 `:key="workspace.id"` / 内联 `="a.b"`：引号**紧跟** `=` 表示这是表达式字符串，
+            // 不是键。只按「引号前一个字符是 =」判，不按「行里有 =」判 —— 否则 `labelKey: "…"` 会被误放行。
+            const prev = text[match.index - 1] ?? "";
+            if (prev === "=") continue;
+            keyLiterals += 1;
+            const missing = [primary, secondary].filter((locale) =>
+                locale === primary ? !primaryKeys.has(key) : !secondaryKeys.has(key),
+            );
+            if (missing.length === 0) continue;
+            const line = lineOf(text, match.index ?? 0);
+            const id = `${rel}:${line}:${key}`;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            findings.push({
+                kind: "unresolved-key-literal",
+                file: rel,
+                line,
+                key,
+                detail: `字面量 ${key} 在 ${missing.join(" / ")} 里不存在`,
+                missingIn: missing,
+            });
+        }
+    }
+
     return {
         root,
         localeIds,
@@ -242,6 +298,7 @@ function scan(root) {
             secondary: secondaryKeys.size,
             uniqueKeys: new Set([...primaryKeys.keys(), ...secondaryKeys.keys()]).size,
             sourceFiles: files.length,
+            keyLiterals,
         },
         findings,
     };
@@ -250,6 +307,9 @@ function scan(root) {
 function formatFinding(finding) {
     if (finding.kind === "unresolved-t") {
         return `  unresolved-t     ${finding.file}:${finding.line}  ${finding.key}（${finding.detail}）`;
+    }
+    if (finding.kind === "unresolved-key-literal") {
+        return `  unresolved-key   ${finding.file}:${finding.line}  ${finding.key}（${finding.detail}）`;
     }
     if (finding.kind === "missing-key") {
         return `  missing-key      ${finding.locale}  ${finding.key}（${finding.detail}）`;
@@ -307,10 +367,13 @@ function main() {
         process.stdout.write(`i18n-scan: ${result.findings.length} 项问题\n`);
         for (const finding of result.findings) process.stdout.write(formatFinding(finding) + "\n");
         process.stdout.write(
-            `\n口径：两侧键集合必须相等；同键 {placeholder} 集合必须相等；源码 t("…") 的键必须两侧都存在。\n`,
+            `\n口径：两侧键集合必须相等；同键 {placeholder} 集合必须相等；源码 t("…") 的键必须两侧都存在；` +
+                `源码里**长得像键的字面量**（root 命中 locale 顶层命名空间）也必须两侧都存在 —— ` +
+                `后者覆盖 t(变量)/t(查表)/t(helper()) 这类动态实参的取值。\n`,
         );
     }
     return ok ? 0 : 1;
 }
 
 process.exitCode = main();
+

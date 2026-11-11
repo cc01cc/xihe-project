@@ -123,6 +123,82 @@ test("an unresolved static t() reference fails and points at file:line", (t) => 
     assert.match(result.stdout, /chat\.approvalResolvedElsewhereDraftKept/);
 });
 
+test("a key-like literal passed as a variable (t(labelKey)) fails when the key is missing", (t) => {
+    // task-93：这是 ui-1 在 task-87 撞到的真实形态 —— `t(item.labelKey)` 的键是**字面量常量**，
+    // 静态正则 `t("…")` 看不见它。验收判据：漏写 i18n 键要在**定义处**就红，不必追调用链。
+    const root = makeFixture(t, {
+        locale: localeModule({
+            zh: { settings: { ia: { resourceAgents: "智能体" } } },
+            en: { settings: { ia: { resourceAgents: "Agents" } } },
+        }),
+        files: {
+            "packages/ui/src/lib/settingsIa.ts": [
+                "export function instanceResourceGroup() {",
+                "    return [",
+                '        { id: "agents", labelKey: "settings.ia.resourceAgents" },',
+                '        { id: "skills", labelKey: "settings.ia.resourceSkills" },',
+                "    ];",
+                "}",
+                "",
+            ].join("\n"),
+        },
+    });
+
+    const result = run(root);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /unresolved-key/);
+    assert.match(result.stdout, /settingsIa\.ts:4/);
+    assert.match(result.stdout, /settings\.ia\.resourceSkills/);
+});
+
+test("a key-like literal missing on only one side names that locale", (t) => {
+    const root = makeFixture(t, {
+        locale: localeModule({
+            zh: { settings: { skills: { title: "技能" } } },
+            en: { settings: {} },
+        }),
+        files: {
+            "packages/ui/src/components/X.vue":
+                '<template><p>{{ t("settings.skills.title") }}</p></template>\n',
+        },
+    });
+
+    const result = run(root, "--json");
+    assert.equal(result.status, 1);
+    const report = JSON.parse(result.stdout);
+    const finding = report.findings.find((item) => item.kind === "unresolved-key-literal");
+    assert.ok(finding, "应当有 unresolved-key-literal");
+    assert.deepEqual(finding.missingIn, ["en-US"]);
+});
+
+test("template attribute bindings and comments are not key literals (no false positives)", (t) => {
+    // 假阳性会把门禁喂成噪音（本仓实测过：`:key="workspace.id"` 9 处、注释里列状态词表 4 处）。
+    const root = makeFixture(t, {
+        locale: localeModule({
+            zh: { workspace: { name: "工作区" }, chat: { hi: "你好" } },
+            en: { workspace: { name: "Workspace" }, chat: { hi: "Hi" } },
+        }),
+        files: {
+            "packages/ui/src/components/Picker.vue": [
+                "<script setup lang=\"ts\">",
+                "// 词表注释：chat.notAKey / monitor.status 都不是键，只是说明文字",
+                'import { t } from "vue-i18n";',
+                "</script>",
+                "<template>",
+                '    <li v-for="workspace in list" :key="workspace.id">',
+                '        <span :data-testid="`picker-${workspace.name}`">{{ workspace.name }}</span>',
+                "    </li>",
+                "</template>",
+                "",
+            ].join("\n"),
+        },
+    });
+
+    const result = run(root);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout, "");
+});
+
 test("--json returns structured findings with the same verdict", (t) => {
     const root = makeFixture(t, {
         locale: localeModule({ zh: { a: "一" }, en: {} }),
