@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { i18n } from "../../../i18n";
-import { api, type VersionInfo } from "../../../composables/api";
+import { api, ApiError, type VersionInfo } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import MonitoringView from "../MonitoringView.vue";
 
@@ -103,6 +103,27 @@ describe("MonitoringView 版本卡片（BL-530）", () => {
         expect(text).toContain(i18n.global.t("settings.versionNotReported"));
         expect(text).toContain(i18n.global.t("settings.commitNotInjected"));
         expect(text).toContain("0.4.0");
+    });
+
+    it("服务状态加载失败走统一错误面，不直渲原始负载 (F-18)", async () => {
+        mockedApi.getServiceStatus.mockRejectedValue(new Error("network down"));
+        const w = await mountView();
+
+        const panel = w.get('[data-testid="settings-error-panel"]');
+        expect(panel.text()).toContain(i18n.global.t("settings.errorSurface.generic"));
+        expect(w.text()).not.toContain("network down");
+    });
+
+    it("服务状态 404 按后端缺口处理：虚线缺口卡 + 解释弹窗，不出现 mock 标记 (F-18)", async () => {
+        mockedApi.getServiceStatus.mockRejectedValue(
+            new ApiError({ status: 404, code: "MOCK_ENDPOINT_MISSING", requestId: "t" }),
+        );
+        const w = await mountView();
+
+        const gap = w.get('[data-testid="settings-error-gap"]');
+        expect(gap.text()).toContain(i18n.global.t("settings.ia.backendGapBadgeGeneric"));
+        expect(w.text()).not.toContain("MOCK_ENDPOINT_MISSING");
+        expect(w.text()).not.toContain("API error");
     });
 
     it("取版本失败（如 401）：仍走既有错误分支，不影响服务列表渲染", async () => {

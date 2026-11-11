@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ApiError, request } from "../../composables/api";
+import { request } from "../../composables/api";
 import { useAuthStore } from "../../stores/auth";
+import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import { INSTANCE_DOMAINS, type ConfigDomain } from "../../stores/config";
 import {
     Select,
@@ -44,7 +45,7 @@ const domain = ref<ConfigDomain>("rag");
 const catalog = ref<ConfigLockCatalog | null>(null);
 const values = ref<Record<string, string>>({});
 const loading = ref(false);
-const error = ref("");
+const errorCause = ref<unknown | null>(null);
 const notice = ref("");
 
 const selected = ref("");
@@ -61,7 +62,7 @@ const lockedCount = computed(() => catalog.value?.keys.filter((row) => row.locke
 async function load() {
     if (!isAdmin.value) return;
     loading.value = true;
-    error.value = "";
+    errorCause.value = null;
     try {
         const [nextCatalog, nextValues] = await Promise.all([
             request<ConfigLockCatalog>(`/config-locks?domain=${domain.value}`),
@@ -73,17 +74,10 @@ async function load() {
             selected.value = "";
         }
     } catch (cause) {
-        error.value = describe(cause);
+        errorCause.value = cause;
     } finally {
         loading.value = false;
     }
-}
-
-function describe(cause: unknown): string {
-    if (cause instanceof ApiError) {
-        return `${cause.problem.code}: ${cause.problem.detail ?? ""}`.trim();
-    }
-    return cause instanceof Error ? cause.message : String(cause);
 }
 
 function pick(row: ConfigLockKey) {
@@ -91,7 +85,7 @@ function pick(row: ConfigLockKey) {
     formValue.value = values.value[row.key] ?? "";
     formReason.value = row.reason ?? "";
     clearValue.value = false;
-    error.value = "";
+    errorCause.value = null;
     notice.value = "";
 }
 
@@ -104,7 +98,7 @@ async function saveLock() {
     const row = selectedKey.value;
     if (!row || saving.value) return;
     saving.value = true;
-    error.value = "";
+    errorCause.value = null;
     notice.value = "";
     try {
         await request(`/config-locks/${domain.value}/${row.key}`, {
@@ -119,7 +113,7 @@ async function saveLock() {
         notice.value = t("settings.configLockSaved");
         await load();
     } catch (cause) {
-        error.value = describe(cause);
+        errorCause.value = cause;
     } finally {
         saving.value = false;
     }
@@ -129,7 +123,7 @@ async function unlock() {
     const row = selectedKey.value;
     if (!row || saving.value) return;
     saving.value = true;
-    error.value = "";
+    errorCause.value = null;
     notice.value = "";
     try {
         await request(
@@ -140,7 +134,7 @@ async function unlock() {
         selected.value = "";
         await load();
     } catch (cause) {
-        error.value = describe(cause);
+        errorCause.value = cause;
     } finally {
         saving.value = false;
     }
@@ -226,13 +220,11 @@ watch(domain, () => {
                 </button>
             </div>
 
-            <p
-                v-if="error"
-                data-testid="config-lock-error"
-                class="mb-3 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-700"
-            >
-                {{ error }}
-            </p>
+            <SettingsErrorSurface
+                :cause="errorCause"
+                :retry="load"
+                retry-key="settings.errorSurface.refresh"
+            />
             <p
                 v-if="notice"
                 data-testid="config-lock-notice"

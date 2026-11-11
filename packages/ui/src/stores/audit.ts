@@ -44,7 +44,8 @@ export const useAuditStore = defineStore("audit", () => {
         } catch (e) {
             if (token !== requestToken) return;
             entries.value = [];
-            error.value = new Error(e instanceof Error ? e.message : String(e));
+            // task-168（F-18）：保留原始 cause（含 ApiError.problem），错误面自行做缺口/本地化换算。
+            error.value = e instanceof Error ? e : new Error(String(e));
         } finally {
             if (token === requestToken) loading.value = false;
         }
@@ -61,7 +62,8 @@ export const useAuditStore = defineStore("audit", () => {
         } catch (e) {
             if (token !== detailToken) return;
             selectedDetail.value = null;
-            error.value = new Error(e instanceof Error ? e.message : String(e));
+            // task-168（F-18）：保留原始 cause（含 ApiError.problem），错误面自行做缺口/本地化换算。
+            error.value = e instanceof Error ? e : new Error(String(e));
         } finally {
             if (token === detailToken) detailLoading.value = false;
         }

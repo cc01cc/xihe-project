@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
+import SettingsErrorSurface from "../../components/settings/SettingsErrorSurface.vue";
 import SettingsPermissionGate from "../../components/settings/SettingsPermissionGate.vue";
 import { api, type VersionInfo } from "../../composables/api";
 
@@ -25,21 +26,21 @@ const services = ref<ServiceStatus[]>([]),
     overallStatus = ref<string>("loading"),
     lastUpdated = ref<number>(0),
     loading = ref(false),
-    error = ref<string | null>(null),
+    statusCause = ref<unknown | null>(null),
     versionInfo = ref<VersionInfo | null>(null),
     versionError = ref<string | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
 
 async function fetchStatus() {
     loading.value = true;
-    error.value = null;
+    statusCause.value = null;
     try {
         const data = await api.getServiceStatus();
         services.value = data.services;
         overallStatus.value = data.status;
         lastUpdated.value = data.timestamp;
     } catch (e) {
-        error.value = e instanceof Error ? e.message : String(e);
+        statusCause.value = e;
         overallStatus.value = "error";
     } finally {
         loading.value = false;
@@ -194,9 +195,11 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <div v-if="error" class="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-            {{ error }}
-        </div>
+        <SettingsErrorSurface
+            :cause="statusCause"
+            :retry="fetchStatus"
+            retry-key="settings.errorSurface.refresh"
+        />
 
         <div class="mb-4 flex items-center gap-2 text-sm">
             <span
