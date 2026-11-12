@@ -397,7 +397,7 @@ alias = "lint:agent"
 
 [tasks."check:mise-env"]
 run = "node scripts/check-mise-env.mjs"
-description = "env 变量登记门（task-131 v1 report-only）：properties 里 XIHE_* 未登记 ⇒ WARN"
+description = "env 变量登记门（task-131 → task-273 fail-closed）：properties 里 XIHE_* 未登记 ⇒ WARN 且 exit 1"
 
 [tasks."lint:cp"]
 run = "mvn checkstyle:check"
