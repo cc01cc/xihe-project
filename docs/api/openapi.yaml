@@ -1057,7 +1057,7 @@ paths:
     post:
       tags: [credential]
       operationId: revealCredential
-      summary: 'Reveal the plaintext once (credential_reveal@credential:<id> + step-up)'
+      summary: 'Reveal the plaintext — no-store delivery (repeatable reads) (credential_reveal@credential:<id> + step-up)'
       description: 'PLAN-0497 T3.1: user-only credential_reveal intersection, reveal-tier gate, step-up password re-verification throttled at 5 failures / 15 minutes, response Cache-Control: no-store, audit credential_revealed without the value; v1 never creates an approval.'
       security: [{ bearerAuth: [] }]
       parameters:
