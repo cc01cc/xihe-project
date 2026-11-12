@@ -368,7 +368,9 @@ async function confirmDelete(): Promise<void> {
                                 id="instance-mcp-url"
                                 v-model="formUrl"
                                 data-testid="instance-mcp-form-url"
-                                placeholder="https://example.com/mcp"
+                                :placeholder="
+                                    t('settings.instanceResources.mcp.fieldUrlPlaceholder')
+                                "
                             />
                         </div>
                         <div class="space-y-1">

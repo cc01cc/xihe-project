@@ -2769,6 +2769,7 @@ const messages = {
                     fieldNamePlaceholder: "例如：internal-docs",
                     fieldTransport: "传输方式",
                     fieldUrl: "地址",
+                    fieldUrlPlaceholder: "例如：https://example.com/mcp",
                     fieldCredential: "引用凭据",
                     credentialNone: "不引用凭据",
                     credentialHint: "只列出实例凭据：个人凭据不能挂到实例级服务上。",
@@ -6159,6 +6160,7 @@ const messages = {
                     fieldNamePlaceholder: "e.g. internal-docs",
                     fieldTransport: "Transport",
                     fieldUrl: "URL",
+                    fieldUrlPlaceholder: "e.g. https://example.com/mcp",
                     fieldCredential: "Credential",
                     credentialNone: "No credential",
                     credentialHint:
