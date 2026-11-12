@@ -718,11 +718,15 @@ paths:
         decision, not a client choice (same shape as the role surface).
         Definition visibility and the atom-source restriction form one fixed-order chain: a
         workspace-private definition is bindable only inside its own workspace; any other
-        workspace's private definition answers 404 `SKILL_NOT_FOUND` (no existence leak); an
+        workspace-private definition answers 404 `SKILL_NOT_FOUND` (no existence leak); an
         instance-library definition is bindable on either axis, and a workspace-triggered bind
         always writes the current workspace row (never an instance row) — the workspace axis only
         grants atoms of that workspace, and the instance library is already instance-visible, so
         the binding narrows, never widens, the visible surface.
+        A user-scope (personal) definition is never bindable here, on either axis: a principal is
+        not its owner, so the answer is 404 `SKILL_NOT_FOUND`, the same as a missing id — the
+        personal library stays inside its owner's own skill bindings and cannot ride an agent
+        whose prompts another caller can drive.
         A duplicate answers 409 `SKILL_BINDING_EXISTS`, computed per (skill, subject, scopeType,
         scopeId), so an instance row and a workspace row for the same (principal, skill) can
         coexist. A disabled or invisible principal answers 404 `AGENT_PRINCIPAL_NOT_FOUND`.
@@ -5438,7 +5442,7 @@ paths:
       tags: [skill]
       operationId: importSkills
       summary: Import skill definitions (PLAN-0628 D28-17)
-      description: 'Manual import, the only writer of skill definitions. Every bookkeeping field is server-computed and never read from the body: contentHash (sha256 over name/description/body/canonical attachments), bodyTokensEst (codePointCount//2, mirrored by the Agent), oversize (D28-15: above 5000 tokens is MARKED, never rejected and never truncated) and version (bumped only when the content changes). Idempotent by the qualified identity (name + definitionScope): re-importing identical content answers action=unchanged with no write and no version bump, which is what makes "re-import the whole directory" cheap. Item-level problems appear in rejected[] with a stable code and the rest of the batch still applies; only a batch larger than 64 items, or a caller without write rights, fails the whole request. Gates: definitionScope.type=instance requires instance administration, type=workspace requires workspace manage rights or instance administration; trusted=true may only be imported by an instance administrator (D28-09 rule 1) and is otherwise reported as SKILL_TRUSTED_FORBIDDEN.'
+      description: 'Manual import, the only writer of skill definitions. Every bookkeeping field is server-computed and never read from the body: contentHash (sha256 over name/description/body/canonical attachments), bodyTokensEst (codePointCount//2, mirrored by the Agent), oversize (D28-15: above 5000 tokens is MARKED, never rejected and never truncated) and version (bumped only when the content changes). Idempotent by the qualified identity (name + definitionScope): re-importing identical content answers action=unchanged with no write and no version bump, which is what makes "re-import the whole directory" cheap. Item-level problems appear in rejected[] with a stable code and the rest of the batch still applies; only a batch larger than 64 items, or a caller without write rights, fails the whole request. Gates, one per definition scope: type=instance requires instance administration, type=workspace requires workspace manage rights or instance administration, and type=user requires MANAGE_PERSONAL_SKILLS — the only write atom of the personal layer: instance administration (cap:instance:admin, or being ADMIN) deliberately does NOT cover it, D-1007 forbids a second discriminator, and the atom authorizes the caller''s own rows only (definition_scope_id is written from the token, never from the body; there is no member to name another user). MANAGE_PERSONAL_SKILLS is granted to every authenticated user by default — it is a revocable capability grant, not a role test — so personal import works out of the box and a revocation turns it into 403 SKILL_IMPORT_FORBIDDEN. A caller missing it fails the whole request with 403 SKILL_IMPORT_FORBIDDEN and nothing is written, exactly like a non-writer on the other two layers. trusted=true may only be imported by an instance administrator (D28-09 rule 1) and is otherwise reported as SKILL_TRUSTED_FORBIDDEN, unchanged for all three layers.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -5447,7 +5451,7 @@ paths:
         '200': { description: 'Per-skill outcomes, the rejected rows, and a summary', content: { application/json: { schema: { $ref: '#/components/schemas/SkillImportResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'SKILL_IMPORT_FORBIDDEN (no write rights for the target definition scope — the whole request fails and nothing is written) or SKILL_TRUSTED_FORBIDDEN (per-item, trustworthy flag without instance administration)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
   /api/v1/skills:
@@ -5455,10 +5459,10 @@ paths:
       tags: [skill]
       operationId: listSkills
       summary: List the skill definitions the caller may see (PLAN-0628)
-      description: 'Instance-scope definitions are visible to every authenticated caller; a workspace-scope definition is visible only to callers who can see that workspace. The body is never included here (see GET /api/v1/skills/{skillId}?includeBody=true).'
+      description: 'Instance-scope definitions are visible to every authenticated caller; a workspace-scope definition is visible only to callers who can see that workspace; a user-scope definition is visible only to its owner, and `definitionScope` selects exactly one layer, so this listing returns exactly the caller''s own user rows for that layer and never another user''s (no parameter can ask for them). The default (`instance`) listing therefore never contains personal rows: a personal definition cannot leak into the shared library view. The body is never included here (see GET /api/v1/skills/{skillId}?includeBody=true).'
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: query, name: definitionScope, required: false, schema: { type: string, enum: [instance, workspace], default: instance }, description: 'Defaults to the instance library. A workspace listing requires workspaceId and answers an empty set (not 403) when the caller is not a member, so the endpoint is not an existence probe.' }
+        - { in: query, name: definitionScope, required: false, schema: { type: string, enum: [instance, workspace, user], default: instance }, description: 'Defaults to the instance library. A workspace listing requires workspaceId; a user listing takes no id (the caller is the owner) and must not carry workspaceId (400 INVALID_REQUEST). A workspace listing answers an empty set (not 403) when the caller is not a member, so the endpoint is not an existence probe; a user listing never answers another user''s rows at all.' }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Required when definitionScope=workspace' }
       responses:
         '200': { description: 'Visible definitions', content: { application/json: { schema: { $ref: '#/components/schemas/SkillListResponse' } } } }
@@ -5470,7 +5474,7 @@ paths:
       tags: [skill]
       operationId: getSkill
       summary: Read one skill definition (PLAN-0628)
-      description: 'The body is omitted by default because it is the largest column; ?includeBody=true returns it. A workspace-scope definition is answered 404 rather than 403 to a caller who cannot see that workspace, so the endpoint does not become an existence probe.'
+      description: 'The body is omitted by default because it is the largest column; ?includeBody=true returns it. Visibility is per definition scope: a workspace-scope definition is answered 404 SKILL_NOT_FOUND rather than 403 to a caller who cannot see that workspace, a user-scope definition answers 404 SKILL_NOT_FOUND to everyone but its owner, and a missing id answers the same code, so the endpoint does not become an existence probe. Reading one''s own user-scope definition needs authentication only, not MANAGE_PERSONAL_SKILLS: ownership is the read boundary, the atom gates writes.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: skillId, required: true, schema: { type: string, format: uuid } }
@@ -5483,7 +5487,7 @@ paths:
       tags: [skill]
       operationId: deleteSkill
       summary: Delete a skill definition and its bindings (PLAN-0628)
-      description: 'Removes the definition; its bindings cascade (V101 ON DELETE CASCADE). Same write gate as importing into that definition scope. Deleting a definition that is still bound is allowed on purpose: the bindings are the subject of the change, not an obstacle.'
+      description: 'Removes the definition; its bindings cascade (V101 ON DELETE CASCADE). Same write gate as importing into that definition scope — and for the user scope that gate is MANAGE_PERSONAL_SKILLS alone: instance administration does not substitute, because a personal row is never an instance resource. Another user''s user-scope definition answers 404 SKILL_NOT_FOUND (never 403, never 204), the same answer as an unknown id, so the write face does not disclose which personal rows exist. Deleting a definition that is still bound is allowed on purpose: the bindings are the subject of the change, not an obstacle.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: skillId, required: true, schema: { type: string, format: uuid } }
@@ -5510,7 +5514,7 @@ paths:
       tags: [skill]
       operationId: createSkillBinding
       summary: Bind a skill to a subject at a scope (PLAN-0628 D28-14)
-      description: 'Two independent axes: subject (user | agent_principal) × scope (instance | workspace). subjectId is always required — v1 has no "shared with everyone" tier, because role_bindings has the same shape (V87 subject_id NOT NULL). Validation order is fixed and deliberate: existence (404 SKILL_NOT_FOUND) → shape (400 SKILL_BINDING_SCOPE_INVALID) → definition visibility (400 SKILL_DEFINITION_OUT_OF_SCOPE: a workspace-private definition may only be bound inside its own workspace, otherwise it would leak through the binding) → authorization (403 SKILL_BINDING_FORBIDDEN) → subject validity (400 SKILL_BINDING_SUBJECT_INVALID) → duplicate (409 SKILL_BINDING_EXISTS). Authorization deliberately precedes subject validity: otherwise an unauthorized caller could probe whether a user or principal exists (or is disabled) from the difference between two error codes. Gates: instance scope requires instance administration; workspace scope requires workspace manage rights or instance administration; binding another user requires instance administration (binding yourself does not).'
+      description: 'Two independent axes: subject (user | agent_principal) × scope (instance | workspace). subjectId is always required — v1 has no "shared with everyone" tier, because role_bindings has the same shape (V87 subject_id NOT NULL). Validation order is fixed and deliberate: existence (404 SKILL_NOT_FOUND) → shape (400 SKILL_BINDING_SCOPE_INVALID) → definition visibility (400 SKILL_DEFINITION_OUT_OF_SCOPE: a workspace-private definition may only be bound inside its own workspace, otherwise it would leak through the binding) → authorization (403 SKILL_BINDING_FORBIDDEN) → subject validity (400 SKILL_BINDING_SUBJECT_INVALID) → duplicate (409 SKILL_BINDING_EXISTS). Authorization deliberately precedes subject validity: otherwise an unauthorized caller could probe whether a user or principal exists (or is disabled) from the difference between two error codes. Gates: instance scope requires instance administration; workspace scope requires workspace manage rights or instance administration; binding another user requires instance administration (binding yourself does not). The definition-visibility rule generalizes to the personal layer: a user-scope definition may only be bound inside its own visibility domain (subjectType=user with subjectId equal to its owner) and otherwise answers 400 SKILL_DEFINITION_OUT_OF_SCOPE — a binding must never carry a personal definition to someone else, or to an agent principal whose prompts another caller can drive.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -7425,7 +7429,9 @@ components:
           type: [string, 'null']
           description: |
             The three-segment `<subject>:<scope>:<definitionScope>:<name>` address (D28-31); it is
-            always the full form even when the rendered listing line used the bare name.
+            always the full form even when the rendered listing line used the bare name. A personal
+            row renders `user` in that segment, and only the session owner's own user rows can appear
+            in one run's listing, so the address stays unambiguous.
         name: { type: string }
         description: { type: [string, 'null'] }
         version: { type: integer, minimum: 1 }
@@ -7440,12 +7446,12 @@ components:
     ChatRunSkillsSnapshotTier:
       type: object
       additionalProperties: false
-      description: Which binding axis put this entry in the listing (D28-14's two axes).
+      description: Which binding axis put this entry in the listing (D28-14's two axes). `definitionScopeType` is which library the definition itself lives in (instance | workspace | user); the axes are independent, so a personal definition can appear in a run's listing while the binding that put it there is instance- or workspace-scoped.
       required: [subjectType, scopeType, definitionScopeType]
       properties:
         subjectType: { type: string, enum: [agent_principal, user] }
         scopeType: { type: string, enum: [instance, workspace] }
-        definitionScopeType: { type: string, enum: [instance, workspace] }
+        definitionScopeType: { type: string, enum: [instance, workspace, user] }
     PendingApprovalSummary:
       type: object
       required: [sessionId, workspaceId, count, oldestRequestedAt]
@@ -8451,11 +8457,11 @@ components:
       additionalProperties: false
     SkillDefinitionScope:
       type: object
-      description: 'Where a definition is imported INTO. Two rows may share a name across scopes (README frozen #4 "双存"); within one scope the name is unique.'
+      description: 'Where a definition lives: `instance` = the shared library every authenticated caller may see, `workspace` = one workspace, `user` = the caller''s personal library. Three rows may share a name across scopes (README frozen #4 "双存"); within one scope the name is unique, and for `user` that means unique per owner, so two users may each own a skill with the same name (V101 `uq_skills_qualified_name` is (name, definition_scope_type, definition_scope_id)).'
       required: [type]
       properties:
-        type: { type: string, enum: [instance, workspace] }
-        workspaceId: { type: string, format: uuid, description: 'Required when type=workspace' }
+        type: { type: string, enum: [instance, workspace, user], description: '`user` = the personal layer. Its owner is the authenticated caller and is never taken from the body: this schema has no userId member, so no request can address another user''s library (an attempt to add one is rejected by additionalProperties, 400 INVALID_REQUEST).' }
+        workspaceId: { type: string, format: uuid, description: 'Required exactly when type=workspace; must be absent when type=instance or type=user (400 INVALID_REQUEST otherwise). A user-scope row stores the caller''s userId in definition_scope_id, so no id travels on the wire.' }
       additionalProperties: false
     SkillImportItem:
       type: object
