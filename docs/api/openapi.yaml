@@ -949,11 +949,11 @@ paths:
       tags: [credential]
       operationId: listCredentials
       summary: List credential metadata for one owner
-      description: 'PLAN-0496 T3.1: USER owner defaults to the caller; WORKSPACE owner requires membership. Credentials are always owned by a user or a workspace - there is no INSTANCE credential ownership. An INSTANCE provider connection may reference a USER credential of the admin who created it; that credential row stays visible only to its owner, while the shared connection resolves it server-side through short-lived leases. Returns sanitized metadata with reference counts — never ciphertext, suffixes or secret values.'
+      description: 'PLAN-0496 T3.1: USER owner defaults to the caller; WORKSPACE owner requires membership. D-1009 (PLAN-0771 M3): credentials are owned by a user, a workspace, or the instance itself - an INSTANCE row has an empty ownerId (there is no instance owner subject), is managed only by cap:instance:admin, is usable only by instance-level resources (platform agents, the instance MCP registry) and can never be produced by promoting a user/workspace credential; its dedicated entry point is /api/v1/instance/credentials, and ownerType=INSTANCE here selects the same rows (with ownerId omitted - a supplied ownerId answers 400 INVALID_REQUEST, since an instance row has no owner id). An INSTANCE provider connection may reference a USER credential of the admin who created it; that credential row stays visible only to its owner, while the shared connection resolves it server-side through short-lived leases. Returns sanitized metadata with reference counts — never ciphertext, suffixes or secret values.'
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: query, name: ownerType, required: false, schema: { type: string, enum: [USER, WORKSPACE] } }
-        - { in: query, name: ownerId, required: false, schema: { type: string, format: uuid } }
+        - { in: query, name: ownerType, required: false, schema: { type: string, enum: [USER, WORKSPACE, INSTANCE] } }
+        - { in: query, name: ownerId, required: false, schema: { type: string, format: uuid, description: 'Required for USER/WORKSPACE owners. Must be omitted for INSTANCE (an instance row has no owner id); a supplied value answers 400 INVALID_REQUEST.' } }
       responses:
         '200':
           description: Owner-scoped credential summaries
@@ -4869,6 +4869,91 @@ paths:
         '200': { description: Audit entry detail (internal tier), content: { application/json: { schema: { $ref: '#/components/schemas/InternalAuditEntryDetailResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { description: AUDIT_ENTRY_NOT_FOUND (unknown id), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/credentials:
+    get:
+      tags: [credential]
+      operationId: listInstanceCredentials
+      summary: List instance-owned credential metadata (instance admin)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): the deployment itself owns credentials, so this path takes no ownerType/ownerId query - the owner IS the instance (owner_type=INSTANCE, owner_id empty; there is no instance owner subject). Gated by cap:instance:admin (CAP_INSTANCE_ADMIN); any other caller answers 403 FORBIDDEN from the security access-denied handler (no new error code). Returns the same sanitized metadata as GET /api/v1/credentials - labels, kind, delivery tier, fingerprint, reference count - and never ciphertext, suffixes or secret values. Instance credentials are usable only by instance-level resources (platform agents, the instance MCP registry); user/workspace resources cannot reference them, and a lower-layer credential can never be promoted into one (D-1009 2/3).'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 'Instance-owned credential summaries (ownerType=INSTANCE, ownerId null)'
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialList' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — cap:instance:admin (CAP_INSTANCE_ADMIN) missing', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      tags: [credential]
+      operationId: createInstanceCredential
+      summary: Register an instance-owned credential (instance admin + credential_manage)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): creates a NEW secret bound to the instance; ownership is server-derived (owner_type=INSTANCE, owner_id empty) and therefore not part of the body - sending ownerType or ownerId answers 400 INVALID_REQUEST (an instance row has no owner id to address). There is deliberately no promote/import operation: a user or workspace credential can never be turned into an instance one (D-1009 2), so the only way to obtain an instance credential is to register its secret here. Requires cap:instance:admin AND credential_manage@credential:* (the atom layer is unchanged; the instance layer adds the admin gate). The secret payload is encrypted at rest as one envelope and the response never carries plaintext or a suffix.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: 'label/kind/deliveryTier plus the conditional secret (kind=token requires token; kind=key_pair requires accessKey and secretKey). ownerType/ownerId must be absent (400 INVALID_REQUEST otherwise).'
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialCreateRequest' } } }
+      responses:
+        '201':
+          description: 'Created instance credential (sanitized; ownerType=INSTANCE, ownerId null)'
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialView' } } }
+        '400': { description: 'INVALID_REQUEST — shape/secret mismatch for the declared kind, or ownerType/ownerId supplied', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — cap:instance:admin missing or credential_manage@credential:* not granted', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/credentials/{id}:
+    get:
+      tags: [credential]
+      operationId: getInstanceCredential
+      summary: Read one instance-owned credential's metadata (instance admin)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): metadata only (same sanitized projection as the list). A row that is not INSTANCE-owned answers 404 CREDENTIAL_NOT_FOUND - the identical answer a missing row gives - so this surface cannot be used to probe whether a user or workspace credential of that id exists (no cross-owner oracle). Requires cap:instance:admin.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: 'Instance credential metadata (ownerType=INSTANCE, ownerId null)'
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialView' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — cap:instance:admin (CAP_INSTANCE_ADMIN) missing', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'CREDENTIAL_NOT_FOUND — no INSTANCE-owned credential with this id (a user/workspace row answers the same 404)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      tags: [credential]
+      operationId: deleteInstanceCredential
+      summary: Soft-delete an instance-owned credential and return the reference report
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): same semantics as DELETE /api/v1/credentials/{id} - soft delete plus a reference report so callers can warn before the row disappears - with the instance-layer gate added (cap:instance:admin AND credential_manage@credential:<id>). The report lists the consumers that will lose the credential; once M3 lands that includes instance-level ones (platform agents, the instance MCP registry), which are reported rather than silently cascaded. A row that is not INSTANCE-owned answers 404 CREDENTIAL_NOT_FOUND (no cross-owner oracle).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Delete report
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialDeleteReport' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — cap:instance:admin missing or credential_manage@credential:<id> not granted', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'CREDENTIAL_NOT_FOUND — no INSTANCE-owned credential with this id (a user/workspace row answers the same 404)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/credentials/{id}/reveal:
+    post:
+      tags: [credential]
+      operationId: revealInstanceCredential
+      summary: 'Reveal an instance credential once (instance admin + credential_reveal + step-up)'
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): the same step-up / throttle / no-store / audit shape as POST /api/v1/credentials/{id}/reveal, with the instance-layer gate added: cap:instance:admin AND credential_reveal@credential:<id>. There is no owner intersection to apply - the instance has no owner row - so the gate is the atom plus the instance-admin capability, not "the caller owns the row". Step-up password re-verification throttled at 5 failures / 15 minutes, response Cache-Control: no-store, audit credential_revealed without the value; a row that is not INSTANCE-owned answers 404 CREDENTIAL_NOT_FOUND (no cross-owner oracle); v1 never creates an approval.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRevealRequest' } } }
+      responses:
+        '200':
+          description: The plaintext for this response only (no-store)
+          content: { application/json: { schema: { $ref: '#/components/schemas/CredentialRevealView' } } }
+        '400': { description: 'INVALID_REQUEST (malformed body/id) or INVALID_ACTOR', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { description: 'AUTHORIZATION_REQUIRED (unauthenticated) or CREDENTIAL_REVEAL_STEP_UP_FAILED — the step-up password is wrong (audited as credential_reveal_failed)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '403': { description: 'FORBIDDEN (cap:instance:admin or credential_reveal@credential:<id> missing) or CREDENTIAL_DISABLED (credential not active)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'CREDENTIAL_NOT_FOUND (no INSTANCE-owned credential with this id) or USER_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '422': { description: 'CREDENTIAL_TIER_MISMATCH — only reveal-tier credentials can be revealed', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '429': { description: 'CREDENTIAL_REVEAL_RATE_LIMITED — 5 failed step-ups within 15 minutes', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/instance/identity:
     get:
       tags: [admin]
@@ -7652,8 +7737,8 @@ components:
          label: { type: string }
          kind: { type: string, enum: [token, key_pair] }
          deliveryTier: { type: string, enum: [lease, reveal] }
-         ownerType: { type: string, enum: [USER, WORKSPACE] }
-         ownerId: { type: string }
+         ownerType: { type: string, enum: [USER, WORKSPACE, INSTANCE] }
+         ownerId: { type: [string, 'null'], description: 'The owner row id; null for INSTANCE-owned rows (D-1009: an instance credential has no owner id). Present-but-null, never omitted.' }
          status: { type: string, enum: [active, disabled] }
          fingerprint: { type: string }
          revision: { type: integer }

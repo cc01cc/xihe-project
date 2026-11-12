@@ -178,6 +178,16 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         //      \`BL-320 批 N\` 逐条登记在这里，而不是去放宽断言 ----
         // KNOWN_GAPS.put("<shape>", "<batch token>");
 
+        // ---- 计划内契约面（D-932）：契约先落、实现待建；代码落地即**必须**删条目（与 KNOWN_GAPS 生命周期相反）----
+        //      PLAN-0771 M3（D-1009，2026-11-12）：实例凭据存在、owner_type=INSTANCE、owner_id 为空。
+        //      5 条操作只对应 3 个 shape（对比键是归一化纯路径、不带 method，同一 path 的多个 method 共用一个 shape）：
+        //        /api/v1/instance/credentials              ← GET(list) + POST(create)
+        //        /api/v1/instance/credentials/{}           ← GET(one) + DELETE
+        //        /api/v1/instance/credentials/{}/reveal    ← POST(reveal)
+        PLANNED_APIS.put("/api/v1/instance/credentials", "PLAN-0771 M3");
+        PLANNED_APIS.put("/api/v1/instance/credentials/{}", "PLAN-0771 M3");
+        PLANNED_APIS.put("/api/v1/instance/credentials/{}/reveal", "PLAN-0771 M3");
+
         // ---- 参数名豁免当前**为空**：批 2 已把 /api/v1/workspaces/{wsId}/mcp/servers 统一为
         //      {workspaceId}。若再出现"同形状不同变量名"，必须逐条登记并写清"为何运行时等价" ----
         // PARAM_NAME_EXEMPT.put("<shape>", "<reason token>");

@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**334** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 234 · 服务间 100
+- 规模：**339** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 239 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（334 / 334 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（339 / 339 个操作带 tag）。
 
-## public（234 operations · 公开 · 17 tags）
+## public（239 operations · 公开 · 17 tags）
 
 ### auth（11）
 
@@ -224,7 +224,7 @@
 | `GET /api/v1/provider-connections/{connectionId}/delete-impact` | `getProviderDeleteImpact` | `bearerAuth` | Preview the config references a connection delete would cascade away | 公开 |
 | `POST /api/v1/provider-connections/{connectionId}/verify` | `verifyProviderConnection` | `bearerAuth` | Verify a persisted provider connection | 公开 |
 
-### credential（10）
+### credential（15）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -238,6 +238,11 @@
 | `GET /api/v1/credentials/{id}/references` | `getCredentialReferences` | `bearerAuth` | Reference report for one credential | 公开 |
 | `POST /api/v1/credentials/{id}/replace` | `replaceCredentialSecret` | `bearerAuth` | Replace the secret value in place (credential_manage@credential:<id>) | 公开 |
 | `POST /api/v1/credentials/{id}/reveal` | `revealCredential` | `bearerAuth` | Reveal the plaintext once (credential_reveal@credential:<id> + step-up) | 公开 |
+| `GET /api/v1/instance/credentials` | `listInstanceCredentials` | `bearerAuth` | List instance-owned credential metadata (instance admin) | 公开 |
+| `POST /api/v1/instance/credentials` | `createInstanceCredential` | `bearerAuth` | Register an instance-owned credential (instance admin + credential_manage) | 公开 |
+| `GET /api/v1/instance/credentials/{id}` | `getInstanceCredential` | `bearerAuth` | Read one instance-owned credential's metadata (instance admin) | 公开 |
+| `DELETE /api/v1/instance/credentials/{id}` | `deleteInstanceCredential` | `bearerAuth` | Soft-delete an instance-owned credential and return the reference report | 公开 |
+| `POST /api/v1/instance/credentials/{id}/reveal` | `revealInstanceCredential` | `bearerAuth` | Reveal an instance credential once (instance admin + credential_reveal + step-up) | 公开 |
 
 ### mcp（8）
 
