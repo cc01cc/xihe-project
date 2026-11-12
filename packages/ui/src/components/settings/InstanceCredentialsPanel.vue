@@ -70,8 +70,39 @@ import SettingsPermissionGate from "./SettingsPermissionGate.vue";
 const { t, locale } = useI18n();
 const auth = useAuthStore();
 
-/** 实例资源写面 = instance admin（CP 端点级判定；UI 只决定渲染哪一档）。 */
-const canManage = computed(() => auth.isAdmin);
+/**
+ * 读侧（task-69 行 1，PLAN-0767 T3）：镜像 CP **list 面**的门 —— `InstanceCredentialController.java:61`
+ * 只有 `@requesterAuthority.holdsCapabilityAtom('instance:admin')`，没有动作原子（凭据含密文，
+ * 读面比平台智能体严一档，这是 CP 的设计，不是笔误）。
+ *
+ * <p><b>本注释是防删的</b>：`hasInstanceAdminCapability` 单看像 `AGENTS.md` 禁止的
+ * `isInstanceAdmin` 角色特判，其实是 CP 守卫的**前半段忠实镜像**（`cap:instance:admin`）；
+ * 删掉它 = UI 比 CP 宽（无 cap 的人看到列表，点开就 403）。</p>
+ */
+const canRead = computed(() => auth.hasInstanceAdminCapability);
+
+/**
+ * 写侧（task-69 行 1）：CP 是**双门** —— 控制器 `:80`（create）/`:118`（delete）/`:137`（reveal）的
+ * capability **加**服务层动作原子（类头 `:36-38` 契约原文：register 要 `credential_manage@credential:*`、
+ * delete 要 `credential_manage@credential:<id>`、reveal 要 `credential_reveal@credential:<id>`；
+ * 实现见 `policy/CredentialAdminService.java:277,289`）。动作原子这半也必须查，
+ * 否则「有 cap 无 atom」的账号看得到按钮、点下去吃 403。
+ *
+ * <p><b>诚实边界</b>：`@credential:<id>` 是**逐行**收窄，而 `/me/permissions` 投影只给 `actionClass`
+ * （无 resource 粒度）⇒ 拿到 `credential_manage` 但只被授予某几个 id 的账号，UI 仍会比 CP 宽一档。
+ * 这是投影粒度决定的，不是判据写错；要消掉得让投影带 resource（归 0767 的数据面）。</p>
+ */
+const canWrite = computed(
+    () => auth.hasInstanceAdminCapability && auth.hasInstanceAtom("credential_manage"),
+);
+/** reveal 在 CP 是**另一个**原子（`credential_reveal`），不能复用 `canWrite`。 */
+const canReveal = computed(
+    () => auth.hasInstanceAdminCapability && auth.hasInstanceAtom("credential_reveal"),
+);
+
+/** 动作原子名同时是按钮禁用理由的文案参数（与 CP 守卫原文一致，便于对账）。 */
+const writeAtom = "credential_manage";
+const revealAtom = "credential_reveal";
 
 const credentials = ref<InstanceCredential[]>([]);
 const loading = ref(false);
@@ -132,7 +163,7 @@ async function load(): Promise<void> {
 
 /** 能力位是异步到的（`/auth/me`）：用 watch immediate，比 onMounted 更早一档也不重复取数。 */
 watch(
-    canManage,
+    canRead,
     (allowed) => {
         if (allowed) void load();
     },
@@ -232,7 +263,7 @@ async function submitReveal(): Promise<void> {
 
 <template>
     <section data-testid="instance-credentials-panel" class="space-y-4">
-        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="credential_manage" />
+        <SettingsPermissionGate v-if="!canRead" variant="atom-denied" atom="instance:admin" />
 
         <template v-else>
             <header class="flex flex-wrap items-center justify-between gap-2">
@@ -246,12 +277,33 @@ async function submitReveal(): Promise<void> {
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-xs text-muted-foreground">{{ countLabel }}</span>
-                    <Button data-testid="instance-credentials-create" @click="openCreate">
+                    <Button
+                        data-testid="instance-credentials-create"
+                        :disabled="!canWrite"
+                        :title="
+                            canWrite
+                                ? undefined
+                                : t('settings.instanceResources.writeAtomMissing', {
+                                      atom: writeAtom,
+                                  })
+                        "
+                        @click="openCreate"
+                    >
                         <Plus class="size-4" aria-hidden="true" />
                         {{ t("settings.instanceResources.credentials.createCta") }}
                     </Button>
                 </div>
             </header>
+
+            <!-- 无动作原子 ⇒ **disabled 不隐藏**（先例口径 `components/resources/ResourceLayerTabs.vue:74`）：
+                 隐藏会让人以为产品没这个能力，而 CP 说的是「你没这个原子」。 -->
+            <p
+                v-if="!canWrite"
+                data-testid="instance-credentials-write-disabled"
+                class="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+            >
+                {{ t("settings.instanceResources.writeAtomMissing", { atom: writeAtom }) }}
+            </p>
 
             <SettingsErrorSurface :cause="loadCause" :retry="load" />
             <p
@@ -287,7 +339,18 @@ async function submitReveal(): Promise<void> {
                     </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
-                    <Button data-testid="instance-credentials-empty-create" @click="openCreate">
+                    <Button
+                        data-testid="instance-credentials-empty-create"
+                        :disabled="!canWrite"
+                        :title="
+                            canWrite
+                                ? undefined
+                                : t('settings.instanceResources.writeAtomMissing', {
+                                      atom: writeAtom,
+                                  })
+                        "
+                        @click="openCreate"
+                    >
                         <Plus class="size-4" aria-hidden="true" />
                         {{ t("settings.instanceResources.credentials.emptyCta") }}
                     </Button>
@@ -363,8 +426,16 @@ async function submitReveal(): Promise<void> {
                                             variant="ghost"
                                             size="icon-sm"
                                             :data-testid="`instance-credential-reveal-${credential.id}`"
+                                            :disabled="!canReveal"
                                             :title="
-                                                t('settings.instanceResources.credentials.reveal')
+                                                canReveal
+                                                    ? t(
+                                                          'settings.instanceResources.credentials.reveal',
+                                                      )
+                                                    : t(
+                                                          'settings.instanceResources.writeAtomMissing',
+                                                          { atom: revealAtom },
+                                                      )
                                             "
                                             @click="openReveal(credential)"
                                         >
@@ -374,7 +445,15 @@ async function submitReveal(): Promise<void> {
                                             variant="ghost"
                                             size="icon-sm"
                                             :data-testid="`instance-credential-delete-${credential.id}`"
-                                            :title="t('settings.instanceResources.delete')"
+                                            :disabled="!canWrite"
+                                            :title="
+                                                canWrite
+                                                    ? t('settings.instanceResources.delete')
+                                                    : t(
+                                                          'settings.instanceResources.writeAtomMissing',
+                                                          { atom: writeAtom },
+                                                      )
+                                            "
                                             @click="requestDelete(credential)"
                                         >
                                             <Trash2 class="size-3.5" aria-hidden="true" />

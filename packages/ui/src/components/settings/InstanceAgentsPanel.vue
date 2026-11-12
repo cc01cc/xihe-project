@@ -45,7 +45,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
-import SettingsPermissionGate from "./SettingsPermissionGate.vue";
 
 /**
  * task-165 · 实例层「平台智能体」面板（`/settings/instance/agents`）。
@@ -61,7 +60,27 @@ import SettingsPermissionGate from "./SettingsPermissionGate.vue";
 const { t, locale } = useI18n();
 const auth = useAuthStore();
 
-const canManage = computed(() => auth.isAdmin);
+/**
+ * 写侧（task-69 行 2，PLAN-0767 T3/T4）：CP 写面是**双门** ——
+ * `InstanceAgentPrincipalController.java:60-62` 的 `INSTANCE_PRINCIPAL_WRITE_GATE`
+ * = `holdsCapabilityAtom('instance:admin')` **and** `holdsActionAtom('MANAGE_AGENT_PRINCIPALS')`
+ * （`:94` POST，PATCH/DELETE 同）。两半都要查，只查前半就是「有 cap 无 atom 的人能点、点下去 403」。
+ *
+ * <p><b>本注释是防删的</b>：`hasInstanceAdminCapability` 单看像 `AGENTS.md` 禁止的
+ * `isInstanceAdmin` 角色特判，其实它是 CP 双门**前半段的忠实镜像**（`cap:instance:admin`），
+ * 删掉它 = UI 比 CP 宽。</p>
+ *
+ * <p><b>读侧故意没有判据</b>（这是本卡与行 1 不同之处）：CP 读面是 `@PreAuthorize("isAuthenticated()")`
+ * （同文件 `:74-75`，类头 `:33-36`「any authenticated caller sees the same list an instance admin
+ * sees」）⇒ 平台智能体列表对**任何登录用户**都可见。此前用能力位把整块面板挡在 403 卡后面，
+ * 属 **UI 比 CP 严** —— 藏了用户本来能看的东西（与 R10 同侧，比「宽」更难发现：用户不会报错，只会说看不到）。</p>
+ */
+const canWrite = computed(
+    () => auth.hasInstanceAdminCapability && auth.hasInstanceAtom("MANAGE_AGENT_PRINCIPALS"),
+);
+
+/** 动作原子名同时也是按钮禁用理由的文案参数（与 CP 守卫原文一致，便于对账）。 */
+const writeAtom = "MANAGE_AGENT_PRINCIPALS";
 
 const agents = ref<InstanceAgent[]>([]);
 const loading = ref(false);
@@ -99,10 +118,11 @@ async function load(): Promise<void> {
     }
 }
 
+/** 读面只受「已登录」约束（CP `:74-75`），所以不再等能力位到达才取数。 */
 watch(
-    canManage,
-    (allowed) => {
-        if (allowed) void load();
+    () => auth.isAuthenticated,
+    (authenticated) => {
+        if (authenticated) void load();
     },
     { immediate: true },
 );
@@ -161,12 +181,12 @@ async function confirmDelete(): Promise<void> {
             （`PermissionAtomCatalog` 无条目，openapi 也不出现），用户照文案去申请权限会找不到。
             改成 CP 守卫原文：`InstanceAgentPrincipalController.java:60-62` 的
             `INSTANCE_PRINCIPAL_WRITE_GATE = holdsCapabilityAtom('instance:admin') and holdsActionAtom('MANAGE_AGENT_PRINCIPALS')`，
-            本面板的门槛（`canManage = auth.isAdmin`，即能力位）对应前半段，所以文案点名能力位原文；
-            动作原子 `MANAGE_AGENT_PRINCIPALS` 同时写进说明，避免读者以为只要能力位就够。
+            task-69 后本面板的两面各查一半，别按旧注释理解：
+            **读面没有门槛**（CP 是 `isAuthenticated()`，同文件 `:74-75`）；**写面 = `canWrite`**
+            = 能力位 `hasInstanceAdminCapability` **and** 原子 `MANAGE_AGENT_PRINCIPALS`，正好是上面那道
+            双门的前后半段。文案两个都点名，避免读者以为只要能力位就够。
         -->
-        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="instance:admin" />
-
-        <template v-else>
+        <template v-if="auth.isAuthenticated">
             <header class="flex flex-wrap items-center justify-between gap-2">
                 <div class="min-w-0">
                     <h2 class="text-base font-medium" data-testid="instance-agents-heading">
@@ -178,12 +198,33 @@ async function confirmDelete(): Promise<void> {
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-xs text-muted-foreground">{{ countLabel }}</span>
-                    <Button data-testid="instance-agents-create" @click="openCreate">
+                    <Button
+                        data-testid="instance-agents-create"
+                        :disabled="!canWrite"
+                        :title="
+                            canWrite
+                                ? undefined
+                                : t('settings.instanceResources.writeAtomMissing', {
+                                      atom: writeAtom,
+                                  })
+                        "
+                        @click="openCreate"
+                    >
                         <Plus class="size-4" aria-hidden="true" />
                         {{ t("settings.instanceResources.agents.createCta") }}
                     </Button>
                 </div>
             </header>
+
+            <!-- 无动作原子 ⇒ **disabled 不隐藏**（先例口径 `components/resources/ResourceLayerTabs.vue:74`）：
+                 隐藏会让人以为产品没这个能力，而 CP 说的是「你没这个原子」。 -->
+            <p
+                v-if="!canWrite"
+                data-testid="instance-agents-write-disabled"
+                class="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+            >
+                {{ t("settings.instanceResources.writeAtomMissing", { atom: writeAtom }) }}
+            </p>
 
             <SettingsErrorSurface :cause="loadCause" :retry="load" />
             <p
@@ -214,7 +255,18 @@ async function confirmDelete(): Promise<void> {
                     </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
-                    <Button data-testid="instance-agents-empty-create" @click="openCreate">
+                    <Button
+                        data-testid="instance-agents-empty-create"
+                        :disabled="!canWrite"
+                        :title="
+                            canWrite
+                                ? undefined
+                                : t('settings.instanceResources.writeAtomMissing', {
+                                      atom: writeAtom,
+                                  })
+                        "
+                        @click="openCreate"
+                    >
                         <Plus class="size-4" aria-hidden="true" />
                         {{ t("settings.instanceResources.agents.emptyCta") }}
                     </Button>
@@ -278,7 +330,15 @@ async function confirmDelete(): Promise<void> {
                                             variant="ghost"
                                             size="icon-sm"
                                             :data-testid="`instance-agent-delete-${agent.id}`"
-                                            :title="t('settings.instanceResources.delete')"
+                                            :disabled="!canWrite"
+                                            :title="
+                                                canWrite
+                                                    ? t('settings.instanceResources.delete')
+                                                    : t(
+                                                          'settings.instanceResources.writeAtomMissing',
+                                                          { atom: writeAtom },
+                                                      )
+                                            "
                                             @click="deleteTarget = agent"
                                         >
                                             <Trash2 class="size-3.5" aria-hidden="true" />

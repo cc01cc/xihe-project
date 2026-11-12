@@ -2698,6 +2698,7 @@ const messages = {
                 columnCreated: "创建时间",
                 columnUpdated: "更新时间",
                 columnActions: "操作",
+                writeAtomMissing: "当前账号缺动作原子 {atom}（CP 写面要它，这里只禁用不隐藏）",
                 credentials: {
                     title: "实例凭据",
                     subtitle:
@@ -6080,6 +6081,8 @@ const messages = {
                 columnCreated: "Created",
                 columnUpdated: "Updated",
                 columnActions: "Actions",
+                writeAtomMissing:
+                    "This account lacks the action atom {atom} (CP requires it on writes; disabled, not hidden)",
                 credentials: {
                     title: "Instance credentials",
                     subtitle:

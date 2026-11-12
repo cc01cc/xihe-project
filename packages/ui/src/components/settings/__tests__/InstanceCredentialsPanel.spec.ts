@@ -9,14 +9,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * ②非管理员拿到 **403 卡片**（`settings-atom-denied`）而**不是**信息条，且**一个请求都不发**；
  * ③空态有出口（`instance-credentials-empty-create`）——「空态没有出口」是用户点名的老毛病。</p>
  *
- * <p>auth 用一个只有 `isAdmin` 的桩：本面板对鉴权面的唯一依赖就是这个能力位投影
- * （`stores/auth.ts:70` 的 `isAdmin` = `capabilities.isInstanceAdmin`，不是角色字符串），
- * 挂真 store 只会引入与判据无关的 `/auth/me` 取数噪音。</p>
+ * <p>task-69：鉴权面是**两件**——能力位（CP list 面的门，`InstanceCredentialController.java:61`）
+ * 与动作原子（CP 写面的第二道门，`CredentialAdminService.java:277`）。桩按 CP 守卫的形状给，
+ * 不按组件内部变量名给；挂真 store 只会引入与判据无关的 `/auth/me` 取数噪音。</p>
  */
-const authState = vi.hoisted(() => ({ isAdmin: true }));
+const authState = vi.hoisted(() => ({
+    isAdmin: true,
+    atoms: new Set<string>(["credential_manage", "credential_reveal"]),
+}));
 
 vi.mock("../../../stores/auth", () => ({
-    useAuthStore: () => authState,
+    useAuthStore: () => ({
+        hasInstanceAdminCapability: authState.isAdmin,
+        hasInstanceAtom: (atom: string) => authState.atoms.has(atom),
+    }),
 }));
 
 vi.mock("vue-sonner", () => ({
@@ -75,6 +81,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
     authState.isAdmin = true;
+    authState.atoms = new Set(["credential_manage", "credential_reveal"]);
     mockedList.mockResolvedValue({ credentials: [], count: 0 });
 });
 
@@ -131,6 +138,37 @@ describe("InstanceCredentialsPanel", () => {
         expect(wrapper.find('[data-testid="instance-credentials-panel"]').exists()).toBe(true);
         // 主体不挂载 ⇒ 不发无谓请求。
         expect(mockedList).not.toHaveBeenCalled();
+
+        wrapper.unmount();
+    });
+
+    /**
+     * 负例（Lead 指定口径：「无 atom ⇒ disabled 不隐藏」，先例 `ResourceLayerTabs.vue:74`）——
+     * 有 `cap:instance:admin`（所以列表读得到），但**缺** `credential_manage` / `credential_reveal`：
+     * 按钮必须在、点不动，并点名缺哪个原子。
+     * 反向断言（隐藏按钮）会红：隐藏等于告诉用户「产品没这个能力」，而 CP 说的是「你没这个原子」。
+     */
+    it("有 cap 无动作原子：写与揭示按钮 disabled 不隐藏，且理由点名各自原子", async () => {
+        authState.atoms = new Set<string>();
+        mockedList.mockResolvedValue({
+            credentials: [credential("cred-1", "内部 MCP 网关")],
+            count: 1,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="instance-credentials-table"]').exists()).toBe(true);
+        const create = wrapper.find('[data-testid="instance-credentials-create"]');
+        const reveal = wrapper.find('[data-testid="instance-credential-reveal-cred-1"]');
+        const del = wrapper.find('[data-testid="instance-credential-delete-cred-1"]');
+        for (const button of [create, reveal, del]) {
+            expect(button.exists()).toBe(true);
+            expect(button.isVisible()).toBe(true);
+            expect(button.attributes("disabled")).toBeDefined();
+        }
+        const notice = wrapper.find('[data-testid="instance-credentials-write-disabled"]');
+        expect(notice.exists()).toBe(true);
+        expect(notice.text()).toContain("credential_manage");
 
         wrapper.unmount();
     });
