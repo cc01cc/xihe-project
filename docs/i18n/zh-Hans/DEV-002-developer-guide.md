@@ -403,6 +403,15 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - **agent principal**：建 session 必须带 `agentPrincipalId`；按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。诊断只输出白名单状态字段，不打印 Agent 原始日志。
 - **模板与连接前置（PLAN-0601）**：B 档要求 Session 显式绑定「已发布 api-request-template 三元组 + chat provider connection」。CLI 自动解析（`GET /api/v1/config/api-request-templates?layer=user|workspace|instance` 取 published 且与连接 API Type 对齐的模板；连接取 `GET /api/v1/provider-connections` 中 `status=READY` 且 `operation=chat` 的一条），并在建 session 时带上 `providerConnectionId` / `modelProvider` / `modelName` / `contextTemplateLayer|Id|Version`。缺模板报 `VERIFY_TEMPLATE_MISSING`、缺连接报 `VERIFY_CONNECTION_MISSING`（均 exit 2 并给出发布/建连的可操作提示），不再以裸 `409 API_TYPE_REBIND_REQUIRED` 失败；模板发布是 ADMIN 实例层操作（设置页 → 配置 → API 请求模板 → 发布）。
 
+### dev:host 与 dev:stack 的语义差别（2026-11-12 实测口径）
+
+- **`dev:host`**：**前台**在当前终端跑 4 个服务（CP/Agent/Runtime/UI），**不写 `lease` / `pidFile`**；记账（`.xihe-stacks/<n>/`）只由 detached supervisor 写。
+- **`dev:stack`**（= `node scripts/dev-stack.mjs start`）：**detached** 启动，**写租约**，进程与终端脱钩；中途关终端不影响服务。
+- **因此**：用 `dev:host` 起过一轮后再看状态，`dev-stack status` 会先报 **`orphan` + `lease-pid-dead`**（服务 4/4 在听，但租约指向已死的旧 pid）。**这不是故障**，执行 `node scripts/dev-stack.mjs acquire --stack 1` 认领后即回到 `healthy`。
+- **`--stack` 同 flag 两语义（易踩）**：
+  - `scripts/dev-stack.mjs --stack 1` ⇒ **栈号**，租约落 `.xihe-stacks/1/`；
+  - `scripts/cp-build-clean.mjs --stack stack-1` ⇒ **目录名**；若误写 `--stack 1`，会**静默空转 exit 0**并打印 `nothing to prune`（依据 `planForStack:72` 的 `join(root, stackId)`），不报错、不提示。
+
 ### `dev-stack` 状态与租约契约（PLAN-0694）
 
 `node scripts/dev-stack.mjs`（verbs 用法见 §3 模式 A2）自 PLAN-0694 起用**租约**记录"这栈是谁起的"，`status` 对**每个**租约字段做一次**独立于租约本身**的事实核对。判据方向是单向的：**事实压过意图**——租约说什么不重要，端口/进程/心跳核得上才算数（"没人校验的字段等于注释"）。

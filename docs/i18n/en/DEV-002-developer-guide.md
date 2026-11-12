@@ -322,6 +322,15 @@ mise run pkg:installer                                  # NSIS build from the fo
 - **Sweep scope:** `mise run clean:runtime-sweep` only touches the single target resolved by the current `cargo metadata` (under `mise run` = the wrapper-injected `<root>/[<worktree-dir>/]main`; in a plain shell = in-tree or the external dir from the ONE-side convention); it never scans other projects under `.local/cargo-target`. `--maxsize 12GB` is interpreted as MiB (≈11.18 GiB).
 - **Permanent delete:** `mise run clean` runs `rm -rf logs packages/*/target packages/*/dist packages/*/coverage` with **no recycle bin and no prompt**; stop builds/services and confirm those are rebuildable artifacts first. Treat caches as "delete and rebuild", not cross-drive backup.
 
+### dev:host vs dev:stack — leases and the two meanings of `--stack` (measured 2026-11-12)
+
+- **`dev:host`** runs the four services (CP/Agent/Runtime/UI) **in the current terminal** and **writes no `lease` / `pidFile`**; bookkeeping under `.xihe-stacks/<n>/` is written only by the detached supervisor.
+- **`dev:stack`** (= `node scripts/dev-stack.mjs start`) starts **detached**, **writes the lease**, and outlives the terminal.
+- **Consequence**: after a `dev:host` session, `dev-stack status` first reports **`orphan` + `lease-pid-dead`** (4/4 services listening, lease pointing at a dead pid). That is **not a fault** — run `node scripts/dev-stack.mjs acquire --stack 1` to reclaim it and get back to `healthy`.
+- **One flag, two meanings (`--stack`)**:
+  - `scripts/dev-stack.mjs --stack 1` ⇒ **stack number**, lease under `.xihe-stacks/1/`;
+  - `scripts/cp-build-clean.mjs --stack stack-1` ⇒ **directory name**; passing `--stack 1` **silently no-ops with exit 0** and prints `nothing to prune` (`planForStack:72`, `join(root, stackId)`) — no error, no hint.
+
 ### 2.5. Configuration Management (PLAN-042)
 
 #### Architecture Overview
