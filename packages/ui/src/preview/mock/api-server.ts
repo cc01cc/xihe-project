@@ -4,6 +4,7 @@ import { CONFIG_SCHEMA_CATALOG } from "../../lib/configSchemaCatalog";
 import { MOCK_VALUES } from "./data/mockValues";
 import { mockSkillDefinition, mockSkillDefinitions } from "./data/skills";
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
+import { handleInstanceResource } from "./data/instanceResources";
 
 /**
  * task-137 rev2（Lead 2026-11-11 拍板）：**真实 UI + mock 数据** —— 数据在**网络层** mock。
@@ -235,6 +236,58 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         });
                     }
                     return respond(200, detail);
+                }
+                // task-165：实例层三资源（D-1008：`/api/v1/instance/<资源>`）。
+                // 判定与内存集合在 data/instanceResources.ts —— 这里只做一次 dispatch，
+                // 免得 1000+ 行的 if 链再长 13 条。只接这三段，**不接** `/instance/` 全部：
+                // `/instance/identity`、`/instance/owner` 等既有端点不能被这层抢走。
+                if (/^\/instance\/(credentials|agents|mcp)(\/|$)/.test(path)) {
+                    const instanceMethod = req.method ?? "GET";
+                    const readJsonBody = (): Promise<Record<string, unknown>> =>
+                        new Promise((resolveBody) => {
+                            let raw = "";
+                            req.on("data", (chunk: unknown) => {
+                                raw += String(chunk);
+                            });
+                            req.on("end", () => {
+                                try {
+                                    resolveBody(
+                                        raw ? (JSON.parse(raw) as Record<string, unknown>) : {},
+                                    );
+                                } catch {
+                                    // 坏 JSON 不该把 mock lane 打挂：按空体处理，交给判定回 400。
+                                    resolveBody({});
+                                }
+                            });
+                        });
+                    void handleInstanceResource(instanceMethod, path, readJsonBody)
+                        .then((result) => {
+                            if (!result) {
+                                return respond(404, {
+                                    type: "about:blank",
+                                    title: "Not Found",
+                                    status: 404,
+                                    code: "INSTANCE_ENDPOINT_MISSING",
+                                    requestId: "mock-request",
+                                });
+                            }
+                            options.log?.(
+                                `[mock-api] ${instanceMethod} ${path} → ${result.status}`,
+                            );
+                            return result.status === 204
+                                ? respond(204, null)
+                                : respond(result.status, result.body);
+                        })
+                        .catch((cause: unknown) => {
+                            options.log?.(
+                                `[mock-api] ${instanceMethod} ${path} 处理失败：${String(cause)}`,
+                            );
+                            respond(500, {
+                                code: "MOCK_HANDLER_FAILED",
+                                requestId: "mock-request",
+                            });
+                        });
+                    return;
                 }
                 if (path === "/user-events") {
                     // 最小 SSE stub：首帧 event: connected 后保持连接。**不能回 404** ——

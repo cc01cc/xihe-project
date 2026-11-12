@@ -155,6 +155,28 @@ const router = createRouter({
                     component: () => import("../views/settings/SkillsView.vue"),
                     meta: { settingsLayer: "instance" },
                 },
+                // task-165（D-1006/D-1008/D-1009）：实例层三资源页，与 skills 同构 ——
+                // 路径放在 `instance/` 段下，但**不是**层×域配置矩阵的一员（D-1006 B6：
+                // `INSTANCE_DOMAINS` 仍 12 项，资源面不进矩阵）。因此这里手写三条、不经
+                // `LAYER_DOMAINS.instance` 的 spread；层仍由 `meta.settingsLayer` 决定。
+                {
+                    path: "instance/credentials",
+                    name: "settings-instance-credentials",
+                    component: () => import("../views/settings/InstanceCredentialsView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
+                {
+                    path: "instance/agents",
+                    name: "settings-instance-agents",
+                    component: () => import("../views/settings/InstanceAgentsView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
+                {
+                    path: "instance/mcp",
+                    name: "settings-instance-mcp",
+                    component: () => import("../views/settings/InstanceMcpView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
                 {
                     path: "config-locks",
                     name: "settings-config-locks",

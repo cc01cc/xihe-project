@@ -109,6 +109,11 @@ const SHOTS = [
     // task-146 修复后补的第 7 张：实例层 embedding 面板现在显示真实 profile 解析结果
     // （嵌入连接 / 模型 / 维度 / 生效层 / 模型来源 + 生效来源表），无需展开分组。
     { id: "07", name: "embedding", path: "/settings/instance/embedding", app: true },
+    // task-165：实例层三资源页（真路由 + 真组件；数据来自 preview/mock 的 /instance/* 端点，
+    // 见 data/instanceResources.ts）。左栏入口也在真组件里渲染，所以图能同时证明「导航项存在」。
+    { id: "08", name: "instance-credentials", path: "/settings/instance/credentials", app: true },
+    { id: "09", name: "instance-agents", path: "/settings/instance/agents", app: true },
+    { id: "10", name: "instance-mcp", path: "/settings/instance/mcp", app: true },
 ];
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);

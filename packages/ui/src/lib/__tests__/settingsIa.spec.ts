@@ -183,7 +183,7 @@ describe("instance ops groups", () => {
     });
 });
 describe("settings IA resource groups (PLAN-0752 T4.0/T4.1)", () => {
-    it("instance layer keeps 4 gap slots and exactly one real entry (skills, task-83)", () => {
+    it("instance layer has four real entries (agents/mcp/credentials/skills) and one gap (knowledge)", () => {
         const items = instanceResourceGroup();
         expect(items.map((item) => item.id)).toEqual([
             "agents",
@@ -192,24 +192,38 @@ describe("settings IA resource groups (PLAN-0752 T4.0/T4.1)", () => {
             "skills",
             "knowledge",
         ]);
-        // D7：留位标缺口，不隐藏 —— 4 条缺口都没有 path（没有后端承载就没有可跳的页面）
+        // task-165（D-1006/D-1008/D-1009）：agents/mcp/credentials 三条**转真**（与 task-83 的
+        // skills 同一手法「转真就摘缺口」）⇒ 只剩 knowledge 仍是缺口（G3：CP 无库实体）。
         const gapped = items.filter((item) => (item.gaps ?? []).length > 0);
-        expect(gapped.map((item) => item.id)).toEqual([
-            "agents",
-            "mcp",
-            "credentials",
-            "knowledge",
-        ]);
+        expect(gapped.map((item) => item.id)).toEqual(["knowledge"]);
         expect(gapped.every((item) => item.path === undefined)).toBe(true);
-        expect(gapped.flatMap((item) => item.gaps ?? [])).toEqual(["G4", "G1", "G2", "G3"]);
+        expect(gapped.flatMap((item) => item.gaps ?? [])).toEqual(["G3"]);
         expect(gapped.every((item) => !!item.gapNoteKey)).toBe(true);
-        // task-83：技能是这一组里唯一后端已就绪的（`GET /skills` 默认 instance scope）⇒
-        // 真入口，且**不带**缺口标记（与用户层 agent-principals「转真就摘缺口」一致）。
+        // 真入口：路径必须落在实例层的资源段下（**不是**层×域矩阵的 `instance/<domain>`——
+        // 资源面不进矩阵，D-1006 B6；这里只是同样的 URL 外观）。
         const real = items.filter((item) => item.path);
-        expect(real.map((item) => item.id)).toEqual(["skills"]);
-        expect(real.map((item) => item.path)).toEqual(["/settings/skills"]);
-        expect(real[0]?.gaps).toBeUndefined();
-        expect(real[0]?.gapNoteKey).toBeUndefined();
+        expect(real.map((item) => item.id)).toEqual(["agents", "mcp", "credentials", "skills"]);
+        expect(real.map((item) => item.path)).toEqual([
+            "/settings/instance/agents",
+            "/settings/instance/mcp",
+            "/settings/instance/credentials",
+            "/settings/skills",
+        ]);
+        expect(real.every((item) => item.gaps === undefined)).toBe(true);
+        expect(real.every((item) => item.gapNoteKey === undefined)).toBe(true);
+    });
+
+    it("task-165: 三条转真的资源路径与路由表一致（资源面不进层×域矩阵）", () => {
+        // 判据：`instanceResourceGroup()` 给的 path 必须能被路由解析，且**不是**配置域路由。
+        const items = instanceResourceGroup().filter((item) =>
+            item.path?.startsWith("/settings/instance/"),
+        );
+        expect(items.map((item) => item.id)).toEqual(["agents", "mcp", "credentials"]);
+        const domains = domainsForLayer("instance") as readonly string[];
+        for (const item of items) {
+            const rest = (item.path ?? "").replace("/settings/instance/", "");
+            expect(domains).not.toContain(rest);
+        }
     });
 
     it("user layer has two real resource entries and one gapped one (PLAN-0750 M3)", () => {

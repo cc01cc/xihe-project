@@ -200,11 +200,20 @@ export interface ResourceNavItem {
 }
 
 /**
- * 实例层「资源」组（design §3.2 第 2 行：资源 0 条目、4 个缺口位）。
+ * 实例层「资源」组（design §3.2 第 2 行；task-165 起 **4 条真入口 + 1 个缺口位**）。
  *
- * <p>4 条与 audit §F 的对应：MCP=G1（表 `workspace_id NOT NULL` 无实例/用户层）、
+ * <p>四条与 audit §F 的对应：MCP=G1（表 `workspace_id NOT NULL` 无实例/用户层）、
  * 凭据=G2（`owner_type` 只有 USER/WORKSPACE）、知识库=G3（CP 无库实体、只有 4 个代理端点）、
  * 智能体=G4（CP 无 tools/agent 注册实体，只有分类与工作区绑定）。</p>
+ *
+ * <p><b>task-165（D-1006/D-1007/D-1008/D-1009）把 G1/G2/G4 转真</b>：`owner_type` 增
+ * `INSTANCE`（D-1007）、wire 采 `/api/v1/instance/<资源>`（D-1008）、实例凭据存在且只服务实例级
+ * 资源（D-1009）。⇒ 按 skills 的先例「**转真就摘缺口**」：去掉 `gaps`/`gapNoteKey`、给真
+ * `path`，条目从「虚线徽标灰显」变成 `router-link`（形态由 `SettingsResourceNav` 决定，
+ * 本函数只给结构）。<b>矩阵不受影响</b>：资源面不是配置域，`LAYER_DOMAINS`/`INSTANCE_DOMAINS`
+ * 仍 12 项（D-1006 B6）。</p>
+ *
+ * <p>知识库（G3）仍是缺口：CP 没有库实体、只有 4 个代理端点 ⇒ 继续留位标缺口（D7：留位不隐藏）。</p>
  */
 export function instanceResourceGroup(): ResourceNavItem[] {
     return [
@@ -222,25 +231,27 @@ export function instanceResourceGroup(): ResourceNavItem[] {
              * `settings-nav-resource-gap-agents`）与缺口弹窗的锚点；改 id 会牵动 E2E 与断言，收益为零。
              * 文字与 id 解耦，改名只动 i18n。</p>
              *
-             * <p><b>本卡只改名与缺口文案</b>：实例级注册表**待实现**（D-951 排期），所以仍带
-             * `gaps: ["G4"]`（灰显留位，D7：留位不隐藏）。真正实现另有卡，等实例级 principal 语义裁定。</p>
+             * <p><b>task-165</b>：D-1006 B4 落了平台智能体模型（全局可见、无需逐工作区绑定、仅
+             * instance admin 可建），实例级注册表走 `/api/v1/instance/agents` ⇒ G4 转真，摘缺口。</p>
              */
             id: "agents",
             labelKey: "settings.ia.resourceAgents",
-            gaps: ["G4"],
-            gapNoteKey: "settings.ia.gapNoteAgent",
+            path: "/settings/instance/agents",
         },
         {
+            // task-165：D-1006 B5 实例 MCP 注册表 + 与工作区级「继承/工作区覆盖同名」，
+            // wire 走 `/api/v1/instance/mcp`（D-1008）⇒ G1 转真，摘缺口。
             id: "mcp",
             labelKey: "settings.ia.resourceMcp",
-            gaps: ["G1"],
-            gapNoteKey: "settings.ia.gapNoteMcp",
+            path: "/settings/instance/mcp",
         },
         {
+            // task-165：D-1007 给 `owner_type` 增 `INSTANCE`（实例行 `owner_id` 为空）、
+            // D-1009 定「实例凭据存在、只服务实例级资源、不可由个人凭据提升」，
+            // wire 走 `/api/v1/instance/credentials`（D-1008，含 `{id}/reveal`）⇒ G2 转真，摘缺口。
             id: "credentials",
             labelKey: "settings.ia.resourceCredentials",
-            gaps: ["G2"],
-            gapNoteKey: "settings.ia.gapNoteCredentials",
+            path: "/settings/instance/credentials",
         },
         {
             // task-83：**不是缺口** —— 这是四类实例资源里唯一后端已就绪的一项：
