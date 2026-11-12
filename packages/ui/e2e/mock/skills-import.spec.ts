@@ -131,7 +131,8 @@ test.describe("实例层技能导入（task-167）", () => {
             });
         });
 
-        await page.goto("/settings/skills");
+        // PLAN-0772 M2：技能页在资源模块，全平台层是 `?layer=INSTANCE`（默认层是本工作区）。
+        await page.goto("/resources/skills?layer=INSTANCE");
 
         const entry = page.getByTestId("settings-skills-import");
         await expect(entry).toBeVisible();
@@ -168,7 +169,8 @@ test.describe("实例层技能导入（task-167）", () => {
             }),
         );
 
-        await page.goto("/settings/skills");
+        // PLAN-0772 M2：技能页在资源模块，全平台层是 `?layer=INSTANCE`（默认层是本工作区）。
+        await page.goto("/resources/skills?layer=INSTANCE");
 
         const entry = page.getByTestId("settings-skills-import");
         // 隐藏 = 让人以为产品没有导入能力 ⇒ 入口必须还在。

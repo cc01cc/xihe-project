@@ -6,8 +6,19 @@ import {
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
-import { defaultLayerPath, knowledgeRedirectTarget } from "../lib/settingsIa";
+import { defaultLayerPath, defaultResourcePath, RESOURCE_DEFS } from "../lib/settingsIa";
 import { LAYER_DOMAINS } from "../stores/config";
+
+/**
+ * 资源页宿主（PLAN-0772 M2）。显式表而不是拼路径：`import()` 用变量在 Vite 里只有「前缀 + 后缀」
+ * 的受限形式，拼错就是运行时 404 —— 显式映射让 typecheck 就能抓到漏项。
+ */
+const RESOURCE_VIEWS: Record<string, () => Promise<unknown>> = {
+    credentials: () => import("../views/resources/CredentialsResourceView.vue"),
+    mcp: () => import("../views/resources/McpResourceView.vue"),
+    skills: () => import("../views/resources/SkillsResourceView.vue"),
+    agents: () => import("../views/resources/AgentsResourceView.vue"),
+};
 
 const router = createRouter({
     history: createWebHistory(),
@@ -146,38 +157,6 @@ const router = createRouter({
                     meta: { settingsLayer: "instance" },
                 },
                 {
-                    // task-83：实例层「技能」读面。后端已就绪（`GET /api/v1/skills` 默认 instance scope），
-                    // 所以这不是缺口占位，而是真页面。
-                    // 只读：导入（`POST /skills/import`，需实例管理员）与绑定（`POST /skill-bindings`）
-                    // 是写面，本卡不铺开（判断与理由见 task-83 汇报）。
-                    path: "skills",
-                    name: "settings-skills",
-                    component: () => import("../views/settings/SkillsView.vue"),
-                    meta: { settingsLayer: "instance" },
-                },
-                // task-165（D-1006/D-1008/D-1009）：实例层三资源页，与 skills 同构 ——
-                // 路径放在 `instance/` 段下，但**不是**层×域配置矩阵的一员（D-1006 B6：
-                // `INSTANCE_DOMAINS` 仍 12 项，资源面不进矩阵）。因此这里手写三条、不经
-                // `LAYER_DOMAINS.instance` 的 spread；层仍由 `meta.settingsLayer` 决定。
-                {
-                    path: "instance/credentials",
-                    name: "settings-instance-credentials",
-                    component: () => import("../views/settings/InstanceCredentialsView.vue"),
-                    meta: { settingsLayer: "instance" },
-                },
-                {
-                    path: "instance/agents",
-                    name: "settings-instance-agents",
-                    component: () => import("../views/settings/InstanceAgentsView.vue"),
-                    meta: { settingsLayer: "instance" },
-                },
-                {
-                    path: "instance/mcp",
-                    name: "settings-instance-mcp",
-                    component: () => import("../views/settings/InstanceMcpView.vue"),
-                    meta: { settingsLayer: "instance" },
-                },
-                {
                     path: "config-locks",
                     name: "settings-config-locks",
                     component: () => import("../views/settings/ConfigLocksView.vue"),
@@ -196,33 +175,6 @@ const router = createRouter({
                     meta: { settingsLayer: "instance" },
                 },
                 {
-                    // 资源面（M4 才搬进「我的资源」分组）：M1 先保持可达，路径不变
-                    path: "credentials",
-                    name: "settings-credentials",
-                    component: () => import("../views/settings/CredentialsView.vue"),
-                    meta: { settingsLayer: "user" },
-                },
-                {
-                    // PLAN-0750 M3（矩阵 U3）：用户层「智能体主体」落地页。
-                    // **不是**工作区「工作区设置 → 智能体」的复制品：本页只承担
-                    // ①个人视图列表（R3：CP 只回 created_by=self）
-                    // ②无工作区上下文的创建（U1：走 CREATE_OWN_AGENT，不是 MANAGE_WORKSPACE_AGENTS）
-                    // ③卡片上的「绑定到工作区」动作（R1 的显式绑定面）。
-                    // 工作区侧的创建入口保持只有 WorkspaceAgentsPanel 那一个（U2：不改造单门）。
-                    path: "agent-principals",
-                    name: "settings-agent-principals",
-                    component: () => import("../views/settings/AgentPrincipalsView.vue"),
-                    meta: { settingsLayer: "user" },
-                },
-                {
-                    // PLAN-0752 T4.4（task-91）：知识库**只有工作区承载**（T4.3：CP 无库表、按 workspace 分区），
-                    // 而这条 user 层路由没有任何导航指向它 —— 保留它等于留一个「点得到的用户层知识库」幽灵页。
-                    // 因此改成工作区重定向：有当前工作区 ⇒ 落到工作区设置的「知识库」tab；没有 ⇒ 回工作区选择面。
-                    path: "knowledge",
-                    name: "settings-knowledge",
-                    redirect: () => knowledgeRedirectTarget(readTabWorkspaceId()),
-                },
-                {
                     // PLAN-0610 W5c：principal-grants 已退役，旧书签落到替代页
                     path: "principal-grants",
                     redirect: { name: "settings-roles" },
@@ -233,6 +185,47 @@ const router = createRouter({
                     // 页的层标题说胡话；层由 SettingsLayout 用 settingsLayerForPath(route.path) 推导。
                     path: ":pathMatch(.*)*",
                     name: "settings-not-found",
+                    component: () => import("../views/settings/SettingsNotFoundView.vue"),
+                },
+            ],
+        },
+        {
+            /**
+             * PLAN-0772 M2（design.md 目标 1 + 决策 10）：资源面独立成**第三个顶层入口**。
+             *
+             * <p>旧路径（`/settings/instance/credentials|agents|mcp`、`/settings/skills`、
+             * `/settings/credentials`、`/settings/agent-principals`、`/settings/knowledge`）
+             * **一次性删除、不留 redirect** —— 用户 2026-11-12 裁定「不用考虑旧的兼容性，要改就全改，
+             * 一次性改」。留着 redirect 会留下两套路径语义，日后没人敢删；删干净则是**可判定**的
+             * 完成判据（`git grep` 归 0）。</p>
+             *
+             * <p>层在 `?layer=`（大写），不在路径段：一资源一页 + 页内层 tab（决策 2）。
+             * 路由只注册**真实存在的资源**（`RESOURCE_DEFS` 里没有 gaps 的），knowledge 单独一条
+             * 缺口落点（左栏不链接它，但深链不该 404）。</p>
+             */
+            path: "/resources",
+            component: () => import("../layouts/ResourcesLayout.vue"),
+            meta: { requiresAuth: true },
+            children: [
+                { path: "", redirect: () => defaultResourcePath() },
+                ...RESOURCE_DEFS.filter((def) => (def.gaps ?? []).length === 0).map((def) => ({
+                    path: def.id,
+                    name: `resources-${def.id}`,
+                    component: RESOURCE_VIEWS[def.id],
+                    meta: { resourceId: def.id },
+                })),
+                {
+                    // 缺口资源（G3）的可读落点：不伪装成可管理页面，只解释缺口并给出口。
+                    path: "knowledge",
+                    name: "resources-knowledge",
+                    component: () => import("../views/resources/KnowledgeResourceView.vue"),
+                    meta: { resourceId: "knowledge" },
+                },
+                {
+                    // 资源模块的 404（`/resources/<不存在>`）：不写 meta.resourceId，避免布局拿不到
+                    // 资源时崩掉；兜底视图与设置区共用（同一句「这条路由不存在」）。
+                    path: ":pathMatch(.*)*",
+                    name: "resources-not-found",
                     component: () => import("../views/settings/SettingsNotFoundView.vue"),
                 },
             ],

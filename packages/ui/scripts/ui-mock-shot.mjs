@@ -111,16 +111,22 @@ const SHOTS = [
     { id: "07", name: "embedding", path: "/settings/instance/embedding", app: true },
     // task-165：实例层三资源页（真路由 + 真组件；数据来自 preview/mock 的 /instance/* 端点，
     // 见 data/instanceResources.ts）。左栏入口也在真组件里渲染，所以图能同时证明「导航项存在」。
-    { id: "08", name: "instance-credentials", path: "/settings/instance/credentials", app: true },
-    { id: "09", name: "instance-agents", path: "/settings/instance/agents", app: true },
-    { id: "10", name: "instance-mcp", path: "/settings/instance/mcp", app: true },
+    // PLAN-0772 M2：资源面搬出 /settings；实例层是页内 tab（`?layer=INSTANCE`），不是独立路径段。
+    {
+        id: "08",
+        name: "resources-credentials",
+        path: "/resources/credentials?layer=INSTANCE",
+        app: true,
+    },
+    { id: "09", name: "resources-agents", path: "/resources/agents?layer=INSTANCE", app: true },
+    { id: "10", name: "resources-mcp", path: "/resources/mcp?layer=INSTANCE", app: true },
     // task-167：实例层技能页。11 = 列表 + 「导入技能」入口（持有 MANAGE_SKILL_LIBRARY ⇒ 可点）；
     // 12 = 点开导入对话框（expand 点的是真按钮，弹的是真 Dialog，不是静态壳）。
-    { id: "11", name: "skills-panel", path: "/settings/skills", app: true },
+    { id: "11", name: "resources-skills", path: "/resources/skills?layer=INSTANCE", app: true },
     {
         id: "12",
         name: "skills-import-dialog",
-        path: "/settings/skills",
+        path: "/resources/skills?layer=INSTANCE",
         app: true,
         expand: "[data-testid=settings-skills-import]",
     },

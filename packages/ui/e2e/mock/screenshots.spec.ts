@@ -19,7 +19,7 @@ const allRoutes: Route[] = [
         requiresAuth: true,
     },
     { path: "/settings/config", name: "settings-config", requiresAuth: true },
-    { path: "/settings/knowledge", name: "settings-knowledge", requiresAuth: true },
+    { path: "/resources/knowledge", name: "resources-knowledge", requiresAuth: true },
     { path: "/settings/data", name: "settings-data", requiresAuth: true },
     { path: "/settings/monitoring", name: "settings-monitoring", requiresAuth: true },
     { path: "/workspace/ws-e2e-1", name: "workspace", requiresAuth: true },

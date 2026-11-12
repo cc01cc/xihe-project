@@ -20,10 +20,16 @@ test.describe("Cross-Module — Knowledge Base RAG", () => {
             localStorage.setItem("xihe-token", token);
         }, accessToken);
 
-        await page.goto("/settings/knowledge");
+        // PLAN-0772 M2：`/settings/knowledge` 直接删除（决策 10 不留 redirect）。知识库在 CP 侧是
+        // 后端缺口（G3：无库实体），所以资源区的落点是**缺口说明页** —— 本用例改为验证这个落点
+        // 真的存在且不再把人送回旧路径。
+        await page.goto("/resources/knowledge");
+        await expect(page.getByTestId("resources-knowledge-gap")).toBeVisible({
+            timeout: ACTION_TIMEOUT_MS,
+        });
         await expect(page.getByRole("heading", { name: /知识库|Knowledge/i })).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        expect(page.url()).toContain("/settings/knowledge");
+        expect(page.url()).toContain("/resources/knowledge");
     });
 });

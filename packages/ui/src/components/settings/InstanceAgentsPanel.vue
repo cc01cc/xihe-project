@@ -56,7 +56,7 @@ import SettingsPermissionGate from "./SettingsPermissionGate.vue";
  *
  * <p><b>与用户层 `agent-principals` 的区别</b>：那一页是「我的主体身份」（`created_by=self`），
  * 这一页是**全平台可用**的平台智能体。两页文案不得都叫「智能体」而不加限定词——左栏 id 仍是
- * `agents`，但显示名带「平台」前缀（见 `settingsIa.instanceResourceGroup` 注释）。</p>
+ * `agents`，但显示名带「平台」前缀（见 `settingsIa.RESOURCE_DEFS` 注释）。</p>
  */
 const { t, locale } = useI18n();
 const auth = useAuthStore();
@@ -156,7 +156,15 @@ async function confirmDelete(): Promise<void> {
 
 <template>
     <section data-testid="instance-agents-panel" class="space-y-4">
-        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="MANAGE_AGENTS" />
+        <!--
+            PLAN-0772 M2 / Lead 裁定三：这里的原子名原先是一个**CP 目录里不存在的**幻影原子
+            （`PermissionAtomCatalog` 无条目，openapi 也不出现），用户照文案去申请权限会找不到。
+            改成 CP 守卫原文：`InstanceAgentPrincipalController.java:60-62` 的
+            `INSTANCE_PRINCIPAL_WRITE_GATE = holdsCapabilityAtom('instance:admin') and holdsActionAtom('MANAGE_AGENT_PRINCIPALS')`，
+            本面板的门槛（`canManage = auth.isAdmin`，即能力位）对应前半段，所以文案点名能力位原文；
+            动作原子 `MANAGE_AGENT_PRINCIPALS` 同时写进说明，避免读者以为只要能力位就够。
+        -->
+        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="instance:admin" />
 
         <template v-else>
             <header class="flex flex-wrap items-center justify-between gap-2">

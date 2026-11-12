@@ -44,8 +44,8 @@ const route = useRoute(),
 
 const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim());
 
-const initialTab = ((): SettingsTab => {
-    const q = route.query.tab;
+/** `?tab=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
+function tabFromQuery(q: unknown): SettingsTab {
     return q === "mcp" ||
         q === "members" ||
         q === "credentials" ||
@@ -53,8 +53,17 @@ const initialTab = ((): SettingsTab => {
         q === "general"
         ? q
         : "general";
-})();
-const activeTab = ref<SettingsTab>(initialTab);
+}
+const activeTab = ref<SettingsTab>(tabFromQuery(route.query.tab));
+
+// 外部 query 变化要能回到页面状态（深链、浏览器前进/后退、别人贴过来的链接）。
+watch(
+    () => route.query.tab,
+    (q) => {
+        const next = tabFromQuery(q);
+        if (next !== activeTab.value) activeTab.value = next;
+    },
+);
 
 // task-253：域段模式（/workspace/:id/settings/:domain）随工作区配置层一起移除 ——
 // 该模式下唯一的域内页签「工具分类」也就没有宿主了（G9/task-153 的工作区入口在本轮消失，
@@ -92,6 +101,11 @@ const loadError = ref(""),
 function switchTab(tab: SettingsTab) {
     if (activeTab.value === tab) return;
     activeTab.value = tab;
+    // PLAN-0772 M2（design.md 决策 9）：页签切换**写回 URL**。改前全仓 6 处读 `?tab=`、只有 2 处写，
+    // 本组件一个都不写 ⇒ 「切到 MCP 后复制链接」打开的是常规页（典型的"看着像有深链其实没有"）。
+    // `general` 是默认页签，落 URL 时省略它（否则同一页有两个地址）。
+    const { tab: _ignored, ...rest } = route.query;
+    void router.push({ query: tab === "general" ? rest : { ...rest, tab } });
 }
 
 // T3.7 头部动作组：新建对话复用 ?newChat=1 语义（Sidebar.startNewChat 同口径）。

@@ -43,12 +43,9 @@ import {
     DOMAIN_LABEL_KEY,
     domainsForLayer,
     instanceOpsGroups,
-    instanceResourceGroup,
     settingsDomainPath,
-    userResourceGroup,
     type SettingsNavItem,
 } from "../../lib/settingsIa";
-import SettingsResourceNav from "./SettingsResourceNav.vue";
 
 /**
  * 设置区左栏（**不**复用工作区 Sidebar）。task-253 起按用户 2026-11-10 裁定改为
@@ -191,11 +188,12 @@ const userDomains = computed<SettingsNavItem[]>(() =>
 );
 
 /**
- * PLAN-0752 T4.0：资源组。实例层 4 条全缺口（G1/G2/G3/G4）、用户层 1 条真（我的凭据）+ 2 条缺口，
- * 按 D7 留位标缺口——具体呈现与点击行为在 SettingsResourceNav。
+ * PLAN-0772 M2（design.md 目标 1）：**资源组已整体搬出设置区**，左栏只剩「配置域 + 实例运维与安全」。
+ *
+ * <p>为什么不再保留资源组：资源条目现在挂在顶层「资源」入口（`/resources/*`，层由页内 tab 表达），
+ * 留在设置区会让同一个「凭据」出现两次（task-88 修掉的重名病会以另一种形式回来）。
+ * 计数也随之变化：实例层 22 → **17**（12 域 + 5 运维安全），用户层 12 → **9**（只剩 9 域）。</p>
  */
-const instanceResources = computed(() => instanceResourceGroup());
-const userResources = computed(() => userResourceGroup());
 
 const opsGroups = computed(() =>
     instanceOpsGroups()
@@ -219,10 +217,9 @@ const opsGroups = computed(() =>
 const instanceEntryCount = computed(
     () =>
         instanceDomains.value.length +
-        instanceResources.value.length +
         opsGroups.value.reduce((sum, group) => sum + group.items.length, 0),
 );
-const userEntryCount = computed(() => userDomains.value.length + userResources.value.length);
+const userEntryCount = computed(() => userDomains.value.length);
 const workspaceDefaultEntryCount = computed(() => workspaceDefaultDomains.value.length);
 
 /** task-175：条目图标（skill A13）。键 = 域 id / ops id；未知项回落 Circle。 */
@@ -381,10 +378,6 @@ const layerHeaderClass =
                                     </SidebarMenuButton>
                                 </SidebarMenuItem>
                             </SidebarMenu>
-                            <SettingsResourceNav
-                                :group-label-key="'settings.ia.groupInstanceResources'"
-                                :items="instanceResources"
-                            />
                         </template>
 
                         <!-- BL-552：ops/安全组按 canSeeInstanceOps 渲染，不被实例层能力位整段遮住。 -->
@@ -492,10 +485,6 @@ const layerHeaderClass =
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
                         </SidebarMenu>
-                        <SettingsResourceNav
-                            :group-label-key="'settings.ia.groupMyResources'"
-                            :items="userResources"
-                        />
                     </CollapsibleContent>
                 </SidebarGroup>
             </Collapsible>

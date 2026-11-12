@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
     defaultLayerPath,
+    defaultResourcePath,
     domainRouteExists,
     domainsForLayer,
     instanceOpsGroups,
-    instanceResourceGroup,
-    knowledgeRedirectTarget,
-    userResourceGroup,
     isInstanceOnlyForUser,
     layersForDomain,
+    layersForResource,
     resolveLayerRoute,
+    resolveResourceLayer,
+    RESOURCE_DEFS,
+    resourceGroups,
+    resourceLayerPath,
+    resourcePath,
     SETTINGS_LAYERS,
     SETTINGS_LAYERS_LOW_TO_HIGH,
     settingsDomainPath,
@@ -25,21 +29,8 @@ import {
  * task-253（用户 2026-11-10 裁定）：UI 侧只保留实例/用户两层 —— 工作区层从矩阵、路由与
  * 左栏一起移除（契约侧由 task-250 只标 deprecated）。凡带 workspace 的断言都已删除。
  */
-// PLAN-0752 T4.4（task-91）：知识库旧路径不能落在「用户层知识库页」上。
-describe("knowledgeRedirectTarget", () => {
-    it("sends the legacy /settings/knowledge bookmark to the workspace knowledge tab", () => {
-        expect(knowledgeRedirectTarget("ws-1")).toEqual({
-            name: "workspace-settings",
-            params: { workspaceId: "ws-1" },
-            query: { tab: "knowledge" },
-        });
-    });
-
-    it("falls back to the workspace picker when there is no workspace context", () => {
-        expect(knowledgeRedirectTarget(null)).toEqual({ name: "workspace-home" });
-        expect(knowledgeRedirectTarget("   ")).toEqual({ name: "workspace-home" });
-    });
-});
+// PLAN-0772 M2：知识库旧路径 `/settings/knowledge` 已随搬家**直接删除**（决策 10：不留 redirect），
+// 所以旧的 `knowledgeRedirectTarget` 用例整段退场 —— 缺口落点改由 `/resources/knowledge` 承担。
 
 describe("settings IA matrix", () => {
     it("keeps the CP layer counts 12 / 9 plus the 8-domain shared workspace-default layer", () => {
@@ -182,71 +173,82 @@ describe("instance ops groups", () => {
         expect(domains).toContain("logging");
     });
 });
-describe("settings IA resource groups (PLAN-0752 T4.0/T4.1)", () => {
-    it("instance layer has four real entries (agents/mcp/credentials/skills) and one gap (knowledge)", () => {
-        const items = instanceResourceGroup();
-        expect(items.map((item) => item.id)).toEqual([
-            "agents",
-            "mcp",
+describe("资源×层矩阵（PLAN-0772 M2）", () => {
+    it("五个资源 + 各自的真实层（缺的层不许自己补）", () => {
+        expect(RESOURCE_DEFS.map((def) => def.id)).toEqual([
             "credentials",
+            "mcp",
             "skills",
+            "agents",
             "knowledge",
         ]);
-        // task-165（D-1006/D-1008/D-1009）：agents/mcp/credentials 三条**转真**（与 task-83 的
-        // skills 同一手法「转真就摘缺口」）⇒ 只剩 knowledge 仍是缺口（G3：CP 无库实体）。
+        // 凭据三层都是真实体（`owner_type = USER / WORKSPACE / INSTANCE`，D-1007）。
+        expect(layersForResource("credentials")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
+        // MCP 没有个人层：`mcp_remote_servers.workspace_id NOT NULL`（audit §F G1）。
+        expect(layersForResource("mcp")).toEqual(["WORKSPACE", "INSTANCE"]);
+        // 技能三层：个人层后端未实现（决策 12 的 T2b），但形状先立（`pendingBackend`）。
+        expect(layersForResource("skills")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
+        // 智能体：个人主体 + 平台智能体；工作区层不在资源区（那是成员/绑定面，M3 才动）。
+        expect(layersForResource("agents")).toEqual(["USER", "INSTANCE"]);
+        // 知识库是后端缺口（G3），一层都没有。
+        expect(layersForResource("knowledge")).toEqual([]);
+    });
+
+    it("resourceGroups() = 5 条目，且只有 knowledge 是缺口（无 path）", () => {
+        const items = resourceGroups();
+        expect(items.map((item) => item.id)).toEqual([
+            "credentials",
+            "mcp",
+            "skills",
+            "agents",
+            "knowledge",
+        ]);
+        // 硬编码路径：搬家后一律 `/resources/<id>`（层在 ?layer，不进路径段）。
+        expect(items.map((item) => item.path)).toEqual([
+            "/resources/credentials",
+            "/resources/mcp",
+            "/resources/skills",
+            "/resources/agents",
+            undefined,
+        ]);
         const gapped = items.filter((item) => (item.gaps ?? []).length > 0);
         expect(gapped.map((item) => item.id)).toEqual(["knowledge"]);
-        expect(gapped.every((item) => item.path === undefined)).toBe(true);
         expect(gapped.flatMap((item) => item.gaps ?? [])).toEqual(["G3"]);
         expect(gapped.every((item) => !!item.gapNoteKey)).toBe(true);
-        // 真入口：路径必须落在实例层的资源段下（**不是**层×域矩阵的 `instance/<domain>`——
-        // 资源面不进矩阵，D-1006 B6；这里只是同样的 URL 外观）。
-        const real = items.filter((item) => item.path);
-        expect(real.map((item) => item.id)).toEqual(["agents", "mcp", "credentials", "skills"]);
-        expect(real.map((item) => item.path)).toEqual([
-            "/settings/instance/agents",
-            "/settings/instance/mcp",
-            "/settings/instance/credentials",
-            "/settings/skills",
-        ]);
-        expect(real.every((item) => item.gaps === undefined)).toBe(true);
-        expect(real.every((item) => item.gapNoteKey === undefined)).toBe(true);
     });
 
-    it("task-165: 三条转真的资源路径与路由表一致（资源面不进层×域矩阵）", () => {
-        // 判据：`instanceResourceGroup()` 给的 path 必须能被路由解析，且**不是**配置域路由。
-        const items = instanceResourceGroup().filter((item) =>
-            item.path?.startsWith("/settings/instance/"),
-        );
-        expect(items.map((item) => item.id)).toEqual(["agents", "mcp", "credentials"]);
+    it("`?layer` 解析：大小写都收、非法回落默认层、不存在的层回落默认层", () => {
+        expect(resolveResourceLayer("credentials", "WORKSPACE")).toBe("WORKSPACE");
+        expect(resolveResourceLayer("credentials", "workspace")).toBe("WORKSPACE");
+        expect(resolveResourceLayer("credentials", "USER")).toBe("USER");
+        expect(resolveResourceLayer("credentials", "INSTANCE")).toBe("INSTANCE");
+        expect(resolveResourceLayer("credentials", undefined)).toBe("USER");
+        expect(resolveResourceLayer("credentials", "nope")).toBe("USER");
+        // MCP 没有个人层 ⇒ `?layer=USER` 落回它的默认层（WORKSPACE），不是 404、不是空页。
+        expect(resolveResourceLayer("mcp", "USER")).toBe("WORKSPACE");
+        // 技能个人层「存在但后端未实现」⇒ 解析仍认它（tab 要能选中并解释为什么不能用）。
+        expect(resolveResourceLayer("skills", "user")).toBe("USER");
+    });
+
+    it("深链形态：`?layer=` 大写、层不进路径段", () => {
+        expect(resourcePath("skills")).toBe("/resources/skills");
+        expect(resourceLayerPath("skills", "WORKSPACE")).toBe("/resources/skills?layer=WORKSPACE");
+        expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
+    });
+
+    it("层门槛只来自 CP 守卫原文（能力位或原子），不出现角色名特判", () => {
+        const requires = RESOURCE_DEFS.flatMap((def) =>
+            def.layerRules.map((rule) => rule.requires),
+        ).filter((value): value is { capability: "instance:admin" } | { atom: string } => !!value);
+        // 三个实例层（凭据 / MCP / 智能体）用 CP 自己的 `instance:admin` 守卫；
+        // 技能实例层的**读面**对任何已认证调用者开放（openapi 原文），所以没有门槛。
+        expect(requires).toEqual([
+            { capability: "instance:admin" },
+            { capability: "instance:admin" },
+            { capability: "instance:admin" },
+        ]);
+        // 资源面不进配置矩阵（D-1006 B6）：资源 id 不得出现在任何层的域名单里。
         const domains = domainsForLayer("instance") as readonly string[];
-        for (const item of items) {
-            const rest = (item.path ?? "").replace("/settings/instance/", "");
-            expect(domains).not.toContain(rest);
-        }
-    });
-
-    it("user layer has two real resource entries and one gapped one (PLAN-0750 M3)", () => {
-        const items = userResourceGroup();
-        expect(items.map((item) => item.id)).toEqual([
-            "agent-principals",
-            "my-credentials",
-            "knowledge-mcp",
-        ]);
-        // PLAN-0750 M3（矩阵 U3）：用户级创建入口落地后，「智能体主体」从缺口转真入口。
-        const real = items.filter((item) => item.path);
-        expect(real.map((item) => item.id)).toEqual(["agent-principals", "my-credentials"]);
-        expect(real.map((item) => item.path)).toEqual([
-            "/settings/agent-principals",
-            "/settings/credentials",
-        ]);
-        // 缺口机制本身必须留着：knowledge-mcp 仍按 D7 留位（G1/G3）。
-        const gaps = items.filter((item) => !item.path);
-        expect(gaps.map((item) => item.id)).toEqual(["knowledge-mcp"]);
-        expect(gaps.map((item) => item.gaps)).toEqual([["G1", "G3"]]);
-        // 「智能体主体」不再是缺口：既没有 gaps，也没有缺口说明文案键。
-        const agentPrincipals = items.find((item) => item.id === "agent-principals");
-        expect(agentPrincipals?.gaps).toBeUndefined();
-        expect(agentPrincipals?.gapNoteKey).toBeUndefined();
+        for (const def of RESOURCE_DEFS) expect(domains).not.toContain(def.id);
     });
 });

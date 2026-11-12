@@ -11,6 +11,8 @@ const messages = {
     "zh-CN": {
         sidebar: {
             workbench: "工作台",
+            // PLAN-0772 M2：全局条第三个入口（资源模块）。
+            resources: "资源",
             settings: "设置",
             logout: "退出登录",
             admin: "管理",

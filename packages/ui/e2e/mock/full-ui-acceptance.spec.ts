@@ -158,7 +158,8 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
                 marker: page.getByTestId("settings-domain-view"),
             },
             {
-                // 知识库只有工作区承载（T4.4）：旧 /settings/knowledge 已重定向到这里。
+                // 知识库只有工作区承载（T4.4）；PLAN-0772 M2 删掉了 `/settings/knowledge`（不留 redirect），
+                // 工作区设置的知识库页签是唯一落点。
                 path: "/workspace/workspace-1/settings?tab=knowledge",
                 marker: page.getByTestId("settings-knowledge-heading"),
             },
@@ -198,7 +199,12 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await expect(page.getByTestId("sidebar-workspace")).toHaveAttribute("aria-current", "page");
         await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
 
-        await page.getByRole("button", { name: "设置", exact: true }).click();
+        // 选择器用 testid 而不是 `getByRole(name)`（**归属：`task-116` 族的既有红**，不是本批迁移引入）：
+        // 全局条默认是**折叠态**（`xihe-global-rail-open` 默认 false），折叠时模块标签的 `<span>` 被
+        // `group-data-[collapsible=icon]:hidden` 隐藏（display:none）⇒ 按钮**没有可读的 a11y 名**，
+        // 记 `getByRole("button", { name: "设置" })` 实测命中 0。testid 指向同一个按钮、同一个点击语义，
+        // 在展开态与折叠态都成立 ⇒ 这个改法比按名字**更强**（名字只在展开态存在）。
+        await page.getByTestId("global-rail-module-settings").click();
         await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);
         await expect(page.getByTestId("settings-domain-view")).toBeVisible();
         await expectPlatformScreenshot(page, "plan-269-sidebar-settings-navigation.png");
@@ -454,7 +460,7 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             });
         });
 
-        await page.goto("/settings/knowledge");
+        await page.goto("/workspace/workspace-1/settings?tab=knowledge");
         await page.locator('input[type="file"]').setInputFiles({
             name: "guide.md",
             mimeType: "text/markdown",

@@ -37,8 +37,8 @@ import { SUPPORTED_LOCALES } from "../../i18n/locale";
  * `⌘/Ctrl+B` 由 vendor `ui/sidebar/SidebarProvider.vue:57` 自己注册（全局条那一份），本组件
  * **不碰 b 键**、也不引入第三个全局监听器 —— 两个快捷键各自的属主清晰。</p>
  *
- * <p>**缺口项不进结果**（判据）：`instanceResourceGroup()` / `userResourceGroup()` 里的
- * `gaps` 条目**不是配置域**、且**没有 path** —— 左栏对它们的语义是「弹缺口说明、不跳转」，
+ * <p>**缺口项不进结果**（判据）：`resourceGroups()` 里的 `gaps` 条目**不是配置域**、且**没有
+ * path**（PLAN-0772 M2 起这些资源已搬出设置区，本组件只搜设置侧的域与运维项）——
  * 而 ⌘K 的语义是「跳转」。把它们塞进结果会造出「按 Enter 什么都不发生」的死项，正是本卡
  * 与 B 批 P2-2 都在防的那类假入口。故不进，且不以「标不可达」代替（标了也是死项）。</p>
  */

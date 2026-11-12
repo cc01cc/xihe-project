@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
-import { BookOpen, Bot, Circle, KeyRound, Plug, Users } from "@lucide/vue";
+import { BookOpen, Bot, Circle, KeyRound, Plug, Sparkles, Users } from "@lucide/vue";
 import { Badge } from "../ui/badge";
 import { SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import type { ResourceNavItem } from "../../lib/settingsIa";
@@ -12,6 +12,12 @@ const props = defineProps<{
     /** 分组标签 i18n key（实例层「实例资源」/ 用户层「我的资源」）。 */
     groupLabelKey: string;
     items: ResourceNavItem[];
+    /**
+     * PLAN-0772 M2：资源模块里「当前在看的资源」。设置区侧栏不传（那里资源组已整体搬走，
+     * 由 `ResourcesLayout` 独占），资源模块传 `meta.resourceId` ⇒ 选中行拿 vendor 的
+     * `data-active` 样式与 `aria-current`。
+     */
+    activeId?: string;
 }>();
 
 /**
@@ -33,7 +39,10 @@ const RESOURCE_ICONS: Record<string, Component> = {
     agents: Bot,
     mcp: Plug,
     credentials: KeyRound,
+    skills: Sparkles,
     knowledge: BookOpen,
+    // 旧 id 保留：设置区侧的调用点已随 PLAN-0772 M2 清空，但 `SettingsResourceNav.spec` 仍用旧组
+    // 数据渲染缺口形态；留着不花成本，删掉要动 spec 的夹具。
     "agent-principals": Users,
     "my-credentials": KeyRound,
     "knowledge-mcp": BookOpen,
@@ -70,6 +79,7 @@ function gapTitle(item: ResourceNavItem): string {
                 <SidebarMenuButton
                     v-if="item.path"
                     as-child
+                    :is-active="props.activeId === item.id"
                     class="flex min-h-[32px] items-center gap-2 truncate rounded-md border-l-2 border-l-transparent py-1.5 pl-6 pr-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 >
                     <router-link :to="item.path" :data-testid="'settings-nav-resource-' + item.id">

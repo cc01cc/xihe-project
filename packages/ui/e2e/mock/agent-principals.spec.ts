@@ -142,15 +142,14 @@ test.describe("PLAN-0750 M3: user-level agent-principals surface", () => {
     }) => {
         const { creates, permissionCalls } = await setupAgentPrincipalsLane(page);
 
-        await page.goto("/settings/agent-principals");
+        // PLAN-0772 M2：用户级智能体主体现在在资源模块（`/resources/agents`，层在 ?layer=）。
+        await page.goto("/resources/agents?layer=USER");
 
         // V12：用户配置区的真入口，不是缺口缺省行。
         await expect(page.getByTestId("agent-principals-panel")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        await expect(
-            page.locator('[data-testid="settings-nav-resource-agent-principals"]'),
-        ).toBeVisible();
+        await expect(page.locator('[data-testid="settings-nav-resource-agents"]')).toBeVisible();
         await expect(page.getByTestId("agent-principals-empty")).toBeVisible();
 
         // T3.2：这类账号没有可管理工作区 ⇒ 显式提示，且不渲染绑定按钮。

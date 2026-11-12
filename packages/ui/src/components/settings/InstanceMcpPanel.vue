@@ -190,7 +190,13 @@ async function confirmDelete(): Promise<void> {
 
 <template>
     <section data-testid="instance-mcp-panel" class="space-y-4">
-        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="MANAGE_AGENTS" />
+        <!--
+            PLAN-0772 M2 / Lead 裁定三：原先点名的原子在 CP 目录里不存在（幻影原子）。实例 MCP 注册表的
+            **写面**按 openapi 原文（`/api/v1/instance/mcp` 的 description）是 instance-admin only，而 CP 侧
+            这个端点当前还没实现（契约先行的 PLANNED_API）——所以这里只能点名 CP 守卫口径的能力位
+            `instance:admin`，不点名任何不存在的动作原子。
+        -->
+        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="instance:admin" />
 
         <template v-else>
             <header class="flex flex-wrap items-center justify-between gap-2">

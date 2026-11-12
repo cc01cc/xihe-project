@@ -19,12 +19,7 @@ import {
 import { badgeOf } from "./data/all-domains";
 // task-121 ①：**清单**不再手写 —— 层/域矩阵与资源、运维分组的唯一正文在 `lib/settingsIa.ts`。
 // 2026-11-11 用户亲审：「用户层的域怎么就这么几个？」—— 稿上手写 4 条，真值 9 域 + 3 资源 = 12。
-import {
-    domainsForLayer,
-    instanceOpsGroups,
-    instanceResourceGroup,
-    userResourceGroup,
-} from "@/lib/settingsIa";
+import { domainsForLayer, instanceOpsGroups, resourceGroups } from "@/lib/settingsIa";
 
 /**
  * Mock data for the task-233 sheets.
@@ -69,7 +64,7 @@ const ICONS: Record<string, typeof Wrench> = {
     "agent-principals": Bot,
     "my-credentials": KeyRound,
     "knowledge-mcp": Database,
-    // 实例层资源组的 id 来自 `instanceResourceGroup()`（agents/mcp/credentials/skills/knowledge）——
+    // 资源模块的 id 来自 `resourceGroups()`（agents/mcp/credentials/skills/knowledge）——
     // 与用户层那 3 条 id 不同名，所以两张表都要有，否则 `missingNavMeta` 会把它们记成「无图标」。
     // task-83 起 `skills` 是**真入口**（`/settings/skills`），其余 4 条仍是缺口位。
     agents: Bot,
@@ -155,10 +150,14 @@ export const opsItems: NavItem[] = groupItems("ops").map((nav) =>
 export const securityItems: NavItem[] = groupItems("security").map((nav) =>
     nav.id === "audit" ? { ...nav, gap: true } : nav,
 );
-/** 实例层「资源」组：5 条（4 缺口 G1–G4 + task-83 的 skills 真入口），生成自 `instanceResourceGroup()`。 */
-export const instanceResourceItems: NavItem[] = instanceResourceGroup().map((resource) =>
-    // gap 由**资源自身**决定（skills 已落地，不是缺口位），不在这里一刀切 true。
-    item(resource.id, undefined, { gap: resource.gaps !== undefined }),
+/**
+ * PLAN-0772 M2：资源**已是独立模块**（第三个顶层入口 `/resources`），不再属于设置区左栏
+ * ⇒ 这 5 条从「实例层资源组」搬到模块级清单，生成自 `resourceGroups()`（5 资源 × 层 tab）。
+ *
+ * <p>这条搬家在稿上必须看得见：把条目留在设置区，评审者会以为资源还在设置里。</p>
+ */
+export const resourceItems: NavItem[] = resourceGroups().map((resource) =>
+    item(resource.id, undefined, { gap: resource.path ? undefined : true }),
 );
 /**
  * 用户层入口（Lead 2026-11-10 裁定：全局设置只有实例层与用户层；工作区设置在各工作区内部，
@@ -168,14 +167,11 @@ export const instanceResourceItems: NavItem[] = instanceResourceGroup().map((res
  * （CP 矩阵 `LAYER_DOMAINS.user` 含 `user-preference`）。所以它出现在两个分组里是矩阵事实，
  * 不是重复条目——这也是为什么左栏必须按层分组：同一条目在不同层是不同的写入目标。</p>
  */
-export const userItems: NavItem[] = [
-    // 9 个用户层配置域（`domainsForLayer("user")`，含 user-preference：它在两层都存在，是矩阵事实）
-    ...domainsForLayer("user").map((domain) => item(domain, badgeOf(domain))),
-    // 3 条资源（我的凭据 / 智能体账号 = 真入口；知识库·MCP = 缺口）
-    ...userResourceGroup().map((resource) =>
-        item(resource.id, undefined, resource.path ? undefined : { gap: true }),
-    ),
-];
+// 用户层只剩 9 个配置域（`domainsForLayer("user")`，含 user-preference：它在两层都存在，是矩阵事实）。
+// 3 条资源入口已随 PLAN-0772 M2 搬到资源模块（`/resources/*`），设置区不再有资源条目。
+export const userItems: NavItem[] = domainsForLayer("user").map((domain) =>
+    item(domain, badgeOf(domain)),
+);
 
 /**
  * **对账表**（稿页直接打印，2026-11-11 裁定）：每段条目数由生成结果现算，不写死。
@@ -187,16 +183,20 @@ export const NAV_RECONCILIATION: { segment: string; count: number }[] = [
     { segment: "实例层 · 配置域", count: domains.length },
     { segment: "实例层 · 运维", count: opsItems.length },
     { segment: "实例层 · 安全", count: securityItems.length },
-    { segment: "实例层 · 资源（4 缺口位 + 1 真入口）", count: instanceResourceItems.length },
     { segment: "用户层 · 配置域", count: domainsForLayer("user").length },
-    { segment: "用户层 · 资源", count: userResourceGroup().length },
+    { segment: "资源模块 · 资源条目（各带层 tab）", count: resourceItems.length },
 ];
 
-/** 徽标口径（与产品 `SettingsSidebar.vue:111/117` 的入口数一致：域 + 资源 + ops 条目）。 */
+/**
+ * 徽标口径（与产品 `SettingsSidebar.vue` 的入口数一致：域 + ops 条目；资源已搬走不再计入）。
+ *
+ * <p>PLAN-0772 M2 的三个数：实例层 **17** = 12 域 + 2 运维 + 3 安全（原 22 减去 5 资源）；
+ * 用户层 **9** = 9 域（原 12 减去 3 资源）；资源模块 **5** = 5 资源条目。</p>
+ */
 export const NAV_COUNTS = {
-    instance:
-        domains.length + opsItems.length + securityItems.length + instanceResourceItems.length,
-    user: domainsForLayer("user").length + userResourceGroup().length,
+    instance: domains.length + opsItems.length + securityItems.length,
+    user: domainsForLayer("user").length,
+    resources: resourceItems.length,
 };
 
 /**
@@ -209,5 +209,8 @@ export const NAV_COUNTS = {
  */
 export const modules: NavItem[] = [
     { id: "workspace", label: "工作区", icon: MessageSquare },
+    // PLAN-0772 M2（design.md 目标 1）：第三个模块入口。上一轮「不加第三个」的裁定（PLAN-0762 T2.3）
+    // 已被本计划 supersede —— 资源面独立成入口正是 D-1011 的结论，不是随手加项。
+    { id: "resources", label: "资源", icon: Wrench },
     { id: "settings", label: "设置", icon: SlidersHorizontal },
 ];

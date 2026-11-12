@@ -229,7 +229,8 @@ test("@host credential manager — UI registration, role block, binding, lease u
     });
 
     // --- T4.1 ① UI 登记：lease 档 + reveal 档 + key-pair 档各一 ---
-    await page.goto("/settings/credentials", { waitUntil: "load" });
+    // PLAN-0772 M2：凭据在资源模块，个人层是默认层（`?layer=USER`）。
+    await page.goto("/resources/credentials?layer=USER", { waitUntil: "load" });
     await expect(page.getByTestId("credentials-heading")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await createCredentialViaUi(page, {
         label: "e2e-managed-lease",
@@ -391,7 +392,8 @@ test("@host credential manager — UI registration, role block, binding, lease u
     }
 
     // --- T4.1 ③ UI 绑定（批量：两个 principal 一次提交；workspace cap 由绑定 API 写入）---
-    await page.goto("/settings/credentials", { waitUntil: "load" });
+    // PLAN-0772 M2：凭据在资源模块，个人层是默认层（`?layer=USER`）。
+    await page.goto("/resources/credentials?layer=USER", { waitUntil: "load" });
     await openCredentialDetail(page, leaseCredentialId!);
     await page.getByTestId("credentials-tab-bindings").click();
     await expect(page.getByTestId("credential-bindings"), "生效范围文案").toContainText(
@@ -468,7 +470,8 @@ test("@host credential manager — UI registration, role block, binding, lease u
     await awaitLatestChatRunCompleted(request, authHeaders, wsId);
 
     // --- T4.1 ⑤ UI reveal：错误密码内联 → 正确密码一次性展示 ---
-    await page.goto("/settings/credentials", { waitUntil: "load" });
+    // PLAN-0772 M2：凭据在资源模块，个人层是默认层（`?layer=USER`）。
+    await page.goto("/resources/credentials?layer=USER", { waitUntil: "load" });
     await openCredentialDetail(page, revealCredentialId!);
     await page.getByTestId("credentials-detail-reveal").click();
     const revealDialog = page.getByTestId("credentials-reveal-dialog");

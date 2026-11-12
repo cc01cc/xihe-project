@@ -28,7 +28,7 @@ const allRoutes: Route[] = [
         name: "real-settings-user-llm-provider",
         requiresAuth: true,
     },
-    { path: "/settings/knowledge", name: "real-settings-knowledge", requiresAuth: true },
+    { path: "/resources/knowledge", name: "real-resources-knowledge", requiresAuth: true },
     { path: "/settings/data", name: "real-settings-data", requiresAuth: true },
     { path: "/settings/monitoring", name: "real-settings-monitoring", requiresAuth: true },
     {

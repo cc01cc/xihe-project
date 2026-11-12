@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-    domainsForLayer,
-    instanceOpsGroups,
-    instanceResourceGroup,
-    userResourceGroup,
-} from "@/lib/settingsIa";
+import { domainsForLayer, instanceOpsGroups, resourceGroups } from "@/lib/settingsIa";
 import {
     NAV_COUNTS,
     NAV_RECONCILIATION,
     domains,
-    instanceResourceItems,
     missingNavMeta,
     opsItems,
+    resourceItems,
     securityItems,
     userItems,
 } from "../data";
@@ -27,18 +22,25 @@ import {
  *   <li>**生成完整性**（弱判据）：`X == 由 X 生成的那些函数的输出`。这条**恒真于生成式**，
  *       只守「map/filter 没吞掉条目」，不守「稿与产品一致」——后者由「生成」这件事本身保证。</li>
  * </ul>
+ *
+ * <p><b>PLAN-0772 M2（2026-11-12）三个数变了</b>：资源面搬出 `/settings` 成了第三个顶层入口 ⇒
+ * 实例层 22 → **17**（12 域 + 2 运维 + 3 安全）、用户层 12 → **9**（只剩 9 域），另立
+ * 资源模块 **5**（5 资源 × 层 tab）。<b>两条断言形态都保留</b>：`toEqual` 仍写死数字、
+ * `toHaveLength(5)` 仍写死字面量 5 —— 不许换成「由生成函数自己算」的恒真式（那样就没人会发现
+ * 有条目被搬走）。</p>
  */
 describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
-    it("实例层 22 = 12 域 + 2 运维 + 3 安全 + 5 资源（task-83 起 skills 是真入口）", () => {
-        expect(NAV_COUNTS).toEqual({ instance: 22, user: 12 });
+    it("设置区两个层：实例层 17 = 12 域 + 2 运维 + 3 安全；用户层 9 = 9 域；资源 5", () => {
+        expect(NAV_COUNTS).toEqual({ instance: 17, user: 9, resources: 5 });
         expect(domains).toHaveLength(12);
         expect(opsItems).toHaveLength(2);
         expect(securityItems).toHaveLength(3);
-        expect(instanceResourceItems).toHaveLength(5);
+        // 硬编码 5：资源搬走后设置区一条都不该剩；资源模块恰好 5 条。
+        expect(resourceItems).toHaveLength(5);
     });
 
-    it("用户层 12 条 = 9 域 + 3 资源（不是稿上原来的 4）", () => {
-        expect(userItems).toHaveLength(12);
+    it("用户层只剩 9 个配置域（资源 3 条已搬走，不是稿上原来的 12）", () => {
+        expect(userItems).toHaveLength(9);
         expect(userItems.map((item) => item.id)).toEqual([
             "llm-provider",
             "context-policy",
@@ -49,9 +51,6 @@ describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
             "user-preference",
             "agent-templates",
             "api-request-templates",
-            "agent-principals",
-            "my-credentials",
-            "knowledge-mcp",
         ]);
     });
 
@@ -61,14 +60,15 @@ describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
         expect(missingNavMeta).toEqual([]);
     });
 
-    it("对账表逐段可加：实例段之和 22 / 用户段之和 12", () => {
+    it("对账表逐段可加：实例段之和 17 / 用户段之和 9 / 资源段 5", () => {
         const sum = (needle: string) =>
             NAV_RECONCILIATION.filter((row) => row.segment.includes(needle)).reduce(
                 (total, row) => total + row.count,
                 0,
             );
-        expect(sum("实例层")).toBe(22);
-        expect(sum("用户层")).toBe(12);
+        expect(sum("实例层")).toBe(17);
+        expect(sum("用户层")).toBe(9);
+        expect(sum("资源模块")).toBe(5);
     });
 });
 
@@ -90,10 +90,9 @@ describe("preview mock 设置导航 · 生成完整性（只防 map 丢条目）
                 .find((group) => group.id === "security")
                 ?.items.map((item) => item.id),
         );
-        expect(instanceResourceItems).toHaveLength(instanceResourceGroup().length);
-        expect(userItems.map((item) => item.id)).toEqual([
-            ...domainsForLayer("user"),
-            ...userResourceGroup().map((resource) => resource.id),
-        ]);
+        expect(resourceItems.map((item) => item.id)).toEqual(
+            resourceGroups().map((resource) => resource.id),
+        );
+        expect(userItems.map((item) => item.id)).toEqual([...domainsForLayer("user")]);
     });
 });

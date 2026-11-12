@@ -127,28 +127,6 @@ export function settingsLayerForPath(path: string): SettingsLayer {
     return path.startsWith("/settings/user") ? "user" : "instance";
 }
 
-/**
- * 知识库旧路径 `/settings/knowledge` 的落点（PLAN-0752 T4.4 / task-91）。
- *
- * <p>知识库**只有工作区承载**（CP 无库表，数据按 `workspace_id` 分区），而这条 user 层路由没有
- * 任何导航指向它 —— 留着就是一个「点得到的用户层知识库」幽灵页。所以旧书签改成工作区重定向；
- * 没有当前工作区上下文时回工作区选择面，而不是把用户丢进一个空页。</p>
- */
-export function knowledgeRedirectTarget(workspaceId: string | null): {
-    name: string;
-    params?: Record<string, string>;
-    query?: Record<string, string>;
-} {
-    const trimmed = (workspaceId ?? "").trim();
-    return trimmed
-        ? {
-              name: "workspace-settings",
-              params: { workspaceId: trimmed },
-              query: { tab: "knowledge" },
-          }
-        : { name: "workspace-home" };
-}
-
 /** 全局设置页的域路径（instance / workspace-default / user 三层都进 `/settings`）。 */
 export function settingsDomainPath(layer: SettingsLayer, domain: ConfigDomain): string {
     return `/settings/${layer}/${domain}`;
@@ -165,6 +143,187 @@ export const WORKSPACE_DEFAULT_CONFIG_ATOM = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
 
 export function isWorkspaceDefaultLayer(layer: SettingsLayer): boolean {
     return layer === "workspace-default";
+}
+
+/**
+ * PLAN-0772 M2：资源面（`/resources/*`）自己的层轴。
+ *
+ * <p><b>为什么不直接沿用 `SETTINGS_LAYERS`</b>（task-188 实测）：配置层的枚举是
+ * instance / user / workspace-default，其中 `workspace-default` 是「部署级默认值行集」，不是资源归属；
+ * 而资源面要的 `workspace` 恰好是 task-253 从全局设置里退役的那一层。两侧不是同一个集合，
+ * 硬映射会把 `workspace-default` 当成资源层、把 `workspace` 漏掉。</p>
+ *
+ * <p>因此**资源层清单只在本模块出现这一份**（组件里不许再写第二份，理由同 `LAYER_DOMAINS`）。
+ * wire 值用大写（`?layer=USER|WORKSPACE|INSTANCE`，design.md 决策 9 / verify V11）；解析时大小写都收
+ * —— 手输小写不该 404，但**输出一律大写**，避免同一个 URL 有两种写法。</p>
+ */
+export type ResourceLayer = "INSTANCE" | "WORKSPACE" | "USER";
+
+/** 显示顺序 = 层进顺序的**反序**（高 → 低）：我的 → 本工作区 → 全平台。 */
+export const RESOURCE_LAYERS: readonly ResourceLayer[] = ["USER", "WORKSPACE", "INSTANCE"];
+
+/** 资源面的五个资源（一资源一页 + 层 tab，不是每层一页：design.md 决策 2）。 */
+export type ResourceId = "credentials" | "mcp" | "skills" | "agents" | "knowledge";
+
+/**
+ * 某一层的进入门槛。**只允许两种来源**，都必须是 CP 自己守卫的原文，不许写角色名特判
+ * （工作区硬规则 + design.md 决策 2 的风险判据）：
+ * - `capability: "instance:admin"`：CP 控制器上就是
+ *   `@PreAuthorize("@requesterAuthority.holdsCapabilityAtom('instance:admin')")`
+ *   （`InstanceCredentialController.java:61`），这是**CP 的选择**，不是 UI 抄角色；
+ * - `atom`：实例域 action atom（`MANAGE_SKILL_LIBRARY` 等，见 `SkillsPanel.vue:42`）。
+ *
+ * 缺省（无 `requires`）= 任何已认证调用者都能读该层（CP 这些读面就是 `isAuthenticated()`）。
+ */
+export type ResourceLayerRequires = { capability: "instance:admin" } | { atom: string };
+
+export interface ResourceLayerRule {
+    layer: ResourceLayer;
+    requires?: ResourceLayerRequires;
+    /** 数据按工作区归属：页面从当前页签上下文取 workspaceId，取不到时给「先选工作区」态。 */
+    needsWorkspace?: boolean;
+    /** 后端尚未实现该层 ⇒ tab 留在 DOM 但 disabled + 理由（形态稿，不假装可用）。 */
+    pendingBackend?: boolean;
+}
+
+export interface ResourceDef {
+    id: ResourceId;
+    labelKey: string;
+    /** 该资源**真实存在**的层（= `spec/resource-layer-matrix.md` 的结论；顺序随 `RESOURCE_LAYERS`）。 */
+    layerRules: readonly ResourceLayerRule[];
+    /** 打开 `/resources/<id>` 时落在哪一层（该资源最具体、且后端已实现的那层）。 */
+    defaultLayer: ResourceLayer;
+    /** 后端缺口（无实体）⇒ 不注册真页面，左栏按缺口渲染（D7：留位不隐藏）。 */
+    gaps?: BackendGap[];
+    gapNoteKey?: string;
+}
+
+/**
+ * 资源×层矩阵（PLAN-0772 M2 的唯一一份）。逐条依据见
+ * `internal/A03-xihe/evidence/2026-11-12-ia-resource-extraction/README.md` §5 与
+ * `spec/resource-layer-matrix.md`；**不是** `LAYER_DOMAINS`（资源面不进配置矩阵，D-1006 B6）。
+ */
+export const RESOURCE_DEFS: readonly ResourceDef[] = [
+    {
+        id: "credentials",
+        labelKey: "settings.ia.resourceCredentials",
+        // 三层都是真实体：`owner_type = USER / WORKSPACE / INSTANCE`（D-1007，V63 CHECK）。
+        layerRules: [
+            { layer: "USER" },
+            { layer: "WORKSPACE", needsWorkspace: true },
+            { layer: "INSTANCE", requires: { capability: "instance:admin" } },
+        ],
+        defaultLayer: "USER",
+    },
+    {
+        id: "mcp",
+        labelKey: "settings.ia.resourceMcp",
+        // 没有个人层：`mcp_remote_servers.workspace_id NOT NULL`（audit §F G1）。
+        layerRules: [
+            { layer: "WORKSPACE", needsWorkspace: true },
+            { layer: "INSTANCE", requires: { capability: "instance:admin" } },
+        ],
+        defaultLayer: "WORKSPACE",
+    },
+    {
+        id: "skills",
+        labelKey: "settings.ia.resourceSkills",
+        /**
+         * 三层：全平台（`GET /skills` 默认 instance）+ 本工作区（`?definitionScope=workspace`，
+         * `api.ts:3657`）+ 个人（**后端未实现**，decision 12 的 T2b）⇒ 个人层 tab disabled 并给理由。
+         *
+         * 实例层读面任何已认证调用者都能进（openapi「visible to every authenticated caller」）；
+         * 写面原子 `MANAGE_SKILL_LIBRARY` 由面板自己守（不在 tab 上重复挡）。
+         */
+        layerRules: [
+            { layer: "USER", pendingBackend: true },
+            { layer: "WORKSPACE", needsWorkspace: true },
+            { layer: "INSTANCE" },
+        ],
+        defaultLayer: "WORKSPACE",
+    },
+    {
+        id: "agents",
+        // 模块级中性名（**不是** `settings.ia.resourceAgents` = 平台智能体）：资源页标题与左栏标签
+        // 都要对默认层（USER=个人主体）成立，用层内名会得到「/resources/agents 标题写着平台智能体、
+        // 当前层却是我的主体」这种自相矛盾的页面（实测 2026-11-12 探针抓到的）。
+        labelKey: "resources.nameAgents",
+        // 个人层 = `agent-principals`（PLAN-0750 M3）；实例层 = 平台智能体（D-1006 B4）。
+        // 工作区层不在这里：工作区智能体是「成员/绑定」面（`WorkspaceAgentsPanel`），M3 才动。
+        layerRules: [
+            { layer: "USER" },
+            { layer: "INSTANCE", requires: { capability: "instance:admin" } },
+        ],
+        defaultLayer: "USER",
+    },
+    {
+        id: "knowledge",
+        labelKey: "settings.ia.resourceKnowledge",
+        // G3：CP 无库实体（无表、无 CRUD），只有 4 个按 workspace 分区的代理端点 ⇒ 缺口，留位不隐藏。
+        layerRules: [],
+        defaultLayer: "WORKSPACE",
+        gaps: ["G3"],
+        gapNoteKey: "settings.ia.gapNoteKnowledge",
+    },
+];
+
+export function isResourceId(value: unknown): value is ResourceId {
+    return (
+        typeof value === "string" &&
+        (RESOURCE_DEFS as readonly ResourceDef[]).some((d) => d.id === value)
+    );
+}
+
+export function isResourceLayer(value: unknown): value is ResourceLayer {
+    return typeof value === "string" && (RESOURCE_LAYERS as readonly string[]).includes(value);
+}
+
+export function resourceDef(id: ResourceId): ResourceDef {
+    const def = RESOURCE_DEFS.find((candidate) => candidate.id === id);
+    if (!def) throw new Error(`unknown resource id: ${id}`);
+    return def;
+}
+
+/** 该资源真实存在的层（顺序 = `RESOURCE_LAYERS` 的高 → 低）。 */
+export function layersForResource(id: ResourceId): readonly ResourceLayer[] {
+    return resourceDef(id).layerRules.map((rule) => rule.layer);
+}
+
+export function resourceLayerRule(
+    id: ResourceId,
+    layer: ResourceLayer,
+): ResourceLayerRule | undefined {
+    return resourceDef(id).layerRules.find((rule) => rule.layer === layer);
+}
+
+/**
+ * `?layer=` 的解析：认得（大小写不敏感）就用它，认不得/缺省就落到该资源的默认层。
+ *
+ * <p>为什么**不**在非法值上 404：层 tab 是本页的主要交互，手输 `?layer=user` 或复制到小写写法
+ * 都该落在正确的层，而不是给一张 404。资源 id 非法才 404（路由段不匹配）。</p>
+ */
+export function resolveResourceLayer(id: ResourceId, raw: unknown): ResourceLayer {
+    const def = resourceDef(id);
+    if (typeof raw !== "string") return def.defaultLayer;
+    const upper = raw.trim().toUpperCase();
+    return def.layerRules.some((rule) => rule.layer === upper)
+        ? (upper as ResourceLayer)
+        : def.defaultLayer;
+}
+
+/** 资源页路径（不带层）：`/resources/credentials`。层在 `?layer=`，不进路径段。 */
+export function resourcePath(id: ResourceId): string {
+    return `/resources/${id}`;
+}
+
+/** 资源页 + 具体层的深链：`/resources/credentials?layer=USER`。 */
+export function resourceLayerPath(id: ResourceId, layer: ResourceLayer): string {
+    return `${resourcePath(id)}?layer=${layer}`;
+}
+
+/** 资源模块的默认落点（= 凭据 · 我的层，与 GlobalRail 第三入口同源）。 */
+export function defaultResourcePath(): string {
+    return resourceLayerPath("credentials", resourceDef("credentials").defaultLayer);
 }
 
 export interface SettingsNavItem {
@@ -200,112 +359,23 @@ export interface ResourceNavItem {
 }
 
 /**
- * 实例层「资源」组（design §3.2 第 2 行；task-165 起 **4 条真入口 + 1 个缺口位**）。
+ * PLAN-0772 M2：资源模块的左栏条目（一资源一条目，层由页内 tab 表达）。
  *
- * <p>四条与 audit §F 的对应：MCP=G1（表 `workspace_id NOT NULL` 无实例/用户层）、
- * 凭据=G2（`owner_type` 只有 USER/WORKSPACE）、知识库=G3（CP 无库实体、只有 4 个代理端点）、
- * 智能体=G4（CP 无 tools/agent 注册实体，只有分类与工作区绑定）。</p>
+ * <p>为什么合并成一份：搬出 /settings 后，实例层与用户层的两组条目不再是「两层各自一组」，
+ * 而是**同一资源的两个 tab**（凭据 3 层 / MCP 2 层 / 技能 3 层 / 智能体 2 层）。留着两份分组
+ * 会让「凭据」在左栏出现两次（task-88 修掉的重名病会以另一种形式回来）。</p>
  *
- * <p><b>task-165（D-1006/D-1007/D-1008/D-1009）把 G1/G2/G4 转真</b>：`owner_type` 增
- * `INSTANCE`（D-1007）、wire 采 `/api/v1/instance/<资源>`（D-1008）、实例凭据存在且只服务实例级
- * 资源（D-1009）。⇒ 按 skills 的先例「**转真就摘缺口**」：去掉 `gaps`/`gapNoteKey`、给真
- * `path`，条目从「虚线徽标灰显」变成 `router-link`（形态由 `SettingsResourceNav` 决定，
- * 本函数只给结构）。<b>矩阵不受影响</b>：资源面不是配置域，`LAYER_DOMAINS`/`INSTANCE_DOMAINS`
- * 仍 12 项（D-1006 B6）。</p>
- *
- * <p>知识库（G3）仍是缺口：CP 没有库实体、只有 4 个代理端点 ⇒ 继续留位标缺口（D7：留位不隐藏）。</p>
+ * <p>缺口资源（knowledge）**没有 path**：左栏渲染成「不可点的一行 + 虚线徽标 + title 说明」
+ * （D7：留位不隐藏，由 SettingsResourceNav 负责形态）。</p>
  */
-export function instanceResourceGroup(): ResourceNavItem[] {
-    return [
-        {
-            /**
-             * task-88（用户裁定 A：留着、改名、并且要实现掉）：
-             *
-             * <p><b>名字为什么分开</b>：实例层 = **全平台可用**的那批智能体（平台智能体 / Platform agents）；
-             * 用户层 = **你个人的主体身份**（`agent-principals` / 智能体主体）。两者曾共用「智能体」
-             * 一个词，于是左栏出现两个都叫「智能体」的条目 —— 用户报的重名病就是它。</p>
-             *
-             * <p><b>不要也叫 "Agent principals"</b>：那正是要消掉的重名（用户层已经有 `agent-principals`）。</p>
-             *
-             * <p><b>为什么 id 仍是 `agents`</b>：`id` 决定 `data-testid`（`settings-nav-resource-agents`、
-             * `settings-nav-resource-gap-agents`）与缺口弹窗的锚点；改 id 会牵动 E2E 与断言，收益为零。
-             * 文字与 id 解耦，改名只动 i18n。</p>
-             *
-             * <p><b>task-165</b>：D-1006 B4 落了平台智能体模型（全局可见、无需逐工作区绑定、仅
-             * instance admin 可建），实例级注册表走 `/api/v1/instance/agents` ⇒ G4 转真，摘缺口。</p>
-             */
-            id: "agents",
-            labelKey: "settings.ia.resourceAgents",
-            path: "/settings/instance/agents",
-        },
-        {
-            // task-165：D-1006 B5 实例 MCP 注册表 + 与工作区级「继承/工作区覆盖同名」，
-            // wire 走 `/api/v1/instance/mcp`（D-1008）⇒ G1 转真，摘缺口。
-            id: "mcp",
-            labelKey: "settings.ia.resourceMcp",
-            path: "/settings/instance/mcp",
-        },
-        {
-            // task-165：D-1007 给 `owner_type` 增 `INSTANCE`（实例行 `owner_id` 为空）、
-            // D-1009 定「实例凭据存在、只服务实例级资源、不可由个人凭据提升」，
-            // wire 走 `/api/v1/instance/credentials`（D-1008，含 `{id}/reveal`）⇒ G2 转真，摘缺口。
-            id: "credentials",
-            labelKey: "settings.ia.resourceCredentials",
-            path: "/settings/instance/credentials",
-        },
-        {
-            // task-83：**不是缺口** —— 这是四类实例资源里唯一后端已就绪的一项：
-            // `GET /api/v1/skills` 的 `definitionScope` 默认就是 `instance`，openapi 原文
-            // 「Instance-scope definitions are visible to every authenticated caller」；
-            // `/skills/{skillId}`、`/skills/{skillId}/bindings`、`/skills/import` 也都在（PLAN-0628/0680）。
-            // 所以给**真入口**，不带 `gaps`/`gapNoteKey` —— 与用户层 `agent-principals`
-            // 「转真就摘缺口」的写法保持一致，不沿用灰显那一套（缺口机制本身仍供 knowledge-mcp 留位）。
-            id: "skills",
-            labelKey: "settings.ia.resourceSkills",
-            path: "/settings/skills",
-        },
-        {
-            id: "knowledge",
-            labelKey: "settings.ia.resourceKnowledge",
-            gaps: ["G3"],
-            gapNoteKey: "settings.ia.gapNoteKnowledge",
-        },
-    ];
-}
-
-/**
- * 用户层「我的资源」组（design §3.2 第 4 行：3 条目 = 智能体主体 / 我的凭据 / 知识库·MCP）。
- *
- * <p>承载状态（PLAN-0750 M3 之后）：</p>
- * <ul>
- *   <li><b>智能体主体</b>——真入口 `/settings/agent-principals`。用户级创建走 `CREATE_OWN_AGENT`
- *       无工作区上下文（矩阵 U1），列表走 `GET /agent-principals` 无 `workspaceId` 的个人视图
- *       （R3：只回 `created_by=self`）。**不再是缺口**，所以去掉 `gaps`/`gapNoteKey`。</li>
- *   <li><b>我的凭据</b>——真入口 `/settings/credentials`（`owner_type=USER`）。</li>
- *   <li><b>知识库·MCP</b>——仍是 G1/G3 缺口，按 D7 留位。</li>
- * </ul>
- * <p>注意：缺口机制本身不能因为本项转真就去掉——`knowledge-mcp` 仍靠它留位（D7：留位标缺口，
- * 不隐藏）。</p>
- */
-export function userResourceGroup(): ResourceNavItem[] {
-    return [
-        {
-            id: "agent-principals",
-            labelKey: "settings.ia.resourceAgentPrincipals",
-            path: "/settings/agent-principals",
-        },
-        {
-            id: "my-credentials",
-            labelKey: "settings.ia.resourceMyCredentials",
-            path: "/settings/credentials",
-        },
-        {
-            id: "knowledge-mcp",
-            labelKey: "settings.ia.resourceKnowledgeMcp",
-            gaps: ["G1", "G3"],
-            gapNoteKey: "settings.ia.gapNoteKnowledgeMcp",
-        },
-    ];
+export function resourceGroups(): ResourceNavItem[] {
+    return RESOURCE_DEFS.map((def) => ({
+        id: def.id,
+        labelKey: def.labelKey,
+        path: def.gaps?.length ? undefined : resourcePath(def.id),
+        gaps: def.gaps,
+        gapNoteKey: def.gapNoteKey,
+    }));
 }
 
 export interface SettingsNavGroup {

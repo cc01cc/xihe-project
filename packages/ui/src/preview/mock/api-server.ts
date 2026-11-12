@@ -2,7 +2,11 @@ import type { Plugin } from "vite";
 import type { ServerResponse } from "node:http";
 import { CONFIG_SCHEMA_CATALOG } from "../../lib/configSchemaCatalog";
 import { MOCK_VALUES } from "./data/mockValues";
-import { mockSkillDefinition, mockSkillDefinitions } from "./data/skills";
+import {
+    mockSkillDefinition,
+    mockSkillDefinitions,
+    mockWorkspaceSkillDefinitions,
+} from "./data/skills";
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 import { handleInstanceResource } from "./data/instanceResources";
 
@@ -183,7 +187,10 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         instanceCapabilities: Object.keys(CAPABILITIES),
                         instancePermissions: [
                             { actionClass: "MANAGE_ROLES", resource: "*" },
-                            { actionClass: "MANAGE_AGENTS", resource: "*" },
+                            // PLAN-0772 M2 / 裁定三：夹具原来给的是一个 CP 目录里**不存在**的原子（幻影原子，详见台账 D-xxx/卡面）。
+                            // 实例智能体写面的真原子是 `MANAGE_AGENT_PRINCIPALS`（`InstanceAgentPrincipalController`
+                            // 的守卫原文同时要 `instance:admin` 能力位），夹具对齐它，才和真栈读到的权限面同形。
+                            { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
                             { actionClass: "MANAGE_INSTANCE_CONFIG", resource: "*" },
                             // PLAN-0766（task-160）：写入共享 workspace-default 层的唯一原子（CP 侧随 task-159 落地）。
                             { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
@@ -221,6 +228,15 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 // 列表**不带 body**；正文只在 `?includeBody=true` 时给 —— 与 openapi 一致，
                 // 免得页面在 mock lane 上养成「列表就有正文」的错误假设。
                 if (path === "/skills" && (req.method ?? "GET") === "GET") {
+                    // PLAN-0772 M2：`definitionScope=workspace` 是**另一个层**的读面（`getWorkspaceSkills`），
+                    // 早先这里不分 scope 一律回实例定义 ⇒ 技能「本工作区」页会显示实例行并被打上「本工作区」
+                    // 徽标（拿别层数据冒充本层的典型假象）。夹具按 scope 分开回。
+                    if (url.searchParams.get("definitionScope") === "workspace") {
+                        return respond(
+                            200,
+                            mockWorkspaceSkillDefinitions(url.searchParams.get("workspaceId")),
+                        );
+                    }
                     return respond(200, mockSkillDefinitions());
                 }
                 const skillMatch = path.match(/^\/skills\/([^/]+)$/);

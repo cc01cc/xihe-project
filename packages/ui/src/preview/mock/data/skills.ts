@@ -12,7 +12,8 @@
 export interface MockSkillView {
     skillId: string;
     name: string;
-    definitionScope: { type: "instance"; workspaceId?: null };
+    /** PLAN-0772 M2：夹具要能表达**工作区层**，所以 scope 不写死成 instance。 */
+    definitionScope: { type: "instance" | "workspace" | "user"; workspaceId?: string | null };
     description: string;
     bodyTokensEst: number;
     oversize: boolean;
@@ -122,8 +123,57 @@ const BASE: ReadonlyArray<MockSkillView> = [
 ];
 
 /** 列表面：**不返回 body**（与 openapi `listSkills` 一致；BASE 里没有任何一条带 body）。 */
+/**
+ * PLAN-0772 M2：**本工作区**层的夹具（`GET /skills?definitionScope=workspace&workspaceId=`）。
+ *
+ * <p>为什么必须单独一组：mock 早先对 workspace 查询也回实例定义（`BASE`），页面上于是出现
+ * 「4 个本工作区技能」而它们的 `skillId` 是 `skill-000N-instance-*` —— 拿实例层的数据冒充本层，
+ * 正是 V11 禁的那种假象。夹具按 scope 分开回，页面才可能验到「本层只显示本层的行」。</p>
+ */
+const WORKSPACE_BASE: ReadonlyArray<MockSkillView> = [
+    {
+        skillId: "skill-ws01-repo-conventions",
+        name: "repo-conventions",
+        definitionScope: { type: "workspace", workspaceId: "workspace-1" },
+        description: "本工作区的仓库约定：目录布局、命名与 PR 模板都在这份技能里，改约定只动它。",
+        bodyTokensEst: 288,
+        oversize: false,
+        trusted: true,
+        sourcePath: "skills/repo-conventions/SKILL.md",
+        contentHash: HASH,
+        version: 2,
+        attachments: [],
+        createdAt: "2026-11-02T03:20:00Z",
+        updatedAt: "2026-11-11T08:05:00Z",
+    },
+    {
+        skillId: "skill-ws02-release-checklist",
+        name: "release-checklist",
+        definitionScope: { type: "workspace", workspaceId: "workspace-1" },
+        description: "本工作区的发版清单：谁批、什么顺序、失败了怎么回滚。",
+        bodyTokensEst: 176,
+        oversize: false,
+        trusted: false,
+        sourcePath: "skills/release-checklist/SKILL.md",
+        contentHash: HASH,
+        version: 1,
+        attachments: [],
+        createdAt: "2026-11-05T06:40:00Z",
+        updatedAt: "2026-11-09T11:15:00Z",
+    },
+];
+
 export function mockSkillDefinitions(): { items: MockSkillView[] } {
     return { items: BASE.map((skill) => ({ ...skill })) };
+}
+
+/** 本工作区层的列表面（PLAN-0772 M2：按 scope 分开回，绝不拿实例定义冒充）。 */
+export function mockWorkspaceSkillDefinitions(workspaceId: string | null): {
+    items: Array<Omit<MockSkillView, "body">>;
+} {
+    // 别的 workspace id 一律回空：本层的数据按工作区归属，夹具不跨工作区借数据。
+    if (workspaceId && workspaceId !== "workspace-1") return { items: [] };
+    return { items: WORKSPACE_BASE.map((skill) => ({ ...skill })) };
 }
 
 /** 详情面：`includeBody=true` 才带正文；未知 id 由调用处回 404。 */

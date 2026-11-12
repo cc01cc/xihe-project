@@ -90,6 +90,8 @@ const messages = {
             settings: "设置",
             // PLAN-0762 T2.3 / D-924：模块名只能是「工作台」；「工作区」只是工作台模块内的对象。
             workbench: "工作台",
+            // PLAN-0772 M2：第三个顶层入口。资源面已搬出 /settings（层 tab 在页内）。
+            resources: "资源",
             languageMenu: "界面语言",
             workspace: "工作区",
             logout: "退出登录",
@@ -1499,6 +1501,64 @@ const messages = {
             checkpointRevertPartial: "恢复完成，但有未完成项",
             checkpointRevertFailed: "恢复执行失败",
             approvalAutoOffFailed: "关闭自动放行失败，自动放行仍然开启，请重试",
+        },
+        // PLAN-0772 M2：资源模块（搬出 /settings 之后的新顶层入口）。
+        // tab 文案写**所属主体**（我的 / 本工作区 / 全平台），不写层名 —— 这是用户 7/7 表态
+        // 里唯一被改的一条（Q4 技能也要分层），其余四屏沿用同一套措辞。
+        resources: {
+            navGroup: "资源",
+            // 资源模块的中性名（左栏与页面标题共用）；层内名（如「平台智能体」）留给 tab。
+            nameAgents: "智能体",
+            // 技能「本工作区」层只读面板（Lead 裁定一：读面补上，写面如实写明未接线）。
+            workspaceSkillsTitle: "本工作区技能",
+            workspaceSkillsCount: "{count} 个",
+            workspaceSkillsSubtitle:
+                "只读列表：本工作区自建的技能定义（读面走 GET /api/v1/skills?definitionScope=workspace）。",
+            workspaceSkillsWriteUnavailable:
+                "写面未接线：导入对话框的 scope 由 JSON 里的 definitionScope 决定，本页不预填 workspace scope。",
+            workspaceSkillsLoading: "正在读取本工作区技能…",
+            workspaceSkillsForeignIgnored:
+                "接口返回了 {count} 条不属于本工作区的条目，已忽略（本层只显示本工作区自建的定义）。",
+            workspaceSkillsErrorTitle: "读取本工作区技能失败",
+            workspaceSkillsRetry: "重试",
+            workspaceSkillsEmptyTitle: "本工作区还没有技能",
+            workspaceSkillsEmptyBody:
+                "本工作区自建的技能会出现在这里；读面正常返回空列表时才显示本状态。",
+            breadcrumbRoot: "资源",
+            breadcrumbLabel: "面包屑",
+            layerUser: "我的",
+            layerWorkspace: "本工作区",
+            layerInstance: "全平台",
+            layerTab: {
+                credentials: {
+                    USER: "我的凭据",
+                    WORKSPACE: "本工作区凭据",
+                    INSTANCE: "全平台凭据",
+                },
+                mcp: { WORKSPACE: "本工作区 MCP", INSTANCE: "全平台 MCP" },
+                skills: {
+                    USER: "我的技能",
+                    WORKSPACE: "本工作区技能",
+                    INSTANCE: "全平台技能",
+                },
+                agents: { USER: "我的主体", INSTANCE: "平台智能体" },
+            },
+            tabsLabel: "资源层",
+            disabledHint: "置灰的层仍留在页面上（不隐藏），点了不会切过去；原因见下。",
+            reasonPendingSkills: "个人技能库后端未实现：本层只表达形态，不提供可用操作",
+            reasonNoWorkspace: "该层的数据按工作区归属：当前没有工作区上下文",
+            reasonCapability: "需要实例管理员能力（CP 侧守的是 instance:admin）",
+            pendingBackendNotice: "本层后端尚未实现：本页只表达形态，不提供可用操作。",
+            workspaceMissing: {
+                title: "先选择一个工作区",
+                body: "本工作区层的资源按工作区归属；当前页签里没有工作区上下文。",
+                action: "去工作台选择工作区",
+            },
+            knowledgeGap: {
+                title: "知识库暂不可管理",
+                body: "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个按 workspace 分区的代理端点，因此没有可管理的“库”。",
+                action: "打开当前工作区的知识库",
+            },
         },
         settings: {
             colorScheme: {
@@ -3111,6 +3171,8 @@ const messages = {
             empty: "No conversations",
             settings: "Settings",
             workbench: "Workbench",
+            // PLAN-0772 M2: third top-level entry; resources moved out of /settings.
+            resources: "Resources",
             workspace: "Workspace",
             logout: "Logout",
             collapse: "Collapse sidebar",
@@ -4596,6 +4658,65 @@ const messages = {
             checkpointRevertPartial: "Restore completed with unfinished items",
             checkpointRevertFailed: "Restore execution failed",
             approvalAutoOffFailed: "Could not turn off auto allow; it is still on. Please retry.",
+        },
+        // PLAN-0772 M2: the resources module (a new top-level entry after leaving /settings).
+        resources: {
+            navGroup: "Resources",
+            nameAgents: "Agents",
+            workspaceSkillsTitle: "Workspace skills",
+            workspaceSkillsCount: "{count} total",
+            workspaceSkillsSubtitle:
+                "Read-only list of skill definitions created in this workspace (GET /api/v1/skills?definitionScope=workspace).",
+            workspaceSkillsWriteUnavailable:
+                "Writing is not wired yet: the import dialog derives its scope from the definitionScope in the JSON, so this page never pre-fills a workspace scope.",
+            workspaceSkillsLoading: "Loading workspace skills…",
+            workspaceSkillsForeignIgnored:
+                "{count} entries returned by the API do not belong to this workspace and were ignored (this layer only shows definitions created here).",
+            workspaceSkillsErrorTitle: "Could not load workspace skills",
+            workspaceSkillsRetry: "Retry",
+            workspaceSkillsEmptyTitle: "This workspace has no skills yet",
+            workspaceSkillsEmptyBody:
+                "Skill definitions created in this workspace show up here; this state only appears when the read face really returned an empty list.",
+            breadcrumbRoot: "Resources",
+            breadcrumbLabel: "Breadcrumb",
+            layerUser: "Mine",
+            layerWorkspace: "This workspace",
+            layerInstance: "Platform-wide",
+            layerTab: {
+                credentials: {
+                    USER: "My credentials",
+                    WORKSPACE: "Workspace credentials",
+                    INSTANCE: "Platform credentials",
+                },
+                mcp: { WORKSPACE: "Workspace MCP", INSTANCE: "Platform MCP" },
+                skills: {
+                    USER: "My skills",
+                    WORKSPACE: "Workspace skills",
+                    INSTANCE: "Platform skills",
+                },
+                agents: { USER: "My principals", INSTANCE: "Platform agents" },
+            },
+            tabsLabel: "Resource layer",
+            disabledHint:
+                "Dimmed layers stay on the page (never hidden) and cannot be selected; reasons below.",
+            reasonPendingSkills:
+                "The personal skill library has no backend yet: this layer only shows the shape, with no usable actions",
+            reasonNoWorkspace:
+                "This layer is scoped to a workspace, and there is no workspace context right now",
+            reasonCapability:
+                "Requires instance-admin capability (CP guards it with instance:admin)",
+            pendingBackendNotice:
+                "This layer has no backend yet: the page shows the shape only, with no usable actions.",
+            workspaceMissing: {
+                title: "Pick a workspace first",
+                body: "Workspace-scoped resources belong to a workspace; this tab has no workspace context.",
+                action: "Go to the workbench and pick a workspace",
+            },
+            knowledgeGap: {
+                title: "Knowledge bases are not manageable yet",
+                body: "The control plane has no knowledge-base entity (no table, no CRUD) - only 4 proxy endpoints partitioned by workspace, so there is no library to manage.",
+                action: "Open the current workspace knowledge base",
+            },
         },
         settings: {
             colorScheme: {

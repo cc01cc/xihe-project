@@ -3,9 +3,9 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useStorage } from "@vueuse/core";
-import { Briefcase, LogOut, Settings } from "@lucide/vue";
+import { Boxes, Briefcase, LogOut, Settings } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
-import { defaultLayerPath } from "../../lib/settingsIa";
+import { defaultLayerPath, defaultResourcePath } from "../../lib/settingsIa";
 import {
     Sidebar,
     SidebarContent,
@@ -41,11 +41,23 @@ const auth = useAuthStore();
 const railOpen = useStorage("xihe-global-rail-open", false);
 
 const workbenchActive = computed(() => (route.path ?? "").startsWith("/workspace"));
+/**
+ * PLAN-0772 M2（design.md 目标 1）：第三个顶层入口「资源」。
+ *
+ * <p>为什么是独立入口而不是并入设置（决策 1）：资源面不参与层×域矩阵、不消费设置区任何机制，
+ * 只是曾经借住在 `/settings` 下 ⇒ 搬走不拆机制；业界（GitLab / GitHub）同样把「设置」与
+ * 「被管理的实体」分成两个入口。</p>
+ */
+const resourcesActive = computed(() => (route.path ?? "").startsWith("/resources"));
 /** D-933：config-locks / roles 归设置模块 —— /settings 前缀即激活，不再有 admin 子态。 */
 const settingsActive = computed(() => (route.path ?? "").startsWith("/settings"));
 
 function goWorkbench() {
     void router.push("/workspace");
+}
+
+function goResources() {
+    void router.push(defaultResourcePath());
 }
 
 function goSettings() {
@@ -121,6 +133,21 @@ function handleLogout() {
                                     <Briefcase class="size-4 shrink-0" aria-hidden="true" />
                                     <span class="truncate group-data-[collapsible=icon]:hidden">{{
                                         t("sidebar.workbench")
+                                    }}</span>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                            <SidebarMenuItem>
+                                <SidebarMenuButton
+                                    data-testid="global-rail-module-resources"
+                                    :is-active="resourcesActive"
+                                    :aria-current="resourcesActive ? 'page' : undefined"
+                                    class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
+                                    :tooltip="t('sidebar.resources')"
+                                    @click="goResources"
+                                >
+                                    <Boxes class="size-4 shrink-0" aria-hidden="true" />
+                                    <span class="truncate group-data-[collapsible=icon]:hidden">{{
+                                        t("sidebar.resources")
                                     }}</span>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>

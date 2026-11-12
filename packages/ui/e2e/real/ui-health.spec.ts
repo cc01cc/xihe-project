@@ -34,8 +34,9 @@ const pages: HealthPage[] = [
         benign: [] as string[],
     },
     {
-        path: "/settings/knowledge",
-        name: "settings-knowledge",
+        // PLAN-0772 M2：知识库没有全局资源页（G3 缺口），承载面是工作区设置的 knowledge 页签。
+        path: "/workspace/{workspaceId}/settings?tab=knowledge",
+        name: "workspace-settings-knowledge",
         requiresAuth: true,
         keySelector: '[data-testid="settings-knowledge-heading"]',
         benign: ["status of 502"],

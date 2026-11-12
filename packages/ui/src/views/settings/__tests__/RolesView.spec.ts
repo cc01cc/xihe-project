@@ -122,10 +122,10 @@ function problemError(status: number, code: string): ApiError {
  * 真实 router 更接近产品里的直链进入。
  */
 const SETTINGS_ROUTE_PATHS = [
+    // PLAN-0772 M2：`/settings/credentials`、`/settings/knowledge` 已随资源面搬去 `/resources/*`
+    // 删除（决策 10 无 redirect）⇒ 这份替身路由表里不能再留旧路径，否则替身与真 IA 悄悄漂开。
     "/settings/config",
     "/settings/tool-faces",
-    "/settings/credentials",
-    "/settings/knowledge",
     "/settings/data",
     "/settings/monitoring",
     "/settings/audit",

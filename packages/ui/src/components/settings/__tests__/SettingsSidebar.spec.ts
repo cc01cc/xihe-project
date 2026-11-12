@@ -76,6 +76,8 @@ const messages = {
             ia: {
                 layerInstance: "实例配置",
                 layerUser: "用户配置",
+                layerWorkspaceDefault: "默认配置",
+                entryCount: "{count} 个入口",
                 groupDomains: "域",
                 groupOps: "实例运维",
                 groupSecurity: "安全与权限",
@@ -181,61 +183,34 @@ describe("SettingsSidebar", () => {
         // 当前层是用户层 ⇒ 实例组默认收起；ops/安全组的可见性要在展开之后判。
         await wrapper.find("#settings-nav-instance").trigger("click");
         await flushPromises();
-        expect(wrapper.findAll('[data-testid="settings-nav-resource-group"]')).toHaveLength(1);
+        // PLAN-0772 M2：设置区**不再有资源组** —— 资源整段搬到 `/resources`（第三个顶层入口），
+        // 所以「atom-only 用户看不到实例资源」这条现在退化成「谁都看不到」。
+        expect(wrapper.findAll('[data-testid="settings-nav-resource-group"]')).toHaveLength(0);
         // 但 ops/安全组里的 roles 项必须渲染（PLAN-0651 ruling ①）。
         expect(wrapper.find('[data-testid="settings-nav-ops-roles"]').exists()).toBe(true);
         // config-locks 走能力位（BL-392），atom-only 下必须隐藏 —— 证明两组门没有互相污染。
         expect(wrapper.find('[data-testid="settings-nav-ops-config-locks"]').exists()).toBe(false);
     });
 
-    it("T4.0: lands the resource group in both layers and keeps every gap slot visible", async () => {
+    it("T4.0 → M2：资源组已整体搬出设置区（两层都不再渲染任何资源条目）", async () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
-        // 实例层当前展开；展开用户层后才能一次看到两层的资源组。
+        // 实例层当前展开；展开用户层后才能一次看到两层。
         await wrapper.find("#settings-nav-user").trigger("click");
         await flushPromises();
-        // task-165：实例层「实例资源」= 4 条真入口（agents/mcp/credentials/skills）+ 1 缺口（knowledge/G3）；
-        // 用户层「我的资源」= 2 真入口（PLAN-0750 M3）+ 1 缺口（knowledge-mcp/G1,G3）
-        const groups = wrapper.findAll('[data-testid="settings-nav-resource-group"]');
-        expect(groups).toHaveLength(2);
-        expect(groups[0]!.text()).toContain("实例资源");
-        expect(groups[1]!.text()).toContain("我的资源");
-        const gaps = wrapper.findAll('[data-testid^="settings-nav-resource-gap-"]');
-        // task-165（D-1006/D-1008/D-1009）：实例层 G4/G1/G2 三条从缺口转真入口（与 task-83 的
-        // 「转真就摘缺口」同手法）⇒ 缺口槽从 5 降到 **2**（只余 knowledge 与用户层 knowledge-mcp）。
-        // 「机制保留」仍被这条断言钉住：只剩 2 个缺口不代表缺口外形可以退化。
-        expect(gaps).toHaveLength(2);
-        expect(gaps.map((gap) => gap.attributes("data-gap-codes"))).toEqual(["G3", "G1,G3"]);
-        // 有后端承载的资源项：「智能体主体」→ /settings/agent-principals，「我的凭据」→ /settings/credentials
-        // 只留真入口：排除分组容器本身（它也叫 settings-nav-resource-group）与缺口按钮
-        const real = wrapper.findAll('[data-testid^="settings-nav-resource-"]').filter((node) => {
-            const id = node.attributes("data-testid") ?? "";
-            return (
-                id !== "settings-nav-resource-group" && !id.startsWith("settings-nav-resource-gap-")
-            );
-        });
-        // task-87：ui-2 的 task-83（31d4544a）在实例层新增「技能」真入口 ⇒ 这里从 2 条变 3 条。
-        // 本用例测的是「资源组落在两层 + 缺口槽可见 + 只留真入口」的**清单语义**，
-        // 不是锚点叫什么名字；testid 收口（task-87）没有改变清单，失败来自上游数据变多。
-        // task-165：实例层新增 3 条真入口（agents/mcp/credentials），排在 skills 之前
-        // （分组清单次序 = agents → mcp → credentials → skills → knowledge）。
-        expect(real.map((node) => node.attributes("data-testid"))).toEqual([
-            "settings-nav-resource-agents",
-            "settings-nav-resource-mcp",
-            "settings-nav-resource-credentials",
-            "settings-nav-resource-skills",
-            "settings-nav-resource-agent-principals",
-            "settings-nav-resource-my-credentials",
-        ]);
-        expect(real.map((node) => node.text())).toEqual([
-            "平台智能体",
-            "MCP 服务器",
-            "凭据",
-            "技能",
-            "智能体主体",
-            "我的凭据",
-        ]);
+        // 判据是**负数**：搬家后设置区左栏一个资源条目都不该有（残留就是双入口）。
+        expect(wrapper.findAll('[data-testid="settings-nav-resource-group"]')).toHaveLength(0);
+        expect(wrapper.findAll('[data-testid^="settings-nav-resource-"]')).toHaveLength(0);
+        expect(wrapper.findAll('[data-testid^="settings-nav-resource-gap-"]')).toHaveLength(0);
+        // 配置域与 ops/安全两组仍在（搬家只动资源面，D-1006 B6 的矩阵不受影响）。
+        expect(wrapper.find('[data-testid="settings-nav-domain-instance-rag"]').exists()).toBe(
+            true,
+        );
+        expect(wrapper.find('[data-testid="settings-nav-ops-audit"]').exists()).toBe(true);
+        // 入口计数：实例层 22 → 17（12 域 + 2 运维 + 3 安全），用户层 12 → 9（只剩 9 域）。
+        expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain("17");
+        expect(wrapper.find('[data-testid="settings-nav-count-user"]').text()).toContain("9");
     });
 
     it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {
