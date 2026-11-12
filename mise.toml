@@ -653,10 +653,10 @@ run = "node scripts/check-event-keys.mjs --report-only"
 description = "Report-only audit of log/SSE/AgentEvent names against the BL-303 baseline + semantics registry (never fails; use --enforce manually)"
 alias = "check:event-keys"
 
-# PLAN-0687 T2.1: E2E in-page bypass 静态门（默认 report-only，永不非零退出；翻 --enforce 走显式裁定）。
-# 判据：`packages/ui/e2e/real/**` 的 `page.evaluate(...)` 块内 `fetch(` 必须带 `// fixture-only:` /
-# `// read-only:` 标注，或在 config/e2e-inpage-bypass-allowlist.json 登记（0644 §4.3 允许通道约定）。
-# mock lane 不在本门判据内（本 PLAN 只登记不扩包）。
+# PLAN-0687 T2.1 / D-1039 ①: E2E in-page bypass 静态门（默认 report-only，永不非零退出；翻 --enforce 走显式裁定）。
+# 判据：`packages/ui/e2e/**`（real + mock，与 check:e2e-timeouts 同口径）的 `page.evaluate(...)` 块内 `fetch(` 必须带
+# `// fixture-only:` / `// read-only:` 标注，或在 config/e2e-inpage-bypass-allowlist.json 登记（0644 §4.3 允许通道约定）。
+# mock lane 同样在判据内（D-1039 ①：此前只扫 real 会把 e2e/mock 的改动判成「无脏」）。
 [tasks."check:a11y-refs"]
 run = "node scripts/check-a11y-refs.mjs --report-only"
 description = "BL-519/PLAN-0733: report-only a11y label literal drift audit (English e2e literal whose i18n key has a Chinese value; default exit 0; tighten with check:a11y-refs:enforce)"
@@ -668,7 +668,7 @@ description = "BL-519/PLAN-0733: enforce a11y label literal gate (findings>0 ⇒
 
 [tasks."check:e2e-bypass"]
 run = "node scripts/check-e2e-inpage-bypass.mjs --report-only"
-description = "Report-only audit of in-page fetch bypasses in packages/ui/e2e/real (annotation or allowlist required; never fails; use --enforce manually)"
+description = "Report-only audit of in-page fetch bypasses in packages/ui/e2e (real + mock; annotation or allowlist required; never fails; use --enforce manually)"
 alias = "check:e2e-bypass"
 
 # task-237（用户 2026-11-10 第四问「openapi 应该有直接从它生成 md 的工具吧」）：生成器 + 落后门。

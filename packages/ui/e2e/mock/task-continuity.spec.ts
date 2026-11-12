@@ -140,6 +140,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
+            // fixture-only: 该路由已被本用例 page.route 拦截（见上），此 fetch 只验证 mock 契约，不触达真实后端
             const result = await page.evaluate(async () => {
                 const resp = await fetch("/internal/v1/context/test-session/compact", {
                     method: "POST",

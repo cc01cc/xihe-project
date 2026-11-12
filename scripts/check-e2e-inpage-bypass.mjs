@@ -3,7 +3,7 @@
  * PLAN-0687 / check:e2e-bypass —— E2E in-page bypass 静态门（默认 report-only，永不阻断）。
  *
  * 判据（承 PLAN-0644 §4.3 / D7，PLAN-0687 F1 改判后口径）：
- *   - 扫描 `packages/ui/e2e/real/**` 的每个 `page.evaluate(...)` 块，块内出现 `fetch(` ⇒ in-page
+ *   - 扫描 `packages/ui/e2e/**` 的每个 `page.evaluate(...)` 块，块内出现 `fetch(` ⇒ in-page
  *     fetch 命中（即「在浏览器页内直接调后端接口」的候选，可能绕过被测产品 UI）。
  *   - 每个命中必须满足其一才算 PASS：
  *       ① 同块内（或 evaluate 起始前 2 行）有 `// fixture-only: <理由>` 或 `// read-only: <理由>`
@@ -13,8 +13,9 @@
  *     「声明这是允许通道」的机制，裁定语义见 PLAN-0687 `spec/bypass-audit-matrix.md`。
  *
  * 口径与零依赖：注释/字符串内的 `page.evaluate`/`fetch` 不计（轻量 tokenizer；与 PLAN-0687 M0 的
- * TypeScript AST 扫描结果逐条对齐，见 `plans/PLAN-0687-.../evidence/rescan.md`）。mock lane 不在本门
- * 判据内（0644 §4.3 判据针对 real lane 的产品路径）。`mock/` 命中由 PLAN-0687 只登记不扩包。
+ * TypeScript AST 扫描结果逐条对齐，见 `plans/PLAN-0687-.../evidence/rescan.md`）。**判据覆盖整条
+ * e2e 面（含 mock lane；D-1039 ①，2026-11-12，与 `check-e2e-timeouts.mjs:16` 同口径）**：mock lane 同样
+ * 是仓内被跟踪面，且 mock spec 会被单独执行 —— 此前只扫 `real` 等于把 `e2e/mock` 的改动判成「无脏」。
  *
  * 用法：
  *   node scripts/check-e2e-inpage-bypass.mjs                # 默认 report-only（exit 0）
@@ -34,8 +35,8 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/** 判据作用面：只扫 real lane（mock lane 不在 0644 §4.3 判据内）。 */
-export const SCAN_DIRS = ["packages/ui/e2e/real"];
+/** 判据作用面：整条 e2e 面（real + mock + 其它 lane；D-1039 ①，与 check-e2e-timeouts 同口径）。 */
+export const SCAN_DIRS = ["packages/ui/e2e"];
 
 /** 参与扫描的源码后缀。 */
 export const FILE_EXTENSIONS = new Set([".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"]);
@@ -322,7 +323,7 @@ export function buildAllowlist({ hits, root, generatedAt }) {
         version: 1,
         generatedBy: "scripts/check-e2e-inpage-bypass.mjs --write-baseline",
         generatedAt,
-        generatedFrom: path.posix.join(path.basename(root) || "", "packages/ui/e2e/real"),
+        generatedFrom: path.posix.join(path.basename(root) || "", "packages/ui/e2e"),
         entries,
     };
 }

@@ -176,6 +176,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Verify route is registered by making a fetch from page context
+            // fixture-only: 路由已被本用例 page.route 拦截（见上），此 fetch 只验证 mock 契约本身，不触达真实后端
             const result = await page.evaluate(async (runId) => {
                 const resp = await fetch(`/api/v1/chat/runs/${runId}/cancel`, {
                     method: "POST",
@@ -206,6 +207,7 @@ test.describe("PLAN-275: Safe Coding Loop E2E", () => {
             await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
+            // fixture-only: 该路由已被本用例 page.route 拦截（见上），此 fetch 只验证 409 mock 契约，不触达真实后端
             const result = await page.evaluate(async (runId) => {
                 const resp = await fetch(`/api/v1/chat/runs/${runId}/cancel`, {
                     method: "POST",
