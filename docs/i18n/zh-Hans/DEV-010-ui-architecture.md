@@ -45,7 +45,7 @@ updated: 2026-10-31
 | `/workspace/:workspaceId/settings` | WorkspaceSettingsView（AppLayout 内，PLAN-0560） | 只有两个**真 tab**：常规（OWNER 可改名/删除）/ 成员（按 `canViewMembers` 过滤，确定无权才隐藏）；旧 `?tab=config\|mcp\|credentials\|knowledge` 一律回落「常规」，**都不是直达** —— `config` 随 task-253 退役（静默回落），后三个随 task-209 / D-1019 撤并额外给迁移提示条 |
 | `/workspace/:workspaceId/scheduled-tasks` | ScheduledTasksView（AppLayout 内） | 定时任务；作为**中间标签栏**的一个标签参与路由投影（`router/index.ts`） |
 
-所有 Workspace 路由共用 `AppLayout`。`AppLayout` 是**两层左栏 + 主区**：最左 `NavRail`（固定 **56px** 纯图标，无文字标签）+ 导航面板（默认 **280px**，可收起/可拖 220–360）+ 主区。工作台内容由 `WorkspaceWorkbench` 承载（结构见 §2 的 `WorkspaceView` 条），顶部有**中间标签栏** `WorkspaceTabBar`（现有路由的投影，不新增路由；`chat` 恒开、其余三个为按 workspace 持久化的打开集合）。无 tab 上下文访问 `/workspace` 时渲染**显式工作区选择面** `WorkspacePicker`（PLAN-0608）。Chat 是 Workspace feature 内的 Session 视图，不再有独立 `/chat` 路由；旧的未匹配路径回退到 `/workspace`。Session id 不能替代 Workspace id（PLAN-222）。
+所有 Workspace 路由共用 `AppLayout`。`AppLayout` 是**两层左栏 + 主区**：最左 `GlobalRail`（可折叠：56px 纯图标 ↔ 图标 + 文字）+ 导航面板（默认 **280px**，可收起/可拖 220–360）+ 主区。工作台内容由 `WorkspaceWorkbench` 承载（结构见 §2 的 `WorkspaceView` 条），顶部有**中间标签栏** `WorkspaceTabBar`（现有路由的投影，不新增路由；`chat` 恒开、其余三个为按 workspace 持久化的打开集合）。无 tab 上下文访问 `/workspace` 时渲染**显式工作区选择面** `WorkspacePicker`（PLAN-0608）。Chat 是 Workspace feature 内的 Session 视图，不再有独立 `/chat` 路由；旧的未匹配路径回退到 `/workspace`。Session id 不能替代 Workspace id（PLAN-222）。
 
 ## 2. 视图分层
 
