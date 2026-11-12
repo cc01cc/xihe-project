@@ -54,10 +54,16 @@ const BUILTIN_ACTION_CLASSES = [
 ] as const;
 const UNCLASSIFIED = "unclassified";
 
+/**
+ * task-74：instance scope 的对端判据是 `MANAGE_WORKSPACE_POLICY` **动作原子**，
+ * 见 `policy/PolicyController.java:166-168` —— 那里的 `isAdmin()` 是
+ * `requesterAuthority.holdsActionAtom(ACTION_MANAGE_WORKSPACE_POLICY)`，**不是** `cap:instance:admin`。
+ * 用能力位会让「有原子无 cap」的人看不到 instance 选项（UI 比 CP 严）。
+ */
 const scopeOptions = computed<PolicyToolFaceQueryScope[]>(() =>
     props.scopeLock
         ? [props.scopeLock]
-        : authStore.isAdmin
+        : authStore.canManageWorkspacePolicy
           ? ["workspace", "instance"]
           : ["workspace"],
 );
@@ -83,8 +89,11 @@ const scopeLabels: Record<PolicyToolFaceQueryScope, string> = {
         opaque: "chat.approvalShapeOpaque",
     };
 
+/** instance scope 的写面与上面同一个原子（`PolicyController.java:71-83` 的 `upsertFace` 也走 `isAdmin()`）。 */
 const canClassify = computed(() =>
-        activeScope.value === "instance" ? authStore.isAdmin : authStore.canClassifyTools,
+        activeScope.value === "instance"
+            ? authStore.canManageWorkspacePolicy
+            : authStore.canClassifyTools,
     ),
     actionClassSuggestions = computed(() => [...new Set<string>(BUILTIN_ACTION_CLASSES)].sort());
 
