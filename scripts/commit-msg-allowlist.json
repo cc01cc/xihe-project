@@ -1,5 +1,5 @@
 {
-  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。2026-11-07 追加 6 条（D-223）：4 条是以 `chore(merge):` 记录的 2 父合并提交、门禁按非 merge 的 72 列判（73~77 列），2 条是 19:08 的 lane 内 chore 提交与真 merge（80/137 列）；同一根因——分支内提交不受门禁约束、合入时未跑分支 `--range` 校验。2026-11-08 追加 6 条（Lead 裁定 G：补白名单、不撤门、不放宽阈值）：`b8ef3413`/`88f320e1`/`1cbedc9a`/`3fbc4cf8`/`bd4dcf5c`/`fe1f1a3b` 六条 11-08 的 feature/test/docs 提交首行 75~92 列超 72，均已进 develop 不可改写；同一根因——分支内提交不受门禁约束、合入时没跑分支 `--range` 校验。",
+  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。2026-11-07 追加 6 条（D-223）：4 条是以 `chore(merge):` 记录的 2 父合并提交、门禁按非 merge 的 72 列判（73~77 列），2 条是 19:08 的 lane 内 chore 提交与真 merge（80/137 列）；同一根因——分支内提交不受门禁约束、合入时未跑分支 `--range` 校验。2026-11-08 追加 6 条（Lead 裁定 G：补白名单、不撤门、不放宽阈值）：`b8ef3413`/`88f320e1`/`1cbedc9a`/`3fbc4cf8`/`bd4dcf5c`/`fe1f1a3b` 六条 11-08 的 feature/test/docs 提交首行 75~92 列超 72，均已进 develop 不可改写；同一根因——分支内提交不受门禁约束、合入时没跑分支 `--range` 校验。 2026-11-12 追加 3 条（D-1058 / task-288）：`fbd0932ed`/`100d4f6ed`/`cbbdf6575` 三条 2026-11-10 的 merge 首行 105/118/104 列 > 100；同一根因——`git merge` 产生的提交不经 `xh-commit` 守卫⑦，range 门又只在 validate 里跑（且 2026-11-11 起该门因 ENOBUFS 跑不动，至 task-286 修复前无人复查这批提交）。",
   "entries": [
     {
       "sha": "e69e06c874c9d4b68e6dafcd7323492f08d825f4",
@@ -92,6 +92,18 @@
     {
       "sha": "fe1f1a3b614d008ecad14de706ccfebbef2aad34",
       "reason": "2026-11-08 docs(0689) V19 注释台账收口提交，首行实测 92 列 > 72；已进 develop 不可改写，历史遗留，非新增（Lead 裁定同上）。"
+    },
+    {
+      "sha": "fbd0932ed81c3f3a11e8a6a53ef470363506e041",
+      "reason": "2026-11-10 14:56 的 merge 提交（merge: queue-item task/bl548-mcp-oauth 7e0a00d11）首行实测 105 列 > 100；该提交已进 develop 历史且不可改写（改写历史被明令禁止）。根因：git merge 产生的提交不经 xh-commit 守卫⑦（消息门禁只拦 xh-commit 路径），range 门又只在 validate 里跑。补录依据 D-1058 / task-288。"
+    },
+    {
+      "sha": "100d4f6eda22900b7dc53f125429df040252df00",
+      "reason": "2026-11-10 13:32 的 merge 提交（merge: queue-item task/e2e-form-migration-debt 3a5bc5ae5）首行实测 118 列 > 100；该提交已进 develop 历史且不可改写（改写历史被明令禁止）。根因：git merge 产生的提交不经 xh-commit 守卫⑦（消息门禁只拦 xh-commit 路径），range 门又只在 validate 里跑。补录依据 D-1058 / task-288。"
+    },
+    {
+      "sha": "cbbdf65750631ed90c2b247e501d26365332fdba",
+      "reason": "2026-11-10 13:08 的 merge 提交（merge: queue-item task/splitter-migration c43263b4d）首行实测 104 列 > 100；该提交已进 develop 历史且不可改写（改写历史被明令禁止）。根因：git merge 产生的提交不经 xh-commit 守卫⑦（消息门禁只拦 xh-commit 路径），range 门又只在 validate 里跑。补录依据 D-1058 / task-288。"
     }
   ]
 }
