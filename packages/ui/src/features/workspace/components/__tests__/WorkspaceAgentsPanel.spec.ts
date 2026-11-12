@@ -61,9 +61,16 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
 });
 
 const admin = { value: true };
+/**
+ * task-74：面板的鉴权面是三件（能力位 / `READ_INSTANCE_CONTENT` 原子 / `MANAGE_WORKSPACE_POLICY` 原子）。
+ * 本 spec 不测判据轴，只测面板行为 ⇒ 三个都绑同一个 `admin` 开关，保持既有用例语义不变；
+ * 判据轴本身由 authStore 单测与 18 处对照表（evidence/2026-11-13-a1-isadmin-cp-guard-matrix）负责。
+ */
 vi.mock("../../../../stores/auth", () => ({
     useAuthStore: () => ({
         isAdmin: admin.value,
+        canReadInstanceContent: admin.value,
+        canManageWorkspacePolicy: admin.value,
         canManageWorkspace: true,
         user: { id: "99999999-9999-4999-8999-999999999999" },
     }),
