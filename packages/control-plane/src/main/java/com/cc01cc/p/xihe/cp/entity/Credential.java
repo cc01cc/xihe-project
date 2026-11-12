@@ -25,6 +25,13 @@ public class Credential {
     public static final String OWNER_USER = "USER";
     public static final String OWNER_WORKSPACE = "WORKSPACE";
 
+    /**
+     * D-1007 / D-1009 (task-166): the instance itself owns the credential and there is no owner
+     * subject — an INSTANCE row therefore carries {@code owner_id = NULL}. The pairing is enforced
+     * by the database (V155 {@code ck_credentials_owner_pairing}), not by this constant.
+     */
+    public static final String OWNER_INSTANCE = "INSTANCE";
+
     public static final String KIND_TOKEN = "token";
     public static final String KIND_KEY_PAIR = "key_pair";
 
@@ -49,7 +56,12 @@ public class Credential {
     @Column(name = "owner_type", nullable = false, length = 16)
     private String ownerType;
 
-    @Column(name = "owner_id", nullable = false, length = 36)
+    /**
+     * D-1009: NULL for {@link #OWNER_INSTANCE} rows, NOT NULL for USER/WORKSPACE rows. The V155
+     * pairing constraint keeps the column from becoming "optional everywhere" — the only rows that
+     * may omit it are the ones whose owner type says they have no owner subject.
+     */
+    @Column(name = "owner_id", nullable = true, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String ownerId;
 

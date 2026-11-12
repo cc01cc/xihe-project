@@ -78,7 +78,7 @@ public class CredentialService {
             throw new IllegalArgumentException("create request is required");
         }
         String ownerType = requireOwnerType(request.ownerType());
-        String ownerId = requireUuid(request.ownerId(), "ownerId");
+        String ownerId = requireOwnerIdForType(ownerType, request.ownerId());
         String label = requireLabel(request.label());
         String kind = requireKind(request.kind());
         String deliveryTier = requireTier(request.deliveryTier());
@@ -172,9 +172,18 @@ public class CredentialService {
 
     /**
      * PLAN-0496 T3.1: active rows for one owner (management-API list); newest first.
+     *
+     * <p>D-1009 (task-166): an INSTANCE owner has no id, so the query must switch to
+     * {@code owner_id IS NULL} — passing null into the two-argument derived query would match
+     * nothing and turn "instance admin sees the instance credentials" into a silent empty list.
      */
     @Transactional(readOnly = true)
     public List<Credential> listForOwner(String ownerType, String ownerId) {
+        if (Credential.OWNER_INSTANCE.equalsIgnoreCase(safeTrim(ownerType))) {
+            return credentialRepository
+                    .findByOwnerTypeAndOwnerIdIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+                            Credential.OWNER_INSTANCE);
+        }
         return credentialRepository.findByOwnerTypeAndOwnerIdAndDeletedAtIsNullOrderByCreatedAtDesc(
                 ownerType, ownerId);
     }
@@ -187,12 +196,20 @@ public class CredentialService {
      */
     public boolean existsForOwner(String ownerType, String ownerId, String credentialId) {
         UUID id = parseUuid(credentialId);
-        if (id == null || ownerType == null || ownerId == null) {
+        if (id == null || ownerType == null) {
+            return false;
+        }
+        // D-1009: an INSTANCE owner has no id, so "belongs to this owner" means "owner_id is null"
+        // rather than "the id matches". A non-INSTANCE owner still requires an id.
+        boolean instance = Credential.OWNER_INSTANCE.equalsIgnoreCase(safeTrim(ownerType));
+        if (!instance && ownerId == null) {
             return false;
         }
         return credentialRepository.findByIdAndDeletedAtIsNull(id)
                 .map(credential -> credential.getOwnerType().equalsIgnoreCase(ownerType)
-                        && credential.getOwnerId().equalsIgnoreCase(ownerId))
+                        && (instance
+                                ? credential.getOwnerId() == null
+                                : ownerId.equalsIgnoreCase(credential.getOwnerId())))
                 .orElse(false);
     }
 
@@ -249,7 +266,27 @@ public class CredentialService {
         if (Credential.OWNER_WORKSPACE.equalsIgnoreCase(safeTrim(ownerType))) {
             return Credential.OWNER_WORKSPACE;
         }
-        throw new IllegalArgumentException("ownerType must be USER or WORKSPACE");
+        // D-1007: INSTANCE is the third owner type. Whether the caller may create one is an
+        // authorization question (CredentialAdminService), not a vocabulary question.
+        if (Credential.OWNER_INSTANCE.equalsIgnoreCase(safeTrim(ownerType))) {
+            return Credential.OWNER_INSTANCE;
+        }
+        throw new IllegalArgumentException("ownerType must be USER, WORKSPACE or INSTANCE");
+    }
+
+    /**
+     * D-1009 (task-166): the owner id is required for USER/WORKSPACE and <b>must be absent</b> for
+     * INSTANCE. Rejecting a supplied id instead of silently dropping it keeps a caller from
+     * believing it scoped the row to a subject that the stored row does not carry.
+     */
+    private static String requireOwnerIdForType(String ownerType, String ownerId) {
+        if (Credential.OWNER_INSTANCE.equals(ownerType)) {
+            if (ownerId != null && !ownerId.isBlank()) {
+                throw new IllegalArgumentException("ownerId must be empty for an INSTANCE credential");
+            }
+            return null;
+        }
+        return requireUuid(ownerId, "ownerId");
     }
 
     private static String requireUuid(String value, String field) {

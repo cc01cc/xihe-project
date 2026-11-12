@@ -20,6 +20,15 @@ public interface CredentialRepository extends JpaRepository<Credential, UUID> {
     List<Credential> findByOwnerTypeAndOwnerIdAndDeletedAtIsNullOrderByCreatedAtDesc(
             String ownerType, String ownerId);
 
+    /**
+     * D-1009 (task-166): INSTANCE rows have no owner id, so their read path needs an
+     * {@code owner_id IS NULL} predicate. A derived query called with a null argument compiles to
+     * {@code owner_id = null} (never true), which is exactly the silent-empty-list trap this method
+     * exists to avoid.
+     */
+    List<Credential> findByOwnerTypeAndOwnerIdIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+            String ownerType);
+
     /** PLAN-0495 M3 rotation scan: rows not yet at the current key version. */
     List<Credential> findByKeyVersionNot(String keyVersion, Pageable pageable);
 

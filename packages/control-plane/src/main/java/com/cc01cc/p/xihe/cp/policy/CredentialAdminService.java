@@ -56,6 +56,9 @@ public class CredentialAdminService {
     private final CredentialEventRepository credentialEventRepository;
     private final ProviderConnectionRepository providerConnectionRepository;
 
+    /** D-1007 task-166: the INSTANCE owner type is gated by the capability atom, not by a role name. */
+    private final AuthzContext authzContext;
+
     public CredentialAdminService(CredentialService credentialService,
             GrantIntersectionEvaluator evaluator,
             AuthorizationGrantRepository grantRepository,
@@ -64,7 +67,8 @@ public class CredentialAdminService {
             AuthService authService,
             CredentialRepository credentialRepository,
             CredentialEventRepository credentialEventRepository,
-            ProviderConnectionRepository providerConnectionRepository) {
+            ProviderConnectionRepository providerConnectionRepository,
+            AuthzContext authzContext) {
         this.credentialService = credentialService;
         this.evaluator = evaluator;
         this.grantRepository = grantRepository;
@@ -74,6 +78,7 @@ public class CredentialAdminService {
         this.credentialRepository = credentialRepository;
         this.credentialEventRepository = credentialEventRepository;
         this.providerConnectionRepository = providerConnectionRepository;
+        this.authzContext = authzContext;
     }
 
     public record CredentialSummary(String id, String label, String kind, String deliveryTier,
@@ -91,7 +96,7 @@ public class CredentialAdminService {
     public List<CredentialSummary> list(String actorUserId, String ownerType, String ownerId) {
         UUID actorId = requireUser(actorUserId);
         String normalizedType = normalizeOwnerType(ownerType);
-        String normalizedOwner = normalizeOwnerId(ownerId, actorId);
+        String normalizedOwner = normalizeOwnerId(normalizedType, ownerId, actorId);
         requireOwnerVisible(actorId, normalizedType, normalizedOwner);
         Map<String, Integer> counts = referenceCounts();
         return credentialService.listForOwner(normalizedType, normalizedOwner).stream()
@@ -111,7 +116,7 @@ public class CredentialAdminService {
         UUID actorId = requireUser(actorUserId);
         requireManageWildcard(actorId);
         String normalizedType = normalizeOwnerType(ownerType);
-        String normalizedOwner = normalizeOwnerId(ownerId, actorId);
+        String normalizedOwner = normalizeOwnerId(normalizedType, ownerId, actorId);
         if ("USER".equals(normalizedType) && !normalizedOwner.equalsIgnoreCase(actorId.toString())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Credentials may only be created for the caller's own USER owner");
@@ -293,6 +298,17 @@ public class CredentialAdminService {
             }
             return;
         }
+        if (Credential.OWNER_INSTANCE.equals(ownerType)) {
+            // D-1009: instance credentials are instance-level infrastructure; only a holder of the
+            // instance:admin capability may see or create them. Evaluated at the atom layer so a
+            // custom role carrying the atom works and a role *named* admin does not.
+            if (!authzContext.capabilitiesFor(actorId)
+                    .holdsCapability(PermissionAtomCatalog.CAP_INSTANCE_ADMIN, null)) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                        "Instance administration is required for INSTANCE-owned credentials");
+            }
+            return;
+        }
         if (!workspaceService.isWorkspaceMember(ownerId, actorId.toString())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace membership is required");
         }
@@ -325,14 +341,27 @@ public class CredentialAdminService {
         String normalized = ownerType == null || ownerType.isBlank()
                 ? "USER"
                 : ownerType.trim().toUpperCase(Locale.ROOT);
-        if (!"USER".equals(normalized) && !"WORKSPACE".equals(normalized)) {
+        if (!"USER".equals(normalized) && !"WORKSPACE".equals(normalized)
+                && !Credential.OWNER_INSTANCE.equals(normalized)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_OWNER_TYPE",
-                    "ownerType must be USER or WORKSPACE");
+                    "ownerType must be USER, WORKSPACE or INSTANCE");
         }
         return normalized;
     }
 
-    private static String normalizeOwnerId(String ownerId, UUID actorId) {
+    /**
+     * D-1009 (task-166): INSTANCE has no owner id — the stored row carries NULL. A supplied id is
+     * rejected rather than ignored: silently dropping it would let a caller believe the row is
+     * scoped to a subject it does not have.
+     */
+    private static String normalizeOwnerId(String ownerType, String ownerId, UUID actorId) {
+        if (Credential.OWNER_INSTANCE.equals(ownerType)) {
+            if (ownerId != null && !ownerId.isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_OWNER_ID",
+                        "INSTANCE-owned credentials have no ownerId");
+            }
+            return null;
+        }
         if (ownerId == null || ownerId.isBlank()) {
             return actorId.toString();
         }

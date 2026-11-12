@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
+import com.cc01cc.p.xihe.cp.entity.Credential;
+
 /**
  * PLAN-0495 I2 / PLAN-0576 决策 #1: AAD binding contract for credential envelopes.
  *
@@ -35,10 +37,28 @@ public final class CredentialAad {
         }
         return V2_PREFIX + "|" + requirePart(credentialId, "credentialId")
                 + "|" + requirePart(ownerType, "ownerType")
-                + "|" + requirePart(ownerId, "ownerId")
+                + "|" + ownerPart(ownerType, ownerId)
                 + "|" + requirePart(kind, "kind")
                 + "|" + revision
                 + "|" + requirePart(keyVersion, "keyVersion");
+    }
+
+    /**
+     * D-1009 (task-166): an INSTANCE row has no owner id, so its owner slot is the <b>empty</b>
+     * field ({@code v2|id|INSTANCE||kind|...}). The field count is unchanged, and the slot cannot
+     * be confused with a USER/WORKSPACE row because {@code ownerType} is a separate field — the
+     * alternative (a sentinel such as {@code "instance"}) would put a value in a column the model
+     * says must be empty, and would silently accept an INSTANCE row that carries an owner id.
+     */
+    private static String ownerPart(String ownerType, String ownerId) {
+        if (Credential.OWNER_INSTANCE.equalsIgnoreCase(ownerType == null ? null : ownerType.trim())) {
+            if (ownerId != null && !ownerId.isBlank()) {
+                throw new IllegalArgumentException(
+                        "ownerId must be empty for an INSTANCE credential AAD");
+            }
+            return "";
+        }
+        return requirePart(ownerId, "ownerId");
     }
 
     private static String requirePart(String value, String field) {
