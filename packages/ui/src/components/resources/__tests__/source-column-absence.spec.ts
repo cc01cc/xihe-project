@@ -34,28 +34,61 @@ import InstanceAgentsPanel from "../../settings/InstanceAgentsPanel.vue";
 import InstanceMcpPanel from "../../settings/InstanceMcpPanel.vue";
 import WorkspaceMcpPanel from "../../../features/workspace/components/WorkspaceMcpPanel.vue";
 
-const h = vi.hoisted(() => ({
-    auth: { isAdmin: true, canWriteWorkspace: true },
-    // services/instanceResources
-    listInstanceMcpServers: vi.fn<typeof resourcesModule.listInstanceMcpServers>(),
-    createInstanceMcpServer: vi.fn<typeof resourcesModule.createInstanceMcpServer>(),
-    deleteInstanceMcpServer: vi.fn<typeof resourcesModule.deleteInstanceMcpServer>(),
-    listInstanceCredentials: vi.fn<typeof resourcesModule.listInstanceCredentials>(),
-    listInstanceAgents: vi.fn<typeof resourcesModule.listInstanceAgents>(),
-    createInstanceAgent: vi.fn<typeof resourcesModule.createInstanceAgent>(),
-    deleteInstanceAgent: vi.fn<typeof resourcesModule.deleteInstanceAgent>(),
-    // composables/api
-    listMyAgentPrincipals: vi.fn<typeof apiModule.api.listMyAgentPrincipals>(),
-    getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
-    listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
-    getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
-    updateWorkspaceAgentCap: vi.fn<typeof apiModule.api.updateWorkspaceAgentCap>(),
-    createOwnAgentPrincipal: vi.fn<typeof apiModule.api.createOwnAgentPrincipal>(),
-    getMcpConfig: vi.fn<typeof apiModule.api.getMcpConfig>(),
-    saveMcpConfig: vi.fn<typeof apiModule.api.saveMcpConfig>(),
-    startOAuthSession: vi.fn<typeof apiModule.api.startOAuthSession>(),
-    completeOAuthSession: vi.fn<typeof apiModule.api.completeOAuthSession>(),
-}));
+const h = vi.hoisted(() => {
+    /**
+     * 假 auth store：**必须覆盖组件真正读到的成员**，且用 Proxy 兜住漏项（task-154）。
+     *
+     * <p>为什么需要 `isAuthenticated`：`964d740bc` 把 `InstanceAgentsPanel` 的**读面**判据从
+     * `isAdmin` 换成 `isAuthenticated`（对齐 CP 的 `@PreAuthorize("isAuthenticated()")`），同批只更新了
+     * 同目录的 `InstanceAgentsPanel.spec.ts`，漏了本文件这条**跨目录**负断言 ⇒ 这里的假 store 没有该字段
+     * ⇒ `load()` 不触发 ⇒ 表格不渲染 ⇒ `:311` 必红（develop 确定性红，非 flake）。**门控怎么改，这个表就怎么补。**</p>
+     *
+     * <p>为什么用 Proxy 而不是普通对象：下次再改读面判据时，「少一个字段」的表现是**静默地少渲染一块**，
+     * 而断言只剩一句「元素不存在」，读起来像产品问题。Proxy 让缺项当场抛错并点名字段，把排查成本从
+     * 「重新推导 964d740bc 那类改动」降到一眼。</p>
+     */
+    const authBase: Record<string, unknown> = {
+        isAuthenticated: true,
+        isAdmin: true,
+        hasInstanceAdminCapability: true,
+        hasInstanceAtom: () => true,
+        canWriteWorkspace: true,
+    };
+    const auth = new Proxy(authBase, {
+        get(target, prop) {
+            // 符号、已在表内的成员、以及 Vue 自身的探针（`__v_isRef` 等，模板里 `unref()` 会读）正常返回；
+            // 其余一律抛错 —— 只把「组件真的问了 store 一个没有的成员」这一种情况变成硬错。
+            if (typeof prop === "symbol" || prop in target || prop.startsWith("__v_")) {
+                return target[prop];
+            }
+            throw new Error(
+                `[source-column-absence] 假 auth store 缺少成员 "${String(prop)}" —— 组件新读了 useAuthStore 的字段，请补进 authBase（task-154）`,
+            );
+        },
+    });
+    return {
+        auth,
+        // services/instanceResources
+        listInstanceMcpServers: vi.fn<typeof resourcesModule.listInstanceMcpServers>(),
+        createInstanceMcpServer: vi.fn<typeof resourcesModule.createInstanceMcpServer>(),
+        deleteInstanceMcpServer: vi.fn<typeof resourcesModule.deleteInstanceMcpServer>(),
+        listInstanceCredentials: vi.fn<typeof resourcesModule.listInstanceCredentials>(),
+        listInstanceAgents: vi.fn<typeof resourcesModule.listInstanceAgents>(),
+        createInstanceAgent: vi.fn<typeof resourcesModule.createInstanceAgent>(),
+        deleteInstanceAgent: vi.fn<typeof resourcesModule.deleteInstanceAgent>(),
+        // composables/api
+        listMyAgentPrincipals: vi.fn<typeof apiModule.api.listMyAgentPrincipals>(),
+        getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
+        listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
+        getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
+        updateWorkspaceAgentCap: vi.fn<typeof apiModule.api.updateWorkspaceAgentCap>(),
+        createOwnAgentPrincipal: vi.fn<typeof apiModule.api.createOwnAgentPrincipal>(),
+        getMcpConfig: vi.fn<typeof apiModule.api.getMcpConfig>(),
+        saveMcpConfig: vi.fn<typeof apiModule.api.saveMcpConfig>(),
+        startOAuthSession: vi.fn<typeof apiModule.api.startOAuthSession>(),
+        completeOAuthSession: vi.fn<typeof apiModule.api.completeOAuthSession>(),
+    };
+});
 
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => h.auth,
