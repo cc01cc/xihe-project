@@ -365,7 +365,19 @@ async fn execute_host(request: ProcessRequest) -> Result<ProcessResult> {
                 if let Some(pid) = pid
                     && matches!(error, RuntimeError::ProcessTimeout { .. })
                 {
-                    terminate_process_tree(pid).await?;
+                    // BL-606: cleanup runs exactly when the child misbehaved, so the cleanup leg
+                    // fails exactly when we most need the original error. Propagating it (`?`)
+                    // replaced `ProcessTimeout` with `ProcessTreeCleanupFailed`, which flips the
+                    // caller's retry/idempotency decision on a run whose child may still be alive.
+                    // Keep the original error; log the cleanup failure instead of promoting it.
+                    if let Err(cleanup_error) = terminate_process_tree(pid).await {
+                        tracing::warn!(
+                            pid,
+                            error = %cleanup_error,
+                            original = %error,
+                            "process tree cleanup failed after timeout; keeping the original error"
+                        );
+                    }
                 }
                 return Err(error);
             }
@@ -435,7 +447,19 @@ async fn execute_mxc(request: ProcessRequest) -> Result<ProcessResult> {
                 if let Some(pid) = pid
                     && matches!(error, RuntimeError::ProcessTimeout { .. })
                 {
-                    terminate_process_tree(pid).await?;
+                    // BL-606: cleanup runs exactly when the child misbehaved, so the cleanup leg
+                    // fails exactly when we most need the original error. Propagating it (`?`)
+                    // replaced `ProcessTimeout` with `ProcessTreeCleanupFailed`, which flips the
+                    // caller's retry/idempotency decision on a run whose child may still be alive.
+                    // Keep the original error; log the cleanup failure instead of promoting it.
+                    if let Err(cleanup_error) = terminate_process_tree(pid).await {
+                        tracing::warn!(
+                            pid,
+                            error = %cleanup_error,
+                            original = %error,
+                            "process tree cleanup failed after timeout; keeping the original error"
+                        );
+                    }
                 }
                 let _ = tokio::fs::remove_file(&config_path).await;
                 return Err(error);
@@ -628,12 +652,70 @@ pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
 /// MXC policy `process.timeout` when the caller asks for no deadline.
 const MXC_UNBOUNDED_TIMEOUT_MS: u64 = 86_400_000;
 
+/// BL-606 regression seam (compiled into **test builds on Windows only**).
+///
+/// Why a seam and not a `taskkill` shim: the shim worked by placing a file next to the executable so
+/// `CreateProcess` resolved it first (search-order #1). That ties the fixture to the build directory
+/// and breaks on another machine -- it stays an investigation tool (`inject-cleanup-failure.ps1`),
+/// never a test fixture. `cfg(test)` also means the production binaries do not contain this code at
+/// all (it is not "compiled but disabled").
+///
+/// Anti-crosstalk: `take()` is one-shot and the guard clears the slot on drop (also on panic), so a
+/// concurrently running test that reaches this seam can only ever observe "no injection".
+#[cfg(all(test, windows))]
+mod test_seam {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, PoisonError};
+
+    use super::RuntimeError;
+
+    static INJECTED: Mutex<Option<RuntimeError>> = Mutex::new(None);
+    static TAKEN: AtomicUsize = AtomicUsize::new(0);
+
+    /// Clears the slot when the test ends, so leakage is bounded to a single test.
+    pub(super) struct Injection;
+
+    impl Drop for Injection {
+        fn drop(&mut self) {
+            *INJECTED.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        }
+    }
+
+    pub(super) fn inject(error: RuntimeError) -> Injection {
+        *INJECTED.lock().unwrap_or_else(PoisonError::into_inner) = Some(error);
+        Injection
+    }
+
+    /// Consumes the injected error; `None` afterwards, so at most one caller can be affected.
+    pub(super) fn take() -> Option<RuntimeError> {
+        let injected = INJECTED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if injected.is_some() {
+            TAKEN.fetch_add(1, Ordering::SeqCst);
+        }
+        injected
+    }
+
+    /// How many injections actually fired. A test asserting "the original error survived" must also
+    /// assert this is exactly 1 -- an un-fired seam would otherwise read as green (the BL-363
+    /// `terminate=0` lesson: "did not reach it" and "reached it and it worked" look identical).
+    pub(super) fn take_count() -> usize {
+        TAKEN.load(Ordering::SeqCst)
+    }
+}
+
 /// 按 PID 杀掉整棵进程树（Windows `taskkill /T /F`）。
 ///
 /// `pub(crate)`：T2.4a 的插件 runner（`crate::plugin::runner`）拿它做崩溃回收，
 /// 保证"进程树整棵杀"只有这一份实现，不在第二个地方再写一次 `taskkill` 口径。
 #[cfg(windows)]
 pub(crate) async fn terminate_process_tree(pid: u32) -> Result<()> {
+    #[cfg(test)]
+    if let Some(injected) = test_seam::take() {
+        return Err(injected);
+    }
     let output = tokio::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .output()
@@ -881,6 +963,50 @@ mod tests {
         .await
         .expect_err("long-running host process must time out");
         assert!(matches!(error, super::RuntimeError::ProcessTimeout { .. }));
+    }
+
+    /// BL-606 regression: a failed `terminate_process_tree` must not replace the timeout error.
+    ///
+    /// Two-directional judgement (task-29 card): green on patch B, red on the unfixed code
+    /// (`terminate_process_tree(pid).await?` => the caller sees `ProcessTreeCleanupFailed`).
+    /// The seam-consumption assertion is not decoration: a seam that never fired would make the
+    /// "original error survived" assertion pass for the wrong reason, which is exactly the trap
+    /// BL-363's `terminate=0` run fell into.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn cleanup_failure_keeps_the_timeout_error() {
+        let directory = tempfile::tempdir().expect("temporary workspace directory");
+        let _injection = super::test_seam::inject(super::RuntimeError::ProcessTreeCleanupFailed {
+            detail: "injected by the BL-606 cleanup seam".to_string(),
+        });
+        let error = super::execute(super::ProcessRequest {
+            contract_version: CONTRACT_VERSION.to_string(),
+            backend_kind: Some("windows-host".to_string()),
+            backend_revision: Some("builtin".to_string()),
+            execution_mode: "windows-host".to_string(),
+            program: "cmd.exe".to_string(),
+            // Short on purpose: the injected seam skips the real `taskkill`, so this child is
+            // *not* killed and would keep its stdout pipe open for as long as it runs. `ping -n 3`
+            // (~2 s) still exceeds the 100 ms deadline but keeps the test at seconds, not 20 s.
+            args: vec!["/C".to_string(), "ping -n 3 127.0.0.1 > nul".to_string()],
+            cwd: Some(directory.path().to_path_buf()),
+            env: BTreeMap::new(),
+            filesystem: super::FilesystemPolicy::default(),
+            timeout_ms: 100,
+            shell: false,
+            output_limit_bytes: None,
+        })
+        .await
+        .expect_err("long-running host process must time out");
+        assert_eq!(
+            super::test_seam::take_count(),
+            1,
+            "the cleanup seam never fired, so the injection did not take effect and this run proves nothing"
+        );
+        assert!(
+            matches!(error, super::RuntimeError::ProcessTimeout { .. }),
+            "cleanup failure replaced the original error: {error:?}"
+        );
     }
 
     #[cfg(windows)]
