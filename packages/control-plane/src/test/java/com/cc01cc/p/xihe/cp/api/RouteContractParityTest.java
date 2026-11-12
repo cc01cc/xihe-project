@@ -90,6 +90,22 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
      * opposite direction ("documented but not implemented") and the opposite lifecycle: entries are
      * added <b>with</b> the contract change and must be removed when the code lands, so an entry here
      * never means "forgotten", it means "scheduled".
+     *
+     * <p><b>This gate does NOT verify that a scheduled route got implemented</b> — and it cannot: the
+     * entry is consumed only when the shape still produces a candidate (see {@link #notExempt}:
+     * candidates are the documented-minus-implemented difference, matched against this map). The
+     * moment the code lands, the candidate disappears, so the entry silently stops being consulted:
+     * deleting a stale entry changes <b>nothing</b> in the reading. Measured (task-178, 2026-11-12):
+     * removing the three stale {@code /api/v1/instance/credentials*} entries after `task-173` landed
+     * produced a byte-identical {@code [bl320]} line (entries 7→4, {@code planned=8} unchanged); by
+     * contrast, removing the two live {@code /api/v1/instance/mcp*} entries went red as it must
+     * ({@code planned 8→4}, {@code unexpected=4}, exit 1). {@link #KNOWN_GAPS} is the asymmetric case:
+     * it has an explicit self-cleaning assertion below ({@code gapHits == KNOWN_GAPS.keySet()}),
+     * this map has none, so a forgotten entry rots invisibly.
+     *
+     * <p><b>⇒ Legal proof that "planned became implemented" lives in the integration test of the
+     * implementing card, never here</b> (task-173's wording). Treat a green run as "no undocumented
+     * route is being served" only; it says nothing about whether a contracted route has code.
      */
     private static final Map<String, String> PLANNED_APIS = new LinkedHashMap<>();
 
@@ -184,9 +200,6 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         //        /api/v1/instance/credentials              ← GET(list) + POST(create)
         //        /api/v1/instance/credentials/{}           ← GET(one) + DELETE
         //        /api/v1/instance/credentials/{}/reveal    ← POST(reveal)
-        PLANNED_APIS.put("/api/v1/instance/credentials", "PLAN-0771 M3");
-        PLANNED_APIS.put("/api/v1/instance/credentials/{}", "PLAN-0771 M3");
-        PLANNED_APIS.put("/api/v1/instance/credentials/{}/reveal", "PLAN-0771 M3");
 
         //      PLAN-0771 M3（D-1008，2026-11-12）：实例层 principals。**4 条操作只对应 2 个 shape** ——
         //      卡面写的「4 条 ⇒ 3 个 shape」是算术错（集合 path 的 GET+POST 共用一个 shape，{principalId}
