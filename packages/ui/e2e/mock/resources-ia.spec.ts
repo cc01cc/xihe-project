@@ -1,6 +1,11 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 
+// 旧资源路径清单的**唯一单源**（`task-315`）：本文件与 `src/router/__tests__/legacy-paths.spec.ts`
+// 共用同一份数据，不再各自手抄。`e2e → src/lib` 是既有惯例（同目录 `plan-0752-settings-ia.spec.ts`
+// 就引 `src/lib/settingsIaRequests`），不是本卡新开的依赖方向。
+import { LEGACY_RESOURCE_PATHS } from "../../src/lib/legacyRoutes";
+
 /**
  * PLAN-0772 M2：资源面搬出 `/settings`、成为**第三个顶层入口**（`/resources/*`）。
  *
@@ -383,15 +388,9 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
     });
     test("旧资源路径直接删除（无 redirect）：渲染 404，URL 不跳走", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
-        const legacy = [
-            "/settings/instance/credentials",
-            "/settings/instance/agents",
-            "/settings/instance/mcp",
-            "/settings/skills",
-            "/settings/credentials",
-            "/settings/agent-principals",
-            "/settings/knowledge",
-        ];
+        // 数据来源换成单源（`src/lib/legacyRoutes.ts`，`task-315`）；下面三条断言与循环体一个字未动 ——
+        // 七条路径的 404 负断言是「没留两套页面」的唯一机器证据，不许为了单源削弱它。
+        const legacy = LEGACY_RESOURCE_PATHS;
         for (const path of legacy) {
             await page.goto(path);
             // 决策 10：用户 2026-11-12 裁定「不用考虑旧的兼容性，要改就全改」⇒ 不留 redirect。

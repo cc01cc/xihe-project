@@ -199,11 +199,15 @@ const router = createRouter({
             /**
              * PLAN-0772 M2（design.md 目标 1 + 决策 10）：资源面独立成**第三个顶层入口**。
              *
-             * <p>旧路径（`/settings/instance/credentials|agents|mcp`、`/settings/skills`、
-             * `/settings/credentials`、`/settings/agent-principals`、`/settings/knowledge`）
+             * <p>旧资源入口（原先挂在 `/settings/**` 下的凭据 / MCP / 技能 / 智能体 / 知识库）
              * **一次性删除、不留 redirect** —— 用户 2026-11-12 裁定「不用考虑旧的兼容性，要改就全改，
              * 一次性改」。留着 redirect 会留下两套路径语义，日后没人敢删；删干净则是**可判定**的
              * 完成判据（`git grep` 归 0）。</p>
+             *
+             * <p><b>具体是哪几条不在这里重复</b>：清单的**唯一单源**是
+             * `src/lib/legacyRoutes.ts` 的 `LEGACY_RESOURCE_PATHS`（`task-315` 收口 `297` 缺口 3 ——
+             * 此前这段注释与 unit 守卫、e2e 404 负断言三处手抄，任一处漏改就静默过期）。
+             * 要新增"已删除路径"，改那个模块即可，两个车道的判据会同时跟上。</p>
              *
              * <p>层在 `?layer=`（大写），不在路径段：一资源一页 + 页内层 tab（决策 2）。
              * 路由只注册**真实存在的资源**（`RESOURCE_DEFS` 里没有 gaps 的），knowledge 单独一条

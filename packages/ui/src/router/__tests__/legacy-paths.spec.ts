@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { LEGACY_RESOURCE_PATHS } from "../../lib/legacyRoutes";
 import router from "../index";
 
 /**
  * `task-301`（PLAN-0772 `T2.3` 遗留）：**七条已删除的旧资源路径不在路由表**（unit 车道守卫）。
  *
  * <p>为什么需要这条（`297` 盘点的结论）：e2e 侧已有 404 负断言
- * （`e2e/mock/resources-ia.spec.ts:384-401`，7/7 覆盖），但那是 **mock 车道、要起栈**；
+ * （`e2e/mock/resources-ia.spec.ts:389-400`，7/7 覆盖），但那是 **mock 车道、要起栈**；
  * unit 车道此前 **0 条**守着「旧路径没被加回路由表」—— 本文件补的就是这半秒级的绊线。</p>
  *
  * <p><b>为什么断言两件而不是一件</b>：只断言 `resolve(path).name === "settings-not-found"`
@@ -14,10 +15,12 @@ import router from "../index";
  * 路由表里真的躺着一条旧路径。所以第二条直接查
  * `router.getRoutes()` 里**是否存在 `path` 精确等于该旧路径的记录**，那是"不在表里"的本体判据。</p>
  *
- * <p><b>单源提示（`297` 缺口 3：清单手写、无单源绑定）</b>：
- * 已删除资源路径清单的唯一凭据 = `src/router/index.ts:202-203` 的注释（决策 10：一次性删除、
- * 不留 redirect）+ 本文件 {@link GUARD}.legacy。**新增删除必须同批加进这个数组**，
- * 否则本门对未来新增的旧路径是盲的（它只能证明"列出来的这些"不在表里）。</p>
+ * <p><b>清单的单源（`task-315` 收口 `297` 缺口 3）</b>：
+ * 已删除资源路径的**唯一**清单是 `src/lib/legacyRoutes.ts` 的 `LEGACY_RESOURCE_PATHS`
+ * （{@link GUARD}.legacy 直接引用它，本文件不再手抄）。**新增删除必须同批改那个模块** ——
+ * 否则本门以及对面的 e2e 404 负断言对新路径同时是盲的（它们只能证明"列出来的这些"不在表里）。
+ * 单源之前的形态是三处手抄（本文件 + `e2e/mock/resources-ia.spec.ts` + `router/index.ts` 注释），
+ * 任何一处漏改都会让另一处静默过期。</p>
  *
  * <p><b>反向自检不是可选项</b>：{@link GUARD}.live 与 {@link GUARD}.surviving 两组断言证明
  * "这套写法能分辨存活/已删" —— 否则「七条都解析到 404」可能只是因为判据恒真
@@ -26,7 +29,7 @@ import router from "../index";
 interface GuardFixture {
     /** 设置区兜底路由的 name（`router/index.ts` 的 `settings-not-found`）。 */
     readonly notFoundName: string;
-    /** 已删除的七条旧资源路径（PLAN-0772 M2 / 决策 10）。**新增删除同批加进来。** */
+    /** 已删除的七条旧资源路径（PLAN-0772 M2 / 决策 10）。**数据来自单源，不在本文件手抄。** */
     readonly legacy: readonly string[];
     /** 反向自检：**活着**的新资源路径（名字来自 `router/index.ts` 的 `resources-<id>`）。 */
     readonly live: readonly (readonly [path: string, name: string])[];
@@ -41,15 +44,7 @@ interface GuardFixture {
 
 const GUARD: GuardFixture = {
     notFoundName: "settings-not-found",
-    legacy: [
-        "/settings/instance/credentials",
-        "/settings/instance/agents",
-        "/settings/instance/mcp",
-        "/settings/skills",
-        "/settings/credentials",
-        "/settings/agent-principals",
-        "/settings/knowledge",
-    ],
+    legacy: LEGACY_RESOURCE_PATHS,
     live: [
         ["/resources/credentials", "resources-credentials"],
         ["/resources/mcp", "resources-mcp"],
