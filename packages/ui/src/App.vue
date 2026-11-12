@@ -43,12 +43,16 @@ onMounted(async () => {
     if (!authStore.isAuthenticated) return;
     // PLAN-0610 W5a: the cached user may predate the capability projection (no `capabilities`
     // field) or its capabilities may have been changed by another administrator. Refresh once
-    // before the first `isAdmin`-sensitive load so instance settings entries and instance config
+    // before the first permission-sensitive load so instance settings entries and instance config
     // layers neither flash nor disappear. Failure is soft: the cached user stays.
     await authStore.refreshCapabilities();
-    configStore.loadAllDomains({ isAdmin: authStore.isAdmin }).catch(() => {
-        // 后端不可用时使用本地持久化配置；错误已在 store 中记录
-    });
+    // task-74：判据是 CP 的 `READ_INSTANCE_CONTENT` 原子（`ConfigController.java:89-90/:207-220`），
+    // 不是 `cap:instance:admin` —— 能力位与动作原子互不蕴含，混用会造出新的不同轴。
+    configStore
+        .loadAllDomains({ canReadInstanceContent: authStore.canReadInstanceContent })
+        .catch(() => {
+            // 后端不可用时使用本地持久化配置；错误已在 store 中记录
+        });
     if (authStore.currentWorkspaceId) {
         try {
             await sessionStore.loadSessions();
