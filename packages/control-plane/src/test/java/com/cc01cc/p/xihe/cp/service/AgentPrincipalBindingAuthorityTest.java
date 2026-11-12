@@ -70,7 +70,8 @@ class AgentPrincipalBindingAuthorityTest {
 
     private AgentPrincipalService.WorkspaceAgentView view(UUID id) {
         return new AgentPrincipalService.WorkspaceAgentView(
-                id, "bl352subject", null, null, Instant.now(), null, true, false, null, null, List.of());
+                id, "bl352subject", null, null, Instant.now(), null, true, false, null, null,
+                List.of(), "explicit");
     }
 
     private CpApiException expectProblem(HttpStatus status, String code) {

@@ -594,6 +594,11 @@ export interface WorkspaceAgentBinding {
     createdAt: string;
     /** 工作区绑定的工作区角色；角色绑定的 scope 与主体无关。 */
     permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
+    /**
+     * D-1109：这份冻结上限的来源 —— `explicit` = 调用方显式传了数组（`[]` 表示零权限）；
+     * `baseline` = 调用方省略字段、由角色基线派生；`null`/缺省 = 该行没有 cap 绑定。
+     */
+    capSource?: "baseline" | "explicit" | null;
     /** 是否存在该工作区的 cap 绑定；角色绑定可使未绑定行可见。 */
     bound: boolean;
     /** 主体被禁用后不能用于新会话。 */
@@ -888,6 +893,8 @@ export interface WorkspaceAgentCapResponse {
     principalId: string;
     workspaceId: string;
     permissions: WorkspaceAgentPermission[];
+    /** D-1109：本次写入的来源（`baseline` = 省略字段继承角色基线；`explicit` = 显式数组）。 */
+    capSource?: "baseline" | "explicit";
 }
 
 export interface ChatApprovalDecisionResponse {
@@ -4040,14 +4047,25 @@ export const api = {
             method: "POST",
         });
     },
+    /**
+     * D-1109（46A + 47A）：`permissions` 变成可选。
+     *
+     * - 传数组（含 `[]`）= 显式冻结，CP 记 `capSource='explicit'`；`[]` **永远表示零权限**，
+     *   不是「用基线」（46C 已否决）。
+     * - **省略**该参数 = 继承该主体的角色基线，CP 记 `capSource='baseline'`，事后可把
+     *   「忘了传」与「故意继承」分开审计。
+     */
     updateWorkspaceAgentCap(
         workspaceId: string,
         principalId: string,
-        permissions: WorkspaceAgentPermission[],
+        permissions?: WorkspaceAgentPermission[],
     ): Promise<WorkspaceAgentCapResponse> {
         return request<WorkspaceAgentCapResponse>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`,
-            { method: "PUT", body: JSON.stringify({ permissions }) },
+            {
+                method: "PUT",
+                body: JSON.stringify(permissions === undefined ? {} : { permissions }),
+            },
         );
     },
     deleteWorkspaceAgent(workspaceId: string, principalId: string): Promise<void> {

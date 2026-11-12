@@ -440,7 +440,17 @@ public class AgentPrincipalService {
         return savedPrincipal;
     }
 
-    /** The caller authorizes MANAGE_WORKSPACE_AGENTS; this service enforces membership and permission ceilings. */
+    /**
+     * The caller authorizes MANAGE_WORKSPACE_AGENTS; this service enforces membership and permission ceilings.
+     *
+     * <p>D-1109 (46A + 47A): {@code requestedPermissions == null} means "the caller omitted the
+     * field" — the cap is then derived from the principal's ROLE BASELINE in this workspace and the
+     * row records {@code cap_source='baseline'} (V161). A non-null array is explicit and frozen as
+     * {@code cap_source='explicit'}; an empty array is an explicit ZERO cap, never "inherit"
+     * (D-1109 guard 3 / 46C). Explicit atoms outside either ceiling are still refused with 403
+     * {@code AGENT_PERMISSION_SCOPE_EXCEEDED} — nothing is silently truncated to the baseline
+     * (D-1096). The read path ({@link #resolveCapFor}) is untouched: effective = role ∩ cap.</p>
+     */
     @Transactional
     public WorkspaceAgent setWorkspaceCap(String actorUserId, UUID workspaceId, UUID principalId,
                                           JsonNode requestedPermissions) {
@@ -459,12 +469,28 @@ public class AgentPrincipalService {
         requireWorkspaceAgentManagement(actorId, workspaceId);
         requireBindingAuthority(actorId, principal);
 
-        Set<GrantIntersectionEvaluator.PermissionAtom> cap = parsePermissions(requestedPermissions);
+        boolean inheritsBaseline = requestedPermissions == null;
+        String capSource = inheritsBaseline
+                ? WorkspaceAgent.CAP_SOURCE_BASELINE : WorkspaceAgent.CAP_SOURCE_EXPLICIT;
+        Set<GrantIntersectionEvaluator.PermissionAtom> cap = inheritsBaseline
+                ? roleBaselineAtoms(principalId, workspaceId)
+                : parsePermissions(requestedPermissions);
         // D-174 + PLAN-0673 D-180: BOTH sides evaluate in the TARGET workspace (instance rows
         // participate everywhere, a workspace row only for its own workspace) — the pre-fix
         // unscoped reads let A's workspace-A write reach into workspace B.
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions =
                 principalEffectiveAtoms(principalId, workspaceId);
+        if (inheritsBaseline) {
+            // D-1109: the baseline is read from the role the structural binding is about to
+            // materialize, so it is inside the principal's ceiling by construction. Union it in
+            // rather than skipping the gate: the ceiling stays "what this principal will hold",
+            // and only the inherited path can reach these atoms (an explicit cap still answers to
+            // the pre-write set, D-1096).
+            Set<GrantIntersectionEvaluator.PermissionAtom> inheritedCeiling =
+                    new LinkedHashSet<>(principalPermissions);
+            inheritedCeiling.addAll(cap);
+            principalPermissions = Set.copyOf(inheritedCeiling);
+        }
         Set<GrantIntersectionEvaluator.PermissionAtom> actorPermissions = evaluator.union(
                 grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
                         GrantSources.EVALUATION_SOURCES, workspaceId));
@@ -482,14 +508,19 @@ public class AgentPrincipalService {
         WorkspaceAgent binding = workspaceAgentRepository.findById(bindingId).orElse(null);
         boolean created = binding == null;
         Set<GrantIntersectionEvaluator.PermissionAtom> previous = Set.of();
+        String previousSource = created ? null : binding.getCapSource();
         if (created) {
-            binding = new WorkspaceAgent(principalId.toString(), workspaceId.toString(), toJson(cap));
+            binding = new WorkspaceAgent(principalId.toString(), workspaceId.toString(), toJson(cap),
+                    capSource);
         } else {
             previous = parsePermissions(binding.getPermissionsSnapshot());
-            if (previous.equals(cap)) {
+            // D-1109 guard 1: the same atom set under a different provenance is still a state
+            // change (explicit -> baseline), otherwise "inherit" would leave no audit trace at all.
+            if (previous.equals(cap) && capSource.equals(previousSource)) {
                 return binding;
             }
             binding.setPermissionsSnapshot(toJson(cap));
+            binding.setCapSource(capSource);
         }
 
         WorkspaceAgent savedBinding = workspaceAgentRepository.saveAndFlush(binding);
@@ -499,6 +530,10 @@ public class AgentPrincipalService {
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "MANAGE_WORKSPACE_AGENTS");
         detail.put("principalId", principalId.toString());
+        detail.put("capSource", capSource);
+        if (previousSource != null) {
+            detail.put("capSourceBefore", previousSource);
+        }
         detail.set("permissionsBefore", toJson(previous));
         detail.set("permissionsAfter", toJson(cap));
         auditLogger.recordDurableChange(actorId.toString(), workspaceId.toString(),
@@ -589,7 +624,8 @@ public class AgentPrincipalService {
                                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
                                 principal.getContextPolicy() == null
                                         ? null : principal.getContextPolicy().deepCopy(),
-                                rolesByPrincipal.getOrDefault(principal.getId(), List.of())))
+                                rolesByPrincipal.getOrDefault(principal.getId(), List.of()),
+                                binding.getCapSource()))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .forEach(view -> merged.put(view.principalId(), view));
@@ -640,7 +676,9 @@ public class AgentPrincipalService {
                 false, principal.getDisabledAt() != null,
                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
                 principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy(),
-                roleIds);
+                roleIds,
+                // no cap binding ⇒ no stored provenance; the view answers null (bound=false).
+                null);
     }
 
     /** PLAN-0629: one query per list call — workspace role bindings grouped by principal. */
@@ -933,6 +971,45 @@ public class AgentPrincipalService {
         return evaluator.union(grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 GrantSources.EVALUATION_SOURCES, workspaceId));
+    }
+
+    /**
+     * D-1109 (46A + 47A): the ROLE BASELINE of a principal in one workspace — what the write path
+     * must copy into the cap when the caller omits {@code permissions}, so a fresh binding is born
+     * with the same shape as a V160-repaired row instead of "grants have it, the snapshot does not".
+     *
+     * <p>Three sources, unioned:</p>
+     * <ol>
+     *   <li>the materialized {@code source='role'} grants for this subject in this workspace
+     *       (PLAN-0629 read path — reach is a role binding);</li>
+     *   <li>{@code source='credential_binding'} grants (PLAN-0494 active mechanism) — leaving them
+     *       out would let this frozen cap silently drop a credential atom at evaluation time;</li>
+     *   <li>when no workspace role binding exists yet, the atoms {@code ensureWorkspaceRoleBinding}
+     *       is about to materialize from the seeded default role. Reading them here (rather than
+     *       moving the binding write earlier) keeps the zero-write refusal guarantees of D-180 —
+     *       a refused cap must leave role_bindings/grants at zero rows.</li>
+     * </ol>
+     * Capability atoms and agent-forbidden atoms are skipped: the materializer never turns them
+     * into grants, so counting them would invent a capability the evaluator drops anyway.
+     */
+    private Set<GrantIntersectionEvaluator.PermissionAtom> roleBaselineAtoms(UUID principalId,
+                                                                            UUID workspaceId) {
+        Set<GrantIntersectionEvaluator.PermissionAtom> baseline = new LinkedHashSet<>(
+                evaluator.union(grantRepository.findScopedGrants(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                        List.of(GrantSources.ROLE, GrantSources.CREDENTIAL_BINDING), workspaceId)));
+        if (workspaceRoleIds(principalId, workspaceId).isEmpty()) {
+            AccessRole defaultRole = requireRole(DEFAULT_AGENT_WORKSPACE_ROLE);
+            for (String name : roleAtomNames(defaultRole.getId())) {
+                if (!PermissionAtomCatalog.isActionAtom(name)
+                        || PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(List.of(name)) != null) {
+                    continue;
+                }
+                baseline.add(new GrantIntersectionEvaluator.PermissionAtom(name,
+                        PermissionAtomCatalog.atom(name).canonicalResource()));
+            }
+        }
+        return Set.copyOf(baseline);
     }
 
     /** PLAN-0629: the workspace-scoped role ids bound to this principal (read-only view field). */
@@ -1591,7 +1668,9 @@ public class AgentPrincipalService {
                                      boolean bound, boolean disabled, JsonNode hooks,
                                      JsonNode contextPolicy,
                                      // PLAN-0629: the workspace-scoped roles that authorize this row.
-                                     java.util.List<UUID> roleIds) {}
+                                     java.util.List<UUID> roleIds,
+                                     // D-1109: provenance of the frozen cap (null = no cap row).
+                                     String capSource) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }

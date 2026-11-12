@@ -240,18 +240,28 @@ public class WorkspaceAgentController {
     @PutMapping("/{principalId}")
     public ResponseEntity<?> update(@PathVariable String workspaceId, @PathVariable String principalId,
                                     @RequestBody(required = false) Map<String, Object> body) {
-        if (body == null || body.size() != 1 || !(body.get("permissions") instanceof List<?> permissions)) {
+        // D-1109 (46A): `permissions` is optional — an empty body means "inherit the role baseline".
+        // The shape check stays first and stays strict: any other key, or a non-array
+        // `permissions`, is 400 INVALID_REQUEST (the atoms-level 400 INVALID_PERMISSION_ATOMS is only
+        // reachable from the DB-side empty-snapshot read path, not from HTTP).
+        boolean hasPermissions = body != null && body.containsKey("permissions");
+        if (body != null && (body.size() > 1
+                || (hasPermissions && !(body.get("permissions") instanceof List<?>)))) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "INVALID_REQUEST", "Body must contain only a permissions array");
+                    "INVALID_REQUEST", "Body must be empty or contain only a permissions array");
         }
+        JsonNode requestedPermissions = hasPermissions
+                ? objectMapper.valueToTree(body.get("permissions"))
+                : null;
         try {
             WorkspaceAgent binding = agentPrincipalService.setWorkspaceCap(
                     requireActor(), parseUuid(workspaceId), parseUuid(principalId),
-                    objectMapper.valueToTree(permissions));
+                    requestedPermissions);
             return ResponseEntity.ok(Map.of(
                     "principalId", binding.getId().getPrincipalId(),
                     "workspaceId", binding.getId().getWorkspaceId(),
-                    "permissions", toValue(binding.getPermissionsSnapshot())));
+                    "permissions", toValue(binding.getPermissionsSnapshot()),
+                    "capSource", binding.getCapSource()));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -282,6 +292,9 @@ public class WorkspaceAgentController {
         result.put("createdAt", view.createdAt().toString());
         // PLAN-0622 M1.2: `permissions` -> `permissionsSnapshot`, plus the mandatory `source`.
         result.put("permissionsSnapshot", toValue(view.permissions()));
+        // D-1109: null = no cap binding row (bound=false); the UI reads "baseline" as the
+        // inherited state instead of pretending the stored atoms were pinned by a caller.
+        result.put("capSource", view.capSource());
         // D26: whether this row is bound to the workspace (visible-without-binding rows are false).
         result.put("bound", view.bound());
         // task-83 Gap D: hook subscriptions — the subscription row must light up on the wire.
