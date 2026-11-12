@@ -1537,7 +1537,12 @@ const messages = {
                     WORKSPACE: "本工作区技能",
                     INSTANCE: "全平台技能",
                 },
-                agents: { USER: "我的主体", INSTANCE: "平台智能体" },
+                agents: {
+                    USER: "我的主体",
+                    // PLAN-0772 task-203：工作区层 = 成员/绑定面（`WorkspaceAgentsPanel`）。
+                    WORKSPACE: "本工作区智能体",
+                    INSTANCE: "平台智能体",
+                },
             },
             tabsLabel: "资源层",
             disabledHint: "置灰的层仍留在页面上（不隐藏），点了不会切过去；原因见下。",
@@ -4687,7 +4692,11 @@ const messages = {
                     WORKSPACE: "Workspace skills",
                     INSTANCE: "Platform skills",
                 },
-                agents: { USER: "My principals", INSTANCE: "Platform agents" },
+                agents: {
+                    USER: "My principals",
+                    WORKSPACE: "Workspace agents",
+                    INSTANCE: "Platform agents",
+                },
             },
             tabsLabel: "Resource layer",
             disabledHint:

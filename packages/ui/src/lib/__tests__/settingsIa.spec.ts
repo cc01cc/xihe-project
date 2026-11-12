@@ -188,8 +188,10 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
         expect(layersForResource("mcp")).toEqual(["WORKSPACE", "INSTANCE"]);
         // 技能三层：个人层后端未实现（决策 12 的 T2b），但形状先立（`pendingBackend`）。
         expect(layersForResource("skills")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
-        // 智能体：个人主体 + 平台智能体；工作区层不在资源区（那是成员/绑定面，M3 才动）。
-        expect(layersForResource("agents")).toEqual(["USER", "INSTANCE"]);
+        // 智能体三层（task-203，用户 2026-11-12「成员入口的 agent principal 也别漏了」）：
+        // 个人主体（`agent-principals`）+ **工作区成员/绑定面**（`WorkspaceAgentsPanel`，
+        // 写面 CP 守工作区档原子 `MANAGE_WORKSPACE_AGENTS`）+ 平台智能体（能力位 `instance:admin`）。
+        expect(layersForResource("agents")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
         // 知识库是后端缺口（G3），一层都没有。
         expect(layersForResource("knowledge")).toEqual([]);
     });
@@ -233,6 +235,11 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
     it("深链形态：`?layer=` 大写、层不进路径段", () => {
         expect(resourcePath("skills")).toBe("/resources/skills");
         expect(resourceLayerPath("skills", "WORKSPACE")).toBe("/resources/skills?layer=WORKSPACE");
+        // task-203：智能体工作区层是**可分享深链**（成员/绑定面），大小写与缺省都走同一解析器。
+        expect(resourceLayerPath("agents", "WORKSPACE")).toBe("/resources/agents?layer=WORKSPACE");
+        expect(resolveResourceLayer("agents", "workspace")).toBe("WORKSPACE");
+        // 默认层**不因新增层而改变**（仍是个人主体）：工作区层只在显式 `?layer=` 时进入。
+        expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
         expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
     });
 

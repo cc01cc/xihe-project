@@ -205,6 +205,114 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await page.goto("/resources/skills?layer=INSTANCE");
         await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText("我的技能");
     });
+    test("智能体：三层 tab（个人主体 / 本工作区成员 / 平台智能体）", async ({ page }) => {
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // 工作区层的绑定面读 `GET /workspaces/{id}/agents`：`setupMockAuth` 的默认桩回 `{agents:[]}`，
+        // 本用例自己给一条真实绑定 —— 否则"面板可见"只能证明壳在，证明不了它读到了工作区数据。
+        await page.route(/\/api\/v1\/workspaces\/[^/]+\/agents/, (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    agents: [
+                        {
+                            principalId: "principal-ws-1",
+                            name: "ws-reviewer",
+                            templateId: "tpl-1",
+                            templateName: "代码评审助手",
+                            createdAt: "2026-11-12T00:00:00.000Z",
+                            permissionsSnapshot: [],
+                            bound: true,
+                            hooks: [],
+                            contextPolicy: null,
+                            disabled: false,
+                        },
+                    ],
+                }),
+            }),
+        );
+
+        await page.goto("/resources/agents");
+        // task-203：三层（USER → WORKSPACE → INSTANCE），默认层仍是个人主体。
+        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
+        await expect(page.getByTestId("resource-layer-tab-USER")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
+        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toHaveAttribute(
+            "aria-selected",
+            "false",
+        );
+
+        // 工作区层 = **成员 / 绑定面**（复用既有 `WorkspaceAgentsPanel`，不是新写的空壳）。
+        await page.getByTestId("resource-layer-tab-WORKSPACE").click();
+        await expect(page).toHaveURL(/\/resources\/agents\?layer=WORKSPACE/);
+        await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible();
+        await expect(page.getByTestId("workspace-agent-management-dialog")).toContainText(
+            "ws-reviewer",
+        );
+
+        // 深链可分享：刷新后层保持（URL 是唯一口径）。
+        await page.reload();
+        await expect(page).toHaveURL(/\/resources\/agents\?layer=WORKSPACE/);
+        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
+    });
+
+    test("智能体：工作区层没有工作区上下文时给诚实态（不是空白列表）", async ({ page }) => {
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // 「没有工作区上下文」要**两件事一起做**才成立（实测 task-203）：
+        // ① 清掉两个存储键（只清 localStorage 会被 `migrateLegacyWorkspace` 迁回）；
+        // ② `/me/permissions` 回**零工作区**——否则 auth store 启动时会按权限列表把默认工作区
+        //    重新写回 sessionStorage（`stores/auth.ts` 的 `writeTabWorkspace`），tab 又变成可用。
+        await page.addInitScript(() => {
+            sessionStorage.removeItem("xihe-workspace");
+            localStorage.removeItem("xihe-workspace");
+        });
+        await page.route("**/api/v1/me/permissions", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    userId: "user-1",
+                    instanceCapabilities: ["isInstanceAdmin"],
+                    instancePermissions: [],
+                    workspaces: [],
+                }),
+            }),
+        );
+        await page.goto("/resources/agents?layer=WORKSPACE");
+
+        // 层 tab 仍有三枚（留位不隐藏）。深链进来时工作区层是**当前层** ⇒ 按裁定 c 不置灰
+        // （否则"选中的 tab 点不动"），但正文必须是诚实态而不是空列表。
+        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
+        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toHaveAttribute(
+            "aria-selected",
+            "true",
+        );
+        await expect(page.getByTestId("resources-workspace-required")).toBeVisible();
+        await expect(page.getByTestId("workspace-agent-management-dialog")).toHaveCount(0);
+
+        // 反向护栏：不在这一层时它必须**置灰 + 给理由**（不是隐藏、也不是可点）。
+        await page.goto("/resources/agents?layer=USER");
+        await expect(page.getByTestId("resource-layer-tab-WORKSPACE")).toBeDisabled();
+        await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText(
+            "本工作区智能体",
+        );
+    });
+
+    test("智能体：无 instance:admin 时实例层置灰 + 理由（不是隐藏）", async ({ page }) => {
+        await setupMockAuth(page);
+        await page.goto("/resources/agents");
+        const instanceTab = page.getByTestId("resource-layer-tab-INSTANCE");
+        await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
+        await expect(instanceTab).toBeDisabled();
+        await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText(
+            "实例管理员",
+        );
+    });
     test("旧资源路径直接删除（无 redirect）：渲染 404，URL 不跳走", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         const legacy = [

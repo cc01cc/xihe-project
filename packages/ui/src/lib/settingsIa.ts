@@ -248,10 +248,19 @@ export const RESOURCE_DEFS: readonly ResourceDef[] = [
         // 都要对默认层（USER=个人主体）成立，用层内名会得到「/resources/agents 标题写着平台智能体、
         // 当前层却是我的主体」这种自相矛盾的页面（实测 2026-11-12 探针抓到的）。
         labelKey: "resources.nameAgents",
-        // 个人层 = `agent-principals`（PLAN-0750 M3）；实例层 = 平台智能体（D-1006 B4）。
-        // 工作区层不在这里：工作区智能体是「成员/绑定」面（`WorkspaceAgentsPanel`），M3 才动。
+        /**
+         * 三层（task-203，用户 2026-11-12「成员入口的 agent principal 也别漏了」）：
+         * - 个人层 = `agent-principals`（`created_by=self` 的个人视图）；
+         * - **工作区层 = 成员 / 绑定面**（`WorkspaceAgentsPanel`；读面 `WorkspaceAgentController`
+         *   全 `@PreAuthorize("isAuthenticated()")`，写面绑定由 CP 的 `BindingController` /
+         *   `BindingAdminService` 守 **`MANAGE_WORKSPACE_AGENTS`**（工作区档原子，`PermissionAtomCatalog.java:125`
+         *   与 `PrincipalGrantActionCatalog.java:84` 要求具体 workspace UUID）。⇒ tab 门只需要
+         *   「有工作区上下文」，动作原子交给面板与 CP，不在这里重复挡、也不编造原子名）；
+         * - 实例层 = 平台智能体（D-1006 B4，能力位 `instance:admin`）。
+         */
         layerRules: [
             { layer: "USER" },
+            { layer: "WORKSPACE", needsWorkspace: true },
             { layer: "INSTANCE", requires: { capability: "instance:admin" } },
         ],
         defaultLayer: "USER",
