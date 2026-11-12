@@ -12,9 +12,11 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -98,5 +100,31 @@ class SkillAccessGuardTest {
         TenantContext.clear();
         assertFalse(guard.canManageInstanceLibrary());
         assertFalse(guard.canWriteDefinitionScope(Skill.DEFINITION_SCOPE_INSTANCE, null));
+    }
+
+    /**
+     * I-9 (task-222): a refused personal write emits <b>one</b> line on the canonical deny stream
+     * ({@code RequesterAuthority.logActionAtomDenied} → {@code [POLICY] event=action_atom_denied}),
+     * with the atom that was missing and the refusing subject. It is not an {@code audit_logs} row
+     * (PLAN-0651 T1.5 B4: a denial is an atom-layer event, never a resource audit).
+     */
+    @Test
+    void refusedPersonalWriteEmitsTheCanonicalDenyLine() {
+        when(requesterAuthority.holdsActionAtom(ACTOR,
+                ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS, null)).thenReturn(false);
+
+        assertFalse(guard.canWriteDefinitionScope(Skill.DEFINITION_SCOPE_USER, null));
+        verify(requesterAuthority).logActionAtomDenied(
+                eq(ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS), eq(ACTOR), isNull());
+    }
+
+    /** The granted path must stay silent, otherwise the deny stream stops being a signal. */
+    @Test
+    void grantedPersonalWriteIsNotLoggedAsADenial() {
+        when(requesterAuthority.holdsActionAtom(ACTOR,
+                ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS, null)).thenReturn(true);
+
+        assertTrue(guard.canWriteDefinitionScope(Skill.DEFINITION_SCOPE_USER, null));
+        verify(requesterAuthority, never()).logActionAtomDenied(any(), any(), any());
     }
 }

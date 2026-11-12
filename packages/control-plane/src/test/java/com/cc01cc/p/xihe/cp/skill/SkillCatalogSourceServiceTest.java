@@ -145,9 +145,41 @@ class SkillCatalogSourceServiceTest {
                 view.items().get(1));
     }
 
+    /**
+     * I-3 (task-222): the definition segment (third of the four-segment qualified name) names the
+     * definition's own home. A {@code user} row must render {@code user}, not {@code instance} — the
+     * old two-way arm folded it into the shared library's word. The collision form is used on
+     * purpose: only a real collision prints the qualified name, so this is the only way the segment
+     * reaches the wire.
+     *
+     * <p>Reachability note: {@code SkillBindingRepository.findResolvable} excludes user rows
+     * explicitly (I-5) and both bind faces refuse them (I-4/I-6), so this branch is defensive —
+     * the mock here stands in for a row written before those gates existed.</p>
+     */
     @Test
-    void uniqueNamesStayBare() {
-        Skill one = skill("alpha", Skill.DEFINITION_SCOPE_INSTANCE, null, "a");
+    void aPersonalDefinitionRendersTheUserSegmentAndNeverInstance() {
+        Skill personal = skill("writing", Skill.DEFINITION_SCOPE_USER, null, "personal copy");
+        personal.setDefinitionScopeUserId(USER_ID);
+        Skill instance = skill("writing", Skill.DEFINITION_SCOPE_INSTANCE, null, "shared copy");
+        List<Object[]> rows = Arrays.asList(
+                row(binding(personal, SkillBinding.SUBJECT_USER, USER_ID,
+                        SkillBinding.SCOPE_INSTANCE, null), personal),
+                row(binding(instance, SkillBinding.SUBJECT_USER, USER_ID,
+                        SkillBinding.SCOPE_INSTANCE, null), instance));
+        when(bindings.findResolvable(any(), any(), any())).thenReturn(rows);
+
+        SkillCatalogSourceService.ComponentView view = service.resolve(request(40));
+
+        assertEquals(2, view.items().size());
+        assertTrue(view.diagnostics().contains(SkillCatalogSourceService.DIAG_COLLISION));
+        assertTrue(view.items().get(0).startsWith("user:instance:user:writing — "),
+                "a personal row renders the user segment: " + view.items().get(0));
+        assertTrue(view.items().get(1).startsWith("user:instance:instance:writing — "),
+                "the instance library keeps the instance segment: " + view.items().get(1));
+    }
+
+    @Test
+    void uniqueNamesStayBare() {        Skill one = skill("alpha", Skill.DEFINITION_SCOPE_INSTANCE, null, "a");
         Skill two = skill("beta", Skill.DEFINITION_SCOPE_INSTANCE, null, "b");
         when(bindings.findResolvable(any(), any(), any())).thenReturn(Arrays.asList(
                 row(binding(one, SkillBinding.SUBJECT_USER, USER_ID, SkillBinding.SCOPE_INSTANCE, null), one),

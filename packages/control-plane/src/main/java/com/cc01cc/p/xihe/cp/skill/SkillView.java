@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.skill;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.Instant;
@@ -25,8 +26,21 @@ public record SkillView(UUID skillId, String name, DefinitionScopeView definitio
                         List<SkillAttachmentView> attachments, String body, Instant createdAt,
                         Instant updatedAt) {
 
-    /** The {@code definition_scope_type} × {@code definition_scope_id} pair, as the wire sees it. */
-    public record DefinitionScopeView(String type, UUID workspaceId) {}
+    /**
+     * The {@code definition_scope_type} × definition-scope pair, as the wire sees it.
+     *
+     * <p><b>I-2 (task-222): {@code workspaceId} is absent unless the definition really is
+     * workspace-private.</b> The contract ({@code openapi.yaml} {@code SkillDefinitionScope}
+     * {@code workspaceId}) says "required exactly when type=workspace; must be absent when
+     * type=instance or type=user", and CP has no global {@code NON_NULL}, so before this the field
+     * serialised as {@code "workspaceId": null} for <b>all three</b> types — the instance row was
+     * already wrong, not only the new user row. The scope id of a user row is the owner's
+     * {@code definition_scope_user_id} (A2/D-1019) and never travels on the wire.</p>
+     */
+    public record DefinitionScopeView(
+            String type,
+            @JsonInclude(JsonInclude.Include.NON_NULL) UUID workspaceId) {
+    }
 
     public static SkillView from(Skill skill, boolean includeBody) {
         return new SkillView(

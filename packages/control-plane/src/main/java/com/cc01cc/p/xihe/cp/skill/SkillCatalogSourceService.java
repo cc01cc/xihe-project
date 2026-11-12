@@ -416,10 +416,32 @@ public class SkillCatalogSourceService {
         String scope = SkillBinding.SCOPE_WORKSPACE.equals(entry.binding().getScopeType())
                 ? "workspace:" + workspaceNames.getOrDefault(entry.binding().getScopeId(), "unknown")
                 : "instance";
-        String definition = Skill.DEFINITION_SCOPE_WORKSPACE.equals(entry.skill().getDefinitionScopeType())
-                ? "ws:" + workspaceNames.getOrDefault(entry.skill().getDefinitionScopeId(), "unknown")
-                : "instance";
+        String definition = definitionSegment(entry.skill(), workspaceNames);
         return subject + ":" + scope + ":" + definition + ":";
+    }
+
+    /**
+     * I-3 (task-222): the third segment names the definition's own home and must not fold two
+     * different homes into one word.
+     *
+     * <p>Before this the arm was a two-way {@code workspace-or-instance} test, so a {@code user}
+     * row (A2/D-1019: {@code definition_scope_id} NULL, owner in
+     * {@code definition_scope_user_id}) fell into the {@code instance} arm — the rendering would
+     * claim a personal definition is the shared library's. The contract
+     * ({@code openapi.yaml} {@code SkillQualifiedName.qualifiedName}) says "a personal row renders
+     * {@code user} in that segment". Reachability note: after I-4/I-6 no personal definition can be
+     * bound, and {@code SkillBindingRepository.findResolvable} now excludes user rows explicitly
+     * (I-5), so this branch is <b>defensive</b> today — it exists for rows written before those
+     * gates and for the day one of them is relaxed; a wrong word here would be silent shape drift.</p>
+     */
+    private static String definitionSegment(Skill skill, Map<UUID, String> workspaceNames) {
+        if (Skill.DEFINITION_SCOPE_WORKSPACE.equals(skill.getDefinitionScopeType())) {
+            return "ws:" + workspaceNames.getOrDefault(skill.getDefinitionScopeId(), "unknown");
+        }
+        if (Skill.DEFINITION_SCOPE_USER.equals(skill.getDefinitionScopeType())) {
+            return "user";
+        }
+        return "instance";
     }
 
     private Map<UUID, String> principalNames(Map<UUID, BindingPlusSkill> unique) {

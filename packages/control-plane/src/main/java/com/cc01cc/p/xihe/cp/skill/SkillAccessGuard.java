@@ -102,14 +102,50 @@ public class SkillAccessGuard {
     /**
      * Write rights for one definition scope: instance library ⇒ N5 instance, personal ⇒
      * {@code MANAGE_PERSONAL_SKILLS}, workspace ⇒ instance admin or workspace manager.
+     *
+     * <p><b>I-9 (task-222): the personal write face's refusal is audited here, at the decision point.</b>
+     * There is no "log something" vagueness in it: the line is the canonical
+     * {@code [POLICY] event=action_atom_denied atom=MANAGE_PERSONAL_SKILLS subject=<uuid>
+     * workspaceId=- source=<none|sources>} WARN emitted by {@link RequesterAuthority#logActionAtomDenied}
+     * (PLAN-0651 T1.5 stream). Its four fields are the closed vocabulary — the atom answers "按哪条
+     * 原子", {@code subject} answers "谁被拒", {@code source} answers "他到底有没有被授予这条" — and
+     * per T1.5 B4 it stays in the log stream and <b>never</b> goes to {@code audit_logs}: a denial is
+     * an atom-layer event, and audit rows must not carry a resource string or content fragment.
+     * Logging only on the refusal branch keeps the granted path silent.</p>
      */
     public boolean canWriteDefinitionScope(String definitionScopeType, UUID definitionScopeId) {
         if (Skill.DEFINITION_SCOPE_INSTANCE.equals(definitionScopeType)) {
             return canManageInstanceLibrary();
         }
         if (Skill.DEFINITION_SCOPE_USER.equals(definitionScopeType)) {
-            return canWritePersonalLibrary();
+            if (canWritePersonalLibrary()) {
+                return true;
+            }
+            logPersonalWriteDenied();
+            return false;
         }
         return canManageInstanceLibrary() || canManageWorkspace(definitionScopeId);
+    }
+
+    /**
+     * I-9: one canonical deny line per refused personal write. Deliberately separate from
+     * {@link #canWritePersonalLibrary()} (a pure probe): only a write decision that actually refuses
+     * may write to the deny stream, otherwise a read-side shape check would pollute the audit
+     * signal. A non-uuid actor degrades to {@code subject=-} — the stream vocabulary, not an
+     * exception (a 401 happens before this path in practice).
+     */
+    private void logPersonalWriteDenied() {
+        String actor = TenantContext.getUserId();
+        UUID subject = null;
+        if (actor != null && !actor.isBlank()) {
+            try {
+                subject = UUID.fromString(actor);
+            } catch (IllegalArgumentException notAnUuid) {
+                subject = null;
+            }
+        }
+        requesterAuthority.logActionAtomDenied(
+                com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
+                subject, null);
     }
 }

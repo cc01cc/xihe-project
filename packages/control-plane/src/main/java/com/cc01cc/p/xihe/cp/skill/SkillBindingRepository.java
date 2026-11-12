@@ -48,6 +48,14 @@ public interface SkillBindingRepository extends JpaRepository<SkillBinding, UUID
             + "where ((b.subjectType = 'agent_principal' and b.subjectId = :principalId) "
             + "    or (b.subjectType = 'user' and b.subjectId = :userId)) "
             + "  and (b.scopeType = 'instance' or b.scopeId = :workspaceId) "
+            // I-5 (task-222): a personal (type=user) definition never participates in an agent's
+            // catalog: only its owner may bind it, and that binding is that owner's own user-scope
+            // row, not a principal row another caller can drive. The old predicate excluded it only
+            // implicitly — a user row has definition_scope_id NULL (A2/D-1019), so
+            // "definitionScopeId = :workspaceId" evaluated to NULL/false by three-valued logic. That
+            // is correct but invisible to a reader (and it would silently re-admit user rows if the
+            // predicate ever gained an "or ... is null" arm), so the exclusion is now explicit.
+            + "  and s.definitionScopeType <> 'user' "
             + "  and (s.definitionScopeType = 'instance' or s.definitionScopeId = :workspaceId) "
             + "order by case b.subjectType when 'agent_principal' then 0 else 1 end, "
             + "         case b.scopeType when 'workspace' then 0 else 1 end, "

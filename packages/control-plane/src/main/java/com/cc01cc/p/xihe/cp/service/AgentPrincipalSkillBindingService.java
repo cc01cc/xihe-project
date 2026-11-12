@@ -110,6 +110,15 @@ public class AgentPrincipalSkillBindingService {
         AccessScope scope = deriveScope(authWorkspaceId, instanceTier, canManageWorkspace);
         Skill skill = skills.findById(skillId).orElseThrow(
                 AgentPrincipalSkillBindingService::skillNotFound);
+        // I-6 (task-222): the personal layer is never bindable here, on either axis, and the answer
+        // is the same 404 as a missing id (openapi.yaml:726-728). Explicit because A2/D-1019 stores
+        // the owner in definition_scope_user_id and leaves definition_scope_id NULL: the workspace
+        // arm below is a "id != null && id != scope" test, so a user row would have slipped through
+        // it and been bound at instance scope (the fork with /api/v1/skill-bindings, which I-4
+        // already closed).
+        if (Skill.DEFINITION_SCOPE_USER.equals(skill.getDefinitionScopeType())) {
+            throw skillNotFound();
+        }
         // Fixed-order visibility + atom-source restriction: a private definition participates only
         // in its own workspace. Anything else — including a workspace context absent — is a 404 so
         // the caller cannot probe another workspace's skill library (the old visible/400,
@@ -219,6 +228,11 @@ public class AgentPrincipalSkillBindingService {
                 && row.getScopeId() != null
                 ? workspaces.findById(row.getScopeId()).map(w -> w.getName()).orElse(null)
                 : null;
+        // The literal "personal" is the CONTRACT's word for "not a workspace-private definition"
+        // (openapi.yaml AgentPrincipalSkillBindingView.sourceType enum [workspace, personal]); it
+        // means "the instance library" here and must NOT be read as the new type=user personal
+        // layer (V156) — a user row never reaches this method because bind() refuses it above.
+        // Renaming the enum member would be a contract change, so it is left as-is and flagged.
         return new AgentSkillBindingView(row.getId(), row.getSubjectId(), skill.getId(), skill.getName(),
                 skill.getDescription(), workspaceDefinition ? "workspace" : "personal", sourceName,
                 row.getScopeType(), row.getScopeId(), scopeName,
@@ -226,7 +240,10 @@ public class AgentPrincipalSkillBindingService {
     }
 
     private static CpApiException skillNotFound() {
-        return new CpApiException(HttpStatus.NOT_FOUND, "SKILL_NOT_FOUND", "Skill not found");
+        // The detail string is shared with /api/v1/skill-bindings on purpose (I-6): both faces must
+        // answer a personal definition, and a missing id, with the exact same body.
+        return new CpApiException(HttpStatus.NOT_FOUND, "SKILL_NOT_FOUND",
+                com.cc01cc.p.xihe.cp.skill.SkillBindingService.SKILL_NOT_FOUND_DETAIL);
     }
 
     private static CpApiException principalNotFound() {

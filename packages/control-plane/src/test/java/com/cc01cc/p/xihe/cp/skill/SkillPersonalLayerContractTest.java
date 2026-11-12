@@ -1,12 +1,17 @@
 package com.cc01cc.p.xihe.cp.skill;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -52,6 +57,22 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private SkillRepository skillRepository;
+
+    @Autowired
+    private SkillBindingRepository bindingRepository;
+
+    @Autowired
+    private SkillCatalogSourceService catalogSourceService;
+
+    /**
+     * Registration issues tokens with {@code workspaceId} only when the account already owns a
+     * workspace, so the tests that need one create it explicitly (fixture binds WS_OWNER).
+     */
+    @Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     // ------------------------------------------------------------------ happy path (the default grant)
 
     @Test
@@ -75,7 +96,8 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
                 "the row must be a user-scope definition: " + personal.getBody());
 
         ResponseEntity<String> instance = get(alice.getAccessToken(), "/api/v1/skills");
-        assertEquals(0, parse(instance.getBody()).path("items").size(),
+        assertTrue(instance.getBody() != null
+                        && !parse(instance.getBody()).path("items").toString().contains("\"type\":\"user\""),
                 "the default listing is the instance library and must contain no personal row: "
                         + instance.getBody());
     }
@@ -126,7 +148,7 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
         assertEquals(HttpStatus.NO_CONTENT, byOwner.getStatusCode(), byOwner.getBody());
     }
 
-    // ------------------------------------------------------------------ N3: the write atom
+    // ------------------------------------------------------------------ I-9: the deny stream
 
     @Test
     void revokingTheAtomForbidsPersonalWritesButKeepsPersonalReadsOpen() throws Exception {
@@ -137,11 +159,35 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
                 + "AND permissions->0->>'actionClass' = 'MANAGE_PERSONAL_SKILLS'",
                 UUID.fromString(alice.getUser().getId()));
 
-        ResponseEntity<String> refused = post(alice.getAccessToken(), "/api/v1/skills/import",
-                personalBody(item("second", "another one")));
-        assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode(), refused.getBody());
-        assertEquals("SKILL_IMPORT_FORBIDDEN", problemCode(refused.getBody()),
-                "the personal write face refuses through the same code as the instance library");
+        Logger denyLogger = (Logger) LoggerFactory.getLogger(RequesterAuthority.class);
+        ListAppender<ILoggingEvent> denyLog = new ListAppender<>();
+        denyLog.start();
+        denyLogger.addAppender(denyLog);
+        try {
+            ResponseEntity<String> refused = post(alice.getAccessToken(), "/api/v1/skills/import",
+                    personalBody(item("second", "another one")));
+            assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode(), refused.getBody());
+            assertEquals("SKILL_IMPORT_FORBIDDEN", problemCode(refused.getBody()),
+                    "the personal write face refuses through the same code as the instance library");
+        } finally {
+            denyLogger.detachAppender(denyLog);
+        }
+
+        // I-9: the refusal landed on the canonical atom-layer deny stream, with the exact atom,
+        // subject and "holds it from no source" reading — and not on audit_logs (PLAN-0651 B4).
+        String denyLine = denyLog.list.stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(line -> line.contains("event=action_atom_denied"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "no [POLICY] event=action_atom_denied line was emitted for the refused personal write"));
+        assertTrue(denyLine.contains("atom=MANAGE_PERSONAL_SKILLS"), denyLine);
+        assertTrue(denyLine.contains("subject=" + alice.getUser().getId()), denyLine);
+        assertTrue(denyLine.contains("workspaceId=-"), denyLine);
+        assertTrue(denyLine.contains("source=none"), denyLine);
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'action_atom_denied'", Integer.class),
+                "a denial is an atom-layer log event, never an audit_logs row (T1.5 B4)");
 
         ResponseEntity<String> personal = get(alice.getAccessToken(),
                 "/api/v1/skills?definitionScope=user");
@@ -211,8 +257,9 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
 
         assertEquals(0, personalCount(alice), "the API listing agrees with the SQL count");
         assertEquals(0, personalCount(bob));
-        assertEquals(0, parse(get(alice.getAccessToken(), "/api/v1/skills").getBody())
-                .path("items").size());
+        assertTrue(get(alice.getAccessToken(), "/api/v1/skills").getBody() != null
+                        && !get(alice.getAccessToken(), "/api/v1/skills").getBody().contains("n5-probe"),
+                "the refused name never reaches the instance listing either");
     }
 
     @Test
@@ -281,6 +328,102 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
                         + " code (a 400 with a definition wording would reveal it exists)");
     }
 
+    // ------------------------------------------------------------------ I-2: the definition-scope shape
+
+    /**
+     * I-2 (task-222): {@code definitionScope.workspaceId} is <b>absent</b> unless the row really is
+     * workspace-private ({@code openapi.yaml:8464} "required exactly when type=workspace; must be
+     * absent when type=instance or type=user"). Three readings, one per type — because the
+     * instance row was already violating this before the personal layer existed (CP has no global
+     * {@code NON_NULL}), and fixing only the user branch would leave half the deviation.
+     */
+    @Test
+    void definitionScopeCarriesWorkspaceIdOnlyForWorkspaceRows() throws Exception {
+        AuthResponse alice = register("v222-shape@test.com");
+        UUID workspaceId = workspaceFixture.ensureOwnedWorkspace(
+                UUID.fromString(alice.getUser().getId())).getId();
+
+        String personalId = importPersonal(alice, "shape-personal");
+        JsonNode personal = parse(readSkill(alice, personalId));
+        assertEquals("user", personal.at("/definitionScope/type").asText(), String.valueOf(personal));
+        assertFalse(personal.at("/definitionScope").has("workspaceId"),
+                "type=user must not carry workspaceId: " + personal.at("/definitionScope"));
+        evidence("user", personal.at("/definitionScope"));
+
+        String workspaceDefinitionId = importWorkspaceSkill(alice, "shape-ws");
+        JsonNode workspace = parse(readSkill(alice, workspaceDefinitionId));
+        assertEquals("workspace", workspace.at("/definitionScope/type").asText(), String.valueOf(workspace));
+        assertTrue(workspace.at("/definitionScope").has("workspaceId"),
+                "type=workspace must carry workspaceId: " + workspace.at("/definitionScope"));
+        assertEquals(workspaceId.toString(),
+                workspace.at("/definitionScope/workspaceId").asText(),
+                "and it must be the definition's own workspace");
+        evidence("workspace", workspace.at("/definitionScope"));
+
+        Skill instanceRow = instanceSkill(alice, "shape-instance");
+        try {
+            JsonNode instance = parse(readSkill(alice, instanceRow.getId().toString()));
+            assertEquals("instance", instance.at("/definitionScope/type").asText(), String.valueOf(instance));
+            assertFalse(instance.at("/definitionScope").has("workspaceId"),
+                    "type=instance must not carry workspaceId (the pre-existing half of the deviation): "
+                            + instance.at("/definitionScope"));
+            evidence("instance", instance.at("/definitionScope"));
+        } finally {
+            // The instance library is shared by every test in the shared container: remove the
+            // fixture so an unrelated test cannot see a stray instance row.
+            jdbc.update("DELETE FROM skills WHERE id = ?", instanceRow.getId());
+        }
+    }
+
+    // ------------------------------------------------------------------ I-5: user rows never resolve
+
+    /**
+     * I-5 (task-222): a personal definition never enters an agent/user skill catalog, and the
+     * exclusion is now <b>explicit</b> in {@link SkillBindingRepository#findResolvable}. The forged
+     * row below is what the service would never write (both bind faces refuse a personal definition
+     * — I-4/I-6), so it stands in for legacy/rogue data. Note the honest limitation: with A2/D-1019
+     * ({@code definition_scope_id} NULL for user rows) the old predicate already excluded it by
+     * SQL three-valued logic — this card makes the intent legible, it does not change today's
+     * behaviour; the assertion is the invariant's guard against a future predicate edit.
+     */
+    @Test
+    void aForgedPersonalBindingNeverResolvesIntoACatalog() throws Exception {
+        AuthResponse alice = register("v222-forge@test.com");
+        String personalId = importPersonal(alice, "catalog-personal");
+        UUID aliceId = UUID.fromString(alice.getUser().getId());
+        UUID workspaceId = workspaceFixture.ensureOwnedWorkspace(aliceId).getId();
+
+        UUID bindingId = UUID.randomUUID();
+        // Bind UUID objects, not strings: a varchar parameter is not implicitly castable to uuid
+        // (measured: "column \"id\" is of type uuid but expression is of type character varying").
+        jdbc.update("INSERT INTO skill_bindings (id, skill_id, subject_type, subject_id, scope_type, "
+                        + "scope_id, created_by_user_id) VALUES (?, ?, 'user', ?, 'workspace', ?, ?)",
+                bindingId, UUID.fromString(personalId), aliceId, workspaceId, aliceId);
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM skill_bindings WHERE skill_id = ?::uuid", Integer.class,
+                personalId), "precondition: the rogue row really exists");
+
+        SkillCatalogSourceService.Request request = new SkillCatalogSourceService.Request(
+                null, aliceId, workspaceId, 40, false, SkillCatalogSourceService.SORT_BINDING);
+        SkillCatalogSourceService.Listing listing = catalogSourceService.resolveListing(request);
+        assertTrue(listing.items().stream()
+                        .noneMatch(item -> item.skillId().equals(UUID.fromString(personalId))),
+                "a type=user definition must never appear in the catalog listing: "
+                        + listing.items());
+
+        // The SQL-arm reading directly: the repository query, at both axes, returns no user row.
+        assertTrue(bindingRepository.findResolvable(aliceId, aliceId, workspaceId).stream()
+                        .noneMatch(row -> Skill.DEFINITION_SCOPE_USER.equals(
+                                ((Skill) row[1]).getDefinitionScopeType())),
+                "findResolvable must not return personal definitions");
+        assertTrue(bindingRepository.findResolvable(aliceId, aliceId, null).stream()
+                        .noneMatch(row -> Skill.DEFINITION_SCOPE_USER.equals(
+                                ((Skill) row[1]).getDefinitionScopeType())),
+                "the instance axis must not return them either");
+
+        jdbc.update("DELETE FROM skill_bindings WHERE id = ?::uuid", bindingId.toString());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static Map<String, Object> personalBody(Map<String, Object> skill) {
@@ -307,6 +450,54 @@ class SkillPersonalLayerContractTest extends AbstractReusableIntegrationTest {
         String skillId = parse(imported.getBody()).path("results").get(0).path("skillId").asText();
         assertNotNull(skillId, imported.getBody());
         return skillId;
+    }
+
+    /** Writes the measured wire node of I-2 to the test log (evidence without re-running by hand). */
+    private static void evidence(String type, JsonNode node) {
+        LoggerFactory.getLogger(SkillPersonalLayerContractTest.class)
+                .info("[EVIDENCE] i2 definitionScope type={} wire={}", type, node);
+    }
+
+    private String importWorkspaceSkill(AuthResponse owner, String name) throws Exception {
+        UUID workspaceId = workspaceFixture.ensureOwnedWorkspace(
+                UUID.fromString(owner.getUser().getId())).getId();
+        Map<String, Object> scope = new LinkedHashMap<>();
+        scope.put("type", "workspace");
+        scope.put("workspaceId", workspaceId.toString());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("definitionScope", scope);
+        body.put("skills", List.of(item(name, "body of " + name)));
+        ResponseEntity<String> imported = post(owner.getAccessToken(), "/api/v1/skills/import", body);
+        assertEquals(HttpStatus.OK, imported.getStatusCode(), imported.getBody());
+        return parse(imported.getBody()).path("results").get(0).path("skillId").asText();
+    }
+
+    private String readSkill(AuthResponse reader, String skillId) {
+        ResponseEntity<String> response = get(reader.getAccessToken(), "/api/v1/skills/" + skillId);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        return response.getBody();
+    }
+
+    /**
+     * An instance-library row written as a fixture: a plain account may not import there (the
+     * personal layer's default grant does not include {@code MANAGE_SKILL_LIBRARY}), but the read
+     * shape of an instance row is exactly what I-2 has to pin.
+     */
+    private Skill instanceSkill(AuthResponse creator, String name) {
+        Skill skill = new Skill();
+        skill.setName(name);
+        skill.setDefinitionScopeType(Skill.DEFINITION_SCOPE_INSTANCE);
+        skill.setDescription(name + " description");
+        skill.setBody("body of " + name);
+        skill.setBodyTokensEst(3);
+        skill.setOversize(false);
+        skill.setAttachments(objectMapper.createArrayNode());
+        skill.setTrusted(false);
+        skill.setSourcePath("test/" + name + "/SKILL.md");
+        skill.setContentHash("0123456789abcdef".repeat(4));
+        skill.setVersion(1);
+        skill.setCreatedByUserId(UUID.fromString(creator.getUser().getId()));
+        return skillRepository.saveAndFlush(skill);
     }
 
     private int personalCount(AuthResponse owner) throws Exception {

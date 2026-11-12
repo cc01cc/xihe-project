@@ -39,6 +39,15 @@ public class SkillBindingService {
     public static final String ERR_INVALID_SCOPE = "SKILL_BINDING_SCOPE_INVALID";
     public static final String ERR_BINDING_NOT_FOUND = "SKILL_BINDING_NOT_FOUND";
 
+    /**
+     * I-6 cross-face parity (task-222): the two bind faces must answer a personal definition
+     * <b>field-for-field identically</b>, and each of them must also be identical to its own
+     * missing-id answer (otherwise the wording becomes an existence oracle). Both faces therefore
+     * share this one detail string — {@code AgentPrincipalSkillBindingService.skillNotFound()}
+     * carries the same text.
+     */
+    public static final String SKILL_NOT_FOUND_DETAIL = "Skill not found";
+
     private final SkillRepository skillRepository;
     private final SkillBindingRepository bindingRepository;
     private final UserRepository userRepository;
@@ -68,7 +77,7 @@ public class SkillBindingService {
     public SkillBinding bind(BindCommand command, Caller caller) {
         Skill skill = skillRepository.findById(command.skillId())
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, ERR_SKILL_NOT_FOUND,
-                        "skill not found"));
+                        SKILL_NOT_FOUND_DETAIL));
         requireVocabulary(command);
         requireDefinitionVisibility(skill, command);
         // Authorization BEFORE subject validity: otherwise a caller who may not bind still learns
@@ -154,7 +163,8 @@ public class SkillBindingService {
      */
     private static void requireDefinitionVisibility(Skill skill, BindCommand command) {
         if (Skill.DEFINITION_SCOPE_USER.equals(skill.getDefinitionScopeType())) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, ERR_SKILL_NOT_FOUND, "skill not found");
+            throw new CpApiException(HttpStatus.NOT_FOUND, ERR_SKILL_NOT_FOUND,
+                    SKILL_NOT_FOUND_DETAIL);
         }
         UUID definitionWorkspace = skill.getDefinitionScopeId();
         if (definitionWorkspace == null) {
