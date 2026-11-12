@@ -112,11 +112,23 @@ public class ConfigController {
      * only be reached by a member whose role lacks the atom (WS_VIEWER). Reversing the two would
      * turn "not found" into "not allowed" and leak existence — the one ordering rule of this gate.
      */
-    private boolean holdsWorkspaceAtom(String actionClass, String wsId) {
+    private boolean holdsWorkspaceAtom(String gate, String actionClass, String wsId) {
         UUID subject = currentUserId();
         UUID workspaceId = parseUuid(wsId);
-        return subject != null && workspaceId != null
-                && requesterAuthority.holdsActionAtom(subject, actionClass, workspaceId);
+        if (subject != null && workspaceId != null
+                && requesterAuthority.holdsActionAtom(subject, actionClass, workspaceId)) {
+            return true;
+        }
+        // task-248: rejection side is WARN/JSONL only — never durable audit (spec/security/audit.md:22).
+        // The canonical deny line carries the atom but no door name, and H2/H3 share the same atom
+        // (MANAGE_WORKSPACE_MCP), so the door is prepended on its own line: otherwise "which door was
+        // refused" is unanswerable from the logs. Signature change is local to this private helper;
+        // the durable/allow side is untouched (its write amplification is a pending ruling).
+        requesterAuthority.logActionAtomDenied(actionClass, subject, workspaceId);
+        log.warn("[POLICY] event=action_atom_denied_door door={} atom={} subject={} workspaceId={}",
+                gate, actionClass, subject == null ? "-" : subject,
+                workspaceId == null ? "-" : workspaceId);
+        return false;
     }
 
 
@@ -473,7 +485,7 @@ public class ConfigController {
         // isAuthenticated() plus "reaches the workspace" was the whole gate, so a read-only member
         // could rewrite another member's configuration. The atom is checked AFTER the 404 above:
         // non-members keep WORKSPACE_NOT_FOUND, members without the atom get 403.
-        if (!holdsWorkspaceAtom(ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT, wsId)) {
+        if (!holdsWorkspaceAtom("h1", ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT, wsId)) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Workspace configuration is not writable by this member");
         }
@@ -695,7 +707,7 @@ public class ConfigController {
         // PLAN-0773 / task-229 (H3): stdio-servers writes are a member capability no more — the
         // atom is MANAGE_WORKSPACE_MCP, shared with the legacy mcp-config door below so the same
         // role cannot be allowed at one door and refused at the other.
-        if (!holdsWorkspaceAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP, wsId)) {
+        if (!holdsWorkspaceAtom("h3", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP, wsId)) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", MCP_WRITE_FORBIDDEN_DETAIL);
         }
@@ -827,7 +839,7 @@ public class ConfigController {
         workspaceService.requireAccessibleWorkspace(wsId, userId);
         // PLAN-0773 / task-229 (H2): the legacy mixed door writes the same catalog rows as the
         // stdio-servers door, so it answers to the same atom and the same detail string.
-        if (!holdsWorkspaceAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP, wsId)) {
+        if (!holdsWorkspaceAtom("h2", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP, wsId)) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", MCP_WRITE_FORBIDDEN_DETAIL);
         }
