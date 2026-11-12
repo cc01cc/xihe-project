@@ -79,6 +79,13 @@ function bodyEl<T extends Element>(selector: string): T | null {
     return document.body.querySelector(selector) as T | null;
 }
 
+/** task-239：工作区层上下文来自 `lib/workspaceContext.ts` 的 sessionStorage 键（唯一 SSOT）。 */
+const WORKSPACE_ID = "ws-1";
+
+function seedWorkspaceContext(id: string = WORKSPACE_ID) {
+    sessionStorage.setItem("xihe-workspace", JSON.stringify({ id }));
+}
+
 async function clickBody(selector: string) {
     const el = bodyEl<HTMLElement>(selector);
     expect(el).toBeTruthy();
@@ -89,6 +96,9 @@ async function clickBody(selector: string) {
 beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
+    // task-239：层上下文逐 tab 存在 sessionStorage —— 每个用例都从「没有上下文」起步，
+    // 需要工作区的用例显式 seed。
+    sessionStorage.removeItem("xihe-workspace");
     // auth store 的 token 取自 localStorage；没有 token 时 ensureSelfPermissions() 直接 fail-closed。
     localStorage.setItem("xihe-token", "test-token");
     setActivePinia(createPinia());
@@ -249,19 +259,47 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
 
     // PLAN-0752 T4.2：工作区层把同一份面板限定到 owner_type=WORKSPACE（凭据只有 USER/WORKSPACE
     // 两档，实例层没有承载 ⇒ 外层左栏走缺口说明，不进这个面板）。
+    //
+    // task-239（治本 task-237 真栈证实的 P1）：WORKSPACE 层**必须同时带**
+    // `ownerType=WORKSPACE` 与 `ownerId=<workspaceId>`。**这条断言此前写的是
+    // `{ ownerType: "WORKSPACE" }`（只传 ownerType）——那正是真栈返回 403 的那次请求**
+    // （D-1034：绿在错误期望上 = 把 bug 固化），所以必须把期望改对，而不是"改代码迁就测试"。
     it("scopes the list and the create flow to WORKSPACE when mounted for the workspace layer", async () => {
         mockedApi.listCredentials.mockResolvedValue({
             credentials: [credential({ ownerType: "WORKSPACE", ownerId: "ws-1", label: "ws key" })],
             count: 1,
         });
+        seedWorkspaceContext();
 
         const wrapper = await mountPanel({ ownerType: "WORKSPACE" });
 
-        expect(mockedApi.listCredentials).toHaveBeenCalledWith({ ownerType: "WORKSPACE" });
+        expect(mockedApi.listCredentials).toHaveBeenCalledWith({
+            ownerType: "WORKSPACE",
+            ownerId: WORKSPACE_ID,
+        });
         expect(bodyEl('[data-testid="credentials-scope-note"]')?.textContent).toContain(
             "owner_type=WORKSPACE",
         );
         expect(wrapper.text()).toContain("ws key");
+        expect(bodyEl('[data-testid="credentials-workspace-missing"]')).toBeNull();
+    });
+
+    // task-239：没有工作区上下文时**不发请求**（缺 ownerId 的 WORKSPACE 请求在 CP 侧恒 403），
+    // 但**屏幕上必须解释**「为什么没有列表」——静默只对 toast 成立，对屏幕不成立；
+    // 文案复用资源壳的同一组键 `resources.workspaceMissing.*`（不新增 i18n）。
+    it("explains the missing workspace context instead of calling the API", async () => {
+        await mountPanel({ ownerType: "WORKSPACE" });
+
+        expect(mockedApi.listCredentials).not.toHaveBeenCalled();
+        const hint = bodyEl<HTMLElement>('[data-testid="credentials-workspace-missing"]');
+        expect(hint?.textContent).toContain(i18n.global.t("resources.workspaceMissing.title"));
+        expect(hint?.textContent).toContain(i18n.global.t("resources.workspaceMissing.body"));
+        // 无上下文 ≠ 0 条：不得渲染「暂无凭据」空态或列表。
+        expect(bodyEl('[data-testid="credentials-empty"]')).toBeNull();
+        expect(bodyEl('[data-testid="credentials-list"]')).toBeNull();
+        expect(
+            bodyEl<HTMLElement>('[data-testid="credentials-refresh"]')?.hasAttribute("disabled"),
+        ).toBe(true);
     });
 
     it("keeps the unscoped view (both owner types) when no layer is pinned", async () => {

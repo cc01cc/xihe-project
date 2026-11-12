@@ -15,6 +15,7 @@ import CredentialRevealDialog from "./CredentialRevealDialog.vue";
 import ResourceDetailLink from "../../resources/ResourceDetailLink.vue";
 import { useAuthStore } from "../../../stores/auth";
 import { useCredentialsStore } from "../../../stores/credentials";
+import { readTabWorkspaceId } from "../../../lib/workspaceContext";
 import type { CredentialOwnerType, CredentialSummary } from "../../../types";
 
 /**
@@ -52,6 +53,26 @@ const scopeNote = computed(() =>
     props.ownerType === "WORKSPACE" ? t("credentials.scopeWorkspaceNote") : "",
 );
 
+/**
+ * task-239：WORKSPACE 层的 `ownerId` 从**既有层上下文入口**取 —— `readTabWorkspaceId()`
+ * （`lib/workspaceContext.ts:33`，sessionStorage 键 `xihe-workspace`）。唯一产品挂载点
+ * `views/resources/CredentialsResourceView.vue:21` 用的就是同一个函数 ⇒ 两处取值必然同源，
+ * 不自造「全局当前工作区」。不传 = 服务端默认（用户层）；INSTANCE 层不在这里
+ * （实例凭据走 `InstanceCredentialsPanel`）。
+ */
+function workspaceIdForLoad(): string | undefined {
+    if (props.ownerType !== "WORKSPACE") return undefined;
+    return readTabWorkspaceId() ?? undefined;
+}
+
+/**
+ * 本面板唯一发列表请求的入口。缺工作区上下文时 store 置 `scopeMissing` 且**不发请求**
+ * （缺 `ownerId` 的 WORKSPACE 请求在 CP 侧恒 403，`task-237` 真栈实测）。
+ */
+function loadCurrent(): Promise<void> {
+    return store.load(props.ownerType, workspaceIdForLoad());
+}
+
 const createOpen = ref(false),
     activeDialog = ref<"detail" | "replace" | "reveal" | "link" | null>(null),
     selectedId = ref<string | null>(null),
@@ -78,19 +99,23 @@ function openLink(credential: CredentialSummary) {
 /** PLAN-0498: bind/unbind keeps the detail dialog open — refresh the list only.
  *  Deletion closes the detail dialog itself (the detail emits `close` after `changed`). */
 function refreshAfterChange() {
-    void store.load(props.ownerType);
+    void loadCurrent();
 }
 
 /**
  * task-189（P1-1）：刷新必须「真的重发 + 有可见反馈」。store.load 本身会重新请求，
  * 这里补上成功/失败两种 toast —— 旧版失败时页面只是把同一条 404 原样再画一遍，
  * 用户看不出刷新到底有没有发生。
+ *
+ * task-239：缺工作区上下文时不重发、也不弹任何 toast —— **静默只对 toast 成立，对屏幕不成立**：
+ * 屏幕上那块 `credentials-workspace-missing` 已经解释「为什么没有列表」。
  */
 async function refresh() {
     if (!canManage.value) return;
+    if (props.ownerType === "WORKSPACE" && !workspaceIdForLoad()) return;
     reloading.value = true;
     try {
-        await store.load(props.ownerType);
+        await loadCurrent();
         if (store.error) {
             toast.error(t("credentials.refreshFailed"));
         } else {
@@ -117,7 +142,7 @@ onMounted(async () => {
     // 列表请求 —— 否则同一件事会出现两遍（「权限不足」403 卡片 + 「无法加载凭据列表」错误条），
     // 用户会以为后端坏了（实测见 `.tmp/xh/shots-188/01-credentials-user.png`）。
     if (!canManage.value) return;
-    void store.load(props.ownerType);
+    void loadCurrent();
 });
 </script>
 
@@ -147,14 +172,14 @@ onMounted(async () => {
                     variant="outline"
                     size="sm"
                     data-testid="credentials-refresh"
-                    :disabled="reloading"
+                    :disabled="reloading || store.scopeMissing"
                     @click="refresh"
                 >
                     <RefreshCw aria-hidden="true" />
                     {{ t("credentials.refresh") }}
                 </Button>
                 <Button
-                    v-if="canManage"
+                    v-if="canManage && !store.scopeMissing"
                     type="button"
                     size="sm"
                     data-testid="credentials-create-button"
@@ -185,7 +210,27 @@ onMounted(async () => {
             />
         </div>
 
-        <section class="min-w-0 rounded-lg border border-border bg-card">
+        <!-- task-239：WORKSPACE 层没有工作区上下文 ⇒ 本来就不发列表请求（store 置 `scopeMissing`）。
+             屏幕上必须解释「为什么没有列表」：静默只对 toast 成立，对屏幕不成立。
+             文案复用资源壳的同一组键（`resources.workspaceMissing.*`），不新增 i18n。 -->
+        <div
+            v-if="store.scopeMissing"
+            data-testid="credentials-workspace-missing"
+            class="mb-4 rounded-md border border-dashed border-border p-4"
+        >
+            <h2 class="text-base font-semibold">{{ t("resources.workspaceMissing.title") }}</h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+                {{ t("resources.workspaceMissing.body") }}
+            </p>
+            <router-link
+                to="/workspace"
+                class="mt-2 inline-block text-sm underline underline-offset-4"
+            >
+                {{ t("resources.workspaceMissing.action") }}
+            </router-link>
+        </div>
+
+        <section v-if="!store.scopeMissing" class="min-w-0 rounded-lg border border-border bg-card">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
                 <h2 class="text-sm font-medium" data-testid="credentials-list-heading">
                     {{ t("credentials.heading") }}
