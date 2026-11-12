@@ -366,7 +366,7 @@ export interface SettingsNavItem {
  *       （`POST /api/v1/agent-principals`，只要求 `isAuthenticated()`），门是 `CREATE_OWN_AGENT`
  *       （`PermissionAtomCatalog.java:157-160` 明确写「user-level agent-principal creation with
  *       owner = actor and no Workspace binding」），UI 走 `composables/api.ts:3941` 的
- *       `createOwnAgentPrincipal`（显式空白 `X-Workspace-Id` 才落到用户门）+ 
+ *       `createOwnAgentPrincipal`（显式空白 `X-Workspace-Id` 才落到用户门）+
  *       `AgentPrincipalsPanel.vue:59` 的原子判据。
  *       ⇒ <b>今天再拿 `G4b` 标任何入口，等于说「后端缺」而后端已经有了</b>；它留在联合类型里
  *       只为「这个码曾经指什么、为什么关掉」可查，并防别人把 `G4b` 重新赋给新缺口。</li>
