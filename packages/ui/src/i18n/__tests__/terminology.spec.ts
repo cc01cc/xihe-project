@@ -40,6 +40,33 @@ describe("terminology: 界面主名词（PLAN-0674 T3.2）", () => {
     });
 });
 
+/** 取某 locale 某键的文案（走 messages 树，避免依赖当前 locale 状态）。 */
+function copyOf(locale: "zh-CN" | "en-US", path: string): string {
+    return (
+        leaves(i18n.global.getLocaleMessage(locale)).find((leaf) => leaf.path === path)?.value ?? ""
+    );
+}
+
+/**
+ * task-251 / D-1043：**层名只能有一个**。
+ * `settings.ia.layerUser`「个人配置」是导航组的"分组功能名"（保留）；层名 SSOT 是「个人层」。
+ * `settings.contextTemplate.layerUser` 曾把同一层写成「用户层 / User layer」（第三个名字）⇒ 钉死。
+ * 只钉这一对键（+ 同一文案里的帮助句），不做全文件快照：快照会因无关改动频繁红。
+ */
+describe("层名词典（task-251）：同一层只有一个层名", () => {
+    it("contextTemplate.layerUser 与 gapNoteAgent 不得用「用户层 / User layer」", () => {
+        expect(copyOf("zh-CN", "settings.contextTemplate.layerUser"), "zh 层名").toBe("个人层");
+        expect(copyOf("en-US", "settings.contextTemplate.layerUser"), "en 层名").toBe(
+            "Personal layer",
+        );
+        expect(copyOf("zh-CN", "settings.ia.gapNoteAgent"), "zh 帮助句").not.toContain("用户层");
+        expect(
+            copyOf("en-US", "settings.ia.gapNoteAgent").toLowerCase(),
+            "en 帮助句",
+        ).not.toContain("user layer");
+    });
+});
+
 /** 取 zh-CN 某键的渲染文案（走 messages 树，避免依赖当前 locale 状态）。 */
 function zhCopy(path: string): string {
     return (

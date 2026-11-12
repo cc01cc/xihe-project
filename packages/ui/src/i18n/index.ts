@@ -1765,7 +1765,7 @@ const messages = {
                 atomDeniedNotGap:
                     "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
                 gapNoteAgent:
-                    "实例级注册表待实现（D-951 排期）：本入口现在点不进页面。能看的是工作区层（工作区设置 → 智能体）与用户层（设置 → 智能体主体）；实例级注册表补齐后，这里会变成可管理的「平台智能体」。",
+                    "实例级注册表待实现（D-951 排期）：本入口现在点不进页面。能看的是工作区层（工作区设置 → 智能体）与个人层（设置 → 智能体主体）；实例级注册表补齐后，这里会变成可管理的「平台智能体」。",
                 gapNoteMcp:
                     "MCP 服务器只有工作区归属（mcp_remote_servers / mcp_stdio_servers 的 workspace_id 非空），实例层与个人层没有承载；接口也只有工作区面。",
                 gapNoteCredentials:
@@ -2096,7 +2096,7 @@ const messages = {
                 estimate: "预算估算",
                 layerInstance: "实例层",
                 layerWorkspace: "工作区层",
-                layerUser: "用户层",
+                layerUser: "个人层",
                 typeText: "文本 text",
                 typeSystemPrompt: "系统提示词 system_prompt",
                 typeRootAgentsMd: "根级 AGENTS.md",
@@ -2313,6 +2313,12 @@ const messages = {
             configSourceUser: "个人层",
             configSourceInstance: "实例层",
             configSourceCode: "默认值",
+            configSourceInstanceDefault: "实例默认",
+            configSourceWorkspaceOverride: "工作区覆盖",
+            configSourceWorkspaceDefaultBadge: "工作区默认",
+            configSourceUserOverride: "个人覆盖",
+            configSourceCodeDefault: "代码默认",
+            configSourceInheritedAbove: "继承自上层",
             configSourceNone: "未设置",
             configSourceInherited: "继承自 {source}",
             configSourceOverride: "覆盖 {source}",
@@ -5031,7 +5037,7 @@ const messages = {
                 atomDeniedNotGap:
                     "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
                 gapNoteAgent:
-                    "The instance-level registry is not implemented yet (scheduled as D-951), so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the user layer (Settings → Agent principals). Once the registry lands, this becomes a manageable Platform agents page.",
+                    "The instance-level registry is not implemented yet (scheduled as D-951), so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the personal layer (Settings → Agent principals). Once the registry lands, this becomes a manageable Platform agents page.",
                 gapNoteMcp:
                     "MCP servers are workspace-owned only (mcp_remote_servers / mcp_stdio_servers have a non-null workspace_id) and the API surface is workspace-only, so neither the instance nor the personal layer can host one.",
                 gapNoteCredentials:
@@ -5382,7 +5388,7 @@ const messages = {
                 estimate: "Budget estimate",
                 layerInstance: "Instance layer",
                 layerWorkspace: "Workspace layer",
-                layerUser: "User layer",
+                layerUser: "Personal layer",
                 typeText: "Text",
                 typeSystemPrompt: "System prompt",
                 typeRootAgentsMd: "Root AGENTS.md",
@@ -5610,6 +5616,12 @@ const messages = {
             configSourceUser: "Personal layer",
             configSourceInstance: "Instance layer",
             configSourceCode: "Built-in default",
+            configSourceInstanceDefault: "Instance default",
+            configSourceWorkspaceOverride: "Workspace override",
+            configSourceWorkspaceDefaultBadge: "Workspace default",
+            configSourceUserOverride: "Personal override",
+            configSourceCodeDefault: "Code default",
+            configSourceInheritedAbove: "Inherited from the layer above",
             configSourceNone: "Not set",
             configSourceInherited: "Inherited from {source}",
             configSourceOverride: "Overrides {source}",

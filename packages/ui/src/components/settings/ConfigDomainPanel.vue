@@ -175,45 +175,81 @@ function isMultilineValueField(field: DomainField): boolean {
     return field.type === "json" || field.type === "textarea";
 }
 
-function sourceText(key: string): string {
-    switch (props.meta?.[key]?.source) {
-        case "env":
-            return t("settings.configSourceEnv");
-        case "workspace":
-            return t("settings.configSourceWorkspace");
-        case "workspace-default":
-            return t("settings.configSourceWorkspaceDefault");
-        case "user":
-            return t("settings.configSourceUser");
-        case "instance":
-            return t("settings.configSourceInstance");
-        case "code":
-            return t("settings.configSourceCode");
-        case "none":
-            return t("settings.configSourceNone");
-        default:
-            return "";
-    }
+/**
+ * 来源词表：同一来源的两种「说法」。
+ * `layer` = 层名（生效层徽标、`sourceText()` 既有语义）；`badge` = 继承行的**来源类型短语**
+ * （对齐 PLAN-0554 design.md:110 词表：`instance 默认` / `workspace 覆盖` / `user 覆盖` / `code default`；
+ *  `workspace-default` 词表无对应短语，按"工作区默认"短语化。`env` / `none` 两面同文但**继承分支不可达**
+ *  （`locked` 与 `source==="none"` 都在继承分支之前返回）。
+ */
+const SOURCE_LABELS: Record<string, { layer: string; badge: string }> = {
+    env: { layer: "settings.configSourceEnv", badge: "settings.configSourceEnv" },
+    workspace: {
+        layer: "settings.configSourceWorkspace",
+        badge: "settings.configSourceWorkspaceOverride",
+    },
+    "workspace-default": {
+        layer: "settings.configSourceWorkspaceDefault",
+        badge: "settings.configSourceWorkspaceDefaultBadge",
+    },
+    user: { layer: "settings.configSourceUser", badge: "settings.configSourceUserOverride" },
+    instance: {
+        layer: "settings.configSourceInstance",
+        badge: "settings.configSourceInstanceDefault",
+    },
+    code: { layer: "settings.configSourceCode", badge: "settings.configSourceCodeDefault" },
+    none: { layer: "settings.configSourceNone", badge: "settings.configSourceNone" },
+};
+
+/** 来源文案；`face` 选「层名」还是「来源类型短语」—— 同一张词表，没有第二份 switch。 */
+function sourceText(key: string, face: "layer" | "badge" = "layer"): string {
+    const source = props.meta?.[key]?.source;
+    const labels = source ? SOURCE_LABELS[source] : undefined;
+    return labels ? t(labels[face]) : "";
 }
 
-function sourceHint(key: string): string {
+/**
+ * task-251 / D-1046：**唯一的来源判定** —— 这一行的 badge 文案、说明文案、以及要不要显示 badge。
+ * 全组件只此一处条件链；改任一分支，徽标与说明同时变（没有第二份抄写）。
+ *
+ * 继承行（design.md:105 要求 badge + 继承说明**并存**，verify 复核后裁定走 ⓐ）：
+ *   badge = 来源类型短语（实例默认 / 工作区覆盖 / 代码默认），
+ *   hint  = 「继承自上层」（不复述源名）⇒ 两句各说一件事，无同词/近义重复。
+ * 自有层 / 锁定 / env / 只读行的文案一字不动。
+ */
+function sourceDisplay(key: string): { badge: string; hint: string; showBadge: boolean } {
     const item = props.meta?.[key];
-    if (!item) return "";
-    if (item.locked) return t("settings.configSourceEnv");
+    if (!item) return { badge: "", hint: "", showBadge: false };
+    const badge = sourceText(key);
+    if (item.locked) return { badge, hint: t("settings.configSourceEnv"), showBadge: true };
     if (item.adminLocked) {
-        return t("settings.adminLockReason", { reason: item.lockReason ?? "" });
+        return {
+            badge,
+            hint: t("settings.adminLockReason", { reason: item.lockReason ?? "" }),
+            showBadge: true,
+        };
     }
     if (props.layer === "instance") {
-        return item.overridable
-            ? t("settings.configSourceOverridable")
-            : t("settings.configSourceInstanceOnly");
+        return {
+            badge,
+            hint: item.overridable
+                ? t("settings.configSourceOverridable")
+                : t("settings.configSourceInstanceOnly"),
+            showBadge: true,
+        };
     }
-    if (item.source === "none") return t("settings.configSourceNone");
+    if (item.source === "none") {
+        return { badge, hint: t("settings.configSourceNone"), showBadge: true };
+    }
     if (props.layer && item.source !== props.layer) {
-        return t("settings.configSourceInherited", { source: sourceText(key) });
+        return {
+            badge: sourceText(key, "badge"),
+            hint: t("settings.configSourceInheritedAbove"),
+            showBadge: true,
+        };
     }
-    if (!item.writable) return t("settings.configSourceReadonly");
-    return "";
+    if (!item.writable) return { badge, hint: t("settings.configSourceReadonly"), showBadge: true };
+    return { badge, hint: "", showBadge: true };
 }
 
 function lockedValue(key: string): string {
@@ -501,29 +537,33 @@ function handleReset(key: string) {
                         class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground"
                     >
                         <!-- T2.4：继承层可点（跳到目标层同一条目并聚焦）；生效层保持纯文本 -->
-                        <button
-                            v-if="jumpLayer(field.key)"
-                            type="button"
-                            :data-testid="`config-source-jump-${domain}-${field.key}`"
-                            :aria-label="
-                                t('settings.configSourceInherited', {
-                                    source: sourceText(field.key),
-                                })
-                            "
-                            class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
-                            @click="jumpToSource(field.key)"
-                        >
-                            {{ sourceText(field.key) }}
-                        </button>
-                        <span
-                            v-else
-                            class="shrink-0 rounded border border-border px-1 py-0.5"
-                            :aria-label="sourceText(field.key)"
-                        >
-                            {{ sourceText(field.key) }}
-                        </span>
-                        <span v-if="sourceHint(field.key)" class="min-w-0 truncate">
-                            {{ sourceHint(field.key) }}
+                        <!-- task-251 / D-1043 B（verify 实读 design.md:105 后裁定 ⓐ）：
+                             badge + 继承说明**必须并存**；缺陷对象只是「两半说同一个层名」。
+                             ⇒ 继承行 badge = 来源类型短语（实例默认/工作区覆盖/代码默认），
+                             hint = 「继承自上层」（不复述源名）。判定唯一出处 = sourceDisplay()（D-1046）。 -->
+                        <template v-if="sourceDisplay(field.key).showBadge">
+                            <button
+                                v-if="jumpLayer(field.key)"
+                                type="button"
+                                :data-testid="`config-source-jump-${domain}-${field.key}`"
+                                :aria-label="
+                                    sourceDisplay(field.key).hint || sourceDisplay(field.key).badge
+                                "
+                                class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                                @click="jumpToSource(field.key)"
+                            >
+                                {{ sourceDisplay(field.key).badge }}
+                            </button>
+                            <span
+                                v-else
+                                class="shrink-0 rounded border border-border px-1 py-0.5"
+                                :aria-label="sourceDisplay(field.key).badge"
+                            >
+                                {{ sourceDisplay(field.key).badge }}
+                            </span>
+                        </template>
+                        <span v-if="sourceDisplay(field.key).hint" class="min-w-0 truncate">
+                            {{ sourceDisplay(field.key).hint }}
                         </span>
                     </FieldDescription>
                 </div>

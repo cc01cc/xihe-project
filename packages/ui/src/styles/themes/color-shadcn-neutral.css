@@ -3,7 +3,15 @@
  *
  * 取值来源：https://www.shadcn-vue.com/r/colors/neutral.json 的 cssVarsV4（light/dark 各 32 键），
  * **原样照抄，不调色**（用户 2026-11-11 裁定）。与 https://ui.shadcn.com/r/colors/neutral.json 交叉一致。
- * 唯一例外是 --ring / --sidebar-ring（见文件内注释与 evidence/2026-11-11-color-shadcn-unify/m2-impl.md）。
+ * 有意偏离官方值之处（2026-11-12 已核对，共 3 组，均在下方逐处注释）：
+ *   ① `--ring` / `--sidebar-ring` → `--primary`（官方 ring 对 background 仅 2.58–2.63:1 < 3:1；
+ *      见 evidence/2026-11-11-color-shadcn-unify/m2-impl.md）；
+ *   ② `--input`（浅色 `oklch(0.66 0 0)`、深色 35% 白）：控件边界需 WCAG 1.4.11 的 3:1，
+ *      `--border` 属装饰线豁免、保持官方值；
+ *   ③ 「面差」5 键（浅色）：`--background` 0.97、`--muted` / `--accent` 0.93、
+ *      `--muted-foreground` 0.53、`--sidebar-accent` 0.94（用户 2026-11-12 批，`a2a24caf3`；
+ *      回退只需改这 5 个 token，暗色侧未动）。
+ * 其余键一律照抄 registry cssVarsV4。
  *
  * 灯的判定：明暗仍由 `useTheme` 的 `xihe-theme` 控制（<html class="dark">），本文件只换色板。
  */
@@ -13,8 +21,8 @@ html[data-xh-color="neutral"] {
     /*
      * 偏离官方值（用户 2026-11-11 裁定）：官方 --ring = oklch(0.708 0 0) 对 --background 实测
      * 2.58–2.63:1（Chromium 栅格化 + WCAG 公式，5 个 base 同量级）< WCAG 2.2 SC 1.4.11/2.4.11
-     * 要求的 3:1 ⇒ 这里改用 --primary（浅色 ≈17:1、深色 ≈15:1）。这是**唯一**偏离官方色值之处，
-     * 其余 30 个键一律照抄 shadcn-vue registry 的 cssVarsV4。改回官方只需把下面两行换成官方值。
+     * 要求的 3:1 ⇒ 这里改用 --primary（浅色 ≈17:1、深色 ≈15:1）。注意这一组不是唯一偏离：
+     * `--input`（同 3:1 判据）与「面差」5 键也另有有意偏离，见文件头与下方各 token 注释。
      */
     --background: oklch(0.97 0 0);
     --foreground: oklch(0.145 0 0);

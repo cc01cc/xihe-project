@@ -28,6 +28,8 @@ const i18n = createI18n({
                 configSourceInstance: "instance",
                 configSourceUser: "user",
                 configSourceInherited: "Inherited from {source}",
+                configSourceInstanceDefault: "Instance default",
+                configSourceInheritedAbove: "Inherited from the layer above",
                 configSourceOverridable: "Overridable below",
             },
             common: { save: "Save" },
@@ -142,8 +144,29 @@ describe("ConfigDomainPanel anchor jump (T2.4 / T2.5)", () => {
         ).toBe(false);
         // 来源文字仍在（纯文本徽标），既有断言不受影响
         expect(wrapper.find('[data-testid="config-source-rag-topK"]').text()).toContain("user");
+        // 继承行文案已按 design.md:105 收窄（badge = 来源类型短语）——这里只验「来源文字仍在」
         expect(wrapper.find('[data-testid="config-source-rag-chunkSize"]').text()).toContain(
-            "instance",
+            "Instance default",
+        );
+        wrapper.unmount();
+    });
+
+    // task-251 / D-1043 B（verify 实读 design.md:105 后裁定 ⓐ）：
+    // badge 与继承说明**必须并存**（design 原意），缺陷对象只是「两半说同一个层名」。
+    // 现在：badge = 来源类型短语（实例默认），hint = 「继承自上层」（不复述源名）。
+    it("TC-A4: 继承行 badge + 继承说明并存，且不重复层名", async () => {
+        const { wrapper } = await mountAtUserRag();
+        await expand(wrapper);
+
+        const inherited = wrapper.find('[data-testid="config-source-rag-chunkSize"]');
+        const badge = wrapper.find('[data-testid="config-source-jump-rag-chunkSize"]');
+        expect(badge.exists(), "design.md:105：继承行仍要有来源 badge").toBe(true);
+        expect(badge.text(), "badge = 来源类型短语，不是纯层名").toBe("Instance default");
+        expect(inherited.text(), "badge + hint 两句并存、层名不重复").toBe(
+            "Instance defaultInherited from the layer above",
+        );
+        expect(inherited.text(), "不再出现「instanceInherited」式拼接").not.toContain(
+            "instanceInherited",
         );
         wrapper.unmount();
     });
