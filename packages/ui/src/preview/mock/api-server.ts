@@ -17,6 +17,16 @@ import {
     mockMcpServerStatus,
     mockStdioServers,
 } from "./data/resourceReadFaces";
+import {
+    deleteNode,
+    isMockFsError,
+    listDirectory,
+    makeDirectory,
+    readFileRange,
+    readFileText,
+    transferNode,
+    writeFile,
+} from "./data/workspaceTree";
 
 /**
  * task-137 rev2（Lead 2026-11-11 拍板）：**真实 UI + mock 数据** —— 数据在**网络层** mock。
@@ -52,7 +62,13 @@ const MOCK_WORKSPACE = {
     workspaceRole: "OWNER",
     canWrite: true,
     hostPath: null,
-    roots: [{ id: "mock-root-main", alias: "主根", position: 0, path: null }],
+    // task-25 C：两个声明根（PLAN-0639 多根契约；数据面 V103 workspace_roots 已实现 ⇒ 这里只是填数据）。
+    // path 是 workspace 相对路径、只用于组头显示（FileTreePanel.vue:161-166 优先取它）；
+    // 文件树用的是 root 相对路径，与 path 无关（见 data/workspaceTree.ts 头注释）。
+    roots: [
+        { id: "mock-root-main", alias: "主根", position: 0, path: "mock/main" },
+        { id: "mock-root-docs", alias: "文档根", position: 1, path: "mock/docs" },
+    ],
     createdAt: "2026-11-01T09:00:00Z",
     updatedAt: "2026-11-11T09:00:00Z",
 };
@@ -158,6 +174,83 @@ function entriesFor(domain: string): Record<string, string> {
     return entries;
 }
 
+type MockToolOutcome =
+    | { ok: true; structured?: unknown; text?: string }
+    | { ok: false; code: string; detail?: string };
+
+/**
+ * task-25 A（2026-11-13）：`/mcp` 的工具面 —— 只覆盖 UI 真会调的那 8 个工具
+ * （`composables/api.ts:4354-4437` 全量枚举：list_directory / read_file / read_file_range /
+ * write_file / delete_file / move_file / copy_file / mkdir）。
+ *
+ * 未列出的工具回 `UNKNOWN_TOOL`（对应契约 400 UNKNOWN_TOOL 语义），**不静默成功** ——
+ * 静默成功会让「工具其实没实现」在 UI 上表现成一切正常。
+ */
+function callMockTool(name: string, args: Record<string, unknown>): MockToolOutcome {
+    const rootId = typeof args.rootId === "string" ? args.rootId : undefined;
+    const path = typeof args.path === "string" ? args.path : "";
+    const numberArg = (value: unknown): number | undefined =>
+        typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    switch (name) {
+        case "list_directory": {
+            const result = listDirectory(rootId, path);
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, structured: result };
+        }
+        case "read_file": {
+            const result = readFileText(rootId, path);
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, text: result.content };
+        }
+        case "read_file_range": {
+            const result = readFileRange(
+                rootId,
+                path,
+                numberArg(args.offset),
+                numberArg(args.limit),
+            );
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, structured: result };
+        }
+        case "write_file": {
+            const result = writeFile(
+                rootId,
+                path,
+                typeof args.content === "string" ? args.content : "",
+            );
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, text: result.message };
+        }
+        case "mkdir": {
+            const result = makeDirectory(rootId, path);
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, text: result.message };
+        }
+        case "delete_file": {
+            const result = deleteNode(rootId, path);
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, text: result.message };
+        }
+        case "move_file":
+        case "copy_file": {
+            const from = typeof args.from === "string" ? args.from : "";
+            const to = typeof args.to === "string" ? args.to : "";
+            const result = transferNode(rootId, from, to, name === "copy_file");
+            return isMockFsError(result)
+                ? { ok: false, ...result }
+                : { ok: true, text: result.message };
+        }
+        default:
+            return { ok: false, code: "UNKNOWN_TOOL", detail: name };
+    }
+}
+
 export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
     return {
         name: "xihe-mock-api",
@@ -218,6 +311,177 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 }
                 if (path === "/workspaces/current" && (req.method ?? "GET") === "GET") {
                     return respond(200, { workspace: MOCK_WORKSPACE });
+                }
+
+                /**
+                 * task-25 A 附（2026-11-13 实测补）：进入 `/workspace/:id` 时页面会打这两个读面，mock 缺 ⇒
+                 * `WorkspaceView.vue:173` 打出 `Load workspace failed (API error 404)`，工作区存储形态
+                 * 也就读不到，**文件树连锁不加载**。这不是「树端点缺失」，是「工作区详情缺失」——
+                 * 树自己的通路是上面的 `/mcp`。
+                 */
+                if (
+                    path === `/workspaces/${MOCK_WORKSPACE.id}` &&
+                    (req.method ?? "GET") === "GET"
+                ) {
+                    return respond(200, { workspace: MOCK_WORKSPACE });
+                }
+
+                /**
+                 * 工作区事件 SSE：`useWorkspaceSSE` 要求 200 + `text/event-stream`，否则顶部出现
+                 * 「与实时更新的连接已断开」横幅（实测 2026-11-13）。mock 只发心跳，不发业务事件 ——
+                 * 发假事件会让「文件树刷新」这类逻辑在预览里跳动，预览要的是静默一致的画面。
+                 */
+                if (
+                    path === `/workspaces/${MOCK_WORKSPACE.id}/events` &&
+                    (req.method ?? "GET") === "GET"
+                ) {
+                    res.statusCode = 200;
+                    res.setHeader("content-type", "text/event-stream; charset=utf-8");
+                    res.setHeader("cache-control", "no-cache, no-transform");
+                    res.setHeader("connection", "keep-alive");
+                    res.setHeader("x-accel-buffering", "no");
+                    // 只保持连接、**不写任何帧**：前端的解析器把 retry 行与 SSE 注释行也当事件解析，
+                    // 会打 workspace_sse_invalid_json 警告（2026-11-13 实测：每次连接 2 条）。
+                    // 心跳靠 TCP 保活即可，预览要的是静默一致的画面。
+                    const keepAlive = setInterval(() => {
+                        if (res.writableEnded) clearInterval(keepAlive);
+                    }, 25_000);
+                    keepAlive.unref?.();
+                    res.on("close", () => clearInterval(keepAlive));
+                    return;
+                }
+
+                /**
+                 * 待答问句读面（openapi:2231 `GET /api/v1/user-questions`）：`listUserQuestions`
+                 * 是**严格信封**校验（`api.ts:3331-3346`），形状不符会抛错 —— 所以给合法的空集，
+                 * 而不是 404 或裸数组。
+                 */
+                /** 嵌套仓库发现读面（PLAN-0641 F4）：形状 {workspaceId, cachedAt, items}；
+                 *  mock 没有未声明的嵌套仓库，给合法空集（不是 404 —— 404 会在页面留红点）。 */
+                if (
+                    path === `/workspaces/${MOCK_WORKSPACE.id}/nested-repos` &&
+                    (req.method ?? "GET") === "GET"
+                ) {
+                    return respond(200, {
+                        workspaceId: MOCK_WORKSPACE.id,
+                        cachedAt: new Date().toISOString(),
+                        items: [],
+                    });
+                }
+
+                /** 待审批摘要（api.ts:4182）：**裸数组**，元素形状不符会被逐条判 malformed；
+                 *  空数组 = 合法的「没有待审批」，与 mock 账号一致。 */
+                if (path === "/approvals/pending" && (req.method ?? "GET") === "GET") {
+                    return respond(200, []);
+                }
+
+                if (path === "/user-questions" && (req.method ?? "GET") === "GET") {
+                    return respond(200, { items: [], pendingCount: 0 });
+                }
+
+                /**
+                 * task-25 A（2026-11-13）：文件树**不走 REST**，走 MCP 工具网关 ——
+                 * `stores/workspace.ts:182 fetchDirectoryTree` → `api.ts:4354` → `api.ts:2662`
+                 * `callRuntimeTool` → `POST /api/v1/mcp` 的 JSON-RPC `tools/call{name:"list_directory"}`，
+                 * **递归在前端**（每个目录一次调用）。所以这里补的是 `/mcp` 分派，
+                 * 不是 `GET /workspaces/{id}/tree` —— 契约里没有那个面，造了就是又一条假面。
+                 *
+                 * 外壳与 `callRuntimeTool` 的取值顺序（`api.ts:2703-2712`）对齐：
+                 * 对象结果 → `structuredContent`；字符串结果 → `content[0].text`；
+                 * 工具级失败 → `result.isError=true`（不是 JSON-RPC error，前端两条通路的文案不同）。
+                 */
+                if (path === "/mcp" && (req.method ?? "GET") === "POST") {
+                    let raw = "";
+                    req.on("data", (chunk) => {
+                        raw += String(chunk);
+                    });
+                    req.on("end", () => {
+                        const sendMcp = (payload: unknown) => {
+                            res.statusCode = 200;
+                            res.setHeader("content-type", "application/json; charset=utf-8");
+                            res.setHeader("cache-control", "no-store");
+                            res.end(JSON.stringify(payload));
+                        };
+                        let envelope: {
+                            id?: unknown;
+                            jsonrpc?: unknown;
+                            method?: unknown;
+                            params?: { name?: unknown; arguments?: unknown };
+                        };
+                        try {
+                            envelope = JSON.parse(raw || "{}") as typeof envelope;
+                        } catch {
+                            // 解析失败属协议级错误：JSON-RPC error 帧（不是 isError）。
+                            sendMcp({
+                                jsonrpc: "2.0",
+                                id: null,
+                                error: { code: -32700, message: "Parse error" },
+                            });
+                            return;
+                        }
+                        const id = envelope.id ?? null;
+                        if (envelope.jsonrpc !== "2.0" || typeof envelope.method !== "string") {
+                            sendMcp({
+                                jsonrpc: "2.0",
+                                id,
+                                error: { code: -32600, message: "Invalid Request" },
+                            });
+                            return;
+                        }
+                        if (envelope.method !== "tools/call") {
+                            // 前端只发 `tools/call`（api.ts:2667-2675）；`initialize`/`tools/list` 明确回 -32601，
+                            // 不假装支持 —— 否则日后有人会拿 mock 当 MCP 契约证据。
+                            sendMcp({
+                                jsonrpc: "2.0",
+                                id,
+                                error: {
+                                    code: -32601,
+                                    message: `Method not supported by mock: ${envelope.method}`,
+                                },
+                            });
+                            return;
+                        }
+                        const name = String(envelope.params?.name ?? "");
+                        const args = (envelope.params?.arguments ?? {}) as Record<string, unknown>;
+                        const outcome = callMockTool(name, args);
+                        if (!outcome.ok) {
+                            options.log?.(`[mock-api] /mcp ${name} → ${outcome.code}`);
+                            sendMcp({
+                                jsonrpc: "2.0",
+                                id,
+                                result: {
+                                    content: [
+                                        {
+                                            type: "text",
+                                            text: `${outcome.code}${outcome.detail ? `: ${outcome.detail}` : ""}`,
+                                        },
+                                    ],
+                                    isError: true,
+                                },
+                            });
+                            return;
+                        }
+                        options.log?.(`[mock-api] /mcp ${name} → ok`);
+                        if (outcome.structured !== undefined) {
+                            sendMcp({
+                                jsonrpc: "2.0",
+                                id,
+                                result: {
+                                    content: [
+                                        { type: "text", text: JSON.stringify(outcome.structured) },
+                                    ],
+                                    structuredContent: outcome.structured,
+                                },
+                            });
+                            return;
+                        }
+                        sendMcp({
+                            jsonrpc: "2.0",
+                            id,
+                            result: { content: [{ type: "text", text: outcome.text ?? "" }] },
+                        });
+                    });
+                    return;
                 }
 
                 /**
@@ -373,7 +637,9 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 // 判定与内存集合在 data/instanceResources.ts —— 这里只做一次 dispatch，
                 // 免得 1000+ 行的 if 链再长 13 条。只接这三段，**不接** `/instance/` 全部：
                 // `/instance/identity`、`/instance/owner` 等既有端点不能被这层抢走。
-                if (/^\/instance\/(credentials|agents|mcp)(\/|$)/.test(path)) {
+                // task-38（R1）：智能体段是 `/instance/agent-principals`（契约 openapi.yaml:4876）。
+                // 旧串 `agents` 已从允许集里**删掉**而不是并存 —— 并存会让 mock 继续掩盖真栈 404。
+                if (/^\/instance\/(credentials|agent-principals|mcp)(\/|$)/.test(path)) {
                     const instanceMethod = req.method ?? "GET";
                     const readJsonBody = (): Promise<Record<string, unknown>> =>
                         new Promise((resolveBody) => {
@@ -713,29 +979,57 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         // 决定渲染可编辑控件还是只读行。空 keys ⇒ 全只读 ⇒ B 轻量版编辑不了，
                         // 所以这里按 schema 生成 meta（值本身仍来自 fixtures 层）。
                         const layer = url.searchParams.get("layer") ?? "instance";
+                        const instanceEntries = entriesFor(domain);
+                        const instanceMemory = memoryFor("instance", domain);
+                        const userMemory = memoryFor("user", domain);
                         const workspaceDefaultMemory = memoryFor("workspace-default", domain);
-                        const keys = Object.keys(entriesFor(domain)).map((key) => ({
+                        /**
+                         * task-25 B1（2026-11-13）：原实现把 `source` 恒填 `"code"`，两个问题 ——
+                         * ① `"code"` **不在契约枚举里**（openapi:6357 只有 instance|user|workspace-default|workspace|env|default）；
+                         * ② 恒值 ⇒ 「谁覆盖了这个键」在实例页**永远显示不出来**，是个「看起来正常、其实永远为假」的信号。
+                         * 现按契约逐字（openapi:6357「Resolved provenance of the value」）给**解析后的来源**，
+                         * 优先级与产品自述的层序一致：workspace-default > user > instance > default（mock 无 env overlay）。
+                         * 键集合取三层并集：只在 user 层存在的覆盖键也要出现，否则「被覆盖」这件事在实例页没有落点。
+                         */
+                        const resolvedSource = (key: string): string => {
+                            if (Object.prototype.hasOwnProperty.call(workspaceDefaultMemory, key)) {
+                                return "workspace-default";
+                            }
+                            if (Object.prototype.hasOwnProperty.call(userMemory, key))
+                                return "user";
+                            if (Object.prototype.hasOwnProperty.call(instanceMemory, key))
+                                return "instance";
+                            if (Object.prototype.hasOwnProperty.call(instanceEntries, key))
+                                return "instance";
+                            return "default";
+                        };
+                        const allKeys = Array.from(
+                            new Set([
+                                ...Object.keys(instanceEntries),
+                                ...Object.keys(instanceMemory),
+                                ...Object.keys(userMemory),
+                                ...Object.keys(workspaceDefaultMemory),
+                            ]),
+                        );
+                        const keys = allKeys.map((key) => ({
                             key,
-                            // 来源按「该键在本层有没有显式值」判：workspace-default 有值 ⇒ 来源就是它，
-                            // 否则沿用继承来的 instance fixture（证明「只显示生效值的来源」）。
-                            source:
-                                layer === "workspace-default"
-                                    ? Object.prototype.hasOwnProperty.call(
-                                          workspaceDefaultMemory,
-                                          key,
-                                      )
-                                        ? "workspace-default"
-                                        : "instance"
-                                    : layer === "instance"
-                                      ? "code"
-                                      : "instance",
+                            source: resolvedSource(key),
                             locked: false,
                             writable: true,
                             reason: null,
                             instanceEligible: true,
                             defaultPresent: true,
                             overridable: true,
+                            // 契约 required（openapi:6354）里还有 adminLocked —— 原实现整个字段都缺。
+                            adminLocked: false,
+                            lockReason: null,
                         }));
+                        const overriddenCount = keys.filter(
+                            (item) => item.source === "user" || item.source === "workspace-default",
+                        ).length;
+                        options.log?.(
+                            `[mock-api] GET /config/${domain}/meta?layer=${layer} → ${keys.length} 键，其中 ${overriddenCount} 键被上层覆盖`,
+                        );
                         return respond(200, { keys });
                     }
                     const layer = url.searchParams.get("layer");

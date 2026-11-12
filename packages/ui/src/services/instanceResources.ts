@@ -20,10 +20,18 @@ import type { CredentialKind, CredentialDeliveryTier } from "../types";
  * `capabilities` 决定**渲染哪一档**（403 卡片 vs 内容），不做第二套授权逻辑。</p>
  */
 
-/** 三个资源段的相对路径（`request` 自带 `/api/v1` 前缀）。 */
-const BASE = {
+/**
+ * 三个资源段的相对路径（`request` 自带 `/api/v1` 前缀）。
+ *
+ * task-38：**导出**是为了让 `__tests__/instanceResources.contract.spec.ts` 能对着
+ * `docs/api/openapi.yaml` 断言「每个段都在契约里」。写死路径 + 没人对账 = 这个 P0 的成因。
+ */
+export const BASE = {
     credentials: "/instance/credentials",
-    agents: "/instance/agents",
+    // task-38（R1，P0 真栈 404）：契约与 CP 都是 `/api/v1/instance/agent-principals`
+    // （openapi.yaml:4876、InstanceAgentPrincipalController.java:52）。原先写 `/instance/agents`
+    // ⇒ 真栈 404；mock 夹具当时也有同名路径 ⇒ mock 绿、真栈红。改这里必须同批改夹具。
+    agents: "/instance/agent-principals",
     mcp: "/instance/mcp",
 } as const;
 

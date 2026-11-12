@@ -1,5 +1,10 @@
 /**
- * task-165 · mock lane 的实例层三资源（`/api/v1/instance/{credentials,agents,mcp}`）。
+ * task-165 · mock lane 的实例层三资源（`/api/v1/instance/{credentials,agent-principals,mcp}`）。
+ *
+ * <p><b>task-38 修正</b>：智能体段原本写成 `/instance/agents`，而契约与 CP 都是
+ * `/instance/agent-principals`（`openapi.yaml:4876`）。夹具当时也有那份错路径 ⇒ mock 绿、真栈 404。
+ * 现在夹具与 `services/instanceResources.ts` 用同一条契约路径，且用
+ * `__tests__/instanceResources.contract.spec.ts` 对着 yaml 断言。</p>
  *
  * <p><b>为什么把状态与判定放在这里而不是塞进 `api-server.ts`</b>：`api-server.ts` 已经 1000+ 行
  * 的 if 链，再往里加 13 条端点的分支只会让「mock 到底支持哪些路径」更难读。这里收成一张
@@ -252,8 +257,12 @@ export async function handleInstanceResource(
         };
     }
 
-    if (path === "/instance/agents") {
-        if (upper === "GET") return { status: 200, body: { agents, count: agents.length } };
+    // task-38（R1）：路径以契约为准（openapi.yaml:4876）；响应信封按 `AgentPrincipalListResponse`
+    // 给 `principals`（CP `InstanceAgentPrincipalController.list` 实测也是 `{principals}`）。
+    // 夹具若继续用 `/instance/agents` + `{agents}`，就会一边掩盖 404、一边掩盖信封漂移。
+    if (path === "/instance/agent-principals") {
+        if (upper === "GET")
+            return { status: 200, body: { principals: agents, count: agents.length } };
         if (upper === "POST") {
             const body = await readBody();
             const name = str(body.name).trim();
@@ -275,7 +284,7 @@ export async function handleInstanceResource(
         return null;
     }
 
-    const agentId = path.match(/^\/instance\/agents\/([^/]+)$/);
+    const agentId = path.match(/^\/instance\/agent-principals\/([^/]+)$/);
     if (agentId) {
         const id = decodeURIComponent(agentId[1] ?? "");
         const index = agents.findIndex((item) => item.principalId === id);
