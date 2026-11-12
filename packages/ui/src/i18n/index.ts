@@ -1572,6 +1572,35 @@ const messages = {
                 importRefreshed: "列表已刷新。",
                 rejectedHeading: "被拒条目",
                 rejectedRow: "{path}：{reason}",
+                /**
+                 * task-312 · 个人层「新建技能」（按钮 + 单条表单对话框）。
+                 * `sameNameBody` 必须同时说出「会更新」与「原内容不可恢复」——只说"同名已存在"
+                 * 会被读成合并或另存（Lead 的验收口径）。
+                 */
+                create: {
+                    cta: "新建技能",
+                    title: "新建个人技能",
+                    description:
+                        "只有你能看到它。提交走 POST /api/v1/skills/import 的 type=user，归属人由服务端从登录态取。",
+                    nameLabel: "名称",
+                    nameHint:
+                        "小写字母或数字开头，可含 . _ -，最长 64 字符；它同时决定存放目录名（派生为 manual/名称/SKILL.md）。",
+                    descriptionLabel: "一句话说明",
+                    descriptionHint: "单行、无首尾空格、无控制字符；列表按这一行展示。",
+                    bodyLabel: "正文",
+                    bodyHint: "SKILL.md 去掉 frontmatter 的部分；不能为空。",
+                    submit: "创建",
+                    submitting: "正在创建…",
+                    cancel: "取消",
+                    sameNameTitle: "已存在同名技能",
+                    sameNameBody:
+                        "已存在同名技能「{name}」（当前版本 v{version}）。继续提交会更新它（版本 +1），原内容不可恢复。",
+                    sameNameConfirm: "继续更新",
+                    unchangedTitle: "内容没有变化",
+                    unchanged: "已存在同名技能且正文相同，本次没有做任何修改。",
+                    rejectedTitle: "这条定义没有被写入",
+                    rejectedNote: "单条新建被拒 = 什么都没建；按上面的原因改完再提交即可。",
+                },
                 workspaceSourceNote:
                     "本层只含本区自建定义；平台库的定义通过智能体绑定可见 —— 技能没有继承语义，所以本页不画来源列。",
             },
@@ -4869,6 +4898,38 @@ const messages = {
                 importRefreshed: "The list has been refreshed.",
                 rejectedHeading: "Rejected items",
                 rejectedRow: "{path}: {reason}",
+                /**
+                 * task-312 · the personal-layer "new skill" entry (button + single-item form dialog).
+                 * `sameNameBody` must say both "will update it" and "cannot be recovered": "a skill
+                 * with this name already exists" alone reads as merge or save-as.
+                 */
+                create: {
+                    cta: "New skill",
+                    title: "New personal skill",
+                    description:
+                        "Only you can see it. The submit goes through POST /api/v1/skills/import with type=user; the owner comes from the session token server-side.",
+                    nameLabel: "Name",
+                    nameHint:
+                        "Starts with a lowercase letter or digit; may contain . _ -; at most 64 characters. It also decides the directory name (derived as manual/<name>/SKILL.md).",
+                    descriptionLabel: "One-line description",
+                    descriptionHint:
+                        "Single line, no leading/trailing spaces, no control characters; the list shows this line.",
+                    bodyLabel: "Body",
+                    bodyHint: "The SKILL.md body without the frontmatter; must not be empty.",
+                    submit: "Create",
+                    submitting: "Creating…",
+                    cancel: "Cancel",
+                    sameNameTitle: "A skill with this name already exists",
+                    sameNameBody:
+                        "A skill named “{name}” already exists (current version v{version}). Submitting will update it (version +1); the previous content cannot be recovered.",
+                    sameNameConfirm: "Update it",
+                    unchangedTitle: "Nothing changed",
+                    unchanged:
+                        "A skill with this name and an identical body already exists; nothing was modified.",
+                    rejectedTitle: "The definition was not written",
+                    rejectedNote:
+                        "A rejected single create means nothing was written; fix the reason above and submit again.",
+                },
                 workspaceSourceNote:
                     "This layer holds workspace-owned definitions only; platform definitions reach agents through bindings — skills have no inheritance semantics, so this page shows no source column.",
             },

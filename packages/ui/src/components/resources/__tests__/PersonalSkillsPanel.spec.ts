@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 
 import { i18n } from "../../../i18n";
@@ -121,12 +121,39 @@ async function submitBatch(json: string): Promise<void> {
     await nextTick();
 }
 
+/** `task-312` 新建对话框的字段填写与提交（内容 Teleport 到 body，故从 `document` 取）。 */
+async function fillCreate(fields: {
+    name: string;
+    description: string;
+    body: string;
+}): Promise<void> {
+    const targets: Array<[string, string]> = [
+        ["personal-skill-create-name", fields.name],
+        ["personal-skill-create-description", fields.description],
+        ["personal-skill-create-body", fields.body],
+    ];
+    for (const [testid, value] of targets) {
+        const input = q<HTMLInputElement>(`[data-testid="${testid}"]`);
+        input.value = value;
+        input.dispatchEvent(new Event("input"));
+    }
+    await nextTick();
+}
+
+async function clickCreateSubmit(): Promise<void> {
+    q('[data-testid="personal-skill-create-submit"]').click();
+    await flushPromises();
+    await nextTick();
+}
+
 beforeEach(() => {
     authState.atoms = new Set<string>();
     listPersonalSkills.mockReset();
     importSkillDefinitions.mockReset();
     ensureSelfPermissions.mockClear();
     listPersonalSkills.mockResolvedValue([skill()]);
+    // 两个对话框都 Teleport 到 body：上一个用例的残留会让 `querySelector` 取到旧节点。
+    document.body.innerHTML = "";
 });
 
 describe("我的技能面板（T2b.3）", () => {
@@ -232,6 +259,97 @@ describe("我的技能面板（T2b.3）", () => {
         // 码 → 中文措辞（与实例面板同一张表），英文 detail 不上屏。
         expect(rejected.text()).toContain("名称不合规");
         expect(rejected.text()).not.toContain("does not match the required pattern");
+        wrapper.unmount();
+    });
+
+    it("无权写：新建按钮同样在 DOM、disabled，并共用同一条理由（task-312）", async () => {
+        const wrapper = mountPanel();
+        await nextTick();
+        await nextTick();
+
+        const create = wrapper.find("[data-testid='personal-skills-create']");
+        expect(create.exists()).toBe(true);
+        expect(create.attributes("disabled")).toBeDefined();
+        // 两个入口共用一个理由段落：`aria-describedby` 指向同一个 id（只置灰不说原因 = 用户以为自己操作错了）。
+        expect(create.attributes("aria-describedby")).toBe("personal-skills-import-reason");
+        expect(
+            wrapper.find("[data-testid='personal-skills-import-disabled-reason']").exists(),
+        ).toBe(true);
+        expect(create.attributes("title")).toContain("MANAGE_PERSONAL_SKILLS");
+        wrapper.unmount();
+    });
+
+    it("有 MANAGE_PERSONAL_SKILLS：点新建打开个人层专用对话框（task-312）", async () => {
+        authState.atoms.add("MANAGE_PERSONAL_SKILLS");
+        const wrapper = mountPanel();
+        await nextTick();
+        await nextTick();
+
+        wrapper.find("[data-testid='personal-skills-create']").trigger("click");
+        await nextTick();
+        await nextTick();
+
+        expect(q('[data-testid="personal-skill-create-dialog"]')).toBeTruthy();
+        wrapper.unmount();
+    });
+
+    it("新建成功 ⇒ 单条 payload（无 definition_scope_id / trusted）且列表重取（task-312）", async () => {
+        authState.atoms.add("MANAGE_PERSONAL_SKILLS");
+        importSkillDefinitions.mockResolvedValue(IMPORT_RESULT);
+        const wrapper = mountPanel();
+        await nextTick();
+        await nextTick();
+        expect(listPersonalSkills).toHaveBeenCalledTimes(1);
+
+        wrapper.find("[data-testid='personal-skills-create']").trigger("click");
+        await nextTick();
+        await fillCreate({ name: "new-skill", description: "一条新说明", body: "## 正文" });
+        await clickCreateSubmit();
+
+        // 裁定 A：不新增端点，提交就是 `POST /skills/import` 的**单条**批。
+        expect(importSkillDefinitions).toHaveBeenCalledTimes(1);
+        const payload = importSkillDefinitions.mock.calls[0]![0] as {
+            definitionScope: Record<string, unknown>;
+            skills: Array<Record<string, unknown>>;
+        };
+        expect(payload.definitionScope).toEqual({ type: "user" });
+        expect(payload.skills).toHaveLength(1);
+        expect(payload.skills[0]!.sourcePath).toBe("manual/new-skill/SKILL.md");
+        // 键**不存在**（不是 `=== undefined`）：这两个键一个由 CP 从 token 取、一个个人层禁入。
+        expect("definition_scope_id" in payload.skills[0]!).toBe(false);
+        expect("trusted" in payload.skills[0]!).toBe(false);
+
+        // 成功后重取列表 + 显示服务端汇总（不乐观插入）。
+        expect(listPersonalSkills).toHaveBeenCalledTimes(2);
+        expect(wrapper.find("[data-testid='personal-skills-import-summary']").text()).toContain(
+            "1",
+        );
+        wrapper.unmount();
+    });
+
+    it("新建同名 ⇒ 确认框带出列表里的当前版本，确认前不发请求（task-312）", async () => {
+        authState.atoms.add("MANAGE_PERSONAL_SKILLS");
+        const wrapper = mountPanel();
+        await nextTick();
+        await nextTick();
+        // 默认夹具里 `my-personal-skill` 的 version = 3（服务端算的，面板不猜）。
+
+        wrapper.find("[data-testid='personal-skills-create']").trigger("click");
+        await nextTick();
+        await fillCreate({
+            name: "my-personal-skill",
+            description: "覆盖前先确认",
+            body: "## 新正文",
+        });
+        await clickCreateSubmit();
+
+        expect(importSkillDefinitions).not.toHaveBeenCalled();
+        const confirmBody =
+            q('[data-testid="personal-skill-create-confirm-body"]').textContent ?? "";
+        expect(confirmBody).toContain("my-personal-skill");
+        expect(confirmBody).toContain("v3");
+        // 必须同时说出"会更新"与"原内容不可恢复"，否则会被读成合并或另存。
+        expect(confirmBody).toContain("原内容不可恢复");
         wrapper.unmount();
     });
 });

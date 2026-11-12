@@ -98,6 +98,45 @@ function asRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
+/**
+ * 单条定义的**字段判据**（`name` / `description` / `body`），与 CP `SkillImportValidator` 同规则。
+ *
+ * <p>抽出来是给「导入」与「新建」两处共用（`task-312`）：新建只差一个 `sourcePath` 的来历
+ * （导入来自文件、新建由 name 派生），三个字段的判据必须**逐字相同** —— 否则同一条名字在两个
+ * 入口一边收一边拒，用户只会觉得产品坏了。解析结果同时把值收敛为 `string`，调用方无需再断言类型。</p>
+ */
+type FieldParse = { ok: true; value: string } | { ok: false; code: string };
+
+function parseName(raw: unknown): FieldParse {
+    return typeof raw === "string" && SKILL_NAME_PATTERN.test(raw)
+        ? { ok: true, value: raw }
+        : { ok: false, code: "SKILL_NAME_INVALID" };
+}
+
+function parseDescription(raw: unknown): FieldParse {
+    if (typeof raw !== "string" || raw.trim() === "") {
+        return { ok: false, code: "SKILL_DESCRIPTION_REQUIRED" };
+    }
+    if (raw.length > SKILL_DESCRIPTION_MAX_LENGTH) {
+        return { ok: false, code: "SKILL_DESCRIPTION_TOO_LONG" };
+    }
+    // 与 CP 同口径：**拒绝而不替用户 trim**（`SkillImportValidator` 的 B 裁定原文：
+    // "reject, do not trim" —— 静默 trim 会让入库存的与调用方以为的不一致）。
+    if (raw !== raw.trim()) return { ok: false, code: "SKILL_DESCRIPTION_EDGE_WHITESPACE" };
+    if (CONTROL_CHARACTER.test(raw)) {
+        return { ok: false, code: "SKILL_DESCRIPTION_CONTROL_CHARACTER" };
+    }
+    return { ok: true, value: raw };
+}
+
+function parseBody(raw: unknown): FieldParse {
+    if (typeof raw !== "string" || raw.trim() === "") {
+        return { ok: false, code: "SKILL_BODY_EMPTY" };
+    }
+    if (raw.length > SKILL_BODY_MAX_LENGTH) return { ok: false, code: "SKILL_BODY_TOO_LARGE" };
+    return { ok: true, value: raw };
+}
+
 /** 单条定义预检：形状 + CP 同判据（返回第一个命中的 CP 码，附带 `sourcePath` 便于定位）。 */
 function checkItem(
     raw: Record<string, unknown>,
@@ -105,31 +144,16 @@ function checkItem(
     targetScope: SkillImportTargetScope = "instance",
 ): { code: string; hint?: string } | SkillImportItemPayload {
     const label = `#${index + 1}`;
-    const name = raw.name,
-        description = raw.description,
-        body = raw.body,
-        sourcePath = raw.sourcePath;
-    if (typeof name !== "string" || !SKILL_NAME_PATTERN.test(name)) {
-        return { code: "SKILL_NAME_INVALID", hint: label };
-    }
-    if (typeof description !== "string" || description.trim() === "") {
-        return { code: "SKILL_DESCRIPTION_REQUIRED", hint: label };
-    }
-    if (description.length > SKILL_DESCRIPTION_MAX_LENGTH) {
-        return { code: "SKILL_DESCRIPTION_TOO_LONG", hint: label };
-    }
-    if (description !== description.trim()) {
-        return { code: "SKILL_DESCRIPTION_EDGE_WHITESPACE", hint: label };
-    }
-    if (CONTROL_CHARACTER.test(description)) {
-        return { code: "SKILL_DESCRIPTION_CONTROL_CHARACTER", hint: label };
-    }
-    if (typeof body !== "string" || body.trim() === "") {
-        return { code: "SKILL_BODY_EMPTY", hint: label };
-    }
-    if (body.length > SKILL_BODY_MAX_LENGTH) {
-        return { code: "SKILL_BODY_TOO_LARGE", hint: label };
-    }
+    const sourcePath = raw.sourcePath;
+    const parsedName = parseName(raw.name);
+    if (!parsedName.ok) return { code: parsedName.code, hint: label };
+    const parsedDescription = parseDescription(raw.description);
+    if (!parsedDescription.ok) return { code: parsedDescription.code, hint: label };
+    const parsedBody = parseBody(raw.body);
+    if (!parsedBody.ok) return { code: parsedBody.code, hint: label };
+    const name = parsedName.value,
+        description = parsedDescription.value,
+        body = parsedBody.value;
     if (typeof sourcePath !== "string" || sourcePath.trim() === "") {
         return { code: "SKILL_SOURCE_PATH_INVALID", hint: label };
     }
@@ -229,6 +253,91 @@ export function parseSkillImportDraft(
     return {
         ok: true,
         payload: { definitionScope: { type: targetScope }, skills: items },
+    };
+}
+
+/**
+ * 「新建」单条个人技能时 `sourcePath` 的根目录。
+ *
+ * <p>`manual/` 是**可信度标记**而不是装饰：它是"这条定义是人手工建的、没有对应文件"留在数据里的
+ * 唯一痕迹。用 `skills/` 会让下一个人以为磁盘上真有个 `skills/<name>/SKILL.md`（那是导入的形态）。</p>
+ */
+export const SKILL_CREATE_SOURCE_ROOT = "manual";
+
+/** 新建技能的 `sourcePath` = `manual/<name>/SKILL.md`（目录名必须等于 `name`，见下）。 */
+export function deriveCreateSourcePath(name: string): string {
+    return `${SKILL_CREATE_SOURCE_ROOT}/${name}/SKILL.md`;
+}
+
+/**
+ * 与 CP `SkillImportValidator.normalizePath`（`:248-271`）**同判据**的路径自检：段级 `..`、
+ * 绝对路径、盘符前缀一律不许。
+ *
+ * <p>注意与 {@link checkItem} 里的 `sourcePath` 预检**不同**：那里对**用户粘进来的**路径用
+ * `includes("..")` 子串判据（更严，粘路径本身就是可疑输入）；这里判的是**我们自己派生**的路径，
+ * 必须与 CP 的段级判据一致 —— 否则 CP 合法的名字（如 `a..b`，`NAME_PATTERN` 允许连续点）会在
+ * 本地被路径预检误拒，那等于 UI 自己发明了一条 CP 没有的规则。</p>
+ */
+function isSafeRelativeSourcePath(path: string): boolean {
+    if (path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:/.test(path)) return false;
+    const parts = path.split(/\/+/).filter((part) => part !== "" && part !== ".");
+    return parts.length > 0 && !parts.includes("..");
+}
+
+/** 「新建」草稿的判据结果：失败时带**字段名**，对话框据此把错误贴到对应输入框旁。 */
+export type SkillCreateDraftResult =
+    | { ok: true; payload: SkillImportRequestPayload }
+    | { ok: false; code: string; field: "name" | "description" | "body" | "sourcePath" };
+
+/**
+ * `task-312` · 「新建」一条个人技能 → 与 `POST /skills/import` **同形的单条批**（裁定 A：
+ * 不新增 REST 端点）。
+ *
+ * <p>三条硬口径：</p>
+ * <ol>
+ *   <li><b>`definition_scope_id` 从不出现</b>：`SkillDefinitionScopePayload` 的 `user` 分支
+ *       类型上就没有 id 字段（P-189-1：CP 从 token 取归属人），所以这里给的是 `{ type: "user" }`
+ *       而不是"带 id 但省略"。</li>
+ *   <li><b>`trusted` 从不出现</b>：个人层连 `false` 都整批 400（`SkillController.refusePersonalTrusted`），
+ *       本函数不接收该字段 ⇒ 调用方连传的机会都没有。</li>
+ *   <li><b>`sourcePath` 由 name 派生</b>（`manual/<name>/SKILL.md`）：CP 要求当路径尾段是
+ *       `SKILL.md` 时其目录名必须等于 `name`（`SkillImportValidator.validateName:117-127`），
+ *       派生保证这一条恒成立；name 的字符集不含 `/`（`NAME_PATTERN`），所以派生不会引入新段。</li>
+ * </ol>
+ */
+export function buildPersonalSkillCreateRequest(fields: {
+    name: string;
+    description: string;
+    body: string;
+}): SkillCreateDraftResult {
+    const parsedName = parseName(fields.name);
+    if (!parsedName.ok) return { ok: false, code: parsedName.code, field: "name" };
+    const parsedDescription = parseDescription(fields.description);
+    if (!parsedDescription.ok) {
+        return { ok: false, code: parsedDescription.code, field: "description" };
+    }
+    const parsedBody = parseBody(fields.body);
+    if (!parsedBody.ok) return { ok: false, code: parsedBody.code, field: "body" };
+    const name = parsedName.value;
+    const sourcePath = deriveCreateSourcePath(name);
+    if (!isSafeRelativeSourcePath(sourcePath)) {
+        // 防御性自检：name 已被 NAME_PATTERN 限死，正常走不到这里；真走到了说明派生规则被改坏，
+        // 宁可本地红，也不要让 CP 用 rejected[].code 兜。
+        return { ok: false, code: "SKILL_SOURCE_PATH_INVALID", field: "sourcePath" };
+    }
+    return {
+        ok: true,
+        payload: {
+            definitionScope: { type: "user" },
+            skills: [
+                {
+                    name: fields.name,
+                    description: fields.description,
+                    body: fields.body,
+                    sourcePath,
+                },
+            ],
+        },
     };
 }
 

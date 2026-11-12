@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertCircle, LoaderCircle, Upload } from "@lucide/vue";
+import { AlertCircle, LoaderCircle, Plus, Upload } from "@lucide/vue";
 
 import {
     api,
@@ -13,6 +13,7 @@ import { useAuthStore } from "../../stores/auth";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import ResourceDetailLink from "./ResourceDetailLink.vue";
+import PersonalSkillCreateDialog from "../settings/PersonalSkillCreateDialog.vue";
 import SkillsImportDialog from "../settings/SkillsImportDialog.vue";
 import { SKILL_REJECTION_I18N_KEYS } from "../settings/skillImport";
 
@@ -30,9 +31,10 @@ import { SKILL_REJECTION_I18N_KEYS } from "../settings/skillImport";
  *       （`openapi.yaml:5465`「takes no id (the caller is the owner)」，
  *       `SkillLibraryService.list:52-61` 只拒 `workspaceId`、没有账权检查）。P-189-3 明写
  *       **撤销 `MANAGE_PERSONAL_SKILLS` 之后读仍开放** ⇒ 本面板照常取数、照常渲染列表。</li>
- *   <li><b>写面按原子判、无权不隐藏</b>：「导入技能」按钮恒在，无权时 `disabled` + 理由点名
- *       `MANAGE_PERSONAL_SKILLS`，并明写读面不受该原子限制 —— 隐藏会让人以为产品没有这个能力，
- *       而只置灰不说原因会让人以为是自己操作错了。</li>
+ *   <li><b>写面按原子判、无权不隐藏</b>：两个写入口「新建技能」与「导入技能」恒在，无权时 `disabled`
+ *       + 理由点名 `MANAGE_PERSONAL_SKILLS`，并明写读面不受该原子限制 —— 隐藏会让人以为产品没有这个能力，
+ *       而只置灰不说原因会让人以为是自己操作错了。「新建」走 `POST /skills/import` 的**单条**批
+ *       （`task-312` 裁定 A：不为 REST 手感新增端点）。</li>
  *   <li><b>`trusted` 永不出现</b>：请求体不带（本地预检也会拦，见 `skillImport.ts`），
  *       行上也不渲染该徽标 —— 个人层没有这个维度。</li>
  * </ul>
@@ -44,6 +46,8 @@ const skills = ref<SkillDefinitionSummary[]>([]);
 const loading = ref(false);
 const loadError = ref<string | null>(null);
 const importOpen = ref(false);
+/** `task-312` · 「新建」对话框（单条，裁定 A：复用 `POST /skills/import` 的 `type=user`）。 */
+const createOpen = ref(false);
 /** 上一次导入的结果（成功与逐条拒绝都在这里；对话框关掉后页面仍能看到结论）。 */
 const lastImport = ref<SkillImportResultPayload | null>(null);
 
@@ -68,6 +72,14 @@ const visibleSkills = computed(() =>
     skills.value.filter((skill) => skill.definitionScope?.type === "user"),
 );
 const foreignCount = computed(() => skills.value.length - visibleSkills.value.length);
+
+/**
+ * `task-312` · 新建对话框的同名覆盖确认只需要 `(name, version)`：面板已加载的列表就是权威快照
+ * （`version` 是服务端算的，本地不猜）。命中同名时由对话框弹确认，文案里要能说出"当前版本 vN"。
+ */
+const existingPersonalSkills = computed(() =>
+    visibleSkills.value.map((skill) => ({ name: skill.name, version: skill.version })),
+);
 
 function formatTime(iso: string | null): string {
     if (!iso) return "—";
@@ -141,9 +153,26 @@ onMounted(() => {
                 {{ countLabel }}
             </span>
             <div class="ml-auto flex flex-wrap items-center gap-2">
-                <!-- 入口恒在：无权时置灰 + 理由，不隐藏（隐藏 = 让人以为产品没有个人技能库）。 -->
+                <!-- 两个入口恒在：无权时置灰 + 理由，不隐藏（隐藏 = 让人以为产品没有个人技能库）。
+                     「新建」是主 CTA（单条字段表单），「导入」是 JSON 批的次入口。 -->
+                <Button
+                    data-testid="personal-skills-create"
+                    size="sm"
+                    :disabled="!canImport"
+                    :aria-describedby="canImport ? undefined : 'personal-skills-import-reason'"
+                    :title="
+                        canImport
+                            ? t('resources.skills.create.cta')
+                            : t('resources.skills.importDisabledReason')
+                    "
+                    @click="createOpen = true"
+                >
+                    <Plus class="size-3.5" aria-hidden="true" />
+                    {{ t("resources.skills.create.cta") }}
+                </Button>
                 <Button
                     data-testid="personal-skills-import"
+                    variant="outline"
                     size="sm"
                     :disabled="!canImport"
                     :aria-describedby="canImport ? undefined : 'personal-skills-import-reason'"
@@ -293,6 +322,14 @@ onMounted(() => {
                 </ul>
             </template>
         </section>
+
+        <PersonalSkillCreateDialog
+            :open="createOpen"
+            :submit="submitImport"
+            :existing="existingPersonalSkills"
+            @update:open="createOpen = $event"
+            @imported="onImported"
+        />
 
         <SkillsImportDialog
             :open="importOpen"
