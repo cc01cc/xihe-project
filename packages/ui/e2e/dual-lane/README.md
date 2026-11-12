@@ -24,9 +24,17 @@ diff 非空 ⇒ 用例红。它把「两侧」放进同一个脚本、同一次�
 ```bash
 cd A03-xihe/packages/ui
 node e2e/dual-lane/selftest.mjs                          # 纯函数自测，24 例，秒级
-node e2e/dual-lane/run.mjs --case resources-agents        # 绿路径：diff 空 ⇒ exit 0
+node e2e/dual-lane/run.mjs --case resources-agents        # 绿路径：mock ↔ 契约，diff 空 ⇒ exit 0
 node e2e/dual-lane/run.mjs --case resources-agents --mutate principals=agents   # 反例：exit 1
+
+# 真栈车道（要一栈 + 一个 token；本轮已跑过一次，见 §4.1）
+node e2e/dual-lane/run.mjs --case resources-agents \
+  --real-base-url http://127.0.0.1:12631 --workspace-id <真栈 workspace uuid>
 ```
+
+真栈车道的 token 从环境变量 `XIHE_E2E_TOKEN` 读（也可 `--token`；**不要写进命令行**，会进 shell history）。
+`--workspace-id` 把用例里的夹具 id `workspace-1` 换成真 uuid —— 不换的话真栈只会回 404/400，那是
+**输入不同**而不是形状不同（`D-1085`：输入不同必须显式登记，不许当成形状一致）。
 
 产物默认落 `A03-xihe/.tmp/xh/dual-lane/`（gitignored）：`mock-<case>.json` / `contract-<case>.json` /
 `diff-<case>.txt`。目录可用 `--out-dir` 改。
@@ -54,9 +62,12 @@ KEYS      GET /api/v1/instance/agent-principals  mock=[agents] contract=[princip
 
 ## 4. 本轮的边界（诚实清单）
 
-1. **真栈车道未跑**：`stack-1` 被 R13 收尾占着，真栈录波需要窗口（用户/Lead 排窗）。代码已接线
-   （`run.mjs --real-base-url <url> --token <bearer>` 走同一个 `recordHttpLane`），跑起来会写
-   `real-<case>.json` 并改成 mock ↔ real 对账。**在此之前「共同运行体」只覆盖 mock ↔ 契约这一对。**
+1. **真栈车道已跑过一次（2026-11-13，`stack-1`，CP `:12631`）**，读数见证据包 `real-lane/run.txt`：
+   绿 ⇒ 3 条 GET 全 200、`{principals}` / `{agents}` / `{principals}` 两侧一致、diff 空、exit 0；
+   红 ⇒ `--mutate principals=agents` 给出 2 条 `KEYS`（`mock=[agents] real=[principals]`）、exit 1。
+   **但它还不是常规门**：要登录态、要一栈、要真 uuid，所以按需跑，不进任何自动化流水线。
+   仍未做的：把「取 token / 取 workspaceId」也脚本化（现在这两步在证据包 `real-lane/run.txt` 里是
+   手工命令），以及把真栈读数接进日常（需要先定谁在什么时机跑）。
 2. **mock 车道是本地桩服务，不是浏览器**：判据是 HTTP 形状（method/path/status/键集），浏览器只
    多一层不确定性；桩体与 `e2e/mock/*.spec.ts` 的 `route.fulfill` 同源。要验「页面真的那样调」属于
    更上一层的 E2E，不在本闸口径内。

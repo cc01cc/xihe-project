@@ -57,6 +57,12 @@ export async function startMockLane(testCase, options = {}) {
     };
 }
 
+function replaceAllTokens(text, subst) {
+    let out = text;
+    for (const [from, to] of Object.entries(subst)) out = out.split(from).join(to);
+    return out;
+}
+
 function readBody(response) {
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("json")) return Promise.resolve(null);
@@ -70,12 +76,20 @@ function readBody(response) {
     });
 }
 
-/** 车道录波：按用例的 `calls` 逐条打过去，记 `{method, 归一化 path, status, 顶层键集}`。 */
+/**
+ * 车道录波：按用例的 `calls` 逐条打过去，记 `{method, 归一化 path, status, 顶层键集合}`。
+ *
+ * `options.subst` = 路径替换表（`{"workspace-1": "<真栈 uuid>"}`）：用例里的 id 是夹具 id，
+ * 真栈那一侧必须是真 uuid，否则拿到的是 404/400 —— 那是**输入不同**，不是形状不同。
+ * 替换只影响要打的 URL，归一化之后两边都变回 `{id}`，所以对账口径不变。
+ */
 export async function recordHttpLane(testCase, options) {
     const headers = { accept: "application/json", ...(options.headers ?? {}) };
+    const subst = options.subst ?? {};
     const rows = [];
     for (const call of testCase.calls) {
-        const target = options.baseUrl + call.path;
+        const path = replaceAllTokens(call.path, subst);
+        const target = options.baseUrl + path;
         const response = await fetch(target, { method: call.method, headers });
         const body = await readBody(response);
         const row = makeRow({

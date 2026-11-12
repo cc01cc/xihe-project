@@ -62,9 +62,11 @@ async function main() {
     let realFile = null;
     if (realBaseUrl) {
         const token = arg("--token", process.env.XIHE_E2E_TOKEN ?? "");
+        const workspaceId = arg("--workspace-id", "");
         const realRows = await recordHttpLane(testCase, {
             baseUrl: realBaseUrl.replace(/\/$/, ""),
             headers: token ? { authorization: "Bearer " + token } : {},
+            subst: workspaceId ? { "workspace-1": workspaceId } : {},
         });
         realFile = path.join(outDir, "real-" + caseId + ".json");
         writeTrace(realFile, "real", testCase, realRows, { baseUrl: realBaseUrl });
