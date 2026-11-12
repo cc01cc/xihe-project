@@ -4997,7 +4997,7 @@ paths:
     post:
       tags: [credential]
       operationId: revealInstanceCredential
-      summary: 'Reveal an instance credential once (instance admin + credential_reveal + step-up)'
+      summary: 'Reveal an instance credential — no-store delivery (repeatable reads) (instance admin + credential_reveal + step-up)'
       description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): the same step-up / throttle / no-store / audit shape as POST /api/v1/credentials/{id}/reveal, with the instance-layer gate added: cap:instance:admin AND credential_reveal@credential:<id>. There is no owner intersection to apply - the instance has no owner row - so the gate is the atom plus the instance-admin capability, not "the caller owns the row". Step-up password re-verification throttled at 5 failures / 15 minutes, response Cache-Control: no-store, audit credential_revealed without the value; a row that is not INSTANCE-owned answers 404 CREDENTIAL_NOT_FOUND (no cross-owner oracle); v1 never creates an approval.'
       security: [{ bearerAuth: [] }]
       parameters:
