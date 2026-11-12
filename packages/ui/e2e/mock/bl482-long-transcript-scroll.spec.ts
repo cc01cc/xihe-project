@@ -248,9 +248,23 @@ test.describe("PLAN-0753 M4：千条级长会话窗口化滚动留证", () => {
         // —— 回到底部：末行可见、下占位归零 ——
         const beforeBottom = await readSample(page);
         await scrollToOffset(page, beforeBottom.scrollHeight);
+        // task-332（BL-603）：判据 = 「距**自身**底部 ≤ 8px」，`scrollHeight`/`clientHeight`/`scrollTop`
+        // 必须**同一次读数内**取。旧写法拿跳前的 `beforeBottom.scrollHeight ± 40px` 当跳后上界，前提不成立：
+        // 窗口化下总高 = 「已测行实测 + 未测行 fallback 120px」之和（`useVirtualMessageWindow.ts:95`
+        // 的 `estimateSize`），一次跳到底会把几条从未量过的短行从 120px 估算换成 ~45px 实测 ⇒ 总高在
+        // 跳的瞬间收缩数百 px（BL-603 实测 −224 / −252 px），`max` 随之下降，40px 容差被击穿 ——
+        // 而那一轮同一读数里 `scrollHeight − clientHeight − scrollTop = 0`，产品正贴在自身最大滚动位。
+        // 写法与 `bl340-anchor-invariant.spec.ts:87-99`、`bl316-scroll-follow.spec.ts:96-99` 同源；
+        // 8px 比旧 40px 更严 —— 这是收紧判据，不是放宽。
         await expect
-            .poll(async () => (await readSample(page)).scrollTop, { timeout: EXPECT_TIMEOUT_MS })
-            .toBeGreaterThan(beforeBottom.scrollHeight - beforeBottom.clientHeight - 40);
+            .poll(
+                async () => {
+                    const sample = await readSample(page);
+                    return sample.scrollHeight - sample.clientHeight - sample.scrollTop;
+                },
+                { timeout: EXPECT_TIMEOUT_MS },
+            )
+            .toBeLessThanOrEqual(8);
         // task-118：窗口 bottomPadding = totalHeight − prefix[end]，重算在下一帧才发生；
         // 先 poll 等到归零再读数断言 —— 否则「产品未重算」与「测试先采样一步」不可分（D-861）。
         await expect
