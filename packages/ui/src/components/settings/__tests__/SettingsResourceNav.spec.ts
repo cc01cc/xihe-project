@@ -111,6 +111,9 @@ describe("SettingsResourceNav（资源模块左栏）", () => {
         // 路径形态的判据在 `settingsIa.spec` 里（`resourceGroups()` 的 path 与 `resourcePath()` 同源）：
         // 这里只锁「哪几条是真链接」，不复制第二份路径字面量（复制就会漂）。
         expect(real.map((node) => node.text())).toEqual(["凭据", "MCP 服务器", "技能", "智能体"]);
+        // task-293：组标签的条目计数与 `resourceGroups()` 实际条数一致（5 = 4 真 + 1 缺口）。
+        // 稿面 S1 一直画着「资源 5」，代码此前没渲染 ⇒ 这一行钉住「稿面画的读数在页面上真的有」。
+        expect(wrapper.get('[data-testid="resources-nav-count"]').text()).toBe("5");
         wrapper.unmount();
     });
 

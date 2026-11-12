@@ -69,6 +69,19 @@ function gapTitle(item: ResourceNavItem): string {
             class="h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium text-muted-foreground"
         >
             {{ t(groupLabelKey) }}
+            <!--
+                task-293（T2.1）：组标签右侧的条目计数徽标 —— 稿面 S1 一直画着「资源 5」，代码此前没渲染，
+                于是稿在替产品承诺一个不存在的读数（同 `D-1053` 那族：稿面/页面对不上时，缺的那半句必须补上）。
+
+                <p>为什么**把缺口项也计入**：与 `SettingsSidebar` 的实例层计数同口径 —— 那是「可见条目数」
+                （12 域 + 2 运维 + 3 安全 = 17，缺口/灰显都算），不是「可用条目数」。两处口径必须一致，
+                否则同一个数字在设置区表示 A、在资源区表示 B。</p>
+            -->
+            <span
+                data-testid="resources-nav-count"
+                class="ml-1.5 shrink-0 text-xs font-normal text-muted-foreground/70"
+                >{{ items.length }}</span
+            >
         </SidebarGroupLabel>
         <SidebarMenu class="gap-0.5">
             <SidebarMenuItem v-for="item in items" :key="item.id">

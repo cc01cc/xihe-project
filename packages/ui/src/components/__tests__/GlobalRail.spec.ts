@@ -5,7 +5,7 @@ import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import GlobalRail from "../sidebar/GlobalRail.vue";
 import { useAuthStore } from "../../stores/auth";
-import { defaultLayerPath } from "../../lib/settingsIa";
+import { defaultLayerPath, defaultResourcePath } from "../../lib/settingsIa";
 
 const messages = {
     "zh-CN": {
@@ -93,18 +93,32 @@ beforeEach(() => {
 });
 
 describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
-    it("renders the global rail with workbench only in the main area and a rail handle (D-933)", async () => {
+    it("主区 = 工作台 → 资源；footer = 设置 → 登出（D-933 + PLAN-0772 第三入口）", async () => {
         patchAuth(true); // 即便管理员：D-933 —— 管理按钮已直接移除，不设替代入口。
         const wrapper = await mountRail();
         expect(wrapper.get('[data-testid="global-rail"]').exists()).toBe(true);
+        // PLAN-0772 M2 起主区**不再只有工作台**：资源是第三个顶层入口、排在主区第二项。
+        // （本用例原名为 "workbench only in the main area"，PLAN-0772 之后那句话已是假话 ⇒ task-293 改掉。）
+        const main = wrapper.get('[data-testid="global-rail"] [data-slot="sidebar-content"]');
+        expect(
+            main
+                .findAll('[data-testid^="global-rail-module-"]')
+                .map((n) => n.attributes("data-testid")),
+        ).toEqual(["global-rail-module-workbench", "global-rail-module-resources"]);
         expect(wrapper.get('[data-testid="global-rail-module-workbench"]').text()).toContain(
             "工作台",
         );
-        // 主区只留工作台：设置与登出一起收在 footer，设置居登出上方。
-        expect(wrapper.get('[data-testid="global-rail-module-settings"]').text()).toContain("设置");
+        expect(wrapper.get('[data-testid="global-rail-module-resources"]').text()).toContain(
+            "资源",
+        );
+        // 设置与登出一起收在 footer，设置居登出上方（D-933）。
         const footer = wrapper.get('[data-testid="global-rail"] [data-slot="sidebar-footer"]');
-        expect(footer.get('[data-testid="global-rail-module-settings"]').exists()).toBe(true);
-        expect(footer.get('[data-testid="global-rail-logout"]').exists()).toBe(true);
+        expect(
+            footer
+                .findAll('[data-testid^="global-rail-module-"]')
+                .map((n) => n.attributes("data-testid")),
+        ).toEqual(["global-rail-module-settings"]);
+        expect(wrapper.get('[data-testid="global-rail-module-settings"]').text()).toContain("设置");
         const footerOrder = footer
             .findAll("[data-testid]")
             .map((node) => node.attributes("data-testid"));
@@ -138,7 +152,7 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         expect(railState(wrapper)).toBe("expanded");
     });
 
-    it("switches modules: workbench -> /workspace, settings -> default layer path", async () => {
+    it("switches modules: workbench -> /workspace, resources -> defaultResourcePath(), settings -> default layer path", async () => {
         patchAuth();
         const wrapper = await mountRail();
         await wrapper.get('[data-testid="global-rail-module-settings"]').trigger("click");
@@ -146,6 +160,36 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
 
         await wrapper.get('[data-testid="global-rail-module-workbench"]').trigger("click");
         expect(pushSpy).toHaveBeenLastCalledWith("/workspace");
+
+        // PLAN-0772 M2：第三入口点下去要落到**默认资源子页**，且落点只能有一处定义
+        // （`/resources` 的 router redirect 也用同一个 `defaultResourcePath()`）⇒ 这里断言
+        // 函数返回值而不是复制字面量，否则两处一改就漂。
+        await wrapper.get('[data-testid="global-rail-module-resources"]').trigger("click");
+        expect(pushSpy).toHaveBeenLastCalledWith(defaultResourcePath());
+        expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
+    });
+
+    it("资源入口在 /resources/** 上保持激活（前缀判定，含详情深链）", async () => {
+        patchAuth();
+        for (const path of [
+            "/resources/credentials?layer=USER",
+            "/resources/skills/x?layer=USER",
+        ]) {
+            routeState.path = path;
+            const wrapper = await mountRail();
+            expect(
+                wrapper
+                    .get('[data-testid="global-rail-module-resources"]')
+                    .attributes("data-active"),
+            ).toBe("true");
+            // 同一时刻工作台不得同时激活（两个入口都是 `startsWith` 前缀判定，写错会两个都亮）。
+            expect(
+                wrapper
+                    .get('[data-testid="global-rail-module-workbench"]')
+                    .attributes("data-active"),
+            ).not.toBe("true");
+            wrapper.unmount();
+        }
     });
 
     it("logs out and returns to the login route", async () => {
