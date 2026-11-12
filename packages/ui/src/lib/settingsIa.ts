@@ -351,8 +351,31 @@ export interface SettingsNavItem {
  * 后端能力缺口代码：**唯一来源**是 `internal/A03-xihe/docs/resource-layer-permission-audit.md` §F
  * （G1–G7，逐条有现状证据）。前端只引用代码与一句话说明，不据此删入口——
  * 用户 2026-11-10 裁定 D7：**留位标缺口，不隐藏**（隐藏会让人以为能力不存在）。
+ *
+ * <p><b>R20（task-43，2026-11-13）：`G4` 一码两义已拆成 `G4a`/`G4b`</b>，来源见
+ * `resource-layer-permission-audit.md:198-201`（该节自己写着「如后续要区分，建议改用 G4a/G4b」）。
+ * 拆的理由不是好看：同一个码同时指两件事，下一个人按 §F 对账时必然判 UI 不符。</p>
+ *
+ * <ul>
+ *   <li><b>`G4a` = 工具无注册实体 / 无 CRUD</b> —— <b>仍开</b>。CP 没有 `tools` 表
+ *       （迁移里 `CREATE TABLE tools` 0 命中），工具来自 Runtime handler + MCP 发现，
+ *       只有分类表 `tool_faces`（`V15__policy_rules_and_tool_faces.sql:42`；
+ *       其 scope 也只有 instance/workspace，见同文件 `:53` = 另一条 `G5`）。</li>
+ *   <li><b>`G4b` = 智能体无用户级创建入口</b> —— <b>已关闭（2026-11-12，PLAN-0750 M1/M3），
+ *       码位保留、不得复用</b>。用户级创建已落地：端点 `AgentPrincipalController.java:122`
+ *       （`POST /api/v1/agent-principals`，只要求 `isAuthenticated()`），门是 `CREATE_OWN_AGENT`
+ *       （`PermissionAtomCatalog.java:157-160` 明确写「user-level agent-principal creation with
+ *       owner = actor and no Workspace binding」），UI 走 `composables/api.ts:3941` 的
+ *       `createOwnAgentPrincipal`（显式空白 `X-Workspace-Id` 才落到用户门）+ 
+ *       `AgentPrincipalsPanel.vue:59` 的原子判据。
+ *       ⇒ <b>今天再拿 `G4b` 标任何入口，等于说「后端缺」而后端已经有了</b>；它留在联合类型里
+ *       只为「这个码曾经指什么、为什么关掉」可查，并防别人把 `G4b` 重新赋给新缺口。</li>
+ * </ul>
+ *
+ * <p>写新的缺口引用时：**禁止**再用不带 `a`/`b` 后缀的裸码（它曾叫 `G4`，一码两义正是 R20 的成因）；用 `G4a`/`G4b` 前先读
+ * 上面两条现状，并确认 §F 没有把该条关掉。</p>
  */
-export type BackendGap = "G1" | "G2" | "G3" | "G4";
+export type BackendGap = "G1" | "G2" | "G3" | "G4a" | "G4b";
 
 /**
  * 「资源」组的条目（不是配置域，走 `/settings/<name>` 或缺口说明）。
