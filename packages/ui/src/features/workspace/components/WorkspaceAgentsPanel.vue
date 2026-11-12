@@ -708,7 +708,10 @@ async function confirmArchiveMemory(principalId: string, memoryId: string) {
 async function loadTemplates() {
     templates.value = [];
     try {
-        const layers = authStore.isAdmin
+        // task-74：instance 层模板的可读判据是 `READ_INSTANCE_CONTENT` 动作原子
+        // （`service/AgentTemplateService.java:119-124` + `:252-255`），不是 `cap:instance:admin`。
+        // 查能力位会让有原子无 cap 的人少拿一层（UI 比 CP 严），反之则请求到空/403（UI 比 CP 宽）。
+        const layers = authStore.canReadInstanceContent
             ? (["instance", "user", "workspace"] as const)
             : (["user", "workspace"] as const);
         const results = await Promise.all(
