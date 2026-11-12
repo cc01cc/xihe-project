@@ -1,3 +1,4 @@
+import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResourceDetailView from "../ResourceDetailView.vue";
@@ -7,6 +8,10 @@ import ResourceDetailView from "../ResourceDetailView.vue";
  *
  * <p>判据纪律：每条状态都断言"看得见的那句话的键 + 关键 DOM"，而不是只断言"没崩"；
  * 未接线态必须**不调**该资源没有的读面（用 mock 调用次数当负数判据）。</p>
+ *
+ * <p>task-254：凭据的 USER/WORKSPACE 读面改走 `useCredentialsStore().load()`（"缺工作区上下文
+ * 就不请求"的守卫只有 `store.load` 一处），所以本 spec 需要 active Pinia；`api` 仍走本文件的
+ * `vi.mock("../../../composables/api")`，store 也从同一路径 import ⇒ mock 对 store 同样生效。</p>
  */
 const { apiMock, instanceMock, routeMock, routerMock, workspaceMock, pushMock, backMock } =
     vi.hoisted(() => ({
@@ -107,6 +112,9 @@ const credentialRow = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    // task-254：凭据读面走 store ⇒ 每个用例都要一个新的 active Pinia（store 是单例，跨用例复用
+    // 会把上一个用例的 `credentials`/`error`/`scopeMissing` 带进来）。
+    setActivePinia(createPinia());
     routeMock.meta = { resourceId: "credentials" };
     routeMock.query = {};
     routeMock.params = { pk: "cred-1" };
@@ -154,10 +162,11 @@ describe("ResourceDetailView — 凭据（USER/WORKSPACE/INSTANCE）", () => {
         expect(wrapper.get('[data-testid="resource-detail-section-events"]').text()).toContain(
             "REVEALED",
         );
-        expect(apiMock.listCredentials).toHaveBeenCalledWith({
-            ownerType: "USER",
-            ownerId: undefined,
-        });
+        // task-254：读面改走 `store.load("USER", undefined)` ⇒ 调用参数不再带显式
+        // `ownerId: undefined`（store 只在有值时才展开）。**HTTP wire 没变**：`ownerId` 无论
+        // 显式 undefined 还是缺键，axios 都不发这个参数 ⇒ 仍是 `?ownerType=USER`。
+        expect(apiMock.listCredentials).toHaveBeenCalledWith({ ownerType: "USER" });
+        expect(apiMock.listCredentials.mock.calls[0]?.[0]).not.toHaveProperty("ownerId");
     });
 
     it("四态之「404」：读面成功但 pk 不在该层 ⇒ not-found（不是未接线、不是错误）", async () => {
@@ -203,6 +212,71 @@ describe("ResourceDetailView — 凭据（USER/WORKSPACE/INSTANCE）", () => {
         );
         expect(apiMock.listCredentials).not.toHaveBeenCalled();
         expect(apiMock.getCredentialReferences).not.toHaveBeenCalled();
+        // task-254：实例层分支一行未动 —— 仍然只打 `/instance/credentials` 那一条读面。
+        expect(instanceMock.listInstanceCredentials).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("ResourceDetailView — task-254：WORKSPACE 缺上下文就不请求（复用 store 守卫）", () => {
+    it("无 workspaceId ⇒ 一个列表请求都不发，走既有 unwired 诚实块（不是「0 条」）", async () => {
+        setRoute({
+            resourceId: "credentials",
+            layer: "WORKSPACE",
+            pk: "ws-cred-1",
+            workspace: null,
+        });
+        const wrapper = mountView();
+        await flushPromises();
+
+        // ④ 失败面「发了不该发的请求」：缺 ownerId 的 WORKSPACE 列表请求在 CP 侧恒 403，
+        // 静默退化成无参更坏（会把工作区凭据读成个人凭据）。
+        expect(apiMock.listCredentials).not.toHaveBeenCalled();
+        expect(apiMock.getCredentialReferences).not.toHaveBeenCalled();
+        expect(apiMock.getCredentialEvents).not.toHaveBeenCalled();
+        // 诚实块：复用 detail 页既有的 unwired 形态与既有 i18n 键（不新增 testid / 文案）。
+        expect(wrapper.get('[data-testid="resource-detail-unwired"]').text()).toContain(
+            "没有工作区上下文",
+        );
+        // ⑤ 失败面「把未知读成没有」：不渲染任何"0 条"叙述，也不渲染引用区块的空态句。
+        expect(wrapper.text()).not.toContain("0 条");
+        expect(wrapper.find('[data-testid="resource-detail-section-references"]').exists()).toBe(
+            false,
+        );
+        // ⑥ 失败面「假装有数据」：phase !== ready 时不得渲染 ready 壳（标题/字段/正文）。
+        expect(wrapper.find('[data-testid="resource-detail-body"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="resource-detail-title"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="resource-detail-fields"]').exists()).toBe(false);
+    });
+
+    it("有 workspaceId ⇒ 仍发双参（ownerId 真的在参数里）并进入 ready", async () => {
+        setRoute({
+            resourceId: "credentials",
+            layer: "WORKSPACE",
+            pk: "ws-cred-1",
+            workspace: "ws-1",
+        });
+        apiMock.listCredentials.mockResolvedValue({
+            credentials: [
+                { ...credentialRow, id: "ws-cred-1", ownerType: "WORKSPACE", ownerId: "ws-1" },
+            ],
+            count: 1,
+        });
+        apiMock.getCredentialReferences.mockResolvedValue({ references: [] });
+        apiMock.getCredentialEvents.mockResolvedValue({ events: [] });
+
+        const wrapper = mountView();
+        await flushPromises();
+
+        const call = apiMock.listCredentials.mock.calls[0]?.[0] as {
+            ownerType?: string;
+            ownerId?: string;
+        };
+        expect(call.ownerType).toBe("WORKSPACE");
+        // 「URL 含 ownerId」的组件级等价断言：参数里带了工作区 id（axios 会把它发成 `?ownerId=`）。
+        expect(call.ownerId).toBe("ws-1");
+        expect(wrapper.get('[data-testid="resource-detail-title"]').text()).toBe("部署令牌");
+        expect(wrapper.find('[data-testid="resource-detail-unwired"]').exists()).toBe(false);
+        expect(apiMock.getCredentialReferences).toHaveBeenCalledWith("ws-cred-1");
     });
 });
 

@@ -15,6 +15,7 @@ import {
 } from "../../lib/settingsIa";
 import { shouldUseBrowserBack } from "../../lib/resourceDetail";
 import { readTabWorkspaceId } from "../../lib/workspaceContext";
+import { useCredentialsStore } from "../../stores/credentials";
 import { logger } from "../../lib/logger";
 import {
     listInstanceAgents,
@@ -185,12 +186,36 @@ async function loadCredentials(): Promise<void> {
         return;
     }
 
-    const ownerType = layer.value;
-    const result = await api.listCredentials({
-        ownerType,
-        ownerId: ownerType === "WORKSPACE" ? (workspaceId.value ?? undefined) : undefined,
-    });
-    const row = findOrNull(result.credentials, (entry) => entry.id === pk.value);
+    /**
+     * task-254：USER / WORKSPACE 两层的列表读面**统一走凭据 store**（`stores/credentials.ts`）。
+     *
+     * <p>为什么不再自己拼参数：`ownerId: layer === "WORKSPACE" ? workspaceId : undefined` 在
+     * `workspaceId` 为空时等于发"**无 `ownerId` 的 WORKSPACE 请求**" —— 契约要求 WORKSPACE/USER
+     * 都带 `ownerId`，CP 缺省会把它回落成调用者自己的 user id，随后 membership 恒 false ⇒
+     * `403 "Workspace membership is required"`（`task-237` 真栈实测，`task-239` 治本）。更坏的是
+     * 它可以被静默退化成"无参调用"，把工作区凭据读成个人凭据 —— 那正是本坑的反面。
+     * 所以这条"缺上下文就不请求"的判断只允许存在**一处**（`store.load` 里"层是 WORKSPACE 且
+     * 没有 `ownerId`"那条分支 ⇒ `scopeMissing`），详情页**消费裁决**，不复制口径（同文件
+     * `loadSkills`/`loadMcp` 已有"无上下文走 `unwired`"的先例）。</p>
+     *
+     * <p>（本条注释刻意不写那段判断的可复制字面量：`git grep` 的"守卫定义点"判据要能数到
+     * **代码**，注释里复述一遍会让它误报。）</p>
+     *
+     * <p>状态归属：store 写它自己那份 `credentials/loading/error/scopeMissing`；本页 `phase` 仍
+     * **只由本页读数驱动**（`scopeMissing` ⇒ `unwired`、`store.error` ⇒ `error`、row 命中 ⇒
+     * `ready`/`not-found`），不把 `store.loading` 当 phase，也不在加载前重置别处的 `error`。</p>
+     */
+    const store = useCredentialsStore();
+    // 两层都把工作区 id 直接传下去（USER 层传 undefined）；空值由 store 的守卫解释，本页不判。
+    await store.load(layer.value, workspaceId.value ?? undefined);
+    if (store.scopeMissing) {
+        // 缺工作区上下文 = "这一层现在没有可读的归属范围"，不是"0 条"，更不是"请求成功但空"。
+        unwiredReasonKey.value = "resources.detail.unwired.reasons.noWorkspace";
+        phase.value = "unwired";
+        return;
+    }
+    if (store.error) throw store.error;
+    const row = findOrNull(store.credentials, (entry) => entry.id === pk.value);
     if (!row) {
         phase.value = "not-found";
         return;
