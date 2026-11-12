@@ -671,6 +671,17 @@ run = "node scripts/check-e2e-inpage-bypass.mjs --report-only"
 description = "Report-only audit of in-page fetch bypasses in packages/ui/e2e (real + mock; annotation or allowlist required; never fails; use --enforce manually)"
 alias = "check:e2e-bypass"
 
+# task-316（`DEV-010` 收口）：DEV 文档「中英编号集合漂移」只读检查。
+# 判据只有两条可靠：①同一篇文档中英两侧的 PLAN-/D-/task- 编号集合对称差；②编号登记面存在性
+# （PLAN 收 `plans/`，**含 `archive/` 且文件与目录都收** —— task-314 的坑；D 收台账主册 + 归档卷，
+# 按「出现过」不按 `###` 标题 —— 主册不少裁定是列表条目，只认标题会当场造假阳）。
+# **report-only，绝不接 `validate.depends`**（task-316 明令）：会被绕过的红门等于没有门（D-1046）。
+# 盲区（负向陈述 / 运行态 task 卡 / 相对子路由 / 不覆盖组件名与 testid）由脚本在输出里自己打印。
+[tasks."check:dev-i18n-drift"]
+run = "node scripts/check-dev-i18n-drift.mjs"
+description = "Report-only DEV i18n drift: zh/en id-set asymmetry (PLAN/D/task) + registration lookup in plans/ (incl. archive, files and dirs) and decision ledgers; prints scan surface and blind spots; never fails (use --enforce manually); NOT in validate.depends"
+alias = "check:dev-i18n-drift"
+
 # task-237（用户 2026-11-10 第四问「openapi 应该有直接从它生成 md 的工具吧」）：生成器 + 落后门。
 # 生成物只覆盖契约能表达的部分（METHOD path / operationId / security / summary / 公开|服务间）；人工叙述版里的
 # 路由迁移对照、调用方、错误契约仍留在 docs/api/inventory.md —— 两份并存、互不替代（生成侧不是替代品）。

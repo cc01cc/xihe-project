@@ -191,9 +191,9 @@ Settings is no longer "one route per page": **layer × domain** is the only skel
 
 ### 10.2 Three-level layout model and MVP scope
 
-- **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: the main Workbench and Settings** (user ruling 2026-11-10, "these two first"). Extending the module list is **pending a ruling** (§10.6).
+- **Global level**: `GlobalRail` + `ModuleStage`. The MVP global rail carries **two modules only: Workbench and Settings** (user ruling 2026-11-10, "these two first"; the module name was corrected 2026-11-11 by **D-924** — it is *Workbench*, not *Workspace*, so that it stays distinct from a workspace object). Extending the module list is **pending a ruling** (§10.6).
 - **Workbench module**: hosts sessions (including sessions that belong to no workspace) plus workspaces (list / switch / new / import / members). "Workspace" is an object under the Workbench module, not a module name.
-- **Main Workspace**: left (session/task list, `ListPane`) + centre (`MainPane`) + right (`ContextPane`, i.e. today's dock); left and right are collapsible.
+- **Workbench**: left (session/task list, `ListPane`) + centre (`MainPane`) + right (`ContextPane`, i.e. today's dock); left and right are collapsible.
 - **Settings**: left = settings navigation (`SettingsNav`, **not** the global rail) + right = content. **MVP is two columns; no right pane** (§10.5).
 
 ### 10.3 Collapse and resize interaction spec (sash pattern, explicitly requested 2026-11-10)
@@ -236,7 +236,7 @@ A right pane on Settings (domain notes / inheritance chain / provenance) is **ou
 
 Among the three items below, anything still marked **pending** must not be decided by implementers; where an item is already ruled, the ruling's source and date are recorded in place (see item 3):
 
-1. **Which modules join the global rail later**: MVP carries two (main Workspace / Settings); when and what a third module would be is pending a user ruling.
+1. **Which modules join the global rail later**: MVP carries two (Workbench / Settings, module naming per **D-924**); when and what a third module would be is pending a user ruling.
 2. **Right-pane parameters for Settings**: what `ContextPane` carries, its default width and whether it collapses — follows from the "not doing it" decision in §10.5 and is decided after the desktop MVP is accepted.
 3. ~~**`shadcn-vue Sidebar` fixed three-tier width vs today's free 220–360 drag**~~ → **ruled: the global rail adopts `Sidebar`** (source: PLAN-0762 "Resolved conflicts" + decision 1, user ruling 2026-11-10 that `Sidebar` may be used throughout at fixed widths; landed `f97bdf039`, 2026-11-11). **Boundary (do not widen it)**: only the global rail and the Settings left nav use `Sidebar`'s CSS-variable steps; **the in-workspace 220–360 continuous drag model is unchanged**, and the three columns' geometry still has `useWorkspaceLayout.ts` as its single owner.
 
