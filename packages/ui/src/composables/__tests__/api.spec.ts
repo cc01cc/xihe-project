@@ -158,8 +158,13 @@ describe("api.login", () => {
         localStorage.setItem("xihe-user", "{}");
         // @ts-expect-error jsdom allows location.href assignment
         delete window.location;
+        // PLAN-0772 M2：凭据页已搬到资源区（层在 ?layer=），替身路径跟着换；
+        // 断言本体与路径无关（step-up 401 不跳转 + token 保留）。
         // @ts-expect-error redefine for test
-        window.location = { href: "/settings/credentials", pathname: "/settings/credentials" };
+        window.location = {
+            href: "/resources/credentials?layer=USER",
+            pathname: "/resources/credentials",
+        };
 
         fetchSpy.mockResolvedValueOnce({
             ok: false,
@@ -177,7 +182,7 @@ describe("api.login", () => {
         ).rejects.toThrow("wrong password");
         expect(localStorage.getItem("xihe-token")).toBe("existing-token");
         expect(localStorage.getItem("xihe-user")).toBe("{}");
-        expect(window.location.href).toBe("/settings/credentials");
+        expect(window.location.href).toBe("/resources/credentials?layer=USER");
     });
 });
 

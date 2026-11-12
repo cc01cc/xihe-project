@@ -145,7 +145,9 @@ async function mockSettingsApis(page: Page) {
 
 test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
     test("protected route matrix reaches each current page", async ({ page }) => {
-        // 设置区在 PLAN-0752 M1 换成层进 URL：/settings/config 与 /settings/knowledge 都成了旧地址，
+        // 设置区在 PLAN-0752 M1 换成层进 URL，但这两个旧地址的**处置不一样**：
+        // `/settings/config` **仍 redirect** 到实例层第一个域页（`plan-0560-settings.spec.ts:99-101` 钉住），
+        // `/settings/knowledge` 则在决策 10 下**直接删除、不留 redirect** ⇒ 渲染 404（`resources-ia.spec.ts:384`）。
         // 矩阵按「当前真实可达的页面」列（矩阵本身就是可达性断言），实例层域页需要 cap:instance:admin。
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });

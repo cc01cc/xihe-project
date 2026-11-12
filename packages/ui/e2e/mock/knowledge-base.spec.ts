@@ -12,9 +12,11 @@ const DOCS = [
     { id: "doc-3", filename: "notes.txt", chunks: 3 },
 ];
 
-// PLAN-0752 T4.4（task-91）：知识库**只有工作区承载**（CP 无库表，按 workspace 分区），
-// 旧 user 层入口 `/settings/knowledge` 已改成工作区重定向 —— 没有工作区上下文时直接回选择面，
-// 所以从这条 URL 出发永远看不到面板。这四个状态用例要验的组件（`KnowledgeBaseView`）没有变，
+// PLAN-0752 T4.4（task-91）：知识库**只有工作区承载**（CP 无库表，按 workspace 分区）。
+// 旧 user 层入口 `/settings/knowledge` **已直接删除、不留 redirect**（决策 10）⇒ 直连是 404
+// （负断言见 `resources-ia.spec.ts:384`）；新入口是资源区 `/resources/knowledge`，而它本身还是
+// G3 后端缺口说明页（`resources-ia.spec.ts:403`）—— 所以从这条 URL 出发永远看不到面板。
+// 这四个状态用例要验的组件（`KnowledgeBaseView`）没有变，
 // 变的是**它挂在哪**：工作区设置的「知识库」tab（`WorkspaceSettingsView` 的 `ws-settings-knowledge`）。
 // 断言逐条保留（空态 / 错误重试 / 加载中 / 文档列表 + 删除按钮），只把入口换到当前产品路径。
 //

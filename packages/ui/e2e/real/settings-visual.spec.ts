@@ -47,13 +47,6 @@ test("settings domain page renders", async ({ page }) => {
     });
 });
 
-test("settings knowledge page with tab nav", async () => {
-    // PLAN-0752 迁移：知识库已不是设置页（`/settings/knowledge` 重定向到工作区 tab），
-    // 旧 `settings-nav-settings-knowledge` 左栏项与 `settings-knowledge.png` 基线一起退役；
-    // 新的知识库视觉基线应由工作区设置页承担（已报 Lead，不在此处顺手造基线）。
-    test.fixme(true, "PLAN-0752: knowledge moved out of the settings surface");
-});
-
 test("settings data page with tab nav", async ({ page }) => {
     await page.goto("/settings/data", { waitUntil: "load" });
     await expect(page.locator('[data-testid="settings-data-heading"]')).toBeVisible();

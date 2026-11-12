@@ -12,7 +12,9 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  *
  * <ol>
  *   <li><b>V12</b>——入口在「用户配置 → 我的资源 → 智能体主体」一级（左栏资源组），
- *       直接进入 `/settings/agent-principals` 就是一个能用的页面，不是缺口占位。</li>
+ *       直接进入 `/resources/agents?layer=USER` 就是一个能用的页面，不是缺口占位。
+ *       旧 `/settings/agent-principals` 已在决策 10 下**直接删除、不留 redirect** ⇒ 直连是 404
+ *       （负断言见 `resources-ia.spec.ts:384`）；新入口本文件 `:146` 已在用。</li>
  *   <li><b>V8 / 矩阵 U1</b>——创建请求**不带工作区上下文**。这条必须有对照，否则断言是空的：
  *       `setupMockAuth` 会往 sessionStorage 里种 `xihe-workspace`，所以本页每一条请求默认
  *       都会被 `apiAuthHeaders` 自动加上 `X-Workspace-Id`。因此本用例同时抓
