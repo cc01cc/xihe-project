@@ -8,8 +8,16 @@
  * `packages/ui/e2e/mock-baseline.json`, and fails with `E_MOCK_BASELINE_DRIFT` on any
  * change (or `--allow-drift` to accept it deliberately).
  *
- * Usage: node scripts/check-mock-baseline.mjs [--report <json>] [--baseline <json>] [--allow-drift]
- * Exit 0 = match; 1 = drift; 2 = missing/unparsable inputs.
+ * Usage: node scripts/check-mock-baseline.mjs [--report <json>] [--baseline <json>]
+ *        [--allow-drift] [--allow-stale-report]
+ * Exit 0 = match; 1 = drift; 2 = missing/unparsable inputs, or a stale report (`E_STALE_REPORT`).
+ *
+ * D-1039 ②（2026-11-12）: a report *file* turns this gate blind — comparing against a report
+ * generated before the specs it claims to cover reports "no drift" for tests nobody ran.
+ * Two-tier criterion (the naive "report mtime < newest spec mtime" alone red-lights 8 pure
+ * checkout-mtime artifacts, measured 2026-11-12): the naive layer only marks "suspicious";
+ * only a spec that is untracked/dirty, or whose last commit is NEWER than the report, is red.
+ * `git log -1 --format=%ct` is the evidence — never the file mtime (checkout rewrites it).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -37,15 +45,18 @@ function resolveRepoRoot() {
 function parseArgs(argv) {
     const repoRoot = resolveRepoRoot();
     const out = {
+        repoRoot,
         report: path.join(repoRoot, "packages/ui/e2e/.mock-report.json"),
         baseline: path.join(repoRoot, "packages/ui/e2e/mock-baseline.json"),
         allowDrift: false,
+        allowStaleReport: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
         if (arg === "--report") out.report = path.resolve(argv[++i]);
         else if (arg === "--baseline") out.baseline = path.resolve(argv[++i]);
         else if (arg === "--allow-drift") out.allowDrift = true;
+        else if (arg === "--allow-stale-report") out.allowStaleReport = true;
         else throw new Error("unknown argument: " + arg);
     }
     return out;
@@ -138,6 +149,125 @@ export function rejectSubsetReport(reportPath, summary, baseline) {
     return null;
 }
 
+function iso(seconds) {
+    return new Date(seconds * 1000).toISOString();
+}
+
+/**
+ * D-1039 ②（2026-11-12）：**陈旧报告**判据（两级）。
+ *
+ * 一级（naive）：报告 mtime < 任一个 mock spec 的 mtime ⇒ 只记「可疑」，**不判红**。
+ *   单独用它在本仓实测会假红 8 条 —— checkout/编辑会重写 mtime，但文件内容与提交都比报告旧。
+ * 二级（定性）：可疑 spec 满足任一条 ⇒ 判红：
+ *   - `git status --porcelain -z --untracked-files=all` 里有记录（untracked / dirty / staged）；
+ *   - 该文件 `git log -1 --format=%ct` 的提交时间 **晚于** 报告 mtime。
+ * 判据只看提交时间，**不看文件 mtime**（mtime 会被 checkout 改写，那正是伪影的来源）。
+ * git 不可用（非仓库/无 git）⇒ 退化为一级判据并显式点名，不静默放行。
+ *
+ * @returns {{suspicious: Array, culprits: Array, artifacts: Array, reportMtimeSec: number|null, newest: object|null, gitAvailable: boolean}}
+ */
+export function detectStaleReport({ repoRoot, reportPath }) {
+    const result = {
+        suspicious: [],
+        culprits: [],
+        artifacts: [],
+        reportMtimeSec: null,
+        newest: null,
+        gitAvailable: true,
+    };
+    let reportStat;
+    try {
+        reportStat = fs.statSync(reportPath);
+    } catch {
+        return result;
+    }
+    result.reportMtimeSec = Math.trunc(reportStat.mtimeMs / 1000);
+    const specDir = path.join(repoRoot, "packages/ui/e2e/mock");
+    const specs = [];
+    const walk = (current) => {
+        let entries;
+        try {
+            entries = fs.readdirSync(current, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            const abs = path.join(current, entry.name);
+            if (entry.isDirectory()) walk(abs);
+            else if (entry.isFile() && entry.name.endsWith(".spec.ts")) specs.push(abs);
+        }
+    };
+    walk(specDir);
+    if (specs.length === 0) return result;
+    const rel = (abs) => path.relative(repoRoot, abs).split(path.sep).join("/");
+    const dirtyPaths = new Set();
+    try {
+        const raw = execFileSync(
+            "git",
+            ["status", "--porcelain", "-z", "--untracked-files=all"],
+            { cwd: repoRoot, encoding: "utf8" },
+        );
+        for (const entry of raw.split("\0").filter(Boolean)) {
+            dirtyPaths.add(entry.slice(3).split(path.sep).join("/"));
+        }
+    } catch {
+        result.gitAvailable = false;
+    }
+    const commitTime = (relPath) => {
+        try {
+            const raw = execFileSync("git", ["log", "-1", "--format=%ct", "--", relPath], {
+                cwd: repoRoot,
+                encoding: "utf8",
+            }).trim();
+            const value = Number(raw);
+            return Number.isFinite(value) && value > 0 ? value : null;
+        } catch {
+            return null;
+        }
+    };
+    for (const abs of specs) {
+        let stat;
+        try {
+            stat = fs.statSync(abs);
+        } catch {
+            continue;
+        }
+        const mtimeSec = Math.trunc(stat.mtimeMs / 1000);
+        if (!result.newest || mtimeSec > result.newest.mtimeSec) {
+            result.newest = { file: rel(abs), mtimeSec };
+        }
+        if (mtimeSec <= result.reportMtimeSec) continue;
+        const relPath = rel(abs);
+        const entry = { file: relPath, mtimeSec };
+        result.suspicious.push(entry);
+        if (!result.gitAvailable) {
+            result.culprits.push({
+                ...entry,
+                reason: "git 不可用，无法区分「内容新」与「纯 mtime 伪影」（一级判据退化）",
+            });
+            continue;
+        }
+        if (dirtyPaths.has(relPath)) {
+            result.culprits.push({ ...entry, reason: "未提交（untracked / dirty / staged）" });
+            continue;
+        }
+        const committedAt = commitTime(relPath);
+        if (committedAt === null) {
+            result.culprits.push({ ...entry, reason: "git 查不到提交时间（未跟踪或路径未入库）" });
+            continue;
+        }
+        if (committedAt > result.reportMtimeSec) {
+            result.culprits.push({
+                ...entry,
+                reason: `提交时间 ${iso(committedAt)} 晚于报告 ${iso(result.reportMtimeSec)}`,
+            });
+            continue;
+        }
+        result.artifacts.push({ ...entry, commitSec: committedAt });
+    }
+    return result;
+}
+
 function main() {
     let options;
     try {
@@ -164,6 +294,37 @@ function main() {
                 "subset runs write .mock-report.subset.json (task-48)",
         );
         return 2;
+    }
+    const staleness = detectStaleReport({ repoRoot: options.repoRoot, reportPath: options.report });
+    if (staleness.culprits.length > 0) {
+        const lines = [
+            `报告 mtime=${iso(staleness.reportMtimeSec)}；mock spec 最新 mtime=${iso(staleness.newest?.mtimeSec ?? staleness.reportMtimeSec)}（${staleness.newest?.file ?? "n/a"}）`,
+            `一级（mtime）可疑 ${staleness.suspicious.length} 条；二级（定性）判红 ${staleness.culprits.length} 条：`,
+        ];
+        for (const culprit of staleness.culprits) {
+            lines.push(
+                `stale: ${culprit.file}（spec mtime=${iso(culprit.mtimeSec)}）— ${culprit.reason}`,
+            );
+        }
+        if (options.allowStaleReport) {
+            console.log(
+                `[check-mock-baseline] stale report accepted (--allow-stale-report): ${staleness.culprits.length} item(s)`,
+            );
+            for (const line of lines) console.log(`  ${line}`);
+        } else {
+            console.error(
+                `E_STALE_REPORT: ${staleness.culprits.length} spec(s) newer than the report (${options.report})`,
+            );
+            for (const line of lines) console.error(`  ${line}`);
+            console.error(
+                "  re-run the full lane (`mise run test:mock`) and re-check; --allow-stale-report accepts deliberately",
+            );
+            return 2;
+        }
+    } else if (staleness.suspicious.length > 0) {
+        console.log(
+            `[check-mock-baseline] ${staleness.suspicious.length} spec(s) newer by mtime but clean and committed before the report ⇒ checkout mtime artifacts (not red)`,
+        );
     }
     const { problems } = compareWithBaseline(summary, baseline);
     const line =

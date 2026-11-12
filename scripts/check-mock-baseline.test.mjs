@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { compareWithBaseline, summarizeReport } from "./check-mock-baseline.mjs";
@@ -289,5 +289,136 @@ test("task-48: full-size report still judged normally (guard does not block)", (
         assert.doesNotMatch(result.stderr, /E_MOCK_REPORT_SCOPE/);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// D-1039 ②（2026-11-12）：E_STALE_REPORT（两级判据）。夹具是一间真 git 仓库（cwd=仓库根，
+// 这样脚本的 `resolveRepoRoot()` 解析到的就是夹具而不是本仓），报告/基线都落在
+// `packages/ui/e2e/` 下，与生产布局一致。
+// ---------------------------------------------------------------------------
+const OLD_COMMIT = "2026-01-01T00:00:00Z";
+
+function makeRepo() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "mock-stale-"));
+    fs.mkdirSync(path.join(root, "packages/ui/e2e/mock"), { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "selftest@example.test"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "selftest"], { cwd: root });
+    return root;
+}
+
+function commitSpec(root, relativePath, content) {
+    const abs = path.join(root, relativePath);
+    fs.writeFileSync(abs, content);
+    execFileSync("git", ["add", relativePath], { cwd: root });
+    execFileSync("git", ["commit", "-q", "-m", "spec"], {
+        cwd: root,
+        env: { ...process.env, GIT_AUTHOR_DATE: OLD_COMMIT, GIT_COMMITTER_DATE: OLD_COMMIT },
+    });
+    return abs;
+}
+
+/** 写报告+基线（计数一致 ⇒ 不出 drift，唯一变量只剩「陈旧」）；可把报告 mtime 钉到过去。 */
+function writeLane(root, reportMtimeIso) {
+    const e2e = path.join(root, "packages/ui/e2e");
+    const reportFile = path.join(e2e, ".mock-report.json");
+    const baselineFile = path.join(e2e, "mock-baseline.json");
+    fs.writeFileSync(
+        reportFile,
+        JSON.stringify({
+            suites: [],
+            stats: { expected: 1, skipped: 0, unexpected: 0, flaky: 0 },
+        }),
+    );
+    fs.writeFileSync(
+        baselineFile,
+        JSON.stringify({
+            counts: { expected: 1, skipped: 0, failed: 0, flaky: 0 },
+            skipNames: [],
+        }),
+    );
+    if (reportMtimeIso) {
+        const past = new Date(reportMtimeIso);
+        fs.utimesSync(reportFile, past, past);
+    }
+    return { reportFile, baselineFile };
+}
+
+function runInRepo(root, files, extra = []) {
+    return spawnSync(
+        process.execPath,
+        [SCRIPT, "--report", files.reportFile, "--baseline", files.baselineFile, ...extra],
+        { encoding: "utf8", cwd: root },
+    );
+}
+
+test("task-244: 未提交的 spec 比报告新 ⇒ E_STALE_REPORT / exit 2", () => {
+    const root = makeRepo();
+    try {
+        commitSpec(root, "packages/ui/e2e/mock/old.spec.ts", "test('a', () => {});\n");
+        const files = writeLane(root, "2026-01-02T00:00:00Z");
+        fs.writeFileSync(
+            path.join(root, "packages/ui/e2e/mock/new.spec.ts"),
+            "test('b', () => {});\n",
+        );
+        const result = runInRepo(root, files);
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_STALE_REPORT/);
+        assert.match(result.stderr, /new\.spec\.ts/);
+        assert.match(result.stderr, /未提交/);
+        assert.doesNotMatch(result.stderr, /E_MOCK_BASELINE_DRIFT/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("task-244: --allow-stale-report 接受陈旧报告（仍判 drift）", () => {
+    const root = makeRepo();
+    try {
+        commitSpec(root, "packages/ui/e2e/mock/old.spec.ts", "test('a', () => {});\n");
+        const files = writeLane(root, "2026-01-02T00:00:00Z");
+        fs.writeFileSync(
+            path.join(root, "packages/ui/e2e/mock/new.spec.ts"),
+            "test('b', () => {});\n",
+        );
+        const result = runInRepo(root, files, ["--allow-stale-report"]);
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /stale report accepted \(--allow-stale-report\): 1 item/);
+        assert.match(result.stdout, /new\.spec\.ts/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("task-244: 纯 mtime 伪影（clean 且提交早于报告）不判红", () => {
+    const root = makeRepo();
+    try {
+        const spec = commitSpec(root, "packages/ui/e2e/mock/artifact.spec.ts", "test('a', () => {});\n");
+        const files = writeLane(root, "2026-01-05T00:00:00Z");
+        // checkout / 编辑只改 mtime，不改内容：这条在 naive 判据下会被假红（实测本仓 8 条同类）。
+        const now = new Date();
+        fs.utimesSync(spec, now, now);
+        const result = runInRepo(root, files);
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.doesNotMatch(result.stderr, /E_STALE_REPORT/);
+        assert.match(result.stdout, /checkout mtime artifacts \(not red\)/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("task-244: 已跟踪但改过的 spec（dirty）比报告新 ⇒ exit 2", () => {
+    const root = makeRepo();
+    try {
+        const spec = commitSpec(root, "packages/ui/e2e/mock/edited.spec.ts", "test('a', () => {});\n");
+        const files = writeLane(root, "2026-01-02T00:00:00Z");
+        fs.writeFileSync(spec, "test('a', () => { /* edited */ });\n");
+        const result = runInRepo(root, files);
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_STALE_REPORT/);
+        assert.match(result.stderr, /edited\.spec\.ts/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
     }
 });
