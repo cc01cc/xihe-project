@@ -61,12 +61,10 @@ const ICONS: Record<string, typeof Wrench> = {
     "config-locks": LockKeyhole,
     roles: ShieldCheck,
     audit: ScrollText,
-    "agent-principals": Bot,
-    "my-credentials": KeyRound,
-    "knowledge-mcp": Database,
-    // 资源模块的 id 来自 `resourceGroups()`（agents/mcp/credentials/skills/knowledge）——
-    // 与用户层那 3 条 id 不同名，所以两张表都要有，否则 `missingNavMeta` 会把它们记成「无图标」。
-    // task-83 起 `skills` 是**真入口**（`/settings/skills`），其余 4 条仍是缺口位。
+    // 资源模块的 5 个 id 来自 `resourceGroups()`（agents/mcp/credentials/skills/knowledge）；
+    // 同一组 id 在 `SettingsResourceNav.vue` 的 `RESOURCE_ICONS` 里另有一份组件内映射——
+    // 两边都要有，否则 `missingNavMeta` 会把缺图标的条目记成「无图标」。
+    // 资源面是独立模块（`/resources/*`）；`resourceGroups()` 现为 **4 真 + 1 缺口**（缺口 = knowledge `G3`）。
     agents: Bot,
     mcp: Wrench,
     credentials: KeyRound,
@@ -92,9 +90,6 @@ const LABELS: Record<string, string> = {
     "config-locks": "配置锁定",
     roles: "角色与权限",
     audit: "审计日志",
-    "agent-principals": "智能体账号",
-    "my-credentials": "我的凭据",
-    "knowledge-mcp": "知识库 / MCP",
     agents: "智能体",
     mcp: "MCP 服务",
     credentials: "凭据",

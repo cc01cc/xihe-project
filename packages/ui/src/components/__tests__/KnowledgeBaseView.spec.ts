@@ -26,10 +26,13 @@ const i18n = createI18n({
 
 const router = createRouter({
     history: createWebHistory(),
+    // 夹具路由指向**真实**资源路径 `/resources/knowledge`（`router/index.ts` 的
+    // `resources-knowledge`）：设置区时代的知识库路由已随 PLAN-0772 M2 决策 10 直接删除（不留 redirect），
+    // 夹具若继续写旧路径，下一个人会以为它还活着（task-298）。
     routes: [
         {
-            path: "/settings/knowledge",
-            name: "settings-knowledge",
+            path: "/resources/knowledge",
+            name: "resources-knowledge",
             component: { template: "<div />" },
         },
     ],
@@ -47,7 +50,7 @@ function mountKnowledgeView() {
 
 describe("KnowledgeBaseView", () => {
     it("renders the heading", async () => {
-        router.push("/settings/knowledge");
+        router.push("/resources/knowledge");
         await router.isReady();
         const wrapper = mountKnowledgeView();
         expect(wrapper.text()).toContain("Knowledge Base");

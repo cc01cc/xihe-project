@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
-import { BookOpen, Bot, Circle, KeyRound, Plug, Sparkles, Users } from "@lucide/vue";
+import { BookOpen, Bot, Circle, KeyRound, Plug, Sparkles } from "@lucide/vue";
 import { Badge } from "../ui/badge";
 import { SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import type { ResourceNavItem } from "../../lib/settingsIa";
@@ -41,11 +41,6 @@ const RESOURCE_ICONS: Record<string, Component> = {
     credentials: KeyRound,
     skills: Sparkles,
     knowledge: BookOpen,
-    // 旧 id 保留：设置区侧的调用点已随 PLAN-0772 M2 清空，但 `SettingsResourceNav.spec` 仍用旧组
-    // 数据渲染缺口形态；留着不花成本，删掉要动 spec 的夹具。
-    "agent-principals": Users,
-    "my-credentials": KeyRound,
-    "knowledge-mcp": BookOpen,
 };
 
 function iconFor(id: string): Component {
