@@ -188,6 +188,10 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                             // PLAN-0766（task-160）：写入共享 workspace-default 层的唯一原子（CP 侧随 task-159 落地）。
                             { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
                             { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
+                            // task-167：实例层技能库写入原子（CP 侧 `SkillAccessGuard.canManageInstanceLibrary()`
+                            // 认的就是它，不是 `cap:instance:admin`）。mock 不授予它，技能页的「导入技能」
+                            // 入口就永远是置灰态，截图与 e2e 都看不到可点形态 —— 夹具默认给管理面。
+                            { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
                         ],
                     });
                 }

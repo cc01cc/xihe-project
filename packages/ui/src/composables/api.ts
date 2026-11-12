@@ -682,6 +682,62 @@ export interface SkillDefinitionDetail extends SkillDefinitionSummary {
 }
 
 /**
+ * task-167 · `POST /api/v1/skills/import` 的单条入参（openapi `SkillImportItem`）。
+ *
+ * <p>**所有记账字段都不在这里**：`contentHash` / `bodyTokensEst` / `oversize` / `version`
+ * 一律服务端算（openapi 原文「never read from the body」）。`sourcePath` 是**工作区相对路径**，
+ * CP 拿它跟定义目录名对账 ⇒ UI 不能省，也不能塞绝对路径。</p>
+ */
+export interface SkillImportItemPayload {
+    name: string;
+    description: string;
+    body: string;
+    sourcePath: string;
+    attachments?: Array<{ path: string; sizeBytes: number; sha256: string; kind?: string }>;
+    /** D28-09 rule 1：**只有实例管理员**能置 true，否则整条被拒（`SKILL_TRUSTED_FORBIDDEN`）。 */
+    trusted?: boolean;
+}
+
+/** 整批入参（openapi `SkillImportRequest`）：`skills` 上限 64 条，超了整批 400。 */
+export interface SkillImportRequestPayload {
+    definitionScope: { type: "instance"; workspaceId?: null };
+    skills: SkillImportItemPayload[];
+}
+
+export interface SkillImportResultRow {
+    skillId: string;
+    name: string;
+    action: "created" | "updated" | "unchanged";
+    version: number;
+    bodyTokensEst: number;
+    oversize: boolean;
+}
+
+/**
+ * 单条被拒的行：**批里其它条目照常生效**（openapi 原文「the rest of the batch still applies」），
+ * `code` 是稳定枚举（10 个），`detail` 是 CP 英文补充说明 —— **UI 不得直显 `detail`**。
+ */
+export interface SkillImportRejectionRow {
+    sourcePath: string | null;
+    code: string;
+    detail?: string | null;
+}
+
+export interface SkillImportSummaryRow {
+    created: number;
+    updated: number;
+    unchanged: number;
+    rejected: number;
+    oversize: number;
+}
+
+export interface SkillImportResultPayload {
+    results: SkillImportResultRow[];
+    rejected: SkillImportRejectionRow[];
+    summary: SkillImportSummaryRow;
+}
+
+/**
  * 记忆写入入参（`{content, pinned}`；`type` 随 CP 删列一并去掉）。
  *
  * 写成功与否**不看响应体**：成功后调用方重新 GET 列表（权威源是 CP 的读取面），
@@ -2809,6 +2865,60 @@ function parseSkillDefinitionDetail(
     return { ...base, body: typeof raw.body === "string" ? raw.body : null };
 }
 
+/**
+ * task-167 · `SkillImportResponse` 的**防御式**解析：三块都缺一不可，缺哪块就按空块处理
+ * （宁可少报计数，也不把 `undefined` 渲染成 `NaN`；形状真看不懂时由调用方看 `summary` 判断）。
+ */
+function parseSkillImportResponse(
+    raw: Record<string, unknown> | null | undefined,
+): SkillImportResultPayload {
+    const num = (value: unknown): number =>
+        typeof value === "number" && Number.isFinite(value) ? value : 0;
+    const summaryRaw = (raw?.summary ?? {}) as Record<string, unknown>;
+    const results: SkillImportResultRow[] = Array.isArray(raw?.results)
+        ? raw.results.flatMap((entry) => {
+              const row = entry as Record<string, unknown>;
+              if (typeof row?.skillId !== "string" || typeof row?.name !== "string") return [];
+              const action =
+                  row.action === "created" || row.action === "updated" ? row.action : "unchanged";
+              return [
+                  {
+                      skillId: row.skillId,
+                      name: row.name,
+                      action,
+                      version: num(row.version),
+                      bodyTokensEst: num(row.bodyTokensEst),
+                      oversize: row.oversize === true,
+                  },
+              ];
+          })
+        : [];
+    const rejected: SkillImportRejectionRow[] = Array.isArray(raw?.rejected)
+        ? raw.rejected.flatMap((entry) => {
+              const row = entry as Record<string, unknown>;
+              if (typeof row?.code !== "string") return [];
+              return [
+                  {
+                      sourcePath: typeof row.sourcePath === "string" ? row.sourcePath : null,
+                      code: row.code,
+                      detail: typeof row.detail === "string" ? row.detail : null,
+                  },
+              ];
+          })
+        : [];
+    return {
+        results,
+        rejected,
+        summary: {
+            created: num(summaryRaw.created),
+            updated: num(summaryRaw.updated),
+            unchanged: num(summaryRaw.unchanged),
+            rejected: num(summaryRaw.rejected),
+            oversize: num(summaryRaw.oversize),
+        },
+    };
+}
+
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -3574,6 +3684,27 @@ export const api = {
         );
         const detail = parseSkillDefinitionDetail(raw);
         return detail;
+    },
+    /**
+     * task-167 · `POST /api/v1/skills/import`：**技能定义的唯一写入口**（openapi 原文
+     * 「Manual import, the only writer of skill definitions」）。
+     *
+     * <p>形状是 **JSON 批**（`{definitionScope, skills[]}`，≤64 条），不是 multipart 文件上传
+     * —— 所以 UI 侧不做 zip/md 解包，直接把用户给的定义批发出去（解析与本地预检见
+     * `components/settings/skillImport*.ts`）。</p>
+     *
+     * <p>授权不是本方法判断的：CP 的 `SkillAccessGuard.canManageInstanceLibrary()` 认
+     * **实例域原子 `MANAGE_SKILL_LIBRARY`**（不是 `cap:instance:admin`），无权时整批 403
+     * `SKILL_IMPORT_FORBIDDEN`；`trusted:true` 另有「只有实例管理员可导」的逐条拒绝。</p>
+     */
+    async importSkillDefinitions(
+        payload: SkillImportRequestPayload,
+    ): Promise<SkillImportResultPayload> {
+        const raw = await request<Record<string, unknown>>("/skills/import", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        });
+        return parseSkillImportResponse(raw);
     },
     async createAgentMemory(
         workspaceId: string,

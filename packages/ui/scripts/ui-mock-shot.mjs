@@ -114,6 +114,16 @@ const SHOTS = [
     { id: "08", name: "instance-credentials", path: "/settings/instance/credentials", app: true },
     { id: "09", name: "instance-agents", path: "/settings/instance/agents", app: true },
     { id: "10", name: "instance-mcp", path: "/settings/instance/mcp", app: true },
+    // task-167：实例层技能页。11 = 列表 + 「导入技能」入口（持有 MANAGE_SKILL_LIBRARY ⇒ 可点）；
+    // 12 = 点开导入对话框（expand 点的是真按钮，弹的是真 Dialog，不是静态壳）。
+    { id: "11", name: "skills-panel", path: "/settings/skills", app: true },
+    {
+        id: "12",
+        name: "skills-import-dialog",
+        path: "/settings/skills",
+        app: true,
+        expand: "[data-testid=settings-skills-import]",
+    },
 ];
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);

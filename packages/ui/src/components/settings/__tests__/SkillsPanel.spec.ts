@@ -21,6 +21,16 @@ const listSkillDefinitions = vi.fn<() => Promise<SkillDefinitionSummary[]>>();
 const getSkillDefinition =
     vi.fn<(id: string, includeBody?: boolean) => Promise<SkillDefinitionDetail | null>>();
 
+// task-167：面板新增了「导入技能」入口，可见性由 auth store 的能力原子决定
+// （`hasInstanceAtom("MANAGE_SKILL_LIBRARY")`）。这份 spec 只验**读面**，所以给一个
+// 「无原子」的替身即可：入口置灰、不影响下面任何读面断言，也不需要 pinia 实例。
+vi.mock("../../../stores/auth", () => ({
+    useAuthStore: () => ({
+        hasInstanceAtom: () => false,
+        ensureSelfPermissions: async () => {},
+    }),
+}));
+
 vi.mock("../../../composables/api", () => ({
     api: {
         listSkillDefinitions: () => listSkillDefinitions(),

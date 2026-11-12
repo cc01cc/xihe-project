@@ -2368,6 +2368,10 @@ const messages = {
                     fileHint:
                         "接受 .json 批文件。本页不解包 zip、不解析 md：契约收发的就是 JSON 批，不是文件包。",
                     jsonLabel: "定义批（JSON）",
+                    jsonPlaceholder: "在这里粘贴技能定义批（JSON）…",
+                    exampleLabel: "示例（照抄即可改）",
+                    exampleHint:
+                        "示例里只放契约必填字段；version / contentHash / bodyTokensEst / oversize 由服务端算，客户端给了也会被忽略。",
                     submit: "开始导入",
                     submitting: "导入中…",
                     cancel: "取消",
@@ -5507,6 +5511,10 @@ const messages = {
                     fileHint:
                         "Accepts a .json batch. This page neither unzips archives nor parses md: the contract takes a JSON batch, not a file package.",
                     jsonLabel: "Definition batch (JSON)",
+                    jsonPlaceholder: "Paste the skill definition batch (JSON) here…",
+                    exampleLabel: "Example (copy and edit)",
+                    exampleHint:
+                        "The example carries only the required fields; version, contentHash, bodyTokensEst and oversize are computed server-side and ignored if sent.",
                     submit: "Start import",
                     submitting: "Importing…",
                     cancel: "Cancel",

@@ -1,33 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertCircle, ChevronDown, LoaderCircle } from "@lucide/vue";
+import { AlertCircle, ChevronDown, LoaderCircle, Upload } from "@lucide/vue";
 
 import { api, type SkillDefinitionSummary } from "../../composables/api";
 import { logger } from "../../lib/logger";
+import { useAuthStore } from "../../stores/auth";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import SkillsImportDialog from "./SkillsImportDialog.vue";
 
 /**
- * task-83 · 实例层「技能」列表（只读）。
+ * task-83 / task-167 · 实例层「技能」列表 + 导入写面。
  *
- * <p>为什么这一页不用 `SettingsPermissionGate`：<b>读面没有权限原子</b>。openapi `listSkills` 原文
- * 「Instance-scope definitions are visible to every authenticated caller」—— 登录即可读，
- * 不该出现「无 atom」信息条（那会暗示按归属收窄），更不该出现 403。写面（导入/绑定）才有闸门，
- * 而本页不给写入口，所以页内只留一句只读说明。</p>
+ * <p>读面的口径（task-83，未变）：openapi `listSkills` 原文「Instance-scope definitions are
+ * visible to every authenticated caller」—— 登录即可读，所以**读面不挂权限门**；列表不返回正文，
+ * 展开才 `?includeBody=true` 单取。</p>
  *
- * <p>三条口径：</p>
- * <ul>
- *   <li><b>正文不铺满</b>：列表接口**不返回** body（openapi：「The body is never included here」），
- *       展开时才 `?includeBody=true` 单取；容器给 `max-h` + 滚动，长文不把页面撑爆。</li>
- *   <li><b>不推算字段</b>：`bodyTokensEst` 是服务端算的估算值（`codePointCount/2`），前缀写「≈」，
- *       页面上不出现自己算的 token 数；`oversize` 是服务端**标记**（D28-15：只标记、不拒绝、不截断）。</li>
- *   <li><b>不暴露 workspaceId</b>：本页默认只列 instance 定义；若某行是 workspace 私有，只显示
- *       「工作区私有」徽标，**不打印 UUID**（它是内部标识，见 DEV-011 §E 术语）。</li>
- * </ul>
+ * <p>写面（task-167）：`POST /api/v1/skills/import` 是技能定义的**唯一写入口**。CP 的闸门是
+ * **实例域原子 `MANAGE_SKILL_LIBRARY`**（`SkillAccessGuard.canManageInstanceLibrary()`，N5；
+ * 不是粗粒度 `cap:instance:admin`）⇒ UI 用 `auth.hasInstanceAtom("MANAGE_SKILL_LIBRARY")` 判，
+ * 与 CP 同源。**无权时入口不隐藏而是置灰 + 写清理由**：隐藏会让人以为产品没有导入能力。</p>
  */
 const { t, locale } = useI18n();
+const auth = useAuthStore();
 
 const skills = ref<SkillDefinitionSummary[]>([]);
 const loading = ref(false);
@@ -38,6 +35,11 @@ const open = reactive<Record<string, boolean>>({});
 const bodies = reactive<Record<string, { loading: boolean; text: string | null; error: boolean }>>(
     {},
 );
+
+const importOpen = ref(false);
+
+/** 写权限：与 CP 同一个原子（fail-closed —— atom 投影还没到就当作无权限）。 */
+const canImport = computed(() => auth.hasInstanceAtom("MANAGE_SKILL_LIBRARY"));
 
 const countLabel = computed(() => t("settings.skills.count", { count: skills.value.length }));
 
@@ -90,7 +92,25 @@ async function toggleBody(skill: SkillDefinitionSummary) {
     }
 }
 
-onMounted(load);
+/** 导入 = CP 的唯一写入口；成功/逐条拒绝的展示在对话框里，面板只负责刷新列表。 */
+function submitImport(payload: Parameters<typeof api.importSkillDefinitions>[0]) {
+    return api.importSkillDefinitions(payload);
+}
+
+/**
+ * 导入成功后刷新列表即可：**不乐观插入**。`action=created/updated/unchanged` 与
+ * `bodyTokensEst/version` 全是服务端算的，前端插一行就等于自己编版本号。
+ */
+async function onImported() {
+    await load();
+}
+
+onMounted(() => {
+    // 写权限来自原子投影（`GET /me/permissions`），单飞、失败 fail-closed；
+    // 无权时入口仍渲染（置灰 + 理由），所以这里不需要等待结果才挂页面。
+    void auth.ensureSelfPermissions();
+    void load();
+});
 </script>
 
 <template>
@@ -102,7 +122,36 @@ onMounted(load);
             <span data-testid="settings-skills-count" class="text-xs text-muted-foreground">
                 {{ countLabel }}
             </span>
+            <div class="ml-auto flex flex-wrap items-center gap-2">
+                <!--
+                    task-167：**入口恒在**，无权时置灰而不是隐藏 —— 隐藏会让人以为是产品缺口。
+                    `aria-describedby` 指向下面那条理由，读屏用户也能拿到「为什么点不了」。
+                -->
+                <Button
+                    data-testid="settings-skills-import"
+                    size="sm"
+                    :disabled="!canImport"
+                    :aria-describedby="canImport ? undefined : 'settings-skills-import-reason'"
+                    :title="
+                        canImport
+                            ? t('settings.skills.import.entryHint')
+                            : t('settings.skills.import.disabledReason')
+                    "
+                    @click="importOpen = true"
+                >
+                    <Upload class="size-3.5" aria-hidden="true" />
+                    {{ t("settings.skills.import.entry") }}
+                </Button>
+            </div>
         </header>
+        <p
+            v-if="!canImport"
+            id="settings-skills-import-reason"
+            data-testid="settings-skills-import-disabled-reason"
+            class="text-xs leading-5 text-muted-foreground"
+        >
+            {{ t("settings.skills.import.disabledReason") }}
+        </p>
         <p class="text-xs leading-5 text-muted-foreground">{{ t("settings.skills.subtitle") }}</p>
 
         <div
@@ -260,5 +309,12 @@ onMounted(load);
         <p class="text-xs leading-5 text-muted-foreground">
             {{ t("settings.skills.readOnlyNote") }}
         </p>
+
+        <SkillsImportDialog
+            :open="importOpen"
+            :submit="submitImport"
+            @update:open="importOpen = $event"
+            @imported="onImported"
+        />
     </section>
 </template>
