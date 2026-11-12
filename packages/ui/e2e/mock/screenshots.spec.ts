@@ -25,6 +25,43 @@ const allRoutes: Route[] = [
     { path: "/workspace/ws-e2e-1", name: "workspace", requiresAuth: true },
 ];
 
+/**
+ * task-4 / BL-601：**截图前的就绪门**（不是固定 sleep，也不是「两次截图相同」）。
+ *
+ * <p>只等 `#app` 可见不够：页面在壳层可见后还有异步数据落地，期间内容区是白的。
+ * `[实测] 2026-11-13`（**同容器、同 commit、只改 `--update-snapshots` 模式**）：8 513 B 纯白
+ * 1920×1080 会被写成「基线」，而比较运行时拿同一张白图去比同一张白图 ⇒ `9 passed` —— 假绿；
+ * 更狠的是 `=all` 让白页**在两次运行之间换路由**（workspace-default ↔ /workspace），且
+ * `settings-data` 两次渲染 33 105 → 79 070 B ⇒ 拍到的不是稳态。</p>
+ *
+ * <p>判据 = **landmark 可见**（显式 timeout），landmark 一律选**既有**元素：7 条路由用产品面已有的
+ * `data-testid`；`/login` 与 `/register` 产品面本来没有 testid（本轮不改产品代码、不新增
+ * testid），用它们唯一的 `<form aria-busy>` 作 landmark —— 表单可见即该页 hero 与字段已挂载。</p>
+ *
+ * <p>**未登记的路由直接抛错**：新增路由忘了补门会当场红，而不是悄悄拍白图。</p>
+ */
+const readinessLandmarks: Record<string, { testId: string } | { selector: string }> = {
+    login: { selector: "form[aria-busy]" },
+    register: { selector: "form[aria-busy]" },
+    // 无 tab 上下文时的选择面（PLAN-0608 C′）。
+    "workspace-default": { testId: "workspace-picker" },
+    // 聊天面：composer 只在会话投影落地后挂载。
+    "workspace-chat-session": { testId: "chat-input" },
+    // 实例层域页：层与域都解析完才出现标题。
+    "settings-config": { testId: "settings-domain-title" },
+    // 知识库缺口页（G3：无实体/无列表/无详情，只解释缺口并给出口）。
+    "resources-knowledge": { testId: "resources-knowledge-gap" },
+    // /settings/data 不是配置域页（router/index.ts:159-164 → DataControlsView，实例运维面）：
+    // 标题是静态的，真正的「已落地」信号是保留策略卡进入三态之一（有数据 / 报错 / 无工作区）。
+    "settings-data": {
+        selector:
+            '[data-testid="settings-checkpoint-constants"], [data-testid="settings-checkpoint-error"], [data-testid="settings-checkpoint-no-workspace"]',
+    },
+    "settings-monitoring": { testId: "settings-monitoring-heading" },
+    // 工作区壳：页签栏以下唯一的路由容器（AppLayout）。
+    workspace: { testId: "workspace-route-viewport" },
+};
+
 for (const route of allRoutes) {
     test(`${route.name} renders with 0 console errors`, async ({ page }) => {
         const errors: string[] = [];
@@ -273,12 +310,31 @@ for (const route of allRoutes) {
         const resp = await page.goto(route.path, { waitUntil: "load", timeout: LONG_TIMEOUT_MS });
         expect(resp?.status()).toBe(200);
         await expect(page.locator("#app")).toBeVisible();
-        if (route.name === "workspace-chat-session") {
-            // Readiness, not a clock: the chat surface mounts its composer only after the session
-            // projection has been applied, and the assertions below must cover the projections
-            // resolving — the `{}` catch-all used to fail *after* this test had already passed.
-            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        }
+        // Readiness, not a clock（AGENTS 禁令：禁固定 sleep）：每条路由等自己的 landmark。
+        const landmark = readinessLandmarks[route.name];
+        if (!landmark) throw new Error(`no readiness landmark for route ${route.name}`);
+        const gate =
+            "testId" in landmark
+                ? page.getByTestId(landmark.testId)
+                : page.locator(landmark.selector).first();
+        await expect(gate).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+
+        // **D-1085 ② 要求的非空断言**：截图前先证明「主内容真的挂载了且占了版面」。
+        // 只比 sha 相等是禁止的 —— 两次都拍白也能逐字节相同（今晚实证过）。
+        // 一级（这里）证明非空，二级（两次独立运行 sha256 相同）才允许说「稳态」。
+        const gateBox = await gate.boundingBox();
+        expect(gateBox, `landmark of ${route.name} has no layout box`).not.toBeNull();
+        expect(
+            (gateBox?.width ?? 0) * (gateBox?.height ?? 0),
+            `landmark of ${route.name} has ~zero area (blank capture?)`,
+        ).toBeGreaterThan(1000);
+        const bodyTextLength = await page.evaluate(() => document.body.innerText.trim().length);
+        expect(
+            bodyTextLength,
+            `page ${route.name} rendered no text (blank capture?)`,
+        ).toBeGreaterThan(0);
+        // 字体落地再拍：字体没到时文本度量未定（显式事件等待，不是等时间）。
+        await page.evaluate(() => document.fonts.ready.then(() => true));
 
         await expectPlatformScreenshot(page, route.name + ".png");
         expect(errors).toEqual([]);
