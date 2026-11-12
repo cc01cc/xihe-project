@@ -253,14 +253,16 @@ export const useConfigStore = defineStore("config", () => {
     }
 
     /**
-     * PLAN-0573: `isAdmin` bypasses the non-admin domain filter (full
-     * CONFIG_DOMAINS pull, admin behavior unchanged); non-admin callers omit
-     * it so domains CP rejects with 403 are never requested.
+     * PLAN-0573 + task-74：入参是**能否读实例内容**，判据与 CP 同源 ——
+     * `config/ConfigController.java:89-90` 的 `canReadInstanceContent()`（原子 `READ_INSTANCE_CONTENT`）
+     * 决定 `GET /config/{domain}` 是否放行非白名单域（`:207-220`）。**不是能力位，也不是角色**：
+     * 传 `auth.isAdmin` 会让「有原子无 `cap:instance:admin`」的账号少拉几个域（UI 比 CP 严）。
+     * 非持有者按白名单过滤，CP 会 403 的域一个都不请求。
      */
-    async function loadAllDomains(options?: { isAdmin?: boolean }) {
+    async function loadAllDomains(options?: { canReadInstanceContent?: boolean }) {
         loading.value = true;
         error.value = null;
-        const domains = options?.isAdmin
+        const domains = options?.canReadInstanceContent
             ? [...CONFIG_DOMAINS]
             : CONFIG_DOMAINS.filter(isDomainReadableWithoutAdmin);
         try {
