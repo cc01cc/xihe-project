@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**339** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 239 · 服务间 100
+- 规模：**343** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 243 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（339 / 339 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（343 / 343 个操作带 tag）。
 
-## public（239 operations · 公开 · 17 tags）
+## public（243 operations · 公开 · 17 tags）
 
 ### auth（11）
 
@@ -87,7 +87,7 @@
 | `DELETE /api/v1/workspaces/{workspaceId}/roots/{rootId}` | `deleteWorkspaceRoot` | `bearerAuth` | Soft-delete a root (PLAN-0639 D39-3) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/runtime/release` | `releaseWorkspaceRuntime` | `bearerAuth` | Release workspace execution resources (any accessible member) | 公开 |
 
-### agent（22）
+### agent（26）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -106,6 +106,10 @@
 | `POST /api/v1/agent-principals/{principalId}/skills` | `bindAgentPrincipalSkill` | `bearerAuth` | Bind one skill to an agent principal (PLAN-0667) | 公开 |
 | `DELETE /api/v1/agent-principals/{principalId}/skills/{bindingId}` | `unbindAgentPrincipalSkill` | `bearerAuth` | Remove one skill binding from an agent principal (PLAN-0667) | 公开 |
 | `GET /api/v1/agent-templates` | `listAgentTemplates` | `bearerAuth` | Read one caller-readable Agent template config layer | 公开 |
+| `GET /api/v1/instance/agent-principals` | `listInstanceAgentPrincipals` | `bearerAuth` | List the instance platform agents (every authenticated caller) | 公开 |
+| `POST /api/v1/instance/agent-principals` | `createInstanceAgentPrincipal` | `bearerAuth` | Create an instance platform agent (instance admin only) | 公开 |
+| `PATCH /api/v1/instance/agent-principals/{principalId}` | `updateInstanceAgentPrincipalDocuments` | `bearerAuth` | Update an instance platform agent's documents (instance admin only) | 公开 |
+| `DELETE /api/v1/instance/agent-principals/{principalId}` | `deleteInstanceAgentPrincipal` | `bearerAuth` | Retire an instance platform agent (instance admin only; never a hard delete) | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/agents` | `listWorkspaceAgents` | `bearerAuth` | List the Agent principals a Workspace can use | 公开 |
 | `PUT /api/v1/workspaces/{workspaceId}/agents/{principalId}` | `setWorkspaceAgentCap` | `bearerAuth` | Add or update one Workspace Agent binding cap | 公开 |
 | `DELETE /api/v1/workspaces/{workspaceId}/agents/{principalId}` | `unbindWorkspaceAgent` | `bearerAuth` | Remove one Workspace Agent binding | 公开 |

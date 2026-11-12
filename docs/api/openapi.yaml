@@ -4869,6 +4869,63 @@ paths:
         '200': { description: Audit entry detail (internal tier), content: { application/json: { schema: { $ref: '#/components/schemas/InternalAuditEntryDetailResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { description: AUDIT_ENTRY_NOT_FOUND (unknown id), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/agent-principals:
+    get:
+      tags: [agent]
+      operationId: listInstanceAgentPrincipals
+      summary: List the instance platform agents (every authenticated caller)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008 / D-1009): the deployment-level platform agents of PLAN-0771 2.4 - global by default, no per-workspace binding, no fork, and never recorded in workspace_agents. This is the READ face and it is deliberately NOT caller-scoped: GET /api/v1/agent-principals answers "what this caller may use" (rows it created, or reach through a workspace binding), while this path answers "what the deployment installed" - no owner filter, no created_by filter, no workspaceId query (the instance layer has no workspace dimension). It stays open to every authenticated caller because platform agents are ownerless and carry no secret material; an unauthenticated request is refused by the JWT filter (401), and a caller who may not write the instance layer sees the same list an instance admin sees. Every row returned here is an instance row: ownerUserId is null (the instance is the owner - there is no instance owner user), and a user/workspace principal can never be promoted into this list (D-1009 2/3).'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: 'The instance platform agents (every row has ownerUserId=null)', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalListResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [agent]
+      operationId: createInstanceAgentPrincipal
+      summary: Create an instance platform agent (instance admin only)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008 / D-1009): creates a NEW platform agent owned by the instance. Gate: cap:instance:admin (CAP_INSTANCE_ADMIN) AND the instance-tier MANAGE_AGENT_PRINCIPALS atom, both evaluated at the capability-atom layer (never a role-name special case); any other caller answers 403 FORBIDDEN before the body is read. The body is AgentPrincipalCreateRequest unchanged and it carries NO ownership field at all - ownership is server-derived (the owner user stays NULL; the instance owns the row), so no request shape can address an owner, and there is no promote/import operation: a user or workspace principal can never become a platform agent (D-1009 2/3). Role and template validation keep their existing codes: 400 INVALID_NAME_FORMAT for the name shape, 403 ROLE_NOT_GRANTABLE / 403 PRIVILEGE_ESCALATION for roleIds, and an instance-administrator role is still refused for an agent principal (agentPrincipalForbiddenAtoms). No workspace binding is created and this path never writes workspace_agents (PLAN-0771 2.4): reach is granted later through the existing bind surface. The durable audit records the atom that authorized the create (detail.authorizationAction).'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalCreateRequest' } } }
+      responses:
+        '201':
+          description: Created instance platform agent (sanitized echo; ownerUserId=null)
+          content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalCreateView' } } }
+        '400': { description: 'INVALID_NAME_FORMAT - name shape; or INVALID_REQUEST - unknown key / body shape', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN - cap:instance:admin (CAP_INSTANCE_ADMIN) or MANAGE_AGENT_PRINCIPALS missing; or ROLE_NOT_GRANTABLE / PRIVILEGE_ESCALATION for roleIds', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/agent-principals/{principalId}:
+    patch:
+      tags: [agent]
+      operationId: updateInstanceAgentPrincipalDocuments
+      summary: Update an instance platform agent's documents (instance admin only)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008 / D-1009): the same subject-document semantics as PATCH /api/v1/agent-principals/{principalId} - hooks / contextPolicy / delegationPolicy, additionalProperties:false, at least one key, an explicit null clears that document, an absent key is untouched, and the response echoes the persisted documents rather than the caller raw input - with the instance-layer gate added: cap:instance:admin AND MANAGE_AGENT_PRINCIPALS. There is no owner to intersect with (the instance owns the row, not a user), so the gate is the atoms and a workspace right can never reach it. Gate order: existence first (404 AGENT_PRINCIPAL_NOT_FOUND), then authority (403); a row that is NOT instance-owned answers the identical 404 a missing row answers, so this surface is no cross-layer existence oracle. WORKSPACE_CONTEXT_REQUIRED is never raised here - this prefix carries no workspace context at all (D22''s workspace-scope gate belongs to the non-instance surface). A preset guard keeps its template-owned subscriptions: 403 GUARD_HOOKS_IMMUTABLE is hooks-only, the memory policy stays writable.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalUpdateRequest' } } }
+      responses:
+        '200':
+          description: The persisted subject documents
+          content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalUpdateView' } } }
+        '400': { description: 'INVALID_REQUEST - body carries a key outside hooks/contextPolicy/delegationPolicy, names no document, or a document fails its shape validation', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN - cap:instance:admin or MANAGE_AGENT_PRINCIPALS missing; or GUARD_HOOKS_IMMUTABLE - a preset guard owns its subscriptions through the template', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND - no INSTANCE-owned principal with this id (a user/workspace row answers the same 404)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      tags: [agent]
+      operationId: deleteInstanceAgentPrincipal
+      summary: Retire an instance platform agent (instance admin only; never a hard delete)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008 / D-1009): 204, and the row is RETIRED, not removed. Principal rows are never hard-deleted in this system - POST /api/v1/agent-principals/{principalId}/disable states the invariant and FK ON DELETE RESTRICT keeps historical session/delegation references intact - so DELETE on this prefix is the instance-surface spelling of that terminal lifecycle: disabledAt is set, the agent is unusable for new sessions, and the durable audit writes agent_principal_disabled. It is idempotent: an already-retired instance row answers 204 again. Gate: cap:instance:admin AND MANAGE_AGENT_PRINCIPALS; a row that is not INSTANCE-owned answers 404 AGENT_PRINCIPAL_NOT_FOUND, the same answer an unknown id gives (no cross-layer oracle). It deliberately does not touch the role bindings or the delegations - those are separate surfaces with their own authority.'
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Principal retired (row kept; disabledAt set) }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN - cap:instance:admin (CAP_INSTANCE_ADMIN) or MANAGE_AGENT_PRINCIPALS missing', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND - no INSTANCE-owned principal with this id (a user/workspace row answers the same 404)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/instance/credentials:
     get:
       tags: [credential]

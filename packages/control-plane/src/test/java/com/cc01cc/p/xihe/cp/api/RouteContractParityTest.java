@@ -188,6 +188,20 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         PLANNED_APIS.put("/api/v1/instance/credentials/{}", "PLAN-0771 M3");
         PLANNED_APIS.put("/api/v1/instance/credentials/{}/reveal", "PLAN-0771 M3");
 
+        //      PLAN-0771 M3（D-1008，2026-11-12）：实例层 principals。**4 条操作只对应 2 个 shape** ——
+        //      卡面写的「4 条 ⇒ 3 个 shape」是算术错（集合 path 的 GET+POST 共用一个 shape，{principalId}
+        //      path 的 PATCH+DELETE 共用另一个；**没有任何第三条 path**）。写成 3 条会多出一条**永不匹配**
+        //      的条目：它不进任何计数、不会报错、也不会被任何断言发现 —— 本卡(task-170)用一条临时幻影条目
+        //      实测过：插入后 [bl320] 读数逐字不变（extra total=63 / planned=4 / unexpected=0），
+        //      见 evidence/2026-11-12-instance-principals-contract/README.md §2.2。
+        //      D-932 的「冗余条目 = 债」⇒ 只写真有消费者的条目：
+        //        /api/v1/instance/agent-principals               ← GET(list) + POST(create)
+        //        /api/v1/instance/agent-principals/{}            ← PATCH(documents) + DELETE(retire)
+        //        /api/v1/instance/agent-principals               ← GET(list) + POST(create)
+        //        /api/v1/instance/agent-principals/{}            ← PATCH(documents) + DELETE(retire)
+        PLANNED_APIS.put("/api/v1/instance/agent-principals", "PLAN-0771 M3");
+        PLANNED_APIS.put("/api/v1/instance/agent-principals/{}", "PLAN-0771 M3");
+
         // ---- 参数名豁免当前**为空**：批 2 已把 /api/v1/workspaces/{wsId}/mcp/servers 统一为
         //      {workspaceId}。若再出现"同形状不同变量名"，必须逐条登记并写清"为何运行时等价" ----
         // PARAM_NAME_EXEMPT.put("<shape>", "<reason token>");
