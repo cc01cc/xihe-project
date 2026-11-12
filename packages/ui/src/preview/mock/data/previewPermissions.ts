@@ -35,6 +35,10 @@ export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
     { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
     // task-167：实例层技能库写入原子（`SkillAccessGuard.canManageInstanceLibrary()` 认的就是它）。
     { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
+    // task-284：个人技能库写入原子（`ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS`）。
+    // CP 侧**默认授予每个账号**（D-1019：可撤销的能力授予，不是角色判定）⇒ 夹具的"默认授权形态"
+    // 必须包含它，否则预览/mock 车道看到的个人层永远是"无权态"，那是**受限形态**不是默认形态。
+    { actionClass: "MANAGE_PERSONAL_SKILLS", resource: "*" },
     // task-249：凭据管理原子。登记页 `CredentialsPanel` 用它把 403 语义区分成
     // "授权问题"而不是"功能缺失"（见 `CredentialsPanel.vue` 的 canManage 判定）。
     { actionClass: "credential_manage", resource: "*" },

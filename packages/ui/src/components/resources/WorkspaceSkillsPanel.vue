@@ -108,6 +108,22 @@ watch(
         <p class="text-xs leading-5 text-muted-foreground">
             {{ t("resources.workspaceSkillsSubtitle") }}
         </p>
+        <!--
+            `T2b.3` / Lead 2026-11-12 裁定：本层**不画来源列**。
+            依据：`GET /skills?definitionScope=workspace&workspaceId=` 的实现是
+            `findByDefinitionScope(WORKSPACE, workspaceId)`（`SkillLibraryService.list:70-71`）⇒
+            返回的每一条都是本区定义；「继承自平台」不是一条技能定义行（继承发生在 agent 绑定，
+            `SkillBindingCreateRequest.skillId` 指向实例定义），本页拿不到该关系；`SkillView`
+            （`openapi.yaml:8531-8550`）也没有逐行来源字段。计划自己的 spec 同样写明不画
+            （`plans/PLAN-0772-.../spec/resource-layer-matrix.md:53`）。
+            画一个两值列就等于编数据 ⇒ 改成一句话说清"本层只有自建、平台定义走绑定"。
+        -->
+        <p
+            data-testid="workspace-skills-source-note"
+            class="text-xs leading-5 text-muted-foreground"
+        >
+            {{ t("resources.skills.workspaceSourceNote") }}
+        </p>
         <!-- 写面未接线：入口不隐藏、也不假装可用（点了会有反应却什么都不发生才是假入口）。 -->
         <!-- 被挡掉的条目要说出来：静默丢弃会让用户以为"接口就给了这些"。 -->
         <p

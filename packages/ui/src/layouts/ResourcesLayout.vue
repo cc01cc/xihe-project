@@ -63,9 +63,13 @@ const title = computed(() => (def.value ? t(def.value.labelKey) : ""));
 const WORKSPACE_ID = computed(() => readTabWorkspaceId());
 
 /**
- * 各层为什么不可用 —— 只认三类来源，全部由 `RESOURCE_DEFS` 声明，组件里不许再写死一层一层判断：
- * ①后端未实现（`pendingBackend`，如技能个人层 T2b）；②该层按工作区归属但当前没有工作区上下文；
- * ③CP 自己守卫的门槛（`capability:instance:admin` / action atom）当前账号不具备。
+ * 各层为什么不可用 —— 只认两类来源，全部由 `RESOURCE_DEFS` 声明，组件里不许再写死一层一层判断：
+ * ①该层按工作区归属但当前没有工作区上下文；②CP 自己守卫的门槛（`capability:instance:admin` /
+ * action atom）当前账号不具备。
+ *
+ * <p>`T2b.3` 删掉了第三类 `pendingBackend`：技能个人层后端已实现（`V156` / `SkillLibraryService`），
+ * 而它的读面**不挂原子**（P-189-3）⇒ 「后端未实现」这条门已无任何资源命中，留着就是给下一个读者
+ * 一个能把 tab 误置灰的开关。</p>
  */
 const disabledReason = computed<Partial<Record<ResourceLayer, string>>>(() => {
     const out: Partial<Record<ResourceLayer, string>> = {};
@@ -75,10 +79,6 @@ const disabledReason = computed<Partial<Record<ResourceLayer, string>>>(() => {
         // 上下文都各有自己的说明卡）—— 页头再列一遍就是同一句话说两遍。所以理由只给"非当前层"的 tab：
         // 用户看到「这一层置灰」时立刻知道原因，进到那层后又只从正文读一次。
         if (rule.layer === active.value) continue;
-        if (rule.pendingBackend) {
-            out[rule.layer] = t("resources.reasonPendingSkills");
-            continue;
-        }
         if (rule.needsWorkspace && !WORKSPACE_ID.value) {
             out[rule.layer] = t("resources.reasonNoWorkspace");
             continue;

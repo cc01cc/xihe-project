@@ -704,9 +704,22 @@ export interface SkillImportItemPayload {
     trusted?: boolean;
 }
 
+/**
+ * 技能定义的目标作用域（openapi `SkillDefinitionScope`）：三层各一条判别分支。
+ *
+ * <p>`user` 分支**没有 id 字段**：P-189-1 明写 `definition_scope_id` 由 CP 从 token 取，
+ * 请求体里根本没有"指定别人"的形状 ⇒ 前端连传的机会都不该有（类型上直接不给字段）。
+ * 同理 `workspace` 分支必须带 `workspaceId`，而 user 分支**必须不带**（带上 CP 会 400，
+ * 见 `SkillLibraryService.list:56-59` 的显式拒绝）。</p>
+ */
+export type SkillDefinitionScopePayload =
+    | { type: "instance" }
+    | { type: "workspace"; workspaceId: string }
+    | { type: "user" };
+
 /** 整批入参（openapi `SkillImportRequest`）：`skills` 上限 64 条，超了整批 400。 */
 export interface SkillImportRequestPayload {
-    definitionScope: { type: "instance"; workspaceId?: null };
+    definitionScope: SkillDefinitionScopePayload;
     skills: SkillImportItemPayload[];
 }
 
@@ -3688,14 +3701,26 @@ export const api = {
         return parseSkillSummaries(raw);
     },
     /**
-     * task-83：实例层 Skills 页的列表面（`GET /api/v1/skills`，`definitionScope` **默认 instance**）。
+     * task-83：技能定义列表（`GET /api/v1/skills`，`definitionScope` **默认 instance**）。
      *
      * <p>契约事实（openapi `listSkills`）：instance 定义对**任何已认证调用者**可见；列表**不返回 body**。
      * 与 `getSkills()` 的区别：那条是「可绑定候选」三字段投影，这条保留页面要展示的只读元数据。</p>
+     *
+     * <p>`definitionScope=user`（V156 / `T2b.3`）：返回**调用者自己的**个人定义 —— 契约原文
+     * 「takes no id (the caller is the owner) and must not carry workspaceId」（openapi:5465），
+     * 所以这条查询**只带 scope、绝不带 workspaceId**；读面**不挂 `MANAGE_PERSONAL_SKILLS`**
+     * （P-189-3：原子管写，撤销后读仍开放）。</p>
      */
-    async listSkillDefinitions(): Promise<SkillDefinitionSummary[]> {
-        const raw = await request<{ items?: Array<Record<string, unknown>> }>("/skills");
+    async listSkillDefinitions(
+        definitionScope: "instance" | "user" = "instance",
+    ): Promise<SkillDefinitionSummary[]> {
+        const query = definitionScope === "user" ? "?definitionScope=user" : "";
+        const raw = await request<{ items?: Array<Record<string, unknown>> }>(`/skills${query}`);
         return parseSkillDefinitions(raw);
+    },
+    /** `T2b.3`：个人技能库（= `listSkillDefinitions("user")` 的语义化别名，**不新增端点**）。 */
+    async listPersonalSkills(): Promise<SkillDefinitionSummary[]> {
+        return api.listSkillDefinitions("user");
     },
     /**
      * task-83：单条定义；`includeBody` 为真才取正文（openapi：正文是最大列，默认不返回）。

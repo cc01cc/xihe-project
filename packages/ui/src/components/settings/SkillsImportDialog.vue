@@ -21,6 +21,7 @@ import {
     SKILL_REJECTION_I18N_KEYS,
     mapSkillImportError,
     parseSkillImportDraft,
+    type SkillImportTargetScope,
 } from "./skillImport";
 
 /**
@@ -46,6 +47,11 @@ import {
 const props = defineProps<{
     open: boolean;
     submit: (payload: SkillImportRequestPayload) => Promise<SkillImportResultPayload>;
+    /**
+     * 目标层（`T2b.3`）：决定预检接受的 `definitionScope.type`，也决定样例 JSON 里写哪一个。
+     * 缺省 `instance`（既有调用点不变）；个人技能库传 `user`。
+     */
+    scope?: SkillImportTargetScope;
 }>();
 
 const emit = defineEmits<{
@@ -55,24 +61,31 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
+const targetScope = computed<SkillImportTargetScope>(() => props.scope ?? "instance");
+
 /**
  * 输入框里的样例是**代码**不是文案，所以不做 i18n（也避免 vue-i18n 把 JSON 里的花括号当插值参数）。
  * 字段与 openapi `SkillImportRequest` 一致：记账字段（contentHash/bodyTokensEst/oversize/version）
  * 一律不填 —— 服务端算，客户端塞了也会被忽略。
+ *
+ * <p>作用域随页面层走：个人层样例写 `{"type":"user"}`（**没有 id 字段** —— 归属人由服务端从
+ * 登录态取，见 P-189-1），并且**不出现 `trusted`**（个人层带这个键整批 400）。</p>
  */
-const JSON_SAMPLE = [
-    "{",
-    '  "definitionScope": { "type": "instance" },',
-    '  "skills": [',
-    "    {",
-    '      "name": "commit-msg-review",',
-    '      "description": "按仓库提交规范检查 commit message",',
-    '      "body": "……SKILL.md 去掉 frontmatter 之后的正文……",',
-    '      "sourcePath": "skills/commit-msg-review/SKILL.md"',
-    "    }",
-    "  ]",
-    "}",
-].join("\n");
+const jsonSample = computed(() =>
+    [
+        "{",
+        `  "definitionScope": { "type": "${targetScope.value}" },`,
+        '  "skills": [',
+        "    {",
+        '      "name": "commit-msg-review",',
+        '      "description": "按仓库提交规范检查 commit message",',
+        '      "body": "……SKILL.md 去掉 frontmatter 之后的正文……",',
+        '      "sourcePath": "skills/commit-msg-review/SKILL.md"',
+        "    }",
+        "  ]",
+        "}",
+    ].join("\n"),
+);
 
 const jsonText = ref("");
 const fileError = ref<string | null>(null);
@@ -134,7 +147,7 @@ async function submitBatch() {
     draftError.value = null;
     error.value = null;
     result.value = null;
-    const parsed = parseSkillImportDraft(jsonText.value);
+    const parsed = parseSkillImportDraft(jsonText.value, targetScope.value);
     if (!parsed.ok) {
         draftError.value = { code: parsed.code, hint: parsed.hint };
         return;
@@ -277,7 +290,7 @@ const rejectedRows = computed(() =>
                     <pre
                         data-testid="skills-import-example"
                         class="whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] leading-4 text-muted-foreground"
-                        >{{ JSON_SAMPLE }}</pre>
+                        >{{ jsonSample }}</pre>
                     <p class="text-[11px] text-muted-foreground">
                         {{ t("settings.skills.import.exampleHint") }}
                     </p>

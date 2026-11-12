@@ -39,7 +39,15 @@ export const LOCAL_IMPORT_CODES = {
     jsonInvalid: "SKILL_IMPORT_JSON_INVALID",
     shapeInvalid: "SKILL_IMPORT_SHAPE_INVALID",
     batchTooLarge: "SKILL_IMPORT_BATCH_TOO_LARGE",
+    /**
+     * `T2b.3`：个人层**整批 400** 的本地预检码。CP 的 `refusePersonalTrusted` 连 `trusted=false`
+     * 都拒（P-189-1）⇒ 不能等 CP 拒，否则用户看到的是一个"请求级失败"却不知道是哪条带了这个键。
+     */
+    trustedNotAllowed: "SKILL_IMPORT_TRUSTED_NOT_ALLOWED",
 } as const;
+
+/** 导入的目标层：决定 `definitionScope.type`，也决定 `trusted` 是否被本地拦下。 */
+export type SkillImportTargetScope = "instance" | "user";
 
 /** `rejected[].code` 的十个稳定取值（openapi `SkillImportRejection.code`）。 */
 export const SKILL_REJECTION_CODES = [
@@ -70,6 +78,7 @@ export const SKILL_REJECTION_I18N_KEYS: Record<string, string> = {
     [LOCAL_IMPORT_CODES.jsonInvalid]: "jsonInvalid",
     [LOCAL_IMPORT_CODES.shapeInvalid]: "shapeInvalid",
     [LOCAL_IMPORT_CODES.batchTooLarge]: "batchTooLarge",
+    [LOCAL_IMPORT_CODES.trustedNotAllowed]: "trustedNotAllowed",
 };
 
 export type SkillImportDraftResult =
@@ -93,6 +102,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function checkItem(
     raw: Record<string, unknown>,
     index: number,
+    targetScope: SkillImportTargetScope = "instance",
 ): { code: string; hint?: string } | SkillImportItemPayload {
     const label = `#${index + 1}`;
     const name = raw.name,
@@ -150,6 +160,11 @@ function checkItem(
             }
         }
     }
+    if (targetScope === "user" && raw.trusted !== undefined) {
+        // P-189-1：个人层请求体里**不允许出现 trusted 这个键**（连 false 也 400 整批）
+        // ⇒ 本地先拦，并把措辞说成"删掉这个键"，而不是让用户去猜哪一条坏。
+        return { code: LOCAL_IMPORT_CODES.trustedNotAllowed, hint: label };
+    }
     if (raw.trusted !== undefined && typeof raw.trusted !== "boolean") {
         return { code: "SKILL_IMPORT_SHAPE_INVALID", hint: label };
     }
@@ -162,7 +177,8 @@ function checkItem(
     if (Array.isArray(attachments)) {
         item.attachments = attachments as SkillImportItemPayload["attachments"];
     }
-    if (typeof raw.trusted === "boolean") item.trusted = raw.trusted;
+    // 个人层**永不**带 trusted（CP 侧恒存 false，且带了就整批 400）。
+    if (targetScope !== "user" && typeof raw.trusted === "boolean") item.trusted = raw.trusted;
     return item;
 }
 
@@ -172,7 +188,10 @@ function checkItem(
  * <p>为什么整批而不是逐条放过：CP 对「批大小 > 64」是**整批 400**，不是逐条拒绝；本地若先放行
  * 66 条再让 CP 拒，用户会以为"填的都坏了"。所以超限在这里就断，措辞与 CP 的 `SKILL_IMPORT_TOO_LARGE` 对齐。</p>
  */
-export function parseSkillImportDraft(text: string): SkillImportDraftResult {
+export function parseSkillImportDraft(
+    text: string,
+    targetScope: SkillImportTargetScope = "instance",
+): SkillImportDraftResult {
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
@@ -182,8 +201,9 @@ export function parseSkillImportDraft(text: string): SkillImportDraftResult {
     const root = asRecord(parsed);
     if (!root) return { ok: false, code: LOCAL_IMPORT_CODES.shapeInvalid };
     const scope = asRecord(root.definitionScope);
-    if (!scope || scope.type !== "instance") {
-        // 本页只导实例库：workspace 作用域要 workspaceId，属工作区设置面的活。
+    if (!scope || scope.type !== targetScope) {
+        // 作用域必须与**当前页面所在层**一致：实例面板只导 instance，个人面板只导 user。
+        // workspace 作用域要 workspaceId，属工作区设置面的活，两个面板都不接受。
         return { ok: false, code: LOCAL_IMPORT_CODES.shapeInvalid, hint: "definitionScope" };
     }
     const skills = root.skills;
@@ -202,11 +222,14 @@ export function parseSkillImportDraft(text: string): SkillImportDraftResult {
         const row = asRecord(skills[index]);
         if (!row)
             return { ok: false, code: LOCAL_IMPORT_CODES.shapeInvalid, hint: `#${index + 1}` };
-        const checked = checkItem(row, index);
+        const checked = checkItem(row, index, targetScope);
         if ("code" in checked) return { ok: false, code: checked.code, hint: checked.hint };
         items.push(checked);
     }
-    return { ok: true, payload: { definitionScope: { type: "instance" }, skills: items } };
+    return {
+        ok: true,
+        payload: { definitionScope: { type: targetScope }, skills: items },
+    };
 }
 
 /** 请求级失败的本地化视图：**只带 i18n key 与可替换参数，不带 CP 的英文 detail**。 */

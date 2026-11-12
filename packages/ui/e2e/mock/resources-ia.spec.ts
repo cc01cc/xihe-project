@@ -132,16 +132,16 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
     });
 
-    test("技能：三层 tab，个人层禁用且点名 T2b（不隐藏、不假装可用）", async ({ page }) => {
+    test("技能：三层 tab 都在，个人层**不因原子置灰**（读面不挂原子）", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await page.goto("/resources/skills");
 
         await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
-        await expect(page.getByTestId("resource-layer-tab-USER")).toBeDisabled();
-        const reasons = page.getByTestId("resource-layer-disabled-reasons");
-        await expect(reasons).toContainText("我的技能");
-        // 用户面不出现计划编号（Lead 裁定四：内部编号会随计划变动失效）。
-        await expect(reasons).toContainText("后端未实现");
+        // `T2b.3`：个人层读面不挂 `MANAGE_PERSONAL_SKILLS`（P-189-3）⇒ tab 照常可点；
+        // 置灰整页会让无原子用户看不到自己已存的技能。写面才置灰（见下一条用例）。
+        await expect(page.getByTestId("resource-layer-tab-USER")).toBeEnabled();
+        // 技能页现在没有任何"真进不去"的层 ⇒ 页头理由列表不该出现（不是把理由功能关掉，见下一条反例）。
+        await expect(page.getByTestId("resource-layer-disabled-reasons")).toHaveCount(0);
 
         // 全平台层是现成读面：切过去有 URL 证据（列表行数由 `skills-import` 那组 spec 钉）。
         await page.getByTestId("resource-layer-tab-INSTANCE").click();
@@ -193,17 +193,85 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
             page.locator('[data-testid="workspace-skill-item-skill-x-instance-leak"]'),
         ).toHaveCount(0);
     });
-    test("技能：个人层的说明只出现在正文一处（页头不再重复同一句）", async ({ page }) => {
+    test("技能：个人层已接线（读面不挂原子，行只来自个人库）", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // `setupMockAuth` 在 `/api/v1/**` 上挂了兜底桩（未匹配端点一律 `{}`），会抢在 mock 中间件前面
+        // 把 `/me/permissions` 也回成 `{}` ⇒ 原子投影为空、写面按钮恒 disabled。本用例要断言"有写权"的
+        // 形态，所以按真实授予组显式给原子（必须注册在 `setupMockAuth` **之后**：Playwright 后注册优先）。
+        await page.route("**/api/v1/me/permissions", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    userId: "user-1",
+                    instanceCapabilities: ["config:instance:admin"],
+                    instancePermissions: [{ actionClass: "MANAGE_PERSONAL_SKILLS", resource: "*" }],
+                }),
+            }),
+        );
+        // 个人层读面 = `GET /skills?definitionScope=user`（**只带 scope、不带 workspaceId**）。
+        await page.route(/\/api\/v1\/skills(\?|$)/, (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    items: [
+                        {
+                            skillId: "skill-user-1",
+                            name: "my-snippets",
+                            definitionScope: { type: "user", workspaceId: null },
+                            description: "只属于我",
+                            bodyTokensEst: 120,
+                            oversize: false,
+                            trusted: false,
+                            sourcePath: "skills/my-snippets/SKILL.md",
+                            contentHash: "a".repeat(64),
+                            version: 2,
+                            attachments: [],
+                            updatedAt: "2026-11-12T08:00:00.000Z",
+                        },
+                        // 故意混进一条 instance 行：个人页面上绝不许它出现（隐私口径，比工作区面板更硬）。
+                        {
+                            skillId: "skill-instance-leak",
+                            name: "instance-leak",
+                            definitionScope: { type: "instance", workspaceId: null },
+                            description: "平台定义",
+                            bodyTokensEst: 10,
+                            oversize: false,
+                            trusted: false,
+                            sourcePath: "skills/instance-leak/SKILL.md",
+                            contentHash: "b".repeat(64),
+                            version: 1,
+                            attachments: [],
+                            updatedAt: "2026-11-12T08:00:00.000Z",
+                        },
+                    ],
+                }),
+            }),
+        );
+
         await page.goto("/resources/skills?layer=USER");
-        const card = page.getByTestId("resources-skills-user-pending");
-        await expect(card).toBeVisible();
-        await expect(card).toContainText("本层后端尚未实现");
-        // Lead 裁定 c：**当前层**的理由由正文承担 ⇒ 页头那条行内理由列表不该再出现（否则一句话两遍）。
+        await expect(page.getByTestId("personal-skills-panel")).toBeVisible();
+        // 只显示个人库的行：混进来的 instance 行被挡住并计数说出来。
+        await expect(page.locator('[data-testid^="personal-skill-item-"]')).toHaveCount(1);
+        await expect(page.getByTestId("personal-skills-foreign-ignored")).toContainText("1 条");
+        await expect(
+            page.locator('[data-testid="personal-skill-item-skill-instance-leak"]'),
+        ).toHaveCount(0);
+        // 读面不挂原子 ⇒ 个人层页头**不该**有置灰理由（置灰整页会让无原子用户看不到自己已存的技能）。
         await expect(page.getByTestId("resource-layer-disabled-reasons")).toHaveCount(0);
-        // 反向护栏：别的非当前层置灰时，页头理由仍然要在（不是把理由功能整体关掉）。
-        await page.goto("/resources/skills?layer=INSTANCE");
-        await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText("我的技能");
+        // 写面按原子判：夹具默认授予 `MANAGE_PERSONAL_SKILLS`（CP 默认授予每个账号，D-1019）⇒ 按钮可点。
+        await expect(page.getByTestId("personal-skills-import")).toBeEnabled();
+        await expect(page.getByTestId("personal-skills-import-disabled-reason")).toHaveCount(0);
+    });
+    test("技能：页头置灰理由仍对真进不去的层生效（不是把理由功能整体关掉）", async ({ page }) => {
+        // 反例口径换成凭据：非实例管理员看 `/resources/credentials?layer=USER` 时，实例层 tab 真进不去
+        // ⇒ 页头必须给出理由（技能页现在**没有**任何置灰层，用它做反例已不成立）。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: false } });
+        await page.goto("/resources/credentials?layer=USER");
+        await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText(
+            "全平台凭据",
+        );
     });
     test("智能体：三层 tab（个人主体 / 本工作区成员 / 平台智能体）", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });

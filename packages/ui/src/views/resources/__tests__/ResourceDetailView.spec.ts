@@ -281,16 +281,43 @@ describe("ResourceDetailView — task-254：WORKSPACE 缺上下文就不请求�
 });
 
 describe("ResourceDetailView — 技能/知识库（未接线诚实态）", () => {
-    it("技能个人层（pendingBackend）⇒ 未接线，且不调任何技能读面", async () => {
+    it("技能个人层走单条定义读面（T2b.3：不再是未接线态）", async () => {
         setRoute({ resourceId: "skills", layer: "USER", pk: "skill-1" });
+        apiMock.getSkillDefinition.mockResolvedValue({
+            skillId: "skill-1",
+            name: "我的私有技能",
+            definitionScope: { type: "user", workspaceId: null },
+            description: "只属于我",
+            bodyTokensEst: 12,
+            oversize: false,
+            trusted: false,
+            sourcePath: "skills/mine/SKILL.md",
+            contentHash: "hash-mine",
+            version: 1,
+            attachments: [],
+            updatedAt: "2026-11-12T00:00:00Z",
+            body: "# 私有\n\n只有我能读…",
+        });
         const wrapper = mountView();
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="resource-detail-unwired"]').text()).toContain(
-            "个人技能库后端未实现",
-        );
-        expect(apiMock.getSkillDefinition).not.toHaveBeenCalled();
+        // 个人层用**同一张**单条读面（CP 只返回调用者自己的行，`openapi.yaml:5465`）⇒
+        // 既不是"未接线"，也不需要 `getWorkspaceSkills`（那是工作区层的事）。
+        expect(apiMock.getSkillDefinition).toHaveBeenCalledWith("skill-1", true);
         expect(apiMock.getWorkspaceSkills).not.toHaveBeenCalled();
+        expect(wrapper.find('[data-testid="resource-detail-unwired"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="resource-detail-title"]').text()).toBe("我的私有技能");
+        expect(wrapper.get('[data-testid="resource-detail-layer"]').text()).toBe("我的技能");
+    });
+
+    it("技能个人层读不到（404）⇒ not-found，而不是未接线", async () => {
+        setRoute({ resourceId: "skills", layer: "USER", pk: "missing" });
+        apiMock.getSkillDefinition.mockResolvedValue(null);
+        const wrapper = mountView();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="resource-detail-not-found"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="resource-detail-unwired"]').exists()).toBe(false);
     });
 
     it("技能实例层走单条定义读面（含正文）", async () => {

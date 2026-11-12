@@ -182,8 +182,6 @@ export interface ResourceLayerRule {
     requires?: ResourceLayerRequires;
     /** 数据按工作区归属：页面从当前页签上下文取 workspaceId，取不到时给「先选工作区」态。 */
     needsWorkspace?: boolean;
-    /** 后端尚未实现该层 ⇒ tab 留在 DOM 但 disabled + 理由（形态稿，不假装可用）。 */
-    pendingBackend?: boolean;
 }
 
 export interface ResourceDef {
@@ -230,13 +228,19 @@ export const RESOURCE_DEFS: readonly ResourceDef[] = [
         labelKey: "settings.ia.resourceSkills",
         /**
          * 三层：全平台（`GET /skills` 默认 instance）+ 本工作区（`?definitionScope=workspace`，
-         * `api.ts:3657`）+ 个人（**后端未实现**，decision 12 的 T2b）⇒ 个人层 tab disabled 并给理由。
+         * `api.ts:3657`）+ **个人**（`T2b.3`：`?definitionScope=user`，契约 `openapi.yaml:5465`
+         * 「takes no id (the caller is the owner)」，CP `SkillLibraryService.list:52-61` 已实现）。
          *
-         * 实例层读面任何已认证调用者都能进（openapi「visible to every authenticated caller」）；
-         * 写面原子 `MANAGE_SKILL_LIBRARY` 由面板自己守（不在 tab 上重复挡）。
+         * <p><b>`USER` 层不给 `requires`</b>（`T2b.2` 交付后改的真话）：读面**不挂任何原子**
+         * —— P-189-3 明写撤销 `MANAGE_PERSONAL_SKILLS` 之后**读仍开放**，只有写面 403。
+         * ⇒ 把 tab 置灰会让没有该原子的用户**连自己已存的个人技能都看不到**（比"看不到按钮"
+         * 严重得多）。该原子只门面板里的「导入技能」按钮，见 `PersonalSkillsPanel`。</p>
+         *
+         * <p>实例层读面任何已认证调用者都能进（openapi「visible to every authenticated caller」）；
+         * 写面原子 `MANAGE_SKILL_LIBRARY` 由面板自己守（不在 tab 上重复挡）。</p>
          */
         layerRules: [
-            { layer: "USER", pendingBackend: true },
+            { layer: "USER" },
             { layer: "WORKSPACE", needsWorkspace: true },
             { layer: "INSTANCE" },
         ],

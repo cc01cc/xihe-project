@@ -1546,10 +1546,35 @@ const messages = {
             },
             tabsLabel: "资源层",
             disabledHint: "置灰的层仍留在页面上（不隐藏），点了不会切过去；原因见下。",
-            reasonPendingSkills: "个人技能库后端未实现：本层只表达形态，不提供可用操作",
             reasonNoWorkspace: "该层的数据按工作区归属：当前没有工作区上下文",
             reasonCapability: "需要实例管理员能力（CP 侧守的是 instance:admin）",
-            pendingBackendNotice: "本层后端尚未实现：本页只表达形态，不提供可用操作。",
+            skills: {
+                panelMine: "我的技能",
+                subtitleMine:
+                    "个人技能库只属于你：其他用户、本工作区和其他工作区都看不到这些定义。",
+                count: "{count} 条",
+                loading: "正在读取个人技能…",
+                loadErrorTitle: "读取个人技能失败",
+                loadErrorBody:
+                    "读面请求失败。这不代表你没有个人技能 —— 请重试；仍然失败请查看服务健康。",
+                retry: "重试",
+                emptyTitle: "个人技能库还是空的",
+                emptyBody: "用「导入技能」把已有的技能定义（JSON）导入进来；只有你自己能看到它们。",
+                importMine: "导入技能",
+                importDisabledReason:
+                    "写入需要「管理个人技能」权限（MANAGE_PERSONAL_SKILLS）；读面不受该原子限制（P-189-3：撤销后仍可读自己已有的个人技能）。",
+                importEntryNote:
+                    "导入走 POST /api/v1/skills/import 的 type=user；归属人由服务端从登录态取，请求里不带也不接受他人 id。",
+                foreignIgnored: "{count} 条不属于个人库的行被忽略（它们不属于这一层）",
+                importResultTitle: "导入结果",
+                importResultLine:
+                    "新建 {created} · 更新 {updated} · 未变 {unchanged} · 被拒 {rejected} · 超长 {oversize}",
+                importRefreshed: "列表已刷新。",
+                rejectedHeading: "被拒条目",
+                rejectedRow: "{path}：{reason}",
+                workspaceSourceNote:
+                    "本层只含本区自建定义；平台库的定义通过智能体绑定可见 —— 技能没有继承语义，所以本页不画来源列。",
+            },
             workspaceMissing: {
                 title: "先选择一个工作区",
                 body: "本工作区层的资源按工作区归属；当前页签里没有工作区上下文。",
@@ -1580,8 +1605,6 @@ const messages = {
                     title: "这一层没有详情面",
                     body: "本页只显示已接线的读面；上面这条说明是当前「资源 + 层」的真实状态，不是加载失败。",
                     reasons: {
-                        skillsUser:
-                            "个人技能库后端未实现（pendingBackend）：本层只表达形态，没有可读的详情数据。",
                         noWorkspace:
                             "该层的资源按工作区归属：当前页签没有工作区上下文，读面无法确定取哪一个工作区。",
                         knowledgeGap:
@@ -2611,9 +2634,11 @@ const messages = {
                         sourcePathInvalid:
                             "sourcePath 不合规：要工作区相对路径，不含 .. 或盘符，且与定义目录名一致",
                         trustedForbidden: "只有实例管理员可以导入 trusted=true（受信来源）",
+                        trustedNotAllowed:
+                            "个人技能库不接受 trusted 字段：连 trusted=false 也会整批 400（P-189-1）—— 删掉该键再导入",
                         jsonInvalid: "不是合法 JSON",
                         shapeInvalid:
-                            "批形状不对：需要 definitionScope（type 取 instance）与 skills 数组，每条含 name/description/body/sourcePath",
+                            "批形状不对：需要 definitionScope（type 取 instance 或 user）与 skills 数组，每条含 name/description/body/sourcePath",
                         batchTooLarge: "超过一次 64 条的上限",
                         readFailed: "文件读取失败",
                         unknown: "未知拒绝码（{code}）",
@@ -4814,14 +4839,39 @@ const messages = {
             tabsLabel: "Resource layer",
             disabledHint:
                 "Dimmed layers stay on the page (never hidden) and cannot be selected; reasons below.",
-            reasonPendingSkills:
-                "The personal skill library has no backend yet: this layer only shows the shape, with no usable actions",
             reasonNoWorkspace:
                 "This layer is scoped to a workspace, and there is no workspace context right now",
             reasonCapability:
                 "Requires instance-admin capability (CP guards it with instance:admin)",
-            pendingBackendNotice:
-                "This layer has no backend yet: the page shows the shape only, with no usable actions.",
+            skills: {
+                panelMine: "My skills",
+                subtitleMine:
+                    "The personal library belongs to you alone: other users, this workspace and every other workspace cannot see these definitions.",
+                count: "{count} total",
+                loading: "Loading personal skills…",
+                loadErrorTitle: "Could not load personal skills",
+                loadErrorBody:
+                    "The read request failed. This does not mean you have no personal skills — retry; if it keeps failing, check service health.",
+                retry: "Retry",
+                emptyTitle: "Your personal library is still empty",
+                emptyBody:
+                    "Use “Import skills” to bring existing skill definitions (JSON) in here; only you can see them.",
+                importMine: "Import skills",
+                importDisabledReason:
+                    "Writing requires the MANAGE_PERSONAL_SKILLS permission; the read face is not gated by that atom (P-189-3: after a revocation you can still read your own personal skills).",
+                importEntryNote:
+                    "Import goes through POST /api/v1/skills/import with type=user; the owner comes from the session token server-side, and the request carries no id of anyone else.",
+                foreignIgnored:
+                    "{count} row(s) outside the personal library were ignored (they do not belong to this layer)",
+                importResultTitle: "Import result",
+                importResultLine:
+                    "created {created} · updated {updated} · unchanged {unchanged} · rejected {rejected} · oversize {oversize}",
+                importRefreshed: "The list has been refreshed.",
+                rejectedHeading: "Rejected items",
+                rejectedRow: "{path}: {reason}",
+                workspaceSourceNote:
+                    "This layer holds workspace-owned definitions only; platform definitions reach agents through bindings — skills have no inheritance semantics, so this page shows no source column.",
+            },
             workspaceMissing: {
                 title: "Pick a workspace first",
                 body: "Workspace-scoped resources belong to a workspace; this tab has no workspace context.",
@@ -4852,8 +4902,6 @@ const messages = {
                     title: "This layer has no detail surface",
                     body: "This page only shows wired read faces; the line above describes the real state of this resource + layer, not a load failure.",
                     reasons: {
-                        skillsUser:
-                            "The personal skill library has no backend yet (pendingBackend): this layer shows the shape only, with no detail data to read.",
                         noWorkspace:
                             "This layer is scoped to a workspace and the current tab has no workspace context, so the read face cannot pick one.",
                         knowledgeGap:
@@ -5935,9 +5983,11 @@ const messages = {
                         sourcePathInvalid:
                             "sourcePath is not valid: it must be workspace-relative (no .., no drive prefix) and match the definition directory name",
                         trustedForbidden: "Only an instance administrator may import trusted=true",
+                        trustedNotAllowed:
+                            "The personal library rejects the trusted key outright: even trusted=false fails the whole batch with 400 (P-189-1) — remove the key and import again",
                         jsonInvalid: "Not valid JSON",
                         shapeInvalid:
-                            "Batch shape is wrong: it needs definitionScope (type instance) and a skills array whose entries carry name/description/body/sourcePath",
+                            "Batch shape is wrong: it needs definitionScope (type instance or user) and a skills array whose entries carry name/description/body/sourcePath",
                         batchTooLarge: "Over the 64-item limit",
                         readFailed: "Could not read the file",
                         unknown: "Unknown rejection code ({code})",

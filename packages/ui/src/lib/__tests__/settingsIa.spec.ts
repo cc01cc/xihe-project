@@ -186,8 +186,14 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
         expect(layersForResource("credentials")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
         // MCP 没有个人层：`mcp_remote_servers.workspace_id NOT NULL`（audit §F G1）。
         expect(layersForResource("mcp")).toEqual(["WORKSPACE", "INSTANCE"]);
-        // 技能三层：个人层后端未实现（决策 12 的 T2b），但形状先立（`pendingBackend`）。
+        // 技能三层都是真实体（`T2b.2` 交付个人层后）；个人层**不带 `requires`** ——
+        // 读面不挂原子（P-189-3：撤销 `MANAGE_PERSONAL_SKILLS` 后读仍开放），原子只门写面。
         expect(layersForResource("skills")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
+        expect(
+            RESOURCE_DEFS.find((def) => def.id === "skills")!.layerRules.find(
+                (rule) => rule.layer === "USER",
+            ),
+        ).toEqual({ layer: "USER" });
         // 智能体三层（task-203，用户 2026-11-12「成员入口的 agent principal 也别漏了」）：
         // 个人主体（`agent-principals`）+ **工作区成员/绑定面**（`WorkspaceAgentsPanel`，
         // 写面 CP 守工作区档原子 `MANAGE_WORKSPACE_AGENTS`）+ 平台智能体（能力位 `instance:admin`）。

@@ -46,7 +46,7 @@ import { Button } from "../../components/ui/button";
  * | mcp | INSTANCE | `listInstanceMcpServers`（`instanceResources.ts:301`） |
  * | skills | WORKSPACE | `api.getWorkspaceSkills`（`:3678`）；该层**没有**单条正文读面 ⇒ 明写原因 |
  * | skills | INSTANCE | `api.getSkillDefinition`（`:3698`，`includeBody=true`）—— 单条定义读面自带正文，**不再**多打一次列表请求 |
- * | skills | USER | 后端未实现（`pendingBackend`）⇒ 未接线诚实态 |
+ * | skills | USER | `api.getSkillDefinition`（`:3698`，`includeBody=true`）—— CP 只返回**调用者自己的**个人定义（`openapi:5465`「takes no id (the caller is the owner)」），所以他人个人技能不可见是同一条契约；`T2b.3` 起不再是「未接线」态 |
  * | agents | USER | `api.listMyAgentPrincipals`（`:3408`） |
  * | agents | WORKSPACE | `api.getWorkspaceAgents`（`:3438`）+ `getAgentRoles`（`:3511`）+ `getAgentSkills`（`:3602`） |
  * | agents | INSTANCE | `listInstanceAgents`（`instanceResources.ts:222`） |
@@ -273,12 +273,6 @@ async function loadCredentials(): Promise<void> {
 }
 
 async function loadSkills(): Promise<void> {
-    if (layer.value === "USER") {
-        // 后端未实现（`RESOURCE_DEFS` 的 `pendingBackend`）⇒ 未接线，不是 404。
-        unwiredReasonKey.value = "resources.detail.unwired.reasons.skillsUser";
-        phase.value = "unwired";
-        return;
-    }
     if (layer.value === "WORKSPACE") {
         if (!workspaceId.value) {
             unwiredReasonKey.value = "resources.detail.unwired.reasons.noWorkspace";
