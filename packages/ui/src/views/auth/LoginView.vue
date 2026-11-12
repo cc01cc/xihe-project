@@ -29,7 +29,9 @@ function rateLimitMessage(): string | null {
 /** Shared post-authentication transition so both entries behave identically. */
 async function enterWorkspace() {
     phase.value = "entering";
-    config.loadAllDomains({ isAdmin: auth.isAdmin }).catch(() => {
+    // task-74：与 `App.vue` 同一契约，判据同 CP 的 `READ_INSTANCE_CONTENT` 原子
+    // （`ConfigController.java:89-90`），不查能力位。
+    config.loadAllDomains({ canReadInstanceContent: auth.canReadInstanceContent }).catch(() => {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     });
     // task-224 档 4：`?redirect=` 是外来输入（可能被手工改、也可能是登出链遗留的嵌套串），
