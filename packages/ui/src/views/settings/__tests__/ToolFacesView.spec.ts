@@ -5,6 +5,7 @@ import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { setSelectValue } from "../../../test-utils/select";
 import { ApiError, api } from "../../../composables/api";
+import { useAuthStore } from "../../../stores/auth";
 import type * as apiModule from "../../../composables/api";
 import type { PolicyToolFaceView } from "../../../types";
 
@@ -79,8 +80,16 @@ const unclassifiedFace: PolicyToolFaceView = {
     shape: "opaque",
 };
 
-/** PLAN-0610 W5a: instance administration is the capability projection, not a role string. */
-function seedIdentity(options: { admin?: boolean; workspaceOwner?: boolean } = {}) {
+/**
+ * PLAN-0610 W5a: instance administration is the capability projection, not a role string.
+ *
+ * task-74：工具面的 instance scope 对端是 `MANAGE_WORKSPACE_POLICY` **动作原子**
+ * （`policy/PolicyController.java:166-168` 的 `isAdmin()` 就是它），不是 `cap:instance:admin`。
+ * `atoms` 默认跟随 `admin` 开关（本 spec 不测判据轴，只测页面行为）；给 `atoms` 单独赋值才测轴。
+ */
+function seedIdentity(
+    options: { admin?: boolean; workspaceOwner?: boolean; atoms?: string[] } = {},
+) {
     localStorage.setItem(
         "xihe-user",
         JSON.stringify({
@@ -101,6 +110,15 @@ function seedIdentity(options: { admin?: boolean; workspaceOwner?: boolean } = {
             ownerId: options.workspaceOwner === false ? "someone-else" : USER_ID,
         }),
     );
+    const atoms = options.atoms ?? (options.admin === true ? ["MANAGE_WORKSPACE_POLICY"] : []);
+    useAuthStore().$patch({
+        selfPermissions: {
+            userId: USER_ID,
+            instanceCapabilities: [],
+            instancePermissions: atoms.map((actionClass) => ({ actionClass, resource: "*" })),
+            workspaces: [],
+        },
+    });
 }
 
 async function mountView() {
@@ -228,6 +246,28 @@ describe("ToolFacesView", () => {
         await flushPromises();
 
         expect(api.listPolicyToolFaces).toHaveBeenLastCalledWith("instance");
+    });
+
+    /**
+     * task-74 判据轴：instance scope 由 `MANAGE_WORKSPACE_POLICY` 原子决定
+     * （`policy/PolicyController.java:166-168`），能力位既不能替代它、也不该拦它。
+     */
+    it("gates the instance scope on the MANAGE_WORKSPACE_POLICY atom, not the instance capability", async () => {
+        // 有能力位、无原子 ⇒ 不给 instance scope（UI 不比 CP 宽）。
+        seedIdentity({ admin: true, atoms: [] });
+        const withoutAtom = await mountView();
+        expect(
+            withoutAtom.find('[data-testid="settings-tool-faces-scope-instance"]').exists(),
+        ).toBe(false);
+        withoutAtom.unmount();
+
+        // 有原子、无能力位 ⇒ 照给（UI 不比 CP 严）。
+        seedIdentity({ admin: false, atoms: ["MANAGE_WORKSPACE_POLICY"] });
+        const withAtom = await mountView();
+        expect(withAtom.find('[data-testid="settings-tool-faces-scope-instance"]').exists()).toBe(
+            true,
+        );
+        withAtom.unmount();
     });
 
     it("surfaces a server 403 from classification without pretending success", async () => {
