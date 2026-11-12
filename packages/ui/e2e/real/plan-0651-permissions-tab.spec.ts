@@ -31,6 +31,9 @@ const ROLES_TAB = '[data-testid="settings-nav-ops-roles"]';
 const LOCKS_TAB = '[data-testid="settings-nav-ops-config-locks"]';
 const CONFIG_TAB = '[data-testid="settings-nav-domain-user-llm-provider"]';
 const SETTINGS_PATH = "/settings/user/llm-provider";
+// task-242：实例层组的**可点标题**（`CollapsibleTrigger` 自带 id，属既有属性，不新造 testid）。
+// `data-testid="settings-nav-group-primary"` 在实例层与个人层各出现一次（不唯一）⇒ 取 id。
+const INSTANCE_GROUP = "#settings-nav-instance";
 
 interface PermissionsBody {
     instanceCapabilities?: string[];
@@ -85,6 +88,25 @@ async function openSettings(page: Page): Promise<PermissionsBody> {
 /** `instancePermissions` only — workspace-scope atoms must not be counted (Lead ruling ①). */
 function instanceAtoms(body: PermissionsBody): string[] {
     return (body.instancePermissions ?? []).map((atom) => atom.actionClass);
+}
+
+/**
+ * task-242（窗口 #2 暴露的过期断言修法，Lead 裁定 ①）：**先展开实例层组再断言实例层 ops 项**。
+ *
+ * 背景（机制已坐实，不在本文件里改产品）：PLAN-0752 后左栏是「层×域」，`SettingsSidebar.vue:157-165`
+ * 用 `instanceOpen = ref(activeLayer === "instance")` + `watch(activeLayer)` 让**只有当前层默认展开**；
+ * 而本 spec 的落点是个人层（`SETTINGS_PATH`）⇒ 实例组收起、其 ops 子项（`settings-nav-ops-*`）
+ * **不挂载** ⇒ 直接断言会 `element(s) not found`。
+ *
+ * 只加"点开组"这一步（用栏内既有 `#settings-nav-instance` 标题，不新增 testid、不改产品默认值）：
+ *  - **幂等**：只在 ops 项还不存在时点一次；产品若哪天改成"两层常显"，这里会自动不点，不会反而收起；
+ *  - 点完再等一次 ops 项可见，避免与展开动画抢跑。
+ */
+async function openInstanceOps(page: Page): Promise<void> {
+    if ((await page.locator(ROLES_TAB).count()) === 0) {
+        await page.locator(INSTANCE_GROUP).click();
+    }
+    await expect(page.locator(ROLES_TAB)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
 async function adminHeaders(request: APIRequestContext): Promise<AdminHeaders> {
@@ -157,7 +179,8 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
         const body = await openSettings(page);
         console.log(`[plan-0651] admin instancePermissions=${instanceAtoms(body).join(",")}`);
         expect(instanceAtoms(body)).toContain("MANAGE_ROLES");
-        await expect(page.locator(ROLES_TAB)).toBeVisible();
+        // task-242：实例层 ops 项在个人层落点下默认收起 ⇒ 先展开组，再断言（不改产品默认）。
+        await openInstanceOps(page);
         // BL-392: this face has no atom yet, so the capability `isInstanceAdmin` still drives it.
         await expect(page.locator(LOCKS_TAB)).toBeVisible();
         await shoot(page, "admin-settings-nav");
@@ -210,8 +233,9 @@ test.describe("@host PLAN-0651 T4.2 permissions tab atom judgment", () => {
             `[plan-0651] atom-only instancePermissions=${instanceAtoms(body).join(",")} capabilities=${(body.instanceCapabilities ?? []).join(",")}`,
         );
         expect(instanceAtoms(body)).toContain("MANAGE_ROLES");
+        // task-242：先展开实例层组（同上），再断言 roles 可见 / config-locks 不可见。
+        await openInstanceOps(page);
         // No `cap:instance:admin` ⇒ the capability-driven face must stay hidden (BL-392).
-        await expect(page.locator(ROLES_TAB)).toBeVisible();
         await expect(page.locator(LOCKS_TAB)).toHaveCount(0);
         await shoot(page, "atom-only-settings-nav");
     });
