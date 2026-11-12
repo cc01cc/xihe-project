@@ -221,11 +221,11 @@ class ContextReuseBucketingTest {
                 problems.add("白名单条目对应类不存在（stale）：" + fqcn);
             }
         }
-        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 149 类：" + problems);
+        assertEquals(List.of(), problems, "白名单/复用桶必须互斥且穷尽 155 类：" + problems);
         assertEquals(77, whitelist.size(), "per-class 白名单 = 77（51 flagged + 5 @MockitoSpyBean + 17 §4.1 async-chat + 1 0691 T1.6b + 1 0646 MVP + 1 0642 MVP + 2 0647 3.1/3.2 + 1 0705 + 1 0767，去重）");
         assertEquals(77, perClass, "per-class 类数必须等于白名单条目数");
-        assertEquals(72, reusable, "reusable 桶 = 72（71 迁移类 + R-D 快照种子夹具 1 类）");
-        assertEquals(149, classes.size(), "149 = 77 per-class + 72 reusable");
+        assertEquals(78, reusable, "reusable 桶 = 78（实测读数，含 task-309 新增审计类 1 类）");
+        assertEquals(155, classes.size(), "155 = 77 per-class + 78 reusable");
         Map<String, Integer> counts = new TreeMap<>();
         for (WhitelistEntry entry : whitelist.values()) {
             for (String code : entry.codes()) {

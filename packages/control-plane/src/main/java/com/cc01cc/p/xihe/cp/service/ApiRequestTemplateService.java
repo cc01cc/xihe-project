@@ -222,6 +222,7 @@ public class ApiRequestTemplateService {
      * so it must carry the same source tag — otherwise "covered" would be true only for the domains
      * that happen to route through {@code ConfigService}.
      */
+    @Transactional
     public void putLayer(String layer, Map<String, String> entries, String actor, UUID user, UUID workspace,
             String atomSource) {
         access(layer, user, workspace, true);

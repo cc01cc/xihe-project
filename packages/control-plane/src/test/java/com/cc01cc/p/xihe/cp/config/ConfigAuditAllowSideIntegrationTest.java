@@ -1,6 +1,6 @@
 package com.cc01cc.p.xihe.cp.config;
 
-import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and the row width is measured rather than estimated so "how expensive is this column" has a reading
  * instead of an upper bound.</p>
  */
-class ConfigAuditAllowSideIntegrationTest extends AbstractIntegrationTest {
+class ConfigAuditAllowSideIntegrationTest extends AbstractReusableIntegrationTest {
 
     private static final String DOMAIN = "logging";
 

@@ -725,6 +725,7 @@ public class ConfigService {
      * task-309: same write, tagged with the door whose atom gate authorized it ({@code h1}|{@code h2}|
      * {@code h3}). Callers without an atom gate pass {@code null} and keep the untagged overload.
      */
+    @Transactional
     public void putLayer(String layer, String domain, Map<String, String> entries,
                          String changedBy, UUID userId, UUID workspaceId, String atomSource) {
         putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId, false, atomSource);

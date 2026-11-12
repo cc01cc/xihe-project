@@ -81,6 +81,12 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("OAuth")) {
             return "oauth";
         }
+        // PLAN-0772/task-165: the instance credential face (controller + admin service) is the same
+        // capability family as the workspace credential slice; the prefix is "InstanceCredential", not
+        // "Credential", so it needs its own registration instead of silently landing in another slice.
+        if (name.startsWith("InstanceCredential")) {
+            return "credentials";
+        }
         if (name.startsWith("Credential")) {
             return "credentials";
         }
@@ -129,6 +135,11 @@ final class CpModuleAssignment implements SliceAssignment {
         // PLAN-0767 M1: the deployment identity singleton (entity/repository/service/controller)
         // sits on the same instance-level identity surface as the owner pointer; consumers
         // (provider, config) point at it and it points only at audit/telemetry, so no new slice.
+        // PLAN-0772/task-165: the instance-level agent-principal admin face is the same capability
+        // family as the Agent* surface (principal), but the "Instance" prefix keeps it out of that rule.
+        if (name.startsWith("InstanceAgentPrincipal")) {
+            return "principal";
+        }
         if (name.startsWith("InstanceIdentity")) {
             return "auth";
         }
