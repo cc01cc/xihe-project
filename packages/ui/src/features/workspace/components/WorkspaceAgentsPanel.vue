@@ -72,7 +72,13 @@ const createdPrincipalMeta = ref<{
 } | null>(null);
 const recoveryUnavailable = ref(false);
 const permissions = ref<WorkspaceAgentPermission[]>([]),
-    editingPrincipalId = ref<string | null>(null);
+    editingPrincipalId = ref<string | null>(null),
+    /**
+     * 47A（D-1109）：上限的**两种来源在 wire 上是不同语义**，所以用三态而不是一个 flag ——
+     * `inherit` = **省略** `permissions`（CP 记 `capSource=baseline`）；
+     * `explicit` = 传数组，其中 `[]` 是**零权限**而不是「用基线」（46C 已否决）。
+     */
+    capMode = ref<"inherit" | "explicit">("explicit");
 /**
  * PLAN-0629 M1-4 C：只读「记忆」区。同一时刻只展开一个主体的记忆（一次一个请求），
  * 展开状态与数据都留在本组件内——不新建 store、不做缓存，只读面按需拉取。
@@ -912,11 +918,10 @@ async function bindExistingAgent(agent: WorkspaceAgentBinding) {
     saving.value = true;
     error.value = "";
     try {
-        await api.updateWorkspaceAgentCap(
-            props.workspaceId,
-            agent.principalId,
-            agent.permissionsSnapshot ?? [],
-        );
+        // 47A（D-1109）：**绑定 = 默认继承角色基线** ⇒ 省略 `permissions`，CP 记 `capSource=baseline`。
+        // 旧口径是把当时的快照原样 PUT 回去（⇒ 恒 explicit，一次绑定就把上限冻死），已被 47A 取代。
+        // 要显式冻结或显式零权限，走「编辑工作区角色」的两个态，不在绑定这一步替用户拍。
+        await api.updateWorkspaceAgentCap(props.workspaceId, agent.principalId, undefined);
         // 该行若同时是本地待绑定主体，行级绑定成功也必须收敛恢复状态（同一 PUT 口径）。
         if (createdPrincipalId.value === agent.principalId) {
             createdPrincipalId.value = null;
@@ -972,6 +977,8 @@ function startEditing(agent: WorkspaceAgentBinding) {
     if (canManageWorkspaceAgents.value !== true) return;
     editingPrincipalId.value = agent.principalId;
     permissions.value = agent.permissionsSnapshot.map((permission) => ({ ...permission }));
+    // 47A：回显以 CP 记的 `capSource` 为准（`baseline` ⇒ 继承态）；更早的响应没有该字段时按显式处理。
+    capMode.value = agent.capSource === "baseline" ? "inherit" : "explicit";
     error.value = "";
 }
 
@@ -980,7 +987,13 @@ async function saveCap(agent: WorkspaceAgentBinding) {
     saving.value = true;
     error.value = "";
     try {
-        await api.updateWorkspaceAgentCap(props.workspaceId, agent.principalId, permissions.value);
+        // 47A：三态 → 三种请求体。继承 = **不传**该字段；显式（含零权限 `[]`）= 传数组。
+        // 不要合并成一个 flag —— `[]` 与「未传」在 wire 上是不同的两件事。
+        await api.updateWorkspaceAgentCap(
+            props.workspaceId,
+            agent.principalId,
+            capMode.value === "inherit" ? undefined : permissions.value,
+        );
         editingPrincipalId.value = null;
         await loadAgents();
         status.value = t("workspace.agentCapSaved");
@@ -1504,43 +1517,77 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     </button>
                 </div>
                 <div v-else class="space-y-2 border-t pt-3">
-                    <div
-                        v-for="actionClass in actionClasses"
-                        :key="actionClass"
-                        class="grid grid-cols-[1fr_1fr] items-center gap-2"
-                    >
-                        <label class="flex items-center gap-2 text-sm">
+                    <!-- 47A（D-1109）：两态在 UI 上必须可区分，且请求体按态分支（见 saveCap）——
+                         继承 = 省略 permissions（baseline）；显式 = 传数组（其中 [] = 零权限）。 -->
+                    <div class="flex flex-wrap items-center gap-3" data-testid="agent-cap-mode">
+                        <label class="flex items-center gap-1.5 text-xs">
                             <input
-                                type="checkbox"
-                                :checked="hasPermission(actionClass)"
-                                :data-testid="`agent-cap-${actionClass}`"
-                                @change="
-                                    togglePermission(
+                                v-model="capMode"
+                                type="radio"
+                                value="inherit"
+                                :data-testid="`workspace-agent-cap-mode-inherit-${agent.principalId}`"
+                            />
+                            {{ t("workspace.agentCapInherit") }}
+                        </label>
+                        <label class="flex items-center gap-1.5 text-xs">
+                            <input
+                                v-model="capMode"
+                                type="radio"
+                                value="explicit"
+                                :data-testid="`workspace-agent-cap-mode-explicit-${agent.principalId}`"
+                            />
+                            {{ t("workspace.agentCapExplicit") }}
+                        </label>
+                    </div>
+                    <p
+                        v-if="capMode === 'inherit'"
+                        :data-testid="`workspace-agent-cap-inherit-hint-${agent.principalId}`"
+                        class="text-[11px] text-muted-foreground"
+                    >
+                        {{ t("workspace.agentCapInheritHint") }}
+                    </p>
+                    <template v-else>
+                        <div
+                            v-for="actionClass in actionClasses"
+                            :key="actionClass"
+                            class="grid grid-cols-[1fr_1fr] items-center gap-2"
+                        >
+                            <label class="flex items-center gap-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    :checked="hasPermission(actionClass)"
+                                    :data-testid="`agent-cap-${actionClass}`"
+                                    @change="
+                                        togglePermission(
+                                            actionClass,
+                                            ($event.target as HTMLInputElement).checked,
+                                        )
+                                    "
+                                />
+                                {{ actionLabel(actionClass) }}
+                            </label>
+                            <input
+                                v-if="hasPermission(actionClass)"
+                                :value="permissionResource(actionClass)"
+                                :data-testid="`agent-resource-${actionClass}`"
+                                :aria-label="
+                                    t('workspace.agentResourceFor', {
+                                        action: actionLabel(actionClass),
+                                    })
+                                "
+                                class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs"
+                                @input="
+                                    setPermissionResource(
                                         actionClass,
-                                        ($event.target as HTMLInputElement).checked,
+                                        ($event.target as HTMLInputElement).value,
                                     )
                                 "
                             />
-                            {{ actionLabel(actionClass) }}
-                        </label>
-                        <input
-                            v-if="hasPermission(actionClass)"
-                            :value="permissionResource(actionClass)"
-                            :data-testid="`agent-resource-${actionClass}`"
-                            :aria-label="
-                                t('workspace.agentResourceFor', {
-                                    action: actionLabel(actionClass),
-                                })
-                            "
-                            class="min-w-0 rounded-md border bg-background px-2 py-1 text-xs"
-                            @input="
-                                setPermissionResource(
-                                    actionClass,
-                                    ($event.target as HTMLInputElement).value,
-                                )
-                            "
-                        />
-                    </div>
+                        </div>
+                        <p class="text-[11px] text-muted-foreground">
+                            {{ t("workspace.agentCapZeroHint") }}
+                        </p>
+                    </template>
                     <div class="flex justify-end gap-2">
                         <button
                             type="button"

@@ -623,7 +623,12 @@ describe("WorkspaceAgentsPanel pending principal recovery", () => {
         await bindRow.trigger("click");
         await flushPromises();
 
-        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(WORKSPACE_ID, PENDING_ID, []);
+        // 47A（D-1109）：行级绑定 = 默认继承基线 ⇒ 省略 permissions（不是 `[]`，那是显式零权限）。
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PENDING_ID,
+            undefined,
+        );
         expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).not.toHaveProperty(
             pendingKey,
         );
@@ -662,11 +667,16 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         await bindRow.trigger("click");
         await flushPromises();
 
-        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
-            WORKSPACE_ID,
-            existing.principalId,
-            [],
-        );
+        // 47A（D-1109）：**绑定 = 默认继承角色基线** ⇒ 第三个参数必须是 `undefined`（省略该字段），
+        // 不能退化成 `[]` —— 后者在 wire 上是**显式零权限**，一绑定就把上限冻成 0。
+        const [wsArg, principalArg, permissionsArg] =
+            apiMock.updateWorkspaceAgentCap.mock.calls[0] ?? [];
+        expect(wsArg).toBe(WORKSPACE_ID);
+        expect(principalArg).toBe(existing.principalId);
+        expect(
+            permissionsArg,
+            "绑定只继承基线；显式零权限只能由用户在「编辑工作区角色」里主动选",
+        ).toBeUndefined();
         // 绑定后必须重新读取列表（与创建后的刷新同一口径）。
         expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(2);
         wrapper.unmount();
@@ -722,6 +732,74 @@ describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
                 .exists(),
         ).toBe(false);
         expect(apiMock.updateWorkspaceAgentCap).not.toHaveBeenCalled();
+    });
+
+    it("继承态：保存时省略 permissions（CP 记 capSource=baseline），且原子不可逐个改", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        // 继承态下**没有**逐原子勾选框（不可逐个改），只有一句说明。
+        await wrapper
+            .get(`[data-testid="workspace-agent-cap-mode-inherit-${capAgent.principalId}"]`)
+            .setValue();
+        expect(wrapper.find(`[data-testid="agent-cap-write"]`).exists()).toBe(false);
+        expect(
+            wrapper
+                .get(`[data-testid="workspace-agent-cap-inherit-hint-${capAgent.principalId}"]`)
+                .text(),
+        ).toContain(i18n.global.t("workspace.agentCapInheritHint"));
+
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        // 省略 = baseline：与「传 []」不是一回事（后者是显式零权限）。
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            capAgent.principalId,
+            undefined,
+        );
+    });
+
+    it("显式零权限：一个都不勾直接保存 ⇒ 传 []（不是省略）", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        // 显式态下勾选框在 DOM 里，且可以全部不勾。
+        expect(wrapper.find(`[data-testid="agent-cap-write"]`).exists()).toBe(true);
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            capAgent.principalId,
+            [],
+        );
+    });
+
+    it("回显以 CP 的 capSource 为准：baseline 的主体打开即继承态", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([{ ...capAgent, capSource: "baseline" }]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        const inherit = wrapper.get(
+            `[data-testid="workspace-agent-cap-mode-inherit-${capAgent.principalId}"]`,
+        );
+        expect((inherit.element as HTMLInputElement).checked).toBe(true);
+        expect(wrapper.find(`[data-testid="agent-cap-write"]`).exists()).toBe(false);
+
+        // 切回显式态才出现逐原子勾选框 —— 两态在 UI 上必须能互相到达。
+        await wrapper
+            .get(`[data-testid="workspace-agent-cap-mode-explicit-${capAgent.principalId}"]`)
+            .setValue();
+        expect(wrapper.find(`[data-testid="agent-cap-write"]`).exists()).toBe(true);
     });
 
     it("saves an edited cap after the projection grants MANAGE_WORKSPACE_AGENTS", async () => {

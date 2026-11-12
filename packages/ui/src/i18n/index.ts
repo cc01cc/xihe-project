@@ -469,6 +469,12 @@ const messages = {
             agentPrincipalCreated: "智能体主体已创建，等待绑定",
             agentBound: "智能体已绑定到工作区",
             agentCapSaved: "工作区角色已保存",
+            agentCapInherit: "跟随角色基线",
+            agentCapExplicit: "显式指定权限",
+            agentCapInheritHint:
+                "继承态跟随该主体的角色基线，不可逐个改；要逐项限定请切「显式指定权限」。",
+            agentCapZeroHint:
+                "一个都不勾 = 显式零权限（CP 记 capSource=explicit），不是「用基线」。",
             agentUnboundSuccess: "智能体已从工作区解绑",
             agentDefaultModelProvider: "默认模型 provider",
             agentDefaultModelName: "默认模型名",
@@ -3735,6 +3741,12 @@ const messages = {
             agentPrincipalCreated: "Agent principal created; binding is pending",
             agentBound: "Agent bound to the Workspace",
             agentCapSaved: "Workspace role saved",
+            agentCapInherit: "Follow the role baseline",
+            agentCapExplicit: "Specify permissions explicitly",
+            agentCapInheritHint:
+                "Inherited mode follows this principal's role baseline and is not editable per atom; switch to “Specify permissions explicitly” to narrow it.",
+            agentCapZeroHint:
+                "Selecting none means an explicit zero cap (CP records capSource=explicit), not “use the baseline”.",
             agentUnboundSuccess: "Agent unbound from the Workspace",
             agentDefaultModelProvider: "Default model provider",
             agentDefaultModelName: "Default model name",
