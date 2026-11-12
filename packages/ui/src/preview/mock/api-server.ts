@@ -9,6 +9,7 @@ import {
 } from "./data/skills";
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 import { handleInstanceResource } from "./data/instanceResources";
+import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
 import {
     mockCredentialEvents,
     mockCredentialList,
@@ -189,25 +190,24 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     });
                 }
                 if (path === "/me/permissions") {
-                    return respond(200, {
-                        userId: "mock-user",
-                        instanceCapabilities: Object.keys(CAPABILITIES),
-                        instancePermissions: [
-                            { actionClass: "MANAGE_ROLES", resource: "*" },
-                            // PLAN-0772 M2 / 裁定三：夹具原来给的是一个 CP 目录里**不存在**的原子（幻影原子，详见台账 D-xxx/卡面）。
-                            // 实例智能体写面的真原子是 `MANAGE_AGENT_PRINCIPALS`（`InstanceAgentPrincipalController`
-                            // 的守卫原文同时要 `instance:admin` 能力位），夹具对齐它，才和真栈读到的权限面同形。
-                            { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
-                            { actionClass: "MANAGE_INSTANCE_CONFIG", resource: "*" },
-                            // PLAN-0766（task-160）：写入共享 workspace-default 层的唯一原子（CP 侧随 task-159 落地）。
-                            { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
-                            { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
-                            // task-167：实例层技能库写入原子（CP 侧 `SkillAccessGuard.canManageInstanceLibrary()`
-                            // 认的就是它，不是 `cap:instance:admin`）。mock 不授予它，技能页的「导入技能」
-                            // 入口就永远是置灰态，截图与 e2e 都看不到可点形态 —— 夹具默认给管理面。
-                            { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
-                        ],
-                    });
+                    /**
+                     * task-249：权限投影搬进 `data/previewPermissions.ts`（原子清单 + 受限模式判定），
+                     * 这里只做一次 dispatch。受限模式的切换通道见该文件头注释：页面 URL 带
+                     * `?denied=1` ⇒ 从 `Referer` 读出来并**扣留 credential_manage**（保留 403 形态可演）。
+                     */
+                    const denied =
+                        process.env.XIHE_UI_MOCK_DENIED === "1" ||
+                        isDeniedPreviewMode(req.headers.referer);
+                    options.log?.(
+                        `[mock-api] /me/permissions → ${denied ? "denied（扣留 credential_manage）" : "granted"}`,
+                    );
+                    return respond(
+                        200,
+                        mockPermissionProjection({
+                            capabilities: Object.keys(CAPABILITIES),
+                            denied,
+                        }),
+                    );
                 }
 
                 // task-149：运行期端点（dev-2 inventory §9 判为「已登记、缺口在 mock 层」）。
