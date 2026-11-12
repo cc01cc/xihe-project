@@ -228,13 +228,13 @@ public class AgentPrincipalSkillBindingService {
                 && row.getScopeId() != null
                 ? workspaces.findById(row.getScopeId()).map(w -> w.getName()).orElse(null)
                 : null;
-        // The literal "personal" is the CONTRACT's word for "not a workspace-private definition"
-        // (openapi.yaml AgentPrincipalSkillBindingView.sourceType enum [workspace, personal]); it
-        // means "the instance library" here and must NOT be read as the new type=user personal
-        // layer (V156) — a user row never reaches this method because bind() refuses it above.
-        // Renaming the enum member would be a contract change, so it is left as-is and flagged.
+        // 2026-11-12 (task-234): the value is `instance` for "not a workspace-private definition",
+        // i.e. the shared instance library — same word as the contract enum
+        // (openapi.yaml AgentPrincipalSkillBindingView.sourceType enum [workspace, instance]). The old
+        // literal `personal` meant exactly this and was renamed because the V156 type=user personal
+        // layer made it ambiguous. A user row never reaches this method: bind() refuses it above (I-6).
         return new AgentSkillBindingView(row.getId(), row.getSubjectId(), skill.getId(), skill.getName(),
-                skill.getDescription(), workspaceDefinition ? "workspace" : "personal", sourceName,
+                skill.getDescription(), workspaceDefinition ? "workspace" : "instance", sourceName,
                 row.getScopeType(), row.getScopeId(), scopeName,
                 skill.getBodyTokensEst(), row.getCreatedByUserId(), row.getCreatedAt());
     }

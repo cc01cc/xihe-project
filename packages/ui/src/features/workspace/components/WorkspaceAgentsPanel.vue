@@ -2181,7 +2181,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                             t(
                                                 binding.sourceType === "workspace"
                                                     ? "workspace.agentSkillSourceWorkspace"
-                                                    : "workspace.agentSkillSourcePersonal",
+                                                    : "workspace.agentSkillSourceInstance",
                                             )
                                         }}</span
                                     >

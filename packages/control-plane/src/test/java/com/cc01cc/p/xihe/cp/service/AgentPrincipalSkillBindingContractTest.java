@@ -152,7 +152,9 @@ class AgentPrincipalSkillBindingContractTest extends AbstractReusableIntegration
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
         assertEquals("skill-a", body.get("name"));
-        assertEquals("personal", body.get("sourceType"));
+        // 2026-11-12 (task-234): the value is the instance library; the old literal `personal` was
+        // renamed to `instance` (openapi AgentPrincipalSkillBindingView x-breaking-note).
+        assertEquals("instance", body.get("sourceType"));
         assertEquals("instance", body.get("scopeType"));
         assertEquals(null, body.get("scopeId"));
         assertEquals(null, body.get("scopeName"));

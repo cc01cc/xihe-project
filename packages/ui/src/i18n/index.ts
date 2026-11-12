@@ -518,7 +518,7 @@ const messages = {
             agentRoleGrantedBy: "创建者：{id}",
             agentSkillTokens: "约 {tokens} tokens",
             agentSkillSourceWorkspace: "工作区技能",
-            agentSkillSourcePersonal: "个人技能",
+            agentSkillSourceInstance: "实例技能",
             agentSkillScopeInstance: "实例级",
             agentSkillScopeWorkspace: "工作区级",
             agentRoleSelectPlaceholder: "选择要绑定的角色",
@@ -1560,6 +1560,113 @@ const messages = {
                 body: "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个按 workspace 分区的代理端点，因此没有可管理的“库”。",
                 writeEntryGone:
                     "工作区知识库的写入入口已随设置页收敛一起撤下（原「工作区设置 → 知识库」tab）；恢复要等 G3 落地后挂到本资源页。",
+            },
+            /**
+             * task-228：资源**详情单页**（`/resources/<id>/:pk?layer=<LAYER>`）。
+             * 文案只描述**已接线的读面**与四种状态；不出现「暂不支持」这种会把"没有读面"说成
+             * "将来会有"的措辞（未接线就是未接线）。
+             */
+            detail: {
+                backToList: "返回列表",
+                loading: "正在读取资源详情…",
+                link: "详情",
+                linkAria: "{name} 的详情",
+                boolean: { true: "是", false: "否" },
+                notFound: {
+                    title: "找不到这条资源",
+                    body: "该层没有这条记录（可能已删除，或地址里的 pk 拼错）。返回列表可以确认当前层有哪些资源。",
+                },
+                unwired: {
+                    title: "这一层没有详情面",
+                    body: "本页只显示已接线的读面；上面这条说明是当前「资源 + 层」的真实状态，不是加载失败。",
+                    reasons: {
+                        skillsUser:
+                            "个人技能库后端未实现（pendingBackend）：本层只表达形态，没有可读的详情数据。",
+                        noWorkspace:
+                            "该层的资源按工作区归属：当前页签没有工作区上下文，读面无法确定取哪一个工作区。",
+                        knowledgeGap:
+                            "知识库没有实体（G3：CP 无表、无 CRUD），只有按工作区分区的代理端点，因此没有可深链的详情面。",
+                        layerMissing:
+                            "该资源没有这一层（层解析应已回落到默认层）—— 出现这句说明状态自相矛盾，请报告。",
+                    },
+                },
+                error: {
+                    title: "读取详情失败",
+                    body: "读面请求失败。下面给出 CP 健康检查结果，用来区分「后端不健康」与「这一条读不到」。",
+                    retry: "重试",
+                },
+                health: {
+                    ok: "CP 健康检查：{status}",
+                    unreachable: "CP 健康检查：不可达",
+                },
+                sections: {
+                    references: "引用",
+                    events: "审计事件",
+                    roles: "角色绑定",
+                    skills: "技能绑定",
+                    attachments: "附件",
+                    body: "正文",
+                    mcpConfig: "配置",
+                },
+                empty: {
+                    references: "这条凭据目前没有引用",
+                    events: "没有审计事件",
+                    roles: "没有角色绑定",
+                    skills: "没有技能绑定",
+                    attachments: "没有附件",
+                },
+                notes: {
+                    instanceCredential:
+                        "实例层凭据没有引用/审计读面，本页不显示这两个区块（这不等于「没有引用」）。",
+                    partialRead: "部分区块读取失败：只显示读取成功的区块，失败的不渲染。",
+                    workspaceSkillBody:
+                        "工作区层没有单条正文读面（单条定义读面只服务实例层定义），因此本页不显示正文。",
+                    needWorkspaceForBindings:
+                        "角色/技能绑定按工作区归属：当前页签没有工作区上下文，因此本页不显示这两个区块。",
+                },
+                fields: {
+                    label: "名称",
+                    kind: "类型",
+                    deliveryTier: "交付方式",
+                    status: "状态",
+                    owner: "归属",
+                    fingerprint: "指纹",
+                    revision: "修订号",
+                    references: "引用数",
+                    createdAt: "创建时间",
+                    replacedAt: "替换时间",
+                    name: "名称",
+                    description: "描述",
+                    scope: "作用域",
+                    workspace: "工作区",
+                    skillId: "技能 ID",
+                    version: "版本",
+                    trusted: "受信",
+                    oversize: "超大",
+                    bodyTokens: "正文字符估算",
+                    sourcePath: "来源路径",
+                    contentHash: "内容哈希",
+                    updatedAt: "更新时间",
+                    template: "模板",
+                    principalId: "主体 ID",
+                    modelProvider: "模型提供方",
+                    modelName: "模型名",
+                    defaultModel: "默认模型",
+                    allowedModels: "可用模型数",
+                    bound: "已绑定",
+                    disabled: "已禁用",
+                    hooks: "Hook 订阅",
+                    contextPolicy: "上下文策略",
+                    transport: "传输",
+                    url: "地址",
+                    enabled: "已启用",
+                    credentialId: "凭据 ID",
+                    state: "运行状态",
+                    attempt: "尝试次数",
+                    lastError: "最近错误",
+                    since: "状态起始时间",
+                    epoch: "世代",
+                },
             },
         },
         settings: {
@@ -3620,7 +3727,7 @@ const messages = {
             agentRoleGrantedBy: "Granted by: {id}",
             agentSkillTokens: "~{tokens} tokens",
             agentSkillSourceWorkspace: "Workspace skill",
-            agentSkillSourcePersonal: "Personal skill",
+            agentSkillSourceInstance: "Instance skill",
             agentSkillScopeInstance: "Instance scope",
             agentSkillScopeWorkspace: "Workspace scope",
             agentRoleSelectPlaceholder: "Select a role to bind",
@@ -4719,6 +4826,114 @@ const messages = {
                 body: "The control plane has no knowledge-base entity (no table, no CRUD) - only 4 proxy endpoints partitioned by workspace, so there is no library to manage.",
                 writeEntryGone:
                     "The workspace knowledge-base write entry was removed with the settings-tab consolidation (old Workspace Settings → Knowledge base tab); it returns here once G3 lands.",
+            },
+            /**
+             * task-228: the resource **detail page** (`/resources/<id>/:pk?layer=<LAYER>`).
+             * Copy only describes wired read faces and the four states; it never turns
+             * "no read face" into "coming soon".
+             */
+            detail: {
+                backToList: "Back to the list",
+                loading: "Loading resource detail…",
+                link: "Details",
+                linkAria: "Details for {name}",
+                boolean: { true: "Yes", false: "No" },
+                notFound: {
+                    title: "Resource not found",
+                    body: "This layer has no such record (it may be deleted, or the pk in the address is mistyped). Go back to the list to see what this layer really has.",
+                },
+                unwired: {
+                    title: "This layer has no detail surface",
+                    body: "This page only shows wired read faces; the line above describes the real state of this resource + layer, not a load failure.",
+                    reasons: {
+                        skillsUser:
+                            "The personal skill library has no backend yet (pendingBackend): this layer shows the shape only, with no detail data to read.",
+                        noWorkspace:
+                            "This layer is scoped to a workspace and the current tab has no workspace context, so the read face cannot pick one.",
+                        knowledgeGap:
+                            "Knowledge bases have no entity (G3: no CP table, no CRUD) - only proxy endpoints partitioned by workspace, so there is no detail surface to deep-link to.",
+                        layerMissing:
+                            "This resource does not have this layer (layer resolution should have fallen back to the default); seeing this line means the state contradicts itself - please report it.",
+                    },
+                },
+                error: {
+                    title: "Could not load the detail",
+                    body: "The read face failed. The CP health probe below tells apart a degraded backend and a single unreadable record.",
+                    retry: "Retry",
+                },
+                health: {
+                    ok: "CP health: {status}",
+                    unreachable: "CP health: unreachable",
+                },
+                sections: {
+                    references: "References",
+                    events: "Audit events",
+                    roles: "Role bindings",
+                    skills: "Skill bindings",
+                    attachments: "Attachments",
+                    body: "Body",
+                    mcpConfig: "Configuration",
+                },
+                empty: {
+                    references: "This credential has no references",
+                    events: "No audit events",
+                    roles: "No role bindings",
+                    skills: "No skill bindings",
+                    attachments: "No attachments",
+                },
+                notes: {
+                    instanceCredential:
+                        "Instance-layer credentials have no references/audit read face, so this page shows neither block (that is not the same as “no references”).",
+                    partialRead:
+                        "Some blocks could not be read: only the successful ones render, the failed ones are omitted.",
+                    workspaceSkillBody:
+                        "The workspace layer has no per-skill body read face (single-definition reads only serve instance definitions), so this page shows no body.",
+                    needWorkspaceForBindings:
+                        "Role and skill bindings are workspace-scoped and the current tab has no workspace context, so this page shows neither block.",
+                },
+                fields: {
+                    label: "Label",
+                    kind: "Kind",
+                    deliveryTier: "Delivery",
+                    status: "Status",
+                    owner: "Owner",
+                    fingerprint: "Fingerprint",
+                    revision: "Revision",
+                    references: "References",
+                    createdAt: "Created",
+                    replacedAt: "Replaced",
+                    name: "Name",
+                    description: "Description",
+                    scope: "Scope",
+                    workspace: "Workspace",
+                    skillId: "Skill ID",
+                    version: "Version",
+                    trusted: "Trusted",
+                    oversize: "Oversize",
+                    bodyTokens: "Body size estimate",
+                    sourcePath: "Source path",
+                    contentHash: "Content hash",
+                    updatedAt: "Updated",
+                    template: "Template",
+                    principalId: "Principal ID",
+                    modelProvider: "Model provider",
+                    modelName: "Model name",
+                    defaultModel: "Default model",
+                    allowedModels: "Allowed models",
+                    bound: "Bound",
+                    disabled: "Disabled",
+                    hooks: "Hooks",
+                    contextPolicy: "Context policy",
+                    transport: "Transport",
+                    url: "URL",
+                    enabled: "Enabled",
+                    credentialId: "Credential ID",
+                    state: "Runtime state",
+                    attempt: "Attempts",
+                    lastError: "Last error",
+                    since: "State since",
+                    epoch: "Epoch",
+                },
             },
         },
         settings: {

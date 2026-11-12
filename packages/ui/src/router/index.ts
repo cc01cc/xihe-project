@@ -8,6 +8,11 @@ import {
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
 import { defaultLayerPath, defaultResourcePath, RESOURCE_DEFS } from "../lib/settingsIa";
+import {
+    normalizeResourceLayerQuery,
+    resourceDetailRouteName,
+    resourceDetailRoutePath,
+} from "./resourceDetailRoutes";
 import { LAYER_DOMAINS } from "../stores/config";
 
 /**
@@ -215,12 +220,42 @@ const router = createRouter({
                     component: RESOURCE_VIEWS[def.id],
                     meta: { resourceId: def.id },
                 })),
+                /**
+                 * 资源详情单页（task-228）：`/resources/<id>/:pk`，`pk` 在**资源 + 层**内唯一。
+                 *
+                 * <p>为什么按资源展开成 4 条而不是一条通用 `:resourceId` 路由：`ResourcesLayout`
+                 * 只从**静态** `meta.resourceId` 求资源（层 tab / 面包屑 / 左栏高亮全靠它），
+                 * 一条参数化路由会让布局在 meta 缺失时掉回默认资源（`credentials`），
+                 * 于是 `/resources/skills/x` 的层 tab 会画成凭据的 —— 静态展开则 typecheck 可查漏项。</p>
+                 */
+                ...RESOURCE_DEFS.filter((def) => (def.gaps ?? []).length === 0).map((def) => ({
+                    path: resourceDetailRoutePath(def.id),
+                    name: resourceDetailRouteName(def.id),
+                    component: () => import("../views/resources/ResourceDetailView.vue"),
+                    meta: { resourceId: def.id },
+                    beforeEnter: normalizeResourceLayerQuery(def.id),
+                })),
                 {
                     // 缺口资源（G3）的可读落点：不伪装成可管理页面，只解释缺口并给出口。
                     path: "knowledge",
                     name: "resources-knowledge",
                     component: () => import("../views/resources/KnowledgeResourceView.vue"),
                     meta: { resourceId: "knowledge" },
+                },
+                {
+                    /**
+                     * 知识库**没有实体、没有列表行、没有详情**（G3：CP 无表、无 CRUD）。
+                     *
+                     * <p>仍注册一条详情落点而不是让它掉进 404：深链 `/resources/knowledge/<任意>` 要
+                     * 给出**明确的"没有详情面"解释**（诚实态），而不是"这条路由不存在"的误导 ——
+                     * 用户点到的明明是资源区里真实存在的资源。`beforeEnter` 与其它详情一致，
+                     * 把 `?layer=` 规范化（knowledge 无层 ⇒ 恒回落 `WORKSPACE`）。</p>
+                     */
+                    path: resourceDetailRoutePath("knowledge"),
+                    name: resourceDetailRouteName("knowledge"),
+                    component: () => import("../views/resources/ResourceDetailView.vue"),
+                    meta: { resourceId: "knowledge" },
+                    beforeEnter: normalizeResourceLayerQuery("knowledge"),
                 },
                 {
                     // 资源模块的 404（`/resources/<不存在>`）：不写 meta.resourceId，避免布局拿不到

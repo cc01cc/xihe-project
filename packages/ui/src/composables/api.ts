@@ -632,7 +632,13 @@ export interface AgentSkillBinding {
     skillId: string;
     name: string;
     description?: string | null;
-    /** Definition home (workspace-private vs instance library), independent of the binding scope. */
+    /**
+     * Definition home, independent of the binding scope: `workspace` = a workspace-private
+     * definition, `instance` = the instance library. It is NEVER the V156 user/personal layer
+     * (A2/D-1019) — this face refuses a user-scope definition with 404 SKILL_NOT_FOUND, so `user`
+     * can never appear here. The old literal `personal` meant "instance library" and was renamed
+     * to `instance` (2026-11-12, openapi x-breaking-note) because it collided with that new layer.
+     */
     sourceType?: string | null;
     sourceName?: string | null;
     /** PLAN-0680: binding activation scope, server-derived from the workspace context. */

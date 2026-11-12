@@ -5,6 +5,7 @@ import { AlertCircle, LoaderCircle } from "@lucide/vue";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { api, type AgentSkillSummary } from "../../composables/api";
+import ResourceDetailLink from "./ResourceDetailLink.vue";
 import { logger } from "../../lib/logger";
 
 /**
@@ -168,6 +169,13 @@ watch(
                     <Badge variant="secondary" class="text-[11px] font-normal">
                         {{ scopeLabel(skill) }}
                     </Badge>
+                    <!-- task-228：行尾详情入口（纯增量链接；本面板恒为本工作区层）。 -->
+                    <ResourceDetailLink
+                        resource-id="skills"
+                        layer="WORKSPACE"
+                        :pk="skill.skillId"
+                        :name="skill.name"
+                    />
                 </div>
                 <p class="mt-1 font-mono text-[11px] break-all text-muted-foreground">
                     {{ skill.skillId }}

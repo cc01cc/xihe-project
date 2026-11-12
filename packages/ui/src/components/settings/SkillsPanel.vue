@@ -9,6 +9,7 @@ import { useAuthStore } from "../../stores/auth";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import ResourceDetailLink from "../resources/ResourceDetailLink.vue";
 import SkillsImportDialog from "./SkillsImportDialog.vue";
 
 /**
@@ -213,6 +214,13 @@ onMounted(() => {
                     >
                         {{ t("settings.skills.badgeTrusted") }}
                     </Badge>
+                    <!-- task-228：行尾详情入口（纯增量链接；本面板恒为实例层）。 -->
+                    <ResourceDetailLink
+                        resource-id="skills"
+                        layer="INSTANCE"
+                        :pk="skill.skillId"
+                        :name="skill.name"
+                    />
                 </div>
 
                 <p

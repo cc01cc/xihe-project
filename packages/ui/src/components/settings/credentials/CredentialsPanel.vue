@@ -12,6 +12,7 @@ import CredentialDetailDialog from "./CredentialDetailDialog.vue";
 import CredentialLinkDialog from "./CredentialLinkDialog.vue";
 import CredentialReplaceDialog from "./CredentialReplaceDialog.vue";
 import CredentialRevealDialog from "./CredentialRevealDialog.vue";
+import ResourceDetailLink from "../../resources/ResourceDetailLink.vue";
 import { useAuthStore } from "../../../stores/auth";
 import { useCredentialsStore } from "../../../stores/credentials";
 import type { CredentialOwnerType, CredentialSummary } from "../../../types";
@@ -39,6 +40,12 @@ const { t } = useI18n(),
  * 落在「新建」这个动作上：没被授予就换成 403 说明，而不是给一个点了必然 403 的按钮。
  */
 const canManage = computed(() => auth.hasInstanceAtom("credential_manage"));
+
+/**
+ * task-228：详情链接要落在**本面板正在渲染的那一层**（`ownerType` 不传 = 服务端默认的用户层）。
+ * 层不在这里二次判定 —— `ResourceDetailLink` 只负责把 (资源, 层, pk) 拼成 URL。
+ */
+const detailLayer = computed(() => props.ownerType ?? "USER");
 
 /** 只在面板被限定到某一层时，把「这里管的是哪种归属」说清楚（避免和另一层的列表混淆）。 */
 const scopeNote = computed(() =>
@@ -265,6 +272,13 @@ onMounted(async () => {
                     >
                         {{ t("credentials.linkAction") }}
                     </Button>
+                    <!-- task-228：行尾的详情入口（纯增量链接，不改行内容与既有 testid）。 -->
+                    <ResourceDetailLink
+                        resource-id="credentials"
+                        :layer="detailLayer"
+                        :pk="credential.id"
+                        :name="credential.label"
+                    />
                 </li>
             </ul>
         </section>

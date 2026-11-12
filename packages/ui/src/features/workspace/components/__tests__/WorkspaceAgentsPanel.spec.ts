@@ -1381,7 +1381,7 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
                 bindingId: "skill-binding-instance",
                 skillId: "skill-instance",
                 name: "instance-review",
-                sourceType: "personal",
+                sourceType: "instance",
                 sourceName: null,
                 scopeType: "instance",
                 scopeId: null,
@@ -1518,6 +1518,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         expect(wrapper.get('[data-testid="agent-skill-source-skill-binding-1"]').text()).toBe(
             i18n.global.t("workspace.agentSkillSourceWorkspace"),
         );
+        // 2026-11-12（task-234）：实例库定义的来源 chip 曾经显示成「个人技能」（同名异义），
+        // 值域改 workspace|instance 后必须显示「实例技能」——这条断言就是防"契约改了、UI 没改"。
+        expect(
+            wrapper.get('[data-testid="agent-skill-source-skill-binding-instance"]').text(),
+        ).toBe(i18n.global.t("workspace.agentSkillSourceInstance"));
         // PLAN-0680 M2: binding scope is a separate axis from the definition source.
         expect(
             wrapper
