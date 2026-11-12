@@ -75,7 +75,7 @@ pnpm run build
 
 - `ComboboxContent position="popper"` 的触发器必须由 `ComboboxAnchor` 包裹，否则内容可能定位到视口外且没有报错。
 - `CollapsibleTrigger` 已自带切换行为，不得再绑定一次 click，否则会双重翻转。
-- `AlertDialogAction` 点击后无条件关闭；校验失败需要保持对话框时用普通 destructive `Button` 并显式控制关闭。
+- `AlertDialogAction` 点击后**无条件关闭**（它是 reka-ui `DialogClose` 的包装）；需要"校验失败保窗"或"确认后要执行副作用"时都别用它，改用普通 destructive `Button` + 显式控制关闭顺序。**机制（顺序不能记反）**：点击 → 关闭先同步触发 `@update:open` → 我们把"待确认 payload"清空 → 我们自己的 click handler 才跑、读到 `null` ⇒ 表现为"**点了确认但一个请求都没发**"（`task-312` 实测）。**症状**：确认框文案断言**全过**、请求计数 **0**（`expected "vi.fn()" to be called 1 times, but got 0 times`）—— 这条红最容易被误判成"mock 没接上"，于是有人去改 mock、越改越远；**排查方向**：先在 click handler 里打印它收到的 payload，是 `null` 就是本陷阱。实测改法见 `src/components/settings/PersonalSkillCreateDialog.vue`（先取 payload → 再关 → 再提交）。
 - MenuItem 的程序化选择不由 jsdom 覆盖；交互行为用 Playwright 验证。
 
 ## UI 预览（mock）工作流（2026-11-03 用户裁定）

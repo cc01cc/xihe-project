@@ -133,6 +133,8 @@ status: active
 
 > **断言陷阱（2026-11-10 实测）｜Vue 布尔属性写成 `:attr="cond"`**：Vue 给元素设属性走两条路——属性名是 DOM 属性（`key in el`）走 `patchDOMProp`，布尔值被正确强制；否则走 `patchAttr`，而 `patchAttr` 的布尔判定用的是**七项小名单** `isSpecialBooleanAttr`（`itemscope,allowfullscreen,formnovalidate,ismap,nomodule,novalidate,readonly`，`@vue/shared` 3.5.44），**不是** `isBooleanAttr`。不在名单里的布尔属性拿到 `false` 会被渲染成 `attr="false"`，而 HTML 对布尔属性**只看存在性** ⇒ 控件被永久禁用，且看起来「已经设成 false 了」。**本仓库 jsdom 实测**：`inert: false` ⇒ `inert="false"`（属性仍在，task-122 就红在 `expected 'false' to be undefined`）；`disabled` / `hidden` / `readonly` / `required` / `multiple: false` ⇒ 属性被正确移除（它们是 DOM 属性，走另一条路）。**判据（可执行）**：① 一律写 `:attr="cond || undefined"`（或 `cond ? '' : undefined`），不要赌某个属性在当前环境有没有 DOM 实现；② 单测必须断言**假态下属性不存在**——`expect(el.hasAttribute("inert")).toBe(false)`；只写 `toHaveAttribute` 抓不到 `attr="false"`（属性确实在，断言会过）；③ 遇到新 HTML 属性（`inert` / `popover` / `commandfor` / `anchor` 这类）先按①写，别照抄浏览器当前行为——「有没有 DOM 属性」随浏览器与 jsdom 版本变化。
 
+> **交互陷阱（2026-11-12 实测）｜`AlertDialogAction` 自动关闭先清空"待确认"状态**：`AlertDialogAction` 是 reka-ui `DialogClose` 的包装，点下即**无条件关闭**；关闭会**同步先触发 `@update:open`**，如果"确认后要提交的 payload"存在 ref 里，它会被这个 `@update:open` 处理器清空 ⇒ **我们自己的 click handler 跑的时候读到 `null`，于是点了确认、一个请求都没发**（`task-312` 实测）。**怎么认出它**：确认框的**文案断言全过**（框确实开了、字也对），唯独请求计数是 **0** —— 红字是 `expected "vi.fn()" to be called 1 times, but got 0 times`。**这类红最容易被误判成"mock 没接上"**：屏幕上一点异常都看不出来，于是有人去改 mock，mock 越改越像真的、问题却还在。**排查方向**：先在 click handler 里打印它收到的 payload —— 是 `null` 就是本陷阱。**改法**：不要让 `AlertDialogAction` 承担"确认后必须执行副作用"的动作，改用普通 `Button` 并显式控制关闭顺序（先取 payload → 再关 → 再提交），实测处 `components/settings/PersonalSkillCreateDialog.vue`。
+
 ---
 
 ## 10. 注意力预算（2026-11-03 用户裁定，配色判定标准）
