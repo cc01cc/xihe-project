@@ -80,6 +80,15 @@ import static org.mockito.Mockito.verify;
  * class runs on the migrated V45 chain the Spring context boots.
  */
 class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
+    /** task-70：命名线程工厂 —— 死锁/超时现场能认出是哪个用例的哪处提交（替代 `pool-N-thread-M`）。 */
+    private static java.util.concurrent.ThreadFactory namedFactory(final String purpose) {
+        final java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, purpose + "-" + seq.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
@@ -475,7 +484,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     void parentDeleteWinsAgainstChildTerminalBarrier() throws Exception {
         SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newSingleThreadExecutor();
+        ExecutorService executor = Executors.newSingleThreadExecutor(namedFactory("ti-atomicity"));
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
@@ -509,7 +518,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     void terminalWinsAgainstParentDeleteBarrierAndDeleteClearsTheCommittedInbox() throws Exception {
         SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2, namedFactory("ti-atomicity"));
         Future<Void> deletion = null;
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
@@ -574,7 +583,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     void cancelClaimWinsAgainstChildTerminalBarrier() throws Exception {
         SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2, namedFactory("ti-atomicity"));
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
@@ -618,7 +627,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     void terminalWinsAgainstCancelClaimBarrier() throws Exception {
         SpawnFixture fixture = createSpawnFixture(true);
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2, namedFactory("ti-atomicity"));
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
@@ -672,7 +681,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 spawnAuthorizationBody("child instruction"), null, null);
 
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newSingleThreadExecutor();
+        ExecutorService executor = Executors.newSingleThreadExecutor(namedFactory("ti-atomicity"));
         ChatSubmissionService.SpawnResult spawned = null;
         try {
             Future<ChatRunTerminalService.TerminalResult> terminal = executor.submit(() -> {
@@ -734,7 +743,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
                 .committed());
 
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newSingleThreadExecutor();
+        ExecutorService executor = Executors.newSingleThreadExecutor(namedFactory("ti-atomicity"));
         try {
             Future<ChatSubmissionService.SpawnResult> spawn = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);
@@ -777,7 +786,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
         SpawnFixture second = attachChild(parent, spawnItem(parent), "sibling-b");
 
         CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2, namedFactory("ti-atomicity"));
         try {
             Future<ChatRunTerminalService.TerminalResult> firstTerminal = executor.submit(() -> {
                 start.await(5, TimeUnit.SECONDS);

@@ -218,7 +218,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         int runsBefore = runCount();
 
         CyclicBarrier barrier = new CyclicBarrier(2);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2, namedFactory("spawn-cancel"));
         Future<SpawnAttempt> spawnFuture = executor.submit(() -> {
             barrier.await(10, TimeUnit.SECONDS);
             try {
@@ -290,7 +290,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         int runsBefore = runCount();
         CountDownLatch sessionLocked = new CountDownLatch(1);
         CountDownLatch releaseDelete = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(3);
+        ExecutorService executor = Executors.newFixedThreadPool(3, namedFactory("spawn-cancel"));
         TransactionTemplate transactions = new TransactionTemplate(transactionManager);
 
         Future<?> deleteFuture = executor.submit(() -> transactions.execute(status -> {
@@ -347,7 +347,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
 
     @Test
     void spawnAndCancelClaimsThatWinBeforeDeleteRemainSerialized() throws Exception {
-        ExecutorService executor = Executors.newSingleThreadExecutor();
+        ExecutorService executor = Executors.newSingleThreadExecutor(namedFactory("spawn-cancel"));
         TransactionTemplate transactions = new TransactionTemplate(transactionManager);
         try {
             ParentFixture spawnParent = fixture("spawn_agent", "{\"prompt\":\"spawn wins delete\"}");
@@ -427,7 +427,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         String previousAgentUrl = (String) ReflectionTestUtils.getField(cancellationService, "agentUrl");
         CountDownLatch sessionLocked = new CountDownLatch(1);
         CountDownLatch releaseLock = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2, namedFactory("spawn-cancel"));
         TransactionTemplate transactions = new TransactionTemplate(transactionManager);
         Future<?> lockHolder = null;
         boolean serverStarted = false;
@@ -686,4 +686,14 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 Integer.class, workspaceId);
     }
 
+
+    /** task-70：命名线程工厂 —— 死锁/超时现场能认出是哪个用例的哪处提交（替代 `pool-N-thread-M`）。 */
+    private static java.util.concurrent.ThreadFactory namedFactory(final String purpose) {
+        final java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, purpose + "-" + seq.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
 }

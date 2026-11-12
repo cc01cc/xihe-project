@@ -179,7 +179,7 @@ class OAuthBrokerIntegrationTest {
         credential();
         provider.blockFirstRefresh = true;
 
-        ExecutorService pool = Executors.newFixedThreadPool(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2, namedFactory("oauth-broker"));
         try {
             Future<OAuthCredentialService.AccessGrant> refresh = pool.submit(this::token);
             assertTrue(provider.firstRefreshStarted.await(5, TimeUnit.SECONDS));
@@ -206,7 +206,7 @@ class OAuthBrokerIntegrationTest {
             credential.setStatus("REVOKED");
             credential.setRefreshTokenCiphertext("revoked");
         });
-        ExecutorService pool = Executors.newSingleThreadExecutor();
+        ExecutorService pool = Executors.newSingleThreadExecutor(namedFactory("oauth-broker"));
         try {
             Future<OAuthBrokerException> refresh = pool.submit(() -> assertThrows(
                     OAuthBrokerException.class, this::token));
@@ -429,7 +429,7 @@ class OAuthBrokerIntegrationTest {
     }
 
     private static final class LockHolder implements AutoCloseable {
-        private final ExecutorService executor = Executors.newSingleThreadExecutor();
+        private final ExecutorService executor = Executors.newSingleThreadExecutor(namedFactory("oauth-broker"));
         private final CountDownLatch held = new CountDownLatch(1);
         private final CountDownLatch release = new CountDownLatch(1);
         private final Future<?> future;
@@ -471,7 +471,7 @@ class OAuthBrokerIntegrationTest {
      */
     private final class ProviderStub implements AutoCloseable {
         private final HttpServer server;
-        private final ExecutorService pool = Executors.newFixedThreadPool(4);
+        private final ExecutorService pool = Executors.newFixedThreadPool(4, namedFactory("oauth-broker"));
         private final AtomicInteger tokenRequests = new AtomicInteger();
         private final AtomicInteger refreshRequests = new AtomicInteger();
         private final AtomicInteger metadataRequests = new AtomicInteger();
@@ -574,5 +574,15 @@ class OAuthBrokerIntegrationTest {
             }
             return null;
         }
+    }
+
+    /** task-70：命名线程工厂 —— 死锁/超时现场能认出是哪个用例的哪处提交（替代 `pool-N-thread-M`）。 */
+    private static java.util.concurrent.ThreadFactory namedFactory(final String purpose) {
+        final java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, purpose + "-" + seq.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 }
