@@ -49,7 +49,6 @@ const VIEWPORT_HEIGHT = 640;
  */
 const DEFAULT_FLIP_BAND = 640;
 const FLIP_BAND = Number(process.env.XH_BL602_E1_BAND ?? DEFAULT_FLIP_BAND) || DEFAULT_FLIP_BAND;
-const OVERSCAN = 6;
 const FRAMES = 300;
 const PREPENDS = 5;
 const PAGE_SIZE = 50;
