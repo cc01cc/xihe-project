@@ -86,6 +86,18 @@ export const useAuthStore = defineStore("auth", () => {
      * missing/failed projection is fail-closed (no atom ⇒ no permission surface).
      */
     const ATOM_MANAGE_ROLES = "MANAGE_ROLES";
+    /**
+     * N2 `READ_INSTANCE_CONTENT`（`tool/ToolFaceRegistry.java:75`）：CP 用它守**实例内容读面** ——
+     * `config/ConfigController.java:89-90`（`canReadInstanceContent()`）+ `:207-220`（`GET /config/{domain}`
+     * 的非白名单域）+ `:319`（`/config/{domain}/meta?layer=instance`）；`service/AgentTemplateService.java:252-255`
+     * 用它决定能否读 instance 层智能体模板。**这是动作原子，不是能力位** —— 两者互不蕴含。
+     */
+    const ATOM_READ_INSTANCE_CONTENT = "READ_INSTANCE_CONTENT";
+    /**
+     * N3 `MANAGE_WORKSPACE_POLICY`（`tool/ToolFaceRegistry.java:91`）：`policy/PolicyController.java:166-168`
+     * 的 `isAdmin()` **就是它**（不是 `cap:instance:admin`）⇒ 工具面读写面的对端判据是动作原子。
+     */
+    const ATOM_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
     const selfPermissions = ref<SelfPermissionsView | null>(null);
     let selfPermissionsRequest: Promise<boolean> | null = null;
     /** Instance-scope atom names; workspace-scope atoms live under `workspaces[].permissions` and
@@ -106,6 +118,19 @@ export const useAuthStore = defineStore("auth", () => {
         return instanceAtoms.value.has(actionClass);
     }
     const canManageRoles = computed(() => hasInstanceAtom(ATOM_MANAGE_ROLES));
+
+    /**
+     * 实例**内容**读面（配置域 + 智能体模板）：镜像 `ConfigController.java:89-90` 与
+     * `AgentTemplateService.java:252-255` 的同一个原子。**不要换成 `isAdmin`** —— 能力位与这个原子
+     * 互不蕴含（`auth/CapabilityProjectionService.java:80`），换了就变成新的不同轴。
+     */
+    const canReadInstanceContent = computed(() => hasInstanceAtom(ATOM_READ_INSTANCE_CONTENT));
+
+    /**
+     * 工具面（`/policy/tool-faces`）读写判据：镜像 `policy/PolicyController.java:166-168` 的 `isAdmin()`，
+     * 那里查的是 `MANAGE_WORKSPACE_POLICY` 原子。**`cap:instance:admin` 不是它的对端**。
+     */
+    const canManageWorkspacePolicy = computed(() => hasInstanceAtom(ATOM_MANAGE_WORKSPACE_POLICY));
 
     /**
      * PLAN-0752 V15：设置区「实例层可见 / 可写」判据必须与 CP 同源。CP 的 `ConfigController`
@@ -554,6 +579,8 @@ export const useAuthStore = defineStore("auth", () => {
         selfPermissions,
         hasInstanceAtom,
         canManageRoles,
+        canReadInstanceContent,
+        canManageWorkspacePolicy,
         ensureSelfPermissions,
         canWorkspaceAdmin,
         canClassifyTools,
