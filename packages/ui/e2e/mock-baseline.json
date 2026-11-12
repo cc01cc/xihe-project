@@ -3,7 +3,7 @@
     "generatedAt": "2026-11-12",
     "sourceWindow": "task-257（2026-11-12 全量重跑；非验证窗口编号）",
     "sourceRun": "task-257：XIHE_UI_PORT=5377 `mise run test:mock`（expected 328 / skipped 20 / failed 0 / flaky 0，203 084 ms）。**源日志未入库、以下为摘录**：Playwright JSON 报告 `packages/ui/e2e/.mock-report.json` 被 A03 `.gitignore:4` 排除。",
-    "skipSourceLog": "同上一次跑（源日志未入库，仅用于 skip 名单交叉核对）：12 条新登记 skip 全部来自基线源窗口（W-23 / 2026-09-09）之后新增的 spec：`knowledge-base.spec.ts`（`f743b1b1a` 2026-11-12）、`measure-sse-connects.spec.ts`（`0962fde96` 2026-11-11）、`pl0756-dockview.spec.ts`（`908c37c58` 2026-11-10）。",
+    "skipSourceLog": "同上一次跑（源日志未入库，仅用于 skip 名单交叉核对）：12 条新登记 skip 都是基线源窗口（W-23 / 2026-09-09）之后**新增的 skip**，分两类 —— ① **7 条来自新增 spec 自带的 skip**：`measure-sse-connects.spec.ts` ×3（`aea2e7300` 2026-11-11 入库即带 `test.skip(`）、`pl0756-dockview.spec.ts` ×4（`908c37c58` 2026-11-10 加 `test.describe.skip`）；② **5 条来自旧 spec 当天新加 `test.fixme`**（均由 `f743b1b1a` 2026-11-12 12:43 这一处改动引入）：`knowledge-base.spec.ts` ×4（整组 `test.describe.fixme` 覆盖，文件自 `dba74a2d6` 2026-07-01）+ `full-ui-acceptance.spec.ts:447` ×1（用例体自 `bcc46e956` 2026-09-07）。",
     "counts": {
         "expected": 328,
         "skipped": 20,
