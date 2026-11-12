@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { useConfigStore } from "../../stores/config";
+import { safeRedirect } from "../../router/safeRedirect";
 import { Sun } from "@lucide/vue";
 
 const { t } = useI18n(),
@@ -31,7 +32,9 @@ async function enterWorkspace() {
     config.loadAllDomains({ isAdmin: auth.isAdmin }).catch(() => {
         // 后端不可用时使用本地持久化配置；错误已在 store 中记录
     });
-    const redirect = (route.query.redirect as string) || "/workspace";
+    // task-224 档 4：`?redirect=` 是外来输入（可能被手工改、也可能是登出链遗留的嵌套串），
+    // 一律过 `safeRedirect`：入口页/已嵌套/站外/超长都回落到 /workspace。
+    const redirect = safeRedirect(route.query.redirect);
     try {
         const failure = await router.push(redirect);
         if (failure) {

@@ -2,7 +2,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginView from "../LoginView.vue";
 
-const { authMock, pushMock, configMock } = vi.hoisted(() => ({
+const { authMock, pushMock, configMock, routeMock } = vi.hoisted(() => ({
     authMock: {
         login: vi.fn<(email: string, password: string) => Promise<boolean>>(),
         error: null as string | null,
@@ -11,13 +11,14 @@ const { authMock, pushMock, configMock } = vi.hoisted(() => ({
     },
     pushMock: vi.fn<(location: unknown) => Promise<unknown>>(),
     configMock: { loadAllDomains: vi.fn<() => Promise<void>>(() => Promise.resolve()) },
+    routeMock: { query: {} as Record<string, unknown> },
 }));
 
 vi.mock("../../../stores/auth", () => ({ useAuthStore: () => authMock }));
 vi.mock("../../../stores/config", () => ({ useConfigStore: () => configMock }));
 vi.mock("vue-router", () => ({
     useRouter: () => ({ push: pushMock }),
-    useRoute: () => ({ query: {} }),
+    useRoute: () => routeMock,
 }));
 vi.mock("vue-i18n", () => ({
     useI18n: () => ({
@@ -51,6 +52,7 @@ beforeEach(() => {
     authMock.isAdmin = false;
     pushMock.mockReset();
     configMock.loadAllDomains.mockClear();
+    routeMock.query = {};
 });
 
 describe("LoginView submission lock", () => {
@@ -85,6 +87,32 @@ describe("LoginView submission lock", () => {
 
         expect(wrapper.text()).toContain("login.navigationFailed");
         expect(wrapper.find('button[type="submit"]').attributes("disabled")).toBeUndefined();
+    });
+
+    it("uses the sanitized redirect target after a successful login (task-224)", async () => {
+        authMock.login.mockResolvedValue(true);
+        pushMock.mockResolvedValue(undefined);
+        // 正常站内路径原样消费
+        routeMock.query = { redirect: "/workspace/ws-1/sessions?s=abc" };
+        const wrapper = mountView();
+
+        await fillAndSubmit(wrapper);
+        await flushPromises();
+
+        expect(pushMock).toHaveBeenCalledWith("/workspace/ws-1/sessions?s=abc");
+    });
+
+    it("falls back to /workspace for a nested or entry redirect (task-224)", async () => {
+        authMock.login.mockResolvedValue(true);
+        pushMock.mockResolvedValue(undefined);
+        routeMock.query = { redirect: "/login?redirect=/workspace" };
+        const wrapper = mountView();
+
+        await fillAndSubmit(wrapper);
+        await flushPromises();
+
+        // 嵌套/自引用串一律不认：登录成功后不该再被送回登录页
+        expect(pushMock).toHaveBeenCalledWith("/workspace");
     });
 
     it("shows the localized retry copy for a 429", async () => {

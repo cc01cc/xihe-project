@@ -2466,8 +2466,17 @@ export function registerForceLogout(fn: ForceLogoutFn): void {
  * hard-navigated — so a token expiring during an SSE stream forgot to reset the in-memory auth refs,
  * kept the permission projection, skipped the cross-tab `broadcastLogout`, and dropped the
  * `redirect` the SPA route adds. Same event, two different end states.
+ *
+ * task-224 档 2（根因）：本函数同时是**单飞幂等**的入口。BL-422 收口的只是"谁来实现"，
+ * 没有说"一批 401 要调几次"——并发 12 个请求同时 401 时，旧实现会清 12 次键、播 12 次
+ * `broadcastLogout`、跳 12 次 `/login`，而每次跳转都把当时的 `location`（已经是
+ * `/login?redirect=…`）套进新的 `redirect` ⇒ 与档 1 同源的自增链。判据用**会话材料**而不是
+ * 时间窗：只要 token / refresh / user 三个键都不在了，就说明这次登出已经发生过（或本来就没
+ * 登录），后续调用是 no-op；重新登录会写回这些键，下一次真正过期照样能触发登出。
  */
 export function forceLogout(): void {
+    // 无会话材料 = 已经登出（或从未登录）：再跳一次只会把登录页 URL 再套一层。
+    if (!hasSessionMaterial()) return;
     localStorage.removeItem("xihe-token");
     localStorage.removeItem("xihe-refresh-token");
     localStorage.removeItem("xihe-user");
@@ -2480,6 +2489,18 @@ export function forceLogout(): void {
     // hard-navigation semantics so the session is still visibly terminated.
     if (!["/login", "/register"].includes(window.location.pathname))
         window.location.href = "/login";
+}
+
+/**
+ * task-224：登出幂等的输入。三个键任一还在就当作"这次登出仍有事可做"——
+ * 只认 token 不够：刷新 token 或缓存的 user 单独残留时，内存态的权限投影同样需要复位。
+ */
+function hasSessionMaterial(): boolean {
+    return (
+        localStorage.getItem("xihe-token") !== null ||
+        localStorage.getItem("xihe-refresh-token") !== null ||
+        localStorage.getItem("xihe-user") !== null
+    );
 }
 
 async function checkedFetch(path: string, options?: RequestInit): Promise<Response> {

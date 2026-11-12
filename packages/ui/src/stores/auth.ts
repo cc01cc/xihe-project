@@ -27,6 +27,7 @@ import { useCheckpointStore } from "./checkpoint";
 import { EMPTY_USER_CAPABILITIES, type User, type UserCapabilities } from "../types";
 // PLAN-0546: SPA-route logout. router/index.ts does not import stores, so this is acyclic.
 import router from "../router";
+import { safeRedirect } from "../router/safeRedirect";
 
 export const useAuthStore = defineStore("auth", () => {
     // Authentication is the only state worth caching. Server is the canonical
@@ -518,9 +519,13 @@ export const useAuthStore = defineStore("auth", () => {
     });
     registerForceLogout(() => {
         logout();
+        // task-224 档 1（止血）：回跳目标一律过 `safeRedirect`。改前这里原样塞
+        // `window.location.pathname + window.search`，而登出后浏览器已经停在
+        // `/login?redirect=…` 上 ⇒ 下一次登出把上一次的登录页 URL 再套一层，
+        // 并发 401 就会累积成 `/login?redirect=/login?redirect=…` 的自增链。
         router.push({
             name: "login",
-            query: { redirect: window.location.pathname + window.location.search },
+            query: { redirect: safeRedirect(window.location.pathname + window.location.search) },
         });
     });
     // BL-181: 409 WORKSPACE_CONTEXT_REQUIRED is a recoverable state (authenticated, no workspace

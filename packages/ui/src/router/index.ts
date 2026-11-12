@@ -6,6 +6,7 @@ import {
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
+import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
 import { defaultLayerPath, defaultResourcePath, RESOURCE_DEFS } from "../lib/settingsIa";
 import { LAYER_DOMAINS } from "../stores/config";
 
@@ -287,9 +288,16 @@ router.beforeEach(async (to) => {
         }
         return { name: "login", query: { redirect: to.fullPath } };
     } else if (
-        (to.name === "login" || to.name === "register" || to.name === "onboarding") &&
-        token
+        isEntryRouteName(to.name) &&
+        shouldBounceEntryToWorkspace(Boolean(token), localStorage.getItem("xihe-user") !== null)
     ) {
+        // task-224 档 3（守卫语义，**行为变更**）：旧判据是"localStorage 里有 token 就弹走"，
+        // 于是半个会话（token 残留、user 已没了，或 token 早已过期但没被校验）也会被当成
+        // 已登录弹进 /workspace —— 那正是"12 个并发 401"的起点。新判据要求**会话材料齐备**
+        // （token + 缓存 user 都在）才让路；不齐备就停在入口页，用户看见的是登录表单而不是
+        // 一次进站即被踢出的闪烁。
+        // 影响面（显式记录）：完整会话下"已登录误访问 /login"的体验**不变**（照旧弹 /workspace）；
+        // 变的是残 token 场景 —— 现在停在登录页。登录成功仍由 `LoginView` 消费 `?redirect=`。
         return { path: "/workspace" };
     }
 
