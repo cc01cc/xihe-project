@@ -48,6 +48,9 @@ test.describe("PLAN-0773 M0-4 reka-ui tree virtualization", () => {
             };
         };
 
+        // 读数写进 stdout：证据包要抄具体数，不能只写「跑绿了」。
+        console.log("[m0-4] readings=" + JSON.stringify(data));
+
         // 对照组：1000 行全挂（否则「虚拟化减少了行数」这个对比没有意义）
         expect(data.plain.total).toBe(1000);
         expect(data.plain.rendered).toBe(1000);
@@ -60,6 +63,6 @@ test.describe("PLAN-0773 M0-4 reka-ui tree virtualization", () => {
         // 证据：截图落 one/.tmp（gitignored），证据包只引用命令与读数，不入库二进制。
         await page
             .locator("#tree-capabilities")
-            .screenshot({ path: "../../.tmp/xh/m0-4/virtualization.png" });
+            .screenshot({ path: "../../../.tmp/xh/m0-4/virtualization.png" });
     });
 });

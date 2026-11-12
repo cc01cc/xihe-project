@@ -36,38 +36,88 @@ interface Readings {
     total: number;
     rendered: number;
     engaged: boolean;
+    attempts: number;
+    /** 三个候选选择器各数到多少 —— 让「用哪个选择器」有读数，不靠我猜 */
+    counted: { role: number; slot: number; row: number };
     scrollHeight?: number;
     viewportHeight?: number;
 }
 
-const plain = reactive<Readings>({ total: N, rendered: 0, engaged: false });
-const virtual = reactive<Readings>({ total: N, rendered: 0, engaged: false });
+const plain = reactive<Readings>({
+    total: N,
+    rendered: 0,
+    engaged: false,
+    attempts: 0,
+    counted: { role: 0, slot: 0, row: 0 },
+});
+const virtual = reactive<Readings>({
+    total: N,
+    rendered: 0,
+    engaged: false,
+    attempts: 0,
+    counted: { role: 0, slot: 0, row: 0 },
+});
 const plainEl = ref<HTMLElement | null>(null);
-const virtualEl = ref<HTMLElement | null>(null);
+/** 虚拟化的**滚动容器必须是 `Tree` 自己的根 div** —— reka 的 `TreeVirtualizer` 用 `useParentElement()`
+ * 取「直接父元素」当 scrollElement；父元素若是外层包裹 div，它就没有 `overflow`/高度约束 ⇒
+ * 视口 = 全高 ⇒ tanstack 认为全部可见 ⇒ 1000 行全挂（实测正是如此）。故 ref 绑在 `<Tree>` 上。*/
+const virtualEl = ref<{ $el?: unknown } | null>(null);
 
+function resolveEl(target: unknown): HTMLElement | null {
+    if (!target) return null;
+    if (target instanceof HTMLElement) return target;
+    const el = (target as { $el?: unknown }).$el;
+    return el instanceof HTMLElement ? el : null;
+}
+
+/**
+ * 计数选择器为什么是 `role="treeitem"`：本仓 `TreeItem.vue` 是 `defineOptions({ inheritAttrs: false })`
+ * 的 vendor 包装，**不绑定 `$attrs`** ⇒ 我们写的 `data-tree-row` 会被**静默丢弃**；第一次跑实测
+ * `scrollHeight=24188`（行确实在）而 `[data-tree-row]` 计数 **0** —— 选择器错，不是虚拟化错。
+ * ⇒ 用 reka-ui 自己渲染的 `role="treeitem"`，并把三个候选各自数到的值一起记进读数，
+ *   由**对照组**（`plain.rendered` 必须 = 1000）反过来验证选择器选对了。
+ */
 function measure(root: HTMLElement | null, box: Readings) {
     if (!root) return;
-    const rendered = root.querySelectorAll("[data-tree-row]").length;
-    box.rendered = rendered;
-    box.engaged = rendered < box.total;
+    const counted = {
+        role: root.querySelectorAll('[role="treeitem"]').length,
+        slot: root.querySelectorAll('[data-slot="tree-item"]').length,
+        row: root.querySelectorAll("[data-tree-row]").length,
+    };
+    box.counted = counted;
+    box.rendered = counted.role;
+    // 0 行**不算** engaged：`0 < 1000` 曾让「计数选择器错了」看起来像「虚拟化生效」——假绿。
+    box.engaged = counted.role > 0 && counted.role < box.total;
     box.scrollHeight = root.scrollHeight;
     box.viewportHeight = root.clientHeight;
 }
 
+/** 虚拟化在布局完成后才算窗口；连测几帧直到数到行为止（不是固定 sleep）。 */
+async function measureUntilPainted(root: HTMLElement | null, box: Readings) {
+    for (let attempt = 1; attempt <= 40; attempt++) {
+        box.attempts = attempt;
+        await nextTick();
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        measure(root, box);
+        if (box.rendered > 0) return;
+    }
+}
+
 onMounted(async () => {
-    await nextTick();
-    // 等一帧再量：虚拟化在布局完成后才算窗口。
-    requestAnimationFrame(() => {
-        measure(plainEl.value, plain);
-        measure(virtualEl.value, virtual);
-    });
+    await measureUntilPainted(resolveEl(plainEl.value), plain);
+    await measureUntilPainted(resolveEl(virtualEl.value), virtual);
 });
 
 const summary = computed(() => ({ plain, virtual }));
 </script>
 
 <template>
-    <SectionShell id="tree-capabilities" index="10" label="reka-ui 树能力（M0-4）">
+    <SectionShell
+        id="tree-capabilities"
+        index="10"
+        title="reka-ui 树能力（M0-4）"
+        description="四条能力在真浏览器里各给一个读数：1000 节点渲染、搜索过滤、懒加载、虚拟化。"
+    >
         <div class="space-y-4">
             <p class="max-w-4xl text-sm leading-relaxed text-muted-foreground">
                 <strong>前提事实</strong>：`src/components/ui/tree/` 这组 vendor 件在本卡之前
@@ -85,7 +135,6 @@ const summary = computed(() => ({ plain, virtual }));
                                 :key="item.key"
                                 :value="item"
                                 :level="1"
-                                data-tree-row
                             >
                                 <span class="font-mono text-xs">{{ item.label }}</span>
                             </TreeItem>
@@ -101,19 +150,17 @@ const summary = computed(() => ({ plain, virtual }));
                     <div class="mb-2 text-xs font-semibold">
                         虚拟化：<code class="font-mono">TreeVirtualizer</code>
                     </div>
-                    <div
-                        ref="virtualEl"
-                        class="relative h-[320px] overflow-auto"
-                        data-testid="m0-4-virtual"
-                    >
-                        <Tree :items="items" :get-key="getKey" :expanded="expanded">
+                    <div data-testid="m0-4-virtual">
+                        <!-- 滚动容器 = `Tree` 根 div：reka 用 `useParentElement()` 取直接父元素当 scrollElement -->
+                        <Tree
+                            ref="virtualEl"
+                            class="relative h-[320px] overflow-auto"
+                            :items="items"
+                            :get-key="getKey"
+                            :expanded="expanded"
+                        >
                             <TreeVirtualizer :estimate-size="28" v-slot="{ item }">
-                                <TreeItem
-                                    v-bind="item.bind"
-                                    :key="item._id"
-                                    class="w-full"
-                                    data-tree-row
-                                >
+                                <TreeItem v-bind="item.bind" :key="item._id" class="block w-full">
                                     <span class="font-mono text-xs">{{ item.value.label }}</span>
                                 </TreeItem>
                             </TreeVirtualizer>
