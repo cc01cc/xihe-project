@@ -240,8 +240,10 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
         expect(bodyEl('[data-testid="credentials-create-button"]')).toBeNull();
         const denied = bodyEl<HTMLElement>('[data-testid="settings-atom-denied"]');
         expect(denied?.textContent).toContain("credential_manage");
-        // 列表仍然要发（无 atom），因此「无谓请求」的判据落在这里：只有列表请求，没有写请求
-        expect(mockedApi.listCredentials).toHaveBeenCalled();
+        // PLAN-0772 M2 / Lead 裁定 a：**先判权限再判错误** —— 没有 atom 时连列表请求都不发，
+        // 页面上也就不会同时出现「权限不足」卡片与「无法加载凭据列表」错误条（一件事说两遍）。
+        expect(mockedApi.listCredentials).not.toHaveBeenCalled();
+        expect(bodyEl('[data-testid="credentials-error"]')).toBeNull();
         expect(mockedApi.createCredential).not.toHaveBeenCalled();
     });
 

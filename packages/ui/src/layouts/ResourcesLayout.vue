@@ -71,6 +71,10 @@ const disabledReason = computed<Partial<Record<ResourceLayer, string>>>(() => {
     const out: Partial<Record<ResourceLayer, string>> = {};
     if (!resourceId.value) return out;
     for (const rule of resourceDef(resourceId.value).layerRules) {
+        // PLAN-0772 M2 / Lead 2026-11-12 裁定 c：**当前层**的不可用理由由页面正文承担（技能个人层/无工作区
+        // 上下文都各有自己的说明卡）—— 页头再列一遍就是同一句话说两遍。所以理由只给"非当前层"的 tab：
+        // 用户看到「这一层置灰」时立刻知道原因，进到那层后又只从正文读一次。
+        if (rule.layer === active.value) continue;
         if (rule.pendingBackend) {
             out[rule.layer] = t("resources.reasonPendingSkills");
             continue;

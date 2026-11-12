@@ -132,6 +132,14 @@ const SHOTS = [
     },
 ];
 
+/**
+ * `app: true` 的镜头拍的是**真路由真组件**，而真页面要求已登录（`auth` 只认 localStorage 的
+ * `xihe-token`）。不塞这个值，1920×1080 拍到的是 `/login` —— 2026-11-12 实测：08/09/10/11
+ * 四张的 sha 全是 `78967385176d93d7`（同一张登录页），这属于"四张图长得一模一样"的硬故障，
+ * 靠肉眼比对才发现。token 值必须是 mock 中间件认的那个（`/auth/me` 会回带 capabilities 的用户）。
+ */
+const MOCK_APP_TOKEN = "mock-token";
+
 const sha = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
 
 /** 工作树脏：默认拒绝出图（不是警告，是拦下）。 */
@@ -731,6 +739,15 @@ async function shootOne(page, base, shot, outDir) {
                 timeout: 20000,
             },
         );
+        // 守卫：`app` 镜头必须真的落在产品页上。没有 token 时 `#app` 也会挂载（登录表单），
+        // 这个探针就是让"拍到登录页"从"肉眼看出来"变成"开拍即失败"。
+        if (new URL(page.url()).pathname === "/login") {
+            throw new Error(
+                "[ui-mock-shot] " +
+                    shot.id +
+                    " 落在 /login：app 镜头缺 mock token（见 MOCK_APP_TOKEN 注释）",
+            );
+        }
         await page.evaluate(() => document.fonts.ready);
         if (shot.expand) {
             // 域面板默认折叠；审计图要看字段级内容 ⇒ 点开再拍（这也是 B 轻量版要证的一种交互）。
@@ -1064,6 +1081,10 @@ async function main() {
     const results = [];
     try {
         const context = await browser.newContext({ viewport: VIEWPORT });
+        // 每个新文档开拍前先种 mock token（`addInitScript` 对后续所有导航生效，只需挂一次）。
+        await context.addInitScript((token) => {
+            localStorage.setItem("xihe-token", token);
+        }, MOCK_APP_TOKEN);
         const page = await context.newPage();
         const consoleErrors = [];
         page.on("console", (message) => {

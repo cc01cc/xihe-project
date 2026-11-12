@@ -193,6 +193,18 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
             page.locator('[data-testid="workspace-skill-item-skill-x-instance-leak"]'),
         ).toHaveCount(0);
     });
+    test("技能：个人层的说明只出现在正文一处（页头不再重复同一句）", async ({ page }) => {
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        await page.goto("/resources/skills?layer=USER");
+        const card = page.getByTestId("resources-skills-user-pending");
+        await expect(card).toBeVisible();
+        await expect(card).toContainText("本层后端尚未实现");
+        // Lead 裁定 c：**当前层**的理由由正文承担 ⇒ 页头那条行内理由列表不该再出现（否则一句话两遍）。
+        await expect(page.getByTestId("resource-layer-disabled-reasons")).toHaveCount(0);
+        // 反向护栏：别的非当前层置灰时，页头理由仍然要在（不是把理由功能整体关掉）。
+        await page.goto("/resources/skills?layer=INSTANCE");
+        await expect(page.getByTestId("resource-layer-disabled-reasons")).toContainText("我的技能");
+    });
     test("旧资源路径直接删除（无 redirect）：渲染 404，URL 不跳走", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         const legacy = [

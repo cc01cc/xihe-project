@@ -80,6 +80,7 @@ function refreshAfterChange() {
  * 用户看不出刷新到底有没有发生。
  */
 async function refresh() {
+    if (!canManage.value) return;
     reloading.value = true;
     try {
         await store.load(props.ownerType);
@@ -105,6 +106,10 @@ function ownerLabel(credential: CredentialSummary): string {
 
 onMounted(async () => {
     await auth.ensureSelfPermissions();
+    // PLAN-0772 M2 / Lead 2026-11-12 裁定 a：**先判权限再判错误**。没有 `credential_manage` 时不再发
+    // 列表请求 —— 否则同一件事会出现两遍（「权限不足」403 卡片 + 「无法加载凭据列表」错误条），
+    // 用户会以为后端坏了（实测见 `.tmp/xh/shots-188/01-credentials-user.png`）。
+    if (!canManage.value) return;
     void store.load(props.ownerType);
 });
 </script>
@@ -163,7 +168,8 @@ onMounted(async () => {
         <!-- task-189（P1-1）：接 168 统一错误面 —— 本地化文案 + 重试出口，绝不渲染 ApiError.message 原文。
              外层保留 credentials-error 作为本页定位点（SettingsErrorSurface 内部自带 settings-error-panel /
              settings-error-retry 两个 testid）。 -->
-        <div v-if="store.error" data-testid="credentials-error" class="mb-4">
+        <!-- 同上：权限不足时这条错误面**不出现**（防的是权限晚到 / ownerType 切换时 store 里留着旧错误）。 -->
+        <div v-if="store.error && canManage" data-testid="credentials-error" class="mb-4">
             <SettingsErrorSurface
                 :cause="store.error"
                 :message="t('credentials.loadFailed')"
