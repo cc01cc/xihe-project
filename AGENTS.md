@@ -84,7 +84,7 @@
   | `EXEMPT_DOCUMENTED`（extra 侧） | **另一服务**实现的路径（契约横跨全平台：runtime Rust 的 `/internal/v1/runtime/**`、agent Python 的 `/internal/v1/agent/**`），以及少数被设计保留的写法 | 每条注释写「哪个服务/哪种设计」，跨服务须点名该服务包 |
   | `KNOWN_GAPS`（missing 侧） | BL-320 的**存量缺口**，逐条冻结；自清洁（补进契约后须同步删除条目，测试会断言集合相等） | 每条注释写缺口归属与批次；**不得把新缺口塞进来** |
   | `PLANNED_APIS`（extra 侧） | **契约已登记但实现待建**的计划内路径（D-932）；与 `KNOWN_GAPS` 反向（前者=已建未登记，后者=登记未建）且生命周期相反（随契约变更同批加入、代码落地即删） | 每条注释写实现批次与预期窗口；**不得收纳「忘了实现」** |
-  实测（2026-11-11，`develop 5da8cc2dd`，`mvn test -Dtest=RouteContractParityTest`）：`implemented=219 documented=270`；missing `total=5 framework=5 frozen-gap=0 unexpected=0`；extra `total=56 cross-service/kept-by-design=56 unexpected=0`；`param-name-exempt=0`。两侧 `unexpected` 均为 0。
+  实测（**2026-11-13，`develop 542217e1d`，`mvn test -Dtest=RouteContractParityTest`，窗口 `VW-20261113-02`**）：`implemented=289 documented=347`；missing `total=5 framework=5 frozen-gap=0 unexpected=0`；extra `total=63 cross-service/kept-by-design=59 frozen-gap=0 planned=4 unexpected=0`；`param-name-exempt=0`。两侧 `unexpected` 均为 0。**旧读数留痕（已过期，勿引用）**：2026-11-11 `develop 5da8cc2dd` 时为 `implemented=219 documented=270`、extra `total=56`；两天内契约面涨到 **347** operations（`docs/api/inventory.generated.md` 自述行）⇒ 引用旧数会得出「缺口 77 条」的假结论。同形读数的入库证据（本窗输出与其逐字符相同）：`internal/A03-xihe/evidence/2026-11-12-parity-rerun/README.md`。
 
 
 - **env 变量登记（`XIHE_*`）见 `one/.agents/skills/xc-cross-cutting-checklist/SKILL.md` §env 变量登记**（check-mise-env 门的 SSOT；新增变量须同批登记）
