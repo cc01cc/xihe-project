@@ -183,6 +183,13 @@ mise run test:mock
 # read-only ledger (BL/PLAN) validation, run from the ONE workspace root; report-only (not part of `validate`)
 mise run ledger:validate
 
+# A03 private docs index gate, run from the ONE workspace root: top-level md registered / links exist /
+# §2 subdir counts match disk / S4 row-decidability / H6 (§1.0 ownership table = 8 rows × 5 cols with
+# executable criteria) / H7 (references to `status: deprecated` docs). Since 2026-11-12 this task runs
+# with `--strict-deprecated`, so H7 is BLOCKING (the single real hit — `dev-hot-loop.md` listed as a
+# trial feature — was fixed in the same commit, so the gate went green before it was armed).
+mise run check:docs-index
+
 # [FROZEN 2026-10-07 — do not run; use dev:host for daily development]
 mise run test:e2e:compose
 mise run validate:full

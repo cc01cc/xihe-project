@@ -132,6 +132,7 @@ sequenceDiagram
 | `mise run test:runtime:lib:gate` | BL-262 竞态复验门：串行 1 + 并行 3 连跑（里程碑/竞态修复后跑；**不进 `validate`**） |
 | `mise run test:runtime:lib:ignored:isolated` / `:functional` / `:mxc` | BL-262 ignored 套件三档（显式列名 + 实测超时；`:mxc` 的 4 条 MXC 边界用例需 `XIHE_MXC_EXECUTABLE`，缺 env 会按可执行消息失败；**不进 `validate`**） |
 | `mise run ledger:validate` | 只读校验台账（BL/PLAN 结构，在 ONE 工作区根运行）；**报告不阻断**，保留工具退出码 |
+| `mise run check:docs-index` | **A03 私有文档索引门**（`one/` 根运行）：顶层 md 是否全部登记 / 链接是否存在 / §2 子目录计数是否等于实测 / S4 行是否可判定 / **H6 §1.0 所有权表形态与措辞**（8 行 × 5 列、过期判据必须含命令或阈值）/ **H7 已废弃文档引用**。2026-11-12 起本任务带 `--strict-deprecated` ⇒ **H7 阻断**（同批已把 `dev-hot-loop.md` 那行从「试行」改标 `status: deprecated`，先绿再上闸）；**仍不接 `validate`** |
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
 | `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
