@@ -2001,6 +2001,39 @@ function normalizePolicyArray<T>(
     return payload.map(normalize);
 }
 
+/**
+ * task-44（多根可见性 C 项）：映射 wire 上的 `roots` 投影。
+ *
+ * <p>此前 `normalizeWorkspace` 逐个搬了 12 个字段却**没有搬 roots**，于是
+ * `authStore.workspace.roots` 恒 undefined ⇒ `stores/workspace.ts` 的 `isMultiRoot` 恒 false
+ * ⇒ 多根分组**在产品里不可能渲染**。数据面（V103/V104 + CP 投影 + mock 两根）早就齐了，
+ * 断点就在这一层，而既有用例直接写 `authState.workspace` 绕过了它，所以一直绿。</p>
+ *
+ * <p>口径：wire 缺该字段（老工作区/老 CP）⇒ `undefined`（**不是** `[]`，两者对
+ * `isMultiRoot` 等价，但 `undefined` 保留「CP 没给」与「CP 给了个空投影」的区别）；
+ * 元素 `id` 不是字符串则丢弃该条（无键的根无法寻址，留着只会渲染出点不动的组头）。
+ * `position` 缺失时按数组下标兜底 —— 只影响排序，不影响分组判定。</p>
+ */
+function normalizeWorkspaceRoots(value: unknown): ApiWorkspaceRoot[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return value.flatMap((entry, index) => {
+        const record = asRecord(entry);
+        if (!record || typeof record.id !== "string") return [];
+        return [
+            {
+                id: record.id,
+                alias: typeof record.alias === "string" ? record.alias : null,
+                position: typeof record.position === "number" ? record.position : index,
+                ...(typeof record.path === "string"
+                    ? { path: record.path }
+                    : record.path === null
+                      ? { path: null }
+                      : {}),
+            },
+        ];
+    });
+}
+
 function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
     const record = asRecord(value);
     if (!record || typeof record.id !== "string" || typeof record.name !== "string")
@@ -2027,6 +2060,8 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
                 : record.hostPath === null
                   ? null
                   : undefined,
+        // task-44：roots 必须同批映射（否则多根在 UI 上恒不可见）。
+        roots: normalizeWorkspaceRoots(record.roots),
         executionMode: isEnumValue(record.executionMode, [
             "docker",
             "windows-mxc",
