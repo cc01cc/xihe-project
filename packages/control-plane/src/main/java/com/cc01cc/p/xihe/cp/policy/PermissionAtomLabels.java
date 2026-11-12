@@ -114,6 +114,13 @@ public final class PermissionAtomLabels {
         // D-928 / PLAN-0766 (task-158/159): the shared workspace-default layer write face.
         put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
                 "管理工作区默认配置", "Manage workspace-default config");
+        // task-229 / PLAN-0773: the two workspace write faces. Wording keeps them apart from
+        // MANAGE_WORKSPACE_DEFAULT_CONFIG ("workspace-default" is the DEPLOYMENT default layer, these
+        // two are one workspace's own rows) — a role editor must not read them as the same privilege.
+        put(labels, ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT,
+                "写工作区配置", "Write workspace config");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP,
+                "管理工作区 MCP 配置", "Manage workspace MCP servers");
         return labels;
     }
 

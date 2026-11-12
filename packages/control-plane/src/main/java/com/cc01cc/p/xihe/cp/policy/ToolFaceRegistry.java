@@ -91,6 +91,29 @@ public class ToolFaceRegistry {
     public static final String ACTION_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
     /** D-928 / PLAN-0766: write access to the shared workspace-default config layer. */
     public static final String ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG = "MANAGE_WORKSPACE_DEFAULT_CONFIG";
+    /**
+     * task-229 / PLAN-0773 (H1): write access to <b>one workspace's</b> configuration row
+     * ({@code PUT /api/v1/config/workspace/{domain}}). The symmetric counterpart of
+     * {@code WRITE_INSTANCE_CONTENT} one tier down: that atom acts on the whole instance, this one
+     * acts on a workspace the caller reaches. Workspace-bindable on purpose (decision #27): the
+     * grant names the workspace it is about, and the endpoint's own {@code requireAccessibleWorkspace}
+     * still runs first, so a non-member keeps the 404 that hides the workspace.
+     *
+     * <p>Default-granted to the workspace write roles only ({@code WS_OWNER}, {@code WS_EDITOR}) —
+     * a read-only member of a workspace ({@code WS_VIEWER}) may not rewrite its config, which is the
+     * whole point of the gate. An instance administrator ({@code ADMIN}) holds it as well, the same
+     * way it already holds the other workspace-layer management atoms.</p>
+     */
+    public static final String ACTION_WRITE_WORKSPACE_CONTENT = "WRITE_WORKSPACE_CONTENT";
+    /**
+     * task-229 / PLAN-0773 (H2 + H3): write access to a workspace's MCP surface — both the legacy
+     * mixed {@code mcp-config} face and the newer {@code stdio-servers} face. Deliberately
+     * <b>one</b> atom for the two endpoints: they write the same underlying
+     * {@code mcp_server_catalog} rows, so two atoms would let a role hold "the new door" while being
+     * refused at "the legacy door" — a drift with no user-meaning. Same default set as
+     * {@link #ACTION_WRITE_WORKSPACE_CONTENT}: {@code WS_OWNER} / {@code WS_EDITOR} / {@code ADMIN}.
+     */
+    public static final String ACTION_MANAGE_WORKSPACE_MCP = "MANAGE_WORKSPACE_MCP";
     // PLAN-0691 T1.3 (M1): the plugin binding capability face. Four atoms, one per verb, named in
     // the UPPER_SNAKE style of every other action atom (the spec's `plugin:manage` spelling is the
     // external capability wording; see spec/authz-plugin-atoms.md). Naming rule is not cosmetic:
@@ -254,7 +277,13 @@ public class ToolFaceRegistry {
                 // V156 / D-1019: the personal skill library write atom. Same batch as its catalog
                 // entry, its label and its Flyway seed rows (V156 roles 1/2/3); the vocabulary is
                 // what GrantIntersectionEvaluator validates a grant against.
-                ACTION_MANAGE_PERSONAL_SKILLS);
+                ACTION_MANAGE_PERSONAL_SKILLS,
+                // task-229 / PLAN-0773 (V157): the two workspace write faces. Same batch as their
+                // catalog entries, labels and seed rows — measured the hard way: a catalog entry
+                // without its vocabulary line makes RoleGrantMaterializer throw
+                // "Unknown actionClass: MANAGE_WORKSPACE_MCP" the moment a seeded role is
+                // materialized, so this list is not decoration.
+                ACTION_WRITE_WORKSPACE_CONTENT, ACTION_MANAGE_WORKSPACE_MCP);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

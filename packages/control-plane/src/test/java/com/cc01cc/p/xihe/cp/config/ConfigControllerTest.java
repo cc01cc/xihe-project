@@ -9,12 +9,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -123,7 +125,14 @@ class ConfigControllerTest extends AbstractH2Test {
             url("/api/v1/config/user/logging"), HttpMethod.PUT,
             new HttpEntity<>(Map.of("logLevel", "DEBUG"), authHeaders(userToken())), Map.class);
 
-        assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+        // MEASURED (task-229): this expectation said 403 since 2026-09-11; the D-928 guard
+        // (`b2c568b79`, 2026-11-11, task-196: "gate non-writable domains BEFORE the template
+        // dispatch") made a non-writable domain answer 400 DOMAIN_NOT_WORKSPACE_WRITABLE at every
+        // layer. That commit did not touch this test, so the 403 was a pre-existing red unrelated
+        // to this card. The assertion now also pins WHICH answer it is: a status-only check would
+        // let a future guard silently change the verdict while staying "green".
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode(), String.valueOf(resp.getBody()));
+        assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"));
     }
 
     @Test
@@ -610,6 +619,159 @@ class ConfigControllerTest extends AbstractH2Test {
         } finally {
             swapEnvOverlay(original);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0773 / task-229: the three workspace write faces (H1/H2/H3)
+    // ------------------------------------------------------------------
+
+    /**
+     * The hole this card closes, in the shape that was actually reachable at HEAD {@code 8d725dadd}:
+     * a caller who is a <b>VIEWER of the target workspace</b> but whose resolved context workspace
+     * is one they may write (they own it). Two facts made the write go through before the atom gate:
+     * {@code WorkspaceWriteGuard} grades the <b>context</b> role (PLAN-0559), and the controllers
+     * only asked "is the caller a member of the target". The gate below is keyed on the
+     * <b>target</b> workspace, so it answers 403 FORBIDDEN where the coarse guard cannot.
+     */
+    @Test
+    void aViewerOfTheTargetCannotWriteItsMcpFaces() {
+        String ownerToken = userToken();
+        String targetWorkspaceId = workspaceIdFor(ownerToken);
+
+        String viewerToken = userToken();
+        String viewerId = jwtTokenProvider.getUserIdFromToken(viewerToken);
+        // The viewer owns a workspace of their own: that is the write-capable CONTEXT, and it is
+        // what makes the coarse guard pass without opening the target.
+        String contextWorkspaceId = workspaceIdFor(viewerToken);
+        workspaceFixture.bindWorkspaceRole(UUID.fromString(targetWorkspaceId),
+                UUID.fromString(viewerId), WorkspaceRole.VIEWER);
+
+        HttpHeaders headers = authHeaders(viewerToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Workspace-Id", contextWorkspaceId);
+
+        ResponseEntity<Map> stdio = restTemplate.exchange(
+                url("/api/v1/workspaces/" + targetWorkspaceId + "/stdio-servers"), HttpMethod.PUT,
+                new HttpEntity<>(stdioBody(), headers), Map.class);
+        evidence("viewer/stdio-servers", stdio);
+        assertEquals(HttpStatus.FORBIDDEN, stdio.getStatusCode(), String.valueOf(stdio.getBody()));
+        assertEquals("FORBIDDEN", stdio.getBody().get("code"),
+                "the refusal must come from the atom gate, not from the context-role guard: "
+                        + stdio.getBody());
+
+        ResponseEntity<Map> mcp = restTemplate.exchange(
+                url("/api/v1/workspaces/" + targetWorkspaceId + "/mcp-config"), HttpMethod.PUT,
+                new HttpEntity<>(mcpBody(), headers), Map.class);
+        evidence("viewer/mcp-config", mcp);
+        assertEquals(HttpStatus.FORBIDDEN, mcp.getStatusCode(), String.valueOf(mcp.getBody()));
+        assertEquals("FORBIDDEN", mcp.getBody().get("code"),
+                "the legacy door answers with the same code as the new one: " + mcp.getBody());
+    }
+
+    /** 404 first: a non-member must not learn whether the workspace exists (ordering red line). */
+    @Test
+    void aNonMemberKeepsTheNotFoundAnswerOnTheMcpFaces() {
+        String ownerToken = userToken();
+        String targetWorkspaceId = workspaceIdFor(ownerToken);
+        // Registration creates no workspace (PLAN-0614), so this account has no workspace context
+        // at all and the request reaches the controller's membership check.
+        String strangerToken = userToken();
+        HttpHeaders headers = authHeaders(strangerToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<Map> stdio = restTemplate.exchange(
+                url("/api/v1/workspaces/" + targetWorkspaceId + "/stdio-servers"), HttpMethod.PUT,
+                new HttpEntity<>(stdioBody(), headers), Map.class);
+        evidence("non-member/stdio-servers", stdio);
+        assertEquals(HttpStatus.NOT_FOUND, stdio.getStatusCode(), String.valueOf(stdio.getBody()));
+        assertEquals("WORKSPACE_NOT_FOUND", stdio.getBody().get("code"));
+
+        ResponseEntity<Map> mcp = restTemplate.exchange(
+                url("/api/v1/workspaces/" + targetWorkspaceId + "/mcp-config"), HttpMethod.PUT,
+                new HttpEntity<>(mcpBody(), headers), Map.class);
+        evidence("non-member/mcp-config", mcp);
+        assertEquals(HttpStatus.NOT_FOUND, mcp.getStatusCode(), String.valueOf(mcp.getBody()));
+        assertEquals("WORKSPACE_NOT_FOUND", mcp.getBody().get("code"));
+    }
+
+    /** The positive control for all THREE faces: WS_EDITOR carries the atoms, so writes stay 200. */
+    @Test
+    void aWorkspaceEditorWritesAllThreeFaces() {
+        String ownerToken = userToken();
+        String targetWorkspaceId = workspaceIdFor(ownerToken);
+        String editorToken = userToken();
+        String editorId = jwtTokenProvider.getUserIdFromToken(editorToken);
+        workspaceFixture.bindWorkspaceRole(UUID.fromString(targetWorkspaceId),
+                UUID.fromString(editorId), WorkspaceRole.EDITOR);
+
+        HttpHeaders headers = authHeaders(editorToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        // No X-Workspace-Id: the fallback resolves the editor's own membership, which IS the target
+        // workspace, so the coarse guard and the atom gate both see the same role.
+        ResponseEntity<Map> stdio = restTemplate.exchange(
+                url("/api/v1/workspaces/" + targetWorkspaceId + "/stdio-servers"), HttpMethod.PUT,
+                new HttpEntity<>(stdioBody(), headers), Map.class);
+        evidence("editor/stdio-servers", stdio);
+        assertEquals(HttpStatus.OK, stdio.getStatusCode(), String.valueOf(stdio.getBody()));
+
+        ResponseEntity<Map> mcp = restTemplate.exchange(
+                url("/api/v1/workspaces/" + targetWorkspaceId + "/mcp-config"), HttpMethod.PUT,
+                new HttpEntity<>(mcpBody(), headers), Map.class);
+        evidence("editor/mcp-config", mcp);
+        assertEquals(HttpStatus.OK, mcp.getStatusCode(), String.valueOf(mcp.getBody()));
+
+        ResponseEntity<Map> config = restTemplate.exchange(
+                url("/api/v1/config/workspace/llm-provider?workspaceId=" + targetWorkspaceId),
+                HttpMethod.PUT, new HttpEntity<>(Map.of("imageProvider", "editor-prov"), headers),
+                Map.class);
+        evidence("editor/config-workspace", config);
+        assertEquals(HttpStatus.OK, config.getStatusCode(), String.valueOf(config.getBody()));
+    }
+
+    /**
+     * H1's denial for a viewer is answered by the <b>coarse</b> guard before the atom gate can run:
+     * with {@code X-Workspace-Id} the context workspace IS the target, so {@code PLAN-0559}'s
+     * {@code WorkspaceWriteGuard} rejects the WRITE with WORKSPACE_READ_ONLY. Pinned here so the
+     * layering stays visible — the atom is defence in depth on this face, not the answering layer.
+     */
+    @Test
+    void theConfigWriteFaceKeepsTheCoarseReadOnlyDenialForAViewer() {
+        String ownerToken = userToken();
+        String targetWorkspaceId = workspaceIdFor(ownerToken);
+        String viewerToken = userToken();
+        String viewerId = jwtTokenProvider.getUserIdFromToken(viewerToken);
+        workspaceFixture.bindWorkspaceRole(UUID.fromString(targetWorkspaceId),
+                UUID.fromString(viewerId), WorkspaceRole.VIEWER);
+
+        HttpHeaders headers = authHeaders(viewerToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Workspace-Id", targetWorkspaceId);
+
+        ResponseEntity<Map> put = restTemplate.exchange(
+                url("/api/v1/config/workspace/llm-provider"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("imageProvider", "viewer-prov"), headers), Map.class);
+        evidence("viewer/config-workspace(coarse-guard)", put);
+        assertEquals(HttpStatus.FORBIDDEN, put.getStatusCode(), String.valueOf(put.getBody()));
+        assertEquals("WORKSPACE_READ_ONLY", put.getBody().get("code"),
+                "measured layer: the coarse guard answers first on this face: " + put.getBody());
+    }
+
+    /** Writes the measured status/code of one face to the test log (evidence without by-hand reruns). */
+    private static void evidence(String face, ResponseEntity<Map> response) {
+        org.slf4j.LoggerFactory.getLogger(ConfigControllerTest.class)
+                .info("[EVIDENCE] task229 face={} status={} code={}", face,
+                        response.getStatusCode().value(),
+                        response.getBody() == null ? null : response.getBody().get("code"));
+    }
+
+    private Map<String, Object> stdioBody() {
+        return Map.of("generation", 0,
+                "servers", Map.of("docs", Map.of("command", "npx", "args", List.of("docs-server"))));
+    }
+
+    private Map<String, Object> mcpBody() {
+        return Map.of("mcpServers",
+                Map.of("docs", Map.of("command", "npx", "args", List.of("docs-server"))));
     }
 
     private EnvOverlayRegistry swapEnvOverlay(EnvOverlayRegistry overlay) throws Exception {

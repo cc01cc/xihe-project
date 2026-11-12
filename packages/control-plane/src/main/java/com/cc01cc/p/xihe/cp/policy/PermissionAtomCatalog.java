@@ -199,7 +199,16 @@ public final class PermissionAtomCatalog {
             // V156 / D-1019 (task-221): the personal skill library write face. 34 + 1 = 35 action
             // atoms; the matching role seeds land in Flyway V156 (roles SUPER_ADMIN/ADMIN/USER,
             // USER because the atom is default-granted to every account — D-1019).
-            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS);
+            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
+            // task-229 / PLAN-0773 (H1/H2/H3): the two workspace write faces that used to answer to
+            // `isAuthenticated()` alone. 35 + 2 = 37 action atoms; the matching role seeds land in
+            // Flyway V157 (SUPER_ADMIN/ADMIN/WS_OWNER/WS_EDITOR — WS_VIEWER deliberately absent).
+            // Both stay scope class `both`, NOT instance-only: the grant names the workspace it is
+            // about, which is exactly the decision #27 test (a workspace-scoped grant is meaningful
+            // here). Neither is agent-forbidden: writing one workspace's configuration is a
+            // workspace act, and an agent principal bound inside that workspace may hold it.
+            ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -293,10 +302,10 @@ public final class PermissionAtomCatalog {
     }
 
     /**
-     * The action atoms, in canonical order (35: 33 after PLAN-0750 M1's restore, +1 for V153's
-     * workspace-default atom, +1 for V156's personal-skills atom). The count in this sentence is
-     * prose, not a gate — {@code P0ManagementAtomSeedMigrationTest} and {@code SkillReadFaceTest}
-     * pin the number.
+     * The action atoms, in canonical order (37: 33 after PLAN-0750 M1's restore, +1 for V153's
+     * workspace-default atom, +1 for V156's personal-skills atom, +2 for V157's workspace write
+     * faces). The count in this sentence is prose, not a gate — {@code P0ManagementAtomSeedMigrationTest}
+     * and {@code SkillReadFaceTest} pin the number.
      */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;

@@ -78,6 +78,10 @@ public class ConfigController {
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
     private static final Set<String> ADMIN_ONLY_READ_DOMAINS = Set.of("agent-runtime");
 
+    /** One detail string for both MCP write faces: they share an atom, so they must read alike. */
+    private static final String MCP_WRITE_FORBIDDEN_DETAIL =
+            "Workspace MCP configuration is not writable by this member";
+
     /**
      * PLAN-0651 M3 T3.6 (A1): the instance-layer read surface is the N2 atom,
      * {@code READ_INSTANCE_CONTENT}, evaluated at instance scope.
@@ -99,6 +103,22 @@ public class ConfigController {
         UUID subject = currentUserId();
         return subject != null && requesterAuthority.holdsActionAtom(subject, actionClass, null);
     }
+
+    /**
+     * PLAN-0773 / task-229: does the caller hold {@code actionClass} <b>for this workspace</b>?
+     *
+     * <p>Callers must run {@code workspaceService.requireAccessibleWorkspace(wsId, userId)} FIRST:
+     * a non-member has to keep the 404 that hides whether the workspace exists, so a 403 here may
+     * only be reached by a member whose role lacks the atom (WS_VIEWER). Reversing the two would
+     * turn "not found" into "not allowed" and leak existence — the one ordering rule of this gate.
+     */
+    private boolean holdsWorkspaceAtom(String actionClass, String wsId) {
+        UUID subject = currentUserId();
+        UUID workspaceId = parseUuid(wsId);
+        return subject != null && workspaceId != null
+                && requesterAuthority.holdsActionAtom(subject, actionClass, workspaceId);
+    }
+
 
     private String maskIfNotAdmin(String key, String value) {
         if (value == null || value.isEmpty() || canViewSecretContent()) {
@@ -449,6 +469,14 @@ public class ConfigController {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId.toString());
+        // PLAN-0773 / task-229 (H1): the workspace layer used to be writable by ANY member —
+        // isAuthenticated() plus "reaches the workspace" was the whole gate, so a read-only member
+        // could rewrite another member's configuration. The atom is checked AFTER the 404 above:
+        // non-members keep WORKSPACE_NOT_FOUND, members without the atom get 403.
+        if (!holdsWorkspaceAtom(ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT, wsId)) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "Workspace configuration is not writable by this member");
+        }
         return writeLayer("workspace", domain, body, "user", null, parseUuid(wsId));
     }
 
@@ -664,6 +692,13 @@ public class ConfigController {
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId);
 
+        // PLAN-0773 / task-229 (H3): stdio-servers writes are a member capability no more — the
+        // atom is MANAGE_WORKSPACE_MCP, shared with the legacy mcp-config door below so the same
+        // role cannot be allowed at one door and refused at the other.
+        if (!holdsWorkspaceAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP, wsId)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", MCP_WRITE_FORBIDDEN_DETAIL);
+        }
         Object rawServers = body == null ? null : body.get("servers");
         if (!(rawServers instanceof Map<?, ?> servers)) {
             return ProblemDetailsHandler.problemResponse(
@@ -790,6 +825,12 @@ public class ConfigController {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId);
+        // PLAN-0773 / task-229 (H2): the legacy mixed door writes the same catalog rows as the
+        // stdio-servers door, so it answers to the same atom and the same detail string.
+        if (!holdsWorkspaceAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP, wsId)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.FORBIDDEN, "FORBIDDEN", MCP_WRITE_FORBIDDEN_DETAIL);
+        }
         Object raw = body == null ? null : body.get("mcpServers");
         if (!(raw instanceof Map<?, ?> servers)) {
             return ProblemDetailsHandler.problemResponse(

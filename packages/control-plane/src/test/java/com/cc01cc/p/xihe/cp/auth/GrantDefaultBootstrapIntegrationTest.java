@@ -102,6 +102,12 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0750 M1 (G1): an ordinary account may create its own user-level principal, so the
         // registration default set carries the own-agent atom again (instance scope, agent-forbidden).
         atoms.add(OWN_AGENT_ATOM);
+        // V156 / D-1019 (task-221, 2026-11-12): every account owns a personal skill library, so its
+        // write atom joined the registration default set. MEASURED (task-229): this expectation was
+        // left at eight atoms when V156 landed, so this class had been red since `7b2d0322`
+        // (2026-11-12) — a pre-existing red, not something task-229 introduced (task-229 adds no
+        // atom to the USER default set).
+        atoms.add(ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS);
         return Set.copyOf(atoms);
     }
 
@@ -240,8 +246,8 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertTrue(userAtoms.containsAll(USER_ALLOW_ATOMS),
                 "the five allow classes are still materialized");
         assertEquals(USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
-                "one instance-tier row per USER atom (eight since PLAN-0750 M1 restored the"
-                        + " own-agent atom)");
+                "one instance-tier row per USER atom (nine: eight after PLAN-0750 M1 restored the"
+                        + " own-agent atom, plus V156 MANAGE_PERSONAL_SKILLS)");
         assertEquals(0, grantRepository.findBySubjectTypeAndSubjectId("agent", session.getId()).size(),
                 "Session creation no longer materializes a Session-subject Agent default (PLAN-0374 T2.7)");
         assertEquals("read", roleRows("user", user.getId()).get(0).getReadState());
@@ -267,7 +273,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
         assertEquals("read", agentDefault.getReadState());
         assertEquals(USER_DEFAULT_ATOMS.size(), agentDefault.getPermissions().size(),
                 "round-2 P1-1: the frozen Agent snapshot keeps the whole USER atom array in one row "
-                        + "(eight since PLAN-0750 M1, not five)");
+                        + "(nine since V156, not five)");
         assertEquals("instance", agentDefault.getScopeType());
         assertEquals(1L, grantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", session.getId(), GrantSources.AGENT_DEFAULT));
@@ -466,7 +472,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
                 "concurrent ensures keep exactly one frozen Agent snapshot");
         assertEquals((long) USER_DEFAULT_ATOMS.size(), roleRows("user", user.getId()).size(),
                 "concurrent ensures keep exactly one instance-tier row per atom (uq_grants_role_atom); "
-                        + "seven after BL-312 removed the former D8 atom");
+                        + "the count follows USER_DEFAULT_ATOMS so a new granted atom cannot slip past");
         assertTrue(roleAtoms("user", user.getId()).contains("MEMORY_WRITE_SELF"),
                 "the last appended atom is the BL-345 SELF atom, not a duplicated base atom");
         // The grants were wiped above, so the first ensure re-creates the instance set (one audit

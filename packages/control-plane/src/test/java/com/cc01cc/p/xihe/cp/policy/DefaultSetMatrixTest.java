@@ -110,7 +110,14 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // inherits the restored own-agent atom without a second literal.
             "CREATE_OWN_AGENT",
             // V156 / D-1019: the same derivation carries the personal-skill atom into ADMIN.
-            "MANAGE_PERSONAL_SKILLS");
+            "MANAGE_PERSONAL_SKILLS",
+            // task-229 / PLAN-0773 (V157): the two workspace write faces. They join the fixed
+            // instance-administrator set for the SAME reason the workspace-layer management atoms
+            // above are there (MANAGE_WORKSPACE_POLICY / RUNTIME / PROVIDER_CONNECTIONS): an
+            // instance administrator writes any workspace's configuration. Leaving them out would
+            // REMOVE that ability, not "tighten" anything — the per-endpoint gate is what turns a
+            // non-member into 404 and a read-only member into 403.
+            "WRITE_WORKSPACE_CONTENT", "MANAGE_WORKSPACE_MCP");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

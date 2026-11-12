@@ -177,7 +177,22 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)))),
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY),
+                                        // task-229 / PLAN-0773: the fixed instance-administrator set
+                                        // already carries the workspace-layer management atoms
+                                        // (MANAGE_WORKSPACE_POLICY / RUNTIME / PROVIDER_CONNECTIONS
+                                        // above), so ADMIN must hold the two new workspace write
+                                        // faces as well. Not doing it would not "protect" anyone —
+                                        // it would silently REMOVE the instance administrator's
+                                        // ability to write a workspace's configuration and MCP
+                                        // servers, a capability the same set grants for the sibling
+                                        // domains. Adding them keeps the family consistent; the
+                                        // non-member 404 and the VIEWER 403 are enforced by the
+                                        // endpoints, not by this set.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP)))),
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network + PLUGIN_INVOKE) plus the "
@@ -218,7 +233,15 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)))),
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY),
+                                        // task-229 / PLAN-0773: the owner may rewrite this
+                                        // workspace's configuration and MCP servers. Workspace
+                                        // scope, so the grant names the workspace it is about —
+                                        // the same shape as the atoms above.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP)))),
                 new RoleSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         "Workspace scope: read/write/delete/exec.",
                         List.of(
@@ -238,7 +261,14 @@ public class SystemAccessRoleCatalog {
                                 // the same BL-349 reason (see WS_OWNER).
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE),
                                 AtomRef.wildcard(
-                                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))),
+                                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY),
+                                // task-229 / PLAN-0773: an editor writes configuration, which is
+                                // the "write" half of the role's own name; WS_VIEWER stays without
+                                // both atoms ("read-only member cannot change the configuration").
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),

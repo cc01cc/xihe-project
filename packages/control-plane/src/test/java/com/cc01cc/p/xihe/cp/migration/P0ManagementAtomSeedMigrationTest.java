@@ -174,12 +174,16 @@ class P0ManagementAtomSeedMigrationTest {
         // PLAN-0750 M1 (G1, 2026-11-10) restored it with user-level semantics (32 → 33).
         // PLAN-0766 (task-158 / V153, 2026-11-11) added MANAGE_WORKSPACE_DEFAULT_CONFIG (33 → 34).
         // V156 (task-221, D-1019, 2026-11-12) added MANAGE_PERSONAL_SKILLS (34 → 35).
+        // task-229 / PLAN-0773 (V157, 2026-11-12) added WRITE_WORKSPACE_CONTENT and
+        // MANAGE_WORKSPACE_MCP (35 → 37) — the two workspace write faces that used to answer to
+        // isAuthenticated() alone.
         // Update together with SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
-        assertEquals(35, PermissionAtomCatalog.actionAtoms().size(),
+        assertEquals(37, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
                         + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
                         + " removal = 32, plus the PLAN-0750 M1 restore = 33, plus PLAN-0766"
-                        + " MANAGE_WORKSPACE_DEFAULT_CONFIG = 34, plus V156 MANAGE_PERSONAL_SKILLS = 35;"
+                        + " MANAGE_WORKSPACE_DEFAULT_CONFIG = 34, plus V156 MANAGE_PERSONAL_SKILLS = 35,"
+                        + " plus V157 WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37;"
                         + " the same arithmetic is frozen in"
                         + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());
