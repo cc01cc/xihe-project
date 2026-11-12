@@ -150,6 +150,7 @@
 @SpringBootTest	com/cc01cc/p/xihe/cp/policy/ToolFaceAdminAtomScopeIntegrationTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/AgentPrincipalScopeUpgradeBehaviorTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/SetWorkspaceCapGateIntegrationTest.java	suite-context
+@SpringBootTest	com/cc01cc/p/xihe/cp/service/WorkspaceAgentCapSourceIntegrationTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/WorkspaceServiceCustomPathTest.java	suite-context
 @SpringBootTest	com/cc01cc/p/xihe/cp/service/WorkspaceServiceTest.java	suite-context
 @TestConfiguration	com/cc01cc/p/xihe/cp/chat/ChatControllerTest.java	fixture-config
