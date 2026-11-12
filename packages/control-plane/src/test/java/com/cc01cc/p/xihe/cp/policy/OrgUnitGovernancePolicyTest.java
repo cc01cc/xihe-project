@@ -147,27 +147,25 @@ class OrgUnitGovernancePolicyTest {
     }
 
     /**
-     * Forward-compatibility: the three governance atoms do not exist in
-     * {@link PermissionAtomCatalog} yet ({@code M2-2} registers them). The moment they do, they
-     * must be instance-scoped — otherwise the whitelist itself would be handing out a
-     * workspace-bindable atom.
+     * The judgement is <b>independent of scope class</b> — that is why it survives the reversal
+     * from {@code D-1117} to {@code D-1118}: it asks "is this a governance role", never "does it
+     * carry a workspace-scoped atom".
      *
-     * <p><b>Today this assertion is vacuous</b> (no catalog hits) and that is stated here rather
-     * than left for a reader to discover: a passing test that cannot fail yet is not evidence, it
-     * is a tripwire armed for {@code M2-2}.</p>
+     * <p>The three atoms are not in {@link PermissionAtomCatalog} yet ({@code M2-2} registers
+     * them). <b>Their scope class is deliberately not asserted here</b>: which class a governance
+     * atom gets depends on how org-unit bindings hang off a scope, and
+     * {@code PermissionAtomCatalog.Atom.bindableIn} admits only {@code instance} or non-instance
+     * for the existing scope types — an unruled decision. Encoding it in an assertion would turn a
+     * pending ruling into a silent design decision (the first version of this test did exactly
+     * that and was removed). This test only pins the reading.</p>
      */
     @Test
-    void governanceAtomsAreInstanceScopedOnceCatalogued() {
-        int catalogHits = 0;
-        for (String atom : OrgUnitGovernancePolicy.governanceAtoms()) {
-            if (PermissionAtomCatalog.allAtomNames().contains(atom)) {
-                catalogHits++;
-                assertEquals(PermissionAtomCatalog.SCOPE_CLASS_INSTANCE,
-                        PermissionAtomCatalog.scopeClassOf(atom),
-                        atom + " is a governance atom and must stay instance-scoped");
-            }
-        }
-        assertTrue(catalogHits <= 3);
+    void governanceAtomsAreNotYetInTheCatalog() {
+        long catalogHits = OrgUnitGovernancePolicy.governanceAtoms().stream()
+                .filter(PermissionAtomCatalog.allAtomNames()::contains)
+                .count();
+        assertEquals(0L, catalogHits,
+                "M2-2 has landed the governance atoms; revisit this reading and drop the test");
     }
 
     /** The whitelist is exactly three atoms — the judgement has no hidden members. */
