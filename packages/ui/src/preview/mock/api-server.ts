@@ -212,6 +212,46 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 if (path === "/workspaces/current" && (req.method ?? "GET") === "GET") {
                     return respond(200, { workspace: MOCK_WORKSPACE });
                 }
+
+                /**
+                 * PLAN-0772 task-203/task-225：三条读面原先**在 mock 车道缺失** ⇒ 真页面（`/resources/agents`、
+                 * 工作台外壳）一进来就吃 404，页面上出现 `API error 404` 红条（交付图会被污染，2026-11-12 实测）。
+                 *
+                 * 口径：只补**读面最小合法响应**，形状对齐 openapi（`{sessions}` / `{principals}` /
+                 * `{layer, workspaceId, templates}`）；列表给**合法空集**而不是假行 —— mock 账号确实没有这些数据，
+                 * 给假行会把「空态」这条真实形态从预览里抹掉（V11「各层数据来自各自契约」的同一判据）。
+                 */
+                const methodIsGet = (req.method ?? "GET") === "GET";
+                if (path === "/sessions" && methodIsGet) {
+                    // `api.getSessions()`：顶层 `{sessions:[…]}`（也接受裸数组，这里按信封给）。
+                    return respond(200, { sessions: [] });
+                }
+                if (path === "/agent-principals" && methodIsGet) {
+                    // `api.listMyAgentPrincipals()`：`{principals:[…]}`；个人视图只回 `created_by=self`。
+                    return respond(200, { principals: [] });
+                }
+                /**
+                 * 第 4 条同类缺口（task-225 验收时实测发现，原卡面只列了 3 条）：`task-203` 新接的工作区层
+                 * 读面 `GET /workspaces/{workspaceId}/agents` 在 mock 车道也不存在 ⇒ `?layer=WORKSPACE` 页面
+                 * 仍会出 `API error 404` 红条（`WorkspaceAgentsPanel` 首屏拉绑定列表）。形状照 e2e 夹具注释里的
+                 * 真实 CP 记录：`{agents:[{principalId,name,templateId,templateName,createdAt,permissionsSnapshot,
+                 * bound,hooks,contextPolicy,disabled}]}`；这里给合法空集（mock 工作区没有已绑定智能体）。
+                 */
+                const workspaceAgentsMatch = path.match(/^\/workspaces\/([^/]+)\/agents$/);
+                if (workspaceAgentsMatch && methodIsGet) {
+                    return respond(200, { agents: [] });
+                }
+
+                if (path === "/agent-templates" && methodIsGet) {
+                    // `api.getAgentTemplates(layer, workspaceId)`：`AgentTemplateLayerResponse`。
+                    // `layer` 原样回显（调用方要么按 `layer=workspace` 要，要么拿 instance 层）。
+                    const layer = url.searchParams.get("layer");
+                    return respond(200, {
+                        layer: layer === "user" || layer === "workspace" ? layer : "instance",
+                        workspaceId: url.searchParams.get("workspaceId"),
+                        templates: [],
+                    });
+                }
                 // task-49（Lead 2026-11-11 扩授权）：工作区环境页的读取面。
                 // 原先只 mock 了 /workspaces 与 /workspaces/current ⇒ 环境页吃 404、Job 三列不渲染。
                 // 这里**只增**两条读端点，既有两条的返回结构不动；夹具见 data/workspaceEnvironment.ts。
