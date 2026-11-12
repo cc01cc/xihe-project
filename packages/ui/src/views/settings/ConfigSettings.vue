@@ -17,10 +17,15 @@ const { t } = useI18n(),
 // 层，走 /settings/workspace-default 域页路由，不在本页签里）；工作区层是每工作区的覆盖层，
 // 编辑面在工作区设置页。旧 ?tab=workspace 不做兼容（决策 #6）。
 type LayerTab = "instance" | "user";
-// BL-392: the instance layer (and the import/export action it owns) is still gated on CP by the
-// `cap:instance:admin` **capability**, not by an action atom — `ConfigController`'s N2/N3 atoms are
-// per-key read/write gates and `ConfigLockController:41/51/70` stayed capability-gated. So this
-// tab keeps `isAdmin`; do not swap it for `hasInstanceAtom(...)` until that face exposes an atom.
+// 修正 BL-392 时期的一句过期结论：原文说「CP 仍用 `cap:instance:admin`、等那面出原子再把本页签
+// 换成 `hasInstanceAtom(...)`」——**原子已经存在**：`ConfigController.java:89-90` 的
+// `canReadInstanceContent()` 查的就是动作原子 `READ_INSTANCE_CONTENT`（`:207-220` 整域读、`:319`
+// meta 读同源），`stores/auth.ts#canReadInstanceContent` 与它同轴。原文「等原子」的前提已不成立。
+//
+// 但本页签的判据**暂时仍留在能力位** `isAdmin`：换成 `canReadInstanceContent` 的改动已写好却
+// 未落地 —— 换上后本页渲染 instance 层会把 vitest worker 挂死（CPU 500 s+ / 内存 3.4 GB /
+// `--testTimeout` 不触发）。该缺陷**在 pristine HEAD 上同样复现**（干净树单跑 `ConfigSettings.spec`
+// 同样跑飞），故不属本次判据改动引入，登记 task-83。⇒ 判据更换以 task-83 结果为前置。
 const activeTab = ref<LayerTab>(authStore.isAdmin ? "instance" : "user");
 
 const tabs = computed<{ key: LayerTab; label: string }[]>(() => {
