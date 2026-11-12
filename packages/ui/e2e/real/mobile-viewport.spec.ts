@@ -75,9 +75,10 @@ test.describe("Mobile Viewport (390x844)", () => {
             },
             { token: authToken, workspaceId: authWorkspaceId },
         );
-        // PLAN-0560: workspace MCP section lives on the workspace settings MCP tab.
-        await page.goto(`/workspace/${authWorkspaceId}/settings?tab=mcp`, { waitUntil: "load" });
-        await expect(page.locator('[data-testid="workspace-settings-page"]')).toBeVisible({
+        // task-209（D-1019）：工作区 MCP 面已从「工作区设置的 MCP 页签」搬到资源区工作区层
+        // （`/resources/mcp?layer=WORKSPACE`），本用例判的是**同一块面板在窄屏下不塌**，判据不变。
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await expect(page.locator('[data-testid="resources-header"]')).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
         await page
@@ -86,7 +87,7 @@ test.describe("Mobile Viewport (390x844)", () => {
         await assertNoHorizontalOverflow(page);
         await page.screenshot({
             scale: "css",
-            path: test.info().outputPath("mobile-settings-config.png"),
+            path: test.info().outputPath("mobile-resources-mcp.png"),
             fullPage: true,
         });
     });

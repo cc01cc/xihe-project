@@ -104,8 +104,12 @@ test.describe("PLAN-0560 workspace settings", () => {
     });
 
     // task-253（2026-11-10）：工作区块配置层整体退役 ⇒ 本用例的「config 区块只读」段（含
-    // ws-settings-tab-config 入口与 config-domain-* 面板断言）随删；常规信息与 MCP 两段保留。
-    test("VIEWER sees read-only general info and MCP", async ({ page }) => {
+    // ws-settings-tab-config 入口与 config-domain-* 面板断言）随删；常规信息段保留。
+    // task-209（D-1019）：MCP 段跟着搬家 —— 工作区设置不再有 MCP tab，MCP 的唯一入口是
+    // `/resources/mcp?layer=WORKSPACE` ⇒ **只读判据一并搬过去**（VIEWER 必须看到禁用 textarea
+    // 且不渲染保存按钮）。判据对象换成资源页容器，不能继续在 settings 页里判「没有保存按钮」：
+    // 那会恒真（假绿）。
+    test("VIEWER sees read-only general info and read-only MCP", async ({ page }) => {
         await page.addInitScript(() => {
             sessionStorage.setItem(
                 "xihe-workspace",
@@ -128,13 +132,11 @@ test.describe("PLAN-0560 workspace settings", () => {
         // (a) 删 —— 配置区块只读段：工作区域配置 tab 已随 task-253 退役，没有可点的入口了。
         // 工作区配置面的只读判定不再有产品对象（实例/用户两层的锁定语义由 config-settings 覆盖）。
 
-        // MCP 区块：JSON textarea 禁用、保存按钮不渲染。
-        await page.getByTestId("ws-settings-tab-mcp").click();
-        const textarea = page.getByTestId("mcp-config-textarea");
-        await expect(textarea).toBeDisabled();
-        await expect(
-            page.getByTestId("workspace-settings-page").getByText("保存", { exact: true }),
-        ).toHaveCount(0);
+        // MCP 区块（资源区 · 工作区层）：JSON textarea 禁用、保存按钮不渲染。
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await expect(page.getByTestId("resources-header")).toBeVisible();
+        await expect(page.getByTestId("mcp-config-textarea")).toBeDisabled();
+        await expect(page.getByTestId("mcp-config-save")).toHaveCount(0);
     });
 
     test("mobile toolbar collapses into ＋ and ⋯ overflow", async ({ page }) => {

@@ -34,11 +34,13 @@ const pages: HealthPage[] = [
         benign: [] as string[],
     },
     {
-        // PLAN-0772 M2：知识库没有全局资源页（G3 缺口），承载面是工作区设置的 knowledge 页签。
-        path: "/workspace/{workspaceId}/settings?tab=knowledge",
-        name: "workspace-settings-knowledge",
+        // PLAN-0772 M2：知识库没有可管理实体（G3 缺口）⇒ 资源区留缺口页。
+        // task-209（D-1019）：原先的承载面「工作区设置 → knowledge 页签」已撤，
+        // 这里改扫资源区的缺口页（页面本身不依赖工作区上下文，无上下文也渲染）。
+        path: "/resources/knowledge?layer=WORKSPACE",
+        name: "resources-knowledge-gap",
         requiresAuth: true,
-        keySelector: '[data-testid="settings-knowledge-heading"]',
+        keySelector: '[data-testid="resources-knowledge-gap"]',
         benign: ["status of 502"],
     },
     {

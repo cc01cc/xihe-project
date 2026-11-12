@@ -827,24 +827,20 @@ const messages = {
             settingsKicker: "工作区",
             settingsTitle: "工作区设置",
             settingsDesc:
-                "本工作区的常规信息、成员与资源入口。配置统一在设置区按 实例 / 工作区默认 / 个人 管理。",
+                "本工作区的常规信息与成员。配置统一在设置区按 实例 / 工作区默认 / 个人 管理；资源（MCP / 凭据 / 技能 / 智能体 / 知识库）统一在资源区按层管理。",
             settingsTabGeneral: "常规",
-            settingsTabConfig: "配置",
             settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
-            settingsTabMcp: "MCP",
-            settingsTabCredentials: "凭据",
-            settingsTabKnowledge: "知识库",
-            settingsResourceGroupNote:
-                "MCP、凭据、知识库是工作区资源（不是配置域）：MCP 是绑定与启用，凭据是归属本工作区的密钥，知识库是按本工作区分区的文档。",
+            settingsResourceMovedTitle: "这项设置已迁到资源区",
+            settingsResourceMovedBody:
+                "「{name}」现在按层在资源区里管理，本页只保留「常规」与「成员」。",
+            settingsResourceMovedAction: "去资源区",
             settingsGeneralTitle: "基本信息",
             settingsName: "名称",
             settingsDescription: "描述",
             settingsId: "工作区 ID",
             settingsStorageRef: "物理目录",
             settingsExecutionMode: "执行后端",
-            settingsConfigNote:
-                "工作区层覆盖个人层与实例层；环境变量锁定与管理员锁定只读，生效值以来源徽标为准。",
             settingsLoadFailed: "加载工作区失败",
             settingsRetry: "重试",
             membersTitle: "工作区成员",
@@ -1557,7 +1553,8 @@ const messages = {
             knowledgeGap: {
                 title: "知识库暂不可管理",
                 body: "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个按 workspace 分区的代理端点，因此没有可管理的“库”。",
-                action: "打开当前工作区的知识库",
+                writeEntryGone:
+                    "工作区知识库的写入入口已随设置页收敛一起撤下（原「工作区设置 → 知识库」tab）；恢复要等 G3 落地后挂到本资源页。",
             },
         },
         settings: {
@@ -3949,24 +3946,20 @@ const messages = {
             settingsKicker: "Workspace",
             settingsTitle: "Workspace Settings",
             settingsDesc:
-                "General info, members and resource entry points for this workspace. Configuration lives in Settings, managed per instance / workspace default / personal layer.",
+                "General info and members for this workspace. Configuration lives in Settings per instance / workspace default / personal layer; resources (MCP / credentials / skills / agents / knowledge) live in the resources module, managed per layer.",
             settingsTabGeneral: "General",
-            settingsTabConfig: "Config",
             settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
-            settingsTabMcp: "MCP",
-            settingsTabCredentials: "Credentials",
-            settingsTabKnowledge: "Knowledge base",
-            settingsResourceGroupNote:
-                "MCP, credentials and the knowledge base are workspace resources (not config domains): MCP is binding/enabling, credentials are keys owned by this workspace, and the knowledge base holds documents partitioned by this workspace.",
+            settingsResourceMovedTitle: "This setting moved to the resources module",
+            settingsResourceMovedBody:
+                '"{name}" is now managed per layer in the resources module; this page keeps only General and Members.',
+            settingsResourceMovedAction: "Open resources",
             settingsGeneralTitle: "General",
             settingsName: "Name",
             settingsDescription: "Description",
             settingsId: "Workspace ID",
             settingsStorageRef: "Storage path",
             settingsExecutionMode: "Execution backend",
-            settingsConfigNote:
-                "The workspace layer overrides personal / instance; env-locked and admin-locked keys are read-only — see the source badges for effective values.",
             settingsLoadFailed: "Failed to load the workspace",
             settingsRetry: "Retry",
             membersTitle: "Workspace members",
@@ -4715,7 +4708,8 @@ const messages = {
             knowledgeGap: {
                 title: "Knowledge bases are not manageable yet",
                 body: "The control plane has no knowledge-base entity (no table, no CRUD) - only 4 proxy endpoints partitioned by workspace, so there is no library to manage.",
-                action: "Open the current workspace knowledge base",
+                writeEntryGone:
+                    "The workspace knowledge-base write entry was removed with the settings-tab consolidation (old Workspace Settings → Knowledge base tab); it returns here once G3 lands.",
             },
         },
         settings: {

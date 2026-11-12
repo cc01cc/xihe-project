@@ -17,9 +17,15 @@ const DOCS = [
 // 所以从这条 URL 出发永远看不到面板。这四个状态用例要验的组件（`KnowledgeBaseView`）没有变，
 // 变的是**它挂在哪**：工作区设置的「知识库」tab（`WorkspaceSettingsView` 的 `ws-settings-knowledge`）。
 // 断言逐条保留（空态 / 错误重试 / 加载中 / 文档列表 + 删除按钮），只把入口换到当前产品路径。
+//
+// task-209（D-1019）：那条 tab 已撤（工作区设置只保留「常规/成员」）⇒ **本文件暂时没有可达入口**。
+// 处置：整组 `fixme`，**断言一行不删**（用例体原样保留，等于可执行的注释：那条 tab 一旦挂回来，
+// 这里立刻重新变绿）。同批把「列表 + 删除 + 上传」三条行为搬到组件级
+// `src/components/__tests__/KnowledgeBaseView.spec.ts`，能力暂时没有入口但行为仍被钉住。
+// 重新启用的条件：`KnowledgeBaseView` 重新有可达挂载点（见回执「工作区知识库写面重接」建议）。
 const KNOWLEDGE_PAGE = "/workspace/workspace-1/settings?tab=knowledge";
 
-test.describe("Knowledge Base", () => {
+test.describe.fixme("Knowledge Base（task-209：挂载点已撤，等重接）", () => {
     test.beforeEach(async ({ page }) => {
         // 工作区路由需要登录态 + 工作区上下文（`workspace-1` 由夹具种入 tab 会话上下文）。
         await setupMockAuth(page);

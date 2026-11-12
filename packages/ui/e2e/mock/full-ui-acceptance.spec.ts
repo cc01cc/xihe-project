@@ -158,10 +158,11 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
                 marker: page.getByTestId("settings-domain-view"),
             },
             {
-                // 知识库只有工作区承载（T4.4）；PLAN-0772 M2 删掉了 `/settings/knowledge`（不留 redirect），
-                // 工作区设置的知识库页签是唯一落点。
-                path: "/workspace/workspace-1/settings?tab=knowledge",
-                marker: page.getByTestId("settings-knowledge-heading"),
+                // 知识库是 **G3 后端缺口**：`/resources/knowledge` 是缺口页（不是 404、也不是可管理面）。
+                // task-209（D-1019）把工作区设置的「知识库」tab 撤了 ⇒ 本行原先指向
+                // `/workspace/.../settings?tab=knowledge` 的落点已不存在，改指资源区缺口页。
+                path: "/resources/knowledge?layer=WORKSPACE",
+                marker: page.getByTestId("resources-knowledge-gap"),
             },
             { path: "/settings/data", marker: page.getByTestId("settings-data-heading") },
             {
@@ -417,9 +418,10 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
-        // PLAN-0560: MCP config lives on the workspace settings MCP tab.
-        await page.goto("/workspace/workspace-1/settings?tab=mcp");
-        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
+        // PLAN-0560 → task-209：MCP 配置从「工作区设置的 MCP tab」搬到了资源区的工作区层
+        // （`/resources/mcp?layer=WORKSPACE`），JSON 校验行为与文案不变。
+        await page.goto("/resources/mcp?layer=WORKSPACE");
+        await expect(page.getByTestId("resources-header")).toBeVisible();
         const mcp = page.getByTestId("mcp-config-textarea");
         await mcp.fill("{invalid");
         await page.getByRole("button", { name: "保存" }).last().click();
@@ -437,7 +439,14 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await expectPlatformScreenshot(page, "plan-269-data-import-preview.png");
     });
 
-    test("Knowledge Base uploads a file and refreshes its document list", async ({ page }) => {
+    // task-209（D-1019）：本用例的入口 `/workspace/.../settings?tab=knowledge` 已随「工作区设置只保留
+    // 常规/成员」撤掉，且 `KnowledgeBaseView` 目前**没有任何可达挂载点** ⇒ 整条改 `fixme`，
+    // **用例体一行不删**（可执行的注释：挂载点一回来这条就重新生效）。同批「列表 + 删除 + 上传」
+    // 三条行为已搬到组件级 `src/components/__tests__/KnowledgeBaseView.spec.ts`，
+    // 能力暂时没入口但行为仍被钉住。重新启用条件见回执「工作区知识库写面重接」建议。
+    test.fixme("Knowledge Base uploads a file and refreshes its document list", async ({
+        page,
+    }) => {
         await setupMockAuth(page);
         await mockSettingsApis(page);
         let uploaded = false;

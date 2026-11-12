@@ -81,13 +81,14 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
             { token: refreshedAuth.accessToken, workspaceId: refreshedAuth.workspaceId },
         );
 
-        // PLAN-0560: MCP config lives on the workspace settings MCP tab.
+        // task-209（D-1019）：MCP 配置面已从「工作区设置的 MCP 页签」搬到资源区工作区层。
+        // 判据不变（加载 200 / 可编辑 / 保存 200 / 重载后仍在），只是入口换了 URL。
         const loadConfigResponse = page.waitForResponse(
             (response) =>
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
         );
-        await page.goto(`/workspace/${workspace.id}/settings?tab=mcp`, { waitUntil: "load" });
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         expect((await loadConfigResponse).status()).toBe(200);
         const editor = page.getByTestId("mcp-config-textarea");
         await expect(editor).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -134,7 +135,7 @@ test.describe("@host PLAN-0470 MCP configuration UI consumer", () => {
                 response.url().includes(`/api/v1/workspaces/${workspace.id}/mcp-config`) &&
                 response.request().method() === "GET",
         );
-        await page.goto(`/workspace/${workspace.id}/settings?tab=mcp`, { waitUntil: "load" });
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         expect((await reloadedConfigResponse).status()).toBe(200);
         const reloadedEditor = page.getByTestId("mcp-config-textarea");
         await expect(reloadedEditor).toBeVisible();

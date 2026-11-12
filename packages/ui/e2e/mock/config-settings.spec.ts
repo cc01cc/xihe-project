@@ -187,22 +187,30 @@ test.describe("Config Settings (three layers)", () => {
     // 保留但改成**正面守卫**：断言「五个存活标签在、配置标签不在、没有任何域面板」——
     // 纯删除会让撤销的事实消失，将来有人把 config 标签加回来没有任何东西会红；改写成断言后，
     // 「不存在」本身成为一条被持续验证的契约（可执行的注释）。
-    test("workspace settings page keeps the surviving tabs and renders no config domains (task-253)", async ({
+    test("workspace settings page keeps the surviving tabs and renders no config domains (task-253/task-209)", async ({
         page,
     }) => {
         await mockConfigAPIs(page);
-        // ?tab=config 已不在 tab 白名单里 ⇒ 兜底回落 general（WorkspaceSettingsView.vue initialTab）。
+        // ?tab=config 已不在 tab 白名单里 ⇒ 兜底回落 general（WorkspaceSettingsView.vue tabFromQuery）。
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-tab-mcp")).toBeVisible();
+        // task-209 / D-1019：mcp / credentials / knowledge 三个资源 tab 已撤到资源区（不再是双入口）。
+        // 断言保留为**正面守卫**（原来这里是 `ws-settings-tab-mcp` 为可见）：删掉它只能证明"这一刻没写"，
+        // 有人把 mcp tab 加回来时不会有任何东西变红。
+        await expect(page.getByTestId("ws-settings-tab-mcp")).toHaveCount(0);
+        await expect(page.getByTestId("ws-settings-tab-credentials")).toHaveCount(0);
+        await expect(page.getByTestId("ws-settings-tab-knowledge")).toHaveCount(0);
+        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
         await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
         await expect(page.locator('[data-testid^="config-domain-"]')).toHaveCount(0);
         await expectPlatformScreenshot(page, "config-workspace-tab.png");
 
-        // MCP 仍在自己独立的标签上（原用例里唯一随撤销一起存活的行为）。
-        await page.getByTestId("ws-settings-tab-mcp").click();
+        // MCP 仍在「自己独立的界面」上 —— 只是从工作区设置的 tab 换成了资源区的工作区层
+        // （`/resources/mcp?layer=WORKSPACE`）。**行为断言不变**：进得去、文本框在。
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await expect(page.getByTestId("resources-header")).toBeVisible();
         await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
         await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
     });

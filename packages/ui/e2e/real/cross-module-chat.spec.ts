@@ -147,8 +147,9 @@ test.describe("Cross-Module — Full Chain Chat", () => {
             { token: auth.accessToken, workspaceId: auth.workspaceId },
         );
 
-        // PLAN-0560: MCP config lives on the workspace settings MCP tab.
-        await page.goto(`/workspace/${auth.workspaceId}/settings?tab=mcp`);
+        // task-209（D-1019）：MCP 面已从「工作区设置的 MCP 页签」搬到资源区工作区层
+        // （`/resources/mcp?layer=WORKSPACE`）。判据不变：面板能渲染、内置工具可见。
+        await page.goto("/resources/mcp?layer=WORKSPACE");
         await expect(page.locator("text=MCP 服务").first()).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -201,8 +202,8 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         const body = await getResp.json();
         expect(body).toHaveProperty("mcpServers");
 
-        // Verify it appears in the UI (PLAN-0560: workspace settings MCP tab)
-        await page.goto(`/workspace/${auth.workspaceId}/settings?tab=mcp`);
+        // Verify it appears in the UI（task-209：资源区工作区层的 MCP 面）
+        await page.goto("/resources/mcp?layer=WORKSPACE");
         await expect(page.locator("text=MCP 服务").first()).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -282,9 +283,10 @@ test.describe("Cross-Module — Full Chain Chat", () => {
         auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const fakeOAuthPort = process.env.XIHE_FAKE_OAUTH_PORT || "13640",
             uiPort = process.env.XIHE_UI_PORT || "12630";
-        // PLAN-0752：远程 MCP 列表已迁到工作区设置的 mcp 页签（旧全局配置页已退役）。
-        const mcpTabPath = `/workspace/${auth.workspaceId}/settings?tab=mcp`;
-        const redirectUri = `http://localhost:${uiPort}${mcpTabPath}`;
+        // task-209（D-1019）：远程 MCP 列表已从工作区设置的 mcp 页签搬到资源区工作区层。
+        // `redirectUri` 必须与用户实际所在的页面一致（OAuth 回调要落回同一屏），所以跟着改。
+        const mcpPagePath = "/resources/mcp?layer=WORKSPACE";
+        const redirectUri = `http://localhost:${uiPort}${mcpPagePath}`;
         const save = await request.put(
             `${CP_URL}/api/v1/workspaces/${auth.workspaceId}/mcp-config`,
             {
@@ -318,18 +320,25 @@ test.describe("Cross-Module — Full Chain Chat", () => {
             },
             { token: auth.accessToken, user: { ...auth.user, workspaceId: auth.workspaceId } },
         );
-        await page.goto(mcpTabPath);
+        // 资源区的「工作区层」依赖 tab 工作区上下文（`xihe-workspace` in sessionStorage）；
+        // 唯一的写入口是工作区路由（selectWorkspace → writeTabWorkspace）。所以先落一次工作区，
+        // 再去资源页 —— 直接 goto 资源页会停在「先选一个工作区」而不是面板。
+        await page.goto(`/workspace/${auth.workspaceId}/settings`, { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible({
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        await page.goto(mcpPagePath);
         const serverRow = page.locator(`[data-testid="remote-mcp-${serverId}"]`);
         await expect(serverRow).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         const authorizeButton = serverRow.locator("button");
         await authorizeButton.click();
-        await page.waitForURL(/\/workspace\/[^/]+\/settings(?:\?|$)/, {
+        await page.waitForURL(/\/resources\/mcp(?:\?|$)/, {
             timeout: ACTION_TIMEOUT_MS,
         });
         await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: EXPECT_TIMEOUT_MS });
 
         await authorizeButton.click();
-        await page.waitForURL(/\/workspace\/[^/]+\/settings(?:\?|$)/, {
+        await page.waitForURL(/\/resources\/mcp(?:\?|$)/, {
             timeout: ACTION_TIMEOUT_MS,
         });
         await expect(serverRow).toContainText(/已授权|Authorized/, { timeout: EXPECT_TIMEOUT_MS });

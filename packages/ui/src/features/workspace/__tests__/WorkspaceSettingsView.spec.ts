@@ -38,8 +38,17 @@ vi.mock("vue-router", () => ({
             meta: {},
         }) as RouteLocationNormalizedLoaded,
     useRouter: () => routerSpies,
-    RouterLink: { template: "<a><slot /></a>" },
 }));
+
+/**
+ * task-209：提示条里的「去资源区」链接要能被断言到**目标地址**，所以本地注册的 RouterLink
+ * stub 把 `to` 暴露成 `data-to`（默认 `<a><slot /></a>` 会吞掉目标，只能断言文案 ——
+ * 那种断言看着绿但什么都没验）。
+ */
+const RouterLinkStub = {
+    props: ["to"],
+    template: '<a :data-to="String(to)"><slot /></a>',
+};
 
 vi.mock("vue-sonner", () => ({
     toast: {
@@ -53,7 +62,10 @@ vi.mock("vue-sonner", () => ({
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 
 /**
- * PLAN-0560 M1：WorkspaceSettingsView 承载 workspace 层配置与 MCP。
+ * PLAN-0560 M1：WorkspaceSettingsView 承载 workspace 层常规信息与成员。
+ * task-209（D-1019）：`mcp` / `credentials` / `knowledge` 三个 tab 已撤到资源区
+ * （`/resources/<id>?layer=WORKSPACE`），旧 `?tab=` 回落到「常规」并显示迁移提示条 ——
+ * 本 spec 现在**同时**守住「tab 不再存在」与「旧链接有落点」两件事。
  * fetch 对 config 域返回 layer envelope；工作区上下文由 selectWorkspace
  * 的缓存短路提供（fixture 带 name），不额外请求 /workspaces/{id}。
  */
@@ -93,6 +105,7 @@ async function mountView(options: { attachTo?: boolean } = {}) {
             global: {
                 plugins: [i18n],
                 stubs: { ProviderHub: true, McpStdioServerList: true },
+                components: { RouterLink: RouterLinkStub },
             },
         });
     await flushPromises();
@@ -116,7 +129,7 @@ beforeEach(() => {
 });
 
 describe("WorkspaceSettingsView (PLAN-0560)", () => {
-    it("renders the workspace header and the tabs (incl. the resource tabs)", async () => {
+    it("renders the workspace header and only the surviving tabs (task-209 撤资源双入口)", async () => {
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="workspace-settings-page"]').exists()).toBe(true);
@@ -128,43 +141,51 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         expect(wrapper.find('[data-testid="ws-settings-tab-general"]').exists()).toBe(true);
         // 工作区配置 tab 随 workspace 配置层一起移除（那块面走已废弃的 /config/workspace/**）。
         expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="ws-settings-tab-mcp"]').exists()).toBe(true);
-        // PLAN-0752 T4.2/T4.3：工作区层资源入口 = 真功能，后端都已实现，所以不给缺口标记。
-        expect(wrapper.find('[data-testid="ws-settings-tab-credentials"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-settings-tab-knowledge"]').exists()).toBe(true);
+        // task-209 / D-1019：mcp / credentials / knowledge 三个 tab 与资源区双入口 ⇒ 撤。
+        // 断言写成**正面守卫**（计数为 0）而不是删掉这几行：删掉只能证明"这一刻没写"，加回来时没人会红。
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
+        for (const removed of ["mcp", "credentials", "knowledge"]) {
+            expect(wrapper.find(`[data-testid="ws-settings-tab-${removed}"]`).exists()).toBe(false);
+            expect(wrapper.find(`[data-testid="ws-settings-${removed}"]`).exists()).toBe(false);
+        }
         wrapper.unmount();
     });
 
-    it("lands the workspace credentials tab on the real credential panel scoped to WORKSPACE", async () => {
-        routeState.query = { tab: "credentials" };
+    it.each([
+        ["mcp", "mcp", "MCP"],
+        ["credentials", "credentials", "凭据"],
+        ["knowledge", "knowledge", "知识库"],
+    ])(
+        "旧 ?tab=%s 回落到「常规」并指路到 /resources/%s?layer=WORKSPACE",
+        async (legacyTab, resourceId, resourceName) => {
+            routeState.query = { tab: legacyTab };
+            const wrapper = await mountView();
+
+            // ① 回落：落点是「常规」，三个旧 tab 容器一个都不渲染（不是静默 404，也不是原页面）。
+            expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
+            expect(wrapper.find(`[data-testid="ws-settings-${legacyTab}"]`).exists()).toBe(false);
+
+            // ② 不静默：提示条点名是哪个资源搬走了，并给出可直接点过去的**目标地址**。
+            const notice = wrapper.find('[data-testid="ws-settings-resource-moved"]');
+            expect(notice.exists()).toBe(true);
+            expect(notice.text()).toContain("已迁到资源区");
+            expect(notice.text()).toContain(resourceName);
+            expect(
+                notice
+                    .find('[data-testid="ws-settings-resource-moved-action"]')
+                    .attributes("data-to"),
+            ).toBe(`/resources/${resourceId}?layer=WORKSPACE`);
+            wrapper.unmount();
+        },
+    );
+
+    it("旧 ?tab= 之外的未知 tab 既不回落提示、也不渲染任何资源面", async () => {
+        routeState.query = { tab: "nope" };
         const wrapper = await mountView();
 
-        const tab = wrapper.find('[data-testid="ws-settings-credentials"]');
-        expect(tab.exists()).toBe(true);
-        // 真功能：面板在（列表已发请求，自身渲染 heading），不是「缺口说明」占位
-        // task-189：页面标题统一为 settings-page-title（h2），旧 credentials-heading 已并入。
-        expect(tab.find('[data-testid="settings-page-title"]').exists()).toBe(true);
-        expect(tab.find('[data-testid="credentials-scope-note"]').exists()).toBe(true);
-        // 「不是缺口占位」按**权限门的形态**判，而不是按文案里有没有「后端缺口」四个字判：
-        // PLAN-0752 M4 的 403 卡有意写「提示：本页不会被标记为『后端缺口』——后端已实现」，
-        // 旧写法（`tab.text()).not.toContain("后端缺口")`）正是被这句说明命中而误红。
-        // ① 不能是 `no-atom`（那才是「概念不存在」的留位信息条）
-        expect(tab.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(false);
-        // ② 缺口徽标/缺口说明一个都不许出现在这个 tab 里
-        expect(tab.find('[data-testid^="settings-gap-"]').exists()).toBe(false);
-        // ③ 必须是 `atom-denied` 的 403 卡，且它明写「不是后端缺口」——真功能只是缺授权
-        expect(tab.find('[data-testid="settings-atom-denied-not-gap"]').exists()).toBe(true);
-        wrapper.unmount();
-    });
-
-    it("lands the workspace knowledge tab on the real knowledge base panel", async () => {
-        routeState.query = { tab: "knowledge" };
-        const wrapper = await mountView();
-
-        const tab = wrapper.find('[data-testid="ws-settings-knowledge"]');
-        expect(tab.exists()).toBe(true);
-        expect(tab.find('[data-testid="settings-knowledge-heading"]').exists()).toBe(true);
-        expect(tab.text()).not.toContain("后端缺口");
+        expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-resource-moved"]').exists()).toBe(false);
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
         wrapper.unmount();
     });
 
@@ -174,15 +195,6 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         const general = wrapper.find('[data-testid="ws-settings-general"]');
         expect(general.exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-name"]').text()).toBe("Workspace");
-        wrapper.unmount();
-    });
-
-    it("renders the MCP panel on the mcp tab", async () => {
-        routeState.query = { tab: "mcp" };
-        const wrapper = await mountView();
-
-        expect(wrapper.find('[data-testid="ws-settings-mcp"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="mcp-config-textarea"]').exists()).toBe(true);
         wrapper.unmount();
     });
 });

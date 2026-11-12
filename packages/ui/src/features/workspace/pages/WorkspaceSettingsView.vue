@@ -10,10 +10,8 @@ import { api, ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
-import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
-import CredentialsPanel from "../../../components/settings/credentials/CredentialsPanel.vue";
-import KnowledgeBaseView from "../../../views/settings/KnowledgeBaseView.vue";
+import { resourcePath } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -24,17 +22,34 @@ import AlertDialogDescription from "../../../components/ui/alert-dialog/AlertDia
 import AlertDialogFooter from "../../../components/ui/alert-dialog/AlertDialogFooter.vue";
 import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCancel.vue";
 
-// PLAN-0560：每工作区设置页（常规/MCP）。MCP 复用 WorkspaceMcpPanel，常规区 OWNER 可编辑/删除。
+// PLAN-0560：每工作区设置页（常规/成员）。
 // PLAN-0565：「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
-// PLAN-0752 T4.2/T4.3：工作区层的资源入口按 tab 承载 —— MCP（绑定/启用）、凭据（归属本工作区）、
-// 知识库（按工作区分区的文档）。三者后端都已实现，所以都是**真入口**，不是缺口位；实例/用户层
-// 没有对应承载才在外层左栏标 G2/G3（D7 口径：只给真缺的能力标缺口）。
 //
 // task-253（用户 2026-11-10 裁定）：**移除「配置」tab 与域段路由**
 // （/workspace/:id/settings/:domain）。全局 config 的 workspace 层已在 UI 侧失效（契约侧由
-// task-250 只标 deprecated），工作区内部设置面本轮不重新设计 ⇒ 这里只保留不依赖该层的资源
-// tab。删除理由不是「看起来多余」：留着它就会继续 PUT/GET /config/workspace/**，而这层已废弃。
-type SettingsTab = "general" | "mcp" | "members" | "credentials" | "knowledge";
+// task-250 只标 deprecated），工作区内部设置面本轮不重新设计 ⇒ 这里只保留不依赖该层的 tab。
+// 删除理由不是「看起来多余」：留着它就会继续 PUT/GET /config/workspace/**，而这层已废弃。
+//
+// D-1019 / task-209（用户 2026-11-12 裁定「一次性改完、不留旧兼容」）：**再撤掉 `mcp` /
+// `credentials` / `knowledge` 三个 tab**。它们与 `/resources/{mcp,credentials}?layer=WORKSPACE`
+// 渲染的是**同一个组件**（`WorkspaceMcpPanel` / `CredentialsPanel ownerType=WORKSPACE`，
+// 见 PLAN-0772 M2 的资源区搬家）⇒ 留着就是两份入口，且文案与权限各自漂移。
+//
+// 旧 `?tab=` 的处置：**回落到「常规」并就地告知迁移地址**（不是 404）。理由：①与 task-253
+// 的 `?tab=config` 同口径，那条回落行为已被 `e2e/mock/config-settings.spec.ts:194-195` 与
+// `e2e/real/approval-policy.spec.ts:128` 当作既有契约在用；②旧链接来自书签/文档/外部引用，
+// 回落到一个能解释「东西搬到哪了」的页面比 404 更有用（404 只能让人以为页面坏了）。
+type SettingsTab = "general" | "members";
+
+/**
+ * 已迁到资源区的三个旧 tab。`knowledge` 在资源区是 **G3 缺口页**（CP 无库实体，见
+ * `KnowledgeResourceView.vue` 的说明）⇒ 这里只负责"指路"，不承诺新页面有写面。
+ */
+type LegacyResourceTab = "mcp" | "credentials" | "knowledge";
+
+function legacyResourceTab(q: unknown): LegacyResourceTab | null {
+    return q === "mcp" || q === "credentials" || q === "knowledge" ? q : null;
+}
 
 const route = useRoute(),
     router = useRouter(),
@@ -46,20 +61,44 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 
 /** `?tab=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function tabFromQuery(q: unknown): SettingsTab {
-    return q === "mcp" ||
-        q === "members" ||
-        q === "credentials" ||
-        q === "knowledge" ||
-        q === "general"
-        ? q
-        : "general";
+    return q === "members" ? "members" : "general";
 }
 const activeTab = ref<SettingsTab>(tabFromQuery(route.query.tab));
+
+/** 旧资源 tab（若有）：驱动「已迁到资源区」的提示条，并在切页签时自然离开 URL。 */
+const legacyTab = ref<LegacyResourceTab | null>(legacyResourceTab(route.query.tab));
+
+function legacyResourceName(tab: LegacyResourceTab | null): string {
+    switch (tab) {
+        case "mcp":
+            return t("settings.ia.resourceMcp");
+        case "credentials":
+            return t("settings.ia.resourceCredentials");
+        case "knowledge":
+            return t("settings.ia.resourceKnowledge");
+        default:
+            return "";
+    }
+}
+
+const legacyResourceLink = computed(() => {
+    switch (legacyTab.value) {
+        case "mcp":
+            return `${resourcePath("mcp")}?layer=WORKSPACE`;
+        case "credentials":
+            return `${resourcePath("credentials")}?layer=WORKSPACE`;
+        case "knowledge":
+            return `${resourcePath("knowledge")}?layer=WORKSPACE`;
+        default:
+            return "";
+    }
+});
 
 // 外部 query 变化要能回到页面状态（深链、浏览器前进/后退、别人贴过来的链接）。
 watch(
     () => route.query.tab,
     (q) => {
+        legacyTab.value = legacyResourceTab(q);
         const next = tabFromQuery(q);
         if (next !== activeTab.value) activeTab.value = next;
     },
@@ -77,9 +116,6 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
     if (auth.canViewMembers !== false) {
         base.push({ key: "members", label: t("workspace.settingsTabMembers") });
     }
-    base.push({ key: "mcp", label: t("workspace.settingsTabMcp") });
-    base.push({ key: "credentials", label: t("workspace.settingsTabCredentials") });
-    base.push({ key: "knowledge", label: t("workspace.settingsTabKnowledge") });
     return base;
 });
 
@@ -319,6 +355,36 @@ onMounted(() => {
                         </button>
                     </div>
 
+                    <!--
+                        D-1019 / task-209：旧 `?tab=mcp|credentials|knowledge` 的落点。
+                        不做 404、也不静默：回落到「常规」后就说明东西搬去哪了，并给一条能直接点过去
+                        的链接（`/resources/<id>?layer=WORKSPACE`）。提示条纯静态，不额外发请求。
+                    -->
+                    <div
+                        v-if="legacyTab"
+                        data-testid="ws-settings-resource-moved"
+                        class="mb-4 rounded-lg border bg-muted/40 px-4 py-3 text-sm"
+                    >
+                        <p class="font-medium">
+                            {{ t("workspace.settingsResourceMovedTitle") }}
+                        </p>
+                        <p class="mt-1 text-muted-foreground">
+                            {{
+                                t("workspace.settingsResourceMovedBody", {
+                                    name: legacyResourceName(legacyTab),
+                                })
+                            }}
+                        </p>
+                        <Button as-child variant="outline" size="sm" class="mt-2">
+                            <RouterLink
+                                :to="legacyResourceLink"
+                                data-testid="ws-settings-resource-moved-action"
+                            >
+                                {{ t("workspace.settingsResourceMovedAction") }}
+                            </RouterLink>
+                        </Button>
+                    </div>
+
                     <div v-if="activeTab === 'general'" data-testid="ws-settings-general">
                         <div class="border rounded-lg mb-2 overflow-hidden">
                             <div class="px-4 py-3 text-sm font-medium bg-muted/30">
@@ -463,24 +529,6 @@ onMounted(() => {
                                     : !auth.canManageWorkspace
                             "
                         />
-                    </div>
-
-                    <div v-else-if="activeTab === 'mcp'" data-testid="ws-settings-mcp">
-                        <WorkspaceMcpPanel
-                            :workspace-id="workspaceId"
-                            :readonly="!auth.canWriteWorkspace"
-                        />
-                    </div>
-
-                    <div
-                        v-else-if="activeTab === 'credentials'"
-                        data-testid="ws-settings-credentials"
-                    >
-                        <CredentialsPanel :owner-type="'WORKSPACE'" />
-                    </div>
-
-                    <div v-else data-testid="ws-settings-knowledge">
-                        <KnowledgeBaseView />
                     </div>
                 </template>
             </div>

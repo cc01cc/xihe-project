@@ -115,26 +115,37 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
     // (a) 删 —— 「域段不在矩阵内渲染 404 且零 /config/workspace 请求」：域 404 面已不存在，
     //     且工作区层 /config 请求整体消失，判据失去对象。
     // (a) 删 —— 「域页概览按钮回 ?tab=config」：概览按钮与域页同批删除。
-    test("legacy ?tab= form still renders every surviving tab container", async ({ page }) => {
+    test("legacy resource ?tab= falls back to general and points at the resources module (task-209)", async ({
+        page,
+    }) => {
         const configRequests: string[] = [];
         await mockSettingsAPIs(page, configRequests);
-        await page.goto("/workspace/ws-1/settings?tab=mcp");
-        // task-253 起工作区设置页自带标题头（不再借用 SettingsLayerHeader 的「设置 › 工作区层」面包屑）。
-        await expect(page.getByTestId("workspace-settings-header")).toBeVisible();
-        await expect(page.getByTestId("workspace-settings-title")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
+
+        // task-209 / D-1019：`mcp` / `credentials` / `knowledge` 三个 tab 与资源区双入口 ⇒ 撤。
+        // 旧深链（书签/文档/外部引用）**不做 404**：回落到「常规」，并就地点名搬去哪 + 给直链。
+        // 判据写成正面守卫：三个旧容器计数为 0、提示条在、链接地址是资源区对应层。
+        for (const legacy of ["mcp", "credentials", "knowledge"] as const) {
+            await page.goto(`/workspace/ws-1/settings?tab=${legacy}`);
+            // task-253 起工作区设置页自带标题头（不再借用 SettingsLayerHeader 的「设置 › 工作区层」面包屑）。
+            await expect(page.getByTestId("workspace-settings-header")).toBeVisible();
+            await expect(page.getByTestId("ws-settings-general")).toBeVisible();
+            await expect(page.getByTestId(`ws-settings-${legacy}`)).toHaveCount(0);
+            await expect(page.getByTestId(`ws-settings-tab-${legacy}`)).toHaveCount(0);
+            await expect(page.getByTestId("ws-settings-resource-moved")).toBeVisible();
+            await expect(page.getByTestId("ws-settings-resource-moved-action")).toHaveAttribute(
+                "href",
+                `/resources/${legacy}?layer=WORKSPACE`,
+            );
+        }
+
+        // 存活 tab 只有「常规 / 成员」两个容器（成员 tab 在能力位未知时保留，BL-344）。
+        await page.goto("/workspace/ws-1/settings");
+        await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-tab-members")).toBeVisible();
+        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
+        await expect(page.getByTestId("ws-settings-resource-moved")).toHaveCount(0);
         // 工作区设置页在 AppLayout 壳内（页签形态），工作区 Sidebar 照常 1 份。
         await expect(page.getByTestId("sidebar")).toHaveCount(1);
-
-        await page.goto("/workspace/ws-1/settings?tab=credentials");
-        await expect(page.getByTestId("ws-settings-credentials")).toBeVisible();
-
-        await page.goto("/workspace/ws-1/settings?tab=knowledge");
-        await expect(page.getByTestId("ws-settings-knowledge")).toBeVisible();
-
-        // 无域段无 tab = 旧默认入口（general）。
-        await page.goto("/workspace/ws-1/settings");
-        await expect(page.getByTestId("ws-settings-general")).toBeVisible();
 
         // 工作区配置 tab 随层退役：任何 URL 都不该再把它渲染出来。
         await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
