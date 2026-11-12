@@ -264,7 +264,7 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         gapHits.addAll(intersectShapes(extra, KNOWN_GAPS.keySet()));
         assertEquals(new TreeSet<>(KNOWN_GAPS.keySet()), gapHits,
                 "KNOWN_GAPS drifted — fixed gaps must be removed from the list, new ones must be bucketed "
-                        + "explicitly (see .local/evidence/bl-320-route-contract-parity.md)");
+                        + "explicitly (see workspace one:.local/evidence/bl-320-route-contract-parity.md)");
 
         // PLANNED_APIS must self-clean the same way (task-182): every entry has to still stand for an
         // outstanding candidate. An entry whose implementation landed produces no candidate any more,
@@ -276,11 +276,9 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         Set<String> plannedHits = new TreeSet<>(intersectShapes(extra, PLANNED_APIS.keySet()));
         SortedSet<String> rottenPlanned = new TreeSet<>(difference(PLANNED_APIS.keySet(), plannedHits));
         assertEquals(new TreeSet<>(PLANNED_APIS.keySet()), plannedHits,
-                () -> "PLANNED_APIS drifted — " + rottenPlanned + " no longer matches any "
-                        + "documented-but-unimplemented route: the code landed (delete the entry, D-932) "
-                        + "or the contract moved (update the key). Entries are only consulted while their "
-                        + "shape still produces a candidate, so a stale entry is invisible without this "
-                        + "assertion (see internal/A03-xihe/evidence/2026-11-12-planned-apis-self-clean/)");
+                () -> "PLANNED_APIS drifted — delete the landed entries from the list, re-key a moved "
+                        + "one (D-932): " + rottenPlanned
+                        + " (see workspace one:/internal/A03-xihe/evidence/2026-11-12-planned-apis-self-clean/)");
 
         assertVariableNamesMatch(documentedRoutes(), implementedRoutes());
     }
