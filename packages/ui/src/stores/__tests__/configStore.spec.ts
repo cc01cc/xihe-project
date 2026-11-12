@@ -70,7 +70,12 @@ describe("useConfigStore", () => {
             expect(parsed["llm-provider"].temperature).toBe("0.5");
         });
 
-        it("loadAllDomains fetches and updates mergedConfig for admins", async () => {
+        /**
+         * task-74：入参语义是「能否读实例内容」（CP 原子 `READ_INSTANCE_CONTENT`，
+         * `ConfigController.java:89-90`），不是「是不是管理员」。用例名跟着改，
+         * 否则下一个人会以为这里该传能力位。
+         */
+        it("loadAllDomains fetches and updates mergedConfig when instance content is readable", async () => {
             const requestedDomains: string[] = [];
             vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
                 const url = typeof input === "string" ? input : input.url,
@@ -92,7 +97,7 @@ describe("useConfigStore", () => {
             });
             const store = useConfigStore();
 
-            await store.loadAllDomains({ isAdmin: true });
+            await store.loadAllDomains({ canReadInstanceContent: true });
 
             expect(store.mergedConfig["logging"]?.logLevel).toBe("DEBUG");
             expect(store.mergedConfig["llm-provider"]?.temperature).toBe("0.5");
@@ -104,7 +109,7 @@ describe("useConfigStore", () => {
             expect(store.mergedConfig["agent-templates"]).toBeUndefined();
         });
 
-        it("loadAllDomains as non-admin never requests domains CP rejects with 403", async () => {
+        it("loadAllDomains without READ_INSTANCE_CONTENT never requests domains CP rejects with 403", async () => {
             const requestedDomains: string[] = [];
             vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
                 const url = typeof input === "string" ? input : input.url,
