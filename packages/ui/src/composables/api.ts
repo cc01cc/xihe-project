@@ -165,6 +165,49 @@ export interface ApiWorkspace {
 }
 
 /**
+ * task-62（源自 task-49 逐字段矩阵）：`GET /workspaces/{id}` 的 wire 字段清单。
+ *
+ * 判据 A：这份清单必须点名 `ApiWorkspace` 的**每一个**键 —— 类型新增字段却忘了登记，
+ * `pnpm run typecheck` 当场红（`_allWorkspaceFieldsListed` 的声明类型会退化成 `never`）。
+ *
+ * 为什么是编译期判据而不是运行时 round-trip 断言：mock 车道连续被证明可能没在跑产品代码
+ * （task-48 夹具自编响应、task-60 兜底静默 `200 {}`），判据不能建在那种车道上；
+ * 编译期判据不依赖任何车道的数据源（D-1094 / task-49 §4）。
+ *
+ * 与契约的差额（`openapi.yaml:6573` 的 `Workspace` 共 15 个 wire 字段）：`generation`（required）
+ * **不在** `ApiWorkspace` 里。本判据只比对「类型 ↔ 清单」，看不见「契约 ↔ 类型」的缺口 —— 那一轴属
+ * PLAN-0763 的 A+ 生成腿（task-242 `ui-type-drift.md`），此处不重复造第二条生成腿。
+ */
+export const WORKSPACE_WIRE_FIELDS = [
+    "id",
+    "name",
+    "description",
+    "ownerId",
+    "storageBackend",
+    "storageRef",
+    "storageMode",
+    "hostPath",
+    "roots",
+    "executionMode",
+    "workspaceRole",
+    "canWrite",
+    "createdAt",
+    "updatedAt",
+] as const satisfies readonly (keyof ApiWorkspace)[];
+
+type UnlistedWorkspaceField = Exclude<keyof ApiWorkspace, (typeof WORKSPACE_WIRE_FIELDS)[number]>;
+export const _allWorkspaceFieldsListed: UnlistedWorkspaceField extends never ? true : never = true;
+
+/**
+ * 判据 B 的对照面：`normalizeWorkspace` 的返回字面量必须**逐键**给出（漏一行映射 ⇒ 编译期红）。
+ *
+ * `-?` 不是装饰：`keyof ApiWorkspace` 里大部分键是可选的，同态映射会**保留可选性** ⇒ 去掉 `-?` 之后
+ * 漏掉 `roots?` 这类可选键**不会报错**，判据静默失效（task-49 实测过这条差异）。
+ * 谁把它“简化”掉，就等于把这条判据删了。
+ */
+export type WorkspaceMappingSurface = { readonly [K in keyof ApiWorkspace]-?: unknown };
+
+/**
  * PLAN-0610 W3-2b decision #22: capability projection carried by `/auth/me` and the auth responses
  * (`CapabilitiesView` on the wire). The retired `role` string is never read by the UI again.
  */
@@ -2075,7 +2118,7 @@ function normalizeWorkspace(value: unknown): ApiWorkspace | undefined {
         canWrite: typeof record.canWrite === "boolean" ? record.canWrite : undefined,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
-    };
+    } satisfies WorkspaceMappingSurface;
 }
 
 export class ApiError extends Error {
