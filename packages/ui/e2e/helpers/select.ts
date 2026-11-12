@@ -18,7 +18,7 @@ export const SELECT_LABELS: Record<string, Record<string, string>> = {
     "session-policy-mode": { manual: "手动审批", auto: "自动放行" },
     "settings-audit-status": { failed: "失败" },
     "settings-audit-type": { chat_run: "对话运行" },
-    "ws-members-add-role": { EDITOR: "编辑", VIEWER: "只读" },
+    "ws-members-add-role": { EDITOR: "可编辑", VIEWER: "只读" },
     "workspace-execution-mode": {
         "windows-mxc": "windows-mxc",
         "windows-host": "宿主执行（不受限制）",
