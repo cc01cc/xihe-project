@@ -150,6 +150,16 @@ describe("InstanceCredentialsPanel", () => {
 
         // 注意：vendor `AlertDialogAction` 点下即关闭（先 `update:open(false)` 再派发 click），
         // 所以这里断言的是「确认后端点被调用」，不依赖弹窗仍然开着。
+        // 机器判据（钉 reka 陷阱，D-1008/task-165 §vendor）：确认按钮**不能**是
+        // vendor `AlertDialogAction` —— 它点下即无条件关闭，先派发 update:open(false) 把动作对象
+        // 清空，再派发我们的 click ⇒ 异步删除永远打不出去。本断言用 data-slot 认人：
+        // 若有人把普通 Button 换回 AlertDialogAction，这里立刻红（不必等到"点了没反应"）：
+        // vendor Button 的 data-slot = "button"，AlertDialogAction 的是 "alert-dialog-action"。
+        expect(
+            wrapper
+                .find('[data-testid="instance-credential-delete-confirm"]')
+                .attributes("data-slot"),
+        ).toBe("button");
         await wrapper.find('[data-testid="instance-credential-delete-confirm"]').trigger("click");
         await flushPromises();
         expect(mockedDelete).toHaveBeenCalledWith("cred-1");
