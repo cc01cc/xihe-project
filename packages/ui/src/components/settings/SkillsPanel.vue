@@ -116,9 +116,9 @@ onMounted(() => {
 <template>
     <section data-testid="settings-skills-panel" class="space-y-4">
         <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h3 data-testid="settings-skills-heading" class="text-base font-medium">
+            <h2 data-testid="settings-skills-heading" class="text-base font-medium">
                 {{ t("settings.skills.title") }}
-            </h3>
+            </h2>
             <span data-testid="settings-skills-count" class="text-xs text-muted-foreground">
                 {{ countLabel }}
             </span>

@@ -195,9 +195,9 @@ async function confirmDelete(): Promise<void> {
         <template v-else>
             <header class="flex flex-wrap items-center justify-between gap-2">
                 <div class="min-w-0">
-                    <h3 class="text-base font-medium" data-testid="instance-mcp-heading">
+                    <h2 class="text-base font-medium" data-testid="instance-mcp-heading">
                         {{ t("settings.instanceResources.mcp.title") }}
-                    </h3>
+                    </h2>
                     <p class="mt-1 text-xs leading-5 text-muted-foreground">
                         {{ t("settings.instanceResources.mcp.subtitle") }}
                     </p>

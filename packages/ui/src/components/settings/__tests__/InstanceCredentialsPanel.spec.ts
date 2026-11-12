@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { defineComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -42,6 +43,7 @@ import {
     type InstanceCredential,
 } from "../../../services/instanceResources";
 import { i18n } from "../../../i18n";
+import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import InstanceCredentialsPanel from "../InstanceCredentialsPanel.vue";
 
 const mockedList = vi.mocked(listInstanceCredentials);
@@ -164,6 +166,31 @@ describe("InstanceCredentialsPanel", () => {
         await flushPromises();
         expect(mockedDelete).toHaveBeenCalledWith("cred-1");
 
+        wrapper.unmount();
+    });
+    /**
+     * task-176：**标题层级不跳级**。资源页不走域页的 `SettingsDomainView`（域页才渲染 `h2`），
+     * 所以面板分节标题曾经是 `h3` ⇒ 屏幕/读屏读出来是 `h1（实例配置）→ h3（凭据）`，**跳过 h2**。
+     * 判据用**整页序列**（层标题 h1 + 面板分节标题），不是"标题只有一个"：
+     * 期望 `["H1", "H2"]`；改前是 `["H1", "H3"]` ⇒ 必红。
+     */
+    it("标题层级不跳级：页面标题序列是 h1 → h2", async () => {
+        const Host = defineComponent({
+            components: { SettingsLayerHeader, InstanceCredentialsPanel },
+            template: `<div>
+                <SettingsLayerHeader layer="instance" domain="凭据" />
+                <InstanceCredentialsPanel />
+            </div>`,
+        });
+        const wrapper = mount(Host, {
+            global: { plugins: [i18n], stubs: { RouterLink: true } },
+            attachTo: document.body,
+        });
+        await flushPromises();
+        const tags = Array.from(wrapper.element.querySelectorAll("h1,h2,h3,h4")).map(
+            (node) => node.tagName,
+        );
+        expect(tags).toEqual(["H1", "H2"]);
         wrapper.unmount();
     });
 });
