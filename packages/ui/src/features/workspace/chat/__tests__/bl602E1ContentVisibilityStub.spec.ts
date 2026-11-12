@@ -67,11 +67,22 @@ const i18n = createI18n({
     locale: "zh",
     messages: {
         zh: {
+            // `MessageScrollerViewport.vue` 的 aria-label 走 `t("common.messages")`。
+            // 本 spec 必须挂**真** message-scroller 组件族（不能 stub），所以这份夹具要补齐它们用到的键；
+            // 缺键会被 `src/test-utils/vueTestUtils.ts` 的 expectNoRawI18nKey 当场拦下（首跑实测）。
+            common: {
+                messages: "消息",
+                scroll: "滚动",
+                wheel: "滚轮",
+                touchMove: "触摸移动",
+                keyDown: "按键",
+            },
             workspace: { participantUnknownName: "未知用户" },
             chat: {
                 runHeader: { toggle: "展开或折叠 run {run}" },
                 followUpStatusCompleted: "已完成",
                 followUpStatusFailed: "失败",
+                expandedLimitReached: "已达展开上限",
                 loadOlder: "加载更早的消息",
                 loadingOlder: "正在加载更早的消息…",
                 foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
@@ -126,6 +137,10 @@ interface Cell {
     heightChanges: number;
     prependWrites: number;
     frames: number;
+    /** 已渲染行里"离视口最远"的距离（px）——判 flip 是否**结构上可达**。 */
+    maxOutOfBandDistance: number;
+    /** `maxOutOfBandDistance > FLIP_BAND`：翻转臂是否可能发生翻转。 */
+    flipReachable: boolean;
 }
 
 const CELLS: Cell[] = [];
@@ -306,6 +321,7 @@ async function runCell(arm: Arm, seed: number): Promise<Cell> {
         let writeFrames = 0;
         let maxConsecutive = 0;
         let consecutive = 0;
+        let maxOutOfBandDistance = 0;
 
         for (let frame = 0; frame < FRAMES; frame += 1) {
             currentFrame = frame;
@@ -336,8 +352,16 @@ async function runCell(arm: Arm, seed: number): Promise<Cell> {
                 '[data-slot="message-scroller-item"]',
             )) {
                 const rawIndex = row.dataset.virtualIndex;
-                if (rawIndex !== undefined)
-                    snapshot.set(Number(rawIndex), modelHeightAt(Number(rawIndex)));
+                if (rawIndex === undefined) continue;
+                const index = Number(rawIndex);
+                snapshot.set(index, modelHeightAt(index));
+                // 该行离视口多远（>0 = 落在视口外）；与 modelHeightAt 里的 near 判据同口径。
+                const position = prefix[index] - state.scrollTop;
+                const base = baseHeightAt(index);
+                const beyondTop = -position;
+                const beyondBottom = position + base - VIEWPORT_HEIGHT;
+                const distance = Math.max(0, beyondTop, beyondBottom);
+                if (distance > maxOutOfBandDistance) maxOutOfBandDistance = distance;
             }
             heightSnapshots.push(snapshot);
         }
@@ -363,10 +387,21 @@ async function runCell(arm: Arm, seed: number): Promise<Cell> {
         const renderedRows = wrapper.findAll('[data-slot="message-scroller-item"]').length;
         expect(renderedRows, "前置：窗口必须小于全表（否则不是窗口化）").toBeLessThan(200);
         expect(renderedRows, "前置：窗口不能为空").toBeGreaterThan(0);
+        const flipReachable = maxOutOfBandDistance > FLIP_BAND;
         if (arm === "flip") {
-            expect(heightChanges, "arm flip 必须真的发生高度翻转（否则桩没生效）").toBeGreaterThan(
-                0,
-            );
+            // **自洽判据，不是"必须阳性"判据**（否则几何不可达时会假红 —— 首跑实测踩过）：
+            // 只有"已渲染行确实有落在翻转带外"时，翻转才必须发生；否则必须恒不翻转。
+            if (flipReachable) {
+                expect(
+                    heightChanges,
+                    `翻转带 ${FLIP_BAND} px 内已有行越带（最远 ${Math.round(maxOutOfBandDistance)} px）⇒ 必须发生翻转`,
+                ).toBeGreaterThan(0);
+            } else {
+                expect(
+                    heightChanges,
+                    `已渲染行最远只到 ${Math.round(maxOutOfBandDistance)} px，未越过 ${FLIP_BAND} px 翻转带 ⇒ 结构上不可能翻转，heightChanges 必须为 0`,
+                ).toBe(0);
+            }
         }
         if (arm === "constant") {
             expect(heightChanges, "arm constant 不得发生高度翻转").toBe(0);
@@ -387,6 +422,8 @@ async function runCell(arm: Arm, seed: number): Promise<Cell> {
             heightChanges,
             prependWrites,
             frames: FRAMES,
+            maxOutOfBandDistance,
+            flipReachable,
         };
     } finally {
         wrapper.unmount();
@@ -424,6 +461,8 @@ describe("BL-602 E1：content-visibility 高度翻转 × 库首测补偿（桩�
             总写次数: cell.totalWrites,
             "prepend 期写次数": cell.prependWrites,
             高度翻转次数: cell.heightChanges,
+            "行最远越带(px)": Math.round(cell.maxOutOfBandDistance),
+            翻转结构可达: cell.flipReachable,
         }));
         // 判定规则（预注册，见证据包 §4 E1）：A 臂 3 seed 全部达标 且 B/C 臂全部达标 ⇒ M2 准入。
         const flipCells = CELLS.filter((cell) => cell.arm === "flip");
