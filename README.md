@@ -172,7 +172,7 @@ The supervisor's order is the product contract, not a preference: PostgreSQL mus
 ## 5. Testing
 
 ```bash
-mise run validate             # lint + typecheck + build + test (+ e2e fixture self-tests)
+mise run validate             # all gates: check:mise-env + check:openapi(:lint) + check:api-docs + check:commit-msg + lint + typecheck + build + test + e2e fixtures + lint:links
 mise run check:types          # UI + e2e TypeScript gates (D-727; every verify window, ~20–40 s)
 mise run validate:full        # validate + test:runtime + test:integration (no E2E; compose E2E lane is frozen)
 mise run test:e2e:fixtures    # e2e fixture self-tests only (fake LLM chain state machine; no stack, seconds)
@@ -181,6 +181,10 @@ mise run test:cp:baseline       # BL-368: classify CP failures against scripts/c
 mise run ledger:validate      # read-only ledger (BL/PLAN) validation; run from the ONE workspace root; report-only
 mise run check:e2e-bypass     # PLAN-0687: in-page fetch bypass audit in e2e/real (report-only; annotation or allowlist required)
 mise run lint:i18n            # task-96: zh-CN/en-US key sets, {placeholder} drift, static t("…") refs; read-only, silent when clean (part of mise run lint)
+mise run check:mise-env       # task-131/273/313: XIHE_* vars used in properties must be registered (fail-closed; first step of validate)
+mise run check:openapi:lint   # task-133/313: Redocly spec-level lint ($ref / operationId / unused); part of validate, errors-only (124 warnings don't block)
+mise run check:docs-gates     # doc gates aggregate (docs-index + doc-bytes + md-tables); run from the ONE workspace root as the monitor's ⑧ question, not by validate
+mise run check:dev-i18n-drift # task-316: DEV docs zh/en id-set drift + PLAN/D registration lookup; report-only (not in validate)
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
 

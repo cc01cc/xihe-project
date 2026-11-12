@@ -397,7 +397,7 @@ alias = "lint:agent"
 
 [tasks."check:mise-env"]
 run = "node scripts/check-mise-env.mjs"
-description = "env 变量登记门（task-131 → task-273 fail-closed）：properties 里 XIHE_* 未登记 ⇒ WARN 且 exit 1"
+description = "env 变量登记门（task-131 → task-273 fail-closed → task-313 挂 validate.depends 最前）：properties 里 XIHE_* 未登记 ⇒ WARN 且 exit 1（此前 fail-closed 但零自动执行者）"
 
 [tasks."lint:cp"]
 run = "mvn checkstyle:check"
@@ -457,8 +457,16 @@ alias = "format"
 # （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
 # task-237: check:api-docs 与 check:openapi 同段 —— 两者都是「契约/文档是否落后」的静态门，且 validate 已通过
 # lint:agent 依赖 uv/python，把 python 依赖放这里不会污染纯 Maven 的 test:cp 车道（故不挂到 check:openapi 上）。
-depends = ["check:openapi", "check:api-docs", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
-description = "Run all quality gates — check:openapi + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
+# task-313（D-1062 第 6a / 10a 项）：把两道「已绿但零自动执行者」的门接进来 ——
+# ① check:mise-env 挂**最前**：毫秒级、已 fail-closed（WARN 非空 ⇒ exit 1），最便宜的失败放第一位；
+#    **depends 为并行执行，首个失败即中止**（2026-11-12 实测注入 WARN 后 35.2 s 收口）；排在首位的理由是
+#    毫秒级且无外部依赖，**不是执行顺序** —— 别把这条读成"串行第一步"。
+# ② check:openapi:lint 紧贴 check:openapi：文档承诺「HTTP 形态四道门全绿才算现行」，此前它无执行者；
+#    实测 errors=0 / warnings=124，而 redocly 只按 errors 退出、本命令也没设 --max-warnings ⇒ 不制造恒红。
+# 不接的两类（同卡 10b / 10d）：check:docs-gates 走 monitor 第⑧问（慢且依赖其它仓状态，接进来会拖垮每次提交）；
+# 其余 report-only 门只登记不接 —— 接进去等于把 report-only 偷偷变阻断，那是策略变更，不是接线。
+depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+description = "Run all quality gates — check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
 alias = "validate"
 
 [tasks."validate:full"]
@@ -738,7 +746,7 @@ description = "Blocking commit-message gate (type/scope, display-width <=72 cols
 #   而本任务的 description 写的是「单文件 HTML 文档」，不内嵌就是名不副实。
 [tasks."check:openapi:lint"]
 run = "cd packages/ui && pnpm exec redocly lint --config ../../.redocly.yaml ../../docs/api/openapi.yaml"
-description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；未接入 validate；task-133 后 errors=0 / warnings=126（存量 56 + internal summary 降格 70），task-245 剩余 warnings 清账后再议接 validate"
+description = "Redocly 规范级 lint（$ref/operationId 唯一/unused）；**task-313 起接入 `validate`**（D-1062 10a，此前零自动执行者）；判据只有 errors（当前 0）——redocly 默认按 errors 退出、本命令无 `--max-warnings`，故 124 warnings 不阻断（2026-11-12 20:16 实测；存量 warnings 清账见 task-245）"
 
 [tasks."docs:api:html"]
 run = "cd packages/ui && pnpm exec redocly build-docs --config ../../.redocly.yaml ../../docs/api/openapi.yaml -o ../../.tmp/api-docs/index.html --inlineBundle -t ../../.redocly/api-docs.hbs --openapi.disableTelemetry=true"
