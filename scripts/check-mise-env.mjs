@@ -5,11 +5,13 @@
  * xc-cross-cutting-checklist 登记 ⇒ WARN（v1 不 fail；存量清 0 后由 Lead 裁定转 fail-closed）。
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const ONE = resolve(ROOT, "..", "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), ".."); // = <A03 仓库根>
+// ONE = one 工作区根 = A03 仓库根的**父目录**（退 1 级）。曾写成 "..","..",".." ⇒ 退到盘根，
+// 于是 `.agents/...` 解析成 `H:\.agents\...` 直接 ENOENT（task-272；别按层数猜根，按语义只退一级）。
+const ONE = resolve(ROOT, "..");
 
 /** 内建白名单：门禁/基线类变量，语义即「基础设施」，免登记。 */
 const WHITELIST = new Set([
@@ -37,7 +39,9 @@ function main() {
       for (const m of line.matchAll(/\$\{(XIHE_[A-Z0-9_]+)/g)) {
         const name = m[1];
         if (WHITELIST.has(name)) continue;
-        if (!found.has(name)) found.set(name, `${f.replace(ROOT + "/", "")}:${i + 1}`);
+        // 用 relative 而不是 `f.replace(ROOT + "/", "")`：Windows 的 join 产出反斜杠，
+        // 硬编码 "/" 永远替换不中 ⇒ 会把机器绝对路径打进门禁输出（task-272）。
+        if (!found.has(name)) found.set(name, `${relative(ROOT, f)}:${i + 1}`);
       }
     });
   }
