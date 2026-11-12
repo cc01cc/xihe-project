@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import type { ConfigDomain, ConfigKeyMeta, ConfigLayer } from "../../stores/config";
-import { settingsDomainPath } from "../../lib/settingsIa";
+import { isInstanceOnlyForUser, settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { FieldControl, FieldError, FieldRoot } from "reka-ui";
@@ -49,6 +49,11 @@ const props = defineProps<{
     meta?: Record<string, ConfigKeyMeta>;
     /** PLAN-0554: current layer, used for inheritance wording. task-253：只剩实例/用户两层。 */
     layer?: ConfigLayer;
+    /**
+     * task-31：**当前查看者的 user 层原始行**（同一域），只用于在实例层派生「被个人层覆盖」。
+     * 不传 = 未加载 —— 面板据此**不画**徽标，而不是画成「没有覆盖」（见 userOverrideActive）。
+     */
+    userEntries?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -295,6 +300,33 @@ function jumpToSource(key: string): void {
     if (!targetLayer) return;
     void router.push({
         path: settingsDomainPath(targetLayer, props.domain as ConfigDomain),
+        hash: `#${key}`,
+    });
+}
+
+/**
+ * task-31（用户复审「我改了用户层配置，实例层看不出被覆盖」）：**实例层的反向可见性**。
+ *
+ * <p>契约（`docs/api/openapi.yaml:3093-3094`）给的做法是「merged 读生效值 + 用 `layer=user`
+ * 检测覆盖」—— `ConfigKeyMeta` 里**没有**覆盖人字段，所以这个徽标只能 UI 侧派生：
+ * instance 层有这一行（本面板正在编辑它），且**当前查看者的用户层**对同一键有显式行
+ * ⇒ 该实例默认值对这个用户不生效。</p>
+ *
+ * <p>语义边界（别把它写成更强的断言）：CP 只允许读自己的 user 层 ⇒ 徽标能说的是
+ * 「**你**的个人层覆盖了它」，不是「被 N 个用户覆盖」。`userEntries === undefined` 表示
+ * user 层还没加载完 —— 那时**不画**徽标；把"不知道"画成"没有覆盖"正是本卡要修的缺陷类。</p>
+ */
+function userOverrideActive(key: string): boolean {
+    if (props.layer !== "instance" || !props.userEntries) return false;
+    // 用户层没有这个域的路由（logging / approval-policy / job-policy 等实例专属域）⇒ 谈不上覆盖。
+    if (isInstanceOnlyForUser(props.domain as ConfigDomain)) return false;
+    return Object.prototype.hasOwnProperty.call(props.userEntries, key);
+}
+
+/** 跳到用户层同一条目（复用 jumpToSource 的锚点 + 高亮机制，不另造一套跳转）。 */
+function jumpToUserOverride(key: string): void {
+    void router.push({
+        path: settingsDomainPath("user", props.domain as ConfigDomain),
         hash: `#${key}`,
     });
 }
@@ -562,6 +594,20 @@ function handleReset(key: string) {
                                 {{ sourceDisplay(field.key).badge }}
                             </span>
                         </template>
+                        <!-- task-31：实例层「被个人层覆盖」——点它跳到用户层同一条目（复用锚点 + 高亮）。
+                             只在「本层 = instance 且 user 层对同键有显式行」时出现；user 层未加载时不画，
+                             避免把"不知道"画成"没有覆盖"。文案用层名（个人覆盖），不写"被 N 个用户覆盖"。 -->
+                        <button
+                            v-if="userOverrideActive(field.key)"
+                            type="button"
+                            :data-testid="`config-user-override-${domain}-${field.key}`"
+                            :aria-label="t('settings.configSourceUser')"
+                            :title="t('settings.configSourceUser')"
+                            class="shrink-0 rounded border border-border px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                            @click="jumpToUserOverride(field.key)"
+                        >
+                            {{ t("settings.configSourceUserOverride") }}
+                        </button>
                         <span v-if="sourceDisplay(field.key).hint" class="min-w-0 truncate">
                             {{ sourceDisplay(field.key).hint }}
                         </span>
