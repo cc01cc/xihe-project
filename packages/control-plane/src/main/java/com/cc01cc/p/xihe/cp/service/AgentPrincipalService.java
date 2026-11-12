@@ -162,6 +162,50 @@ public class AgentPrincipalService {
     }
 
     /**
+     * task-179 (PLAN-0771 M3, contract {@code d533613c}): the instance-layer create.
+     *
+     * <p>Two differences from {@link #createPrincipalFromTemplate}, both required by the contract
+     * rather than by taste:</p>
+     * <ol>
+     *   <li>the authorizing atom is the instance-tier {@code MANAGE_AGENT_PRINCIPALS} (N1) evaluated
+     *       at <b>instance scope</b> — {@code requireCreationAction} would demand
+     *       {@code CREATE_OWN_AGENT} for a context-less request, which is the user door, not this
+     *       one; and the atom string recorded in the durable audit is therefore N1, not a
+     *       hard-coded workspace action;</li>
+     *   <li>there is no workspace context at all: this prefix never reads
+     *       {@code TenantContext.getWorkspaceId()} and never writes {@code workspace_agents}
+     *       (PLAN-0771 2.4 — reach is granted later through the existing bind surface).</li>
+     * </ol>
+     *
+     * <p>The row is created the same way every other principal is (owner column left null by
+     * design, G2=(b)); pending decision #40 means the <b>path</b> is what makes it an instance
+     * platform agent, not a stored discriminator, so this method deliberately writes no new
+     * ownership state.</p>
+     */
+    @Transactional
+    public AgentPrincipal createInstancePrincipal(String actorUserId, String name, String templateId,
+                                                  String defaultModelProvider, String defaultModelName,
+                                                  JsonNode allowedModels, JsonNode hooks, List<UUID> roleIds) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        // N1 at instance scope (null workspace selects exactly the instance-scope grant rows).
+        requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS, "*", null);
+        AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
+                actorUserId, null, templateId);
+        String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
+        boolean builtinPreset = "instance".equals(resolved.sourceLayer())
+                && AgentPrincipal.BUILTIN_GUARD_PRESET_TEMPLATE_ID.equals(resolvedTemplateId);
+        JsonNode templateHooks = resolved.snapshot().path("hooks");
+        JsonNode effectiveHooks = hooks != null ? hooks
+                : (templateHooks.isMissingNode() || templateHooks.isNull()) ? null : templateHooks.deepCopy();
+        return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(),
+                defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
+                builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET : AgentPrincipal.ORIGIN_USER,
+                builtinPreset ? resolvedTemplateId : null, roleIds,
+                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS);
+    }
+
+    /**
      * Authorizes a create and reports the atom that did it, so the audit records the real source
      * (PLAN-0750 M1, G1=(1a) + G2=(b), user ruling 2026-11-10).
      *
@@ -634,6 +678,25 @@ public class AgentPrincipalService {
                 .toList();
     }
 
+    /**
+     * task-179 (PLAN-0771 M3, contract {@code d533613c}): the instance-layer read face.
+     *
+     * <p>The contract is explicit that this list is <b>not</b> caller-scoped: "GET
+     * /api/v1/agent-principals answers what this caller may use … this path answers what the
+     * deployment installed — no owner filter, no created_by filter, no workspaceId query". So it
+     * does not go through {@link #listPrincipals} (which filters by {@code created_by} for callers
+     * without the management atom); every authenticated caller sees the same set.</p>
+     *
+     * <p>Honest limit (pending decision #40, option 40A "path 即归属"): {@code agent_principals}
+     * carries no ownership column, so "the deployment installed" cannot be filtered from the row —
+     * this returns the whole principal set, and the path is what makes the face an instance face.
+     * When #40 lands as 40B/40C the filter arrives here, in one place.</p>
+     */
+    @Transactional(readOnly = true)
+    public List<AgentPrincipalView> listInstancePrincipals() {
+        return agentPrincipalRepository.findAll().stream().map(this::toPrincipalView).toList();
+    }
+
     private AgentPrincipalView toPrincipalView(AgentPrincipal principal) {
         return new AgentPrincipalView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(),
@@ -943,8 +1006,6 @@ public class AgentPrincipalService {
                 actorId, workspaceId.toString());
     }
 
-    /** Global account disable; the caller must authorize the account-lifecycle operation. */
-    @Transactional
     /**
      * PLAN-0622 M1.2 / O6: disable is tier-authorized, and a refusal is a {@code 403}, never a
      * {@code 404} that pretends the row does not exist.
@@ -956,7 +1017,29 @@ public class AgentPrincipalService {
      *   <li>{@code INSTANCE} — instance administration only.</li>
      * </ul>
      */
+    @Transactional
     public boolean disablePrincipal(String actorUserId, UUID principalId) {
+        return disable(actorUserId, principalId, true);
+    }
+
+    /**
+     * task-179 (PLAN-0771 M3, contract {@code d533613c}): {@code DELETE /api/v1/instance/agent-principals/{id}}
+     * is the <b>retire</b> spelling — {@code disabledAt} is set, the row is kept (principal rows are
+     * never hard-deleted; FK {@code ON DELETE RESTRICT} keeps historical session/delegation
+     * references intact), and it is idempotent (an already-retired row answers 204 again).
+     *
+     * <p>The only difference from {@link #disablePrincipal} is the deliberately skipped
+     * {@code WORKSPACE_CONTEXT_REQUIRED} gate: that 409 exists to close a user-surface existence
+     * oracle (D22/D-196), and on the instance prefix there is no workspace context to require —
+     * the contract says the code is never raised here. The authority matrix underneath is
+     * unchanged (an instance admin holds N1, so it passes on the first channel).</p>
+     */
+    @Transactional
+    public boolean disableInstancePrincipal(String actorUserId, UUID principalId) {
+        return disable(actorUserId, principalId, false);
+    }
+
+    private boolean disable(String actorUserId, UUID principalId, boolean requireWorkspaceContext) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
@@ -965,7 +1048,9 @@ public class AgentPrincipalService {
         // D-196/BL-336 order (revises D22): existence (404) → scope-aware context (409) → authority
         // (403). The lookup is here only to learn the subject's scope; nothing from it is echoed in
         // the 409 branch, and the residual 404-vs-409 oracle is documented on the method below.
-        requireWorkspaceContextFor(principal);
+        if (requireWorkspaceContext) {
+            requireWorkspaceContextFor(principal);
+        }
         requireDisableAuthority(actorId, principal);
         if (principal.getDisabledAt() != null) {
             // Idempotent: disabling twice is not an error, and it must not add a second audit row.
@@ -1220,6 +1305,25 @@ public class AgentPrincipalService {
     @Transactional
     public PrincipalSettings applyPrincipalSettings(String actorUserId, UUID principalId,
                                                     PrincipalSettingsPatch patch) {
+        return applySettings(actorUserId, principalId, patch, true);
+    }
+
+    /**
+     * task-179 (PLAN-0771 M3, contract {@code d533613c}): {@code PATCH /api/v1/instance/agent-principals/{id}}
+     * keeps the subject-document semantics verbatim (at least one key, explicit null clears, absent
+     * key untouched, echo the persisted documents) and only drops the
+     * {@code WORKSPACE_CONTEXT_REQUIRED} gate — the contract states that code is never raised on
+     * this prefix, which carries no workspace context at all (D22's gate belongs to the
+     * non-instance surface). Gate order here stays existence (404) → authority (403).
+     */
+    @Transactional
+    public PrincipalSettings applyInstancePrincipalSettings(String actorUserId, UUID principalId,
+                                                            PrincipalSettingsPatch patch) {
+        return applySettings(actorUserId, principalId, patch, false);
+    }
+
+    private PrincipalSettings applySettings(String actorUserId, UUID principalId,
+                                            PrincipalSettingsPatch patch, boolean requireWorkspaceContext) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         // Validate before the lookup: a malformed document must never need a row to be rejected
@@ -1236,7 +1340,9 @@ public class AgentPrincipalService {
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
         // D-196/BL-336: same scope-aware gate as disable — a personal (instance-scope) principal stays
         // writable without a workspace context; a workspace-scoped one needs the explicit context.
-        requireWorkspaceContextFor(principal);
+        if (requireWorkspaceContext) {
+            requireWorkspaceContextFor(principal);
+        }
         if (patch.hooksPresent()) {
             requireMutableHooks(principal);
         }
