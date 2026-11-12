@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watchEffect } from "vue";
+import { computed, onMounted, ref, watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -65,6 +65,44 @@ const { t } = useI18n(),
 function domainLabel(domain: string): string {
     const key = DOMAIN_LABEL_KEY[domain as ConfigDomain];
     return key ? t(key) : domain;
+}
+
+/**
+ * task-31：实例层「被个人层覆盖」徽标的数据面。
+ *
+ * <p>面板（ConfigDomainPanel）只负责渲染，**拉取只在这里做一次**：当前查看者的 user 层
+ * 与实例层同域同键都有行 ⇒ 实例默认值对这个用户不生效。为什么要自己拉：ConfigKeyMeta
+ * 没有覆盖人字段（docs/api/openapi.yaml:3093-3094 的做法是「读 merged 生效值 + 用
+ * layer=user 检测覆盖」），所以覆盖关系只能由 UI 比两份层数据得出。</p>
+ *
+ * <p>为什么失败时不画徽标：userEntries 为 undefined 表示「不知道」；把「不知道」画成
+ * 「没有覆盖」正是本卡要修的缺陷类（用户改了用户层，实例页却看不出被覆盖）。</p>
+ */
+const userLayerLoaded = ref(false);
+let userLayerInFlight: Promise<void> | null = null;
+
+async function ensureUserLayerLoaded(): Promise<void> {
+    if (userLayerLoaded.value) return;
+    userLayerInFlight ??= configStore
+        .loadLayerDomains("user")
+        .then(
+            () => {
+                userLayerLoaded.value = true;
+            },
+            (e: unknown) => {
+                logger.warn("user layer prefetch failed, override badges stay hidden", e);
+            },
+        )
+        .finally(() => {
+            userLayerInFlight = null;
+        });
+    await userLayerInFlight;
+}
+
+/** 只在实例层用得上：用户层自己看自己没有「被覆盖」可言。 */
+function userEntriesFor(domain: ConfigDomain): Record<string, string> | undefined {
+    if (props.layer !== "instance" || !userLayerLoaded.value) return undefined;
+    return configStore.layerConfig.user[domain] ?? {};
 }
 
 /**
@@ -407,7 +445,16 @@ async function loadProviderCatalog() {
 onMounted(() => {
     void loadProviderCatalog();
     void configStore.fetchModels();
+    if (props.layer === "instance") void ensureUserLayerLoaded();
 });
+
+// task-31：从别的层切到实例层时也要有覆盖数据（首次进入实例页由 onMounted 负责）。
+watch(
+    () => props.layer,
+    (layer) => {
+        if (layer === "instance") void ensureUserLayerLoaded();
+    },
+);
 
 async function reloadLayer() {
     await configStore.loadLayerDomains(props.layer);
@@ -634,6 +681,7 @@ async function handleReset(domain: string, key: string) {
             :meta="configStore.layerMeta[layer][domain] || {}"
             :layer="layer"
             :readonly="readonly"
+            :user-entries="userEntriesFor(domain)"
             @save="handleSave(domain, $event)"
             @reset="handleReset(domain, $event)"
         />
