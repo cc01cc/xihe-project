@@ -87,7 +87,7 @@ const messages = {
                 navAudit: "审计日志",
                 groupInstanceResources: "实例资源",
                 groupMyResources: "我的资源",
-                resourceAgents: "智能体",
+                resourceAgents: "平台智能体",
                 resourceMcp: "MCP 服务器",
                 resourceCredentials: "凭据",
                 resourceKnowledge: "知识库",
@@ -195,21 +195,18 @@ describe("SettingsSidebar", () => {
         // 实例层当前展开；展开用户层后才能一次看到两层的资源组。
         await wrapper.find("#settings-nav-user").trigger("click");
         await flushPromises();
-        // 实例层「实例资源」4 条全缺口；用户层「我的资源」1 缺口 + 2 真入口（PLAN-0750 M3）
+        // task-165：实例层「实例资源」= 4 条真入口（agents/mcp/credentials/skills）+ 1 缺口（knowledge/G3）；
+        // 用户层「我的资源」= 2 真入口（PLAN-0750 M3）+ 1 缺口（knowledge-mcp/G1,G3）
         const groups = wrapper.findAll('[data-testid="settings-nav-resource-group"]');
         expect(groups).toHaveLength(2);
         expect(groups[0]!.text()).toContain("实例资源");
         expect(groups[1]!.text()).toContain("我的资源");
         const gaps = wrapper.findAll('[data-testid^="settings-nav-resource-gap-"]');
-        // PLAN-0750 M3：agents 从缺口转真入口 ⇒ 缺口槽从 6 降到 5（机制保留，见下一条断言）。
-        expect(gaps).toHaveLength(5);
-        expect(gaps.map((gap) => gap.attributes("data-gap-codes"))).toEqual([
-            "G4",
-            "G1",
-            "G2",
-            "G3",
-            "G1,G3",
-        ]);
+        // task-165（D-1006/D-1008/D-1009）：实例层 G4/G1/G2 三条从缺口转真入口（与 task-83 的
+        // 「转真就摘缺口」同手法）⇒ 缺口槽从 5 降到 **2**（只余 knowledge 与用户层 knowledge-mcp）。
+        // 「机制保留」仍被这条断言钉住：只剩 2 个缺口不代表缺口外形可以退化。
+        expect(gaps).toHaveLength(2);
+        expect(gaps.map((gap) => gap.attributes("data-gap-codes"))).toEqual(["G3", "G1,G3"]);
         // 有后端承载的资源项：「智能体主体」→ /settings/agent-principals，「我的凭据」→ /settings/credentials
         // 只留真入口：排除分组容器本身（它也叫 settings-nav-resource-group）与缺口按钮
         const real = wrapper.findAll('[data-testid^="settings-nav-resource-"]').filter((node) => {
@@ -221,12 +218,24 @@ describe("SettingsSidebar", () => {
         // task-87：ui-2 的 task-83（31d4544a）在实例层新增「技能」真入口 ⇒ 这里从 2 条变 3 条。
         // 本用例测的是「资源组落在两层 + 缺口槽可见 + 只留真入口」的**清单语义**，
         // 不是锚点叫什么名字；testid 收口（task-87）没有改变清单，失败来自上游数据变多。
+        // task-165：实例层新增 3 条真入口（agents/mcp/credentials），排在 skills 之前
+        // （分组清单次序 = agents → mcp → credentials → skills → knowledge）。
         expect(real.map((node) => node.attributes("data-testid"))).toEqual([
+            "settings-nav-resource-agents",
+            "settings-nav-resource-mcp",
+            "settings-nav-resource-credentials",
             "settings-nav-resource-skills",
             "settings-nav-resource-agent-principals",
             "settings-nav-resource-my-credentials",
         ]);
-        expect(real.map((node) => node.text())).toEqual(["技能", "智能体主体", "我的凭据"]);
+        expect(real.map((node) => node.text())).toEqual([
+            "平台智能体",
+            "MCP 服务器",
+            "凭据",
+            "技能",
+            "智能体主体",
+            "我的凭据",
+        ]);
     });
 
     it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {

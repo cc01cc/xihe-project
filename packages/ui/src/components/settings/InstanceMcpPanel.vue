@@ -16,7 +16,7 @@ import {
 } from "../../services/instanceResources";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import {
     Empty,
@@ -84,6 +84,13 @@ const deleteTarget = ref<InstanceMcpServer | null>(null);
 const countLabel = computed(() =>
     t("settings.instanceResources.mcp.count", { count: servers.value.length }),
 );
+
+/** 传输方式按语义显示（HTTP/SSE/stdio），不把 wire 小写字面量直接端给用户。 */
+function transportLabel(transport: string): string {
+    if (transport === "sse") return t("settings.instanceResources.mcp.transportSse");
+    if (transport === "stdio") return t("settings.instanceResources.mcp.transportStdio");
+    return t("settings.instanceResources.mcp.transportHttp");
+}
 
 function formatTime(iso: string | null): string {
     if (!iso) return "—";
@@ -241,12 +248,7 @@ async function confirmDelete(): Promise<void> {
             </Empty>
 
             <Card v-else-if="servers.length">
-                <CardHeader class="pb-2">
-                    <CardTitle class="text-sm">
-                        {{ t("settings.instanceResources.mcp.title") }}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent class="pt-0">
+                <CardContent class="pt-4">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm" data-testid="instance-mcp-table">
                             <thead class="text-xs text-muted-foreground">
@@ -286,7 +288,7 @@ async function confirmDelete(): Promise<void> {
                                         </Badge>
                                     </td>
                                     <td class="py-2 text-xs text-muted-foreground">
-                                        {{ server.transport }}
+                                        {{ transportLabel(server.transport) }}
                                     </td>
                                     <td
                                         class="max-w-xs truncate py-2 font-mono text-xs text-muted-foreground"

@@ -15,7 +15,7 @@ import {
 } from "../../services/instanceResources";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import {
     Empty,
@@ -295,12 +295,7 @@ async function submitReveal(): Promise<void> {
             </Empty>
 
             <Card v-else-if="credentials.length">
-                <CardHeader class="pb-2">
-                    <CardTitle class="text-sm">
-                        {{ t("settings.instanceResources.credentials.title") }}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent class="pt-0">
+                <CardContent class="pt-4">
                     <div class="overflow-x-auto">
                         <table
                             class="w-full text-left text-sm"

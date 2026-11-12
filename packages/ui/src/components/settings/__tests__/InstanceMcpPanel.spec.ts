@@ -79,7 +79,8 @@ describe("InstanceMcpPanel", () => {
         const row = wrapper.find('[data-testid="instance-mcp-row-mcp-1"]');
         expect(row.exists()).toBe(true);
         expect(row.text()).toContain("internal-docs");
-        expect(row.text()).toContain("http");
+        // task-165 五维自审 P2：传输方式按语义显示（wire 的 "http" → 展示 "HTTP"），不再直出小写字面量。
+        expect(row.text()).toContain("HTTP");
         expect(wrapper.text()).toContain("1 个服务");
         // 表单的凭据候选来自**实例**凭据端点。
         expect(mockedCredentials).toHaveBeenCalledTimes(1);
