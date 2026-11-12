@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.credentials.CredentialConcurrentModificationException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialNotFoundException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialService;
+import com.cc01cc.p.xihe.cp.credentials.CredentialWireView;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.policy.CredentialAdminService;
 import com.cc01cc.p.xihe.cp.policy.CredentialBindingService;
@@ -334,20 +335,12 @@ public class CredentialController {
         return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", e.getMessage());
     }
 
+    /**
+     * PLAN-0771 M3: the projection moved to {@link CredentialWireView} so the user/workspace surface
+     * and the instance surface ({@code /api/v1/instance/credentials}) cannot drift apart.
+     */
     private static Map<String, Object> credentialView(Credential credential) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("id", credential.getId().toString());
-        body.put("label", credential.getLabel());
-        body.put("kind", credential.getKind());
-        body.put("deliveryTier", credential.getDeliveryTier());
-        body.put("ownerType", credential.getOwnerType());
-        body.put("ownerId", credential.getOwnerId());
-        body.put("status", credential.getStatus());
-        body.put("fingerprint", credential.getFingerprint());
-        body.put("revision", credential.getRevision());
-        body.put("createdAt", credential.getCreatedAt() == null ? null : credential.getCreatedAt().toString());
-        body.put("replacedAt", credential.getReplacedAt() == null ? null : credential.getReplacedAt().toString());
-        return body;
+        return CredentialWireView.toWire(credential);
     }
 
     public record CreateCredentialRequest(String ownerType, String ownerId, String label, String kind,

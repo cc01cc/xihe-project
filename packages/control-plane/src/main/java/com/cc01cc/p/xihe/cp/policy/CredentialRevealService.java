@@ -72,7 +72,40 @@ public class CredentialRevealService {
             String password) {
         UUID actorId = requireActor(actorUserId);
         requireRevealGrant(actorId, credentialId, workspaceId);
+        return revealAfterAuthorization(requireCredential(credentialId), actorId, password);
+    }
+
+    /**
+     * PLAN-0771 M3 (contract {@code 37e7ddd8}, D-1009): the instance reveal channel.
+     *
+     * <p>There is no <em>owner intersection</em> to apply here — the instance has no owner row — so
+     * the gate is the {@code credential_reveal@credential:<id>} atom evaluated at <b>instance
+     * scope</b> (a null workspace is instance-scope evaluation, see
+     * {@code GrantAuthorizationService}), with {@code cap:instance:admin} already enforced on the
+     * URL layer. Everything after authorization is the unchanged user-path shape: status →
+     * reveal-tier → step-up (5 failures / 15 minutes) → decrypt under the AAD → value-free audit
+     * ({@code credential_revealed} + {@code credential_events.revealed}), response no-store.</p>
+     *
+     * <p>A row that is not INSTANCE-owned answers 404 {@code CREDENTIAL_NOT_FOUND} — the same answer
+     * a missing row gives — <b>before</b> the atom is consulted, so this surface cannot be used to
+     * probe whether some user's or workspace's credential id exists (no cross-owner oracle).</p>
+     */
+    public RevealedCredential revealInstance(String actorUserId, UUID credentialId, String password) {
+        UUID actorId = requireActor(actorUserId);
         Credential credential = requireCredential(credentialId);
+        if (!Credential.OWNER_INSTANCE.equals(credential.getOwnerType())) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "CREDENTIAL_NOT_FOUND", "Credential not found");
+        }
+        requireInstanceRevealGrant(actorId, credentialId);
+        return revealAfterAuthorization(credential, actorId, password);
+    }
+
+    /**
+     * The shared tail of both reveal channels (task-166 left the step-up/throttle/audit rules alone;
+     * PLAN-0771 M3 adds the instance gate in front of them, not a second implementation of them).
+     */
+    private RevealedCredential revealAfterAuthorization(Credential credential, UUID actorId,
+            String password) {
         if (!Credential.STATUS_ACTIVE.equals(credential.getStatus())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "CREDENTIAL_DISABLED",
                     "Only active credentials can be revealed");
@@ -85,6 +118,17 @@ public class CredentialRevealService {
         String plaintext = credentialEnvelope.decrypt(credential);
         recordRevealed(credential, actorId);
         return new RevealedCredential(credential.getId().toString(), credential.getRevision(), plaintext);
+    }
+
+    private void requireInstanceRevealGrant(UUID actorId, UUID credentialId) {
+        PolicyRequest request = new PolicyRequest("credential_reveal",
+                List.of(ToolFaceRegistry.ACTION_CREDENTIAL_REVEAL),
+                List.of("credential:" + credentialId), ToolShape.OPAQUE, actorId.toString(),
+                null, null);
+        if (!grantAuthorizationService.allowsUserOnly(request)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "credential_reveal@credential:" + credentialId + " is required");
+        }
     }
 
     private void requireRevealGrant(UUID actorId, UUID credentialId, String workspaceId) {
