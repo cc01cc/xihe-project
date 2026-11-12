@@ -88,6 +88,8 @@ public final class PermissionAtomLabels {
                 "查看密文内容", "View secret content");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
                 "管理技能库", "Manage skill library");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
+                "管理个人技能库", "Manage personal skill library");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
                 "管理模型连接", "Manage provider connections");
         put(labels, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,

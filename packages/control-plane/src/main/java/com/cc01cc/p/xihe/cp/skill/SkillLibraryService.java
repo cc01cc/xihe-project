@@ -20,7 +20,10 @@ import java.util.UUID;
  *       who cannot see that workspace, because the difference between the two codes is itself an
  *       existence oracle. Read surfaces say "does not exist" rather than "not allowed";</li>
  *   <li>listing a workspace library the caller is not a member of returns an <b>empty set</b> for
- *       the same reason.</li>
+ *       the same reason;</li>
+ *   <li>a <b>personal</b> definition (V156) is visible to its owner only, and to anyone else it is
+ *       the same 404 {@code SKILL_NOT_FOUND} as a random UUID — the owner id is never a parameter,
+ *       so no request can even ask for another user's library.</li>
  * </ul>
  */
 @Service
@@ -46,9 +49,19 @@ public class SkillLibraryService {
         if (Skill.DEFINITION_SCOPE_INSTANCE.equals(definitionScopeType)) {
             return skillRepository.findByDefinitionScope(Skill.DEFINITION_SCOPE_INSTANCE, null);
         }
+        if (Skill.DEFINITION_SCOPE_USER.equals(definitionScopeType)) {
+            // The personal listing is always the caller's own library; there is no way to ask for
+            // another owner's rows (no parameter addresses a user), and a workspaceId is refused
+            // rather than silently ignored (openapi.yaml: must be absent when type=user).
+            if (workspaceId != null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "workspaceId must be absent for the personal library");
+            }
+            return skillRepository.findByPersonalScope(UUID.fromString(guard.requireActor()));
+        }
         if (!Skill.DEFINITION_SCOPE_WORKSPACE.equals(definitionScopeType)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "definitionScope must be instance or workspace");
+                    "definitionScope must be instance, workspace or user");
         }
         if (workspaceId == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
@@ -66,7 +79,10 @@ public class SkillLibraryService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, SKILL_NOT_FOUND,
                         "skill not found"));
         boolean visible = Skill.DEFINITION_SCOPE_INSTANCE.equals(skill.getDefinitionScopeType())
-                || guard.canSeeWorkspace(skill.getDefinitionScopeId());
+                || (Skill.DEFINITION_SCOPE_WORKSPACE.equals(skill.getDefinitionScopeType())
+                        && guard.canSeeWorkspace(skill.getDefinitionScopeId()))
+                || (Skill.DEFINITION_SCOPE_USER.equals(skill.getDefinitionScopeType())
+                        && guard.isPersonalOwner(skill.getDefinitionScopeUserId()));
         if (!visible) {
             throw new CpApiException(HttpStatus.NOT_FOUND, SKILL_NOT_FOUND, "skill not found");
         }

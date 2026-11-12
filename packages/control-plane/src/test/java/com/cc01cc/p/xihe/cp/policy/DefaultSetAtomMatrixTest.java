@@ -175,10 +175,13 @@ class DefaultSetAtomMatrixTest {
                     "must be grantable to agent principals (workspace capability): " + atom);
         }
         // The aggregate is the single source of truth 0667 derives from.
-        assertEquals(22, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+        assertEquals(23, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
                 "17 up to BL-345 (2026-11-06; BL-312 removed CREATE_OWN_AGENT from the 18)"
                         + " + PLUGIN_MANAGE/PLUGIN_BIND/PLUGIN_DATA (PLAN-0691 T1.3, 2026-11-08)"
-                        + " = 20, + the PLAN-0750 M1 (G1) own-agent atom = 21; PLUGIN_INVOKE stays"
-                        + " bindable");
+                        + " = 20, + the PLAN-0750 M1 (G1) own-agent atom = 21"
+                        + " + MANAGE_WORKSPACE_DEFAULT_CONFIG (D-928/V153, 2026-11-11) = 22"
+                        + " + MANAGE_PERSONAL_SKILLS (V156/D-1019, 2026-11-12) = 23;"
+                        + " PLUGIN_INVOKE stays bindable (the arrow above stopped at 21 because V153"
+                        + " was never added to this sentence — fixed here, not a new atom)");
     }
 }

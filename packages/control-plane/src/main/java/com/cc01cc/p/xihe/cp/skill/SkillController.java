@@ -13,6 +13,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -30,6 +34,13 @@ import java.util.UUID;
  *
  * <p>Response types are scalar projections ({@link SkillView}): the entity's Jackson-2
  * {@code attachments} node is converted to typed records and never reaches the wire (PLAN-0633 C1).</p>
+ *
+ * <p><b>Import binds the body strictly</b> (D-1019 / V156): the request is read as a Jackson-3 tree
+ * first and converted with a mapper that has {@code FAIL_ON_UNKNOWN_PROPERTIES} on, so the
+ * {@code additionalProperties: false} of {@code SkillImportRequest}, {@code SkillDefinitionScope} and
+ * {@code SkillImportItem} is actually enforced. Without it, the schema's promise "no userId member
+ * exists, so no request can address another user's library" would be unimplemented: an extra member
+ * is not merely ignored, it is {@code 400 INVALID_REQUEST} with zero rows written.</p>
  */
 @RestController
 @RequestMapping("/api/v1/skills")
@@ -38,35 +49,70 @@ public class SkillController {
     private final SkillLibraryService library;
     private final SkillImportService importService;
     private final SkillAccessGuard guard;
+    /**
+     * A copy of the wire mapper (Jackson 3 — the same one Boot serialises HTTP with) that refuses
+     * unknown members. Derived once at construction, never per request.
+     */
+    private final ObjectMapper strictImportMapper;
 
     public SkillController(SkillLibraryService library, SkillImportService importService,
-                           SkillAccessGuard guard) {
+                           SkillAccessGuard guard, ObjectMapper wireMapper) {
         this.library = library;
         this.importService = importService;
         this.guard = guard;
+        this.strictImportMapper = wireMapper.rebuild()
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .build();
     }
 
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/import")
-    public ResponseEntity<?> importSkills(@RequestBody SkillImportRequest request) {
+    public ResponseEntity<?> importSkills(@RequestBody JsonNode body) {
         try {
             UUID actor = UUID.fromString(guard.requireActor());
-            SkillImportService.DefinitionScope scope = request.toServiceScope();
+            SkillImportRequest request = bindImportRequest(body);
+            SkillImportService.DefinitionScope scope = request.toServiceScope(actor);
             if (scope == null || request.skills() == null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "definitionScope and skills are required");
             }
-            if (Skill.DEFINITION_SCOPE_WORKSPACE.equals(scope.type()) && scope.id() == null) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "workspaceId is required for a workspace definition scope");
-            }
             boolean instanceAdmin = guard.canManageInstanceLibrary();
             boolean authorized = guard.canWriteDefinitionScope(scope.type(), scope.id());
+            refusePersonalTrusted(request, scope);
             SkillImportService.ImportResult result = importService.importSkills(
                     request.skills(), scope, actor, authorized, instanceAdmin);
             return ResponseEntity.ok(importResponse(result));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * The personal layer accepts no {@code trusted} member at all: the definition is always stored
+     * {@code trusted=false}, and a request that carries the member — even {@code false} — is refused
+     * as a whole ({@code openapi.yaml} {@code SkillDefinitionScope.type} description, P-189-1).
+     * Runs before the service so the refusal writes zero rows.
+     */
+    private static void refusePersonalTrusted(SkillImportRequest request,
+                                              SkillImportService.DefinitionScope scope) {
+        if (!Skill.DEFINITION_SCOPE_USER.equals(scope.type())) {
+            return;
+        }
+        for (SkillImportItem item : request.skills()) {
+            if (item != null && item.trusted() != null) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "the personal layer does not accept trusted: personal definitions are always"
+                                + " stored trusted=false");
+            }
+        }
+    }
+
+    private SkillImportRequest bindImportRequest(JsonNode body) {
+        try {
+            return strictImportMapper.treeToValue(body, SkillImportRequest.class);
+        } catch (JacksonException shapeError) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "request body does not match the import shape", shapeError);
         }
     }
 

@@ -145,8 +145,17 @@ public class SkillBindingService {
      * A workspace-private definition may only be bound inside its own workspace — otherwise a
      * workspace's private skill would become visible elsewhere through a binding (the leak this
      * whole feature has to avoid).
+     *
+     * <p><b>Personal definitions are never bindable</b> (V156 / openapi.yaml:726-728): a
+     * {@code type=user} definition answers {@code 404 SKILL_NOT_FOUND}, the same code and message a
+     * random UUID gets. Not {@code 400}: the caller reached none of their own definitions, so this
+     * is invisibility rather than a mis-scoped request — and a 400 with a "definition" wording would
+     * tell the caller that the id <i>is</i> a definition.</p>
      */
     private static void requireDefinitionVisibility(Skill skill, BindCommand command) {
+        if (Skill.DEFINITION_SCOPE_USER.equals(skill.getDefinitionScopeType())) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, ERR_SKILL_NOT_FOUND, "skill not found");
+        }
         UUID definitionWorkspace = skill.getDefinitionScopeId();
         if (definitionWorkspace == null) {
             return;

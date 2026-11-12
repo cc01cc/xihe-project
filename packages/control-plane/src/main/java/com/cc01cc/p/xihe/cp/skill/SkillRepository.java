@@ -28,10 +28,26 @@ public interface SkillRepository extends JpaRepository<Skill, UUID> {
                                   @Param("scopeType") String scopeType,
                                   @Param("scopeId") UUID scopeId);
 
+    /**
+     * The qualified identity of a <b>personal</b> definition (V156): its owner is stored in the
+     * separate {@code definition_scope_user_id} column, so it is a different query rather than a
+     * bigger one — {@code definition_scope_id} keeps its foreign key to {@code workspaces} and must
+     * stay NULL here.
+     */
+    @Query("select s from Skill s where s.name = :name "
+            + "and s.definitionScopeType = 'user' and s.definitionScopeUserId = :ownerUserId")
+    Optional<Skill> findQualifiedPersonal(@Param("name") String name,
+                                          @Param("ownerUserId") UUID ownerUserId);
+
     /** Library listing (D28-17 v1 import is manual; the CLI lists what was imported). */
     @Query("select s from Skill s where s.definitionScopeType = :scopeType "
             + "and ((:scopeId is null and s.definitionScopeId is null) "
             + "or s.definitionScopeId = :scopeId) order by s.name, s.id")
     List<Skill> findByDefinitionScope(@Param("scopeType") String scopeType,
                                       @Param("scopeId") UUID scopeId);
+
+    /** The caller's own personal library (never another owner's rows). */
+    @Query("select s from Skill s where s.definitionScopeType = 'user' "
+            + "and s.definitionScopeUserId = :ownerUserId order by s.name, s.id")
+    List<Skill> findByPersonalScope(@Param("ownerUserId") UUID ownerUserId);
 }

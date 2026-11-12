@@ -92,7 +92,7 @@ public final class SkillImportValidator {
         if (attachmentViolation != null) {
             return Optional.of(attachmentViolation);
         }
-        if (item.trusted() && !callerIsInstanceAdmin) {
+        if (Boolean.TRUE.equals(item.trusted()) && !callerIsInstanceAdmin) {
             return Optional.of(rejection(item, SKILL_TRUSTED_FORBIDDEN,
                     "only an instance administrator may import a trusted skill"));
         }

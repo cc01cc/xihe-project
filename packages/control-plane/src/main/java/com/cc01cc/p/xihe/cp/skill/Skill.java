@@ -17,10 +17,11 @@ import java.util.UUID;
  * PLAN-0628 M1 (V101): one imported skill definition.
  *
  * <p><b>Definition scope is part of the definition</b> (D28-14 + README frozen #4 "双存"): the same
- * {@code name} may exist once in the instance library and once per workspace. The DB enforces it
- * with {@code uq_skills_qualified_name UNIQUE NULLS NOT DISTINCT (name, definition_scope_type,
- * definition_scope_id)} — the instance rows' NULL {@code definition_scope_id} must collide, which is
- * exactly the {@code role_bindings} trap from V87:53-55.</p>
+ * {@code name} may exist once in the instance library, once per workspace, and once per user (the
+ * personal layer added by V156). The DB enforces it with {@code uq_skills_qualified_name UNIQUE
+ * NULLS NOT DISTINCT (name, definition_scope_type, definition_scope_id, definition_scope_user_id)}
+ * — the instance rows' NULL scope ids must collide, which is exactly the {@code role_bindings} trap
+ * from V87:53-55; and the fourth column is what keeps two users' same-named personal rows apart.</p>
  *
  * <p>Server-computed fields, never read from a request body (V99 discipline): {@link #bodyTokensEst},
  * {@link #oversize}, {@link #contentHash}, {@link #version}. {@link #attachments} is a
@@ -34,9 +35,15 @@ import java.util.UUID;
 @Table(name = "skills")
 public class Skill {
 
-    /** D28-14 vocabulary; mirrors the V101 CHECK on {@code definition_scope_type}. */
+    /** D28-14 vocabulary; mirrors the V156 CHECK on {@code definition_scope_type}. */
     public static final String DEFINITION_SCOPE_INSTANCE = "instance";
     public static final String DEFINITION_SCOPE_WORKSPACE = "workspace";
+    /**
+     * D-1019 / V156: the personal layer. Its owner is the authenticated caller and lives in
+     * {@code definition_scope_user_id}; {@code definition_scope_id} stays NULL for these rows (it
+     * keeps its V101 foreign key to {@code workspaces}).
+     */
+    public static final String DEFINITION_SCOPE_USER = "user";
 
     /** D28-16 frozen numbers; the DDL enforces them, these constants keep callers in sync. */
     public static final int MAX_NAME_LENGTH = 64;
@@ -58,6 +65,15 @@ public class Skill {
     /** NULL for the instance library; a workspace id for a workspace-private library. */
     @Column(name = "definition_scope_id", columnDefinition = "uuid")
     private UUID definitionScopeId;
+
+    /**
+     * The owner of a personal ({@code type=user}) definition; NULL for instance and workspace rows.
+     * Two columns rather than one polymorphic id because {@code definition_scope_id} keeps its V101
+     * foreign key to {@code workspaces} (D-1019: value = referential integrity, not cascade cleanup
+     * — {@code created_by_user_id}'s RESTRICT already decides who may delete a creator).
+     */
+    @Column(name = "definition_scope_user_id", columnDefinition = "uuid")
+    private UUID definitionScopeUserId;
 
     @Column(name = "description", nullable = false, columnDefinition = "TEXT")
     private String description;
@@ -137,6 +153,15 @@ public class Skill {
     public UUID getDefinitionScopeId() { return definitionScopeId; }
 
     public void setDefinitionScopeId(UUID definitionScopeId) { this.definitionScopeId = definitionScopeId; }
+
+    public UUID getDefinitionScopeUserId() { return definitionScopeUserId; }
+
+    public void setDefinitionScopeUserId(UUID definitionScopeUserId) {
+        this.definitionScopeUserId = definitionScopeUserId;
+    }
+
+    /** True when the row belongs to the personal layer (one owner, never bindable). */
+    public boolean isPersonal() { return DEFINITION_SCOPE_USER.equals(definitionScopeType); }
 
     public String getDescription() { return description; }
 

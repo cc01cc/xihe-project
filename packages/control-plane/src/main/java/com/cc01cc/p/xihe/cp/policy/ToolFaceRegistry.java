@@ -76,6 +76,15 @@ public class ToolFaceRegistry {
     public static final String ACTION_WRITE_INSTANCE_CONTENT = "WRITE_INSTANCE_CONTENT";
     public static final String ACTION_VIEW_SECRET_CONTENT = "VIEW_SECRET_CONTENT";
     public static final String ACTION_MANAGE_SKILL_LIBRARY = "MANAGE_SKILL_LIBRARY";
+    /**
+     * V156 / D-1019: writing to one's <b>own</b> personal skill library. Instance-tier atom
+     * (decision #27-style: there is no workspace dimension in a personal library), default-granted
+     * to every account through the USER role — it is the shape of the face, not a privilege. Reading
+     * a personal library needs no atom at all (ownership is visibility); revoking this one makes
+     * personal writes 403 while personal reads stay open (P-189-3). Never grantable to an agent
+     * principal: an agent holds no personal library of its own.
+     */
+    public static final String ACTION_MANAGE_PERSONAL_SKILLS = "MANAGE_PERSONAL_SKILLS";
     public static final String ACTION_MANAGE_PROVIDER_CONNECTIONS = "MANAGE_PROVIDER_CONNECTIONS";
     public static final String ACTION_USE_WORKSPACE_RUNTIME = "USE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_RUNTIME = "MANAGE_WORKSPACE_RUNTIME";
@@ -241,7 +250,11 @@ public class ToolFaceRegistry {
                 // D-928 / PLAN-0766 (task-158/159): the workspace-default write atom joins the
                 // action-class set in the same batch as its catalog entry and its Flyway seed
                 // rows (V153) — GrantIntersectionEvaluator validates against this vocabulary.
-                ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG);
+                ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
+                // V156 / D-1019: the personal skill library write atom. Same batch as its catalog
+                // entry, its label and its Flyway seed rows (V156 roles 1/2/3); the vocabulary is
+                // what GrantIntersectionEvaluator validates a grant against.
+                ACTION_MANAGE_PERSONAL_SKILLS);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

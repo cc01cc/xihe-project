@@ -27,9 +27,11 @@ import java.util.UUID;
  * forged field is a deserialisation error rather than a silent override, and
  * {@code SkillImportServiceTest} pins that by reflection.</p>
  *
- * <p>Idempotency is by the qualified identity {@code (name, definitionScopeType, definitionScopeId)}:
- * re-importing identical content is {@code unchanged} (no write, no version bump), which is what
- * makes "import the whole skills directory again" cheap instead of a churn of versions.</p>
+ * <p>Idempotency is by the qualified identity {@code (name, definitionScopeType, scope id)}: re-importing
+ * identical content is {@code unchanged} (no write, no version bump), which is what makes "import the
+ * whole skills directory again" cheap instead of a churn of versions. The scope id is the workspace
+ * id for a workspace library and the owner's user id for the personal layer (V156) — one record, two
+ * distinct columns, so a personal row never occupies a workspace id.</p>
  *
  * <p>Item-level problems land in {@code rejected[]} and the batch continues — one bad SKILL.md must
  * not block the other 110. Only "batch too large" and "you may not write this library" throw.</p>
@@ -49,7 +51,11 @@ public class SkillImportService {
         this.objectMapper = objectMapper;
     }
 
-    /** Which library a definition is imported into (V101's {@code definition_scope_*} pair). */
+    /**
+     * Which library a definition is imported into. {@code id} is the workspace id for a workspace
+     * scope and the <b>owner's user id</b> for the personal scope (V156); the two id columns are
+     * distinct on purpose, see {@link Skill#getDefinitionScopeUserId()}.
+     */
     public record DefinitionScope(String type, UUID id) {
 
         public static DefinitionScope instance() {
@@ -58,6 +64,15 @@ public class SkillImportService {
 
         public static DefinitionScope workspace(UUID workspaceId) {
             return new DefinitionScope(Skill.DEFINITION_SCOPE_WORKSPACE, workspaceId);
+        }
+
+        /** The personal layer: {@code userId} is always the authenticated caller, never a body. */
+        public static DefinitionScope user(UUID userId) {
+            return new DefinitionScope(Skill.DEFINITION_SCOPE_USER, userId);
+        }
+
+        public boolean isPersonal() {
+            return Skill.DEFINITION_SCOPE_USER.equals(type);
         }
     }
 
@@ -130,35 +145,42 @@ public class SkillImportService {
 
     private Upsert upsert(SkillImportItem item, DefinitionScope scope, UUID callerUserId) {
         String hash = contentHash(item);
-        Optional<Skill> existing =
-                skillRepository.findQualified(item.name(), scope.type(), scope.id());
+        Optional<Skill> existing = scope.isPersonal()
+                ? skillRepository.findQualifiedPersonal(item.name(), scope.id())
+                : skillRepository.findQualified(item.name(), scope.type(), scope.id());
         if (existing.isEmpty()) {
             Skill skill = new Skill();
             skill.setName(item.name());
             skill.setDefinitionScopeType(scope.type());
-            skill.setDefinitionScopeId(scope.id());
+            if (scope.isPersonal()) {
+                skill.setDefinitionScopeUserId(scope.id());
+            } else {
+                skill.setDefinitionScopeId(scope.id());
+            }
             skill.setCreatedByUserId(callerUserId);
             skill.setVersion(1);
-            applyContent(skill, item, hash);
+            applyContent(skill, item, hash, scope.isPersonal());
             return new Upsert(skillRepository.save(skill), ACTION_CREATED);
         }
         Skill skill = existing.get();
         if (hash.equals(skill.getContentHash())) {
             return new Upsert(skill, ACTION_UNCHANGED);
         }
-        applyContent(skill, item, hash);
+        applyContent(skill, item, hash, scope.isPersonal());
         skill.setVersion(skill.getVersion() + 1);
         return new Upsert(skillRepository.save(skill), ACTION_UPDATED);
     }
 
-    private void applyContent(Skill skill, SkillImportItem item, String hash) {
+    private void applyContent(Skill skill, SkillImportItem item, String hash, boolean personal) {
         skill.setDescription(item.description());
         skill.setBody(item.body());
         int tokens = SkillTokenEstimator.estimate(item.body());
         skill.setBodyTokensEst(tokens);
         skill.setOversize(SkillTokenEstimator.isOversize(tokens));
         skill.setAttachments(attachmentsNode(item));
-        skill.setTrusted(item.trusted());
+        // D-1019 / V156: a personal definition is always untrusted; the controller already refuses
+        // any request that carries the member, so this line also holds for a direct service call.
+        skill.setTrusted(!personal && Boolean.TRUE.equals(item.trusted()));
         skill.setSourcePath(item.sourcePath());
         skill.setContentHash(hash);
     }

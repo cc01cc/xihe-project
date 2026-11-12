@@ -110,7 +110,11 @@ public class SystemAccessRoleCatalog {
                     AtomRef.wildcard(ToolFaceRegistry.ACTION_CREATE_OWN_AGENT),
                     // BL-345 (user ruling 2026-11-06): every registered account may write the
                     // memory of a principal it owns. MEMORY_WRITE (any subject) is NOT here.
-                    AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF)));
+                    AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                    // V156 / D-1019 (task-221): every account owns a personal skill library, so the
+                    // write atom is part of the registration default set — the face's shape, not a
+                    // privilege. A user row of this atom never leaves the user's own library.
+                    AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS)));
 
     private final AccessRoleRepository roleRepository;
     private final AccessRolePermissionRepository permissionRepository;

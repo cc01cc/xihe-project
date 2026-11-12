@@ -68,7 +68,12 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             // PLAN-0750 M1 (G1, 2026-11-10): an ordinary account may create its own user-level
             // principal (owner = actor, no Workspace binding). Instance scope, agent-forbidden —
             // it is NOT the workspace tier (MANAGE_WORKSPACE_AGENTS) and not CREATE_ACCOUNT.
-            "CREATE_OWN_AGENT");
+            "CREATE_OWN_AGENT",
+            // V156 / D-1019 (task-221, 2026-11-12): every account owns a personal skill library, so
+            // its write atom is in the registration default set. Instance-bindable only (decision
+            // #27) — a workspace-scoped grant cannot carry it, and it never leaves the owner's own
+            // library.
+            "MANAGE_PERSONAL_SKILLS");
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
@@ -103,7 +108,9 @@ class DefaultSetMatrixTest extends AbstractReusableIntegrationTest {
             "PLUGIN_MANAGE", "PLUGIN_BIND", "PLUGIN_INVOKE",
             // PLAN-0750 M1 (G1): ADMIN derives from USER_DEFAULT_ATOMS in the code catalog, so it
             // inherits the restored own-agent atom without a second literal.
-            "CREATE_OWN_AGENT");
+            "CREATE_OWN_AGENT",
+            // V156 / D-1019: the same derivation carries the personal-skill atom into ADMIN.
+            "MANAGE_PERSONAL_SKILLS");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

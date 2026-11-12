@@ -13,6 +13,10 @@ import java.util.List;
  * <p>{@code attachments} is typed (not a raw node) so the wire layer owns shape errors
  * ("not an array") and this record only carries the manifest. {@code trusted} is honoured only for
  * an instance admin — see {@code SkillImportValidator#validate}.</p>
+ *
+ * <p><b>{@code trusted} is a {@link Boolean}, not a primitive</b> (D-1019): the personal layer must
+ * refuse a request that carries the member <i>even as {@code false}</i> (P-189-1), and a primitive
+ * cannot tell "absent" from "false". {@code null} = the member was absent.</p>
  */
 public record SkillImportItem(
         String name,
@@ -20,7 +24,7 @@ public record SkillImportItem(
         String body,
         String sourcePath,
         List<SkillAttachmentView> attachments,
-        boolean trusted) {
+        Boolean trusted) {
 
     public SkillImportItem {
         attachments = attachments == null ? List.of() : List.copyOf(attachments);

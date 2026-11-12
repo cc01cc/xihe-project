@@ -70,15 +70,46 @@ public class SkillAccessGuard {
                 && workspaceService.resolveWorkspaceRole(workspaceId.toString(), requireActor()) != null;
     }
 
+    /** The personal layer is visible to its owner only (never to another caller, never 403). */
+    public boolean isPersonalOwner(UUID ownerUserId) {
+        return ownerUserId != null && ownerUserId.toString().equals(TenantContext.getUserId());
+    }
+
+    /**
+     * V156: the personal layer's write atom, held at instance scope ({@code workspaceId = null}).
+     * Granted by default to every account through the USER role, so this is a shape check rather
+     * than a privilege gate — revoking it makes personal writes 403 while personal <b>reads</b>
+     * stay open (P-189-3: the two are deliberately separate decisions).
+     */
+    public boolean canWritePersonalLibrary() {
+        String actor = TenantContext.getUserId();
+        if (actor == null || actor.isBlank()) {
+            return false;
+        }
+        try {
+            return requesterAuthority.holdsActionAtom(UUID.fromString(actor),
+                    com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS, null);
+        } catch (IllegalArgumentException invalidSubject) {
+            return false;
+        }
+    }
+
     public boolean canManageWorkspace(UUID workspaceId) {
         return workspaceId != null && com.cc01cc.p.xihe.cp.entity.WorkspaceRole.canManage(
                 workspaceService.resolveWorkspaceRole(workspaceId.toString(), requireActor()));
     }
 
-    /** Write rights for one definition scope: instance library ⇒ N5 instance, workspace ⇒ manage. */
+    /**
+     * Write rights for one definition scope: instance library ⇒ N5 instance, personal ⇒
+     * {@code MANAGE_PERSONAL_SKILLS}, workspace ⇒ instance admin or workspace manager.
+     */
     public boolean canWriteDefinitionScope(String definitionScopeType, UUID definitionScopeId) {
-        return Skill.DEFINITION_SCOPE_INSTANCE.equals(definitionScopeType)
-                ? canManageInstanceLibrary()
-                : canManageInstanceLibrary() || canManageWorkspace(definitionScopeId);
+        if (Skill.DEFINITION_SCOPE_INSTANCE.equals(definitionScopeType)) {
+            return canManageInstanceLibrary();
+        }
+        if (Skill.DEFINITION_SCOPE_USER.equals(definitionScopeType)) {
+            return canWritePersonalLibrary();
+        }
+        return canManageInstanceLibrary() || canManageWorkspace(definitionScopeId);
     }
 }

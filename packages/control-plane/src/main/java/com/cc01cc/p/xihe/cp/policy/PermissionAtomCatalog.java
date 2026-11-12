@@ -133,7 +133,10 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_PLUGIN_DATA,
             // D-928 / PLAN-0766: deployment-wide default management is an instance-domain act,
             // same family as WRITE_INSTANCE_CONTENT.
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
+            // V156 / D-1019: a personal library belongs to one human account; an agent principal has
+            // no personal library of its own, so this atom stays outside the agent face.
+            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS);
 
     private static final List<String> ACTION_ATOM_NAMES = List.of(
             ToolFaceRegistry.ACTION_READ,
@@ -192,7 +195,11 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_PLUGIN_DATA,
             // D-928 / PLAN-0766 (task-158/159): the workspace-default layer write face. 33 + 1 = 34
             // action atoms; the matching role seeds land in Flyway V153.
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
+            // V156 / D-1019 (task-221): the personal skill library write face. 34 + 1 = 35 action
+            // atoms; the matching role seeds land in Flyway V156 (roles SUPER_ADMIN/ADMIN/USER,
+            // USER because the atom is default-granted to every account — D-1019).
+            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -227,6 +234,10 @@ public final class PermissionAtomCatalog {
             // D-928 / PLAN-0766: the workspace-default layer is one deployment-wide row set, so
             // its management atom is instance-bindable only (decision #27).
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
+            // V156 / D-1019: a personal library is keyed by the owner user id with no workspace
+            // dimension at all, so the atom is instance-bindable only (decision #27) — a
+            // workspace-scoped grant would have to name an owner it cannot name.
+            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
@@ -281,7 +292,12 @@ public final class PermissionAtomCatalog {
                 : WILDCARD;
     }
 
-    /** The action atoms, in canonical order (33: 32 after BL-312, +1 restored by PLAN-0750 M1). */
+    /**
+     * The action atoms, in canonical order (35: 33 after PLAN-0750 M1's restore, +1 for V153's
+     * workspace-default atom, +1 for V156's personal-skills atom). The count in this sentence is
+     * prose, not a gate — {@code P0ManagementAtomSeedMigrationTest} and {@code SkillReadFaceTest}
+     * pin the number.
+     */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
     }
