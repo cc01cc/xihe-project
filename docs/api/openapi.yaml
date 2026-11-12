@@ -178,7 +178,7 @@ paths:
             schema: { $ref: '#/components/schemas/WorkspaceRootCreateRequest' }
       responses:
         '201': { description: 'Root created; projection returned, position appended. Shadow repo not yet created (lazy on first capture).', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRoot' } } } }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'Three causes, three codes (P-189 structure): a batch larger than 64 items fails the whole request with SKILL_IMPORT_TOO_LARGE (nothing is written, no item is processed — this is the live implementation, SkillImportValidator:105); a personal-layer (type=user) item whose object carries the trusted member fails the whole request with INVALID_REQUEST before any item is processed (P-189-1); any other malformed body answers INVALID_REQUEST.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
