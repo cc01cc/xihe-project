@@ -398,6 +398,59 @@ describe("useAuthStore self permission atoms (PLAN-0651 T4.2)", () => {
         expect(api.getSelfPermissions).toHaveBeenCalledTimes(1);
     });
 
+    /**
+     * task-74 的负例：实例内容读面与工具面写面的 CP 对端是**动作原子**
+     * （`ConfigController.java:89-90` / `PolicyController.java:166-168`），
+     * 不是 `cap:instance:admin`。所以「有 cap 无原子 ⇒ false」与「有原子无 cap ⇒ true」两个方向都要钉，
+     * 否则下一个人按 `AGENTS.md`「禁止 isInstanceAdmin 特判」把这里改回能力位也不会红。
+     */
+    it("canReadInstanceContent / canManageWorkspacePolicy follow atoms, not the instance capability", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        // 能力位为真（老 UI 会据此放行），但两个原子都没授予。
+        store.$patch({
+            user: {
+                id: "u1",
+                email: "a@test.com",
+                capabilities: {
+                    isInstanceAdmin: true,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [],
+                },
+            },
+        });
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(view([]));
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(store.isAdmin).toBe(true);
+        expect(store.canReadInstanceContent).toBe(false);
+        expect(store.canManageWorkspacePolicy).toBe(false);
+
+        // 反过来：原子在手、能力位为假 ⇒ 两个判据都为真（UI 不比 CP 严）。
+        store.$patch({ selfPermissions: null });
+        store.$patch({
+            user: {
+                id: "u1",
+                email: "a@test.com",
+                capabilities: {
+                    isInstanceAdmin: false,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [],
+                },
+            },
+        });
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([
+                { actionClass: "READ_INSTANCE_CONTENT", resource: "*" },
+                { actionClass: "MANAGE_WORKSPACE_POLICY", resource: "*" },
+            ]),
+        );
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(store.isAdmin).toBe(false);
+        expect(store.canReadInstanceContent).toBe(true);
+        expect(store.canManageWorkspacePolicy).toBe(true);
+    });
+
     it("ignores instanceCapabilities and workspace-scope atoms", async () => {
         localStorage.setItem("xihe-token", "token");
         const { api } = await import("../../composables/api"),
