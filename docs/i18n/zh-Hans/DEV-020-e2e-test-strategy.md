@@ -125,13 +125,13 @@ xihe 使用单个浏览器 project（chromium），通过 `XIHE_E2E_PROFILE` 区
 
 ### 2.1 基线追踪
 
-视觉回归使用 Playwright `toHaveScreenshot()`，基线文件存于 `*-snapshots/` 目录。当前 Git index 跟踪 64 个 Linux PNG；`.gitignore` 忽略平台本地快照，并显式放行 `*-linux.png`，以便新 Linux 基线可复现和审查。
+视觉回归使用 Playwright `toHaveScreenshot()`，基线文件存于 `*-snapshots/` 目录。`[实测]` Git 跟踪 **61** 个 Linux PNG（`git -C A03-xihe ls-files '*-linux.png' | wc -l`；2026-11-12 **20:27 与 20:32 两次现测均为 61**，两次 `HEAD` 分别是 `bc7a482df` / `ae2ade487`，其间 `309`/`312`/`323` 已入库 —— 值没变，说明这段的漂移来自删基线而不是正常提交）—— **这是现算值不是恒量**：同日晚 `37f42e6e1` 删掉 3 张已无引用的旧基线（`settings-knowledge-linux.png` × 3 处），此前口径写的 64 因此过期。`.gitignore` 忽略平台本地快照，并显式放行 `*-linux.png`，以便新 Linux 基线可复现和审查。
 
 - Linux 是唯一提交级视觉基线平台；启用 Linux workflow 时用锁定的 Playwright/Chromium 版本比较 Linux PNG。
 - Windows/macOS 本地通过 `expectPlatformScreenshot` 跳过视觉 matcher 并记录 annotation；同一 E2E 用例的动作、DOM、网络和持久化断言照常运行。不得跳过整条测试或生成本地平台基线。
 - Linux baseline 缺失时 matcher 必须失败；禁止用 `--update-snapshots` 自动生成并接受差异。
 
-本地候选 Linux 视觉 workflow 配置为只运行 `e2e/mock/screenshots.spec.ts` 与 Compose-compatible `e2e/real/screenshots.spec.ts`（各 9 个路由场景，共消费 18 个 baseline）。按 PLAN-0440 用户决策 #6/#7（2026-10-05/06），远端 workflow 与 Linux 测试不属于 PLAN-0440 的当前任务，仅作未来事实记录；workflow 未触发、未验证。其余 46 个已跟踪 Linux baseline 不在候选范围；不得声称 Linux 视觉回归已通过。原生平台运行这些 spec 时仍执行导航、HTTP、根节点可见性和 console/page-error 断言。
+本地候选 Linux 视觉 workflow 配置为只运行 `e2e/mock/screenshots.spec.ts` 与 Compose-compatible `e2e/real/screenshots.spec.ts`（各 9 个路由场景 ⇒ **应有 18 个 baseline**；`[实测]` 2026-11-12 这两个快照目录里**实有 16 张** `-linux.png`：11 张与当前 route name 对得上、**5 张是改名遗留的旧名孤儿**、**缺 7 张** —— 缺口逐条成因与解冻前提见 `BL-601`）。按 PLAN-0440 用户决策 #6/#7（2026-10-05/06），远端 workflow 与 Linux 测试不属于 PLAN-0440 的当前任务，仅作未来事实记录；workflow 未触发、未验证。其余 **43** 个已跟踪 Linux baseline 不在候选范围（61 − 18）；不得声称 Linux 视觉回归已通过。原生平台运行这些 spec 时仍执行导航、HTTP、根节点可见性和 console/page-error 断言（`helpers/visual.ts:16-27` 在非 Linux 平台直接 return，只挂 `visual-baseline-platform` annotation）。
 
 ```
 e2e/mock/login.spec.ts-snapshots/

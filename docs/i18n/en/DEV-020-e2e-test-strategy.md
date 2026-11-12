@@ -86,7 +86,7 @@ xihe uses a single Playwright project (chromium). Desktop coverage is complement
 
 ### 2.1 Baseline Tracking
 
-Visual regression uses Playwright `toHaveScreenshot()`. Git currently tracks 64 Linux PNG baselines. Linux is the only commit-level baseline platform; Windows/macOS screenshots are local-only artifacts:
+Visual regression uses Playwright `toHaveScreenshot()`. `[measured]` Git tracks **61** Linux PNG baselines (`git -C A03-xihe ls-files '*-linux.png' | wc -l`; two measurements on 2026-11-12 at **20:27 and 20:32 both returned 61**, at `HEAD` `bc7a482df` and `ae2ade487` respectively, with `309`/`312`/`323` landed in between — the figure held, so the drift came from deleting baselines rather than from ordinary commits) — a figure that is **computed, not constant**: commit `37f42e6e1` deleted 3 unreferenced legacy baselines (`settings-knowledge-linux.png` × 3 paths) later the same day, which is why the previously documented 64 is stale. Linux is the only commit-level baseline platform; Windows/macOS screenshots are local-only artifacts:
 
 ```
 e2e/mock/login.spec.ts-snapshots/
@@ -97,7 +97,7 @@ With the current single Chromium project, Playwright names files as `{snapshotNa
 
 On Windows/macOS, `expectPlatformScreenshot` records a `visual-baseline-platform` annotation and skips only the visual matcher; the test's browser actions and non-visual assertions still run. When the Linux workflow is enabled, it compares the tracked baseline. A missing Linux baseline must fail; do not generate/update baselines as part of a normal run.
 
-The local candidate Linux visual workflow is configured to run only `e2e/mock/screenshots.spec.ts` and Compose-compatible `e2e/real/screenshots.spec.ts` (9 route cases each, 18 baselines total). Per PLAN-0440 user decisions #6/#7 (2026-10-05/06), remote workflow execution and Linux testing are not part of PLAN-0440; this is an unexecuted record for possible future work. The remaining 46 tracked Linux baselines are outside the candidate scope. Do not claim that Linux visual regression has passed. Both specs retain their navigation, HTTP, root visibility, and console/page-error assertions when run natively.
+The local candidate Linux visual workflow is configured to run only `e2e/mock/screenshots.spec.ts` and Compose-compatible `e2e/real/screenshots.spec.ts` (9 route cases each ⇒ **18 baselines expected**; `[measured]` 2026-11-12 the two snapshot directories hold **16** `-linux.png` files: 11 match a current route name, **5 are old-name orphans left by route renames**, and **7 are missing** — per-file causes and the unblock prerequisite are in `BL-601`). Per PLAN-0440 user decisions #6/#7 (2026-10-05/06), remote workflow execution and Linux testing are not part of PLAN-0440; this is an unexecuted record for possible future work. The remaining **43** tracked Linux baselines are outside the candidate scope (61 − 18). Do not claim that Linux visual regression has passed. Both specs retain their navigation, HTTP, root visibility, and console/page-error assertions when run natively (`helpers/visual.ts:16-27` returns early on non-Linux platforms and only records a `visual-baseline-platform` annotation).
 
 ### 2.2 Updating Baselines
 
