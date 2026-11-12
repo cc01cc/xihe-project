@@ -201,19 +201,11 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         //        /api/v1/instance/credentials/{}           ← GET(one) + DELETE
         //        /api/v1/instance/credentials/{}/reveal    ← POST(reveal)
 
-        //      PLAN-0771 M3（D-1008，2026-11-12）：实例层 principals。**4 条操作只对应 2 个 shape** ——
-        //      卡面写的「4 条 ⇒ 3 个 shape」是算术错（集合 path 的 GET+POST 共用一个 shape，{principalId}
-        //      path 的 PATCH+DELETE 共用另一个；**没有任何第三条 path**）。写成 3 条会多出一条**永不匹配**
-        //      的条目：它不进任何计数、不会报错、也不会被任何断言发现 —— 本卡(task-170)用一条临时幻影条目
-        //      实测过：插入后 [bl320] 读数逐字不变（extra total=63 / planned=4 / unexpected=0），
-        //      见 evidence/2026-11-12-instance-principals-contract/README.md §2.2。
-        //      D-932 的「冗余条目 = 债」⇒ 只写真有消费者的条目：
-        //        /api/v1/instance/agent-principals               ← GET(list) + POST(create)
-        //        /api/v1/instance/agent-principals/{}            ← PATCH(documents) + DELETE(retire)
-        //        /api/v1/instance/agent-principals               ← GET(list) + POST(create)
-        //        /api/v1/instance/agent-principals/{}            ← PATCH(documents) + DELETE(retire)
-        PLANNED_APIS.put("/api/v1/instance/agent-principals", "PLAN-0771 M3");
-        PLANNED_APIS.put("/api/v1/instance/agent-principals/{}", "PLAN-0771 M3");
+        // ---- 实例层 principals（PLAN-0771 M3 / D-1008）：2 条条目在 task-179 落地代码的同批删除 ----
+        //      契约（task-170）先落 4 条端点 = 2 个 shape；实现（task-179, be4e76d1）随后注册同一 4 条 ⇒
+        //      条目变成“删了读数也不变”的死配置（task-178 实测）⇒ 按 D-932「代码落地即删」在此清掉。
+        //      实测见 evidence/2026-11-12-instance-principals-contract/README.md 与
+        //      evidence/2026-11-12-planned-apis-self-clean/README.md。
 
         //      PLAN-0771 M3（D-1008，2026-11-12）：实例层 mcp 注册表。同样 **4 条操作 = 2 个 shape**（集合 GET+POST、
         //      {name} PATCH+DELETE）；卡面的「3 个 shape」是同一个算术错（task-170 已用幻影条目证过一次，不重复做）。
@@ -273,6 +265,22 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         assertEquals(new TreeSet<>(KNOWN_GAPS.keySet()), gapHits,
                 "KNOWN_GAPS drifted — fixed gaps must be removed from the list, new ones must be bucketed "
                         + "explicitly (see .local/evidence/bl-320-route-contract-parity.md)");
+
+        // PLANNED_APIS must self-clean the same way (task-182): every entry has to still stand for an
+        // outstanding candidate. An entry whose implementation landed produces no candidate any more,
+        // so notExempt/classify stop consulting it — the gate goes silently blind to it (task-178
+        // measured: three stale entries deleted, [bl320] byte-identical). Without this assertion the
+        // only maintenance signal is somebody remembering to delete the entry, which is exactly the
+        // rot KNOWN_GAPS is protected from above. This is the mirrored guard: the extra side's ledger
+        // must not rot either.
+        Set<String> plannedHits = new TreeSet<>(intersectShapes(extra, PLANNED_APIS.keySet()));
+        SortedSet<String> rottenPlanned = new TreeSet<>(difference(PLANNED_APIS.keySet(), plannedHits));
+        assertEquals(new TreeSet<>(PLANNED_APIS.keySet()), plannedHits,
+                () -> "PLANNED_APIS drifted — " + rottenPlanned + " no longer matches any "
+                        + "documented-but-unimplemented route: the code landed (delete the entry, D-932) "
+                        + "or the contract moved (update the key). Entries are only consulted while their "
+                        + "shape still produces a candidate, so a stale entry is invisible without this "
+                        + "assertion (see internal/A03-xihe/evidence/2026-11-12-planned-apis-self-clean/)");
 
         assertVariableNamesMatch(documentedRoutes(), implementedRoutes());
     }
