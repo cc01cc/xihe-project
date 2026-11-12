@@ -68,72 +68,46 @@ const SHOT_DIR = process.env.XH_0631_COLOR_SHOT_DIR
     ? path.resolve(process.env.XH_0631_COLOR_SHOT_DIR)
     : defaultShotDir();
 
+/**
+ * task-257 / 簇④（`850a011cb` + `a2a24caf3`）：自有色板（C1 / C3 / C2′）连同
+ * `--action` / `--action-foreground` / `--action-border` / `--bubble` / `--brand` /
+ * `--link` / `--badge` 一组 token 已整体下线（`main.css:325-326` 把 `bg-action` 全量塌成
+ * `bg-primary`），配色统一到 shadcn-vue 官方 5 个 base color；`colorScheme.ts:16,28-32`
+ * 再把这些旧参数值（`c1` / `c3` / `c2′` …）一律**归一为 `neutral`**。
+ *
+ * ⇒ `?color=c1|c3` 现在只剩**旧值迁移**覆盖：两条用例仍按旧参数进页面（迁移入口不变），
+ *   但配色断言一律对着官方 neutral 的 light token。自定义属性返回**作者写入的文本**
+ *   （不做色彩空间归一），所以下面写 oklch 原串，直接与 `getComputedStyle` 的结果比文本。
+ */
+const NEUTRAL = {
+    primary: "oklch(0.205 0 0)",
+    primaryForeground: "oklch(0.985 0 0)",
+    /** 徽标 = `Badge variant=secondary`（`--badge` 撤后落官方 secondary）。 */
+    secondary: "oklch(0.97 0 0)",
+    secondaryForeground: "oklch(0.205 0 0)",
+    background: "oklch(0.97 0 0)",
+    foreground: "oklch(0.145 0 0)",
+    mutedForeground: "oklch(0.53 0 0)",
+    border: "oklch(0.922 0 0)",
+    destructive: "oklch(0.577 0.245 27.325)",
+    /** `data-xh-color` 恒被设置（含默认）。 */
+    scheme: "neutral",
+} as const;
+
 interface ColorCase {
     id: "C1" | "C3";
+    /** 旧候选参数：只剩 URL / 迁移入口意义，不再代表任何配色。 */
     param: "c1" | "c3";
     name: string;
-    /** `--action` 解析后的期望色。 */
-    action: string;
-    actionForeground: string;
-    /** 1px 描边（C1/C3 为透明；默认 C2′ 另测）。 */
-    actionBorder: string;
-    /** 自己的气泡（反馈③：默认走 --bubble 品牌蓝；C1/C3 各自覆盖）。 */
-    bubble: string;
-    bubbleForeground: string;
-    badge: string;
-    badgeForeground: string;
-    badgeBorder: string;
-    brand: string;
-    destructive: string;
 }
 
 const CASES: ColorCase[] = [
-    {
-        id: "C1",
-        param: "c1",
-        name: "中性优先",
-        action: "#1a1a1a",
-        actionForeground: "#ffffff",
-        actionBorder: "transparent",
-        bubble: "#1a1a1a",
-        bubbleForeground: "#ffffff",
-        badge: "#eef0f3",
-        badgeForeground: "#1b1e24",
-        badgeBorder: "transparent",
-        brand: "#2450c8",
-        destructive: "#b42318",
-    },
-    {
-        id: "C3",
-        param: "c3",
-        name: "降饱和",
-        action: "#4a68a4",
-        actionForeground: "#ffffff",
-        actionBorder: "transparent",
-        bubble: "#4a68a4",
-        bubbleForeground: "#ffffff",
-        badge: "transparent",
-        badgeForeground: "#2f4a8c",
-        badgeBorder: "#b9c6df",
-        brand: "#4a68a4",
-        destructive: "#b42318",
-    },
+    { id: "C1", param: "c1", name: "中性优先（旧参数 ⇒ 归一 neutral）" },
+    { id: "C3", param: "c3", name: "降饱和（旧参数 ⇒ 归一 neutral）" },
 ];
 
-/** C2′（默认）期望色 —— 用户三条反馈落进基础层后的实测基准。 */
-const DEFAULT_CASE = {
-    id: "C2′",
-    name: "蓝仅小面积（默认）",
-    action: "#ffffff",
-    actionForeground: "#16181d",
-    /** 反馈①：弱化描边（旧 C2 是 #8b93a1）。 */
-    actionBorder: "#c9cfd6",
-    /** 反馈③：气泡保持品牌蓝实心 + 白字。 */
-    bubble: "#3b5bd0",
-    bubbleForeground: "#ffffff",
-    brand: "#3b5bd0",
-    destructive: "#b42318",
-} as const;
+/** 默认（无 `?color=`）与旧参数落同一个 official neutral ⇒ 期望 token 同源。 */
+const DEFAULT_CASE = { id: "C2′", name: "默认（official neutral）" } as const;
 
 const SESSION_ID = "color-session";
 const AGENT_PRINCIPAL_ID = "00000000-0000-4000-8000-0000000000a1";
@@ -176,13 +150,18 @@ const MESSAGES: Record<string, Array<Record<string, unknown>>> = {
     ],
 };
 
-/** 与 `rgb()` 计算值对齐的比较基准（transparent → rgba(0,0,0,0)）。 */
-function cssColor(hex: string): string {
-    if (hex === "transparent") return "rgba(0, 0, 0, 0)";
-    const value = hex.replace("#", "");
-    const r = Number.parseInt(value.slice(0, 2), 16);
-    const g = Number.parseInt(value.slice(2, 4), 16);
-    const b = Number.parseInt(value.slice(4, 6), 16);
+/**
+ * 预期色文本：`oklch()` token 与 `getComputedStyle` 的原样文本直接比（自定义属性返回作者
+ * 写入的串，不做色彩空间归一）；hex 入参（历史 C2′ 字面值）仍换算成 `rgb()`；
+ * `transparent` 用计算值形态（`rgba(0, 0, 0, 0)`）。
+ */
+function cssColor(value: string): string {
+    if (value === "transparent") return "rgba(0, 0, 0, 0)";
+    if (!value.startsWith("#")) return value;
+    const hex = value.replace("#", "");
+    const r = Number.parseInt(hex.slice(0, 2), 16);
+    const g = Number.parseInt(hex.slice(2, 4), 16);
+    const b = Number.parseInt(hex.slice(4, 6), 16);
     return `rgb(${r}, ${g}, ${b})`;
 }
 
@@ -474,7 +453,11 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
                 variant: document.documentElement.getAttribute("data-xh-variant"),
                 stored: localStorage.getItem("xihe-color-scheme"),
             }));
-            expect(attributes.color, "?color= 必须投影到 <html data-xh-color>").toBe(item.param);
+            // `colorScheme.ts:90-98`：URL 上的旧候选值（c1/c3/…）**故意忽略**（`resolveColorScheme`
+            // 返回 null）⇒ 落默认 `neutral`。旧链接不得把界面拉回已下线的调色板。
+            expect(attributes.color, "旧 ?color= 归一为 data-xh-color=neutral").toBe(
+                NEUTRAL.scheme,
+            );
             expect(attributes.stored, "清除式迁移：不得再写持久化键").toBeNull();
 
             const shot = await shoot(page, `${item.id}-chat.png`);
@@ -496,15 +479,12 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
                     background: read("--background"),
                     foreground: read("--foreground"),
                     mutedForeground: read("--muted-foreground"),
-                    action: read("--action"),
-                    actionForeground: read("--action-foreground"),
-                    actionBorder: read("--action-border"),
                     primary: read("--primary"),
-                    brand: read("--brand"),
-                    link: read("--link"),
+                    primaryForeground: read("--primary-foreground"),
+                    secondary: read("--secondary"),
+                    border: read("--border"),
                     ring: read("--ring"),
                     destructive: read("--destructive"),
-                    badge: read("--badge"),
                 };
             });
             // 焦点环：真实键盘 Tab 到**发送按钮**（不数固定次数，按 activeElement 判定）。
@@ -543,19 +523,20 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
             expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
 
-            // 颜色必须真的换成候选值。
-            expect(send.background, "发送按钮填充 = --action").toBe(cssColor(item.action));
-            expect(send.color, "发送按钮文字 = --action-foreground").toBe(
-                cssColor(item.actionForeground),
+            // 颜色必须真的落官方 neutral（旧 c1/c3 只剩迁移入口，见文件头 NEUTRAL）。
+            // primary：发送按钮（`InputArea.vue:707` bg-primary）+ 用户气泡
+            //（`Bubble` default 变体，`MessageItem.vue:158-165` 自己消息走 default）。
+            expect(send.background, "发送按钮填充 = --primary").toBe(cssColor(NEUTRAL.primary));
+            expect(send.color, "发送按钮文字 = --primary-foreground").toBe(
+                cssColor(NEUTRAL.primaryForeground),
             );
-            expect(bubble.background, "用户消息气泡 = 该方案的 --bubble").toBe(
-                cssColor(item.bubble),
+            expect(bubble.background, "用户气泡底 = --primary").toBe(cssColor(NEUTRAL.primary));
+            expect(bubble.color, "用户气泡字 = --primary-foreground").toBe(
+                cssColor(NEUTRAL.primaryForeground),
             );
-            expect(bubble.color, "气泡文字 = --bubble-foreground").toBe(
-                cssColor(item.bubbleForeground),
-            );
-            expect(tokens.brand, "--brand").toBe(item.brand);
-            expect(tokens.destructive, "--destructive").toBe(item.destructive);
+            expect(tokens.primary, "--primary").toBe(NEUTRAL.primary);
+            expect(tokens.secondary, "--secondary").toBe(NEUTRAL.secondary);
+            expect(tokens.destructive, "--destructive").toBe(NEUTRAL.destructive);
 
             expect(bodyTokenContrast, "正文 token（前景/背景）≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
             expect(bodyContrast, "消息气泡内正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
@@ -563,11 +544,8 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             expect(sendContrast, "发送按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
             expect(focusContrast, "焦点环与背景 ≥ 3:1（WCAG 1.4.11）").toBeGreaterThanOrEqual(3);
 
-            if (item.actionBorder !== "transparent") {
-                // raw <button> 没有 border token 通道，由基础层补 1px 内描边。
-                expect(send.outlineWidthPx, "发送按钮必须有 1px 描边").toBeGreaterThanOrEqual(1);
-                expect(send.outlineColor, "描边颜色").toBe(cssColor(item.actionBorder));
-            }
+            // 主按钮是实色填充（raw <button> 带 bg-primary，没有 border 类）⇒ 无描边。
+            expect(send.borderTopWidth, "主按钮实色填充，无描边").toBe(0);
 
             writeMeasure(`${item.id}-chat`, {
                 scheme: item.id,
@@ -637,12 +615,14 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             const rejectContrast = contrastRatio(reject.color, reject.backgrounds);
 
             // primary = 动作填充；destructive = 语义红（红字 + 红边，不是中性）。
-            expect(approve.background, "primary 按钮填充 = --action").toBe(cssColor(item.action));
-            expect(approve.color, "primary 按钮文字 = --action-foreground").toBe(
-                cssColor(item.actionForeground),
+            expect(approve.background, "primary 按钮填充 = --primary").toBe(
+                cssColor(NEUTRAL.primary),
+            );
+            expect(approve.color, "primary 按钮文字 = --primary-foreground").toBe(
+                cssColor(NEUTRAL.primaryForeground),
             );
             expect(reject.color, "destructive 按钮文字必须仍是语义红").toBe(
-                cssColor(item.destructive),
+                cssColor(NEUTRAL.destructive),
             );
 
             // 区分度：destructive 必须"红"（饱和度高），且与 primary 在色相或中性上不同。
@@ -705,18 +685,17 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             const badgeContrast = contrastRatio(badge.color, badge.backgrounds);
             const createContrast = contrastRatio(create.color, create.backgrounds);
 
-            expect(badge.background, "徽标底 = --badge").toBe(cssColor(item.badge));
-            expect(badge.color, "徽标字 = --badge-foreground").toBe(cssColor(item.badgeForeground));
-            if (item.badgeBorder !== "transparent") {
-                expect(badge.borderTopColor, "C2/C3 徽标必须有 1px 描边").toBe(
-                    cssColor(item.badgeBorder),
-                );
-                expect(badge.borderTopWidth).toBeGreaterThanOrEqual(1);
-            }
-            expect(create.background, "主按钮填充 = --action").toBe(cssColor(item.action));
-            // 选中态用 --brand（2px 下划线），保证 C1 的"蓝色只留选中项"成立。
-            expect(selectedNav.borderBottomColor, "设置页选中 tab 下划线 = --brand").toBe(
-                cssColor(item.brand),
+            expect(badge.background, "徽标底 = --secondary").toBe(cssColor(NEUTRAL.secondary));
+            expect(badge.color, "徽标字 = --secondary-foreground").toBe(
+                cssColor(NEUTRAL.secondaryForeground),
+            );
+            // `Badge` secondary = 基础类 `border` + `border-transparent`（1px 透明边）。
+            expect(badge.borderTopColor, "徽标描边透明（secondary）").toBe(cssColor("transparent"));
+            expect(badge.borderTopWidth).toBeGreaterThanOrEqual(1);
+            expect(create.background, "主按钮填充 = --primary").toBe(cssColor(NEUTRAL.primary));
+            // 选中态 = `border-primary` 2px 下划线（`RolesView.vue:221`），蓝只剩小面积。
+            expect(selectedNav.borderBottomColor, "设置页选中 tab 下划线 = --primary").toBe(
+                cssColor(NEUTRAL.primary),
             );
             expect(selectedNav.borderBottomWidth).toBeGreaterThanOrEqual(2);
 
@@ -758,22 +737,22 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         });
         await page.getByTestId("chat-input").fill(DRAFT);
 
-        const attributes = await page.evaluate(() => ({
-            color: document.documentElement.getAttribute("data-xh-color"),
-            stored: localStorage.getItem("xihe-color-scheme"),
-            action: getComputedStyle(document.documentElement).getPropertyValue("--action").trim(),
-            actionBorder: getComputedStyle(document.documentElement)
-                .getPropertyValue("--action-border")
-                .trim(),
-            bubble: getComputedStyle(document.documentElement).getPropertyValue("--bubble").trim(),
-        }));
-        expect(attributes.color, "默认 = C2′：不设 data-xh-color").toBeNull();
+        const attributes = await page.evaluate(() => {
+            const style = getComputedStyle(document.documentElement);
+            return {
+                color: document.documentElement.getAttribute("data-xh-color"),
+                stored: localStorage.getItem("xihe-color-scheme"),
+                primary: style.getPropertyValue("--primary").trim(),
+                primaryForeground: style.getPropertyValue("--primary-foreground").trim(),
+            };
+        });
+        // `colorScheme.ts:16`：属性**恒被设置**（默认也写 neutral，「没有属性 = 默认」的隐式态已撤）。
+        expect(attributes.color, "默认也恒设 data-xh-color = neutral").toBe(NEUTRAL.scheme);
         expect(attributes.stored, "清除式迁移：旧 xihe-color-scheme 必须已清除").toBeNull();
-        expect(attributes.action, "默认 --action = 白底（反馈①②：主操作不再铺色）").toBe("#ffffff");
-        expect(attributes.actionBorder, "默认 --action-border = 弱化描边").toBe(
-            DEFAULT_CASE.actionBorder,
+        expect(attributes.primary, "默认 --primary = 官方 neutral").toBe(NEUTRAL.primary);
+        expect(attributes.primaryForeground, "默认 --primary-foreground").toBe(
+            NEUTRAL.primaryForeground,
         );
-        expect(attributes.bubble, "默认 --bubble = 品牌蓝（反馈③）").toBe(DEFAULT_CASE.bubble);
 
         const shot = await shoot(page, "default2-chat.png");
 
@@ -794,16 +773,12 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
                 background: read("--background"),
                 foreground: read("--foreground"),
                 mutedForeground: read("--muted-foreground"),
-                action: read("--action"),
-                actionForeground: read("--action-foreground"),
-                actionBorder: read("--action-border"),
-                bubble: read("--bubble"),
                 primary: read("--primary"),
-                brand: read("--brand"),
-                link: read("--link"),
+                primaryForeground: read("--primary-foreground"),
+                secondary: read("--secondary"),
+                border: read("--border"),
                 ring: read("--ring"),
                 destructive: read("--destructive"),
-                badge: read("--badge"),
             };
         });
         // 焦点环：真实键盘 Tab 到**发送按钮**（不数固定次数，按 activeElement 判定）。
@@ -820,33 +795,29 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         const focus = await probeActive(page);
         expect(focus.testId, "焦点环必须量在发送按钮上（键盘可达）").toBe("chat-send-button");
 
-        // 反馈①：白底 + 弱化 1px 描边（旧 C2 是 #8b93a1）。
-        expect(send.background, "发送按钮填充 = 白底").toBe(cssColor(DEFAULT_CASE.action));
-        expect(send.color, "发送按钮文字 = --action-foreground").toBe(
-            cssColor(DEFAULT_CASE.actionForeground),
+        // 官方 neutral：主操作 = `bg-primary` 实色填充（旧 C2′ 的「白底 + 弱化描边」已废）。
+        expect(send.background, "发送按钮填充 = --primary").toBe(cssColor(NEUTRAL.primary));
+        expect(send.color, "发送按钮文字 = --primary-foreground").toBe(
+            cssColor(NEUTRAL.primaryForeground),
         );
-        expect(send.outlineWidthPx, "发送按钮必须有 1px 内描边").toBeGreaterThanOrEqual(1);
-        expect(send.outlineColor, "弱化描边色值（反馈①）").toBe(
-            cssColor(DEFAULT_CASE.actionBorder),
-        );
+        expect(send.borderTopWidth, "主按钮实色填充，无描边").toBe(0);
 
-        // 反馈③：气泡品牌蓝实心 + 白字，无描边。
-        expect(bubble.background, "用户气泡 = 品牌蓝实心").toBe(cssColor(DEFAULT_CASE.bubble));
-        expect(bubble.color, "气泡白字").toBe(cssColor(DEFAULT_CASE.bubbleForeground));
-        expect(bubble.outlineStyle, "气泡不得有描边（反馈③）").toBe("none");
+        // 气泡同样 `bg-primary` + `--primary-foreground`，无描边。
+        expect(bubble.background, "用户气泡底 = --primary").toBe(cssColor(NEUTRAL.primary));
+        expect(bubble.color, "用户气泡字 = --primary-foreground").toBe(
+            cssColor(NEUTRAL.primaryForeground),
+        );
+        expect(bubble.outlineStyle, "气泡不得有描边").toBe("none");
 
         // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
         expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
         expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
         expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
 
-        expect(tokens.brand, "--brand").toBe(DEFAULT_CASE.brand);
-        // 基础层 --destructive 是 oklch 红（候选文件才落 #b42318 字面值）：
-        // 判"仍是语义红"用色相距离，不判字面量。
-        expect(
-            hueDistance(tokens.destructive, DEFAULT_CASE.destructive),
-            "--destructive 仍是语义红（与 #b42318 同族）",
-        ).toBeLessThanOrEqual(10);
+        expect(tokens.primary, "--primary").toBe(NEUTRAL.primary);
+        expect(tokens.secondary, "--secondary").toBe(NEUTRAL.secondary);
+        // 官方 `--destructive` 仍是 oklch 语义红：判 token 原值（不再有 #b42318 候选字面值）。
+        expect(tokens.destructive, "--destructive 仍是语义红 token").toBe(NEUTRAL.destructive);
 
         const sendContrast = contrastRatio(send.color, [send.background]);
         const bodyContrast = contrastRatio(body.color, body.backgrounds);
@@ -880,9 +851,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
                 sendButton: sendContrast,
                 focusRing: focusContrast,
             },
-            borderWeakened: {
-                before: "#8b93a1（对白 3.09:1）",
-                after: `${DEFAULT_CASE.actionBorder}（对白 1.57:1）`,
+            filledPrimary: {
+                before: "白底 + #c9cfd6 弱化描边（C2′ 旧口径）",
+                after: `${NEUTRAL.primary} 实色填充、无描边（官方 neutral）`,
             },
             geometry: {
                 bodyFontSizePx: body.fontSizePx,
@@ -936,15 +907,15 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         const approveContrast = contrastRatio(approve.color, approve.backgrounds);
         const rejectContrast = contrastRatio(reject.color, reject.backgrounds);
 
-        // primary = 白底弱化描边；destructive = 语义红（红字 + 红边，不是中性）。
-        expect(approve.background, "primary 按钮填充 = 白底").toBe(cssColor(DEFAULT_CASE.action));
-        expect(approve.color, "primary 按钮文字 = 深字").toBe(
-            cssColor(DEFAULT_CASE.actionForeground),
+        // primary = `--primary` 实色填充；destructive = 语义红（红字 + 红边，不是中性）。
+        expect(approve.background, "primary 按钮填充 = --primary").toBe(cssColor(NEUTRAL.primary));
+        expect(approve.color, "primary 按钮文字 = --primary-foreground").toBe(
+            cssColor(NEUTRAL.primaryForeground),
         );
         // 基础层 --destructive 是 oklch 红：判"仍是语义红"用色相距离 + 饱和度，不判字面量。
         const dangerHsl = hsl(reject.color);
         expect(
-            hueDistance(reject.color, DEFAULT_CASE.destructive) <= 10 && dangerHsl.s >= 40,
+            hueDistance(reject.color, NEUTRAL.destructive) <= 10 && dangerHsl.s >= 40,
             `destructive 按钮文字必须仍是语义红（实测 ${reject.color}）`,
         ).toBe(true);
 
@@ -1004,15 +975,18 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         const badgeContrast = contrastRatio(badge.color, badge.backgrounds);
         const createContrast = contrastRatio(create.color, create.backgrounds);
 
-        // 徽标沿用默认（--badge = --secondary #f1f3f7），不铺强调色。
-        expect(badge.background, "徽标底 = --badge（secondary 浅灰）").toBe(cssColor("#f1f3f7"));
-        expect(badge.color, "徽标字 = --badge-foreground").toBe(cssColor("#16181d"));
-        expect(create.background, "主按钮填充 = 白底弱化描边").toBe(cssColor(DEFAULT_CASE.action));
-        expect(create.borderTopWidth, "主按钮 1px 弱化描边").toBeGreaterThanOrEqual(1);
-        expect(create.borderTopColor, "弱化描边色值").toBe(cssColor(DEFAULT_CASE.actionBorder));
-        // 选中态用 --brand（2px 下划线），蓝只留小面积。
-        expect(selectedNav.borderBottomColor, "设置页选中 tab 下划线 = --brand").toBe(
-            cssColor(DEFAULT_CASE.brand),
+        // 徽标 = `Badge variant=secondary`（`--badge` 撤后落官方 secondary），不铺强调色。
+        expect(badge.background, "徽标底 = --secondary").toBe(cssColor(NEUTRAL.secondary));
+        expect(badge.color, "徽标字 = --secondary-foreground").toBe(
+            cssColor(NEUTRAL.secondaryForeground),
+        );
+        expect(create.background, "主按钮填充 = --primary").toBe(cssColor(NEUTRAL.primary));
+        // `Button` 基础类始终带 `border`、default 变体是 `border-transparent` ⇒ 1px 透明边。
+        expect(create.borderTopWidth, "主按钮仍有 1px 边框槽").toBeGreaterThanOrEqual(1);
+        expect(create.borderTopColor, "主按钮描边透明（实色填充）").toBe(cssColor("transparent"));
+        // 选中态 = `border-primary` 2px 下划线。
+        expect(selectedNav.borderBottomColor, "设置页选中 tab 下划线 = --primary").toBe(
+            cssColor(NEUTRAL.primary),
         );
         expect(selectedNav.borderBottomWidth).toBeGreaterThanOrEqual(2);
 
@@ -1068,14 +1042,14 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         const create = await probe(page, '[data-testid="workspace-picker-create"]');
         const createContrast = contrastRatio(create.color, create.backgrounds);
 
-        // 反馈②：中性 ghost —— 透明底 + 1px 边框 + 常规字重，不用 --action 填充。
-        expect(create.background, "新建工作区 = 透明底（不是 --action 白底/蓝底）").toBe(
-            "rgba(0, 0, 0, 0)",
+        // 反馈②：中性 ghost —— 透明底 + 1px 边框 + 常规字重，不用主按钮填充。
+        expect(create.background, "新建工作区 = 透明底（不是 --primary 填充）").toBe(
+            cssColor("transparent"),
         );
         expect(create.borderTopWidth, "ghost 必须有 1px 边框").toBeGreaterThanOrEqual(1);
-        // --border = --border-subtle = rgba(22, 24, 29, 0.09)：实色改 alpha，直接比对计算值。
-        expect(create.borderTopColor, "ghost 边框 = --border").toBe("rgba(22, 24, 29, 0.09)");
-        expect(create.color, "ghost 文字 = --foreground").toBe(cssColor("#16181d"));
+        // 基础层 `* { border-color: var(--border) }`（`main.css:171`）⇒ 官方 oklch(0.922 0 0)。
+        expect(create.borderTopColor, "ghost 边框 = --border").toBe(cssColor(NEUTRAL.border));
+        expect(create.color, "ghost 文字 = --foreground").toBe(cssColor(NEUTRAL.foreground));
         expect(create.fontWeight, "常规字重（不是主按钮的 600）").toBe("400");
         expect(createContrast, "ghost 文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
 

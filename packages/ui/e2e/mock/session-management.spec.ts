@@ -174,11 +174,12 @@ async function expectNoAdminEntryOnGlobalRail(page: Page): Promise<void> {
     // 旧 NavRail 的两个 testid 整体不得再出现在页面上（组件本体仍在树里，但产品零挂载）。
     await expect(page.getByTestId("nav-rail")).toHaveCount(0);
     await expect(page.getByTestId("nav-rail-admin")).toHaveCount(0);
-    // 全局条恰好三个入口（工作台 / 设置 / 登出）；多一个就说明模块面被偷偷扩了。
+    // 全局条恰好四个入口（工作台 / 资源 / 设置 / 登出）；模块入口三个，登出单列。
     await expect(page.getByTestId("global-rail-module-workbench")).toHaveCount(1);
+    await expect(page.getByTestId("global-rail-module-resources")).toHaveCount(1);
     await expect(page.getByTestId("global-rail-module-settings")).toHaveCount(1);
     await expect(page.getByTestId("global-rail-logout")).toHaveCount(1);
-    await expect(rail.getByTestId(/^global-rail-module-/)).toHaveCount(2);
+    await expect(rail.getByTestId(/^global-rail-module-/)).toHaveCount(3);
 }
 
 test.describe("Session Management", () => {

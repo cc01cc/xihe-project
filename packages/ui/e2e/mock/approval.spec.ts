@@ -435,7 +435,7 @@ test.describe("Chat approval flow", () => {
         await dialog.locator('[data-testid="approval-save-back"]').click();
         await expect(dialog.locator('[data-testid="approval-save-rule"]')).toBeFocused();
         await dialog.locator('[data-testid="approval-save-rule"]').click();
-        await selectByLocator(dialog.locator('[data-testid="approval-rule-layer"]'), "用户层");
+        await selectByLocator(dialog.locator('[data-testid="approval-rule-layer"]'), "个人层");
         await dialog.locator('[data-testid="approval-rule-resource"]').fill("workspace/**");
         await expect(dialog.locator('[data-testid="approval-rule-preview"]')).toContainText(
             "workspace/**",

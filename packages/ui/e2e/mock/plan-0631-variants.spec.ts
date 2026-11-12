@@ -83,7 +83,8 @@ const DEFAULT_B = {
      */
     primary: "oklch(0.205 0 0)",
     foreground: "oklch(0.145 0 0)",
-    mutedForeground: "oklch(0.556 0 0)",
+    /** 「面差」批（`a2a24caf3`）：官方值被有意下调一档（`color-shadcn-neutral.css:38`）。 */
+    mutedForeground: "oklch(0.53 0 0)",
 } as const;
 
 /**

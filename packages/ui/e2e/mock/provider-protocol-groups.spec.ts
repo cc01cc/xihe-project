@@ -150,8 +150,8 @@ test.describe("Provider protocol groups (PLAN-0364 M4, discovery modes per PLAN-
         await expect(discoveryTrigger).toHaveAttribute("aria-expanded", "true");
         const optionText = (await page.getByRole("option").allTextContents()).join(" | ");
         await page.keyboard.press("Escape");
-        expect(optionText).toContain("Provider /models");
-        expect(optionText).toContain("LiteLLM Catalog");
+        expect(optionText).toContain("从 Provider 拉取模型列表");
+        expect(optionText).toContain("LiteLLM 模型目录");
         expect(optionText).toContain("手动输入模型");
         expect(optionText).not.toContain("精选模型");
 

@@ -192,10 +192,11 @@ test.describe("PLAN-0554 config provenance", () => {
         await page.goto("/settings/instance/rag", { waitUntil: "load" });
         await openRag(page);
 
-        await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("instance");
+        // 48aef0f26：层名与人话都换了 zh 词表（实例层 / 可被覆盖 / 默认值 / 环境变量锁定）。
+        await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("实例层");
         await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("可被覆盖");
-        await expect(page.getByTestId("config-source-rag-topK")).toContainText("code default");
-        await expect(page.getByTestId("config-source-rag-minScore")).toContainText("env 锁定");
+        await expect(page.getByTestId("config-source-rag-topK")).toContainText("默认值");
+        await expect(page.getByTestId("config-source-rag-minScore")).toContainText("环境变量锁定");
         await expect(page.getByTestId("config-env-lock-rag-minScore")).toBeVisible();
         await expect(page.locator('input[type="checkbox"][name*="lock"]')).toHaveCount(0);
         await expect(page.getByRole("button", { name: /锁定|解锁/ })).toHaveCount(0);
@@ -207,11 +208,13 @@ test.describe("PLAN-0554 config provenance", () => {
         await page.goto("/settings/user/rag", { waitUntil: "load" });
         await openRag(page);
 
-        await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("user");
-        await expect(page.getByTestId("config-source-rag-chunkOverlap")).toContainText(
-            "继承自 instance",
-        );
-        await expect(page.getByTestId("config-source-rag-minScore")).toContainText("env 锁定");
+        await expect(page.getByTestId("config-source-rag-chunkSize")).toContainText("个人层");
+        // task-251/D-1043：继承行 = 来源短语徽标（实例默认）+ 一句「继承自上层」，不复述同一层名。
+        const inherited = page.getByTestId("config-source-rag-chunkOverlap");
+        await expect(inherited).toContainText("实例默认");
+        await expect(inherited).toContainText("继承自上层");
+        await expect(inherited).not.toContainText("实例层继承自");
+        await expect(page.getByTestId("config-source-rag-minScore")).toContainText("环境变量锁定");
     });
 
     // PLAN-0752 V6（task-133）：点继承层徽标 ⇒ 跳到对应层同一条目并**聚焦**那条目。
@@ -268,8 +271,9 @@ test.describe("PLAN-0554 config provenance", () => {
         await expect(page.getByTestId("config-source-rag-chunkSize")).not.toContainText(
             "workspace",
         );
+        await expect(page.getByTestId("config-source-rag-chunkOverlap")).toContainText("实例默认");
         await expect(page.getByTestId("config-source-rag-chunkOverlap")).toContainText(
-            "继承自 instance",
+            "继承自上层",
         );
     });
 
@@ -281,10 +285,14 @@ test.describe("PLAN-0554 config provenance", () => {
         // 058220aa0 给层分组加了入口数徽标（SettingsSidebar.vue:117/244），组标题从此是两段文本
         //（「用户配置」+「N 个入口」）⇒ 原来写死的 toHaveText("用户配置") 必然漂移。
         // 改法按 D-889：断言**性质**，不写某次渲染的**结果值**（12）。
-        const primaryGroup = page.getByTestId("settings-nav-group-primary");
-        await expect(primaryGroup).toHaveCount(1);
-        await expect(primaryGroup).toContainText("用户配置");
-        await expect(primaryGroup).not.toContainText("实例配置");
+        // task-250 §4.1：`settings-nav-group-primary` 在 `SettingsSidebar.vue:324/434` **双挂载**
+        //（管理员场景 strict-mode 命中多元素）⇒ 改按全树唯一 id 定位（先例 task-242/plan-0651），
+        //  组名与入口数徽标分开断言（整按钮 textContent 会把两段文本拼成一串）。
+        const userGroup = page.locator("#settings-nav-user");
+        await expect(userGroup).toHaveCount(1);
+        await expect(userGroup).toContainText("个人配置");
+        // 普通用户侧栏不得出现实例层分组：正向计数断言比「整按钮不含某串」更硬。
+        await expect(page.locator("#settings-nav-instance")).toHaveCount(0);
         // 徽标数字的真性质：**等于该组实际渲染的入口数**（域链接 + 资源链接，资源含缺口占位）。
         // 这样写的好处：域/资源矩阵变（增加域、缺口补齐）时，徽标和链接一起变，断言仍成立；
         // 而写死 12 会把「矩阵变了」误报成「产品坏了」。
@@ -329,8 +337,14 @@ test.describe("PLAN-0554 config provenance", () => {
         await expect(page.getByTestId("provider-hub")).toBeVisible();
         await expect(page.getByTestId("provider-hub-connect")).toBeVisible();
         await expect(page.getByTestId("provider-connection-search")).toBeVisible();
-        await expect(page.getByTestId("config-source-summary-llm-provider")).toContainText(
-            "llm-provider.profile",
-        );
+        // task-170/F-07：摘要默认只留人话结论 + 「查看」；技术标识在展开区，先展开再断言明细。
+        const summary = page.getByTestId("config-source-summary-llm-provider");
+        await expect(summary).toContainText("生效来源");
+        await expect(summary).not.toContainText("llm-provider.profile");
+        const summaryToggle = page.getByTestId("config-source-summary-toggle-llm-provider");
+        await expect(summaryToggle).toHaveAttribute("aria-expanded", "false");
+        await summaryToggle.click();
+        await expect(summaryToggle).toHaveAttribute("aria-expanded", "true");
+        await expect(summary).toContainText("llm-provider.profile");
     });
 });

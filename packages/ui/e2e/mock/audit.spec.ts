@@ -493,7 +493,12 @@ test.describe("Audit read view (PLAN-0466)", () => {
         await installAuditRoutes(page, "error");
         await page.goto("/settings/audit");
 
-        await expect(page.getByText("Audit backend unavailable")).toBeVisible();
+        // task-168：统一错误面只渲染本地化文案，**绝不**渲染 problem.detail 原文
+        //（`SettingsErrorSurface.vue:24` 注释即判据）。
+        const errorPanel = page.getByTestId("settings-error-panel");
+        await expect(errorPanel).toBeVisible();
+        await expect(errorPanel).toContainText("请求失败，请稍后重试；若多次失败请联系管理员。");
+        await expect(errorPanel).not.toContainText("Audit backend unavailable");
         await expect(page.getByTestId("settings-audit-no-selection")).toBeVisible();
     });
 });

@@ -292,8 +292,14 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("embedding-settings")).toBeVisible();
         const source = page.getByTestId("config-source-summary-embedding");
         await expect(source).toBeVisible();
+        // task-170/F-07：审计明细（`domain.key` 技术标识 + 来源）默认收起，展开后才可见。
+        await expect(source).not.toContainText("embedding.model");
+        const toggle = page.getByTestId("config-source-summary-toggle-embedding");
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-expanded", "true");
         await expect(source).toContainText("embedding.model");
-        await expect(source).toContainText("env 锁定");
+        await expect(source).toContainText("环境变量锁定");
     });
 
     test("saving a value goes through the layer endpoint", async ({ page }) => {

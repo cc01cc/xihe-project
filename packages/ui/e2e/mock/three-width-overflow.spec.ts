@@ -109,6 +109,9 @@ async function openChat(page: Page): Promise<void> {
         });
     });
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+    // 具体信号：工作台宿主必须已挂载（`WorkspaceWorkbench.vue:664`）。`body` 可见只证明 HTML 到了，
+    // 应用还没挂完就采样正是 task-250 #27-29 的假红来源。
+    await expect(page.getByTestId("workspace-workbench")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.locator("body")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 }
 
@@ -122,17 +125,34 @@ for (const size of WIDTHS) {
             await expectNoHorizontalOverflow(page, "html", "页面根 <html>");
 
             // 消息区：优先内部滚动容器，其次消息列表，最后会话列（三者按实际挂载取其一）。
-            // 1920 下默认 dock 是文件面板，聊天要等它挂载后才存在，所以用轮询而不是硬等。
-            const messageArea = await page.evaluate(() => {
-                const candidates = [
-                    '[data-testid="message-scroller-viewport"]',
-                    '[data-testid="message-list"]',
-                    '[data-testid="workspace-conversation"]',
-                ];
-                return candidates.find((sel) => document.querySelector(sel) !== null) ?? null;
-            });
-            expect(messageArea, "消息区容器都不存在（聊天列没挂载？）").not.toBeNull();
-            await expectNoHorizontalOverflow(page, messageArea as string, "消息区容器");
+            // 1920 下默认 dock 是文件面板，聊天要等它挂载后才存在 ⇒ **用 poll 等具体信号**
+            //（容器出现），不用单次 evaluate + 立即断言，也不加固定 sleep 掩盖竞态
+            //（task-250 #27-29：首版就是应用还没挂完就采样）。
+            let messageArea = "";
+            await expect
+                .poll(
+                    async () => {
+                        const found = await page.evaluate(() => {
+                            const candidates = [
+                                '[data-testid="message-scroller-viewport"]',
+                                '[data-testid="message-list"]',
+                                '[data-testid="workspace-conversation"]',
+                            ];
+                            return (
+                                candidates.find((sel) => document.querySelector(sel) !== null) ??
+                                null
+                            );
+                        });
+                        messageArea = found ?? "";
+                        return found;
+                    },
+                    {
+                        timeout: LONG_TIMEOUT_MS,
+                        message: "消息区容器都不存在（聊天列没挂载？）",
+                    },
+                )
+                .not.toBeNull();
+            await expectNoHorizontalOverflow(page, messageArea, "消息区容器");
 
             // 成员面板：桌面由 dock 的 members 标签承担（打开 → 断言 → 关闭）。
             const membersTab = page.locator('[data-testid="workspace-toolbar-members"]');

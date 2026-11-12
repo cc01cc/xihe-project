@@ -219,7 +219,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         await expect(page.getByTestId("workspace-prepare-card")).toBeVisible();
         const prepareButton = page.getByTestId("workspace-prepare-button");
         await prepareButton.click();
-        await expect(prepareButton).toContainText("Preparing");
+        await expect(prepareButton).toContainText("准备中…");
         await expect(prepareButton).toBeDisabled();
 
         await expect.poll(() => typeof materializeGate.release).toBe("function");

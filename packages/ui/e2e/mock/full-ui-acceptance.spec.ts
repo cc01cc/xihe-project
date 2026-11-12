@@ -524,9 +524,16 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await expect(page.getByText("README", { exact: false }).first()).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        await page.getByRole("button", { name: "源码" }).click();
-        const editor = page.getByTestId("workspace-markdown-source");
-        await editor.fill("# README\n\nChanged");
+        // CM6（314146d12）：Markdown 编辑面只剩一条 CM6 视图（默认就是源码态），
+        // 旧的「源码/预览」开关与 `workspace-markdown-source` textarea 已撤；
+        // 编辑走 CM6 的 contenteditable（点进 → 全选 → 输入），保存链路不变。
+        const markdownEditor = page
+            .getByTestId("workspace-aux-panel")
+            .locator('[contenteditable="true"]');
+        await expect(markdownEditor).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
+        await markdownEditor.click();
+        await page.keyboard.press("Control+A");
+        await page.keyboard.type("# README\n\nChanged");
         await page.getByRole("button", { name: "保存", exact: true }).click();
         await expect(page.getByRole("button", { name: "已保存", exact: true })).toBeVisible();
         expect(writes).toBe(1);
@@ -705,9 +712,16 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await page.getByRole("button", { name: "main.ts", exact: true }).click();
         const codeEditor = page.getByTestId("workspace-code-editor");
         await expect(codeEditor).toBeVisible();
-        await codeEditor.locator("textarea").fill("const answer = 43");
-        await page.waitForTimeout(400);
-        await page.getByRole("button", { name: "差异", exact: true }).click();
+        // CM6（314146d12）：代码区是 contenteditable（`.cm-content`），没有 `textarea` 节点。
+        const cm6Content = codeEditor.locator(".cm-content");
+        await expect(cm6Content).toHaveAttribute("contenteditable", "true");
+        await cm6Content.click();
+        await page.keyboard.press("Control+A");
+        await page.keyboard.type("const answer = 43");
+        // 具体信号：内容改动后「差异」按钮才出现（`FileEditor.vue:192` 的 v-if），等它而不是睡 400ms。
+        const diffButton = page.getByRole("button", { name: "差异", exact: true });
+        await expect(diffButton).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
+        await diffButton.click();
         await expect(page.getByTestId("workspace-diff-viewer")).toBeVisible();
 
         await page.getByRole("button", { name: "image.png", exact: true }).click();

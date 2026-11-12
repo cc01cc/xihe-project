@@ -9,7 +9,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * 便于未列出的下拉先跑通，再补映射。
  */
 export const SELECT_LABELS: Record<string, Record<string, string>> = {
-    "approval-rule-layer": { workspace: "工作区层", user: "用户层" },
+    "approval-rule-layer": { workspace: "工作区层", user: "个人层" },
     "approval-classify-shape": {
         structured: "结构化",
         interpreter: "解释器型",
@@ -24,6 +24,14 @@ export const SELECT_LABELS: Record<string, Record<string, string>> = {
         "windows-host": "宿主执行（不受限制）",
     },
     "config-select-approval-policy-mode": { manual: "手动审批", auto: "自动放行" },
+    /** task-250 §4.6：logging 级别选项已人话化（`ConfigLayerPanels.vue:85-101` levelLabel）。 */
+    "config-select-logging-levelCp": {
+        TRACE: "跟踪",
+        DEBUG: "调试",
+        INFO: "信息",
+        WARN: "警告",
+        ERROR: "错误",
+    },
 };
 
 export function selectLabelFor(testId: string, value: string): string {
