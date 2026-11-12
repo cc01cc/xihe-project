@@ -202,6 +202,15 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         PLANNED_APIS.put("/api/v1/instance/agent-principals", "PLAN-0771 M3");
         PLANNED_APIS.put("/api/v1/instance/agent-principals/{}", "PLAN-0771 M3");
 
+        //      PLAN-0771 M3（D-1008，2026-11-12）：实例层 mcp 注册表。同样 **4 条操作 = 2 个 shape**（集合 GET+POST、
+        //      {name} PATCH+DELETE）；卡面的「3 个 shape」是同一个算术错（task-170 已用幻影条目证过一次，不重复做）。
+        //      注意 identity 不是 uuid：两层都按 **name** 寻址（PLAN-0771 2.5「继承 + 覆盖同名」），所以变量名是
+        //      {name}，shape 归一化后为 {}（与 PARAM_NAME_EXEMPT 无关：该 shape 在实现侧尚不存在，将来实现必须也叫 name）。
+        //        /api/v1/instance/mcp               ← GET(registry) + POST(register one)
+        //        /api/v1/instance/mcp/{}            ← PATCH(replace one) + DELETE(remove one)
+        PLANNED_APIS.put("/api/v1/instance/mcp", "PLAN-0771 M3");
+        PLANNED_APIS.put("/api/v1/instance/mcp/{}", "PLAN-0771 M3");
+
         // ---- 参数名豁免当前**为空**：批 2 已把 /api/v1/workspaces/{wsId}/mcp/servers 统一为
         //      {workspaceId}。若再出现"同形状不同变量名"，必须逐条登记并写清"为何运行时等价" ----
         // PARAM_NAME_EXEMPT.put("<shape>", "<reason token>");

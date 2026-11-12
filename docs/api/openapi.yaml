@@ -5022,6 +5022,124 @@ paths:
         '200': { description: 'Instance identity view', content: { application/json: { schema: { $ref: '#/components/schemas/InstanceIdentityView' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/instance/mcp:
+    get:
+      tags: [mcp]
+      operationId: listInstanceMcpServers
+      summary: Read the instance MCP server registry
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008): the deployment-level MCP registry - the fallback layer every workspace inherits. The response is the SAME document shape as GET /api/v1/workspaces/{workspaceId}/mcp-config ({mcpServers: {<name>: entry}}, remote entries by value, stdio entries persisted verbatim), and it is keyed by server NAME because that name is the resource identity: PLAN-0771 2.5 makes the workspace layer an inheriting layer that OVERRIDES an instance entry of the same name, so both layers address the same key and no synthetic id exists at either layer. Returning the identical document shape is deliberate - a client can diff the instance registry against a workspace config without a second model. Carries no secret material: oauth credentials live in the credential vault and are referenced, never echoed (an instance entry may reference only an instance-owned credential, PLAN-0771 2.5). Read face is open to every authenticated caller (this registry shapes routing, not authority); the write face is instance-admin only.'
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 'The instance registry: mcpServers keyed by server name'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mcpServers]
+                properties:
+                  mcpServers:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                        - type: object
+                          description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+        '401': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [mcp]
+      operationId: createInstanceMcpServer
+      summary: Register one instance MCP server (instance admin only)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008): registers EXACTLY ONE entry in the instance registry. The request body is the same mcpServers document the config surface uses, constrained to exactly one key - 0 keys or 2+ keys answer 400 INVALID_REQUEST - so this card adds NO new document or entry model (a {name, entry} wrapper would have been a second model for the same thing). Gate: cap:instance:admin (CAP_INSTANCE_ADMIN) evaluated at the capability-atom layer; any other caller answers 403 FORBIDDEN before the body is read. An entry must be one shape, never both (a remote entry has url + optional oauth, a stdio entry has command/args; CP answers 400 INVALID_REQUEST on a mix, PLAN-0759). A name already present in the instance registry answers 409 MCP_SERVER_EXISTS - the registry is instance-admin-owned, so a silent overwrite would be an unattributable change; use PATCH to replace. An instance entry may reference only an instance-owned credential (PLAN-0771 2.5); a workspace credential reference is refused. The workspace layer is untouched: workspaces inherit this entry until they declare an own entry with the same name.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: 'The mcpServers document with exactly one key (the new server name).'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mcpServers]
+              properties:
+                mcpServers:
+                  type: object
+                  additionalProperties:
+                    oneOf:
+                      - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                      - type: object
+                        description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+      responses:
+        '201':
+          description: 'The registry after the create (same document shape as GET)'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mcpServers]
+                properties:
+                  mcpServers:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                        - type: object
+                          description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+        '400': { description: 'INVALID_REQUEST - the document carries 0 or 2+ names, or one entry mixes remote and stdio fields', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN - cap:instance:admin (CAP_INSTANCE_ADMIN) missing', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'MCP_SERVER_EXISTS - a registry entry with this name already exists (use PATCH to replace it)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/instance/mcp/{name}:
+    patch:
+      tags: [mcp]
+      operationId: updateInstanceMcpServer
+      summary: Replace one instance MCP server entry (instance admin only)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008): replaces the VALUE of one existing registry entry, addressed by its name. The request body is one entry (the same oneOf the document uses: remote RemoteMcpServerEntry with url + optional oauth, or the stdio value), so the entry model stays single-sourced with the config surface; changing the name is not part of this operation (register under a new name, then delete the old one) and a body that carries a second name or a mixing of shapes answers 400 INVALID_REQUEST. Gate: cap:instance:admin; a name that is not in the instance registry answers 404 MCP_SERVER_NOT_FOUND - the same answer an unknown name gives on this prefix, so the read face learns nothing extra. The response echoes the registry document after the replace (same shape as GET), never the caller raw input. A preset/instance entry stays inheritable: a workspace that already overrides this name keeps its own entry (that is a workspace-layer row, not this one).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string, minLength: 1 }, description: 'The server name (the mcpServers key), not a uuid: both layers address entries by name (PLAN-0771 2.5).' }
+      requestBody:
+        required: true
+        description: 'One entry (remote or stdio, never both, never a second name).'
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                - type: object
+                  description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+      responses:
+        '200':
+          description: 'The registry after the replace (same document shape as GET)'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mcpServers]
+                properties:
+                  mcpServers:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: '#/components/schemas/RemoteMcpServerEntry'
+                        - type: object
+                          description: Stdio entry (Claude Desktop compatible value; CP persists it verbatim)
+        '400': { description: 'INVALID_REQUEST - the body mixes remote and stdio fields or carries a name that is not the path parameter', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN - cap:instance:admin (CAP_INSTANCE_ADMIN) missing', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'MCP_SERVER_NOT_FOUND - no instance registry entry with this name', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      tags: [mcp]
+      operationId: deleteInstanceMcpServer
+      summary: Remove one instance MCP server from the registry (instance admin only)
+      description: 'D-932 contract-first (PLAN-0771 M3 / D-1008): 204 and the registry entry is gone. This is a registry-layer delete, not a session or routing operation: stdio/remote sessions are owned by the Runtime and are rebuilt lazily from the next resolved config, and a workspace that overrides this name keeps its own entry (the override is a workspace-layer row and is not touched here). Gate: cap:instance:admin; an unknown name answers 404 MCP_SERVER_NOT_FOUND (the identical answer a name that was never in this registry gives, so the write face enables no existence oracle for names the caller does not own). Not idempotent by design: a second DELETE answers 404, which is what "not in the registry" means.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: name, required: true, schema: { type: string, minLength: 1 }, description: 'The server name (the mcpServers key), not a uuid.' }
+      responses:
+        '204': { description: Removed from the instance registry }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN - cap:instance:admin (CAP_INSTANCE_ADMIN) missing', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'MCP_SERVER_NOT_FOUND - no instance registry entry with this name', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/instance/owner:
     get:
       tags: [auth]

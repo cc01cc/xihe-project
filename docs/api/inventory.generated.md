@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**343** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 243 · 服务间 100
+- 规模：**347** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 247 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（343 / 343 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（347 / 347 个操作带 tag）。
 
-## public（243 operations · 公开 · 17 tags）
+## public（247 operations · 公开 · 17 tags）
 
 ### auth（11）
 
@@ -248,10 +248,14 @@
 | `DELETE /api/v1/instance/credentials/{id}` | `deleteInstanceCredential` | `bearerAuth` | Soft-delete an instance-owned credential and return the reference report | 公开 |
 | `POST /api/v1/instance/credentials/{id}/reveal` | `revealInstanceCredential` | `bearerAuth` | Reveal an instance credential once (instance admin + credential_reveal + step-up) | 公开 |
 
-### mcp（8）
+### mcp（12）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
+| `GET /api/v1/instance/mcp` | `listInstanceMcpServers` | `bearerAuth` | Read the instance MCP server registry | 公开 |
+| `POST /api/v1/instance/mcp` | `createInstanceMcpServer` | `bearerAuth` | Register one instance MCP server (instance admin only) | 公开 |
+| `PATCH /api/v1/instance/mcp/{name}` | `updateInstanceMcpServer` | `bearerAuth` | Replace one instance MCP server entry (instance admin only) | 公开 |
+| `DELETE /api/v1/instance/mcp/{name}` | `deleteInstanceMcpServer` | `bearerAuth` | Remove one instance MCP server from the registry (instance admin only) | 公开 |
 | `GET /api/v1/mcp` | `mcpStream` | `bearerAuth` | Open the MCP event stream | 公开 |
 | `POST /api/v1/mcp` | `mcpPost` | `bearerAuth` | MCP JSON-RPC endpoint (tools/list, tools/call, discovery) | 公开 |
 | `DELETE /api/v1/mcp` | `mcpDisconnect` | `bearerAuth` | Disconnect the MCP stream | 公开 |
