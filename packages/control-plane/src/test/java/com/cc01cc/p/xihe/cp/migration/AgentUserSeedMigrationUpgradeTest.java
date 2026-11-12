@@ -92,12 +92,16 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default:
         // base + SELF. The base set is six atoms since PLAN-0691 T1.3 added PLUGIN_INVOKE (V137);
         // BL-312 (V147, 2026-11-09) removed the former CREATE_OWN_AGENT seed row (7 at that point);
-        // PLAN-0750 M1 (G1, 2026-11-10) restored it with user-level semantics, so the human USER
-        // seed is 6 base + SELF + the own-agent atom = 8. AGENT_USER stays at six: the atom is
-        // agent-principal-forbidden, which is exactly why the two roles differ again.
-        assertEquals(8, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
+        // PLAN-0750 M1 (G1, 2026-11-10) restored it with user-level semantics (8 at that point);
+        // V156 (task-221 / D-1019, 2026-11-12) then seeded MANAGE_PERSONAL_SKILLS onto USER
+        // (V156:83-85) because every account owns a personal skill library, so the human USER seed
+        // is 6 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS = 9. AGENT_USER stays at six:
+        // all three extras are agent-principal-forbidden (PermissionAtomCatalog.java:96-139), which
+        // is exactly why the two roles differ again.
+        assertEquals(9, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
                 "human USER keeps its registration atoms + the V129 SELF atom + the PLAN-0750 M1"
-                        + " own-agent atom (6 base + SELF + CREATE_OWN_AGENT)");
+                        + " own-agent atom + the V156 personal-library atom"
+                        + " (6 base + SELF + CREATE_OWN_AGENT + MANAGE_PERSONAL_SKILLS)");
         assertTrue(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
                         .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
                 "PLAN-0750 M1: creating one's own user-level principal is a registration capability"
@@ -155,6 +159,11 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         // Upgrade path continues past V127: BL-367's forward migration strips the instance-scope SELF
         // row that V129's backfill materialized on legacy agent bindings.
         runMigration("V131__bl367_remove_agent_memory_write_self.sql");
+        // V156 (task-221 / D-1019) seeded MANAGE_PERSONAL_SKILLS onto the human USER role, and an
+        // agent principal materialized from that legacy USER binding carries it. V159 is the
+        // forward strip for exactly that atom — one atom per migration, the same shape as V131
+        // (V156 is already applied elsewhere, so it is not edited).
+        runMigration("V159__agent_principals_drop_personal_skills_atom.sql");
 
         assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemAccessRoleCatalog.AGENT_USER_ID),
                 "40 → 40: every legacy seed is rebound to AGENT_USER");
