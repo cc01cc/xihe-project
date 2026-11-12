@@ -69,10 +69,10 @@ status: active
 - [ ] 点击会话项高亮当前选中状态
 - [ ] 导航面板折叠/展开动画流畅；收起后 rail 上有明确的展开入口（不靠快捷键）
 
-### 6.1 rail（`NavRail`，恒 56px）
+### 6.1 rail（`GlobalRail`，双态：折叠 56px 纯图标 ↔ 展开图标 + 文字）
 
-- [ ] 恒 **56px**、纯图标无文字标签；每个图标有 `aria-label` 且 hover 有 tooltip
-- [ ] rail **不含**收起控件（收起控件在导航面板头）；`<1024` 时整列隐藏
+- [ ] **双态**（`GlobalRail.vue:77`：`--sidebar-width-icon: 3.5rem` = 折叠 56px、`--sidebar-width: 12rem` = 展开，`collapsible="icon"`）：折叠态纯图标无文字标签、展开态图标 + 文字；每个图标有 `aria-label` 且 hover 有 tooltip
+- [ ] 收起/展开入口**不只在导航面板头、也不只靠快捷键**：全局条自带 `SidebarRail` hover 切换（`GlobalRail.vue:190`）+ `⌘/Ctrl+B`（`SidebarProvider`）；导航面板折叠态另渲染一条 56px 折叠条（`Sidebar.vue:154-157`，`sidebar-collapsed-strip`，只含展开控件）；`<1024` 时全局条整条隐藏（`App.vue:29-36`）
 
 ### 6.2 三处栏宽与夹取（PLAN-0582）
 

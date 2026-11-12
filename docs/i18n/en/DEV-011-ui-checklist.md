@@ -65,10 +65,10 @@ status: active
 - [ ] Clicking conversation item highlights current selected state
 - [ ] Navigation panel collapse/expand animation is smooth; when collapsed the rail exposes an explicit expand entry (no hidden shortcut)
 
-### 6.1 rail (`NavRail`, always 56px)
+### 6.1 rail (`GlobalRail`, dual state: 56px icon-only collapsed ↔ icon + label expanded)
 
-- [ ] Always **56px**, icons only, no text labels; every icon has an `aria-label` and a hover tooltip
-- [ ] The rail **does not** host the collapse control (it lives in the navigation panel header); the whole column is hidden below `<1024`
+- [ ] **Dual state** (`GlobalRail.vue:77`: `--sidebar-width-icon: 3.5rem` = 56px collapsed, `--sidebar-width: 12rem` = expanded, `collapsible="icon"`): icon-only with no text labels when collapsed, icon + label when expanded; every icon has an `aria-label` and a hover tooltip
+- [ ] Collapse/expand affordances live **neither only in the navigation panel header nor behind a shortcut**: the global rail ships its own `SidebarRail` hover toggle (`GlobalRail.vue:190`) plus `⌘/Ctrl+B` (`SidebarProvider`); the navigation panel additionally renders a 56px collapsed strip (`Sidebar.vue:154-157`, `sidebar-collapsed-strip`, expand control only); below `1024` the whole global rail is hidden (`App.vue:29-36`)
 
 ### 6.2 Three column widths and viewport clamping (PLAN-0582)
 
