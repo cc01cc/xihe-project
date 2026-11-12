@@ -18,6 +18,7 @@
  *   node scripts/check-commit-msg.mjs --range HEAD --strict   # ✗ 未知参数 ⇒ exit 2 + usage，不再静默忽略
  *
  * 退出码：0 通过 / 1 违规 / 2 用法错误（含**未知参数**、参数缺值、`--report-only` 与 `--enforce` 同给）
+ *         / 2 `git log` 读取失败（fail-closed：读不到提交就报错，**绝不**当成"没提交 ⇒ 通过"）
  *
  * 规则（2026-11-06 起）：
  *  - 首行 `<type>(<scope>): <摘要>`；type ∈ feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert
@@ -27,7 +28,7 @@
  *  - 非 merge 提交：subject 或 body 必须出现 `PLAN-\d{4}` / `BL-\d{3}` / `D-\d{3}`
  *  - 历史提交豁免：默认只校验 `--since`（默认 `1dd57056`）之后的提交；`--file` 模式不豁免
  */
-import { execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 
 const TYPES = new Set(["feat", "fix", "docs", "test", "chore", "refactor", "perf", "build", "ci", "style", "revert"]);
@@ -189,6 +190,59 @@ const ALLOWLIST = new Map();
   }
 }
 
+/**
+ * 逐条**流式**读 `git log <span>` 并回调（task-286）。
+ *
+ * 病根：原实现 `execSync('git log ...', { encoding: "utf8" })` 用的是 Node 默认
+ * `maxBuffer` = 1 MiB；而 `a632de77..HEAD` 实测 **1476 条 / 1 265 619 B（1.21 MiB）**
+ * ⇒ `spawnSync … ENOBUFS` ⇒ 门**没检查任何一条**就 `exit 2`（fail-closed，方向对，但等于
+ * 这条 validate 依赖长期跑不动）。
+ *
+ * 为什么**不**改成 `maxBuffer: N`：git 单条消息长度没有上限，"N 多大才够"只能靠
+ * "按当前提交数 × 单条实测上限"外推 —— 那不是证明，只是把同一类故障推后（本仓历史
+ * 增速下 1 MiB 阈值就是被推着推着撞穿的）。改为按 `--pretty` 自带的记录分隔符
+ * U+001E 分帧流式处理：内存只与**单条消息**大小有关（实测最大 3 506 B），与提交数无关，
+ * 且没有可撞穿的固定阈值。
+ *
+ * 语义与旧实现逐项对齐：同样的 `%H%x1f%B%x1e` 格式、同样的 `\x1e` 分帧、同样的
+ * `\x1f` 切 sha/正文；git 失败时抛出（调用方打印 `git log <span> 失败：…` 并 exit 2，
+ * 与旧实现同一条 fail-closed 路径）。
+ *
+ * @returns {Promise<number>} 实际回调的提交条数
+ */
+async function forEachRangeEntry(span, onEntry) {
+  const child = spawn("git", ["log", span, "--pretty=format:%H%x1f%B%x1e"], { stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const closed = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => resolve(code));
+  });
+  let leftover = "";
+  let count = 0;
+  const consume = (frame) => {
+    const entry = frame.trim();
+    if (!entry) return;
+    const [sha, ...rest] = entry.split("\x1f");
+    count += 1;
+    onEntry(sha, rest.join("\x1f"));
+  };
+  for await (const chunk of child.stdout) {
+    leftover += chunk;
+    const frames = leftover.split("\x1e");
+    leftover = frames.pop() ?? "";
+    for (const frame of frames) consume(frame);
+  }
+  consume(leftover);
+  const code = await closed;
+  if (code !== 0) throw new Error(stderr.trim().split("\n")[0] || `git 退出码 ${code}`);
+  return count;
+}
+
 let bad = 0;
 if (file) {
   if (!fs.existsSync(file)) {
@@ -200,23 +254,12 @@ if (file) {
   bad = res.errors.length ? 1 : 0;
 } else {
   const span = range ?? `${since}..HEAD`;
-  let raw;
-  try {
-    raw = execSync(`git log ${span} --pretty=format:%H%x1f%B%x1e`, { encoding: "utf8" });
-  } catch (e) {
-    console.error(`git log ${span} 失败：${e.message}`);
-    process.exit(2);
-  }
-  const entries = raw.split("\x1e").map((s) => s.trim()).filter(Boolean);
-  if (!entries.length) {
-    console.log(`[PASS] ${span} 内没有提交（或全部豁免）`);
-  }
   let errCount = 0;
-  let warnCount = 0, violating = 0;
+  let warnCount = 0, violating = 0, commits = 0;
   const byCode = {};
-  for (const e of entries) {
-    const [sha, ...rest] = e.split("\x1f");
-    const res = checkMessage(rest.join("\x1f"));
+  const checkOne = (sha, message) => {
+    commits += 1;
+    const res = checkMessage(message);
     const allow = ALLOWLIST.get(sha) ?? ALLOWLIST.get(sha.slice(0, 8));
     if (allow) {
       for (const x of res.errors) {
@@ -228,12 +271,21 @@ if (file) {
     warnCount += res.warns.length;
     for (const x of res.errors) byCode[x.code] = (byCode[x.code] ?? 0) + 1;
     if (!stats) print(`${sha.slice(0, 8)}`, res, json);
+  };
+  try {
+    await forEachRangeEntry(span, checkOne);
+  } catch (e) {
+    console.error(`git log ${span} 失败：${e.message}`);
+    process.exit(2);
+  }
+  if (!commits) {
+    console.log(`[PASS] ${span} 内没有提交（或全部豁免）`);
   }
   if (stats) {
-    const rate = entries.length ? (violating / entries.length) * 100 : 0;
-    console.log(JSON.stringify({ span, commits: entries.length, violating, rate: Number(rate.toFixed(1)), errors: errCount, warns: warnCount, byCode }, null, 2));
-  } else if (entries.length) {
-    console.log(`\n共 ${entries.length} 条，错误 ${errCount}，警告 ${warnCount}`);
+    const rate = commits ? (violating / commits) * 100 : 0;
+    console.log(JSON.stringify({ span, commits, violating, rate: Number(rate.toFixed(1)), errors: errCount, warns: warnCount, byCode }, null, 2));
+  } else if (commits) {
+    console.log(`\n共 ${commits} 条，错误 ${errCount}，警告 ${warnCount}`);
   }
   // 默认即阻断；`--report-only` 是唯一的"永不失败"出口，`--enforce` 只是把这个默认
   // 显式写出来（解析器保证两者不会同时出现，所以这里不必再判"谁赢"）。
