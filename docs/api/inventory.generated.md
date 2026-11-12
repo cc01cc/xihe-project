@@ -241,12 +241,12 @@
 | `GET /api/v1/credentials/{id}/events` | `getCredentialEvents` | `bearerAuth` | Owner-visible credential audit trail (never a value) | 公开 |
 | `GET /api/v1/credentials/{id}/references` | `getCredentialReferences` | `bearerAuth` | Reference report for one credential | 公开 |
 | `POST /api/v1/credentials/{id}/replace` | `replaceCredentialSecret` | `bearerAuth` | Replace the secret value in place (credential_manage@credential:<id>) | 公开 |
-| `POST /api/v1/credentials/{id}/reveal` | `revealCredential` | `bearerAuth` | Reveal the plaintext once (credential_reveal@credential:<id> + step-up) | 公开 |
+| `POST /api/v1/credentials/{id}/reveal` | `revealCredential` | `bearerAuth` | Reveal the plaintext — no-store delivery (repeatable reads) (credential_reveal@credential:<id> + st… | 公开 |
 | `GET /api/v1/instance/credentials` | `listInstanceCredentials` | `bearerAuth` | List instance-owned credential metadata (instance admin) | 公开 |
 | `POST /api/v1/instance/credentials` | `createInstanceCredential` | `bearerAuth` | Register an instance-owned credential (instance admin + credential_manage) | 公开 |
 | `GET /api/v1/instance/credentials/{id}` | `getInstanceCredential` | `bearerAuth` | Read one instance-owned credential's metadata (instance admin) | 公开 |
 | `DELETE /api/v1/instance/credentials/{id}` | `deleteInstanceCredential` | `bearerAuth` | Soft-delete an instance-owned credential and return the reference report | 公开 |
-| `POST /api/v1/instance/credentials/{id}/reveal` | `revealInstanceCredential` | `bearerAuth` | Reveal an instance credential once (instance admin + credential_reveal + step-up) | 公开 |
+| `POST /api/v1/instance/credentials/{id}/reveal` | `revealInstanceCredential` | `bearerAuth` | Reveal an instance credential — no-store delivery (repeatable reads) (instance admin + credential_r… | 公开 |
 
 ### mcp（12）
 
