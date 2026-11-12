@@ -273,10 +273,11 @@ export function deriveCreateSourcePath(name: string): string {
  * 与 CP `SkillImportValidator.normalizePath`（`:248-271`）**同判据**的路径自检：段级 `..`、
  * 绝对路径、盘符前缀一律不许。
  *
- * <p>注意与 {@link checkItem} 里的 `sourcePath` 预检**不同**：那里对**用户粘进来的**路径用
- * `includes("..")` 子串判据（更严，粘路径本身就是可疑输入）；这里判的是**我们自己派生**的路径，
- * 必须与 CP 的段级判据一致 —— 否则 CP 合法的名字（如 `a..b`，`NAME_PATTERN` 允许连续点）会在
- * 本地被路径预检误拒，那等于 UI 自己发明了一条 CP 没有的规则。</p>
+ * <p><b>两种判据并存是有意的，不是不一致</b>：**派生路径（本函数）用段级判据对齐 CP；粘贴路径
+ * （{@link checkItem}）用 `includes("..")` 子串判据，故意更严**（粘进来的是不可信输入，宁可严）。
+ * **不要"统一"它们** —— 统一必然二选一地翻车：改用子串 ⇒ CP 合法的名字（如 `a..b`，
+ * `NAME_PATTERN` 允许连续点）会被本地误拒，等于 UI 自己发明一条 CP 没有的规则；改用段级 ⇒
+ * 拆掉一条对不可信输入的防线。裁定：`2026-11-12` 导入侧那条子串判据**一个字不改**。</p>
  */
 function isSafeRelativeSourcePath(path: string): boolean {
     if (path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:/.test(path)) return false;
