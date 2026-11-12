@@ -9,6 +9,13 @@ import {
 } from "./data/skills";
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 import { handleInstanceResource } from "./data/instanceResources";
+import {
+    mockCredentialEvents,
+    mockCredentialList,
+    mockCredentialReferences,
+    mockMcpServerStatus,
+    mockStdioServers,
+} from "./data/resourceReadFaces";
 
 /**
  * task-137 rev2（Lead 2026-11-11 拍板）：**真实 UI + mock 数据** —— 数据在**网络层** mock。
@@ -160,7 +167,7 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
             // 只在 XIHE_UI_MOCK_API=1 时存在 ⇒ 正常 dev 的 index.html 行为逐字节不变。
             server.middlewares.use((req, _res, next) => {
                 const url = req.url ?? "/";
-                if (/^\/(settings|workspace)(\/|$)/.test(url) && !url.includes(".")) {
+                if (/^\/(settings|workspace|resources)(\/|$)/.test(url) && !url.includes(".")) {
                     req.url = "/preview-real.html";
                 }
                 next();
@@ -297,6 +304,71 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     }
                     return respond(200, detail);
                 }
+                /**
+                 * task-247：资源详情单页（`/resources/<id>/:pk?layer=`）要的**凭据**三条读面。
+                 *
+                 * <p>task-228 §7.3 报备时**故意没有**回空壳 200：空壳会让页面的 `ready` 与"夹具缺"
+                 * 长得一样，等于把缺口藏起来。这里补的是真夹具（`data/resourceReadFaces.ts`），
+                 * 形状照 `CredentialList` / `CredentialReferencesView` / `CredentialEventsView`。</p>
+                 */
+                if (path === "/credentials" && methodIsGet) {
+                    return respond(200, mockCredentialList(url.searchParams.get("ownerType")));
+                }
+                const credentialReferencesMatch = path.match(
+                    /^\/credentials\/([^/]+)\/references$/,
+                );
+                if (credentialReferencesMatch && methodIsGet) {
+                    const references = mockCredentialReferences(
+                        decodeURIComponent(credentialReferencesMatch[1]),
+                    );
+                    if (references === null) {
+                        // 不存在的凭据 ⇒ 404（不编空集合：空集合会让"该凭据没有引用"和"凭据不存在"混淆）。
+                        return respond(404, {
+                            type: "about:blank",
+                            title: "Not Found",
+                            status: 404,
+                            code: "CREDENTIAL_NOT_FOUND",
+                            requestId: "mock-request",
+                        });
+                    }
+                    return respond(200, { references });
+                }
+                const credentialEventsMatch = path.match(/^\/credentials\/([^/]+)\/events$/);
+                if (credentialEventsMatch && methodIsGet) {
+                    // limit 的 clamp 与 openapi 一致（1..500，默认 200）。
+                    const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
+                    const limit = Number.isFinite(rawLimit)
+                        ? Math.min(Math.max(rawLimit, 1), 500)
+                        : 200;
+                    const events = mockCredentialEvents(
+                        decodeURIComponent(credentialEventsMatch[1]),
+                        limit,
+                    );
+                    if (events === null) {
+                        return respond(404, {
+                            type: "about:blank",
+                            title: "Not Found",
+                            status: 404,
+                            code: "CREDENTIAL_NOT_FOUND",
+                            requestId: "mock-request",
+                        });
+                    }
+                    return respond(200, { events });
+                }
+                /**
+                 * task-247：**MCP 工作区层**两条读面（原缺口第 4、5 条）。详情页把 pk 认作
+                 * `stdio-servers` 的 `servers` 映射键，运行状态另在 `mcp/servers` 里 ——
+                 * 两条都缺时页面落 `error`，只补一条会落 `ready` 但没状态字段（看似成功实则半张页）。
+                 */
+                const stdioServersMatch = path.match(/^\/workspaces\/([^/]+)\/stdio-servers$/);
+                if (stdioServersMatch && methodIsGet) {
+                    return respond(200, mockStdioServers());
+                }
+                const mcpServersMatch = path.match(/^\/workspaces\/([^/]+)\/mcp\/servers$/);
+                if (mcpServersMatch && methodIsGet) {
+                    return respond(200, mockMcpServerStatus());
+                }
+
                 // task-165：实例层三资源（D-1008：`/api/v1/instance/<资源>`）。
                 // 判定与内存集合在 data/instanceResources.ts —— 这里只做一次 dispatch，
                 // 免得 1000+ 行的 if 链再长 13 条。只接这三段，**不接** `/instance/` 全部：
