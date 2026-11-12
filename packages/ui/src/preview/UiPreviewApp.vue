@@ -13,6 +13,7 @@ import ProviderFingerprintSection from "./sections/ProviderFingerprintSection.vu
 import StatesSection from "./sections/StatesSection.vue";
 import WorkbenchSection from "./sections/WorkbenchSection.vue";
 import MonitorPanelSection from "./sections/MonitorPanelSection.vue";
+import TreeCapabilitiesSection from "./sections/TreeCapabilitiesSection.vue";
 
 /**
  * Dev-only preview shell (`preview.html`): a sticky block index plus the anchored blocks. It is
@@ -29,6 +30,7 @@ const blocks = [
     { id: "states", index: "07", label: "四态样张" },
     { id: "provider-fingerprint", index: "08", label: "Provider 请求指纹" },
     { id: "modal-overlay", index: "09", label: "Modal 内 Popover" },
+    { id: "tree-capabilities", index: "10", label: "reka-ui 树能力（M0-4）" },
 ];
 
 const { width } = useWindowSize();
@@ -88,6 +90,7 @@ const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
             <ProviderFingerprintSection />
             <ModalOverlaySection />
             <MonitorPanelSection />
+            <TreeCapabilitiesSection />
         </main>
     </div>
 </template>
