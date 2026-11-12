@@ -112,6 +112,15 @@ public class ConfigController {
      * only be reached by a member whose role lacks the atom (WS_VIEWER). Reversing the two would
      * turn "not found" into "not allowed" and leak existence — the one ordering rule of this gate.
      */
+    /**
+     * task-309: the enumerated value domain of {@code config_audit.atom_source}. Each id names an
+     * atom-gated door that reaches {@code ConfigService#createAudit}; the DB CHECK mirrors this set, so
+     * a new door must land here and in V158's CHECK in the same change.
+     */
+    private static final String DOOR_I1 = "i1";
+    private static final String DOOR_W1 = "w1";
+    private static final String DOOR_H1 = "h1";
+
     private boolean holdsWorkspaceAtom(String gate, String actionClass, String wsId) {
         UUID subject = currentUserId();
         UUID workspaceId = parseUuid(wsId);
@@ -377,7 +386,7 @@ public class ConfigController {
     public ResponseEntity<Map<String, Object>> putInstanceConfig(
             @PathVariable String domain,
             @RequestBody Map<String, String> body) {
-        return writeLayer("instance", domain, body, "admin", null, null);
+        return writeLayer("instance", domain, body, "admin", null, null, DOOR_I1);
     }
 
     @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
@@ -422,7 +431,7 @@ public class ConfigController {
     public ResponseEntity<Map<String, Object>> putWorkspaceDefaultConfig(
             @PathVariable String domain,
             @RequestBody Map<String, String> body) {
-        return writeLayer("workspace-default", domain, body, "admin", null, null);
+        return writeLayer("workspace-default", domain, body, "admin", null, null, DOOR_W1);
     }
 
     @PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_WORKSPACE_DEFAULT_CONFIG')")
@@ -465,7 +474,7 @@ public class ConfigController {
         if (userId == null) {
             return ProblemDetailsHandler.missingPrincipal("User context is required");
         }
-        return writeLayer("user", domain, body, "user", userId, null);
+        return writeLayer("user", domain, body, "user", userId, null, null);
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -489,12 +498,13 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Workspace configuration is not writable by this member");
         }
-        return writeLayer("workspace", domain, body, "user", null, parseUuid(wsId));
+        // task-309: H1 is the only config_audit-backed door; H2/H3 write MCP rows elsewhere.
+        return writeLayer("workspace", domain, body, "user", null, parseUuid(wsId), DOOR_H1);
     }
 
     private ResponseEntity<Map<String, Object>> writeLayer(
             String layer, String domain, Map<String, String> body, String changedBy,
-        UUID userId, UUID workspaceId) {
+        UUID userId, UUID workspaceId, String atomSource) {
         try {
             // D-928 / PLAN-0766 (task-196): the layer-level domain guard must run BEFORE the
             // template-service dispatch. Otherwise a non-writable domain reaches the template
@@ -520,7 +530,7 @@ public class ConfigController {
                 }
                 contextTemplateService.putLayer(layer, body, actorId.toString(), userId, workspaceId);
             } else {
-                configService.putLayer(layer, domain, body, changedBy, userId, workspaceId);
+                configService.putLayer(layer, domain, body, changedBy, userId, workspaceId, atomSource);
             }
             log.info("Config updated: layer={}, domain={}, keys={}", layer, domain, body.size());
             return ResponseEntity.ok(Map.of("status", "ok", "keys", body.size()));

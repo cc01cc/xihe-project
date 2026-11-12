@@ -718,7 +718,16 @@ public class ConfigService {
     @Transactional
     public void putLayer(String layer, String domain, Map<String, String> entries,
                          String changedBy, UUID userId, UUID workspaceId) {
-        putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId, false);
+        putLayer(layer, domain, entries, changedBy, userId, workspaceId, null);
+    }
+
+    /**
+     * task-309: same write, tagged with the door whose atom gate authorized it ({@code h1}|{@code h2}|
+     * {@code h3}). Callers without an atom gate pass {@code null} and keep the untagged overload.
+     */
+    public void putLayer(String layer, String domain, Map<String, String> entries,
+                         String changedBy, UUID userId, UUID workspaceId, String atomSource) {
+        putLayerInternal(layer, domain, entries, changedBy, userId, workspaceId, false, atomSource);
     }
 
     /**
@@ -728,12 +737,12 @@ public class ConfigService {
      */
     @Transactional
     public void putInstanceLockValue(String domain, String key, String value, String changedBy) {
-        putLayerInternal("instance", domain, Map.of(key, value), changedBy, null, null, true);
+        putLayerInternal("instance", domain, Map.of(key, value), changedBy, null, null, true, null);
     }
 
     private void putLayerInternal(String layer, String domain, Map<String, String> entries,
                                   String changedBy, UUID userId, UUID workspaceId,
-                                  boolean bypassAdminLock) {
+                                  boolean bypassAdminLock, String atomSource) {
         Set<String> envLocked = envOverriddenKeys(domain);
         if (!envLocked.isEmpty()) {
             List<String> lockedKeys = new ArrayList<>();
@@ -761,7 +770,7 @@ public class ConfigService {
                     "Domain is not writable at the workspace-default layer: " + domain);
         }
         if ("api-request-templates".equals(domain)) {
-            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
+            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId, atomSource);
             return;
         }
         validateLayerScope(layer, domain, entries, userId, workspaceId);
@@ -817,7 +826,7 @@ public class ConfigService {
             }
             validateEmbeddingLayer(layer, effectiveEntries);
         }
-        putLayerInternal(layer, domain, effectiveEntries, changedBy, userId, workspaceId);
+        putLayerInternal(layer, domain, effectiveEntries, changedBy, userId, workspaceId, atomSource);
         for (String key : clearLlmKeys) {
             deleteKey(layer, "llm-provider", key, changedBy, userId, workspaceId);
         }
@@ -1444,9 +1453,9 @@ public class ConfigService {
     }
 
     private void putLayerInternal(String layer, String domain, Map<String, String> entries,
-                                  String changedBy, UUID userId, UUID workspaceId) {
+                                  String changedBy, UUID userId, UUID workspaceId, String atomSource) {
         if ("api-request-templates".equals(domain)) {
-            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId);
+            apiRequestTemplates.getObject().putLayer(layer, entries, changedBy, userId, workspaceId, atomSource);
             return;
         }
         lockDomainScope(layer, domain, userId, workspaceId);
@@ -1461,7 +1470,7 @@ public class ConfigService {
                 entity.setConfigValue(value);
                 entity.setUpdatedBy(changedBy);
                 repo.save(entity);
-                createAudit(entity, oldValue, value, changedBy);
+                createAudit(entity, oldValue, value, changedBy, atomSource);
             } else {
                 ConfigEntity entity = new ConfigEntity();
                 entity.setLayer(layer);
@@ -1472,7 +1481,7 @@ public class ConfigService {
                 entity.setConfigValue(value);
                 entity.setUpdatedBy(changedBy);
                 repo.save(entity);
-                createAudit(entity, null, value, changedBy);
+                createAudit(entity, null, value, changedBy, atomSource);
             }
         }
     }
@@ -1539,6 +1548,16 @@ public class ConfigService {
 
     public List<ConfigAuditEntity> getAuditLogByConfigId(String configId) {
         return auditRepo.findByConfigIdOrderByChangedAtDesc(configId);
+    }
+
+    /**
+     * task-309: the ruling's only sanctioned consumer shape — "the most recent N rows for one
+     * config". Unbounded reads of this table are exactly what a "no readers" table invites.
+     */
+    public List<ConfigAuditEntity> getAuditLogByConfigId(String configId, int limit) {
+        int bounded = Math.max(1, Math.min(limit, 200));
+        return auditRepo.findByConfigIdOrderByChangedAtDesc(configId,
+                org.springframework.data.domain.PageRequest.of(0, bounded));
     }
 
     // ------------------------------------------------------------------
@@ -1742,7 +1761,27 @@ public class ConfigService {
     }
 
     private void createAudit(ConfigEntity entity, String oldValue,
-                             String newValue, String changedBy) {
+            String newValue, String changedBy) {
+        createAudit(entity, oldValue, newValue, changedBy, null);
+    }
+
+    /**
+     * task-309 (user ruling b): the allow-side record — grant source + who + before/after digest.
+     *
+     * <p>Four deliberate choices (not defaults — read them before editing this method):</p>
+     * <ol>
+     *   <li><b>Same transaction as the write.</b> Called inside the caller's transaction, so an
+     *       audit failure rolls the business write back: a config write never commits without its row.</li>
+     *   <li><b>No swallow-and-continue.</b> Never wrap this in a {@code try/catch} that logs and
+     *       returns — that is how a gate stays green after its guarantee is gone.</li>
+     *   <li><b>If a future ruling wants "audit must not block the write"</b>, it must arrive with an
+     *       observable signal (WARN + counter/event) and the choice must be marked deliberate here.</li>
+     *   <li><b>The rejection side stays WARN/JSONL</b> ({@code task-248}); it is not moved into this
+     *       table by this change.</li>
+     * </ol>
+     */
+    private void createAudit(ConfigEntity entity, String oldValue,
+                             String newValue, String changedBy, String atomSource) {
         ConfigAuditEntity audit = new ConfigAuditEntity();
         audit.setConfigId(entity.getId().toString());
         audit.setLayer(entity.getLayer());
@@ -1751,6 +1790,7 @@ public class ConfigService {
         audit.setOldValue(auditValue(entity, oldValue));
         audit.setNewValue(auditValue(entity, newValue));
         audit.setChangedBy(changedBy);
+        audit.setAtomSource(atomSource);
         auditRepo.save(audit);
     }
 

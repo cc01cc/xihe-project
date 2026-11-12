@@ -44,6 +44,14 @@ public class ConfigAuditEntity {
     @Column(name = "changed_by", length = 64)
     private String changedBy;
 
+    /**
+     * task-309 (user ruling b): which door's atom gate authorized this write — {@code h1}/{@code h2}/
+     * {@code h3}, never free text (the DB CHECK pins the same domain). NULL means the write passed no
+     * atom gate (Flyway seeds, admin bypass, template domain writers).
+     */
+    @Column(name = "atom_source", length = 24)
+    private String atomSource;
+
     @Column(name = "changed_at", nullable = false)
     private Instant changedAt;
 
@@ -80,6 +88,11 @@ public class ConfigAuditEntity {
 
     public String getChangedBy() { return changedBy; }
     public void setChangedBy(String changedBy) { this.changedBy = changedBy; }
+
+    /** task-309: enumerated door id (h1/h2/h3) or null when the write passed no atom gate. */
+    public String getAtomSource() { return atomSource; }
+
+    public void setAtomSource(String atomSource) { this.atomSource = atomSource; }
 
     public Instant getChangedAt() { return changedAt; }
     public void setChangedAt(Instant changedAt) { this.changedAt = changedAt; }

@@ -213,6 +213,17 @@ public class ApiRequestTemplateService {
 
     @Transactional
     public void putLayer(String layer, Map<String, String> entries, String actor, UUID user, UUID workspace) {
+        putLayer(layer, entries, actor, user, workspace, null);
+    }
+
+    /**
+     * task-309: same write, tagged with the door whose atom gate authorized it. This domain writes the
+     * same {@code config_audit} table as the main path with the same digest shape ({@link #auditHash}),
+     * so it must carry the same source tag — otherwise "covered" would be true only for the domains
+     * that happen to route through {@code ConfigService}.
+     */
+    public void putLayer(String layer, Map<String, String> entries, String actor, UUID user, UUID workspace,
+            String atomSource) {
         access(layer, user, workspace, true);
         if (entries == null || !KEYS.containsAll(entries.keySet())) {
             throw invalid("Unknown API Request Template config key");
@@ -235,7 +246,7 @@ public class ApiRequestTemplateService {
         validateTemplates(old, next);
         validateMaps(layer, user, workspace, proposed, next);
         for (Map.Entry<String, String> entry : entries.entrySet()) {
-            save(layer, user, workspace, entry.getKey(), entry.getValue(), actor);
+            save(layer, user, workspace, entry.getKey(), entry.getValue(), actor, atomSource);
         }
     }
 
@@ -276,6 +287,12 @@ public class ApiRequestTemplateService {
     }
 
     private void save(String layer, UUID user, UUID workspace, String key, String value, String actor) {
+        save(layer, user, workspace, key, value, actor, null);
+    }
+
+    /** task-309: same write, tagged with the door whose atom gate authorized it (null = no gate). */
+    private void save(String layer, UUID user, UUID workspace, String key, String value, String actor,
+            String atomSource) {
         ConfigEntity row = rows(layer, user, workspace).stream().filter(r -> r.getConfigKey().equals(key))
                 .findFirst().orElseGet(() -> {
                     ConfigEntity created = new ConfigEntity();
@@ -298,6 +315,7 @@ public class ApiRequestTemplateService {
         audit.setOldValue(auditHash(previous));
         audit.setNewValue(auditHash(value));
         audit.setChangedBy(actor == null ? "internal-service" : actor);
+        audit.setAtomSource(atomSource);
         audits.save(audit);
     }
 

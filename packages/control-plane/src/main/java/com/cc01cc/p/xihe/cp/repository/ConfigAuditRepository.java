@@ -11,5 +11,8 @@ public interface ConfigAuditRepository extends JpaRepository<ConfigAuditEntity, 
 
     List<ConfigAuditEntity> findByConfigIdOrderByChangedAtDesc(String configId);
 
+    /** task-309: "the most recent N rows for this config" — the only consumer use case. */
+    List<ConfigAuditEntity> findByConfigIdOrderByChangedAtDesc(String configId, org.springframework.data.domain.Pageable pageable);
+
     void deleteByChangedAtBefore(Instant before);
 }
