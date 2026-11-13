@@ -280,7 +280,7 @@ PLAN-0576 起（V84）：新写密文使用 AAD v2（`v2|credentialId|ownerType|
 - **优先级**：`env > 管理员锁定 > workspace > user > instance > code default`；env 最高且不可在页面解除。job-policy 的 `defaultTimeoutSecs`/`maxTimeoutSecs` 是 env 映射键，因此不可锁。
 - **值落点（A2）**：锁记录（`config_locks`）只存 `domain/config_key/mode/reason/updated_by/updated_at`；强制值写 instance 层既有 `config` 行，锁表不存值。锁定必须带值（可用已有 instance 值）；本页是该键锁定值的唯一写入口。
 - **可锁边界**：schema 标量键 ∧ 域可被 user/workspace 覆盖 ∧ 非 instance-only ∧ 非 env 映射 ∧ 非整单元域（`llm-provider`/`embedding`/模板域/`pricing`）∧ 非凭据键。其余在目录返回 `INSTANCE_ONLY`/`ENV_LOCKED`/`WHOLE_UNIT`/`SECRET_KEY`/`NOT_OVERRIDABLE`/`NO_SCHEMA` 且不给开关。
-- **写保护**：锁定键在 instance/user/workspace 的 `PUT`、instance `DELETE` 与导入均被拒（`409 CONFIG_KEY_LOCKED`，detail 带键名与原因；导入改为跳过 + warning）。锁定端点内部写值绕过该守卫，其余校验（env/scope/schema/凭据/instructions）不变。
+- **写保护**：锁定键在 instance / workspace-default / user / workspace 四层的 `PUT`、instance `DELETE` 与导入均被拒（`409 CONFIG_KEY_LOCKED`，detail 带键名与原因；导入改为跳过 + warning）。锁定端点内部写值绕过该守卫，其余校验（env/scope/schema/凭据/instructions）不变。
 - **生效面**：`resolve`/`effective` 在 env 之后、workspace 之前取 instance 锁值；`overrides` 对 user/workspace 剔除锁定键，保证 Agent 收到的覆盖不与 CP 生效值冲突。
 - **解锁**：默认保留 instance 值（成为普通默认值）；`clearValue=true` 同时删除该行以恢复继承。无锁时重复解锁返回 200（幂等）。
 - **并发**：唯一约束 `(domain, config_key)` + `pg_advisory_xact_lock('lock:domain:key')`；写请求带 `revision`（锁行 updated_at 毫秒，无锁为 0），不匹配返回 `409 CONFIG_LOCK_CONFLICT`，页面提示刷新。
