@@ -120,11 +120,16 @@ pnpm run build
 > - **spacing 轴**（`p-*` / `gap-*` / `size-*` / `m*-*`，基数 `--spacing` = `0.21875rem` = `0.25rem × 0.875` = **3.5 px**，定义见 `src/styles/main.css:302-310`）：`p-2`/`gap-2` ⇒ **7**、`size-4` ⇒ **14**、`h-8` ⇒ **28**、**`ml-3.5` ⇒ 3.5 × 3.5 = 12.25**（不是 14）。
 > - 所以本表「图标 12/16/20 档」是**名义档**：实渲染走 spacing 轴乘积（`size-4` ⇒ **14 px**），名义 **16/32 在当前 token 下不可达**（设计稿按名义值标注 ⇒ 交付必差 0.875 倍）。`size-4`=14 与 `ml-3.5`=12.25 **不能套同一个算式**：前者是「4 个单位 × 3.5」，后者是「3.5 个单位 × 3.5」。
 > - **动机（`task-224` 的真实反例）**：`GlobalRail.vue` 旧注释写过「3.5 × 3.5 = 14px」，并把「logo 与居中位逐像素相同」当事实 —— 实测 **12.25**（差 1.75 px），由 `ede53f115` 改成固定左内距修掉。**注释里的算式同样是读数，也得能被复算**。
-> - **判据（可跑）**：`node internal/A03-xihe/evidence/2026-11-13-rail-metrics/rail-metrics.mjs <输出目录>`（`channel: chrome-beta` / 1920×1080 / dpr 1），读 `rail-metrics.json`：`rows[*].box.h` = **28**、行内 `svg` 盒 = **14**、`fontSize` = **14px**。**拿「32 / 16」去对图即判为假缺陷**（名义值当渲染值）。
+> - **判据（可跑）**：`node internal/A03-xihe/evidence/2026-11-13-rail-metrics/rail-metrics.mjs <输出目录>`（`channel: chrome-beta` / 1920×1080 / dpr 1），读 `rail-metrics.json`：`rows[*].box.h` = **9 × `--spacing`**（当前 3.5 ⇒ **31.5**；`task-287` 前是 `h-8` ⇒ 28）、行内 `svg` 盒 = **4 × `--spacing`**（当前 14）、`fontSize` = **14px**（rem 轴，与 `--spacing` 无关）。**拿「32 / 16」去对图即判为假缺陷**（名义值当渲染值）。
 >
 > **② rail footer 动作组与框架控件组的间距 = 15 px = `gap-2`×2 + `h-px`（有规则出处，不许再被当魔数改掉）**
-> - `SidebarFooter` 是 vendor 的 `gap-2 p-2 flex flex-col` ⇒ 子项间距恒 **7 px**；`task-214`（用户 2026-11-13 裁定）在「动作组（设置 / 退出登录）」与「框架控件（收起）」之间插了 vendored `SidebarSeparator`（`Separator` 的 `h-px`）⇒ 组间 = 7 + **1** + 7 = **15 px**，末行 centerY 相对上一行 = **43 = 28 + 15**。
-> - **判据（两态各一组，±0 px）**：`footer` 末行 centerY − 上一行 centerY = **43**；展开 **1052 − 1009**、折叠 **1059 − 1016**（`2026-11-13T03:13:38Z` 实测；footer 盒：展开 y967/h113、折叠 y953/h127）。同批钉子：`[data-sidebar="separator"]` 的 rect `h` = **1**，其上下 `gap` 各 = **7**。跑法 = `rail-metrics.mjs` 同口径，取数时刻写进报告。
+> - `SidebarFooter` 是 vendor 的 `gap-2 p-2 flex flex-col` ⇒ 子项间距恒 **7 px**；`task-214`（用户 2026-11-13 裁定）在「动作组（设置 / 退出登录）」与「框架控件（收起）」之间插了 vendored `SidebarSeparator`（`Separator` 的 `h-px`）⇒ 组间 = 7 + **1** + 7 = **15 px**，末行 centerY 相对上一行 = **导航行高 + 15**（`task-287` 后 = 31.5 + 15 = **46.5**；此前 `h-8` 时 = 28 + 15 = 43）。
+> - **判据（两态各一组，±0 px）—— 钉公式，不钉派生数**：`footer` 末行 centerY − 上一行 centerY = **导航行高 + 15**。
+>   - 展开态：行高 31.5 ⇒ **46.5**（`task-287` 实测 `1057.25 − 1010.75`，`2026-11-13T10:49:10Z`）
+>   - 折叠态：行高 28 ⇒ **43**（`task-287` 实测 `1059 − 1016`，同一跑）
+>   - **为什么写公式**：43 是派生数（行高 + 15）。行高变了而 43 留在文档里 ⇒ 静默过期，改它的上游的人必须回来考古。写成公式后行高再变也不会错 —— 与 `D-1137`「一致性断言必须锚独立基准」是同一形态：**别钉结果，钉算法**。
+>   - 同批钉子（这两个是**独立基准**，不随行高变）：`[data-sidebar="separator"]` 的 rect `h` = **1**，其上下 `gap` 各 = **7**。跑法 = `rail-metrics.mjs` 同口径，取数时刻写进报告。
+> - **已知两态差（有意，别当 bug 修）**：展开态行高 **31.5**（`h-9` = 9×3.5），折叠态仍 **28**（vendor `group-data-[collapsible=icon]:size-8!` 带 `!important`，优先级高于业务 class）。**接受理由（判据）**：折叠态是图标方块、不是文字行 —— 判据是「这一态里有没有需要行高承载的文字」；`task-287` 实测折叠态 6 行可见文字全为空（`span` 被 `group-data-[collapsible=icon]:hidden`），故 28 没裁任何东西。**要「修成一致」请先读这条** —— 那会推翻上述判据。证据：`internal/A03-xihe/evidence/2026-11-13-rail-metrics/README.md` §「已知两态差」。
 > - **四条「看起来像微调」的非法改法**（要得到 14 只有这四条路，全部不合法）：① `gap-2` 改 6.5 px（任意值）；② 去掉 separator 只留间距（回到动作项与框架控件混排，`task-214` 裁定不许）；③ 改 `--spacing`（全站重排、牵连所有档位）；④ **把 `SidebarSeparator` 换成 `my-[7px]` / `mt-[…]` 任意值 class** —— 这条最隐蔽：它把 token 换成魔数，却看起来像「微调间距」。出现任一条即判回归。
 
 **做法**（钉在 commit 上，别用脏树）
