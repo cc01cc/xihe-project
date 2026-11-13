@@ -21,7 +21,7 @@ Credentials 不等于普通 config KV：API key/token 由 provider connection/le
 
 | 进程 | 能读取 | 不能假设能读取 | 输出要求 |
 |---|---|---|---|
-| CP | DB instance/user/workspace、EnvOverlayRegistry、code defaults、per-call/CLI input | Runtime host env/CLI 的实时值 | effective value/source/revision/lock/conflict；audit change |
+| CP | DB instance/workspace-default/user/workspace、EnvOverlayRegistry、code defaults、per-call/CLI input | Runtime host env/CLI 的实时值 | effective value/source/revision/lock/conflict；audit change |
 | Agent | CP 下发的 effective config/run payload、必要 lease；按 run 身份 `(workspaceId, userId)` 拉取的 run 级 effective 快照（PLAN-0590，5 域：llm-provider/agent-profile/rag/agent-runtime/context-policy） | CP DB、Runtime host env、其他 Workspace config；不得把 env `XIHE_WORKSPACE_ID` 绑定快照当 run 基线 | metadata 标 source/revision；不自行 resolve precedence；run 快照解析日志含 `workspaceId`/`userId` 摘要 |
 | Runtime | 自身 bootstrap env/CLI（PORT/HOST/DB/JWT/backend/storage 等）和 CP execution spec | CP user/workspace DB layer，除非 CP 显式下发 | environment snapshot/provenance；host secrets 不回传 |
 | UI | CP 生效结果/层级/env lock 响应、capability available/reason | 进程 env、DB raw secret、Runtime host absolute path | 展示最终 source、被覆盖 key、lock reason 和 capability reason |

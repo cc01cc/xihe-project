@@ -15,7 +15,7 @@
 | Session binding | Session 对一个 Workspace 的可选绑定 | CP Session |
 | Execution entity | Sandbox/host process 的物化实体 | Runtime lifecycle/backend |
 | WorkspaceStorage | 工作区文件的逻辑/宿主存储根 | CP binding + Runtime canonical path |
-| 配置生效结果（Config projection） | instance/user/workspace/env 的 effective 结果 | CP ConfigService；Runtime/Agent 只消费各自输入 |
+| 配置生效结果（Config projection） | instance/workspace-default/user/workspace/env 的 effective 结果 | CP ConfigService；Runtime/Agent 只消费各自输入 |
 Workspace 可以没有 Session；Session 依赖 Workspace 绑定，但 Workspace 不依赖 Session。
 
 ## Session 不变式

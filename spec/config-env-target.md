@@ -35,11 +35,11 @@
 ## 2 部署权威与锁定
 
 - env 命中的键为最高部署权威：UI 显示 env 生效值并禁用编辑（见 `DEV-003`）。
-- env 未设时回落到配置域解析链（`workspace > user > instance > 代码默认`）。
+- env 未设时回落到配置域解析链（`workspace > workspace-default > user > instance > 代码默认`）。
 
 ## 3 与配置域的关系
 
-- 配置域三层（`instance / user / workspace`）与 env 相互正交：env 是部署权威，不占三层中的任一层。
+- 配置域四层（`instance / workspace-default / user / workspace`）与 env 相互正交：env 是部署权威，不占四层中的任一层。
 - 详细解析链、域归属与凭证两级（`WORKSPACE > USER`）见 [`configuration/env-effective.md`](configuration/env-effective.md) 与 `DEV-003`。
 
 ## 4 发布门禁

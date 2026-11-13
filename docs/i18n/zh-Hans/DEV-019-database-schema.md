@@ -660,7 +660,7 @@ erDiagram
 
 ### 3.5 配置与 RAG（config / config_audit / document_chunks / context_events / context_projections / context_source_hashes）
 
-**config**（`V1` 建表，`V12` 三层化 + 删列，`V13` 旧键清理；Entity `entity/ConfigEntity.java`）：三层配置 canonical 存储（`instance / workspace / user`，解析链 `workspace > user > instance > 代码默认`），语义与域集见 [DEV-003](DEV-003-config-management.md) §1。
+**config**（`V1` 建表，`V12` 三层化 + 删列，`V13` 旧键清理；Entity `entity/ConfigEntity.java`）：四层配置 canonical 存储（`instance / workspace-default / user / workspace`，解析链 `env/锁 pin > workspace > workspace-default > user > instance > 代码默认`；`workspace-default` 层随 `V153` 引入，本句前文 `V12` 三层化/`V13` 旧键清理是当时形态），语义与域集见 [DEV-003](DEV-003-config-management.md) §1。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|

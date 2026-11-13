@@ -31,6 +31,7 @@
 - 切换 Workspace 允许切走在飞 ChatRun：静默断开该会话的 Chat SSE 订阅，回切时重连并回放终态；Session 永不 rebind 到另一 Workspace。
 - 移动端（≤767px）不挂载对话列；Chat 经 MobileChatSheet 进入，其入口控件依赖当前 Session 已存在。
 - 普通 Chat（`toolMode=none`）与 Workspace Chat（`toolMode=workspace`）保留为运行能力差异，不构成两个并列的一级导航入口。
+- 工作台视图只有两级：**工作区 → 会话**。实例层与用户层配置属设置区（`/settings/*`），工作台内不存在「实例」这一级；把实例层或用户层写进工作台层级会造出产品中不存在的实体。
 
 ## 用户动作闭环
 
