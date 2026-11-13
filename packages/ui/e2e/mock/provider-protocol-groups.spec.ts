@@ -73,6 +73,20 @@ test.describe("Provider protocol groups (PLAN-0364 M4, discovery modes per PLAN-
         await page.route("**/api/v1/**", (route) =>
             route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         );
+        // task-466（D-1322 统一口径，照 task-461 / BL-318 先例）：兜底 `200 {}` 会吞掉页面合法调用的
+        // 会话集合面（`/sessions?scope=workspaceless` 与 `/workspaces/{id}/sessions`），`api.ts` 的
+        // `normalizeSessionListPayload` 要求 `sessions` 数组 ⇒ `{}` 必 throw ⇒ logger[ERROR] ⇒ 共享 console 门红。
+        // **后注册者优先（LIFO）**，所以这条必须在兜底之后。非 GET 仍 `fallback()` 交回上层。
+        // **边界**：`{sessions: []}` 是合法空集，在这里成立只因为本 spec **不断言会话内容**；
+        // 要验会话内容的 spec 必须给真行，空集会让断言变成空断言（D-1281 同族）⇒ 不许照抄到需要内容的场景。
+        await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route) => {
+            if (route.request().method() !== "GET") return route.fallback();
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ sessions: [] }),
+            });
+        });
         // PLAN-0560: workspace settings page resolves the workspace context first.
         await page.route("**/api/v1/workspaces/ws-1", (route) =>
             route.fulfill({

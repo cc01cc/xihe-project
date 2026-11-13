@@ -34,6 +34,9 @@ test.describe("Data Controls", () => {
                 body: JSON.stringify({}),
             }),
         );
+        // task-466（D-1322 可达性实测）：本 spec **不加**会话集合桩 —— 2 条执行用例 passed、探针 0 命中（/settings/data；第 3 条视觉 skipped 未测）。
+        // 兜底 `200 {}` 因此不会吞掉合法会话调用（没发就没得吞）。若将来路由/布局改动让它开始发，
+        // 按 task-461 / BL-318 先例在兜底**之后**补两形态正则桩（非 GET fallback），别改断言或放宽 console 门。
         await page.route("**/api/v1/events**", (route) =>
             route.fulfill({
                 status: 200,
@@ -69,6 +72,9 @@ test.describe("Data Controls", () => {
         await page.route("**/api/v1/**", (route) =>
             route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         );
+        // task-466（D-1322 可达性实测）：本 spec **不加**会话集合桩 —— 2 条执行用例 passed、探针 0 命中（/settings/data；第 3 条视觉 skipped 未测）。
+        // 兜底 `200 {}` 因此不会吞掉合法会话调用（没发就没得吞）。若将来路由/布局改动让它开始发，
+        // 按 task-461 / BL-318 先例在兜底**之后**补两形态正则桩（非 GET fallback），别改断言或放宽 console 门。
         // Playwright 路由后注册者优先（LIFO）⇒ 权威投影覆盖在兜底 {} 之后。
         await page.route("**/api/v1/me/permissions**", (route) =>
             route.fulfill({
@@ -116,6 +122,9 @@ test.describe("Data Controls", () => {
             if (route.request().url().includes("/checkpoints/retention")) retentionRequests++;
             return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
         });
+        // task-466（D-1322 可达性实测）：本 spec **不加**会话集合桩 —— 2 条执行用例 passed、探针 0 命中（/settings/data；第 3 条视觉 skipped 未测）。
+        // 兜底 `200 {}` 因此不会吞掉合法会话调用（没发就没得吞）。若将来路由/布局改动让它开始发，
+        // 按 task-461 / BL-318 先例在兜底**之后**补两形态正则桩（非 GET fallback），别改断言或放宽 console 门。
         await page.route("**/api/v1/events**", (route) =>
             route.fulfill({
                 status: 200,

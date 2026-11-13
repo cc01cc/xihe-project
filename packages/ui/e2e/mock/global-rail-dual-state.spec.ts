@@ -45,6 +45,9 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         await page.route("**/api/v1/**", (route) =>
             route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         );
+        // task-466（D-1322 可达性实测）：本 spec **不加**会话集合桩 —— 3 条执行用例全 passed、探针 0 命中（/settings/instance/llm-provider 走设置区左栏，不挂工作区会话分组）。
+        // 兜底 `200 {}` 因此不会吞掉合法会话调用（没发就没得吞）。若将来路由/布局改动让它开始发，
+        // 按 task-461 / BL-318 先例在兜底**之后**补两形态正则桩（非 GET fallback），别改断言或放宽 console 门。
     });
 
     async function gotoRail(page: import("@playwright/test").Page) {
