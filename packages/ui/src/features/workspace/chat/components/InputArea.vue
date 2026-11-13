@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, markRaw, nextTick, onBeforeUnmount, watch } from "vue";
+import { useElementSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -1169,12 +1170,34 @@ function prefillDraft(next: {
     return blocked ? "blocked" : "idle";
 }
 
+/**
+ * task-442（F-14 / D-1276 C1）：把 composer 的**实测高度**发布成 `--xh-composer-h`，
+ * 供浮动 dock 把底边让开（`WorkspaceDock.vue` 的 `panelStyle`）。
+ *
+ * 为什么用 `useElementSize`（`@vueuse/core`，栈内已有依赖）而不是自研 ResizeObserver：
+ * 用户裁定「复杂组件优先栈内库」；高度随附件/多行/移动端安全区变化，写死内距是魔数。
+ * 发布目标是**最近的 workbench 根**（浮动 dock 的包含块），不是 `:root` —— 避免离开会话面后
+ * 留下陈旧值把别的页面的 dock 底边抬高；卸载时显式归零。移动端没有该根 ⇒ 天然 no-op。
+ */
+const composerRoot = ref<HTMLElement | null>(null);
+// border-box：composer 自带 px/pt/pb 内距，content-box 会少算约 16px ⇒ 面板底边仍压住 composer 顶。
+const { height: composerHeight } = useElementSize(composerRoot, undefined, {
+    box: "border-box",
+});
+function publishComposerHeight(px: number) {
+    const host = composerRoot.value?.closest('[data-testid="workspace-workbench"]');
+    if (host instanceof HTMLElement) host.style.setProperty("--xh-composer-h", `${px}px`);
+}
+watch(composerHeight, (h) => publishComposerHeight(h), { immediate: true });
+onBeforeUnmount(() => publishComposerHeight(0));
+
 defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
 </script>
 
 <template>
     <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
     <div
+        ref="composerRoot"
         class="min-w-0 border-t bg-background px-4 pt-2 pb-[calc(var(--mobile-safe-area-inset-bottom)+0.5rem)]"
         data-testid="chat-composer"
     >

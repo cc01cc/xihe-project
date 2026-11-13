@@ -127,11 +127,37 @@ const panelClass = computed(() => {
         ];
     }
     return [
-        "flex h-full shrink-0 flex-col border-l border-border bg-surface-canvas",
+        "flex shrink-0 flex-col border-l border-border bg-surface-canvas",
+        // task-442：**浮动态不能带 `h-full`** —— 绝对定位元素一旦有显式 height，`bottom` 就被忽略
+        // （过约束：top + height 决定位置，bottom 被丢弃）。实测带 h-full 时 bottom:170px 完全不生效，
+        // 面板仍覆盖 composer。pinned 是 flex 子项，仍要 h-full 撑满。
         isPinned.value
-            ? "relative z-auto shadow-none"
-            : "absolute inset-y-0 right-0 z-20 shadow-xl",
+            ? "relative z-auto h-full shadow-none"
+            : "absolute top-0 right-0 z-20 shadow-xl",
     ];
+});
+
+/**
+ * task-442（F-14 / D-1276 C1）：浮动面板的**底边让开 composer**。
+ *
+ * 为什么：浮动 dock 与 `workspace-center` 是兄弟且绝对定位，`inset-y-0` 会覆盖整个中列**含 composer**
+ * ⇒ 1600×1000 实测发送键中心 `elementFromPoint` 返回面板 div，用户**能打字不能发送**；
+ * Esc / 点击主列这两个既有 dismiss 都救不了（指针目标就是 dock；Esc 在输入框里属于输入框）。
+ *
+ * 为什么不用 dockview 的 API：`dockview-core` 的 `floatingGroupBounds` 只相对**视口**
+ * （`boundedWithinViewport` / `minimum{Height,Width}WithinViewport`），`transformFloatingGroupDrag` 只在拖拽帧生效，
+ * **没有「避开兄弟元素」的语义**；且产品路径当前是手写 dock（`dockviewEnabled` 恒 false）。
+ * 为什么不用固定底部内距：composer 高度随附件/多行/移动端变化，写死是魔数。
+ * 为什么不给中列留白：浮动是窄屏防挤压的兜底（主列 <640 才转 floating），留白会把它压回线下。
+ *
+ * 高度由聊天列用 `@vueuse/core` 的 `useElementSize` 量 composer 后发布 `--xh-composer-h`
+ * （见 `chat/components/InputArea.vue`）；未发布时回落 0 = 与旧行为一致。
+ */
+const panelStyle = computed(() => {
+    if (props.focus) return undefined;
+    const style: Record<string, string> = { width: `${props.width}px` };
+    if (!isPinned.value) style.bottom = "var(--xh-composer-h, 0px)";
+    return style;
 });
 
 const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
@@ -217,7 +243,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
         :data-dock-focus="focus ? 'true' : 'false'"
         :aria-label="t('workspace.dockTabs')"
         :class="[panelClass, { 'is-resizing': resizingWidth !== null }]"
-        :style="focus ? undefined : { width: `${width}px` }"
+        :style="panelStyle"
     >
         <!-- Focus fills the row, so a resize handle (and its width) has no meaning. -->
         <!--

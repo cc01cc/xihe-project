@@ -386,3 +386,31 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(pressed.attributes("aria-label")).toBe("Restore layout");
     });
 });
+
+/**
+ * task-442（F-14 / D-1276 C1）：浮动 dock 的底边必须让开 composer。
+ * 红线来自真栈实测（证据 2026-11-14-instance-flow-audit/aux-obstruction.json + 图 105）：
+ * 1600×1000 浮动面板覆盖发送键，`elementFromPoint` 返回面板 div ⇒ 能打字不能发送。
+ * jsdom 无布局引擎，量不到覆盖 ⇒ 这里只钉**契约**（class + CSS 变量），覆盖判据归 Playwright。
+ */
+describe("WorkspaceDock · task-442 浮动底边让开 composer", () => {
+    it("floating：top-0 + bottom 走 --xh-composer-h，不再 inset-y-0", () => {
+        const wrapper = mountDock({ mode: "floating" });
+        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+        expect(panel.classes()).toContain("top-0");
+        expect(panel.classes()).not.toContain("inset-y-0");
+        expect(panel.attributes("style")).toContain("bottom: var(--xh-composer-h, 0px)");
+    });
+
+    it("pinned：不设 bottom（flex 子项本来就不覆盖主列）", () => {
+        const wrapper = mountDock({ mode: "pinned" });
+        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+        expect(panel.attributes("style") ?? "").not.toContain("bottom:");
+    });
+
+    it("focus：整行投影，不设 width/bottom", () => {
+        const wrapper = mountDock({ mode: "floating", focus: true });
+        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+        expect(panel.attributes("style")).toBeUndefined();
+    });
+});
