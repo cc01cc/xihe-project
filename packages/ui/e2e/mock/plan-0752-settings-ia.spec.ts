@@ -148,11 +148,20 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
         // 工作区设置页在 AppLayout 壳内（页签形态），工作区 Sidebar 照常 1 份。
         await expect(page.getByTestId("sidebar")).toHaveCount(1);
 
-        // 工作区配置 tab 随层退役：任何 URL 都不该再把它渲染出来。
-        await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
+        // PLAN-0773 M4-1（task-190，d0864b59e）：配置 tab **回来了** —— 但这次是 per-workspace 层
+        // （`ConfigLayer` 新增 `workspace`），不是 task-253 退役的那个全局入口。
+        // 断言从「不存在」翻成「存在」而不是删掉：纯删除只能证明「这一刻没写」，有人再撤掉它
+        // 时不会有任何东西变红（同 WorkspaceSettingsView.spec.ts:145-149 的翻面理由）。
+        // 本条在 M4-1 之后**恒红**，直到 2026-11-13 才被发现：76bc895a3 只跟了单测与 configStore
+        // 两处规格，漏了这里（第三处），于是阻断门带着一条过期断言红了整整一天。
+        await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(1);
 
-        // 防复活守卫（task-230 建立，task-253 删面后接手）：工作区设置页不得发出**工作区层**
-        // config 请求。读路径的层在 query（/config/<domain>?layer=workspace），**pathname 里看不出来**，
+        // 默认页签仍是 general（tabFromQuery:65-67）⇒ 配置面板不挂载，工作区层 config 读不会
+        // 因为 M4-1 把 tab 加回来就凭空冒出来 —— 下面这条防复活守卫判的就是这个。
+        await expect(page.getByTestId("ws-settings-config")).toHaveCount(0);
+
+        // 防复活守卫（task-230 建立，task-253 删面后接手）：**默认页签**下工作区设置页不得发出
+        // **工作区层** config 请求（M4-1 后点开配置 tab 的读面是合法的，由那一 tab 自己覆盖）。读路径的层在 query（/config/<domain>?layer=workspace），**pathname 里看不出来**，
         // 所以只能走纯函数判（src/lib/settingsIaRequests.ts，带单测），读写两种形态都覆盖。
         // 失败时把**全部**捕获到的 config 请求打出来：否则「多了一条」只能靠猜来源。
         const captured = `捕获到的 config 请求：${JSON.stringify(configRequests)}`;
