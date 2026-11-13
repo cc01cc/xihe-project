@@ -218,9 +218,6 @@ class RouteContractParityTest extends AbstractReusableIntegrationTest {
         // PLAN-0773 M2-11: the org-unit contract is written first (batch A ships the two read
         // routes), so the write/member/role routes below are documented but served by no controller
         // yet. Each entry is deleted in the commit that implements its batch (batch B / batch C).
-PLANNED_APIS.put("/api/v1/org-units", "PLAN-0773 M2-11 batch B (POST create)");
-PLANNED_APIS.put("/api/v1/org-units/{}", "PLAN-0773 M2-11 batch B (PATCH rename)");
-PLANNED_APIS.put("/api/v1/org-units/{}/parent", "PLAN-0773 M2-11 batch B (PUT move)");
 PLANNED_APIS.put("/api/v1/org-units/{}/members/{}", "PLAN-0773 M2-11 batch C (PUT/DELETE member)");
 PLANNED_APIS.put("/api/v1/org-units/{}/role-bindings", "PLAN-0773 M2-11 batch C (PUT role set)");
 

@@ -22,6 +22,9 @@ public final class OrgUnitWireView {
 
     public record NodeList(List<Node> nodes) {}
 
+    /** Create response: the id plus the materialized path (the contract's one place for `path`). */
+    public record Created(UUID id, String path) {}
+
     public record Member(String memberKind, UUID memberId, UUID orgUnitId, String displayName) {}
 
     public record MemberList(List<Member> members) {}

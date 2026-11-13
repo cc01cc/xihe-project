@@ -1,8 +1,15 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
+import com.cc01cc.p.xihe.cp.service.OrgUnitWriteService;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,10 +34,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/org-units")
 public class OrgUnitController {
 
-    private final OrgUnitReadService readService;
+    /** Request bodies of the write endpoints (the contract's `additionalProperties: false` maps
+     *  onto these records: an unknown field is a 400 from Jackson, not a silent ignore). */
+    public record CreateBody(String name, String parentId) {}
 
-    public OrgUnitController(OrgUnitReadService readService) {
+    public record RenameBody(String name) {}
+
+    public record MoveBody(String parentId) {}
+
+    private final OrgUnitReadService readService;
+    private final OrgUnitWriteService writeService;
+
+    public OrgUnitController(OrgUnitReadService readService, OrgUnitWriteService writeService) {
         this.readService = readService;
+        this.writeService = writeService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -39,6 +56,25 @@ public class OrgUnitController {
             @RequestParam(required = false) String parentId,
             @RequestParam(required = false) String q) {
         return readService.list(parentId, q);
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public OrgUnitWireView.Created create(@RequestBody CreateBody body) {
+        return writeService.create(body.name(), body.parentId());
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PatchMapping("/{unitId}")
+    public OrgUnitWireView.Node rename(@PathVariable String unitId, @RequestBody RenameBody body) {
+        return writeService.rename(unitId, body.name());
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/{unitId}/parent")
+    public OrgUnitWireView.Node move(@PathVariable String unitId, @RequestBody MoveBody body) {
+        return writeService.move(unitId, body.parentId());
     }
 
     @PreAuthorize("isAuthenticated()")

@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.OrgUnitWireView;
-import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.OrgUnitReadRepository;
 import org.springframework.http.HttpStatus;
@@ -10,7 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -47,32 +45,30 @@ public class OrgUnitReadService {
     public static final String READ_ATOM = ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS;
 
     private final OrgUnitReadRepository units;
-    private final RequesterAuthority authority;
+    private final OrgUnitAccess access;
 
-    public OrgUnitReadService(OrgUnitReadRepository units, RequesterAuthority authority) {
+    public OrgUnitReadService(OrgUnitReadRepository units, OrgUnitAccess access) {
         this.units = units;
-        this.authority = authority;
+        this.access = access;
     }
 
     /** Tree top, lazy-loaded children, or a name search inside the caller's visible subtree. */
     @Transactional(readOnly = true)
     public OrgUnitWireView.NodeList list(String parentIdValue, String q) {
-        Scope scope = resolveScope();
+        OrgUnitAccess.Scope scope = access.resolve(READ_ATOM);
         if (q != null && !q.isBlank()) {
             List<OrgUnitReadRepository.UnitRow> hits = units.searchByName(q.trim(), scope.path());
             return new OrgUnitWireView.NodeList(nodes(hits, scope));
         }
-        UUID parentId = parse(parentIdValue, "INVALID_ORG_UNIT_ID");
+        UUID parentId = OrgUnitAccess.parseUuid(parentIdValue, "INVALID_ORG_UNIT_ID");
         if (parentId == null) {
             List<OrgUnitReadRepository.UnitRow> top = scope.path() == null
                     ? units.findChildren(null)
-                    : List.of(units.findUnit(scope.unitId()).orElseThrow(() -> new CpApiException(
-                            HttpStatus.NOT_FOUND, "ORG_UNIT_NOT_FOUND", "org unit not found")));
+                    : List.of(units.findUnit(scope.unitId()).orElseThrow(OrgUnitAccess::notFound));
             return new OrgUnitWireView.NodeList(nodes(top, scope));
         }
         OrgUnitReadRepository.UnitRow parent = units.findUnit(parentId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ORG_UNIT_NOT_FOUND",
-                        "org unit not found"));
+                .orElseThrow(OrgUnitAccess::notFound);
         scope.requireWithin(parent.path());
         return new OrgUnitWireView.NodeList(nodes(units.findChildren(parentId), scope));
     }
@@ -80,15 +76,14 @@ public class OrgUnitReadService {
     /** Members of one unit, or of its whole subtree when `includeDescendants` is true. */
     @Transactional(readOnly = true)
     public OrgUnitWireView.MemberList members(String unitIdValue, boolean includeDescendants) {
-        Scope scope = resolveScope();
-        UUID unitId = parse(unitIdValue, "INVALID_ORG_UNIT_ID");
+        OrgUnitAccess.Scope scope = access.resolve(READ_ATOM);
+        UUID unitId = OrgUnitAccess.parseUuid(unitIdValue, "INVALID_ORG_UNIT_ID");
         if (unitId == null) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ORG_UNIT_ID",
                     "unitId must be a UUID");
         }
         OrgUnitReadRepository.UnitRow unit = units.findUnit(unitId)
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ORG_UNIT_NOT_FOUND",
-                        "org unit not found"));
+                .orElseThrow(OrgUnitAccess::notFound);
         scope.requireWithin(unit.path());
         List<OrgUnitWireView.Member> members = units.findMembers(unit.id(), unit.path(), includeDescendants)
                 .stream()
@@ -98,67 +93,17 @@ public class OrgUnitReadService {
         return new OrgUnitWireView.MemberList(members);
     }
 
-    /**
-     * Resolve the caller's visibility, refusing in the design's order: 404 (no visibility at all)
-     * before 403 (visible but not allowed).
-     */
-    private Scope resolveScope() {
-        UUID caller = authority.currentSubjectId();
-        if (caller == null) {
-            throw new CpApiException(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED",
-                    "authentication required");
-        }
-        Optional<OrgUnitReadRepository.MembershipRow> membership = units.findHumanMembership(caller);
-        if (membership.isEmpty()) {
-            if (authority.holdsActionAtom(READ_ATOM)) {
-                return new Scope(null, null);
-            }
-            throw new CpApiException(HttpStatus.NOT_FOUND, "ORG_UNIT_NOT_FOUND",
-                    "org unit not found");
-        }
-        if (!authority.holdsActionAtom(READ_ATOM)) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "READ_ORG_UNIT_MEMBERS is required to read org units");
-        }
-        return new Scope(membership.get().orgUnitId(), membership.get().path());
-    }
-
-    private List<OrgUnitWireView.Node> nodes(List<OrgUnitReadRepository.UnitRow> rows, Scope scope) {
+    private List<OrgUnitWireView.Node> nodes(List<OrgUnitReadRepository.UnitRow> rows,
+                                            OrgUnitAccess.Scope scope) {
         if (rows.isEmpty()) {
             return List.of();
         }
         Set<UUID> parents = units.parentsOf(rows.stream().map(OrgUnitReadRepository.UnitRow::id).toList());
         return rows.stream()
-                .filter(row -> scope.path() == null || within(row.path(), scope.path()))
+                .filter(row -> scope.path() == null || OrgUnitAccess.within(row.path(), scope.path()))
                 .map(row -> new OrgUnitWireView.Node(
                         row.id(), row.name(), row.parentId(), row.depth(), parents.contains(row.id())))
                 .toList();
     }
 
-    private static boolean within(String path, String scopePath) {
-        // ltree <@ semantics in memory: "a.b" is a descendant of "a" when it starts with "a."
-        return path.equals(scopePath) || path.startsWith(scopePath + ".");
-    }
-
-    private static UUID parse(String value, String code) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return UUID.fromString(value.trim());
-        } catch (IllegalArgumentException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, code, code + ": " + value);
-        }
-    }
-
-    /** The caller's visibility: `path` null means the whole tree (instance-level reader). */
-    private record Scope(UUID unitId, String path) {
-
-        void requireWithin(String targetPath) {
-            if (path != null && !within(targetPath, path)) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "org unit is outside the caller's governance scope");
-            }
-        }
-    }
 }
