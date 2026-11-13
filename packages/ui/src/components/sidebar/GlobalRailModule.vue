@@ -60,7 +60,7 @@ function isItemActive(path: string) {
                 :data-testid="`global-rail-module-${module.id}`"
                 :is-active="active"
                 :aria-current="active ? 'page' : undefined"
-                class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
+                class="h-9 py-1.5 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
                 @click="emit('navigate', module.path)"
             >
                 <component :is="module.icon" class="size-4 shrink-0" aria-hidden="true" />

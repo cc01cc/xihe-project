@@ -269,8 +269,7 @@ const layerHeaderClass =
      * `data-active:text-sidebar-accent-foreground` `data-active:font-medium`（`[实测]` 注入判别色后
      * 选中行背景确为 `--sidebar-accent`），因此本栏只需要补一个 shadcn 原生维度：选中图标上 `--sidebar-primary`。
      */
-    itemBaseClass =
-        "flex min-h-[32px] items-center gap-2 truncate rounded-md py-1.5 pl-6 pr-2 text-sm",
+    itemBaseClass = "flex min-h-9 items-center gap-2 truncate rounded-md py-1.5 pl-6 pr-2 text-sm",
     itemIdleClass =
         "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
     itemActiveClass =

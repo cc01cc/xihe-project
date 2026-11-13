@@ -202,7 +202,7 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                 -->
                 <SidebarGroup class="group-data-[collapsible=icon]:p-4">
                     <SidebarGroupContent>
-                        <SidebarMenu>
+                        <SidebarMenu class="gap-0.5">
                             <GlobalRailModule
                                 v-for="module in contentModules"
                                 :key="module.id"
@@ -226,7 +226,7 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                 这里只移动、不改任何 class/tooltip/aria。
             -->
             <SidebarFooter class="group-data-[collapsible=icon]:p-4">
-                <SidebarMenu>
+                <SidebarMenu class="gap-0.5">
                     <GlobalRailModule
                         v-for="module in footerModules"
                         :key="module.id"
@@ -240,6 +240,7 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                     <SidebarMenuItem>
                         <SidebarMenuButton
                             data-testid="global-rail-logout"
+                            class="h-9 py-1.5"
                             :tooltip="t('sidebar.logout')"
                             @click="handleLogout"
                         >
@@ -262,6 +263,7 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                     <SidebarMenuItem>
                         <SidebarMenuButton
                             data-testid="global-rail-toggle"
+                            class="h-9 py-1.5"
                             :aria-expanded="railOpen"
                             :aria-label="railOpen ? t('sidebar.collapse') : t('sidebar.expand')"
                             :tooltip="railOpen ? undefined : t('sidebar.expand')"
