@@ -172,11 +172,13 @@ describe("mock provider 连接夹具被路由消费（task-454）", () => {
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
         ]);
-        const imageRow = catalog.providers["conn-image-primary"].models;
-        expect(imageRow).toContainEqual({ name: "gpt-image-1", capabilities: { image: true } });
-        expect(
-            imageRow.filter((model) => model.capabilities.chat === true).length,
-        ).toBeGreaterThanOrEqual(2);
+        // **精确相等，不用成员匹配**（runtime-1 复核指出 toContainEqual 是放宽）：数据按裁定合法变化时
+        // 正确做法是**更新期望值**而不是降低匹配强度 —— 否则该行从此失去「多余模型 / 能力被改」的检出能力。
+        expect(catalog.providers["conn-image-primary"].models).toEqual([
+            { name: "gpt-4o", capabilities: { chat: true } },
+            { name: "gpt-4o-mini", capabilities: { chat: true } },
+            { name: "gpt-image-1", capabilities: { image: true } },
+        ]);
     });
 
     it("POST 真的落库：201 回裸连接，且 GET 回读多一行（旧实现 200 但行数不变 = 假成功）", async () => {
