@@ -1072,9 +1072,34 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 }
 
                 // Provider 面（llm-provider 页 = ProviderHub）：目录 / 连接 / 模型目录 / 输入类型。
+                /**
+                 * task-284 ②a 前置（Lead 裁②，D-1281 假可用族）：这块原先缺 `defaultApiType` 与
+                 * `supportedApiTypes`（`ProviderDefinition.required` 八项里的两项，`openapi.yaml:8069`），
+                 * 而 `ProviderHub:710` 读 `provider.defaultApiType.apiTypeId`、`:716` 读
+                 * `supportedApiTypes.find(...)` ⇒ 点「连接」选 provider 后 `resetForm` 当场抛
+                 * `Cannot read properties of undefined (reading 'apiTypeId')`，表单永不出现
+                 * ⇒ **mock 车道的「新建连接」入口一直不可用**（按钮渲染了但一点就抛）。
+                 * 浏览器实测与红先判据见 `__tests__/providerConnections.coverage.spec.ts` 与
+                 * `e2e/mock/task284-instance-provider.spec.ts`。
+                 *
+                 * 同批修三处形状漂移（照契约，不发明字段）：`catalogRevision` `mock-1` → `v3`
+                 * （enum `[v1,v2,v3]`，`:8065`；带 per-API-Type capability 就该是 v3）；
+                 * `credential.type` `api_key` → `api-key`（enum `[api-key,none]`，`:8108`）；
+                 * `supports` `{chat,embedding,image}` → `{customBaseUrl,streaming,tools,vision}`
+                 * （`ProviderSupports.required=[customBaseUrl,streaming]`，`:8113`）。
+                 *
+                 * **诚实边界**：`catalogRevision: "v3"` 也是 **mock 近似值，不是 CP 事实** —— v1/v2/v3
+                 * 是有语义的契约版本（v2 加 per-API-Type tools capability，v3 加 vision，`:8065`），
+                 * 这里挑 v3 只因为夹具带了 capability 字段，**不代表 mock 实现了 v3 的全部语义**
+                 * （runtime-1 复核意见：别只对一半字段标近似）。`supports` 与 `capability` 的布尔值同样是 **mock 近似**（不是 CP 事实，
+                 * CP 的 vendor 声明另有真源）；`supportedApiTypes` 只列 `/api-input-types` 现有的两型
+                 * （anthropic-messages v1 / openai-chat v1）⇒ 连接夹具里 `conn-embed-primary` 引用的
+                 * `openai-embeddings` **仍不在目录里**，点那条连接的「管理」可能同族抛错。
+                 * 那是第三处漂移，本批**只报不改**（runtime-1 窗口前不多引入变量；已报 Lead 归卡）。
+                 */
                 if (path === "/provider-catalog") {
                     return respond(200, {
-                        catalogRevision: "mock-1",
+                        catalogRevision: "v3",
                         providers: [
                             {
                                 id: "anthropic",
@@ -1085,8 +1110,21 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                                 litellmProvider: "anthropic",
                                 defaultBaseUrl: "https://api.anthropic.com/v1",
                                 modelDiscovery: "curated",
-                                credential: { type: "api_key", required: true },
-                                supports: { chat: true, embedding: false, image: false },
+                                credential: { type: "api-key", required: true, placeholder: null },
+                                supports: {
+                                    customBaseUrl: true,
+                                    streaming: true,
+                                    tools: true,
+                                    vision: true,
+                                },
+                                supportedApiTypes: [
+                                    {
+                                        apiTypeId: "anthropic-messages",
+                                        version: 1,
+                                        capability: { tools: true, vision: true },
+                                    },
+                                ],
+                                defaultApiType: { apiTypeId: "anthropic-messages", version: 1 },
                             },
                             {
                                 id: "openai",
@@ -1097,8 +1135,21 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                                 litellmProvider: "openai",
                                 defaultBaseUrl: "https://api.openai.com/v1",
                                 modelDiscovery: "curated",
-                                credential: { type: "api_key", required: true },
-                                supports: { chat: true, embedding: true, image: true },
+                                credential: { type: "api-key", required: true, placeholder: null },
+                                supports: {
+                                    customBaseUrl: true,
+                                    streaming: true,
+                                    tools: true,
+                                    vision: true,
+                                },
+                                supportedApiTypes: [
+                                    {
+                                        apiTypeId: "openai-chat",
+                                        version: 1,
+                                        capability: { tools: true, vision: true },
+                                    },
+                                ],
+                                defaultApiType: { apiTypeId: "openai-chat", version: 1 },
                             },
                         ],
                     });

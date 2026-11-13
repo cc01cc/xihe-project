@@ -293,3 +293,90 @@ describe("mock provider 连接夹具被路由消费（task-454）", () => {
         expect(after.some((row) => row.id === "conn-claude-primary")).toBe(true);
     });
 });
+
+/**
+ * task-284 ②a 的 mock 前置（Lead 裁②）：`/provider-catalog` 的形状判据。
+ *
+ * <p>为什么在这里钉：浏览器实测点「连接」选 provider 后表单**永不出现**，pageerror =
+ * `Cannot read properties of undefined (reading 'apiTypeId')` —— mock 的两个 provider 缺
+ * `defaultApiType` 与 `supportedApiTypes`，而 `ProviderHub:710/:716` 直接读它们 ⇒ `resetForm` 抛。
+ * 即 **mock 车道的「新建连接」入口一直不可用**（按钮渲染了但一点就抛，D-1281 假可用族）。</p>
+ *
+ * <p>判据照契约 `openapi.yaml:8061-8120`，不发明字段：`ProviderDefinition.required` 八项、
+ * `supportedApiTypes` minItems 1、`defaultApiType` 必须是 `supportedApiTypes` 里的一对、
+ * `catalogRevision` enum `[v1,v2,v3]`（旧值 `mock-1` 不在 enum 内）、`credential.type` enum
+ * `[api-key,none]`（旧值 `api_key` 不在 enum 内）、`ProviderSupports.required` = customBaseUrl+streaming
+ * （旧形状 `{chat,embedding,image}`  entirely 不是契约字段）。</p>
+ */
+describe("mock provider 目录形状照契约（task-284 ②a 前置）", () => {
+    const REQUIRED = [
+        "id",
+        "displayName",
+        "adapter",
+        "modelDiscovery",
+        "credential",
+        "supports",
+        "supportedApiTypes",
+        "defaultApiType",
+    ];
+
+    it("GET /provider-catalog：catalogRevision 在 enum 内，两个 provider 八项必填齐", async () => {
+        const answer = await call(handler, "/provider-catalog");
+        expect(answer.status).toBe(200);
+        const body = answer.body as {
+            catalogRevision: string;
+            providers: Array<Record<string, unknown>>;
+        };
+        expect(["v1", "v2", "v3"]).toContain(body.catalogRevision);
+        expect(body.providers.length).toBeGreaterThanOrEqual(2);
+        for (const provider of body.providers) {
+            for (const key of REQUIRED) expect(provider, key).toHaveProperty(key);
+        }
+    });
+
+    it("defaultApiType 是 supportedApiTypes 里的一对，且类型 id 与 /api-input-types 同源", async () => {
+        const catalog = (await call(handler, "/provider-catalog")).body as {
+            providers: Array<{
+                id: string;
+                defaultApiType: { apiTypeId: string; version: number };
+                supportedApiTypes: Array<{ apiTypeId: string; version: number }>;
+            }>;
+        };
+        const types = (await call(handler, "/api-input-types")).body as {
+            types: Array<{ apiTypeId: string; version: number }>;
+        };
+        for (const provider of catalog.providers) {
+            expect(provider.supportedApiTypes.length).toBeGreaterThanOrEqual(1);
+            const pair = provider.defaultApiType;
+            expect(pair.apiTypeId).toBeTruthy();
+            expect(pair.version).toBeGreaterThanOrEqual(1);
+            expect(
+                provider.supportedApiTypes.some(
+                    (item) => item.apiTypeId === pair.apiTypeId && item.version === pair.version,
+                ),
+                provider.id + " defaultApiType 必须在 supportedApiTypes 里",
+            ).toBe(true);
+            for (const item of provider.supportedApiTypes) {
+                expect(
+                    types.types.some((type) => type.apiTypeId === item.apiTypeId),
+                    provider.id + " 的 " + item.apiTypeId + " 应在 /api-input-types 里",
+                ).toBe(true);
+            }
+        }
+    });
+
+    it("credential.type 与 supports 用契约字段（不是 api_key / {chat,embedding,image}）", async () => {
+        const catalog = (await call(handler, "/provider-catalog")).body as {
+            providers: Array<{
+                credential: { type: string; required: boolean };
+                supports: Record<string, unknown>;
+            }>;
+        };
+        for (const provider of catalog.providers) {
+            expect(["api-key", "none"]).toContain(provider.credential.type);
+            expect(typeof provider.credential.required).toBe("boolean");
+            expect(typeof provider.supports.customBaseUrl).toBe("boolean");
+            expect(typeof provider.supports.streaming).toBe("boolean");
+        }
+    });
+});
