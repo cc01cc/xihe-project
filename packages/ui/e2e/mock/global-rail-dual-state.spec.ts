@@ -59,6 +59,12 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         await page.getByTestId("global-rail-module-resources").hover();
         const menu = page.getByTestId("global-rail-menu-content-resources");
         await expect(menu).toBeVisible();
+        // **「开着」还不够，必须「一直开着」**（task-189 实测抓到的一次真缺陷）：
+        // 指针停住不动，菜单若在 160ms 后自己关掉又打开（周期 ≈700ms 的自激开关），
+        // 上面那句 `toBeVisible()` 正好落在开的那一帧 ⇒ 断言全过、产品是坏的。
+        // 判据：停在同一位置等过两个关闭周期后，仍然可见。
+        await page.waitForTimeout(900);
+        await expect(menu).toBeVisible();
 
         // 菜单项 = RESOURCE_DEFS 的投影（5 项，`lib/globalModules.ts`）。
         const items = menu.locator("[data-testid^='global-rail-menu-item-resources-']");

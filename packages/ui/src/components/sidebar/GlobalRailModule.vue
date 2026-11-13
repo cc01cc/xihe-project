@@ -100,8 +100,18 @@ onBeforeUnmount(cancelHover);
                 二级菜单触发器：折叠态用 `sr-only` 藏起，**不排除出可达性树** ——
                 Tab 仍可聚焦、Enter/Space 仍能打开，只是视觉上让位给 56px 图标栏。
             -->
+            <!--
+                `:modal="false"` 不是可选优化，是**悬浮打开的必要条件**（2026-11-13 task-189 实测）：
+                reka 的 DropdownMenu 默认 modal，打开时会把内容区外的页面标成 `pointer-events: none`
+                ⇒ 指针下方从「模块按钮」变成 `html`，浏览器合成出 `pointerleave` ⇒ 我们的关菜单
+                计时器 160ms 后关掉 ⇒ 指针恢复、又重新 `pointerenter` ⇒ **菜单自激开关**（实测：
+                100ms 粒度采样下 open/closed 交替，周期 ≈700ms，`pointerleave:DIV → BODY → pointerover:HTML`
+                三连事件就是指纹）。e2e 里「hover 后立刻断言可见」正好落在开的那一帧，所以这条
+                缺陷在断言层面是假绿；只有「等一会儿再断言」才抓得到。
+            -->
             <DropdownMenu
                 :open="open"
+                :modal="false"
                 @update:open="(value: boolean) => emit('update:open', value)"
             >
                 <DropdownMenuTrigger as-child>
