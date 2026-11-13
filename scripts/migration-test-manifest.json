@@ -1,0 +1,53 @@
+{
+  "why": "这份清单只解决一件事：`-Dtest=*Migration*` 是按【类名】选的，所以 migration/ 目录下名字里没有\n\"Migration\" 的测试**不在扫描范围内**——它们存在、可能全绿、却没人跑，而 \"234/234 绿\" 会让人以为\n守卫面已被覆盖（task-178 实测发现，task-181 收口）。\n\n规则（由 scripts/check-migration-test-coverage.mjs 机器判定）：migration/ 目录下每个 *Test.java\n必须「类名含 Migration」**或**「在本清单里且有 reason」。两者皆不 => exit 1。\n\n清单驱动的命令（不要再用通配符）：\n  node scripts/check-migration-test-coverage.mjs --test-filter\n  mvn -o test \"-Dtest=$(node scripts/check-migration-test-coverage.mjs --test-filter)\"\n\n加条目的判据：① 它确实在 `**/migration/**` 下；② 名字是被测行为/表/契约，不是\"迁移\"；\n③ reason 写清\"名按什么命名\"。**不许为凑数加无关测试**，也不许改类名（改名会让证据包与\n卡面的行号锚全部失效）。",
+  "entries": [
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/ContextTemplateResetScopeTest.java",
+      "className": "ContextTemplateResetScopeTest",
+      "namedFor": "重置范围（PLAN-0439 T0.2）",
+      "reason": "名按它证明的「重置范围」命名，不按「迁移」命名：导出/隔离恢复的往返范围，跑在真 Flyway 链上。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/OrgUnitCycleConcurrencyTest.java",
+      "className": "OrgUnitCycleConcurrencyTest",
+      "namedFor": "并发与锁语义（task-178）",
+      "reason": "名按并发语义命名：两条独立连接上的锁行为（55P03/ XH001）与 `DROP CONSTRAINT` 探针；迁移链只是它的前置。改这个名字会让 task-176/178 的证据包行号锚失效。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/PluginRecordsIndexSchemaTest.java",
+      "className": "PluginRecordsIndexSchemaTest",
+      "namedFor": "表名（PLAN-0691 T2.2 / V142）",
+      "reason": "名按被断言的表命名：`plugin_records` / `plugin_index_declarations` 在真 PG 17 + 真 Flyway 文件上。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/SpecFieldConformanceTest.java",
+      "className": "SpecFieldConformanceTest",
+      "namedFor": "契约字段一致性（PLAN-0407 T2.9）",
+      "reason": "名按「spec §3 字段一致」命名：用 JdbcTemplate 检查 Spring 管理的 Testcontainers schema。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/StateEnumConformanceTest.java",
+      "className": "StateEnumConformanceTest",
+      "namedFor": "状态枚举集合",
+      "reason": "名按「状态枚举」命名：每个状态集合必须等于迁移链里冻结的那一份（或代码侧词表）。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/V114V115SeedIdempotencyAndParityTest.java",
+      "className": "V114V115SeedIdempotencyAndParityTest",
+      "namedFor": "种子幂等（PLAN-0651 T2.2）",
+      "reason": "名按 V 号 + 「幂等/对账」命名：第二次执行影响行数必须为 0，不只比行数。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/V145RollbackScriptTest.java",
+      "className": "V145RollbackScriptTest",
+      "namedFor": "回滚脚本可执行（PLAN-0705 / BL-515）",
+      "reason": "名按 V 号 + 「rollback」命名：空库与含 NULL 两态在独立 Testcontainers 克隆上钻。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/V156PersonalSkillScopeTest.java",
+      "className": "V156PersonalSkillScopeTest",
+      "namedFor": "个人技能层 DDL 契约（V156 / task-221）",
+      "reason": "名按 V 号 + 特性命名：DDL 即契约，CHECK 各分支与四列唯一键在全新库的 Flyway 上断言。"
+    }
+  ]
+}
