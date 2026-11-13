@@ -30,12 +30,11 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * task-435 PROBE (read-only): what the MCP face actually answers for a workspace-less session.
+ * task-435 (D-1269 ruling: PIN the current behaviour, do NOT relax the filter).
  *
  * <p>{@code SessionService#findMcpSessionOwner} filters on {@code workspaceId.equals(session
  * .getWorkspaceId())}, which is never true for an independent session (null column) — the third
@@ -45,8 +44,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * whether the equality is the binding constraint on this face, or whether the entry gate fires
  * first — that decides whether a D-1247-shaped minimal fix changes anything observable here.</p>
  *
- * <p>Cases 1-2 print their reading and assert only "a 4xx, not a 5xx" (the ruling is not made yet);
- * cases 3-4 are controls that must hold under either ruling.</p>
+ * <p>Measured before the ruling: both workspace-less cases answer 404 SESSION_NOT_FOUND, while a
+ * workspace-bound session in its own workspace reaches dispatch (503 RUNTIME_UNAVAILABLE in this
+ * lane, which has no runtime). That 404-vs-503 split is the evidence for WHICH layer refuses: the
+ * independent session is stopped at the visibility filter, not by a broken chain.
+ *
+ * <p>Why pinning is the right call (unlike task-399 / task-418): those guards protect the caller's
+ * OWN row (read/delete a session, bind a connection), so skipping the workspace-equality half only
+ * makes the user's own resource reachable. Here {@code authorize} continues with
+ * {@code workspaceId = effectiveWorkspaceId} (McpProxyController:3071) and tools resolve in the
+ * CALLER's workspace — relaxing the filter would hand an independent session the ambient
+ * workspace's MCP tools, i.e. a cross-resource privilege widening. The instance-level MCP arm
+ * (D-1006 B5) does not exist yet (zero INSTANCE hits in the whole cp/mcp package), so an
+ * independent session must wait for that arm before it can use tools at all.</p>
  */
 @SpringBootTest
 @ActiveProfiles("h2")
@@ -79,7 +89,10 @@ class SessionWorkspacelessMcpFaceTest {
         Session session = saveSession(null, user.getUser().getId(), "independent");
         var response = call(user, null, session.getId());
         report("workspace-less session, ambient workspace only", response);
-        assertTrue(response.getStatus() >= 400 && response.getStatus() < 500, "a 4xx, not a 500");
+        // D-1269: pinned. The ambient workspace satisfies the entry gate, so the visibility filter
+        // is the binding constraint on this face — and it must keep refusing.
+        assertEquals(404, response.getStatus());
+        assertEquals("SESSION_NOT_FOUND", code(response));
     }
 
     @Test
@@ -89,7 +102,8 @@ class SessionWorkspacelessMcpFaceTest {
         Session session = saveSession(null, user.getUser().getId(), "independent");
         var response = call(user, workspace.getId().toString(), session.getId());
         report("workspace-less session, explicit workspace header", response);
-        assertTrue(response.getStatus() >= 400 && response.getStatus() < 500, "a 4xx, not a 500");
+        assertEquals(404, response.getStatus());
+        assertEquals("SESSION_NOT_FOUND", code(response));
     }
 
     @Test
@@ -101,6 +115,9 @@ class SessionWorkspacelessMcpFaceTest {
         report("CONTROL workspace-bound session, own workspace", response);
         assertNotEquals("SESSION_NOT_FOUND", code(response),
                 "the owner filter must not reject a session in its own workspace");
+        assertEquals(503, response.getStatus(),
+                "it reaches dispatch (no runtime in this lane) — proving the 404 above is the "
+                        + "visibility filter, not a broken chain");
     }
 
     @Test
