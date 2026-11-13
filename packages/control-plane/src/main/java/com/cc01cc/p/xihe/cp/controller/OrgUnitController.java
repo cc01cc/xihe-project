@@ -1,0 +1,51 @@
+package com.cc01cc.p.xihe.cp.controller;
+
+import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * PLAN-0773 M2-11 (batch A): the two read endpoints of the org-unit group, per the contract in
+ * `docs/api/openapi.yaml` (`tasks.md` M2-11 端点契约 lines 146-153, written contract-first).
+ *
+ * <p><b>Why `isAuthenticated()` rather than `holdsActionAtom`.</b> The atom gate lives in
+ * {@link OrgUnitReadService} on purpose: gating it here would answer 403 before the service can
+ * answer 404 for a non-member, and `设计 §4.3` forbids the 403 there ("非成员读任意单元 ⇒ 404，不泄露
+ * 存在性"). A `@PreAuthorize` atom check cannot express "403 only when the unit is visible to
+ * you", so it would either leak existence or move the decision into the annotation — both worse
+ * than one explicit service call in the design's own order.</p>
+ *
+ * <p>Batch B (create/rename/move) and batch C (members/role bindings) land in this same controller
+ * as separate commits; the six not-yet-implemented routes are declared in
+ * {@code RouteContractParityTest.PLANNED_APIS} until their batch removes them.</p>
+ */
+@RestController
+@RequestMapping("/api/v1/org-units")
+public class OrgUnitController {
+
+    private final OrgUnitReadService readService;
+
+    public OrgUnitController(OrgUnitReadService readService) {
+        this.readService = readService;
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping
+    public OrgUnitWireView.NodeList list(
+            @RequestParam(required = false) String parentId,
+            @RequestParam(required = false) String q) {
+        return readService.list(parentId, q);
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{unitId}/members")
+    public OrgUnitWireView.MemberList members(
+            @PathVariable String unitId,
+            @RequestParam(defaultValue = "false") boolean includeDescendants) {
+        return readService.members(unitId, includeDescendants);
+    }
+}

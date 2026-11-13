@@ -1023,7 +1023,7 @@ paths:
     post:
       tags: [credential]
       operationId: replaceCredentialSecret
-      summary: 'Replace the secret value in place (credential_manage@credential:<id>)'
+      summary: "'Replace the secret value in place (credential_manage@credential:<id>)'"
       description: 'PLAN-0496 T3.1: keeps the credential id; revision +1; the response never carries plaintext or a suffix.'
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1078,7 +1078,7 @@ paths:
     post:
       tags: [credential]
       operationId: revealCredential
-      summary: 'Reveal the plaintext — no-store delivery (repeatable reads) (credential_reveal@credential:<id> + step-up)'
+      summary: "'Reveal the plaintext — no-store delivery (repeatable reads) (credential_reveal@credential:<id> + step-up)'"
       description: 'PLAN-0497 T3.1: user-only credential_reveal intersection, reveal-tier gate, step-up password re-verification throttled at 5 failures / 15 minutes, response Cache-Control: no-store, audit credential_revealed without the value; v1 never creates an approval.'
       security: [{ bearerAuth: [] }]
       parameters:
@@ -5018,7 +5018,7 @@ paths:
     post:
       tags: [credential]
       operationId: revealInstanceCredential
-      summary: 'Reveal an instance credential — no-store delivery (repeatable reads) (instance admin + credential_reveal + step-up)'
+      summary: "'Reveal an instance credential — no-store delivery (repeatable reads) (instance admin + credential_reveal + step-up)'"
       description: 'D-932 contract-first (PLAN-0771 M3 / D-1009): the same step-up / throttle / no-store / audit shape as POST /api/v1/credentials/{id}/reveal, with the instance-layer gate added: cap:instance:admin AND credential_reveal@credential:<id>. There is no owner intersection to apply - the instance has no owner row - so the gate is the atom plus the instance-admin capability, not "the caller owns the row". Step-up password re-verification throttled at 5 failures / 15 minutes, response Cache-Control: no-store, audit credential_revealed without the value; a row that is not INSTANCE-owned answers 404 CREDENTIAL_NOT_FOUND (no cross-owner oracle); v1 never creates an approval.'
       security: [{ bearerAuth: [] }]
       parameters:
@@ -5304,7 +5304,7 @@ paths:
       tags: [admin]
       operationId: readPrincipalGrants
       deprecated: true
-      summary: '[RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的只读入口'
+      summary: "'[RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的只读入口'"
       description: |
         **BL-320 批 2（2026-11-05 Lead 批准）：保留为 410 tombstone，不是可用接口。**
         PLAN-0610 W2（决策 #28）/ V88 已退役该面：V88 把 `ck_grants_source` 收窄为五值后 `source='direct'`
@@ -5324,7 +5324,7 @@ paths:
       tags: [admin]
       operationId: patchPrincipalGrants
       deprecated: true
-      summary: '[RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的写入入口'
+      summary: "'[RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的写入入口'"
       description: '同 GET：恒 `410 PRINCIPAL_GRANTS_RETIRED`。请求体形状仅为历史记录（`{add:[{actionClass,resource}], remove:[...]}`），不再解析。'
       security: [{ bearerAuth: [] }]
       parameters:
@@ -6030,6 +6030,237 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'THREAD_WRITE_FORBIDDEN (not the session owner) or THREAD_SCOPE_UNRESOLVED', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'THREAD_NOT_FOUND or SESSION_NOT_FOUND', content: { application/json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units:
+    get:
+      tags: [admin]
+      operationId: listOrgUnits
+      summary: List org-unit nodes (tree top, lazy-loaded children, or name search)
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch A; D-1115). Org units are a single-parent tree on the **subject
+        side** (`org_units.path`, ltree). They are **not** a scope and carry **no** workspace:
+        org and workspace are parallel containers (design §4.5 Q1), so nothing here filters a
+        workspace and no `org_unit_id` column is consulted on the workspace side.
+
+        Two gates, **in this order** (the order is load-bearing, not stylistic):
+
+        1. **Scope.** The caller must be a member of some unit (`org_unit_members`,
+           `member_kind='human'`, `member_id` = caller) ⇒ the visible tree is **that unit's
+           subtree** (`target.path <@ own.path`, one index query, no recursion). A caller who
+           holds `READ_ORG_UNIT_MEMBERS` at **instance** scope with **no** membership row is an
+           instance-level reader and sees the whole tree (design §4.2: the instance admin default
+           grant is instance-scope). A caller with **neither** gets `404 ORG_UNIT_NOT_FOUND` —
+           deliberately not 403: a non-member must not learn whether a unit exists (design §4.3,
+           `tasks.md` M2-11 判据③).
+        2. **Atom.** `READ_ORG_UNIT_MEMBERS` (design §4.2). A member without the atom gets
+           `403 FORBIDDEN`. The atom gate runs **after** scope resolution precisely so the 404
+           above stays a 404 instead of collapsing into a 403 for everybody.
+
+        Paging shape: `parentId` absent ⇒ the **top** of the visible tree (the caller's own unit
+        for a member; every root — `parent_id IS NULL` — for an instance-level reader).
+        `parentId` present ⇒ its **direct children** (lazy loading), and each node carries
+        `hasChildren` so the UI can decide whether an expand is worth a request.
+
+        `q` filters by name inside the visible subtree and **ignores `parentId`** (it searches
+        the subtree, not one level) — a lazy tree cannot answer a name search one node at a time.
+
+        Nodes never carry member detail; that is `GET /api/v1/org-units/{unitId}/members`.
+      parameters:
+        - { in: query, name: parentId, required: false, schema: { type: string, format: uuid }, description: 'List the direct children of this unit. Absent ⇒ the top of the caller''s visible tree.' }
+        - { in: query, name: q, required: false, schema: { type: string, minLength: 1, maxLength: 120 }, description: 'Case-insensitive name search (ILIKE %q%) inside the visible subtree; ignores parentId.' }
+      responses:
+        '200': { description: Org-unit nodes, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitNodeListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — a member without READ_ORG_UNIT_MEMBERS, or a parentId outside the caller''s subtree', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — no visibility for the caller (non-member) or a parentId that is not visible', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      tags: [admin]
+      operationId: createOrgUnit
+      summary: Create an org unit (a root when parentId is null)
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch B; D-1115). The writer maintains `path` and `depth` in the
+        same transaction as `parent_id` (design §3.1: `path` is a materialized index,
+        `parent_id` is the truth). Each path label is a UUID **with the hyphens removed**
+        (D-1116) — on this PG major the database would accept the hyphenated form, so the V163
+        CHECK is what keeps one spelling, not the type itself.
+
+        Gates: the same scope resolution as the read face, then `MANAGE_ORG_UNITS` (design §4.2).
+        Sibling names are unique per parent (`NULLS NOT DISTINCT`, so two roots cannot share a
+        name) ⇒ a clash is `409`, never a silent second row (D-1116: a UI hint cannot repair two
+        units with one name).
+      parameters:
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Not part of org-unit addressing; accepted only so a shared client header can be echoed. Ignored server-side (org units carry no workspace).' }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitCreateRequest' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitCreatedResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — no MANAGE_ORG_UNITS within the caller''s scope', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — parentId not visible to the caller', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'ORG_UNIT_NAME_CONFLICT — a sibling of that parent already uses this name', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units/{unitId}/members:
+    get:
+      tags: [admin]
+      operationId: listOrgUnitMembers
+      summary: List the humans and agent principals attached to one org unit
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch A; D-1115). Same two gates and same order as
+        `GET /api/v1/org-units`: scope (member subtree / instance-level reader), then the atom
+        `READ_ORG_UNIT_MEMBERS`. A **non-member** gets `404 ORG_UNIT_NOT_FOUND` for any unit
+        id, existing or not (design §4.3 — no existence leak); a **member** reading outside their
+        subtree gets `403 FORBIDDEN` (a sibling unit is known to exist to a member, and the
+        design says 403 there, not 404).
+
+        `includeDescendants=false` (default) lists members whose `org_unit_members.org_unit_id`
+        is that unit; `true` lists the whole subtree (`path <@ unit.path`) — equivalent because
+        `P ∈ subtree(U) ⇔ P.unit.path <@ U.path` (design §4.1.1).
+
+        Humans and agent principals are **one table** (`member_kind` tells them apart, M3-2). This
+        endpoint never returns a workspace, a role or a permission: a subject's atoms are visible
+        only through `GET /api/v1/me/permissions` for that subject's own caller.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: includeDescendants, required: false, schema: { type: boolean, default: false }, description: 'true ⇒ members of the whole subtree (path <@ unit.path), false ⇒ that unit only.' }
+      responses:
+        '200': { description: Members of the unit, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitMemberListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN — a member without READ_ORG_UNIT_MEMBERS, or a unit outside the caller''s subtree', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — no visibility (non-member) or an unknown unit id', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units/{unitId}:
+    patch:
+      tags: [admin]
+      operationId: renameOrgUnit
+      summary: Rename an org unit
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch B; D-1115). Rename only — a rename does not touch `path`
+        (labels are UUIDs, not names, so the tree shape is untouched by construction). Gates:
+        scope + `MANAGE_ORG_UNITS`; sibling-name uniqueness as on create ⇒ `409`.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitRenameRequest' } } } }
+      responses:
+        '200': { description: Renamed node, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitNode' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — unknown or not visible', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'ORG_UNIT_NAME_CONFLICT — a sibling already uses this name', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units/{unitId}/parent:
+    put:
+      tags: [admin]
+      operationId: moveOrgUnit
+      summary: Move an org unit under a new parent (rejects rings with 422)
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch B; D-1115). The move rewrites `parent_id`, `path` (every
+        descendant's prefix) and `depth` (every descendant's depth) in one transaction: `path`
+        is a materialized index, so a move that forgets the subtree leaves a tree whose queries
+        and its own rows disagree.
+
+        A ring is refused **twice**, and the two refusals are not equivalent: the V165 trigger
+        (`trg_org_units_reject_cycle`) raises SQLSTATE `XH001` inside the same statement, so a
+        ring cannot be committed by a code path that forgot the check; the service then translates
+        that trigger refusal into `422 ORG_UNIT_CYCLE`. The service-side pre-check exists only to
+        keep the message readable — it never replaces the trigger.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitMoveRequest' } } } }
+      responses:
+        '200': { description: Moved node, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitNode' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — unknown or not visible', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'ORG_UNIT_NAME_CONFLICT — the destination parent already has a child of this name', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '422': { description: 'ORG_UNIT_CYCLE — the destination is this unit or one of its descendants (refused by trg_org_units_reject_cycle, never committed)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units/{unitId}/members/{memberId}:
+    put:
+      tags: [admin]
+      operationId: moveOrgUnitMember
+      summary: "Add or move one human/agent into an org unit (G1: affected workspaces + audit + confirmation)"
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 batch C + M2-10b G1 (D-1115, D-1089). One row moves; nothing else is
+        written. Because "the permission follows the person" is an accepted consequence
+        (design §4.6), a move can silently change what atoms the subject holds — and every
+        `WS_OWNER` workspace it owns stays byte-identical, so the drift is invisible unless the
+        response says so.
+
+        Therefore **G1**: the response always carries `affectedWorkspaceIds` (the workspaces
+        where that subject is `WS_OWNER`); the field **must appear even when the array is empty**
+        (a missing field and an empty array are indistinguishable to a client that JSON-decodes
+        structurally, and "no affected workspaces" is a real answer, not an absence). When the
+        array is **non-empty**, the call requires `confirmAffected: true`; without it the
+        endpoint answers `409 ORG_UNIT_MOVE_CONFIRMATION_REQUIRED` and **nothing changed** —
+        the `org_unit_members` row is untouched and the `audit_logs` row count is unchanged
+        (`verify.md` V2-11 ③). The audit row (`org_membership_moved`, fields `memberId` /
+        `fromOrgUnitId` / `toOrgUnitId` / `affectedWorkspaceIds`) is written **in the same
+        transaction** as the move: a move that is not audited cannot happen.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: memberId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: memberKind, required: true, schema: { type: string, enum: [human, agent_principal] }, description: 'org_unit_members.member_kind of the member being placed.' }
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitMemberMoveRequest' } } } }
+      responses:
+        '200': { description: Moved, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitMemberMoveResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — unit not visible to the caller', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'ORG_UNIT_MOVE_CONFIRMATION_REQUIRED — affectedWorkspaceIds is non-empty and confirmAffected was not true; the member row and the audit count are unchanged', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      tags: [admin]
+      operationId: removeOrgUnitMember
+      summary: Remove one human/agent from an org unit
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch C; D-1115). Deletes the `org_unit_members` row; the subject keeps
+        every grant it holds through other subjects (bindings are never rewritten here). Gates:
+        scope + `MANAGE_ORG_UNIT_MEMBERS`. Removing a member who is not in this unit is
+        `404 ORG_UNIT_MEMBER_NOT_FOUND` (the pair is the identity), not a silent 204.
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: memberId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: memberKind, required: true, schema: { type: string, enum: [human, agent_principal] } }
+      responses:
+        '204': { description: Removed }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'ORG_UNIT_NOT_FOUND or ORG_UNIT_MEMBER_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/org-units/{unitId}/role-bindings:
+    put:
+      tags: [admin]
+      operationId: replaceOrgUnitRoleBindings
+      summary: Replace an org unit's role bindings as one set
+      security: [{ bearerAuth: [] }]
+      description: |
+        PLAN-0773 M2-11 (batch C; D-1115, D-1118). Whole-set write (`org_unit_role_bindings`):
+        the body is the complete role set of that unit, not a delta — a delta cannot express
+        "remove everything", and two clients sending deltas would each see the other's rows.
+
+        **Fail closed on non-governance roles**: org-unit grants are projected as *instance*-scope
+        grants (design §4.1.1), so a role carrying a workspace-content atom would spread to every
+        workspace the member can reach. Roles whose atom set is not inside the governance whitelist
+        are therefore refused with `409 ORG_SCOPE_ROLE_FORBIDDEN` — and an **unknown** role is
+        refused too (unknown is not empty, and an empty set would silently grant nothing while
+        looking like a stored binding).
+      parameters:
+        - { in: path, name: unitId, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitRoleBindingReplaceRequest' } } } }
+      responses:
+        '200': { description: Stored set, content: { application/json: { schema: { $ref: '#/components/schemas/OrgUnitRoleBindingListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'ORG_UNIT_NOT_FOUND — unit not visible to the caller', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { $ref: '#/components/responses/OrgScopeRoleForbidden' }
+
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -6071,12 +6302,96 @@ components:
       description: >-
         409 ORG_SCOPE_ROLE_FORBIDDEN — the role's action-atom set is not inside the org-unit
         governance whitelist, so the binding is refused (fail closed: an unknown role is not an
-        empty one) — D-1118. **Shape only**: no operation in this contract returns it yet; the
-        org-unit binding write endpoint lands with PLAN-0773 M2-11 and will reference this response.
+        empty one) — D-1118. Referenced by `PUT /api/v1/org-units/{unitId}/role-bindings` (PLAN-0773 M2-11 batch C).
+        The refusal is fail closed on the role's atom set, never a role-name special case (D-1118).
         It is declared here so a client can branch on status + code (never on detail text) before
         that endpoint exists.
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
+    OrgUnitNode:
+      type: object
+      additionalProperties: false
+      required: [id, name, parentId, depth, hasChildren]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        parentId: { type: [string, 'null'], format: uuid, description: 'null for a root unit.' }
+        depth: { type: integer, minimum: 0, description: '0 for a root, parent depth + 1 otherwise (org_units.depth, a materialized index beside parent_id).' }
+        hasChildren: { type: boolean, description: 'true when at least one unit has parent_id = this id — lets a tree UI decide whether expanding is worth a request.' }
+    OrgUnitNodeListResponse:
+      type: object
+      additionalProperties: false
+      required: [nodes]
+      properties:
+        nodes: { type: array, items: { $ref: '#/components/schemas/OrgUnitNode' } }
+    OrgUnitMemberView:
+      type: object
+      additionalProperties: false
+      required: [memberKind, memberId, orgUnitId, displayName]
+      properties:
+        memberKind: { type: string, enum: [human, agent_principal], description: 'org_unit_members.member_kind. Humans and agent principals share one table and are told apart by this tag (M3-2).' }
+        memberId: { type: string, format: uuid }
+        orgUnitId: { type: string, format: uuid, description: 'The unit the member sits in; org_unit_members rows are unique per (memberKind, memberId), so one subject sits in at most one unit.' }
+        displayName: { type: [string, 'null'], description: 'Human: users.username (email when the username is blank); agent principal: agent_principals.name. null when the referenced subject row is gone (the membership row is not cascaded away).' }
+    OrgUnitMemberListResponse:
+      type: object
+      additionalProperties: false
+      required: [members]
+      properties:
+        members: { type: array, items: { $ref: '#/components/schemas/OrgUnitMemberView' } }
+    OrgUnitCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120, description: 'Trimmed server-side; the trimmed value is what the sibling uniqueness rule sees.' }
+        parentId: { type: [string, 'null'], format: uuid, description: 'null or absent ⇒ a root unit.' }
+    OrgUnitCreatedResponse:
+      type: object
+      additionalProperties: false
+      required: [id, path]
+      properties:
+        id: { type: string, format: uuid }
+        path: { type: string, description: 'The de-hyphenated ltree path (D-1116). A materialized index, not a second source of truth: parent_id decides the shape and the writer keeps them agreeing.' }
+    OrgUnitRenameRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+    OrgUnitMoveRequest:
+      type: object
+      additionalProperties: false
+      required: [parentId]
+      properties:
+        parentId: { type: [string, 'null'], format: uuid, description: 'New parent; null promotes the unit to a root. This unit or one of its descendants ⇒ 422 ORG_UNIT_CYCLE.' }
+    OrgUnitMemberMoveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        confirmAffected: { type: boolean, default: false, description: 'Required true when affectedWorkspaceIds is non-empty: the caller states it understands the subject''s WS_OWNER workspaces are affected by the move. Absent or false with a non-empty list ⇒ 409 ORG_UNIT_MOVE_CONFIRMATION_REQUIRED and no write.' }
+    OrgUnitMemberMoveResponse:
+      type: object
+      additionalProperties: false
+      required: [memberId, fromOrgUnitId, toOrgUnitId, affectedWorkspaceIds, auditEvent]
+      properties:
+        memberId: { type: string, format: uuid }
+        fromOrgUnitId: { type: [string, 'null'], format: uuid, description: 'null when the subject was not in any unit before this call (a first placement, not a move).' }
+        toOrgUnitId: { type: string, format: uuid }
+        affectedWorkspaceIds: { type: array, items: { type: string, format: uuid }, description: 'G1: workspaces where this subject holds WS_OWNER. **Always present, empty array included** — an empty array is an answer ("no workspace is affected"), a missing field is a contract break.' }
+        auditEvent: { type: string, enum: [org_membership_moved], description: 'The audit action written in the same transaction as the move.' }
+    OrgUnitRoleBindingReplaceRequest:
+      type: object
+      additionalProperties: false
+      required: [roleIds]
+      properties:
+        roleIds: { type: array, items: { type: string, format: uuid }, description: 'The complete role set of the unit; an empty array clears it (this is why the write is a whole-set PUT).' }
+    OrgUnitRoleBindingListResponse:
+      type: object
+      additionalProperties: false
+      required: [roleIds]
+      properties:
+        roleIds: { type: array, items: { type: string, format: uuid }, description: 'The stored set, ordered by role id so two reads of unchanged data are byte-identical.' }
     ConversationThreadCreateRequest:
       type: object
       required: [scopeType, scopeId]
