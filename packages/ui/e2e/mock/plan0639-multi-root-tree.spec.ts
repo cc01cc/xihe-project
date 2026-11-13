@@ -37,6 +37,33 @@ function seedRootTrees(page: import("@playwright/test").Page) {
     );
 }
 
+/**
+ * task-59：多根数据必须**从 wire 来**。
+ *
+ * 之前 roots 是经 `setupMockAuth` 的 `workspace` 选项写进 localStorage / sessionStorage 的，
+ * store 在首帧之前就已经有多根 ⇒ 把 `normalizeWorkspaceRoots` 整行注释掉，这三条用例照样绿。
+ * 现在 seed 不带 roots（`rootsFromWire`），roots 由本 spec 自己 stub 的响应提供，
+ * 必须经过 `normalizeWorkspace` —— 注释掉映射就会红。
+ *
+ * 注册顺序是关键：`setupMockAuth` **之后**注册 ⇒ Playwright 后注册优先，盖过夹具的兜底。
+ */
+function stubWorkspaceFromWire(
+    page: import("@playwright/test").Page,
+    workspace: { hostPath: string | null; roots: unknown[] },
+) {
+    // 注意：`page.route` 的正则是**对完整 URL** 匹配的，不能加 `^` 锚点。
+    return page.route(/\/api\/v1\/workspaces\/[^/?]+$/, async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                workspace: { id: PRIMARY_ROOT_ID, name: "Mock Workspace", ...workspace },
+            }),
+        });
+    });
+}
+
 test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
     test.beforeEach(async ({ page }) => {
         await setupMockSessions(page, {
@@ -64,13 +91,15 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
         page,
     }) => {
         await setupMockAuth(page, {
-            workspace: {
-                hostPath: "H:/mock/alpha",
-                roots: [
-                    { id: PRIMARY_ROOT_ID, alias: "alpha", position: 0 },
-                    { id: SECONDARY_ROOT_ID, alias: SECONDARY_ROOT_ALIAS, position: 1 },
-                ],
-            },
+            rootsFromWire: true,
+            workspace: { hostPath: "H:/mock/alpha" },
+        });
+        await stubWorkspaceFromWire(page, {
+            hostPath: "H:/mock/alpha",
+            roots: [
+                { id: PRIMARY_ROOT_ID, alias: "alpha", position: 0 },
+                { id: SECONDARY_ROOT_ID, alias: SECONDARY_ROOT_ALIAS, position: 1 },
+            ],
         });
         await seedRootTrees(page);
         await page.goto("/workspace/workspace-1");
@@ -105,13 +134,13 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
     test("multi-root: alias-less secondary root falls back to the ordinal label", async ({
         page,
     }) => {
-        await setupMockAuth(page, {
-            workspace: {
-                roots: [
-                    { id: PRIMARY_ROOT_ID, alias: null, position: 0 },
-                    { id: SECONDARY_ROOT_ID, alias: null, position: 1 },
-                ],
-            },
+        await setupMockAuth(page, { rootsFromWire: true });
+        await stubWorkspaceFromWire(page, {
+            hostPath: null,
+            roots: [
+                { id: PRIMARY_ROOT_ID, alias: null, position: 0 },
+                { id: SECONDARY_ROOT_ID, alias: null, position: 1 },
+            ],
         });
         await seedRootTrees(page);
         await page.goto("/workspace/workspace-1");

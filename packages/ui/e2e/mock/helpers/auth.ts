@@ -6,6 +6,7 @@ import {
     type SessionProjectionOptions,
 } from "./session-projections";
 import { installWorkspaceEventStream, type WorkspaceStreamScenario } from "./context-events";
+import { fulfillWorkspaceDetail } from "./workspace-fixture";
 
 export interface MockSSEStream {
     tokens: string[];
@@ -44,6 +45,15 @@ export interface MockAuthOptions {
      * Fields the caller does not set keep the existing fixture values.
      */
     workspace?: Record<string, unknown>;
+    /**
+     * task-59：`true` ⇒ **seed 不再注入 `roots`**，工作区 roots 必须从 wire 来
+     * （需要固定多根数据的 spec 自己 `page.route` 给 `GET /api/v1/workspaces/{id}`）。
+     *
+     * 默认 `false`，保留既有的「合并进两个 seed」语义（96 个 spec 不动）。
+     * 这个开关存在的唯一理由：roots 从 seed 来的时候，`normalizeWorkspaceRoots` 那条映射
+     * **根本没被走到** —— 把它整行注释掉，多根用例照样绿（判别力 = 0）。
+     */
+    rootsFromWire?: boolean;
     /**
      * BL-318：四类会话投影默认挂（形状照抄真实 CP 响应）。传 `false` 关掉，用于极少数要断言
      * "投影不可用"降级路径的用例；传对象可覆盖参与者花名册 / capabilities。
@@ -182,8 +192,30 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             response: { branchId: string; parentBranchId: string; forkPointMessageId: string };
         }
     >();
+    // task-59：`rootsFromWire` 还必须**让 store 真的去取**。`selectWorkspace`（stores/auth.ts:504）
+    // 的短路条件是「id 命中 且已有 name 或 workspaceRole」—— seed 一旦带 name，它就直接返回内存里的
+    // 对象，`GET /workspaces/{id}` 连发都不发。那时无论 wire 返回什么，多根都到不了 UI。
+    // 所以这个开关同时把 seed 收窄成「只知道 id」，逼出那次请求。
+    const workspaceOverrides = options.rootsFromWire ? {} : (options.workspace ?? {});
+    const seedWorkspace = options.rootsFromWire
+        ? { id: "workspace-1" }
+        : {
+              id: "workspace-1",
+              name: "Mock Workspace",
+              ownerId: "user-1",
+              ...workspaceOverrides,
+          };
+    const seedTabWorkspace = options.rootsFromWire
+        ? { id: "workspace-1" }
+        : {
+              id: "workspace-1",
+              name: "Mock Workspace",
+              workspaceRole: "OWNER",
+              ownerId: "user-1",
+              ...workspaceOverrides,
+          };
     await page.addInitScript(
-        ({ workspaceOverrides, capabilities }) => {
+        ({ seededWorkspace, seededTabWorkspace, capabilities }) => {
             localStorage.setItem("xihe-token", "mock-token");
             localStorage.setItem(
                 "xihe-user",
@@ -194,30 +226,17 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                     ...(capabilities ? { capabilities } : {}),
                 }),
             );
-            localStorage.setItem(
-                "xihe-workspace",
-                JSON.stringify({
-                    id: "workspace-1",
-                    name: "Mock Workspace",
-                    ownerId: "user-1",
-                    ...workspaceOverrides,
-                }),
-            );
+            localStorage.setItem("xihe-workspace", JSON.stringify(seededWorkspace));
             // PLAN-0559 per-tab context is authoritative; migrateLegacyWorkspace drops
             // role fields, so seed sessionStorage directly with the post-login shape
             // (PLAN-0560 workspace settings rely on workspaceRole).
-            sessionStorage.setItem(
-                "xihe-workspace",
-                JSON.stringify({
-                    id: "workspace-1",
-                    name: "Mock Workspace",
-                    workspaceRole: "OWNER",
-                    ownerId: "user-1",
-                    ...workspaceOverrides,
-                }),
-            );
+            sessionStorage.setItem("xihe-workspace", JSON.stringify(seededTabWorkspace));
         },
-        { workspaceOverrides: options.workspace ?? {}, capabilities: options.capabilities },
+        {
+            seededWorkspace: seedWorkspace,
+            seededTabWorkspace: seedTabWorkspace,
+            capabilities: options.capabilities,
+        },
     );
 
     if (options.sse) {
@@ -601,14 +620,13 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             workspaceMatch[1] !== "current" &&
             route.request().method() === "GET"
         ) {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    id: workspaceMatch[1],
-                    name: "Mock Workspace",
-                    status: "ready",
-                }),
+            // task-59（B 案）：工作区详情改由**单一来源** `helpers/workspace-fixture.ts` 供给，
+            // 不再在本文件里自编 `{ id, name, status }`。该响应带 14 个 wire 字段 + roots 投影，
+            // 所以 `normalizeWorkspaceRoots` 这条映射**第一次真正被执行到**（此前恒 undefined）。
+            // 不用 `route.fallback()`：mock 车道 `XIHE_UI_MOCK_API=0`，插件中间件没挂，
+            // 放行只会掉到真 CP（实测 401）。要改这条 lane 的数据面是 task-339 的事。
+            await fulfillWorkspaceDetail(route, workspaceMatch[1], {
+                workspace: options.workspace ?? {},
             });
             return;
         }
