@@ -390,7 +390,10 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="workspace-create-agent-session"]').trigger("click");
         await flushPromises();
         expect(wrapper.find('[data-testid="chat-panel-stub"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="workspace-active-agent"]').text()).toContain("agent-1");
+        // D-1167 ④（task-365 F）：工具栏的「当前智能体」chip 整体删除 —— 会话身份在创建时已经
+        // 由 `POST /sessions` 的 `agentPrincipalId` 请求参数钉住（下一行断言），workbench chrome
+        // 不再复述它；无对象的断言 = 「该元素不存在」。
+        expect(wrapper.find('[data-testid="workspace-active-agent"]').exists()).toBe(false);
         expect(mockedApi.createSession).toHaveBeenCalledWith("agent-1", "New Chat");
     });
 

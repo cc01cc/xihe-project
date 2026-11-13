@@ -172,7 +172,9 @@ test("@host Chat approval — approve, reject and persistence in one flow", asyn
     await expect(modal.locator("text=delete file")).toBeVisible();
     await expect(modal.locator("text=README.md")).toBeVisible();
     await expectPlatformScreenshot(page, "approval-real-modal.png", {
-        mask: [page.locator("time"), page.getByTestId("workspace-active-agent")],
+        // task-365 F：工具栏「当前智能体」chip 已删（D-1167 ④），mask 里那项一并移除，
+        // 否则 getByTestId 找不到元素会让快照本身失败。
+        mask: [page.locator("time")],
     });
     await modal.locator('[data-testid="approval-approve"]').click();
     await expect(modal).toBeHidden({ timeout: LONG_TIMEOUT_MS });

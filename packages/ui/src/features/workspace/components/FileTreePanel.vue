@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
     ChevronRight,
+    FileText,
     Folder,
     FolderOpen,
     FolderPlus,
@@ -51,6 +52,28 @@ const nestedRepos = ref<ApiNestedRepoItem[]>([]),
     confirmingNestedRepo = ref<string | null>(null),
     declaringNestedRepo = ref(false);
 const workspaceName = computed(() => auth.workspace?.name ?? t("sidebar.workspace"));
+
+/**
+ * task-365 E（D-1220 邻域）：**当前打开文件的路径**从 workbench 顶部工具栏搬进本面板头。
+ * 判据：文件级状态归文件级容器 —— 工具栏是 workbench 层 chrome，不该描述某个文件。
+ *
+ * <p>为什么是「目录段截断 + 文件名恒可见」两段，而不是整条面包屑：本面板宽 200–320px
+ * （`useWorkspaceLayout` 常量），全段面包屑在深层路径下必然溢出，要么横向滚动要么裁掉文件名 ——
+ * 而文件名是这条信息里唯一不可省的部分。**被否决候选**：vendored `Breadcrumb` 全段 + 横向滚动容器
+ * （成本 = 自定义滚动条 + 溢出阴影，收益 = 中间段可点，但中间段本来就没有点击行为）。</p>
+ *
+ * <p>旧实现带 `cursor-pointer` 却**没有点击处理** = 假可点，搬过来时一并去掉：这里只读。</p>
+ *
+ * <p>无文件时整行不渲染（`v-if`）：`D-1161`（task-312）已裁定「未选择文件」这类空态占位不该存在，
+ * 本卡不复活它。</p>
+ */
+const activeFilePath = computed(() => ws.activeFilePath ?? "");
+const activeFileName = computed(() => activeFilePath.value.split("/").pop() ?? "");
+const activeFileDir = computed(() => {
+    const segments = activeFilePath.value.split("/");
+    segments.pop();
+    return segments.join("/");
+});
 
 const undeclaredNestedRepos = computed(() => nestedRepos.value.filter((repo) => !repo.declared));
 const canDeclareNestedRepo = computed(
@@ -279,6 +302,28 @@ function upload() {
             >
                 <PanelLeftClose class="size-3.5" aria-hidden="true" />
             </button>
+        </div>
+
+        <!-- task-365 E：当前文件路径（只读；无文件时整行不渲染）。 -->
+        <div
+            v-if="activeFilePath"
+            data-testid="workspace-tree-active-file"
+            class="flex h-7 shrink-0 items-center gap-1 border-b border-border px-2 text-xs text-muted-foreground"
+            :title="activeFilePath"
+            :aria-label="activeFilePath"
+        >
+            <FileText class="size-3.5 shrink-0" aria-hidden="true" />
+            <span
+                v-if="activeFileDir"
+                data-testid="workspace-tree-active-file-dir"
+                class="min-w-0 truncate"
+                >{{ activeFileDir }}/</span
+            >
+            <span
+                data-testid="workspace-tree-active-file-name"
+                class="shrink-0 font-medium text-foreground"
+                >{{ activeFileName }}</span
+            >
         </div>
 
         <!-- PLAN-0641 B11: soft cost hint only, never a hard cap (>16 declared roots). -->

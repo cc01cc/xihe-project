@@ -186,12 +186,6 @@ const sessionId = computed(() => {
     return null;
 });
 
-const activeAgentPrincipalId = computed(
-    () =>
-        sessionStore.sessions.find((session) => session.id === sessionId.value)?.agentPrincipalId ??
-        null,
-);
-
 /** P1-2: the center header shows the session, never the workspace name again. */
 const sessionTitle = computed(() => {
     const session = sessionStore.sessions.find((item) => item.id === sessionId.value);
@@ -437,7 +431,6 @@ watch(isMobileViewport, (mobile) => {
             ref="workbenchRef"
             :workspace-id="workspaceId"
             :session-id="sessionId"
-            :agent-principal-id="activeAgentPrincipalId"
             :is-mobile="isMobileViewport"
             :sse-connected="workspaceEvents.isConnected.value"
             :sse-connecting="workspaceEvents.isConnecting.value"

@@ -2,14 +2,12 @@
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { useWorkspaceStore } from "../stores/workspace";
 import { useAuthStore } from "../../../stores/auth";
 import {
     Activity,
     Bot,
     Code,
     FileDiff,
-    FolderTree,
     GitBranch,
     MoreHorizontal,
     PanelLeft,
@@ -30,7 +28,6 @@ import {
  */
 const props = defineProps<{
     workspaceId: string;
-    agentPrincipalId?: string | null;
     codeOpen?: boolean;
     changesOpen?: boolean;
     monitorOpen?: boolean;
@@ -56,23 +53,12 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const router = useRouter(),
-    ws = useWorkspaceStore(),
     auth = useAuthStore();
 
 /** 徽标只做"呈现上限"处理（`@9+`），数值本身来自 props（服务端派生，前端不累加）。 */
 const membersBadgeCount = computed(() => {
     const value = props.membersUnread ?? 0;
     return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-});
-
-const breadcrumb = computed(() => {
-    const active = ws.activeFilePath;
-    if (!active) return [] as Array<{ label: string; path: string; isLast: boolean }>;
-    return active.split("/").map((part, i, arr) => ({
-        label: part,
-        path: arr.slice(0, i + 1).join("/"),
-        isLast: i === arr.length - 1,
-    }));
 });
 
 function openEnvironment() {
@@ -106,7 +92,14 @@ function overflowNav(navigate: () => void) {
 </script>
 
 <template>
-    <div class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-background/80">
+    <!--
+        task-365 E：给这条 chrome 一个稳定锚点 —— 「文件路径不在工具栏里」这条负例需要一个
+        可定位的容器（否则只能断言某个不存在的 testid 计数为 0，那是恒真的假断言）。
+    -->
+    <div
+        data-testid="workspace-toolbar"
+        class="flex items-center gap-2 px-3 h-10 border-b shrink-0 bg-background/80"
+    >
         <button
             class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors md:hidden"
             :title="t('files.titleFiles')"
@@ -240,44 +233,29 @@ function overflowNav(navigate: () => void) {
                 </button>
             </div>
         </div>
-        <div
-            class="flex min-w-0 items-center gap-1 pr-12 text-xs text-muted-foreground flex-1"
-            :title="props.workspaceId"
-        >
-            <FolderTree class="size-3.5" />
-            <template v-if="breadcrumb.length > 0">
-                <span v-for="(part, i) in breadcrumb" :key="i" class="flex items-center gap-1">
-                    <span v-if="i > 0" class="text-muted-foreground/50">/</span>
-                    <span
-                        class="hover:text-foreground cursor-pointer"
-                        :class="{ 'text-foreground font-medium': part.isLast }"
-                    >
-                        {{ part.label }}
-                    </span>
-                </span>
-            </template>
-            <!--
-                task-312（D-1161 用户裁定）：「未选择文件」整段删除，不搬位置。
-                用户原话「这一行都没有必要」—— 是**存在必要性**问题，不是位置问题。
-                判据：① 它是**文件级**状态，却挂在 workbench 层 chrome 的正中间；
-                ② 出现在会话页顶部却描述文件面板；③ 没打开文件是**常态**，用全条最淡的
-                text-muted-foreground/70 占住中段，信息量为零。
-                被否决的两个方案（防复发）：挪回 FileTreePanel header（等于把同一问题换个
-                地方）、保留但改文案（同病）。文件面板的空态应由该面板自己表达。
-                宽度影响（[实测] 2026-11-13，mock 预览 5199，1920×1080 等效）：
-                把该 span 按原 class 插回原位再量，中段 1077.91 → 1077.91、右段 274.83 → 274.83、
-                页签 x 逐个不变 ⇒ 删除零跳动。中段是 flex-1，本来就与外层同宽，变的是内容不是宽度。
-            -->
-            <span
-                v-if="agentPrincipalId"
-                data-testid="workspace-active-agent"
-                class="max-w-24 shrink-0 truncate rounded border px-1 py-0.5 text-xs text-muted-foreground"
-                :title="`${t('workspace.activeAgent')}: ${agentPrincipalId}`"
-                :aria-label="`${t('workspace.activeAgent')}: ${agentPrincipalId}`"
-            >
-                {{ t("workspace.activeAgent") }} · {{ agentPrincipalId.slice(0, 8) }}
-            </span>
-        </div>
+        <!--
+            task-365 E：文件路径面包屑**整段搬去文件树面板头**（FileTreePanel 的
+            `workspace-tree-active-file`）—— 文件级状态归文件级容器，不占 workbench chrome 正中。
+            这里留一个**空撑位**：它是把右侧控件推到右端的布局件（flex-1），删掉它右段会左移；
+            外层宽度不变 ⇒ 右段 x 不变（D-1161 的零跳动纪律：改内容不改宽度）。
+            与 D-1161 的关系：那条裁定删的是「未选择文件」**空态占位**，并把「挪回面板头」列为
+            被否决方案 —— 否决的是空态文案的**存在必要性**；本卡搬的是**真有文件时的路径**，
+            面板侧无文件时整行不渲染，不重新引入任何占位文案。
+            树面板收起时路径仍可见：编辑器自己的页签条（EditorTabBar）钉着当前文件。
+        -->
+        <!--
+            task-312（D-1161 用户裁定）：「未选择文件」整段删除，不搬位置。
+            用户原话「这一行都没有必要」—— 是**存在必要性**问题，不是位置问题。
+            判据：① 它是**文件级**状态，却挂在 workbench 层 chrome 的正中间；
+            ② 出现在会话页顶部却描述文件面板；③ 没打开文件是**常态**，用全条最淡的
+            text-muted-foreground/70 占住中段，信息量为零。
+            被否决的两个方案（防复发）：挪回 FileTreePanel header（等于把同一问题换个
+            地方）、保留但改文案（同病）。文件面板的空态应由该面板自己表达。
+            宽度影响（[实测] 2026-11-13，mock 预览 5199，1920×1080 等效）：
+            把该 span 按原 class 插回原位再量，中段 1077.91 → 1077.91、右段 274.83 → 274.83、
+            页签 x 逐个不变 ⇒ 删除零跳动。中段是 flex-1，本来就与外层同宽，变的是内容不是宽度。
+        -->
+        <div class="min-w-0 flex-1" aria-hidden="true" />
 
         <div class="flex items-center gap-1 max-md:hidden">
             <button

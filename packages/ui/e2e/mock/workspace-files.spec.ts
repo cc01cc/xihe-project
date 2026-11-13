@@ -121,6 +121,47 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         await expect(destructive).toHaveCSS("pointer-events", "auto");
     });
 
+    /**
+     * task-365 E：文件路径归文件级容器 —— 打开文件后路径出现在**文件树面板头**，
+     * 且 workbench 顶部工具栏里不再复述它（负例用「工具栏文本不含文件名」表达，
+     * 不用「某个不存在的 testid 计数为 0」—— 后者恒真、等于没验）。
+     */
+    test("active file path lives in the file-tree panel head, not in the toolbar", async ({
+        page,
+    }) => {
+        await page.addInitScript(() => {
+            localStorage.setItem(
+                "xihe-mock-filetree",
+                JSON.stringify([
+                    {
+                        name: "src",
+                        path: "src",
+                        type: "directory",
+                        children: [
+                            { name: "notes.md", path: "src/notes.md", type: "file", size: 12 },
+                        ],
+                    },
+                ]),
+            );
+        });
+        await page.goto("/workspace/workspace-1");
+        // 目录行的可访问名带展开箭头（实测「▶ src」）⇒ 用正则而不是 exact。
+        const dirEntry = page.getByRole("treeitem", { name: /src/ });
+        await expect(dirEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await dirEntry.click();
+        const fileEntry = page.getByRole("button", { name: /notes\.md/ });
+        await expect(fileEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await fileEntry.click();
+
+        const pathRow = page.getByTestId("workspace-tree-active-file");
+        await expect(pathRow).toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        await expect(pathRow).toHaveAttribute("title", "src/notes.md");
+        await expect(page.getByTestId("workspace-tree-active-file-name")).toHaveText("notes.md");
+        await expect(page.getByTestId("workspace-tree-active-file-dir")).toContainText("src");
+        // 旧位置（workbench 顶部工具栏）不再承载文件级状态。
+        await expect(page.getByTestId("workspace-toolbar")).not.toContainText("notes.md");
+    });
+
     test("empty file tree renders an explicit empty state", async ({ page }) => {
         await page.addInitScript(() => {
             localStorage.setItem("xihe-mock-filetree", JSON.stringify([]));

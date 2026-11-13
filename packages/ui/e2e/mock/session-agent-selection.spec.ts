@@ -57,7 +57,9 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     const createRequest = await createRequestPromise;
     await expect(page).toHaveURL(/\/workspace\/workspace-1\/chat\/mock-session-/);
     await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
-    await expect(page.getByTestId("workspace-active-agent")).toContainText("agent-1");
+    // D-1167 ④（task-365 F）：工具栏 chip 删除。会话身份仍由创建请求钉住；
+    // 这里钉「chip 不再出现在 workbench chrome 里」。
+    await expect(page.getByTestId("workspace-active-agent")).toHaveCount(0);
     if ((page.viewportSize()?.width ?? 1920) < 768) {
         await page.getByTestId("mobile-chat-open").click();
         const sheet = page.getByTestId("mobile-chat-sheet");

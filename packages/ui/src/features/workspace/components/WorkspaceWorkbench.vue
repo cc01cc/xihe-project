@@ -64,7 +64,6 @@ import { useAgentStore } from "../../../stores/agent";
 const props = defineProps<{
     workspaceId: string;
     sessionId: string | null;
-    agentPrincipalId?: string | null;
     isMobile: boolean;
     /**
      * task-312：底部状态栏的 SSE 连接态。**由页面（`WorkspaceView`）传入而不是在这里取** ——
@@ -709,7 +708,6 @@ defineExpose({ openDockTab });
     <div class="flex h-full min-w-0 flex-1 flex-col">
         <WorkspaceToolbar
             :workspace-id="workspaceId"
-            :agent-principal-id="agentPrincipalId"
             :code-open="isMobile ? false : codeOpen"
             :changes-open="
                 isMobile ? (mobileChangesOpen ?? false) && mobileAuxTab === 'changes' : changesOpen
