@@ -15,6 +15,8 @@
  * 是唯一"零产品改动 + 用户可手动切换"的通道。另支持 env `XIHE_UI_MOCK_DENIED=1` 给脚本化跑批用。</p>
  */
 
+import { MOCK_AGENT_WORKSPACE_ID } from "./workspaceAgents";
+
 export interface PreviewPermissionAtom {
     actionClass: string;
     resource: string;
@@ -48,6 +50,23 @@ export const PREVIEW_PERMISSION_ATOMS: readonly PreviewPermissionAtom[] = [
 export const DENIED_PERMISSION_ATOMS: readonly string[] = ["credential_manage"];
 
 /**
+ * task-449 / D-1287：**工作区档**授予（与上面的实例档 `*` 原子分开，不合并）。
+ *
+ * <p>为什么必须补：`WorkspaceAgentsPanel` 的写面判据是 `workspaceAtoms.includes('MANAGE_WORKSPACE_AGENTS')`
+ * （`:178-181`），而 `workspaceAtoms` 取自本投影的 `workspaces[]`（`:262-267`）。此前 mock 只发实例档 ⇒
+ * 该原子永远不在册 ⇒ 「修改上限」按钮恒禁用（`:1558`）⇒ **写回环在浏览器里根本没法验**
+ * （449 的 preview e2e 第一轮实测：click 超时，元素 disabled）。这正是 D-1281 说的「空集把缺口藏起来」。</p>
+ *
+ * <p>原子名取自 CP 真实目录，不编造：`PermissionAtomCatalog.java:125/159`（MANAGE_WORKSPACE_AGENTS）、
+ * `:173`（MEMORY_WRITE）。**resource 必须是具体 workspace UUID，禁 `*`**（管理员 Principal 授权页口径，
+ * 见 `packages/ui/AGENTS.md`）——所以不能塞进上面那份实例档清单（那份的判据是 resource 全为 `*`）。</p>
+ */
+export const PREVIEW_WORKSPACE_ATOMS: readonly PreviewPermissionAtom[] = [
+    { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: MOCK_AGENT_WORKSPACE_ID },
+    { actionClass: "MEMORY_WRITE", resource: MOCK_AGENT_WORKSPACE_ID },
+];
+
+/**
  * `?denied=1` 判定：从 `Referer`（页面 URL）里读 `denied`，接受 `1` / `true`。
  *
  * @param referer 请求头 `Referer`（缺失/不可解析 ⇒ 授权模式，即默认形态）
@@ -72,6 +91,17 @@ export function mockPermissionProjection(input: { capabilities: string[]; denied
     userId: string;
     instanceCapabilities: string[];
     instancePermissions: PreviewPermissionAtom[];
+    /**
+     * CP `CapabilityProjectionService.WorkspacePermissions`（`:77-78`）四字段原样：
+     * workspaceId / workspaceRole（canonicalName）/ workspaceAdmin / permissions。
+     * 角色名取自 `SystemAccessRoleCatalog.WS_OWNER`（`:52`），不自造别名。
+     */
+    workspaces: Array<{
+        workspaceId: string;
+        workspaceRole: string;
+        workspaceAdmin: boolean;
+        permissions: PreviewPermissionAtom[];
+    }>;
 } {
     const atoms = input.denied
         ? PREVIEW_PERMISSION_ATOMS.filter(
@@ -82,5 +112,15 @@ export function mockPermissionProjection(input: { capabilities: string[]; denied
         userId: "mock-user",
         instanceCapabilities: input.capabilities,
         instancePermissions: atoms,
+        // 工作区档不受 `?denied=1` 影响：受限形态演的是**凭据** 403（DENIED_PERMISSION_ATOMS），
+        // 不顺手把智能体写面也扣掉 —— 那会造出一个 CP 里不存在的组合态。
+        workspaces: [
+            {
+                workspaceId: MOCK_AGENT_WORKSPACE_ID,
+                workspaceRole: "WS_OWNER",
+                workspaceAdmin: true,
+                permissions: [...PREVIEW_WORKSPACE_ATOMS],
+            },
+        ],
     };
 }

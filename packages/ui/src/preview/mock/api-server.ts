@@ -21,6 +21,8 @@ import {
     sessionsOfWorkspace,
     workspacelessSessions,
 } from "./data/sessions";
+// task-449 / D-1287（D-1281 同形）：工作区智能体夹具 —— capSource 四态 + 记忆/角色绑定 + 写面判定。
+import { handleWorkspaceAgentResource } from "./data/workspaceAgents";
 import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
 import {
     MOCK_ORG_UNITS,
@@ -707,17 +709,67 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     return respond(200, { principals: [] });
                 }
                 /**
-                 * 第 4 条同类缺口（task-225 验收时实测发现，原卡面只列了 3 条）：`task-203` 新接的工作区层
-                 * 读面 `GET /workspaces/{workspaceId}/agents` 在 mock 车道也不存在 ⇒ `?layer=WORKSPACE` 页面
-                 * 仍会出 `API error 404` 红条（`WorkspaceAgentsPanel` 首屏拉绑定列表）。形状照 e2e 夹具注释里的
-                 * 真实 CP 记录：`{agents:[{principalId,name,templateId,templateName,createdAt,permissionsSnapshot,
-                 * bound,hooks,contextPolicy,disabled}]}`；这里给合法空集（mock 工作区没有已绑定智能体）。
+                 * task-449 / D-1287：这里原先回 `{agents:[]}`（task-225 补的合法空集）。空集让
+                 * `WorkspaceAgentsPanel` 在 mock 车道**没有行可渲染** ⇒ task-417 的「冻结上限快照」标注与
+                 * `capSource` 来源徽标拿不到浏览器证据，且面板消费的 21 条面里缺哪些**看不见**
+                 * （D-1281：空集不是没有缺口，是看不见缺口）。现在改夹具驱动：六行覆盖 capSource 四态
+                 * （explicit 非空 / explicit 空=零权限 / baseline 空=继承 / 缺省=旧响应）+ disabled + bound=false。
+                 * 判定与内存集合在 `data/workspaceAgents.ts`，这里只做一次 dispatch（与 instance/skills 同形）。
+                 * 未知 suffix 仍回 404 `MOCK_ENDPOINT_MISSING`，**不做通配 200**。
                  */
-                const workspaceAgentsMatch = path.match(/^\/workspaces\/([^/]+)\/agents$/);
-                if (workspaceAgentsMatch && methodIsGet) {
-                    return respond(200, { agents: [] });
+                if (
+                    /^\/workspaces\/[^/]+\/agents(\/|$)/.test(path) ||
+                    /^\/agent-principals(\/|$)/.test(path) ||
+                    path === "/roles"
+                ) {
+                    const agentMethod = req.method ?? "GET";
+                    const readAgentBody = (): Promise<Record<string, unknown>> =>
+                        new Promise((resolveBody) => {
+                            let raw = "";
+                            req.on("data", (chunk: unknown) => {
+                                raw += String(chunk);
+                            });
+                            req.on("end", () => {
+                                try {
+                                    resolveBody(
+                                        raw ? (JSON.parse(raw) as Record<string, unknown>) : {},
+                                    );
+                                } catch {
+                                    resolveBody({});
+                                }
+                            });
+                        });
+                    // 个人主体列表（`GET /agent-principals`）形状不变：本模块只接写面与子资源。
+                    if (agentMethod === "GET" && path === "/agent-principals") {
+                        return respond(200, { principals: [] });
+                    }
+                    void handleWorkspaceAgentResource(agentMethod, path, url, readAgentBody)
+                        .then((result) => {
+                            if (!result) {
+                                return respond(404, {
+                                    type: "about:blank",
+                                    title: "Not Found",
+                                    status: 404,
+                                    code: "MOCK_ENDPOINT_MISSING",
+                                    requestId: "mock-request",
+                                });
+                            }
+                            options.log?.(`[mock-api] ${agentMethod} ${path} → ${result.status}`);
+                            return result.status === 204
+                                ? respond(204, null)
+                                : respond(result.status, result.body);
+                        })
+                        .catch((cause: unknown) => {
+                            options.log?.(
+                                `[mock-api] ${agentMethod} ${path} 处理失败：${String(cause)}`,
+                            );
+                            respond(500, {
+                                code: "MOCK_HANDLER_FAILED",
+                                requestId: "mock-request",
+                            });
+                        });
+                    return;
                 }
-
                 if (path === "/agent-templates" && methodIsGet) {
                     // `api.getAgentTemplates(layer, workspaceId)`：`AgentTemplateLayerResponse`。
                     // `layer` 原样回显（调用方要么按 `layer=workspace` 要，要么拿 instance 层）。
