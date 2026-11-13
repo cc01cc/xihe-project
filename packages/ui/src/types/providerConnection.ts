@@ -48,12 +48,27 @@ type AssertNever<T extends never> = T;
  */
 export type ApiTypePairHasNoCapability = AssertNever<Extract<keyof ApiTypePair, "capability">>;
 
+/**
+ * CP `/api-input-types` 的读面投影。**9 个字段全部是契约 required**
+ * （`docs/api/openapi.yaml:8050` 的 `ApiInputType.required`，逐字段见 `:8051-8059`）。
+ *
+ * <p>task-465（D-1318）：此前缺 `requiredBaseSuffix` —— 它是**base URL 必须带的后缀**，
+ * 与 `path` 分工：CP 注册表里 `path` **不含** `/v1`（如 `/chat/completions`），前缀由
+ * `requiredBaseSuffix`（`/v1`）承载；embedding 型是 `/api/v1`。漏了它，UI 就无法从契约
+ * 还原完整端点，只能靠猜或硬编码（`preview/mock/api-server.ts` 已在 task-457 按真源补上）。</p>
+ *
+ * <p>**当前无消费者**（grep 实测：9 处命中全是类型标注，没有读该字段的代码）⇒ 本条是
+ * **读面投影完整性**修复，不是行为修复；不因此声称「UI 已按后缀拼端点」。真值来源是 CP
+ * `control-plane/src/main/resources/api-input-types/api-input-types.json`，UI 不另造词表。</p>
+ */
 export interface ApiInputType {
     apiTypeId: string;
     version: number;
     operation: ApiTypeOperation;
     method: "POST";
     path: string;
+    /** base URL 必备后缀（`/v1`、`/api/v1`）；`path` 不含它。契约 required（openapi:8057）。 */
+    requiredBaseSuffix: string;
     requestShape: string;
     responseShape: string;
     streamShape: string;
