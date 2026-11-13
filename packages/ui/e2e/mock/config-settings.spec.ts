@@ -85,6 +85,29 @@ test.describe("Config Settings (three layers)", () => {
                 body: JSON.stringify({}),
             });
         });
+        // task-461（D-1311）：上面的兜底把页面**合法调用**的会话列表也答成 `{}`，而
+        // `api.ts:3107-3114 normalizeSessionListPayload` 要求 `sessions` 数组 ⇒ throw ⇒ logger[ERROR]
+        // ⇒ `helpers/page-failures.ts:44` 的共享 console 门「no unexpected console errors」红。
+        // 这不是产品缺陷，是**桩给了非法形状**：`WorkspaceSessionGroups` 首屏要读独立会话与
+        // 工作区会话，两条都被兜底吞掉。修法照**仓内既有先例** `plan-0560-settings.spec.ts:33-43`
+        // （BL-318 同因同修）：注册在兜底**之后**（Playwright LIFO ⇒ 后注册优先），只给集合面
+        // 一个合法信封，非 GET 仍 `route.fallback()` 交回上层桩。
+        //
+        // **为什么不 passthrough 给 mock server**：本 spec 跑 index 链路，`helpers/chain.ts:79
+        // mockApiEnvFor("index") = "0"` ⇒ `vite.config.ts:136/155` 不挂 mock 中间件 ⇒ `route.continue()`
+        // 会落到 vite 的 SPA 回落（200 HTML），JSON 解析炸得更响。index 链路只能按契约给形状。
+        //
+        // **边界（runtime-1 复核意见，别照抄到别处）**：`{sessions: []}` 是**合法空集**，在这里成立
+        // 只因为本 spec 不断言会话内容。要验会话内容的 spec 必须给真行 —— 空集会让断言变成空断言
+        // （D-1281 同族）。**不放宽 console 门、不给 sessions 错误加白名单**（那是把判据改绿，D-1303）。
+        await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route: any) => {
+            if (route.request().method() !== "GET") return route.fallback();
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ sessions: [] }),
+            });
+        });
         // PLAN-0560: workspace settings page resolves the workspace context first.
         await page.route("**/api/v1/workspaces/ws-1", (route: any) =>
             route.fulfill({
@@ -629,6 +652,29 @@ test.describe("Config Settings (three layers)", () => {
                 body: JSON.stringify({}),
             }),
         );
+        // task-461（D-1311）：上面的兜底把页面**合法调用**的会话列表也答成 `{}`，而
+        // `api.ts:3107-3114 normalizeSessionListPayload` 要求 `sessions` 数组 ⇒ throw ⇒ logger[ERROR]
+        // ⇒ `helpers/page-failures.ts:44` 的共享 console 门「no unexpected console errors」红。
+        // 这不是产品缺陷，是**桩给了非法形状**：`WorkspaceSessionGroups` 首屏要读独立会话与
+        // 工作区会话，两条都被兜底吞掉。修法照**仓内既有先例** `plan-0560-settings.spec.ts:33-43`
+        // （BL-318 同因同修）：注册在兜底**之后**（Playwright LIFO ⇒ 后注册优先），只给集合面
+        // 一个合法信封，非 GET 仍 `route.fallback()` 交回上层桩。
+        //
+        // **为什么不 passthrough 给 mock server**：本 spec 跑 index 链路，`helpers/chain.ts:79
+        // mockApiEnvFor("index") = "0"` ⇒ `vite.config.ts:136/155` 不挂 mock 中间件 ⇒ `route.continue()`
+        // 会落到 vite 的 SPA 回落（200 HTML），JSON 解析炸得更响。index 链路只能按契约给形状。
+        //
+        // **边界（runtime-1 复核意见，别照抄到别处）**：`{sessions: []}` 是**合法空集**，在这里成立
+        // 只因为本 spec 不断言会话内容。要验会话内容的 spec 必须给真行 —— 空集会让断言变成空断言
+        // （D-1281 同族）。**不放宽 console 门、不给 sessions 错误加白名单**（那是把判据改绿，D-1303）。
+        await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route: any) => {
+            if (route.request().method() !== "GET") return route.fallback();
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ sessions: [] }),
+            });
+        });
         await page.route("**/api/v1/config/**", (route: any) => route.abort("connectionrefused"));
         await page.route("**/api/v1/events**", (route: any) =>
             route.fulfill({
