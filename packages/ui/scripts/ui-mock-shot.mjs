@@ -159,12 +159,20 @@ const SHOTS = [
     // 16 = 展开「研发部」并选中 ⇒ 右侧成员表出现（「含下级」默认开 ⇒ 子单元的人也在，
     //      「所在单元」列显示各自**实际**单元，fixture 见 preview/mock/data/orgUnits.ts）。
     // 两张图同时覆盖「树 + 列表 + 禁用写面 + 404/403 文案位置」的静态元素自审。
-    { id: "15", name: "org-members-tree", path: "/members", app: true },
+    {
+        id: "15",
+        name: "org-members-tree",
+        path: "/members",
+        app: true,
+        // 等到树节点真的落地再拍：冷启动首批模块要现转译，见 `shootOne` 里 waitFor 的实测记录。
+        waitFor: "[data-testid=org-tree-label-ou-rd]",
+    },
     {
         id: "16",
         name: "org-members-selected",
         path: "/members",
         app: true,
+        waitFor: "[data-testid=org-tree-label-ou-rd]",
         expand: ["[data-testid=org-tree-toggle-ou-rd]", "[data-testid=org-tree-label-ou-rd]"],
     },
 ];
@@ -845,6 +853,16 @@ async function shootOne(page, base, shot, outDir) {
                     shot.id +
                     " 落在 /login：app 镜头缺 mock token（见 MOCK_APP_TOKEN 注释）",
             );
+        }
+        /**
+         * task-240（2026-11-13 实测）：**冷启动的第一张 app 镜头会拍到半挂载态** ——
+         * 全新的 dev server 首次渲染新路由时，Vite 还在冷转译该路由的模块，固定的 600 ms
+         * 静置不够：实测 15 号（组织成员页）单独成批时拍到"只剩搜索框 + 半屏空白"，
+         * 而前面先拍一张 01 预热后同一镜头正常。给镜头声明一个**内容就绪选择器**比"再加 2 秒"
+         * 更准（等的是它要拍的东西出现），且只对声明者生效 —— 存量镜头时序与 sha 零改动。
+         */
+        if (shot.waitFor) {
+            await page.waitForSelector(shot.waitFor, { timeout: 20000 });
         }
         await page.evaluate(() => document.fonts.ready);
         // task-189：`expand` 允许**数组**（按顺序连点），用于「先切双态、再开二级菜单」这类
