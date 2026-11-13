@@ -718,7 +718,7 @@ alias = "check:api-docs"
 # 改本任务必须同批改 zh/en 的 DEV-002 §4（**en 的 §4 不是同一节，两侧各查、别按编号平移**）。
 [tasks."check:migrations"]
 run = "node scripts/check-migration-numbers.mjs"
-description = "Gate: Flyway migration numbers must be unique and registered in workspace migration-numbers.md (1 = finding, 2 = cannot answer — 2 is NOT green; cross-repo registry via pass-through arg --registry <path>)"
+description = "Gate: Flyway migration numbers must be unique and registered in workspace migration-numbers.md (1 = finding, 2 = cannot answer — 2 is NOT green; cross-repo registry via pass-through arg --registry <path>) Needs a workspace prerequisite (the registry lives in the one repo) and is DELIBERATELY NOT a validate dependency: a gate that routinely returns 2 trains people to ignore exit codes; if the registry ever moves into this repository, re-evaluate wiring."
 alias = "check:migrations"
 
 [tasks."check:openapi"]
