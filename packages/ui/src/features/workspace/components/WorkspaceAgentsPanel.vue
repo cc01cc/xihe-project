@@ -1389,6 +1389,16 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     {{ t("workspace.refreshAgents") }}
                 </button>
             </div>
+            <!-- task-417 P1-6（408 盘点）：下面每行的能力徽标是 **CP 记录的冻结上限快照**，不是当前生效权限。
+                 公开读面只给 permissionsSnapshot + capSource（WorkspaceAgentController:294-297），
+                 真源 resolveCapFor 是 CP 内部求值、**没有公开读面** ⇒ UI 不得声称「这就是它现在的权限」。
+                 缺 CP 读面这条已在 417 报告里登记（不在 UI 私造字段）。 -->
+            <p
+                class="text-xs text-muted-foreground"
+                data-testid="workspace-agent-cap-snapshot-hint"
+            >
+                {{ t("workspace.agentCapSnapshotHint") }}
+            </p>
             <p v-if="loading" class="text-sm text-muted-foreground" role="status">
                 {{ t("workspace.loadingAgents") }}
             </p>
@@ -1498,32 +1508,59 @@ async function unbind(agent: WorkspaceAgentBinding) {
                 </div>
                 <div
                     v-if="editingPrincipalId !== agent.principalId"
-                    class="flex flex-wrap gap-1.5"
+                    class="space-y-1"
                     data-testid="workspace-agent-cap"
                 >
-                    <span
-                        v-for="permission in agent.permissionsSnapshot"
-                        :key="`${permission.actionClass}:${permission.resource ?? '*'}`"
-                        class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
-                    >
-                        {{ actionLabel(permission.actionClass) }} ·
-                        {{ permission.resource ?? "*" }}
-                    </span>
-                    <span
-                        v-if="agent.permissionsSnapshot.length === 0"
-                        class="text-xs text-muted-foreground"
-                    >
-                        {{ t("workspace.noAgentCapabilities") }}
-                    </span>
-                    <button
-                        type="button"
-                        class="ml-auto text-xs underline disabled:opacity-50"
-                        :data-testid="`workspace-agent-edit-cap-${agent.principalId}`"
-                        :disabled="saving || canManageWorkspaceAgents !== true"
-                        @click="startEditing(agent)"
-                    >
-                        {{ t("workspace.editAgentCap") }}
-                    </button>
+                    <!-- task-417 P1-6：标题明写这是快照；来源用 CP 自己的 capSource（D-1109），
+                         **不由数组长度猜语义** —— baseline 的空数组是「跟随角色基线」，不是「无工具权限」。 -->
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <span
+                            class="text-xs font-medium text-muted-foreground"
+                            data-testid="workspace-agent-cap-label"
+                        >
+                            {{ t("workspace.agentCapSnapshotLabel") }}
+                        </span>
+                        <span
+                            v-if="agent.capSource"
+                            class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
+                            :data-testid="`workspace-agent-cap-source-${agent.principalId}`"
+                        >
+                            {{
+                                agent.capSource === "baseline"
+                                    ? t("workspace.agentCapInherit")
+                                    : t("workspace.agentCapExplicit")
+                            }}
+                        </span>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        <span
+                            v-for="permission in agent.permissionsSnapshot"
+                            :key="`${permission.actionClass}:${permission.resource ?? '*'}`"
+                            class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
+                        >
+                            {{ actionLabel(permission.actionClass) }} ·
+                            {{ permission.resource ?? "*" }}
+                        </span>
+                        <span
+                            v-if="
+                                agent.permissionsSnapshot.length === 0 &&
+                                agent.capSource !== 'baseline'
+                            "
+                            class="text-xs text-muted-foreground"
+                            data-testid="workspace-agent-cap-empty"
+                        >
+                            {{ t("workspace.noAgentCapabilities") }}
+                        </span>
+                        <button
+                            type="button"
+                            class="ml-auto text-xs underline disabled:opacity-50"
+                            :data-testid="`workspace-agent-edit-cap-${agent.principalId}`"
+                            :disabled="saving || canManageWorkspaceAgents !== true"
+                            @click="startEditing(agent)"
+                        >
+                            {{ t("workspace.editAgentCap") }}
+                        </button>
+                    </div>
                 </div>
                 <div v-else class="space-y-2 border-t pt-3">
                     <!-- 47A（D-1109）：两态在 UI 上必须可区分，且请求体按态分支（见 saveCap）——

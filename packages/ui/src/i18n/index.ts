@@ -564,6 +564,9 @@ const messages = {
             agentTemplateId: "模板 ID",
             agentWorkspaceId: "工作区 ID",
             noAgentCapabilities: "无工具权限",
+            agentCapSnapshotLabel: "冻结上限快照",
+            agentCapSnapshotHint:
+                "下列徽标是 CP 在绑定时记录的冻结上限快照，不是当前生效权限；实际生效由 CP 按角色绑定实时求值，UI 目前没有该读面。",
             editAgentCap: "编辑工作区角色",
             saveAgentCap: "保存权限",
             unbindAgent: "解绑",
@@ -3477,6 +3480,8 @@ const messages = {
             bindWorkspace: "工作区",
             bindAgentsEmpty: "该工作区暂无智能体",
             bindAlready: "已绑定",
+            bindSnapshotNote:
+                "「已绑定」按该工作区的权限快照判定；由角色授权（grant）带来的可用性不在此列。",
             bindApply: "绑定所选",
             bindRemove: "解绑所选",
             bindBusy: "处理中…",
@@ -4080,6 +4085,9 @@ const messages = {
             agentTemplateId: "Template ID",
             agentWorkspaceId: "Workspace ID",
             noAgentCapabilities: "No tool permissions",
+            agentCapSnapshotLabel: "Frozen cap snapshot",
+            agentCapSnapshotHint:
+                "The badges below are the frozen cap snapshot CP recorded at binding time, not the permissions in effect now. Live authority is evaluated by CP from role bindings; the UI has no read face for it yet.",
             editAgentCap: "Edit workspace role",
             saveAgentCap: "Save permissions",
             unbindAgent: "Unbind",
@@ -7134,6 +7142,8 @@ const messages = {
             bindWorkspace: "Workspace",
             bindAgentsEmpty: "No Agents in this workspace",
             bindAlready: "Bound",
+            bindSnapshotNote:
+                "“Bound” is judged from this workspace’s cap snapshot; availability that comes from role grants is not covered here.",
             bindApply: "Bind selected",
             bindRemove: "Unbind selected",
             bindBusy: "Working…",

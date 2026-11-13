@@ -137,6 +137,12 @@ void loadWorkspaces();
 <template>
     <div class="space-y-3" data-testid="credential-bindings">
         <p class="text-xs text-muted-foreground">{{ t("credentials.bindScopeNote") }}</p>
+        <!-- task-417 P1-6：「已绑定」徽标由 permissionsSnapshot 判定，而快照是 CP 存的上限文档、
+             不是实时求值结果（真源 resolveCapFor 无公开读面）；角色授权（grant）那条轴也不在快照里。
+             这里只把判据来源说清楚，**不改绑定/解绑语义**（那两条写面本来就只动工作区 cap）。 -->
+        <p class="text-xs text-muted-foreground" data-testid="credential-bind-snapshot-note">
+            {{ t("credentials.bindSnapshotNote") }}
+        </p>
 
         <div class="flex flex-wrap items-center gap-2">
             <label class="text-xs text-muted-foreground" for="credential-bind-workspace">{{

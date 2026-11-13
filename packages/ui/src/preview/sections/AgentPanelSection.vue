@@ -111,7 +111,10 @@ const showEmpty = ref(true);
                                     </TooltipContent>
                                 </Tooltip>
                             </div>
-                            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                            <p class="mt-2 text-xs text-muted-foreground">
+                                冻结上限快照（CP 绑定时记录，非当前生效权限）
+                            </p>
+                            <div class="mt-1 flex flex-wrap items-center gap-1.5">
                                 <Badge
                                     v-for="atom in agent.permissionsSnapshot"
                                     :key="atom.actionClass"

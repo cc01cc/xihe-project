@@ -1768,3 +1768,94 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         expect(cjk, `hardcoded CJK: ${cjk?.slice(0, 6).join("") ?? ""}`).toBeNull();
     });
 });
+
+// ── task-417 P1-6（408 盘点 §4）：permissionsSnapshot 不是权限真源 ─────────────────────
+// 事实依据：公开读面只给 permissionsSnapshot + capSource（CP WorkspaceAgentController:294-297），
+// 真源 resolveCapFor 是 CP 内部求值、无公开读面 ⇒ UI 只能**标注来源**，不得声称「这就是当前权限」。
+// 空数组的语义由 CP 自己的 capSource 决定（D-1109）：baseline = 跟随角色基线，不是「无工具权限」。
+describe("WorkspaceAgentsPanel cap snapshot provenance (task-417 P1-6)", () => {
+    const base = {
+        principalId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        name: "snapshot agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-05T00:00:00Z",
+        bound: true,
+        disabled: false,
+    };
+    const atoms = [
+        { actionClass: "file_read", resource: "workspace" },
+        { actionClass: "file_write", resource: "workspace" },
+    ];
+    const tt = (key: string) => i18n.global.t(key);
+    async function mountWith(row: Record<string, unknown>) {
+        apiMock.getWorkspaceAgents.mockResolvedValue([row]);
+        return mountOpenedPanel();
+    }
+    const sourceBadge = (wrapper: VueWrapper) =>
+        wrapper.find(`[data-testid="workspace-agent-cap-source-${base.principalId}"]`);
+
+    it("labels the badges as a frozen snapshot and keeps every atom visible", async () => {
+        const wrapper = await mountWith({
+            ...base,
+            permissionsSnapshot: atoms,
+            capSource: "explicit",
+        });
+        expect(wrapper.get('[data-testid="workspace-agent-cap-label"]').text()).toBe(
+            tt("workspace.agentCapSnapshotLabel"),
+        );
+        expect(wrapper.get('[data-testid="workspace-agent-cap-snapshot-hint"]').text()).toBe(
+            tt("workspace.agentCapSnapshotHint"),
+        );
+        const cap = wrapper.get('[data-testid="workspace-agent-cap"]');
+        // 标注不是把信息藏起来：两条原子徽标 + 一条来源徽标都还在。
+        expect(cap.findAll("span.rounded.border")).toHaveLength(atoms.length + 1);
+        expect(sourceBadge(wrapper).text()).toBe(tt("workspace.agentCapExplicit"));
+    });
+
+    it("baseline + empty snapshot reads as inherit, never as 'no tool permissions'", async () => {
+        const wrapper = await mountWith({
+            ...base,
+            permissionsSnapshot: [],
+            capSource: "baseline",
+        });
+        expect(sourceBadge(wrapper).text()).toBe(tt("workspace.agentCapInherit"));
+        expect(wrapper.find('[data-testid="workspace-agent-cap-empty"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="workspace-agent-cap"]').text()).not.toContain(
+            tt("workspace.noAgentCapabilities"),
+        );
+    });
+
+    it("explicit + empty snapshot still reads as zero cap (no weakening)", async () => {
+        const wrapper = await mountWith({
+            ...base,
+            permissionsSnapshot: [],
+            capSource: "explicit",
+        });
+        expect(wrapper.get('[data-testid="workspace-agent-cap-empty"]').text()).toBe(
+            tt("workspace.noAgentCapabilities"),
+        );
+        expect(sourceBadge(wrapper).text()).toBe(tt("workspace.agentCapExplicit"));
+    });
+
+    it("a response without capSource invents no provenance (pre-D-1109 rows unchanged)", async () => {
+        const wrapper = await mountWith({ ...base, permissionsSnapshot: [] });
+        expect(sourceBadge(wrapper).exists()).toBe(false);
+        expect(wrapper.get('[data-testid="workspace-agent-cap-empty"]').text()).toBe(
+            tt("workspace.noAgentCapabilities"),
+        );
+    });
+
+    it("baseline with recorded atoms still shows them plus the inherit provenance", async () => {
+        const wrapper = await mountWith({
+            ...base,
+            permissionsSnapshot: atoms,
+            capSource: "baseline",
+        });
+        expect(sourceBadge(wrapper).text()).toBe(tt("workspace.agentCapInherit"));
+        expect(
+            wrapper.get('[data-testid="workspace-agent-cap"]').findAll("span.rounded.border"),
+        ).toHaveLength(atoms.length + 1);
+        expect(wrapper.find('[data-testid="workspace-agent-cap-empty"]').exists()).toBe(false);
+    });
+});

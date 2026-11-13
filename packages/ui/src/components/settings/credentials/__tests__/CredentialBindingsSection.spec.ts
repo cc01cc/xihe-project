@@ -99,6 +99,23 @@ describe("CredentialBindingsSection (PLAN-0498 T2.2)", () => {
         expect(wrapper.findAll('[data-testid="credential-bind-bound"]')).toHaveLength(1);
     });
 
+    // task-417 P1-6：「已绑定」由 permissionsSnapshot 判定，而快照是 CP 存的上限文档、不是实时求值
+    // 结果（真源 resolveCapFor 无公开读面），角色授权（grant）那条轴也不在快照里 ⇒ 判据来源必须写明。
+    // 本用例只钉「说清楚了」+「语义没变」，不改绑定/解绑行为（那两条写面只动工作区 cap）。
+    it("states that the bound badge is judged from the cap snapshot, not live authority", async () => {
+        const wrapper = await mountSection();
+        await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="credential-bind-snapshot-note"]').text()).toBe(
+            i18n.global.t("credentials.bindSnapshotNote"),
+        );
+        // 语义不弱化：仍只有快照里持 credential_use 的那一个主体被标为已绑定。
+        const badges = wrapper.findAll('[data-testid="credential-bind-bound"]');
+        expect(badges).toHaveLength(1);
+        expect(wrapper.text()).toContain("Free agent");
+    });
+
     it("binds the selected principals all-or-nothing", async () => {
         const wrapper = await mountSection();
         await setSelectValue(wrapper, '[data-testid="credential-bind-workspace"]', "ws-1");
