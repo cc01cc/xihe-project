@@ -90,6 +90,16 @@ public final class OrgUnitGovernancePolicy {
      * different window and belongs to the role-update path ({@code M2-8c} re-checks org-unit
      * bindings there); it is not something this predicate can decide.</p>
      *
+     * <p><b>The safety of that allowance is borrowed, and this is where it is borrowed from.</b>
+     * Accepting an empty atom set is safe <i>because</i> evaluation re-applies this same predicate
+     * to every org-unit binding on every evaluation ({@link #filterGovernanceRoles}, called by
+     * {@code OrgUnitGrantExpander}; no cache — {@code M2-10a} forbids one). A role that later
+     * gains a non-governance atom therefore cannot smuggle atoms through an org-unit binding,
+     * even though the write side let its empty form in. If that evaluation-side filter is ever
+     * removed, or made to run once and be cached, this acceptance stops being safe and this
+     * predicate alone does not make it safe. Removing the filter is a security change, not a
+     * performance change.</p>
+     *
      * @param roleAtomNames atom names of the role being bound (may be {@code null})
      * @return whether the role may be bound inside an org unit
      */
