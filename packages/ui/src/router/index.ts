@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { CalendarClock, LayoutGrid, Server, Settings } from "@lucide/vue";
+import { Boxes, CalendarClock, LayoutGrid, Server, Settings } from "@lucide/vue";
 import { api } from "../composables/api";
 import {
     migrateLegacyWorkspace,
@@ -15,17 +15,9 @@ import {
     resourceDetailRoutePath,
 } from "./resourceDetailRoutes";
 import { LAYER_DOMAINS } from "../stores/config";
-
-/**
- * 资源页宿主（PLAN-0772 M2）。显式表而不是拼路径：`import()` 用变量在 Vite 里只有「前缀 + 后缀」
- * 的受限形式，拼错就是运行时 404 —— 显式映射让 typecheck 就能抓到漏项。
- */
-const RESOURCE_VIEWS: Record<string, () => Promise<unknown>> = {
-    credentials: () => import("../views/resources/CredentialsResourceView.vue"),
-    mcp: () => import("../views/resources/McpResourceView.vue"),
-    skills: () => import("../views/resources/SkillsResourceView.vue"),
-    agents: () => import("../views/resources/AgentsResourceView.vue"),
-};
+// 资源页宿主映射（PLAN-0772 M2 引入；PLAN-0773 M4-2 / task-210 搬到 `lib/resourceViews.ts`
+// —— 工作区资源页要复用同一批视图组件，映射只能有一份，否则新增资源时两处必然漂）。
+import { RESOURCE_VIEWS } from "../lib/resourceViews";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -109,6 +101,30 @@ const router = createRouter({
                                     labelKey: "workspaceNav.scheduledTasks",
                                     order: 30,
                                     icon: CalendarClock,
+                                },
+                            },
+                        },
+                        {
+                            /**
+                             * PLAN-0773 M4-2（task-210）：**本工作区**的资源页 —— 四个资源
+                             * （技能 / MCP / 凭据 / 智能体），层**固定「本工作区」**，平台层与
+                             * 用户层只作只读引用（链接到 `/resources/<id>?layer=`）。
+                             *
+                             * <p>资源清单**不在这里**：由 `RESOURCE_DEFS` 里「有 WORKSPACE 层」的资源
+                             * 派生（`WorkspaceResourcesView.vue` 一个地方算），本文件只登记这一页。</p>
+                             */
+                            path: "resources",
+                            name: "workspace-resources",
+                            component: () =>
+                                import("../features/workspace/pages/WorkspaceResourcesView.vue"),
+                            meta: {
+                                workspacePage: {
+                                    id: "resources",
+                                    labelKey: "workspaceNav.resources",
+                                    // 动作面（设置）/边界位（资源）之间保持 order 空档：M4-3 的
+                                    // 「成员」页预定 45，不重排既有 10/20/30/40。
+                                    order: 35,
+                                    icon: Boxes,
                                 },
                             },
                         },
@@ -291,7 +307,7 @@ const router = createRouter({
                     // 缺口资源（G3）的可读落点：不伪装成可管理页面，只解释缺口并给出口。
                     path: "knowledge",
                     name: "resources-knowledge",
-                    component: () => import("../views/resources/KnowledgeResourceView.vue"),
+                    component: RESOURCE_VIEWS.knowledge,
                     meta: { resourceId: "knowledge" },
                 },
                 {

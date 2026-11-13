@@ -74,6 +74,8 @@ const messages = {
             workbench: "工作台",
             environment: "环境",
             scheduledTasks: "定时任务",
+            // PLAN-0773 M4-2（task-210）：本工作区资源页（`/workspace/:id/resources`）。
+            resources: "资源",
             settings: "设置",
         },
         sidebar: {
@@ -855,6 +857,8 @@ const messages = {
             settingsConfigLoadFailedHint: "稍后可重试；这次失败已显式呈现，没有被忽略。",
             settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
+            // PLAN-0773 M4-2（task-210）：工作区资源页里「平台 / 用户层只读引用」那一行的引导语。
+            resourcesRefHint: "平台 / 用户层的同类资源在这里只读引用：",
             settingsResourceMovedTitle: "这项设置已迁到资源区",
             settingsResourceMovedBody:
                 "「{name}」现在按层在资源区里管理，本页只保留「常规」与「成员」。",
@@ -3344,6 +3348,7 @@ const messages = {
             workbench: "Workbench",
             environment: "Environment",
             scheduledTasks: "Scheduled tasks",
+            resources: "Resources",
             settings: "Settings",
         },
         sidebar: {
@@ -4165,6 +4170,7 @@ const messages = {
                 "You can retry later; the failure is surfaced explicitly, not swallowed.",
             settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
+            resourcesRefHint: "Platform / user layers are referenced read-only:",
             settingsResourceMovedTitle: "This setting moved to the resources module",
             settingsResourceMovedBody:
                 '"{name}" is now managed per layer in the resources module; this page keeps only General and Members.',
