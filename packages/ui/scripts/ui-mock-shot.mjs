@@ -330,6 +330,28 @@ function loadDirtyProofs(proofPath, dirtyPaths, repoRoot) {
     });
 }
 
+/**
+ * `--extra-shot <id>:<name>:<path>`：**临时加拍**一镜，不进 SHOTS 常量。
+ *
+ * <p>为什么要这个口子：SHOTS 是**交付批次**的定义（改它 = 改批次身份与证据包清单），
+ * 而真实需求里常出现「某张卡只要一张页面的初始态」—— 那种图必须仍由本执行器拍（真路由 + 真组件
+ * + 双拍比 sha + manifest），不能退化成手拍。所以临时镜头走参数、manifest 里带 `adHoc: true`，
+ * 默认批次仍是那 14 张。</p>
+ */
+function parseExtraShot(spec) {
+    const parts = String(spec).split(":");
+    if (parts.length < 3) {
+        throw new Error("--extra-shot 需要 <id>:<name>:<path>，收到: " + spec);
+    }
+    const id = parts.shift().trim();
+    const name = parts.shift().trim();
+    const route = parts.join(":").trim();
+    if (!id || !name || !route.startsWith("/")) {
+        throw new Error("--extra-shot 的 id/name 不能空，path 必须以 / 开头，收到: " + spec);
+    }
+    return { id, name, path: route, app: true, adHoc: true };
+}
+
 function parseArgs(argv) {
     const opts = {
         url: null,
@@ -340,6 +362,8 @@ function parseArgs(argv) {
         only: null,
         allowDirty: false,
         dirtyProof: null,
+        // 临时加拍镜头的原始规格（<id>:<name>:<path>），可重复；见 parseExtraShot
+        extraShots: [],
         selftest: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
@@ -369,6 +393,14 @@ function parseArgs(argv) {
                     .filter(Boolean),
             );
             i += 1;
+        } else if (arg === "--extra-shot") {
+            if (!value) throw new Error("--extra-shot 需要一个 <id>:<name>:<path> 值");
+            opts.extraShots.push(value);
+            i += 1;
+        } else if (arg === "--extra-shot=") {
+            throw new Error("--extra-shot 用空格传值，不用 =");
+        } else if (arg.startsWith("--extra-shot=")) {
+            opts.extraShots.push(arg.slice("--extra-shot=".length));
         } else if (arg === "--selftest") {
             // 只跑探活自检：不起浏览器、不需要 dev server，秒级返回（负例必须快速失败）。
             opts.selftest = true;
@@ -381,7 +413,8 @@ function parseArgs(argv) {
         } else if (arg === "--help" || arg === "-h") {
             process.stdout.write(
                 [
-                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--allow-dirty] [--selftest]",
+                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--extra-shot <id>:<name>:<path> …] [--allow-dirty] [--selftest]",
+                    "--extra-shot 可重复传：临时加拍一镜（真路由真组件、同样双拍比 sha），不进 SHOTS 批次定义；manifest 里该镜带 adHoc: true。",
                     "--chromium-arg 可重复传，原样进 chromium.launch 的 args（例：--chromium-arg=--disable-gpu 强制软件合成）；它和 channel/版本一起写进 manifest.browser。",
                     "工作树脏时默认 exit 1；--allow-dirty --dirty-proof <json> 用于「脏改动不影响像素」的交付批次（每个脏路径一条可复算命令 + 实际输出）。",
                     "--selftest 只跑探活自检（不开浏览器、不起 dev server），用于验证「探不到要快速失败且报全 URL」。",
@@ -926,6 +959,8 @@ async function shootOne(page, base, shot, outDir) {
     return {
         id: shot.id,
         name: shot.name,
+        // 临时加拍（`--extra-shot`）的镜头必须自证「我不是那 14 张交付批次之一」。
+        adHoc: Boolean(shot.adHoc),
         // task-189：`app` 镜头跑的是**真路由**（`base + shot.path`），此前这里一律写
         // `preview-mock.html` + `shot.query` ⇒ 真页面镜头的 manifest 记成
         // `preview-mock.htmlundefined`，即「图从哪来」这件事记错了。证据包的 url 必须可复算，
@@ -1063,7 +1098,11 @@ async function main() {
         await runSelftest();
         return;
     }
-    const shots = opts.only ? SHOTS.filter((shot) => opts.only.has(shot.id)) : SHOTS;
+    // 交付批次 = SHOTS（`--only` 时按 id 收窄）；临时加拍镜头追加在后面，manifest 带 adHoc 标记。
+const extraShots = opts.extraShots.map(parseExtraShot);
+const shots = (opts.only ? SHOTS.filter((shot) => opts.only.has(shot.id)) : SHOTS.slice()).concat(
+    opts.only ? extraShots.filter((shot) => opts.only.has(shot.id)) : extraShots,
+);
     if (shots.length === 0) throw new Error("--only 没有匹配到任何镜头");
 
     const git = gitState();
