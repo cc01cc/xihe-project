@@ -198,9 +198,21 @@ test.describe("Chat", () => {
         await page.goto("/workspace/workspace-1/chat/usage-session");
         await page.getByTestId("chat-input").fill("show usage");
         await page.getByTestId("chat-input").press("Enter");
-        await expect(page.getByText("in 120 · out 30")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
-        await expect(page.getByText("$0.012")).toBeVisible();
-        await expect(page.getByText("real", { exact: true })).toBeVisible();
+        // task-327：同一串 wire 文案现在同屏出现两处 —— 会话列头部的 run-terminal 用量行
+        // （`WorkspaceView.vue:491-518`：tokens · cost · source）和 task-312 新落地的底部状态栏
+        // （`WorkspaceStatusBar.vue:123-131`：`workspace.statusBarUsage`，**只有 tokens**）。
+        // 页面级 getByText 因此失去唯一性（strict mode violation），故收窄到会话列。
+        //
+        // 收窄方向是**更严**不是更松：断言原文一字未改，只是把搜索面从整页缩到
+        // `workspace-conversation` 子树 ⇒ 「会话内用量行不渲染」仍然必红，「状态栏不渲染」
+        // 则不会让本用例红（本用例的意图在会话内那处：cost 与 source 徽标只在那里存在）。
+        // 真栈车道的同一断言早就是这个写法，见 `e2e/real/usage-line.spec.ts:95-109`。
+        const usageLine = page.getByTestId("workspace-conversation");
+        await expect(usageLine.getByText("in 120 · out 30")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(usageLine.getByText("$0.012")).toBeVisible();
+        await expect(usageLine.getByText("real", { exact: true })).toBeVisible();
     });
 
     test("stops streaming on user request", async ({ page }) => {
