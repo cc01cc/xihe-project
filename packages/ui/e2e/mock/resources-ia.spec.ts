@@ -12,8 +12,13 @@ import { LEGACY_RESOURCE_PATHS } from "../../src/lib/legacyRoutes";
  * <p>本 spec 只钉 M2 的**可判定**部分（信息架构与布线，不重测各面板的读写链路 —— 那些由
  * `skills-import` / `agent-principals` / `credential-manager` 等既有 spec 继续覆盖）：</p>
  * <ul>
- *   <li>全局条三个入口，`/resources` 上「资源」是当前项；设置区左栏**一个资源条目都没有**
- *       （负数判据：两个入口 = 双入口）。</li>
+ *   <li>全局条**四个**入口（`workbench` / `org-members` / `resources` / `settings`），
+ *       `/resources` 上「资源」是当前项；设置区左栏**一个资源条目都没有**
+ *       （负数判据：两个入口 = 双入口）。**为什么是四个而不是三个（task-350）**：本 spec 写于
+ *       `08cae77b9`（task-188 资源区搬家），当时 `GLOBAL_MODULES` 只有三项；`dc3603db6`
+ *       （`task-240` / PLAN-0773 M3，Lead 裁 (a)「实例级面进全局模块」）加了第 2 位的
+ *       `org-members`，产品侧单测 `src/lib/__tests__/globalModules.spec.ts` 同批改成「四个模块」，
+ *       而**本文件的 `3` 没跟着改** ⇒ 到 HEAD 上必红。判为「规格落后产品」，不是副作用。</li>
  *   <li>层 tab 的**存在性**必须等于后端真实层（凭据 3 / MCP 2 / 技能 3）：多画一层就是编造能力，
  *       少画一层就是藏能力。</li>
  *   <li>层 tab **写回 `?layer=`**（决策 9 的新能力：每个层都是可分享深链）。</li>
@@ -34,7 +39,13 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await page.goto("/workspace/workspace-1/chat/session-1");
         const rail = page.getByTestId("global-rail-module-resources");
         await expect(rail).toBeVisible();
-        await expect(page.locator('[data-testid^="global-rail-module-"]')).toHaveCount(3);
+        // task-350：计数从 3 改 4（原因见文件头）。**不只改数字**——单独一个计数下次还会过期，
+        // 所以把「哪四个」也逐个钉住：多一个少一个/换了 id，红点会点名到具体模块，
+        // 而不是只报「期望 4 实际 5」。
+        await expect(page.locator('[data-testid^="global-rail-module-"]')).toHaveCount(4);
+        for (const moduleId of ["workbench", "org-members", "resources", "settings"]) {
+            await expect(page.getByTestId(`global-rail-module-${moduleId}`)).toHaveCount(1);
+        }
 
         await rail.click();
         await expect(page).toHaveURL(/\/resources\/credentials($|\?)/);
@@ -49,12 +60,19 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await expect(page).toHaveURL(/\/settings/);
         // 判据是**负数**：搬家后设置区左栏一个资源条目都不该有。
         await expect(page.locator('[data-testid^="settings-nav-resource-"]')).toHaveCount(0);
-        // 计数也随之变（入口数徽标）：用户层 12 → **9**（只剩 9 个配置域，无权限过滤，稳定值）。
-        await expect(page.getByTestId("settings-nav-count-user")).toContainText("9");
-        // 实例层 22 → 16/17：12 域 + 2 运维 + 3 安全 = 17 是**满配**口径；徽标本身按权限过滤
-        // （`config-locks` 要能力位、`roles` 要 MANAGE_ROLES 原子，见 `SettingsSidebar.vue` 的 opsGroups），
-        // 所以 mock 身份只给能力位时是 16。断言这两值之一，避免把权限口径写死进 IA 用例。
-        await expect(page.getByTestId("settings-nav-count-instance")).toHaveText(/1[67] 个入口/);
+        // 计数也随之变（入口数徽标）。**用户层是 7，不是 9（task-350 第二处过期期望）**：
+        // 用户层矩阵仍是 9 个配置域，但 `1be65e6aa`（`task-227`，用户 2026-11-13 裁定「合页，不合域」）
+        // 把 3 个模型域（`llm-provider` / `context-policy` / `api-request-templates`）在左栏折成**一个**
+        // 「模型配置」组入口 ⇒ 9 − 3 + 1 = **7 个入口**。域一个都没合并（锁定/继承/env 覆盖仍按域求值），
+        // 变的只是左栏条目数。
+        await expect(page.getByTestId("settings-nav-count-user")).toHaveText("7 个入口");
+        // 实例层同理，**14 个入口**（原写 16/17，`task-350` 第三处过期期望）。可复算：
+        //    12 个配置域 − 3 个模型域 + 1 个「模型配置」组入口 = 10（同 `1be65e6aa` 的合页）
+        //  + 2 运维（`config-locks` / `audit`）+ 3 安全（`roles` 等）= 15
+        //  − 1 按权限过滤（`roles` 要 `MANAGE_ROLES` 原子，本用例只给了 `isInstanceAdmin` 能力位）
+        //  ⇒ 14。用户层那笔（9 − 3 + 1 = 7）与这里是同一次变化、同一条算术，两处互证。
+        // 不再写成 `1[67]` 这种「两值之一」—— 那等于把判据放宽到不会红（`spec-assertion-strength`）。
+        await expect(page.getByTestId("settings-nav-count-instance")).toHaveText("14 个入口");
     });
 
     test("凭据：三层 tab、默认「我的凭据」、点全平台层写回 ?layer=INSTANCE", async ({ page }) => {
