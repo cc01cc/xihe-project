@@ -43,7 +43,11 @@ function mountBar(props: Record<string, unknown> = {}) {
 }
 
 function stateOf(wrapper: ReturnType<typeof mountBar>): string | null {
-    return wrapper.find('[data-testid="workspace-status-connection"]').attributes("data-connection-state") ?? null;
+    return (
+        wrapper
+            .find('[data-testid="workspace-status-connection"]')
+            .attributes("data-connection-state") ?? null
+    );
 }
 
 describe("WorkspaceStatusBar（task-312）", () => {
@@ -72,7 +76,9 @@ describe("WorkspaceStatusBar（task-312）", () => {
         // 若派生顺序写反（先判 connected），这一条必红。
         const wrapper = mountBar({ connected: true, connecting: true });
         expect(stateOf(wrapper)).toBe("connecting");
-        expect(wrapper.find('[data-testid="workspace-status-connection"]').text()).toContain("连接中");
+        expect(wrapper.find('[data-testid="workspace-status-connection"]').text()).toContain(
+            "连接中",
+        );
     });
 
     it("待审批：0 时不渲染（0 条是常态，占位等于噪音）；>0 时渲染出数字", async () => {
@@ -87,7 +93,9 @@ describe("WorkspaceStatusBar（task-312）", () => {
     });
 
     it("用量：无 run（null/undefined）不渲染；有 run 时渲染 in/out，且 0 也是有效读数", () => {
-        expect(mountBar({ usageInput: null }).find('[data-testid="workspace-status-usage"]').exists()).toBe(false);
+        expect(
+            mountBar({ usageInput: null }).find('[data-testid="workspace-status-usage"]').exists(),
+        ).toBe(false);
         expect(mountBar({}).find('[data-testid="workspace-status-usage"]').exists()).toBe(false);
 
         const withRun = mountBar({ usageInput: 1234, usageOutput: 567 });
