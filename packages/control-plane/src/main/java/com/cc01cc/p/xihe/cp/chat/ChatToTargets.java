@@ -58,6 +58,19 @@ final class ChatToTargets {
         return new ArrayList<>(ordered);
     }
 
+    /**
+     * task-443 (F-12 / D-1273): the wire distinguishes an <b>absent</b> {@code toParticipantIds} field
+     * (legacy single-responder path — the primary answers) from an <b>explicit empty array</b> (the
+     * caller cleared every TO chip ⇒ notify nobody, {@code SUPPRESSED_NO_RESPONDER}). {@link #parse}
+     * collapses both to an empty list for dispatch/canonicalization, so this classifier preserves the
+     * presence distinction the suppression branch needs. A present empty array ⇒ {@code true};
+     * {@code null} (field absent) or a non-empty/non-array value ⇒ {@code false} (non-array shapes are
+     * rejected by {@link #parse} before this is consulted).
+     */
+    static boolean isExplicitEmptySelection(Object raw) {
+        return raw instanceof List<?> list && list.isEmpty();
+    }
+
     /** Sorted, de-duplicated, blank-filtered string form — the hash input (order-insensitive). */
     static List<String> canonical(List<UUID> participantIds) {
         if (participantIds == null || participantIds.isEmpty()) {

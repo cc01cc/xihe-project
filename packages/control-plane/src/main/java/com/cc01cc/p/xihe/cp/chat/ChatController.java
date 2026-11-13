@@ -557,6 +557,10 @@ public class ChatController {
         // 400 INVALID_REQUEST; never silently dropped); roster authz + AGENT-only classification
         // runs with the other participant gates further down. Empty/absent ⇒ today's single-TO path.
         List<UUID> toParticipantIds;
+        // task-443 (F-12 / D-1273): an explicit empty array means "notify nobody" (suppress the
+        // primary); an absent field keeps the legacy single-responder path. parse() collapses both,
+        // so capture the presence distinction here before it is lost.
+        boolean explicitNoResponder = ChatToTargets.isExplicitEmptySelection(request.get(ChatToTargets.FIELD));
         try {
             toParticipantIds = ChatToTargets.parse(request.get(ChatToTargets.FIELD));
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
@@ -857,6 +861,27 @@ public class ChatController {
                         userMessage.getId(), runId, "agent_down"));
                 }
                 chatSubmissionService.persistRunStatus(chatRun, "accepted");
+            }
+
+            // task-443 (F-12 / D-1273): an explicit empty toParticipantIds array means the caller
+            // cleared every TO chip — notify nobody. The user Message stays in the conversation
+            // (persisted above) and the Run is terminalized with an explicit outcome instead of being
+            // dispatched, so "nobody answered" is observable, not a silent loss (contrast the mention
+            // fallback below, which answers here when it finds no recipient). No fan-out: nobody is
+            // named. An absent field (legacy single-responder) and a non-empty TO never enter here.
+            if (explicitNoResponder) {
+                chatRunLifecycleService.transition(runId, List.of("accepted"), "succeeded",
+                        SUPPRESSED_NO_RESPONDER, null, null, 0, 0, null);
+                // No dispatch will use the borrowed slots (queued-path lifecycle, PLAN-0622 D28).
+                governor.releaseRun(runId);
+                logger.info("[LIFECYCLE] service=cp event=chat_primary_suppressed requestId={} sessionId={} "
+                                + "runId={} cause=explicit_empty_to",
+                        requestId, sessionId, runId);
+                handedOff = true;
+                Map<String, Object> suppressedBody = runAcceptedBody(chatRun, "succeeded", sessionId,
+                        userMessage.getId(), runId, "primary_suppressed");
+                suppressedBody.put("terminalOutcome", SUPPRESSED_NO_RESPONDER);
+                return ResponseEntity.accepted().body(suppressedBody);
             }
 
             // PLAN-0648 D1 (interim ruling): an explicit @ of another participant outranks the

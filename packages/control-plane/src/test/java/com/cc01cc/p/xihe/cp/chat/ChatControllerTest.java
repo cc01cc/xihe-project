@@ -2334,6 +2334,115 @@ class ChatControllerTest extends AbstractH2Test {
         assertNull(body.get("terminalOutcome"),
                 "as=<member> is an explicit answer and keeps the normal lifecycle");
     }
+
+    // ── task-443 (F-12 / D-1273): absent TO field vs explicit empty array are distinct contracts ──
+
+    /** postChat variant that carries the raw toParticipantIds wire value (null ⇒ field omitted). */
+    private ResponseEntity<Map> postChatWithTo(String content, Object toParticipantIds) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", content);
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("branchId", branchId);
+        if (toParticipantIds != null) {
+            request.put("toParticipantIds", toParticipantIds);
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+    }
+
+    @Test
+    void chat_explicitEmptyTo_suppressesPrimaryWithoutFanOutOrDispatch() {
+        seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 0);
+
+        // An explicit empty array means the caller cleared every TO chip: notify nobody.
+        ResponseEntity<Map> response = postChatWithTo("这条谁都不通知", List.of());
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertEquals("succeeded", body.get("status"));
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, body.get("terminalOutcome"),
+                "explicit empty TO must terminalize with the suppressed-no-responder outcome");
+        assertEquals("primary_suppressed", body.get("reason"));
+        String runId = (String) body.get("runId");
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, jdbcTemplate.queryForObject(
+                        "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                        String.class, runId),
+                "the durable Run row must carry the same outcome");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
+                        Integer.class, runId),
+                "nobody answers: the PRIMARY must not produce an assistant Message");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM chat_run_transport_attempts WHERE CAST(run_id AS VARCHAR) = ?",
+                        Integer.class, runId),
+                "a suppressed submission never reaches the transport");
+        // Unlike mention suppression, nobody is named ⇒ no fan-out at all.
+        Mockito.verify(wakeFanOutService, Mockito.never()).fanOut(Mockito.any(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any());
+    }
+
+    @Test
+    void chat_absentTo_keepsLegacySingleResponderPath() {
+        seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 0);
+        stubAgentSuccessReply();
+
+        // Field omitted (null) ⇒ legacy single-responder path, NOT the explicit-empty suppression.
+        ResponseEntity<Map> response = postChatWithTo("普通消息谁答", null);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertNull(body.get("terminalOutcome"),
+                "an absent TO field keeps the legacy single-responder lifecycle (not suppressed)");
+        String runId = (String) body.get("runId");
+        assertNull(jdbcTemplate.queryForObject(
+                        "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                        String.class, runId),
+                "the Run must keep its normal, non-suppressed lifecycle");
+    }
+
+    @Test
+    void chat_pureChatWithoutTo_dispatchesPrimaryNotSuppressed() {
+        // probe ② (task-443): a workspace-less (pure-chat) Session has no roster/cc/TO surface; the
+        // ChatController:920 comment claimed this but it was never exercised. Build a null-workspace
+        // Session and submit with no TO field ⇒ the primary must answer, never be suppressed.
+        String pureSessionId = UUID.randomUUID().toString();
+        Session pure = new Session(null, userId, "Pure Chat");
+        pure.setId(UUID.fromString(pureSessionId));
+        pure.setAgentPermissionsSnapshot(sessionPrincipal.getTemplateSnapshot().get("permissions").deepCopy());
+        ChatBindingTestSupport.bind(pure, chatConnection(), apiRequestTemplates);
+        sessionRepository.save(pure);
+        bindPrimaryParticipant(pureSessionId, sessionPrincipal.getId().toString());
+        String pureBranchId = branchPathService.ensureRootBranchId(pureSessionId);
+        stubAgentSuccessReply();
+
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("sessionId", pureSessionId);
+        request.put("content", "纯 chat 无 TO 面");
+        request.put("userId", userId);
+        request.put("branchId", pureBranchId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertNull(body.get("terminalOutcome"),
+                "pure-chat with no TO surface must dispatch the primary, not suppress it");
+        Mockito.verify(wakeFanOutService, Mockito.never()).fanOut(Mockito.any(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any());
+    }
     // ── PLAN-0648 task-33: suppressing the PRIMARY must hand the turn over, not swallow it ──
 
     private void stubAgentSuccessReply() {

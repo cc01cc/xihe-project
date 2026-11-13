@@ -32,6 +32,31 @@ class ChatToTargetsTest {
         assertThat(ChatToTargets.parse(List.of())).isEmpty();
     }
 
+    // task-443 (F-12 / D-1273): parse() collapses absent and explicit-empty to the same empty list,
+    // so the presence distinction the suppression branch needs lives in this classifier.
+    @Test
+    void explicitEmptySelection_absentField_isNotExplicitEmpty() {
+        assertThat(ChatToTargets.isExplicitEmptySelection(null)).isFalse();
+    }
+
+    @Test
+    void explicitEmptySelection_presentEmptyArray_isExplicitEmpty() {
+        assertThat(ChatToTargets.isExplicitEmptySelection(List.of())).isTrue();
+        assertThat(ChatToTargets.isExplicitEmptySelection(new java.util.ArrayList<>())).isTrue();
+    }
+
+    @Test
+    void explicitEmptySelection_nonEmptyArray_isNotExplicitEmpty() {
+        assertThat(ChatToTargets.isExplicitEmptySelection(List.of(ALPHA))).isFalse();
+    }
+
+    @Test
+    void explicitEmptySelection_nonArray_isNotExplicitEmpty() {
+        // a non-array shape is rejected by parse() before the classifier is consulted; defensively false
+        assertThat(ChatToTargets.isExplicitEmptySelection(ALPHA)).isFalse();
+        assertThat(ChatToTargets.isExplicitEmptySelection("")).isFalse();
+    }
+
     @Test
     void preservesFirstSeenOrder_andDeduplicates() {
         assertThat(ChatToTargets.parse(List.of(BETA, ALPHA, BETA)))
