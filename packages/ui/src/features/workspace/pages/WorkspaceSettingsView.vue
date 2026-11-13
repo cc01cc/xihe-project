@@ -11,6 +11,7 @@ import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
 import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
+import WorkspaceConfigPanel from "../components/WorkspaceConfigPanel.vue";
 import { resourcePath } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
@@ -39,7 +40,7 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 // 的 `?tab=config` 同口径，那条回落行为已被 `e2e/mock/config-settings.spec.ts:194-195` 与
 // `e2e/real/approval-policy.spec.ts:128` 当作既有契约在用；②旧链接来自书签/文档/外部引用，
 // 回落到一个能解释「东西搬到哪了」的页面比 404 更有用（404 只能让人以为页面坏了）。
-type SettingsTab = "general" | "members";
+type SettingsTab = "config" | "general" | "members";
 
 /**
  * 已迁到资源区的三个旧 tab。`knowledge` 在资源区是 **G3 缺口页**（CP 无库实体，见
@@ -61,6 +62,7 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 
 /** `?tab=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function tabFromQuery(q: unknown): SettingsTab {
+    if (q === "config") return "config";
     return q === "members" ? "members" : "general";
 }
 const activeTab = ref<SettingsTab>(tabFromQuery(route.query.tab));
@@ -109,6 +111,10 @@ watch(
 // 已作为「产品面减少」报 Lead 裁定；ToolFacesView 本身与实例层入口不受影响）。
 const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
     const base: { key: SettingsTab; label: string }[] = [
+        // PLAN-0773 M4-1（task-190）：配置 tab 回来了 —— 但这次是**按工作区**的层
+        // （`ConfigLayer` 新增 `workspace`），不是 task-253 退役的那层废弃全局入口。
+        // 域清单不在这里：面板只渲染 `layer="workspace"`，域集由 `LAYER_DOMAINS` 交给它。
+        { key: "config", label: t("workspace.settingsTabConfig") },
         { key: "general", label: t("workspace.settingsTabGeneral") },
     ];
     // BL-344：`canViewMembers` 是三态 —— 未知（`undefined`）时**保留**成员 tab，
@@ -384,6 +390,8 @@ onMounted(() => {
                             </RouterLink>
                         </Button>
                     </div>
+
+                    <WorkspaceConfigPanel v-if="activeTab === 'config'" />
 
                     <div v-if="activeTab === 'general'" data-testid="ws-settings-general">
                         <div class="border rounded-lg mb-2 overflow-hidden">

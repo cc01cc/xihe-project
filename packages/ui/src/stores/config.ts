@@ -19,8 +19,19 @@ import { parseLlmProfileValue } from "../services/llmProviderProfile";
  * `/config/{domain}?layer=workspace-default`、`PUT /config/workspace-default/{domain}`）。
  * 它是部署级的一份行集，对没有显式 workspace 覆盖的所有工作区生效；层序
  * workspace > workspace-default > user > instance（env / 管理员钉仍在所有 DB 层之上）。
+ *
+ * PLAN-0773 M4-1（task-190）：**新增的是 per-workspace 层** `workspace` —— 与上面那个
+ * `workspace-default` **不是一回事**，两者并存且命名必须能一眼区分：
+ * - `workspace-default` = **部署级共享默认值**（一份行集，对所有没显式覆盖的工作区生效，`D-928`）；
+ * - `workspace` = **某一个工作区自己的行集**（身份由 `X-Workspace-Id` 头承载，CP 侧
+ *   `ConfigController.java:172-180` 解析，契约 `PUT /api/v1/config/workspace/{domain}` 现为
+ *   `deprecated: true` 但仍在服务；退役前置条件「工作区设置重构落地」= 本条）。
+ *
+ * 设置区**不得**因此变成四层：`lib/settingsIa.ts` 的 `SettingsLayer` 同批收窄为
+ * `Exclude<ConfigLayer, "workspace">` —— 加层与收窄**必须同一批**，否则中间态会让
+ * `task-253` 刚删掉的「工作区层」从后门回到全局设置页，而且不会有任何报错。
  */
-export type ConfigLayer = "instance" | "workspace-default" | "user";
+export type ConfigLayer = "instance" | "workspace-default" | "workspace" | "user";
 
 /**
  * 配置值的**来源**（GET /config/{domain}/meta 回填的 provenance），与上面的层**不是同一个轴**：
@@ -109,22 +120,34 @@ export function isDomainReadableWithoutAdmin(domain: ConfigDomain): boolean {
     return NON_ADMIN_READABLE_DOMAINS.has(domain);
 }
 
+/**
+ * `workspace-default`（部署级共享默认，PLAN-0766/D-928）与 `workspace`（per-workspace，
+ * PLAN-0773 M4-1）**共用**这张矩阵：CP 侧两者都由 `WORKSPACE_WRITABLE_DOMAINS` 约束，
+ * 且都要经过「通用 config API 只能服务 12 个 UI 域」这一层过滤 ⇒ UI 侧就是 9 − 1 = 8 域。
+ */
+const GENERIC_WORKSPACE_DOMAINS = [
+    "llm-provider",
+    "context-policy",
+    "embedding",
+    "rag",
+    "agent-runtime",
+    "approval-policy",
+    "agent-templates",
+    "job-policy",
+] as const;
+
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
     instance: INSTANCE_DOMAINS,
     // PLAN-0766：CP `WORKSPACE_WRITABLE_DOMAINS` 是 9 域（b05aad952 ConfigService.java:94），
     // 但 `context-templates` 是 service-only 域 —— 契约明写 config API 只收 12 个 UI 域，
     // 其余（context-templates / pricing）返回 INVALID_DOMAIN。所以 UI 侧矩阵是 9 − 1 = 8 域，
     // 这里刻意不列 context-templates，避免左栏出现一个点进去必然失败的入口。
-    "workspace-default": [
-        "llm-provider",
-        "context-policy",
-        "embedding",
-        "rag",
-        "agent-runtime",
-        "approval-policy",
-        "agent-templates",
-        "job-policy",
-    ],
+    "workspace-default": GENERIC_WORKSPACE_DOMAINS,
+    // PLAN-0773 M4-1：**per-workspace 层**与 `workspace-default` 用的是**同一张 8 域矩阵**，
+    // 且共用同一个数组常量 —— 不是巧合，是同一个 CP 常量 `WORKSPACE_WRITABLE_DOMAINS` 的两个落库面：
+    // 一个写"某一工作区自己的行"，一个写"没显式覆盖时的部署级默认行"。分成两份数组等于
+    // 允许两层的可写域集漂移（今天相同、明天有人只改一处），而契约里它们是**同一个集合**。
+    workspace: GENERIC_WORKSPACE_DOMAINS,
     user: [
         "llm-provider",
         "context-policy",
@@ -158,10 +181,14 @@ export const useConfigStore = defineStore("config", () => {
     const loading = ref(false),
         error = ref<string | null>(null);
 
-    /** Per-layer raw entries for the two settings entries (T2.17; task-253 去掉 workspace). */
+    /**
+     * Per-layer raw entries (T2.17)。`workspace`（per-workspace 层，PLAN-0773 M4-1）与
+     * `workspace-default`（部署级共享默认值，PLAN-0766）是两个不同的行集，都存在这里。
+     */
     const layerConfig = ref<Record<ConfigLayer, Record<string, Record<string, string>>>>({
         instance: {},
         "workspace-default": {},
+        workspace: {},
         user: {},
     });
     const layerLoading = ref(false);
@@ -173,6 +200,7 @@ export const useConfigStore = defineStore("config", () => {
     const layerLoadingByLayer = ref<Record<ConfigLayer, boolean>>({
         instance: false,
         "workspace-default": false,
+        workspace: false,
         user: false,
     });
     /** domain -> key -> env-effective value when an env overlay wins (decision #22). */
@@ -181,6 +209,7 @@ export const useConfigStore = defineStore("config", () => {
     const layerMeta = ref<Record<ConfigLayer, Record<string, Record<string, ConfigKeyMeta>>>>({
         instance: {},
         "workspace-default": {},
+        workspace: {},
         user: {},
     });
 
@@ -508,9 +537,9 @@ export const useConfigStore = defineStore("config", () => {
         sessionModels.value = {};
         modelFavorites.value = [];
         modelError.value = null;
-        layerConfig.value = { instance: {}, "workspace-default": {}, user: {} };
+        layerConfig.value = { instance: {}, "workspace-default": {}, workspace: {}, user: {} };
         envOverridden.value = {};
-        layerMeta.value = { instance: {}, "workspace-default": {}, user: {} };
+        layerMeta.value = { instance: {}, "workspace-default": {}, workspace: {}, user: {} };
         providerConnections.value = [];
         providerConnectionsLoaded.value = false;
         providerConnectionsError.value = false;

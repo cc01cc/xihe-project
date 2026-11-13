@@ -848,6 +848,11 @@ const messages = {
             settingsDesc:
                 "本工作区的常规信息与成员。配置统一在设置区按 实例 / 工作区默认 / 个人 管理；资源（MCP / 凭据 / 技能 / 智能体 / 知识库）统一在资源区按层管理。",
             settingsTabGeneral: "常规",
+            // PLAN-0773 M4-1（task-190）：工作区「配置」tab —— 按**本工作区**的层读写（直连既有端点）。
+            settingsTabConfig: "配置",
+            settingsConfigLoading: "正在加载本工作区的配置…",
+            settingsConfigLoadFailed: "本工作区配置加载失败",
+            settingsConfigLoadFailedHint: "稍后可重试；这次失败已显式呈现，没有被忽略。",
             settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
             settingsResourceMovedTitle: "这项设置已迁到资源区",
@@ -4153,6 +4158,11 @@ const messages = {
             settingsDesc:
                 "General info and members for this workspace. Configuration lives in Settings per instance / workspace default / personal layer; resources (MCP / credentials / skills / agents / knowledge) live in the resources module, managed per layer.",
             settingsTabGeneral: "General",
+            settingsTabConfig: "Configuration",
+            settingsConfigLoading: "Loading this workspace configuration…",
+            settingsConfigLoadFailed: "Failed to load this workspace configuration",
+            settingsConfigLoadFailedHint:
+                "You can retry later; the failure is surfaced explicitly, not swallowed.",
             settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
             settingsResourceMovedTitle: "This setting moved to the resources module",

@@ -18,11 +18,21 @@ import {
  */
 
 /**
- * 设置区可出现的层。task-253（用户 2026-11-10 裁定）：**全局设置只有实例 / 用户两层**，
- * 工作区设置在各工作区内部、本轮不设计，因此这里不再有 workspace 层 ——
- * 层是路由（/settings/instance/**、/settings/user/**），不是 UI 状态。
+ * 设置区可出现的层 = **`ConfigLayer` 减去 per-workspace 层**（`Exclude`，不是另写一份字面量）。
+ *
+ * <p>历史：task-253（用户 2026-11-10 裁定）把 workspace 层从全局设置里删掉；PLAN-0766 又加了
+ * 部署级的 `workspace-default`。PLAN-0773 M4-1（task-190）需要在**工作区内部**用 per-workspace
+ * 层 ⇒ `ConfigLayer` 新增 `workspace`，而**全局设置仍然是三层**，所以这里用 `Exclude` 收窄。</p>
+ *
+ * <p><b>为什么必须是 `Exclude` 而不是把 `ConfigLayer` 拆成两个类型</b>：`ConfigLayer` 是 store
+ * （`layerConfig`/`layerMeta`/`layerLoadingByLayer`/`LAYER_DOMAINS`）的键，per-workspace 层确
+ * 实在 store 里存在；而「设置区能出现哪些层」是**路由/IA 的投影**（`SETTINGS_LAYERS` 与路由注册
+ * 都由它派生）。两个概念共用一个底层枚举 + 一个 `Exclude`，比维护两份几乎相同的枚举更少漂移。</p>
+ *
+ * <p><b>加层与收窄必须同一批提交</b>：中间态让 `SettingsLayer = ConfigLayer` 自动变四层 ⇒
+ * task-253 删掉的「工作区层」会从后门回到全局设置页，且**不会有任何报错**。</p>
  */
-export type SettingsLayer = ConfigLayer;
+export type SettingsLayer = Exclude<ConfigLayer, "workspace">;
 
 /**
  * 全局设置可出现的三层。PLAN-0766（task-160）：在实例/用户两层之间插入共享的
