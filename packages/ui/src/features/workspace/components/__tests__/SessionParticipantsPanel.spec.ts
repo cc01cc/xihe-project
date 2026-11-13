@@ -457,7 +457,11 @@ describe("ParticipantRow without a display name (PLAN-0623 human-display fix)", 
         const initials = wrapper.get('[data-testid="participant-initials-p-human"]').text();
         // 旧兜底会得到 principalId 前两位（fixture 是 `5a2b…` ⇒ "5A"）。
         expect(initials).not.toBe("5A");
-        expect(initials.length).toBeGreaterThan(0);
+        // task-292 / D-1142 ④：**精确等于 1**，不是 `> 0`。
+        // `toBeGreaterThan(0)` 对「2 个字符」完全免疫 —— 那正是本卡之前的形态
+        // （`participantInitials` 取前两词首字母 ⇒ "A架"，长度 2，本条仍绿）。
+        // 契约是「恰好 1 个字符」（徽标圆只装得下 1 个，见 participantInitials.ts 注释）。
+        expect(initials).toHaveLength(1);
         expect(initials).not.toMatch(/\d/);
     });
 

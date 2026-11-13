@@ -13,6 +13,7 @@ import { MessageCircle } from "@lucide/vue";
 import { useAgentStore } from "../../../stores/agent";
 import { useSessionStore } from "../../../stores/session";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
+import { participantInitials } from "./participantInitials";
 
 /**
  * 注意 `withDefaults(..., { isMobile: undefined })` **不是摆设**：Vue 对运行时类型为 `Boolean` 的
@@ -52,10 +53,23 @@ const memberCount = computed(() => memberRows.value.length);
 const memberMentionTotal = computed(() =>
     memberRows.value.reduce((sum, row) => sum + (row.readCursor?.mentionCount ?? 0), 0),
 );
+/**
+ * 前 3 位成员的首字（移动端成员入口的叠头像）。
+ *
+ * <p><b>task-292 / D-1142 ②</b>：这里原来自己写了一份
+ * `.trim().slice(0, 1).toUpperCase() || "?"` —— 与共享的 `participantInitials` 是**两份
+ * 实现**，且行为并不等价：自写版对「纯标点名 / 代理对 / 占位文案」都不处理。全仓本应
+ * 只有一处产生缩写（这正是 `participantInitials.ts` 存在的理由），故改调共享函数。</p>
+ *
+ * <p>回退文案用 `t("workspace.participantUnknownName")`，与 `ParticipantRow.vue:136` /
+ * `MessageItem.vue:140` / `actorView.ts:23` 全部同源 —— 自写版硬编码 `"?"` 是第二处隐藏
+ * 差异：那意味着「无名字」在这块 UI 上显示 `?`、在成员面板上显示「未知用户」，同一个人
+ * 两处不同样。</p>
+ */
 const memberAvatarInitials = computed(() =>
     memberRows.value
         .slice(0, 3)
-        .map((row) => (row.displayName ?? "").trim().slice(0, 1).toUpperCase() || "?"),
+        .map((row) => participantInitials(row.displayName, t("workspace.participantUnknownName"))),
 );
 const membersEntryLabel = computed(() =>
     memberMentionTotal.value > 0

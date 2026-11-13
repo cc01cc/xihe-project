@@ -116,8 +116,15 @@ function toggle(): void {
                 :data-actor-principal-id="actor.principalId"
                 :data-actor-kind="actor.kind"
             >
+                <!--
+                    task-292 / D-1142 ③：直径 size-3.5（3.5 × 3.5 = **12.25px**）装不下 1 个
+                    汉字。实测（Range API，见 task-292 证据）：contentBox 12.25 减左右边框
+                    各 0.67 ⇒ 可用 10.92px，而「架」字 12px、「H」9.02px ⇒ **CJK 必裁**；
+                    size-4（4 × 3.5 = 14px，可用 12.67px）才装得下 12px 的 CJK 首字。
+                    注意 3.5 与 4 都不是 px：本仓 --spacing = 3.5px，所以 3.5 ⇒ 12.25、4 ⇒ 14。
+                -->
                 <span
-                    class="flex size-3.5 shrink-0 items-center justify-center rounded-full border bg-muted text-xs leading-none font-medium text-foreground"
+                    class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-xs leading-none font-medium text-foreground"
                     aria-hidden="true"
                     data-testid="process-row-actor-initials"
                     >{{ actor.initials }}</span
