@@ -28,6 +28,13 @@ public final class OrgUnitWireView {
     public record Member(String memberKind, UUID memberId, UUID orgUnitId, String displayName) {}
 
     public record MemberList(List<Member> members) {}
+    /**
+     * G1 (M2-10b): the move response. {@code affectedWorkspaceIds} is <b>always present</b> — an
+     * empty array is a real answer (no workspace is affected), and a client that branches on
+     * presence rather than emptiness is the one thing this shape must not allow.
+     */
+    public record MemberMoved(UUID memberId, UUID fromOrgUnitId, UUID toOrgUnitId,
+                              List<UUID> affectedWorkspaceIds, String auditEvent) {}
 
     private OrgUnitWireView() {}
 }

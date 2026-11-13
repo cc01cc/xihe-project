@@ -70,6 +70,12 @@ public class OrgUnitAccess {
         return new Scope(membership.get().orgUnitId(), membership.get().path());
     }
 
+    /** The request's actor id as the audit stream wants it (a string), or null when anonymous. */
+    public String currentActorId() {
+        UUID caller = authority.currentSubjectId();
+        return caller == null ? null : caller.toString();
+    }
+
     public static CpApiException notFound() {
         return new CpApiException(HttpStatus.NOT_FOUND, "ORG_UNIT_NOT_FOUND", "org unit not found");
     }

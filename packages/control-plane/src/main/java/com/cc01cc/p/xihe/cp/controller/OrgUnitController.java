@@ -1,10 +1,13 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitWriteService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -42,12 +45,18 @@ public class OrgUnitController {
 
     public record MoveBody(String parentId) {}
 
+    /** G1 body: `confirmAffected` is opt-in, and required only when the move affects workspaces. */
+    public record MemberMoveBody(Boolean confirmAffected) {}
+
     private final OrgUnitReadService readService;
     private final OrgUnitWriteService writeService;
+    private final OrgUnitMemberService memberService;
 
-    public OrgUnitController(OrgUnitReadService readService, OrgUnitWriteService writeService) {
+    public OrgUnitController(OrgUnitReadService readService, OrgUnitWriteService writeService,
+                             OrgUnitMemberService memberService) {
         this.readService = readService;
         this.writeService = writeService;
+        this.memberService = memberService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -75,6 +84,25 @@ public class OrgUnitController {
     @PutMapping("/{unitId}/parent")
     public OrgUnitWireView.Node move(@PathVariable String unitId, @RequestBody MoveBody body) {
         return writeService.move(unitId, body.parentId());
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/{unitId}/members/{memberId}")
+    public ResponseEntity<OrgUnitWireView.MemberMoved> moveMember(
+            @PathVariable String unitId,
+            @PathVariable String memberId,
+            @RequestParam String memberKind,
+            @RequestBody(required = false) MemberMoveBody body) {
+        boolean confirmAffected = body != null && Boolean.TRUE.equals(body.confirmAffected());
+        return ResponseEntity.ok(memberService.move(unitId, memberId, memberKind, confirmAffected));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @DeleteMapping("/{unitId}/members/{memberId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeMember(@PathVariable String unitId, @PathVariable String memberId,
+                             @RequestParam String memberKind) {
+        memberService.remove(unitId, memberId, memberKind);
     }
 
     @PreAuthorize("isAuthenticated()")

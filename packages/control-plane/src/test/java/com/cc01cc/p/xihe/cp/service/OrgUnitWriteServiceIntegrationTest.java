@@ -277,11 +277,16 @@ class OrgUnitWriteServiceIntegrationTest extends AbstractIntegrationTest {
         grant(caller, OrgUnitWriteService.MANAGE_ATOM);
         TenantContext.setUserId(caller.toString());
 
-        assertEquals(HttpStatus.FORBIDDEN, assertThrows(CpApiException.class,
-                () -> writeService.create("another-root-" + suffix, null)).getStatus(),
+        CpApiException createRoot = assertThrows(CpApiException.class,
+                () -> writeService.create("another-root-" + suffix, null));
+        assertEquals(HttpStatus.FORBIDDEN, createRoot.getStatus(),
                 "a member's scope is its own subtree; a root is outside it");
-        assertEquals(HttpStatus.FORBIDDEN, assertThrows(CpApiException.class,
-                () -> writeService.move(unitId.toString(), null)).getStatus());
+        assertEquals("FORBIDDEN", createRoot.getCode(),
+                "Lead 2026-11-13 ②: the code is part of the judgement, not the status alone");
+        CpApiException promoteRoot = assertThrows(CpApiException.class,
+                () -> writeService.move(unitId.toString(), null));
+        assertEquals(HttpStatus.FORBIDDEN, promoteRoot.getStatus());
+        assertEquals("FORBIDDEN", promoteRoot.getCode());
     }
 
     // ------------------------------------------------------------------ fixtures
