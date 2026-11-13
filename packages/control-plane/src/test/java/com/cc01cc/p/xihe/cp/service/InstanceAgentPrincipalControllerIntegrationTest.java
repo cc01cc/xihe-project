@@ -271,6 +271,184 @@ class InstanceAgentPrincipalControllerIntegrationTest extends AbstractReusableIn
         assertFalse(listedRow.path("disabledAt").isNull());
     }
 
+    // --- task-413: the model-intent triple rides the same PATCH (G1 edit half) ----------------
+
+    @Test
+    void patchWritesTheModelIntentTripleAndAuditsIt() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "modelagent");
+
+        HttpProbe patched = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o",
+                        "allowedModels", List.of(Map.of("provider", "openai", "model", "gpt-4o"))));
+        assertEquals(200, patched.status(), patched.body());
+        JsonNode body = parse(patched.body());
+        assertEquals("openai", body.path("defaultModelProvider").asText(), "the echo is the stored value");
+        assertEquals("gpt-4o", body.path("defaultModelName").asText());
+        assertEquals(1, body.path("allowedModels").size(), "the allow-list is echoed too");
+        AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
+        assertEquals("openai", row.getDefaultModelProvider(), "the column really changed");
+        assertEquals("gpt-4o", row.getDefaultModelName(), "the column really changed");
+        assertNotNull(row.getAllowedModels(), "the allow-list column really changed");
+        assertEquals(1, modelIntentAuditRows(adminId, principalId),
+                "the write lands one agent_principal_model_intent_updated audit row");
+    }
+
+    @Test
+    void patchMergesOneModelHalfAndKeepsTheStoredOther() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "mergeagent");
+        assertEquals(200, probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o")).status());
+
+        // Only the model half is named: the provider half must survive (merge-then-validate).
+        HttpProbe merged = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelName", "gpt-4o-mini"));
+        assertEquals(200, merged.status(), merged.body());
+        JsonNode body = parse(merged.body());
+        assertEquals("openai", body.path("defaultModelProvider").asText(),
+                "an absent key keeps the stored half, it does not clear it");
+        assertEquals("gpt-4o-mini", body.path("defaultModelName").asText());
+        AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
+        assertEquals("openai", row.getDefaultModelProvider());
+        assertEquals("gpt-4o-mini", row.getDefaultModelName());
+    }
+
+    @Test
+    void patchClearsTheModelIntentWithExplicitNulls() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "clearagent");
+        assertEquals(200, probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o",
+                        "allowedModels", List.of(Map.of("provider", "openai", "model", "gpt-4o")))).status());
+
+        Map<String, Object> clear = new HashMap<>();
+        clear.put("defaultModelProvider", null);
+        clear.put("defaultModelName", null);
+        clear.put("allowedModels", null);
+        HttpProbe cleared = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId, clear);
+        assertEquals(200, cleared.status(), cleared.body());
+        JsonNode body = parse(cleared.body());
+        assertTrue(body.path("defaultModelProvider").isNull(), "null clears the provider column");
+        assertTrue(body.path("defaultModelName").isNull(), "null clears the model column");
+        assertTrue(body.path("allowedModels").isNull(), "null clears the allow-list");
+        AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
+        assertNull(row.getDefaultModelProvider());
+        assertNull(row.getDefaultModelName());
+        assertNull(row.getAllowedModels());
+    }
+
+    @Test
+    void patchRejectsAHalfFilledMergedModelIntent() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "halfagent");
+        assertEquals(200, probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o")).status());
+
+        // Clearing one half alone leaves a half-filled intent — the same rule create enforces.
+        Map<String, Object> half = new HashMap<>();
+        half.put("defaultModelProvider", null);
+        HttpProbe refused = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId, half);
+        assertEquals(400, refused.status(), refused.body());
+        assertEquals("INVALID_AGENT_PRINCIPAL", problemCode(refused));
+        AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
+        assertEquals("openai", row.getDefaultModelProvider(), "a refused write changes nothing");
+        assertEquals("gpt-4o", row.getDefaultModelName());
+    }
+
+    @Test
+    void patchRejectsMalformedAllowedModels() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "listagent");
+
+        HttpProbe missingHalf = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("allowedModels", List.of(Map.of("provider", "openai"))));
+        assertEquals(400, missingHalf.status(), missingHalf.body());
+        assertEquals("INVALID_AGENT_PRINCIPAL", problemCode(missingHalf));
+
+        HttpProbe notAnArray = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("allowedModels", "openai/gpt-4o"));
+        assertEquals(400, notAnArray.status(), notAnArray.body());
+        assertEquals("INVALID_AGENT_PRINCIPAL", problemCode(notAnArray));
+        assertNull(principalRepository.findById(principalId).orElseThrow().getAllowedModels());
+    }
+
+    @Test
+    void patchStillRefusesUnknownKeysAndAnEmptyBody() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "shapeagent");
+
+        HttpProbe unknown = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModel", "gpt-4o"));
+        assertEquals(400, unknown.status(), unknown.body());
+        assertEquals("INVALID_REQUEST", problemCode(unknown));
+
+        HttpProbe wrongType = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelName", 42));
+        assertEquals(400, wrongType.status(), wrongType.body());
+        assertEquals("INVALID_REQUEST", problemCode(wrongType));
+
+        HttpProbe empty = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId, Map.of());
+        assertEquals(400, empty.status(), empty.body());
+        assertEquals("INVALID_REQUEST", problemCode(empty));
+    }
+
+    @Test
+    void patchModelIntentNeedsTheSameInstanceAtoms() {
+        UUID adminId = registerInstanceAdmin();
+        UUID principalId = createPrincipal(tokenOf(adminId), "gateagent");
+        String plainToken = registerPlainUser();
+
+        HttpProbe denied = probe(plainToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o"));
+        assertEquals(403, denied.status(), "model intent is a write, not a new privilege: " + denied.body());
+        assertEquals("FORBIDDEN", problemCode(denied));
+        AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
+        assertNull(row.getDefaultModelProvider(), "the refused write left the row alone");
+    }
+
+    @Test
+    void presetGuardRefusesModelIntentEdits() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "guardagent");
+        // Fixture: mark the row a preset guard (the builtin-preset create path sets the same origin).
+        // V95:32-34 requires preset_id NOT NULL whenever origin=SYSTEM_PRESET, so both columns move
+        // together — setting the origin alone is a DataIntegrityViolation, not a guard.
+        AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
+        row.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
+        row.setPresetId("fixture-guard-preset");
+        principalRepository.saveAndFlush(row);
+
+        HttpProbe refused = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o"));
+        assertEquals(403, refused.status(), refused.body());
+        assertEquals("GUARD_MODEL_INTENT_IMMUTABLE", problemCode(refused),
+                "its own code, not a sibling's (D25-14: the refusals say different things)");
+        assertNull(principalRepository.findById(principalId).orElseThrow().getDefaultModelProvider());
+    }
+
+    @Test
+    void theUserSurfaceAcceptsTheSameModelIntentKeys() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "widthagent");
+
+        // Width pin (task-413): the wire-body gate is SHARED, so the user surface accepts the keys too.
+        // This row is workspace-scoped under the D-196 predicate (owner null + origin USER), so that
+        // surface answers 409 for the missing context — the point is that it is NOT a 400 shape refusal.
+        HttpProbe shared = probe(adminToken, "PATCH", "/api/v1/agent-principals/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o"));
+        assertEquals(409, shared.status(), shared.body());
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", problemCode(shared));
+    }
+
     // --- fixtures ---------------------------------------------------------------------------
 
     private String tokenOf(UUID userId) {
@@ -380,6 +558,18 @@ class InstanceAgentPrincipalControllerIntegrationTest extends AbstractReusableIn
             }
         }
         return null;
+    }
+
+    /** task-413: the model-intent write's durable audit action. */
+    private int modelIntentAuditRows(UUID actorId, UUID principalId) {
+        int count = 0;
+        for (AuditLog log : auditLogRepository.findByUserIdOrderByCreatedAtDesc(actorId.toString())) {
+            if ("agent_principal_model_intent_updated".equals(log.getAction())
+                    && principalId.toString().equals(log.getResourceId())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private int disabledAuditRows(UUID actorId, UUID principalId) {

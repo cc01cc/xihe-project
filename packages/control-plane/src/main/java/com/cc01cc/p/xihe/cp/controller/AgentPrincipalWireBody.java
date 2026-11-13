@@ -32,14 +32,23 @@ public final class AgentPrincipalWireBody {
             "name", "templateId", "defaultModelProvider", "defaultModelName", "allowedModels",
             "hooks", "roleIds");
 
-    /** {@code AgentPrincipalUpdateRequest.additionalProperties:false} key set. */
-    private static final Set<String> DOCUMENT_KEYS = Set.of("hooks", "contextPolicy", "delegationPolicy");
+    /**
+     * {@code AgentPrincipalUpdateRequest.additionalProperties:false} key set.
+     *
+     * <p>task-413 (G1 edit half): the model-intent triple joins the documents here, on <b>both</b>
+     * faces. This class exists precisely so the two surfaces cannot drift (see the class javadoc),
+     * so an instance-only key set was rejected: it would recreate the drift this gate prevents.
+     * The authority is unchanged — each face keeps its own gate.</p>
+     */
+    private static final Set<String> DOCUMENT_KEYS = Set.of("hooks", "contextPolicy", "delegationPolicy",
+            "defaultModelProvider", "defaultModelName", "allowedModels");
 
     private static final String CREATE_SHAPE_DETAIL = "Body must contain name plus optional templateId, "
             + "defaultModelProvider, defaultModelName, allowedModels, hooks and roleIds only";
 
     private static final String DOCUMENT_SHAPE_DETAIL =
-            "Body must contain hooks, contextPolicy and/or delegationPolicy (object or null)";
+            "Body must contain hooks, contextPolicy, delegationPolicy (object or null) and/or "
+                    + "defaultModelProvider, defaultModelName (string or null), allowedModels (array or null)";
 
     private AgentPrincipalWireBody() {}
 
@@ -83,8 +92,23 @@ public final class AgentPrincipalWireBody {
     public static AgentPrincipalService.PrincipalSettingsPatch parseDocuments(Map<String, Object> body,
             ObjectMapper objectMapper) {
         if (body == null || body.isEmpty()
-                || body.keySet().stream().anyMatch(key -> !DOCUMENT_KEYS.contains(key))) {
+                || body.keySet().stream().anyMatch(key -> !DOCUMENT_KEYS.contains(key))
+                || (body.containsKey("defaultModelProvider") && body.get("defaultModelProvider") != null
+                && !(body.get("defaultModelProvider") instanceof String))
+                || (body.containsKey("defaultModelName") && body.get("defaultModelName") != null
+                && !(body.get("defaultModelName") instanceof String))) {
             throw invalidRequest(DOCUMENT_SHAPE_DETAIL);
+        }
+        // task-413: same split as create — the wire edge only tree-ifies, the model-intent rule
+        // (both-or-neither on the merged pair, allow-list shape) stays in the service's single
+        // normalizeModelIntent so there is no second copy of the rule.
+        JsonNode allowedModels = null;
+        if (body.get("allowedModels") != null) {
+            try {
+                allowedModels = objectMapper.valueToTree(body.get("allowedModels"));
+            } catch (IllegalArgumentException e) {
+                throw invalidRequest("allowedModels must be an array of {provider, model}");
+            }
         }
         return new AgentPrincipalService.PrincipalSettingsPatch(
                 body.get("hooks") == null ? null : objectMapper.valueToTree(body.get("hooks")),
@@ -93,7 +117,13 @@ public final class AgentPrincipalWireBody {
                 body.containsKey("contextPolicy"),
                 body.get("delegationPolicy") == null
                         ? null : objectMapper.valueToTree(body.get("delegationPolicy")),
-                body.containsKey("delegationPolicy"));
+                body.containsKey("delegationPolicy"),
+                body.get("defaultModelProvider") instanceof String provider ? provider : null,
+                body.containsKey("defaultModelProvider"),
+                body.get("defaultModelName") instanceof String model ? model : null,
+                body.containsKey("defaultModelName"),
+                allowedModels,
+                body.containsKey("allowedModels"));
     }
 
     /** {@code roleIds} is a plain array of uuids; anything else is a 400 at the wire edge. */

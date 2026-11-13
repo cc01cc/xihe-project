@@ -1428,6 +1428,13 @@ public class AgentPrincipalService {
                 ? ContextPolicyValidator.validate(patch.contextPolicy()) : null;
         JsonNode checkedDelegation = patch.delegationPolicyPresent()
                 ? DelegationPolicyValidator.validate(patch.delegationPolicy()) : null;
+        // task-413: the allow-list shape is a body-shape rule, so it is validated here (before the
+        // lookup) exactly like the documents. The both-or-neither rule needs the STORED halves, so it
+        // runs after the lookup on the merged pair — one rule function, no second copy.
+        boolean modelIntentPresent = patch.defaultModelProviderPresent()
+                || patch.defaultModelNamePresent() || patch.allowedModelsPresent();
+        JsonNode checkedAllowedModels = patch.allowedModelsPresent()
+                ? normalizeModelIntent(null, null, patch.allowedModels()) : null;
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
@@ -1445,6 +1452,9 @@ public class AgentPrincipalService {
         if (patch.delegationPolicyPresent()) {
             requireMutableDelegationPolicy(principal);
         }
+        if (modelIntentPresent) {
+            requireMutableModelIntent(principal);
+        }
         requireDisableAuthority(actorId, principal);
         if (patch.hooksPresent()) {
             principal.setHooks(checkedHooks);
@@ -1454,6 +1464,28 @@ public class AgentPrincipalService {
         }
         if (patch.delegationPolicyPresent()) {
             principal.setDelegationPolicy(checkedDelegation);
+        }
+        if (modelIntentPresent) {
+            // Merge-then-validate: a present key replaces, an absent key keeps the stored half, an
+            // explicit null clears. Only the pair rule is re-checked here (the allow-list was already
+            // shape-checked above), so "change just the model name" is legal while clearing one half
+            // alone is the same 400 INVALID_AGENT_PRINCIPAL create answers.
+            String mergedProvider = patch.defaultModelProviderPresent()
+                    ? patch.defaultModelProvider() : principal.getDefaultModelProvider();
+            String mergedModel = patch.defaultModelNamePresent()
+                    ? patch.defaultModelName() : principal.getDefaultModelName();
+            if (patch.defaultModelProviderPresent() || patch.defaultModelNamePresent()) {
+                normalizeModelIntent(mergedProvider, mergedModel, null);
+            }
+            if (patch.defaultModelProviderPresent()) {
+                principal.setDefaultModelProvider(blankToNull(mergedProvider));
+            }
+            if (patch.defaultModelNamePresent()) {
+                principal.setDefaultModelName(blankToNull(mergedModel));
+            }
+            if (patch.allowedModelsPresent()) {
+                principal.setAllowedModels(checkedAllowedModels);
+            }
         }
         agentPrincipalRepository.saveAndFlush(principal);
         if (patch.hooksPresent()) {
@@ -1477,8 +1509,28 @@ public class AgentPrincipalService {
                     "agent_principal_delegation_policy_updated", "agent_principal", principalId.toString(),
                     detail.toString());
         }
+        if (modelIntentPresent) {
+            ObjectNode detail = objectMapper.createObjectNode();
+            detail.put("defaultModelProvider", principal.getDefaultModelProvider());
+            detail.put("defaultModelName", principal.getDefaultModelName());
+            detail.put("allowedModels", principal.getAllowedModels() == null
+                    ? "null" : principal.getAllowedModels().toString());
+            auditLogger.recordDurableChange(actorId.toString(), null,
+                    "agent_principal_model_intent_updated", "agent_principal", principalId.toString(),
+                    detail.toString());
+        }
         return new PrincipalSettings(principal.getHooks(), principal.getContextPolicy(),
-                principal.getDelegationPolicy());
+                principal.getDelegationPolicy(), principal.getDefaultModelProvider(),
+                principal.getDefaultModelName(), principal.getAllowedModels());
+    }
+
+    /**
+     * task-413: PATCH stores a blank provider/model as NULL, the same reading
+     * {@link #normalizeModelIntent} already applies when it validates the pair. Create keeps the raw
+     * value it was given (pre-existing behaviour, deliberately not changed here).
+     */
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     /**
@@ -1487,10 +1539,27 @@ public class AgentPrincipalService {
      */
     public record PrincipalSettingsPatch(JsonNode hooks, boolean hooksPresent,
                                          JsonNode contextPolicy, boolean contextPolicyPresent,
-                                         JsonNode delegationPolicy, boolean delegationPolicyPresent) {}
+                                         JsonNode delegationPolicy, boolean delegationPolicyPresent,
+                                         String defaultModelProvider, boolean defaultModelProviderPresent,
+                                         String defaultModelName, boolean defaultModelNamePresent,
+                                         JsonNode allowedModels, boolean allowedModelsPresent) {
 
-    /** The subject-level documents after a write, all read back from the persisted row. */
-    public record PrincipalSettings(JsonNode hooks, JsonNode contextPolicy, JsonNode delegationPolicy) {}
+        /** Documents-only patch (the pre-task-413 shape): every model-intent key is absent. */
+        public PrincipalSettingsPatch(JsonNode hooks, boolean hooksPresent,
+                                      JsonNode contextPolicy, boolean contextPolicyPresent,
+                                      JsonNode delegationPolicy, boolean delegationPolicyPresent) {
+            this(hooks, hooksPresent, contextPolicy, contextPolicyPresent, delegationPolicy,
+                    delegationPolicyPresent, null, false, null, false, null, false);
+        }
+    }
+
+    /**
+     * The subject-level documents and model intent after a write, all read back from the persisted row
+     * (task-413 added the triple so the edit face renders persisted state, including a kept half).
+     */
+    public record PrincipalSettings(JsonNode hooks, JsonNode contextPolicy, JsonNode delegationPolicy,
+                                    String defaultModelProvider, String defaultModelName,
+                                    JsonNode allowedModels) {}
 
     /** D25-14: a preset guard's hook subscriptions are fixed at the write side, like its cap. */
     private void requireMutableHooks(AgentPrincipal principal) {
@@ -1564,6 +1633,21 @@ public class AgentPrincipalService {
                 .map(AgentPrincipal::getName)
                 .orElse(null);
     }
+    /**
+     * task-413: a preset guard's model intent is preset-owned, the same D25-03 "a guard is a system
+     * asset" reasoning as its cap / hooks / memory policy / delegation budget. The judge model decides
+     * how a guard adjudicates, so letting the API swap it would be the same class of bypass D25-14
+     * refused for hooks. Its own code ({@code GUARD_MODEL_INTENT_IMMUTABLE}) rather than a sibling's,
+     * for the D25-14 reason: the refusals say different things.
+     */
+    private void requireMutableModelIntent(AgentPrincipal principal) {
+        if (AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "GUARD_MODEL_INTENT_IMMUTABLE",
+                    "A preset guard's model intent is fixed; a guard is a system asset, "
+                            + "so its judge model is not a user setting");
+        }
+    }
+
     /** D25-02/D25-08: preset guards (and any future hook-only preset) never get their cap rewritten. */
     private void requireMutableCap(AgentPrincipal principal) {
         if (com.cc01cc.p.xihe.cp.entity.AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {

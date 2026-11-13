@@ -82,6 +82,11 @@ public final class AgentPrincipalWireView {
         result.put("hooks", JacksonNodeExit.toDocument(objectMapper, stored.hooks()));
         result.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, stored.contextPolicy()));
         result.put("delegationPolicy", JacksonNodeExit.toDocument(objectMapper, stored.delegationPolicy()));
+        // task-413: the model-intent triple is echoed from the row too, so the edit face can render
+        // persisted state (including a merge that kept one half) without a second read.
+        result.put("defaultModelProvider", stored.defaultModelProvider());
+        result.put("defaultModelName", stored.defaultModelName());
+        result.put("allowedModels", JacksonNodeExit.toDocument(objectMapper, stored.allowedModels()));
         return result;
     }
 }
