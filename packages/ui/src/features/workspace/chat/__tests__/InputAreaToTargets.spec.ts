@@ -240,3 +240,61 @@ describe("InputArea · task-450 省略 vs 显式空集", () => {
         expect(wrapper.emitted("queue")![0][4]).toEqual([]);
     });
 });
+
+/**
+ * task-453（F-16 / Lead 裁 P1，D-1300）：定向发送与默认「代发」的联动。
+ * CP 契约（ChatController:569-577，PLAN-0665 M1/Q1）：显式 TO 非空时 asParticipantId 必须
+ * **等于首目标**或缺席，否则 400 INVALID_REQUEST。而 InputArea 会自动把代发默认成 PRIMARY
+ * （D30-14 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用定向栏就必然冲突。
+ * 真栈实证：To=MiMo 直接发 ⇒ 400「asParticipantId conflicts with toParticipantIds[0]」；
+ * 手动点掉代发 chip 后同一条 ⇒ 202 且 MiMo 真作答（task445-case-b2/b3.json）。
+ */
+describe("InputArea · task-453 定向发送让位默认代发", () => {
+    function mountWithSpeakAs() {
+        storeState.canSpeakAs = true;
+        storeState.speakAsCandidates = roster();
+        storeState.participants = roster();
+        return mountInputArea();
+    }
+
+    async function pickTo(wrapper: ReturnType<typeof mountInputArea>, name: string) {
+        await wrapper.get('[data-testid="to-targets-input"]').setValue(name);
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+    }
+
+    async function send(wrapper: ReturnType<typeof mountInputArea>) {
+        await wrapper.get('[data-testid="chat-input"]').setValue("hello");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+        return wrapper.emitted("send")![0];
+    }
+
+    it("To 非空且首目标≠默认代发 ⇒ 省略 asParticipantId，且代发 chip 不再显示", async () => {
+        const wrapper = mountWithSpeakAs();
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="speak-as-chip"]')).toHaveLength(1);
+        await pickTo(wrapper, "Helper");
+        const args = await send(wrapper);
+        expect(args[4]).toEqual([HELPER_ID]);
+        expect(args[2]).toBeUndefined();
+        expect(wrapper.findAll('[data-testid="speak-as-chip"]')).toHaveLength(0);
+    });
+
+    it("To 首目标 == 默认代发 ⇒ 保留 asParticipantId（CP 允许相等）", async () => {
+        const wrapper = mountWithSpeakAs();
+        await flushPromises();
+        await pickTo(wrapper, "Alpha");
+        const args = await send(wrapper);
+        expect(args[4]).toEqual([PRIMARY_ID]);
+        expect(args[2]).toBe(PRIMARY_ID);
+    });
+
+    it("To 为空 ⇒ 旧单响应者路径不变（仍带默认代发）", async () => {
+        const wrapper = mountWithSpeakAs();
+        await flushPromises();
+        const args = await send(wrapper);
+        expect(args[4]).toBeUndefined();
+        expect(args[2]).toBe(PRIMARY_ID);
+    });
+});

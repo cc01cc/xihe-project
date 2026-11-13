@@ -264,6 +264,24 @@ function onToTargetsFieldChange(ids: string[]): void {
     toTargetsTouched.value = true;
 }
 
+/**
+ * task-453（F-16 / D-1300）：**显式定向优先于默认代发**。
+ * CP（ChatController:569-577，PLAN-0665 M1/Q1）：TO 非空时 `asParticipantId` 必须等于**首目标**
+ * 或缺席，否则 400 `INVALID_REQUEST`。而上面那个 watch 会把代发自动默认成 PRIMARY（D30-14 的
+ * 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用定向栏就必然冲突，且只看到一句英文 detail。
+ * 这里让**默认**让位：相等则保留，不等则省略；`speakAsId` 本身不清空 ⇒ 撤掉定向后自动恢复。
+ * 可见 chip 也绑这个有效值（不能显示「以 A 身份发」而 wire 里其实没有 A）。
+ */
+const effectiveSpeakAsId = computed(() => {
+    const targets = activeToTargetIds.value;
+    if (targets.length === 0) return activeSpeakAsId.value;
+    return activeSpeakAsId.value === targets[0] ? activeSpeakAsId.value : "";
+});
+
+const speakAsOverriddenByTo = computed(
+    () => Boolean(activeSpeakAsId.value) && !effectiveSpeakAsId.value,
+);
+
 /** 发送用的 TO 载荷：非空 ⇒ 数组；空但动过 ⇒ **显式 []**；从未动过 ⇒ undefined（省略）。 */
 const toTargetsPayload = computed(() => {
     if (activeToTargetIds.value.length > 0) return [...activeToTargetIds.value];
@@ -807,7 +825,7 @@ async function handleSend() {
             "queue",
             text,
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
-            activeSpeakAsId.value,
+            effectiveSpeakAsId.value || undefined,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
             toTargetsPayload.value,
         );
@@ -816,7 +834,7 @@ async function handleSend() {
             "send",
             text,
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
-            activeSpeakAsId.value,
+            effectiveSpeakAsId.value || undefined,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
             toTargetsPayload.value,
         );
@@ -1227,13 +1245,21 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
             <RecipientField
                 v-if="showSpeakAs"
                 :label="t('chat.input.toLabel')"
-                :model-value="speakAsId ? [speakAsId] : []"
+                :model-value="effectiveSpeakAsId ? [effectiveSpeakAsId] : []"
                 :candidates="speakAsOptions"
                 :placeholder="t('chat.input.recipientPlaceholder')"
                 testid="speak-as"
                 data-testid="speak-as-bar"
                 @update:model-value="onSpeakAsFieldChange"
             />
+            <!-- task-453：默认代发被定向让位时必须说出来，不能只是 chip 悄悄消失。 -->
+            <p
+                v-if="speakAsOverriddenByTo"
+                class="text-muted-foreground"
+                data-testid="speak-as-overridden-hint"
+            >
+                {{ t("chat.input.speakAsOverriddenByTo") }}
+            </p>
             <!--
                 PLAN-0665 M2（Q3/D4）：定向发送多选（1..N 个 AGENT）——与上面的「代发」栏分开，
                 因为一个消息只能有一个发言身份，但可以有多个响应者。默认空集 = 旧单响应者路径。

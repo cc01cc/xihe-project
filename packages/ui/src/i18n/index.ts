@@ -1186,6 +1186,7 @@ const messages = {
                 // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
                 toTargetsLabel: "定向发送",
                 toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
+                speakAsOverriddenByTo: "已指定定向发送的响应者，本条不代发",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -4753,6 +4754,8 @@ const messages = {
                 toLabel: "To",
                 toTargetsLabel: "Send to",
                 toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
+                speakAsOverriddenByTo:
+                    "Directed recipients are set; this message is not sent as anyone",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",
