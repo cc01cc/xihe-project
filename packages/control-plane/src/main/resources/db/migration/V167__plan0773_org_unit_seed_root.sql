@@ -1,0 +1,69 @@
+-- V167 (PLAN-0773 / M1-6): the root org unit -- the one row that makes the tree non-empty.
+--
+-- WHY THIS MIGRATION EXISTS (task-260)
+--   V163 creates org_units, V164 creates org_unit_members, and NOT ONE row of either table was
+--   ever inserted by the migration chain: `grep -c 'INSERT INTO org_units' <migration dir>` = 0
+--   before this file. On a fresh instance that makes the tree empty, `GET /api/v1/org-units`
+--   answers an empty nodes list, and the org-members page shows 「无法查看组织单元」 -- i.e. it
+--   reports an authorization/contract failure where the real cause is "there is no data yet".
+--   The page cannot fix that by itself either: OrgUnitWriteService.create(name, null) demands
+--   scope.wholeTree(), which requires the caller to hold MANAGE_ORG_UNITS *and* to have no
+--   org_unit_members row (OrgUnitAccess.resolve). A root therefore has to exist in the database
+--   before the first UI request; it cannot be bootstrapped through the API that needs it.
+--   (This is M1-6 as tasks.md:27 words it -- 「建根单元」, not 「等第一个用户建」.)
+--
+-- WHY THE ID IS A FIXED SENTINEL RATHER THAN gen_random_uuid()
+--   The second half of M1-6 -- placing the seeded admin in this unit -- runs at runtime, in
+--   DataSeeder, where the admin's own id is only known after the user row exists. That writer
+--   must be able to name the unit WITHOUT a lookup query: a `SELECT ... WHERE parent_id IS NULL`
+--   is ambiguous as soon as a second root exists, and several roots are legitimate (the API allows
+--   them; uq_org_units_sibling_name only forbids two roots with one NAME). A literal id makes the
+--   seed addressable by construction, which is exactly the pattern V87 uses for the built-in roles
+--   (00000000-0000-4000-8000-000000000001 .. ...0002). The value below was measured before being
+--   taken, and the reading is reproducible: `git -C A03-xihe grep -l <uuid> -- .` on the two
+--   tracked trees gave ...000000a0 = 3, ...000000d1 = 1, ...000000f1 = 0, ...000000e1 = 0.
+--   (...000000e1 reads 1 today, and that hit is THIS card's constant in DataSeeder.java -- the
+--   value was free when it was chosen, and claiming "still 0" would mean counting my own write
+--   as evidence that nobody had taken it.) The neighbours are listed because "free" only means
+--   something against the ones that are taken: the a0/d1 hits are real collisions that make a
+--   generic-looking sentinel unsafe to pick at random.
+--   The path must then be the de-hyphenated id, and not a hand-written 'root' label: D-1116 +
+--   ck_org_units_path_no_hyphen (V163:64) make the label a property of the id, so a decorative
+--   name here would be the one row in the table that does not obey the rule everything else obeys.
+--   (design.md:57's literal `root.<uuid>` is an EXAMPLE of the shape, not a value to copy -- V163
+--   documented that when it froze the CHECK.)
+--
+-- WHY THE ADMIN'S MEMBERSHIP ROW IS NOT IN THIS FILE
+--   A placement needs a member_id, and no user row exists at migration time: `INSERT INTO users`
+--   has zero hits in the whole migration chain, and User.id is GenerationType.UUID, i.e. minted at
+--   runtime. Inventing a user here would mean inventing an account. So the split follows V85:15,
+--   which leaves ownership of the first administrator to DataSeeder for the same reason. This
+--   migration seeds the STRUCTURE; DataSeeder (config/DataSeeder.java) seeds the SUBJECT, and both
+--   halves are idempotent on their own.
+--
+-- IDEMPOTENCY (a seed is judged by the replay, not by "it ran once")
+--   ON CONFLICT DO NOTHING is deliberately UNTARGETED: two constraints can be the collision
+--   (the primary key on `id`, and uq_org_units_path on the label), and either one means the same
+--   thing -- this unit is already there. Naming a single conflict target would make the other one
+--   a hard error, which is the failure mode V129:31-61 documented for inference-by-NOT EXISTS.
+--   The judgement is the affected-row count of a replay: 0 on an already-seeded database
+--   (OrgUnitRootSeedMigrationTest asserts that number, not the totals -- a delete+insert would keep
+--   the totals equal while still being a re-run that changes the data).
+--
+-- Number allocation taken with the gate (task-164 / task-175 / task-176), measured 2026-11-13 15:4x
+-- from A03-xihe at develop 64f1417c1:
+--   before writing : node scripts/check-migration-numbers.mjs => files=158 max=V166 next=V167
+--                    registeredRows=174, exit 1 -- and the red was NOT only about V167 missing:
+--                    §0 parity was already stale (主干上界 登记=165 实测=166; 迁移文件数
+--                    登记=157 实测=158; 下一条可用号 登记=166 实测=167) because V166 landed
+--                    without a §0 update. Both readings are honest input, not noise; §0 is fixed
+--                    in the same batch.
+--   after writing, before registering => E_REGISTRY_STALE + E_MIGRATION_NOT_REGISTERED .. V167
+--   base sha at write time = 64f1417c1 (2026-11-13)
+--
+-- Not in this file on purpose: tabs/columns beyond design.md:60, no org_unit_members row (see
+-- above), no role binding, no updated_at trigger. Shape is V163's, untouched.
+INSERT INTO org_units (id, parent_id, name, path, depth) VALUES
+    ('00000000-0000-4000-8000-0000000000e1', NULL, '默认组织',
+     '000000000000400080000000000000e1', 0)
+ON CONFLICT DO NOTHING;
