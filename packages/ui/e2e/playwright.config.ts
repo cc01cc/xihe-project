@@ -34,7 +34,7 @@ const viewport = (() => {
 // whenever real provider credentials are present in the test process.
 
 // task-48（2026-11-11）：**全量报告与子集报告必须分文件写**。
-// 子集跑（显式列 spec 文件，例如 `test:mock:smoke` 的 29 文件、排障时的单文件复跑）过去会把整份
+// 子集跑（显式列 spec 文件，例如 `test:mock:smoke` 的 30 文件、排障时的单文件复跑）过去会把整份
 // 全量报告覆盖成子集 ⇒ `check:mock-baseline` 读到的是子集数字。这是**门的输入源能被旁路写入污染**，
 // 与「`.tmp` 阈值门量错目录」同一类病：门算得对，但算的不是那件事。
 // 判据不靠人记得设环境变量，而是**从 argv 推**：给了具体 `*.spec.ts` 就是子集跑。
