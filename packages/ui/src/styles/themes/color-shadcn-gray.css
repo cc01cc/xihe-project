@@ -35,7 +35,7 @@ html[data-xh-color="gray"] {
        （旧值 0.66 对 #fff 报 3.11，对真底 oklch(0.97) 只有 2.85、对 `--muted` 2.54）。
        新值对 5 个底面的最差 = 3.184。`--border` 保持不动：装饰线不受 1.4.11 约束，
        一起提等于把全站描边统一加重 = 换风格、收益 0（Lead 2026-11-13 裁定）。
-       读数与复算脚本：internal/A03-xihe/evidence/2026-11-13-config-domain-selects/README.md §5 */
+       读数与复算脚本：internal/A03-xihe/evidence/2026-11-13-config-domain-selects/README.md §9 */
     --input: oklch(0.631 0.006 264.531);
     --ring: var(--primary);
     --chart-1: oklch(0.646 0.222 41.116);
