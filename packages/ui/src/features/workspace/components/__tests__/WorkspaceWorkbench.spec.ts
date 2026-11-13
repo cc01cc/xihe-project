@@ -808,3 +808,45 @@ describe("WorkspaceWorkbench file tree as splitter panel (PLAN-0753 T3)", () => 
         await expectStored(() => expect(storedLayout().treeWidth).toBe(TREE_WIDTH_MAX));
     });
 });
+
+/**
+ * task-353 / D-1207 甲案：判据① 是**层级判据**，不是可见性判据。
+ *
+ * 文件树必须是中栏容器（`[data-testid="workspace-center"]`）内部的一道 panel，而不是工作台的
+ * 第三列。判据用 DOM 祖先判定，所以「加个 hidden 开关」不算进容器（D-1207 §⑤）：隐藏不改变
+ * `closest()` 的结果 —— 只有真的换了父节点才会变。
+ *
+ * 反向（改前必红，`[源码]`）：改造前模板里 `workspace-center` 这个串出现 **0 次**
+ * （`git show <改前 sha>:…/WorkspaceWorkbench.vue | Select-String -c 'workspace-center'` ⇒ 0），
+ * `closest()` 对不存在的选择器返回 null ⇒ 本用例在旧结构上必红。
+ * 恒绿风险由**负控**堵住：同一个节点换一个不存在的 testid 必须查不到（见下）。
+ */
+describe("WorkspaceWorkbench 文件树归属中栏容器（task-353 / D-1207 甲案）", () => {
+    it("文件树与它的列壳都在 workspace-center 内，主区同属该容器", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        const treeStub = wrapper.get('[data-testid="file-tree-stub"]').element;
+        const centerEl = treeStub.closest('[data-testid="workspace-center"]');
+        expect(centerEl, "文件树的 DOM 祖先里必须有中栏容器（判据①a）").not.toBeNull();
+
+        // 负控（恒绿防线）：同一个节点查一个不存在的 testid 必须为 null。
+        // 没有这一条时，选择器写错、属性没渲染等情形都会让上面的断言「找不到就判过」。
+        expect(treeStub.closest('[data-testid="workspace-center-absent"]')).toBeNull();
+        if (!centerEl) return; // 已断言非空，这里只为类型收窄。
+
+        // 判据①b：列壳也必须搬进容器 —— 它不再是工作台的第三列。
+        // 注意判据是「rail 在中栏容器内」，**不是「rail 消失」**：折叠态下 rail 自己就是那道
+        // panel（`as-child`），要求它消失等于把结构判据写成不可能成立。
+        const rail = wrapper.get('[data-testid="workspace-file-rail"]').element;
+        expect(
+            rail.closest('[data-testid="workspace-center"]'),
+            "列壳必须在中栏容器内（判据①b）",
+        ).not.toBeNull();
+
+        // 容器语义的最小证据：主区与文件树必须同属这一个容器。
+        const main = wrapper.get('[data-testid="workspace-main"]').element;
+        expect(centerEl.contains(rail), "中栏容器必须容纳文件树列壳").toBe(true);
+        expect(centerEl.contains(main), "中栏容器必须同时容纳主区").toBe(true);
+    });
+});

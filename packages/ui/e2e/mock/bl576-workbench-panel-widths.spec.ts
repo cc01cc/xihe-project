@@ -30,20 +30,27 @@ interface PanelGeometry {
 /** 直读几何（不用固定 sleep）：调用方负责轮询到稳定。 */
 async function measure(page: Page): Promise<PanelGeometry | null> {
     return page.evaluate(() => {
-        const group = document.querySelector(
-            String.raw`[data-testid="workspace-workbench"] [data-panel-group]`,
-        );
-        if (!group) return null;
-        const panels = Array.from(group.querySelectorAll("[data-panel]"));
-        if (panels.length < 2) return null;
-        const g = group.getBoundingClientRect();
-        const tree = panels[0]?.getBoundingClientRect();
-        const main = panels[1]?.getBoundingClientRect();
+        // task-353（D-1207 甲案）后：工作台里只剩**一道** group —— 中栏容器内部那道，
+        // 两道 panel 是 [文件树 | 主区]。面板**按 testid 定位，不按 index**：index 依赖 DOM
+        // 顺序，结构一改就静默错位（旧写法 `panels[0]` 会把主区当成树来量，量出来的数还对得上）。
+        const center = document.querySelector('[data-testid="workspace-center"]');
+        const group = center?.querySelector("[data-panel-group]") ?? null;
+        if (!center || !group) return null;
+        const tree = document
+            .querySelector('[data-testid="workspace-file-rail"]')
+            ?.closest("[data-panel]");
+        const main = document
+            .querySelector('[data-testid="workspace-main"]')
+            ?.closest("[data-panel]");
         if (!tree || !main) return null;
+        // 层级（判据①的量法侧）：两块 panel 都在中栏容器内，且是同一 group 的兄弟。
+        if (!center.contains(tree) || !center.contains(main)) return null;
+        if (tree.parentElement !== main.parentElement) return null;
+        const g = group.getBoundingClientRect();
         return {
             containerWidth: g.width,
-            treeWidth: tree.width,
-            mainWidth: main.width,
+            treeWidth: tree.getBoundingClientRect().width,
+            mainWidth: main.getBoundingClientRect().width,
         };
     });
 }
@@ -87,6 +94,8 @@ test("BL-576 守卫：主列不是坍缩态，两面板按百分比分配且吃�
     const geom = await measureStable(page);
     const round = (value: number) => value.toFixed(1);
     const ratio = round((geom.mainWidth / geom.containerWidth) * 100);
+    // task-353：把读数无条件打出来 —— 通过时断言消息不进报告，改前/改后就没法对比数字。
+    console.log("[bl576]", JSON.stringify(geom));
     const detail =
         `mainWidth=${round(geom.mainWidth)} treeWidth=${round(geom.treeWidth)} ` +
         `containerWidth=${round(geom.containerWidth)} mainRatio=${ratio}%`;
@@ -121,4 +130,17 @@ test("BL-576 守卫：主列不是坍缩态，两面板按百分比分配且吃�
             `树宽 + 主列宽应 ≈ 容器宽（±2 px）；${detail}`,
         )
         .toBeLessThanOrEqual(2);
+    // ⑤ 层级（task-353 判据① 的量法侧）：上面四个数只在「group 位于中栏容器内」时才有意义。
+    //    没有这条，同一个量法在改造前的结构（group = 工作台根下那道、树是第三列）上也全绿 ——
+    //    那就成了「量的是旧结构、报的是新结构」的假绿。
+    const hierarchy = await page.evaluate(() => {
+        const center = document.querySelector('[data-testid="workspace-center"]');
+        const rail = document.querySelector('[data-testid="workspace-file-rail"]');
+        return {
+            groupInCenter: center?.querySelector("[data-panel-group]") != null,
+            railInCenter: center != null && rail != null && center.contains(rail),
+        };
+    });
+    expect(hierarchy.groupInCenter, "splitter group 必须在中栏容器内（判据①的量法侧）").toBe(true);
+    expect(hierarchy.railInCenter, "文件树列壳必须在中栏容器内（判据①b）").toBe(true);
 });
