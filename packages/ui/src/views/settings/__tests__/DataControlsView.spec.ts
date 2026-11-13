@@ -123,6 +123,14 @@ function selfPermissions(atoms: string[]) {
 }
 
 beforeEach(() => {
+    // task-467：本块此前**只设 token、不清场**，而同文件下一块（snapshot retention）既写
+    // `xihe-workspace` 又真的调用 getWorkspaceCheckpointRetention。顺序跑时两块先后固定所以恒绿；
+    // `--sequence.shuffle` 把两块的用例交错后，下一块记录的调用会留在同一个 vi.fn 的历史里，
+    // 于是 403 用例的 `not.toHaveBeenCalled()` 被**别人的调用**判红（实测 4/4 种子单文件即复现）。
+    // 清场对齐下一块：mock 调用历史 + 两个 storage 都清，再设本块自己要的 token。
+    vi.clearAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
     setActivePinia(createPinia());
     // auth store 的 token 来自 localStorage；无 token ⇒ ensureSelfPermissions() fail-closed。
     localStorage.setItem("xihe-token", "test-token");
