@@ -7,6 +7,7 @@ import {
 } from "../../../lib/workspaceContext";
 import { useAuthStore } from "../../../stores/auth";
 import { useWorkspaceStore } from "../stores/workspace";
+import { makeWorkspace } from "../../../tests/workspaceFixture";
 
 /**
  * task-44（多根可见性，C 项）—— **经 HTTP 的链路用例**。
@@ -86,12 +87,14 @@ async function hydrateFromHttp(workspace: Record<string, unknown>): Promise<void
 
 describe("多根可见性：roots 必须经 HTTP 走完 normalizeWorkspace（task-44）", () => {
     it("GET /workspaces/{id} 的 roots 落在 authStore，并让 workspace store 认出多根", async () => {
-        await hydrateFromHttp({
-            id: WORKSPACE_ID,
-            name: "多根工作区",
-            hostPath: "H:/mock/alpha",
-            roots: DECLARED_ROOTS,
-        });
+        await hydrateFromHttp(
+            makeWorkspace({
+                id: WORKSPACE_ID,
+                name: "多根工作区",
+                hostPath: "H:/mock/alpha",
+                roots: DECLARED_ROOTS,
+            }),
+        );
 
         // ① 归一化层：这一行就是 task-25 实测到的断点（旧实现里 roots 恒 undefined）。
         const auth = useAuthStore();
@@ -114,11 +117,13 @@ describe("多根可见性：roots 必须经 HTTP 走完 normalizeWorkspace（tas
     });
 
     it("wire 上只有 position 而无 path/alias 时仍排序可用，且不把单根错判成多根", async () => {
-        await hydrateFromHttp({
-            id: WORKSPACE_ID,
-            name: "单根工作区",
-            roots: [{ id: WORKSPACE_ID, alias: null, position: 0 }],
-        });
+        await hydrateFromHttp(
+            makeWorkspace({
+                id: WORKSPACE_ID,
+                name: "单根工作区",
+                roots: [{ id: WORKSPACE_ID, alias: null, position: 0 }],
+            }),
+        );
 
         const auth = useAuthStore();
         expect(auth.workspace?.roots).toHaveLength(1);
@@ -132,7 +137,7 @@ describe("多根可见性：roots 必须经 HTTP 走完 normalizeWorkspace（tas
     });
 
     it("没有 roots 投影的老工作区保持不分组（不抛错、不退化成空根）", async () => {
-        await hydrateFromHttp({ id: WORKSPACE_ID, name: "老工作区" });
+        await hydrateFromHttp(makeWorkspace({ id: WORKSPACE_ID, name: "老工作区" }));
 
         const ws = useWorkspaceStore();
         expect(useAuthStore().workspace?.roots).toBeUndefined();

@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
+import { makeWorkspace } from "../../../tests/workspaceFixture";
 
 const routeState = vi.hoisted(() => ({
     workspaceId: "66666666-6666-4666-8666-666666666666",
@@ -82,7 +83,9 @@ function mockConfigFetchResponse(input: RequestInfo | URL): Promise<Response> {
         }
         return Promise.resolve(
             new Response(
-                JSON.stringify({ id: WORKSPACE_ID, name: "Workspace", workspaceRole: "OWNER" }),
+                JSON.stringify(
+                    makeWorkspace({ id: WORKSPACE_ID, name: "Workspace", workspaceRole: "OWNER" }),
+                ),
                 { status: 200 },
             ),
         );

@@ -17,6 +17,7 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
+import { makeWorkspace } from "../../../tests/workspaceFixture";
 
 const WORKSPACE_ID = "77777777-7777-4777-8777-777777777777";
 
@@ -71,11 +72,13 @@ function mockFetch() {
         if (parsed.pathname.endsWith(`/workspaces/${WORKSPACE_ID}`)) {
             return Promise.resolve(
                 new Response(
-                    JSON.stringify({
-                        id: WORKSPACE_ID,
-                        name: "Workspace",
-                        storageMode: "direct_attach",
-                    }),
+                    JSON.stringify(
+                        makeWorkspace({
+                            id: WORKSPACE_ID,
+                            name: "Workspace",
+                            storageMode: "direct_attach",
+                        }),
+                    ),
                     { status: 200, headers: { "content-type": "application/json" } },
                 ),
             );
