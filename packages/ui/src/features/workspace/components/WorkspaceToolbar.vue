@@ -9,7 +9,6 @@ import {
     Bot,
     Code,
     FileDiff,
-    FolderOpen,
     FolderTree,
     GitBranch,
     MoreHorizontal,
@@ -46,9 +45,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    importSource: [];
     agents: [];
-    addWorkspace: [];
     files: [];
     toggleCode: [];
     toggleChanges: [];
@@ -241,14 +238,6 @@ function overflowNav(navigate: () => void) {
                 >
                     {{ t("workspace.settingsTitle") }}
                 </button>
-                <button
-                    type="button"
-                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
-                    data-testid="workspace-toolbar-more-add-workspace"
-                    @click="overflowNav(() => emit('addWorkspace'))"
-                >
-                    {{ t("workspace.addWorkspace") }}
-                </button>
             </div>
         </div>
         <div
@@ -380,24 +369,6 @@ function overflowNav(navigate: () => void) {
             >
                 <Bot class="size-3.5" aria-hidden="true" />
                 {{ t("workspace.agentManagement") }}
-            </button>
-            <button
-                data-testid="workspace-toolbar-add"
-                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
-                :title="t('workspace.addWorkspace')"
-                :aria-label="t('workspace.addWorkspace')"
-                @click="emit('addWorkspace')"
-            >
-                <Plus class="size-3.5" />
-            </button>
-            <button
-                data-testid="workspace-toolbar-import-source"
-                class="p-1.5 rounded hover:bg-accent text-muted-foreground transition-colors"
-                :title="t('workspace.importSource')"
-                :aria-label="t('workspace.importSource')"
-                @click="emit('importSource')"
-            >
-                <FolderOpen class="size-3.5" />
             </button>
         </div>
     </div>

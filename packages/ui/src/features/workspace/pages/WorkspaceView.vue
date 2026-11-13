@@ -329,6 +329,35 @@ watch(
     { immediate: true },
 );
 
+/**
+ * D-1220 ②（task-365 B）：导入源对话框的入口从左栏「工作区」区头来（`?importSource=1`），
+ * 页内工具栏不再放这个按钮。消费后抹掉参数，与 `?newChat=1` 同形。
+ */
+/**
+ * `?create=1` 在**两个宿主**都要消费：无 tab 上下文时 `/workspace` 渲染 `WorkspacePicker`，
+ * 有上下文时路由守卫把它重定向到 `/workspace/{id}`（query 原样带过来，`router/index.ts:486`）
+ * ⇒ 只在 Picker 里消费的话，「已经在工作区里点区头 +」会**点了没反应**（对话框根本不挂载）。
+ */
+watch(
+    () => route.query.create,
+    (request) => {
+        if (request !== "1") return;
+        showCreateDialog.value = true;
+        void router.replace({ query: { ...route.query, create: undefined } });
+    },
+    { immediate: true },
+);
+
+watch(
+    () => route.query.importSource,
+    (request) => {
+        if (request !== "1") return;
+        showSourceImportDialog.value = true;
+        void router.replace({ query: { ...route.query, importSource: undefined } });
+    },
+    { immediate: true },
+);
+
 watch(
     () => sessionId.value,
     (id) => {
@@ -416,9 +445,7 @@ watch(isMobileViewport, (mobile) => {
             :usage-output="usageOutput ?? null"
             :mobile-changes-open="showMobileChanges"
             :mobile-aux-tab="mobileAuxTab"
-            @import-source="showSourceImportDialog = true"
             @agents="handleOpenAgentsPanel"
-            @add-workspace="showCreateDialog = true"
             @files="showMobileFiles = true"
             @mobile-toggle-changes="handleToggleChanges"
             @mobile-toggle-monitor="handleToggleMonitor"

@@ -17,13 +17,20 @@ import { api } from "../../composables/api";
  * —— 它们测的是副本，不是产品文案。这比变红更糟：**红的会被修，绿的不会**。
  * 现改为直接取 `src/i18n` 的真源；产品文案一旦改名，这里必然跟着红。
  */
-type LocaleBranch = { sidebar: Record<string, string>; settings: Record<string, string> };
+// task-365 B：左栏「工作区」区头的两个动作沿用 `workspace.*` 既有键（导入源 / 新建工作区），
+// 所以夹具必须带上 workspace 分支 —— 否则裸键守卫（expectNoRawI18nKey）会在 mount 处红。
+type LocaleBranch = {
+    sidebar: Record<string, string>;
+    settings: Record<string, string>;
+    workspace: Record<string, string>;
+};
 const zhSource = appI18n.global.getLocaleMessage("zh-CN") as unknown as LocaleBranch;
 
 const messages = {
     "zh-CN": {
         sidebar: zhSource.sidebar,
         settings: zhSource.settings,
+        workspace: zhSource.workspace,
     },
 };
 
@@ -130,10 +137,18 @@ async function mountSidebar(
 }
 
 describe("Sidebar", () => {
-    it("renders new chat button with correct text", async () => {
+    it("renders the new-chat entry as an icon-only control (task-365 A / D-1220 ①)", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
-        expect(wrapper.text()).toContain("新建会话");
+        const btn = wrapper.get('[data-testid="sidebar-new-chat"]');
+        // 降级后**没有可见文字**（文字进 aria-label/title）⇒ 断言从「文字存在」换成「无文字 + 有可访问名」。
+        expect(btn.text()).toBe("");
+        expect(btn.attributes("aria-label")).toBe("新建会话");
+        expect(btn.attributes("title")).toBe("新建会话");
+        // token 读数：size-7 = 7 × --spacing(3.5px) = 24.5px；填充色从 bg-primary 变透明。
+        expect(btn.classes()).toContain("size-7");
+        expect(btn.classes()).not.toContain("bg-primary");
+        expect(btn.classes()).not.toContain("w-full");
     });
 
     it("clicking new chat routes through the explicit Workspace Agent selector", async () => {
@@ -143,9 +158,8 @@ describe("Sidebar", () => {
         const spy = vi.spyOn(globalThis, "fetch");
 
         const wrapper = await mountSidebar(),
-            buttons = wrapper.findAll("button"),
-            newChatBtn = buttons.find((b) => b.text().trim() === "新建会话");
-        expect(newChatBtn).toBeDefined();
+            newChatBtn = wrapper.find('[data-testid="sidebar-new-chat"]');
+        expect(newChatBtn.exists()).toBe(true);
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -166,8 +180,7 @@ describe("Sidebar", () => {
         const store = useSessionStore(),
             spy = vi.spyOn(globalThis, "fetch"),
             wrapper = await mountSidebar(),
-            buttons = wrapper.findAll("button"),
-            newChatBtn = buttons.find((b) => b.text().trim() === "新建会话");
+            newChatBtn = wrapper.find('[data-testid="sidebar-new-chat"]');
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -199,8 +212,7 @@ describe("Sidebar", () => {
         } as Response);
         const store = useSessionStore(),
             wrapper = await mountSidebar(),
-            buttons = wrapper.findAll("button"),
-            newChatBtn = buttons.find((b) => b.text().trim() === "新建会话");
+            newChatBtn = wrapper.find('[data-testid="sidebar-new-chat"]');
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -303,33 +315,35 @@ describe("Sidebar", () => {
         expect(wrapper.find('[data-testid="sidebar-collapsed-strip"]').exists()).toBe(false);
     });
 
-    it("moves the workspace identity to the panel header and drops the lone bottom entry", async () => {
+    it("panel header is a section header, not a second copy of the workspace name (D-1229)", async () => {
         mockAuth();
         routeState.name = "workspace";
         routeState.path = "/workspace/ws-test";
         const wrapper = await mountSidebar();
 
-        const rows = wrapper.findAll('[data-testid="sidebar-workspace"]');
-        expect(rows).toHaveLength(1);
-        expect(rows[0]!.text()).toContain("Default Workspace");
-        expect(rows[0]!.attributes("aria-current")).toBe("page");
-
-        // The workspace row now precedes the session list instead of trailing it.
-        // task-352：会话列表的容器从 `sidebar-session-list`（单列表）换成了
-        // `sidebar-workspace-groups`（工作区分组）；「标题在前、列表在后」这条意图不变，
-        // 只换锚点 —— 空组态下内层 `sidebar-session-list` 根本不渲染，钉它会变成空断言。
-        const html = wrapper.html();
-        // 前置条件：锚点必须真的存在。少了这一条，`indexOf` 双 -1 也能让下面的比较失败得
-        // 「对」，而更糟的是**老代码上它会以 -1 参与比较** —— 换锚点前后必须能区分：
-        // 改前的代码里没有 `sidebar-workspace-groups`，这一行就是红的那一行。
-        expect(html.indexOf('data-testid="sidebar-workspace-groups"')).toBeGreaterThan(-1);
-        expect(html.indexOf('data-testid="sidebar-workspace"')).toBeLessThan(
-            html.indexOf('data-testid="sidebar-workspace-groups"'),
+        const header = wrapper.get('[data-testid="sidebar-workspaces-header"]');
+        expect(header.text()).toContain(zhSource.sidebar.workspacesSection);
+        // 三重冗余收敛：栏头不再复述工作区名，旧的「工作区名按钮」整体不存在。
+        expect(header.text()).not.toContain("Default Workspace");
+        expect(wrapper.find('[data-testid="sidebar-workspace"]').exists()).toBe(false);
+        // 判据「左栏内工作区名只出现一次」：唯一那次在分组头里。
+        const occurrences = wrapper.text().split("Default Workspace").length - 1;
+        expect(occurrences).toBe(1);
+        expect(wrapper.get('[data-testid="sidebar-workspace-group-ws-test"]').text()).toContain(
+            "Default Workspace",
         );
 
-        await rows[0]!.trigger("click");
-        await flushPromises();
-        expect(pushSpy).toHaveBeenCalledWith("/workspace/ws-test");
+        // 栏头承载**列表级**动作 + 折叠（折叠按钮仍在原位）。
+        expect(header.find('[data-testid="sidebar-add-workspace"]').exists()).toBe(true);
+        expect(header.find('[data-testid="sidebar-import-source"]').exists()).toBe(true);
+        expect(header.find('[data-testid="sidebar-collapse"]').exists()).toBe(true);
+
+        // 顺序意图不变：栏头在分组列表之前（锚点必须真的存在，否则双 -1 会假绿）。
+        const html = wrapper.html();
+        expect(html.indexOf('data-testid="sidebar-workspace-groups"')).toBeGreaterThan(-1);
+        expect(html.indexOf('data-testid="sidebar-workspaces-header"')).toBeLessThan(
+            html.indexOf('data-testid="sidebar-workspace-groups"'),
+        );
     });
 
     it("filters the session list through the shared search query", async () => {
@@ -416,6 +430,58 @@ describe("Sidebar nav yield (PLAN-0582 S5-W2)", () => {
         expect(
             wrapper.get('[data-testid="sidebar-panel"]').attributes("aria-hidden"),
         ).toBeUndefined();
-        expect(wrapper.get('[data-testid="sidebar-workspace"]').exists()).toBe(true);
+        expect(wrapper.get('[data-testid="sidebar-workspaces-header"]').exists()).toBe(true);
+    });
+});
+
+/**
+ * task-365 B（`D-1220` ②）：「新建工作区 / 导入源」从页内右上角搬进左栏「工作区」区头。
+ * 三条判据：① 两个动作在区头可达；② 它们各自走 query 深链（页内不再持有按钮）；
+ * ③ **两个 `+` 不许混语义** —— 区头 `+` = 新建工作区（无对象），分组行 `+` = 在该工作区新建会话。
+ * 「如果我没做」这条会怎么红：区头不存在 ⇒ ①② 直接找不到 testid；语义混用 ⇒ ③ 的 aria-label 对不上。
+ */
+describe("Sidebar workspace section header (task-365 B / D-1220 ②)", () => {
+    it("renders add-workspace and import-source in the workspace section header", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        const add = wrapper.get('[data-testid="sidebar-add-workspace"]');
+        const importSource = wrapper.get('[data-testid="sidebar-import-source"]');
+        expect(add.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
+        expect(importSource.attributes("aria-label")).toBe(zhSource.workspace.importSource);
+        // 区头是**列表级**动作：它出现在分组列表之前，不在任何工作区行内。
+        expect(wrapper.text()).toContain(zhSource.sidebar.workspacesSection);
+    });
+
+    it("add-workspace opens the picker create dialog through ?create=1", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-add-workspace"]').trigger("click");
+        await flushPromises();
+        expect(pushSpy).toHaveBeenCalledWith({ path: "/workspace", query: { create: "1" } });
+    });
+
+    it("import-source opens the workspace dialog through ?importSource=1", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-import-source"]').trigger("click");
+        await flushPromises();
+        expect(pushSpy).toHaveBeenCalledWith({
+            path: "/workspace/ws-test",
+            query: { importSource: "1" },
+        });
+    });
+
+    it("keeps the two plus buttons semantically distinct (header = workspace, row = session)", async () => {
+        mockAuth();
+        const wrapper = await mountSidebar();
+        const header = wrapper.get('[data-testid="sidebar-add-workspace"]');
+        expect(header.attributes("aria-label")).toBe(zhSource.workspace.addWorkspace);
+        const rowNew = wrapper
+            .findAll("button")
+            .filter((b) => b.attributes("aria-label") === zhSource.sidebar.groupNewSession);
+        expect(rowNew.length).toBeGreaterThan(0);
+        for (const btn of rowNew) {
+            expect(btn.attributes("data-testid")).not.toBe("sidebar-add-workspace");
+        }
     });
 });

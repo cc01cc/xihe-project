@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
     CircleUser,
+    FolderOpen,
     FolderTree,
     LogOut,
     PanelLeftClose,
@@ -45,23 +46,10 @@ const emit = defineEmits<{
     "update:open": [value: boolean];
 }>();
 
-const router = useRouter(),
-    route = useRoute();
+const router = useRouter();
 const { t } = useI18n();
 const auth = useAuthStore();
 const sessionStore = useSessionStore();
-
-const workspaceLabel = computed(() => {
-    const id = auth.currentWorkspaceId;
-    return auth.workspace?.name || (id ? `Workspace ${id.slice(0, 6)}` : t("sidebar.workspace"));
-});
-
-const isWorkspacePage = computed(() => {
-    const workspaceId = auth.currentWorkspaceId;
-    if (!workspaceId) return false;
-    if (route?.name === "workspace" || route?.name === "workspace-home") return true;
-    return (route?.path ?? "") === workspacePath(workspaceId);
-});
 
 const isOpen = computed(() => Boolean(props.open) && !props.forceCollapsed);
 
@@ -116,7 +104,23 @@ function toggleSidebar() {
 const bubbleRef = ref<HTMLElement | null>(null);
 defineExpose({ bubbleRef });
 
-async function navigateToWorkspace() {
+function clearSearch() {
+    sessionStore.searchQuery = "";
+}
+
+/**
+ * D-1220 ②（task-365 B）：「新建工作区 / 导入源」从页内右上角搬进左栏「工作区」区头。
+ * 两者都是**对一级列表做的事**（DSH 的 workspace.add 也在区头/菜单，不在工作区行上）；
+ * 行上的 `+` 保持「在该工作区新建会话」语义，两者不可混用（D-1206）。
+ * 走 query 而不是本地弹窗：左栏是全局 chrome，而创建/导入对话框分别住在
+ * `WorkspacePicker`（无 tab 上下文时）与 `WorkspaceView`（有上下文时）——
+ * query 让它们各自消费，顺带得到可分享深链。
+ */
+function openAddWorkspace() {
+    void router.push({ path: "/workspace", query: { create: "1" } });
+}
+
+async function openImportSource() {
     if (!auth.currentWorkspaceId) {
         await auth.hydrateWorkspace();
     }
@@ -125,11 +129,7 @@ async function navigateToWorkspace() {
         toast.error(t("sidebar.noWorkspace"));
         return;
     }
-    void router.push(workspacePath(workspaceId));
-}
-
-function clearSearch() {
-    sessionStore.searchQuery = "";
+    void router.push({ path: workspacePath(workspaceId), query: { importSource: "1" } });
 }
 
 /** task-113：指向最终地址（`lib/settingsIa` 的 SSOT），不再依赖 `/settings/config` 的 redirect。 */
@@ -187,22 +187,42 @@ function handleLogout() {
             :class="isMobile ? undefined : 'flex-1'"
             :style="panelStyle"
         >
-            <div class="flex h-14 shrink-0 items-center gap-1 px-2">
-                <button
-                    type="button"
-                    data-testid="sidebar-workspace"
-                    class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-base transition-colors"
-                    :class="
-                        isWorkspacePage
-                            ? 'bg-primary/10 font-semibold text-primary'
-                            : 'text-sidebar-foreground hover:bg-sidebar-accent'
-                    "
-                    :aria-current="isWorkspacePage ? 'page' : undefined"
-                    :title="workspaceLabel"
-                    @click="navigateToWorkspace"
+            <!--
+                D-1229（并入 task-365 B）：这一行是**左栏区头**，不再显示当前工作区名。
+                此前工作区名在左栏出现两次（本行 + 分组头）再加行2 面包屑 = 三重冗余；
+                现在名字只由分组头（列表内高亮）与面包屑表达，本行只回答「这一栏是什么」，
+                并承载**对一级列表做的事**（导入源 / 新建工作区）+ 折叠。
+                位置与高度不变（h-14 = 14 × 3.5 = 49px）：换内容不换组件（D-1229）。
+            -->
+            <div
+                data-testid="sidebar-workspaces-header"
+                class="flex h-14 shrink-0 items-center gap-1 px-2"
+            >
+                <span
+                    class="flex min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium tracking-wider text-muted-foreground"
                 >
                     <FolderTree class="size-4 shrink-0" aria-hidden="true" />
-                    <span class="truncate font-semibold">{{ workspaceLabel }}</span>
+                    <span class="truncate">{{ t("sidebar.workspacesSection") }}</span>
+                </span>
+                <button
+                    type="button"
+                    data-testid="sidebar-import-source"
+                    class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="t('workspace.importSource')"
+                    :title="t('workspace.importSource')"
+                    @click="openImportSource"
+                >
+                    <FolderOpen class="size-3.5" aria-hidden="true" />
+                </button>
+                <button
+                    type="button"
+                    data-testid="sidebar-add-workspace"
+                    class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="t('workspace.addWorkspace')"
+                    :title="t('workspace.addWorkspace')"
+                    @click="openAddWorkspace"
+                >
+                    <Plus class="size-3.5" aria-hidden="true" />
                 </button>
                 <button
                     type="button"
@@ -217,47 +237,57 @@ function handleLogout() {
                 </button>
             </div>
 
-            <div class="px-3 pb-2">
-                <button
-                    data-testid="sidebar-new-chat"
-                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-sm font-medium text-primary-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    @click="startNewChat"
-                >
-                    <Plus class="size-4" aria-hidden="true" />
-                    {{ t("sidebar.newChat") }}
-                </button>
-            </div>
-
             <!-- PLAN-0660 T5.21（B-7 全局导航入口）：有欠答时才占位，零态不渲染（见组件头注释）。 -->
             <div class="px-3 pb-2">
                 <UserQuestionsEntry />
             </div>
 
+            <!--
+                D-1220 ①（task-365 A）：新建会话**不再是全宽实心主按钮**。
+                判据「主按钮 = 高频 ∧ 无就近替代」它两条都不满足 —— 每个工作区行右侧的 `+`
+                （带上文：新建的会话落在该工作区）与工作区空态里的「新建会话」已经在做这件事，
+                而顶部这个按钮**不携带对象**（不知道在哪个工作区）。
+                降级为与搜索同行的 icon 按钮：size-7（7×3.5 = 24.5px）+ 透明底 + size-4 图标，
+                填充色 `--primary` → 透明 ⇒ 左栏 L3 强调占用 1 → 0（注意力预算：每屏 ≤2）。
+                `data-testid="sidebar-new-chat"` 保持不变（8 处 e2e 引用它，改 testid 等于改别人的断言）。
+            -->
             <div class="px-3 pb-2">
-                <div class="relative">
-                    <Search
-                        class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                        aria-hidden="true"
-                    />
-                    <input
-                        v-model="sessionStore.searchQuery"
-                        data-testid="sidebar-session-search"
-                        type="text"
-                        autocomplete="off"
-                        class="w-full rounded-md border border-sidebar-border bg-background py-1.5 pl-7 pr-7 text-sm text-sidebar-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                        :placeholder="t('sidebar.search')"
-                        :aria-label="t('sidebar.search')"
-                    />
+                <div class="flex items-center gap-1">
+                    <div class="relative min-w-0 flex-1">
+                        <Search
+                            class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                            aria-hidden="true"
+                        />
+                        <input
+                            v-model="sessionStore.searchQuery"
+                            data-testid="sidebar-session-search"
+                            type="text"
+                            autocomplete="off"
+                            class="w-full rounded-md border border-sidebar-border bg-background py-1.5 pl-7 pr-7 text-sm text-sidebar-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                            :placeholder="t('sidebar.search')"
+                            :aria-label="t('sidebar.search')"
+                        />
+                        <button
+                            v-if="sessionStore.searchQuery"
+                            type="button"
+                            data-testid="sidebar-search-clear"
+                            class="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent"
+                            :aria-label="t('sidebar.clearSearch')"
+                            :title="t('sidebar.clearSearch')"
+                            @click="clearSearch"
+                        >
+                            <X class="size-3.5" aria-hidden="true" />
+                        </button>
+                    </div>
                     <button
-                        v-if="sessionStore.searchQuery"
                         type="button"
-                        data-testid="sidebar-search-clear"
-                        class="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent"
-                        :aria-label="t('sidebar.clearSearch')"
-                        :title="t('sidebar.clearSearch')"
-                        @click="clearSearch"
+                        data-testid="sidebar-new-chat"
+                        class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        :aria-label="t('sidebar.newChat')"
+                        :title="t('sidebar.newChat')"
+                        @click="startNewChat"
                     >
-                        <X class="size-3.5" aria-hidden="true" />
+                        <Plus class="size-4" aria-hidden="true" />
                     </button>
                 </div>
             </div>

@@ -89,7 +89,7 @@ test.describe("@host Workspace import", () => {
         options: { read?: boolean } = {},
     ) {
         await page.goto(`/workspace/${user.wsId}`, { waitUntil: "load" });
-        await page.getByTestId("workspace-toolbar-import-source").click();
+        await page.getByTestId("sidebar-import-source").click();
         const dialog = page.getByRole("dialog");
         await expect(dialog).toBeVisible();
         await dialog.getByPlaceholder("Runtime 可访问的目录路径").fill(source);
@@ -202,7 +202,7 @@ test.describe("@host Workspace import", () => {
 
         // Disconnect (reload) mid-import; the durable record must restore the in-flight import.
         await page.reload({ waitUntil: "load" });
-        await page.getByTestId("workspace-toolbar-import-source").click();
+        await page.getByTestId("sidebar-import-source").click();
         await expect(page.getByTestId("workspace-import-recovered")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

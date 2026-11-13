@@ -17,12 +17,20 @@ import {
  * <p><b>激活态判什么</b>：判 `route.name`（不判路径前缀）。判路径前缀会让 `/workspace/:id`
  * 把 `settings` 也点亮成「工作台」（前缀包含），而 name 是路由表自己的稳定标识。</p>
  */
-export function useWorkspaceNav() {
+export function useWorkspaceNav(fallbackWorkspaceId?: () => string) {
     const route = useRoute();
     const router = useRouter();
     const auth = useAuthStore();
 
-    const workspaceId = computed(() => String(route.params.workspaceId ?? ""));
+    /**
+     * `task-365` C-1：全局 rail 也要派生工作区面板项，但它渲染在**所有**路由上 ——
+     * 在 `/settings` 这类路由里没有 `params.workspaceId`。因此允许调用方给一个回退
+     * （rail 传 tab 上下文的 `auth.currentWorkspaceId`）。**路由参数优先**：切工作区的
+     * 那一帧里，地址栏才是当前容器，tab 上下文可能还没跟上。
+     */
+    const workspaceId = computed(
+        () => String(route.params.workspaceId ?? "") || (fallbackWorkspaceId?.() ?? ""),
+    );
 
     /**
      * 当前工作区的**人读名**（task-297）：面包屑中间段要用它，不能让用户看 UUID。

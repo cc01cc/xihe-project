@@ -1,5 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { workspaceWire } from "./helpers/workspace-fixture";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 test.describe("Session switch between chat and workspace", () => {
@@ -12,6 +13,23 @@ test.describe("Session switch between chat and workspace", () => {
         // task-100：下面要断言「两个 workspace 的事件流都被请求过」（`page.on("request")`），
         // 而默认的 in-page 长连接桩不走网络层 ⇒ 显式退回网络层桩形态。
         await setupMockAuth(page, { workspaceEvents: "off" });
+        // task-352（`D-1206`）后左栏是「工作区分组 + 会话项」：会话行只在分组里渲染，
+        // 分组清单来自 `GET /api/v1/workspaces`。本 spec 原先只桩 sessions ⇒ 分组落到
+        // 「加载失败」态、`session-item` 整块不渲染（实测红在「navigation panel session tree
+        // switches session」）。这里补两个工作区的列表桩（数组形态）。
+        await page.route(
+            (url) => url.pathname === "/api/v1/workspaces",
+            async (route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify([
+                        { id: "workspace-1", name: "Workspace One", workspaceRole: "WS_OWNER" },
+                        { id: "workspace-2", name: "Workspace Two", workspaceRole: "WS_OWNER" },
+                    ]),
+                });
+            },
+        );
         await setupMockSessions(page, {
             sessions: [{ id: sessionId, title: sessionTitle, workspaceId }],
             messages: {
@@ -34,7 +52,9 @@ test.describe("Session switch between chat and workspace", () => {
             timeout: EXPECT_TIMEOUT_MS,
         });
 
-        await page.getByTestId("sidebar-workspace").click();
+        // D-1229：左栏头改成区头（不再显示工作区名、也不再是导航按钮）⇒
+        // 「回到工作区页」的入口是全局 rail 的「工作台」模块。
+        await page.getByTestId("global-rail-module-workbench").click();
         await page.waitForURL(`**/workspace/${workspaceId}`);
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -122,6 +142,25 @@ test.describe("Session switch between chat and workspace", () => {
                     },
                 ],
             },
+        });
+
+        // 本用例需要**两个真实工作区**，而共享夹具的 `KNOWN_WORKSPACE_IDS`（`D-1178`）刻意
+        // 不含 `workspace-2` —— 那份名单是为了让「访问不存在的工作区应当 404」可验，不能为
+        // 本用例放宽（放宽等于把别处的负例洗掉）。所以这里在 spec 内单独回 workspace-2 的详情。
+        // 不补这条的实测后果：`GET /api/v1/workspaces/workspace-2` 404 ⇒ WorkspaceView 判定
+        // 上下文冲突并退回「选择工作区」页 ⇒ 第二个会话的正文永远不出现（本用例长期红）。
+        await page.route("**/api/v1/workspaces/workspace-2", async (route) => {
+            if (route.request().method() !== "GET") {
+                await route.fallback();
+                return;
+            }
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    workspace: workspaceWire({ id: "workspace-2", name: "Workspace Two" }),
+                }),
+            });
         });
 
         const firstHistory = page.waitForResponse((response) =>

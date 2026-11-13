@@ -28,6 +28,22 @@ function markdownResponseTokens(): string[] {
 test.describe("Chat", () => {
     test.beforeEach(async ({ page }) => {
         await setupMockAuth(page);
+        // task-352（`D-1206`）：左栏改「工作区分组 + 会话项」后，会话行只渲染在分组里，
+        // 分组清单来自 `GET /api/v1/workspaces`。本 spec 原先只桩 sessions ⇒ 分组落到
+        // 「加载失败」态、会话行整块不渲染（两条用例实测红在这里：`aside >> text=TypeScript Help`
+        // 找不到）。补一条**列表**桩：`api.listWorkspaces()` 直接吃数组（不是 `{workspaces:[…]}`）。
+        await page.route(
+            (url) => url.pathname === "/api/v1/workspaces",
+            async (route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify([
+                        { id: "workspace-1", name: "Workspace 1", workspaceRole: "WS_OWNER" },
+                    ]),
+                });
+            },
+        );
     });
 
     test("empty chat page renders correctly", async ({ page }) => {
@@ -117,7 +133,11 @@ test.describe("Chat", () => {
         await setupMockSessions(page);
 
         await page.goto("/workspace");
-        await expect(page.locator("text=暂无会话")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        // task-352：空态文案已从「暂无会话」改成「这个工作区暂无会话」，且判据应钉 testid
+        // （`sidebar-empty-no-session` = 分组展开但该组无会话），不再钉文案 —— 文案改一次就红一次。
+        await expect(page.getByTestId("sidebar-empty-no-session")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
         await expectPlatformScreenshot(page, "chat-sidebar-empty.png");
     });
 

@@ -30,10 +30,38 @@ const messages = {
             // 补键不放宽任何断言。
             orgMembers: "组织成员",
         },
+        // task-365 C-1：rail 的工作区面板组复用工作区页的 labelKey（路由 meta 的 SSOT），
+        // 所以夹具要带 workspaceNav 分支，否则渲染出裸键。
+        workspaceNav: {
+            scheduledTasks: "定时任务",
+            environment: "环境",
+        },
     },
 };
 
-const { pushSpy, routeState } = vi.hoisted(() => ({
+const { pushSpy, routeState, mockRouteRecords } = vi.hoisted(() => ({
+    mockRouteRecords: [
+        {
+            name: "workspace-scheduled-tasks",
+            meta: {
+                workspacePage: {
+                    id: "scheduled-tasks",
+                    labelKey: "workspaceNav.scheduledTasks",
+                    order: 30,
+                },
+            },
+        },
+        {
+            name: "workspace-environment",
+            meta: {
+                workspacePage: {
+                    id: "environment",
+                    labelKey: "workspaceNav.environment",
+                    order: 20,
+                },
+            },
+        },
+    ],
     pushSpy: vi.fn<Router["push"]>(),
     routeState: {
         params: {} as Record<string, string>,
@@ -52,7 +80,23 @@ vi.mock("vue-router", () => ({
         currentRoute: { value: {} },
     }),
     createWebHistory: () => ({}),
-    useRouter: () => ({ push: pushSpy }),
+    useRouter: () => ({
+        push: pushSpy,
+        // task-365 C-1：rail 现在也派生工作区面板项（`useWorkspaceNav`）⇒ 桩必须提供
+        // `getRoutes` / `resolve`。**两条记录**：一条在允许清单里（定时任务）、一条不在
+        // （环境）—— 后者是负例，证明 rail 不是把工作区页整份倒进来。
+        getRoutes: () => mockRouteRecords,
+        resolve: (target: { name: string; params: Record<string, string> }) => ({
+            href:
+                "/workspace/" +
+                (target.params.workspaceId ?? "") +
+                (target.name === "workspace-scheduled-tasks"
+                    ? "/scheduled-tasks"
+                    : target.name === "workspace-environment"
+                      ? "/environment"
+                      : ""),
+        }),
+    }),
     useRoute: () => routeState,
 }));
 
@@ -339,5 +383,51 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         expect(
             wrapper2.get('[data-testid="global-rail-module-settings"]').attributes("data-active"),
         ).toBeUndefined();
+    });
+});
+
+/**
+ * task-365 C-1（`D-1220` ③）：把**已存在的工作区页**注册成 rail 的面板项，而不是在页内再加一行。
+ * 四条判据，缺一条这张卡就可能做成半成品：
+ * ① 有工作区上下文时面板项可达、点了去带 id 的地址；
+ * ② 允许清单之外的页**不**进 rail（负例：环境页有 meta 但不该出现）；
+ * ③ 无工作区上下文时整组不渲染（没有目标的入口 = 假入口）；
+ * ④ 面板项不是模块 —— `global-rail-module-*` 的条数不变（既有 e2e 钉「4 个模块」）。
+ */
+describe("GlobalRail workspace panels (task-365 C-1 / D-1220 ③)", () => {
+    it("registers the allowlisted workspace page and navigates to its workspace-scoped path", async () => {
+        const auth = patchAuth();
+        auth.$patch({ workspace: { id: "ws-1", name: "WS One" } });
+        routeState.params = {};
+        routeState.name = "workspace";
+        routeState.path = "/workspace/ws-1";
+        const wrapper = await mountRail();
+
+        const panel = wrapper.get('[data-testid="global-rail-panel-scheduled-tasks"]');
+        expect(panel.text()).toContain("定时任务");
+        // ④ 面板不是模块：模块行数不受影响。
+        expect(wrapper.findAll('[data-testid^="global-rail-module-"]')).toHaveLength(4);
+        await panel.trigger("click");
+        expect(pushSpy).toHaveBeenCalledWith("/workspace/ws-1/scheduled-tasks");
+        wrapper.unmount();
+    });
+
+    it("does not pull non-allowlisted workspace pages into the rail", async () => {
+        const auth = patchAuth();
+        auth.$patch({ workspace: { id: "ws-1", name: "WS One" } });
+        const wrapper = await mountRail();
+        expect(wrapper.find('[data-testid="global-rail-panel-environment"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("renders no panel group without a workspace context (no dead entry)", async () => {
+        patchAuth();
+        routeState.params = {};
+        const wrapper = await mountRail();
+        expect(wrapper.find('[data-testid="global-rail-panels"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="global-rail-panel-scheduled-tasks"]').exists()).toBe(
+            false,
+        );
+        wrapper.unmount();
     });
 });

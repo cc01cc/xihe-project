@@ -157,7 +157,7 @@ test.describe("@host PLAN-0384 MXC unavailable branch", () => {
         );
         seedPage(page);
         await page.goto(`/workspace/${seedWs}`);
-        await page.locator('[data-testid="workspace-toolbar-add"]').click();
+        await page.locator('[data-testid="sidebar-add-workspace"]').click();
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeVisible();
 
         await page.locator('[data-testid="workspace-storage-direct"]').click();

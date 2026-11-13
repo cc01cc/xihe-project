@@ -171,3 +171,50 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         await expect(page).toHaveURL(/\/workspace$/);
     });
 });
+
+/**
+ * task-365 B（`D-1220` ②）：「新建工作区 / 导入源」的入口从页内工具栏搬到左栏「工作区」区头。
+ * 每条都钉两件事：**新入口可达** + **旧入口不再存在**（`toHaveCount(0)`）——
+ * 只钉前者会让「两处并存」这种半成品一路绿；只钉后者会让「搬没了」一路绿。
+ */
+test.describe("Workspace chrome entries live in the rail section header (task-365 B)", () => {
+    // 独立 describe **不继承**上面那个 describe 的 beforeEach —— 少了这一步整块跑在登录页上
+    // （实测：`sidebar-import-source` not found，快照里是「登录」标题）。
+    test.beforeEach(async ({ page }) => {
+        await setupMockAuth(page);
+        await setupMockSessions(page, {
+            sessions: [{ id: "session-1", title: "Session 1" }],
+            messages: { "session-1": [] },
+        });
+    });
+
+    test("add-workspace: rail header opens the dialog; the page toolbar entry is gone", async ({
+        page,
+    }) => {
+        await page.goto("/workspace/workspace-1");
+        await expect(page.getByTestId("sidebar-add-workspace")).toBeVisible();
+        await expect(page.getByTestId("workspace-toolbar-add")).toHaveCount(0);
+        await expect(page.getByTestId("workspace-toolbar-more-add-workspace")).toHaveCount(0);
+
+        await page.getByTestId("sidebar-add-workspace").click();
+        await expect(page.getByTestId("workspace-create-dialog")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        // 消费后抹掉参数：深链不留状态，刷新不会又弹一次。
+        await expect(page).not.toHaveURL(/create=1/);
+    });
+
+    test("import-source: rail header opens the dialog; the page toolbar entry is gone", async ({
+        page,
+    }) => {
+        await page.goto("/workspace/workspace-1");
+        await expect(page.getByTestId("sidebar-import-source")).toBeVisible();
+        await expect(page.getByTestId("workspace-toolbar-import-source")).toHaveCount(0);
+
+        await page.getByTestId("sidebar-import-source").click();
+        await expect(page.getByTestId("workspace-import-dialog")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        await expect(page).not.toHaveURL(/importSource=1/);
+    });
+});

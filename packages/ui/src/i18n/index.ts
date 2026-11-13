@@ -163,6 +163,9 @@ const messages = {
             // 非当前工作区的分组是**展开时拉取的快照**：折叠再展开不重拉（判据③），
             // 所以别处对该组会话的增删要刷新后才看得到。这条提示是「不静默陈旧」的最低成本做法。
             groupSnapshotHint: "展开时加载；该工作区在别处有变动时，刷新页面后才会显示最新列表",
+            // D-1220 ②（task-365 B）：左栏「工作区」区头 —— 一级列表自己的动作（新建工作区 /
+            // 导入源）放在区头，不放在页内右上角、也不混进工作区行上的 `+`（那是新建会话）。
+            workspacesSection: "工作区",
             settings: "设置",
             // PLAN-0762 T2.3 / D-924：模块名只能是「工作台」；「工作区」只是工作台模块内的对象。
             workbench: "工作台",
@@ -3582,6 +3585,7 @@ const messages = {
             groupNewSession: "New session in this workspace",
             groupSnapshotHint:
                 "Loaded on expand; if this workspace changes elsewhere, reload the page to see the latest list",
+            workspacesSection: "Workspaces",
             settings: "Settings",
             workbench: "Workbench",
             orgMembers: "Org members",

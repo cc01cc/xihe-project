@@ -7,8 +7,8 @@
  * a 409 had nowhere to go but a toast. The picker makes "not chosen yet" a real
  * state and gives the user a working path to any workspace they belong to.
  */
-import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { api, ApiError, type ApiWorkspace } from "../composables/api";
 import { clearTabWorkspace, readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
@@ -19,6 +19,22 @@ import WorkspaceCreateDialog from "../features/workspace/components/WorkspaceCre
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
+
+/**
+ * D-1220 ②（task-365 B）：左栏「工作区」区头的 `+` 用 `?create=1` 唤起创建对话框 ——
+ * 左栏是全局 chrome、不持有本页状态，query 是它和页之间唯一的耦合面，
+ * 顺带让「新建工作区」变成可分享深链。消费后立刻抹掉参数（与 `?newChat=1` 同形）。
+ */
+watch(
+    () => route.query.create,
+    (request) => {
+        if (request !== "1") return;
+        createOpen.value = true;
+        void router.replace({ query: { ...route.query, create: undefined } });
+    },
+    { immediate: true },
+);
 
 const workspaces = ref<ApiWorkspace[]>([]);
 const loading = ref(true);

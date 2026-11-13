@@ -199,9 +199,13 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await mockSettingsApis(page);
 
         await page.goto("/workspace/workspace-1/chat/session-1");
-        await page.getByTestId("sidebar-workspace").click();
+        // D-1229：栏头不再是工作区名按钮 ⇒ 导航走 rail 的「工作台」模块（激活态也钉在它上面）。
+        await page.getByTestId("global-rail-module-workbench").click();
         await expect(page).toHaveURL(/\/workspace\/workspace-1$/);
-        await expect(page.getByTestId("sidebar-workspace")).toHaveAttribute("aria-current", "page");
+        await expect(page.getByTestId("global-rail-module-workbench")).toHaveAttribute(
+            "aria-current",
+            "page",
+        );
         // C3: the secondary nav is the surviving page-nav surface (tab bar is
         // session-only now); "会话" is the identity marker of the workspace page.
         await expect(page.getByTestId("workspace-nav-sessions")).toBeVisible();

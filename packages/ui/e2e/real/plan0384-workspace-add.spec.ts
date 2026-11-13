@@ -164,7 +164,7 @@ test.describe("@host PLAN-0384 workspace add flow", () => {
             (req) => req.url().endsWith("/api/v1/workspaces") && req.method() === "POST",
         );
 
-        await page.locator('[data-testid="workspace-toolbar-add"]').click();
+        await page.locator('[data-testid="sidebar-add-workspace"]').click();
         await expect(page.locator('[data-testid="workspace-create-dialog"]')).toBeVisible();
 
         // V1: directory selection goes through the Runtime-visible source browser (no File.path).

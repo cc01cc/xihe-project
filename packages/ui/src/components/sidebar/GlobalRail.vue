@@ -25,6 +25,8 @@ import {
     SidebarSeparator,
 } from "../ui/sidebar";
 import GlobalRailModule from "./GlobalRailModule.vue";
+import { RAIL_PANEL_PAGE_IDS } from "../../lib/workspacePages";
+import { useWorkspaceNav } from "../../features/workspace/composables/useWorkspaceNav";
 
 /**
  * PLAN-0762 T2.1/T2.3 —— 全局导航条（GlobalRail，DEV-010 §10.1 的唯一正名）。
@@ -138,6 +140,37 @@ function handleLogout() {
 
 const contentModules = computed(() => GLOBAL_MODULES.filter((module) => module.id !== "settings"));
 const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id === "settings"));
+
+/**
+ * `D-1220` ③（`task-365` C-1）：**工作区面板组** —— 把已存在的工作区页注册进最左 rail，
+ * 而不是在页内再加一行。第一批只有「定时任务」（允许清单在 `lib/workspacePages.ts`）。
+ *
+ * <p>数据仍然只来自路由 `meta.workspacePage`（`useWorkspaceNav` 派生标签/图标/地址），
+ * 本组件不写页面清单；回退工作区 id 用 tab 上下文，所以在 `/settings` 上这一组也在。</p>
+ *
+ * <p><b>没有工作区上下文时整组不渲染</b>：地址带 workspaceId，无 id 时给一个点不动的行
+ * 等于假入口（`D-1136`：无合法替代路径的拒绝不许做；反过来，无目标的入口也不许做）。</p>
+ *
+ * <p><b>testid 前缀刻意与模块不同</b>（`global-rail-panel-*` vs `global-rail-module-*`）：
+ * 既有 e2e 钉「rail 有 4 个模块」（`resources-ia.spec.ts`），面板项不是模块，
+ * 混用前缀会让那条计数断言把面板当模块 —— 那是把两种东西合成一个数。</p>
+ */
+const workspaceNav = useWorkspaceNav(() => auth.currentWorkspaceId ?? "");
+/** 当前容器 id：路由参数优先，其次 tab 上下文（与 `useWorkspaceNav` 同一优先级）。 */
+const railWorkspaceId = computed(
+    () => String(route.params.workspaceId ?? "") || auth.currentWorkspaceId || "",
+);
+const railPanels = computed(() =>
+    // 无 id ⇒ 整组不渲染：`items` 本身与 id 无关（它派生自路由表），少了这道闸就会渲染出
+    // 一个指向 `/workspace//scheduled-tasks` 的死入口。
+    railWorkspaceId.value
+        ? workspaceNav.items.value.filter((item) => RAIL_PANEL_PAGE_IDS.includes(item.id))
+        : [],
+);
+
+function isPanelActive(name: string) {
+    return route.name === name;
+}
 </script>
 
 <template>
@@ -213,6 +246,36 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                                 @navigate="navigate"
                                 @update:open="(open: boolean) => onMenuOpenChange(module.id, open)"
                             />
+                        </SidebarMenu>
+                    </SidebarGroupContent>
+                </SidebarGroup>
+                <!-- D-1220 ③：工作区面板组（注册既有页，不新增页内顶部行）。 -->
+                <SidebarGroup
+                    v-if="railPanels.length > 0"
+                    data-testid="global-rail-panels"
+                    class="group-data-[collapsible=icon]:p-4"
+                >
+                    <SidebarGroupContent>
+                        <SidebarMenu class="gap-0.5">
+                            <SidebarMenuItem v-for="panel in railPanels" :key="panel.id">
+                                <SidebarMenuButton
+                                    :data-testid="`global-rail-panel-${panel.id}`"
+                                    :is-active="isPanelActive(panel.name)"
+                                    :aria-current="isPanelActive(panel.name) ? 'page' : undefined"
+                                    :title="t(panel.labelKey)"
+                                    class="h-9 py-1.5 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
+                                    @click="navigate(panel.path)"
+                                >
+                                    <component
+                                        :is="panel.icon"
+                                        class="size-4 shrink-0"
+                                        aria-hidden="true"
+                                    />
+                                    <span class="truncate group-data-[collapsible=icon]:hidden">{{
+                                        t(panel.labelKey)
+                                    }}</span>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
                         </SidebarMenu>
                     </SidebarGroupContent>
                 </SidebarGroup>

@@ -40,14 +40,10 @@ import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import SashGrip from "../../../components/shared/SashGrip.vue";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
+import WorkspaceDockPanelContent from "./WorkspaceDockPanelContent.vue";
+import WorkspaceShellDockview from "./WorkspaceShellDockview.vue";
 import FileTreePanel from "./FileTreePanel.vue";
 import FileEditor from "./FileEditor.vue";
-import WorkspaceChangesPanel from "./WorkspaceChangesPanel.vue";
-import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
-import SessionParticipantsPanel from "./SessionParticipantsPanel.vue";
-import SessionContextPanel from "./SessionContextPanel.vue";
-import WorkspaceAgentsPanel from "./WorkspaceAgentsPanel.vue";
-import DelegationDagPanel from "../chat/components/DelegationDagPanel.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 import WorkspaceStatusBar from "./WorkspaceStatusBar.vue";
 import { useAgentStore } from "../../../stores/agent";
@@ -86,12 +82,16 @@ const props = defineProps<{
     usageOutput?: number | null;
     mobileChangesOpen?: boolean;
     mobileAuxTab?: "monitor" | "changes" | "members";
+    /**
+     * task-369 S1：打开「一个 dockview 实例横跨中栏+右栏」的壳。**默认 false** ——
+     * 产品路径仍是手写 dock + reka SplitterGroup，`bl576` / `task353` 的指称物因此保持有效。
+     * 注入面复活（PLAN-0756 原设计）：本 prop 或 `globalThis.__xhUseDockview`。
+     */
+    useDockview?: boolean;
 }>();
 
 const emit = defineEmits<{
-    importSource: [];
     agents: [];
-    addWorkspace: [];
     files: [];
     "mobile-toggle-changes": [];
     "mobile-toggle-monitor": [];
@@ -452,6 +452,44 @@ watch(
     { flush: "post" },
 );
 
+/**
+ * task-369 S1（D-1222）：dockview 壳开关。默认 false ⇒ 产品路径与两条既有判据
+ * （`bl576` 的 `[data-panel-group]`、`task353` 的 `workspace-center` 祖先链）都不受影响；
+ * 打开后才走「一个实例横跨中栏+右栏、树是可关可重开的面板」的模型。
+ */
+const dockviewEnabled = computed(
+    () =>
+        props.useDockview === true ||
+        (globalThis as { __xhUseDockview?: boolean }).__xhUseDockview === true,
+);
+
+/**
+ * 树面板「在不在容器里」。**S1 是组件内临时态**：持久化键仍只有 `xihe-layout-ws:<id>`
+ * 那一份（D-1222 ⑥：不许另建一套布局状态）；把它收进既有 layout 对象是 S2 的事
+ * （那要动 `useWorkspaceLayout.ts`，不在本卡 write_scopes 内）。
+ * 折叠与关闭是**两个动作**（Lead 裁定①）：折叠 ⇒ 40px rail 仍在；关闭 ⇒ 面板与 rail
+ * 一起消失，重开走容器组头的「+」（`WorkspaceShellDockview` 的 rightHeaderActions）。
+ */
+const treeOpen = ref(true);
+
+/** 面板 id → 已本地化标题，喂给 dockview 壳（壳本身不新增 i18n 键）。 */
+const dockPanelLabels = computed(() =>
+    Object.fromEntries(dockTabs.value.map((tab) => [tab.id, tab.label])),
+);
+
+function closeTreePanel(): void {
+    treeOpen.value = false;
+}
+
+/** 「+」菜单重开：target 由**被点击的组头**决定（中栏组 / dock 组），见壳组件判据③。 */
+function reopenPanel(payload: { id: string; target: "center" | "dock" }): void {
+    if (payload.id === "tree") {
+        treeOpen.value = true;
+        return;
+    }
+    if (isDockTabId(payload.id)) openDockTab(payload.id);
+}
+
 /** Pin/unpin is an explicit user choice: it wins over the breakpoint derivation. */
 function toggleDockMode(): void {
     layout.value.dockMode = dockMode.value === "pinned" ? "floating" : "pinned";
@@ -682,9 +720,7 @@ defineExpose({ openDockTab });
             :members-open="isMobile ? false : membersOpen"
             :members-unread="membersUnread"
             :delegation-open="isMobile ? false : delegationOpen"
-            @import-source="emit('importSource')"
             @agents="emit('agents')"
-            @add-workspace="emit('addWorkspace')"
             @files="emit('files')"
             @toggle-code="handleToggleCode"
             @toggle-changes="handleToggleChanges"
@@ -706,7 +742,83 @@ defineExpose({ openDockTab });
             PLAN-0753 T3 的 handle 净零宽约定（`-ml-1 w-1` ⇒ 主列起始位不变）照旧。
         -->
         <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
-            <div data-testid="workspace-center" class="flex min-h-0 min-w-0 flex-1">
+            <!--
+                task-369 S1（D-1222）：dockview 壳 —— **一个实例横跨中栏+右栏**，树是它的面板，
+                可关（面板与 rail 一起消失）、可从容器组头的「+」重开、投哪个容器由点哪个组头决定。
+                只在 `dockviewEnabled` 时渲染；默认路径仍是下面的 reka SplitterGroup + 手写 dock，
+                因此 `bl576` / `task353` 两条判据的指称物不受影响。
+                树 rail 标记与 legacy 分支同形（testid 不变）；S1 无拖拽 ⇒ 不需要宽度气泡。
+                S2 应把这段 rail 与 legacy 抽成共用件（现在两处同形，改一处必须改两处）。
+            -->
+            <div
+                v-if="dockviewEnabled"
+                data-testid="workspace-center"
+                class="flex min-h-0 min-w-0 flex-1"
+            >
+                <WorkspaceShellDockview
+                    :dock-tabs="layout.dockTabs"
+                    :active-dock-tab="activeDockTab"
+                    :tree-open="treeOpen"
+                    :tree-collapsed="effectiveTreeCollapsed"
+                    :dock-width="layout.dockWidth"
+                    :labels="dockPanelLabels"
+                    :tree-label="t('workspace.expandFiles')"
+                    @update:active-dock-tab="setActiveDockTab"
+                    @close-tab="closeDockTab"
+                    @close-tree="closeTreePanel"
+                    @reopen-panel="reopenPanel"
+                >
+                    <template #tree>
+                        <div
+                            data-testid="workspace-file-rail"
+                            class="relative flex h-full flex-col border-r border-border bg-surface-canvas"
+                        >
+                            <div
+                                v-if="effectiveTreeCollapsed"
+                                class="flex flex-col items-center gap-1 py-2"
+                            >
+                                <button
+                                    type="button"
+                                    data-testid="workspace-tree-expand"
+                                    class="rounded p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    :title="t('workspace.expandFiles')"
+                                    :aria-label="t('workspace.expandFiles')"
+                                    :aria-pressed="false"
+                                    @click="toggleTree"
+                                >
+                                    <FolderTree class="size-4" aria-hidden="true" />
+                                </button>
+                            </div>
+                            <div
+                                v-else
+                                class="flex h-full min-h-0 flex-1 flex-col"
+                                data-testid="workspace-file-tree"
+                            >
+                                <FileTreePanel @collapse="toggleTree" />
+                            </div>
+                        </div>
+                    </template>
+                    <template #center>
+                        <div
+                            data-testid="workspace-main"
+                            class="flex min-w-0 flex-1 flex-col bg-card"
+                            @mousedown="handleMainColumnPointerDown"
+                        >
+                            <slot name="center" />
+                        </div>
+                    </template>
+                    <template v-for="tab in dockTabs" :key="tab.id" #[tab.id]>
+                        <WorkspaceDockPanelContent
+                            :id="tab.id"
+                            :session-id="sessionId"
+                            :workspace-id="workspaceId"
+                            @close="collapseDock"
+                            @mention="emit('mention', $event)"
+                        />
+                    </template>
+                </WorkspaceShellDockview>
+            </div>
+            <div v-else data-testid="workspace-center" class="flex min-h-0 min-w-0 flex-1">
                 <SplitterGroup
                     ref="centerGroupRef"
                     direction="horizontal"
@@ -828,46 +940,67 @@ defineExpose({ openDockTab });
                 @toggle-focus="toggleDockFocus"
             >
                 <template #code>
-                    <FileEditor />
-                </template>
-                <template #changes>
-                    <WorkspaceChangesPanel
+                    <WorkspaceDockPanelContent
+                        id="code"
                         :session-id="sessionId"
                         :workspace-id="workspaceId"
                         @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
+                </template>
+                <template #changes>
+                    <WorkspaceDockPanelContent
+                        id="changes"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
                     />
                 </template>
                 <template #monitor>
-                    <SessionMonitorPanel v-if="sessionId" :session-id="sessionId" />
-                    <div v-else class="p-4 text-xs text-muted-foreground">
-                        {{ t("workspace.noSession") }}
-                    </div>
+                    <WorkspaceDockPanelContent
+                        id="monitor"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
                 </template>
                 <template #members>
-                    <!-- PLAN-0623 U1：按会话挂载；无会话时面板自身渲染 participants-empty。 -->
-                    <SessionParticipantsPanel
-                        :session-id="sessionId ?? null"
+                    <WorkspaceDockPanelContent
+                        id="members"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @close="collapseDock"
                         @mention="emit('mention', $event)"
                     />
                 </template>
                 <template #context>
-                    <!-- PLAN-0626 M2：会话设置（粘性面板，无会话时面板自身给空态）。 -->
-                    <SessionContextPanel :session-id="sessionId ?? null" />
+                    <WorkspaceDockPanelContent
+                        id="context"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
                 </template>
                 <template #delegation>
-                    <!-- PLAN-0659 T1.4：委派 DAG（父→子会话，状态/深度/预算）。 -->
-                    <DelegationDagPanel v-if="sessionId" :session-id="sessionId" />
-                    <div v-else class="p-4 text-xs text-muted-foreground">
-                        {{ t("workspace.noSession") }}
-                    </div>
+                    <WorkspaceDockPanelContent
+                        id="delegation"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
                 </template>
                 <template #agents>
-                    <!--
-                        PLAN-0626 M3 (D26-05)：工作区 Agent 管理。`key` forces a remount when the
-                        workspace changes, so the list/capability projection is never carried over
-                        (the old dialog reloaded on every open).
-                    -->
-                    <WorkspaceAgentsPanel :key="workspaceId" :workspace-id="workspaceId" />
+                    <WorkspaceDockPanelContent
+                        id="agents"
+                        :session-id="sessionId"
+                        :workspace-id="workspaceId"
+                        @close="collapseDock"
+                        @mention="emit('mention', $event)"
+                    />
                 </template>
             </WorkspaceDock>
         </div>
