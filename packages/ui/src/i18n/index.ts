@@ -1907,6 +1907,10 @@ const messages = {
                 navAudit: "审计日志",
                 domainKeysCount: "本域 {count} 个配置键",
                 domainEditableCount: "可编辑 {count} 项",
+                // task-285：计数只数静态可枚举字段；`context-policy` 的按模型覆盖子表行数另计，
+                // 不写这句读者会以为「13 项」就是全部（Lead 2026-11-13 裁定：计数不完整须自述口径）。
+                domainEditableCountNote: "（按模型覆盖 {rows} 行另计）",
+                domainEditableCountNoteEmpty: "（按模型覆盖子表另计）",
                 switchToUserLayer: "切到个人层",
                 layerOnlyInstance: "该域仅在实例层可配置",
                 layerOnlyInstanceDetail:
@@ -5338,6 +5342,8 @@ const messages = {
                 navAudit: "Audit log",
                 domainKeysCount: "{count} config keys in this domain",
                 domainEditableCount: "{count} editable",
+                domainEditableCountNote: "(plus {rows} per-model override rows)",
+                domainEditableCountNoteEmpty: "(plus the per-model override table)",
                 switchToUserLayer: "Switch to the personal layer",
                 layerOnlyInstance: "This domain is configurable only at the instance layer",
                 layerOnlyInstanceDetail:

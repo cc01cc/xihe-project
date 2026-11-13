@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import type { ConfigDomain, ConfigKeyMeta, ConfigLayer } from "../../stores/config";
 import { isInstanceOnlyForUser, settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
+import JsonFieldEditor from "./JsonFieldEditor.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { FieldControl, FieldError, FieldRoot } from "reka-ui";
 import { FieldDescription, FieldLabel } from "../ui/field";
@@ -730,15 +731,21 @@ function handleReset(key: string) {
                     </Select>
                 </template>
 
+                <JsonFieldEditor
+                    v-else-if="!readonly && field.type === 'json'"
+                    v-model="editing[field.key]"
+                    :control-id="controlId(field)"
+                    :test-id="`config-json-${domain}-${field.key}`"
+                    :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                />
+
                 <textarea
-                    v-else-if="!readonly && (field.type === 'json' || field.type === 'textarea')"
+                    v-else-if="!readonly && field.type === 'textarea'"
                     v-model="editing[field.key]"
                     rows="3"
                     :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
-                    :class="field.type === 'json' ? 'font-mono' : ''"
-                    :placeholder="field.type === 'json' ? 'JSON' : ''"
                 />
 
                 <FieldRoot
