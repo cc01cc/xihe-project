@@ -2301,8 +2301,11 @@ onMounted(() => {
                     </label>
                 </div>
                 <footer class="flex justify-end gap-2 border-t bg-muted/30 px-5 py-3.5">
+                    <!-- task-427 P2（ui-1 请求代做，卡归 ui-1）：连接弹窗的取消/提交补稳定 testid，
+                         让 e2e 不必靠文案或 button[type=submit] 定位（文案会随 locale 变）。 -->
                     <button
                         type="button"
+                        data-testid="provider-connection-cancel"
                         class="rounded-md border px-3.5 py-2 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                         @click="closeForm"
                     >
@@ -2310,6 +2313,7 @@ onMounted(() => {
                     </button>
                     <button
                         type="submit"
+                        data-testid="provider-connection-submit"
                         class="rounded-md bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                         :disabled="saving"
                     >
