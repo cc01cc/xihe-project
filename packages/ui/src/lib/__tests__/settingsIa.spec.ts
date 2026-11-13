@@ -217,7 +217,8 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
         ).toEqual({ layer: "USER" });
         // 智能体三层（task-203，用户 2026-11-12「成员入口的 agent principal 也别漏了」）：
         // 个人主体（`agent-principals`）+ **工作区成员/绑定面**（`WorkspaceAgentsPanel`，
-        // 写面 CP 守工作区档原子 `MANAGE_WORKSPACE_AGENTS`）+ 平台智能体（能力位 `instance:admin`）。
+        // 写面 CP 守工作区档原子 `MANAGE_WORKSPACE_AGENTS`）+ 平台智能体（实例层读面开放，
+        // 写面双门由 `InstanceAgentsPanel.canWrite` 守；task-447 去掉 tab 上过窄的能力位门槛）。
         expect(layersForResource("agents")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
         // 知识库是后端缺口（G3），一层都没有。
         expect(layersForResource("knowledge")).toEqual([]);
@@ -274,13 +275,32 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
         const requires = RESOURCE_DEFS.flatMap((def) =>
             def.layerRules.map((rule) => rule.requires),
         ).filter((value): value is { capability: "instance:admin" } | { atom: string } => !!value);
-        // 三个实例层（凭据 / MCP / 智能体）用 CP 自己的 `instance:admin` 守卫；
-        // 技能实例层的**读面**对任何已认证调用者开放（openapi 原文），所以没有门槛。
-        expect(requires).toEqual([
-            { capability: "instance:admin" },
-            { capability: "instance:admin" },
-            { capability: "instance:admin" },
-        ]);
+        // task-447（D-1286）：**只剩凭据实例层**挂能力位 —— CP `InstanceCredentialController`
+        // 的 list/detail/create/delete/reveal 全部 `@PreAuthorize(holdsCapabilityAtom('instance:admin'))`
+        // （`:61/80/98/120/152`）⇒ 读面本身就是能力位守卫，tab 置灰是**照实**不是收窄。
+        // MCP / 智能体 / 技能实例层的**读面**对任何已认证调用者开放，所以都不挂门槛：
+        // - MCP：`openapi.yaml:5079`「Read face is open to every authenticated caller」，写面才是
+        //   能力位（`:5102`）⇒ 由 `InstanceMcpPanel` 守；该端点 CP 尚未实现（PLANNED_APIS，
+        //   `RouteContractParityTest:216-217`）⇒ 缺口由错误面照实显示，不用 403 卡片打扮。
+        // - 智能体：CP `InstanceAgentPrincipalController:75` 是 `isAuthenticated()`，写面才是双门
+        //   （`:61-62` 能力位 AND `MANAGE_AGENT_PRINCIPALS`）⇒ 由 `InstanceAgentsPanel.canWrite` 守。
+        // 挂门槛会让非管理员**连读都读不到**（比看不到按钮严重得多，与 skills 个人层同一裁定）。
+        expect(requires).toEqual([{ capability: "instance:admin" }]);
+        // 逐条钉「读面开放」不是漏写：这两条实例层规则**必须**只有 layer 字段。
+        for (const id of ["mcp", "agents", "skills"] as const) {
+            expect(
+                RESOURCE_DEFS.find((def) => def.id === id)!.layerRules.find(
+                    (rule) => rule.layer === "INSTANCE",
+                ),
+                id,
+            ).toEqual({ layer: "INSTANCE" });
+        }
+        // 凭据实例层仍挂能力位（不许顺手一起放开）。
+        expect(
+            RESOURCE_DEFS.find((def) => def.id === "credentials")!.layerRules.find(
+                (rule) => rule.layer === "INSTANCE",
+            ),
+        ).toEqual({ layer: "INSTANCE", requires: { capability: "instance:admin" } });
         // 资源面不进配置矩阵（D-1006 B6）：资源 id 不得出现在任何层的域名单里。
         const domains = domainsForLayer("instance") as readonly string[];
         for (const def of RESOURCE_DEFS) expect(domains).not.toContain(def.id);

@@ -324,10 +324,18 @@ export const RESOURCE_DEFS: readonly ResourceDef[] = [
         id: "mcp",
         labelKey: "settings.ia.resourceMcp",
         // 没有个人层：`mcp_remote_servers.workspace_id NOT NULL`（audit §F G1）。
-        layerRules: [
-            { layer: "WORKSPACE", needsWorkspace: true },
-            { layer: "INSTANCE", requires: { capability: "instance:admin" } },
-        ],
+        /**
+         * task-447（D-1286）：**实例层读面不挂门槛**。契约原文（`openapi.yaml:5079`）：
+         * 「Read face is open to every authenticated caller (this registry shapes routing,
+         * not authority); the write face is instance-admin only.」⇒ 写面才是能力位
+         * `instance:admin`（`:5102`），由 `InstanceMcpPanel` 自己守；tab 置灰会让非管理员
+         * **连读都读不到**，与 skills 实例层同一裁定（见下）。
+         *
+         * <p>另注：该端点 CP 侧**尚未实现**（`RouteContractParityTest:216-217` 收在 PLANNED_APIS
+         * 「PLAN-0771 M3」）⇒ 这是**后端缺口**，不是授权问题：缺口由面板的 `SettingsErrorSurface`
+         * 照实显示，**不得**用 403 卡片打扮成「缺权限」（那会同时谎报「不是后端缺口」）。</p>
+         */
+        layerRules: [{ layer: "WORKSPACE", needsWorkspace: true }, { layer: "INSTANCE" }],
         defaultLayer: "WORKSPACE",
     },
     {
@@ -367,12 +375,17 @@ export const RESOURCE_DEFS: readonly ResourceDef[] = [
          *   `BindingAdminService` 守 **`MANAGE_WORKSPACE_AGENTS`**（工作区档原子，`PermissionAtomCatalog.java:125`
          *   与 `PrincipalGrantActionCatalog.java:84` 要求具体 workspace UUID）。⇒ tab 门只需要
          *   「有工作区上下文」，动作原子交给面板与 CP，不在这里重复挡、也不编造原子名）；
-         * - 实例层 = 平台智能体（D-1006 B4，能力位 `instance:admin`）。
+         * - 实例层 = 平台智能体（D-1006 B4）。**读面不挂门槛**：CP
+         *   `InstanceAgentPrincipalController:75` 是 `@PreAuthorize("isAuthenticated()")`（类头 `:33-36`
+         *   明写任何已认证调用者看到同一份列表）；写面才是双门 `INSTANCE_PRINCIPAL_WRITE_GATE`
+         *   （`:61-62` = 能力位 `instance:admin` **and** 原子 `MANAGE_AGENT_PRINCIPALS`），由
+         *   `InstanceAgentsPanel` 的 `canWrite` 守（A 类双门，防删注释在该面板）。task-447（D-1286）
+         *   去掉这里的 `requires`：它比 CP 读面窄，会让非管理员连读都读不到（与 skills 同裁定）。
          */
         layerRules: [
             { layer: "USER" },
             { layer: "WORKSPACE", needsWorkspace: true },
-            { layer: "INSTANCE", requires: { capability: "instance:admin" } },
+            { layer: "INSTANCE" },
         ],
         defaultLayer: "USER",
     },

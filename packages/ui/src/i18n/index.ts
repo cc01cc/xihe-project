@@ -3032,6 +3032,10 @@ const messages = {
                     title: "实例 MCP 注册表",
                     subtitle:
                         "实例级 MCP 服务：所有工作区默认继承；工作区可用同名覆盖。只可引用实例凭据。",
+                    // task-447（D-1286）：非管理员是**只读**视图（读面契约对已认证调用者开放），
+                    // 写面门槛在此非阻断点名**能力位**（本面 CP 没有动作原子门，不编造原子名）。
+                    writeRequiresCapability:
+                        "只读视图：注册或删除实例 MCP 服务需要实例管理员能力位（instance:admin）。",
                     count: "{count} 个服务",
                     emptyTitle: "还没有实例级 MCP 服务",
                     emptyBody: "注册后所有工作区默认继承；需要专属配置时在工作区侧用同名覆盖。",
@@ -6672,6 +6676,10 @@ const messages = {
                     title: "Instance MCP registry",
                     subtitle:
                         "Instance-scope MCP servers: inherited by every workspace by default, and a workspace can override one by the same name. Only instance credentials may be referenced.",
+                    // task-447 (D-1286): non-admins get a read-only view; the write gate names the
+                    // capability (this face has no action-atom gate in CP, so no atom name is invented).
+                    writeRequiresCapability:
+                        "Read-only view: registering or removing instance MCP servers requires the instance-admin capability (instance:admin).",
                     count: "{count} servers",
                     emptyTitle: "No instance-scope MCP servers yet",
                     emptyBody:

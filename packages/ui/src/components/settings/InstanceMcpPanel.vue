@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Plug, Plus, Trash2 } from "@lucide/vue";
+import { Info, Plug, Plus, Trash2 } from "@lucide/vue";
 
 import { useAuthStore } from "../../stores/auth";
 import { logger } from "../../lib/logger";
@@ -47,7 +47,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
-import SettingsPermissionGate from "./SettingsPermissionGate.vue";
+import { Alert, AlertDescription } from "../ui/alert";
 
 /**
  * task-165 · 实例层「MCP 注册表」面板（`/settings/instance/mcp`）。
@@ -63,7 +63,14 @@ import SettingsPermissionGate from "./SettingsPermissionGate.vue";
 const { t, locale } = useI18n();
 const auth = useAuthStore();
 
-const canManage = computed(() => auth.isAdmin);
+/**
+ * task-447（D-1286）：写面判据 = **能力位** `instance:admin`（契约 `openapi.yaml:5102`：
+ * 「Gate: cap:instance:admin (CAP_INSTANCE_ADMIN) evaluated at the capability-atom layer」）。
+ * 用 store 提供的访问器而不是 `auth.isAdmin` —— 两者同源（`stores/auth.ts:71` 与 `:150` 都是
+ * `capabilities.value.isInstanceAdmin`），但 `:148-149` 明确要求调用点用访问器，避免写出
+ * 「看起来像角色判断」的字面量。**不是**角色特判，也**不是**动作原子（本面 CP 没有动作原子门）。
+ */
+const canManage = computed(() => auth.hasInstanceAdminCapability);
 
 const servers = ref<InstanceMcpServer[]>([]);
 const credentialOptions = ref<InstanceCredential[]>([]);
@@ -124,13 +131,29 @@ async function loadCredentialOptions(): Promise<void> {
     }
 }
 
+/**
+ * task-447（D-1286）/ Lead 裁定⑵：**读面对任何已认证调用者开放**（`openapi.yaml:5079` 原文
+ * 「Read face is open to every authenticated caller」）⇒ 取数不再等能力位。与同门
+ * `InstanceAgentsPanel:279-293` 同形（那里 watch 的也是 `auth.isAuthenticated`）。
+ * 此前 `watch(canManage)` 让非管理员**根本不取数**，比契约读面窄。
+ */
+watch(
+    () => auth.isAuthenticated,
+    (authenticated) => {
+        if (!authenticated) return;
+        void load();
+    },
+    { immediate: true },
+);
+
+/**
+ * 凭据候选只服务**新建表单**（写面）⇒ 只在有能力位时取：非管理员取它只会拿到 403
+ * （`InstanceCredentialController` 全部能力位守卫），是无谓请求。能力位后到也能补取。
+ */
 watch(
     canManage,
     (allowed) => {
-        if (allowed) {
-            void load();
-            void loadCredentialOptions();
-        }
+        if (allowed && auth.isAuthenticated) void loadCredentialOptions();
     },
     { immediate: true },
 );
@@ -191,14 +214,17 @@ async function confirmDelete(): Promise<void> {
 <template>
     <section data-testid="instance-mcp-panel" class="space-y-4">
         <!--
-            PLAN-0772 M2 / Lead 裁定三：原先点名的原子在 CP 目录里不存在（幻影原子）。实例 MCP 注册表的
-            **写面**按 openapi 原文（`/api/v1/instance/mcp` 的 description）是 instance-admin only，而 CP 侧
-            这个端点当前还没实现（契约先行的 PLANNED_API）——所以这里只能点名 CP 守卫口径的能力位
-            `instance:admin`，不点名任何不存在的动作原子。
-        -->
-        <SettingsPermissionGate v-if="!canManage" variant="atom-denied" atom="instance:admin" />
+            PLAN-0772 M2 / Lead 裁定三（保留）：原先点名的原子在 CP 目录里不存在（幻影原子），
+            写面按 openapi 原文是 instance-admin only，所以只点名能力位 `instance:admin`，
+            不点名任何不存在的动作原子。
 
-        <template v-else>
+            task-447（D-1286）/ Lead 裁定⑵⑶：主体不再按能力位阻断 —— 读面对任何已认证调用者开放
+            （`openapi.yaml:5079`），非管理员看**只读**列表。原先的 `atom-denied` 403 卡片有两处假陈述：
+            ① 把能力位当动作原子点名；② 卡片正文声称「不是后端缺口」，而本面恰是 CP 未实现的
+            PLANNED_API（`RouteContractParityTest:216-217`，PLAN-0771 M3）⇒ **是**后端缺口。
+            缺口改由下面的 `SettingsErrorSurface` 照实显示（404 就是 404），写面门槛用非阻断提示点名。
+        -->
+        <template v-if="auth.isAuthenticated">
             <header class="flex flex-wrap items-center justify-between gap-2">
                 <div class="min-w-0">
                     <h2 class="text-base font-medium" data-testid="instance-mcp-heading">
@@ -210,12 +236,24 @@ async function confirmDelete(): Promise<void> {
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-xs text-muted-foreground">{{ countLabel }}</span>
-                    <Button data-testid="instance-mcp-create" @click="openCreate">
+                    <Button v-if="canManage" data-testid="instance-mcp-create" @click="openCreate">
                         <Plus class="size-4" aria-hidden="true" />
                         {{ t("settings.instanceResources.mcp.createCta") }}
                     </Button>
                 </div>
             </header>
+
+            <Alert
+                v-if="!canManage"
+                data-testid="instance-mcp-write-capability-notice"
+                role="status"
+                class="rounded-md border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground"
+            >
+                <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <AlertDescription class="text-pretty text-xs leading-5 text-muted-foreground">
+                    {{ t("settings.instanceResources.mcp.writeRequiresCapability") }}
+                </AlertDescription>
+            </Alert>
 
             <SettingsErrorSurface :cause="loadCause" :retry="load" />
             <p
@@ -246,7 +284,11 @@ async function confirmDelete(): Promise<void> {
                     </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
-                    <Button data-testid="instance-mcp-empty-create" @click="openCreate">
+                    <Button
+                        v-if="canManage"
+                        data-testid="instance-mcp-empty-create"
+                        @click="openCreate"
+                    >
                         <Plus class="size-4" aria-hidden="true" />
                         {{ t("settings.instanceResources.mcp.emptyCta") }}
                     </Button>
@@ -307,6 +349,7 @@ async function confirmDelete(): Promise<void> {
                                     </td>
                                     <td class="space-x-1 py-2 text-right">
                                         <Button
+                                            v-if="canManage"
                                             variant="ghost"
                                             size="icon-sm"
                                             :data-testid="`instance-mcp-delete-${server.id}`"

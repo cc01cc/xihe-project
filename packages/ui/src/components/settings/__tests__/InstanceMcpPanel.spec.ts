@@ -8,7 +8,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * <p>多锁一条：凭据下拉**只列实例凭据**（D-1006 B5「只可引用实例凭据」）——
  * 它取的是 `listInstanceCredentials()`，不是个人凭据端点。</p>
  */
-const authState = vi.hoisted(() => ({ isAdmin: true }));
+/**
+ * task-447（D-1286）：面板改读**能力位访问器**与**已认证**两个信号（读面契约对任何已认证
+ * 调用者开放，写面才是能力位）⇒ 替身三个字段都给，且 `isAdmin` 与能力位**故意可分离**，
+ * 用来钉「面板读的是访问器，不是 isAdmin 字面量」。
+ */
+const authState = vi.hoisted(() => ({
+    isAdmin: true,
+    hasInstanceAdminCapability: true,
+    isAuthenticated: true,
+}));
 
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => authState,
@@ -67,6 +76,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
     authState.isAdmin = true;
+    authState.hasInstanceAdminCapability = true;
+    authState.isAuthenticated = true;
     mockedList.mockResolvedValue({ servers: [], count: 0 });
     mockedCredentials.mockResolvedValue({ credentials: [], count: 0 });
 });
@@ -101,16 +112,68 @@ describe("InstanceMcpPanel", () => {
         wrapper.unmount();
     });
 
-    it("非实例管理员：403 卡片，且不发任何请求", async () => {
-        authState.isAdmin = false;
+    /**
+     * task-447（D-1286）/ Lead 裁定⑵⑶：本条**取代**旧的「非管理员 ⇒ 403 卡片且不发请求」。
+     * 旧判据把 UI 写得比契约窄：`openapi.yaml:5079` 明写读面对任何已认证调用者开放
+     * （「this registry shapes routing, not authority」），只有写面是 instance-admin only（`:5102`）。
+     * 且旧卡片正文声称「不是后端缺口」，而本面是 CP 未实现的 PLANNED_API
+     * （`RouteContractParityTest:216-217`）⇒ 那是假陈述。新判据同时钉：读得到、写不了、不谎报。
+     */
+    it("非实例管理员：只读列表照取，写入口全消失，非阻断提示点名能力位（不是 403 卡片）", async () => {
+        authState.hasInstanceAdminCapability = false;
+        mockedList.mockResolvedValue({ servers: [server("mcp-1", "internal-docs")], count: 1 });
         const wrapper = mountPanel();
         await flushPromises();
 
-        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="settings-no-atom-notice"]').exists()).toBe(false);
-        expect(mockedList).not.toHaveBeenCalled();
+        // 读面开放 ⇒ 真的取数并渲染（旧实现 watch(canManage) 让它根本不取数）。
+        expect(mockedList).toHaveBeenCalledTimes(1);
+        expect(wrapper.find('[data-testid="instance-mcp-row-mcp-1"]').exists()).toBe(true);
+        // 写入口全部消失（新建 / 行内删除）。
+        expect(wrapper.find('[data-testid="instance-mcp-create"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="instance-mcp-delete-mcp-1"]').exists()).toBe(false);
+        // 非阻断提示点名**能力位**；不得是 403 卡片（那张会谎报「不是后端缺口」）。
+        const notice = wrapper.find('[data-testid="instance-mcp-write-capability-notice"]');
+        expect(notice.exists()).toBe(true);
+        expect(notice.text()).toContain("instance:admin");
+        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(false);
+        // 凭据候选只服务写面 ⇒ 非管理员不取（否则只会拿到 403，是无谓请求）。
         expect(mockedCredentials).not.toHaveBeenCalled();
 
+        wrapper.unmount();
+    });
+
+    it("非实例管理员 + 空注册表：空态不摆「注册」出口（只读视图不给假按钮）", async () => {
+        authState.hasInstanceAdminCapability = false;
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="instance-mcp-empty"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="instance-mcp-empty-create"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("写面判据读能力位访问器，不读 isAdmin 字面量（两者同源但纪律不同）", async () => {
+        // 故意让两个信号不一致：若面板仍读 isAdmin，本条必红。
+        authState.isAdmin = true;
+        authState.hasInstanceAdminCapability = false;
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="instance-mcp-create"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="instance-mcp-write-capability-notice"]').exists()).toBe(
+            true,
+        );
+        wrapper.unmount();
+    });
+
+    it("未认证：不取数、不渲染主体（fail-closed，不静默空列表）", async () => {
+        authState.isAuthenticated = false;
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(mockedList).not.toHaveBeenCalled();
+        expect(wrapper.find('[data-testid="instance-mcp-table"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="instance-mcp-empty"]').exists()).toBe(false);
         wrapper.unmount();
     });
     /**
