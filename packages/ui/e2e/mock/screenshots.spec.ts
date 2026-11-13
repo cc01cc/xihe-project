@@ -7,6 +7,14 @@ interface Route {
     path: string;
     name: string;
     requiresAuth: boolean;
+    /**
+     * task-171：该路由的**产品页**在真栈上要求实例管理员能力（设置区实例层门
+     * `cap:instance:admin` → `authStore.hasInstanceAdminCapability` ← `user.capabilities.isInstanceAdmin`）。
+     * 截图夹具此前只塞了 token、没有 user ⇒ 页面正确地渲染成「需要实例管理员能力」的警示卡，
+     * 于是 `settings-domain-title` 永不出现、用例 30 s 超时。**产品行为是对的，夹具缺能力位。**
+     * 形状照 `e2e/mock/config-settings.spec.ts:32-49`（同一字段、同一来源）。
+     */
+    needsInstanceAdmin?: boolean;
 }
 
 const allRoutes: Route[] = [
@@ -18,9 +26,19 @@ const allRoutes: Route[] = [
         name: "workspace-chat-session",
         requiresAuth: true,
     },
-    { path: "/settings/config", name: "settings-config", requiresAuth: true },
+    {
+        path: "/settings/config",
+        name: "settings-config",
+        requiresAuth: true,
+        needsInstanceAdmin: true,
+    },
     { path: "/resources/knowledge", name: "resources-knowledge", requiresAuth: true },
-    { path: "/settings/data", name: "settings-data", requiresAuth: true },
+    {
+        path: "/settings/data",
+        name: "settings-data",
+        requiresAuth: true,
+        needsInstanceAdmin: true,
+    },
     { path: "/settings/monitoring", name: "settings-monitoring", requiresAuth: true },
     { path: "/workspace/ws-e2e-1", name: "workspace", requiresAuth: true },
 ];
@@ -73,6 +91,25 @@ for (const route of allRoutes) {
         if (route.requiresAuth) {
             await page.addInitScript(() => {
                 localStorage.setItem("xihe-token", "mock-token-for-screenshot");
+            });
+        }
+
+        if (route.needsInstanceAdmin) {
+            // 只给需要它的两条路由加，**不广播**：其它路由的截图是别的渲染面，
+            // 多给一次能力位就可能让第 3 张基线变（task-171 验收 ②）。
+            await page.addInitScript(() => {
+                localStorage.setItem(
+                    "xihe-user",
+                    JSON.stringify({
+                        id: "u1",
+                        email: "admin@xihe.local",
+                        capabilities: {
+                            isInstanceAdmin: true,
+                            isInstanceSuper: true,
+                            workspaceAdminOf: ["ws-1"],
+                        },
+                    }),
+                );
             });
         }
 
