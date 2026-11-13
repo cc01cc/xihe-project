@@ -12,7 +12,9 @@ const e2eProfile = process.env.XIHE_E2E_PROFILE || "all",
 
 // task-368 / D-1226：未设 XIHE_UI_PORT 时明示正在使用默认端口（避免「有个 ui 在 12750」被误读成栈）。
 if (!process.env.XIHE_UI_PORT) {
-    console.log(`[e2e] XIHE_UI_PORT 未设置 ⇒ 使用默认端口 ${UI_PORT}（非 stack 段；task-368 / D-1226）`);
+    console.log(
+        `[e2e] XIHE_UI_PORT 未设置 ⇒ 使用默认端口 ${UI_PORT}（非 stack 段；task-368 / D-1226）`,
+    );
 }
 
 /**
