@@ -107,7 +107,12 @@ import InstanceAgentSkillsDialog from "../../resources/InstanceAgentSkillsDialog
 
 const mockedList = vi.mocked(listInstanceAgents);
 
-function agent(id: string, name: string): InstanceAgent {
+function agent(
+    id: string,
+    name: string,
+    // task-431：列表投影带存量白名单（cp-1 task-423 核实），夹具默认「不限制」。
+    allowedModels: InstanceAgent["allowedModels"] = null,
+): InstanceAgent {
     return {
         id,
         name,
@@ -115,8 +120,21 @@ function agent(id: string, name: string): InstanceAgent {
         templateName: null,
         modelProvider: "anthropic",
         modelName: "claude-sonnet-4.5",
+        allowedModels,
         createdAt: "2026-10-21T03:22:00Z",
         disabled: false,
+    };
+}
+
+/**
+ * 存量意图恰好落在可见 chat 连接的目录里 ⇒ 三段可预填。
+ * 提到模块级：401 编辑半与 431 三态比对共用同一份存量夹具（两处各写一份会漂移）。
+ */
+function storedAgent(allowedModels: InstanceAgent["allowedModels"] = null): InstanceAgent {
+    return {
+        ...agent("agent-1", "代码评审助手", allowedModels),
+        modelProvider: "anthropic",
+        modelName: "claude-sonnet-4-5",
     };
 }
 
@@ -568,15 +586,6 @@ describe("InstanceAgentsPanel · task-401 模型意图（创建半）", () => {
 describe("InstanceAgentsPanel · task-401 模型意图（编辑半，cp-1 task-413 契约）", () => {
     type PanelWrapper = ReturnType<typeof mountPanel>;
 
-    /** 存量意图恰好落在可见 chat 连接的目录里 ⇒ 三段可预填。 */
-    function storedAgent(): InstanceAgent {
-        return {
-            ...agent("agent-1", "代码评审助手"),
-            modelProvider: "anthropic",
-            modelName: "claude-sonnet-4-5",
-        };
-    }
-
     async function openEdit(wrapper: PanelWrapper): Promise<void> {
         await wrapper.get('[data-testid="instance-agent-edit-agent-1"]').trigger("click");
         await flushPromises();
@@ -633,7 +642,10 @@ describe("InstanceAgentsPanel · task-401 模型意图（编辑半，cp-1 task-4
         wrapper.unmount();
     });
 
-    it("勾「只允许这个模型」：白名单写成新模型；模型没变也算改动（存量白名单不在列表投影里）", async () => {
+    // task-431 更正前提：存量白名单**在**列表投影里（cp-1 task-423 / c7ace6f42 核实）。
+    // 这条用例的存量是「不限制」，勾选后白名单从 null 变成一项 ⇒ 是**真变化**，
+    // 不是旧口径的「勾了就算改动」。
+    it("勾「只允许这个模型」：存量不限制 ⇒ 白名单 null→一项，算真改动并写成所选模型", async () => {
         mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
         const wrapper = mountPanel();
         await flushPromises();
@@ -896,6 +908,147 @@ describe("InstanceAgentsPanel · task-430 创建面契约收紧", () => {
         expect(error.text()).toContain("名字格式不合契约");
         expect(error.text()).not.toContain("name format");
         expect(wrapper.find('[data-testid="instance-agents-create-dialog"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+});
+
+/**
+ * task-431：编辑面 dirty-check 按**规范化白名单三态**比对（cp-1 task-423 / c7ace6f42 给了基线：
+ * 列表投影 required 带 allowedModels，null = 不限制且键恒在，[] 与 null 同义）。
+ * 判据：预填原样保存**禁用**（不白写 PATCH、不多一条审计）；真变化才写；取消勾选要能清掉存量白名单。
+ */
+describe("InstanceAgentsPanel · task-431 白名单三态比对", () => {
+    const SAME = [{ provider: "anthropic", model: "claude-sonnet-4-5" }];
+
+    async function openEdit(wrapper: ReturnType<typeof mountPanel>): Promise<void> {
+        await wrapper.get('[data-testid="instance-agent-edit-agent-1"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="instance-agents-edit-dialog"]').exists()).toBe(true);
+    }
+
+    function boxes(wrapper: ReturnType<typeof mountPanel>) {
+        const all = wrapper.findAllComponents(Checkbox);
+        expect(all).toHaveLength(2);
+        return all;
+    }
+
+    it("存量白名单=同一模型一项：预填勾选，原样保存禁用（不白写一次 PATCH）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent(SAME)], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        expect(boxes(wrapper)[0]!.props("modelValue")).toBe(true);
+        expect(wrapper.get('[data-testid="instance-agents-edit-whitelist"]').text()).toContain(
+            "anthropic / claude-sonnet-4-5",
+        );
+        expect(wrapper.find('[data-testid="instance-agents-edit-nochange"]').exists()).toBe(true);
+        expect(
+            wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(updateInstanceAgent).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("存量白名单=同一模型一项：取消勾选 ⇒ 显式 null 清掉（模型没变也是真改动）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent(SAME)], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        boxes(wrapper)[0]!.vm.$emit("update:modelValue", false);
+        await flushPromises();
+        expect(
+            wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
+        ).toBeUndefined();
+        await wrapper.get('[data-testid="instance-agents-edit-submit"]').trigger("click");
+        await flushPromises();
+        expect(vi.mocked(updateInstanceAgent).mock.calls[0]![1]).toEqual({
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-sonnet-4-5",
+            allowedModels: null,
+        });
+        wrapper.unmount();
+    });
+
+    it("存量 [] 与 null 同义：都预填不勾选，原样保存禁用（三态归一）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent([])], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        expect(boxes(wrapper)[0]!.props("modelValue")).toBe(false);
+        expect(wrapper.get('[data-testid="instance-agents-edit-whitelist"]').text()).toContain(
+            "不限制",
+        );
+        expect(
+            wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
+        ).toBeDefined();
+        wrapper.unmount();
+    });
+
+    it("存量白名单指着别的模型：照实显示，改成所选模型才算改动并写新白名单", async () => {
+        mockedList.mockResolvedValue({
+            agents: [storedAgent([{ provider: "anthropic", model: "claude-haiku-4-5" }])],
+            count: 1,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        expect(wrapper.get('[data-testid="instance-agents-edit-whitelist"]').text()).toContain(
+            "claude-haiku-4-5",
+        );
+        // 预填勾选 + 所选仍是存量默认模型 ⇒ 白名单与存量不同 ⇒ 是真改动（不是「勾了就算」）。
+        expect(
+            wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
+        ).toBeUndefined();
+        await wrapper.get('[data-testid="instance-agents-edit-submit"]').trigger("click");
+        await flushPromises();
+        expect(vi.mocked(updateInstanceAgent).mock.calls[0]![1]).toEqual({
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-sonnet-4-5",
+            allowedModels: SAME,
+        });
+        wrapper.unmount();
+    });
+
+    it("存量白名单多项：照实显示两项（勾选框只能表达一项，不许 silently 缩而不告知）", async () => {
+        mockedList.mockResolvedValue({
+            agents: [
+                storedAgent([
+                    { provider: "anthropic", model: "claude-sonnet-4-5" },
+                    { provider: "openai", model: "gpt-5.1" },
+                ]),
+            ],
+            count: 1,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        const text = wrapper.get('[data-testid="instance-agents-edit-whitelist"]').text();
+        expect(text).toContain("claude-sonnet-4-5");
+        expect(text).toContain("openai / gpt-5.1");
+        wrapper.unmount();
+    });
+
+    it("清除也要「不改就不写」：存量本来没有意图与白名单 ⇒ 清除同样禁用", async () => {
+        mockedList.mockResolvedValue({
+            agents: [
+                {
+                    ...agent("agent-1", "空意图助手"),
+                    modelProvider: null,
+                    modelName: null,
+                    allowedModels: null,
+                },
+            ],
+            count: 1,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        await wrapper.get('[data-testid="instance-agents-edit-clear"]').trigger("click");
+        await flushPromises();
+        expect(
+            wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(updateInstanceAgent).not.toHaveBeenCalled();
         wrapper.unmount();
     });
 });

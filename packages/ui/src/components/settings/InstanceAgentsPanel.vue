@@ -13,6 +13,8 @@ import {
     createInstanceAgent,
     deleteInstanceAgent,
     listInstanceAgents,
+    normalizeModelWhitelist,
+    sameModelWhitelist,
     updateInstanceAgent,
     type InstanceAgent,
     type InstanceAgentUpdateRequest,
@@ -154,38 +156,64 @@ function modelIntentOf(binding: AgentModelBindingDraft) {
 
 /**
  * 编辑载荷：没有可写的改动就回 null（提交禁用）——「不改就不写」，也避开 `minProperties: 1` 的 400。
- * 白名单规则：勾选 = 写新白名单；没勾但**换了模型** = 显式 null 清掉旧白名单（否则旧白名单还指着
- * 旧模型）；没勾且模型没变 = 省略该键（保留存量，不静默清数据）。
+ *
+ * <p>task-431（cp-1 task-423 / c7ace6f42 核实）：列表投影**本来就带** `allowedModels`
+ * （required，present-but-null），所以 dirty-check 改成**规范化后的三态比对**：
+ * `null` 与 `[]` 都归一为「不限制」，条目按 provider+model 排序去重后逐项比。
+ * 旧口径「勾了白名单就算改动」是因为当时以为投影没这个字段 ⇒ 预填原样保存也会白写一次 PATCH
+ * （还多一条审计）。现在：模型意图与白名单**都**没变 ⇒ 不写。</p>
+ *
+ * <p>白名单写法：勾选 = 写新白名单；没勾但存量有白名单（或换了模型）= 显式 null 清掉
+ * （否则旧白名单还指着旧模型）；两者都不成立 = 省略该键（保留存量，不静默清数据）。</p>
  */
 function editPayload(): InstanceAgentUpdateRequest | null {
+    const target = editTarget.value;
+    const storedWhitelist = normalizeModelWhitelist(target?.allowedModels ?? null);
     if (editClear.value) {
+        // 清除也要「不改就不写」：存量本来就没有意图与白名单时，三个 null 是幂等空写。
+        const alreadyEmpty =
+            !target?.modelProvider && !target?.modelName && storedWhitelist === null;
+        if (alreadyEmpty) return null;
         return { defaultModelProvider: null, defaultModelName: null, allowedModels: null };
     }
     const binding = editBinding.value;
     if (!binding.model || !bindingComplete(binding)) return null;
-    const target = editTarget.value;
-    const changed =
+    const modelChanged =
         binding.provider !== (target?.modelProvider ?? "") ||
         binding.model !== (target?.modelName ?? "");
-    // 不改就不写：预填后原样保存会白写一次（还多一条审计），所以「与存量相同且没勾白名单」
-    // 视为无改动 ⇒ 提交禁用。勾了白名单就算改动（存量白名单不在列表投影里，无法比对）。
-    if (!changed && !binding.restrict) return null;
+    const draftWhitelist = binding.restrict
+        ? normalizeModelWhitelist([{ provider: binding.provider, model: binding.model }])
+        : null;
+    const whitelistChanged = !sameModelWhitelist(storedWhitelist, draftWhitelist);
+    if (!modelChanged && !whitelistChanged) return null;
     return {
         defaultModelProvider: binding.provider,
         defaultModelName: binding.model,
         ...(binding.restrict
             ? { allowedModels: [{ provider: binding.provider, model: binding.model }] }
-            : changed
+            : modelChanged || storedWhitelist !== null
               ? { allowedModels: null }
               : {}),
     };
 }
 
+/** 存量白名单照实显示（含多项）：勾选框只能表达「当前所选模型」这一项，存量别 silently 被缩。 */
+const editStoredWhitelistText = computed(() => {
+    const stored = normalizeModelWhitelist(editTarget.value?.allowedModels ?? null);
+    if (!stored) return t("settings.instanceResources.agents.currentWhitelistNone");
+    return stored.map((entry) => entry.provider + " / " + entry.model).join("、");
+});
+
 const canSubmitEdit = computed(() => editPayload() !== null);
 
 function openEdit(agent: InstanceAgent): void {
     editTarget.value = agent;
-    editBinding.value = emptyBinding();
+    // task-431：白名单勾选态**按存量预填**（此前三态里只有「不限制」被表达，存量白名单看不见）。
+    // 字段组件的 intent 预填会保留 restrict（AgentModelBindingFields:152），所以这里先置真值安全。
+    editBinding.value = {
+        ...emptyBinding(),
+        restrict: normalizeModelWhitelist(agent.allowedModels) !== null,
+    };
     editClear.value = false;
     editError.value = null;
 }
@@ -626,6 +654,17 @@ async function confirmDelete(): Promise<void> {
                                 <template v-else>{{
                                     t("settings.instanceResources.agents.currentIntentNone")
                                 }}</template>
+                            </p>
+                            <!-- task-431：存量白名单照实显示，勾选框的预填才有可读的基线。 -->
+                            <p
+                                class="text-xs text-muted-foreground"
+                                data-testid="instance-agents-edit-whitelist"
+                            >
+                                {{
+                                    t("settings.instanceResources.agents.currentWhitelist", {
+                                        value: editStoredWhitelistText,
+                                    })
+                                }}
                             </p>
                         </div>
                         <AgentModelBindingFields

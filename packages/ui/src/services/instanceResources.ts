@@ -240,6 +240,51 @@ export type InstanceAgentField =
     | "createdAt"
     | "disabled";
 
+/** 模型白名单三态：`null` = 不限制（键恒在，present-but-null）；有项 = 白名单。`[]` 归一为 null。 */
+export type ModelWhitelist = Array<{ provider: string; model: string }> | null;
+
+/**
+ * task-431 / cp-1 `task-423`（c7ace6f42）：列表投影**本来就带** `allowedModels`
+ * （`AgentPrincipalWireView#principalView` 自 task-179 起 put，契约 `AgentPrincipalView` 列它为
+ * required，用户面与实例面共用同一投影）⇒ 编辑面可以拿列表行做比对基线，不必靠「勾没勾」猜。
+ *
+ * <p>规范化：`null` 与 `[]` 都归一为「不限制」；条目去空、去重、按 provider+model 排序 ——
+ * 比的是**语义**而不是数组引用或顺序（否则同一份白名单换个顺序就被判成改动，白写一次 PATCH）。</p>
+ */
+export function normalizeModelWhitelist(value: unknown): ModelWhitelist {
+    if (!Array.isArray(value)) return null;
+    const seen = new Set<string>();
+    const entries: Array<{ provider: string; model: string }> = [];
+    for (const item of value) {
+        const entry = asRecord(item);
+        const provider = str(entry.provider).trim();
+        const model = str(entry.model).trim();
+        if (!provider || !model) continue;
+        const key = provider + "\u0000" + model;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        entries.push({ provider, model });
+    }
+    if (entries.length === 0) return null;
+    return entries.sort((a, b) =>
+        (a.provider + "\u0000" + a.model).localeCompare(b.provider + "\u0000" + b.model),
+    );
+}
+
+/** 规范化后逐项比（两侧都先归一，所以 null 与 [] 相等、顺序无关）。 */
+export function sameModelWhitelist(a: ModelWhitelist, b: ModelWhitelist): boolean {
+    const left = normalizeModelWhitelist(a);
+    const right = normalizeModelWhitelist(b);
+    if (left === null || right === null) return left === right;
+    return (
+        left.length === right.length &&
+        left.every((entry, index) => {
+            const other = right[index]!;
+            return entry.provider === other.provider && entry.model === other.model;
+        })
+    );
+}
+
 export interface InstanceAgent {
     id: string;
     name: string;
@@ -247,6 +292,8 @@ export interface InstanceAgent {
     templateName: string | null;
     modelProvider: string | null;
     modelName: string | null;
+    /** task-431：存量白名单（列表投影 required；null = 不限制）。编辑面 dirty-check 的基线。 */
+    allowedModels: ModelWhitelist;
     createdAt: string | null;
     disabled: boolean;
     /** 每个展示字段在载荷里到底属于三态中的哪一种（见 `wireStateOf`）。 */
@@ -286,6 +333,7 @@ function normalizeAgent(value: unknown): InstanceAgent {
         templateName: nullableStr(raw.templateName),
         modelProvider: nullableStr(raw.defaultModelProvider) ?? nullableStr(raw.modelProvider),
         modelName: nullableStr(raw.defaultModelName) ?? nullableStr(raw.modelName),
+        allowedModels: normalizeModelWhitelist(raw.allowedModels),
         createdAt: nullableStr(raw.createdAt),
         disabled: raw.disabled === true,
         states: {
@@ -344,17 +392,12 @@ export interface InstanceAgentUpdateView {
 
 function normalizeUpdateView(value: unknown): InstanceAgentUpdateView {
     const raw = asRecord(value);
-    const list = Array.isArray(raw.allowedModels) ? raw.allowedModels : [];
     return {
         principalId: str(raw.principalId) || str(raw.id),
         defaultModelProvider: nullableStr(raw.defaultModelProvider),
         defaultModelName: nullableStr(raw.defaultModelName),
-        allowedModels: list.length
-            ? list.map((item) => {
-                  const entry = asRecord(item);
-                  return { provider: str(entry.provider), model: str(entry.model) };
-              })
-            : null,
+        // 与列表行同一套归一（task-431）：两个面读同一投影，规范化不许有第二份。
+        allowedModels: normalizeModelWhitelist(raw.allowedModels),
     };
 }
 

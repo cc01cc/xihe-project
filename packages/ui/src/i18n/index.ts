@@ -2984,6 +2984,8 @@ const messages = {
                         "改这条智能体的默认模型与白名单。名称与说明不在这个写面上（契约只收模型意图与文档）。",
                     currentIntent: "当前模型意图",
                     currentIntentNone: "未设置（沿用平台默认）",
+                    currentWhitelist: "当前白名单：{value}",
+                    currentWhitelistNone: "不限制",
                     clearModel: "清除模型意图（回到平台默认）",
                     editWhitelistHint: "换模型会清掉旧白名单；勾「只允许这个模型」则写成新白名单。",
                     editNoChange: "选满三段，或勾选清除，才有可写的改动。",
@@ -6612,6 +6614,8 @@ const messages = {
                         "Change this agent's default model and allow-list. Name and description are not on this write face (the contract takes model intent and documents only).",
                     currentIntent: "Current model intent",
                     currentIntentNone: "Not set (inherits the platform default)",
+                    currentWhitelist: "Current whitelist: {value}",
+                    currentWhitelistNone: "Unrestricted",
                     clearModel: "Clear model intent (back to the platform default)",
                     editWhitelistHint:
                         'Changing the model clears the old allow-list; tick "Allow only this model" to write a new one.',
