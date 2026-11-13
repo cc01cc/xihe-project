@@ -741,14 +741,11 @@ public class ApiRequestTemplateService {
         UUID user = layer.equals("user") ? owner : null;
         UUID workspace = layer.equals("workspace") ? owner : null;
         // Connection row is already locked by the mutation owner.
-        List<ConfigEntity> overrides = configs.findByLayerAndDomain("user", DOMAIN).stream()
-                .filter(r -> r.getConfigKey().equals("providerModelBindings"))
-                .filter(r -> object(r.getConfigValue()).has(connection.getId().toString()))
-                .sorted(Comparator.comparing(r -> r.getUserId().toString())).toList();
+        List<ConfigEntity> overrides = bindingRows(connection);
         Set<String> scopes = new TreeSet<>();
         scopes.add(layer + ":" + (owner == null ? "instance" : owner));
         for (ConfigEntity row : overrides) {
-            scopes.add("user:" + row.getUserId());
+            scopes.add(scopeKey(row));
         }
         for (String scope : scopes) {
             String[] parts = scope.split(":", 2);
@@ -771,6 +768,8 @@ public class ApiRequestTemplateService {
         int removed = 0;
         for (ConfigEntity row : overrides) {
             em.refresh(row);
+            UUID rowUser = row.getUserId();
+            UUID rowWorkspace = "workspace".equals(row.getLayer()) ? row.getWorkspaceId() : null;
             ObjectNode bindings = object(row.getConfigValue());
             if (!bindings.path(connection.getId().toString()).isObject()) {
                 continue;
@@ -779,7 +778,7 @@ public class ApiRequestTemplateService {
             List<String> delete = new ArrayList<>();
             models.fields().forEachRemaining(entry -> {
                 try {
-                    compatible(connection, resolveRef(entry.getValue(), row.getUserId(), workspace, "", json.createArrayNode()));
+                    compatible(connection, resolveRef(entry.getValue(), rowUser, rowWorkspace, "", json.createArrayNode()));
                 } catch (CpApiException mismatch) {
                     if (!mismatch.getCode().equals("API_TYPE_TEMPLATE_MISMATCH")) {
                         throw mismatch;
@@ -792,7 +791,8 @@ public class ApiRequestTemplateService {
             if (models.isEmpty()) {
                 bindings.remove(connection.getId().toString());
             }
-            save("user", row.getUserId(), null, "providerModelBindings", write(bindings), TenantContext.getUserId());
+            save(row.getLayer(), rowUser, rowWorkspace, "providerModelBindings", write(bindings),
+                    TenantContext.getUserId());
         }
         return removed;
     }
@@ -817,21 +817,33 @@ public class ApiRequestTemplateService {
             }
         }
         int count = 0;
-        for (ConfigEntity row : configs.findByLayerAndDomain("user", DOMAIN)) {
-            if (!row.getConfigKey().equals("providerModelBindings")) {
-                continue;
-            }
+        int ownerLayerCount = 0;
+        for (ConfigEntity row : bindingRows(connection)) {
+            UUID rowUser = row.getUserId();
+            UUID rowWorkspace = "workspace".equals(row.getLayer()) ? row.getWorkspaceId() : null;
+            boolean userRow = "user".equals(row.getLayer());
             for (JsonNode ref : object(row.getConfigValue()).path(connection.getId().toString())) {
-                JsonNode template = resolveRef(ref, row.getUserId(), layer.equals("workspace") ? owner : null, "", json.createArrayNode());
+                JsonNode template = resolveRef(ref, rowUser, rowWorkspace, "", json.createArrayNode());
                 if (!template.path("apiTypeId").asText().equals(type) || template.path("apiTypeVersion").asInt() != version) {
-                    count++;
+                    if (userRow) {
+                        count++;
+                    } else {
+                        ownerLayerCount++;
+                    }
                 }
             }
+        }
+        List<Map<String, Object>> incompatibleOverrides = new ArrayList<>();
+        incompatibleOverrides.add(Map.of("scope", "user", "count", count));
+        if (ownerLayerCount > 0) {
+            // task-354: the owner layer binds its own connections since task-343; report it instead of
+            // folding it into the user bucket (the field is free text, so no contract change).
+            incompatibleOverrides.add(Map.of("scope", layer, "count", ownerLayerCount));
         }
         return Map.of("connectionRevision", connection.getRevision(),
                 "currentType", Map.of("apiTypeId", connection.getApiTypeId(), "apiTypeVersion", connection.getApiTypeVersion()),
                 "targetType", Map.of("apiTypeId", type, "apiTypeVersion", version),
-                "compatibleTemplates", candidates, "incompatibleOverrides", List.of(Map.of("scope", "user", "count", count)),
+                "compatibleTemplates", candidates, "incompatibleOverrides", incompatibleOverrides,
                 "sessionRebindCount", connection.getApiTypeId().equals(type) && connection.getApiTypeVersion() == version ? 0L
                         : sessionReferenceCount(connection.getId().toString()));
     }
@@ -846,19 +858,61 @@ public class ApiRequestTemplateService {
     // ------------------------------------------------------------------
 
     /**
-     * PLAN-0505 review fix (#6): single definition of "user-layer rows whose
-     * {@code providerModelBindings} hold a non-empty entry for this
-     * connection", shared by the preview and the cascade so the predicate,
+     * PLAN-0505 review fix (#6) + task-354: the single definition of "config rows whose
+     * {@code providerModelBindings} hold a non-empty entry for this connection", shared by the
+     * delete preview, the delete cascade and the two type-change impact readers so predicate,
      * lock set, removal set and audit counts cannot drift apart.
+     *
+     * <p>Until task-343 this only had to scan {@code layer="user"}: the instance and workspace
+     * layers could not bind a connection at all (the write guard answered 400). The guard now
+     * follows the connection owner layer (D-1140), so the owner layer row is a real binding scope
+     * and must be scanned here too — otherwise a delete silently leaves a dangling connection id
+     * behind and a type change under-reports its impact.
      */
-    private List<ConfigEntity> bindingRows(String connectionId) {
-        return configs.findByLayerAndDomain("user", DOMAIN).stream()
-                .filter(r -> r.getConfigKey().equals("providerModelBindings"))
-                .filter(r -> {
-                    JsonNode bound = object(r.getConfigValue()).path(connectionId);
+    private List<ConfigEntity> bindingRows(ProviderConnection connection) {
+        String connectionId = connection.getId().toString();
+        String ownerLayer = ownerLayer(connection);
+        UUID owner = ownerUuid(connection);
+        List<ConfigEntity> rows = new ArrayList<>();
+        if (!"user".equals(ownerLayer)) {
+            rows.addAll(bindingRowsIn(ownerLayer, owner, connectionId));
+        }
+        rows.addAll(bindingRowsIn("user", null, connectionId));
+        rows.sort(Comparator.comparing(ConfigEntity::getLayer)
+                .thenComparing(row -> String.valueOf(row.getUserId())));
+        return rows;
+    }
+
+    /** Rows in ONE layer whose {@code providerModelBindings} hold a non-empty entry for this connection. */
+    private List<ConfigEntity> bindingRowsIn(String layer, UUID owner, String connectionId) {
+        return configs.findByLayerAndDomain(layer, DOMAIN).stream()
+                .filter(row -> row.getConfigKey().equals("providerModelBindings"))
+                .filter(row -> matchesOwnerScope(row, layer, owner))
+                .filter(row -> {
+                    JsonNode bound = object(row.getConfigValue()).path(connectionId);
                     return bound.isObject() && !bound.isEmpty();
                 })
-                .sorted(Comparator.comparing(r -> r.getUserId().toString())).toList();
+                .toList();
+    }
+
+    private boolean matchesOwnerScope(ConfigEntity row, String layer, UUID owner) {
+        if ("instance".equals(layer)) {
+            return row.getUserId() == null && row.getWorkspaceId() == null;
+        }
+        if ("workspace".equals(layer)) {
+            return row.getUserId() == null && owner != null && owner.equals(row.getWorkspaceId());
+        }
+        // user rows: every user is a candidate scope (a user may bind another user's visible connection, I2)
+        return true;
+    }
+
+    /** Lock-set key of one binding row (instance / workspace / user scope). */
+    private String scopeKey(ConfigEntity row) {
+        return switch (row.getLayer()) {
+            case "instance" -> "instance:instance";
+            case "workspace" -> "workspace:" + row.getWorkspaceId();
+            default -> "user:" + row.getUserId();
+        };
     }
 
     private ObjectNode ownerDefaultTemplates(ProviderConnection connection) {
@@ -885,7 +939,7 @@ public class ApiRequestTemplateService {
      * writes; other users' binding contents are never exposed, only counts.
      */
     public Map<String, Object> deleteImpact(ProviderConnection connection) {
-        List<ConfigEntity> overrides = bindingRows(connection.getId().toString());
+        List<ConfigEntity> overrides = bindingRows(connection);
         boolean defaultTemplateRef = ownerDefaultTemplates(connection)
                 .has(connection.getId().toString());
         long sessionCount = sessionReferenceCount(connection.getId().toString());
@@ -894,7 +948,7 @@ public class ApiRequestTemplateService {
                 "connectionKey", connection.getConnectionKey(),
                 "bindingCount", overrides.stream()
                         .mapToInt(r -> object(r.getConfigValue()).path(connection.getId().toString()).size()).sum(),
-                "bindingUserScopes", overrides.size(),
+                "bindingUserScopes", (int) overrides.stream().filter(r -> "user".equals(r.getLayer())).count(),
                 "defaultTemplateRef", defaultTemplateRef,
                 "sessionCount", sessionCount,
                 "blocked", sessionCount > 0);
@@ -904,8 +958,9 @@ public class ApiRequestTemplateService {
     public record CleanupCounts(int removedBindings, boolean removedDefaultTemplate, int bindingScopes) {}
 
     /**
-     * PLAN-0505 cascade cleanup (T2.2): removes this connection's entries from
-     * every user layer {@code providerModelBindings} row (cross-user, I2), the
+     * PLAN-0505 cascade cleanup (T2.2) + task-354: removes this connection's entries from
+     * every user layer {@code providerModelBindings} row (cross-user, I2) and from the
+     * connection owner layer row (instance / workspace, the layer task-343 let bind), the
      * owner layer {@code connectionDefaultTemplates} entry, and returns the
      * counts for the audit record. Runs inside the caller's delete transaction;
      * the caller holds the connection row lock. Scopes are locked in lexical
@@ -914,12 +969,12 @@ public class ApiRequestTemplateService {
      */
     public CleanupCounts cleanupReferences(ProviderConnection connection) {
         String connectionId = connection.getId().toString();
-        List<ConfigEntity> overrides = bindingRows(connectionId);
+        List<ConfigEntity> overrides = bindingRows(connection);
         Set<String> scopes = new TreeSet<>();
         UUID connectionOwner = ownerUuid(connection);
         scopes.add(ownerLayer(connection) + ":" + (connectionOwner == null ? "instance" : connectionOwner));
         for (ConfigEntity row : overrides) {
-            scopes.add("user:" + row.getUserId());
+            scopes.add(scopeKey(row));
         }
         for (String scope : scopes) {
             String[] parts = scope.split(":", 2);
@@ -941,7 +996,8 @@ public class ApiRequestTemplateService {
             }
             removedBindings += bound.size();
             bindings.remove(connectionId);
-            save("user", row.getUserId(), null, "providerModelBindings", write(bindings), TenantContext.getUserId());
+            save(row.getLayer(), row.getUserId(), "workspace".equals(row.getLayer()) ? row.getWorkspaceId() : null,
+                    "providerModelBindings", write(bindings), TenantContext.getUserId());
         }
         boolean removedDefaultTemplate = false;
         String layer = ownerLayer(connection);

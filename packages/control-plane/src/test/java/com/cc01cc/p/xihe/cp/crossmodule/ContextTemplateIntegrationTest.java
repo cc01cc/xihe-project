@@ -11,6 +11,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -369,6 +370,102 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
                         + "\"tools\":[{\"name\":\"forged\"}]}")
                 .put("status", "published").toString();
         assertEquals(HttpStatus.BAD_REQUEST, putUserTemplates("[" + forgedTools + "]").getStatusCode());
+    }
+
+
+    // ---- task-354: the connection OWNER layer row is a real binding scope since task-343 ----
+
+    @Test
+    void deletingAnInstanceConnectionCascadesItsInstanceLayerBindings() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        var connection = instanceChatConnection("ctx-cascade-instance");
+        String connectionId = connection.getId().toString();
+        ResponseEntity<Map> written = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of(
+                        "templates", "[" + publishedFragment(1, "实例模板 v1") + "]",
+                        "providerModelBindings", "{\"" + connectionId + "\":{\"cascade-model\":{\"layer\":\"instance\",\"templateId\":\""
+                                + TEMPLATE_ID + "\",\"version\":1}}}"),
+                        bearerJson(token)),
+                Map.class);
+        assertEquals(HttpStatus.OK, written.getStatusCode(), String.valueOf(written.getBody()));
+
+        // Preview BEFORE the delete: the owner-layer binding is counted (0 before task-354), but it is
+        // not a user scope, so bindingUserScopes stays a user-row count.
+        ResponseEntity<Map> impact = restTemplate.exchange(
+                url("/api/v1/provider-connections/" + connectionId + "/delete-impact"), HttpMethod.GET,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, impact.getStatusCode(), String.valueOf(impact.getBody()));
+        assertEquals(1, ((Number) impact.getBody().get("bindingCount")).intValue(), String.valueOf(impact.getBody()));
+        assertEquals(0, ((Number) impact.getBody().get("bindingUserScopes")).intValue(),
+                "owner-layer bindings are not user scopes");
+
+        ResponseEntity<Map> deleted = restTemplate.exchange(
+                url("/api/v1/provider-connections/" + connectionId), HttpMethod.DELETE,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode());
+
+        ResponseEntity<Map> read = restTemplate.exchange(
+                url("/api/v1/config/api-request-templates?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, read.getStatusCode());
+        assertFalse(String.valueOf(read.getBody().get("providerModelBindings")).contains(connectionId),
+                "delete must not leave a dangling instance-layer binding: " + read.getBody().get("providerModelBindings"));
+    }
+
+    @Test
+    void typeChangeImpactReportsInstanceLayerBindings() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        var connection = instanceChatConnection("ctx-impact-instance");
+        String connectionId = connection.getId().toString();
+        assertEquals(HttpStatus.OK, restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of(
+                        "templates", "[" + publishedFragment(1, "实例模板 v1") + "]",
+                        "providerModelBindings", "{\"" + connectionId + "\":{\"impact-model\":{\"layer\":\"instance\",\"templateId\":\""
+                                + TEMPLATE_ID + "\",\"version\":1}}}"),
+                        bearerJson(token)),
+                Map.class).getStatusCode());
+        // The HTTP door also runs catalog.supportedPair(provider, target) and the fixture provider
+        // (custom-openai-compatible) supports exactly one chat type, so the scanning predicate is
+        // exercised through the service; the HTTP shape stays covered by
+        // ApiRequestTemplateHttpIntegrationTest.
+        Map<String, Object> impact = apiRequestTemplates.impact(connection, "anthropic-messages", 1);
+        Object raw = impact.get("incompatibleOverrides");
+        assertTrue(raw instanceof java.util.List<?>, String.valueOf(raw));
+        Map<?, ?> instanceBucket = ((java.util.List<?>) raw).stream()
+                .map(bucket -> (Map<?, ?>) bucket)
+                .filter(bucket -> "instance".equals(bucket.get("scope")))
+                .findFirst().orElseThrow(() -> new AssertionError("no instance bucket: " + impact));
+        assertEquals(1, ((Number) instanceBucket.get("count")).intValue(), String.valueOf(impact));
+    }
+
+    @Test
+    void connectionDefaultChangePurgesIncompatibleInstanceLayerBindings() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        var connection = instanceChatConnection("ctx-defaults-instance");
+        String connectionId = connection.getId().toString();
+        assertEquals(HttpStatus.OK, restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of(
+                        "templates", "[" + publishedFragment(1, "实例模板 v1") + "]",
+                        "providerModelBindings", "{\"" + connectionId + "\":{\"purge-model\":{\"layer\":\"instance\",\"templateId\":\""
+                                + TEMPLATE_ID + "\",\"version\":1}}}"),
+                        bearerJson(token)),
+                Map.class).getStatusCode());
+        // Fixture: the Connection API Type changed (the PATCH/impact path has its own coverage);
+        // under test here is that the purge walks the OWNER layer row, not only user rows.
+        connection.setApiTypeId("anthropic-messages");
+        connection.setApiTypeVersion(1);
+        providerConnectionRepository.saveAndFlush(connection);
+        assertEquals(1, apiRequestTemplates.changeConnectionDefault(connection, null));
+        ResponseEntity<Map> read = restTemplate.exchange(
+                url("/api/v1/config/api-request-templates?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, read.getStatusCode());
+        assertFalse(String.valueOf(read.getBody().get("providerModelBindings")).contains(connectionId),
+                "type change must not leave an incompatible instance-layer binding: "
+                        + read.getBody().get("providerModelBindings"));
     }
 
     // ---- T1.3 / V3: explicit Session binding ----
