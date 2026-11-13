@@ -2951,10 +2951,11 @@ const messages = {
                 agents: {
                     title: "平台智能体",
                     subtitle:
-                        "平台智能体：默认对所有工作区可用，无需逐工作区绑定；只有实例管理员能创建。",
+                        "平台智能体：只有实例管理员能创建。当前需在目标工作区显式接入后才能使用；默认对所有工作区可用尚未实现。",
                     count: "{count} 个智能体",
                     emptyTitle: "还没有平台智能体",
-                    emptyBody: "平台智能体建好后，所有工作区都能直接使用，不需要再逐个绑定。",
+                    emptyBody:
+                        "平台智能体建好后，还要在目标工作区显式接入才能使用；默认全局可见尚未实现。",
                     emptyCta: "创建第一个平台智能体",
                     fieldName: "名称",
                     fieldNamePlaceholder: "例如：代码评审助手",
@@ -6579,11 +6580,11 @@ const messages = {
                 agents: {
                     title: "Platform agents",
                     subtitle:
-                        "Platform agents are available to every workspace by default and need no per-workspace binding; only instance administrators can create them.",
+                        "Only instance administrators can create platform agents. A workspace must explicitly adopt one before it can be used; availability to every workspace by default is not implemented yet.",
                     count: "{count} agents",
                     emptyTitle: "No platform agents yet",
                     emptyBody:
-                        "Once created, a platform agent is usable from every workspace without binding it one by one.",
+                        "Once created, a platform agent still has to be adopted in the target workspace before use; global visibility by default is not implemented yet.",
                     emptyCta: "Create the first platform agent",
                     fieldName: "Name",
                     fieldNamePlaceholder: "e.g. code review assistant",

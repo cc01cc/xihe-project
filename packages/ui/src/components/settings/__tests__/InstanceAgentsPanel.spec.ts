@@ -234,6 +234,37 @@ beforeEach(() => {
     } as Awaited<ReturnType<typeof listProviderCatalog>>);
 });
 
+/**
+ * task-437（A′ / D-1268）：文案必须说**今天的真相**，且**不得抹掉 D-1006 B4**。
+ * 真栈实测：实例主体在任何工作区都不可用（CP 未实现 B4 的平台预置段）⇒ 旧文案「默认对所有
+ * 工作区可用，无需逐工作区绑定」是**与行为矛盾的承诺**。这两条断言把「诚实」钉住：
+ * 既不许恢复旧承诺，也不许把 B4 改写成「本来就要逐个绑定」（必须明写尚未实现）。
+ */
+describe("InstanceAgentsPanel · task-437 文案诚实性（A′）", () => {
+    it("zh 文案说今天真相并明标 B4 尚未实现", () => {
+        const zh = { locale: "zh-CN" } as const;
+        for (const key of ["subtitle", "emptyBody"]) {
+            const text = i18n.global.t(`settings.instanceResources.agents.${key}`, {}, zh);
+            expect(text, `${key} 必须说明需显式接入`).toContain("接入");
+            expect(text, `${key} 必须明标尚未实现，不能抹掉 B4`).toContain("尚未实现");
+            expect(text, `${key} 不得承诺无需绑定`).not.toContain("无需逐工作区绑定");
+            expect(text, `${key} 不得承诺默认全局可用`).not.toContain("默认对所有工作区可用，");
+        }
+    });
+
+    it("en copy states today's truth and marks the gap", () => {
+        const en = { locale: "en-US" } as const;
+        for (const key of ["subtitle", "emptyBody"]) {
+            const text = i18n.global.t(`settings.instanceResources.agents.${key}`, {}, en);
+            expect(text, `${key} must mention adoption`).toMatch(/adopt/i);
+            expect(text, `${key} must mark the gap`).toContain("not implemented yet");
+            expect(text, `${key} must not promise default availability`).not.toContain(
+                "available to every workspace by default and need no per-workspace binding",
+            );
+        }
+    });
+});
+
 describe("InstanceAgentsPanel", () => {
     it("管理员：列出平台智能体（行 + 模型列）", async () => {
         mockedList.mockResolvedValue({ agents: [agent("agent-1", "代码评审助手")], count: 1 });
