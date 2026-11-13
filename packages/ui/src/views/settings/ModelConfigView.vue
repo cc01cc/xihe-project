@@ -32,23 +32,20 @@ import {
  */
 const props = defineProps<{ layer: ConfigLayer }>();
 
-const { t } = useI18n();
-const auth = useAuthStore();
-
-const settingsLayer = computed(() => props.layer as SettingsLayer);
-
-/** 本层实际承载的段（派生，不写第二份域名单）。 */
-const domains = computed(() => modelConfigDomainsForLayer(settingsLayer.value));
-
-/** 实例层需要 CP 的 cap:instance:admin（能力原子，不是角色名判断）。 */
-const forbidden = computed(() => props.layer === "instance" && !auth.hasInstanceAdminCapability);
-
-/** `workspace-default` 层：可读人人、可写仅原子持有者（与域页同一判据，不在此另立一套）。 */
-const panelReadonly = computed(
-    () =>
-        props.layer === "workspace-default" &&
-        !auth.hasInstanceAtom?.(WORKSPACE_DEFAULT_CONFIG_ATOM),
-);
+// 一个声明链（one-var）：后面的 computed 引用前面的，顺序即依赖顺序。
+const { t } = useI18n(),
+    auth = useAuthStore(),
+    settingsLayer = computed(() => props.layer as SettingsLayer),
+    /** 本层实际承载的段（派生，不写第二份域名单）。 */
+    domains = computed(() => modelConfigDomainsForLayer(settingsLayer.value)),
+    /** 实例层需要 CP 的 cap:instance:admin（能力原子，不是角色名判断）。 */
+    forbidden = computed(() => props.layer === "instance" && !auth.hasInstanceAdminCapability),
+    /** `workspace-default` 层：可读人人、可写仅原子持有者（与域页同一判据，不在此另立一套）。 */
+    panelReadonly = computed(
+        () =>
+            props.layer === "workspace-default" &&
+            !auth.hasInstanceAtom?.(WORKSPACE_DEFAULT_CONFIG_ATOM),
+    );
 
 function anchorHref(domain: string): string {
     return "#settings-domain-" + domain;

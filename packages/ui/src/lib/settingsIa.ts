@@ -163,6 +163,21 @@ export const MODEL_CONFIG_DOMAINS: readonly ConfigDomain[] = [
     "api-request-templates",
 ];
 
+/**
+ * 组**只在哪几层成组**（D-1122 口径，2026-11-13）：instance / user 两层。
+ *
+ * <p>「层能不能成组」与「矩阵里有没有这些域」是**两个问题**：矩阵（`LAYER_DOMAINS`）今天仍把
+ * llm-provider / context-policy 列在 workspace-default 里（那是 D-1122 还没改的存量），但**裁定**说
+ * 模型配置不往工作区层拉 ⇒ 组页、组路由、左栏组条目都只认这两层。等 D-1122 把矩阵改完，
+ * 这里一行都不用动（`MODEL_CONFIG_LAYERS` 是政策、矩阵是事实，分开才能各说各话）。</p>
+ */
+export const MODEL_CONFIG_LAYERS: readonly SettingsLayer[] = ["instance", "user"];
+
+/** 该层是否允许出现模型配置组（政策判据，先于此层矩阵里有没有这些域）。 */
+export function isModelConfigGroupLayer(layer: SettingsLayer): boolean {
+    return MODEL_CONFIG_LAYERS.includes(layer);
+}
+
 /** 组在该层实际承载的域（交集）：instance 3 段 / user 3 段 / workspace-default 2 段（无 api-request-templates）。 */
 export function modelConfigDomainsForLayer(layer: SettingsLayer): ConfigDomain[] {
     return MODEL_CONFIG_DOMAINS.filter((domain) => LAYER_DOMAINS[layer].includes(domain));
@@ -191,7 +206,8 @@ export interface SettingsNavItem {
 }
 
 export function navItemsForLayer(layer: SettingsLayer): SettingsNavItem[] {
-    const members = modelConfigDomainsForLayer(layer),
+    // D-1122：workspace-default 即使矩阵里还有这些域，也不生成组条目（政策在 MODEL_CONFIG_LAYERS）。
+    const members = isModelConfigGroupLayer(layer) ? modelConfigDomainsForLayer(layer) : [],
         items: SettingsNavItem[] = [];
     for (const domain of domainsForLayer(layer)) {
         if (members.includes(domain)) continue;

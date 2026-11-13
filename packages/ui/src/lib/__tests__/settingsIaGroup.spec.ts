@@ -55,7 +55,12 @@ describe("settingsIa · 模型配置组（task-227）", () => {
     });
 
     it("左栏：三个成员域折成一个组条目，位置 = 首个成员原来所在处", () => {
-        const instance = navItemsForLayer("instance");
+        const instance = navItemsForLayer("instance"),
+            user = navItemsForLayer("user"),
+            // D-1122 验收行（Lead 2026-11-13 加码）：工作区层 nav 里**不含**组 id —— 「不注册路由」只保证
+            // 不 404，不保证菜单不出现死链，两者必须分开断。矩阵里的两个域仍以普通叶子出现（那是
+            // D-1122 还没改的存量，组政策在 MODEL_CONFIG_LAYERS，不跟矩阵走）。
+            wsDefault = navItemsForLayer("workspace-default");
         expect(instance).toHaveLength(LAYER_DOMAINS.instance.length - 2);
         expect(instance[0]).toEqual({
             id: "model-config",
@@ -65,12 +70,13 @@ describe("settingsIa · 模型配置组（task-227）", () => {
         expect(instance.map((item) => item.id)).not.toContain("llm-provider");
         expect(instance.map((item) => item.id)).not.toContain("context-policy");
         expect(instance.map((item) => item.id)).not.toContain("api-request-templates");
-
-        const user = navItemsForLayer("user");
         expect(user).toHaveLength(LAYER_DOMAINS.user.length - 2);
         expect(user[0]!.path).toBe("/settings/user/model-config");
         expect(settingsGroupPath("workspace-default")).toBe(
             "/settings/workspace-default/model-config",
         );
+        expect(wsDefault.map((item) => item.id)).not.toContain("model-config");
+        expect(wsDefault.map((item) => item.id)).toContain("llm-provider");
+        expect(wsDefault.map((item) => item.id)).toContain("context-policy");
     });
 });

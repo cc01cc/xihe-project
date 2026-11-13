@@ -9,6 +9,7 @@ import {
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
 import {
+    isModelConfigGroupLayer,
     MODEL_CONFIG_GROUP_ID,
     SETTINGS_LAYERS,
     defaultLayerPath,
@@ -184,6 +185,8 @@ const router = createRouter({
                  * 自动消失，不需要再改这里。</p>
                  */
                 ...SETTINGS_LAYERS.flatMap((layer) => {
+                    // D-1122 政策层：组路由只认 instance / user（矩阵里的存量不影响这条）。
+                    if (!isModelConfigGroupLayer(layer)) return [];
                     const members = modelConfigDomainsForLayer(layer);
                     if (members.length < 2) return [];
                     return [
