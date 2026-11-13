@@ -116,7 +116,6 @@ function agent(
     return {
         id,
         name,
-        description: null,
         templateName: null,
         modelProvider: "anthropic",
         modelName: "claude-sonnet-4.5",

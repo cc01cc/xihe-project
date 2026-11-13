@@ -103,7 +103,6 @@ async function stubModelFaces(page: Page): Promise<void> {
 const SEED_AGENT = {
     principalId: "agent-seed",
     name: "存量助手",
-    description: null,
     templateId: null,
     templateName: null,
     defaultModelProvider: "anthropic",

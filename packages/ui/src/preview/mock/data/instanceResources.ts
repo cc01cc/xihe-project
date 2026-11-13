@@ -34,7 +34,6 @@ export interface MockInstanceCredential {
 export interface MockInstanceAgent {
     principalId: string;
     name: string;
-    description: string | null;
     templateId: string | null;
     templateName: string | null;
     defaultModelProvider: string | null;
@@ -102,7 +101,6 @@ const agents: MockInstanceAgent[] = [
     {
         principalId: "a1f0c4d2-7b3e-4c55-8f10-5d2c9b000001",
         name: "代码评审助手",
-        description: "全平台默认可用：按仓库规范审 diff，输出可执行的修改建议。",
         templateId: "tpl-code-review",
         templateName: "代码评审",
         defaultModelProvider: "anthropic",
@@ -114,7 +112,6 @@ const agents: MockInstanceAgent[] = [
     {
         principalId: "a1f0c4d2-7b3e-4c55-8f10-5d2c9b000002",
         name: "需求拆解助手",
-        description: "把需求文档拆成可验收的任务清单，供各工作区直接引用。",
         templateId: null,
         templateName: null,
         defaultModelProvider: "openai",
@@ -300,8 +297,6 @@ export async function handleInstanceResource(
             const created: MockInstanceAgent = {
                 principalId: nextId("agent", agents.length + 1),
                 name,
-                // 契约不收 description ⇒ 新建行恒 null（读面那个字段是另一笔账，见 task-430 报告）。
-                description: null,
                 templateId: str(body.templateId) || null,
                 templateName: null,
                 // task-401 / `D-1248`：创建面**已收**模型意图三字段（契约 6950 行，CP

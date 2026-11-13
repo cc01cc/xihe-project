@@ -233,7 +233,6 @@ export function revealInstanceCredential(
  */
 export type InstanceAgentField =
     | "name"
-    | "description"
     | "template"
     | "modelProvider"
     | "modelName"
@@ -288,7 +287,11 @@ export function sameModelWhitelist(a: ModelWhitelist, b: ModelWhitelist): boolea
 export interface InstanceAgent {
     id: string;
     name: string;
-    description: string | null;
+    // task-430 A（Lead 裁定 / D-1263 backlog 记 B）：**没有 description** —— 契约
+    // AgentPrincipalView 的 properties 里没有它（principalId/name/templateId/templateName/
+    // ownerUserId/defaultModel*/allowedModels/createdAt/disabledAt/hooks/contextPolicy/delegationPolicy）。
+    // 真栈永远不返回 ⇒ 读面那块永不渲染，而 mock 种子却编了说明文案（mock 比真栈富）。
+    // 撤之无损；若产品要「平台智能体说明」，那是契约变更 + CP 卡（B），不是 UI 私自加字段。
     templateName: string | null;
     modelProvider: string | null;
     modelName: string | null;
@@ -329,7 +332,6 @@ function normalizeAgent(value: unknown): InstanceAgent {
     return {
         id: str(raw.id) || str(raw.principalId) || str(raw.agentId),
         name: str(raw.name) || str(raw.displayName),
-        description: nullableStr(raw.description),
         templateName: nullableStr(raw.templateName),
         modelProvider: nullableStr(raw.defaultModelProvider) ?? nullableStr(raw.modelProvider),
         modelName: nullableStr(raw.defaultModelName) ?? nullableStr(raw.modelName),
@@ -338,7 +340,6 @@ function normalizeAgent(value: unknown): InstanceAgent {
         disabled: raw.disabled === true,
         states: {
             name: wireStateOf(raw, ["name", "displayName"]),
-            description: wireStateOf(raw, ["description"]),
             template: wireStateOf(raw, ["templateName"]),
             modelProvider: wireStateOf(raw, ["defaultModelProvider", "modelProvider"]),
             modelName: wireStateOf(raw, ["defaultModelName", "modelName"]),

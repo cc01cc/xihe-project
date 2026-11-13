@@ -505,12 +505,8 @@ async function confirmDelete(): Promise<void> {
                                         >
                                             {{ t("settings.instanceResources.agents.disabled") }}
                                         </Badge>
-                                        <p
-                                            v-if="agent.description"
-                                            class="mt-0.5 max-w-md truncate text-xs text-muted-foreground"
-                                        >
-                                            {{ agent.description }}
-                                        </p>
+                                        <!-- task-430 A（D-1263）：撤掉行内说明 —— 契约 AgentPrincipalView
+                                             没有 description，真栈这块永不渲染；mock 种子的说明文案同批撤。 -->
                                     </td>
                                     <td class="py-2 text-xs text-muted-foreground">
                                         <template v-if="agent.modelName">

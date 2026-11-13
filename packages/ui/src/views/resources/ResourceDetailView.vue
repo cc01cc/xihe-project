@@ -438,7 +438,6 @@ async function loadAgents(): Promise<void> {
             row,
             [
                 ["name", row.name],
-                ["description", row.description],
                 ["template", row.templateName],
                 ["modelProvider", row.modelProvider],
                 ["modelName", row.modelName],

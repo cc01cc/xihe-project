@@ -37,7 +37,8 @@ describe("mock 实例智能体创建面契约（task-430）", () => {
         });
         expect(result.status).toBe(201);
         expect(result.body.name).toBe("评审助手");
-        expect(result.body.description).toBeNull();
+        // task-430 A：读面也没有 description（契约 AgentPrincipalView 无此字段）⇒ 键根本不该出现。
+        expect(result.body).not.toHaveProperty("description");
         expect(result.body.defaultModelProvider).toBe("anthropic");
         expect(result.body.allowedModels).toEqual([
             { provider: "anthropic", model: "claude-sonnet-4-5" },

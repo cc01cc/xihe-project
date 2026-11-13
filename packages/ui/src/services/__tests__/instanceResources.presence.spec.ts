@@ -79,7 +79,8 @@ describe("实例层 DTO 的 states（值是默认值，三态另存）", () => {
         const { agents } = await listInstanceAgents();
         expect(agents[0].disabled).toBe(false);
         expect(agents[0].states.disabled).toBe("absent");
-        expect(agents[0].states.description).toBe("absent");
+        // task-430 A（D-1263）：description 已从读面撤掉（契约 AgentPrincipalView 无此字段），
+        // 所以这里不再断言它的三态；disabled 的 absent 判据不变。
     });
 
     it("MCP：enabled 缺席 ⇒ absent；载荷里出现 enabled=false ⇒ value", async () => {
