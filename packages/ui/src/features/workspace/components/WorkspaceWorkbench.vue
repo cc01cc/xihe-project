@@ -49,6 +49,8 @@ import SessionContextPanel from "./SessionContextPanel.vue";
 import WorkspaceAgentsPanel from "./WorkspaceAgentsPanel.vue";
 import DelegationDagPanel from "../chat/components/DelegationDagPanel.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
+import WorkspaceStatusBar from "./WorkspaceStatusBar.vue";
+import { useAgentStore } from "../../../stores/agent";
 
 /**
  * PLAN-0582 S2: the workspace workbench skeleton. It owns the workspace-scoped
@@ -68,6 +70,20 @@ const props = defineProps<{
     sessionId: string | null;
     agentPrincipalId?: string | null;
     isMobile: boolean;
+    /**
+     * task-312：底部状态栏的 SSE 连接态。**由页面（`WorkspaceView`）传入而不是在这里取** ——
+     * `useWorkspaceSSE` 是**页面级实例**（同一 workspace 每页只应有一份订阅），
+     * 在 workbench 里再调一次会多建一份连接/leader 选举，属于行为变更。
+     */
+    sseConnected?: boolean;
+    sseConnecting?: boolean;
+    /**
+     * task-312：本次 run 的用量。同样**由页面传入** —— `WorkspaceView` 已有
+     * `lastUsage`/`usageInput`/`usageOutput` 三个 computed（会话列 header 在用），
+     * 这里复用而不是另读一遍 store，保证两处读的是**同一份**数据。
+     */
+    usageInput?: number | null;
+    usageOutput?: number | null;
     mobileChangesOpen?: boolean;
     mobileAuxTab?: "monitor" | "changes" | "members";
 }>();
@@ -87,6 +103,25 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const ws = useWorkspaceStore();
+
+/**
+ * task-312：底部状态栏的三条数据。
+ *
+ * <p><b>数据源分层是本卡的关键事实</b>（决定状态栏只能挂在页面级）：</p>
+ * <ul>
+ *   <li>SSE 连接态 = **页面级**（`useWorkspaceSSE` 在 `WorkspaceView` 实例化），
+ *       这里只能通过 props 拿到，不在本组件再订阅一份。</li>
+ *   <li>待审批总数 = **全局 store**（`agentStore.pendingApprovalTotal`），本组件直接读。</li>
+ *   <li>run 用量 = **全局 store**（`chatStore.getSessionLastUsage(sessionId)`），本组件直接读。</li>
+ * </ul>
+ *
+ * <p>所以「三条数据都在同一层拿得到」这件事本身是**页面级挂载**才成立的；
+ * 挂到 shell/layout 层就必须把 SSE 连接态提升成 store = 新增 store 字段，本卡边界禁止。</p>
+ */
+const agentStore = useAgentStore();
+
+/** 待审批总数：全局 store 派生，状态栏只在 >0 时渲染。 */
+const pendingApprovalTotal = computed(() => agentStore.pendingApprovalTotal);
 
 /**
  * BL-317 / D-198 —— 移动端成员入口的未读徽标（**只用服务端值**）。
@@ -824,6 +859,20 @@ defineExpose({ openDockTab });
                 </template>
             </WorkspaceDock>
         </div>
+
+        <!--
+            task-312：底部状态栏。挂在**列根**（`flex ... flex-col` 的直接子项）而不是
+            塞进某个面板里 —— 它要横跨整个工作区主体，且必须是 `shrink-0`：
+            PLAN-0626 的高度链新口径是「逐层扣除」，承载 chrome 的那层负责 shrink-0。
+            移动端不渲染（组件内 `max-md:hidden`）：移动端走 sheets，没有这层空间。
+        -->
+        <WorkspaceStatusBar
+            :connected="sseConnected ?? false"
+            :connecting="sseConnecting ?? false"
+            :pending-approval-total="pendingApprovalTotal"
+            :usage-input="usageInput ?? null"
+            :usage-output="usageOutput ?? null"
+        />
     </div>
 </template>
 

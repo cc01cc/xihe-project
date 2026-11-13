@@ -267,9 +267,16 @@ function overflowNav(navigate: () => void) {
                     </span>
                 </span>
             </template>
-            <span v-else class="truncate text-muted-foreground/70">{{
-                t("workspace.noActiveFile")
-            }}</span>
+            <!--
+                task-312（D-1161 用户裁定）：「未选择文件」整段删除，不搬位置。
+                用户原话「这一行都没有必要」—— 是**存在必要性**问题，不是位置问题。
+                判据：① 它是**文件级**状态，却挂在 workbench 层 chrome 的正中间；
+                ② 出现在会话页顶部却描述文件面板；③ 没打开文件是**常态**，用全条最淡的
+                text-muted-foreground/70 占住中段，信息量为零。
+                被否决的两个方案（防复发）：挪回 FileTreePanel header（等于把同一问题换个
+                地方）、保留但改文案（同病）。文件面板的空态应由该面板自己表达。
+                宽度影响见证据包 §task-312：删前中段 1077.91 / 删后 ___，页签 x 未变。
+            -->
             <span
                 v-if="agentPrincipalId"
                 data-testid="workspace-active-agent"

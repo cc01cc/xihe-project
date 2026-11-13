@@ -635,6 +635,12 @@ const messages = {
             chatHeader: "工作区会话",
             eventsConnected: "文件事件已连接",
             eventsReconnecting: "文件事件重连中",
+            // task-312：底部状态栏三态。connecting 与 reconnecting 是不同态 ——
+            // 前者是首次建连/重选 leader，后者是已连过又断。文案必须分开，
+            // 否则状态栏会把「正在连」读成「断线重连」，判据也就分不出三态。
+            eventsConnecting: "文件事件连接中",
+            eventsDisconnected: "文件事件未连接",
+            statusBarUsage: "in {input} · out {output}",
             externalChange: "文件已被外部修改，本地内容尚未覆盖。",
             reloadExternalChange: "重新加载",
             checkpointTimelineLoading: "正在加载切片时间线…",
@@ -4020,6 +4026,9 @@ const messages = {
             chatHeader: "Workspace session",
             eventsConnected: "File events connected",
             eventsReconnecting: "Reconnecting file events",
+            eventsConnecting: "Connecting file events",
+            eventsDisconnected: "File events disconnected",
+            statusBarUsage: "in {input} · out {output}",
             externalChange: "The file changed outside this editor; local content was kept.",
             reloadExternalChange: "Reload file",
             checkpointTimelineLoading: "Loading slice timeline…",
