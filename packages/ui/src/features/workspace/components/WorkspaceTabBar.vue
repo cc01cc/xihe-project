@@ -22,13 +22,13 @@ import { useSessionStore } from "../../../stores/session";
 import { workspaceChatPath, workspacePath } from "../../../lib/routes";
 
 /**
- * C3 (task-217, Lead ruling): the tab bar is **no longer a page navigator** —
- * workspace pages live only in the secondary nav (`WorkspaceSecondaryNav`,
- * derived from `meta.workspacePage`). This bar is an indicator of the user's
- * open sessions: the chat tab (current session / fallback) plus an open set of
- * pinned session tabs persisted per workspace as `session:<id>` work tabs
- * (see useWorkspaceLayout). Clicking a tab only calls `router.push`, so deep
- * links, back/forward and bookmarks stay the truth.
+ * C3 (task-217) + task-365 D（D-1220 ①）：行1 页签栏**只显示钉住的会话页签** ——
+ * 固定的「会话」页签（workspace-tab-chat）整体删除：它是 fallback 入口，但它永远
+ * 存在 ⇒ 行1 永远占着一条 36px chrome；「去会话页」与「回工作区页」本就有合法入口
+ * （左栏分组里的会话行 / rail 工作台模块）。钉住会话（`session:<id>` work tabs，
+ * 持久在 `xihe-layout-ws:<id>.openTabs`）保留 —— 它们是「打开过哪些会话」的指示，
+ * 不是行1 的去留判据（整行删除等右侧多页签 + 并行会话替代验证后再裁，D-1136）。
+ * 点击页签仍只 `router.push`：深链、前进后退与书签仍是唯一事实。
  */
 const props = defineProps<{
     workspaceId: string;
@@ -41,7 +41,7 @@ const route = useRoute(),
 const { t } = useI18n();
 
 interface RouteTab {
-    id: "chat" | WorkTabId;
+    id: WorkTabId;
     label: string;
     path: string;
     testid: string;
@@ -53,12 +53,6 @@ const chatPath = computed(() =>
         ? workspaceChatPath(props.workspaceId, props.sessionId)
         : workspacePath(props.workspaceId),
 );
-
-const sessionTitle = computed(() => {
-    const session = sessionStore.currentSession;
-    if (session && props.sessionId && session.id === props.sessionId) return session.title;
-    return t("workspace.tabChatFallback");
-});
 
 function sessionTabLabel(tab: WorkTabId): string {
     const id = sessionIdFromWorkTab(tab);
@@ -73,19 +67,10 @@ const openTabs = ref<WorkTabId[]>(
 );
 
 const tabs = computed<RouteTab[]>(() => {
-    const list: RouteTab[] = [
-        {
-            id: "chat",
-            label: sessionTitle.value,
-            path: chatPath.value,
-            testid: "workspace-tab-chat",
-            closable: false,
-        },
-    ];
-    // PLAN-0753 T5: render the open set in the persisted user order (the chat
-    // tab stays first — it is the fallback and is not closable). Ids that fail
-    // the work-tab prefix check are dropped so a corrupt payload (or a legacy
-    // page id) can never render a dead tab.
+    const list: RouteTab[] = [];
+    // task-365 D：固定页签删除后，`tabs` 就是**纯 open set 投影**（PLAN-0753 T5 的
+    // 持久顺序语义不变）。越界 id 仍然丢弃：损坏 payload（或历史遗留页签 id）
+    // 不得渲染出死页签。
     for (const id of openTabs.value) {
         if (!isWorkTabId(id)) continue;
         list.push({
@@ -105,9 +90,9 @@ function currentTabId(): WorkTabId | null {
     return typeof sid === "string" && sid ? workTabIdForSession(sid) : null;
 }
 
-// Outside a chat route the bar still indicates the current session: the fallback
-// chat tab (your current session) stays highlighted on workspace pages.
-const activeId = computed<"chat" | WorkTabId>(() => currentTabId() ?? "chat");
+// task-365 D：固定页签删了，「不在会话路由上」没有替代高亮 —— 不硬造一个（空页签栏
+// 直接整体隐藏，见模板 v-if）。会话路由上高亮 = 当前钉住的页签。
+const activeId = computed<WorkTabId | null>(() => currentTabId());
 
 /**
  * Persist the open session set. S3a audit P1-1: the workbench distinguishes
@@ -182,8 +167,8 @@ function selectTab(tab: RouteTab): void {
  * the setter only navigates — the route stays the single source of truth, so
  * deep links, back/forward and bookmarks keep working exactly as before.
  */
-const activeTab = computed<"chat" | WorkTabId>({
-    get: () => activeId.value,
+const activeTab = computed<WorkTabId | undefined>({
+    get: () => activeId.value ?? undefined,
     set: (id) => {
         const tab = tabs.value.find((item) => item.id === id);
         if (tab) selectTab(tab);
@@ -217,8 +202,8 @@ function moveTab(id: "chat" | WorkTabId, delta: number): void {
     if (to === from) return;
     const nextIds = list.map((tab) => tab.id);
     nextIds.splice(to, 0, nextIds.splice(from, 1)[0]);
-    // Persist only the open (non-chat) slice: the chat tab is always first.
-    persistOpenTabs(nextIds.slice(1) as WorkTabId[]);
+    // task-365 D：固定页签删除 ⇒ 拖/键序的就是**整个列表**（不再有「跳过首位」）。
+    persistOpenTabs(nextIds as WorkTabId[]);
 }
 
 function onDragUpdate(event: { oldIndex?: number; newIndex?: number }): void {
@@ -228,20 +213,24 @@ function onDragUpdate(event: { oldIndex?: number; newIndex?: number }): void {
     if (oldIndex >= list.length || newIndex >= list.length) return;
     const nextIds = list.map((tab) => tab.id);
     nextIds.splice(newIndex, 0, nextIds.splice(oldIndex, 1)[0]);
-    persistOpenTabs(nextIds.slice(1) as WorkTabId[]);
+    persistOpenTabs(nextIds as WorkTabId[]);
 }
 
 function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    // Only move when the tab bar is horizontal; the chat tab never moves.
-    if (tab.id === "chat") return;
     event.preventDefault();
     moveTab(tab.id, event.key === "ArrowLeft" ? -1 : 1);
 }
 </script>
 
 <template>
+    <!--
+        task-365 D：没有钉住页签时整条栏隐藏 —— 空 36px chrome 只会让人以为「这里该有东西」。
+        会话一旦打开（`watch` 钉住）它就回来；不改变 WorkspaceWorkbench 的布局链（它是
+        flex 列里的 `shrink-0`，有内容才占高）。
+    -->
     <nav
+        v-if="tabs.length > 0"
         data-testid="workspace-tab-bar"
         :aria-label="t('workspace.tabBarLabel')"
         class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"

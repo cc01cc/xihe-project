@@ -70,19 +70,20 @@ beforeEach(() => {
 });
 
 describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () => {
-    it("shows the chat tab and the pinned session tab on a chat route", async () => {
+    it("shows only the pinned session tab on a chat route (task-365 D)", async () => {
         const wrapper = mountBar();
         await flushPromises();
 
-        // The visited session is pinned and active; the chat tab is the fallback.
+        // The visited session is pinned and active; the fixed chat tab is gone
+        // (task-365 D / D-1220 ①) — its absence is the assertion, not a count-0
+        // on some testid that never existed.
         expect(
             wrapper
                 .get('[data-testid="workspace-tab-session-session-1"]')
                 .attributes("aria-selected"),
         ).toBe("true");
-        expect(wrapper.get('[data-testid="workspace-tab-chat"]').attributes("aria-selected")).toBe(
-            "false",
-        );
+        expect(wrapper.find('[data-testid="workspace-tab-chat"]').exists()).toBe(false);
+        expect(wrapper.findAll("[data-tab-id]")).toHaveLength(1);
         // C3: workspace pages never render as tabs (page entries live only in the
         // secondary nav).
         expect(wrapper.find('[data-testid="workspace-toolbar-settings"]').exists()).toBe(false);
@@ -101,17 +102,23 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
     });
 
     it("navigates with router.push only (no navigation interception)", async () => {
+        // task-365 D：固定页签删除后，「点当前页签」是 no-op（selectTab 提前返回），
+        // 所以用**另一个钉住的会话**做点击对象 —— 判据仍是「恰好一次 push、不拦截」。
+        localStorage.setItem(
+            "xihe-layout-ws:workspace-1",
+            JSON.stringify({ openTabs: ["session:other"] }),
+        );
         const wrapper = mountBar();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-tab-chat"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-tab-session-other"]').trigger("click");
 
-        expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/chat/session-1");
+        expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/chat/other");
         // Exactly one push: the tab bar never intercepts or re-dispatches navigation.
         expect(pushSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("falls back to the chat tab when the active session tab is closed", async () => {
+    it("returns to the current session route when the active tab is closed", async () => {
         gotoSession("session-2");
         const wrapper = mountBar();
         await flushPromises();
@@ -122,7 +129,7 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
         expect(readWorkspaceLayout("workspace-1").openTabs).not.toContain("session:session-2");
     });
 
-    it("keeps the session title on the chat tab", async () => {
+    it("keeps the session title on the pinned tab (task-365 D)", async () => {
         useSessionStore().sessions = [
             {
                 id: "session-1",
@@ -137,7 +144,9 @@ describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () 
         const wrapper = mountBar();
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="workspace-tab-chat"]').text()).toContain("Session title");
+        expect(wrapper.get('[data-testid="workspace-tab-session-session-1"]').text()).toContain(
+            "Session title",
+        );
     });
 });
 
@@ -185,9 +194,9 @@ describe("WorkspaceTabBar tab semantics (BL-476 L1 reka Tabs pilot)", () => {
         // forwarded to the selected tab, so the triggers themselves stay at -1.
         expect(list.attributes("tabindex")).toBe("0");
 
-        const chat = wrapper.get('[data-testid="workspace-tab-chat"]');
-        expect(chat.attributes("role")).toBe("tab");
-        expect(chat.attributes("tabindex")).toBe("-1");
+        // task-365 D：固定页签删除 ⇒ roving-focus 判据落在钉住的页签上。
+        const pinned = wrapper.get('[data-testid="workspace-tab-session-session-1"]');
+        expect(pinned.attributes("role")).toBe("tab");
         expect(
             wrapper.get('[data-testid="workspace-tab-session-session-1"]').attributes("tabindex"),
         ).toBe("-1");
@@ -209,13 +218,7 @@ describe("WorkspaceTabBar tab ordering (PLAN-0753 T5)", () => {
 
         // The visited session is pinned after the stored set.
         const ids = wrapper.findAll("[data-tab-id]").map((node) => node.attributes("data-tab-id"));
-        expect(ids).toEqual([
-            "chat",
-            "session:s3",
-            "session:s1",
-            "session:s2",
-            "session:session-1",
-        ]);
+        expect(ids).toEqual(["session:s3", "session:s1", "session:s2", "session:session-1"]);
         wrapper.unmount();
     });
 
@@ -234,16 +237,18 @@ describe("WorkspaceTabBar tab ordering (PLAN-0753 T5)", () => {
             "session:b",
         ]);
         const ids = wrapper.findAll("[data-tab-id]").map((node) => node.attributes("data-tab-id"));
-        expect(ids).toEqual(["chat", "session:a", "session:session-1", "session:b"]);
+        expect(ids).toEqual(["session:a", "session:session-1", "session:b"]);
         wrapper.unmount();
     });
 
-    it("keeps the chat tab first and ignores ArrowLeft on it", async () => {
+    it("clamps ArrowLeft on the first pinned tab (task-365 D)", async () => {
+        // 原判据是「固定页签不动」；固定页签删除后，同一不变量落在**首位钉住页签**上：
+        // 左移到头即钳制，顺序不变（不是把这条覆盖删掉）。
         localStorage.setItem(OPEN_KEY, JSON.stringify({ openTabs: ["session:a", "session:b"] }));
         const wrapper = mountBar();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-tab-chat"]').trigger("keydown", {
+        await wrapper.get('[data-testid="workspace-tab-session-a"]').trigger("keydown", {
             key: "ArrowLeft",
         });
         await flushPromises();
@@ -283,9 +288,10 @@ describe("WorkspaceTabBar tab ordering (PLAN-0753 T5)", () => {
         const wrapper = mountBar();
         await flushPromises();
 
-        // Simulate Sortable's update: the first open tab row was dragged to the end.
+        // Simulate Sortable's update: the first tab row was dragged to the end.
+        // task-365 D：列表里不再有固定页签 ⇒ 索引整体前移一位（0..2 而不是 1..3）。
         const draggable = wrapper.findComponent({ name: "VueDraggable" });
-        draggable.vm.$emit("update", { oldIndex: 1, newIndex: 3 });
+        draggable.vm.$emit("update", { oldIndex: 0, newIndex: 2 });
         await flushPromises();
 
         expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([

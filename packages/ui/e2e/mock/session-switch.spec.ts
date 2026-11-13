@@ -59,13 +59,13 @@ test.describe("Session switch between chat and workspace", () => {
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
-        // PLAN-0582 S3a: the "switch to chat" toolbar button became the chat tab
-        // of the middle route tab bar (pure route projection).
-        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({
-            timeout: EXPECT_TIMEOUT_MS,
-        });
-
-        await page.getByTestId("workspace-tab-chat").click();
+        // task-365 D：固定「会话」页签删除（D-1220 ①）—— 行1 只显示钉住的会话页签。
+        // 「回到这个会话」的入口 = 左栏该工作区分组里的会话行。
+        await page
+            .getByTestId("sidebar-panel")
+            .getByTestId("session-item")
+            .filter({ hasText: sessionTitle })
+            .click();
         await page.waitForURL(`**/workspace/${workspaceId}/chat/${sessionId}`);
         await expect(page.locator(`text=${userMessage}`)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -81,7 +81,9 @@ test.describe("Session switch between chat and workspace", () => {
         });
 
         await page.goto(`/workspace/${workspaceId}`);
-        await expect(page.getByTestId("workspace-tab-chat")).toBeVisible({
+        // task-365 D：就绪探针从「固定页签可见」换成「左栏面板可见」——
+        // 同一个等待意图（页面已挂载），换一个仍然存在的对象。
+        await expect(page.getByTestId("sidebar-panel")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
 
