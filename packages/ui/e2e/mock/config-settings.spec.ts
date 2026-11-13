@@ -97,7 +97,13 @@ test.describe("Config Settings (three layers)", () => {
         // mockApiEnvFor("index") = "0"` ⇒ `vite.config.ts:136/155` 不挂 mock 中间件 ⇒ `route.continue()`
         // 会落到 vite 的 SPA 回落（200 HTML），JSON 解析炸得更响。index 链路只能按契约给形状。
         //
-        // **边界（runtime-1 复核意见，别照抄到别处）**：`{sessions: []}` 是**合法空集**，在这里成立
+        // **读数机制（runtime-1 核实，更正 4cb22713 body 的措辞）**：含视觉基线的用例修前**不是「没走到 skip」**——
+        // `e2e/helpers/visual.ts:28 test.skip(true)` 在非 linux 平台执行了，红来自**之后的 auto fixture teardown**
+        // （`helpers/mock-test.ts:79 expectNoPageFailures`，`{auto:true}`）⇒ skip 已触发 + 门红 = failed；门绿 = skipped。
+        // ⇒ **这套套件里 skipped 不是免检区**（teardown 门仍能把 skip 的用例判红），且这些用例在 Windows 上
+        // **视觉断言零执行**（仪器覆盖边界，别读成「它在保护视觉回归」）。两种说法排查方向不同：前者查渲染/取数，
+        // 后者查桩形状。
+        //        // **边界（runtime-1 复核意见，别照抄到别处）**：`{sessions: []}` 是**合法空集**，在这里成立
         // 只因为本 spec 不断言会话内容。要验会话内容的 spec 必须给真行 —— 空集会让断言变成空断言
         // （D-1281 同族）。**不放宽 console 门、不给 sessions 错误加白名单**（那是把判据改绿，D-1303）。
         await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route: any) => {
@@ -664,7 +670,13 @@ test.describe("Config Settings (three layers)", () => {
         // mockApiEnvFor("index") = "0"` ⇒ `vite.config.ts:136/155` 不挂 mock 中间件 ⇒ `route.continue()`
         // 会落到 vite 的 SPA 回落（200 HTML），JSON 解析炸得更响。index 链路只能按契约给形状。
         //
-        // **边界（runtime-1 复核意见，别照抄到别处）**：`{sessions: []}` 是**合法空集**，在这里成立
+        // **读数机制（runtime-1 核实，更正 4cb22713 body 的措辞）**：含视觉基线的用例修前**不是「没走到 skip」**——
+        // `e2e/helpers/visual.ts:28 test.skip(true)` 在非 linux 平台执行了，红来自**之后的 auto fixture teardown**
+        // （`helpers/mock-test.ts:79 expectNoPageFailures`，`{auto:true}`）⇒ skip 已触发 + 门红 = failed；门绿 = skipped。
+        // ⇒ **这套套件里 skipped 不是免检区**（teardown 门仍能把 skip 的用例判红），且这些用例在 Windows 上
+        // **视觉断言零执行**（仪器覆盖边界，别读成「它在保护视觉回归」）。两种说法排查方向不同：前者查渲染/取数，
+        // 后者查桩形状。
+        //        // **边界（runtime-1 复核意见，别照抄到别处）**：`{sessions: []}` 是**合法空集**，在这里成立
         // 只因为本 spec 不断言会话内容。要验会话内容的 spec 必须给真行 —— 空集会让断言变成空断言
         // （D-1281 同族）。**不放宽 console 门、不给 sessions 错误加白名单**（那是把判据改绿，D-1303）。
         await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route: any) => {
