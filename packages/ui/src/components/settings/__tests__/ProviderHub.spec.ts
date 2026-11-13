@@ -23,6 +23,7 @@ import { toast } from "vue-sonner";
 import { listVisibleTemplates, readTemplateConfig } from "../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../stores/config";
 import { i18n } from "../../../i18n";
+import { formatApiType } from "../../../lib/apiTypeLabels";
 
 // PLAN-0523 T3.4: install the real i18n plugin so template strings resolve.
 (config.global.plugins ??= []).push(i18n);
@@ -85,14 +86,14 @@ const provider: ProviderDefinition = {
     modelDiscovery: "remote-models",
     credential: { type: "api-key", required: true },
     supports: { customBaseUrl: true, streaming: true },
-    supportedApiTypes: [{ apiTypeId: "openai-chat", version: 1 }],
-    defaultApiType: { apiTypeId: "openai-chat", version: 1 },
+    supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+    defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
 };
 const user: ProviderConnection = {
     id: "user-connection",
     providerId: provider.id,
     connectionKey: "primary",
-    apiTypeId: "openai-chat",
+    apiTypeId: "openai-chat-completions",
     apiTypeVersion: 1,
     operation: "chat",
     label: "User connection",
@@ -955,8 +956,16 @@ describe("PLAN-0591 tool capability visibility", () => {
                 {
                     ...provider,
                     supports: { ...provider.supports, tools: true, toolsPartial: true },
+                    // task-465（D-1318）：类型 id 用 CP 真名（`api-input-types.json` / `providers.json:11`）。
+                    // **第二个是合成类型，不是 CP id**：CP 里 openai 只支持一个类型，这里造第二个只为测
+                    // 「同 provider 两类型 capability 差异 ⇒ toolsPartial」这条 UI 判定。**不要改成某个真 id**
+                    // （那会造出「openai 支持别家类型」的新非法组合，正是 task-457 修掉的漂移）。Lead 裁定保留。
                     supportedApiTypes: [
-                        { apiTypeId: "openai-chat", version: 1, capability: { tools: true } },
+                        {
+                            apiTypeId: "openai-chat-completions",
+                            version: 1,
+                            capability: { tools: true },
+                        },
                         { apiTypeId: "legacy-responses", version: 1, capability: { tools: false } },
                     ],
                 },
@@ -970,8 +979,15 @@ describe("PLAN-0591 tool capability visibility", () => {
         await wrapper.get('[data-testid="provider-picker-example"]').trigger("click");
         const modal = wrapper.get('[data-testid="provider-connection-modal"]');
         const detail = modal.get('[data-testid="connection-api-type-capabilities"]').text();
-        expect(detail).toContain("openai-chat@1");
+        // task-465（D-1318 / D-1319）：夹具改用 CP 真名后，产品**显示本地化短名**而不是裸 id
+        // （`lib/apiTypeLabels.ts:9-15` 只登记 CP 真名）⇒ 期望值跟着变，**匹配方式不变**（仍 toContain）。
+        // 期望串**从产品自己的 formatter 派生**，不在 spec 里抄一份中文字面量（抄的那份会随译文漂）。
+        expect(detail).toContain(
+            formatApiType("openai-chat-completions", 1, (key) => i18n.global.t(key)),
+        );
         expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsSupported"));
+        // 合成类型没有标签映射 ⇒ **原样显示裸 id**（`apiTypeLabels.ts:6-7` 的诚实回退）。
+        // 这一对断言同时钉住「标签映射只覆盖 CP 真名，未登记的不猜名字」。
         expect(detail).toContain("legacy-responses@1");
         expect(detail).toContain(i18n.global.t("settings.providerHub.apiTypeToolsUnsupported"));
         wrapper.unmount();

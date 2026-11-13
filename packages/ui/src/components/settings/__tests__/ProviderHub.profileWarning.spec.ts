@@ -48,8 +48,8 @@ const provider: ProviderDefinition = {
     modelDiscovery: "remote-models",
     credential: { type: "api-key", required: true },
     supports: { customBaseUrl: true, streaming: true },
-    supportedApiTypes: [{ apiTypeId: "openai-chat", version: 1 }],
-    defaultApiType: { apiTypeId: "openai-chat", version: 1 },
+    supportedApiTypes: [{ apiTypeId: "openai-chat-completions", version: 1 }],
+    defaultApiType: { apiTypeId: "openai-chat-completions", version: 1 },
 };
 
 function connection(overrides: Partial<ProviderConnection> = {}): ProviderConnection {
@@ -57,7 +57,7 @@ function connection(overrides: Partial<ProviderConnection> = {}): ProviderConnec
         id: "instance-connection",
         providerId: provider.id,
         connectionKey: "primary",
-        apiTypeId: "openai-chat",
+        apiTypeId: "openai-chat-completions",
         apiTypeVersion: 1,
         operation: "chat",
         label: "Instance connection",
