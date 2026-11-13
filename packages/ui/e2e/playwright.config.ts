@@ -106,6 +106,12 @@ export default defineConfig({
               // 端口被占时应显式失败并换一个已登记 stack 端口，而不是静默复用。
               reuseExistingServer: false,
               // task-80：显式注入（而不是继承 shell），让"实际服务哪个 HTML"与"声明链路"同源。
-              env: { ...baseEnv, XIHE_UI_MOCK_API: mockApiEnvFor(expectedChain.chain) },
+              // task-428 / task-421 根因修：XIHE_UI_PORT 显式注入，与 webServer.port 同源（单一事实源）。
+              // 未设 env 时 baseEnv 无 XIHE_UI_PORT，vite 回落自身默认 12630 ⇒ 与等待端口失配超时。
+              env: {
+                  ...baseEnv,
+                  XIHE_UI_PORT: UI_PORT,
+                  XIHE_UI_MOCK_API: mockApiEnvFor(expectedChain.chain),
+              },
           },
 });
