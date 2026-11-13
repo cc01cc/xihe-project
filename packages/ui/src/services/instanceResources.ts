@@ -1,5 +1,6 @@
 import { request } from "../composables/api";
 import type { CredentialKind, CredentialDeliveryTier } from "../types";
+import { wireStateOf, type FieldStates } from "./fieldState";
 
 /**
  * task-165 · 实例层资源 API client（D-1008 案 B：实例作用域 = **新前缀** `/api/v1/instance/<资源>`）。
@@ -9,11 +10,15 @@ import type { CredentialKind, CredentialDeliveryTier } from "../types";
  * （D-1008 A 被否决的理由：把层变成请求字段 ⇒ 误传即跨层写），所以路径前缀不同、鉴权挂法不同，
  * 混进 `api` 只会让人以为「传个参数就能切层」。这里只放实例作用域，命名也用 `…Instance…`。</p>
  *
- * <p><b>字段口径（诚实标注）</b>：截至本卡，`docs/api/openapi.yaml` 里**还没有**这三组 path 的
- * schema（由 `cp-1` 落 yaml，D-1008 只裁了形态：13 条最小端点 = 集合 GET/POST + `{id}` PATCH/DELETE，
- * credentials 另加 `{id}/reveal`）。因此本文件的 DTO 是**按现有同实体投影推导的过渡形状**，
- * 用「归一化函数」把已知的几种字段别名收口（`principalId`/`agentId` → `id`、
- * `label`/`name` → 显示名），yaml 落地后**只需改归一化函数**，页面不用动。
+ * <p><b>字段口径（诚实标注，task-42 复核）</b>：契约**已落地** —— `docs/api/openapi.yaml` 的
+ * `/api/v1/instance/**` 共 9 条 path（`:4905-5175`，任务卡当时的「yaml 里还没有这三组 path 的 schema」
+ * 已过期）。但本文件的 DTO **仍是过渡形状**：归一化函数把已知的几种字段别名收口
+ * （`principalId`/`agentId` → `id`、`label`/`name` → 显示名），所以 DTO 的键与契约字段名不是一一对应。</p>
+ *
+ * <p><b>归一化的代价（task-42）</b>：`nullableStr` / `num` / `str` 会把「键缺席」「键在但值为空」
+ * 「有值」抹平成同一批默认值（`null` / `""` / `0`，`revision` 给了 `1`、`enabled` 给了 `true`）——
+ * 于是调用方**无法**区分「契约没给这个字段」与「给了但这条没填」。本文件因此给每个 DTO 补 `states`
+ * （见 `wireStateOf`）：值字段保持原样（面板依赖既有默认值，本卡不动它们），三态只由 `states` 承担。</p>
  * 证据 `internal/A03-xihe/evidence/2026-11-12-ui-instance-resources/README.md` §wire 差异表。</p>
  *
  * <p><b>为什么不在这里做权限判断</b>：写权限（instance admin）由 CP 在端点级判定；UI 只按
@@ -48,6 +53,17 @@ function withId(base: string, id: string): string {
  * 实例凭据（D-1007/D-1009）：`owner_type = INSTANCE`、**`owner_id` 为空**、只能被实例级资源使用。
  * 投影仍是脱敏元数据（不含密文/后缀/明文），reveal 是唯一取明文的入口。
  */
+export type InstanceCredentialField =
+    | "label"
+    | "kind"
+    | "deliveryTier"
+    | "status"
+    | "fingerprint"
+    | "revision"
+    | "references"
+    | "createdAt"
+    | "replacedAt";
+
 export interface InstanceCredential {
     id: string;
     label: string;
@@ -59,6 +75,8 @@ export interface InstanceCredential {
     createdAt: string | null;
     replacedAt: string | null;
     referenceCount: number;
+    /** 每个展示字段在载荷里到底属于三态中的哪一种（见 `wireStateOf`）。 */
+    states: FieldStates<InstanceCredentialField>;
 }
 
 export interface InstanceCredentialListResponse {
@@ -103,6 +121,17 @@ function num(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * 本文件只**消费**三态判据，不自己实现它（实现见 `services/fieldState.ts`）。
+ *
+ * <p>为什么要这一层：归一化函数（`nullableStr` / `num` / `str`）会把「键缺席」「键在但值为空」
+ * 「有值」抹平成 `null` / `""` / `0`，于是详情页分不出**契约问题**（后端根本没返回这个字段）与
+ * **数据问题**（返回了、这条没填）。`states` 是唯一还分得清的地方；值字段保持原样不动
+ * （面板依赖它们的既有默认值）。</p>
+ */
+export { wireStateOf } from "./fieldState";
+export type { FieldState, FieldStates } from "./fieldState";
+
 function normalizeCredential(value: unknown): InstanceCredential {
     const raw = asRecord(value);
     return {
@@ -116,6 +145,17 @@ function normalizeCredential(value: unknown): InstanceCredential {
         createdAt: nullableStr(raw.createdAt),
         replacedAt: nullableStr(raw.replacedAt),
         referenceCount: num(raw.referenceCount),
+        states: {
+            label: wireStateOf(raw, ["label", "name"]),
+            kind: wireStateOf(raw, ["kind"]),
+            deliveryTier: wireStateOf(raw, ["deliveryTier"]),
+            status: wireStateOf(raw, ["status"]),
+            fingerprint: wireStateOf(raw, ["fingerprint"]),
+            revision: wireStateOf(raw, ["revision"]),
+            references: wireStateOf(raw, ["referenceCount"]),
+            createdAt: wireStateOf(raw, ["createdAt"]),
+            replacedAt: wireStateOf(raw, ["replacedAt"]),
+        },
     };
 }
 
@@ -191,6 +231,15 @@ export function revealInstanceCredential(
  * 不做 fork、不收录 `workspace_agents`。列表 = 工作区自有 + 平台预置两段拼接，
  * 本模块只负责**平台段**。
  */
+export type InstanceAgentField =
+    | "name"
+    | "description"
+    | "template"
+    | "modelProvider"
+    | "modelName"
+    | "createdAt"
+    | "disabled";
+
 export interface InstanceAgent {
     id: string;
     name: string;
@@ -200,6 +249,8 @@ export interface InstanceAgent {
     modelName: string | null;
     createdAt: string | null;
     disabled: boolean;
+    /** 每个展示字段在载荷里到底属于三态中的哪一种（见 `wireStateOf`）。 */
+    states: FieldStates<InstanceAgentField>;
 }
 
 export interface InstanceAgentListResponse {
@@ -224,6 +275,15 @@ function normalizeAgent(value: unknown): InstanceAgent {
         modelName: nullableStr(raw.defaultModelName) ?? nullableStr(raw.modelName),
         createdAt: nullableStr(raw.createdAt),
         disabled: raw.disabled === true,
+        states: {
+            name: wireStateOf(raw, ["name", "displayName"]),
+            description: wireStateOf(raw, ["description"]),
+            template: wireStateOf(raw, ["templateName"]),
+            modelProvider: wireStateOf(raw, ["defaultModelProvider", "modelProvider"]),
+            modelName: wireStateOf(raw, ["defaultModelName", "modelName"]),
+            createdAt: wireStateOf(raw, ["createdAt"]),
+            disabled: wireStateOf(raw, ["disabled"]),
+        },
     };
 }
 
@@ -271,6 +331,14 @@ export function deleteInstanceAgent(id: string): Promise<void> {
  * 唯一标识用 **`name`**（D-1007 第 2 条：同 url 可换协议/auth，换掉不该算同一 server）；
  * 只可引用**实例凭据**。子动作（oauth/session/bindings）按 D-1008 不铺开。
  */
+export type InstanceMcpField =
+    | "name"
+    | "transport"
+    | "url"
+    | "enabled"
+    | "credentialId"
+    | "createdAt";
+
 export interface InstanceMcpServer {
     id: string;
     name: string;
@@ -279,6 +347,8 @@ export interface InstanceMcpServer {
     enabled: boolean;
     credentialId: string | null;
     createdAt: string | null;
+    /** 每个展示字段在载荷里到底属于三态中的哪一种（见 `wireStateOf`）。 */
+    states: FieldStates<InstanceMcpField>;
 }
 
 export interface InstanceMcpListResponse {
@@ -303,6 +373,14 @@ function normalizeMcpServer(value: unknown): InstanceMcpServer {
         enabled: raw.enabled !== false,
         credentialId: nullableStr(raw.credentialId),
         createdAt: nullableStr(raw.createdAt),
+        states: {
+            name: wireStateOf(raw, ["name"]),
+            transport: wireStateOf(raw, ["transport", "type"]),
+            url: wireStateOf(raw, ["url"]),
+            enabled: wireStateOf(raw, ["enabled"]),
+            credentialId: wireStateOf(raw, ["credentialId"]),
+            createdAt: wireStateOf(raw, ["createdAt"]),
+        },
     };
 }
 

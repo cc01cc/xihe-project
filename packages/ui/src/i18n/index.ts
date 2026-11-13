@@ -1692,10 +1692,31 @@ const messages = {
                 action: "去工作台选择工作区",
             },
             knowledgeGap: {
-                title: "知识库暂不可管理",
-                body: "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个按 workspace 分区的代理端点，因此没有可管理的“库”。",
-                writeEntryGone:
-                    "工作区知识库的写入入口已随设置页收敛一起撤下（原「工作区设置 → 知识库」tab）；恢复要等 G3 落地后挂到本资源页。",
+                title: "知识库：CP 侧没有「库」这个被管理对象",
+                intro: "本页逐条列出已知缺口，每条都给出核法（读面读数）。缺口没修之前这里不会有可用入口；不写排期，也不承诺时间。",
+                basisLabel: "怎么核",
+                gaps: {
+                    noLibrary: {
+                        title: "① 没有「库」实体",
+                        body: "CP 侧没有知识库实体：没有表、没有 CRUD 端点。契约里 /api/v1/rag/* 一共 4 条（stats、ingest、search、documents/:docId），没有一条接受「库 id」，所以没有可命名、可列举、可授权的库。",
+                        basis: "openapi.yaml 里 rag 只有 4 条 path；CP 的 Java 源码里 grep KnowledgeBase 是 0 命中。",
+                    },
+                    noDocList: {
+                        title: "② 没有「文档列表」读面",
+                        body: "documents/:docId 只有 DELETE，没有集合 GET；stats 在契约里只声明了 200，连响应字段都没写。所以一个库里有哪些文档、各多少分块，契约不保证 —— 页面只能靠猜 agent 的响应形状。",
+                        basis: "openapi.yaml 的 /rag/stats 的 200 无 schema、/rag/documents/:docId 只有 delete；旧组件按 data.documents 猜，该字段不在契约里。",
+                    },
+                    partition: {
+                        title: "③ 分区键是（用户, 工作区），不是库",
+                        body: "4 个端点都按调用者的用户与工作区下传分区，没有「选哪个库」的参数 —— 同一工作区里不同用户看到的是各自的索引，不是同一份共享库。",
+                        basis: "RagProxyController 的 stats 从 TenantContext 取 userId/workspaceId 再解析 profile；ingest、search 同形状。",
+                    },
+                    noWriteEntry: {
+                        title: "④ 写入入口当前没有挂载点",
+                        body: "工作区设置收敛时撤掉了「工作区设置 → 知识库」tab，/settings/knowledge 路由也已删除。KnowledgeBaseView 组件与上传、删除端点都还在，但当前没有任何页面挂载它 —— 这是入口现状，不是排期。",
+                        basis: "router/index.ts 里的 knowledge 只指向 /resources/knowledge；/settings/knowledge 只留在已删路径清单 lib/legacyRoutes.ts:34 与测试里。",
+                    },
+                },
             },
             /**
              * task-228：资源**详情单页**（`/resources/<id>/:pk?layer=<LAYER>`）。
@@ -1748,6 +1769,12 @@ const messages = {
                     roles: "没有角色绑定",
                     skills: "没有技能绑定",
                     attachments: "没有附件",
+                },
+                /** task-42：键**在**但值为空 ⇒ 显式画「（空）」，不让它静默消失。 */
+                emptyValue: "（空）",
+                absent: {
+                    title: "接口没有返回这几个字段",
+                    body: "这些键在读面响应里不存在（契约问题，不是「值为空」）：页面不猜、也不拿空值冒充，只点名。要区分「读面没实现」与「契约本就不要求」，看 docs/api/openapi.yaml 里该端点的响应 schema。",
                 },
                 notes: {
                     instanceCredential:
@@ -5134,10 +5161,31 @@ const messages = {
                 action: "Go to the workbench and pick a workspace",
             },
             knowledgeGap: {
-                title: "Knowledge bases are not manageable yet",
-                body: "The control plane has no knowledge-base entity (no table, no CRUD) - only 4 proxy endpoints partitioned by workspace, so there is no library to manage.",
-                writeEntryGone:
-                    "The workspace knowledge-base write entry was removed with the settings-tab consolidation (old Workspace Settings → Knowledge base tab); it returns here once G3 lands.",
+                title: "Knowledge base: CP has no managed library object",
+                intro: "This page lists the known gaps and, for each one, how to verify it against the read faces. There is no usable entry here until a gap is fixed; no schedule is written down and no date is promised.",
+                basisLabel: "How to verify",
+                gaps: {
+                    noLibrary: {
+                        title: "1. No library entity",
+                        body: "CP has no knowledge-base entity: no table, no CRUD endpoint. The contract has exactly 4 /api/v1/rag/* paths (stats, ingest, search, documents/:docId) and none of them takes a library id, so there is nothing to name, list or authorize.",
+                        basis: "openapi.yaml has 4 rag paths; grepping KnowledgeBase in the CP Java sources returns 0 hits.",
+                    },
+                    noDocList: {
+                        title: "2. No document-list read face",
+                        body: "documents/:docId only supports DELETE, there is no collection GET; stats declares a 200 without any response schema. Which documents a library holds, and how many chunks each has, is therefore not guaranteed by the contract — the page can only guess the agent response shape.",
+                        basis: "In openapi.yaml the /rag/stats 200 has no schema and /rag/documents/:docId is delete-only; the old component guessed data.documents, a field the contract never declares.",
+                    },
+                    partition: {
+                        title: "3. The partition key is (user, workspace), not a library",
+                        body: "All 4 endpoints partition by the caller user and workspace; none takes a library argument, so different users in one workspace see their own index rather than one shared library.",
+                        basis: "In RagProxyController the stats handler reads userId/workspaceId from TenantContext and resolves the profile; ingest and search have the same shape.",
+                    },
+                    noWriteEntry: {
+                        title: "4. The write entry has no mount point today",
+                        body: "When workspace settings were consolidated the workspace-settings knowledge tab was removed and the /settings/knowledge route was deleted. The KnowledgeBaseView component plus the upload and delete endpoints still exist, but no page mounts the component — this is the current entry state, not a schedule.",
+                        basis: "in router/index.ts every knowledge route is /resources/knowledge; /settings/knowledge survives only in the removed-path list lib/legacyRoutes.ts:34 and in tests.",
+                    },
+                },
             },
             /**
              * task-228: the resource **detail page** (`/resources/<id>/:pk?layer=<LAYER>`).
@@ -5200,6 +5248,12 @@ const messages = {
                         "The workspace layer has no per-skill body read face (single-definition reads only serve instance definitions), so this page shows no body.",
                     needWorkspaceForBindings:
                         "Role and skill bindings are workspace-scoped and the current tab has no workspace context, so this page shows neither block.",
+                },
+                /** task-42: a key that IS present but empty renders an explicit "(empty)" instead of vanishing. */
+                emptyValue: "(empty)",
+                absent: {
+                    title: "The read face returned none of these fields",
+                    body: "These keys are absent from the response body (a contract problem, not an empty value): the page neither guesses nor invents a value — it names them. To tell whether the read face is unimplemented or the contract simply does not require the field, check that endpoint response schema in docs/api/openapi.yaml.",
                 },
                 fields: {
                     label: "Label",

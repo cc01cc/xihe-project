@@ -524,3 +524,78 @@ describe("ResourceDetailView — 错误态与返回栈", () => {
         expect(pushMock).not.toHaveBeenCalled();
     });
 });
+
+/**
+ * task-42：**三态**在页面上的可读差异 + 冻结期的负断言。
+ *
+ * <p>为什么要在组件层再钉一次：`detailFieldStates.spec.ts` 钉的是装配逻辑（纯函数），
+ * 但「用户到底看到什么」取决于模板 —— 装配对了、模板把 `empty` 也当 `value` 画成空串，
+ * 页面依旧长得一样。所以这一组断言 `data-field-state` 与可见文本两头。</p>
+ *
+ * <p>`data-field-state` 是给机器读的那一路（与 `task-296` 来源列冻结的三路信号同源：
+ * 列头文案 / 取值单元格 / 结构化 testid）；只断文本会漏掉「文本恰好相同」的情形。</p>
+ */
+describe("ResourceDetailView — 字段三态（task-42）", () => {
+    it("键在但空 ⇒ 画「（空）」；键不在 ⇒ 进「接口未返回」清单（两者不再都消失）", async () => {
+        setRoute({ resourceId: "credentials", layer: "USER", pk: "cred-1" });
+        const row: Record<string, unknown> = { ...credentialRow, fingerprint: "" };
+        delete row.replacedAt;
+        apiMock.listCredentials.mockResolvedValue({ credentials: [row], count: 1 });
+        apiMock.getCredentialReferences.mockResolvedValue({ references: [] });
+        apiMock.getCredentialEvents.mockResolvedValue({ events: [] });
+
+        const wrapper = mountView();
+        await flushPromises();
+
+        // 数据问题：键在、值为空 ⇒ 一行显式的「（空）」
+        const fingerprint = wrapper.get('[data-testid="resource-detail-field-fingerprint"]');
+        expect(fingerprint.attributes("data-field-state")).toBe("empty");
+        expect(fingerprint.text()).toBe("（空）");
+
+        // 契约问题：键不在 ⇒ 不画数据行，在清单里点名
+        expect(wrapper.find('[data-testid="resource-detail-field-replacedAt"]').exists()).toBe(
+            false,
+        );
+        const absent = wrapper
+            .get('[data-testid="resource-detail-absent-fields"]')
+            .findAll('[data-testid="resource-detail-absent-field"]');
+        expect(absent.map((node) => node.text())).toContain("替换时间");
+    });
+
+    it("阳性对照：同一个 replacedAt 键给了值 ⇒ 画数据行且不进缺席清单", async () => {
+        setRoute({ resourceId: "credentials", layer: "USER", pk: "cred-1" });
+        apiMock.listCredentials.mockResolvedValue({
+            credentials: [
+                { ...credentialRow, fingerprint: "fp:abcd", replacedAt: "2026-11-01T00:00:00Z" },
+            ],
+            count: 1,
+        });
+        apiMock.getCredentialReferences.mockResolvedValue({ references: [] });
+        apiMock.getCredentialEvents.mockResolvedValue({ events: [] });
+
+        const wrapper = mountView();
+        await flushPromises();
+
+        const replaced = wrapper.get('[data-testid="resource-detail-field-replacedAt"]');
+        expect(replaced.attributes("data-field-state")).toBe("value");
+        expect(replaced.text()).toContain("2026-11-01");
+        expect(wrapper.find('[data-testid="resource-detail-absent-fields"]').exists()).toBe(false);
+    });
+
+    it("来源列仍不渲染（task-296 冻结期：只加负断言，不改列）", async () => {
+        setRoute({ resourceId: "credentials", layer: "USER", pk: "cred-1" });
+        apiMock.listCredentials.mockResolvedValue({ credentials: [credentialRow], count: 1 });
+        apiMock.getCredentialReferences.mockResolvedValue({ references: [] });
+        apiMock.getCredentialEvents.mockResolvedValue({ events: [] });
+
+        const wrapper = mountView();
+        await flushPromises();
+
+        // 三路信号：列头文案 / 结构化 testid / 取值单元格文本。三者都不得出现。
+        expect(wrapper.text()).not.toContain("来源");
+        expect(wrapper.find('[data-testid^="resource-detail-field-source"]').exists()).toBe(false);
+        const cells = wrapper.findAll('[data-testid="resource-detail-fields"] dd');
+        expect(cells.length).toBeGreaterThan(0);
+        expect(cells.some((cell) => cell.text().includes("来源"))).toBe(false);
+    });
+});

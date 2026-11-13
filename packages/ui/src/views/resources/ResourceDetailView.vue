@@ -22,6 +22,7 @@ import {
     listInstanceCredentials,
     listInstanceMcpServers,
 } from "../../services/instanceResources";
+import { collectFields, type BooleanLabels, type DetailFields } from "./detailFields";
 import type { AgentRoleBinding, AgentSkillBinding } from "../../composables/api";
 import type { CredentialEventView, CredentialReference } from "../../types";
 import { Button } from "../../components/ui/button";
@@ -73,11 +74,6 @@ const layer = computed<ResourceLayer>(() =>
 const pk = computed(() => String(route.params.pk ?? ""));
 const workspaceId = computed(() => readTabWorkspaceId());
 
-interface FieldRow {
-    labelKey: string;
-    value: string;
-}
-
 interface SectionItem {
     name: string;
     meta: string[];
@@ -93,7 +89,8 @@ interface DetailModel {
     title: string;
     /** 副标题 = 层名（"我的 / 本工作区 / 全平台"），从 tab 文案同源取。 */
     subtitle: string;
-    fields: FieldRow[];
+    /** 三态装配结果：`rows` 是画出来的行，`absentKeyList` 是读面没有返回的字段。 */
+    fields: DetailFields;
     sections: DetailSection[];
     /** 已接线的整块文本（技能正文 / MCP 配置 JSON）；没有就不渲染。 */
     blockText?: string;
@@ -125,26 +122,21 @@ function layerLabel(value: ResourceLayer): string {
     return t(generic[value]);
 }
 
-/** 缺字段/空串 ⇒ **不渲染这一行**（口径 3：不用 `—`、不用 0 冒充）。 */
-function pushField(fields: FieldRow[], labelKey: string, value: unknown): void {
-    if (value === null || value === undefined) return;
-    if (typeof value === "string") {
-        if (value.length === 0) return;
-        fields.push({ labelKey, value });
-        return;
-    }
-    if (typeof value === "number") {
-        fields.push({ labelKey, value: String(value) });
-        return;
-    }
-    if (typeof value === "boolean") {
-        fields.push({
-            labelKey,
-            value: t(value ? "resources.detail.boolean.true" : "resources.detail.boolean.false"),
-        });
-        return;
-    }
-    fields.push({ labelKey, value: JSON.stringify(value) });
+/**
+ * 布尔值文案（`pushField` 时代由组件内联，现在下传给 `collectFields`）。
+ *
+ * <p>task-42：字段装配挪到 `detailFields.ts`（三态判定是纯函数，要能单测），本组件只提供文案。</p>
+ */
+function boolLabels(): BooleanLabels {
+    return {
+        true: t("resources.detail.boolean.true"),
+        false: t("resources.detail.boolean.false"),
+    };
+}
+
+/** 字段行的 testid：取文案键末段（`resources.detail.fields.fingerprint` ⇒ `fingerprint`）。 */
+function fieldTestId(labelKey: string): string {
+    return `resource-detail-field-${labelKey.split(".").slice(-1)[0]}`;
 }
 
 function isoTime(ms: number): string {
@@ -164,16 +156,22 @@ async function loadCredentials(): Promise<void> {
             phase.value = "not-found";
             return;
         }
-        const fields: FieldRow[] = [];
-        pushField(fields, "resources.detail.fields.label", row.label);
-        pushField(fields, "resources.detail.fields.kind", row.kind);
-        pushField(fields, "resources.detail.fields.deliveryTier", row.deliveryTier);
-        pushField(fields, "resources.detail.fields.status", row.status);
-        pushField(fields, "resources.detail.fields.fingerprint", row.fingerprint);
-        pushField(fields, "resources.detail.fields.revision", row.revision);
-        pushField(fields, "resources.detail.fields.references", row.referenceCount);
-        pushField(fields, "resources.detail.fields.createdAt", row.createdAt);
-        pushField(fields, "resources.detail.fields.replacedAt", row.replacedAt);
+        const fields = collectFields(
+            row,
+            [
+                ["label", row.label],
+                ["kind", row.kind],
+                ["deliveryTier", row.deliveryTier],
+                ["status", row.status],
+                ["fingerprint", row.fingerprint],
+                ["revision", row.revision],
+                ["references", row.referenceCount],
+                ["createdAt", row.createdAt],
+                ["replacedAt", row.replacedAt],
+            ],
+            boolLabels(),
+            row.states,
+        );
         model.value = {
             title: row.label,
             subtitle: layerLabel(layer.value),
@@ -221,17 +219,22 @@ async function loadCredentials(): Promise<void> {
         return;
     }
 
-    const fields: FieldRow[] = [];
-    pushField(fields, "resources.detail.fields.label", row.label);
-    pushField(fields, "resources.detail.fields.kind", row.kind);
-    pushField(fields, "resources.detail.fields.deliveryTier", row.deliveryTier);
-    pushField(fields, "resources.detail.fields.status", row.status);
-    pushField(fields, "resources.detail.fields.owner", row.ownerType);
-    pushField(fields, "resources.detail.fields.fingerprint", row.fingerprint);
-    pushField(fields, "resources.detail.fields.revision", row.revision);
-    pushField(fields, "resources.detail.fields.references", row.referenceCount);
-    pushField(fields, "resources.detail.fields.createdAt", row.createdAt);
-    pushField(fields, "resources.detail.fields.replacedAt", row.replacedAt);
+    const fields = collectFields(
+        row,
+        [
+            ["label", row.label],
+            ["kind", row.kind],
+            ["deliveryTier", row.deliveryTier],
+            ["status", row.status],
+            ["owner", row.ownerType],
+            ["fingerprint", row.fingerprint],
+            ["revision", row.revision],
+            ["references", row.referenceCount],
+            ["createdAt", row.createdAt],
+            ["replacedAt", row.replacedAt],
+        ],
+        boolLabels(),
+    );
 
     // 引用与审计是**两条独立读面**：一条失败不该把整页打红（元数据已经拿到了）。
     const [references, events] = await Promise.allSettled([
@@ -285,11 +288,16 @@ async function loadSkills(): Promise<void> {
             phase.value = "not-found";
             return;
         }
-        const fields: FieldRow[] = [];
-        pushField(fields, "resources.detail.fields.skillId", row.skillId);
-        pushField(fields, "resources.detail.fields.name", row.name);
-        pushField(fields, "resources.detail.fields.scope", row.definitionScope?.type);
-        pushField(fields, "resources.detail.fields.workspace", row.definitionScope?.workspaceId);
+        const fields = collectFields(
+            row,
+            [
+                ["skillId", row.skillId],
+                ["name", row.name],
+                ["scope", row.definitionScope?.type],
+                ["workspace", row.definitionScope?.workspaceId],
+            ],
+            boolLabels(),
+        );
         model.value = {
             title: row.name || row.skillId,
             subtitle: layerLabel(layer.value),
@@ -307,18 +315,23 @@ async function loadSkills(): Promise<void> {
         phase.value = "not-found";
         return;
     }
-    const fields: FieldRow[] = [];
-    pushField(fields, "resources.detail.fields.skillId", detail.skillId);
-    pushField(fields, "resources.detail.fields.name", detail.name);
-    pushField(fields, "resources.detail.fields.description", detail.description);
-    pushField(fields, "resources.detail.fields.scope", detail.definitionScope?.type);
-    pushField(fields, "resources.detail.fields.version", detail.version);
-    pushField(fields, "resources.detail.fields.trusted", detail.trusted);
-    pushField(fields, "resources.detail.fields.oversize", detail.oversize);
-    pushField(fields, "resources.detail.fields.bodyTokens", detail.bodyTokensEst);
-    pushField(fields, "resources.detail.fields.sourcePath", detail.sourcePath);
-    pushField(fields, "resources.detail.fields.contentHash", detail.contentHash);
-    pushField(fields, "resources.detail.fields.updatedAt", detail.updatedAt);
+    const fields = collectFields(
+        detail,
+        [
+            ["skillId", detail.skillId],
+            ["name", detail.name],
+            ["description", detail.description],
+            ["scope", detail.definitionScope?.type],
+            ["version", detail.version],
+            ["trusted", detail.trusted],
+            ["oversize", detail.oversize],
+            ["bodyTokens", detail.bodyTokensEst],
+            ["sourcePath", detail.sourcePath],
+            ["contentHash", detail.contentHash],
+            ["updatedAt", detail.updatedAt],
+        ],
+        boolLabels(),
+    );
     model.value = {
         title: detail.name || detail.skillId,
         subtitle: layerLabel(layer.value),
@@ -358,17 +371,22 @@ async function loadAgents(): Promise<void> {
             phase.value = "not-found";
             return;
         }
-        const fields: FieldRow[] = [];
-        pushField(fields, "resources.detail.fields.principalId", binding.principalId);
-        pushField(fields, "resources.detail.fields.name", binding.name);
-        pushField(fields, "resources.detail.fields.template", binding.templateName);
-        pushField(fields, "resources.detail.fields.bound", binding.bound);
-        pushField(fields, "resources.detail.fields.disabled", binding.disabled);
-        pushField(fields, "resources.detail.fields.defaultModel", binding.defaultModelName);
-        pushField(fields, "resources.detail.fields.allowedModels", binding.allowedModels?.length);
-        pushField(fields, "resources.detail.fields.hooks", binding.hooks);
-        pushField(fields, "resources.detail.fields.contextPolicy", binding.contextPolicy);
-        pushField(fields, "resources.detail.fields.createdAt", binding.createdAt);
+        const fields = collectFields(
+            binding,
+            [
+                ["principalId", binding.principalId],
+                ["name", binding.name],
+                ["template", binding.templateName],
+                ["bound", binding.bound],
+                ["disabled", binding.disabled],
+                ["defaultModel", binding.defaultModelName],
+                ["allowedModels", binding.allowedModels?.length],
+                ["hooks", binding.hooks],
+                ["contextPolicy", binding.contextPolicy],
+                ["createdAt", binding.createdAt],
+            ],
+            boolLabels(),
+        );
 
         const [roles, skills] = await Promise.allSettled([
             api.getAgentRoles(workspaceId.value, pk.value),
@@ -416,14 +434,20 @@ async function loadAgents(): Promise<void> {
             phase.value = "not-found";
             return;
         }
-        const fields: FieldRow[] = [];
-        pushField(fields, "resources.detail.fields.name", row.name);
-        pushField(fields, "resources.detail.fields.description", row.description);
-        pushField(fields, "resources.detail.fields.template", row.templateName);
-        pushField(fields, "resources.detail.fields.modelProvider", row.modelProvider);
-        pushField(fields, "resources.detail.fields.modelName", row.modelName);
-        pushField(fields, "resources.detail.fields.disabled", row.disabled);
-        pushField(fields, "resources.detail.fields.createdAt", row.createdAt);
+        const fields = collectFields(
+            row,
+            [
+                ["name", row.name],
+                ["description", row.description],
+                ["template", row.templateName],
+                ["modelProvider", row.modelProvider],
+                ["modelName", row.modelName],
+                ["disabled", row.disabled],
+                ["createdAt", row.createdAt],
+            ],
+            boolLabels(),
+            row.states,
+        );
         model.value = {
             title: row.name,
             subtitle: layerLabel(layer.value),
@@ -443,13 +467,18 @@ async function loadAgents(): Promise<void> {
         phase.value = "not-found";
         return;
     }
-    const fields: FieldRow[] = [];
-    pushField(fields, "resources.detail.fields.principalId", principal.principalId);
-    pushField(fields, "resources.detail.fields.name", principal.name);
-    pushField(fields, "resources.detail.fields.template", principal.templateName);
-    pushField(fields, "resources.detail.fields.disabled", principal.disabled);
-    pushField(fields, "resources.detail.fields.defaultModel", principal.defaultModelName);
-    pushField(fields, "resources.detail.fields.createdAt", principal.createdAt);
+    const fields = collectFields(
+        principal,
+        [
+            ["principalId", principal.principalId],
+            ["name", principal.name],
+            ["template", principal.templateName],
+            ["disabled", principal.disabled],
+            ["defaultModel", principal.defaultModelName],
+            ["createdAt", principal.createdAt],
+        ],
+        boolLabels(),
+    );
     const noteKey = workspaceId.value
         ? undefined
         : "resources.detail.notes.needWorkspaceForBindings";
@@ -473,13 +502,19 @@ async function loadMcp(): Promise<void> {
             phase.value = "not-found";
             return;
         }
-        const fields: FieldRow[] = [];
-        pushField(fields, "resources.detail.fields.name", row.name);
-        pushField(fields, "resources.detail.fields.transport", row.transport);
-        pushField(fields, "resources.detail.fields.url", row.url);
-        pushField(fields, "resources.detail.fields.enabled", row.enabled);
-        pushField(fields, "resources.detail.fields.credentialId", row.credentialId);
-        pushField(fields, "resources.detail.fields.createdAt", row.createdAt);
+        const fields = collectFields(
+            row,
+            [
+                ["name", row.name],
+                ["transport", row.transport],
+                ["url", row.url],
+                ["enabled", row.enabled],
+                ["credentialId", row.credentialId],
+                ["createdAt", row.createdAt],
+            ],
+            boolLabels(),
+            row.states,
+        );
         model.value = {
             title: row.name,
             subtitle: layerLabel(layer.value),
@@ -508,16 +543,17 @@ async function loadMcp(): Promise<void> {
         phase.value = "not-found";
         return;
     }
-    const fields: FieldRow[] = [];
-    pushField(fields, "resources.detail.fields.state", serverStatus?.state);
-    pushField(fields, "resources.detail.fields.attempt", serverStatus?.attempt);
-    pushField(fields, "resources.detail.fields.lastError", serverStatus?.lastError);
-    pushField(
-        fields,
-        "resources.detail.fields.since",
-        serverStatus && isoTime(serverStatus.sinceMs),
+    const fields = collectFields(
+        serverStatus,
+        [
+            ["state", serverStatus?.state],
+            ["attempt", serverStatus?.attempt],
+            ["lastError", serverStatus?.lastError],
+            ["since", serverStatus && isoTime(serverStatus.sinceMs)],
+            ["epoch", serverStatus?.epoch],
+        ],
+        boolLabels(),
     );
-    pushField(fields, "resources.detail.fields.epoch", serverStatus?.epoch);
     model.value = {
         title: pk.value,
         subtitle: layerLabel(layer.value),
@@ -704,15 +740,50 @@ function goBack(): void {
             </div>
 
             <dl
-                v-if="model.fields.length"
+                v-if="model.fields.rows.length"
                 data-testid="resource-detail-fields"
                 class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[minmax(0,12rem)_1fr]"
             >
-                <template v-for="field in model.fields" :key="field.labelKey">
+                <template v-for="field in model.fields.rows" :key="field.labelKey">
                     <dt class="text-muted-foreground">{{ t(field.labelKey) }}</dt>
-                    <dd class="break-words">{{ field.value }}</dd>
+                    <dd
+                        :data-testid="fieldTestId(field.labelKey)"
+                        :data-field-state="field.state"
+                        class="break-words"
+                        :class="field.state === 'empty' ? 'text-muted-foreground' : ''"
+                    >
+                        {{
+                            field.state === "empty" ? t("resources.detail.emptyValue") : field.value
+                        }}
+                    </dd>
                 </template>
             </dl>
+
+            <!--
+                task-42：「字段不存在」与「字段存在但为空」在界面上原本长得一模一样（都整行消失）。
+                空值现在画成显式的「（空）」（数据问题：这条没填）；没有返回的字段在这里**点名**
+                （契约问题：读面没给这个键），两件事分开说，谁也不冒充谁。
+            -->
+            <section
+                v-if="model.fields.absentKeyList.length"
+                data-testid="resource-detail-absent-fields"
+                class="space-y-1"
+            >
+                <h2 class="text-base font-medium">{{ t("resources.detail.absent.title") }}</h2>
+                <p class="text-sm leading-relaxed text-muted-foreground">
+                    {{ t("resources.detail.absent.body") }}
+                </p>
+                <ul class="flex flex-wrap gap-1 text-xs">
+                    <li
+                        v-for="key in model.fields.absentKeyList"
+                        :key="key"
+                        data-testid="resource-detail-absent-field"
+                        class="rounded-full border border-dashed px-2 py-0.5 text-muted-foreground"
+                    >
+                        {{ t(key) }}
+                    </li>
+                </ul>
+            </section>
 
             <section v-if="model.blockText" data-testid="resource-detail-block" class="space-y-1">
                 <h2 class="text-base font-medium">
