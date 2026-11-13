@@ -33,6 +33,13 @@ public class SessionService {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionService.class);
 
+    /**
+     * D-1236 (task-390): the only accepted value of the optional {@code scope} query parameter on
+     * {@code GET /api/v1/sessions}. It selects the workspace-less ("独立会话") read face; any other
+     * value is rejected by the controller with 400 INVALID_SCOPE.
+     */
+    public static final String SCOPE_WORKSPACELESS = "workspaceless";
+
     @org.springframework.beans.factory.annotation.Autowired
     private ApiRequestTemplateService apiRequestTemplates;
 
@@ -111,6 +118,20 @@ public class SessionService {
      */
     @Transactional(readOnly = true)
     public List<Session> listReadable(String userId, String workspaceId) {
+        return listReadable(userId, workspaceId, null);
+    }
+
+    /**
+     * D-1236 (task-390): {@code scope=workspaceless} switches to the user-level workspace-less read
+     * face, which needs no workspace context. The workspace hard gate stays on the no-scope path, so
+     * the behaviour without the parameter is unchanged. Unknown scope values never reach here (the
+     * controller answers 400 INVALID_SCOPE first).
+     */
+    @Transactional(readOnly = true)
+    public List<Session> listReadable(String userId, String workspaceId, String scope) {
+        if (SCOPE_WORKSPACELESS.equals(scope)) {
+            return listReadableWorkspaceless(userId);
+        }
         requireWorkspace(userId, workspaceId);
         UUID actorId;
         try {
@@ -119,6 +140,24 @@ public class SessionService {
             return List.of();
         }
         return sessionRepository.findReadableByWorkspaceIdAndActor(workspaceId, userId, actorId);
+    }
+
+    /**
+     * D-1236: workspace-less sessions readable by the caller. No workspace gate — these rows have
+     * {@code workspace_id IS NULL} by definition (V145), so requiring a workspace would make the
+     * read face unreachable for exactly the sessions it exists to list.
+     */
+    private List<Session> listReadableWorkspaceless(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw CpApiException.workspaceContextRequired();
+        }
+        UUID actorId;
+        try {
+            actorId = UUID.fromString(userId);
+        } catch (IllegalArgumentException malformedActor) {
+            return List.of();
+        }
+        return sessionRepository.findReadableWorkspacelessByActor(userId, actorId);
     }
 
     @Transactional

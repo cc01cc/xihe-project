@@ -37,6 +37,29 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     List<Session> findReadableByWorkspaceIdAndActor(@Param("workspaceId") String workspaceId,
                                                     @Param("userId") String userId,
                                                     @Param("actorId") UUID actorId);
+
+    /**
+     * D-1236 (task-390): the workspace-less read face. Same D1/D5 rule as
+     * {@link #findReadableByWorkspaceIdAndActor} (owner OR enabled HUMAN participant, managers
+     * absent, archived excluded) with the workspace predicate replaced by {@code workspaceId is null}.
+     * Serves the V145 partial index idx_sessions_user_active_no_workspace
+     * (user_id, archived, created_at DESC) WHERE workspace_id IS NULL — the legacy composite index
+     * cannot serve NULL rows (V145:21-24).
+     */
+    @Query("""
+            select s from Session s
+             where s.workspaceId is null
+               and s.archived = false
+               and (s.userId = :userId
+                    or exists (select p.id from SessionParticipant p
+                                where p.sessionId = s.id
+                                  and p.principalKind = 'HUMAN'
+                                  and p.principalId = :actorId
+                                  and p.disabledAt is null))
+             order by s.createdAt desc
+            """)
+    List<Session> findReadableWorkspacelessByActor(@Param("userId") String userId,
+                                                   @Param("actorId") UUID actorId);
     Optional<Session> findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
             UUID id, String userId, String workspaceId);
 

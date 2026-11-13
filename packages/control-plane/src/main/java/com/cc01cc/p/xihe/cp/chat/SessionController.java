@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
@@ -82,15 +83,26 @@ public class SessionController {
         return SessionViews.toView(session, primaryPrincipalId);
     }
 
+    /**
+     * D-1236 (task-390): the optional {@code scope} parameter selects the workspace-less read face.
+     * Without it the behaviour is unchanged (workspace context required); an unknown value is a
+     * client input error, answered 400 INVALID_SCOPE like the other scope-bearing routes.
+     */
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<?> list() {
+    public ResponseEntity<?> list(
+            @RequestParam(value = "scope", required = false) String scope) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
-        if (userId == null || workspaceId == null) {
+        if (scope != null && !SessionService.SCOPE_WORKSPACELESS.equals(scope)) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_SCOPE",
+                    "Unknown session list scope: " + scope);
+        }
+        boolean workspaceless = SessionService.SCOPE_WORKSPACELESS.equals(scope);
+        if (userId == null || (!workspaceless && workspaceId == null)) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
-        List<Session> readable = sessionService.listReadable(userId, workspaceId);
+        List<Session> readable = sessionService.listReadable(userId, workspaceId, scope);
         // PLAN-0689 A2c: one batched PRIMARY read for the whole page (no per-Session query).
         Map<UUID, UUID> primaries = sessionParticipantService.primaryPrincipalIdsFor(
                 readable.stream().map(Session::getId).toList());
