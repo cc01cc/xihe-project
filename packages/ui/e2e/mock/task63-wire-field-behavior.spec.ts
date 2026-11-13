@@ -182,23 +182,19 @@ test.describe("task-63 · wire 字段 → 行为（description / canWrite）", (
         await expect.poll(() => tabWorkspace(page).then((ws) => ws.description)).toBe(DESCRIPTION);
     });
 
-    test.fixme("description（验收流程 · 产品缺陷）：只改名字保存 —— 描述被覆盖成空串", async ({
-        page,
-    }) => {
-        // 实测（2026-11-13，本文件）：`ws-settings-description-input` 的值是 **""**，
-        // 而页签上下文里 `description` 明明有值（见上一条）。原因见文件头：
-        // `startEdit()` 在 `onMounted` 里先于 `loadWorkspace()` 跑且此后不再初始化。
-        // 卡面要求「测出真红 ⇒ 停手报 Lead，不自己修」⇒ 本条以 fixme 留在树里当判据，
-        // 修好后把 `test.fixme` 换回 `test` 即可转红/转绿。
+    test("description（验收流程）：只改名字保存 —— 描述原值不变", async ({ page }) => {
+        // task-341 ① 的回执。修前的读数（`task-63` 实测）：`ws-settings-description-input` 的值是 **""**，
+        // 而页签上下文里 `description` 有值 ⇒ 点保存发 `description: ""` ⇒ 既有描述被清空。
+        // 修的是挂载顺序（`onMounted` 里先 `await loadWorkspace()` 再 `startEdit()`）。
         const probes = await bootFreshTab(page, {
-            description: DESCRIPTION,
-            workspaceRole: "OWNER",
-        });
+                description: DESCRIPTION,
+                workspaceRole: "OWNER",
+            }),
+            descriptionInput = page.getByTestId("ws-settings-description-input");
         await page.goto(SETTINGS_URL, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect.poll(() => probes.detailHits.count).toBeGreaterThan(0);
 
-        const descriptionInput = page.getByTestId("ws-settings-description-input");
         await expect(descriptionInput).toBeVisible();
         await expect(descriptionInput).toHaveValue(DESCRIPTION);
 
@@ -213,7 +209,7 @@ test.describe("task-63 · wire 字段 → 行为（description / canWrite）", (
 
     test("description（判别力对照：wire 不带该字段）：同一路径确实会写成空串", async ({ page }) => {
         // 这一条**不是验收**，是判别力证明：`handleSave` 无条件发送 description，
-        // 所以「字段没到 UI」的后果就是清空既有描述。上一条（fixme）红在同一处。
+        // 所以「字段没到 UI」的后果就是清空既有描述 —— 上一条回执红在同一处。
         const probes = await bootFreshTab(page, { workspaceRole: "OWNER" }),
             descriptionInput = page.getByTestId("ws-settings-description-input");
         await page.goto(SETTINGS_URL, { waitUntil: "load" });
@@ -268,21 +264,22 @@ test.describe("task-63 · wire 字段 → 行为（description / canWrite）", (
         await expect(page.getByTestId("mcp-config-save")).toBeVisible();
     });
 
-    test("【入口缺口·现状】直接从资源区落地：工作区投影一次都不取，wire 说什么都不影响写面", async ({
+    test("【入口缺口回执】直接从资源区落地：投影被取回，wire 的 VIEWER + canWrite=false 生效", async ({
         page,
     }) => {
-        // wire 明确说「VIEWER 且 canWrite=false」—— 按契约这是最该只读的身份。
+        // task-341 ② 的回执。修前这条的读数是「`detailHits` = 0 且写面可写」（`task-63` 实测）。
+        // 判据③（卡面）：本条**不 seed `workspaceRole`** —— 角色只能从 wire 来。
+        // 靠 seed 补答案正是 `task-40` 当初漏掉这个缺口的形态（D-1199）。
         const probes = await bootFreshTab(page, { workspaceRole: "VIEWER", canWrite: false });
         await page.goto(MCP_DIRECT_URL, { waitUntil: "load" });
         await expect(page.getByTestId("resources-header")).toBeVisible();
 
-        // ① 这条读数才是缺口本身：整页生命周期内 `GET /workspaces/{id}` = 0 次。
-        expect(probes.detailHits.count).toBe(0);
-        // ② 于是 `canWriteWorkspace` 只能落到角色回落；页签上下文没有 role/ownerId ⇒
-        //    `workspaceRole` 回落成 "EDITOR"（`stores/auth.ts:195-202`）⇒ 可写。
-        await expect(page.getByTestId("mcp-config-textarea")).toBeEnabled();
-        await expect(page.getByTestId("mcp-config-save")).toBeVisible();
-        // 判据方向：**入口一旦补了 hydrate，本条会转红** —— 那时把上面两条改成
-        // `toBeGreaterThan(0)` 与 `toBeDisabled`，本条即成为修好的回执。
+        // ① 资源区布局现在会自己取投影（`ResourcesLayout` 的 onMounted）。
+        await expect.poll(() => probes.detailHits.count).toBeGreaterThan(0);
+        // ② CP 的投影生效：写面禁用、保存按钮不渲染。
+        const textarea = page.getByTestId("mcp-config-textarea");
+        await expect(textarea).toBeVisible();
+        await expect(textarea).toBeDisabled();
+        await expect(page.getByTestId("mcp-config-save")).toHaveCount(0);
     });
 });

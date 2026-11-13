@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { Menu, X } from "@lucide/vue";
@@ -61,6 +61,24 @@ const active = computed<ResourceLayer>(() =>
 const title = computed(() => (def.value ? t(def.value.labelKey) : ""));
 
 const WORKSPACE_ID = computed(() => readTabWorkspaceId());
+
+/**
+ * task-341 ②：**资源区落地时必须自己把工作区投影取回来**。
+ *
+ * <p>`/resources/**` 挂的是本布局、`/settings/**` 挂的是 `SettingsLayout`，**都不是 `AppLayout`** ——
+ * 而 `hydrateWorkspace()` 过去只在 `AppLayout.vue:307`（以及 `Sidebar`/`WorkspaceView` 的几处页内调用）
+ * 触发。于是从资源区**直接落地**（深链/刷新/书签）时 `GET /workspaces/{id}` 一次都不发，
+ * `auth.canWriteWorkspace` 只能落到角色回落：页签上下文若没有 role/ownerId，`workspaceRole` 回落成
+ * `EDITOR`（`stores/auth.ts:195-202`）⇒ CP 明说「VIEWER + canWrite=false」，MCP 配置框照样可写
+ * （按钮可点、CP 仍拒 = 假可用）。</p>
+ *
+ * <p>为什么放在**布局**而不是 `App.vue`：App 只在应用启动时挂一次，登录/切换后不会再跑；
+ * 布局按每次进入该区挂载，语义是「进资源区就把投影对一次」。`hydrateWorkspace` 自身幂等
+ * （store 已有 id + ownerId 时直接返回，不发请求）。</p>
+ */
+onMounted(() => {
+    void auth.hydrateWorkspace();
+});
 
 /**
  * 各层为什么不可用 —— 只认两类来源，全部由 `RESOURCE_DEFS` 声明，组件里不许再写死一层一层判断：

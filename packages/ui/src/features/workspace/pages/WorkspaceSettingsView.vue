@@ -267,9 +267,22 @@ async function handleDelete() {
     }
 }
 
-onMounted(() => {
+/**
+ * task-341 ①：**先取工作区，再初始化编辑态** —— 顺序是承重的，不是风格问题。
+ *
+ * <p>旧写法 `onMounted(() => { startEdit(); void loadWorkspace(); })` 让 `startEdit()` 先跑且不等加载：
+ * `editDescription` 的初值取 `auth.workspace?.description ?? ""`（`:206-210`），而此刻 store 里的
+ * workspace 可能只有 `{ id }`（深链/刷新、或 `migrateLegacyWorkspace` 迁出来的 `{ id, name }`）
+ * ⇒ 输入框停在空串，且`startEdit` 之后没有任何 watch 重新初始化。`handleSave()` 又**无条件**发送
+ * `description`（`name` 有 `|| undefined` 兜底，`description` 没有）⇒ 只改名字点保存就把既有描述清空。
+ * 实测读数见 `e2e/mock/task63-wire-field-behavior.spec.ts` 与 `task-63`。</p>
+ *
+ * <p>为什么不是「保存时判断值有没有变」：那是给症状打补丁 —— 初值错的地方还留着，下一个读
+ * `editName`/`editDescription` 的字段（或在别处复用 `startEdit`）会再踩一次。顺序修正只有一处。</p>
+ */
+onMounted(async () => {
+    await loadWorkspace();
     startEdit();
-    void loadWorkspace();
 });
 </script>
 

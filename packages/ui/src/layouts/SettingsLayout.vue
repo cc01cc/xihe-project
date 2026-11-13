@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { Menu, Search, X } from "@lucide/vue";
@@ -8,6 +8,7 @@ import SettingsCommandPalette from "../components/settings/SettingsCommandPalett
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
 import { Button } from "../components/ui/button";
+import { useAuthStore } from "../stores/auth";
 import {
     DOMAIN_LABEL_KEY,
     isConfigDomain,
@@ -25,6 +26,7 @@ import {
  */
 const route = useRoute();
 const { t } = useI18n();
+const auth = useAuthStore();
 
 // 层是外框：这里决定它。路由 meta 有层就用 meta；兜底路由（404）没有 meta，按路径推导。
 const layer = computed(() =>
@@ -55,6 +57,15 @@ const drawerOpen = ref(false);
  * 通过 `update:open` 回报；不要在任何子组件里再挂第二份，否则同一个键会被处理两次。
  */
 const paletteOpen = ref(false);
+
+/**
+ * task-341 ②：与 `ResourcesLayout` 同款、同理由 —— 设置区也**不是** `AppLayout`，
+ * 而工作区层的域页（`meta.settingsLayer === "workspace"`）要读 `auth.workspace` 的投影。
+ * 不取就只剩页签缓存，缓存不全时权限位会回落成默认值。幂等：已加载则不发请求。
+ */
+onMounted(() => {
+    void auth.hydrateWorkspace();
+});
 watch(
     () => route.fullPath,
     () => {
