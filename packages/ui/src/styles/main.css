@@ -5,6 +5,19 @@
 @import "./scroll-fade.css";
 @import "./shimmer.css";
 @import "./diffTheme.css";
+/*
+ * dockview 自带样式（BL-564 / task-324）：必须在这里，且**必须排在 ./dockview-theme.css 之前** ——
+ * 后者是 XH 自己的覆盖（只针对 [data-dockview-host] / .dockview-host），排后面才能赢。
+ *
+ * 为什么这条是硬阻断而不是"翻开关时顺手加"：不 import 时 .dv- 变量生效数为 0、
+ * .dv-groupview 高度塌到 151px、.dv-sash 是 position:static ⇒ 指针拖动完全不可能生效。
+ * （读数见 internal/A03-xihe/evidence/2026-11-13-workspace-layout-target/README.md §13.2）
+ *
+ * 安全性：该文件 656 个选择器里 619 个含 .dv-，其余 19 个全是 dockview 自己的主题类名
+ * （.dockview-theme-* / .dockview-spaced），**零全局选择器**（无 :root / html / body / * / 裸标签 / @import / @font-face）。
+ * ⇒ 在没有任何 .dv- 元素的页面上不可能产生影响；实测 25 页 × 2 主题逐项比对见 README §13.5。
+ */
+@import "dockview-vue/dist/styles/dockview.css";
 @import "./dockview-theme.css";
 @import "./typeset.css";
 
