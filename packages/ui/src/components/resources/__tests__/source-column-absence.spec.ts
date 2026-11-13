@@ -56,6 +56,9 @@ const h = vi.hoisted(() => {
         canWriteWorkspace: true,
         // task-401：实例智能体面板现在自取 `/me/permissions` 投影（资源区路由上没有别人拉它）。
         ensureSelfPermissions: async () => true,
+        // task-420（D-1254）：写门三态化后 `useInstanceWriteGate` 读投影的**读取状态**，
+        // 不再只看原子集合。假 store 同批补这一项（Proxy 当场点名了它，正是 task-154 的设计目的）。
+        selfPermissionsStatus: "ready",
     };
     const auth = new Proxy(authBase, {
         get(target, prop) {

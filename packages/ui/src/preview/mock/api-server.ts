@@ -9,6 +9,7 @@ import {
 } from "./data/skills";
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 import { handleInstanceResource } from "./data/instanceResources";
+import { handleAgentSkillBinding } from "./data/agentSkillBindings";
 import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
 import {
     MOCK_ORG_UNITS,
@@ -729,6 +730,51 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         .catch((cause: unknown) => {
                             options.log?.(
                                 `[mock-api] ${instanceMethod} ${path} 处理失败：${String(cause)}`,
+                            );
+                            respond(500, {
+                                code: "MOCK_HANDLER_FAILED",
+                                requestId: "mock-request",
+                            });
+                        });
+                    return;
+                }
+                // task-402 / D-1243 G2：agent 主体技能绑定（v1 principal 级路径）。
+                // 实例档/工作区档由 `workspaceId` 有无派生（CP deriveScope:196），判定与内存集合
+                // 在 data/agentSkillBindings.ts —— 这里只做一次 dispatch。真 HTTP 已验（stack-1）。
+                if (/^\/agent-principals\/[^/]+\/skills(\/|$)/.test(path)) {
+                    const bindingMethod = req.method ?? "GET";
+                    const readBindingBody = (): Promise<Record<string, unknown>> =>
+                        new Promise((resolveBody) => {
+                            let raw = "";
+                            req.on("data", (chunk: unknown) => {
+                                raw += String(chunk);
+                            });
+                            req.on("end", () => {
+                                try {
+                                    resolveBody(
+                                        raw ? (JSON.parse(raw) as Record<string, unknown>) : {},
+                                    );
+                                } catch {
+                                    resolveBody({});
+                                }
+                            });
+                        });
+                    void handleAgentSkillBinding(bindingMethod, path, url, readBindingBody)
+                        .then((result) => {
+                            if (!result) {
+                                return respond(404, {
+                                    code: "SKILL_BINDING_ENDPOINT_MISSING",
+                                    requestId: "mock-request",
+                                });
+                            }
+                            options.log?.(`[mock-api] ${bindingMethod} ${path} → ${result.status}`);
+                            return result.status === 204
+                                ? respond(204, null)
+                                : respond(result.status, result.body);
+                        })
+                        .catch((cause: unknown) => {
+                            options.log?.(
+                                `[mock-api] ${bindingMethod} ${path} 处理失败：${String(cause)}`,
                             );
                             respond(500, {
                                 code: "MOCK_HANDLER_FAILED",

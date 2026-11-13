@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Bot, Pencil, Plus, Trash2 } from "@lucide/vue";
+import { Bot, Pencil, Plus, Sparkles, Trash2 } from "@lucide/vue";
 
 import { useAuthStore } from "../../stores/auth";
 import { useInstanceWriteGate } from "../../composables/useInstanceWriteGate";
@@ -51,6 +51,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
+import InstanceAgentSkillsDialog from "../resources/InstanceAgentSkillsDialog.vue";
 import AgentModelBindingFields, {
     type AgentModelBindingDraft,
 } from "./AgentModelBindingFields.vue";
@@ -130,6 +131,8 @@ function emptyBinding(): AgentModelBindingDraft {
 
 const createBinding = ref<AgentModelBindingDraft>(emptyBinding());
 const editTarget = ref<InstanceAgent | null>(null);
+/** task-402：技能面目标（与编辑/删除同一形态：一个 ref 表达「选中了哪一行」）。 */
+const skillsTarget = ref<InstanceAgent | null>(null);
 const editBinding = ref<AgentModelBindingDraft>(emptyBinding());
 const editClear = ref(false);
 const editError = ref<string | null>(null);
@@ -479,6 +482,24 @@ async function confirmDelete(): Promise<void> {
                                         >
                                             <Pencil class="size-3.5" aria-hidden="true" />
                                         </Button>
+                                        <!-- task-402：技能面入口。写门文案用 420 的 writeGateTitle，
+                                             不在这里另写二态（加载中/失败不得冒充缺原子，D-1254）。 -->
+                                        <Button
+                                            variant="ghost"
+                                            size="icon-sm"
+                                            :data-testid="`instance-agent-skills-${agent.id}`"
+                                            :disabled="!canWrite"
+                                            :title="
+                                                canWrite
+                                                    ? t(
+                                                          'settings.instanceResources.agents.skillsCta',
+                                                      )
+                                                    : writeGateTitle
+                                            "
+                                            @click="skillsTarget = agent"
+                                        >
+                                            <Sparkles class="size-3.5" aria-hidden="true" />
+                                        </Button>
                                         <Button
                                             variant="ghost"
                                             size="icon-sm"
@@ -641,6 +662,13 @@ async function confirmDelete(): Promise<void> {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <!-- task-402：实例档技能绑定（列/绑/解绑）。组件自足取数，权限由入口按钮的写门管。 -->
+            <InstanceAgentSkillsDialog
+                :open="skillsTarget !== null"
+                :principal="skillsTarget ? { id: skillsTarget.id, name: skillsTarget.name } : null"
+                @update:open="(open: boolean) => !open && (skillsTarget = null)"
+            />
 
             <AlertDialog
                 :open="deleteTarget !== null"

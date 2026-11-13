@@ -707,6 +707,15 @@ export interface AgentPrincipalOption {
     name: string;
 }
 
+/**
+ * task-402：技能面的 scope 查询串 —— 有 workspaceId 就带，没有就**整段不带**
+ * （CP `required=false`，不传即实例档）。与角色面同口径；空串也算「没有」，
+ * 免得发出 `?workspaceId=` 让 CP 去解析一个空 UUID。
+ */
+function skillsScopeQuery(workspaceId: string | null | undefined): string {
+    return workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+}
+
 /** PLAN-0667 M3：agent 主体的**技能绑定**（`GET /api/v1/agent-principals/{id}/skills`，v1 principal 级）。 */
 export interface AgentSkillBinding {
     bindingId: string;
@@ -3798,13 +3807,23 @@ export const api = {
             { method: "DELETE" },
         );
     },
-    /** PLAN-0667 M3：agent 主体技能绑定列表（信封 `{items:[…]}`，CP M2 待合入；两种信封都接受）。 */
-    async getAgentSkills(workspaceId: string, principalId: string): Promise<AgentSkillBinding[]> {
+    /**
+     * PLAN-0667 M3：agent 主体技能绑定列表（信封 `{items:[…]}`，两种信封都接受）。
+     *
+     * <p>task-402 / D-1243 G2：`workspaceId` 可省 —— CP
+     * `AgentPrincipalSkillBindingController:56` 是 `required=false`，**不传即实例档**
+     * （`AgentPrincipalBindingAuthority` 要 `MANAGE_AGENT_PRINCIPALS`）。与同文件角色面
+     * `unbindAgentRole:3790` 同形，不另立一套实例档函数。</p>
+     */
+    async getAgentSkills(
+        workspaceId: string | null | undefined,
+        principalId: string,
+    ): Promise<AgentSkillBinding[]> {
         const raw = await request<{
             items?: Array<Record<string, unknown>>;
             bindings?: Array<Record<string, unknown>>;
         }>(
-            `/agent-principals/${encodeURIComponent(principalId)}/skills?workspaceId=${encodeURIComponent(workspaceId)}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/skills${skillsScopeQuery(workspaceId)}`,
         );
         const rows = raw?.items ?? raw?.bindings;
         if (!Array.isArray(rows)) {
@@ -3841,10 +3860,17 @@ export const api = {
             ];
         });
     },
-    /** 绑定技能（body `{skillId}`）。 */
-    async bindAgentSkill(workspaceId: string, principalId: string, skillId: string): Promise<void> {
+    /**
+     * 绑定技能（body **只有** `{skillId}`，CP `BIND_KEYS` 白名单）。
+     * 省 `workspaceId` ⇒ 服务端派生**实例档**行（客户端不能选 scope，也就不能借它扩权）。
+     */
+    async bindAgentSkill(
+        workspaceId: string | null | undefined,
+        principalId: string,
+        skillId: string,
+    ): Promise<void> {
         await request<void>(
-            `/agent-principals/${encodeURIComponent(principalId)}/skills?workspaceId=${encodeURIComponent(workspaceId)}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/skills${skillsScopeQuery(workspaceId)}`,
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -3852,13 +3878,14 @@ export const api = {
             },
         );
     },
+    /** 解绑。实例档（省 workspaceId）可删该 principal 的**任意** scope 行（CP `mayDeleteAtRowScope`）。 */
     async unbindAgentSkill(
-        workspaceId: string,
+        workspaceId: string | null | undefined,
         principalId: string,
         bindingId: string,
     ): Promise<void> {
         await request<void>(
-            `/agent-principals/${encodeURIComponent(principalId)}/skills/${encodeURIComponent(bindingId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/skills/${encodeURIComponent(bindingId)}${skillsScopeQuery(workspaceId)}`,
             { method: "DELETE" },
         );
     },

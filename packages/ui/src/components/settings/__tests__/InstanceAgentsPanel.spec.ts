@@ -81,6 +81,21 @@ import {
     updateInstanceAgent,
     type InstanceAgent,
 } from "../../../services/instanceResources";
+/**
+ * task-402：技能面是面板的子组件，它自己取数。这里只把两条读面接成空集 ——
+ * 面板这组用例钉的是**入口 wiring**（按钮 / 写门三态 / 传参），技能面自己的判据在
+ * `components/resources/__tests__/InstanceAgentSkillsDialog.spec.ts`，不在这儿重复钉。
+ */
+const skillReads = vi.hoisted(() => ({
+    getAgentSkills: vi.fn<() => Promise<unknown[]>>(),
+    getSkills: vi.fn<() => Promise<unknown[]>>(),
+}));
+
+vi.mock("../../../composables/api", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../composables/api")>();
+    return { ...actual, api: { ...actual.api, ...skillReads } };
+});
+
 import { ApiError } from "../../../composables/api";
 import { listProviderCatalog } from "../../../services/providerConnectionService";
 import { Select } from "../../ui/select";
@@ -88,6 +103,7 @@ import { Checkbox } from "../../ui/checkbox";
 import { i18n } from "../../../i18n";
 import SettingsLayerHeader from "../SettingsLayerHeader.vue";
 import InstanceAgentsPanel from "../InstanceAgentsPanel.vue";
+import InstanceAgentSkillsDialog from "../../resources/InstanceAgentSkillsDialog.vue";
 
 const mockedList = vi.mocked(listInstanceAgents);
 
@@ -120,6 +136,8 @@ beforeEach(() => {
     authState.selfPermissionsStatus = "ready";
     authState.ensureSelfPermissions.mockResolvedValue(true);
     mockedList.mockResolvedValue({ agents: [], count: 0 });
+    skillReads.getAgentSkills.mockResolvedValue([]);
+    skillReads.getSkills.mockResolvedValue([]);
     configState.providerConnections = [
         {
             id: "conn-chat",
@@ -710,6 +728,65 @@ describe("InstanceAgentsPanel · task-401 模型意图（编辑半，cp-1 task-4
         const edit = wrapper.get('[data-testid="instance-agent-edit-agent-1"]');
         expect(edit.attributes("disabled")).toBeDefined();
         expect(edit.attributes("title")).toContain("MANAGE_AGENT_PRINCIPALS");
+        wrapper.unmount();
+    });
+});
+
+describe("InstanceAgentsPanel · task-402 技能面入口（D-1243 G2）", () => {
+    it("行有技能入口，点开把**那一行**的 principal 交给技能面", async () => {
+        mockedList.mockResolvedValue({
+            agents: [agent("agent-1", "代码评审助手"), agent("agent-2", "发布助手")],
+            count: 2,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const dialog = wrapper.findComponent(InstanceAgentSkillsDialog);
+        expect(dialog.exists()).toBe(true);
+        expect(dialog.props("open")).toBe(false);
+        expect(dialog.props("principal")).toBeNull();
+
+        await wrapper.get('[data-testid="instance-agent-skills-agent-2"]').trigger("click");
+        await flushPromises();
+        expect(dialog.props("open")).toBe(true);
+        expect(dialog.props("principal")).toEqual({ id: "agent-2", name: "发布助手" });
+        wrapper.unmount();
+    });
+
+    it("缺动作原子：技能入口 disabled 不隐藏，理由点名原子（与删除同口径，D-1136）", async () => {
+        authState.atoms = new Set();
+        mockedList.mockResolvedValue({ agents: [agent("agent-1", "代码评审助手")], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        const button = wrapper.get('[data-testid="instance-agent-skills-agent-1"]');
+        expect(button.attributes("disabled")).toBeDefined();
+        expect(button.attributes("title")).toContain("MANAGE_AGENT_PRINCIPALS");
+        wrapper.unmount();
+    });
+
+    it("投影加载中：技能入口说「正在读取权限」，不冒充缺原子（D-1254 三态，不另写二态）", async () => {
+        authState.selfPermissionsStatus = "loading";
+        mockedList.mockResolvedValue({ agents: [agent("agent-1", "代码评审助手")], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        const button = wrapper.get('[data-testid="instance-agent-skills-agent-1"]');
+        expect(button.attributes("disabled")).toBeDefined();
+        expect(button.attributes("title")).toContain("正在读取权限");
+        expect(button.attributes("title")).not.toContain("MANAGE_AGENT_PRINCIPALS");
+        wrapper.unmount();
+    });
+
+    it("关闭技能面 ⇒ 目标清空（下次打开不会带着上一行的 principal）", async () => {
+        mockedList.mockResolvedValue({ agents: [agent("agent-1", "代码评审助手")], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await wrapper.get('[data-testid="instance-agent-skills-agent-1"]').trigger("click");
+        await flushPromises();
+        const dialog = wrapper.findComponent(InstanceAgentSkillsDialog);
+        dialog.vm.$emit("update:open", false);
+        await flushPromises();
+        expect(dialog.props("open")).toBe(false);
+        expect(dialog.props("principal")).toBeNull();
         wrapper.unmount();
     });
 });
