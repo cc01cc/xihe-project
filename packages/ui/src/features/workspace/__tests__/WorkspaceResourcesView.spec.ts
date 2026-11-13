@@ -62,6 +62,7 @@ vi.mock("../../../lib/resourceViews", async () => {
     // 的空组件 —— 断言照样能过/照样能红，但红的是替身而不是被测页。
     // 返回**模块形状**（`__esModule: true`）：`defineAsyncComponent` 只对"模块"解包 `.default`，
     // 直接返回 `{ default: comp }` 会被当成组件本身 ⇒ 渲染成空注释节点 + "missing template" 警告。
+    // 约定 + 正负两侧读数：`packages/ui/AGENTS.md`「async 组件替身（defineAsyncComponent）约定」（task-234）；注：本段「runtime-only ⇒ 模板字符串得到空组件」已被该卡实测推翻（Vitest 解析到带编译器的 CJS 构建）。
     const stub = (id: string) => async () => ({
         __esModule: true,
         default: {

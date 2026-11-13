@@ -49,6 +49,27 @@ pnpm run build
 - **至少跑 3 个种子**：单种子 `--sequence.shuffle` 通过**不构成**稳定性证据 —— 2026-11-06 实测 `2/3` 通过（一条是已知 1/3 偶发，另一条换种子才照出来的 `Sidebar.spec.ts` 顺序依赖）。判据：**3 个种子全绿**才算 shuffle 干净。
 - **经验值 ≠ 推导值**：`SessionMonitorPanel.spec.ts` 的 `sleep(650)`（真墙钟）与 `MessageListVirtual.spec.ts` 的 `for (round < 4) nextTick()`（"够用"的轮数）都是经验值，慢机会崩；改它们前先看文件内注释。
 
+### async 组件替身（`defineAsyncComponent`）约定 —— 假红坑（`task-234`，2026-11-13 `[实测]`）
+
+**先记症状**：替身形状给错时子组件**不会挂**，渲染成空注释节点并打 `[Vue warn]: Component is missing template or render function: { default: … }`。此时业务断言不是在测页面，是在测一个不存在的元素 —— 红得莫名其妙（`Error: Unable to get [data-testid="…"] within:`），也**可能一路绿**。**这条红被误判成页面 bug 已经发生过两次**（`task-210` / `task-231`：去改业务代码，真因是替身），成本是把人引到错误的文件里。
+
+约定（`defineAsyncComponent` 的 loader 返回值）：
+
+1. **必须是模块形状**：`async () => ({ __esModule: true, default: comp })`。只写 `{ default: comp }` 会被 `defineAsyncComponent` 当成「组件本身」—— 它只对 `__esModule` / `Symbol.toStringTag === "Module"` 解包 `.default` ⇒ 空注释节点 + 上面的警告。
+2. **组件用 `setup()` + `h()`**：与生产构建一致、不依赖模块解析条件（理由见下条纠正；**不是**因为「否则报 missing template」）。
+
+**可执行判据（先判替身，再判业务）**：spec 里出现 `defineAsyncComponent` 替身时，**必须先**断言目标子组件真的挂上 —— `expect(wrapper.find('[data-testid^="…"]').exists()).toBe(true)`（或 `findComponent(...).exists()`）—— **再**断言业务行为。差别是可读性而非「会不会红」：没有这条时，同一个错误替身会让红落在业务断言上（消息指向"元素找不到"⇒ 你会去查页面）；有这条时红落在替身判据上（`expected false to be true` + Vue 警告原文点名替身形状）。
+
+**自检（正负两侧都钉着，别只跑正例）**：
+
+```bash
+node ../../../internal/A03-xihe/evidence/2026-11-13-async-stub-convention/stub-shape-check.mjs
+```
+
+四例：正例绿；负例 A（裸对象 + 有存在性判据）红且**红在判据上**；负例 C（同一个错误替身 + 没有判据）红在业务断言上（就是假红的样子）；另一例是被**证伪的假设**（下条）。退出码 0 = 四个都对上，1 = 与预期不符，2 = 环境问题或仓库里残留临时 spec。
+
+**一条纠正（`[实测]` 2026-11-13，本包 `vue` 3.5.44）**：「`vue` 是 runtime-only，所以替身不能写字符串 `template`」这半句**在本包单测里不成立**。Vitest 在 `node` 解析条件下把 `vue` 落到 `node_modules/vue/index.mjs → index.js → dist/vue.cjs.js`，那是**带编译器**的开发构建 ⇒ 字符串 `template` 能正常编译（自检用例里的 `PROBE compile = function` 就是这条读数，`2 passed`）。runtime-only 的是 `package.json` 的 `module` 字段（`dist/vue.runtime.esm-bundler.js`），**那是 Vite 给浏览器打包用的**。⇒ 上面第 2 条保留，但理由是「与生产构建一致、不依赖解析条件」。**同一份 `WorkspaceResourcesView.spec.ts` 注释里的旧说法保留未改**（那行不是本卡写面），只在其旁加了一行指针与纠正。
+
 ## 跨层与交互规则
 
 - API、SSE 事件、TypeScript types、Pinia store、i18n 四层必须同波次同步；字段以 API/inventory 契约为准，不在 UI 私自重命名或猜测。
