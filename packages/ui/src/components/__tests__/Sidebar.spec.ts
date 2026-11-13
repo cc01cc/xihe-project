@@ -102,6 +102,14 @@ beforeEach(() => {
         sessions: [],
         workspace: null,
     } as Awaited<ReturnType<typeof api.getSessions>>);
+    // task-373：左栏多了独立会话分组，它自己拉 `GET /sessions?scope=workspaceless`。
+    // 不桩就会在 jsdom 里打真 fetch（相对 URL 无法解析）⇒ 满屏 TypeError 噪声，
+    // 还会吃掉用例里 `mockResolvedValueOnce` 的顺序配额。独立会话面本身由
+    // WorkspaceSessionGroups.standalone.spec.ts 与 mock e2e 覆盖，这里给合法空集。
+    vi.spyOn(api, "getWorkspacelessSessions").mockResolvedValue({
+        sessions: [],
+        workspace: null,
+    } as Awaited<ReturnType<typeof api.getWorkspacelessSessions>>);
 });
 
 const i18n = createI18n({
@@ -151,7 +159,7 @@ describe("Sidebar", () => {
         expect(btn.classes()).not.toContain("w-full");
     });
 
-    it("clicking new chat routes through the explicit Workspace Agent selector", async () => {
+    it("new-chat menu: the workspace item routes through the explicit Workspace Agent selector", async () => {
         mockAuth();
         const store = useSessionStore();
         expect(store.sessions.length).toBe(0);
@@ -161,6 +169,14 @@ describe("Sidebar", () => {
             newChatBtn = wrapper.find('[data-testid="sidebar-new-chat"]');
         expect(newChatBtn.exists()).toBe(true);
         await newChatBtn!.trigger("click");
+        await flushPromises();
+
+        // task-373 / `D-1236`：触发器现在**只开菜单**，自己不再导航（判据未削弱：
+        // 导航仍必须发生，只是改由菜单项承担；真指针交互由 mock e2e 覆盖）。
+        expect(pushSpy).not.toHaveBeenCalled();
+        const workspaceItem = wrapper.find('[data-testid="sidebar-new-chat-workspace"]');
+        expect(workspaceItem.exists()).toBe(true);
+        await workspaceItem.trigger("click");
         await flushPromises();
 
         expect(spy).not.toHaveBeenCalledWith(
@@ -174,14 +190,34 @@ describe("Sidebar", () => {
         });
     });
 
-    it("clicking new chat shows toast when no current workspace is set", async () => {
+    it("new-chat menu: the standalone item opens the create dialog instead of navigating", async () => {
+        mockAuth();
+        // 弹窗会取个人智能体候选；不桩就在 jsdom 里打真 fetch（相对 URL 噪声）。
+        vi.spyOn(api, "listMyAgentPrincipals").mockResolvedValue([]);
+        const wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-new-chat"]').trigger("click");
+        await flushPromises();
+
+        const standaloneItem = wrapper.find('[data-testid="sidebar-new-chat-standalone"]');
+        expect(standaloneItem.exists()).toBe(true);
+        await standaloneItem.trigger("click");
+        await flushPromises();
+
+        // 独立会话不经过工作区路由，也不偷偷建会话（弹窗里选智能体后才建）。
+        expect(pushSpy).not.toHaveBeenCalled();
+        expect(wrapper.find('[data-testid="standalone-dialog"]').exists()).toBe(true);
+    });
+
+    it("new-chat menu: the workspace item still refuses without workspace context", async () => {
         const auth = useAuthStore();
         auth.$patch({ token: "mock", user: { id: "u-1", email: "x@xihe.local" } });
         const store = useSessionStore(),
             spy = vi.spyOn(globalThis, "fetch"),
-            wrapper = await mountSidebar(),
-            newChatBtn = wrapper.find('[data-testid="sidebar-new-chat"]');
-        await newChatBtn!.trigger("click");
+            wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-new-chat"]').trigger("click");
+        await flushPromises();
+        // task-373：判据未削弱 —— 菜单项承担导航后，「无工作区不许建会话」仍必须成立。
+        await wrapper.get('[data-testid="sidebar-new-chat-workspace"]').trigger("click");
         await flushPromises();
 
         // The click first tries to resolve the workspace (hydrate), then refuses;
@@ -199,21 +235,35 @@ describe("Sidebar", () => {
     // 选择）提供，而不是靠 `hydrateWorkspace` 去 `/workspaces/current` 猜一个回退值。
     // 本用例原本依赖后者；现改为显式播种 tab 上下文，断言（hydrate → 导航到该 ws
     // 且不建会话）完全不变。
-    it("clicking new chat hydrates the workspace before opening the Agent selector", async () => {
+    it("new-chat menu: the workspace item hydrates the workspace before opening the selector", async () => {
         const { writeTabWorkspaceId } = await import("../../lib/workspaceContext");
         writeTabWorkspaceId("ws-late");
         const auth = useAuthStore();
         auth.$patch({ token: "mock", user: { id: "u-1", email: "x@xihe.local" } });
         const spy = vi.spyOn(globalThis, "fetch");
-        spy.mockResolvedValueOnce({
-            ok: true,
-            status: 200,
-            json: () => Promise.resolve({ id: "ws-late", name: "Late Workspace", ownerId: "u-1" }),
-        } as Response);
+        // task-373：按 URL 应答，不用 `mockResolvedValueOnce` —— 左栏现在多一条独立会话
+        // 取数，顺序配额会被它吃掉（hydrate 拿到 undefined ⇒ 红在与本用例无关的地方）。
+        spy.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/workspaces/ws-late")) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: () =>
+                        Promise.resolve({ id: "ws-late", name: "Late Workspace", ownerId: "u-1" }),
+                } as Response;
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve({ sessions: [] }),
+            } as Response;
+        });
         const store = useSessionStore(),
-            wrapper = await mountSidebar(),
-            newChatBtn = wrapper.find('[data-testid="sidebar-new-chat"]');
-        await newChatBtn!.trigger("click");
+            wrapper = await mountSidebar();
+        await wrapper.get('[data-testid="sidebar-new-chat"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="sidebar-new-chat-workspace"]').trigger("click");
         await flushPromises();
 
         expect(store.sessions.length).toBe(0);

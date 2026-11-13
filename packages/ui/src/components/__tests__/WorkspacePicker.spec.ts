@@ -25,6 +25,11 @@ vi.mock(
     () =>
         ({
             useRouter: () => ({ replace: mocks.replace, push: mocks.push }),
+            // task-412：`44d2e7e14`（task-365 A/B/C-1）给选择面加了 `?create=1` 深链 ⇒
+            // 组件开始读 `useRoute()`，而本 mock 只给了 useRouter ⇒ 9 条用例在 setup 处就红
+            // （No "useRoute" export is defined on the "vue-router" mock）。本文件的用例都由
+            // **按钮**驱动创建对话框，不走 query 深链，所以空 query 是忠实的最小 stub。
+            useRoute: () => ({ query: {} }),
             // 选择面静态 import 了创建对话框 → 其依赖链会加载 `stores/auth` → `router/index.ts`，
             // 那里在模块求值时调用 `createRouter`/`createWebHistory`，所以 mock 必须提供最小实现。
             createRouter: () => ({
