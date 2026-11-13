@@ -880,6 +880,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                         isWritable(field.key)
                     "
                     class="text-xs text-muted-foreground hover:text-foreground px-1"
+                    :data-testid="`config-reset-${domain}-${field.key}`"
                     :title="t('settings.resetToDefault')"
                     @click="handleReset(field.key)"
                 >
@@ -889,6 +890,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
             <div v-if="!readonly" class="flex justify-end pt-1">
                 <button
                     class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+                    :data-testid="`config-save-${domain}`"
                     :disabled="
                         !schema.some((field) => isWritable(field.key) && !isLocked(field.key))
                     "

@@ -31,8 +31,10 @@
  * 1. **先证被测路径真的跑了**：面板在 DOM（`ws-settings-config`）→ 域卡渲染出来 →
  *    **至少一次** `GET /api/v1/config/<domain>?layer=workspace` 被发出。
  * 2. **再断它没产出坏东西**：只读态下可写动作 count 0。顺序反过来就是「页面没渲染」也能通过的假绿。
- * 3. **扫描器自证**（OWNER 用例）：同一个扫描函数在可写身份下**必须**扫出写控件，
- *    否则第 2 条永远绿而毫无意义（`D-1034`：没红 ≠ 断言了正确行为）。
+ * 3. **扫描器自证**（OWNER 用例）：同一个扫描函数在可写身份下**必须**扫出**具名**写控件
+ *    （`config-save-agent-runtime`）与可编辑输入控件，否则第 2 条永远绿而毫无意义
+ *    （`D-1034`：没红 ≠ 断言了正确行为）。`task-364` 后保存/重置按钮都有了具名 testid，
+ *    故判据不再依赖「卡里恰好没有无 testid 控件」这个偶然事实 —— 残余盲点见 `writeControls` 注释。
  *
  * 本文件**只断 testid 与请求**，不用整页快照（卡面硬要求③）。
  */
@@ -135,17 +137,29 @@ async function bootConfigTab(page: Page, role: Role): Promise<{ calls: ConfigCal
 }
 
 /**
- * 面板内**可用**的写动作控件（testid 面）。
+ * 面板内**可用**的写动作控件（`task-364` 起为**精确断言**，不再是启发式）。
  *
- * 三个桶，缺一不可：
- * - `write-testid`：testid 命中写动词（新增写按钮必须带 testid，否则落进下一桶）；
- * - `editable-control`：`input` / `select` / `textarea` —— 只读态下字段渲染成 `span`
- *   （`ConfigDomainPanel.vue:813-838` 的 `v-else-if="!readonly"` / `v-else`），出现即说明不是只读；
- * - `untestid-control`：**面板内没有 testid 的可交互控件**。
- *   这一桶是为保存按钮专设的：`ConfigDomainPanel.vue:890` 的保存按钮**没有 testid**，
- *   只靠 `v-if="!readonly"` 存在 ⇒ 只断 testid 会漏掉它。只读态下本面板内其余控件
- *   （折叠 toggle / 来源跳转 / 用户覆盖 / 漂移清除 / 重置）**全部带 testid**，
- *   所以「出现一个无 testid 的控件」= 保存按钮回来了（或有人加了新的写面却没给 testid）。
+ * 两个桶：
+ * - `write-testid`：enabled 且 testid 命中写动词；
+ * - `editable-control`：enabled 的 `input` / `select` / `textarea` —— 只读态下字段渲染成 `span`
+ *   （`ConfigDomainPanel.vue` 的 `v-else-if="!readonly"` / `v-else`），出现即说明不是只读。
+ *
+ * ## 第三个桶（无 testid 控件）为什么删掉了（`task-364`）
+ *
+ * `task-361` 时保存按钮与 ↺ 恢复默认都没有 testid，只扫 testid 会**永远绿**，所以当时加了一个
+ * 启发式桶：「通用域卡内部出现无 testid 的可交互控件」= 写控件回来了。它当时能工作，但**会烂**：
+ * ①有人加一个正常的无 testid 控件（纯展示按钮）⇒ 假红；②有人为消红给那个控件补 testid ⇒ 桶空转回
+ * 「永远绿」。实测证据：`task-364` 给两个按钮补上 testid 后，OWNER 阳性对照**立刻红**
+ * （`untestid-control:button` 不再出现）—— 这就是启发式依赖「卡里恰好没有无 testid 控件」的证据。
+ *
+ * 现在两个按钮都有具名 testid（`config-save-<域>` / `config-reset-<域>-<键>`），断言退化成
+ * 「具名写动词 testid 集合必须为空」，不依赖任何偶然事实。
+ *
+ * ## 残余盲点（明写，不藏）
+ *
+ * 「扫描器能看见所有写面」现在的成立条件是**新增写面必须带 testid**；若有人加一个无 testid 的写按钮，
+ * 精确断言看不见它。这与 `r17-viewer-readonly-surfaces.spec.ts` 全篇的口径一致（r17 也只靠 testid 扫），
+ * 但它是**假设**而不是可以自动验证的事实 —— 所以写在这里，而不是让「精确」掩盖它。
  */
 async function writeControls(page: Page): Promise<string[]> {
     return page.evaluate((selector) => {
@@ -164,21 +178,15 @@ async function writeControls(page: Page): Promise<string[]> {
                     (node as HTMLInputElement).readOnly === true ||
                     node.getAttribute("aria-disabled") === "true";
             if (disabled) continue;
-            if (!testid) {
-                // 只算**通用域卡内部**的无 testid 控件：那正是保存按钮的位置
-                // （`ConfigDomainPanel.vue:890`，`v-if="!readonly"`，无 testid）；
-                // 专用面板（如 `AgentTemplatesPanel`）里另有不带 testid 的按钮，不属本判据。
-                if (node.closest('[data-testid^="config-domain-"]')) {
-                    out.push("untestid-control:" + node.tagName.toLowerCase());
-                }
-                continue;
-            }
-            if (/save|create|delete|remove|apply|update|submit|write|reset|clear/i.test(testid)) {
+            if (
+                testid &&
+                /save|create|delete|remove|apply|update|submit|write|reset|clear/i.test(testid)
+            ) {
                 out.push("write-testid:" + testid);
                 continue;
             }
             if (/^(INPUT|SELECT|TEXTAREA)$/.test(node.tagName)) {
-                out.push("editable-control:" + testid);
+                out.push("editable-control:" + (testid || node.tagName.toLowerCase()));
             }
         }
         return out;
@@ -240,7 +248,7 @@ for (const role of ["VIEWER", "EDITOR"] as const) {
     });
 }
 
-test("扫描器自证（OWNER 可写）：同一函数必须扫出写控件，否则上面两条 count 0 是空转", async ({
+test("扫描器自证（OWNER 可写）：同一函数必须扫出具名写控件，否则上面两条 count 0 是空转", async ({
     page,
 }) => {
     const { calls } = await bootConfigTab(page, "OWNER");
@@ -250,8 +258,10 @@ test("扫描器自证（OWNER 可写）：同一函数必须扫出写控件，�
     await expectDomainsRendered(page);
     expectReadOnlyTraffic(calls);
 
-    // 阳性对照：可写身份下扫描器**必须**有输出，且里面必须有那个没有 testid 的保存按钮。
+    // 阳性对照（`task-364` 起为**具名**断言，不再是「扫到无 testid 控件」）：
+    // 可写身份下必须看到**具名的**保存按钮 + 至少一个可编辑输入控件。
+    // 缺任一 ⇒ 扫描器坏了或写面没了，两条只读用例的 count 0 就是空转。
     const controls = await writeControls(page);
-    expect(controls.length).toBeGreaterThan(0);
-    expect(controls).toContain("untestid-control:button");
+    expect(controls).toContain("write-testid:config-save-agent-runtime");
+    expect(controls.some((entry) => entry.startsWith("editable-control:"))).toBe(true);
 });
