@@ -26,10 +26,19 @@ import {
   shortSha,
   writeBuildInfo,
 } from "./lib/cp-build-info.mjs";
-import { cpBuildRoot, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
+import { cpBuildRoot, readPointer, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { ensureEnvFromUser } from "./lib/user-env.mjs";
+// task-283：单目标路径的构建戳注入。与 dev-stack.mjs:406 共用 build-commit-env.mjs 的
+// **同一个**实现（D-896「能派生就不复制」）——这里只决定「什么时候调」，不重写解析逻辑。
+import {
+  BUILD_COMMIT_ENV,
+  buildCommitEnv,
+  buildCommitForBoot,
+  cpBuildForStack,
+  describeBuildCommit,
+} from "./lib/build-commit-env.mjs";
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
 // PLAN-0770 INV-3：dev 管理员凭据的来源可观测（只读、非密）。与 dev-stack 共用同一条解析链。
 import { describeDevAdminSource } from "./lib/dev-admin-password.mjs";
@@ -485,6 +494,10 @@ if (GUARDED_TARGETS.includes(target) && process.platform === "win32") {
 //
 // `--no-rebuild` downgrades stale/missing to a WARN and continues — the escape hatch for
 // "I know the tree is old and I need this stack up now", which must stay visible in the log.
+// task-283：本目标的「本次构建 commit」注入态。cp 分支里在**重建之后**赋值（那时 verdict
+// 才是权威的，见下方 gate 注释）；非 cp 目标在 launch 前用 .current/构建目录解析。
+let cpBuildCommitState = null;
+
 if (target === "cp") {
   const cpDir = join(projectRoot, "packages", "control-plane"),
     head = gitHead({ cwd: projectRoot }),
@@ -606,6 +619,57 @@ if (target === "cp") {
   } catch (error) {
     console.error(`[stack] WARNING: could not write the cp build pointer: ${error.message}`);
   }
+  // task-283 **A 案**：注入点必须在**重建之后**。
+  // 判据来源是上面 gate 的最终 `verdict`（重建后会重新 evaluate），所以此刻「将要运行的 classes」
+  // 已经确定 ⇒ 从 `targetDir` 的戳读 commit 才是真话。task-61 的教训正是反例：在 mvn **之前**读
+  // 指针里的 sha，结果跑的是 `850a011cb…` 却注入 `be2cd4e9…`。
+  cpBuildCommitState = buildCommitForBoot({
+    cpBuild: { verdict: verdict.status, targetDir, file: verdict.file ?? null },
+  });
+}
+
+const currentCommitEnv =
+  typeof env[BUILD_COMMIT_ENV] === "string" ? env[BUILD_COMMIT_ENV].trim() : "";
+
+// task-283 **归属规则（谁说了算）** —— 这一条是「修根不许重开 task-61」的关键，不是可选优化。
+//
+// cp 目标：**本进程的构建门说了算**，覆盖已有的值。
+//   为什么不能「调用方给了就照用」：整栈路径（`dev-stack.mjs`）在 start 前就把它对
+//   `cpBuildFor()` 的**预测**塞进 childEnv，再 spawn `stack-run cp`。那个预测是**重建之前**的读数。
+//   若两步之间 HEAD 前进 / 树变脏，本进程会真的执行 `clean compile`，但「不覆盖已有值」会让它保留
+//   那个**旧的预测** ⇒ 跑的是新构建、报的是旧 sha ⇒ 正是 task-61 那起事故
+//   （进程跑 `850a011cb…` 却注入 `be2cd4e9…`）的形状，只是换了个入口。
+//   代价与取舍：`stack-run cp` 是**开发跑道**的构建门，部署面的 env-first 覆盖走 `pkg/launcher.mjs`
+//   （PLAN-0534 的兼容位在那里，本文件不碰）。所以这里让构建门赢，不削弱部署契约。
+//   守的是「宁可没有值，不可报错值」：verdict 非 fresh ⇒ 仍是空串，绝不凑一个 sha。
+//
+// 非 cp 目标（agent/runtime/ui）：**只补缺省**（与 `stackEnvDefaults` 同一口径）。它们没有自己的
+//   构建戳，取本栈 CP 的戳 —— 这正是整栈路径「三个服务共用一份 childEnv」的口径，两路径读数才一致。
+//
+// 判据是**空串**而不是「键不存在」（判据①的接缝）：整栈路径的 `childEnv` 在 start 前就冻结，里面带
+// 的是 `buildCommitEnv` 恒产出的 `''`（`unknownBuildCommit` 形态 = 「已分配但当时还不知道」）。
+// 只认「键不存在」会让子进程保留那个**启动前**的空串 ⇒ `modules.agent/runtime.commit` 仍为 null，
+// 而 `modules.cp.commit` 已是真值 ⇒ 同一个响应里三个模块自相矛盾。
+if (target !== "cp" && currentCommitEnv === "") {
+  const row = cpBuildForStack({ projectRoot, stackId: derived.stackId, env });
+  cpBuildCommitState = buildCommitForBoot({
+    cpBuild: { verdict: row.verdict, targetDir: row.targetDir, file: row.file },
+  });
+}
+if (cpBuildCommitState !== null) {
+  const nextValue = typeof cpBuildCommitState.value === "string" ? cpBuildCommitState.value : "";
+  // cp：构建门权威（可能是空串，表示「不敢报」）；其余目标：不覆盖已有的非空值。
+  const override = target === "cp" || currentCommitEnv === "";
+  const changed = override && currentCommitEnv !== nextValue;
+  if (changed) Object.assign(env, buildCommitEnv(cpBuildCommitState));
+  const note = !changed
+    ? "unchanged"
+    : currentCommitEnv !== ""
+      ? `overrode pre-set "${currentCommitEnv}" (post-build verdict wins)`
+      : "injected";
+  console.error(
+    `[stack] ${BUILD_COMMIT_ENV} ${note} — ${describeBuildCommit(cpBuildCommitState)}`,
+  );
 }
 
 launch({ ...factory(env), env });

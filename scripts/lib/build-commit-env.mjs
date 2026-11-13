@@ -14,7 +14,8 @@
  * 注入空串与「跳过不注入」在服务侧看到的都是 null，但运维面必须能显示「我知道它不该有值」，
  * 所以 status 里 `unknown` 与其 `reason` 必须显式出现，而不是静默略过。
  */
-import { readBuildInfo, shortSha } from './cp-build-info.mjs';
+import { cpBuildRoot, resolveBuildTargetForStack } from './cp-build-dir.mjs';
+import { cpBuildStatus, cpTargetDir, gitHead, readBuildInfo, shortSha } from './cp-build-info.mjs';
 
 /** 三个服务共同读取的 env 名（cp `VersionController`、agent `version.py`、runtime `main.rs`）。 */
 export const BUILD_COMMIT_ENV = 'XIHE_BUILD_COMMIT';
@@ -100,6 +101,41 @@ export function buildCommitForBoot({ cpBuild, resolve = resolveBuildCommit } = {
         : 'unverified';
     if (verdict !== 'fresh') return unknownBuildCommit(`cp-build-${verdict}`, cpBuild?.file ?? null);
     return resolve({ targetDir: cpBuild?.targetDir });
+}
+
+
+/**
+ * task-283：**「这套栈本次 start 该注入哪个 commit」的唯一解析入口**。
+ *
+ * 为什么必须抽出来：`scripts/dev-stack.mjs`（整栈）与 `scripts/stack-run.mjs`（单服务）问的是
+ * **同一个问题**，但历史上只有前者答过 ⇒ 单服务路径的 `XIHE_BUILD_COMMIT` 恒缺省 ⇒
+ * `GET /api/v1/version` 的 `commit` 恒 `null` ⇒ 「commit == HEAD」判据**必假红**。
+ * 两处各写一遍解析会造出「两个来源两个值」，正是本模块开头禁止的形态（D-896「能派生就不复制」）。
+ *
+ * 语义直接复用 `buildCommitForBoot`（含 task-61 的取舍）：**只有 `verdict === 'fresh'` 才给真值**。
+ * 调用方拿到空串时**不得**自己再猜一个 sha。
+ *
+ * @param {{projectRoot: string, stackId: string, env?: Record<string,string|undefined>,
+ *   root?: string|null}} input
+ * @returns {{targetDir: string, targetDirSource: string, verdict: string,
+ *   runningCommit: string|null, headCommit: string|null, behind: number|null,
+ *   builtAt: string, dirty: boolean|null, file?: string|null}}
+ */
+export function cpBuildForStack({ projectRoot, stackId, env = process.env, root = null }) {
+    const head = gitHead({ cwd: projectRoot });
+    const target = resolveBuildTargetForStack({
+        root: typeof root === 'string' && root !== '' ? root : cpBuildRoot({ env }),
+        stackId,
+        env,
+        commit: head.commit,
+        dirty: head.dirty,
+    });
+    return cpBuildStatus({
+        targetDir: target.targetDir ?? cpTargetDir({ projectRoot, env }),
+        headCommit: head.commit,
+        cwd: projectRoot,
+        targetDirSource: target.source,
+    });
 }
 
 /**

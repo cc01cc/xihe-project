@@ -53,11 +53,11 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from './lib/stack-cargo-target.mjs';
 import { ensureEnvFromUser } from './lib/user-env.mjs';
-import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
-import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
+import { shortSha } from './lib/cp-build-info.mjs';
 import {
   buildCommitEnv,
   buildCommitForBoot,
+  cpBuildForStack,
   describeBuildCommit,
   resolveBuildCommit,
 } from './lib/build-commit-env.mjs';
@@ -320,20 +320,11 @@ function checkProjectRoot(projectRoot) {
  * Read-only: it never rebuilds and never touches a stack — it only reports `verdict`.
  */
 function cpBuildFor(root = projectRoot, stackId = derived.stackId) {
-  const head = gitHead({ cwd: root });
-  const target = resolveBuildTargetForStack({
-    root: cpBuildRoot({ env: process.env }),
-    stackId,
-    env: process.env,
-    commit: head.commit,
-    dirty: head.dirty,
-  });
-  return cpBuildStatus({
-    targetDir: target.targetDir ?? cpTargetDir({ projectRoot: root, env: process.env }),
-    headCommit: head.commit,
-    cwd: root,
-    targetDirSource: target.source,
-  });
+  // task-283：解析整段收进 `lib/build-commit-env.mjs` 的 `cpBuildForStack`，与
+  // `scripts/stack-run.mjs`（单服务起栈路径）**共用同一个实现**。此前这段逻辑只在这里，
+  // 单服务路径一行人没有 ⇒ 它的 `XIHE_BUILD_COMMIT` 恒缺省 ⇒ `/api/v1/version` 的
+  // `commit` 恒 null ⇒ 「commit == HEAD」判据在单服务路径上**必假红**（task-260 实测）。
+  return cpBuildForStack({ projectRoot: root, stackId, env: process.env });
 }
 
 function formatCpBuild(cpBuild) {
