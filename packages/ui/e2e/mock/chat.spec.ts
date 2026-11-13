@@ -117,7 +117,7 @@ test.describe("Chat", () => {
         await setupMockSessions(page);
 
         await page.goto("/workspace");
-        await expect(page.locator("text=暂无对话")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(page.locator("text=暂无会话")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await expectPlatformScreenshot(page, "chat-sidebar-empty.png");
     });
 

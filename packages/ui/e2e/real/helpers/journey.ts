@@ -1007,13 +1007,13 @@ export async function awaitOperationCompletedForRun(
 
 /**
  * Recover from the brand-new-user empty state ("暂无活动会话"): auto session
- * creation can race CP readiness on cold starts, so 新建对话 is the real
+ * creation can race CP readiness on cold starts, so 新建会话 is the real
  * user path out of it.
  */
 export async function ensureChatReady(page: Page): Promise<void> {
     const chatInput = page.locator('[data-testid="chat-input"]');
     if (!(await chatInput.isVisible({ timeout: 10000 }).catch(() => false))) {
-        const newChat = page.getByRole("button", { name: "新建对话" }).first();
+        const newChat = page.getByRole("button", { name: "新建会话" }).first();
         if (await newChat.isVisible().catch(() => false)) {
             await newChat.click();
         } else {

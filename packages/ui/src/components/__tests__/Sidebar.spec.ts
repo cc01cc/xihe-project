@@ -4,40 +4,25 @@ import { setActivePinia, createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import Sidebar from "../sidebar/Sidebar.vue";
+import { i18n as appI18n } from "../../i18n";
 import { useSessionStore } from "../../stores/session";
 import { useAuthStore } from "../../stores/auth";
 import { useAgentStore } from "../../stores/agent";
 
+/**
+ * D-1162 ③：夹具**必须读真源**。
+ *
+ * 旧版在这里手抄了一份 `sidebar` 文案副本，于是文案改名后本文件那几条断言**仍然全绿**
+ * —— 它们测的是副本，不是产品文案。这比变红更糟：**红的会被修，绿的不会**。
+ * 现改为直接取 `src/i18n` 的真源；产品文案一旦改名，这里必然跟着红。
+ */
+type LocaleBranch = { sidebar: Record<string, string>; settings: Record<string, string> };
+const zhSource = appI18n.global.getLocaleMessage("zh-CN") as unknown as LocaleBranch;
+
 const messages = {
     "zh-CN": {
-        sidebar: {
-            newChat: "新建对话",
-            search: "搜索对话...",
-            today: "今天",
-            yesterday: "昨天",
-            earlier: "更早",
-            rename: "重命名",
-            delete: "删除",
-            empty: "暂无对话",
-            settings: "设置",
-            workspace: "工作区",
-            logout: "退出登录",
-            noWorkspace: "没有可用工作区",
-            pendingApprovalBadge: "待审批",
-            admin: "管理",
-            collapse: "收起侧边栏",
-            expand: "展开侧边栏",
-            collapseRail: "收起导航栏",
-            expandRail: "展开导航栏",
-            clearSearch: "清除搜索",
-            resize: "调整导航面板宽度",
-        },
-        // task-36 ③：移动端用户区新增紧凑语言切换，需要这三条文案。
-        settings: {
-            languageLabel: "界面语言",
-            languageZh: "中文（zh-Hans）",
-            languageEn: "English (en)",
-        },
+        sidebar: zhSource.sidebar,
+        settings: zhSource.settings,
     },
 };
 
@@ -136,7 +121,7 @@ describe("Sidebar", () => {
     it("renders new chat button with correct text", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
-        expect(wrapper.text()).toContain("新建对话");
+        expect(wrapper.text()).toContain("新建会话");
     });
 
     it("clicking new chat routes through the explicit Workspace Agent selector", async () => {
@@ -147,7 +132,7 @@ describe("Sidebar", () => {
 
         const wrapper = await mountSidebar(),
             buttons = wrapper.findAll("button"),
-            newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
+            newChatBtn = buttons.find((b) => b.text().trim() === "新建会话");
         expect(newChatBtn).toBeDefined();
         await newChatBtn!.trigger("click");
         await flushPromises();
@@ -170,7 +155,7 @@ describe("Sidebar", () => {
             spy = vi.spyOn(globalThis, "fetch"),
             wrapper = await mountSidebar(),
             buttons = wrapper.findAll("button"),
-            newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
+            newChatBtn = buttons.find((b) => b.text().trim() === "新建会话");
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -185,7 +170,7 @@ describe("Sidebar", () => {
     });
 
     // PLAN-0608 I6（预期变更，判据未削弱）：登录不再把回退值写进 tab 上下文，
-    // 因此「点击新建对话前已有 workspace」这件事必须由 **tab 上下文**（用户的显式
+    // 因此「点击新建会话前已有 workspace」这件事必须由 **tab 上下文**（用户的显式
     // 选择）提供，而不是靠 `hydrateWorkspace` 去 `/workspaces/current` 猜一个回退值。
     // 本用例原本依赖后者；现改为显式播种 tab 上下文，断言（hydrate → 导航到该 ws
     // 且不建会话）完全不变。
@@ -203,7 +188,7 @@ describe("Sidebar", () => {
         const store = useSessionStore(),
             wrapper = await mountSidebar(),
             buttons = wrapper.findAll("button"),
-            newChatBtn = buttons.find((b) => b.text().trim() === "新建对话");
+            newChatBtn = buttons.find((b) => b.text().trim() === "新建会话");
         await newChatBtn!.trigger("click");
         await flushPromises();
 
@@ -217,7 +202,7 @@ describe("Sidebar", () => {
     it("renders empty state when no sessions exist", async () => {
         mockAuth();
         const wrapper = await mountSidebar();
-        expect(wrapper.text()).toContain("暂无对话");
+        expect(wrapper.text()).toContain("暂无会话");
     });
 
     it("renders session time group headers when sessions exist", async () => {
@@ -347,7 +332,7 @@ describe("Sidebar", () => {
         ];
         const wrapper = await mountSidebar();
         const input = wrapper.get('[data-testid="sidebar-session-search"]');
-        expect(input.attributes("placeholder")).toBe("搜索对话...");
+        expect(input.attributes("placeholder")).toBe("搜索会话...");
 
         await input.setValue("alpha");
         await flushPromises();

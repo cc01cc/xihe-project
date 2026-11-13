@@ -122,7 +122,7 @@ const MESSAGES: Record<string, Array<Record<string, unknown>>> = {
             id: "msg-1",
             sessionId: SESSION_ID,
             role: "USER",
-            content: "现在的界面蓝色块太多了：发送按钮、新建对话、消息气泡全是一个蓝。",
+            content: "现在的界面蓝色块太多了：发送按钮、新建会话、消息气泡全是一个蓝。",
             createdAt: "2026-11-03T02:10:00.000Z",
         },
         {

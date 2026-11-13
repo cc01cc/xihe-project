@@ -83,7 +83,7 @@ test.describe("@host Journey D — context pipeline", () => {
         await page.goto("/workspace/" + wsId, { waitUntil: "load" });
         const chatInput = page.locator('[data-testid="chat-input"]');
         if (!(await chatInput.isVisible({ timeout: ACTION_TIMEOUT_MS }).catch(() => false))) {
-            const newChat = page.getByRole("button", { name: "新建对话" }).first();
+            const newChat = page.getByRole("button", { name: "新建会话" }).first();
             if (await newChat.isVisible().catch(() => false)) {
                 await newChat.click();
             } else {
