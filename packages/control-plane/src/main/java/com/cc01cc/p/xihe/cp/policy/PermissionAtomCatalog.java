@@ -136,7 +136,14 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_DEFAULT_CONFIG,
             // V156 / D-1019: a personal library belongs to one human account; an agent principal has
             // no personal library of its own, so this atom stays outside the agent face.
-            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS);
+            ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
+            // PLAN-0773 M2-2 (tasks.md:57 判据「进」): org-unit governance is human administration —
+            // an agent principal is a grantee, never an org-unit administrator, so all three atoms
+            // stay outside the agent face. This also keeps OrgUnitGovernancePolicy honest: an agent
+            // role can never become a governance role by construction, not by a second check.
+            ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS,
+            ToolFaceRegistry.ACTION_MANAGE_ORG_UNIT_MEMBERS,
+            ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS);
 
     private static final List<String> ACTION_ATOM_NAMES = List.of(
             ToolFaceRegistry.ACTION_READ,
@@ -208,7 +215,13 @@ public final class PermissionAtomCatalog {
             // here). Neither is agent-forbidden: writing one workspace's configuration is a
             // workspace act, and an agent principal bound inside that workspace may hold it.
             ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT,
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP,
+            // PLAN-0773 M2-2 (V162): the org-unit governance atoms. 37 + 3 = 40 action atoms; the
+            // matching role seed (SUPER_ADMIN, required by DefaultSetMigrationParityTest) lands in
+            // V162. Scope class is NOT decided here — see INSTANCE_ONLY_ATOMS below.
+            ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS,
+            ToolFaceRegistry.ACTION_MANAGE_ORG_UNIT_MEMBERS,
+            ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -249,6 +262,14 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_PERSONAL_SKILLS,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
+    // 〔待 M2-8c 定〕 PLAN-0773 M2-2: the three org-unit governance atoms are NOT listed above, and
+    // that is a **state, not a ruling**. Membership of INSTANCE_ONLY_ATOMS means "bindable in the
+    // instance scope only" (decision #27), so Atom.bindableIn(scopeType) is false for every
+    // non-instance scope — an instance-class governance atom would be literally unbindable inside
+    // an org unit. Which class the three take depends on how org-unit grants are evaluated (a new
+    // scope family vs a projection onto existing scopes), and that question belongs to M2-8c. Until
+    // then they fall into `both` by absence, which keeps them bindable; moving them here is a
+    // one-line change once M2-8c rules. Do not "tidy" this by guessing a class.
 
     private static final Map<String, Atom> ATOMS = buildAtoms();
 

@@ -27,14 +27,16 @@ class PluginBindingAuthorizationTest {
     // 29 before PLAN-0691 + the four plugin atoms = 33, minus the BL-312 removal = 32, plus the
     // PLAN-0750 M1 (G1) restore = 33, plus PLAN-0766 (task-158 / V153)
     // MANAGE_WORKSPACE_DEFAULT_CONFIG = 34, plus V156 (task-221) MANAGE_PERSONAL_SKILLS = 35, plus
-    // task-229 / PLAN-0773 (V157) WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37.
+    // task-229 / PLAN-0773 (V157) WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37, plus
+    // PLAN-0773 M2-2 (task-158 / V162) MANAGE_ORG_UNITS + MANAGE_ORG_UNIT_MEMBERS +
+    // READ_ORG_UNIT_MEMBERS = 40.
     // SkillReadFaceTest and P0ManagementAtomSeedMigrationTest freeze the same number from the other
     // two directions.
     //
     // NOTE (task-229 evidence): this literal was ALREADY stale at 34 vs the catalog's 35 before this
     // card touched anything — V156 added its atom and did not update this one. The pre-existing red
     // is recorded separately from any regression this card could introduce.
-    private static final int ACTION_ATOM_COUNT = 37;
+    private static final int ACTION_ATOM_COUNT = 40;
 
     @Test
     void pluginAtomsJoinTheCatalogWithTheSpecifiedScopes() {

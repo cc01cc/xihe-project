@@ -177,13 +177,16 @@ class P0ManagementAtomSeedMigrationTest {
         // task-229 / PLAN-0773 (V157, 2026-11-12) added WRITE_WORKSPACE_CONTENT and
         // MANAGE_WORKSPACE_MCP (35 → 37) — the two workspace write faces that used to answer to
         // isAuthenticated() alone.
+        // PLAN-0773 M2-2 (task-158 / V162, 2026-11-13) added the three org-unit governance atoms
+        // (37 → 40); they are the whitelist OrgUnitGovernancePolicy judges a role against.
         // Update together with SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
-        assertEquals(37, PermissionAtomCatalog.actionAtoms().size(),
+        assertEquals(40, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
                         + " = 29, plus the four PLAN-0691 plugin atoms (V137) = 33, minus the BL-312"
                         + " removal = 32, plus the PLAN-0750 M1 restore = 33, plus PLAN-0766"
                         + " MANAGE_WORKSPACE_DEFAULT_CONFIG = 34, plus V156 MANAGE_PERSONAL_SKILLS = 35,"
-                        + " plus V157 WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37;"
+                        + " plus V157 WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP = 37, plus V162"
+                        + " MANAGE_ORG_UNITS + MANAGE_ORG_UNIT_MEMBERS + READ_ORG_UNIT_MEMBERS = 40;"
                         + " the same arithmetic is frozen in"
                         + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());

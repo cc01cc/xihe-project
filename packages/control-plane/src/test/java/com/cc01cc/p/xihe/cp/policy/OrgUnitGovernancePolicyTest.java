@@ -147,25 +147,41 @@ class OrgUnitGovernancePolicyTest {
     }
 
     /**
-     * The judgement is <b>independent of scope class</b> — that is why it survives the reversal
-     * from {@code D-1117} to {@code D-1118}: it asks "is this a governance role", never "does it
-     * carry a workspace-scoped atom".
+     * After {@code M2-2} (task-158 / V162) the three atoms are catalogued, and the whitelist starts
+     * answering for real without a single line of judge code changing — that is what this test
+     * checks: registration, not a second rule.
      *
-     * <p>The three atoms are not in {@link PermissionAtomCatalog} yet ({@code M2-2} registers
-     * them). <b>Their scope class is deliberately not asserted here</b>: which class a governance
-     * atom gets depends on how org-unit bindings hang off a scope, and
-     * {@code PermissionAtomCatalog.Atom.bindableIn} admits only {@code instance} or non-instance
-     * for the existing scope types — an unruled decision. Encoding it in an assertion would turn a
-     * pending ruling into a silent design decision (the first version of this test did exactly
-     * that and was removed). This test only pins the reading.</p>
+     * <p><b>Scope class is still deliberately not asserted.</b> Which class a governance atom takes
+     * depends on how org-unit grants are evaluated (a new scope family vs a projection onto existing
+     * scopes) — {@code M2-8c} owns that question, and {@code Atom.bindableIn} makes an
+     * {@code instance}-class atom unusable in any non-instance scope. The first version of this test
+     * asserted {@code instance} and was removed for exactly that reason; do not reintroduce it as a
+     * "tidy-up". The catalog carries the marker {@code 〔待 M2-8c 定〕}.</p>
      */
     @Test
-    void governanceAtomsAreNotYetInTheCatalog() {
-        long catalogHits = OrgUnitGovernancePolicy.governanceAtoms().stream()
-                .filter(PermissionAtomCatalog.allAtomNames()::contains)
-                .count();
-        assertEquals(0L, catalogHits,
-                "M2-2 has landed the governance atoms; revisit this reading and drop the test");
+    void governanceAtomsAreCataloguedAndTheWhitelistAnswers() {
+        for (String atom : OrgUnitGovernancePolicy.governanceAtoms()) {
+            assertTrue(PermissionAtomCatalog.allAtomNames().contains(atom), atom);
+            assertTrue(PermissionAtomCatalog.isActionAtom(atom), atom + " must be an action atom");
+            assertTrue(ToolFaceRegistry.builtinActionClasses().contains(atom),
+                    atom + " must be in the evaluator vocabulary (RoleGrantMaterializer throws otherwise)");
+            assertFalse(orgUnitAtomLabel(atom).isBlank(), atom + " needs a display label");
+            // tasks.md:57 判据「进」: an agent principal is a grantee, never an org-unit administrator.
+            assertTrue(PermissionAtomCatalog.agentPrincipalForbiddenAtoms().contains(atom),
+                    atom + " must stay outside the agent face");
+        }
+        // The whitelist answers "true" for the atoms it is made of, and the judge needed no change.
+        assertTrue(OrgUnitGovernancePolicy.isGovernanceRole(
+                List.copyOf(OrgUnitGovernancePolicy.governanceAtoms())));
+
+        // Negative control: a governance atom plus any workspace atom is refused, so the whitelist is
+        // not "any role containing a governance atom".
+        assertFalse(OrgUnitGovernancePolicy.isGovernanceRole(List.of(
+                OrgUnitGovernancePolicy.ATOM_MANAGE_ORG_UNITS, ToolFaceRegistry.ACTION_EXEC)));
+    }
+
+    private static String orgUnitAtomLabel(String atom) {
+        return PermissionAtomLabels.label(atom, PermissionAtomLabels.DEFAULT_LOCALE);
     }
 
     /** The whitelist is exactly three atoms — the judgement has no hidden members. */

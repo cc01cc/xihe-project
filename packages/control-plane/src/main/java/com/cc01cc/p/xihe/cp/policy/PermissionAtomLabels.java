@@ -121,6 +121,15 @@ public final class PermissionAtomLabels {
                 "写工作区配置", "Write workspace config");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MCP,
                 "管理工作区 MCP 配置", "Manage workspace MCP servers");
+        // PLAN-0773 M2-2: the org-unit governance atoms. The wording separates the org tree
+        // ("组织单元") from a workspace ("工作区") on purpose — these two nouns are the whole subject
+        // of PLAN-0773, and a role editor that reads them as the same thing would mis-grant.
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS,
+                "管理组织单元", "Manage org units");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_ORG_UNIT_MEMBERS,
+                "管理组织单元成员", "Manage org unit members");
+        put(labels, ToolFaceRegistry.ACTION_READ_ORG_UNIT_MEMBERS,
+                "查看组织单元成员", "View org unit members");
         return labels;
     }
 

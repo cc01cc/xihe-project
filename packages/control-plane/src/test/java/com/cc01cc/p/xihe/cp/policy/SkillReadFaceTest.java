@@ -34,8 +34,9 @@ class SkillReadFaceTest {
     // PLAN-0766 (task-158 / V153, 2026-11-11) added MANAGE_WORKSPACE_DEFAULT_CONFIG (33 → 34).
     // V156 (task-221, D-1019, 2026-11-12) added MANAGE_PERSONAL_SKILLS (34 → 35).
     // task-229 / PLAN-0773 (V157, 2026-11-12) added WRITE_WORKSPACE_CONTENT + MANAGE_WORKSPACE_MCP
-    // (35 → 37).
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 37;
+    // (35 → 37). PLAN-0773 M2-2 (task-158 / V162, 2026-11-13) added the three org-unit governance
+    // atoms (37 → 40).
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 40;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {

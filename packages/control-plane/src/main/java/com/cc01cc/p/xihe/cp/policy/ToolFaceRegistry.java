@@ -128,6 +128,22 @@ public class ToolFaceRegistry {
     public static final String ACTION_PLUGIN_BIND = "PLUGIN_BIND";
     public static final String ACTION_PLUGIN_INVOKE = "PLUGIN_INVOKE";
     public static final String ACTION_PLUGIN_DATA = "PLUGIN_DATA";
+    // PLAN-0773 M2-2 (D-1118): the three org-unit governance atoms. They are the <b>whitelist</b>
+    // of OrgUnitGovernancePolicy — a role may be bound inside an org unit only when its atom set is
+    // a subset of these three (M2-3 seeds ORG_LEADER exactly like that).
+    //
+    // Scope class: **deliberately not decided here** — see the marker in PermissionAtomCatalog
+    // INSTANCE_ONLY_ATOMS. Today the three fall into the default (`both`) simply by NOT being
+    // listed there, which is a state, not a ruling: whether an org-unit grant is evaluated as a
+    // new scope family or projected onto an existing one is M2-8c's design question, and
+    // `Atom.bindableIn` makes an `instance`-class atom unusable in any non-instance scope.
+    // 〔待 M2-8c 定〕
+    //
+    // They are NOT attached to a tool face (like the other management atoms): the vocabulary entry
+    // is what GrantIntersectionEvaluator validates a grant against.
+    public static final String ACTION_MANAGE_ORG_UNITS = "MANAGE_ORG_UNITS";
+    public static final String ACTION_MANAGE_ORG_UNIT_MEMBERS = "MANAGE_ORG_UNIT_MEMBERS";
+    public static final String ACTION_READ_ORG_UNIT_MEMBERS = "READ_ORG_UNIT_MEMBERS";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}).
      */
@@ -283,7 +299,13 @@ public class ToolFaceRegistry {
                 // without its vocabulary line makes RoleGrantMaterializer throw
                 // "Unknown actionClass: MANAGE_WORKSPACE_MCP" the moment a seeded role is
                 // materialized, so this list is not decoration.
-                ACTION_WRITE_WORKSPACE_CONTENT, ACTION_MANAGE_WORKSPACE_MCP);
+                ACTION_WRITE_WORKSPACE_CONTENT, ACTION_MANAGE_WORKSPACE_MCP,
+                // PLAN-0773 M2-2 (V162): the three org-unit governance atoms join the action-class
+                // set in the same batch as their catalog entries, labels and seed row (SUPER_ADMIN),
+                // for the same mechanical reason V157 documents: a catalog entry without this line
+                // makes RoleGrantMaterializer throw "Unknown actionClass" the moment a seeded role is
+                // materialized, and MemoryWriteAtomTest asserts actionAtoms() == this set.
+                ACTION_MANAGE_ORG_UNITS, ACTION_MANAGE_ORG_UNIT_MEMBERS, ACTION_READ_ORG_UNIT_MEMBERS);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */
