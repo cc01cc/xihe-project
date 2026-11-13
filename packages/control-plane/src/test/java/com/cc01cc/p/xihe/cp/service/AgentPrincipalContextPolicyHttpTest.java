@@ -166,6 +166,32 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractReusableIntegrationTes
                 "GET /agent-principals projects the memory policy: " + row);
     }
 
+    // --- task-423: the user-face LIST projection carries the allow-list too ---------------------
+    // Same shared projection as the instance face (AgentPrincipalWireView#principalView, D-932),
+    // pinned here so ui-2's edit comparison has a guaranteed contract on both faces.
+
+    @Test
+    void patchStoresAllowedModelsAndTheListSurfaceProjectsIt() {
+        fixture();
+        UUID principalId = createPrincipal("AllowListAgent");
+        String allowJson = "[{\"provider\":\"openai\",\"model\":\"gpt-4o\"}]";
+
+        ResponseEntity<Map> response = patch(principalId, body("allowedModels", plainJson(allowJson)),
+                globalToken());
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(plainJson(allowJson), response.getBody().get("allowedModels"),
+                "the PATCH echo is the persisted allow-list: " + response.getBody());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM agent_principals WHERE id = CAST(? AS UUID) "
+                        + "AND allowed_models::jsonb = CAST(? AS jsonb)",
+                Integer.class, principalId.toString(), allowJson),
+                "the value must be in the column, not merely in the persistence context");
+
+        Map<String, Object> row = personalPrincipalRow(principalId);
+        assertEquals(plainJson(allowJson), row.get("allowedModels"),
+                "GET /agent-principals projects the allow-list for the edit comparison: " + row);
+    }
+
     @Test
     void patchCarriesHooksAndContextPolicyTogether() {
         fixture();

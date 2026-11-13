@@ -475,6 +475,67 @@ class InstanceAgentPrincipalControllerIntegrationTest extends AbstractReusableIn
         return userId;
     }
 
+    // --- task-423: the LIST projection carries the allow-list (ui-2's edit comparison) ---------
+    // The field was already projected (AgentPrincipalWireView#principalView since be4e76d1e,
+    // task-179) and the schema declares it required; what was missing is a test pinning it on the
+    // LIST face, so a consumer comparing "did the allow-list change" can rely on it. Both states
+    // matter: an array of {provider,model} and present-but-null (= unrestricted).
+
+    @Test
+    void listProjectsTheStoredAllowListSoTheEditFaceCanCompare() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "listallow");
+        List<Map<String, Object>> allow = List.of(
+                Map.of("provider", "openai", "model", "gpt-4o"),
+                Map.of("provider", "anthropic", "model", "claude-sonnet-4-5"));
+
+        HttpProbe patched = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("allowedModels", allow));
+        assertEquals(200, patched.status(), patched.body());
+
+        HttpProbe listed = probe(adminToken, "GET", INSTANCE_PRINCIPALS, null);
+        assertEquals(200, listed.status(), listed.body());
+        JsonNode row = find(parse(listed.body()).path("principals"), principalId.toString());
+        assertNotNull(row, "the created row must be a list member");
+        assertTrue(row.has("allowedModels"), "the key is present, never omitted");
+        assertEquals(2, row.path("allowedModels").size(), "the stored allow-list is projected: " + row);
+        assertEquals("openai", row.path("allowedModels").get(0).path("provider").asText());
+        assertEquals("gpt-4o", row.path("allowedModels").get(0).path("model").asText());
+        assertEquals("anthropic", row.path("allowedModels").get(1).path("provider").asText());
+        assertEquals("claude-sonnet-4-5", row.path("allowedModels").get(1).path("model").asText());
+        assertEquals(parse(patched.body()).path("allowedModels"), row.path("allowedModels"),
+                "one projection: the list row and the PATCH echo must agree exactly");
+    }
+
+    @Test
+    void listProjectsAnUnrestrictedAllowListAsPresentButNull() {
+        UUID adminId = registerInstanceAdmin();
+        String adminToken = tokenOf(adminId);
+        UUID principalId = createPrincipal(adminToken, "listnull");
+
+        HttpProbe fresh = probe(adminToken, "GET", INSTANCE_PRINCIPALS, null);
+        JsonNode freshRow = find(parse(fresh.body()).path("principals"), principalId.toString());
+        assertTrue(freshRow.has("allowedModels"), "present-but-null, not a missing key (D-1009 shape)");
+        assertTrue(freshRow.path("allowedModels").isNull(), "a new row is unrestricted: " + freshRow);
+
+        HttpProbe set = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
+                Map.of("allowedModels", List.of(Map.of("provider", "openai", "model", "gpt-4o"))));
+        assertEquals(200, set.status(), set.body());
+        // Map.of rejects null values, so the explicit-clear body needs a mutable map (same as the
+        // task-413 clear case above).
+        Map<String, Object> clear = new java.util.LinkedHashMap<>();
+        clear.put("allowedModels", null);
+        HttpProbe cleared = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId, clear);
+        assertEquals(200, cleared.status(), cleared.body());
+
+        HttpProbe listed = probe(adminToken, "GET", INSTANCE_PRINCIPALS, null);
+        JsonNode row = find(parse(listed.body()).path("principals"), principalId.toString());
+        assertTrue(row.has("allowedModels"), "clearing keeps the key present");
+        assertTrue(row.path("allowedModels").isNull(),
+                "null means unrestricted, so the edit face can tell it from an empty allow-list: " + row);
+    }
+
     private String registerPlainUser() {
         return tokens.get(registerUserViaHttp());
     }
