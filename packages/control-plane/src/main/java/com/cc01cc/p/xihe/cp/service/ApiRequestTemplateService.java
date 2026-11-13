@@ -369,14 +369,31 @@ public class ApiRequestTemplateService {
         UUID visibleWorkspace = workspace != null ? workspace : TenantContext.getWorkspaceId() == null ? null : uuid(TenantContext.getWorkspaceId());
         ObjectNode defaults = object(entries.getOrDefault("connectionDefaultTemplates", "{}"));
         ObjectNode overrides = object(entries.getOrDefault("providerModelBindings", "{}"));
-        if (!layer.equals("user") && !overrides.isEmpty()) {
-            throw invalid("Model overrides are user-scope only");
+        // task-343 / D-1140: the storage layer of a model override is the "to" layer of the
+        // binding - the consumer's own user row, or the Connection owner's layer. Defaults already
+        // derive their layer from the Connection owner (below), so overrides follow the same rule
+        // instead of being rejected outright outside the user layer. D-922 keeps an INSTANCE
+        // connection consumable by every bound consumer; resolve() therefore falls back to the
+        // owner layer after the consuming user's own row (task-343 read half).
+        String layerOwnerId = layer.equals("user") ? String.valueOf(user)
+                : layer.equals("workspace") ? String.valueOf(workspace)
+                : instanceIdentity.ownerId();
+        if (!layer.equals("user")) {
+            overrides.fieldNames().forEachRemaining(id -> {
+                ProviderConnection connection = connections.findById(UUID.fromString(id)).orElseThrow();
+                if (!connection.getOwnerType().equalsIgnoreCase(layer)
+                        || !connection.getOwnerId().equals(layerOwnerId)) {
+                    // Cross-owner writes stay rejected: from this layer's point of view the
+                    // Connection is not in scope, so it reads as "not found" (D-922 keeps the
+                    // INSTANCE rows visible to consumers, not writable from a foreign layer).
+                    throw new CpApiException(HttpStatus.NOT_FOUND, "PROVIDER_CONNECTION_NOT_FOUND",
+                            "Connection not found in this layer's scope");
+                }
+            });
         }
         defaults.fields().forEachRemaining(entry -> {
             ProviderConnection connection = connections.findById(UUID.fromString(entry.getKey())).orElseThrow();
-            String owner = layer.equals("user") ? String.valueOf(user)
-                    : layer.equals("workspace") ? String.valueOf(workspace)
-                    : instanceIdentity.ownerId();
+            String owner = layerOwnerId;
             if (!connection.getOwnerType().equalsIgnoreCase(layer) || !connection.getOwnerId().equals(owner)) {
                 throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Default must be in Connection owner scope");
             }
@@ -448,6 +465,21 @@ public class ApiRequestTemplateService {
             ref = object(raw("user", user, null).getOrDefault("providerModelBindings", "{}"))
                     .path(connection.getId().toString()).get(model);
             source = "provider-model";
+        }
+        if (ref == null) {
+            // task-343 / D-1140: overrides may also live in the Connection owner's layer (an
+            // INSTANCE connection's model bindings belong to the instance). The consuming user's
+            // own row above still wins, so existing user-layer data keeps its exact meaning; a
+            // USER-owned connection resolves through that row already and skips this step.
+            String overrideLayer = ownerLayer(connection);
+            if (!"user".equals(overrideLayer)) {
+                UUID overrideOwner = ownerUuid(connection);
+                ref = object(raw(overrideLayer, null,
+                        "workspace".equals(overrideLayer) ? overrideOwner : null)
+                        .getOrDefault("providerModelBindings", "{}"))
+                        .path(connection.getId().toString()).get(model);
+                source = "provider-model";
+            }
         }
         if (ref == null) {
             String layer = ownerLayer(connection);

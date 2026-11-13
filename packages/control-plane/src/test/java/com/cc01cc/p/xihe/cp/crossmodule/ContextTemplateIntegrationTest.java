@@ -18,13 +18,23 @@ import static org.mockito.Mockito.when;
 import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.service.InstanceIdentityService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -97,6 +107,11 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentTemplateService agentTemplateService;
     @Autowired private BranchPathService branchPathService;
+    @Autowired private InstanceIdentityService instanceIdentity;
+    @Autowired private AuthzContext authzContext;
+    @Autowired private AccessRoleRepository roleRepository;
+    @Autowired private AccessRoleBindingRepository bindingRepository;
+    @Autowired private RoleGrantMaterializer roleGrantMaterializer;
 
     private String token;
     private String userId;
@@ -230,7 +245,7 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     }
 
     @Test
-    void workspaceLayerCannotDefineUserScopeModelOverrides() {
+    void foreignLayerCannotBindAnotherOwnersConnectionModels() {
         var connection = ChatBindingTestSupport.ensureChatConnection(
                 providerConnectionRepository, "USER", userId, "ctx-workspace");
         String overrides = "{\"" + connection.getId() + "\":{\"wire-model\":{\"layer\":\"user\","
@@ -239,9 +254,102 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
                 url("/api/v1/config/workspace/api-request-templates?workspaceId=" + workspaceId),
                 HttpMethod.PUT, new HttpEntity<>(Map.of("providerModelBindings", overrides), bearerJson(token)),
                 Map.class);
-        // Model overrides (the "Model override" resolution step) are user-scope
-        // only; the workspace layer cannot define them.
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        // task-343 / D-1140: a model override may live in the consumer's own user row or in the
+        // Connection owner's layer. A USER-owned Connection is out of scope for the workspace
+        // layer, so the widening does not turn into "any layer may bind any Connection": from
+        // this layer the row does not exist, which is a 404 rather than a 400 (the old
+        // "user-scope only" blanket rejection).
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("PROVIDER_CONNECTION_NOT_FOUND", response.getBody().get("code"));
+
+        // 判据③: the widening is not "stop validating" — an id that exists nowhere still fails
+        // closed on the same code, even for an instance admin.
+        grantInstanceAdmin(UUID.fromString(userId));
+        String unknown = UUID.randomUUID().toString();
+        ResponseEntity<Map> bogus = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("providerModelBindings",
+                        "{\"" + unknown + "\":{\"x\":{\"layer\":\"instance\",\"templateId\":\""
+                                + TEMPLATE_ID + "\",\"version\":1}}}"), bearerJson(token)),
+                Map.class);
+        assertEquals(HttpStatus.NOT_FOUND, bogus.getStatusCode(), String.valueOf(bogus.getBody()));
+        assertEquals("PROVIDER_CONNECTION_NOT_FOUND", bogus.getBody().get("code"));
+    }
+
+    // ---- task-343 / D-1140: instance layer owns model overrides for its own Connections ----
+
+    @Test
+    void instanceLayerBindsItsOwnConnectionModelsAndAPlainUserResolvesThem() {
+        UUID actor = UUID.fromString(userId);
+        grantInstanceAdmin(actor);
+        var connection = instanceChatConnection("ctx-instance");
+        String connectionId = connection.getId().toString();
+        // two bindings on the instance layer: one resolved only here, one also bound in the
+        // caller's own user row (the precedence case below)
+        String overrides = "{\"" + connectionId + "\":{"
+                + "\"instance-model\":{\"layer\":\"instance\",\"templateId\":\"" + TEMPLATE_ID
+                + "\",\"version\":1},"
+                + "\"precedence-model\":{\"layer\":\"instance\",\"templateId\":\"" + TEMPLATE_ID
+                + "\",\"version\":1}}}";
+
+        // write half: the instance layer now accepts a model override for an INSTANCE Connection
+        ResponseEntity<Map> written = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of(
+                        "templates", "[" + publishedFragment(1, "实例模板 v1") + "]",
+                        "providerModelBindings", overrides), bearerJson(token)),
+                Map.class);
+        assertEquals(HttpStatus.OK, written.getStatusCode(), String.valueOf(written.getBody()));
+
+        // round-trip: the row really landed at the instance layer
+        ResponseEntity<Map> read = restTemplate.exchange(
+                url("/api/v1/config/api-request-templates?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, read.getStatusCode());
+        assertTrue(String.valueOf(read.getBody().get("providerModelBindings")).contains(connectionId),
+                String.valueOf(read.getBody().get("providerModelBindings")));
+
+        // read half (D-1140 后半句的最小可测形态): a plain non-admin user resolving through this
+        // INSTANCE Connection gets the instance-layer override instead of falling through to the
+        // built-in template.
+        var snapshot = apiRequestTemplates.resolve(connection, "instance-model", actor,
+                UUID.fromString(workspaceId), null);
+        assertEquals("provider-model", snapshot.path("source").asText());
+        assertEquals("instance", snapshot.path("layer").asText());
+        assertEquals(TEMPLATE_ID, snapshot.path("template").path("id").asText());
+        assertEquals(1, snapshot.path("template").path("version").asInt());
+
+        // Precedence (card 判据②): the caller's OWN user row wins over the Connection owner
+        // layer, which is exactly the order resolve() already had - step 2 (user row) runs
+        // before the owner-layer fallback this card adds. Pinned with two different template
+        // ids so the assertion cannot pass by accident.
+        UUID userTemplateId = UUID.randomUUID();
+        ResponseEntity<Map> userWritten = putUserTemplateConfig(Map.of(
+                "templates", "[" + publishedFragment(userTemplateId.toString(), 1, "用户模板 v1") + "]",
+                "providerModelBindings", "{\"" + connectionId + "\":{\"precedence-model\":{"
+                        + "\"layer\":\"user\",\"templateId\":\"" + userTemplateId + "\",\"version\":1}}}"));
+        assertEquals(HttpStatus.OK, userWritten.getStatusCode(), String.valueOf(userWritten.getBody()));
+        var withUserRow = apiRequestTemplates.resolve(connection, "precedence-model", actor,
+                UUID.fromString(workspaceId), null);
+        assertEquals("user", withUserRow.path("layer").asText(), String.valueOf(withUserRow));
+        assertEquals(userTemplateId.toString(), withUserRow.path("template").path("id").asText());
+    }
+
+    @Test
+    void instanceLayerCannotBindAUserOwnedConnectionModels() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        var userOwned = ChatBindingTestSupport.ensureChatConnection(
+                providerConnectionRepository, "USER", userId, "ctx-foreign");
+        String overrides = "{\"" + userOwned.getId() + "\":{\"foreign-model\":{\"layer\":\"instance\","
+                + "\"templateId\":\"" + TEMPLATE_ID + "\",\"version\":1}}}";
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("providerModelBindings", overrides), bearerJson(token)),
+                Map.class);
+        // Widening the layer is not "the instance may bind anyone's Connection": an override
+        // belongs to the Connection owner layer, so a USER-owned Connection is invisible here.
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("PROVIDER_CONNECTION_NOT_FOUND", response.getBody().get("code"));
     }
 
     @Test
@@ -534,6 +642,42 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
                 + " was not persisted within " + RUN_WAIT);
     }
 
+    /** task-343: the fixture must really hold instance:admin, otherwise the 200 is meaningless. */
+    private void grantInstanceAdmin(UUID target) {
+        AccessRole adminRole = roleRepository.findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow();
+        bindingRepository.saveAndFlush(new AccessRoleBinding(adminRole.getId(),
+                AuthzContext.SUBJECT_USER, target, AccessScope.INSTANCE, null, target));
+        // Action atoms are answered from the materialized grants(source='role') rows, not from
+        // the binding itself: without this the capability cache says admin while the
+        // @PreAuthorize atom gate still answers 403.
+        roleGrantMaterializer.materializeSubject("user", target, target, null);
+        authzContext.invalidate(target);
+        assertTrue(authzContext.isInstanceAdmin(target),
+                "fixture must really hold instance:admin, otherwise the positive case proves nothing");
+    }
+
+    /**
+     * task-343: an INSTANCE-owned chat Connection (D-922: consumable by every bound consumer).
+     * Built directly instead of through {@link ChatBindingTestSupport} because the credential
+     * fixture creates its row as the owner actor, which is not what this contract is about.
+     */
+    private ProviderConnection instanceChatConnection(String connectionKey) {
+        ProviderConnection connection = new ProviderConnection();
+        connection.setId(UUID.randomUUID());
+        connection.setOwnerType(ProviderConnection.OWNER_INSTANCE);
+        connection.setOwnerId(instanceIdentity.ownerId());
+        connection.setProviderId("custom-openai-compatible");
+        connection.setConnectionKey(connectionKey);
+        connection.setApiTypeId(CHAT_TYPE_ID);
+        connection.setApiTypeVersion(CHAT_TYPE_VERSION);
+        connection.setLabel("instance chat fixture " + connectionKey);
+        connection.setModelDiscovery("remote-models");
+        connection.setEnabled(true);
+        connection.setStatus(ProviderConnection.STATUS_READY);
+        connection.setRevision(1L);
+        return providerConnectionRepository.saveAndFlush(connection);
+    }
+
     private ResponseEntity<Map> putUserTemplates(String templatesJson) {
         return putUserTemplateConfig(Map.of("templates", templatesJson));
     }
@@ -574,8 +718,13 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
 
     /** A published, Type-valid revision of the shared TEMPLATE_ID. */
     private String publishedFragment(int version, String name) {
+        return publishedFragment(TEMPLATE_ID, version, name);
+    }
+
+    /** A published, Type-valid revision of an arbitrary template id (task-343 precedence case). */
+    private String publishedFragment(String templateId, int version, String name) {
         var node = objectMapper.createObjectNode();
-        node.put("id", TEMPLATE_ID).put("version", version).put("name", name)
+        node.put("id", templateId).put("version", version).put("name", name)
                 .put("description", "d").put("apiTypeId", CHAT_TYPE_ID).put("apiTypeVersion", CHAT_TYPE_VERSION)
                 .put("bodySource", VALID_BODY_SOURCE).put("status", "published");
         return node.toString();

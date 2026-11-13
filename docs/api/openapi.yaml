@@ -2712,14 +2712,15 @@ paths:
       tags: [config]
       operationId: saveApiRequestTemplates
       summary: Save API request templates for one layer
-      description: 'BL-320 批 3（**有意保留 / kept-by-design**）：同上，`{layer}` ∈ `instance|user|workspace` 分别对应已注册的 `PUT /api/v1/config/{layer}/{domain}` 且 `domain=api-request-templates` 的具体示例，不是独立路径。'
+      description: 'BL-320 批 3（**有意保留 / kept-by-design**）：同上，`{layer}` ∈ `instance|user|workspace` 分别对应已注册的 `PUT /api/v1/config/{layer}/{domain}` 且 `domain=api-request-templates` 的具体示例，不是独立路径。**providerModelBindings 的存储层 = 绑定的「到」层**：消费方自己的 user 行，或 Connection owner 所在层（D-1140：实例层与用户层同构，实例 Connection 的按模型绑定写在实例层；workspace Connection 的写在 workspace 层）。写别的 owner 的连接 ⇒ 404 PROVIDER_CONNECTION_NOT_FOUND（该连接在本层作用域外，不是「模型绑定只能写在 user 层」）。解析顺序不变：显式选择 > user 行 > Connection owner 层 > connection-default > built-in-default。'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace, workspace-default] }, description: 'DEPRECATED value: workspace is retired from the target contract (2026-11-10 user ruling, PLAN-0763 task-250 / D-800); CP still accepts it until the UI stops calling it (task-253).' }]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: { type: string }, description: 'templates, connectionDefaultTemplates and providerModelBindings are JSON strings. Published versions are immutable; drafts preserve invalid raw source.' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: { type: string }, description: 'templates, connectionDefaultTemplates and providerModelBindings are JSON strings. Published versions are immutable; drafts preserve invalid raw source. providerModelBindings keys are Connection ids of the layer owner; unknown ids and ids owned by another layer fail with 404 PROVIDER_CONNECTION_NOT_FOUND.' } } } }
       responses:
         '200': { description: Saved authorized config envelope }
         '400': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/provider-connections/{connectionId}/api-type-change-impact:
     get:
