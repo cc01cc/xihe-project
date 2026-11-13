@@ -421,6 +421,42 @@ describe("RolesView delete flow", () => {
 });
 
 describe("RoleBindingsPanel", () => {
+    /**
+     * task-409 P2-4（D-949 #21 A）：有效原子原来是 `atoms.join(", ")` 一行逗号串 ——
+     * 机器标识符挤在一起读不出边界、也选不准单个。改为逐个 code + title。
+     */
+    it("P2-4：有效原子逐个渲染为 code 并带 title", async () => {
+        mockedApi.getBindings.mockResolvedValue({
+            scopeType: "instance",
+            scopeId: null,
+            bindings: [
+                {
+                    id: "b-1",
+                    subjectType: "user",
+                    subjectId: "user-1",
+                    roleId: "role-sys",
+                    roleName: "SUPER_ADMIN",
+                    grantedBy: null,
+                    grantedAt: null,
+                },
+            ],
+        });
+        mockedApi.listAdminUsers.mockResolvedValue([
+            { id: "user-1", email: "a@xihe.local", username: "alice" },
+        ]);
+        const wrapper = await mountView();
+        await clickBody('[data-testid="roles-tab-bindings"]');
+        const codes = wrapper
+            .get('[data-testid="role-bindings-effective"]')
+            .findAll('[data-testid="binding-effective-atoms"] code');
+        expect(codes.length).toBe(SYSTEM_ROLE.atoms.length);
+        // 顺序不是契约（effectiveSummary 用 Set 去重）⇒ 比集合，不比排列
+        expect(codes.map((c) => c.attributes("title")).sort()).toEqual(
+            SYSTEM_ROLE.atoms.map((a) => a.name).sort(),
+        );
+        wrapper.unmount();
+    });
+
     async function openBindings() {
         const wrapper = await mountView();
         await clickBody('[data-testid="roles-tab-bindings"]');

@@ -300,3 +300,45 @@ describe("API request template lifecycle", () => {
         wrapper.unmount();
     });
 });
+
+/**
+ * task-409 P2-2（D-949 第21条 A）：空态只有一句话，没有出口 —— 用户看到「还没有模板」
+ * 却要去工具栏找「新建」。空态内嵌 CTA，走**同一条 create 路径**，不另写一份创建逻辑。
+ * testid 沿用既有 `api-request-*` 前缀（`api-request-type` 被 2 个 real e2e spec 引用，不改名）。
+ */
+describe("API request template empty state · task-409 P2-2", () => {
+    function mountPanel() {
+        return mount(Panel, {
+            props: { entries: { templates: JSON.stringify([]) }, saving: false, layer: "user" },
+        });
+    }
+
+    it("空态给出内嵌新建 CTA", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        const empty = wrapper.get('[data-testid="api-request-empty"]');
+        expect(empty.find('[data-testid="api-request-empty-create"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("点空态 CTA 走既有 create 路径，进入草稿详情", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(false);
+        await wrapper.get('[data-testid="api-request-empty-create"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("没有可用类型时 CTA 禁用（与工具栏同一判据）", async () => {
+        vi.mocked(listApiInputTypes).mockResolvedValue({ types: [] } as Awaited<
+            ReturnType<typeof listApiInputTypes>
+        >);
+        const wrapper = mountPanel();
+        await flushPromises();
+        const cta = wrapper.get('[data-testid="api-request-empty-create"]');
+        expect(cta.attributes("disabled")).toBeDefined();
+        wrapper.unmount();
+    });
+});

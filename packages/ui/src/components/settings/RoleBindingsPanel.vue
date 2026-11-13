@@ -483,7 +483,19 @@ defineExpose({ load });
                 <li v-for="entry in effectiveSummary" :key="`eff-${entry.subjectId}`">
                     <span class="font-mono">{{ subjectLabel(entry.subjectId) }}</span
                     >:
-                    <span class="font-mono">{{ entry.atoms.join(", ") || "—" }}</span>
+                    <!-- task-409 P2-4：原子名是机器标识符，逐个 code 呈现并给 title，
+                         不再挤成一行逗号串（长串既读不出边界也选不准单个）。 -->
+                    <span v-if="entry.atoms.length === 0">—</span>
+                    <span v-else class="flex flex-wrap gap-1" data-testid="binding-effective-atoms">
+                        <code
+                            v-for="atom in entry.atoms"
+                            :key="atom"
+                            class="rounded bg-muted px-1 py-0.5 font-mono text-xs"
+                            :title="atom"
+                        >
+                            {{ atom }}
+                        </code>
+                    </span>
                 </li>
             </ul>
         </div>

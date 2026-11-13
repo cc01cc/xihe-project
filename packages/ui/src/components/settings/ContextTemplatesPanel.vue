@@ -339,9 +339,36 @@ async function save(publish: boolean) {
                         >v{{ item.version }} · {{ statusLabel(item.status) }}</span
                     >
                 </button>
-                <p v-if="latest.length === 0" class="p-3 text-xs text-muted-foreground">
-                    {{ t("settings.apiRequest.empty") }}
-                </p>
+                <!--
+                    task-409 P2-2（D-949 #21 A）：空态原来只有一句话，没有出口。
+                    内嵌 CTA 走**同一条 create()**，不另写创建逻辑；禁用判据与工具栏一致。
+                    testid 沿用既有 api-request-* 前缀：api-request-type 被 2 个 real e2e spec 引用，
+                    改名只会打断它们而没有收益。
+                -->
+                <div
+                    v-if="latest.length === 0"
+                    class="space-y-2 p-3"
+                    data-testid="api-request-empty"
+                >
+                    <p class="text-xs text-muted-foreground">
+                        {{ t("settings.apiRequest.empty") }}
+                    </p>
+                    <button
+                        v-if="!readonly"
+                        type="button"
+                        data-testid="api-request-empty-create"
+                        class="rounded-md border px-3 py-1 text-xs"
+                        :disabled="saving || types.length === 0"
+                        :title="
+                            types.length === 0
+                                ? t('settings.apiRequest.defaultUnavailable')
+                                : undefined
+                        "
+                        @click="create"
+                    >
+                        {{ t("settings.apiRequest.new") }}
+                    </button>
+                </div>
             </nav>
             <div v-if="selected" class="min-w-0 space-y-3 p-4">
                 <div class="flex flex-wrap items-center gap-2 text-xs">
