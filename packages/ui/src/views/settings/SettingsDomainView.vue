@@ -124,6 +124,12 @@ const showSummary = computed(
 );
 /** M>0 才显示；纯引导页/连接管理页没有可编辑字段 ⇒ 不显示徽标（task-78）。 */
 const editableCount = ref(0);
+/**
+ * task-285：计数的口径附注（`ConfigLayerPanels` 用第二个事件给）。只有「静态字段数 != 全部可编辑项」
+ * 的域才非空（目前是 `context-policy`：`models` 是行数随数据变化的按模型覆盖子表）。
+ * 为什么不写成「N 项」的一部分：句子由子表所在组件算（它才知道有几行），这里只负责显示。
+ */
+const editableCountNote = ref("");
 const showEditableCount = computed(
     () =>
         activeTab.value === "policy" &&
@@ -219,6 +225,14 @@ watch(
                 class="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs leading-none tabular-nums text-muted-foreground"
             >
                 {{ t("settings.ia.domainEditableCount", { count: editableCount }) }}
+            </span>
+            <!-- task-285：计数只数静态可枚举字段；子表行数另计，必须在计数旁自述口径。 -->
+            <span
+                v-if="showEditableCount && editableCountNote"
+                data-testid="settings-domain-editable-count-note"
+                class="shrink-0 text-xs leading-none text-muted-foreground"
+            >
+                {{ editableCountNote }}
             </span>
             <p
                 v-if="showSummary"
@@ -367,6 +381,7 @@ watch(
                 :domain="resolved.domain"
                 :readonly="panelReadonly"
                 @editable-count="editableCount = $event"
+                @editable-count-note="editableCountNote = $event"
             />
         </div>
     </section>

@@ -68,6 +68,13 @@ const emit = defineEmits<{
     "switch-layer": [layer: "instance" | "user"];
     /** task-157：当前域页的可编辑字段数（SettingsDomainView 的页头次量纲 M）。 */
     "editable-count": [count: number];
+    /**
+     * task-285：计数的**口径附注**。`editableFieldCount` 只数静态可枚举字段，而
+     * `context-policy.models` 是行数随数据变化的子表 —— 光给 13 会让读者以为 13 就是全部。
+     * 用第二个事件而不是把 count 改成对象：既有断言都断言在数字上，改形状会把别的域的读数
+     * 一起打碎（additive 才不伤）。
+     */
+    "editable-count-note": [note: string];
 }>();
 
 const settings = useSettingsStore();
@@ -497,7 +504,20 @@ const editableFieldCount = computed<number>(() => {
         return true;
     }).length;
 });
+/**
+ * 计数口径附注（见 emit 声明处）。只有「静态可枚举字段数 != 该域全部可编辑项」的域才给附注；
+ * 行数从**当前层已加载的值**里数，所以保存后行数变化会跟着变 —— 不写死。
+ */
+const editableCountNote = computed<string>(() => {
+    if (props.domain !== CONTEXT_POLICY_DOMAIN || props.readonly) return "";
+    const entries = configStore.layerConfig[props.layer]?.[CONTEXT_POLICY_DOMAIN] || {};
+    const rows = Object.keys(parseObjectValue(entries[MODELS_KEY])).length;
+    return rows > 0
+        ? t("settings.ia.domainEditableCountNote", { rows })
+        : t("settings.ia.domainEditableCountNoteEmpty");
+});
 watchEffect(() => emit("editable-count", editableFieldCount.value));
+watchEffect(() => emit("editable-count-note", editableCountNote.value));
 
 /**
  * task-125（D-899，方案 B）：user-preference.language 是 settings store 的**薄皮肤** ——
