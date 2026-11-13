@@ -205,6 +205,7 @@ function downloadBlob(blob: Blob, filename: string) {
         <template v-else-if="permissionsChecked">
             <div class="space-y-2">
                 <button
+                    data-testid="settings-data-export-settings"
                     class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
                     :disabled="exporting"
                     @click="exportSettings"
@@ -212,6 +213,7 @@ function downloadBlob(blob: Blob, filename: string) {
                     {{ t("settings.exportSettings") }}
                 </button>
                 <button
+                    data-testid="settings-data-export-chats"
                     class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
                     :disabled="exporting"
                     @click="exportChats"
@@ -222,6 +224,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
             <div class="border-t pt-3 space-y-2">
                 <button
+                    data-testid="settings-data-import"
                     class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors"
                     @click="($refs.fileInput as HTMLInputElement)?.click()"
                 >
@@ -229,6 +232,7 @@ function downloadBlob(blob: Blob, filename: string) {
                 </button>
                 <input
                     ref="fileInput"
+                    data-testid="settings-data-import-file"
                     type="file"
                     accept=".json"
                     class="hidden"
