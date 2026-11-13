@@ -22,6 +22,7 @@ import {
     SidebarMenuItem,
     SidebarProvider,
     SidebarRail,
+    SidebarSeparator,
 } from "../ui/sidebar";
 import GlobalRailModule from "./GlobalRailModule.vue";
 
@@ -195,32 +196,15 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                 </SidebarGroup>
             </SidebarContent>
             <!-- task-50 B2：footer 与顶部组同一内距，折起态两个图标各自居中。 -->
+            <!--
+                task-214（用户 2026-11-13 裁定）：footer 里**两类东西不许混排** ——
+                动作项（设置 / 退出登录，是「对应用做的事」）与框架控件（收起/展开，是
+                「对这根栏做的事」）。收起属于**栏的边界**，贴最底；两者之间用 vendored
+                `SidebarSeparator` 分隔（既有 token `bg-sidebar-border`，不新增色阶）。
+                这里只移动、不改任何 class/tooltip/aria。
+            -->
             <SidebarFooter class="group-data-[collapsible=icon]:p-4">
                 <SidebarMenu>
-                    <!--
-                        task-189 双态切换控件（D-896 的「必须有可见切换控件」）：
-                        `aria-expanded` 反映真实状态、`aria-label` 随态变化、原生 button ⇒
-                        Enter/Space 可切；折叠态它自己也有 tooltip（rail 里没有文字时靠它认路）。
-                    -->
-                    <SidebarMenuItem>
-                        <SidebarMenuButton
-                            data-testid="global-rail-toggle"
-                            :aria-expanded="railOpen"
-                            :aria-label="railOpen ? t('sidebar.collapse') : t('sidebar.expand')"
-                            :tooltip="railOpen ? undefined : t('sidebar.expand')"
-                            @click="railOpen = !railOpen"
-                        >
-                            <PanelLeftClose
-                                v-if="railOpen"
-                                class="size-4 shrink-0"
-                                aria-hidden="true"
-                            />
-                            <PanelLeftOpen v-else class="size-4 shrink-0" aria-hidden="true" />
-                            <span class="truncate group-data-[collapsible=icon]:hidden">{{
-                                t("sidebar.collapse")
-                            }}</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
                     <GlobalRailModule
                         v-for="module in footerModules"
                         :key="module.id"
@@ -241,6 +225,35 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                             <LogOut class="size-4 shrink-0" aria-hidden="true" />
                             <span class="truncate group-data-[collapsible=icon]:hidden">{{
                                 t("sidebar.logout")
+                            }}</span>
+                        </SidebarMenuButton>
+                    </SidebarMenuItem>
+                </SidebarMenu>
+                <SidebarSeparator />
+                <SidebarMenu>
+                    <!--
+                        task-189 双态切换控件（D-896 的「必须有可见切换控件」）：
+                        `aria-expanded` 反映真实状态、`aria-label` 随态变化、原生 button ⇒
+                        Enter/Space 可切；折叠态它自己也有 tooltip（rail 里没有文字时靠它认路）。
+
+                        task-214：位置移到动作组之后（footer 最底）—— 控件本身一字未改。
+                    -->
+                    <SidebarMenuItem>
+                        <SidebarMenuButton
+                            data-testid="global-rail-toggle"
+                            :aria-expanded="railOpen"
+                            :aria-label="railOpen ? t('sidebar.collapse') : t('sidebar.expand')"
+                            :tooltip="railOpen ? undefined : t('sidebar.expand')"
+                            @click="railOpen = !railOpen"
+                        >
+                            <PanelLeftClose
+                                v-if="railOpen"
+                                class="size-4 shrink-0"
+                                aria-hidden="true"
+                            />
+                            <PanelLeftOpen v-else class="size-4 shrink-0" aria-hidden="true" />
+                            <span class="truncate group-data-[collapsible=icon]:hidden">{{
+                                t("sidebar.collapse")
                             }}</span>
                         </SidebarMenuButton>
                     </SidebarMenuItem>

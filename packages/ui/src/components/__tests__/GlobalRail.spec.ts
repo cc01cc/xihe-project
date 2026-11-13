@@ -17,6 +17,13 @@ const messages = {
             logout: "退出登录",
             admin: "管理",
             toggle: "切换侧边栏",
+            // task-214：footer 顺序断言要读 `global-rail-toggle` 的 aria-label（随态变化）。
+            collapse: "收起侧边栏",
+            expand: "展开侧边栏",
+            // 夹具补齐（本条与本卡改动无关的存量缺口）：`GlobalRailModule` 用到
+            // `sidebar.moduleMenu`，而本夹具的 messages 没这条 ⇒ 该文件在 HEAD 上就红
+            // （"渲染结果里出现裸 i18n 键"）。补键不改判据、不放宽断言。
+            moduleMenu: "打开模块页面菜单",
         },
     },
 };
@@ -84,6 +91,24 @@ function railState(wrapper: ReturnType<typeof mount>): string | null {
     return rail.closest('[data-slot="sidebar"]')?.getAttribute("data-state") ?? null;
 }
 
+/**
+ * footer 里**三个相关控件**的 DOM 顺序（task-214）。只取这三个 id 而不是整个
+ * `[data-testid]` 列表：`GlobalRailModule` 内部还渲染了自己的 testid
+ * （`global-rail-menu-settings`），把它算进来会让断言在「模块内部结构变了」时假红 ——
+ * 本卡要证明的是**这三者的先后**，不是 footer 里恰好只有三项。
+ */
+const FOOTER_ACTION_IDS = [
+    "global-rail-module-settings",
+    "global-rail-logout",
+    "global-rail-toggle",
+] as const;
+
+function footerActionOrder(wrapper: ReturnType<typeof mount>): string[] {
+    const footer = wrapper.get('[data-testid="global-rail"] [data-slot="sidebar-footer"]');
+    const ids = footer.findAll("[data-testid]").map((node) => node.attributes("data-testid") ?? "");
+    return ids.filter((id) => (FOOTER_ACTION_IDS as readonly string[]).includes(id));
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
@@ -131,6 +156,51 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         expect(wrapper.find('[data-sidebar="rail"]').exists()).toBe(true);
     });
 
+    /**
+     * task-214（Lead 裁定）：footer 里**动作项**（设置 / 退出登录）与**框架控件**（收起/展开）
+     * 不许混排 —— 收起属于「栏的边界」，必须贴最底。
+     *
+     * <p>判据用 **DOM 顺序**（`[data-testid]` 序列）而不是坐标：jsdom 没有布局，坐标只会
+     * 变成 0 ⇒ 断言恒真。这条断言是**唯一**能证明"位置"的东西 —— 本文件此前只断言了
+     * aria 属性（`aria-label`/`aria-expanded`），那种断言在控件被挪到中间时照样绿。</p>
+     */
+    it("footer 顺序：动作组（设置 → 登出）在上，收起控件贴最底（折起/展开两态同构）", async () => {
+        patchAuth();
+        const wrapper = await mountRail();
+        // 折起态（默认 56px 图标栏）
+        expect(railState(wrapper)).toBe("collapsed");
+        expect(footerActionOrder(wrapper)).toEqual([
+            "global-rail-module-settings",
+            "global-rail-logout",
+            "global-rail-toggle",
+        ]);
+        // 框架控件与动作组之间有 vendored 分隔件（`SidebarSeparator`），只用既有 token。
+        const footer = wrapper.get('[data-testid="global-rail"] [data-slot="sidebar-footer"]');
+        expect(footer.findAll('[data-sidebar="separator"]')).toHaveLength(1);
+
+        const toggle = wrapper.get('[data-testid="global-rail-toggle"]');
+        // 折起态仍可见：DOM 里存在且是**原生 button**（Enter/Space 可切由它保证，不靠额外 keydown 绑定）。
+        expect(toggle.element.tagName).toBe("BUTTON");
+        expect(toggle.attributes("aria-expanded")).toBe("false");
+        expect(toggle.attributes("aria-label")).toBe("展开侧边栏");
+
+        // 点一下换态：aria 三件（expanded / label / 文案）一起跟，顺序不受影响。
+        await toggle.trigger("click");
+        await flushPromises();
+        expect(railState(wrapper)).toBe("expanded");
+        expect(wrapper.get('[data-testid="global-rail-toggle"]').attributes("aria-expanded")).toBe(
+            "true",
+        );
+        expect(wrapper.get('[data-testid="global-rail-toggle"]').attributes("aria-label")).toBe(
+            "收起侧边栏",
+        );
+        expect(footerActionOrder(wrapper)).toEqual([
+            "global-rail-module-settings",
+            "global-rail-logout",
+            "global-rail-toggle",
+        ]);
+    });
+
     it("is icon-only by default and expands to icon+text via the rail handle (dual state)", async () => {
         patchAuth();
         const wrapper = await mountRail();
@@ -140,14 +210,20 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         await flushPromises();
 
         expect(railState(wrapper)).toBe("expanded");
-        // 双态持久化：独立 key；绝不写全局布局键 xihe-layout-global（T2.4 防串味）。
-        expect(localStorage.getItem("xihe-global-rail-open")).toBe("true");
+        // 双态持久化口径随 task-189（0126ef771，2026-11-13）改成状态对象 `xihe-global-rail`
+        // = `{ open, width }`；旧布尔键 `xihe-global-rail-open` 只作一次性迁移输入、随后清除。
+        // （本条与 task-214 的 footer 移位无关：旧断言写的是**迁移前**的键 ⇒ 自 task-189 起一直红。）
+        expect(JSON.parse(localStorage.getItem("xihe-global-rail") ?? "{}").open).toBe(true);
+        expect(localStorage.getItem("xihe-global-rail-open")).toBeNull();
+        // 独立 key；绝不写全局布局键 xihe-layout-global（T2.4 防串味）。
         expect(localStorage.getItem("xihe-layout-global")).toBeNull();
     });
 
     it("restores the persisted expanded state on the next mount", async () => {
         patchAuth();
-        localStorage.setItem("xihe-global-rail-open", "true");
+        // 同 task-189 口径：新键是 `{ open, width }`。种子必须写新键 —— 写旧布尔键时
+        // `useStorage` 会先落默认值、迁移逻辑随即因「新键已存在」放弃迁移 ⇒ 永远读不到。
+        localStorage.setItem("xihe-global-rail", JSON.stringify({ open: true, width: 288 }));
         const wrapper = await mountRail();
         expect(railState(wrapper)).toBe("expanded");
     });
@@ -161,11 +237,12 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         await wrapper.get('[data-testid="global-rail-module-workbench"]').trigger("click");
         expect(pushSpy).toHaveBeenLastCalledWith("/workspace");
 
-        // PLAN-0772 M2：第三入口点下去要落到**默认资源子页**，且落点只能有一处定义
-        // （`/resources` 的 router redirect 也用同一个 `defaultResourcePath()`）⇒ 这里断言
-        // 函数返回值而不是复制字面量，否则两处一改就漂。
+        // PLAN-0772 M2：第三入口点下去要落到**默认资源子页**。
+        // 组件侧落地 = `resourcePath(RESOURCE_DEFS[0].id)`（`globalModules.ts:100`，**不带层**）；
+        // `defaultResourcePath()` 额外带 `?layer=`，层由 `/resources/<id>` 的 `beforeEnter`
+        // 规范化写回 ⇒ 判据是「落到同一页」，故这里比**路径部分**而不是整串。
         await wrapper.get('[data-testid="global-rail-module-resources"]').trigger("click");
-        expect(pushSpy).toHaveBeenLastCalledWith(defaultResourcePath());
+        expect(String(pushSpy.mock.lastCall?.[0])).toBe(defaultResourcePath().split("?")[0]);
         expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
     });
 
