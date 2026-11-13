@@ -90,20 +90,66 @@ const canDeleteOverride = computed(() => props.layer === "instance");
 const expanded = ref(true),
     editing = ref<Record<string, string>>({});
 
-function initDraft(): Record<string, string> {
-    const init: Record<string, string> = {};
+/**
+ * 上一次草稿同步所依据的 entries 值 —— 判「这个键有没有未保存编辑」的**基准**。
+ * 必须拿它与草稿比，不能拿**新到的** entries 与草稿比：后者会把「服务端刚改了这个键」
+ * 误判成「用户改了这个键」，于是永远不同步（正是 task-464 的缺陷形态）。
+ */
+let syncedEntries: Record<string, string> = {};
+
+function entriesSnapshot(): Record<string, string> {
+    const snap: Record<string, string> = {};
     for (const field of props.schema) {
-        init[field.key] = props.entries[field.key] ?? "";
+        snap[field.key] = props.entries[field.key] ?? "";
     }
-    return init;
+    return snap;
+}
+
+function initDraft(): Record<string, string> {
+    return entriesSnapshot();
 }
 
 watch(
     expanded,
     (open) => {
-        if (open) editing.value = initDraft();
+        if (!open) return;
+        editing.value = initDraft();
+        syncedEntries = entriesSnapshot();
     },
     { immediate: true },
+);
+
+/**
+ * task-464（D-1317，cp-2 task-462 诊断）：**entries 异步到达/变化时同步草稿**。
+ *
+ * <p>缺陷：域卡容器是 `v-show`（`SettingsDomainView:373`）⇒ 面板立即挂载，早于 `loadLayerDomains`
+ * 取数；草稿只由上面那个 `watch(expanded, {immediate:true})` 初始化一次，挂载那刻 entries 还是空 ⇒
+ * 草稿全空串；取数到达后没有 watch entries ⇒ 草稿不重算 ⇒ Select 的 model-value 空 ⇒ trigger 空串
+ * ⇒ e2e「手动审批」断言稳定红（fresh goto 确定性复现，不是 flaky）。CP/mock 数据都对，是 UI 渲染缺陷。</p>
+ *
+ * <p>**只同步没有未保存编辑的键**（task-74 语义）：草稿与 `syncedEntries` 相同 ⇒ 用户没动过 ⇒ 跟服务端走；
+ * 不同 ⇒ 用户正在编辑 ⇒ 保留。`handleReset` 的乐观清空因此也不会被随后到达的 entries 复活
+ * （清空后草稿 "" 与旧基准不同 ⇒ 判为未保存编辑 ⇒ 保留空串，正是重置要的结果）。</p>
+ *
+ * <p>**不会造成 task-121 的自持循环**：本 watch 只写本地草稿，不 emit、不取数、不改 `expanded`；
+ * 容器仍是 `v-show` + 单调 `layerSettled`（不改回 `v-if`）。watch 源是 `props.entries` 而不是草稿，
+ * 所以写草稿不会反过来触发自己。</p>
+ */
+watch(
+    () => props.entries,
+    () => {
+        if (!expanded.value) return;
+        const next = entriesSnapshot();
+        const merged: Record<string, string> = { ...editing.value };
+        for (const field of props.schema) {
+            const key = field.key;
+            const dirty = (editing.value[key] ?? "") !== (syncedEntries[key] ?? "");
+            if (!dirty) merged[key] = next[key];
+        }
+        editing.value = merged;
+        syncedEntries = next;
+    },
+    { deep: true },
 );
 
 function toggle() {
@@ -515,10 +561,12 @@ function handleSave() {
 }
 
 function handleReset(key: string) {
-    // 乐观清空该键草稿：重置 = 删掉本层覆盖（父组件 DELETE 后整层 reload），但 `editing` 只在展开
-    // 那一刻初始化（`toggle()`），`props.entries` 变了草稿不重算 ⇒ 输入框会留着刚被删掉的旧值
-    // （task-74 B1 浏览器量测实测：DELETE 已发出、回读已完成，输入框仍显示 1234 = "点了重置没反应"）。
-    // 这里只清这一个键，不动其它键的未保存编辑。
+    // 乐观清空该键草稿：重置 = 删掉本层覆盖（父组件 DELETE 后整层 reload）。
+    // 历史缺陷（task-74 B1 浏览器量测）：DELETE 已发出、回读已完成，输入框仍显示 1234 =
+    // "点了重置没反应"，因为当时草稿只在展开那一刻初始化、entries 变了不重算。
+    // **task-464 起草稿会跟着 entries 同步**（见上面的 watch），但这里仍只清这一个键：
+    // 清空后草稿 "" 与同步基准不同 ⇒ 被判为「未保存编辑」⇒ 随后到达的 entries **不会把它复活**，
+    // 正是重置要的结果；其它键的未保存编辑同样不受影响。
     editing.value[key] = "";
     emit("reset", key);
 }
