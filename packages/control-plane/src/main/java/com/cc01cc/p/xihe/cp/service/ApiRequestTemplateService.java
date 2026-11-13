@@ -265,10 +265,28 @@ public class ApiRequestTemplateService {
     @Transactional
     public ProviderConnection lockConnection(String id) {
         timeout.apply();
-        ProviderConnection connection = connections.findByIdForUpdate(UUID.fromString(id))
+        // task-425 B: both binding faces reach the row through this lock (PATCH pre-checks with it,
+        // the creation path calls it inside the funnel), so the shape guard lives here ONCE instead
+        // of a second copy per face. A raw UUID.fromString failure surfaced either as the generic
+        // "Request validation failed" (PATCH) or as the leaked Java text "Invalid UUID string: …"
+        // (creation) — neither tells the caller which field is wrong.
+        UUID connectionId = requireConnectionId(id);
+        ProviderConnection connection = connections.findByIdForUpdate(connectionId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "PROVIDER_CONNECTION_NOT_FOUND", "Connection not found"));
         em.refresh(connection);
         return connection;
+    }
+
+    /** task-425 B: a readable, field-named refusal for a missing or malformed connection id. */
+    private static UUID requireConnectionId(String id) {
+        if (id == null || id.isBlank()) {
+            throw invalid("providerConnectionId must be a UUID");
+        }
+        try {
+            return UUID.fromString(id);
+        } catch (IllegalArgumentException notAUuid) {
+            throw invalid("providerConnectionId must be a UUID");
+        }
     }
 
     private void lockScope(String layer, UUID user, UUID workspace) {

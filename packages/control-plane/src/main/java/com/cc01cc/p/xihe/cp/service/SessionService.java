@@ -623,6 +623,12 @@ public class SessionService {
                     || !session.getUserId().equals(userId)) {
                 throw new IllegalArgumentException("Session ownership mismatch");
             }
+        } catch (CpApiException e) {
+            // task-425 A: CpApiException EXTENDS IllegalArgumentException, so the wrapper below would
+            // otherwise re-code a deliberate refusal — measured: the creation path answered
+            // 400 PROVIDER_CONNECTION_UNAVAILABLE for an unknown connection while PATCH answered
+            // 404 PROVIDER_CONNECTION_NOT_FOUND for the very same input. Keep the domain code.
+            throw e;
         } catch (IllegalArgumentException e) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_UNAVAILABLE", e.getMessage());
         }
