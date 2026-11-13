@@ -19,7 +19,8 @@ import TreeItem from "@/components/ui/tree/TreeItem.vue";
  * slot 暴露 `flattenItems`，每项带 `bind: { value, level, "aria-setsize", "aria-posinset" }`。
  * `TreeRoot` **没有** `loadChildren`/`async`（dist 全文无此符号）⇒ 懒加载不是库特性，是 app 侧模式（第三条）。
  *
- * 用 `h()` 而非字符串模板槽：`packages/ui` 的 vue 是 runtime-only，字符串模板需要编译器。
+ * 用 `h()` 而非字符串模板槽：**与生产构建一致、不依赖模块解析条件**（`packages/ui/AGENTS.md`「async 组件替身」
+ * 约定 / `D-1195` ②）。本包单测解析到的 `vue` 其实**带**编译器，所以这里不是「模板编不出来」的问题。
  */
 
 interface Node {
