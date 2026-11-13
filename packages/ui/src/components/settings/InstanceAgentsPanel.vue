@@ -5,6 +5,10 @@ import { toast } from "vue-sonner";
 import { Bot, Plus, Trash2 } from "@lucide/vue";
 
 import { useAuthStore } from "../../stores/auth";
+import { useConfigStore } from "../../stores/config";
+import { chatModelNamesOf, listProviderCatalog } from "../../services/providerConnectionService";
+import { getProviderInfo } from "../../types/provider";
+import type { ProviderDefinition } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
 import {
     createInstanceAgent,
@@ -41,7 +45,9 @@ import {
     DialogHeader,
     DialogTitle,
 } from "../ui/dialog";
+import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
@@ -59,6 +65,7 @@ import SettingsErrorSurface from "./SettingsErrorSurface.vue";
  */
 const { t, locale } = useI18n();
 const auth = useAuthStore();
+const configStore = useConfigStore();
 
 /**
  * 写侧（task-69 行 2，PLAN-0767 T3/T4）：CP 写面是**双门** ——
@@ -93,6 +100,91 @@ const formName = ref("");
 const formDescription = ref("");
 const deleteTarget = ref<InstanceAgent | null>(null);
 
+/**
+ * task-401 / `D-1248`：创建时的**模型意图**（provider＞连接＞模型）。
+ *
+ * <p>契约：`POST /instance/agent-principals` 的 body 就是 `AgentPrincipalCreateRequest`，
+ * 已含 `defaultModelProvider` / `defaultModelName` / `allowedModels`（openapi.yaml:6950），
+ * CP `InstanceAgentPrincipalService#create:56-60` 透传 ⇒ 这是纯 UI 缺口，不是后端缺口。</p>
+ *
+ * <p>连接**只用于挑模型**，不上 wire —— 契约原文「the principal never holds a provider
+ * connection」。模型身份在 UI 侧是 connectionId+modelId，落到载荷是 provider+model。</p>
+ *
+ * <p>数据全部复用既有状态：`configStore.providerConnections` + `modelCache.providers`
+ * （`GET /models` 按 connectionId 聚合），不建第二份连接/目录状态。</p>
+ *
+ * <p>**编辑半不在这里**：`PATCH /instance/agent-principals/{id}` 只收 documents
+ * （additionalProperties:false）⇒ 实例层改模型是 CP 缺口（task-413）。不建会 400 的假入口。</p>
+ */
+const formProvider = ref("");
+const formConnectionId = ref("");
+const formModel = ref("");
+const formRestrictModel = ref(false);
+const bindingLoading = ref(false);
+const providerDefs = ref<ProviderDefinition[]>([]);
+
+const chatConnections = computed(() =>
+    configStore.providerConnections.filter((item) => item.operation === "chat" && item.enabled),
+);
+const providerOptions = computed(() =>
+    [...new Set(chatConnections.value.map((item) => item.providerId))].map((id) => ({
+        id,
+        label:
+            providerDefs.value.find((item) => item.id === id)?.displayName ??
+            getProviderInfo(id)?.name ??
+            id,
+    })),
+);
+const connectionOptions = computed(() =>
+    chatConnections.value.filter((item) => item.providerId === formProvider.value),
+);
+const selectedConnection = computed(
+    () => chatConnections.value.find((item) => item.id === formConnectionId.value) ?? null,
+);
+const modelOptions = computed(() =>
+    selectedConnection.value
+        ? chatModelNamesOf(selectedConnection.value, configStore.modelCache.providers)
+        : [],
+);
+/** 半组选择不是合法载荷：要么三个都空（沿用平台默认），要么三个都有。 */
+const bindingComplete = computed(() => {
+    const picked = [formProvider.value, formConnectionId.value, formModel.value].filter(Boolean);
+    return picked.length === 0 || picked.length === 3;
+});
+const bindingUnavailable = computed(
+    () => configStore.providerConnectionsError || Boolean(configStore.modelError),
+);
+
+async function loadBindingOptions(): Promise<void> {
+    bindingLoading.value = true;
+    try {
+        // 目录失败不阻塞：提供方名退化为 id，连接与模型目录仍可用（两个 store loader 自吞错误）。
+        const catalog = listProviderCatalog()
+            .then((response) => response.providers ?? [])
+            .catch((cause: unknown) => {
+                logger.warn("Provider catalog load failed", cause);
+                return [] as ProviderDefinition[];
+            });
+        const [defs] = await Promise.all([
+            catalog,
+            configStore.loadProviderConnections(),
+            configStore.fetchModels(),
+        ]);
+        providerDefs.value = defs;
+    } finally {
+        bindingLoading.value = false;
+    }
+}
+
+// 级联重置：换提供方就丢连接与模型，换连接就按目录重取模型（首个 chat 模型，与 ProviderHub 同口径）。
+watch(formProvider, () => {
+    formConnectionId.value = "";
+    formModel.value = "";
+});
+watch(formConnectionId, () => {
+    formModel.value = modelOptions.value[0] ?? "";
+});
+
 const countLabel = computed(() =>
     t("settings.instanceResources.agents.count", { count: agents.value.length }),
 );
@@ -122,7 +214,14 @@ async function load(): Promise<void> {
 watch(
     () => auth.isAuthenticated,
     (authenticated) => {
-        if (authenticated) void load();
+        if (!authenticated) return;
+        // task-401：写面判据是**动作原子** `MANAGE_AGENT_PRINCIPALS`，它来自 `/me/permissions`
+        // 投影。资源区这条路由（`/resources/agents?layer=INSTANCE`）上**没有别的组件拉它**
+        // （设置区左栏 `SettingsSidebar` 才拉）⇒ 面板不自取就永远停在「缺原子」禁用态，
+        // 真管理员也点不动（`D-1136` 死路）。与 `SkillsPanel` / `CredentialsPanel` 同形：
+        // 自取投影，幂等 + 单飞由 store 保证。mock e2e 不桩这条端点，验的就是这条自取路径。
+        void auth.ensureSelfPermissions();
+        void load();
     },
     { immediate: true },
 );
@@ -130,11 +229,16 @@ watch(
 function openCreate(): void {
     formName.value = "";
     formDescription.value = "";
+    formProvider.value = "";
+    formConnectionId.value = "";
+    formModel.value = "";
+    formRestrictModel.value = false;
     actionError.value = null;
     createOpen.value = true;
+    void loadBindingOptions();
 }
 
-const canSubmit = computed(() => Boolean(formName.value.trim()));
+const canSubmit = computed(() => Boolean(formName.value.trim()) && bindingComplete.value);
 
 async function submitCreate(): Promise<void> {
     if (!canSubmit.value || submitting.value) return;
@@ -144,6 +248,21 @@ async function submitCreate(): Promise<void> {
         await createInstanceAgent({
             name: formName.value.trim(),
             ...(formDescription.value.trim() ? { description: formDescription.value.trim() } : {}),
+            // 留空 = 不写模型意图，由 CP 沿用平台默认 llm-provider 偏好解析（不假装选了）。
+            ...(formModel.value
+                ? {
+                      defaultModelProvider: formProvider.value,
+                      defaultModelName: formModel.value,
+                      // 省略 = 不限制（契约 null = unrestricted）；勾选才是白名单。
+                      ...(formRestrictModel.value
+                          ? {
+                                allowedModels: [
+                                    { provider: formProvider.value, model: formModel.value },
+                                ],
+                            }
+                          : {}),
+                  }
+                : {}),
         });
         createOpen.value = false;
         toast.success(t("settings.instanceResources.agents.created"));
@@ -384,6 +503,158 @@ async function confirmDelete(): Promise<void> {
                                 v-model="formDescription"
                                 data-testid="instance-agents-form-description"
                             />
+                        </div>
+                        <!--
+                            task-401 / D-1248：模型意图三段（provider＞连接＞模型）。
+                            控件全部用栈内 vendor（Select / Checkbox），中性色 —— 低频可逆动作不上强调色
+                            （注意力预算 L2）；只有「半组选择」这一条阻塞判据用 destructive 文字。
+                        -->
+                        <div
+                            class="space-y-2 rounded-md border border-border p-3"
+                            data-testid="instance-agents-form-model"
+                        >
+                            <div class="space-y-1">
+                                <Label>{{
+                                    t("settings.instanceResources.agents.fieldModel")
+                                }}</Label>
+                                <p class="text-xs text-muted-foreground">
+                                    {{ t("settings.instanceResources.agents.modelHint") }}
+                                </p>
+                            </div>
+                            <div class="grid gap-2 sm:grid-cols-3">
+                                <div class="space-y-1">
+                                    <Label class="text-xs" for="instance-agent-model-provider">
+                                        {{
+                                            t(
+                                                "settings.instanceResources.agents.modelProviderLabel",
+                                            )
+                                        }}
+                                    </Label>
+                                    <Select
+                                        v-model="formProvider"
+                                        :disabled="bindingLoading || providerOptions.length === 0"
+                                    >
+                                        <SelectTrigger
+                                            id="instance-agent-model-provider"
+                                            class="w-full"
+                                            data-testid="instance-agents-form-provider"
+                                        >
+                                            <SelectValue
+                                                :placeholder="
+                                                    t(
+                                                        'settings.instanceResources.agents.modelProviderLabel',
+                                                    )
+                                                "
+                                            />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="option in providerOptions"
+                                                :key="option.id"
+                                                :value="option.id"
+                                            >
+                                                {{ option.label }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div class="space-y-1">
+                                    <Label class="text-xs" for="instance-agent-model-connection">
+                                        {{
+                                            t(
+                                                "settings.instanceResources.agents.modelConnectionLabel",
+                                            )
+                                        }}
+                                    </Label>
+                                    <Select
+                                        v-model="formConnectionId"
+                                        :disabled="bindingLoading || !formProvider"
+                                    >
+                                        <SelectTrigger
+                                            id="instance-agent-model-connection"
+                                            class="w-full"
+                                            data-testid="instance-agents-form-connection"
+                                        >
+                                            <SelectValue
+                                                :placeholder="
+                                                    t(
+                                                        'settings.instanceResources.agents.modelConnectionLabel',
+                                                    )
+                                                "
+                                            />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="option in connectionOptions"
+                                                :key="option.id"
+                                                :value="option.id"
+                                            >
+                                                {{ option.label }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div class="space-y-1">
+                                    <Label class="text-xs" for="instance-agent-model-name">
+                                        {{ t("settings.instanceResources.agents.modelNameLabel") }}
+                                    </Label>
+                                    <Select
+                                        v-model="formModel"
+                                        :disabled="bindingLoading || !formConnectionId"
+                                    >
+                                        <SelectTrigger
+                                            id="instance-agent-model-name"
+                                            class="w-full"
+                                            data-testid="instance-agents-form-model-name"
+                                        >
+                                            <SelectValue
+                                                :placeholder="
+                                                    t(
+                                                        'settings.instanceResources.agents.modelNameLabel',
+                                                    )
+                                                "
+                                            />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem
+                                                v-for="name in modelOptions"
+                                                :key="name"
+                                                :value="name"
+                                            >
+                                                {{ name }}
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+                            <p
+                                v-if="!bindingLoading && chatConnections.length === 0"
+                                class="text-xs text-muted-foreground"
+                                data-testid="instance-agents-model-no-connections"
+                            >
+                                {{ t("settings.instanceResources.agents.modelNoConnections") }}
+                            </p>
+                            <p
+                                v-if="bindingUnavailable"
+                                class="text-xs text-muted-foreground"
+                                data-testid="instance-agents-model-load-failed"
+                            >
+                                {{ t("settings.instanceResources.agents.modelLoadFailed") }}
+                            </p>
+                            <p
+                                v-if="!bindingComplete"
+                                class="text-xs text-destructive"
+                                data-testid="instance-agents-model-incomplete"
+                            >
+                                {{ t("settings.instanceResources.agents.modelIncomplete") }}
+                            </p>
+                            <label v-if="formModel" class="flex items-center gap-2 text-xs">
+                                <Checkbox
+                                    v-model="formRestrictModel"
+                                    data-testid="instance-agents-form-restrict"
+                                />
+                                {{ t("settings.instanceResources.agents.modelRestrict") }}
+                            </label>
                         </div>
                     </div>
                     <DialogFooter>

@@ -262,6 +262,15 @@ export interface InstanceAgentCreateRequest {
     name: string;
     description?: string;
     templateId?: string;
+    /**
+     * task-401 / `D-1248`：契约 `AgentPrincipalCreateRequest`（openapi.yaml:6950）**已收**这三个，
+     * CP `InstanceAgentPrincipalService#create` 也透传 ⇒ 创建面是纯 UI 缺口。
+     * 语义：`defaultModel*` 是**模型意图**，principal 不持有连接（契约原文）；
+     * `allowedModels` 省略/null = 不限制，给值 = 白名单。
+     */
+    defaultModelProvider?: string;
+    defaultModelName?: string;
+    allowedModels?: Array<{ provider: string; model: string }>;
 }
 
 function normalizeAgent(value: unknown): InstanceAgent {
@@ -308,15 +317,14 @@ export function createInstanceAgent(input: InstanceAgentCreateRequest): Promise<
     }).then(normalizeAgent);
 }
 
-export function updateInstanceAgent(
-    id: string,
-    input: Partial<Pick<InstanceAgent, "name" | "description" | "disabled">>,
-): Promise<InstanceAgent> {
-    return request<unknown>(withId(BASE.agents, id), {
-        method: "PATCH",
-        body: JSON.stringify(input),
-    }).then(normalizeAgent);
-}
+/**
+ * task-401 / `D-1248`：这里原先有一个 `updateInstanceAgent(id, {name, description, disabled})`。
+ * 它与契约不符且**无任何消费方**：`PATCH /instance/agent-principals/{id}` 的 body 是
+ * `AgentPrincipalUpdateRequest`（只有 hooks / contextPolicy / delegationPolicy，
+ * `additionalProperties: false`；控制器走 `parseDocuments`）⇒ 发 name/description 会 400。
+ * 留着一个「看起来能改名字/模型」的函数就是给后人埋假入口（`D-1136`），故移除。
+ * 实例层的改名/改模型写面是 CP 缺口，承接卡 task-413；落地后再按真契约加回来。
+ */
 
 export function deleteInstanceAgent(id: string): Promise<void> {
     return request<void>(withId(BASE.agents, id), { method: "DELETE" });

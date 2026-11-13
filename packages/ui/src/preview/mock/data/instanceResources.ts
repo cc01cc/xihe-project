@@ -39,6 +39,8 @@ export interface MockInstanceAgent {
     templateName: string | null;
     defaultModelProvider: string | null;
     defaultModelName: string | null;
+    /** task-401：契约 `AgentPrincipalCreateRequest.allowedModels`；null = 不限制。 */
+    allowedModels: Array<{ provider: string; model: string }> | null;
     createdAt: string;
     disabled: boolean;
 }
@@ -89,6 +91,7 @@ const agents: MockInstanceAgent[] = [
         templateName: "代码评审",
         defaultModelProvider: "anthropic",
         defaultModelName: "claude-sonnet-4.5",
+        allowedModels: null,
         createdAt: "2026-10-21T03:22:00Z",
         disabled: false,
     },
@@ -100,6 +103,7 @@ const agents: MockInstanceAgent[] = [
         templateName: null,
         defaultModelProvider: "openai",
         defaultModelName: "gpt-5.1",
+        allowedModels: null,
         createdAt: "2026-11-05T06:40:00Z",
         disabled: false,
     },
@@ -273,8 +277,23 @@ export async function handleInstanceResource(
                 description: str(body.description).trim() || null,
                 templateId: str(body.templateId) || null,
                 templateName: null,
-                defaultModelProvider: null,
-                defaultModelName: null,
+                // task-401 / `D-1248`：创建面**已收**模型意图三字段（契约 6950 行，CP
+                // `InstanceAgentPrincipalService#create` 透传）。夹具此前硬写 null ⇒ 选了模型
+                // 也看不到，等于用 mock 掩盖「UI 没接线」这件事。现按 body 原样承载。
+                defaultModelProvider: str(body.defaultModelProvider).trim() || null,
+                defaultModelName: str(body.defaultModelName).trim() || null,
+                allowedModels: Array.isArray(body.allowedModels)
+                    ? body.allowedModels
+                          .filter(
+                              (item): item is Record<string, unknown> =>
+                                  typeof item === "object" && item !== null,
+                          )
+                          .map((item) => ({
+                              provider: str(item.provider).trim(),
+                              model: str(item.model).trim(),
+                          }))
+                          .filter((item) => item.provider && item.model)
+                    : null,
                 createdAt: new Date().toISOString(),
                 disabled: false,
             };
@@ -291,15 +310,19 @@ export async function handleInstanceResource(
         if (index < 0) return notFound("AGENT_NOT_FOUND");
         if (upper === "PATCH") {
             const body = await readBody();
+            // task-401 / `D-1248`：契约 `AgentPrincipalUpdateRequest` **只收 documents 三键**
+            // （hooks / contextPolicy / delegationPolicy，`additionalProperties: false`、
+            // `minProperties: 1`；CP 控制器走 `parseDocuments`）。夹具此前照单全收 name /
+            // description / disabled ⇒ 一边掩盖真栈 400，一边让人以为实例层能改名改模型。
+            // 现按契约拒绝；实例层的改名/改模型写面是 CP 缺口（task-413），不是 UI 缺口。
+            // documents 本身不在本 lane 建模（无消费方），故合法请求回当前行。
+            const documentKeys = new Set(["hooks", "contextPolicy", "delegationPolicy"]);
+            const keys = Object.keys(body);
+            const foreign = keys.find((key) => !documentKeys.has(key));
+            if (keys.length === 0 || foreign !== undefined)
+                return badRequest("INVALID_REQUEST", foreign);
             const current = agents[index] as MockInstanceAgent;
-            const updated: MockInstanceAgent = {
-                ...current,
-                ...(str(body.name).trim() ? { name: str(body.name).trim() } : {}),
-                ...(typeof body.description === "string" ? { description: body.description } : {}),
-                ...(typeof body.disabled === "boolean" ? { disabled: body.disabled } : {}),
-            };
-            agents.splice(index, 1, updated);
-            return { status: 200, body: updated };
+            return { status: 200, body: current };
         }
         if (upper === "DELETE") {
             agents.splice(index, 1);

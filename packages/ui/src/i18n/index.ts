@@ -2963,6 +2963,18 @@ const messages = {
                     created: "平台智能体已创建",
                     deleted: "平台智能体已删除",
                     columnModel: "默认模型",
+                    // task-401 / `D-1248`：创建时选模型（provider＞连接＞模型）。编辑半是 CP 缺口
+                    // （PATCH 只收 documents，task-413），所以这里只有创建面的文案。
+                    fieldModel: "默认模型（可选）",
+                    modelHint: "留空 = 沿用平台默认模型偏好；选了就是这条智能体的模型意图。",
+                    modelProviderLabel: "提供方",
+                    modelConnectionLabel: "连接",
+                    modelNameLabel: "模型",
+                    modelRestrict: "只允许这个模型",
+                    modelIncomplete: "提供方、连接、模型要一起选，或一起留空。",
+                    modelNoConnections:
+                        "没有可用的对话连接。可留空沿用平台默认，或先到「模型与连接」建一个。",
+                    modelLoadFailed: "模型目录没加载出来。可留空沿用平台默认，或重试。",
                     disabled: "已停用",
                     deleteTitle: "删除平台智能体",
                     deleteBody: "删除「{name}」后，所有工作区都将失去这个智能体。此操作不可撤销。",
@@ -6534,6 +6546,19 @@ const messages = {
                     created: "Platform agent created",
                     deleted: "Platform agent deleted",
                     columnModel: "Default model",
+                    fieldModel: "Default model (optional)",
+                    modelHint:
+                        "Leave empty to inherit the platform default model preference; picking one sets this agent's model intent.",
+                    modelProviderLabel: "Provider",
+                    modelConnectionLabel: "Connection",
+                    modelNameLabel: "Model",
+                    modelRestrict: "Allow only this model",
+                    modelIncomplete:
+                        "Pick provider, connection and model together, or leave all three empty.",
+                    modelNoConnections:
+                        "No usable chat connection. Leave it empty to inherit the platform default, or create one under Models & connections first.",
+                    modelLoadFailed:
+                        "The model catalog did not load. Leave it empty to inherit the platform default, or retry.",
                     disabled: "Disabled",
                     deleteTitle: "Delete platform agent",
                     deleteBody:

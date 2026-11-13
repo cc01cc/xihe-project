@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
 import type * as apiModule from "../../../composables/api";
 import type * as resourcesModule from "../../../services/instanceResources";
 
@@ -53,6 +54,8 @@ const h = vi.hoisted(() => {
         hasInstanceAdminCapability: true,
         hasInstanceAtom: () => true,
         canWriteWorkspace: true,
+        // task-401：实例智能体面板现在自取 `/me/permissions` 投影（资源区路由上没有别人拉它）。
+        ensureSelfPermissions: async () => true,
     };
     const auth = new Proxy(authBase, {
         get(target, prop) {
@@ -220,6 +223,10 @@ function mountPanel(component: unknown, props: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+    // task-401：实例智能体面板现在读 `useConfigStore()`（模型三段的连接与目录来源）⇒
+    // 本文件必须有 active pinia，否则 mount 处直接抛「no active Pinia」。这里只给真 pinia，
+    // 不桩 store：本文件的判据是「不渲染来源列」，与连接数据无关，空 store 就够。
+    setActivePinia(createPinia());
     vi.clearAllMocks();
     document.body.innerHTML = "";
     window.history.replaceState({}, "", "/workspace/ws-1");
