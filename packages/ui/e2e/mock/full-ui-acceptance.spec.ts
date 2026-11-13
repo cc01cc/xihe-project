@@ -173,7 +173,9 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
             },
             {
                 path: "/workspace/workspace-1",
-                marker: page.getByTestId("workspace-toolbar-settings"),
+                // C3 (task-217): page tabs retired from the tab bar; the workspace
+                // page identity marker is the secondary-nav "会话" entry.
+                marker: page.getByTestId("workspace-nav-sessions"),
             },
             {
                 path: "/workspace/workspace-1/environment",
@@ -200,7 +202,9 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await page.getByTestId("sidebar-workspace").click();
         await expect(page).toHaveURL(/\/workspace\/workspace-1$/);
         await expect(page.getByTestId("sidebar-workspace")).toHaveAttribute("aria-current", "page");
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
+        // C3: the secondary nav is the surviving page-nav surface (tab bar is
+        // session-only now); "会话" is the identity marker of the workspace page.
+        await expect(page.getByTestId("workspace-nav-sessions")).toBeVisible();
 
         // 选择器用 testid 而不是 `getByRole(name)`（**归属：`task-116` 族的既有红**，不是本批迁移引入）：
         // 全局条默认是**折叠态**（`xihe-global-rail-open` 默认 false），折叠时模块标签的 `<span>` 被

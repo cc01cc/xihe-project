@@ -421,9 +421,10 @@ test.describe("@host Workspace — File Panel & Delete Flow", () => {
             { token: registered.accessToken, wsId: workspaceId },
         );
         await page.goto("/workspace/" + workspaceId, { waitUntil: "load" });
-        // Toolbar is only a *ready* signal; the pass condition is the real empty-state
-        // marker rendered by FileTreePanel.vue ("工作区暂无文件").
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
+        // The nav entry is only a *ready* signal; the pass condition is the real
+        // empty-state marker rendered by FileTreePanel.vue ("工作区暂无文件").
+        // C3: ready signal moved to the secondary nav (tab bar is session-only).
+        await expect(page.getByTestId("workspace-nav-settings")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
         await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

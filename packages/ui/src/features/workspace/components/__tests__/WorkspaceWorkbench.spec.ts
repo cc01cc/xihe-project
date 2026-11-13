@@ -514,7 +514,8 @@ describe("WorkspaceWorkbench anti-squeeze (PLAN-0582 S3b §4)", () => {
                 dockMode: "pinned",
                 dockModeManual: true,
                 dockPolicyDismissed: false,
-                openTabs: ["environment", "scheduled-tasks", "settings"],
+                // C3: page ids no longer validate as work tabs; seed a session tab.
+                openTabs: ["session:s1"],
             }),
         );
         const wrapper = mountWorkbench();
@@ -570,7 +571,8 @@ describe("WorkspaceWorkbench floating dock Escape (PLAN-0582 T5.4 gap)", () => {
                 activeDockTab: "monitor",
                 dockMode: "pinned",
                 dockModeManual: true,
-                openTabs: ["environment", "scheduled-tasks", "settings"],
+                // C3: page ids no longer validate as work tabs; seed a session tab.
+                openTabs: ["session:s1"],
             }),
         );
         try {

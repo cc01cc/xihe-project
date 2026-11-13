@@ -90,7 +90,8 @@ test.describe("PLAN-269 viewport matrix: desktop-2k", () => {
     test("workspace shell remains bounded on 2K", async ({ page }) => {
         await setupViewportFixtures(page);
         await page.goto("/workspace/workspace-1");
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
+        // C3: page-entry surface is the secondary nav (tab bar is session-only).
+        await expect(page.getByTestId("workspace-nav-settings")).toBeVisible();
         // W4 (PLAN-0328 T3.7) chat-first layout: the FileEditor empty state now lives
         // in the collapsible code panel, opened explicitly from the toolbar.
         await page.getByTestId("workspace-toolbar-code").click();
@@ -122,7 +123,8 @@ test.describe("PLAN-269 viewport matrix: desktop-720p", () => {
     test("workspace toolbar and composer remain usable at 720p", async ({ page }) => {
         await setupViewportFixtures(page);
         await page.goto("/workspace/workspace-1");
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible();
+        // C3: secondary nav stays visible at 720p (toolbar tab strip retired).
+        await expect(page.getByTestId("workspace-nav-settings")).toBeVisible();
         await expect(page.getByTestId("chat-input")).toBeVisible();
         await expectNoHorizontalOverflow(page);
         // Baseline `plan-269-viewport-desktop-720p-workspace.png` still shows the pre-W4

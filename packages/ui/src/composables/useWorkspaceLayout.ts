@@ -101,13 +101,34 @@ export const DOCK_TAB_IDS = [
 export type DockTabId = (typeof DOCK_TAB_IDS)[number];
 
 /**
- * PLAN-0582 S3a: the middle route tab bar is a pure projection of the existing
- * routes (`/workspace/:ws`, `/chat/:sid`, `/environment`, `/scheduled-tasks`,
- * `/settings`) — no new routes. `chat` is always open (it is the fallback), the
- * other three are an "open set" persisted per workspace.
+ * C3 (task-217, Lead ruling): the middle tab bar no longer expresses workspace
+ * pages — page entries live only in the secondary nav (`WorkspaceSecondaryNav`,
+ * derived from `meta.workspacePage`). The bar is now an indicator of the user's
+ * open sessions / work items only.
+ *
+ * A persisted work tab is a session id with the `session:` prefix; legacy page
+ * ids ("environment" / "scheduled-tasks" / "settings") never match the prefix,
+ * so the read side converges without any hand-written page-id list — which the
+ * `workspacePages.ts` invariant forbids (no runtime page list).
  */
-export const WORKSPACE_TAB_IDS = ["environment", "scheduled-tasks", "settings"] as const;
-export type WorkspaceTabId = (typeof WORKSPACE_TAB_IDS)[number];
+export const WORK_TAB_ID_PREFIX = "session:";
+export type WorkTabId = `${typeof WORK_TAB_ID_PREFIX}${string}`;
+
+export function isWorkTabId(value: unknown): value is WorkTabId {
+    return (
+        typeof value === "string" &&
+        value.startsWith(WORK_TAB_ID_PREFIX) &&
+        value.length > WORK_TAB_ID_PREFIX.length
+    );
+}
+
+export function workTabIdForSession(sessionId: string): WorkTabId {
+    return `${WORK_TAB_ID_PREFIX}${sessionId}`;
+}
+
+export function sessionIdFromWorkTab(tab: WorkTabId): string {
+    return tab.slice(WORK_TAB_ID_PREFIX.length);
+}
 
 export interface GlobalLayoutState {
     navOpen: boolean;
@@ -137,8 +158,8 @@ export interface WorkspaceLayoutState {
      * no "remember what it was" field, which a third `dockMode` value would have required.
      */
     dockFocus: boolean;
-    /** Route tabs opened by the user (the chat tab is implicit and not stored). */
-    openTabs: WorkspaceTabId[];
+    /** Work tabs (open sessions) the user chose to keep; the chat tab is implicit and not stored. */
+    openTabs: WorkTabId[];
 }
 
 function storage(): Storage | null {
@@ -202,6 +223,22 @@ export function clampNavWidthForViewport(width: number, viewportWidth: number): 
  * legitimately persists its own `openTabs` slice before any geometry was written,
  * and that must not be mistaken for "the user already chose a dock state".
  */
+/**
+ * Raw key existence: true even for an openTabs-only slice (unlike
+ * `hasWorkspaceLayout`, which asks about stored *geometry*). The tab bar uses
+ * this to decide whether an emptied default set must still be persisted: once
+ * any payload exists, skipping the write would resurrect closed tabs on reload.
+ */
+export function hasWorkspaceLayoutKey(workspaceId: string): boolean {
+    const store = storage();
+    if (!workspaceId || !store) return false;
+    try {
+        return store.getItem(workspaceLayoutKey(workspaceId)) !== null;
+    } catch {
+        return false;
+    }
+}
+
 export function hasWorkspaceLayout(workspaceId: string): boolean {
     const store = storage();
     if (!workspaceId || !store) return false;
@@ -229,7 +266,7 @@ export function hasWorkspaceLayout(workspaceId: string): boolean {
  * layout from a default-valued read would clobber the geometry the workbench just
  * stored (e.g. flip "≥1800 opened the monitor" back to "dock closed").
  */
-export function writeWorkspaceOpenTabs(workspaceId: string, openTabs: WorkspaceTabId[]): void {
+export function writeWorkspaceOpenTabs(workspaceId: string, openTabs: WorkTabId[]): void {
     const store = storage();
     if (!workspaceId || !store) return;
     try {
@@ -242,7 +279,7 @@ export function writeWorkspaceOpenTabs(workspaceId: string, openTabs: WorkspaceT
                 parsed = existing as Record<string, unknown>;
             }
         }
-        parsed.openTabs = openTabs.filter(isWorkspaceTabId);
+        parsed.openTabs = openTabs.filter(isWorkTabId);
         store.setItem(key, JSON.stringify(parsed));
     } catch (cause) {
         logger.warn("Failed to persist the route tab set", cause);
@@ -270,21 +307,19 @@ export function defaultWorkspaceLayoutForViewport(viewportWidth: number): Worksp
     return { ...defaults, dockMode };
 }
 
-export function isWorkspaceTabId(value: unknown): value is WorkspaceTabId {
-    return typeof value === "string" && (WORKSPACE_TAB_IDS as readonly string[]).includes(value);
-}
+// isWorkTabId: see the C3 block above — the prefix check replaces the old
+// closed page-id list, so legacy page ids silently stop validating.
 
 export function defaultGlobalLayout(): GlobalLayoutState {
     return { navOpen: true, navWidth: NAV_WIDTH_DEFAULT };
 }
 
 /**
- * Every route tab starts open so the three workspace pages always have an entry
- * point from the chat view; closing one only hides it until the route is visited
- * again (a closed tab must never strand the user).
+ * C3: pages never enter the tab bar, so the default open set is empty — the
+ * chat tab is implicit (it is the fallback) and visiting a session adds its tab.
  */
-export function defaultOpenTabs(): WorkspaceTabId[] {
-    return [...WORKSPACE_TAB_IDS];
+export function defaultOpenTabs(): WorkTabId[] {
+    return [];
 }
 
 export function defaultWorkspaceLayout(): WorkspaceLayoutState {
@@ -345,13 +380,14 @@ function workspaceLayoutKey(workspaceId: string): string {
     return `${WORKSPACE_LAYOUT_STORAGE_PREFIX}${workspaceId}`;
 }
 
-/** Route tabs are sanitized the same way as dock tabs: known ids, no duplicates. */
-function readOpenTabs(parsed: Partial<WorkspaceLayoutState>): WorkspaceTabId[] {
-    // A missing field means "legacy / never closed anything" -> all tabs open.
+/** Open work tabs are sanitized like dock tabs: prefix-valid ids, no duplicates. */
+function readOpenTabs(parsed: Partial<WorkspaceLayoutState>): WorkTabId[] {
+    // A missing field means "legacy / never opened a session tab" -> the default
+    // (empty) set. Legacy page ids are dropped by the prefix check (C3).
     if (!Array.isArray(parsed.openTabs)) return defaultOpenTabs();
-    const openTabs: WorkspaceTabId[] = [];
+    const openTabs: WorkTabId[] = [];
     for (const tab of parsed.openTabs) {
-        if (isWorkspaceTabId(tab) && !openTabs.includes(tab)) openTabs.push(tab);
+        if (isWorkTabId(tab) && !openTabs.includes(tab)) openTabs.push(tab);
     }
     return openTabs;
 }
@@ -444,7 +480,7 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 // Mirrors the read-side normalization: never persist "focused" for a dock
                 // that cannot render (collapsed or tabless).
                 dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,
-                openTabs: state.openTabs.filter(isWorkspaceTabId),
+                openTabs: state.openTabs.filter(isWorkTabId),
             }),
         );
     } catch (cause) {

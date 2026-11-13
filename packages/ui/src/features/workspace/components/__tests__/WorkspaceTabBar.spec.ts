@@ -5,7 +5,10 @@ import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceTabBar from "../WorkspaceTabBar.vue";
 import { useSessionStore } from "../../../../stores/session";
-import { readWorkspaceLayout } from "../../../../composables/useWorkspaceLayout";
+import {
+    hasWorkspaceLayout,
+    readWorkspaceLayout,
+} from "../../../../composables/useWorkspaceLayout";
 
 const { pushSpy, routeState } = vi.hoisted(() => ({
     pushSpy: vi.fn<Router["push"]>(),
@@ -40,9 +43,6 @@ const i18n = createI18n({
                 tabBarLabel: "Workbench tabs",
                 tabChatFallback: "Chat",
                 tabClose: "Close tab",
-                environmentState: "Environment",
-                scheduledTasks: { nav: "Scheduled tasks" },
-                settingsTitle: "Workspace settings",
             },
         },
     },
@@ -55,51 +55,52 @@ function mountBar() {
     });
 }
 
+function gotoSession(sessionId: string): void {
+    routeState.name = "workspace-chat";
+    routeState.path = `/workspace/workspace-1/chat/${sessionId}`;
+    routeState.fullPath = `/workspace/workspace-1/chat/${sessionId}`;
+    routeState.params = { workspaceId: "workspace-1", sessionId };
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
     pushSpy.mockClear();
-    routeState.name = "workspace-chat";
-    routeState.path = "/workspace/workspace-1/chat/session-1";
-    routeState.fullPath = "/workspace/workspace-1/chat/session-1";
+    gotoSession("session-1");
 });
 
-describe("WorkspaceTabBar (PLAN-0582 S3a)", () => {
-    it("shows the chat tab and highlights it on a chat route", async () => {
+describe("WorkspaceTabBar (C3: session indicator, PLAN-0582 S3a semantics)", () => {
+    it("shows the chat tab and the pinned session tab on a chat route", async () => {
         const wrapper = mountBar();
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="workspace-tab-chat"]').attributes("aria-selected")).toBe(
-            "true",
-        );
-        // All route tabs are entry points by default; only the chat one is active.
+        // The visited session is pinned and active; the chat tab is the fallback.
         expect(
             wrapper
-                .get('[data-testid="workspace-toolbar-environment"]')
+                .get('[data-testid="workspace-tab-session-session-1"]')
                 .attributes("aria-selected"),
-        ).toBe("false");
-    });
-
-    it("adds a tab for a deep-linked route and marks it active", async () => {
-        routeState.name = "workspace-environment";
-        routeState.path = "/workspace/workspace-1/environment";
-        routeState.fullPath = "/workspace/workspace-1/environment";
-        const wrapper = mountBar();
-        await flushPromises();
-
-        const tab = wrapper.get('[data-testid="workspace-toolbar-environment"]');
-        expect(tab.attributes("aria-selected")).toBe("true");
+        ).toBe("true");
         expect(wrapper.get('[data-testid="workspace-tab-chat"]').attributes("aria-selected")).toBe(
             "false",
         );
+        // C3: workspace pages never render as tabs (page entries live only in the
+        // secondary nav).
+        expect(wrapper.find('[data-testid="workspace-toolbar-settings"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="workspace-toolbar-environment"]').exists()).toBe(false);
+    });
+
+    it("adds a tab for a deep-linked session and marks it active", async () => {
+        gotoSession("session-2");
+        const wrapper = mountBar();
+        await flushPromises();
+
+        const tab = wrapper.get('[data-testid="workspace-tab-session-session-2"]');
+        expect(tab.attributes("aria-selected")).toBe("true");
         // The open set is persisted per workspace.
-        expect(readWorkspaceLayout("workspace-1").openTabs).toContain("environment");
+        expect(readWorkspaceLayout("workspace-1").openTabs).toContain("session:session-2");
     });
 
     it("navigates with router.push only (no navigation interception)", async () => {
-        routeState.name = "workspace-environment";
-        routeState.path = "/workspace/workspace-1/environment";
-        routeState.fullPath = "/workspace/workspace-1/environment";
         const wrapper = mountBar();
         await flushPromises();
 
@@ -110,17 +111,15 @@ describe("WorkspaceTabBar (PLAN-0582 S3a)", () => {
         expect(pushSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("falls back to the chat tab when the active tab is closed", async () => {
-        routeState.name = "workspace-settings";
-        routeState.path = "/workspace/workspace-1/settings";
-        routeState.fullPath = "/workspace/workspace-1/settings";
+    it("falls back to the chat tab when the active session tab is closed", async () => {
+        gotoSession("session-2");
         const wrapper = mountBar();
         await flushPromises();
 
-        await wrapper.get('[data-testid="workspace-tab-close-settings"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-tab-close-session:session-2"]').trigger("click");
 
         expect(pushSpy).toHaveBeenCalledWith("/workspace/workspace-1/chat/session-1");
-        expect(readWorkspaceLayout("workspace-1").openTabs).not.toContain("settings");
+        expect(readWorkspaceLayout("workspace-1").openTabs).not.toContain("session:session-2");
     });
 
     it("keeps the session title on the chat tab", async () => {
@@ -143,35 +142,31 @@ describe("WorkspaceTabBar (PLAN-0582 S3a)", () => {
 });
 
 describe("WorkspaceTabBar storage hygiene (PLAN-0582 S3a audit P1-1)", () => {
-    it("does not create the per-workspace layout key just by visiting a route", async () => {
-        routeState.name = "workspace-settings";
-        routeState.path = "/workspace/workspace-1/settings";
-        routeState.fullPath = "/workspace/workspace-1/settings";
+    it("pins a visited session without fabricating stored geometry", async () => {
         const wrapper = mountBar();
         await flushPromises();
 
-        // The workbench distinguishes "no stored layout" (first-run policy) from
-        // "user already chose"; fabricating the key here would silently disable the
-        // ≥1800 "open monitor by default" policy for deep-linked first visits.
-        expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+        // Visiting a chat session persists the openTabs slice (the pin), but an
+        // openTabs-only payload is NOT stored geometry: the workbench's first-run
+        // policy (≥1800 opens the monitor) must not be disabled by a tab visit.
+        expect(readWorkspaceLayout("workspace-1").openTabs).toContain("session:session-1");
+        expect(hasWorkspaceLayout("workspace-1")).toBe(false);
         wrapper.unmount();
     });
 
-    it("only writes once a tab is actually closed", async () => {
-        routeState.name = "workspace-settings";
-        routeState.path = "/workspace/workspace-1/settings";
-        routeState.fullPath = "/workspace/workspace-1/settings";
+    it("writes the emptied set when the last pinned tab is closed", async () => {
+        gotoSession("session-2");
         const wrapper = mountBar();
         await flushPromises();
-        expect(localStorage.getItem("xihe-layout-ws:workspace-1")).toBeNull();
+        expect(readWorkspaceLayout("workspace-1").openTabs).toContain("session:session-2");
 
-        await wrapper.get('[data-testid="workspace-tab-close-settings"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-tab-close-session:session-2"]').trigger("click");
         await flushPromises();
 
         const stored = JSON.parse(localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}") as {
             openTabs?: string[];
         };
-        expect(stored.openTabs).not.toContain("settings");
+        expect(stored.openTabs).not.toContain("session:session-2");
         wrapper.unmount();
     });
 });
@@ -192,10 +187,9 @@ describe("WorkspaceTabBar tab semantics (BL-476 L1 reka Tabs pilot)", () => {
 
         const chat = wrapper.get('[data-testid="workspace-tab-chat"]');
         expect(chat.attributes("role")).toBe("tab");
-        expect(chat.attributes("aria-selected")).toBe("true");
         expect(chat.attributes("tabindex")).toBe("-1");
         expect(
-            wrapper.get('[data-testid="workspace-toolbar-environment"]').attributes("tabindex"),
+            wrapper.get('[data-testid="workspace-tab-session-session-1"]').attributes("tabindex"),
         ).toBe("-1");
 
         wrapper.unmount();
@@ -203,38 +197,49 @@ describe("WorkspaceTabBar tab semantics (BL-476 L1 reka Tabs pilot)", () => {
 });
 
 describe("WorkspaceTabBar tab ordering (PLAN-0753 T5)", () => {
+    const OPEN_KEY = "xihe-layout-ws:workspace-1";
+
     it("renders the open set in the persisted order", async () => {
         localStorage.setItem(
-            "xihe-layout-ws:workspace-1",
-            JSON.stringify({ openTabs: ["settings", "environment", "scheduled-tasks"] }),
+            OPEN_KEY,
+            JSON.stringify({ openTabs: ["session:s3", "session:s1", "session:s2"] }),
         );
         const wrapper = mountBar();
         await flushPromises();
 
+        // The visited session is pinned after the stored set.
         const ids = wrapper.findAll("[data-tab-id]").map((node) => node.attributes("data-tab-id"));
-        expect(ids).toEqual(["chat", "settings", "environment", "scheduled-tasks"]);
+        expect(ids).toEqual([
+            "chat",
+            "session:s3",
+            "session:s1",
+            "session:s2",
+            "session:session-1",
+        ]);
         wrapper.unmount();
     });
 
     it("moves a tab with ArrowLeft and persists the new order (keyboard path)", async () => {
+        localStorage.setItem(OPEN_KEY, JSON.stringify({ openTabs: ["session:a", "session:b"] }));
         const wrapper = mountBar();
         await flushPromises();
 
-        const settings = wrapper.get('[data-testid="workspace-toolbar-settings"]');
-        await settings.trigger("keydown", { key: "ArrowLeft" });
+        const pinned = wrapper.get('[data-testid="workspace-tab-session-session-1"]');
+        await pinned.trigger("keydown", { key: "ArrowLeft" });
         await flushPromises();
 
         expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
-            "environment",
-            "settings",
-            "scheduled-tasks",
+            "session:a",
+            "session:session-1",
+            "session:b",
         ]);
         const ids = wrapper.findAll("[data-tab-id]").map((node) => node.attributes("data-tab-id"));
-        expect(ids).toEqual(["chat", "environment", "settings", "scheduled-tasks"]);
+        expect(ids).toEqual(["chat", "session:a", "session:session-1", "session:b"]);
         wrapper.unmount();
     });
 
     it("keeps the chat tab first and ignores ArrowLeft on it", async () => {
+        localStorage.setItem(OPEN_KEY, JSON.stringify({ openTabs: ["session:a", "session:b"] }));
         const wrapper = mountBar();
         await flushPromises();
 
@@ -244,44 +249,49 @@ describe("WorkspaceTabBar tab ordering (PLAN-0753 T5)", () => {
         await flushPromises();
 
         expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
-            "environment",
-            "scheduled-tasks",
-            "settings",
+            "session:a",
+            "session:b",
+            "session:session-1",
         ]);
         wrapper.unmount();
     });
 
     it("moves a tab with ArrowRight and clamps at the end", async () => {
+        localStorage.setItem(OPEN_KEY, JSON.stringify({ openTabs: ["session:a", "session:b"] }));
         const wrapper = mountBar();
         await flushPromises();
 
-        const settings = wrapper.get('[data-testid="workspace-toolbar-settings"]');
-        await settings.trigger("keydown", { key: "ArrowRight" });
+        const first = wrapper.get('[data-testid="workspace-tab-session-a"]');
+        await first.trigger("keydown", { key: "ArrowRight" });
         await flushPromises();
-        await settings.trigger("keydown", { key: "ArrowRight" });
+        await first.trigger("keydown", { key: "ArrowRight" });
+        await flushPromises();
+        // Second move hits the clamp: "a" stays at the end.
+        await first.trigger("keydown", { key: "ArrowRight" });
         await flushPromises();
 
         expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
-            "environment",
-            "scheduled-tasks",
-            "settings",
+            "session:b",
+            "session:session-1",
+            "session:a",
         ]);
         wrapper.unmount();
     });
 
     it("syncs the store from a drag reorder (onDragUpdate)", async () => {
+        localStorage.setItem(OPEN_KEY, JSON.stringify({ openTabs: ["session:a", "session:b"] }));
         const wrapper = mountBar();
         await flushPromises();
 
-        // Simulate Sortable's update: the environment row was dragged to the end.
+        // Simulate Sortable's update: the first open tab row was dragged to the end.
         const draggable = wrapper.findComponent({ name: "VueDraggable" });
         draggable.vm.$emit("update", { oldIndex: 1, newIndex: 3 });
         await flushPromises();
 
         expect(readWorkspaceLayout("workspace-1").openTabs).toEqual([
-            "scheduled-tasks",
-            "settings",
-            "environment",
+            "session:b",
+            "session:session-1",
+            "session:a",
         ]);
         wrapper.unmount();
     });

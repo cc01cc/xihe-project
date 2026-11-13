@@ -265,9 +265,11 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
         );
         await page.goto(`/workspace/${ctx.workspaceId}`, { waitUntil: "load" });
 
-        const entry = page.locator('[data-testid="workspace-toolbar-scheduled-tasks"]');
+        // C3: the secondary nav is the surviving page entry (page tabs retired from
+        // the tab bar). Label + post-navigation identity assertions are kept.
+        const entry = page.locator('[data-testid="workspace-nav-scheduled-tasks"]');
         await expect(entry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await expect(entry).toHaveAttribute("title", "定时任务");
+        await expect(entry).toContainText("定时任务");
         await entry.click();
         await page.waitForURL(
             (url) => url.pathname === `/workspace/${ctx.workspaceId}/scheduled-tasks`,

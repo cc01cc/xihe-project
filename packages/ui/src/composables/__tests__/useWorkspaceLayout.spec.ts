@@ -135,7 +135,8 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockMode: "floating",
             dockModeManual: false,
             dockFocus: false,
-            openTabs: ["environment", "scheduled-tasks", "settings"],
+            // C3: pages never enter the tab bar; the default open set is empty.
+            openTabs: [],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
     });
@@ -158,7 +159,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockMode: "pinned",
             dockModeManual: true,
             dockFocus: true,
-            openTabs: ["environment", "settings"],
+            openTabs: ["session:s1", "session:s2"],
         });
 
         expect(readStoredWorkspace("ws-1")).toEqual({
@@ -171,7 +172,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockMode: "pinned",
             dockModeManual: true,
             dockFocus: true,
-            openTabs: ["environment", "settings"],
+            openTabs: ["session:s1", "session:s2"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
             treeCollapsed: true,
@@ -183,7 +184,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockMode: "pinned",
             dockModeManual: true,
             dockFocus: true,
-            openTabs: ["environment", "settings"],
+            openTabs: ["session:s1", "session:s2"],
         });
         // Workspace-scoped: another workspace is untouched.
         expect(readWorkspaceLayout("ws-2")).toEqual(defaultWorkspaceLayout());
@@ -427,16 +428,14 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
 
     // S3a audit P1-1 (S3b fix): an openTabs-only payload is not "layout chosen yet".
     it("treats an openTabs-only payload as no stored geometry", () => {
-        writeWorkspaceOpenTabs("ws-1", ["settings"]);
+        writeWorkspaceOpenTabs("ws-1", ["session:s1"]);
         expect(hasWorkspaceLayout("ws-1")).toBe(false);
         // ...and it still preserves whatever geometry is written later.
         writeWorkspaceLayout("ws-1", { ...defaultWorkspaceLayout(), dockCollapsed: false });
         expect(hasWorkspaceLayout("ws-1")).toBe(true);
-        expect(readWorkspaceLayout("ws-1").openTabs).toEqual([
-            "environment",
-            "scheduled-tasks",
-            "settings",
-        ]);
+        // The later FULL write wins: it carries the default (empty) open set,
+        // which overwrites the slice written above.
+        expect(readWorkspaceLayout("ws-1").openTabs).toEqual([]);
     });
 
     it("patches only the openTabs slice instead of clobbering the stored geometry", () => {
@@ -446,12 +445,28 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
             dockTabs: ["monitor"],
             activeDockTab: "monitor",
         });
-        writeWorkspaceOpenTabs("ws-1", ["settings"]);
+        writeWorkspaceOpenTabs("ws-1", ["session:s1", "session:s2"]);
         const layout = readWorkspaceLayout("ws-1");
-        expect(layout.openTabs).toEqual(["settings"]);
+        expect(layout.openTabs).toEqual(["session:s1", "session:s2"]);
         expect(layout.dockCollapsed).toBe(false);
         expect(layout.dockTabs).toEqual(["monitor"]);
         expect(layout.activeDockTab).toBe("monitor");
+    });
+
+    // C3 (task-217, Lead criterion): legacy page ids are dropped on read and the
+    // first write converges the stored payload — only the session work tab survives.
+    it("converges legacy page ids out of openTabs (C3 read-side ignore)", () => {
+        localStorage.setItem(
+            "xihe-layout-ws:ws-1",
+            JSON.stringify({ openTabs: ["environment", "settings", "session:s-1"] }),
+        );
+        const layout = readWorkspaceLayout("ws-1");
+        expect(layout.openTabs).toEqual(["session:s-1"]);
+        writeWorkspaceOpenTabs("ws-1", layout.openTabs);
+        const raw = localStorage.getItem("xihe-layout-ws:ws-1") ?? "";
+        expect(raw).not.toContain("environment");
+        expect(raw).not.toContain("settings");
+        expect(raw).toContain("session:s-1");
     });
 
     it("coalesces drag writes and flushes the pending value (P2-9)", async () => {

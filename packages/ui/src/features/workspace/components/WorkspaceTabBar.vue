@@ -9,24 +9,26 @@ import { X } from "@lucide/vue";
 // role/aria-selected/roving-focus, the bar keeps owning navigation + persistence.
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import {
-    WORKSPACE_TAB_IDS,
     defaultOpenTabs,
+    hasWorkspaceLayoutKey,
+    isWorkTabId,
     readWorkspaceLayout,
+    sessionIdFromWorkTab,
+    workTabIdForSession,
     writeWorkspaceOpenTabs,
-    type WorkspaceTabId,
+    type WorkTabId,
 } from "../../../composables/useWorkspaceLayout";
 import { useSessionStore } from "../../../stores/session";
 import { workspaceChatPath, workspacePath } from "../../../lib/routes";
 
 /**
- * PLAN-0582 S3a: the middle tab bar is a **pure projection of the existing
- * routes** — `/workspace/:ws`, `/chat/:sid`, `/environment`, `/scheduled-tasks`,
- * `/settings`. No new routes, no `beforeEach` interception: clicking a tab only
- * calls `router.push`, so deep links, back/forward and bookmarks stay the truth.
- *
- * The chat tab is always present (it is the fallback when a tab is closed); the
- * other three form an "open set" persisted per workspace. Visiting a route adds
- * its tab, closing it removes it and falls back to the chat tab.
+ * C3 (task-217, Lead ruling): the tab bar is **no longer a page navigator** —
+ * workspace pages live only in the secondary nav (`WorkspaceSecondaryNav`,
+ * derived from `meta.workspacePage`). This bar is an indicator of the user's
+ * open sessions: the chat tab (current session / fallback) plus an open set of
+ * pinned session tabs persisted per workspace as `session:<id>` work tabs
+ * (see useWorkspaceLayout). Clicking a tab only calls `router.push`, so deep
+ * links, back/forward and bookmarks stay the truth.
  */
 const props = defineProps<{
     workspaceId: string;
@@ -39,18 +41,12 @@ const route = useRoute(),
 const { t } = useI18n();
 
 interface RouteTab {
-    id: "chat" | WorkspaceTabId;
+    id: "chat" | WorkTabId;
     label: string;
     path: string;
     testid: string;
     closable: boolean;
 }
-
-const tabPaths = computed<Record<WorkspaceTabId, string>>(() => ({
-    environment: `/workspace/${props.workspaceId}/environment`,
-    "scheduled-tasks": `/workspace/${props.workspaceId}/scheduled-tasks`,
-    settings: `/workspace/${props.workspaceId}/settings`,
-}));
 
 const chatPath = computed(() =>
     props.sessionId
@@ -64,7 +60,15 @@ const sessionTitle = computed(() => {
     return t("workspace.tabChatFallback");
 });
 
-const openTabs = ref<WorkspaceTabId[]>(
+function sessionTabLabel(tab: WorkTabId): string {
+    const id = sessionIdFromWorkTab(tab);
+    const session = sessionStore.sessions.find((item) => item.id === id);
+    // A pinned tab whose session is not loaded yet keeps the generic label
+    // instead of rendering a raw id.
+    return session?.title || t("workspace.tabChatFallback");
+}
+
+const openTabs = ref<WorkTabId[]>(
     props.workspaceId ? readWorkspaceLayout(props.workspaceId).openTabs : [],
 );
 
@@ -78,73 +82,56 @@ const tabs = computed<RouteTab[]>(() => {
             closable: false,
         },
     ];
-    const labels: Record<WorkspaceTabId, string> = {
-        environment: t("workspace.environmentState"),
-        "scheduled-tasks": t("workspace.scheduledTasks.nav"),
-        settings: t("workspace.settingsTitle"),
-    };
     // PLAN-0753 T5: render the open set in the persisted user order (the chat
-    // tab stays first — it is the fallback and is not closable). Unknown ids are
-    // dropped so a corrupt payload can never render a dead tab.
+    // tab stays first — it is the fallback and is not closable). Ids that fail
+    // the work-tab prefix check are dropped so a corrupt payload (or a legacy
+    // page id) can never render a dead tab.
     for (const id of openTabs.value) {
-        if (!WORKSPACE_TAB_IDS.includes(id)) continue;
+        if (!isWorkTabId(id)) continue;
         list.push({
             id,
-            label: labels[id],
-            path: tabPaths.value[id],
-            // The S2/S3 contract keeps the historic toolbar ids on these tab
-            // buttons so the 20 affected specs keep working.
-            testid:
-                id === "environment"
-                    ? "workspace-toolbar-environment"
-                    : id === "scheduled-tasks"
-                      ? "workspace-toolbar-scheduled-tasks"
-                      : "workspace-toolbar-settings",
+            label: sessionTabLabel(id),
+            path: workspaceChatPath(props.workspaceId, sessionIdFromWorkTab(id)),
+            testid: `workspace-tab-session-${sessionIdFromWorkTab(id)}`,
             closable: true,
         });
     }
     return list;
 });
 
-const activeId = computed<"chat" | WorkspaceTabId>(() => {
-    const name = route?.name;
-    if (name === "workspace-environment") return "environment";
-    if (name === "workspace-scheduled-tasks") return "scheduled-tasks";
-    if (name === "workspace-settings") return "settings";
-    return "chat";
-});
-
-function currentTabId(): WorkspaceTabId | null {
-    const name = route?.name;
-    if (name === "workspace-environment") return "environment";
-    if (name === "workspace-scheduled-tasks") return "scheduled-tasks";
-    if (name === "workspace-settings") return "settings";
-    return null;
+function currentTabId(): WorkTabId | null {
+    if (route?.name !== "workspace-chat") return null;
+    const sid = route.params.sessionId;
+    return typeof sid === "string" && sid ? workTabIdForSession(sid) : null;
 }
 
+// Outside a chat route the bar still indicates the current session: the fallback
+// chat tab (your current session) stays highlighted on workspace pages.
+const activeId = computed<"chat" | WorkTabId>(() => currentTabId() ?? "chat");
+
 /**
- * Persist the open set. S3a audit P1-1: the workbench distinguishes "no stored
- * layout yet" (apply the ≥1800 first-run policy) from "user already chose", so this
- * writer must never fabricate the key just because a route was visited — only a
- * real change of the open set (i.e. closing a tab) may create it.
+ * Persist the open session set. S3a audit P1-1: the workbench distinguishes
+ * "no stored layout yet" (apply the ≥1800 first-run policy) from "user already
+ * chose", so a default-valued set must not fabricate the key — but C3 made the
+ * default set **empty**, so once a key exists an emptied set must still be
+ * written, otherwise the last closed tab would resurrect on reload.
  */
-function persistOpenTabs(next: WorkspaceTabId[]): void {
+function persistOpenTabs(next: WorkTabId[]): void {
     const defaults = defaultOpenTabs();
-    // PLAN-0753 T5: order is now user-owned, so "default" means the default
-    // **sequence** — a permutation of the defaults (e.g. after a drag/keyboard
-    // move) is a real choice and must be persisted, or the next mount silently
-    // reverts the user's order.
+    // PLAN-0753 T5: order is user-owned — a persisted order (after a drag/keyboard
+    // move) is a real choice and must be kept; the comparison below only asks
+    // "is this the default set", which for C3 means "empty".
     const isDefaultSet =
         next.length === defaults.length && defaults.every((id, index) => next[index] === id);
     openTabs.value = next;
-    if (!props.workspaceId || isDefaultSet) return;
+    if (!props.workspaceId || (isDefaultSet && !hasWorkspaceLayoutKey(props.workspaceId))) return;
     // Only the tab slice is written: re-writing the whole layout from a
     // default-valued read would clobber the workbench's stored geometry and silently
     // disable the ≥1800 "open monitor on first run" policy (S3a audit P1-1).
     writeWorkspaceOpenTabs(props.workspaceId, next);
 }
 
-/** Visiting a route through any means (tab, deep link, history) opens its tab. */
+/** Visiting a session through any means (tab, deep link, history) pins its tab. */
 watch(
     () => currentTabId(),
     (tabId) => {
@@ -195,7 +182,7 @@ function selectTab(tab: RouteTab): void {
  * the setter only navigates — the route stays the single source of truth, so
  * deep links, back/forward and bookmarks keep working exactly as before.
  */
-const activeTab = computed<"chat" | WorkspaceTabId>({
+const activeTab = computed<"chat" | WorkTabId>({
     get: () => activeId.value,
     set: (id) => {
         const tab = tabs.value.find((item) => item.id === id);
@@ -222,7 +209,7 @@ function closeTab(tab: RouteTab): void {
  * same `persistOpenTabs` so the store and the DOM never diverge (PLAN-0753
  * "拖拽必须有键盘替代：聚焦 + 方向键移动").
  */
-function moveTab(id: "chat" | WorkspaceTabId, delta: number): void {
+function moveTab(id: "chat" | WorkTabId, delta: number): void {
     const list = tabs.value;
     const from = list.findIndex((tab) => tab.id === id);
     if (from < 0) return;
@@ -231,7 +218,7 @@ function moveTab(id: "chat" | WorkspaceTabId, delta: number): void {
     const nextIds = list.map((tab) => tab.id);
     nextIds.splice(to, 0, nextIds.splice(from, 1)[0]);
     // Persist only the open (non-chat) slice: the chat tab is always first.
-    persistOpenTabs(nextIds.slice(1) as WorkspaceTabId[]);
+    persistOpenTabs(nextIds.slice(1) as WorkTabId[]);
 }
 
 function onDragUpdate(event: { oldIndex?: number; newIndex?: number }): void {
@@ -241,7 +228,7 @@ function onDragUpdate(event: { oldIndex?: number; newIndex?: number }): void {
     if (oldIndex >= list.length || newIndex >= list.length) return;
     const nextIds = list.map((tab) => tab.id);
     nextIds.splice(newIndex, 0, nextIds.splice(oldIndex, 1)[0]);
-    persistOpenTabs(nextIds.slice(1) as WorkspaceTabId[]);
+    persistOpenTabs(nextIds.slice(1) as WorkTabId[]);
 }
 
 function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {

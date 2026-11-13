@@ -29,7 +29,8 @@ test.describe("Cross-Module — Workspace", () => {
 
         await page.goto(`/workspace/${workspaceId}`);
 
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
+        // C3: workspace page identity marker = secondary-nav "会话" entry.
+        await expect(page.getByTestId("workspace-nav-sessions")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
         expect(page.url()).toContain("/workspace");
@@ -41,7 +42,7 @@ test.describe("Cross-Module — Workspace", () => {
 
         await page.goto(`/workspace/${workspaceId}`);
 
-        await expect(page.getByTestId("workspace-toolbar-settings")).toBeVisible({
+        await expect(page.getByTestId("workspace-nav-sessions")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
         await expect(page.getByText("工作区暂无文件")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

@@ -210,6 +210,13 @@ function overflowNav(navigate: () => void) {
                 >
                     {{ t("workspace.panelDelegation") }}
                 </button>
+                <!--
+                  C3 护栏（task-217，Lead 裁定）：下面三个溢出入口（more-environment /
+                  more-scheduled / more-settings）是**窄屏唯一页面入口** —— 桌面页入口只有
+                  二级导航（WorkspaceSecondaryNav），窄屏不渲染页签栏，这套「⋯」菜单是唯一
+                  能到环境 / 定时任务 / 设置的地方。做 IA 清理时**不许**把它们当重复面删掉：
+                  删它等于删移动端入口。
+                -->
                 <button
                     type="button"
                     class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"

@@ -148,8 +148,9 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         page,
     }) => {
         await page.goto("/workspace/workspace-1");
-        // PLAN-0560: toolbar settings entry routes to the workspace settings page.
-        await page.getByTestId("workspace-toolbar-settings").click();
+        // PLAN-0560: workspace settings entry routes to the workspace settings page.
+        // C3: the entry now lives in the secondary nav (tab bar is session-only).
+        await page.getByTestId("workspace-nav-settings").click();
         await expect(page).toHaveURL(/\/workspace\/workspace-1\/settings/);
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
 

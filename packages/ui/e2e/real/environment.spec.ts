@@ -55,10 +55,13 @@ test.describe("Workspace environment status", () => {
         );
 
         await page.goto("/workspace", { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-toolbar-environment")).toBeVisible({
+        // C3 (task-217): the secondary nav is now the desktop page entry (the tab
+        // bar no longer carries page tabs). The post-navigation identity assertions
+        // below (URL + environment heading + API 200) are unchanged.
+        await expect(page.getByTestId("workspace-nav-environment")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByTestId("workspace-toolbar-environment").click();
+        await page.getByTestId("workspace-nav-environment").click();
         await page.waitForURL(
             (url) => url.pathname === `/workspace/${auth.workspaceId}/environment`,
             { timeout: LONG_TIMEOUT_MS },
