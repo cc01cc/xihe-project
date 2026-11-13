@@ -67,17 +67,36 @@ describe("provider resolver copy（task-152 定稿语义）", () => {
     });
 
     it("实例层分区描述与默认模型描述不再声称 USER 直连", () => {
+        // llmInstanceDefaultDesc 仍承载 owner 规则「连接归属随配置供给层」（task-284 未改它），正向锚点保留。
+        expect(String(settings(zh).llmInstanceDefaultDesc)).toContain("连接归属随配置供给层");
+        expect(String(settings(en).llmInstanceDefaultDesc)).toContain("the connection follows");
+        // providerPartitionDescInstance 经 task-284/D-1140 四层文案改写，改述「分区结构 + 默认身份是派生值」，
+        // 不再复述连接归属 —— 该语义由 providerInstanceNote / providerHub.scopeNoteBody 承载（见上一条用例，
+        // 仍 toBe 定稿句）⇒ 属合法改写而非文案回归。此处同步到现行正确文案的正向锚点（不是第二套真源）。
+        expect(String(settings(zh).providerPartitionDescInstance)).toContain("默认身份");
+        expect(String(settings(zh).providerPartitionDescInstance)).toContain("不是第二套真源");
+        expect(String(settings(en).providerPartitionDescInstance)).toContain("default identity");
+        expect(String(settings(en).providerPartitionDescInstance)).toContain(
+            "not a second source of truth",
+        );
+        // 本意（负断言，不弱化）：两个实例层描述都不许回流「USER 直连」旧口径。
         for (const value of [
             settings(zh).providerPartitionDescInstance,
             settings(zh).llmInstanceDefaultDesc,
         ]) {
-            expect(String(value)).toContain("连接归属随配置供给层");
+            expect(String(value)).not.toContain("实例 profile 落到消费用户的个人连接");
+            expect(String(value)).not.toContain("连接与密钥由使用者的个人/工作区连接提供");
         }
         for (const value of [
             settings(en).providerPartitionDescInstance,
             settings(en).llmInstanceDefaultDesc,
         ]) {
-            expect(String(value)).toContain("the connection follows");
+            expect(String(value)).not.toContain(
+                "an instance profile resolves to the consuming user's user connection",
+            );
+            expect(String(value)).not.toContain(
+                "connections and credentials come from the user's personal/workspace connections",
+            );
         }
     });
 });
