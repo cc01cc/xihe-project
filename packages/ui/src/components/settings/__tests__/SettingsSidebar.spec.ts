@@ -2,13 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
+import { LAYER_DOMAINS } from "../../../stores/config";
+import { navItemsForLayer } from "../../../lib/settingsIa";
 
 /**
  * PLAN-0752 T1.6 / V15：左栏 = 层内二级。
  *
  * 这三条用例锁的是**权限面**与**矩阵**：实例块是否出现只看 cap:instance:admin 能力位，
- * roles 项只看 MANAGE_ROLES 原子；域条目数必须是 12 / 9。这些数一旦被"顺手改一下"，
+ * roles 项只看 MANAGE_ROLES 原子；矩阵必须是 12 / 9 个域。这些数一旦被"顺手改一下"，
  * 用户报过的「域比层高 / 两层不对称」就会复发。
+ *
+ * task-227（合页不合域）之后，**条目数 ≠ 域数**：三个模型域在左栏折成一个组条目
+ * （12 → 10、9 → 7）。所以这里的判据拆成两句 —— 矩阵数（防合并域）+ 派生条目数
+ * （防把组折叠去掉），两个都从 settingsIa / stores 求值，不写死"10 / 7"。
  */
 const state = {
     capability: true,
@@ -117,16 +123,28 @@ describe("SettingsSidebar", () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
+        // task-227「合页不合域」：**矩阵没变**（实例 12 域 / 用户 9 域，下面两条断言钉住），
+        // 变的是左栏条目 —— 三个模型域（llm-provider / context-policy / api-request-templates）
+        // 折成**一个**组条目 ⇒ 条目数 12 − 3 + 1 = 10、9 − 3 + 1 = 7。
+        // 判据写成「矩阵数 + 派生数」两句：谁把域合并了，矩阵断言立刻红；
+        // 谁把组折叠去掉了，条目数断言立刻红。
+        expect(LAYER_DOMAINS.instance).toHaveLength(12);
+        expect(LAYER_DOMAINS.user).toHaveLength(9);
+        expect(navItemsForLayer("instance")).toHaveLength(10);
+        expect(navItemsForLayer("user")).toHaveLength(7);
         // task-253：左栏改成两个可折叠层分组 —— 当前层默认展开、另一层默认收起。
-        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(12);
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(10);
         await wrapper.find("#settings-nav-user").trigger("click");
         await flushPromises();
         const links = wrapper.findAll('[data-testid^="settings-nav-domain-"]');
-        expect(links).toHaveLength(21);
+        expect(links).toHaveLength(17);
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(2);
         // 未挂 router 插件时 router-link 是未解析元素，to 以原生属性渲染（组件产出的值仍可断言）
-        expect(links[0]!.attributes("to")).toBe("/settings/instance/llm-provider");
-        expect(links[12]!.attributes("to")).toBe("/settings/user/llm-provider");
+        // 首条是组条目（组占 llm-provider 原来的位置）——"反序"不是随意的：组把它所代表的
+        // 三个域收在自己名下，位置必须保持在三段原来所在处，否则用户会以为模型配置被挪走了。
+        expect(links[0]!.attributes("to")).toBe("/settings/instance/model-config");
+        // 实例层 10 条之后是用户层：**第一条是组条目**（组在左栏占 llm-provider 原来的位置）。
+        expect(links[10]!.attributes("to")).toBe("/settings/user/model-config");
         // task-50 A 案：选中底色走 `--sidebar-accent` 组，且不再有 2px 左竖条（「半截括号」）。
         expect(links[0]!.classes().join(" ")).toContain("bg-sidebar-accent");
         expect(links[0]!.classes().join(" ")).toContain("text-sidebar-accent-foreground");
@@ -137,10 +155,12 @@ describe("SettingsSidebar", () => {
         // task-172：per-domain id 必须带层 —— 12 实例域与 9 用户域有 9 个同名（llm-provider /
         // embedding / rag …），不带层会撞 id（getByTestId 在 strict mode 直接抛）。
         expect(links[0]!.attributes("data-testid")).toBe(
-            "settings-nav-domain-instance-llm-provider",
+            "settings-nav-domain-instance-model-config",
         );
-        expect(links[12]!.attributes("data-testid")).toBe("settings-nav-domain-user-llm-provider");
-        expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(21);
+        // 组条目复用同一个 testid 前缀（"domain" 在此表示"配置区条目"）；组 id 不是域 id，
+        // 这也正是它能在 strict-mode 下与域条目共存、又不与任何 `/config/model-config` 请求混淆的原因。
+        expect(links[10]!.attributes("data-testid")).toBe("settings-nav-domain-user-model-config");
+        expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(17);
 
         // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
         // security(config-locks,roles,audit)。
@@ -166,7 +186,9 @@ describe("SettingsSidebar", () => {
         state.canManageRoles = false;
         const wrapper = mountSidebar("user", "rag");
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
-        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(9);
+        // task-227：用户层 9 域里同样有 3 个模型域折成 1 个组条目 ⇒ 9 − 3 + 1 = 7。
+        expect(LAYER_DOMAINS.user).toHaveLength(9);
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(7);
         expect(wrapper.text()).not.toContain("配置锁定");
         // 域 + 实例资源整段不渲染 ⇒ ops/安全项也一个都不在（不是靠文案判断）。
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);
@@ -208,9 +230,15 @@ describe("SettingsSidebar", () => {
             true,
         );
         expect(wrapper.find('[data-testid="settings-nav-ops-audit"]').exists()).toBe(true);
-        // 入口计数：实例层 22 → 17（12 域 + 2 运维 + 3 安全），用户层 12 → 9（只剩 9 域）。
-        expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain("17");
-        expect(wrapper.find('[data-testid="settings-nav-count-user"]').text()).toContain("9");
+        // 入口计数 = 条目数（不是域数）：实例层 = 10 条目 + 2 运维 + 3 安全 = **15**，
+        // 用户层 = 7 条目（task-227 把三个模型域折成一个组条目）。
+        const instanceCount = navItemsForLayer("instance").length + 5;
+        expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain(
+            String(instanceCount),
+        );
+        expect(wrapper.find('[data-testid="settings-nav-count-user"]').text()).toContain(
+            String(navItemsForLayer("user").length),
+        );
     });
 
     it("gates roles on the MANAGE_ROLES atom while keeping audit visible", () => {
@@ -252,8 +280,9 @@ describe("SettingsSidebar", () => {
         for (const link of wrapper.findAll('[data-testid^="settings-nav-domain-"]')) {
             expect(link.attributes("data-slot")).toBe("sidebar-menu-button");
         }
+        // 条目总数同样是派生的（实例层 10 条目 + 5 运维/安全 = 15；task-227 之前是 17）。
         expect(wrapper.findAll('[data-slot="sidebar-menu-button"]').length).toBeGreaterThanOrEqual(
-            17,
+            navItemsForLayer("instance").length + 5,
         );
         // 选中态走 vendor 的 `data-active` 语义（`bg-sidebar-accent` / `text-sidebar-accent-foreground`）；
         // task-50 A 案去掉了条目自带的 2px 左竖条（用户看到的「半截括号」）。

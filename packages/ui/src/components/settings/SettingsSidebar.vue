@@ -39,13 +39,7 @@ import { provideSidebarContext } from "@/components/ui/sidebar/utils";
 import { useMediaQuery } from "@vueuse/core";
 import { useAuthStore } from "../../stores/auth";
 import { readGlobalLayout, writeGlobalLayout } from "../../composables/useWorkspaceLayout";
-import {
-    DOMAIN_LABEL_KEY,
-    domainsForLayer,
-    instanceOpsGroups,
-    settingsDomainPath,
-    type SettingsNavItem,
-} from "../../lib/settingsIa";
+import { instanceOpsGroups, navItemsForLayer, type SettingsNavItem } from "../../lib/settingsIa";
 
 /**
  * 设置区左栏（**不**复用工作区 Sidebar）。task-253 起按用户 2026-11-10 裁定改为
@@ -149,9 +143,16 @@ const activeLayer = computed(() => {
         : "instance";
 });
 
-const activeDomain = computed(() =>
-    typeof route.meta.settingsDomain === "string" ? route.meta.settingsDomain : "",
-);
+/**
+ * 高亮口径：**组页用 `meta.settingsGroup`**，域页用 `meta.settingsDomain`。
+ *
+ * <p>组条目在左栏的 `id` 就是组 id（`model-config`），与 `settingsGroup` 同一个常量 ⇒ 这里把两者
+ * 收成一个"当前条目 id"，否则组页打开时左栏一条都不亮（那会让用户以为自己在"没在设置区里"）。</p>
+ */
+const activeDomain = computed(() => {
+    if (typeof route.meta.settingsGroup === "string") return route.meta.settingsGroup;
+    return typeof route.meta.settingsDomain === "string" ? route.meta.settingsDomain : "";
+});
 
 /** 当前层默认展开、另一层默认收起；跨层导航时跟着路由翻。 */
 const instanceOpen = ref(activeLayer.value === "instance");
@@ -163,29 +164,15 @@ watch(activeLayer, (layer) => {
     userOpen.value = layer === "user";
 });
 
-const instanceDomains = computed<SettingsNavItem[]>(() =>
-    domainsForLayer("instance").map((domain) => ({
-        id: domain,
-        labelKey: DOMAIN_LABEL_KEY[domain],
-        path: settingsDomainPath("instance", domain),
-    })),
-);
+// task-227：左栏条目**统一由 settingsIa.navItemsForLayer 派生**（组折叠只在那一个函数里发生），
+// 三个层都走同一条，避免"某层折叠了、某层没折叠"这类不一致。
+const instanceDomains = computed<SettingsNavItem[]>(() => navItemsForLayer("instance"));
 
 const workspaceDefaultDomains = computed<SettingsNavItem[]>(() =>
-    domainsForLayer("workspace-default").map((domain) => ({
-        id: domain,
-        labelKey: DOMAIN_LABEL_KEY[domain],
-        path: settingsDomainPath("workspace-default", domain),
-    })),
+    navItemsForLayer("workspace-default"),
 );
 
-const userDomains = computed<SettingsNavItem[]>(() =>
-    domainsForLayer("user").map((domain) => ({
-        id: domain,
-        labelKey: DOMAIN_LABEL_KEY[domain],
-        path: settingsDomainPath("user", domain),
-    })),
-);
+const userDomains = computed<SettingsNavItem[]>(() => navItemsForLayer("user"));
 
 /**
  * PLAN-0772 M2（design.md 目标 1）：**资源组已整体搬出设置区**，左栏只剩「配置域 + 实例运维与安全」。

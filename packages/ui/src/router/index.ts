@@ -8,7 +8,14 @@ import {
 } from "../lib/workspaceContext";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
-import { defaultLayerPath, defaultResourcePath, RESOURCE_DEFS } from "../lib/settingsIa";
+import {
+    MODEL_CONFIG_GROUP_ID,
+    SETTINGS_LAYERS,
+    defaultLayerPath,
+    defaultResourcePath,
+    modelConfigDomainsForLayer,
+    RESOURCE_DEFS,
+} from "../lib/settingsIa";
 import {
     normalizeResourceLayerQuery,
     resourceDetailRouteName,
@@ -166,6 +173,32 @@ const router = createRouter({
                     path: "",
                     redirect: () => defaultLayerPath("instance"),
                 },
+                /**
+                 * task-227（用户 2026-11-13「合页，不合域」）：模型配置**组页** `/settings/<层>/model-config`。
+                 *
+                 * <p>三条刻意的取舍：①**只注册一次**（每个层一个组路由），而不是"重定向到某一段" ——
+                 * 重定向会让"一页三段"退化成"一页一段 + 两次跳转"，正好违反判据；
+                 * ②**三个域路由原样保留**（下面那三段 map 不动）：旧 URL 仍然直达单域页，
+                 * 深层链接/书签/文档引用不失效；③**是否注册由矩阵算**（`modelConfigDomainsForLayer`
+                 * 求交集，≥2 段才成组）—— D-1122 把工作区层的模型域整层下线后，那条路由会
+                 * 自动消失，不需要再改这里。</p>
+                 */
+                ...SETTINGS_LAYERS.flatMap((layer) => {
+                    const members = modelConfigDomainsForLayer(layer);
+                    if (members.length < 2) return [];
+                    return [
+                        {
+                            path: `${layer}/${MODEL_CONFIG_GROUP_ID}`,
+                            name: `settings-${layer}-model-config`,
+                            component: () => import("../views/settings/ModelConfigView.vue"),
+                            props: { layer },
+                            meta: {
+                                settingsLayer: layer,
+                                settingsGroup: MODEL_CONFIG_GROUP_ID,
+                            },
+                        },
+                    ];
+                }),
                 ...LAYER_DOMAINS.instance.map((domain) => ({
                     path: `instance/${domain}`,
                     name: `settings-instance-domain-${domain}`,

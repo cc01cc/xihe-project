@@ -37,8 +37,15 @@ const props = withDefaults(
         readonly?: boolean;
         /** PLAN-0752 T1.2：只渲染这一个域（域页用）；不传 = 整层（沿用旧行为）。 */
         domain?: ConfigDomain;
+        /**
+         * task-227「合页不合域」：**只渲染列出的这几个域**（模型配置组页用，一页三段）。
+         * 与 `domain` 的区别只是粒度：`domain` 是单段、`domains` 是多段，两者都不改变
+         * 「每个域各自保存」的语义（保存仍按域 PUT，见 handleSave(domain)）。
+         * **清单由调用方从 settingsIa 派生**，本组件不再写第二份域名单。
+         */
+        domains?: readonly ConfigDomain[];
     }>(),
-    { readonly: false, domain: undefined },
+    { readonly: false, domain: undefined, domains: undefined },
 );
 
 const emit = defineEmits<{
@@ -363,9 +370,10 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
 
 const savingDomains = ref<Record<string, boolean>>({});
 
-const visibleDomains = computed(() =>
-    props.domain ? [props.domain] : [...LAYER_DOMAINS[props.layer]],
-);
+const visibleDomains = computed(() => {
+    if (props.domains?.length) return [...props.domains];
+    return props.domain ? [props.domain] : [...LAYER_DOMAINS[props.layer]];
+});
 
 /**
  * PLAN-0752 T3.2：实例专属键在下层**不再静默消失**，而是渲染成只读行 + 「仅实例层」徽标
@@ -581,7 +589,15 @@ async function handleReset(domain: string, key: string) {
 </script>
 
 <template>
-    <template v-for="domain in visibleDomains" :key="domain">
+    <!-- task-227：外层 `div` 只为**页内锚点**服务（`#settings-domain-<域>`），组页的分段导航
+         直接跳到这一段；单域页也带同一个 id，所以同一套锚点两处都成立。`scroll-mt-14` 让跳转后
+         段落不被粘性页头顶掉。 -->
+    <div
+        v-for="domain in visibleDomains"
+        :key="domain"
+        :id="'settings-domain-' + domain"
+        class="scroll-mt-14"
+    >
         <!-- PLAN-0523 T3.1: llm-provider 合并为单一「模型提供方」分区
              （spec/ui-surfaces.md S1/S3）；旧 ProfilePanel / 层全局参数表单
              退役（组件删除在 T3.6）。 -->
@@ -685,5 +701,5 @@ async function handleReset(domain: string, key: string) {
             @save="handleSave(domain, $event)"
             @reset="handleReset(domain, $event)"
         />
-    </template>
+    </div>
 </template>

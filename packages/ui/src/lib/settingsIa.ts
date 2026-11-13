@@ -137,6 +137,81 @@ export function settingsLayerForPath(path: string): SettingsLayer {
     return path.startsWith("/settings/user") ? "user" : "instance";
 }
 
+/**
+ * task-227（用户 2026-11-13 裁定「**合页，不合域**」）：把三个「模型配置」域放**一页三段**。
+ *
+ * <p><b>为什么不合并域</b>：`{domain}` 合法集合由 CP 的 `config-schemas/*.json` + yaml `enum` 决定，
+ * 且**锁定 / 继承 / env 覆盖都是按域求值** —— 合并域会让「只想让管理员锁 LLM 连接、不锁上下文策略」
+ * 做不到（那样"锁一半"没有表达方式）。所以这里只做**页面组装**：域 id 一个都不合并，
+ * 三个域各自的 `meta` / 保存 / 层矩阵语义原样不变。</p>
+ *
+ * <p><b>组 id 不是域 id</b>：`model-config` 不在 `INSTANCE_DOMAINS` 里，也**不进** `LAYER_DOMAINS`
+ * —— 它只出现在**路由段**与左栏条目标识上。因此 `resolveLayerRoute("instance", "model-config")`
+ * 仍然返回 `unknown-domain`（路由侧另走 `isModelConfigGroup()`），这条边界是刻意的：
+ * 一旦它被当成域，`/config/model-config/meta` 这类请求就会打到 CP 上必然 400。</p>
+ */
+export const MODEL_CONFIG_GROUP_ID = "model-config";
+
+/**
+ * 组内域的**唯一一份**清单（顺序 = 页内段顺序 = 左栏组入口顺序）。
+ * 每层实际出现几段由 `modelConfigDomainsForLayer()` 用 `LAYER_DOMAINS` 求**交集**得出，
+ * **不**在组件里再写第二份字面量 —— 否则「某层矩阵改了、页面还画三段」这种漂移会静默发生。
+ */
+export const MODEL_CONFIG_DOMAINS: readonly ConfigDomain[] = [
+    "llm-provider",
+    "context-policy",
+    "api-request-templates",
+];
+
+/** 组在该层实际承载的域（交集）：instance 3 段 / user 3 段 / workspace-default 2 段（无 api-request-templates）。 */
+export function modelConfigDomainsForLayer(layer: SettingsLayer): ConfigDomain[] {
+    return MODEL_CONFIG_DOMAINS.filter((domain) => LAYER_DOMAINS[layer].includes(domain));
+}
+
+export function isModelConfigGroup(value: unknown): value is typeof MODEL_CONFIG_GROUP_ID {
+    return value === MODEL_CONFIG_GROUP_ID;
+}
+
+/** 组页路径（与域页同构：`/settings/<layer>/model-config`）。 */
+export function settingsGroupPath(layer: SettingsLayer): string {
+    return `/settings/${layer}/${MODEL_CONFIG_GROUP_ID}`;
+}
+
+/**
+ * 左栏条目（**组折叠的唯一实现处**）：把 `MODEL_CONFIG_DOMAINS` 在**该层存在**的那些域折成**一个**组条目，
+ * 其余域照旧一条一域。三个层都调这一个函数，所以「左栏有组入口但路由没有」这类不一致不可能单独发生。
+ *
+ * <p>只有一个成员时不折叠（`members.length >= 2` 才成组）——那种组点进去只有一段，
+ * 等于多一次点击还没有收益。</p>
+ */
+export interface SettingsNavItem {
+    id: string;
+    labelKey: string;
+    path: string;
+}
+
+export function navItemsForLayer(layer: SettingsLayer): SettingsNavItem[] {
+    const members = modelConfigDomainsForLayer(layer),
+        items: SettingsNavItem[] = [];
+    for (const domain of domainsForLayer(layer)) {
+        if (members.includes(domain)) continue;
+        items.push({
+            id: domain,
+            labelKey: DOMAIN_LABEL_KEY[domain],
+            path: settingsDomainPath(layer, domain),
+        });
+    }
+    if (members.length >= 2) {
+        const firstMember = domainsForLayer(layer).indexOf(members[0]);
+        items.splice(firstMember < 0 ? 0 : firstMember, 0, {
+            id: MODEL_CONFIG_GROUP_ID,
+            labelKey: "settings.groupModelConfig",
+            path: settingsGroupPath(layer),
+        });
+    }
+    return items;
+}
+
 /** 全局设置页的域路径（instance / workspace-default / user 三层都进 `/settings`）。 */
 export function settingsDomainPath(layer: SettingsLayer, domain: ConfigDomain): string {
     return `/settings/${layer}/${domain}`;

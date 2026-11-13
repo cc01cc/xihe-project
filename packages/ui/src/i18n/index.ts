@@ -2218,6 +2218,12 @@ const messages = {
             approvalModeManual: "手动审批（ask 交人确认）",
             approvalModeAuto: "自动放行（ask 自动放行，deny 与能力边界仍生效）",
             domainJobPolicy: "Job 运行时限",
+            // task-227「合页不合域」：组页标题 + 一句「为什么三段在一页」的说明（用户判据是
+            // 「同一对象的相关配置一屏可达、零路由跳转」，不是「三个 tab 少点两次」）。
+            groupModelConfig: "模型配置",
+            groupModelConfigDesc:
+                "提供商、上下文策略、请求模板三段在同一页，改完一段可直接看下一段；每段仍按各自的域单独保存。",
+            groupModelConfigJump: "跳到",
             fieldDefaultTimeoutSecs: "默认时限（秒）",
             fieldMaxTimeoutSecs: "上限（秒，0 = 未设上限）",
             domainLlmProvider: "LLM 提供商",
@@ -5591,6 +5597,10 @@ const messages = {
             approvalModeManual: "Manual (ask waits for a person)",
             approvalModeAuto: "Auto allow (ask is allowed; deny and capability limits still apply)",
             domainJobPolicy: "Job Timeout",
+            groupModelConfig: "Model configuration",
+            groupModelConfigDesc:
+                "Provider, context policy and request templates on one page: edit one section and read the next without leaving the page. Each section still saves through its own config domain.",
+            groupModelConfigJump: "Jump to",
             fieldDefaultTimeoutSecs: "Default timeout (seconds)",
             fieldMaxTimeoutSecs: "Max timeout (seconds, 0 = no cap)",
             domainLlmProvider: "LLM Provider",
