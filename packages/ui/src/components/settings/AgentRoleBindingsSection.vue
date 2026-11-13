@@ -50,6 +50,10 @@ const availableRoles = computed(() =>
 );
 
 function roleFitsScope(role: ApiRole): boolean {
+    // task-416（P0-1②）：含**禁用原子**的角色对智能体主体永远不可绑（选了必然 409）。
+    // 判据消费服务端 agentPrincipalForbidden，不在 UI 重算原子词表；持 MANAGE_ROLES 的
+    // 全量视图会把这些角色送过来，所以过滤必须在消费侧做。
+    if (role.atoms.some((atom) => atom.agentPrincipalForbidden)) return false;
     if (props.scope === "instance") return true;
     return role.atoms.every((atom) => atom.scopeClass === "both");
 }
@@ -150,12 +154,15 @@ async function save() {
     const currentRoleIds = new Set(bindings.value.map((binding) => binding.roleId));
     const toBind = [...desired].filter((roleId) => !currentRoleIds.has(roleId));
     try {
-        // Unbind first: swapping a role can otherwise trip the CP cap before the old row is gone.
-        for (const binding of toUnbind) {
-            await api.unbindAgentRole(authWorkspaceId.value, principalId, binding.bindingId);
-        }
+        // task-416（P0-1③）：**先绑后解**。旧写法先解绑，一旦绑定被拒（禁用原子 / cap 上限）
+        // 主体就停在**零角色**态 —— 一次失败的换角色把权限抹掉了，这是不可接受的失败模式。
+        // 先绑的代价：换角色时可能先撞上 CP 的角色数上限而 409；但那种失败**保留旧角色集**，
+        // 用户看到拒绝原因、权限不变，属于 fail-safe。两害相权取其可恢复的一侧。
         for (const roleId of toBind) {
             await api.bindAgentRole(authWorkspaceId.value, principalId, roleId);
+        }
+        for (const binding of toUnbind) {
+            await api.unbindAgentRole(authWorkspaceId.value, principalId, binding.bindingId);
         }
         await loadBindings();
         emit(

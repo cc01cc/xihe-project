@@ -208,3 +208,65 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         expect(mockedApi.getAgentRoles).toHaveBeenCalledWith(null, "agent-1");
     });
 });
+
+/**
+ * task-416（RBAC-3 P0-1②③，cp-1 408 盘点第 3 张）。
+ * ② 角色可选性必须消费服务端 `agentPrincipalForbidden`（task-415 投影），不能只看 scopeClass：
+ *    持 MANAGE_ROLES 的调用方拿的是**全量**角色（openapi listRoles 描述），禁用原子角色会混进选择器，
+ *    选中后必然 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS。
+ * ③ 保存必须**先绑后解**：旧写法先解绑，绑定失败就把主体留在**零角色**态（权限被抹）。
+ */
+describe("AgentRoleBindingsSection · task-416 P0-1②③", () => {
+    const FORBIDDEN_ROLE: apiModule.ApiRole = {
+        id: "role-forbidden",
+        name: "HUMAN_ONLY",
+        displayName: "Human only",
+        description: null,
+        system: false,
+        atoms: [
+            {
+                name: "instance:admin",
+                scopeClass: "both",
+                capability: true,
+                resource: "*",
+                agentPrincipalForbidden: true,
+            },
+        ],
+        bindingCount: 0,
+    };
+
+    it("② 含禁用原子的角色不出现在可选列表（消费服务端标记，不本地重算）", async () => {
+        const wrapper = mount(AgentRoleBindingsSection, {
+            attachTo: document.body,
+            props: {
+                scope: "workspace",
+                scopeId: "ws-1",
+                workspaceId: "ws-1",
+                roles: [...ROLES, FORBIDDEN_ROLE],
+            },
+            global: { plugins: [i18n] },
+        });
+        await flushPromises();
+        const values = wrapper
+            .findAllComponents({ name: "SelectItem" })
+            .map((item) => item.props("value"));
+        expect(values).toContain("role-a");
+        expect(values).not.toContain("role-forbidden");
+    });
+
+    it("③ 绑定失败时不得已经解绑（先绑后解，失败保留旧角色）", async () => {
+        mockedApi.getAgentRoles.mockResolvedValue([binding("role-b", "binding-b")]);
+        mockedApi.bindAgentRole.mockRejectedValue(
+            new ApiError({ status: 409, code: "AGENT_PRINCIPAL_FORBIDDEN_ATOMS", detail: "no" }),
+        );
+        const wrapper = mountSection();
+        await flushPromises();
+        await wrapper.get('[data-testid="agent-role-binding-remove-role-b"]').trigger("click");
+        await setSelectValue(wrapper, '[data-testid="agent-role-bindings-role"]', "role-a");
+        await wrapper.get('[data-testid="agent-role-bindings-add"]').trigger("click");
+        await wrapper.get('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await flushPromises();
+        expect(mockedApi.bindAgentRole).toHaveBeenCalled();
+        expect(mockedApi.unbindAgentRole).not.toHaveBeenCalled();
+    });
+});

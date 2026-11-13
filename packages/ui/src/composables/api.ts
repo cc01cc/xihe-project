@@ -290,6 +290,14 @@ export interface ApiRoleAtom {
      * 只渲染这个字段；缺省时回退到 `name`（服务端保证非空）。
      */
     displayName?: string;
+    /**
+     * task-415（RBAC P0-1）投影：该原子**永不可授予智能体主体**（CP
+     * `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` 为 SSOT，openapi RoleAtom 已登记）。
+     * UI 只消费这个标记，不本地重算词表。缺省视为 false —— 服务端对只持
+     * `MANAGE_WORKSPACE_AGENTS` 的调用方本就会**整行剔除**含禁用原子的角色（listRoles 契约），
+     * 只有持 `MANAGE_ROLES` 的全量视图才会把它们送过来。
+     */
+    agentPrincipalForbidden?: boolean;
 }
 
 export interface ApiRoleCatalog {
