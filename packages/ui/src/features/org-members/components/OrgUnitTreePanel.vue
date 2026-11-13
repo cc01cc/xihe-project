@@ -55,6 +55,22 @@ function childrenOf(item: OrgTreeItem): OrgTreeItem[] {
 const getKey = (item: OrgTreeItem) => item.key;
 const getChildren = (item: OrgTreeItem) => childrenOf(item);
 
+/**
+ * **行点击 = 选中，只走 chevron 才展开/收起**。
+ *
+ * <p>为什么不用 reka 的行默认行为（实测 reka `TreeItem.js:152-154` 的行 onClick =
+ * select **+** toggle）：在读面里"点一下父单元想选中它"会顺手把子树收起 —— 用户刚展开的层级
+ * 白展开了，而右栏此时还显示着该子树成员（左收右展的错位）。所以行的内容区
+ * `@click.stop` 后只调 `handleSelect`（reka 的纯 select，不 toggle），展开只认 chevron 的
+ * `handleToggle`。键盘 Enter/Space 仍走 reka 默认（select + toggle），与既有树控件一致。</p>
+ */
+function pick(item: OrgTreeItem, select: () => void) {
+    if (item.key.endsWith(LOADING_SUFFIX) || item.key.endsWith(ERROR_SUFFIX)) return;
+    select();
+    selectedKey.value = item.key;
+    emit("select", item.unit);
+}
+
 function onSelect(next: OrgTreeItem | OrgTreeItem[] | undefined) {
     const single = Array.isArray(next) ? next[0] : next;
     if (!single || single.key.endsWith(LOADING_SUFFIX) || single.key.endsWith(ERROR_SUFFIX)) {
@@ -160,7 +176,7 @@ function retryChildren(item: OrgTreeItem) {
                     <TreeItem
                         v-for="fi in flattenItems"
                         :key="fi._id"
-                        v-slot="{ isExpanded, handleToggle }"
+                        v-slot="{ isExpanded, handleToggle, handleSelect }"
                         v-bind="fi.bind"
                         :data-testid="'org-tree-node-' + fi.value.key"
                         class="flex min-h-8 w-full items-center gap-1 rounded-md px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 data-[selected]:bg-accent"
@@ -204,11 +220,14 @@ function retryChildren(item: OrgTreeItem) {
                                 <ChevronRight v-else class="size-4" />
                             </button>
                             <span v-else class="size-4" />
-                            <span
-                                :style="{ paddingLeft: fi.hasChildren ? '0' : '4px' }"
+                            <button
+                                type="button"
+                                class="min-w-0 flex-1 truncate text-left"
                                 :data-testid="'org-tree-label-' + fi.value.key"
-                                >{{ fi.value.label }}</span
+                                @click.stop="pick(fi.value, handleSelect)"
                             >
+                                {{ fi.value.label }}
+                            </button>
                         </template>
                     </TreeItem>
                 </template>

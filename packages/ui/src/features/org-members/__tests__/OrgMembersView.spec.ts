@@ -116,6 +116,25 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
         wrapper.unmount();
     });
 
+    it("行点击只选中、不收起子树（reka 行默认 select+toggle 的坑，已在组件里拦掉）", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        // 展开根单元 ⇒ 子节点行出现。
+        await wrapper.get('[data-testid="org-tree-toggle-u-root"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="org-tree-label-u-child"]').exists()).toBe(true);
+
+        // 点父单元标签 = 只选中：子树**不许**在同一击里收起（收起来右栏还显示子树成员，左右错位）。
+        await wrapper.get('[data-testid="org-tree-label-u-root"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="org-tree-label-u-child"]').exists()).toBe(true);
+        // 只有 chevron 能收起。
+        await wrapper.get('[data-testid="org-tree-toggle-u-root"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="org-tree-label-u-child"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
     it("「含下级」开关默认开；关掉后请求不再带 includeDescendants", async () => {
         mockFetch(happyHandler);
         const wrapper = await mountView();
