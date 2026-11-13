@@ -24,16 +24,34 @@ public final class RoleAdminViews {
      * wire carries one string, never a {@code {zh, en}} pair, so the UI keeps no vocabulary.</p>
      */
     public record AtomView(String name, String scopeClass, boolean capability, String resource,
-                           String displayName) {
+                           String displayName, boolean agentPrincipalForbidden) {
 
         static AtomView of(PermissionAtomCatalog.Atom atom, String locale) {
             return new AtomView(atom.name(), atom.scopeClass(), atom.capability(),
-                    atom.canonicalResource(), PermissionAtomLabels.label(atom.name(), locale));
+                    atom.canonicalResource(), PermissionAtomLabels.label(atom.name(), locale),
+                    // task-415 (RBAC P0-1): the catalog already computed this flag; the view used to
+                    // drop it, so a binding UI could offer a role the CP would refuse. Projecting it
+                    // lets the UI pre-disable instead of walking into AGENT_PRINCIPAL_FORBIDDEN.
+                    atom.agentPrincipalForbidden());
         }
     }
 
-    /** {@code GET /api/v1/roles/catalog}: the atom vocabulary plus the bindable scope types. */
-    public record CatalogView(List<AtomView> atoms, List<String> scopes) {
+    /**
+     * {@code GET /api/v1/roles/catalog}: the atom vocabulary, the bindable scope types and the
+     * built-in default grant sets (task-415 / RBAC P1-2).
+     */
+    public record CatalogView(List<AtomView> atoms, List<String> scopes,
+                              List<DefaultGrantView> defaultGrants) {
+    }
+
+    /**
+     * task-415 (RBAC P1-2): one built-in role's seeded default grant set, from
+     * {@link SystemAccessRoleCatalog#roleSeeds()} — the code-level default, not the live DB rows
+     * ({@code GET /roles} lists the rows). This is what answers "who gets a new atom by default"
+     * without reading code, the default-grant half of the permission-face rule.
+     */
+    public record DefaultGrantView(String roleName, String displayName, String description,
+                                   List<String> atoms) {
     }
 
     /** One role definition. {@code bindingCount} lets the UI disable a delete it cannot perform. */

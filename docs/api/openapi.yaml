@@ -92,7 +92,7 @@ paths:
       tags: [auth]
       operationId: myPermissions
       summary: Effective capabilities of the caller (PLAN-0610 W3-2b)
-      description: 'Instance-scope materialized atoms plus one entry per active workspace membership. Read-only self service: the data source is the caller''s role bindings plus the materialized grants union (users.role is never read).'
+      description: 'Instance-scope materialized atoms plus one entry per active workspace membership. Read-only self service: the data source is the caller''s role bindings plus the materialized grants union (users.role is never read). task-415 (RBAC P1-1): atoms are grouped by (actionClass, resource) and each carries sources — the hit-source audit (which grant / role / scope produced it), so a permission face can explain itself instead of only listing names.'
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: 'Self permission summary', content: { application/json: { schema: { $ref: '#/components/schemas/MePermissions' } } } }
@@ -6687,9 +6687,20 @@ components:
         workspaceAdminOf: { type: array, items: { type: string, format: uuid } }
     MePermissionsAtom:
       type: object
+      description: 'task-415 (RBAC P1-1): one effective atom, grouped by (actionClass, resource) — before task-415 the projection emitted one entry per grant row, so the same atom could appear twice. Every grant that produces it is listed in sources (the hit-source audit the permission-face rule asks for).'
       properties:
         actionClass: { type: string }
         resource: { type: string, description: '"*" when the atom is wildcard-scoped' }
+        sources: { type: array, items: { $ref: '#/components/schemas/MePermissionsAtomSource' }, description: 'Every materialized grant row that yields this atom, in evaluation order. Never empty for a listed atom.' }
+    MePermissionsAtomSource:
+      type: object
+      description: 'task-415: where one effective atom came from. source is the grant provenance (role / spawn / template / credential_binding / agent_default); roleName is the bound role for source=role; grantId addresses the durable row for audit.'
+      properties:
+        source: { type: string }
+        roleName: { type: [string, 'null'] }
+        scopeType: { type: string, enum: [instance, workspace] }
+        scopeId: { type: [string, 'null'], format: uuid }
+        grantId: { type: string, format: uuid }
     MePermissionsWorkspace:
       type: object
       properties:
@@ -6829,12 +6840,23 @@ components:
         capability: { type: boolean, description: 'true for instance:super / instance:admin / workspace:admin — resolved as cap:<atom> authorities, never materialized (decision #23)' }
         resource: { type: string, description: 'Canonical resource pattern of a wildcard atom (* or credential:*)' }
         displayName: { type: string, description: 'PLAN-0651 D51-37: human label resolved server-side from ?locale (zh-CN default, en-US supported). Always non-empty; the UI renders this instead of the wire name so it keeps no atom vocabulary of its own.' }
+        agentPrincipalForbidden: { type: boolean, description: 'task-415 (RBAC P0-1): true when AGENT_FORBIDDEN_ATOMS contains this atom, i.e. it can never be bound to an agent principal (the only-subtract cap). PermissionAtomCatalog already computed it; before task-415 the view dropped it, so a binding UI could offer a role the CP would refuse. The UI pre-disables instead of walking into the refusal.' }
     RoleCatalogView:
       type: object
-      required: [atoms, scopes]
+      required: [atoms, scopes, defaultGrants]
+      description: 'PLAN-0610 W3-2a + task-415 (RBAC P1-2): the atom vocabulary, the bindable scopes, and the built-in default grant sets (SystemAccessRoleCatalog.roleSeeds) so the page can answer "who gets a new atom by default" without reading code.'
       properties:
         atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
         scopes: { type: array, items: { type: string, enum: [instance, workspace] } }
+        defaultGrants: { type: array, items: { $ref: '#/components/schemas/RoleDefaultGrantView' }, description: 'The seeded default grant set per built-in role, in catalog order (instance tier first). These are the code-level seeds, not the live DB rows: /roles lists the rows, this lists what a fresh install grants.' }
+    RoleDefaultGrantView:
+      type: object
+      required: [roleName, displayName, atoms]
+      properties:
+        roleName: { type: string }
+        displayName: { type: string }
+        description: { type: [string, 'null'] }
+        atoms: { type: array, items: { type: string }, description: 'Atom names of the seed set (capability atoms included), in seed order.' }
     RoleView:
       type: object
       description: 'PLAN-0610 W3-2a: a role definition with its atom set and how many bindings reference it.'

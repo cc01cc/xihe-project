@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
@@ -10,8 +11,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -125,6 +128,107 @@ class RoleAdminApiIntegrationTest extends AbstractReusableIntegrationTest {
                 "it is an action atom, not a capability atom");
         assertEquals(PermissionAtomCatalog.capabilityAtoms().size(), atoms.findValues("capability").stream()
                 .filter(JsonNode::asBoolean).count(), "exactly the catalog's capability atoms");
+    }
+
+    // ── task-415 (RBAC P0-1① / P1-2): the catalog's two missing projections ────
+
+    @Test
+    void catalogProjectsTheAgentPrincipalForbiddenFlag() throws Exception {
+        String superToken = superAdmin("catalog-forbidden@test.com");
+
+        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/roles/catalog", null, superToken);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        JsonNode atoms = objectMapper.readTree(response.getBody()).path("atoms");
+        assertTrue(atoms.size() > 0, "the catalog is not empty");
+
+        // Derived from the SSOT, never a hard-coded list: every atom's flag must equal the catalog's
+        // own membership test, and the number of true flags must equal the forbidden set's size.
+        Set<String> forbidden = PermissionAtomCatalog.agentPrincipalForbiddenAtoms();
+        int trueFlags = 0;
+        for (JsonNode atom : atoms) {
+            String name = atom.path("name").asText();
+            assertTrue(atom.has("agentPrincipalForbidden"),
+                    "task-415: the flag must be on the wire for " + name);
+            assertEquals(forbidden.contains(name), atom.path("agentPrincipalForbidden").asBoolean(),
+                    "the projected flag must equal PermissionAtomCatalog's membership for " + name);
+            if (atom.path("agentPrincipalForbidden").asBoolean()) {
+                trueFlags++;
+            }
+        }
+        assertEquals(forbidden.size(), trueFlags,
+                "every agent-forbidden atom is visible as such (the UI can pre-disable the bind)");
+        assertTrue(trueFlags > 0, "the forbidden set is not empty");
+        // Two concrete readings, both verified against AGENT_FORBIDDEN_ATOMS:
+        JsonNode createOwn = findAtom(atoms, "CREATE_OWN_AGENT");
+        assertTrue(createOwn.path("agentPrincipalForbidden").asBoolean(),
+                "PLAN-0750 M1: creating a principal is account-level, never agent-bindable");
+        JsonNode wsAgents = findAtom(atoms, "MANAGE_WORKSPACE_AGENTS");
+        assertTrue(wsAgents.path("agentPrincipalForbidden").asBoolean(),
+                "workspace agent management is a human administration face");
+        // And a non-forbidden atom really reports false (not a constant true).
+        JsonNode allowed = null;
+        for (JsonNode atom : atoms) {
+            if (!forbidden.contains(atom.path("name").asText())) {
+                allowed = atom;
+                break;
+            }
+        }
+        assertNotNull(allowed, "the catalog has at least one agent-bindable atom");
+        assertFalse(allowed.path("agentPrincipalForbidden").asBoolean(),
+                "an agent-bindable atom must report false: " + allowed.path("name").asText());
+    }
+
+    @Test
+    void catalogExposesTheBuiltInDefaultGrantSets() throws Exception {
+        String superToken = superAdmin("catalog-defaults@test.com");
+
+        ResponseEntity<String> response = call(HttpMethod.GET, "/api/v1/roles/catalog", null, superToken);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        JsonNode body = objectMapper.readTree(response.getBody());
+        JsonNode defaults = body.path("defaultGrants");
+        List<SystemAccessRoleCatalog.RoleSeed> seeds = SystemAccessRoleCatalog.roleSeeds();
+        assertEquals(seeds.size(), defaults.size(),
+                "task-415: one default grant set per built-in role seed");
+
+        Map<String, JsonNode> byRole = new LinkedHashMap<>();
+        for (int i = 0; i < seeds.size(); i++) {
+            assertEquals(seeds.get(i).name(), defaults.get(i).path("roleName").asText(),
+                    "seed order is kept (instance tier first)");
+            byRole.put(defaults.get(i).path("roleName").asText(), defaults.get(i));
+        }
+        // The fixed administrator set is visible: instance:admin is a default grant of ADMIN.
+        assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains("instance:admin"),
+                "instance:admin belongs to the fixed instance-administrator default set");
+        assertFalse(texts(byRole.get("USER").path("atoms")).contains("instance:admin"),
+                "a plain user is not an instance administrator by default");
+        // Lead's flow-P0 question (ui-1 step 0): the instance-agent write gate needs BOTH halves, and
+        // the administrator default set carries both — so a disabled button on a plain account is the
+        // gate working, not a missing default grant.
+        assertTrue(texts(byRole.get("ADMIN").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
+                "ADMIN's default set carries the instance-agent write atom (SystemAccessRoleCatalog:159)");
+        assertTrue(texts(byRole.get("SUPER_ADMIN").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
+                "SUPER_ADMIN holds every action atom by construction");
+        assertFalse(texts(byRole.get("USER").path("atoms")).contains("MANAGE_AGENT_PRINCIPALS"),
+                "a plain account creates its OWN principal (CREATE_OWN_AGENT), not an instance one");
+        assertTrue(texts(byRole.get("USER").path("atoms")).contains("CREATE_OWN_AGENT"),
+                "PLAN-0750 M1: the user-level create atom is in the registration default set");
+        // Every seeded atom name is part of the exposed vocabulary (no phantom default grant).
+        Set<String> vocabulary = new LinkedHashSet<>(texts(body.path("atoms")));
+        for (JsonNode grant : defaults) {
+            for (String atom : texts(grant.path("atoms"))) {
+                assertTrue(vocabulary.contains(atom),
+                        "default grant atom must be in the catalog vocabulary: " + atom);
+            }
+        }
+    }
+
+    private static JsonNode findAtom(JsonNode atoms, String name) {
+        for (JsonNode atom : atoms) {
+            if (name.equals(atom.path("name").asText())) {
+                return atom;
+            }
+        }
+        throw new AssertionError("atom not in catalog: " + name);
     }
 
     // ── role CRUD ───────────────────────────────────────────────────────────

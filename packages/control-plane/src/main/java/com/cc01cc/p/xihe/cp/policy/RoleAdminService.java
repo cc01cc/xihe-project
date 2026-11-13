@@ -119,8 +119,17 @@ public class RoleAdminService {
         for (String name : PermissionAtomCatalog.capabilityAtoms()) {
             atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
         }
+        // task-415 (RBAC P1-2): expose the seeded default grant sets next to the vocabulary, so the
+        // page can show which built-in role a new atom lands in by default (and that instance:admin
+        // is part of the fixed administrator set) instead of leaving that fact in the Java source.
+        List<RoleAdminViews.DefaultGrantView> defaultGrants = new ArrayList<>();
+        for (SystemAccessRoleCatalog.RoleSeed seed : SystemAccessRoleCatalog.roleSeeds()) {
+            defaultGrants.add(new RoleAdminViews.DefaultGrantView(seed.name(), seed.displayName(),
+                    seed.description(), seed.atoms().stream()
+                            .map(SystemAccessRoleCatalog.AtomRef::actionClass).distinct().toList()));
+        }
         return new RoleAdminViews.CatalogView(atoms,
-                List.of(AccessScope.INSTANCE, AccessScope.WORKSPACE));
+                List.of(AccessScope.INSTANCE, AccessScope.WORKSPACE), defaultGrants);
     }
 
     /** {@code GET /api/v1/roles}: every definition, system roles first, then by name. */

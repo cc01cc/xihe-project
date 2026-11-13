@@ -132,6 +132,95 @@ class MePermissionsIntegrationTest extends AbstractReusableIntegrationTest {
         assertFalse(me.has("role"));
     }
 
+    // ── task-415 (RBAC P1-1): the hit-source audit on the self-service face ────
+
+    @Test
+    void mePermissionsReportsTheHitSourceOfEveryAtom() throws Exception {
+        AuthResponse registered = register("w3b-sources@test.com");
+        UUID userId = UUID.fromString(registered.getUser().getId());
+        workspaceFixture.createOwnedWorkspace("Me perms sources workspace", registered.getUser().getId());
+        JsonNode body = getJson(registered.getAccessToken(), "/api/v1/me/permissions");
+
+        JsonNode instanceAtoms = body.path("instancePermissions");
+        assertTrue(instanceAtoms.size() > 0, "registration materializes the USER tier: " + body);
+        boolean sawRoleSource = false;
+        for (JsonNode atom : instanceAtoms) {
+            JsonNode sources = atom.path("sources");
+            assertTrue(sources.isArray() && sources.size() > 0,
+                    "task-415: every listed atom names its hit source: " + atom);
+            for (JsonNode source : sources) {
+                assertFalse(source.path("source").asText().isBlank(), "the provenance is named: " + source);
+                assertFalse(source.path("grantId").asText().isBlank(),
+                        "the durable grant row is addressable for audit: " + source);
+                assertEquals("instance", source.path("scopeType").asText());
+                if ("role".equals(source.path("source").asText())) {
+                    sawRoleSource = true;
+                    assertFalse(source.path("roleName").asText().isBlank(),
+                            "a role source names the bound role: " + source);
+                }
+            }
+        }
+        assertTrue(sawRoleSource,
+                "the USER tier comes from a role binding, so at least one source is source=role");
+
+        // Workspace tier: the same audit, scoped to the workspace the atom was granted in.
+        JsonNode own = body.path("workspaces").get(0);
+        String workspaceId = own.path("workspaceId").asText();
+        assertTrue(own.path("permissions").size() > 0,
+                "WS_OWNER carries workspace action atoms, not only the capability: " + own);
+        for (JsonNode atom : own.path("permissions")) {
+            assertTrue(atom.path("sources").size() > 0, "workspace atoms are audited too: " + atom);
+            for (JsonNode source : atom.path("sources")) {
+                assertEquals("workspace", source.path("scopeType").asText());
+                assertEquals(workspaceId, source.path("scopeId").asText(),
+                        "the source points at the workspace the grant belongs to");
+            }
+        }
+    }
+
+    @Test
+    void mePermissionsGroupsOneAtomWithEveryContributingGrant() throws Exception {
+        AuthResponse registered = register("w3b-grouped@test.com");
+        UUID userId = UUID.fromString(registered.getUser().getId());
+        JsonNode before = getJson(registered.getAccessToken(), "/api/v1/me/permissions");
+        JsonNode first = before.path("instancePermissions").get(0);
+        String actionClass = first.path("actionClass").asText();
+        String resource = first.path("resource").asText();
+
+        // A second, non-role grant of the SAME atom. The materializer only reconciles source='role'
+        // rows, so this template row survives it — exactly the "two sources, one atom" case.
+        String permissions = "[{\"actionClass\":\"" + actionClass + "\",\"resource\":\"" + resource + "\"}]";
+        jdbc.update("INSERT INTO grants (id, subject_type, subject_id, permissions, source,"
+                + " template_name, scope_type) VALUES (gen_random_uuid(), 'user', CAST(? AS UUID),"
+                + " CAST(? AS JSONB), 'template', 'task-415-fixture', 'instance')", userId, permissions);
+        try {
+            authzContext.invalidateAll();
+            JsonNode after = getJson(registered.getAccessToken(), "/api/v1/me/permissions");
+            int matches = 0;
+            JsonNode grouped = null;
+            for (JsonNode atom : after.path("instancePermissions")) {
+                if (actionClass.equals(atom.path("actionClass").asText())
+                        && resource.equals(atom.path("resource").asText())) {
+                    matches++;
+                    grouped = atom;
+                }
+            }
+            assertEquals(1, matches,
+                    "the same atom from two grants is ONE entry (the per-row projection duplicated it)");
+            assertEquals(2, grouped.path("sources").size(),
+                    "both contributing grants are listed, not just the first: " + grouped);
+            boolean role = false;
+            boolean template = false;
+            for (JsonNode source : grouped.path("sources")) {
+                role |= "role".equals(source.path("source").asText());
+                template |= "template".equals(source.path("source").asText());
+            }
+            assertTrue(role && template, "the audit distinguishes the two provenances: " + grouped);
+        } finally {
+            jdbc.update("DELETE FROM grants WHERE template_name = 'task-415-fixture'");
+        }
+    }
+
     /**
      * Mints a token with the pre-W3-2b shape (including a {@code role} claim) using the test
      * secret, i.e. exactly what an old client holds. The issuer no longer produces this shape.

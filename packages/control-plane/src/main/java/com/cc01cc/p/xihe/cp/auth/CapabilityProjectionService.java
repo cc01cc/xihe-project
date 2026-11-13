@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -52,8 +53,24 @@ public class CapabilityProjectionService {
         this.workspaces = workspaces;
     }
 
-    /** One materialized atom as exposed to the caller (resource {@code "*"} when wildcard). */
-    public record AtomView(String actionClass, String resource) {
+    /**
+     * One effective atom as exposed to the caller (resource {@code "*"} when wildcard).
+     *
+     * <p>task-415 (RBAC P1-1): {@code sources} is the hit-source audit — every materialized grant row
+     * that yields this atom. Atoms are grouped by {@code (actionClass, resource)}; before task-415 the
+     * projection emitted one entry per row, so the same atom could be listed twice.</p>
+     */
+    public record AtomView(String actionClass, String resource, List<AtomSource> sources) {
+    }
+
+    /**
+     * task-415: where one effective atom came from. {@code source} is the grant provenance
+     * ({@code role} / {@code spawn} / {@code template} / {@code credential_binding} /
+     * {@code agent_default}), {@code roleName} the bound role for {@code source=role}, and
+     * {@code grantId} addresses the durable row so an audit can follow it.
+     */
+    public record AtomSource(String source, String roleName, String scopeType, String scopeId,
+                             String grantId) {
     }
 
     /** Effective permissions inside one workspace, with the workspace's own role string. */
@@ -149,7 +166,11 @@ public class CapabilityProjectionService {
     }
 
     private static List<AtomView> atoms(List<AuthorizationGrant> rows) {
-        List<AtomView> atoms = new ArrayList<>();
+        // task-415: group by (actionClass, resource) and keep every contributing grant as a source.
+        // The grouping is what makes the audit readable ("this atom comes from WS_OWNER and from a
+        // credential binding"), and it also removes the duplicate entries the per-row projection
+        // produced when two sources granted the same atom.
+        Map<String, AtomView> grouped = new LinkedHashMap<>();
         for (AuthorizationGrant row : rows) {
             JsonNode permissions = row.getPermissions();
             if (permissions == null || !permissions.isArray() || permissions.isEmpty()) {
@@ -161,8 +182,21 @@ public class CapabilityProjectionService {
                 continue;
             }
             String resource = atom.path("resource").asText(null);
-            atoms.add(new AtomView(actionClass, resource == null ? "*" : resource));
+            String effectiveResource = resource == null ? "*" : resource;
+            AtomSource source = new AtomSource(row.getSource(), row.getRoleName(), row.getScopeType(),
+                    row.getScopeId() == null ? null : row.getScopeId().toString(),
+                    row.getId() == null ? null : row.getId().toString());
+            String key = actionClass + '\u0000' + effectiveResource;
+            AtomView existing = grouped.get(key);
+            if (existing == null) {
+                grouped.put(key, new AtomView(actionClass, effectiveResource, List.of(source)));
+            } else {
+                List<AtomSource> merged = new ArrayList<>(existing.sources());
+                merged.add(source);
+                grouped.put(key, new AtomView(actionClass, effectiveResource, List.copyOf(merged)));
+            }
         }
+        List<AtomView> atoms = new ArrayList<>(grouped.values());
         atoms.sort(Comparator.comparing(AtomView::actionClass).thenComparing(AtomView::resource));
         return atoms;
     }
