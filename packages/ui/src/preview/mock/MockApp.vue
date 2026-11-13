@@ -63,9 +63,10 @@ const winlong = params.get("winlong") === "1";
  * sans-serif（Windows = 微软雅黑），中英文的字重与 x-height 完全不同，混排看起来「不协调」。
  * 这里显式声明中文回退，让中英文落在相近的中性无衬线族上。
  *
- * `"Noto Sans SC"` 已移除（D-1132 / D-1133，task-266）：该族此前靠 `main.css` 的 `@font-face` 提供，
- * 那条声明随字体自托管缓做一并删除 ⇒ 留着这个名字已经从「确定命中自托管子集」变成
- * 「装了这字体就命中、没装就落下一族」的环境相关行为，而这里只差一个不再存在的族。
+ * 原先次位的自托管中文字族已移除（D-1132 / D-1133，task-266）：该族此前靠 `main.css` 的字体面声明
+ * 提供，那条声明随字体自托管缓做一并删除 ⇒ 留着这个名字已从「确定命中自托管子集」退化成
+ * 「装了这字体就命中、没装就落下一族」的环境相关行为。族名与关键字都不在此处重述 ——
+ * 判据要求产品包对它们的机械命中为 0（`git grep -c`），注释里的字面量同样会命中。
  */
 [data-mock-canvas] {
     font-family: "Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
