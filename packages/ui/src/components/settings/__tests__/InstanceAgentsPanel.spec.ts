@@ -790,3 +790,112 @@ describe("InstanceAgentsPanel · task-402 技能面入口（D-1243 G2）", () =>
         wrapper.unmount();
     });
 });
+
+/**
+ * task-430：创建面**照契约收紧**（真 HTTP 照出的两笔，stack-1 2026-11-14 02:35）。
+ * ① 契约 `AgentPrincipalCreateRequest` 没有 description ⇒ 撤框 + 载荷不带该键；
+ * ② 名字格式 `^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$` ⇒ 常驻提示 + 就地拦 +
+ *    服务端 `INVALID_NAME_FORMAT` 本地化（不直显通用「操作失败」）。
+ */
+describe("InstanceAgentsPanel · task-430 创建面契约收紧", () => {
+    async function openCreate(wrapper: ReturnType<typeof mountPanel>): Promise<void> {
+        await wrapper.get('[data-testid="instance-agents-create"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="instance-agents-create-dialog"]').exists()).toBe(true);
+    }
+
+    it("不再有「说明」框，载荷一个 description 键都不带（多带即真栈 400）", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openCreate(wrapper);
+        expect(wrapper.find('[data-testid="instance-agents-form-description"]').exists()).toBe(
+            false,
+        );
+        await wrapper.get('[data-testid="instance-agents-form-name"]').setValue("评审助手");
+        await wrapper.get('[data-testid="instance-agents-create-submit"]').trigger("click");
+        await flushPromises();
+        const call = vi.mocked(createInstanceAgent).mock.calls[0];
+        expect(call).toBeDefined();
+        expect(Object.keys(call![0] as unknown as Record<string, unknown>)).toEqual(["name"]);
+        wrapper.unmount();
+    });
+
+    it("名字不合契约（连字符 / 空格 / 数字开头）：提交禁用 + 提示就地变红点名格式", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openCreate(wrapper);
+        const hint = wrapper.get('[data-testid="instance-agents-form-name-hint"]');
+        expect(hint.classes()).toContain("text-muted-foreground");
+
+        for (const bad of ["task-402-probe", "评审 助手", "1号助手"]) {
+            await wrapper.get('[data-testid="instance-agents-form-name"]').setValue(bad);
+            await flushPromises();
+            expect(
+                wrapper.get('[data-testid="instance-agents-create-submit"]').attributes("disabled"),
+                bad,
+            ).toBeDefined();
+            expect(
+                wrapper.get('[data-testid="instance-agents-form-name-hint"]').classes(),
+                bad,
+            ).toContain("text-destructive");
+            expect(
+                wrapper.get('[data-testid="instance-agents-form-name-hint"]').text(),
+                bad,
+            ).toContain("不能以数字开头");
+        }
+        expect(vi.mocked(createInstanceAgent)).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("合法名字（汉字 / 字母数字）：提示保持中性，提交可用且真发得出去", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openCreate(wrapper);
+        for (const good of ["评审助手", "Reviewer2"]) {
+            await wrapper.get('[data-testid="instance-agents-form-name"]').setValue(good);
+            await flushPromises();
+            expect(
+                wrapper.get('[data-testid="instance-agents-create-submit"]').attributes("disabled"),
+                good,
+            ).toBeUndefined();
+            expect(
+                wrapper.get('[data-testid="instance-agents-form-name-hint"]').classes(),
+                good,
+            ).toContain("text-muted-foreground");
+        }
+        await wrapper.get('[data-testid="instance-agents-create-submit"]').trigger("click");
+        await flushPromises();
+        expect(vi.mocked(createInstanceAgent)).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+
+    it("空名字只算必填不算格式错（两条判据不互相冒充）", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openCreate(wrapper);
+        expect(
+            wrapper.get('[data-testid="instance-agents-create-submit"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(wrapper.get('[data-testid="instance-agents-form-name-hint"]').classes()).toContain(
+            "text-muted-foreground",
+        );
+        wrapper.unmount();
+    });
+
+    it("服务端 400 INVALID_NAME_FORMAT：本地化点名格式，不直显通用失败，弹窗保窗", async () => {
+        vi.mocked(createInstanceAgent).mockRejectedValue(
+            new ApiError({ code: "INVALID_NAME_FORMAT", detail: "name format", status: 400 }),
+        );
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openCreate(wrapper);
+        await wrapper.get('[data-testid="instance-agents-form-name"]').setValue("评审助手");
+        await wrapper.get('[data-testid="instance-agents-create-submit"]').trigger("click");
+        await flushPromises();
+        const error = wrapper.get('[data-testid="instance-agents-action-error"]');
+        expect(error.text()).toContain("名字格式不合契约");
+        expect(error.text()).not.toContain("name format");
+        expect(wrapper.find('[data-testid="instance-agents-create-dialog"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+});

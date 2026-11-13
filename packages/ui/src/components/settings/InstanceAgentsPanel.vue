@@ -49,7 +49,6 @@ import {
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Textarea } from "../ui/textarea";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
 import InstanceAgentSkillsDialog from "../resources/InstanceAgentSkillsDialog.vue";
 import AgentModelBindingFields, {
@@ -112,7 +111,6 @@ const actionError = ref<string | null>(null);
 
 const createOpen = ref(false);
 const formName = ref("");
-const formDescription = ref("");
 const deleteTarget = ref<InstanceAgent | null>(null);
 
 /**
@@ -260,14 +258,30 @@ watch(
 
 function openCreate(): void {
     formName.value = "";
-    formDescription.value = "";
     createBinding.value = emptyBinding();
     actionError.value = null;
     createOpen.value = true;
 }
 
+/**
+ * task-430：名字契约（openapi `AgentPrincipalCreateRequest.name.pattern`，2026-11-03 裁定）——
+ * 字母 / 汉字 / 数字，不能数字开头，不含空格与符号。真 HTTP 实测违者 400 `INVALID_NAME_FORMAT`
+ * （探针第一版名字带连字符当场被拒，`.tmp/xh/task-402/probe-report.json`）⇒ 就地提示 + 提交前拦，
+ * 不让用户白跑一次必 400 的请求；服务端码仍本地化映射（别的客户端/竞态下仍可能收到）。
+ */
+const NAME_PATTERN = /^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$/;
+
+/** 空名字不算「格式错」（那是必填判据）；非空才按契约校验。 */
+const nameFormatOk = computed(() => {
+    const name = formName.value.trim();
+    return !name || NAME_PATTERN.test(name);
+});
+
 const canSubmit = computed(
-    () => Boolean(formName.value.trim()) && bindingComplete(createBinding.value),
+    () =>
+        Boolean(formName.value.trim()) &&
+        nameFormatOk.value &&
+        bindingComplete(createBinding.value),
 );
 
 async function submitCreate(): Promise<void> {
@@ -277,7 +291,6 @@ async function submitCreate(): Promise<void> {
     try {
         await createInstanceAgent({
             name: formName.value.trim(),
-            ...(formDescription.value.trim() ? { description: formDescription.value.trim() } : {}),
             // 留空 = 不写模型意图，由 CP 沿用平台默认 llm-provider 偏好解析（不假装选了）。
             ...(createBinding.value.model ? modelIntentOf(createBinding.value) : {}),
         });
@@ -285,7 +298,12 @@ async function submitCreate(): Promise<void> {
         toast.success(t("settings.instanceResources.agents.created"));
         await load();
     } catch (cause) {
-        actionError.value = t("settings.instanceResources.actionFailed");
+        // task-430：名字格式错要点名判据，不直显通用「操作失败」（用户看不出为什么）。
+        const code = cause instanceof ApiError ? cause.problem.code : undefined;
+        actionError.value =
+            code === "INVALID_NAME_FORMAT"
+                ? t("settings.instanceResources.agents.nameInvalid")
+                : t("settings.instanceResources.actionFailed");
         logger.warn("Failed to create instance agent", cause);
     } finally {
         submitting.value = false;
@@ -545,17 +563,22 @@ async function confirmDelete(): Promise<void> {
                                     t('settings.instanceResources.agents.fieldNamePlaceholder')
                                 "
                             />
+                            <!-- task-430：格式提示常驻（不是等 400 才说）；不合契约时就地变红点名。 -->
+                            <p
+                                class="text-xs"
+                                :class="nameFormatOk ? 'text-muted-foreground' : 'text-destructive'"
+                                data-testid="instance-agents-form-name-hint"
+                            >
+                                {{
+                                    nameFormatOk
+                                        ? t("settings.instanceResources.agents.nameHint")
+                                        : t("settings.instanceResources.agents.nameInvalid")
+                                }}
+                            </p>
                         </div>
-                        <div class="space-y-1">
-                            <Label for="instance-agent-description">
-                                {{ t("settings.instanceResources.agents.fieldDescription") }}
-                            </Label>
-                            <Textarea
-                                id="instance-agent-description"
-                                v-model="formDescription"
-                                data-testid="instance-agents-form-description"
-                            />
-                        </div>
+                        <!-- task-430：撤掉「说明」框 —— 契约 AgentPrincipalCreateRequest 没有 description，
+                             填了就必 400（真 HTTP 实测）。不摆会 400 的框，与编辑半同口径。 -->
+
                         <AgentModelBindingFields v-model="createBinding" />
                     </div>
                     <DialogFooter>

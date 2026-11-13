@@ -14,6 +14,9 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * 创建按钮永久禁用。桩的形态照契约给：列表信封 `{principals,count}`、创建回 201 且**按 body 承载模型三字段**
  * （与 `src/preview/mock/data/instanceResources.ts` 同口径）、`/models` 按 connectionId 聚合。</p>
  */
+// task-430：夹具名字去掉了空格（原「E2E 模型甲」等）。契约名字格式是字母/汉字/数字、
+// 不含空格与符号 ⇒ 那些名字在真栈本来就必 400 INVALID_NAME_FORMAT，是 mock 照单全收掩盖了它。
+// 创建面现在就地拦（提交禁用 + 提示变红），所以夹具必须用合规名字，否则红在前提上而不是判据上。
 const PANEL_URL = "/resources/agents?layer=INSTANCE";
 
 type Page = import("@playwright/test").Page;
@@ -247,7 +250,7 @@ test.describe("instance agent model intent on create (task-401)", () => {
     });
 
     test("真指针选满三段：请求带模型意图，列表行回显它", async ({ page }) => {
-        await openCreateDialog(page, "E2E 模型甲");
+        await openCreateDialog(page, "E2E模型甲");
         await pickProvider(page);
         await pickConnection(page);
         await pickModel(page);
@@ -259,17 +262,17 @@ test.describe("instance agent model intent on create (task-401)", () => {
         const body = (await created).postDataJSON() as Record<string, unknown>;
         // 连接**不上 wire**（契约：principal 不持有连接）；未勾选就不带 allowedModels。
         expect(body).toEqual({
-            name: "E2E 模型甲",
+            name: "E2E模型甲",
             defaultModelProvider: "anthropic",
             defaultModelName: "claude-sonnet-4-5",
         });
-        await expect(rowOf(page, "E2E 模型甲")).toContainText("anthropic / claude-sonnet-4-5", {
+        await expect(rowOf(page, "E2E模型甲")).toContainText("anthropic / claude-sonnet-4-5", {
             timeout: EXPECT_TIMEOUT_MS,
         });
     });
 
     test("勾「只允许这个模型」：allowedModels 白名单进载荷", async ({ page }) => {
-        await openCreateDialog(page, "E2E 模型乙");
+        await openCreateDialog(page, "E2E模型乙");
         await pickProvider(page);
         await pickConnection(page);
         await pickModel(page);
@@ -286,7 +289,7 @@ test.describe("instance agent model intent on create (task-401)", () => {
     });
 
     test("半组选择：提交禁用且点名判据，补全后放行", async ({ page }) => {
-        await openCreateDialog(page, "E2E 半组");
+        await openCreateDialog(page, "E2E半组");
         await pickProvider(page);
 
         await expect(page.getByTestId("instance-agents-model-incomplete")).toBeVisible({
@@ -301,14 +304,14 @@ test.describe("instance agent model intent on create (task-401)", () => {
     });
 
     test("三段留空：载荷一个模型键都不带，行模型列是 —（沿用平台默认）", async ({ page }) => {
-        await openCreateDialog(page, "E2E 无模型");
+        await openCreateDialog(page, "E2E无模型");
         const created = captureCreate(page);
         await page
             .getByTestId("instance-agents-create-submit")
             .click({ timeout: ACTION_TIMEOUT_MS });
         const body = (await created).postDataJSON() as Record<string, unknown>;
-        expect(body).toEqual({ name: "E2E 无模型" });
-        await expect(rowOf(page, "E2E 无模型")).toContainText("—", { timeout: EXPECT_TIMEOUT_MS });
+        expect(body).toEqual({ name: "E2E无模型" });
+        await expect(rowOf(page, "E2E无模型")).toContainText("—", { timeout: EXPECT_TIMEOUT_MS });
     });
 });
 
@@ -323,7 +326,7 @@ test.describe("instance agent model intent · mobile (task-401)", () => {
     });
 
     test("390×844：三段单列不塌，仍能选满并创建", async ({ page }) => {
-        await openCreateDialog(page, "E2E 移动模型");
+        await openCreateDialog(page, "E2E移动模型");
         await expect(page.getByTestId("instance-agents-form-provider")).toBeVisible();
         await expect(page.getByTestId("instance-agents-form-connection")).toBeVisible();
         await expect(page.getByTestId("instance-agents-form-model-name")).toBeVisible();
@@ -337,7 +340,7 @@ test.describe("instance agent model intent · mobile (task-401)", () => {
             .click({ timeout: ACTION_TIMEOUT_MS });
         const body = (await created).postDataJSON() as Record<string, unknown>;
         expect(body.defaultModelName).toBe("claude-sonnet-4-5");
-        await expect(rowOf(page, "E2E 移动模型")).toContainText("anthropic / claude-sonnet-4-5", {
+        await expect(rowOf(page, "E2E移动模型")).toContainText("anthropic / claude-sonnet-4-5", {
             timeout: EXPECT_TIMEOUT_MS,
         });
     });

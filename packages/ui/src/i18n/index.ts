@@ -2958,7 +2958,6 @@ const messages = {
                     emptyCta: "创建第一个平台智能体",
                     fieldName: "名称",
                     fieldNamePlaceholder: "例如：代码评审助手",
-                    fieldDescription: "说明",
                     createCta: "新建平台智能体",
                     createTitle: "新建平台智能体",
                     createBody: "创建后立即对全平台可见；不做 fork，也不写入工作区绑定表。",
@@ -6586,7 +6585,6 @@ const messages = {
                     emptyCta: "Create the first platform agent",
                     fieldName: "Name",
                     fieldNamePlaceholder: "e.g. code review assistant",
-                    fieldDescription: "Description",
                     createCta: "New platform agent",
                     createTitle: "New platform agent",
                     createBody:

@@ -55,6 +55,22 @@ export interface MockInstanceMcpServer {
     createdAt: string;
 }
 
+/**
+ * task-430：创建面白名单与名字格式**照契约**（openapi `AgentPrincipalCreateRequest`）。
+ * 真 HTTP 实测（stack-1，2026-11-14 02:35）：多带 description ⇒ 400 INVALID_REQUEST；
+ * 名字带连字符 ⇒ 400 INVALID_NAME_FORMAT。夹具此前照单全收 ⇒ mock 绿掩盖真栈 400。
+ */
+const CREATE_KEYS = new Set([
+    "name",
+    "templateId",
+    "roleIds",
+    "defaultModelProvider",
+    "defaultModelName",
+    "allowedModels",
+    "hooks",
+]);
+const NAME_PATTERN = /^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$/;
+
 const credentials: MockInstanceCredential[] = [
     {
         id: "8831a1f5-0c6d-4a2e-9a11-2b1d7f000001",
@@ -269,12 +285,23 @@ export async function handleInstanceResource(
             return { status: 200, body: { principals: agents, count: agents.length } };
         if (upper === "POST") {
             const body = await readBody();
+            // task-430：白名单照契约（多一键就 400，与真 CP 同口径）。
+            const foreign = Object.keys(body).filter((key) => !CREATE_KEYS.has(key));
+            if (foreign.length > 0) {
+                return badRequest(
+                    "INVALID_REQUEST",
+                    "Body must contain name plus optional templateId, defaultModelProvider, " +
+                        "defaultModelName, allowedModels, hooks and roleIds only",
+                );
+            }
             const name = str(body.name).trim();
             if (!name) return badRequest("NAME_REQUIRED", "name");
+            if (!NAME_PATTERN.test(name)) return badRequest("INVALID_NAME_FORMAT", "name");
             const created: MockInstanceAgent = {
                 principalId: nextId("agent", agents.length + 1),
                 name,
-                description: str(body.description).trim() || null,
+                // 契约不收 description ⇒ 新建行恒 null（读面那个字段是另一笔账，见 task-430 报告）。
+                description: null,
                 templateId: str(body.templateId) || null,
                 templateName: null,
                 // task-401 / `D-1248`：创建面**已收**模型意图三字段（契约 6950 行，CP

@@ -260,7 +260,11 @@ export interface InstanceAgentListResponse {
 
 export interface InstanceAgentCreateRequest {
     name: string;
-    description?: string;
+    // task-430：**没有 description** —— 契约 `AgentPrincipalCreateRequest` 是
+    // `additionalProperties: false` 且白名单只有 name/templateId/roleIds/defaultModel*/allowedModels/hooks。
+    // 真 HTTP 实测（stack-1，2026-11-14 02:35）发 description ⇒ 400 INVALID_REQUEST，
+    // detail 原文「Body must contain name plus optional templateId, defaultModelProvider,
+    // defaultModelName, allowedModels, hooks and roleIds only」。UI 曾比契约宽 ⇒ 填说明必 400。
     templateId?: string;
     /**
      * task-401 / `D-1248`：契约 `AgentPrincipalCreateRequest`（openapi.yaml:6950）**已收**这三个，
