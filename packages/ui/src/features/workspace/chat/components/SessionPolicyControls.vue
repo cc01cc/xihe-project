@@ -131,7 +131,7 @@ function retry() {
         <p
             v-if="readOnly"
             data-testid="session-policy-mode-readonly"
-            class="mt-1 line-clamp-2 text-[11px] text-muted-foreground"
+            class="mt-1 line-clamp-2 text-xs text-muted-foreground"
         >
             {{ t("workspace.viewerReadOnly") }}
         </p>
@@ -145,7 +145,7 @@ function retry() {
             <button
                 type="button"
                 data-testid="session-policy-mode-retry"
-                class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 text-[11px] font-medium transition hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 text-xs font-medium transition hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 @click="retry"
             >
                 {{ t("common.retry") }}

@@ -92,13 +92,13 @@ function hint(item: ConfigKeyMeta): string {
                 :data-testid="`config-source-row-${domain}-${item.key}`"
                 class="flex min-w-0 items-center gap-2 py-0.5"
             >
-                <code class="min-w-0 flex-1 truncate font-mono text-[11px]">
+                <code class="min-w-0 flex-1 truncate font-mono text-xs">
                     {{ domain }}.{{ item.key }}
                 </code>
-                <span class="shrink-0 rounded border border-border px-1 py-0.5 text-[10px]">
+                <span class="shrink-0 rounded border border-border px-1 py-0.5 text-xs">
                     {{ sourceText(item) }}
                 </span>
-                <span v-if="hint(item)" class="min-w-0 truncate text-[10px] text-muted-foreground">
+                <span v-if="hint(item)" class="min-w-0 truncate text-xs text-muted-foreground">
                     {{ hint(item) }}
                 </span>
             </div>

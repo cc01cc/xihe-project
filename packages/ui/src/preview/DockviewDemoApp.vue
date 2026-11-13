@@ -171,7 +171,7 @@ onBeforeUnmount(() => {
         <!-- 顶栏：能力按钮 -->
         <header class="flex shrink-0 items-center gap-2 border-b bg-card px-4 py-2 text-xs">
             <span class="font-semibold">dockview 能力演示</span>
-            <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            <span class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                 dev-only · 真组件 · 零请求
             </span>
             <span class="mx-2 h-4 w-px bg-border" />
@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
         <div class="flex min-h-0 flex-1">
             <section class="flex min-h-0 w-[54%] shrink-0 flex-col border-r bg-background">
                 <div
-                    class="flex h-9 shrink-0 items-center gap-2 border-b px-3 text-[11px] text-muted-foreground"
+                    class="flex h-9 shrink-0 items-center gap-2 border-b px-3 text-xs text-muted-foreground"
                 >
                     主列占位（真实工作台里这里是对话/编辑器，dock 在右侧）
                 </div>
@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
                     </template>
                     <template #panel-file>
                         <div
-                            class="flex h-full flex-col overflow-auto p-3 font-mono text-[11px] leading-5"
+                            class="flex h-full flex-col overflow-auto p-3 font-mono text-xs leading-5"
                         >
                             <div class="mb-1 font-sans text-xs font-medium">文件预览</div>
                             <div class="text-muted-foreground">1 export function demo() {</div>
@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
                     </template>
                     <template #panel-logs>
                         <div
-                            class="flex h-full flex-col gap-0.5 overflow-auto p-3 font-mono text-[11px] leading-5"
+                            class="flex h-full flex-col gap-0.5 overflow-auto p-3 font-mono text-xs leading-5"
                         >
                             <div class="mb-1 font-sans text-xs font-medium">运行日志</div>
                             <div>[10:00:00] INFO &nbsp;stack ready</div>
@@ -334,7 +334,7 @@ onBeforeUnmount(() => {
             <div class="flex w-[38%] shrink-0 flex-col gap-1 border-r p-3 text-xs">
                 <div class="font-medium">当前动作</div>
                 <div class="text-muted-foreground" data-demo="note">{{ note }}</div>
-                <div class="mt-auto space-y-0.5 text-[11px] text-muted-foreground">
+                <div class="mt-auto space-y-0.5 text-xs text-muted-foreground">
                     <div>② 跨组拖 tab：把任一 tab 拖到另一组（真实拖拽）</div>
                     <div>③ 组间缩放：拖两组之间的分隔条</div>
                 </div>
@@ -343,7 +343,7 @@ onBeforeUnmount(() => {
                 <div class="mb-1 text-xs font-medium">⑤ api.toJSON() —— 布局持久化的全部状态</div>
                 <pre
                     data-demo="json"
-                    class="min-h-0 flex-1 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[10px] leading-4 text-muted-foreground"
+                    class="min-h-0 flex-1 overflow-auto rounded border bg-muted/40 p-2 font-mono text-xs leading-4 text-muted-foreground"
                     >{{ savedJson || "（点「⑤ 保存布局」把当前布局序列化到这里）" }}</pre>
             </div>
         </footer>

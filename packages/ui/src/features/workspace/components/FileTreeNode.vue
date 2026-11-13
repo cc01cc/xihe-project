@@ -91,7 +91,7 @@ function handleContextmenu(e: MouseEvent) {
             @click="handleClick"
             @contextmenu.prevent="handleContextmenu"
         >
-            <span class="w-4 shrink-0 text-[10px] text-muted-foreground">
+            <span class="w-4 shrink-0 text-xs text-muted-foreground">
                 {{ node.type === "directory" ? (isExpanded ? "▼" : "▶") : "" }}
             </span>
             <component :is="getIcon()" class="size-3.5 shrink-0" aria-hidden="true" />

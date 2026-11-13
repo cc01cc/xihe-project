@@ -582,7 +582,7 @@ watch(
                         {{ t("workspace.executionModeMxc") }}
                         <span
                             v-if="mxcPreflight?.maturity === 'experimental'"
-                            class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-normal text-amber-600"
+                            class="rounded border border-amber-500/40 px-1.5 py-0.5 text-xs font-normal text-amber-600"
                         >
                             {{ t("workspace.maturityExperimental") }}
                         </span>

@@ -391,7 +391,7 @@ onUnmounted(() => {
             -->
             <div
                 v-if="delivery"
-                class="mb-0.5 flex flex-wrap items-center gap-1 px-0.5 text-[10px] text-muted-foreground"
+                class="mb-0.5 flex flex-wrap items-center gap-1 px-0.5 text-xs text-muted-foreground"
                 :class="isOwnMessage ? 'justify-end' : 'justify-start'"
                 data-testid="message-delivery"
             >
@@ -439,7 +439,7 @@ onUnmounted(() => {
                     圆点 + 名称（多主体下靠圆点+名区分），中心线程保持无头像观感。
                 -->
                 <span
-                    class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-[9px] font-medium text-foreground"
+                    class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-xs leading-none font-medium text-foreground"
                     data-testid="message-responder-initials"
                     :data-actor-principal-id="responder?.participantId"
                     :data-actor-kind="responder?.principalKind"
@@ -448,7 +448,7 @@ onUnmounted(() => {
                 >
                 <span class="truncate text-foreground">{{ responderName }}</span>
                 <span
-                    class="flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
+                    class="flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-xs font-normal text-muted-foreground"
                     data-testid="message-responder-role"
                     :data-session-role="responder?.role"
                 >
@@ -593,7 +593,7 @@ onUnmounted(() => {
             >
                 <button
                     type="button"
-                    class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/40"
+                    class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/40"
                     :aria-expanded="toolCallsExpanded"
                     data-testid="tool-calls-truncation-toggle"
                     @click="toolCallsExpanded = !toolCallsExpanded"
@@ -621,7 +621,7 @@ onUnmounted(() => {
                 -->
                 <div
                     v-if="toolCallsExpanded"
-                    class="border-t border-border/60 px-2 py-1.5 text-[11px] text-muted-foreground"
+                    class="border-t border-border/60 px-2 py-1.5 text-xs text-muted-foreground"
                     data-testid="tool-calls-truncation-body"
                 >
                     <p>{{ t("chat.toolCallsTruncationDetail") }}</p>
@@ -667,11 +667,11 @@ onUnmounted(() => {
                 class="invisible mt-0.5 flex items-center gap-2 opacity-0 transition-opacity group-hover/message:visible group-hover/message:opacity-100 group-focus-within/message:visible group-focus-within/message:opacity-100"
                 :class="isUser ? 'justify-end' : 'justify-start'"
             >
-                <span class="px-1 text-[10px] text-muted-foreground">{{ timestamp }}</span>
+                <span class="px-1 text-xs text-muted-foreground">{{ timestamp }}</span>
                 <button
                     v-if="canDelete"
                     data-testid="message-delete-button"
-                    class="p-1 rounded text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+                    class="p-1 rounded text-xs text-muted-foreground hover:text-destructive transition-colors"
                     :aria-label="'Delete message'"
                     @click="handleDelete"
                 >
@@ -681,7 +681,7 @@ onUnmounted(() => {
                     v-if="canCreateBranch"
                     type="button"
                     data-testid="message-branch-button"
-                    class="p-1 rounded text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                    class="p-1 rounded text-xs text-muted-foreground hover:text-primary transition-colors"
                     :aria-label="t('chat.branchFromMessage')"
                     :disabled="branchBusy || isStreaming"
                     :aria-busy="branchBusy"

@@ -182,7 +182,7 @@ watch(
             >
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="text-sm font-medium">{{ skill.name }}</span>
-                    <Badge variant="secondary" class="text-[11px] font-normal">
+                    <Badge variant="secondary" class="text-xs font-normal">
                         {{ scopeLabel(skill) }}
                     </Badge>
                     <!-- task-228：行尾详情入口（纯增量链接；本面板恒为本工作区层）。 -->
@@ -193,7 +193,7 @@ watch(
                         :name="skill.name"
                     />
                 </div>
-                <p class="mt-1 font-mono text-[11px] break-all text-muted-foreground">
+                <p class="mt-1 font-mono text-xs break-all text-muted-foreground">
                     {{ skill.skillId }}
                 </p>
             </li>

@@ -31,7 +31,7 @@ const label = computed(() => {
     <span
         data-testid="message-terminated"
         :data-run-outcome="outcome"
-        class="mt-0.5 flex w-fit items-center gap-1.5 rounded border px-1.5 py-0.5 text-[10px] leading-none"
+        class="mt-0.5 flex w-fit items-center gap-1.5 rounded border px-1.5 py-0.5 text-xs leading-none"
         :class="
             outcome === 'partial'
                 ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'

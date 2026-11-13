@@ -141,7 +141,7 @@ const summary = computed(() => ({ plain, virtual }));
                         </Tree>
                     </div>
                     <pre
-                        class="mt-2 text-[11px] text-muted-foreground"
+                        class="mt-2 text-xs text-muted-foreground"
                         data-testid="m0-4-readings-plain"
                         >{{ JSON.stringify(plain) }}</pre>
                 </div>
@@ -167,13 +167,13 @@ const summary = computed(() => ({ plain, virtual }));
                         </Tree>
                     </div>
                     <pre
-                        class="mt-2 text-[11px] text-muted-foreground"
+                        class="mt-2 text-xs text-muted-foreground"
                         data-testid="m0-4-readings-virtual"
                         >{{ JSON.stringify(virtual) }}</pre>
                 </div>
             </div>
 
-            <pre class="rounded-md bg-muted p-3 text-[11px]" data-testid="m0-4-readings">{{
+            <pre class="rounded-md bg-muted p-3 text-xs" data-testid="m0-4-readings">{{
                 JSON.stringify(summary)
             }}</pre>
             <p class="text-xs text-muted-foreground">

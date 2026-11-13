@@ -122,7 +122,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
                 <span
                     v-if="delegated"
                     data-testid="session-delegated-badge"
-                    class="shrink-0 rounded border px-1 py-px text-[10px] leading-none text-muted-foreground"
+                    class="shrink-0 rounded border px-1 py-px text-xs leading-none text-muted-foreground"
                 >
                     {{ t("chat.delegation.badge") }}
                 </span>
@@ -130,7 +130,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
             <p
                 v-if="delegated && delegationUsage"
                 data-testid="session-delegation-chip"
-                class="mt-0.5 truncate text-[11px] leading-snug text-muted-foreground"
+                class="mt-0.5 truncate text-xs leading-snug text-muted-foreground"
             >
                 {{ t("chat.delegation.delegatedTo") }}
                 {{ delegationUsage.principalName ?? "—" }} ｜ {{ t("chat.delegation.budgetUsage") }}
@@ -143,7 +143,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
         <span
             v-if="pendingCount > 0"
             data-testid="session-pending-badge"
-            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+            class="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs font-medium text-foreground"
             aria-live="polite"
         >
             <CircleAlert class="size-3" aria-hidden="true" />

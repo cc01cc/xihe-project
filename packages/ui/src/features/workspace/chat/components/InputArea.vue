@@ -1212,7 +1212,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
             />
             <p
                 v-if="showToTargets"
-                class="px-2 text-[11px] text-muted-foreground"
+                class="px-2 text-xs text-muted-foreground"
                 data-testid="to-agents-only-hint"
             >
                 {{ t("chat.input.toAgentsOnlyHint") }}
@@ -1231,7 +1231,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                     v-if="!ccBarVisible"
                     type="button"
                     data-testid="cc-expand"
-                    class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     @click="expandCc"
                 >
                     <Plus class="size-3" />
@@ -1254,7 +1254,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                         type="button"
                         data-testid="cc-collapse"
                         :aria-label="t('chat.input.ccCollapse')"
-                        class="shrink-0 rounded-sm px-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                        class="shrink-0 rounded-sm px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                         @click="collapseCc"
                     >
                         ×
@@ -1263,7 +1263,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
             </div>
             <p
                 v-if="queueMode"
-                class="px-2 text-[11px] text-muted-foreground"
+                class="px-2 text-xs text-muted-foreground"
                 role="status"
                 data-testid="follow-up-composer-notice"
             >
@@ -1294,7 +1294,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                         <span v-else class="p-1">{{ file.name }}</span>
                         <span
                             v-if="attachmentErrors[file.name]"
-                            class="absolute inset-x-0 bottom-0 bg-destructive px-1 py-0.5 text-center text-[9px] font-medium text-destructive-foreground"
+                            class="absolute inset-x-0 bottom-0 bg-destructive px-1 py-0.5 text-center text-xs font-medium text-destructive-foreground"
                         >
                             {{ t("multimodal.uploadFailed") }}
                         </span>
@@ -1309,7 +1309,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                     <div
                         v-if="attachmentErrors[file.name]"
                         data-testid="attachment-upload-error"
-                        class="mt-1 w-16 space-y-1 text-[10px] text-destructive"
+                        class="mt-1 w-16 space-y-1 text-xs text-destructive"
                     >
                         <span class="block truncate" :title="attachmentErrors[file.name]">{{
                             t("multimodal.uploadFailed")
@@ -1438,7 +1438,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"

@@ -167,7 +167,7 @@ watch(
                         <Search class="size-3.5" aria-hidden="true" />
                         {{ t("settings.commandk.trigger") }}
                         <kbd
-                            class="ml-1 rounded border px-1 font-mono text-[10px] text-muted-foreground"
+                            class="ml-1 rounded border px-1 font-mono text-xs text-muted-foreground"
                             aria-hidden="true"
                             >⌘K</kbd
                         >

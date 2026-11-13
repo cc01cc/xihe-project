@@ -163,7 +163,7 @@ function retry(): void {
                 "
             >
                 <SelectTrigger
-                    class="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-[10px]"
+                    class="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-xs"
                     :aria-label="t('monitor.fingerprint.againstLabel')"
                     data-testid="provider-fingerprint-against-select"
                 >
@@ -192,16 +192,16 @@ function retry(): void {
             </Select>
         </div>
 
-        <p v-if="loading" class="py-1 text-center text-[10px] text-muted-foreground">
+        <p v-if="loading" class="py-1 text-center text-xs text-muted-foreground">
             {{ t("monitor.fingerprint.loading") }}
         </p>
         <template v-else-if="loadFailed">
-            <p class="py-1 text-center text-[10px] text-muted-foreground">
+            <p class="py-1 text-center text-xs text-muted-foreground">
                 {{ t("monitor.fingerprint.failed") }}
             </p>
             <button
                 type="button"
-                class="text-[10px] text-muted-foreground underline"
+                class="text-xs text-muted-foreground underline"
                 data-testid="provider-fingerprint-retry"
                 @click="retry"
             >
@@ -213,7 +213,7 @@ function retry(): void {
         <template v-else-if="view">
             <p
                 v-if="!view.available"
-                class="py-1 text-center text-[10px] text-muted-foreground"
+                class="py-1 text-center text-xs text-muted-foreground"
                 data-testid="provider-fingerprint-not-captured"
             >
                 {{ t("monitor.fingerprint.notCaptured") }}
@@ -221,7 +221,7 @@ function retry(): void {
             <template v-else-if="view.fingerprint">
                 <p
                     v-if="isErrorMarker(view.fingerprint)"
-                    class="py-1 text-center text-[10px] text-muted-foreground"
+                    class="py-1 text-center text-xs text-muted-foreground"
                     data-testid="provider-fingerprint-error"
                 >
                     {{
@@ -233,7 +233,7 @@ function retry(): void {
                 <template v-if="documentOf(view.fingerprint)">
                     <dl
                         v-if="view.request"
-                        class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]"
+                        class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs"
                         data-testid="provider-fingerprint-meta"
                     >
                         <dt class="text-muted-foreground">{{ t("monitor.trace.apiType") }}</dt>
@@ -263,13 +263,13 @@ function retry(): void {
                         <span
                             v-for="[role, count] in roleEntries(view.request)"
                             :key="role"
-                            class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
                         >
                             {{ t("monitor.fingerprint.roleEntry", { role, count }) }}
                         </span>
                     </div>
                     <div class="overflow-x-auto">
-                        <table class="w-full text-[10px]">
+                        <table class="w-full text-xs">
                             <thead>
                                 <tr class="text-left text-muted-foreground">
                                     <th class="py-0.5 pr-2 font-medium">
@@ -331,7 +331,7 @@ function retry(): void {
                 <p
                     v-for="side in diff.sides"
                     :key="side.side"
-                    class="text-[10px] text-muted-foreground"
+                    class="text-xs text-muted-foreground"
                 >
                     {{
                         t(`monitor.fingerprint.side.${side.side}`, {
@@ -342,14 +342,14 @@ function retry(): void {
             </div>
             <dl
                 v-if="diff.against && diff.current"
-                class="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[10px]"
+                class="grid grid-cols-3 gap-x-2 gap-y-0.5 text-xs"
                 data-testid="provider-fingerprint-diff-meta"
             >
                 <dt />
-                <dd class="text-[9px] text-muted-foreground">
+                <dd class="text-xs text-muted-foreground">
                     {{ t("monitor.fingerprint.againstColumn") }}
                 </dd>
-                <dd class="text-[9px] text-muted-foreground">
+                <dd class="text-xs text-muted-foreground">
                     {{ t("monitor.fingerprint.currentColumn") }}
                 </dd>
                 <dt class="text-muted-foreground">{{ t("monitor.trace.model") }}</dt>
@@ -362,14 +362,14 @@ function retry(): void {
                 <dd>{{ diff.against.bytesTotal }}</dd>
                 <dd>{{ diff.current.bytesTotal }}</dd>
             </dl>
-            <div v-if="diff.summary && diff.summary.changedLayers.length > 0" class="text-[10px]">
+            <div v-if="diff.summary && diff.summary.changedLayers.length > 0" class="text-xs">
                 <span class="text-muted-foreground">{{
                     t("monitor.fingerprint.summaryChanged")
                 }}</span>
                 {{ diff.summary.changedLayers.join(", ") }}
             </div>
             <div class="overflow-x-auto">
-                <table class="w-full text-[10px]">
+                <table class="w-full text-xs">
                     <thead>
                         <tr class="text-left text-muted-foreground">
                             <th class="py-0.5 pr-2 font-medium">

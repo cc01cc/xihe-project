@@ -285,14 +285,14 @@ function submit() {
                             class="flex flex-wrap items-baseline gap-1.5"
                         >
                             <span
-                                class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                                class="rounded border px-1 py-0.5 text-xs text-muted-foreground"
                                 >{{ entryActionLabel(entry) }}</span
                             >
                             <span class="break-all font-mono">{{ entry.path }}</span>
                             <span
                                 v-if="entry.state !== 'execute'"
                                 data-testid="revert-preview-entry-state"
-                                class="rounded border border-amber-500/40 bg-amber-500/10 px-1 py-0.5 text-[10px]"
+                                class="rounded border border-amber-500/40 bg-amber-500/10 px-1 py-0.5 text-xs"
                             >
                                 {{ entryStateLabel(entry)
                                 }}<template v-if="entry.reason">: {{ entry.reason }}</template>

@@ -301,7 +301,7 @@ watch(
                                         ? new Date(checkpoint.capturedAt).toLocaleString()
                                         : t("workspace.checkpointTimeUnknown")
                                 }}</span>
-                                <span class="mt-0.5 block text-[11px] text-muted-foreground"
+                                <span class="mt-0.5 block text-xs text-muted-foreground"
                                     >{{
                                         checkpoint.sourceRunId ??
                                         t("workspace.checkpointSourceUnknown")
@@ -315,12 +315,12 @@ watch(
                             </button>
                             <span
                                 :data-checkpoint-state="checkpoint.state"
-                                class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                class="shrink-0 rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                                 >{{ t(`workspace.checkpointState.${checkpoint.state}`) }}</span
                             >
                         </div>
                         <div
-                            class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                            class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
                         >
                             <span
                                 >{{ checkpoint.changedCount }}
@@ -350,20 +350,20 @@ watch(
                                     class="flex items-baseline gap-1.5"
                                 >
                                     <span
-                                        class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                                        class="rounded border px-1 py-0.5 text-xs text-muted-foreground"
                                         >{{ entry.status }}</span
                                     ><span class="break-all font-mono">{{ entry.path }}</span>
                                 </li>
                             </ul>
                             <p
                                 v-else-if="checkpoint.changedCount > 0"
-                                class="text-[11px] text-muted-foreground"
+                                class="text-xs text-muted-foreground"
                             >
                                 {{ t("workspace.checkpointFilesTruncated") }}
                             </p>
                             <p
                                 v-if="checkpoint.opaqueNestedRepos.length > 0"
-                                class="text-[11px] text-muted-foreground"
+                                class="text-xs text-muted-foreground"
                             >
                                 {{ t("workspace.checkpointOpaqueRepos") }}:
                                 {{ checkpoint.opaqueNestedRepos.join(", ") }}
@@ -372,7 +372,7 @@ watch(
                                 v-if="checkpoint.unrollableReason"
                                 data-testid="workspace-checkpoint-reason"
                                 :title="checkpointReasonTitle(checkpoint.unrollableReason)"
-                                class="text-[11px] text-destructive"
+                                class="text-xs text-destructive"
                             >
                                 {{ t(checkpointReasonKey(checkpoint.unrollableReason)) }}
                             </p>
@@ -444,7 +444,7 @@ watch(
                             class="flex items-baseline gap-1.5"
                         >
                             <span
-                                class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                                class="rounded border px-1 py-0.5 text-xs text-muted-foreground"
                                 >{{ entry.status }}</span
                             >
                             <span class="break-all font-mono">{{ entry.path }}</span>
@@ -462,7 +462,7 @@ watch(
 
             <p
                 data-testid="workspace-diff-difference-note"
-                class="border-t pt-2 text-[11px] leading-relaxed text-muted-foreground"
+                class="border-t pt-2 text-xs leading-relaxed text-muted-foreground"
             >
                 <FileDiff class="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />
                 {{ t("workspace.diffDifferenceNote") }}

@@ -191,7 +191,7 @@ watch(
                 </h2>
                 <p
                     v-if="rootBudget"
-                    class="truncate text-[10px] text-muted-foreground"
+                    class="truncate text-xs text-muted-foreground"
                     data-testid="delegation-dag-budget"
                 >
                     {{
@@ -223,7 +223,7 @@ watch(
 
         <p
             v-if="error"
-            class="mx-3 mt-2 rounded border border-destructive/40 bg-destructive/5 px-2 py-1 text-[11px] text-destructive"
+            class="mx-3 mt-2 rounded border border-destructive/40 bg-destructive/5 px-2 py-1 text-xs text-destructive"
             role="status"
             data-testid="delegation-dag-error"
         >
@@ -232,7 +232,7 @@ watch(
 
         <p
             v-if="graph.truncated"
-            class="mx-3 mt-2 text-[11px] text-muted-foreground"
+            class="mx-3 mt-2 text-xs text-muted-foreground"
             data-testid="delegation-dag-truncated"
         >
             {{ t("chat.delegation.dagTruncated", { count: graph.nodes.length }) }}
@@ -300,13 +300,13 @@ watch(
                     <span class="min-w-0 truncate text-foreground">{{ row.node.title }}</span>
                     <span
                         v-if="row.node.depth > 0"
-                        class="shrink-0 rounded border border-border px-1 text-[9px] text-muted-foreground"
+                        class="shrink-0 rounded border border-border px-1 text-xs text-muted-foreground"
                         data-testid="delegation-node-badge"
                         >{{ t("chat.delegation.badge") }}</span
                     >
                     <span
                         v-if="statusLabel(row.node)"
-                        class="ml-auto shrink-0 text-[10px] text-muted-foreground"
+                        class="ml-auto shrink-0 text-xs text-muted-foreground"
                         data-testid="delegation-node-status"
                         >{{ statusLabel(row.node) }}</span
                     >

@@ -129,13 +129,13 @@ function inheritedText(field: MockSchemaField): string {
                         :key="row.name"
                         class="mk-body border-b last:border-0"
                     >
-                        <td class="py-2 pr-4 font-mono text-[13px]">{{ row.name }}</td>
+                        <td class="py-2 pr-4 font-mono text-sm">{{ row.name }}</td>
                         <td class="py-2 pr-4">
                             <span class="rounded border px-1.5 py-0.5 mk-caption font-medium">{{
                                 row.method
                             }}</span>
                         </td>
-                        <td class="py-2 pr-4 font-mono text-[13px]">{{ row.urlTemplate }}</td>
+                        <td class="py-2 pr-4 font-mono text-sm">{{ row.urlTemplate }}</td>
                         <td class="py-2 pr-4">{{ row.headers }} 个</td>
                         <td class="mk-caption py-2 text-muted-foreground">{{ row.note }}</td>
                     </tr>
@@ -208,14 +208,14 @@ function inheritedText(field: MockSchemaField): string {
                     <!-- map/json：JSON 块 -->
                     <pre
                         v-else-if="field.type === 'map' || field.type === 'json'"
-                        class="mk-body overflow-x-auto rounded-md border bg-muted/40 p-3 font-mono text-[13px] leading-5"
+                        class="mk-body overflow-x-auto rounded-md border bg-muted/40 p-3 font-mono text-sm leading-5"
                         >{{ jsonText(field) }}</pre>
                     <!-- string / integer / number：输入框样 -->
                     <div
                         v-else
                         class="mk-body flex h-8 max-w-md items-center rounded-md border bg-background px-3"
                     >
-                        <span class="truncate font-mono text-[13px]">{{ shownText(field) }}</span>
+                        <span class="truncate font-mono text-sm">{{ shownText(field) }}</span>
                     </div>
                     <p
                         v-if="override && isOverridden(field)"

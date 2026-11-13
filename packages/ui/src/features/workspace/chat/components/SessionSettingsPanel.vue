@@ -241,7 +241,7 @@ async function closeAutoApproval() {
             <span
                 v-if="templateRisk"
                 data-testid="session-settings-risk-template"
-                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700"
+                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700"
                 :title="templateRiskText"
             >
                 <CircleAlert class="size-3 shrink-0" aria-hidden="true" />
@@ -250,7 +250,7 @@ async function closeAutoApproval() {
             <span
                 v-if="branchDetached"
                 data-testid="session-settings-risk-branch"
-                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700"
+                class="inline-flex max-w-36 shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700"
                 :title="t('sessionSettings.branchDetached')"
             >
                 <CircleAlert class="size-3 shrink-0" aria-hidden="true" />
@@ -272,7 +272,7 @@ async function closeAutoApproval() {
             <button
                 type="button"
                 data-testid="session-policy-auto-close"
-                class="shrink-0 rounded-md border border-amber-500/40 px-2 py-0.5 text-[11px] font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                class="shrink-0 rounded-md border border-amber-500/40 px-2 py-0.5 text-xs font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 :disabled="closingAuto || Boolean(policyState?.changing) || !canWriteWorkspace"
                 :title="canWriteWorkspace ? undefined : t('workspace.viewerReadOnly')"
                 @click="closeAutoApproval"

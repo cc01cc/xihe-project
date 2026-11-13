@@ -225,7 +225,7 @@ watch(
                         :aria-label="t('resources.breadcrumbLabel')"
                         class="text-muted-foreground"
                     >
-                        <BreadcrumbList class="gap-1 text-[11px]">
+                        <BreadcrumbList class="gap-1 text-xs">
                             <BreadcrumbItem>
                                 <BreadcrumbLink
                                     as-child

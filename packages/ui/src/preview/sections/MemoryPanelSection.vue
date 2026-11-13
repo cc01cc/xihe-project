@@ -63,11 +63,7 @@ const relative = (iso: string) => {
                                 aria-label="已置顶"
                             />
                             <PinOff v-else class="size-3.5 text-muted-foreground/50" />
-                            <Badge
-                                v-if="memory.origin"
-                                variant="outline"
-                                class="font-mono text-[10px]"
-                            >
+                            <Badge v-if="memory.origin" variant="outline" class="font-mono text-xs">
                                 {{ memory.origin === "manual" ? "manual · 手动" : "run · 运行" }}
                             </Badge>
                             <span

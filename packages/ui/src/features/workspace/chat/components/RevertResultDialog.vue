@@ -198,7 +198,7 @@ watch(
                                 v-if="canInspect(entry)"
                                 type="button"
                                 :data-testid="`revert-result-diff-${entry.path}`"
-                                class="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                class="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 @click="openDiff(entry)"
                             >
                                 <FileDiff class="size-3" aria-hidden="true" />
@@ -272,14 +272,14 @@ watch(
                     <p
                         v-if="diffTruncated"
                         data-testid="revert-result-diff-truncated"
-                        class="mt-1 text-[10px] text-muted-foreground"
+                        class="mt-1 text-xs text-muted-foreground"
                     >
                         {{ t("chat.checkpointResultDiffTruncated") }}
                     </p>
                 </div>
             </div>
 
-            <p data-testid="revert-result-ref" class="break-all text-[10px] text-muted-foreground">
+            <p data-testid="revert-result-ref" class="break-all text-xs text-muted-foreground">
                 {{ t("chat.checkpointResultSliceRef") }}:
                 <span class="font-mono">{{ result.sliceRef }}</span>
             </p>
@@ -295,7 +295,7 @@ watch(
             <p
                 v-if="durationText"
                 data-testid="revert-result-duration"
-                class="text-[10px] text-muted-foreground"
+                class="text-xs text-muted-foreground"
             >
                 {{ t("chat.checkpointResultDuration") }}: {{ durationText }}
             </p>

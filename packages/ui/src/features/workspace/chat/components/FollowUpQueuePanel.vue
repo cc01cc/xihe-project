@@ -108,7 +108,7 @@ function pauseMessage(): string {
                     {{ t("chat.followUpQueueTitle") }}
                 </h2>
                 <span
-                    class="truncate text-[11px] text-muted-foreground"
+                    class="truncate text-xs text-muted-foreground"
                     data-testid="follow-up-queue-count"
                 >
                     {{
@@ -129,7 +129,7 @@ function pauseMessage(): string {
             >
                 {{ continuing ? t("chat.followUpContinuing") : t("chat.followUpContinue") }}
             </button>
-            <span v-else class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span v-else class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span class="size-1.5 rounded-full bg-primary" />
                 FIFO
             </span>
@@ -137,7 +137,7 @@ function pauseMessage(): string {
 
         <p
             v-if="snapshot.queueState === 'paused'"
-            class="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-200"
+            class="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-800 dark:text-amber-200"
             role="status"
             data-testid="follow-up-pause-reason"
         >
@@ -159,7 +159,7 @@ function pauseMessage(): string {
                 data-testid="follow-up-queue-item"
             >
                 <span
-                    class="inline-flex size-5 items-center justify-center rounded-md border text-[10px] tabular-nums text-muted-foreground"
+                    class="inline-flex size-5 items-center justify-center rounded-md border text-xs leading-none tabular-nums text-muted-foreground"
                 >
                     {{ String(item.queueSequence).padStart(2, "0") }}
                 </span>
@@ -168,7 +168,7 @@ function pauseMessage(): string {
                         {{ itemText(item) }}
                     </p>
                     <div
-                        class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground"
+                        class="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground"
                     >
                         <span>{{ itemBranch(item) }}</span>
                         <span
@@ -190,7 +190,7 @@ function pauseMessage(): string {
                     </div>
                 </div>
                 <div
-                    class="flex items-center gap-2 self-center whitespace-nowrap text-[10px] text-muted-foreground max-sm:col-start-2 max-sm:justify-self-start"
+                    class="flex items-center gap-2 self-center whitespace-nowrap text-xs text-muted-foreground max-sm:col-start-2 max-sm:justify-self-start"
                 >
                     <span
                         class="inline-flex items-center gap-1.5"
@@ -215,7 +215,7 @@ function pauseMessage(): string {
                     <button
                         v-if="item.status === 'queued' || item.status === 'paused'"
                         type="button"
-                        class="min-h-11 rounded-md border px-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        class="min-h-11 rounded-md border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                         :aria-label="
                             t('chat.followUpWithdrawItem', { sequence: item.queueSequence })
                         "
@@ -233,7 +233,7 @@ function pauseMessage(): string {
             </li>
         </ol>
 
-        <footer class="mt-1 flex flex-wrap justify-between gap-2 text-[10px] text-muted-foreground">
+        <footer class="mt-1 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
             <span>{{ t("chat.followUpExecutionNote") }}</span>
             <span>{{ t("chat.followUpCapacityNote", { capacity: snapshot.capacityLimit }) }}</span>
         </footer>

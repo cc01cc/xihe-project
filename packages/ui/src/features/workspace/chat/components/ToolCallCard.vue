@@ -265,7 +265,7 @@ async function loadJobOutput(reset: boolean) {
         <template #extra>
             <div
                 v-if="toolCall.waitingOn"
-                class="flex min-w-0 items-center justify-between gap-3 border-t border-border/60 px-2 py-1 text-[11px] text-muted-foreground"
+                class="flex min-w-0 items-center justify-between gap-3 border-t border-border/60 px-2 py-1 text-xs text-muted-foreground"
                 role="status"
                 data-testid="tool-call-waiting-on"
             >
@@ -349,7 +349,7 @@ async function loadJobOutput(reset: boolean) {
                     <span class="font-medium text-foreground">{{ t("chat.jobOutputTitle") }}</span>
                     <span
                         v-if="displayJobStatus"
-                        class="rounded px-1.5 py-0.5 text-[10px] uppercase"
+                        class="rounded px-1.5 py-0.5 text-xs uppercase"
                         :class="jobStatusClass(displayJobStatus)"
                         data-testid="job-status"
                         >{{ t(`chat.jobStatus.${displayJobStatus}`) }}</span

@@ -79,9 +79,7 @@ const statusTone = (status: string) => {
                                 {{ statusTone(connection.status).label }}
                             </Badge>
                         </div>
-                        <div
-                            class="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground"
-                        >
+                        <div class="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                             <span class="font-mono">{{ connection.providerId }}</span>
                             <span class="text-border">·</span>
                             <span class="font-mono">{{ connection.apiTypeId }}</span>
@@ -89,7 +87,7 @@ const statusTone = (status: string) => {
                         </div>
                     </button>
                 </CardContent>
-                <div class="border-t border-border/70 px-3 py-2 text-[11px] text-muted-foreground">
+                <div class="border-t border-border/70 px-3 py-2 text-xs text-muted-foreground">
                     连接弹窗只做「输入 key 快速新建凭据」；换绑在凭据页完成。
                 </div>
             </Card>
@@ -179,7 +177,7 @@ const statusTone = (status: string) => {
                         验证连接
                     </Button>
                     <Button variant="ghost" size="sm">编辑</Button>
-                    <span class="ml-auto text-[11px] text-muted-foreground"
+                    <span class="ml-auto text-xs text-muted-foreground"
                         >保存必须等真实 PUT 200</span
                     >
                 </div>
@@ -216,7 +214,7 @@ const statusTone = (status: string) => {
                             </Badge>
                         </div>
                         <div
-                            class="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground"
+                            class="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
                         >
                             <span>{{ template.apiTypeId }}</span>
                             <span class="text-border">·</span>
@@ -231,16 +229,16 @@ const statusTone = (status: string) => {
                             {{ template.description }}
                         </p>
                         <div class="mt-1.5 flex items-center gap-1.5">
-                            <Badge variant="secondary" class="font-mono text-[10px]">
+                            <Badge variant="secondary" class="font-mono text-xs">
                                 {{ template.status === "draft" ? "未发布" : "生效中" }}
                             </Badge>
-                            <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px]">
+                            <Button variant="ghost" size="sm" class="h-6 px-2 text-xs">
                                 校验
                             </Button>
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                class="h-6 px-2 text-[11px]"
+                                class="h-6 px-2 text-xs"
                                 :disabled="template.status === 'published'"
                             >
                                 发布此版本
@@ -249,7 +247,7 @@ const statusTone = (status: string) => {
                     </div>
                 </CardContent>
                 <div
-                    class="border-t border-border/70 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground"
+                    class="border-t border-border/70 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
                 >
                     发布诊断来自 CP validator；UI 只展示，不自动修复模板原文。
                 </div>

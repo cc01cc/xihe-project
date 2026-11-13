@@ -111,9 +111,7 @@ function append(snippet: string) {
             <MarkdownRender mode="chat" :content="doc" :final="true" custom-id="xihe" />
         </div>
 
-        <div
-            class="px-3 py-1 text-[10px] text-muted-foreground border-t shrink-0 flex justify-between"
-        >
+        <div class="px-3 py-1 text-xs text-muted-foreground border-t shrink-0 flex justify-between">
             <span>{{ doc.split("\n").length }} lines</span>
             <span>{{ doc.length }} chars</span>
         </div>

@@ -230,7 +230,7 @@ useEventListener("keydown", (event: KeyboardEvent) => {
                             item.alias
                         }}</span>
                         <span
-                            class="ml-2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            class="ml-2 rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                             :data-testid="`commandk-badge-${item.value}`"
                             >{{
                                 t("settings.commandk.crossLayerBadge", { layer: group.label })

@@ -26,7 +26,7 @@ const { t } = useI18n();
         v-if="props.truncation"
         data-testid="context-truncation-notice"
         role="status"
-        class="mt-1 flex items-center gap-2 px-1 text-[11px] text-muted-foreground"
+        class="mt-1 flex items-center gap-2 px-1 text-xs text-muted-foreground"
     >
         <span class="min-w-0 truncate">
             {{

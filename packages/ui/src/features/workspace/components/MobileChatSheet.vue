@@ -222,7 +222,7 @@ defineExpose({ toggle });
                                     v-for="(initial, index) in memberAvatarInitials"
                                     :key="`avatar-${index}`"
                                     data-testid="members-entry-avatar"
-                                    class="flex size-5 items-center justify-center rounded-full border bg-muted text-[10px] font-medium text-foreground/70"
+                                    class="flex size-5 items-center justify-center rounded-full border bg-muted text-xs leading-none font-medium text-foreground/70"
                                     >{{ initial }}</span
                                 >
                             </span>
@@ -234,14 +234,14 @@ defineExpose({ toggle });
                             >
                             <span
                                 v-if="memberMentionTotal > 0"
-                                class="rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground"
+                                class="rounded-full bg-primary px-1.5 py-0.5 text-xs leading-none text-primary-foreground"
                                 data-testid="members-entry-mentions"
                                 >@{{ memberMentionTotal }}</span
                             >
                         </button>
                         <span
                             data-testid="mobile-session-agent"
-                            class="max-w-44 truncate rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            class="max-w-44 truncate rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                             :title="agentPrincipalId ?? t('workspace.agentUnbound')"
                         >
                             {{

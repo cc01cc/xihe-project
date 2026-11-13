@@ -82,9 +82,9 @@ const states = [
             >
                 <div class="flex items-center gap-2">
                     <h3 class="text-xs font-medium text-foreground">{{ state.title }}</h3>
-                    <Badge variant="outline" class="font-mono text-[10px]">{{ state.key }}</Badge>
+                    <Badge variant="outline" class="font-mono text-xs">{{ state.key }}</Badge>
                 </div>
-                <p class="text-[11px] leading-relaxed text-muted-foreground">{{ state.hint }}</p>
+                <p class="text-xs leading-relaxed text-muted-foreground">{{ state.hint }}</p>
                 <div class="rounded-md border border-border/70 p-2">
                     <ProviderRequestFingerprintPanel
                         :run-id="PREVIEW_FINGERPRINT_RUN_ID"
@@ -97,7 +97,7 @@ const states = [
         </div>
 
         <p
-            class="mt-4 rounded-xl border border-dashed border-border bg-muted/20 p-3 text-[11px] leading-relaxed text-muted-foreground"
+            class="mt-4 rounded-xl border border-dashed border-border bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground"
         >
             <span class="font-mono">fetcher</span>
             是组件真实取数路径的注入点：产品里默认为

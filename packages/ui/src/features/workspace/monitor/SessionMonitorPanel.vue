@@ -627,7 +627,7 @@ const connectionChipClass = computed(() => {
                         class="flex items-center justify-between border-b px-2 py-1 text-xs text-muted-foreground"
                     >
                         <span class="font-medium">{{ t("monitor.activityTitle") }}</span>
-                        <span class="text-[10px]">{{ t("monitor.activityTag") }}</span>
+                        <span class="text-xs">{{ t("monitor.activityTag") }}</span>
                     </header>
                     <div class="divide-y">
                         <div
@@ -638,22 +638,22 @@ const connectionChipClass = computed(() => {
                         >
                             <div class="flex items-center gap-2">
                                 <span
-                                    class="rounded-full px-1.5 py-0.5 text-[10px]"
+                                    class="rounded-full px-1.5 py-0.5 text-xs"
                                     :class="statusChipClass(item.status)"
                                 >
                                     {{ statusLabel(item.status) }}
                                 </span>
-                                <span class="font-mono text-[10px] text-muted-foreground">
+                                <span class="font-mono text-xs text-muted-foreground">
                                     {{ runIdShort(item.runId) }}
                                 </span>
                                 <span class="flex-1" />
-                                <span class="text-[10px] text-muted-foreground">
+                                <span class="text-xs text-muted-foreground">
                                     {{ formatTime(item.createdAt) }}
                                 </span>
                             </div>
                             <div
                                 v-if="item.leaseExpired"
-                                class="mt-1 text-[10px] text-amber-600 dark:text-amber-400"
+                                class="mt-1 text-xs text-amber-600 dark:text-amber-400"
                                 data-testid="monitor-lease-expired"
                             >
                                 {{ t("monitor.leaseExpired") }}
@@ -677,7 +677,7 @@ const connectionChipClass = computed(() => {
                         <span class="font-medium">{{ t("monitor.transport.title") }}</span>
                         <span
                             v-if="transportAggregate"
-                            class="text-[10px]"
+                            class="text-xs"
                             data-testid="monitor-transport-aggregate"
                         >
                             {{
@@ -693,14 +693,14 @@ const connectionChipClass = computed(() => {
                         <template v-if="diagnoseRunId">
                             <div class="flex items-center gap-2">
                                 <span
-                                    class="font-mono text-[10px] text-muted-foreground"
+                                    class="font-mono text-xs text-muted-foreground"
                                     data-testid="monitor-transport-run"
                                 >
                                     {{ runIdShort(diagnoseRunId) }}
                                 </span>
                                 <span
                                     v-if="runIdentity"
-                                    class="truncate text-[10px] text-muted-foreground"
+                                    class="truncate text-xs text-muted-foreground"
                                 >
                                     {{ runIdentity }}
                                 </span>
@@ -716,16 +716,16 @@ const connectionChipClass = computed(() => {
                                     :class="cell.active ? 'ring-1 ring-primary/50' : ''"
                                     data-testid="monitor-transport-stage"
                                 >
-                                    <span class="block truncate text-[9px] text-muted-foreground">
+                                    <span class="block truncate text-xs text-muted-foreground">
                                         {{ t(`monitor.transport.stage.${cell.stage}`) }}
                                     </span>
-                                    <span class="mt-0.5 block truncate font-mono text-[10px]">
+                                    <span class="mt-0.5 block truncate font-mono text-xs">
                                         {{ cell.value }}
                                     </span>
                                 </div>
                             </div>
                             <div
-                                class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground"
+                                class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
                                 data-testid="monitor-transport-metrics"
                             >
                                 <span>
@@ -764,11 +764,11 @@ const connectionChipClass = computed(() => {
                                     class="flex items-center gap-2 px-2 py-1"
                                     data-testid="monitor-transport-attempt"
                                 >
-                                    <span class="font-mono text-[10px] text-muted-foreground">
+                                    <span class="font-mono text-xs text-muted-foreground">
                                         #{{ row.seq }}
                                     </span>
                                     <span
-                                        class="rounded-full px-1.5 py-0.5 text-[10px]"
+                                        class="rounded-full px-1.5 py-0.5 text-xs"
                                         :class="
                                             outcomeChipClass(
                                                 row.status === 'running' ? null : row.outcome,
@@ -782,17 +782,17 @@ const connectionChipClass = computed(() => {
                                         }}
                                     </span>
                                     <span
-                                        class="flex-1 truncate font-mono text-[10px] text-muted-foreground"
+                                        class="flex-1 truncate font-mono text-xs text-muted-foreground"
                                     >
                                         {{ row.errorCode ?? formatMs(row.durationMs) }}
                                     </span>
-                                    <span class="text-[10px] text-muted-foreground">
+                                    <span class="text-xs text-muted-foreground">
                                         {{ formatTime(row.endedAt ?? row.startedAt) }}
                                     </span>
                                 </div>
                                 <p
                                     v-if="mergedAttempts.length === 0"
-                                    class="px-2 py-2 text-center text-[10px] text-muted-foreground"
+                                    class="px-2 py-2 text-center text-xs text-muted-foreground"
                                     data-testid="monitor-transport-empty"
                                 >
                                     {{ t("monitor.transport.empty") }}
@@ -800,7 +800,7 @@ const connectionChipClass = computed(() => {
                             </div>
                             <p
                                 v-if="attemptsLoadFailed"
-                                class="text-[10px] text-muted-foreground"
+                                class="text-xs text-muted-foreground"
                                 data-testid="monitor-transport-history-unavailable"
                             >
                                 {{ t("monitor.transport.historyUnavailable") }}
@@ -808,7 +808,7 @@ const connectionChipClass = computed(() => {
                         </template>
                         <p
                             v-else
-                            class="py-1 text-center text-[10px] text-muted-foreground"
+                            class="py-1 text-center text-xs text-muted-foreground"
                             data-testid="monitor-transport-empty"
                         >
                             {{ t("monitor.transport.empty") }}
@@ -881,7 +881,7 @@ const connectionChipClass = computed(() => {
                         class="flex items-center justify-between border-b px-2 py-1 text-xs text-muted-foreground"
                     >
                         <span class="font-medium">{{ t("monitor.historyTitle") }}</span>
-                        <span class="text-[10px]">
+                        <span class="text-xs">
                             {{ t("monitor.historyWindowTag", { size: data.history.windowSize }) }}
                         </span>
                     </header>
@@ -890,7 +890,7 @@ const connectionChipClass = computed(() => {
                             <span
                                 v-for="[outcome, count] in counts"
                                 :key="outcome"
-                                class="rounded-full px-1.5 py-0.5 text-[10px]"
+                                class="rounded-full px-1.5 py-0.5 text-xs"
                                 :class="outcomeChipClass(outcome === 'unknown' ? null : outcome)"
                                 data-testid="monitor-history-count"
                             >
@@ -906,17 +906,15 @@ const connectionChipClass = computed(() => {
                             data-testid="monitor-history-item"
                         >
                             <span
-                                class="rounded-full px-1.5 py-0.5 text-[10px]"
+                                class="rounded-full px-1.5 py-0.5 text-xs"
                                 :class="outcomeChipClass(item.terminalOutcome)"
                             >
                                 {{ item.terminalOutcome ?? "—" }}
                             </span>
-                            <span
-                                class="flex-1 truncate font-mono text-[10px] text-muted-foreground"
-                            >
+                            <span class="flex-1 truncate font-mono text-xs text-muted-foreground">
                                 {{ item.errorCode ?? runIdShort(item.runId) }}
                             </span>
-                            <span class="text-[10px] text-muted-foreground">
+                            <span class="text-xs text-muted-foreground">
                                 {{ formatTime(item.terminalAt) }}
                             </span>
                         </div>
@@ -941,16 +939,16 @@ const connectionChipClass = computed(() => {
                                 {{ t("monitor.readinessConnection") }}
                             </span>
                             <template v-if="data.readiness.connection">
-                                <span class="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">
+                                <span class="rounded-full bg-muted px-1.5 py-0.5 text-xs">
                                     {{ data.readiness.connection.status }}
                                 </span>
-                                <span class="text-[10px] text-muted-foreground">
+                                <span class="text-xs text-muted-foreground">
                                     {{ formatTime(data.readiness.connection.lastVerifiedAt) }}
                                 </span>
                             </template>
                             <span
                                 v-else
-                                class="text-[10px] text-muted-foreground"
+                                class="text-xs text-muted-foreground"
                                 data-testid="monitor-connection-missing"
                             >
                                 {{ t("monitor.notProvided") }}
@@ -961,15 +959,15 @@ const connectionChipClass = computed(() => {
                                 {{ t("monitor.readinessAgent") }}
                             </span>
                             <span
-                                class="rounded-full border border-dashed px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                class="rounded-full border border-dashed px-1.5 py-0.5 text-xs text-muted-foreground"
                                 data-testid="monitor-agent-global-tag"
                             >
                                 {{ t("monitor.agentGlobalTag") }}
                             </span>
-                            <span class="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">
+                            <span class="rounded-full bg-muted px-1.5 py-0.5 text-xs">
                                 {{ data.readiness.agent.llmReady }}
                             </span>
-                            <span class="text-[10px] text-muted-foreground">
+                            <span class="text-xs text-muted-foreground">
                                 {{ formatTime(data.readiness.agent.verifiedAt) }}
                             </span>
                         </div>
@@ -979,7 +977,7 @@ const connectionChipClass = computed(() => {
                             </span>
                             <template v-if="data.readiness.lastObservedRun">
                                 <span
-                                    class="rounded-full px-1.5 py-0.5 text-[10px]"
+                                    class="rounded-full px-1.5 py-0.5 text-xs"
                                     :class="
                                         outcomeChipClass(
                                             data.readiness.lastObservedRun.terminalOutcome,
@@ -988,18 +986,18 @@ const connectionChipClass = computed(() => {
                                 >
                                     {{ data.readiness.lastObservedRun.terminalOutcome ?? "—" }}
                                 </span>
-                                <span class="text-[10px] text-muted-foreground">
+                                <span class="text-xs text-muted-foreground">
                                     {{ formatTime(data.readiness.lastObservedRun.terminalAt) }}
                                 </span>
                             </template>
-                            <span v-else class="text-[10px] text-muted-foreground">
+                            <span v-else class="text-xs text-muted-foreground">
                                 {{ t("monitor.notProvided") }}
                             </span>
                         </div>
                     </div>
                 </section>
 
-                <p class="text-right text-[10px] text-muted-foreground">
+                <p class="text-right text-xs text-muted-foreground">
                     {{ t("monitor.generatedAt", { time: formatTime(data.generatedAt) }) }}
                 </p>
             </template>

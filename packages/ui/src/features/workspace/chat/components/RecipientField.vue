@@ -191,11 +191,11 @@ function focusInput(): void {
 
 <template>
     <div class="flex flex-wrap items-center gap-1.5 px-2" :data-testid="testid">
-        <span class="shrink-0 text-[11px] text-muted-foreground">{{ label }}</span>
+        <span class="shrink-0 text-xs text-muted-foreground">{{ label }}</span>
         <span
             v-for="entry in selected"
             :key="entry.id"
-            class="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+            class="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs"
             :data-testid="`${testid}-chip`"
             :data-participant-id="entry.id"
         >
@@ -222,7 +222,7 @@ function focusInput(): void {
                 aria-autocomplete="list"
                 :aria-label="label"
                 :placeholder="placeholder"
-                class="w-full min-w-0 rounded-sm bg-transparent py-0.5 text-[11px] outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0"
+                class="w-full min-w-0 rounded-sm bg-transparent py-0.5 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0"
                 :data-testid="`${testid}-input`"
                 @keydown="onKeydown"
                 @focus="open = query.trim().length > 0"
@@ -258,11 +258,9 @@ function focusInput(): void {
                     @mousedown.prevent
                     @click="commit(candidate.participantId)"
                 >
-                    <span class="truncate text-[13px] font-medium">{{
-                        candidate.displayName
-                    }}</span>
+                    <span class="truncate text-sm font-medium">{{ candidate.displayName }}</span>
                     <span
-                        class="ml-auto shrink-0 rounded-full border px-1.5 py-px font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+                        class="ml-auto shrink-0 rounded-full border px-1.5 py-px font-mono text-xs uppercase tracking-wide text-muted-foreground"
                         >{{ candidate.role }}</span
                     >
                 </button>
@@ -270,7 +268,7 @@ function focusInput(): void {
             <!-- 空态：打字后没有匹配候选时也要有反馈（不是"什么都没发生"）。 -->
             <div
                 v-else-if="open"
-                class="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border bg-popover px-2.5 py-2 text-[11px] text-muted-foreground shadow-lg"
+                class="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border bg-popover px-2.5 py-2 text-xs text-muted-foreground shadow-lg"
                 role="status"
                 :data-testid="`${testid}-empty`"
             >
@@ -279,7 +277,7 @@ function focusInput(): void {
         </div>
         <span
             v-if="unknownHint"
-            class="text-[11px] text-destructive"
+            class="text-xs text-destructive"
             role="status"
             :data-testid="`${testid}-unknown`"
             >{{ t("chat.input.recipientUnknown") }}</span
@@ -287,7 +285,7 @@ function focusInput(): void {
         <button
             v-else-if="!query && !selected.length"
             type="button"
-            class="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+            class="shrink-0 text-xs text-muted-foreground hover:text-foreground"
             :data-testid="`${testid}-hint`"
             @click="focusInput"
         >

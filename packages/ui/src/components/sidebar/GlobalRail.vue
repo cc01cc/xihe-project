@@ -191,7 +191,7 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                 aria-hidden="true"
                 class="pointer-events-none my-2 flex size-8 shrink-0 items-center justify-center self-start ml-3.5 bg-primary text-primary-foreground select-none"
             >
-                <span class="text-[11px] leading-none font-semibold tracking-[-0.01em]">XH</span>
+                <span class="text-xs leading-none font-semibold tracking-[-0.01em]">XH</span>
             </div>
             <SidebarContent>
                 <!--

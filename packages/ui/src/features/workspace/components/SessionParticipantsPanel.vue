@@ -202,7 +202,7 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
                 aria-hidden="true"
             />
             <span
-                class="rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none tabular-nums text-muted-foreground"
+                class="rounded-full bg-muted px-1.5 py-0.5 text-xs leading-none tabular-nums text-muted-foreground"
                 data-testid="participants-pending-questions-badge"
                 :title="t('userQuestions.title')"
                 >{{ t("userQuestions.pendingCount", { count: pendingQuestionCount }) }}</span

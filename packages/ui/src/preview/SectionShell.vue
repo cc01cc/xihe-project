@@ -16,7 +16,7 @@ defineProps<{
     <section :id="id" class="scroll-mt-24 border-t border-border/70 pt-10">
         <header class="mb-3 flex items-center gap-3">
             <span
-                class="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                class="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
                 >{{ index }}</span
             >
             <h2 class="text-xl font-semibold tracking-tight text-foreground">{{ title }}</h2>

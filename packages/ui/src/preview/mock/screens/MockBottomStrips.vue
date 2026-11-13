@@ -72,7 +72,7 @@ const LIB_ROWS = [
                     :key="row.name"
                     class="mk-body mb-2 flex items-center justify-between rounded-md border px-3 py-2 last:mb-0"
                 >
-                    <span class="font-mono text-[13px]">{{ row.name }}</span>
+                    <span class="font-mono text-sm">{{ row.name }}</span>
                     <span class="mk-caption text-muted-foreground"
                         >{{ row.chunks }} 块 · {{ row.updated }}</span
                     >

@@ -48,7 +48,7 @@ const tier = computed(() => runStateTier(props.status ?? undefined));
 
 <template>
     <div
-        class="mt-2 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground"
+        class="mt-2 flex items-center gap-1.5 px-1 text-xs text-muted-foreground"
         data-testid="run-header"
         :data-run-id="runId"
         :data-run-status="status ?? undefined"

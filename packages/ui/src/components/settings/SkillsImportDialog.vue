@@ -244,7 +244,7 @@ const rejectedRows = computed(() =>
                             <span class="text-muted-foreground">{{ row.path }}</span>
                             <span class="mx-1 text-border">·</span>
                             <span>{{ row.reason }}</span>
-                            <span class="ml-1 font-mono text-[10px] text-muted-foreground">
+                            <span class="ml-1 font-mono text-xs text-muted-foreground">
                                 {{ row.code }}
                             </span>
                         </li>
@@ -266,7 +266,7 @@ const rejectedRows = computed(() =>
                         class="block w-full text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-background file:px-2 file:py-1 file:text-xs"
                         @change="onFile"
                     />
-                    <p class="text-[11px] text-muted-foreground">
+                    <p class="text-xs text-muted-foreground">
                         {{ t("settings.skills.import.fileHint") }}
                     </p>
                     <p
@@ -284,14 +284,14 @@ const rejectedRows = computed(() =>
                     </label>
                     <!-- 示例放在框**外面**：放进 placeholder 时它长得像"已经填好的内容"，
                         用户会直接点提交（12 号图自审的第一条）。示例是 **代码**，不经过 i18n。 -->
-                    <p class="text-[11px] font-medium text-muted-foreground">
+                    <p class="text-xs font-medium text-muted-foreground">
                         {{ t("settings.skills.import.exampleLabel") }}
                     </p>
                     <pre
                         data-testid="skills-import-example"
-                        class="whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] leading-4 text-muted-foreground"
+                        class="whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-2 font-mono text-xs leading-4 text-muted-foreground"
                         >{{ jsonSample }}</pre>
-                    <p class="text-[11px] text-muted-foreground">
+                    <p class="text-xs text-muted-foreground">
                         {{ t("settings.skills.import.exampleHint") }}
                     </p>
                     <Textarea
@@ -346,14 +346,14 @@ const rejectedRows = computed(() =>
                         </p>
                         <p
                             data-testid="skills-import-error-code"
-                            class="mt-1 font-mono text-[10px] text-muted-foreground"
+                            class="mt-1 font-mono text-xs text-muted-foreground"
                         >
                             {{ t("settings.skills.import.errorCode", { code: error.code }) }}
                         </p>
                     </AlertDescription>
                 </Alert>
 
-                <ul class="space-y-1 text-[11px] leading-4 text-muted-foreground">
+                <ul class="space-y-1 text-xs leading-4 text-muted-foreground">
                     <li data-testid="skills-import-hint-idempotent">
                         · {{ t("settings.skills.import.hintIdempotent") }}
                     </li>

@@ -211,7 +211,7 @@ function requestAdvance(): void {
         :data-testid="`participant-row-${participant.participantId}`"
     >
         <span
-            class="flex size-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-medium"
+            class="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs leading-none font-medium"
             :data-testid="`participant-initials-${participant.participantId}`"
             aria-hidden="true"
             >{{ initials }}</span
@@ -221,7 +221,7 @@ function requestAdvance(): void {
                 <span class="truncate font-medium">{{ displayName }}</span>
                 <span
                     v-if="mentionCount"
-                    class="rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground"
+                    class="rounded-full bg-primary px-1.5 py-0.5 text-xs leading-none text-primary-foreground"
                     :data-testid="`participant-mention-badge-${participant.participantId}`"
                     :title="t('workspace.participantMentionBadge', { count: mentionCount })"
                     >@{{ mentionCount }}</span
@@ -229,13 +229,13 @@ function requestAdvance(): void {
             </div>
             <p class="mt-1 flex flex-wrap items-center gap-1">
                 <span
-                    class="rounded border px-1.5 py-0.5 text-[10px]"
+                    class="rounded border px-1.5 py-0.5 text-xs"
                     :data-testid="`participant-kind-badge-${participant.participantId}`"
                     :data-participant-kind="participant.principalKind"
                     >{{ kindLabel }}</span
                 >
                 <span
-                    class="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px]"
+                    class="flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs"
                     :data-testid="`participant-role-badge-${participant.participantId}`"
                     :data-session-role="participant.role"
                 >
@@ -248,14 +248,14 @@ function requestAdvance(): void {
                 </span>
                 <span
                     v-if="disabled"
-                    class="rounded border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive"
+                    class="rounded border border-destructive/40 px-1.5 py-0.5 text-xs text-destructive"
                     :data-testid="`participant-disabled-badge-${participant.participantId}`"
                     >{{ t("workspace.participantDisabledBadge") }}</span
                 >
             </p>
             <!-- 策略：只读文字 + （有 manage 时）可编辑下拉。**先渲染，保存成功后才改值**。 -->
             <template v-if="showDetails">
-                <p class="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                <p class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span :data-testid="`participant-wake-indicator-${participant.participantId}`">
                         {{ t("workspace.participantWakeLabel") }}:
                     </span>
@@ -268,7 +268,7 @@ function requestAdvance(): void {
                         "
                     >
                         <SelectTrigger
-                            class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                            class="rounded border bg-background px-1 py-0.5 text-xs disabled:opacity-50"
                             :data-testid="`participant-wake-select-${participant.participantId}`"
                         >
                             <SelectValue />
@@ -297,7 +297,7 @@ function requestAdvance(): void {
                         "
                     >
                         <SelectTrigger
-                            class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                            class="rounded border bg-background px-1 py-0.5 text-xs disabled:opacity-50"
                             :data-testid="`participant-respond-select-${participant.participantId}`"
                         >
                             <SelectValue />
@@ -322,7 +322,7 @@ function requestAdvance(): void {
                 <!-- M1a：仅 AGENT 有模型意图（契约字段，缺失不猜）。 -->
                 <p
                     v-if="modelIntent"
-                    class="mt-1 text-[10px] text-muted-foreground"
+                    class="mt-1 text-xs text-muted-foreground"
                     :data-testid="`participant-model-${participant.participantId}`"
                 >
                     {{ modelIntent }}
@@ -336,7 +336,7 @@ function requestAdvance(): void {
         <button
             v-if="density === 'summary' && !expanded"
             type="button"
-            class="shrink-0 rounded border px-2 py-1 text-[10px] text-muted-foreground max-md:min-h-[44px] max-md:min-w-[44px]"
+            class="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground max-md:min-h-[44px] max-md:min-w-[44px]"
             :data-testid="`participant-expand-${participant.participantId}`"
             :aria-expanded="expanded"
             :aria-label="t('workspace.participantMoreAction')"
@@ -352,7 +352,7 @@ function requestAdvance(): void {
             <button
                 v-if="canAdvanceOwnCursor"
                 type="button"
-                class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50 max-md:min-h-[44px] max-md:min-w-[44px]"
+                class="rounded border px-1.5 py-0.5 text-xs disabled:opacity-50 max-md:min-h-[44px] max-md:min-w-[44px]"
                 data-testid="participant-cursor-advance"
                 :disabled="advancing === true || readOnly"
                 :title="
@@ -367,7 +367,7 @@ function requestAdvance(): void {
             <!-- U2/F-01：无权限时**点击前**禁用，并给出原因，而不是点了才 403。 -->
             <button
                 type="button"
-                class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50"
+                class="rounded border px-1.5 py-0.5 text-xs disabled:opacity-50"
                 :data-testid="`participant-mention-${participant.participantId}`"
                 :disabled="!canMention || disabled || !realName"
                 :title="
@@ -383,7 +383,7 @@ function requestAdvance(): void {
             </button>
             <button
                 type="button"
-                class="rounded border px-1.5 py-0.5 text-[10px] text-destructive disabled:opacity-50"
+                class="rounded border px-1.5 py-0.5 text-xs text-destructive disabled:opacity-50"
                 :data-testid="`participant-remove-${participant.participantId}`"
                 :disabled="
                     !canManage || disabled || removing === true || participant.role === 'PRIMARY'

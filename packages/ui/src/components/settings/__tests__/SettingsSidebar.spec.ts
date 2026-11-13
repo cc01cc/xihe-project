@@ -149,8 +149,11 @@ describe("SettingsSidebar", () => {
         expect(links[0]!.classes().join(" ")).toContain("bg-sidebar-accent");
         expect(links[0]!.classes().join(" ")).toContain("text-sidebar-accent-foreground");
         expect(links[0]!.classes().join(" ")).not.toContain("border-l-2");
-        // task-50 C1：条目 13px，与 14px 层组标题拉开一档
-        expect(links[0]!.classes().join(" ")).toContain("text-[13px]");
+        // task-278 G1：条目由任意值 13px 收敛到 `text-sm`（14px，--text-sm: 0.875rem）。
+        // 为什么不是 text-xs：13px → 12px 会与 14px 层组标题差 2px 反而不成阶，
+        // 且用户 2026-11-13 要的是「收敛到既有 token」而不是「全部压到最小档」。
+        expect(links[0]!.classes().join(" ")).toContain("text-sm");
+        expect(links[0]!.classes().join(" ")).not.toContain("text-[13px]");
 
         // task-172：per-domain id 必须带层 —— 12 实例域与 9 用户域有 9 个同名（llm-provider /
         // embedding / rag …），不带层会撞 id（getByTestId 在 strict mode 直接抛）。

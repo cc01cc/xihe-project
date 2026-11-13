@@ -196,7 +196,7 @@ function overflowNav(navigate: () => void) {
                     <span>{{ t("workspace.panelMembers") }}</span>
                     <span
                         v-if="membersBadgeCount > 0"
-                        class="rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground"
+                        class="rounded-full bg-primary px-1.5 py-0.5 text-xs leading-none text-primary-foreground"
                         data-testid="workspace-toolbar-more-members-badge"
                         aria-hidden="true"
                         >@{{ membersBadgeCount > 9 ? "9+" : membersBadgeCount }}</span
@@ -273,7 +273,7 @@ function overflowNav(navigate: () => void) {
             <span
                 v-if="agentPrincipalId"
                 data-testid="workspace-active-agent"
-                class="max-w-24 shrink-0 truncate rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                class="max-w-24 shrink-0 truncate rounded border px-1 py-0.5 text-xs text-muted-foreground"
                 :title="`${t('workspace.activeAgent')}: ${agentPrincipalId}`"
                 :aria-label="`${t('workspace.activeAgent')}: ${agentPrincipalId}`"
             >

@@ -195,14 +195,14 @@ onMounted(() => {
             >
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="text-sm font-medium">{{ skill.name }}</span>
-                    <Badge variant="secondary" class="text-[11px] font-normal">
+                    <Badge variant="secondary" class="text-xs font-normal">
                         {{ t(`settings.skills.${scopeKeyOf(skill)}`) }}
                     </Badge>
                     <Badge
                         v-if="skill.oversize"
                         variant="outline"
                         :data-testid="`skill-oversize-${skill.skillId}`"
-                        class="border-amber-500/40 text-[11px] font-normal text-amber-700 dark:text-amber-400"
+                        class="border-amber-500/40 text-xs font-normal text-amber-700 dark:text-amber-400"
                     >
                         {{ t("settings.skills.badgeOversize") }}
                     </Badge>
@@ -210,7 +210,7 @@ onMounted(() => {
                         v-if="skill.trusted"
                         variant="outline"
                         :data-testid="`skill-trusted-${skill.skillId}`"
-                        class="text-[11px] font-normal"
+                        class="text-xs font-normal"
                     >
                         {{ t("settings.skills.badgeTrusted") }}
                     </Badge>
@@ -223,10 +223,7 @@ onMounted(() => {
                     />
                 </div>
 
-                <p
-                    v-if="skill.description"
-                    class="mt-1 text-[13px] leading-5 text-muted-foreground"
-                >
+                <p v-if="skill.description" class="mt-1 text-sm leading-5 text-muted-foreground">
                     {{ skill.description }}
                 </p>
 

@@ -582,7 +582,7 @@ onBeforeUnmount(() => {
                         >
                             <p class="flex items-center gap-1.5">
                                 <span
-                                    class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                                    class="rounded border border-amber-500/40 px-1.5 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400"
                                     data-testid="approval-guard-verdict"
                                 >
                                     {{

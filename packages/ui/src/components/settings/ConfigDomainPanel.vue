@@ -524,7 +524,7 @@ function handleReset(key: string) {
                     <span
                         v-if="!expanded && schema.length > 0"
                         :data-testid="`config-domain-field-count-${domain}`"
-                        class="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                        class="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs font-normal text-muted-foreground"
                     >
                         {{ t("settings.configCardFieldCount", { count: schema.length }) }}
                     </span>
@@ -549,7 +549,7 @@ function handleReset(key: string) {
             <p
                 v-if="note"
                 :data-testid="`config-domain-note-${domain}`"
-                class="text-[11px] text-muted-foreground"
+                class="text-xs text-muted-foreground"
             >
                 {{ note }}
             </p>
@@ -575,7 +575,7 @@ function handleReset(key: string) {
                         <span
                             v-if="isInstanceOnlyField(field)"
                             :data-testid="`config-key-layer-badge-${domain}-${field.key}`"
-                            class="shrink-0 rounded border border-border px-1 py-0.5 text-[10px] tracking-wide text-muted-foreground"
+                            class="shrink-0 rounded border border-border px-1 py-0.5 text-xs tracking-wide text-muted-foreground"
                             :title="t('settings.configKeyInstanceOnlyHint')"
                             :aria-label="t('settings.configKeyInstanceOnlyHint')"
                             >{{ t("settings.configKeyInstanceOnlyBadge") }}</span
@@ -584,7 +584,7 @@ function handleReset(key: string) {
                     <FieldDescription
                         v-if="meta?.[field.key]"
                         :data-testid="`config-source-${domain}-${field.key}`"
-                        class="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground"
+                        class="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
                     >
                         <!-- T2.4：继承层可点（跳到目标层同一条目并聚焦）；生效层保持纯文本 -->
                         <!-- task-251 / D-1043 B（verify 实读 design.md:105 后裁定 ⓐ）：
@@ -647,7 +647,7 @@ function handleReset(key: string) {
                         }}
                     </span>
                     <span
-                        class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border"
+                        class="text-xs uppercase tracking-wide px-1.5 py-0.5 rounded border"
                         :class="
                             isAdminLocked(field.key)
                                 ? 'border-rose-500/60 text-rose-600'
@@ -798,7 +798,7 @@ function handleReset(key: string) {
                 <span
                     v-if="isDrifted(field)"
                     :data-testid="`config-drift-${domain}-${field.key}`"
-                    class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
+                    class="shrink-0 text-xs uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
                     :title="t('settings.driftedHint')"
                     >{{ t("settings.driftedBadge") }}</span
                 >

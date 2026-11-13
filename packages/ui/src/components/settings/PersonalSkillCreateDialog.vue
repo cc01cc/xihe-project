@@ -232,7 +232,7 @@ const draftErrorReason = computed(() =>
                         :aria-invalid="draftErrorField === 'name'"
                         spellcheck="false"
                     />
-                    <p class="text-[11px] text-muted-foreground">
+                    <p class="text-xs text-muted-foreground">
                         {{ t("resources.skills.create.nameHint") }}
                     </p>
                     <p
@@ -254,7 +254,7 @@ const draftErrorReason = computed(() =>
                         data-testid="personal-skill-create-description"
                         :aria-invalid="draftErrorField === 'description'"
                     />
-                    <p class="text-[11px] text-muted-foreground">
+                    <p class="text-xs text-muted-foreground">
                         {{ t("resources.skills.create.descriptionHint") }}
                     </p>
                     <p
@@ -279,7 +279,7 @@ const draftErrorReason = computed(() =>
                         class="min-h-48 text-xs"
                         :aria-invalid="draftErrorField === 'body'"
                     />
-                    <p class="text-[11px] text-muted-foreground">
+                    <p class="text-xs text-muted-foreground">
                         {{ t("resources.skills.create.bodyHint") }}
                     </p>
                     <p
@@ -316,7 +316,7 @@ const draftErrorReason = computed(() =>
                         </p>
                         <p
                             data-testid="personal-skill-create-request-error-code"
-                            class="mt-1 font-mono text-[10px] text-muted-foreground"
+                            class="mt-1 font-mono text-xs text-muted-foreground"
                         >
                             {{ t("settings.skills.import.errorCode", { code: requestError.code }) }}
                         </p>

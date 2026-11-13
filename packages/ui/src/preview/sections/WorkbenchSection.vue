@@ -115,7 +115,7 @@ const stop = () => {};
                         >
                             <Search class="size-3.5" />
                             <span>搜索会话</span>
-                            <span class="ml-auto font-mono text-[10px]">⌘K</span>
+                            <span class="ml-auto font-mono text-xs">⌘K</span>
                         </div>
                     </div>
                     <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">

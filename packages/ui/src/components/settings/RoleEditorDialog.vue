@@ -203,7 +203,7 @@ defineExpose({ error });
                                 />
                                 <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
                                 <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
-                                <span class="font-mono text-[11px] text-muted-foreground">
+                                <span class="font-mono text-xs text-muted-foreground">
                                     {{ atom.name }}
                                 </span>
                                 <span v-if="atom.capability" class="text-xs text-muted-foreground">
@@ -234,7 +234,7 @@ defineExpose({ error });
                                 />
                                 <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
                                 <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
-                                <span class="font-mono text-[11px] text-muted-foreground">
+                                <span class="font-mono text-xs text-muted-foreground">
                                     {{ atom.name }}
                                 </span>
                             </label>

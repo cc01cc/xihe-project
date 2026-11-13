@@ -68,7 +68,7 @@ const summaryText = computed(() => {
     <div
         v-if="inherited.length"
         :data-testid="`config-domain-summary-${domain}`"
-        class="border-b bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground"
+        class="border-b bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground"
     >
         <div class="flex min-w-0 items-center gap-2">
             <span
@@ -94,10 +94,10 @@ const summaryText = computed(() => {
                 :data-testid="`config-domain-summary-row-${domain}-${item.key}`"
                 class="flex min-w-0 items-center gap-2"
             >
-                <code class="min-w-0 flex-1 truncate font-mono text-[10px]"
+                <code class="min-w-0 flex-1 truncate font-mono text-xs"
                     >{{ domain }}.{{ item.key }}</code
                 >
-                <span class="shrink-0 rounded border border-border px-1 py-0.5 text-[10px]">
+                <span class="shrink-0 rounded border border-border px-1 py-0.5 text-xs">
                     {{ sourceLabel(item) }}
                 </span>
             </li>

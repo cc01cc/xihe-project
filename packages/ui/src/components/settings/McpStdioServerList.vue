@@ -143,7 +143,7 @@ defineExpose({ load, showStale });
             <span class="text-sm font-medium">{{ t("settings.mcpServersTitle") }}</span>
             <span
                 v-if="showStale"
-                class="rounded border border-amber-500/50 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                class="rounded border border-amber-500/50 bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
                 data-testid="mcp-status-stale"
                 >{{ t("settings.mcpStatusStale") }}</span
             >

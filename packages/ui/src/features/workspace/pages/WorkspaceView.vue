@@ -465,13 +465,13 @@ watch(isMobileViewport, (mobile) => {
                         <span
                             v-if="!auth.canWriteWorkspace"
                             data-testid="workspace-viewer-badge"
-                            class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300"
+                            class="rounded border border-amber-500/40 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-300"
                         >
                             {{ t("workspace.viewerReadOnly") }}
                         </span>
                         <span
                             data-testid="workspace-event-status"
-                            class="text-[10px]"
+                            class="text-xs"
                             :class="
                                 workspaceEvents.isConnected.value
                                     ? 'text-emerald-600'
@@ -502,7 +502,7 @@ watch(isMobileViewport, (mobile) => {
                             </span>
                             <span
                                 v-if="usageSource"
-                                class="rounded border px-1 py-0.5 text-[10px] leading-none"
+                                class="rounded border px-1 py-0.5 text-xs leading-none"
                                 :class="
                                     usageSource === 'real'
                                         ? 'border-emerald-500/40 text-emerald-600'

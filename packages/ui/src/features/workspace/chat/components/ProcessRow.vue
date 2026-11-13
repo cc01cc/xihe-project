@@ -117,22 +117,22 @@ function toggle(): void {
                 :data-actor-kind="actor.kind"
             >
                 <span
-                    class="flex size-3.5 shrink-0 items-center justify-center rounded-full border bg-muted text-[8px] font-medium text-foreground"
+                    class="flex size-3.5 shrink-0 items-center justify-center rounded-full border bg-muted text-xs leading-none font-medium text-foreground"
                     aria-hidden="true"
                     data-testid="process-row-actor-initials"
                     >{{ actor.initials }}</span
                 >
-                <span class="max-w-24 truncate text-[11px] text-muted-foreground">{{
+                <span class="max-w-24 truncate text-xs text-muted-foreground">{{
                     actor.name
                 }}</span>
             </span>
             <span
                 v-if="meta"
-                class="shrink-0 tabular-nums text-[11px] text-muted-foreground"
+                class="shrink-0 tabular-nums text-xs text-muted-foreground"
                 data-testid="process-row-meta"
                 >{{ meta }}</span
             >
-            <span v-if="status" class="shrink-0 text-[11px]" :class="tone">{{ status }}</span>
+            <span v-if="status" class="shrink-0 text-xs" :class="tone">{{ status }}</span>
             <ChevronDown
                 v-if="canExpand"
                 class="size-3.5 shrink-0 text-muted-foreground transition-transform"

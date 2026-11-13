@@ -721,7 +721,7 @@ defineExpose({ openDockTab });
                             ref="treeBubbleRef"
                             data-testid="tree-resize-bubble"
                             aria-hidden="true"
-                            class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
+                            class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-xs tabular-nums text-background"
                         />
                     </div>
                 </SplitterPanel>

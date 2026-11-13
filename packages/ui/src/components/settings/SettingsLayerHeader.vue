@@ -68,7 +68,7 @@ const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
                 :aria-label="t('settings.ia.breadcrumbLabel')"
                 class="text-muted-foreground"
             >
-                <BreadcrumbList class="gap-1 text-[11px]">
+                <BreadcrumbList class="gap-1 text-xs">
                     <BreadcrumbItem>
                         <BreadcrumbLink
                             as-child
@@ -103,7 +103,7 @@ const layerCrumb = computed(() => t(LAYER_CRUMB_KEYS[props.layer]));
                 >
                     {{ layerTitle }}
                 </h1>
-                <p v-if="summary" class="text-[11px] text-muted-foreground">{{ summary }}</p>
+                <p v-if="summary" class="text-xs text-muted-foreground">{{ summary }}</p>
             </div>
             <slot />
         </div>

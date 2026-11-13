@@ -65,7 +65,7 @@ const { t } = useI18n(),
         class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-3 py-2.5"
     >
         <span
-            class="inline-flex items-center rounded-md border border-dashed px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+            class="inline-flex items-center rounded-md border border-dashed px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
         >
             {{ t("settings.ia.backendGapBadgeGeneric") }}
         </span>

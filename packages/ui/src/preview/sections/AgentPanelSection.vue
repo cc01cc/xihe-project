@@ -116,7 +116,7 @@ const showEmpty = ref(true);
                                     v-for="atom in agent.permissionsSnapshot"
                                     :key="atom.actionClass"
                                     variant="secondary"
-                                    class="font-mono text-[10px]"
+                                    class="font-mono text-xs"
                                 >
                                     <Shield class="mr-1 size-3" />
                                     {{ atom.actionClass }}
@@ -126,7 +126,7 @@ const showEmpty = ref(true);
                                     class="text-xs text-muted-foreground"
                                     >无冻结能力上限</span
                                 >
-                                <span class="ml-auto font-mono text-[11px] text-muted-foreground">
+                                <span class="ml-auto font-mono text-xs text-muted-foreground">
                                     {{ agent.defaultModelProvider ?? "—" }} /
                                     {{ agent.defaultModelName ?? "—" }}
                                 </span>
@@ -264,7 +264,7 @@ const showEmpty = ref(true);
                             <Sparkles class="size-4" />
                             创建智能体
                         </Button>
-                        <p class="mt-1.5 text-center text-[11px] text-muted-foreground">
+                        <p class="mt-1.5 text-center text-xs text-muted-foreground">
                             {{ nameError ? nameErrorMessage : t("validation.nameAllowed") }}
                         </p>
                     </div>

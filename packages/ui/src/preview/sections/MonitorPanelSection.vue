@@ -127,7 +127,7 @@ const fingerprintFetcher = async (): Promise<ProviderRequestFingerprintView> =>
                 :style="{ width: width + 'px' }"
             >
                 <div
-                    class="border-b border-border/70 px-2 py-1 font-mono text-[10px] text-muted-foreground"
+                    class="border-b border-border/70 px-2 py-1 font-mono text-xs text-muted-foreground"
                 >
                     dock {{ width }} px
                 </div>

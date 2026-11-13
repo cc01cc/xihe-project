@@ -285,7 +285,7 @@ function upload() {
         <p
             v-if="ws.workspaceRoots.length > 16"
             data-testid="roots-cost-hint"
-            class="shrink-0 border-b border-border px-2 py-1 text-[11px] text-muted-foreground"
+            class="shrink-0 border-b border-border px-2 py-1 text-xs text-muted-foreground"
         >
             {{ t("workspace.nestedReposCostHint") }}
         </p>
@@ -341,7 +341,7 @@ function upload() {
             class="shrink-0 border-b border-border px-2 py-1.5"
         >
             <p
-                class="flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
+                class="flex items-center gap-1 text-xs font-semibold text-amber-800 dark:text-amber-200"
             >
                 <GitBranch class="size-3" aria-hidden="true" />
                 {{ t("workspace.nestedReposTitle") }}
@@ -361,7 +361,7 @@ function upload() {
                             >{{ repo.path }}</span
                         >
                         <span
-                            class="shrink-0 rounded bg-card px-1 text-[10px] text-muted-foreground"
+                            class="shrink-0 rounded bg-card px-1 text-xs text-muted-foreground"
                             data-testid="nested-repo-type"
                             >{{ nestedRepoTypeLabel(repo.type) }}</span
                         >
@@ -371,12 +371,12 @@ function upload() {
                         class="mt-1 flex items-center gap-1"
                         data-testid="nested-repo-confirm"
                     >
-                        <span class="min-w-0 flex-1 text-[11px] text-muted-foreground">
+                        <span class="min-w-0 flex-1 text-xs text-muted-foreground">
                             {{ t("workspace.nestedRepoDeclareConfirm") }}
                         </span>
                         <button
                             type="button"
-                            class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
+                            class="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
                             data-testid="nested-repo-declare-confirm"
                             :disabled="declaringNestedRepo"
                             @click="confirmDeclareNestedRepo(repo)"
@@ -385,7 +385,7 @@ function upload() {
                         </button>
                         <button
                             type="button"
-                            class="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
+                            class="shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent"
                             data-testid="nested-repo-declare-cancel"
                             @click="confirmingNestedRepo = null"
                         >
@@ -395,7 +395,7 @@ function upload() {
                     <button
                         v-else-if="isDeclarableNestedRepo(repo)"
                         type="button"
-                        class="mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
+                        class="mt-1 rounded px-1.5 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
                         data-testid="nested-repo-declare"
                         :disabled="!canDeclareNestedRepo || declaringNestedRepo"
                         :title="
@@ -437,7 +437,7 @@ function upload() {
                 <p
                     v-if="showTreeErrorDetail"
                     data-testid="workspace-tree-error-detail"
-                    class="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground"
+                    class="mt-0.5 line-clamp-2 break-words text-xs text-muted-foreground"
                 >
                     {{ ws.treeError }}
                 </p>
@@ -475,7 +475,7 @@ function upload() {
             >
                 {{ t("workspace.uploadFile") }}
             </button>
-            <p class="text-[11px] text-muted-foreground">{{ t("workspace.dropHint") }}</p>
+            <p class="text-xs text-muted-foreground">{{ t("workspace.dropHint") }}</p>
         </div>
 
         <!-- PLAN-0639 M2: multi-root workspaces render one group per declared root;

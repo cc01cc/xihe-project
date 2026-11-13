@@ -254,7 +254,7 @@ onMounted(() => {
             >
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="text-sm font-medium">{{ skill.name }}</span>
-                    <Badge variant="secondary" class="text-[11px] font-normal">
+                    <Badge variant="secondary" class="text-xs font-normal">
                         {{ t("resources.layerUser") }}
                     </Badge>
                     <!-- 个人层没有 trusted 维度（CP 恒存 false 且拒收该键）⇒ 这里**不渲染**该徽标。 -->
@@ -262,7 +262,7 @@ onMounted(() => {
                         v-if="skill.oversize"
                         variant="outline"
                         :data-testid="`personal-skill-oversize-${skill.skillId}`"
-                        class="border-amber-500/40 text-[11px] font-normal text-amber-700 dark:text-amber-400"
+                        class="border-amber-500/40 text-xs font-normal text-amber-700 dark:text-amber-400"
                     >
                         {{ t("settings.skills.badgeOversize") }}
                     </Badge>
@@ -273,10 +273,10 @@ onMounted(() => {
                         :name="skill.name"
                     />
                 </div>
-                <p class="mt-1 font-mono text-[11px] break-all text-muted-foreground">
+                <p class="mt-1 font-mono text-xs break-all text-muted-foreground">
                     {{ skill.skillId }}
                 </p>
-                <p class="mt-1 text-[11px] text-muted-foreground">
+                <p class="mt-1 text-xs text-muted-foreground">
                     v{{ skill.version }} · {{ skill.bodyTokensEst }} tok ·
                     {{ formatTime(skill.updatedAt) }}
                 </p>

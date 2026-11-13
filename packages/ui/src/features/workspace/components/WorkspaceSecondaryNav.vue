@@ -68,7 +68,7 @@ const containerLabel = computed(() => t("workspaceNav.workspaceContainer"));
             :aria-label="t('workspaceNav.breadcrumbLabel')"
             class="text-muted-foreground"
         >
-            <BreadcrumbList class="gap-1 text-[11px]">
+            <BreadcrumbList class="gap-1 text-xs">
                 <BreadcrumbItem>
                     <BreadcrumbLink as-child class="hover:text-foreground">
                         <RouterLink :to="trail.rootPath">{{ containerLabel }}</RouterLink>

@@ -64,7 +64,7 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                                     </Badge>
                                 </div>
                                 <div
-                                    class="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground"
+                                    class="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-muted-foreground"
                                 >
                                     <span>{{ credential.kind }}</span>
                                     <span class="text-border">·</span>
@@ -79,14 +79,14 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                                 <div class="text-xs text-muted-foreground">
                                     引用 {{ credential.referenceCount }}
                                 </div>
-                                <div class="font-mono text-[11px] text-muted-foreground">
+                                <div class="font-mono text-xs text-muted-foreground">
                                     r{{ credential.revision }}
                                 </div>
                             </div>
                         </div>
                     </CardContent>
                     <div
-                        class="flex items-center gap-2 border-t border-border/70 px-4 py-2 text-[11px] text-muted-foreground"
+                        class="flex items-center gap-2 border-t border-border/70 px-4 py-2 text-xs text-muted-foreground"
                     >
                         <ShieldCheck class="size-3.5" />
                         删除被引用的凭据返回 409；先换绑再删。
@@ -165,7 +165,7 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                                 <div class="flex items-center gap-2">
                                     <span class="text-sm font-medium">{{ role.displayName }}</span>
                                     <Badge v-if="role.system" variant="secondary">内置</Badge>
-                                    <span class="font-mono text-[11px] text-muted-foreground">{{
+                                    <span class="font-mono text-xs text-muted-foreground">{{
                                         role.name
                                     }}</span>
                                     <Badge variant="outline" class="ml-auto"
@@ -183,7 +183,7 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                                         v-for="atom in role.atoms"
                                         :key="atom.name"
                                         variant="secondary"
-                                        class="font-mono text-[10px]"
+                                        class="font-mono text-xs"
                                     >
                                         <ShieldCheck class="mr-1 size-3" />
                                         {{ atom.name }} · {{ atom.scopeClass }}
@@ -208,13 +208,12 @@ import { mockBindings, mockCredentials, mockRoles } from "../mockData";
                                 :key="binding.id"
                                 class="flex items-center gap-2 rounded-md border border-border px-2.5 py-2"
                             >
-                                <Badge variant="outline" class="font-mono text-[10px]">{{
+                                <Badge variant="outline" class="font-mono text-xs">{{
                                     binding.subjectType
                                 }}</Badge>
-                                <span
-                                    class="truncate font-mono text-[11px] text-muted-foreground"
-                                    >{{ binding.subjectId }}</span
-                                >
+                                <span class="truncate font-mono text-xs text-muted-foreground">{{
+                                    binding.subjectId
+                                }}</span>
                                 <span class="ml-auto shrink-0 text-xs">{{ binding.roleName }}</span>
                             </div>
                         </div>

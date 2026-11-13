@@ -87,7 +87,7 @@ const isDefault = computed(() => colorScheme.value === DEFAULT_COLOR_SCHEME);
                 </Label>
                 <span
                     v-if="colorScheme === option.value && isDefault"
-                    class="ml-auto text-[11px] text-muted-foreground"
+                    class="ml-auto text-xs text-muted-foreground"
                 >
                     DEFAULT
                 </span>

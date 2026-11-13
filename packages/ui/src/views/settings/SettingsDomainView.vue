@@ -216,14 +216,14 @@ watch(
             <span
                 v-if="showEditableCount"
                 data-testid="settings-domain-editable-count"
-                class="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] leading-none tabular-nums text-muted-foreground"
+                class="shrink-0 rounded border border-border px-1.5 py-0.5 text-xs leading-none tabular-nums text-muted-foreground"
             >
                 {{ t("settings.ia.domainEditableCount", { count: editableCount }) }}
             </span>
             <p
                 v-if="showSummary"
                 data-testid="settings-domain-summary"
-                class="text-[11px] text-muted-foreground"
+                class="text-xs text-muted-foreground"
             >
                 {{ t("settings.ia.domainKeysCount", { count: keyCount }) }}
             </p>
@@ -233,7 +233,7 @@ watch(
                     v-if="instanceOnly"
                     type="button"
                     data-testid="settings-switch-layer"
-                    class="rounded px-1 text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    class="rounded px-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                     @click="blocked = true"
                 >
                     {{ t("settings.ia.switchToUserLayer") }}
@@ -251,7 +251,7 @@ watch(
         <div
             v-if="blocked && instanceOnly"
             data-testid="settings-layer-block-notice"
-            class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[11px]"
+            class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs"
         >
             <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <div class="min-w-0 flex-1">
@@ -286,7 +286,7 @@ watch(
         <div
             v-if="workspaceDefaultReadonly"
             data-testid="settings-ws-default-readonly-notice"
-            class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-[11px]"
+            class="mt-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs"
         >
             <Info class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <div class="min-w-0 flex-1">
@@ -334,7 +334,7 @@ watch(
         <p
             v-if="pending"
             data-testid="settings-domain-loading"
-            class="mt-4 text-[11px] text-muted-foreground"
+            class="mt-4 text-xs text-muted-foreground"
         >
             {{ t("common.loading") }}
         </p>

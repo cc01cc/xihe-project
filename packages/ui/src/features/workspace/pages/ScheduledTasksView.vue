@@ -474,7 +474,7 @@ function openCreate() {
                                     </span>
                                     <span
                                         v-if="task.status === 'missed' && task.missedCount > 0"
-                                        class="ml-1.5 inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+                                        class="ml-1.5 inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-300"
                                         data-testid="scheduled-task-missed-count-row"
                                     >
                                         ×{{ task.missedCount }}
@@ -501,7 +501,7 @@ function openCreate() {
                                         task.createdBy.name || "—"
                                     }}</span>
                                     <span
-                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
                                         :class="
                                             task.createdBy.type === 'agent'
                                                 ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
@@ -618,7 +618,7 @@ function openCreate() {
                                         task.createdBy.name || "—"
                                     }}</span>
                                     <span
-                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                                        class="ml-1.5 inline-block rounded-full border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
                                         :class="
                                             task.createdBy.type === 'agent'
                                                 ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'

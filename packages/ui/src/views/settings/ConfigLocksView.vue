@@ -277,32 +277,29 @@ watch(domain, () => {
                                     <span
                                         v-if="row.locked"
                                         :data-testid="`config-lock-badge-${row.key}`"
-                                        class="rounded border border-rose-500/50 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-700"
+                                        class="rounded border border-rose-500/50 bg-rose-500/10 px-1.5 py-0.5 text-xs text-rose-700"
                                     >
                                         {{ t("settings.adminLockedBadge") }}
                                     </span>
                                     <span
                                         v-else-if="row.lockable"
-                                        class="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                        class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                                     >
                                         {{ t("settings.configLockUnlocked") }}
                                     </span>
                                     <span
                                         v-else
                                         :data-testid="`config-lock-not-lockable-${row.key}`"
-                                        class="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                        class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                                     >
                                         {{ notLockableText(row) }}
                                     </span>
-                                    <span
-                                        v-if="row.locked && row.reason"
-                                        class="text-[11px] break-all"
-                                    >
+                                    <span v-if="row.locked && row.reason" class="text-xs break-all">
                                         {{ row.reason }}
                                     </span>
                                     <span
                                         v-if="row.locked && row.updatedBy"
-                                        class="text-[10px] text-muted-foreground"
+                                        class="text-xs text-muted-foreground"
                                     >
                                         {{ row.updatedBy }} · {{ row.updatedAt }}
                                     </span>
@@ -322,7 +319,7 @@ watch(domain, () => {
                                             : t("settings.configLockLock")
                                     }}
                                 </button>
-                                <span v-else class="text-[11px] text-muted-foreground">—</span>
+                                <span v-else class="text-xs text-muted-foreground">—</span>
                             </td>
                         </tr>
                     </tbody>
@@ -347,7 +344,7 @@ watch(domain, () => {
                         data-testid="config-lock-value-input"
                         class="rounded border bg-background px-2 py-1 font-mono text-sm"
                     />
-                    <span class="text-[11px] text-muted-foreground">
+                    <span class="text-xs text-muted-foreground">
                         {{ t("settings.configLockValueHint") }}
                     </span>
                 </div>
@@ -363,7 +360,7 @@ watch(domain, () => {
                         data-testid="config-lock-reason-input"
                         class="rounded border bg-background px-2 py-1 text-sm"
                     />
-                    <span class="text-[11px] text-amber-600">
+                    <span class="text-xs text-amber-600">
                         {{ t("settings.configLockReasonHint") }}
                     </span>
                 </div>

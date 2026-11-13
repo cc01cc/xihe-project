@@ -184,7 +184,7 @@ onMounted(() => {
                 </h1>
                 <p
                     class="mt-1 text-muted-foreground"
-                    :class="props.embedded ? 'text-[11px]' : 'text-sm'"
+                    :class="props.embedded ? 'text-xs' : 'text-sm'"
                 >
                     {{ t("settings.toolFacesDesc") }}
                 </p>

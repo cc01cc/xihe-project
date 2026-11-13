@@ -103,7 +103,7 @@ function highlightName(name: string, query?: string): string {
                         }"
                         :style="{ paddingLeft: `${level * 16 + 8}px` }"
                     >
-                        <span class="w-4 shrink-0 text-[10px] text-muted-foreground">
+                        <span class="w-4 shrink-0 text-xs text-muted-foreground">
                             {{ node.type === "directory" ? (isExpanded ? "▼" : "▶") : "" }}
                         </span>
                         <component

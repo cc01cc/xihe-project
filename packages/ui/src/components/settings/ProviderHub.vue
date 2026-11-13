@@ -1094,7 +1094,7 @@ onMounted(() => {
                                     driftedProfile.connectionKey
                                 }}</span>
                                 <span
-                                    class="rounded bg-amber-200 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900"
+                                    class="rounded bg-amber-200 px-1.5 py-0.5 text-xs font-semibold text-amber-900"
                                     >{{ t("settings.providerHub.badgeDefault") }}</span
                                 >
                                 <span
@@ -1130,7 +1130,7 @@ onMounted(() => {
                                         defaultConnection.connectionKey
                                     }}</span>
                                     <span
-                                        class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                        class="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary"
                                         >{{ t("settings.providerHub.badgeDefault") }}</span
                                     >
                                     <span class="text-xs text-muted-foreground">{{
@@ -1449,12 +1449,12 @@ onMounted(() => {
                                         <span class="break-all font-medium">{{ model }}</span>
                                         <span
                                             v-if="isDefaultModel(model)"
-                                            class="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                            class="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary"
                                             >{{ t("settings.providerHub.badgeDefault") }}</span
                                         >
                                         <span
                                             v-if="isDriftedDefaultModel(model)"
-                                            class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+                                            class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700"
                                             >{{ t("settings.providerHub.driftBadge") }}</span
                                         >
                                     </button>
@@ -1465,7 +1465,7 @@ onMounted(() => {
                                             !isDefaultModel(model) &&
                                             activeConnection
                                         "
-                                        class="rounded-md border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                                        class="rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
                                         :disabled="props.readonly || savingDefault"
                                         :data-testid="`provider-model-default-${model}`"
                                         @click="setAsDefault(activeConnection, model)"
@@ -1661,7 +1661,7 @@ onMounted(() => {
                                                         : t("settings.providerHub.saveParams")
                                                 }}
                                             </button>
-                                            <span class="text-[11px] text-muted-foreground">
+                                            <span class="text-xs text-muted-foreground">
                                                 {{ t("settings.providerHub.paramsHint") }}
                                             </span>
                                         </div>
@@ -1751,7 +1751,7 @@ onMounted(() => {
                 class="flex items-start gap-3 rounded-lg border-l-[3px] border-primary bg-muted/40 px-4 py-3 text-xs leading-relaxed text-muted-foreground"
             >
                 <span
-                    class="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
+                    class="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-primary text-xs font-bold leading-none text-primary-foreground"
                     >i</span
                 >
                 <div>
@@ -1902,7 +1902,7 @@ onMounted(() => {
                     </p>
                     <template v-for="group in pickerGroups" :key="group.label">
                         <div
-                            class="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                            class="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                         >
                             {{ group.label }}
                         </div>
@@ -1920,7 +1920,7 @@ onMounted(() => {
                                 <span class="block truncate text-xs text-muted-foreground">
                                     {{ provider.description || provider.displayName }}
                                 </span>
-                                <span class="mt-0.5 block text-[10px] text-muted-foreground">
+                                <span class="mt-0.5 block text-xs text-muted-foreground">
                                     {{ adapterLabel(provider) }} ·
                                     {{ discoveryLabelOf(provider.modelDiscovery) }}
                                 </span>
@@ -1930,35 +1930,35 @@ onMounted(() => {
                                 >
                                     <span
                                         v-if="provider.supports.streaming"
-                                        class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
                                         >{{ t("settings.providerHub.supportsStreaming") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.tools"
-                                        class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
                                         >{{ t("settings.providerHub.supportsTools") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.toolsPartial"
-                                        class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
                                         :data-testid="`provider-supports-tools-partial-${provider.id}`"
                                         >{{ t("settings.providerHub.supportsToolsPartial") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.vision"
-                                        class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
                                         >{{ t("settings.providerHub.supportsVision") }}</span
                                     >
                                     <span
                                         v-if="provider.supports.customBaseUrl"
-                                        class="rounded bg-muted px-1 text-[10px] text-muted-foreground"
+                                        class="rounded bg-muted px-1 text-xs text-muted-foreground"
                                         >{{ t("settings.providerHub.supportsCustomBaseUrl") }}</span
                                     >
                                 </span>
                             </span>
                             <span
                                 v-if="connectedProviderIds.has(provider.id)"
-                                class="shrink-0 text-[11px] text-muted-foreground"
+                                class="shrink-0 text-xs text-muted-foreground"
                                 >{{ t("settings.providerHub.pickConnected") }}</span
                             >
                         </button>
@@ -2051,7 +2051,7 @@ onMounted(() => {
                             v-if="
                                 selectedProvider.supportedApiTypes.some((pair) => pair.capability)
                             "
-                            class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                            class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
                             data-testid="connection-api-type-capabilities"
                         >
                             <span
@@ -2140,7 +2140,7 @@ onMounted(() => {
                             pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
                             :placeholder="t('settings.providerHub.defaultPlaceholder')"
                         />
-                        <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
+                        <span class="mt-1.5 block text-xs text-muted-foreground">{{
                             t("settings.providerHub.keyHint")
                         }}</span>
                     </label>
@@ -2159,7 +2159,7 @@ onMounted(() => {
                                       t('settings.providerHub.optional')
                             "
                         />
-                        <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
+                        <span class="mt-1.5 block text-xs text-muted-foreground">{{
                             t("settings.providerHub.keySaveHint")
                         }}</span>
                     </label>
@@ -2212,7 +2212,7 @@ onMounted(() => {
                                 </SelectItem>
                             </SelectContent>
                         </Select>
-                        <span class="mt-1.5 block text-[11px] text-muted-foreground">{{
+                        <span class="mt-1.5 block text-xs text-muted-foreground">{{
                             t("settings.providerHub.discoveryHint")
                         }}</span>
                     </label>

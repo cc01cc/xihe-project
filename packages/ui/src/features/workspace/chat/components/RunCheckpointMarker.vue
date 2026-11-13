@@ -132,14 +132,14 @@ watch(
             </span>
             <span
                 data-testid="run-checkpoint-slice-ref"
-                class="max-w-48 truncate font-mono text-[10px] text-muted-foreground"
+                class="max-w-48 truncate font-mono text-xs text-muted-foreground"
                 :title="record.sliceRef"
                 >{{ record.sliceRef }}</span
             >
             <time
                 v-if="record.capturedAt"
                 data-testid="run-checkpoint-captured-at"
-                class="text-[10px] text-muted-foreground"
+                class="text-xs text-muted-foreground"
                 :datetime="record.capturedAt"
                 >{{ new Date(record.capturedAt).toLocaleString() }}</time
             >
@@ -154,7 +154,7 @@ watch(
             <details
                 v-if="'changedFiles' in record && record.changedFiles.length > 0"
                 data-testid="run-checkpoint-details"
-                class="basis-full rounded border bg-muted/10 px-2 py-1 text-[11px]"
+                class="basis-full rounded border bg-muted/10 px-2 py-1 text-xs"
             >
                 <summary class="cursor-pointer text-muted-foreground">
                     {{ t("chat.checkpointPreviewPathsTitle") }}

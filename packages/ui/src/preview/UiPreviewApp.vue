@@ -53,7 +53,7 @@ const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
                         :href="'#' + block.id"
                         class="rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     >
-                        <span class="mr-1 font-mono text-[10px]">{{ block.index }}</span>
+                        <span class="mr-1 font-mono text-xs">{{ block.index }}</span>
                         {{ block.label }}
                     </a>
                 </nav>

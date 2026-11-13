@@ -1402,14 +1402,14 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             <!-- PLAN-0622 D26：未绑定的行必须显式标注，否则用户以为它已经能用。 -->
                             <span
                                 v-if="agent.bound === false"
-                                class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-600"
+                                class="rounded border border-amber-500/40 px-1.5 py-0.5 text-xs text-amber-600"
                                 :data-testid="`agent-unbound-badge-${agent.principalId}`"
                             >
                                 {{ t("workspace.agentUnboundBadge") }}
                             </span>
                             <span
                                 v-if="agent.disabled"
-                                class="rounded border border-destructive/40 px-1.5 py-0.5 text-[11px] text-destructive"
+                                class="rounded border border-destructive/40 px-1.5 py-0.5 text-xs text-destructive"
                                 :data-testid="`agent-disabled-badge-${agent.principalId}`"
                             >
                                 {{ t("workspace.agentDisabledBadge") }}
@@ -1435,7 +1435,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 · {{ hookActionClasses(agent).join(", ") }}
                             </template>
                         </p>
-                        <p class="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                        <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
                             {{ agent.principalId }}
                         </p>
                         <p class="mt-1 text-xs text-muted-foreground">
@@ -1482,7 +1482,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     : t("workspace.disableAgent")
                             }}
                         </button>
-                        <p class="max-w-[12rem] text-right text-[11px] text-muted-foreground">
+                        <p class="max-w-[12rem] text-right text-xs text-muted-foreground">
                             {{ t("workspace.agentDisableConsequence") }}
                         </p>
                     </div>
@@ -1495,7 +1495,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <span
                         v-for="permission in agent.permissionsSnapshot"
                         :key="`${permission.actionClass}:${permission.resource ?? '*'}`"
-                        class="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                        class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
                     >
                         {{ actionLabel(permission.actionClass) }} ·
                         {{ permission.resource ?? "*" }}
@@ -1542,7 +1542,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <p
                         v-if="capMode === 'inherit'"
                         :data-testid="`workspace-agent-cap-inherit-hint-${agent.principalId}`"
-                        class="text-[11px] text-muted-foreground"
+                        class="text-xs text-muted-foreground"
                     >
                         {{ t("workspace.agentCapInheritHint") }}
                     </p>
@@ -1584,7 +1584,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 "
                             />
                         </div>
-                        <p class="text-[11px] text-muted-foreground">
+                        <p class="text-xs text-muted-foreground">
                             {{ t("workspace.agentCapZeroHint") }}
                         </p>
                     </template>
@@ -1620,7 +1620,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             @click="toggleMemories(agent)"
                         >
                             <span>{{ t("workspace.agentMemoryTitle") }}</span>
-                            <span class="text-[11px] text-muted-foreground">{{
+                            <span class="text-xs text-muted-foreground">{{
                                 canWriteMemories === true
                                     ? t("workspace.agentMemoryWritableBadge")
                                     : canWriteMemories === false
@@ -1633,7 +1633,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         <!-- 启用记忆：与设置页同一个 Switch（reka-ui），不混用 checkbox。 -->
                         <label
                             v-if="canWriteMemories === true"
-                            class="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+                            class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
                         >
                             <Switch
                                 :model-value="memoryEnabled"
@@ -1656,7 +1656,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                              没有权限时保留只读提示（不留任何看起来能用的控件）。 -->
                         <p
                             v-if="canWriteMemories !== true"
-                            class="text-[11px] text-muted-foreground"
+                            class="text-xs text-muted-foreground"
                             data-testid="agent-memory-readonly-hint"
                         >
                             {{
@@ -1670,7 +1670,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         <div v-else class="space-y-2">
                             <div class="flex items-center justify-between gap-2">
                                 <label
-                                    class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                                    class="flex items-center gap-1.5 text-xs text-muted-foreground"
                                 >
                                     <Switch
                                         :model-value="showArchivedMemories"
@@ -1692,7 +1692,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             </div>
                             <p
                                 v-if="!archiveStatusSupported"
-                                class="text-[11px] text-muted-foreground"
+                                class="text-xs text-muted-foreground"
                                 :data-testid="`agent-memory-archived-unsupported-${agent.principalId}`"
                             >
                                 {{ t("workspace.agentMemoryArchivedUnsupported") }}
@@ -1702,7 +1702,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 class="space-y-2 rounded-md border p-2"
                                 :data-testid="`agent-memory-create-form-${agent.principalId}`"
                             >
-                                <label class="block text-[11px] text-muted-foreground">
+                                <label class="block text-xs text-muted-foreground">
                                     {{ t("workspace.agentMemoryContentLabel") }}
                                     <textarea
                                         v-model="memoryCreateContent"
@@ -1713,7 +1713,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </label>
                                 <div class="flex flex-wrap items-center gap-3">
                                     <label
-                                        class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                                        class="flex items-center gap-1.5 text-xs text-muted-foreground"
                                     >
                                         <Switch
                                             :model-value="memoryCreatePinned"
@@ -1766,7 +1766,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         </div>
                         <p
                             v-if="!memoryEnabled"
-                            class="text-[11px] text-muted-foreground"
+                            class="text-xs text-muted-foreground"
                             data-testid="agent-memory-disabled-hint"
                         >
                             {{ t("workspace.agentMemoryDisabledHint") }}
@@ -1827,7 +1827,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 class="rounded-md border p-2"
                                 :data-testid="`agent-memory-item-${memory.id}`"
                             >
-                                <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                <div class="flex flex-wrap items-center gap-1.5 text-xs">
                                     <!-- 来源 chip：CP 未透出 origin 时不渲染（不回落到默认值）。 -->
                                     <span
                                         v-if="memory.origin"
@@ -1891,7 +1891,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                         rows="3"
                                         :data-testid="`agent-memory-edit-content-${memory.id}`"
                                     />
-                                    <div class="flex flex-wrap items-center gap-3 text-[11px]">
+                                    <div class="flex flex-wrap items-center gap-3 text-xs">
                                         <label
                                             class="flex items-center gap-1.5 text-muted-foreground"
                                         >
@@ -1931,7 +1931,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </div>
                                 <div
                                     v-if="memoryPendingArchiveId === memory.id"
-                                    class="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1 text-[11px]"
+                                    class="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1 text-xs"
                                     :data-testid="`agent-memory-archive-confirm-${memory.id}`"
                                 >
                                     <span>{{ t("workspace.agentMemoryArchiveConfirm") }}</span>
@@ -1986,7 +1986,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         </button>
                         <span
                             v-if="canBindRbac !== true"
-                            class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            class="rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground"
                         >
                             {{
                                 canBindRbac === false
@@ -2041,7 +2041,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     class="rounded-md border p-2"
                                     :data-testid="`agent-role-item-${binding.bindingId}`"
                                 >
-                                    <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                    <div class="flex flex-wrap items-center gap-1.5 text-xs">
                                         <span class="text-xs font-medium">{{
                                             binding.displayName || binding.name
                                         }}</span>
@@ -2072,7 +2072,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     </div>
                                     <p
                                         v-if="binding.atomSummary.length > 0"
-                                        class="mt-1 text-[11px] text-muted-foreground"
+                                        class="mt-1 text-xs text-muted-foreground"
                                         :data-testid="`agent-role-atoms-${binding.bindingId}`"
                                     >
                                         {{
@@ -2084,7 +2084,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     </p>
                                     <p
                                         v-if="binding.grantedBy"
-                                        class="mt-0.5 text-[11px] text-muted-foreground"
+                                        class="mt-0.5 text-xs text-muted-foreground"
                                         :data-testid="`agent-role-granted-by-${binding.bindingId}`"
                                     >
                                         {{
@@ -2096,7 +2096,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </li>
                             </ul>
                             <p
-                                class="mt-1 text-[11px] text-muted-foreground"
+                                class="mt-1 text-xs text-muted-foreground"
                                 :data-testid="`agent-role-cap-hint-${agent.principalId}`"
                             >
                                 {{ t("workspace.agentRoleCapHint") }}
@@ -2139,7 +2139,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             </div>
                             <p
                                 v-else
-                                class="text-[11px] text-muted-foreground"
+                                class="text-xs text-muted-foreground"
                                 data-testid="agent-rbac-readonly-hint"
                             >
                                 {{
@@ -2178,7 +2178,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         </button>
                         <span
                             v-if="canBindRbac === false"
-                            class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                            class="rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground"
                         >
                             {{ t("workspace.agentRbacReadonlyBadge") }}
                         </span>
@@ -2200,13 +2200,13 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 <li
                                     v-for="binding in agentSkills"
                                     :key="binding.bindingId"
-                                    class="flex flex-wrap items-center gap-1.5 rounded-md border p-2 text-[11px]"
+                                    class="flex flex-wrap items-center gap-1.5 rounded-md border p-2 text-xs"
                                     :data-testid="`agent-skill-item-${binding.bindingId}`"
                                 >
                                     <span class="text-xs font-medium">{{ binding.name }}</span>
                                     <span
                                         v-if="binding.scopeType"
-                                        class="rounded-full border px-1.5 py-0.5 text-[10px]"
+                                        class="rounded-full border px-1.5 py-0.5 text-xs"
                                         :class="
                                             binding.scopeType === 'workspace'
                                                 ? 'bg-muted'
@@ -2225,7 +2225,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     </span>
                                     <span
                                         v-if="binding.sourceType"
-                                        class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                                        class="rounded border px-1 py-0.5 text-xs text-muted-foreground"
                                         :data-testid="`agent-skill-source-${binding.bindingId}`"
                                         >{{
                                             t(
@@ -2294,7 +2294,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     {{ t("workspace.agentRbacBind") }}
                                 </button>
                             </div>
-                            <p v-else class="text-[11px] text-muted-foreground">
+                            <p v-else class="text-xs text-muted-foreground">
                                 {{
                                     canBindRbac === false
                                         ? t("workspace.agentRbacReadonlyHint")
