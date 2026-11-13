@@ -58,11 +58,40 @@ const title = computed(() =>
     props.role ? t("settings.rolesEditorEditTitle") : t("settings.rolesEditorCreateTitle"),
 );
 
-const instanceAtoms = computed<ApiRoleAtom[]>(
-    () => props.catalog?.atoms.filter((atom) => atom.scopeClass === "instance") ?? [],
+/**
+ * task-416 P1-3（D-1312）：原子目录已有 79 条，平铺找不到东西。
+ * **只过滤可见集，不动 selectedAtoms** —— 搜索是视图操作，不是选择操作。
+ * 被否决候选：换成 vendor `Command`（CommandItem 是**单选菜单项**语义，会把「多选原子」
+ * 变成「单选触发」，a11y 与既有 toggle 交互都要重做）；这里保留多选 checkbox 列表，
+ * 只加一个 vendor 输入框，过滤逻辑是 name/displayName 的大小写不敏感子串匹配。
+ */
+const atomQuery = ref("");
+
+function matchesAtomQuery(atom: ApiRoleAtom): boolean {
+    const query = atomQuery.value.trim().toLowerCase();
+    if (!query) return true;
+    return (
+        atom.name.toLowerCase().includes(query) ||
+        (atom.displayName ?? "").toLowerCase().includes(query)
+    );
+}
+
+const instanceAtoms = computed<ApiRoleAtom[]>(() =>
+    (props.catalog?.atoms ?? []).filter(
+        (atom) => atom.scopeClass === "instance" && matchesAtomQuery(atom),
+    ),
 );
-const bothAtoms = computed<ApiRoleAtom[]>(
-    () => props.catalog?.atoms.filter((atom) => atom.scopeClass === "both") ?? [],
+const bothAtoms = computed<ApiRoleAtom[]>(() =>
+    (props.catalog?.atoms ?? []).filter(
+        (atom) => atom.scopeClass === "both" && matchesAtomQuery(atom),
+    ),
+);
+const noAtomMatches = computed(
+    () =>
+        Boolean(props.catalog) &&
+        atomQuery.value.trim() !== "" &&
+        instanceAtoms.value.length === 0 &&
+        bothAtoms.value.length === 0,
 );
 
 function reset() {
@@ -71,6 +100,7 @@ function reset() {
     displayName.value = role?.displayName ?? "";
     description.value = role?.description ?? "";
     selectedAtoms.value = role ? role.atoms.map((atom) => atom.name) : [];
+    atomQuery.value = "";
     error.value = "";
 }
 
@@ -182,6 +212,22 @@ defineExpose({ error });
                         {{ t("settings.rolesEditorAtoms") }}
                     </legend>
 
+                    <!-- task-416 P1-3：只过滤可见集，多选语义与 toggle 路径保持不变。 -->
+                    <Input
+                        v-model="atomQuery"
+                        type="search"
+                        class="mb-2 h-8 text-sm"
+                        data-testid="role-editor-atom-search"
+                        :placeholder="t('settings.rolesEditorAtomSearch')"
+                        :aria-label="t('settings.rolesEditorAtomSearch')"
+                    />
+                    <p
+                        v-if="noAtomMatches"
+                        class="mb-2 text-xs text-muted-foreground"
+                        data-testid="role-editor-atoms-no-match"
+                    >
+                        {{ t("settings.rolesEditorAtomNoMatch") }}
+                    </p>
                     <div data-testid="role-editor-atoms-instance">
                         <p class="mb-1 text-xs font-medium">
                             {{ t("settings.rolesEditorGroupInstance") }}

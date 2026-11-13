@@ -166,6 +166,28 @@ function atomSummary(role: ApiRole): string {
     return t("settings.rolesAtomCount", { count: role.atoms.length });
 }
 
+/**
+ * task-416 P1-4（D-1314）：列表原来只有「N 个原子」，看不出这角色到底给了什么。
+ * 补前 3 条**服务端已解析的** displayName（缺省回退 name），余量按服务端给的数组长度算，
+ * **不本地重算原子词表**；含禁用原子的角色额外标一笔，避免用户拿去绑智能体才吃 409。
+ */
+const ROLE_ATOM_PREVIEW = 3;
+
+function atomPreview(role: ApiRole): string {
+    return role.atoms
+        .slice(0, ROLE_ATOM_PREVIEW)
+        .map((atom) => atom.displayName || atom.name)
+        .join("、");
+}
+
+function atomRemainder(role: ApiRole): number {
+    return Math.max(0, role.atoms.length - ROLE_ATOM_PREVIEW);
+}
+
+function hasForbiddenAtom(role: ApiRole): boolean {
+    return role.atoms.some((atom) => atom.agentPrincipalForbidden);
+}
+
 onMounted(() => {
     // D-713/B7: the page is direct-linkable (/settings/roles), so it cannot rely on SettingsNav
     // having loaded the projection first. ensureSelfPermissions is idempotent (cached promise),
@@ -349,7 +371,33 @@ watch(
                                         {{ t("settings.rolesSystemBadge") }}
                                     </Badge>
                                 </td>
-                                <td class="py-1 text-xs">{{ atomSummary(role) }}</td>
+                                <td class="py-1 text-xs">
+                                    <span data-testid="role-atom-summary">{{
+                                        atomPreview(role)
+                                    }}</span>
+                                    <span
+                                        v-if="atomRemainder(role) > 0"
+                                        class="ml-1 text-muted-foreground"
+                                        data-testid="role-atom-more"
+                                    >
+                                        {{
+                                            t("settings.rolesAtomMore", {
+                                                count: atomRemainder(role),
+                                            })
+                                        }}
+                                    </span>
+                                    <span
+                                        v-if="hasForbiddenAtom(role)"
+                                        class="ml-1 text-muted-foreground"
+                                        data-testid="role-atom-forbidden"
+                                        :title="t('settings.rolesAtomForbiddenHint')"
+                                    >
+                                        {{ t("settings.rolesAtomForbidden") }}
+                                    </span>
+                                    <span class="ml-1 text-muted-foreground">{{
+                                        atomSummary(role)
+                                    }}</span>
+                                </td>
                                 <td class="py-1 text-xs" data-testid="role-binding-count">
                                     {{ role.bindingCount }}
                                 </td>

@@ -599,3 +599,130 @@ describe("roleErrorMessages", () => {
         expect(message).toBe("settings.rolesError.roleInUse");
     });
 });
+
+/**
+ * task-416 P1-3 / P1-4（Lead D-1312 修订裁）。
+ * P1-3：79 条原子平铺无搜索 ⇒ 加 **vendor 搜索输入**过滤可见集；
+ * **不换 Command** —— CommandItem 是单选菜单语义，会把「多选原子」变成「单选触发」，
+ * a11y 与既有交互都要重做（被否决候选，写进 commit body）。
+ * P1-4：角色列表原来只有计数 ⇒ 补前 3 条原子标签 + 余量 + 禁用原子提示。
+ */
+describe("RolesView · task-416 P1-3 原子搜索", () => {
+    async function openCreate() {
+        await mountView();
+        await clickBody('[data-testid="roles-create"]');
+    }
+    async function typeQuery(value: string) {
+        const input = (await bodyEl('[data-testid="role-editor-atom-search"]')) as HTMLInputElement;
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await flushPromises();
+    }
+    async function atomNames(): Promise<string[]> {
+        const groups = await Promise.all([
+            bodyEl('[data-testid="role-editor-atoms-instance"]'),
+            bodyEl('[data-testid="role-editor-atoms-both"]'),
+        ]);
+        return groups.flatMap((g) =>
+            Array.from(g.querySelectorAll("[data-testid^='role-editor-atom-']")).map((el) =>
+                (el.getAttribute("data-testid") ?? "").replace("role-editor-atom-", ""),
+            ),
+        );
+    }
+
+    it("关键词收敛可见集且大小写不敏感", async () => {
+        await openCreate();
+        expect((await atomNames()).length).toBe(CATALOG.atoms.length);
+        await typeQuery("manage");
+        expect(await atomNames()).toEqual(["MANAGE_ROLES"]);
+    });
+
+    it("清空关键词恢复全量", async () => {
+        await openCreate();
+        await typeQuery("manage");
+        await typeQuery("");
+        expect((await atomNames()).length).toBe(CATALOG.atoms.length);
+    });
+
+    it("搜索态下仍走既有 toggle 路径", async () => {
+        await openCreate();
+        await typeQuery("future");
+        await clickBody('[data-testid="role-editor-atom-FUTURE_ATOM_FROM_CATALOG"]');
+        const nameInput = (await bodyEl('[data-testid="role-editor-name"]')) as HTMLInputElement;
+        nameInput.value = "SEARCHED";
+        nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        const displayInput = (await bodyEl(
+            '[data-testid="role-editor-display-name"]',
+        )) as HTMLInputElement;
+        displayInput.value = "SEARCHED 角色";
+        displayInput.dispatchEvent(new Event("input", { bubbles: true }));
+        await clickBody('[data-testid="role-editor-submit"]');
+        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
+        expect(mockedApi.createRole.mock.calls[0]?.[0]?.atoms).toEqual([
+            "FUTURE_ATOM_FROM_CATALOG",
+        ]);
+    });
+
+    it("搜索只影响可见性，不改已选集合", async () => {
+        await openCreate();
+        await clickBody('[data-testid="role-editor-atom-FUTURE_ATOM_FROM_CATALOG"]');
+        await typeQuery("manage");
+        expect(await atomNames()).toEqual(["MANAGE_ROLES"]);
+        await typeQuery("");
+        const nameInput = (await bodyEl('[data-testid="role-editor-name"]')) as HTMLInputElement;
+        nameInput.value = "KEPT";
+        nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        const displayInput = (await bodyEl(
+            '[data-testid="role-editor-display-name"]',
+        )) as HTMLInputElement;
+        displayInput.value = "KEPT 角色";
+        displayInput.dispatchEvent(new Event("input", { bubbles: true }));
+        await clickBody('[data-testid="role-editor-submit"]');
+        await vi.waitFor(() => expect(mockedApi.createRole).toHaveBeenCalled());
+        expect(mockedApi.createRole.mock.calls[0]?.[0]?.atoms).toEqual([
+            "FUTURE_ATOM_FROM_CATALOG",
+        ]);
+    });
+});
+
+describe("RolesView · task-416 P1-4 角色列表关键信息", () => {
+    const manyAtoms: apiModule.ApiRoleAtom[] = [1, 2, 3, 4, 5].map((n) => ({
+        name: `atom_${n}`,
+        scopeClass: "both",
+        capability: false,
+        resource: "*",
+        displayName: `原子${n}`,
+    }));
+
+    it("展示前 3 条原子标签与余量，而不是只有计数", async () => {
+        mockedApi.listRoles.mockResolvedValue([role({ name: "MANY", atoms: manyAtoms })]);
+        const wrapper = await mountView();
+        const row = wrapper.get('[data-testid="role-row-MANY"]');
+        const summary = row.get('[data-testid="role-atom-summary"]').text();
+        expect(summary).toContain("原子1");
+        expect(summary).toContain("原子3");
+        expect(summary).not.toContain("原子4");
+        expect(row.get('[data-testid="role-atom-more"]').text()).toContain("2");
+    });
+
+    it("原子数 ≤3 时不渲染余量", async () => {
+        mockedApi.listRoles.mockResolvedValue([
+            role({ name: "FEW", atoms: manyAtoms.slice(0, 2) }),
+        ]);
+        const wrapper = await mountView();
+        const row = wrapper.get('[data-testid="role-row-FEW"]');
+        expect(row.find('[data-testid="role-atom-more"]').exists()).toBe(false);
+    });
+
+    it("含禁用原子的角色给出提示（消费服务端标记）", async () => {
+        mockedApi.listRoles.mockResolvedValue([
+            role({
+                name: "FORBIDDEN",
+                atoms: [{ ...manyAtoms[0]!, agentPrincipalForbidden: true }],
+            }),
+        ]);
+        const wrapper = await mountView();
+        const row = wrapper.get('[data-testid="role-row-FORBIDDEN"]');
+        expect(row.find('[data-testid="role-atom-forbidden"]').exists()).toBe(true);
+    });
+});
