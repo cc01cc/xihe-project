@@ -668,6 +668,30 @@ function boundBaseFromLog(log, fallbackBase) {
     }
 }
 
+/**
+ * 临时 dev server 的 mock 开关（BL-620，task-203 ①）：**显式注入，不靠父进程继承**。
+ * 未设 ⇒ 补 `1` 并打一行说明（暗改不算修 —— 不打印就等于没人知道这批图是 mock 态拍的）；
+ * 显式设成非 `1` ⇒ WARN（那是排障用法，必须留痕，免得有人拿它当交付图）。
+ * `--url` 复用分支不在此列：外接真栈时 mock 态由调用方负责。
+ */
+function mockApiEnvPatch() {
+    const raw = process.env.XIHE_UI_MOCK_API;
+    if (raw === undefined || raw === "") {
+        console.log(
+            "[ui-mock-shot] XIHE_UI_MOCK_API 未设置 ⇒ 临时 dev server 默认补 1（mock 态）",
+        );
+        return { XIHE_UI_MOCK_API: "1" };
+    }
+    if (raw !== "1") {
+        console.warn(
+            "[ui-mock-shot] WARN XIHE_UI_MOCK_API=" +
+                raw +
+                " ⇒ 临时 dev server 不是 mock 态，这样拍的图不能当 mock 交付图",
+        );
+    }
+    return { XIHE_UI_MOCK_API: raw };
+}
+
 /** 起一个临时 vite dev server（只在没给 --url 时用）。 */
 async function startServer() {
     const port = await freePort();
@@ -680,11 +704,17 @@ async function startServer() {
     const viteBin = path.join(viteDir, String(vitePkg.bin.vite));
     // 显式绑 127.0.0.1：vite 默认只听 localhost，在 Windows 上可能只落 ::1。
     // 但**不假设**它一定按我们说的绑 —— 探活失败时会连同 vite 打印的 Local: 一起报出来。
+    const childEnv = { ...process.env, ...mockApiEnvPatch() };
     const child = spawn(
         process.execPath,
         [viteBin, "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
         {
             cwd: uiRoot,
+            // **必须显式给 env**：不给就继承父进程 ⇒ 父 shell 没设 mock 开关时，这里跑的是
+            // 「真应用 + 无后端」，而 app 镜头照样能 goto、#app 照常挂载、不触发 /login 守卫
+            // ⇒ 截出一张「看着像正常产品页」的空壳图，且 exit 0 / sha 稳定 / 无任何 WARN
+            // （BL-620，task-203 ①：这是「失败看起来像成功」那一类）。
+            env: childEnv,
             stdio: ["ignore", "pipe", "pipe"],
             shell: false,
         },
