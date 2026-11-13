@@ -33,8 +33,18 @@
  * 退出码：0 = 未超出基线；1 = 出现基线外的 (a) 文件；2 = 脚本自身/仓库结构问题
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, rmSync, existsSync } from "node:fs";
+import {
+    readFileSync,
+    writeFileSync,
+    readdirSync,
+    statSync,
+    rmSync,
+    existsSync,
+    mkdtempSync,
+} from "node:fs";
 import { join, relative, extname, resolve, dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
@@ -416,6 +426,37 @@ function dirtyFilesAtMeasure(uiRoot) {
     }
 }
 
+/** 文件指纹：用于证明自检没有污染正式基线 */
+function fileSha(path) {
+    if (!existsSync(path)) return "MISSING";
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * 测量 + 落盘，**唯一出口**。main 的 --write-baseline 与 --selftest 都走这里，
+ * 避免「两处各写一遍 JSON」——那正是「同一条公式算两次」的温床（D-1170）。
+ * 返回写入文件的那些值，供调用方打印/断言，保证「打印的 = 落盘的」。
+ */
+function measureAndWriteBaseline(ts, uiRoot, qualifier, aFiles, path) {
+    const dirty = dirtyFilesAtMeasure(uiRoot);
+    const dirtyFiles = Array.isArray(dirty) ? dirty : [];
+    const dirtyNote = Array.isArray(dirty) ? undefined : "git status 取不到：" + dirty.error;
+    const measuredAt = isoTimestamp(new Date());
+    const payload = {
+        note: "task-318 ratchet 基线：只许缩小。收账后手工重跑 --write-baseline。",
+        ruler: qualifier.name,
+        rulerLabel: qualifier.label,
+        measuredAt,
+        dirtyAtMeasure: dirtyFiles,
+        ...(dirtyNote ? { dirtyAtMeasureNote: dirtyNote } : {}),
+        uiRoot: relative(ONE_ROOT, uiRoot).split("\\").join("/"),
+        aCount: aFiles.length,
+        files: aFiles,
+    };
+    writeFileSync(path, JSON.stringify(payload, null, 4) + "\n", "utf8");
+    return { measuredAt, dirtyFiles, dirtyNote, aCount: aFiles.length, path };
+}
+
 function readBaseline(path) {
     if (!existsSync(path)) return { files: [] };
     try {
@@ -427,8 +468,13 @@ function readBaseline(path) {
 }
 
 function selftest(ts, opts) {
+    const qualifier = resolveQualifier(opts);
+    const realBaselinePath = opts.baseline ?? LEGACY_BASELINE_PATHS[qualifier.name] ?? BASELINE_PATH;
+    const realBefore = fileSha(realBaselinePath);
     const probeRel = "src/__tests__/__ratchet-selftest.spec.ts";
     const probePath = join(opts.uiRoot, probeRel);
+    const tmpRoot = mkdtempSync(join(tmpdir(), "i18n-copies-selftest-"));
+    const tmpBaseline = join(tmpRoot, "baseline.json");
     const body =
         'import { createI18n } from "vue-i18n";\n' +
         "// task-318 自检：故意让「被断言的值」同时是夹具副本，正确行为是计入 (a)。\n" +
@@ -437,27 +483,64 @@ function selftest(ts, opts) {
         'const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });\n' +
         "export { i18n };\n" +
         'it("selftest", () => { expect("搜索会话...").toBe("搜索会话..."); });\n';
+
+    const checks = [];
+    const check = (ok, label, detail) => {
+        checks.push({ ok, label });
+        process.stdout.write((ok ? "[PASS] " : "[FAIL] ") + label + (detail ? "  " + detail : "") + "\n");
+    };
+
     try {
+        // 1) 真的写探针（不做任何 mock）
         writeFileSync(probePath, body, "utf8");
-        const { rows } = scan(ts, opts.uiRoot, resolveQualifier(opts).qualifies);
+
+        // 2) 检测器必须把这个「断言吃副本」的文件认成 (a)
+        const { rows, aFiles } = scan(ts, opts.uiRoot, qualifier.qualifies);
         const hit = rows.find((r) => r.rel === probeRel);
-        const ok = Boolean(hit) && hit.counts.a > 0;
-        process.stdout.write(
-            (ok ? "[PASS] " : "[FAIL] ") +
-                "自检：临时探针 " +
-                (hit
-                    ? "tier=" + hit.tier + " a=" + hit.counts.a + " (" + hit.poisonedValues.join(", ") + ")"
-                    : "未被识别") +
-                "\n",
+        check(
+            Boolean(hit) && hit.counts.a > 0,
+            "探针被计入 (a)",
+            hit ? "tier=" + hit.tier + " a=" + hit.counts.a + " (" + hit.poisonedValues.join(", ") + ")" : "未被识别",
         );
-        return ok ? 0 : 1;
+
+        // 3) 真的写临时基线文件（不 mock 写盘：要验的正是「字段落盘」）
+        const w = measureAndWriteBaseline(ts, opts.uiRoot, qualifier, aFiles, tmpBaseline);
+        const onDisk = JSON.parse(readFileSync(tmpBaseline, "utf8"));
+        check(
+            Array.isArray(onDisk.dirtyAtMeasure) && onDisk.dirtyAtMeasure.includes(probeRel),
+            "dirtyAtMeasure 已落盘且抓到探针",
+            JSON.stringify(onDisk.dirtyAtMeasure),
+        );
+
+        // 4) 打印给读者的值 必须与 写入文件的值 同源（D-1170）
+        check(
+            onDisk.measuredAt === w.measuredAt && onDisk.aCount === w.aCount,
+            "打印值 == 落盘值（同一个计算）",
+            "measuredAt=" + onDisk.measuredAt + " aCount=" + onDisk.aCount,
+        );
+    } catch (e) {
+        check(false, "自检过程本身抛错", e.message);
     } finally {
+        // 5) 探针与临时基线都在 finally 里清
         if (existsSync(probePath)) rmSync(probePath, { force: true });
-        if (existsSync(probePath)) {
-            process.stderr.write("[i18n-copies] 严重：临时探针删不掉：" + probePath + "\n");
-            process.exit(2);
-        }
+        if (existsSync(tmpRoot)) rmSync(tmpRoot, { recursive: true, force: true });
+        check(!existsSync(probePath) && !existsSync(tmpRoot), "探针与临时基线已清理", "probe=" + probePath);
+
+        // 6) 清完之后核正式基线：自检自己不许污染被测物
+        const realAfter = fileSha(realBaselinePath);
+        check(
+            realAfter === realBefore,
+            "正式基线未被污染（sha 比对）",
+            realBefore.slice(0, 12) + " -> " + realAfter.slice(0, 12),
+        );
     }
+
+    const failed = checks.filter((c) => !c.ok).length;
+    const code = failed === 0 ? 0 : 1;
+    process.stdout.write(
+        "[i18n-copies] 自检 " + (checks.length - failed) + "/" + checks.length + " 项通过，exit=" + code + "\n",
+    );
+    return code;
 }
 
 function main() {
@@ -479,42 +562,20 @@ function main() {
     const fixedNotReconciled = [...baselineSet].filter((f) => !aFiles.includes(f)).sort();
 
     if (opts.writeBaseline) {
-        const dirty = dirtyFilesAtMeasure(opts.uiRoot);
-        const dirtyFiles = Array.isArray(dirty) ? dirty : [];
-        const dirtyNote = Array.isArray(dirty) ? undefined : "git status 取不到：" + dirty.error;
-        const measuredAt = isoTimestamp(new Date());
-        writeFileSync(
-            baselinePath,
-            JSON.stringify(
-                {
-                    note: "task-318 ratchet 基线：只许缩小。收账后手工重跑 --write-baseline。",
-                    ruler: qualifier.name,
-                    rulerLabel: qualifier.label,
-                    measuredAt,
-                    dirtyAtMeasure: dirtyFiles,
-                    ...(dirtyNote ? { dirtyAtMeasureNote: dirtyNote } : {}),
-                    uiRoot: relative(ONE_ROOT, opts.uiRoot).split("\\").join("/"),
-                    aCount: aFiles.length,
-                    files: aFiles,
-                },
-                null,
-                4,
-            ) + "\n",
-            "utf8",
-        );
+        const w = measureAndWriteBaseline(ts, opts.uiRoot, qualifier, aFiles, baselinePath);
         process.stdout.write(
             "[i18n-copies] 基线已写入 " +
-                baselinePath +
+                w.path +
                 "（尺=" +
                 qualifier.label +
                 "，a=" +
-                aFiles.length +
+                w.aCount +
                 "，measuredAt=" +
-                measuredAt +
+                w.measuredAt +
                 "，dirtyAtMeasure=" +
-                dirtyFiles.length +
+                w.dirtyFiles.length +
                 " 个）\n" +
-                (dirtyNote ? "[i18n-copies] " + dirtyNote + "\n" : ""),
+                (w.dirtyNote ? "[i18n-copies] " + w.dirtyNote + "\n" : ""),
         );
         process.exit(0);
     }
