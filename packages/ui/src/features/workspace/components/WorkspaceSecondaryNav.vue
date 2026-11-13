@@ -75,11 +75,28 @@ const containerLabel = computed(() => t("workspaceNav.workspaceContainer"));
                     </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
+                <!--
+                    task-297：中间段 = **哪个工作区**。此前 trail.container 一直算出来却没人渲染
+                    （死字段），面包屑只剩「工作区 › <页>」⇒ 用户读不出是哪个工作区，而旁边 tab
+                    也写着「会话」，两处同词都没信息量。这段就是用户说的「不明所以」的机制。
+
+                    为什么用普通 span 而不是 BreadcrumbPage：vendor 的 BreadcrumbPage **硬写**
+                    aria-current="page"（BreadcrumbPage.vue:16），而 aria-current="page" 一页只能
+                    有一个、属于**最后一个**面包屑段。中间段是祖先容器不是当前页，用它就会让
+                    屏幕阅读器读出两个「当前页」。同段不可点是因为它和第一段「工作区」指向同一个
+                    地址（trail.container.path === trail.rootPath），做成链接等于两个相邻链接去同一处。
+                -->
+                <BreadcrumbItem>
+                    <span
+                        data-testid="workspace-breadcrumb-container"
+                        class="max-w-[16rem] truncate"
+                    >
+                        {{ trail.container.label }}
+                    </span>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator v-if="trail.page" />
                 <BreadcrumbItem v-if="trail.page">
                     <BreadcrumbPage>{{ t(trail.page.labelKey) }}</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbItem v-else>
-                    <BreadcrumbPage>{{ containerLabel }}</BreadcrumbPage>
                 </BreadcrumbItem>
             </BreadcrumbList>
         </Breadcrumb>

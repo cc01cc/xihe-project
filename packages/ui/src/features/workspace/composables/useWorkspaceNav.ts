@@ -1,5 +1,6 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useAuthStore } from "../../../stores/auth";
 import {
     workspacePageOfMeta,
     type WorkspaceNavItem,
@@ -19,8 +20,27 @@ import {
 export function useWorkspaceNav() {
     const route = useRoute();
     const router = useRouter();
+    const auth = useAuthStore();
 
     const workspaceId = computed(() => String(route.params.workspaceId ?? ""));
+
+    /**
+     * 当前工作区的**人读名**（task-297）：面包屑中间段要用它，不能让用户看 UUID。
+     *
+     * <p>来源优先级与 `FileTreePanel.vue:53` 一致（`auth.workspace?.name` 优先），
+     * 区别只在回退：面板标题回退成常量「工作区」，而面包屑的中间段**本来就紧跟在常量
+     * 「工作区」后面**，回退成同一个词会读成「工作区 › 工作区」，所以这里回退成 id
+     * （id 不好看但**有信息量**，能区分两个工作区）。</p>
+     *
+     * <p>判据：`auth.workspace` 是**当前 tab 选中**的工作区，与路由参数可能短暂不一致
+     * （切换工作区的那一帧）。因此只有在 id 对得上时才采用它的 name，否则一律用路由参数
+     * ——否则会出现「地址栏是 A、面包屑写 B」的错误读数。</p>
+     */
+    const workspaceName = computed(() => {
+        const current = auth.workspace;
+        if (current && current.id === workspaceId.value) return current.name || current.id;
+        return workspaceId.value;
+    });
 
     /** 路由表里所有工作区二级页，按 `meta.workspacePage.order` 排序。 */
     const pages = computed(() =>
@@ -49,14 +69,19 @@ export function useWorkspaceNav() {
 
     /**
      * 面包屑三段：`工作区`（根，可点）→ `<工作区名或 id>`（不可点，是当前容器）→ `<页>`（当前页）。
-     * 根页（工作台本身）只有两段，不出现「工作台 › 工作台」这种同义重复。
+     * 无独立页名的路由（如聊天页）只有两段，不出现「工作台 › 工作台」这种同义重复。
+     *
+     * <p><b>task-297 修的是「三段只渲染两段」</b>：本函数一直算 `container`，但
+     * `WorkspaceSecondaryNav.vue` 的模板只渲染常量「工作区」+ 当前页 ⇒ `container`
+     * 是**死字段**，面包屑永远读作「工作区 › 会话」、不含是哪个工作区。
+     * 判据：面包屑必须能读出「在哪个工作区的哪一页」，所以 `container` 必须被渲染。</p>
      */
     const trail = computed(() => {
         const rootPath = router.resolve({
             name: "workspace",
             params: { workspaceId: workspaceId.value },
         }).href;
-        const container = { label: workspaceId.value, path: rootPath, clickable: true };
+        const container = { label: workspaceName.value, path: rootPath, clickable: true };
         const current = active.value;
         return {
             rootPath,
@@ -65,5 +90,5 @@ export function useWorkspaceNav() {
         };
     });
 
-    return { workspaceId, items, active, trail };
+    return { workspaceId, workspaceName, items, active, trail };
 }
