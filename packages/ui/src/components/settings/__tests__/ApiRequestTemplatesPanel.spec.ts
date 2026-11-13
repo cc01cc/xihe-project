@@ -65,6 +65,32 @@ describe("API request template lifecycle", () => {
         wrapper.unmount();
     });
 
+    /**
+     * task-426（task-397 真栈审计发现，ui-review E 内容与真实性）：左列按 `latest`（每 id 取
+     * **max version**）渲染，详情初始却取 `templates[0]`（**原始数组顺序**）⇒ 存储里旧版本排在
+     * 前面时首屏「列表 v2 / 详情 v1」。真栈复现恒定 5 次采样（证据
+     * `internal/A03-xihe/evidence/2026-11-14-instance-flow-audit/template-race-samples.json`）。
+     * 判据：初始选中必须与列表第一行**同源**，而不是「数组里第一个」。
+     */
+    it("初始详情版本与列表第一行同源（旧版本排在数组前面也不选它）", async () => {
+        const v2 = { ...builtin, version: 2 };
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin, v2]) },
+                saving: false,
+                layer: "instance",
+            },
+        });
+        await flushPromises();
+
+        const firstRow = wrapper.findAll("nav button")[0];
+        expect(firstRow.text()).toContain("v2");
+        const revisionTrigger = wrapper.get('[aria-label="settings.apiRequest.revisions"]');
+        expect(revisionTrigger.text()).toContain("v2");
+
+        wrapper.unmount();
+    });
+
     it("does not emit a publication after its scope instance unmounts", async () => {
         let finish!: (value: { valid: boolean; diagnostics: [] }) => void;
         vi.mocked(validateTemplate).mockReturnValue(

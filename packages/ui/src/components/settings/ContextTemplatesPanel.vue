@@ -86,7 +86,14 @@ watch(
             validating.value = false;
         }
         templates.value = parseTemplates(raw);
-        if (!selected.value) selected.value = templates.value[0] ? { ...templates.value[0] } : null;
+        // task-426：初始选中必须与左列**同源** —— 左列 v-for 用的是 `latest`（每 id 取 max
+        // version），这里原先取 `templates[0]`（原始数组顺序）⇒ 存储里旧版本排在前面时首屏
+        // 「列表 v2 / 详情 v1」（真栈恒定复现，证据 2026-11-14-instance-flow-audit/
+        // template-race-samples.json）。只改**初始**选择：用户手动选旧 revision 的行为不变。
+        if (!selected.value) {
+            const first = latest.value[0];
+            selected.value = first ? { ...first } : null;
+        }
     },
     { immediate: true },
 );
