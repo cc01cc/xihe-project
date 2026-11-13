@@ -5,11 +5,12 @@
     "sourceRun": "task-174：XIHE_UI_PORT=28597 `pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock --workers=4`（expected 288 / skipped 68 / failed 0 / flaky 0，耗时 206957 ms，startTime 2026-11-13T00:54:07.217Z）。**源报告 `packages/ui/e2e/.mock-report.json` 被 A03 `.gitignore:4` 排除、未入库**。",
     "skipSourceLog": "同上一次跑（源日志未入库，仅用于 skip 名单交叉核对）：12 条新登记 skip 都是基线源窗口（W-23 / 2026-09-09）之后**新增的 skip**，分两类 —— ① **7 条来自新增 spec 自带的 skip**：`measure-sse-connects.spec.ts` ×3（`aea2e7300` 2026-11-11 入库即带 `test.skip(`）、`pl0756-dockview.spec.ts` ×4（`908c37c58` 2026-11-10 加 `test.describe.skip`）；② **5 条来自旧 spec 当天新加 `test.fixme`**（均由 `f743b1b1a` 2026-11-12 12:43 这一处改动引入）：`knowledge-base.spec.ts` ×4（整组 `test.describe.fixme` 覆盖，文件自 `dba74a2d6` 2026-07-01）+ `full-ui-acceptance.spec.ts:447` ×1（用例体自 `bcc46e956` 2026-09-07）。",
     "counts": {
-        "expected": 288,
+        "expected": 291,
         "skipped": 68,
         "failed": 0,
         "flaky": 0
     },
+    "$countsDerivation": "[推导] 2026-11-13 task-189：expected 288 → 291 = 本批新增 3 条 mock 用例（`e2e/mock/global-rail-dual-state.spec.ts` 单 spec 3 passed 为 [实测]，全量未跑干净）。**不是 [实测]**：唯一一次全量（XIHE_UI_PORT=28608，5.0m）被并发 lane 污染成 282 passed / 67 skipped / 9 failed / 1 flaky ⇒ 拿它改计数就是洗红，故计数按「288 + 本批新增 3 条全绿」推导。出处与替换条件见 `internal/A03-xihe/docs/mock-baseline-provenance.md` 的 [推导] 注记（one 仓）。",
     "skipNames": [
         "renders approval modal from canonical approval_request event",
         "shows the durable origin badge for model-initiated approvals",
