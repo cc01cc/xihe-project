@@ -57,12 +57,13 @@ vi.mock("vue-router", () => ({
  */
 vi.mock("../../../lib/resourceViews", async () => {
     const vue = await import("vue");
-    // **用 render 函数而不是字符串 template**：本仓库单测里 `vue` 是 runtime-only
-    // （不带模板编译器），替身写 `template` 会得到一条 "missing template or render function"
-    // 的空组件 —— 断言照样能过/照样能红，但红的是替身而不是被测页。
+    // 替身组件一律用 `setup()` + `h()`：**与生产构建一致、不依赖模块解析条件**。
     // 返回**模块形状**（`__esModule: true`）：`defineAsyncComponent` 只对"模块"解包 `.default`，
     // 直接返回 `{ default: comp }` 会被当成组件本身 ⇒ 渲染成空注释节点 + "missing template" 警告。
-    // 约定 + 正负两侧读数：`packages/ui/AGENTS.md`「async 组件替身（defineAsyncComponent）约定」（task-234）；注：本段「runtime-only ⇒ 模板字符串得到空组件」已被该卡实测推翻（Vitest 解析到带编译器的 CJS 构建）。
+    // 约定与判据（含正负两侧读数）：`packages/ui/AGENTS.md`「async 组件替身（defineAsyncComponent）约定」（task-234）。
+    // 哨兵（**别删**）：`internal/A03-xihe/evidence/2026-11-13-async-stub-convention/fixtures/case-3-template-string.spec.ts`
+    //   断言 `typeof vue.compile === "function"`。模块解析条件哪天变了它会红 —— 那就是该回来重判上面那条理由的时候；
+    //   删掉它等于把「理由仍成立」变成无人复核的假设。
     const stub = (id: string) => async () => ({
         __esModule: true,
         default: {

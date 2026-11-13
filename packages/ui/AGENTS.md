@@ -68,7 +68,7 @@ node ../../../internal/A03-xihe/evidence/2026-11-13-async-stub-convention/stub-s
 
 四例：正例绿；负例 A（裸对象 + 有存在性判据）红且**红在判据上**；负例 C（同一个错误替身 + 没有判据）红在业务断言上（就是假红的样子）；另一例是被**证伪的假设**（下条）。退出码 0 = 四个都对上，1 = 与预期不符，2 = 环境问题或仓库里残留临时 spec。
 
-**一条纠正（`[实测]` 2026-11-13，本包 `vue` 3.5.44）**：「`vue` 是 runtime-only，所以替身不能写字符串 `template`」这半句**在本包单测里不成立**。Vitest 在 `node` 解析条件下把 `vue` 落到 `node_modules/vue/index.mjs → index.js → dist/vue.cjs.js`，那是**带编译器**的开发构建 ⇒ 字符串 `template` 能正常编译（自检用例里的 `PROBE compile = function` 就是这条读数，`2 passed`）。runtime-only 的是 `package.json` 的 `module` 字段（`dist/vue.runtime.esm-bundler.js`），**那是 Vite 给浏览器打包用的**。⇒ 上面第 2 条保留，但理由是「与生产构建一致、不依赖解析条件」。**同一份 `WorkspaceResourcesView.spec.ts` 注释里的旧说法保留未改**（那行不是本卡写面），只在其旁加了一行指针与纠正。
+**一条纠正（`[实测]` 2026-11-13，本包 `vue` 3.5.44）**：「`vue` 是 runtime-only，所以替身不能写字符串 `template`」这半句**在本包单测里不成立**。Vitest 在 `node` 解析条件下把 `vue` 落到 `node_modules/vue/index.mjs → index.js → dist/vue.cjs.js`，那是**带编译器**的开发构建 ⇒ 字符串 `template` 能正常编译（自检用例里的 `PROBE compile = function` 就是这条读数，`2 passed`）。runtime-only 的是 `package.json` 的 `module` 字段（`dist/vue.runtime.esm-bundler.js`），**那是 Vite 给浏览器打包用的**。⇒ 上面第 2 条保留，但理由是「与生产构建一致、不依赖解析条件」。**同一份 `WorkspaceResourcesView.spec.ts` 注释里的旧说法已由 `task-340` 收口（2026-11-13）**：该文件内关于 `template` 的说法**只剩一条**（= 与生产构建一致、不依赖解析条件），旧说法原文已删而不是并列保留；哨兵 fixture 的路径写在该注释里（解析条件真变了它会红）。
 
 ## 跨层与交互规则
 
