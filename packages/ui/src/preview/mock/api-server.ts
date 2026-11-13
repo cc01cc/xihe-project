@@ -10,6 +10,17 @@ import {
 import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnvironment";
 import { handleInstanceResource } from "./data/instanceResources";
 import { handleAgentSkillBinding } from "./data/agentSkillBindings";
+// task-25 D（D-1175 收窄重开）：会话/消息/投影夹具（长值样本供 cp-2 task-392 折行取证）。
+import {
+    mockSessionBranches,
+    mockSessionMessages,
+    mockSessionParticipants,
+    mockSessions,
+    mockSessionMonitor,
+    mockSessionRuns,
+    sessionsOfWorkspace,
+    workspacelessSessions,
+} from "./data/sessions";
 import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
 import {
     MOCK_ORG_UNITS,
@@ -539,14 +550,157 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 if (path === "/sessions" && methodIsGet) {
                     // `api.getSessions()`：顶层 `{sessions:[…]}`（也接受裸数组，这里按信封给）。
                     // task-373 / `D-1236` 甲案：`scope=workspaceless` 是**另一份**读面（独立会话）。
-                    // 这里同样给合法空集（本文件的口径：不给假行，空态是真实形态）；未知值 fail-closed
-                    // 400，与 CP 同口径。要在浏览器里看到非空的独立会话分组，用 e2e 夹具的
-                    // `setupMockSessions(page, { workspacelessSessions: [...] })`（task-25 再丰富预览数据）。
+                    // task-25 D（`D-1175` 收窄重开）：**不再硬回空集** —— 空集让聊天面在 mock 车道
+                    // 永远没有消息体与工具卡挂载，cp-2 `task-392` 的折行取证因此只测到「短值+已渲染」
+                    // 子集（`D-1146` 上界）。夹具见 `data/sessions.ts`（形状照 openapi，长值样本齐全）。
+                    // 未知 scope 仍 fail-closed 400，与 CP 同口径。
                     const sessionScope = url.searchParams.get("scope");
                     if (sessionScope !== null && sessionScope !== "workspaceless") {
                         return respond(400, { code: "INVALID_REQUEST", detail: "unknown scope" });
                     }
-                    return respond(200, { sessions: [] });
+                    return respond(200, {
+                        sessions:
+                            sessionScope === "workspaceless"
+                                ? workspacelessSessions()
+                                : sessionsOfWorkspace(MOCK_WORKSPACE.id),
+                    });
+                }
+                // 工作区地址的会话列表（PLAN-0608 C′：UI 走 `/workspaces/{id}/sessions`）。
+                const workspaceSessionsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions$/);
+                if (workspaceSessionsMatch && methodIsGet) {
+                    return respond(200, {
+                        sessions: sessionsOfWorkspace(workspaceSessionsMatch[1]),
+                    });
+                }
+                /**
+                 * 会话子资源读面（task-25 D）。四类投影的形状照 `e2e/mock/helpers/session-projections.ts`
+                 * 里 2026-11-05 对真实 CP 的逐条留档 —— 不桩它们，聊天列一挂载就是真 404 +
+                 * 「Failed to load …」console error（夹具缺口会伪装成产品回归，PLAN-0660 T5.6 实测）。
+                 */
+                const sessionItemMatch = path.match(/^\/sessions\/([^/]+)(\/.*)?$/);
+                if (sessionItemMatch && methodIsGet) {
+                    const sessionId = sessionItemMatch[1];
+                    const suffix = sessionItemMatch[2] ?? "";
+                    const session = mockSessions.find((item) => item.id === sessionId);
+                    if (!session) return respond(404, { code: "SESSION_NOT_FOUND" });
+                    if (suffix === "") return respond(200, session);
+                    if (suffix === "/messages") {
+                        // 契约（openapi listMessages）：无 limit/before ⇒ **裸数组**（legacy 全量、升序）。
+                        return respond(200, mockSessionMessages[sessionId] ?? []);
+                    }
+                    if (suffix === "/branches") {
+                        return respond(200, {
+                            sessionId,
+                            items: mockSessionBranches[sessionId] ?? [],
+                        });
+                    }
+                    if (suffix === "/participants") {
+                        return respond(200, {
+                            participants: mockSessionParticipants,
+                            capabilities: {
+                                view: true,
+                                manage: true,
+                                mention: true,
+                                speakAs: true,
+                            },
+                        });
+                    }
+                    if (suffix === "/derived-state") {
+                        return respond(200, {
+                            sessionId,
+                            activeChildren: [],
+                            terminalNotices: [],
+                        });
+                    }
+                    if (suffix === "/follow-ups") {
+                        return respond(200, {
+                            sessionId,
+                            queueState: "empty",
+                            outstandingCount: 0,
+                            capacityLimit: 5,
+                            pauseReason: null,
+                            items: [],
+                        });
+                    }
+                    if (suffix === "/commands") {
+                        return respond(200, {
+                            commands: [
+                                {
+                                    name: "/export",
+                                    source: "builtin",
+                                    available: true,
+                                    reason: null,
+                                },
+                                {
+                                    name: "/compact",
+                                    source: "builtin",
+                                    available: true,
+                                    reason: null,
+                                },
+                            ],
+                        });
+                    }
+                    return respond(404, { code: "MOCK_ENDPOINT_MISSING", detail: suffix });
+                }
+                /**
+                 * task-25 D 附（**浏览器实测补**）：会话一旦真的能点开，聊天面还会打这 5 条读面。
+                 * 此前 `sessions=[]` 让聊天面永远打不开，于是这些缺口被空集掩盖了 —— 夹具一富化就照出来：
+                 * runs / monitor / policy-mode / checkpoints / 会话级 SSE。形状来源：
+                 * `e2e/mock/helpers/auth.ts` 对真实 CP 的留档（runs / monitor / policy）与 `api.ts` 的解析器
+                 * （checkpoints 是**裸数组**、policy/mode 严格校验 sessionId + mode enum）。
+                 */
+                const chatSessionMatch = path.match(/^\/chat\/sessions\/([^/]+)\/(runs|monitor)$/);
+                if (chatSessionMatch && methodIsGet) {
+                    const sessionId = chatSessionMatch[1];
+                    if (chatSessionMatch[2] === "runs") {
+                        return respond(200, {
+                            sessionId,
+                            page: Number(url.searchParams.get("page") ?? 0),
+                            size: Number(url.searchParams.get("size") ?? 100),
+                            runs: mockSessionRuns(sessionId),
+                        });
+                    }
+                    return respond(200, mockSessionMonitor(sessionId));
+                }
+                if (path === "/policy/mode" && methodIsGet) {
+                    // 严格校验：sessionId 必须回显请求里的那个，mode ∈ {manual, auto}（api.ts:1948）。
+                    return respond(200, {
+                        sessionId: url.searchParams.get("sessionId") ?? "",
+                        mode: "manual",
+                        sessionRules: 0,
+                    });
+                }
+                const checkpointsMatch = path.match(/^\/workspaces\/([^/]+)\/checkpoints$/);
+                if (checkpointsMatch && methodIsGet) {
+                    // api.listWorkspaceCheckpoints 要求**裸数组**（不是信封）；预览没有检查点 ⇒ 合法空集。
+                    return respond(200, []);
+                }
+                const contextSourcesMatch = path.match(/^\/context\/([^/]+)\/sources$/);
+                if (contextSourcesMatch && methodIsGet) {
+                    // U1 上下文来源：**只给元数据、永不带正文**（契约 openapi:4197 与 CP
+                    // ContextPublicController:66-68 同口径）。mock 没有真实上下文快照 ⇒ status 用
+                    // CP 自己的缺省 "unknown"、hashPrefix 空串，而不是编一个看起来像已加载的值。
+                    return respond(200, {
+                        sourceKey: "AGENTS.md",
+                        status: "unknown",
+                        hashPrefix: "",
+                    });
+                }
+                if (path === "/events" && methodIsGet) {
+                    // 会话级 SSE：与工作区事件同口径 —— 只保活、**不写任何帧**（retry 行与注释行都会被
+                    // 前端解析器当事件，打 invalid_json 警告，2026-11-13 实测）。404 更不行：
+                    // fetch-event-source 对 404 会无限退避重连把日志刷满。
+                    res.statusCode = 200;
+                    res.setHeader("content-type", "text/event-stream; charset=utf-8");
+                    res.setHeader("cache-control", "no-cache, no-transform");
+                    res.setHeader("connection", "keep-alive");
+                    res.setHeader("x-accel-buffering", "no");
+                    const sessionKeepAlive = setInterval(() => {
+                        if (res.writableEnded) clearInterval(sessionKeepAlive);
+                    }, 25_000);
+                    sessionKeepAlive.unref?.();
+                    res.on("close", () => clearInterval(sessionKeepAlive));
+                    return;
                 }
                 if (path === "/agent-principals" && methodIsGet) {
                     // `api.listMyAgentPrincipals()`：`{principals:[…]}`；个人视图只回 `created_by=self`。
