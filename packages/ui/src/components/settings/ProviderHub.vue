@@ -12,6 +12,9 @@ import { formatApiType } from "../../lib/apiTypeLabels";
 import { ApiError, request } from "../../composables/api";
 import type { ProviderCatalog, CatalogModel, ModelPricing } from "../../types/provider";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
+import { Button } from "../ui/button";
+import { profileReadiness } from "./llmProfileNotices";
 import { Search } from "@lucide/vue";
 import {
     createProviderConnection,
@@ -283,6 +286,17 @@ async function saveBinding(model: string | null, value: string) {
 }
 
 // PLAN-0523 T3.2: in-place default identity + per-model sampling params.
+/**
+ * task-385（D-1233）：保存 profile 时连接未就绪 / ghost ⇒ **inline 警示，不阻断保存**。
+ * 纯前端判据（D-1203：不加 HTTP warning 字段、服务端行为不变）；两个写 profile 的入口
+ * （setAsDefault / saveModelParams）成功后按「当前 profile + 可见连接列表」重算。
+ * 判据②：READY 连接保存 ⇒ 重算为 null ⇒ 无警示；判据③：可关闭，且不禁用任何后续操作。
+ */
+const profileWarning = ref<"unverified" | "ghost" | null>(null);
+function refreshProfileWarning(): void {
+    const readiness = profileReadiness(storedProfile.value, connections.value);
+    profileWarning.value = readiness === "unverified" || readiness === "ghost" ? readiness : null;
+}
 const savingDefault = ref(false),
     savingParams = ref(false),
     expandedModel = ref<string | null>(null),
@@ -342,6 +356,7 @@ async function setAsDefault(connection: ProviderConnection, modelOverride?: stri
             }),
         });
         await configStore.loadLayerDomains(currentLayer.value);
+        refreshProfileWarning();
         toast.success(
             modelOverride
                 ? t("settings.providerHub.toastDefaultModelUpdated")
@@ -412,6 +427,7 @@ async function saveModelParams(model: string) {
             }),
         });
         await configStore.loadLayerDomains(currentLayer.value);
+        refreshProfileWarning();
         toast.success(t("settings.providerHub.toastParamsSaved"));
     } catch (cause) {
         logger.warn("Model params save failed", cause);
@@ -1084,6 +1100,32 @@ onMounted(() => {
                     t("settings.providerHub.needsKeyBanner", { count: needsKeyConnections.length })
                 }}
             </div>
+
+            <!-- task-385（D-1233）：inline 警示不阻断 —— 保存已成功，这里只说明「现在解析不了」。
+                 配色沿用本组件既有 amber 提示块（drift/kept 同族），不引入第二套设计语言。 -->
+            <Alert
+                v-if="profileWarning"
+                data-testid="provider-profile-warning"
+                class="mb-3 border-amber-300 bg-amber-50 text-amber-900"
+            >
+                <AlertDescription data-testid="provider-profile-warning-text">
+                    {{
+                        profileWarning === "ghost"
+                            ? t("settings.providerHub.profileWarningGhost")
+                            : t("settings.providerHub.profileWarningUnverified")
+                    }}
+                </AlertDescription>
+                <AlertAction>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid="provider-profile-warning-dismiss"
+                        @click="profileWarning = null"
+                    >
+                        {{ t("settings.providerHub.profileWarningDismiss") }}
+                    </Button>
+                </AlertAction>
+            </Alert>
 
             <section
                 data-testid="provider-master-detail"

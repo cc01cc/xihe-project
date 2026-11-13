@@ -9,6 +9,11 @@ const props = defineProps<{
     domain: string;
     layer: ConfigLayer;
     meta?: Record<string, ConfigKeyMeta>;
+    /**
+     * task-386（D-1232）：消费层展示的实例模型旁标注「此模型将使用你自己的凭据」。
+     * 判据由调用方算（ConfigLayerPanels 的 llmOwnCredentialNote）—— 本组件保持域无关。
+     */
+    ownCredentialNote?: boolean;
 }>();
 
 /**
@@ -85,6 +90,13 @@ function hint(item: ConfigKeyMeta): string {
                 {{ expanded ? t("settings.configSummaryHide") : t("settings.configSummaryShow") }}
             </button>
         </div>
+        <p
+            v-if="ownCredentialNote"
+            :data-testid="`config-source-own-credential-${domain}`"
+            class="mt-1 text-xs text-muted-foreground"
+        >
+            {{ t("settings.configOwnCredentialNote") }}
+        </p>
         <div v-if="expanded" class="mt-1 space-y-0.5">
             <div
                 v-for="item in rows"

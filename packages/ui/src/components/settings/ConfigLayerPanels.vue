@@ -23,6 +23,7 @@ import { getProviderInfo } from "../../types/provider";
 import type { ProviderDefinition } from "../../types/providerConnection";
 import { listProviderCatalog } from "../../services/providerConnectionService";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
+import { usesOwnCredential } from "./llmProfileNotices";
 import { DOMAIN_LABEL_KEY } from "../../lib/settingsIa";
 import ContextModelOverrides from "./ContextModelOverrides.vue";
 import {
@@ -482,6 +483,67 @@ function envLockedFor(domain: string): Record<string, string> {
 const llmProviderLayer = computed<"instance" | "user">(() =>
     props.layer === "instance" ? "instance" : "user",
 );
+/**
+ * task-386（D-1232）：消费层（非实例层）展示实例模型时标注「此模型将使用你自己的凭据」。
+ * 三个条件缺一不可：① 该层 profile 的 source 是 instance（真的在消费实例模型）；
+ * ② 生效 profile 取 mergedConfig（无 layer 合并读面，非管理员可读；**不读 layerConfig.instance**，
+ * 非管理员 403）；③ 用户自己有同 (providerId, connectionKey) 的 USER 连接且 enabled ∧ READY。
+ * 判据函数与 CP T1.5 语义对齐，见 llmProfileNotices.ts（不复用 ProviderHub.defaultConnection）。
+ */
+/**
+ * task-386（D-1232）：标注要的两个读面在本页**不一定已加载** —— SettingsDomainView 只调
+ * `loadLayerDomains(layer)`（:183），不调 `loadAllDomains` ⇒ `mergedConfig` 可能是空的，
+ * 判据就会恒假、标注永远不出现（这类「功能看起来做了但页面里从不渲染」正是本卡要防的）。
+ * 按 task-31 的同一纪律补一次：inflight 去重 + **失败不画标注**（「不知道」不能画成「没有」）。
+ * 只补 llm-provider 一个域的合并读面（`GET /config/llm-provider`，非管理员白名单内，
+ * 不读 `layerConfig.instance` —— 非管理员 403），写回 store 的 mergedConfig 缓存
+ * （与 loadAllDomains 的落点一致），不引入第二份状态。
+ */
+const ownCredentialFacesLoaded = ref(false);
+let ownCredentialInFlight: Promise<void> | null = null;
+
+async function ensureOwnCredentialFaces(): Promise<void> {
+    if (props.layer === "instance" || ownCredentialFacesLoaded.value) return;
+    ownCredentialInFlight ??= Promise.all([
+        configStore.fetchDomain("llm-provider").then((entries) => {
+            configStore.mergedConfig["llm-provider"] = entries;
+        }),
+        configStore.loadProviderConnections(),
+    ])
+        .then(
+            () => {
+                ownCredentialFacesLoaded.value = true;
+            },
+            (e: unknown) => {
+                logger.warn(
+                    "llm-provider merged/connections prefetch failed, credential note stays hidden",
+                    e,
+                );
+            },
+        )
+        .finally(() => {
+            ownCredentialInFlight = null;
+        });
+    await ownCredentialInFlight;
+}
+
+watch(
+    () => [props.layer, props.domain] as const,
+    () => {
+        if (props.layer !== "instance" && (!props.domain || props.domain === "llm-provider")) {
+            void ensureOwnCredentialFaces();
+        }
+    },
+    { immediate: true },
+);
+
+const llmOwnCredentialNote = computed(() => {
+    if (props.layer === "instance" || !ownCredentialFacesLoaded.value) return false;
+    const meta = configStore.layerMeta[props.layer]?.["llm-provider"]?.profile;
+    if (meta?.source !== "instance") return false;
+    const profile = parseLlmProfileValue(configStore.mergedConfig["llm-provider"]?.profile);
+    return usesOwnCredential(profile, configStore.providerConnections);
+});
 const editableFieldCount = computed<number>(() => {
     const domain = props.domain;
     if (!domain || props.readonly) return 0;
@@ -803,6 +865,7 @@ async function handleReset(domain: string, key: string) {
                         domain="llm-provider"
                         :layer="layer"
                         :meta="configStore.layerMeta[layer]['llm-provider'] || {}"
+                        :own-credential-note="llmOwnCredentialNote"
                     />
                 </div>
             </div>

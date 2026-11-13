@@ -777,6 +777,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                     v-model="editing[field.key]"
                     rows="3"
                     :id="controlId(field)"
+                    :data-testid="`config-textarea-${domain}-${field.key}`"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1"
                 />
@@ -813,6 +814,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                     v-else-if="!readonly"
                     v-model="editing[field.key]"
                     :id="controlId(field)"
+                    :data-testid="`config-text-${domain}-${field.key}`"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     class="min-w-0 flex-1"
                     :type="field.type === 'password' ? 'password' : 'text'"
