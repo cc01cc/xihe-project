@@ -129,7 +129,7 @@ function formatNow(): void {
             :id="controlId"
             ref="host"
             :data-testid="testId"
-            class="min-w-0 border border-foreground/50 rounded bg-background overflow-auto max-h-64 text-sm"
+            class="min-w-0 rounded-lg border border-input bg-background overflow-auto max-h-64 text-sm"
             :aria-invalid="error ? 'true' : undefined"
         ></div>
         <div class="flex items-center gap-2">

@@ -13,6 +13,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Input } from "../ui/input";
 import {
     composeModels,
     decomposeModels,
@@ -97,13 +98,14 @@ function submit(): void {
                     >
                         {{ t("settings.ctxModelName") }}
                     </label>
-                    <input
+                    <!-- task-310：形态回落 vendor `Input` 默认，只保留描边覆盖（见 ConfigDomainPanel 同款注释） -->
+                    <Input
                         :id="`ctx-model-name-${index}`"
                         v-model="row.name"
                         :data-testid="`ctx-model-name-${index}`"
                         :disabled="locked"
                         :placeholder="t('settings.ctxModelNamePlaceholder')"
-                        class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                        class="min-w-0 flex-1"
                     />
                     <button
                         v-if="!locked"
@@ -137,7 +139,7 @@ function submit(): void {
                             <SelectTrigger
                                 :id="`ctx-model-${index}-${field.key}`"
                                 :data-testid="`ctx-model-${index}-${field.key}`"
-                                class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                                class="min-w-0 flex-1"
                             >
                                 <SelectValue />
                             </SelectTrigger>
@@ -158,7 +160,7 @@ function submit(): void {
                                 </SelectItem>
                             </SelectContent>
                         </Select>
-                        <input
+                        <Input
                             v-else
                             :id="`ctx-model-${index}-${field.key}`"
                             v-model="row.values[field.key]"
@@ -169,7 +171,7 @@ function submit(): void {
                                     ? 'number'
                                     : 'text'
                             "
-                            class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                            class="min-w-0 flex-1"
                         />
                     </div>
                 </div>

@@ -7,6 +7,8 @@ import { isInstanceOnlyForUser, settingsDomainPath } from "../../lib/settingsIa"
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import JsonFieldEditor from "./JsonFieldEditor.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { FieldControl, FieldError, FieldRoot } from "reka-ui";
 import { FieldDescription, FieldLabel } from "../ui/field";
 
@@ -500,6 +502,14 @@ function handleReset(key: string) {
     editing.value[key] = "";
     emit("reset", key);
 }
+
+/** task-310：`<Input type="number">` 上的 `v-model` 会被 Vue 自动转成 number
+ *  （`vModelText` 对 `type=number` 恒做 `castToNumber`），而本面板的编辑草稿**必须保持字符串**
+ *  —— PLAN-0753 M2 起 save body 里所有值都是字符串，`ConfigDomainPanel.spec.ts` 的 TC8 钉的就是这条。
+ *  所以这里手动绑定并显式 `String()`。**别改回 `v-model`**，那会静默把 8192 变成数字。 */
+function onNumberDraft(key: string, v: string | number | null | undefined) {
+    editing.value[key] = v === null || v === undefined || v === "" ? "" : String(v);
+}
 </script>
 
 <template>
@@ -673,13 +683,16 @@ function handleReset(key: string) {
                 </template>
 
                 <template v-else-if="!readonly && field.type === 'select'">
-                    <input
+                    <!-- task-310：形态回落 vendor `Input` 默认（h-8 / rounded-lg / px-2.5 py-1 / bg-transparent），
+                         只保留描边覆盖 —— `--input` 在 5 调色板里 9/10 格不达 WCAG 1.4.11 的 3:1，
+                         实测见 evidence/2026-11-13-config-domain-selects/README.md §3。 -->
+                    <Input
                         v-if="field.allowCustom && customMode[field.key]"
                         v-model="editing[field.key]"
                         :id="controlId(field)"
                         :data-testid="`config-custom-${domain}-${field.key}`"
                         :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                        class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                        class="min-w-0 flex-1"
                         :placeholder="t('settings.customPlaceholder')"
                     />
                     <Select
@@ -701,7 +714,7 @@ function handleReset(key: string) {
                         <SelectTrigger
                             :id="controlId(field)"
                             :data-testid="`config-select-${domain}-${field.key}`"
-                            class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                            class="min-w-0 flex-1"
                         >
                             <SelectValue />
                         </SelectTrigger>
@@ -739,13 +752,13 @@ function handleReset(key: string) {
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                 />
 
-                <textarea
+                <Textarea
                     v-else-if="!readonly && field.type === 'textarea'"
                     v-model="editing[field.key]"
                     rows="3"
                     :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                    class="min-w-0 flex-1"
                 />
 
                 <FieldRoot
@@ -756,28 +769,32 @@ function handleReset(key: string) {
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
                     validation-mode="onChange"
                 >
-                    <FieldControl
-                        v-model="editing[field.key]"
-                        as="input"
-                        :id="controlId(field)"
-                        :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                        class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
-                        type="number"
-                        :max="field.max"
-                        :title="field.max ? `≤ ${field.max}` : undefined"
-                        :data-testid="`config-number-${domain}-${field.key}`"
-                    />
+                    <!-- as-child + vendor `Input`：FieldControl 的校验监听经 mergeProps 落到 input 上，
+                         样式则整体回落 vendor 默认（不再逐个 pixel 手写）。 -->
+                    <FieldControl as-child>
+                        <Input
+                            :model-value="editing[field.key]"
+                            :id="controlId(field)"
+                            :disabled="!isWritable(field.key) || isLayerReadonly(field)"
+                            class="min-w-0 flex-1"
+                            type="number"
+                            @update:model-value="(v) => onNumberDraft(field.key, v)"
+                            :max="field.max"
+                            :title="field.max ? `≤ ${field.max}` : undefined"
+                            :data-testid="`config-number-${domain}-${field.key}`"
+                        />
+                    </FieldControl>
                     <FieldError
                         class="shrink-0 text-xs text-destructive"
                         :data-testid="`config-number-error-${domain}-${field.key}`"
                     />
                 </FieldRoot>
-                <input
+                <Input
                     v-else-if="!readonly"
                     v-model="editing[field.key]"
                     :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
+                    class="min-w-0 flex-1"
                     :type="field.type === 'password' ? 'password' : 'text'"
                 />
 

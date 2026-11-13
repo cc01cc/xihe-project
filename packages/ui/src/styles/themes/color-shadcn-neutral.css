@@ -40,9 +40,13 @@ html[data-xh-color="neutral"] {
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
     --border: oklch(0.922 0 0);
-    /* 2026-11-12：控件边界提到 WCAG 1.4.11 的 3:1（原 0.922 对白仅 1.26:1）。
-   0.66 的线性亮度 0.2875 ⇒ 对 #fff 3.11:1，留一点 8 位取整余量。--border 不动：装饰线豁免。 */
-    --input: oklch(0.66 0 0);
+    /* task-310（2026-11-13）：`--input` = 可交互控件的边界，按 WCAG 1.4.11 需 ≥3:1。
+       判据底面取【最差的那个】（`--muted`）而不是 `--background` —— 只按浅底算会偏乐观
+       （旧值 0.66 对 #fff 报 3.11，对真底 oklch(0.97) 只有 2.85、对 `--muted` 2.54）。
+       新值对 5 个底面的最差 = 3.136。`--border` 保持不动：装饰线不受 1.4.11 约束，
+       一起提等于把全站描边统一加重 = 换风格、收益 0（Lead 2026-11-13 裁定）。
+       读数与复算脚本：internal/A03-xihe/evidence/2026-11-13-config-domain-selects/README.md §5 */
+    --input: oklch(0.605 0 0);
     --ring: var(--primary);
     --chart-1: oklch(0.646 0.222 41.116);
     --chart-2: oklch(0.6 0.118 184.704);
@@ -78,8 +82,11 @@ html[data-xh-color="neutral"].dark {
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
-    /* 暗色同一判据：sRGB 空间合成，15% 白压 #0a0a0a ≈ #2f2f2f ⇒ 仅 1.48:1；35% ≈ #5d5d5d ⇒ 3.05:1。 */
-    --input: oklch(1 0 0 / 35%);
+    /* task-310：同上判据（5 个底面最差 = 3.192）。此处 C=0 是【纯灰】，不是漏了调色板色相：
+       规则 = 取本调色板 `--border` 的 C/H、只解 L，而暗色 `--border` 是 oklch(1 0 0 / 10%) 本身无彩度
+       ⇒ C=0 是这条规则的正确输出；亮色带色相，是因为亮色 `--border` 本身带色相。
+       要改这里之前先读证据包，别当 bug 顺手修。 */
+    --input: oklch(0.554 0 0);
     --ring: var(--primary);
     --chart-1: oklch(0.488 0.243 264.376);
     --chart-2: oklch(0.696 0.17 162.48);

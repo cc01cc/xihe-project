@@ -147,7 +147,9 @@ describe("ConfigDomainPanel", () => {
      *   锁定值：`--muted-foreground` 对 `--muted`(232,232,232) = **4.30:1（未过 4.5）**
      *         ⇒ 改 `text-foreground` = **16.11:1**
      *   控件边框：裸 `border` 取 `--border`(229) 对 `--background` = **1.15:1（白底上几乎看不见）**
-     *         ⇒ 改 `border-foreground/50`（10 以 50% 叠在 245 上 = 128）= **3.62:1**（过 WCAG 1.4.11 的 3:1）
+     *         ⇒ task-225 改成 `border-foreground/50`（3.62:1）；**task-310 已撤掉这个覆盖**：
+     *         `--input` 这个 token 本身提到了 3.10:1 以上，控件回落 vendor 默认 `border-input` 即可，
+     *         不再需要在每个调用点手写 `border-foreground/50`（9 处同款 class 是重复，不是判据）。
      *
      * <p>jsdom 没有级联与布局 ⇒ 这里只能钉住**决定对比度的类**（数值断言在真实浏览器里做，
      * 否则 @supports/变量解析差异会让断言在 jsdom 里恒真）。</p>
@@ -165,10 +167,13 @@ describe("ConfigDomainPanel", () => {
         expect(labelBlock.classes()).toContain("text-foreground");
         expect(labelBlock.find("label").classes()).toContain("text-foreground");
 
-        // ② 可编辑控件的边框：不是裸 border（=--border 1.15:1），而是 foreground/50（3.62:1）
+        // ② 可编辑控件的边框：走 vendor 默认的 `border-input`（= `--input` token）。
+        //    **注意这条断言守的是「用了哪个 token」，不是「对比度够不够」** ——
+        //    task-310 起对比度本身由 `src/styles/__tests__/input-contrast.spec.ts` 直接断言
+        //    （10 格 × 5 底面最差 ≥ 3.10，含反例自检）。改 token 值请改那边，别改这里。
         const control = wrapper.get('[data-testid="config-field-test-model"] input');
-        expect(control.classes()).toContain("border-foreground/50");
-        expect(control.classes()).not.toContain("border-input");
+        expect(control.classes()).toContain("border-input");
+        expect(control.classes()).not.toContain("border-foreground/50");
 
         // ③ env 锁定值（只读 chip）：文字用 foreground（16.11:1），底色仍 muted（不改语义）
         const locked = wrapper.get('[data-testid="config-env-lock-test-maxTokens"]');
