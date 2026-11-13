@@ -61,7 +61,16 @@
  * hanging it on the pipeline"). Wiring is a separate card.
  */
 
-import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  readFileSync,
+  readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+} from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,6 +83,53 @@ export const DEFAULT_MIGRATION_DIR = join(
 );
 /** The registry lives in the workspace repo (one/), one level above the project repo. */
 export const DEFAULT_REGISTRY = resolve(DEFAULT_REPO_ROOT, '../internal/A03-xihe/docs/migration-numbers.md');
+
+/**
+ * 跨仓登记册定位（task-168 接线时补）。判据顺序：`--registry` > 本仓兄弟目录 > **主检出**（worktree 场景）。
+ *
+ * 为什么需要第三步：lane 在 `.worktrees/<slot>` 里跑，`<repoRoot>/../internal/…` 落在
+ * `.worktrees/internal/…` ⇒ 每一步都 exit 2。**exit 2 本身是对的**（判不了不是绿），但门在 lane 里
+ * 永远绿不了 ⇒ 训练出「这条红是正常的」⇒ 必然被绕过（D-1074：开不了的门等于没有门）。
+ * 第三步不猜路径：`git rev-parse --git-common-dir` 给出**主检出**的 `.git`，其父目录就是主检出根，
+ * 登记册在主检出根的同级 `internal/` 下。找不到 ⇒ **保留 exit 2**，并把两条修法打印出来（不静默回落）。
+ *
+ * @returns {{path:string, via:'explicit'|'repo-sibling'|'main-checkout'|'missing', note:string|null}}
+ */
+export function pickRegistry({ explicit, repoRoot, mainCheckoutRoot, exists }) {
+  const seen = typeof exists === 'function' ? exists : existsSync;
+  if (explicit) return { path: resolve(explicit), via: 'explicit', note: null };
+  const local = join(repoRoot, '../internal/A03-xihe/docs/migration-numbers.md');
+  if (seen(local)) return { path: local, via: 'repo-sibling', note: null };
+  if (mainCheckoutRoot) {
+    const cross = join(mainCheckoutRoot, '../internal/A03-xihe/docs/migration-numbers.md');
+    if (seen(cross)) {
+      return {
+        path: cross,
+        via: 'main-checkout',
+        note:
+          'NOTE 跨仓登记册：本仓是 worktree ⇒ 登记册由主检出 ' +
+          mainCheckoutRoot +
+          ' 提供（不是本仓文件；改它要回主检出，且属于 workspace 层的改动）',
+      };
+    }
+  }
+  return { path: local, via: 'missing', note: null };
+}
+
+/** 主检出根：`git rev-parse --path-format=absolute --git-common-dir` 的父目录。读不到 ⇒ null（保持 exit 2）。 */
+export function detectMainCheckoutRoot(repoRoot) {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-C', repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    if (!out) return null;
+    return resolve(out, '..');
+  } catch {
+    return null;
+  }
+}
 
 export const CODES = {
   DUPLICATE: 'E_DUPLICATE_MIGRATION_NUMBER',
@@ -233,9 +289,18 @@ function main(argv) {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
   };
+  // task-168：登记册定位（跨仓/前置）在 load() 之前定，缺登记册时的提示也在这里拼。
+  const explicitRegistry = argOf('--registry');
+  const repoRoot = argOf('--repo-root') ?? DEFAULT_REPO_ROOT;
+  const picked = pickRegistry({
+    explicit: explicitRegistry,
+    repoRoot,
+    mainCheckoutRoot: detectMainCheckoutRoot(repoRoot),
+  });
+  if (!json && picked.note) console.log('[migration-numbers] ' + picked.note);
   const io = {
     migrationDir: argOf('--dir') ?? DEFAULT_MIGRATION_DIR,
-    registryPath: argOf('--registry') ?? DEFAULT_REGISTRY,
+    registryPath: picked.path,
   };
 
   let loaded;
@@ -243,8 +308,26 @@ function main(argv) {
     loaded = load(io);
   } catch (error) {
     const message = 'cannot read inputs: ' + (error && error.message ? error.message : String(error));
-    if (json) console.log(JSON.stringify({ ok: false, code: 'E_UNREADABLE_INPUT', message }));
-    else console.log('[migration-numbers] E_UNREADABLE_INPUT ' + message);
+    if (json) console.log(JSON.stringify({ ok: false, code: 'E_UNREADABLE_INPUT', message, registryVia: picked.via }));
+    else {
+      console.log('[migration-numbers] E_UNREADABLE_INPUT ' + message);
+      // exit 2 = **判不了**，不是通过。把两条修法写在同一屏（读者不必回查脚本注释）。
+      if (picked.via === 'explicit') {
+        console.log(
+          '[migration-numbers] HINT 传的 --registry 读不到：路径写错，或该文件还没生成（登记册在 workspace 的 one/internal/A03-xihe/docs/）',
+        );
+      }
+      if (picked.via === 'missing') {
+        console.log(
+          '[migration-numbers] HINT 登记册是 workspace 文件（one/internal/A03-xihe/docs/migration-numbers.md）：',
+        );
+        console.log(
+          '[migration-numbers] HINT ① 传 --registry <one>/internal/A03-xihe/docs/migration-numbers.md；' +
+            '② 或先满足 workspace 前置（本仓位于 one/ 之下，worktree 由主检出提供登记册）',
+        );
+        console.log('[migration-numbers] HINT exit 2 = 判不了 ≠ 通过（这条门不会把「读不到」当绿）');
+      }
+    }
     return 2;
   }
 
@@ -416,10 +499,64 @@ function selftest() {
       rmSync(root, { recursive: true, force: true });
     }
   }
+  /* task-168：登记册定位的判据也要自测 —— 否则「跨仓能找到」只是本次实测的结论，
+   * 下一个人改路径时不会有人发现它退化了。全部用注入的 exists，不碰真盘。 */
+  const pickCases = [
+    {
+      name: 'explicit 优先',
+      input: { explicit: 'X:/reg.md', repoRoot: 'R:/repo', mainCheckoutRoot: null },
+      exists: () => true,
+      expect: (p) => p.via === 'explicit' && p.note === null,
+    },
+    {
+      name: '本仓兄弟目录存在 ⇒ repo-sibling（不提示跨仓）',
+      input: { explicit: undefined, repoRoot: 'R:/repo', mainCheckoutRoot: null },
+      // 本仓兄弟目录存在（注入的 exists 只认不带 .worktrees 的路径 = 本仓自己的 ../internal）
+      exists: (p) => !String(p).includes('.worktrees'),
+      expect: (p) => p.via === 'repo-sibling' && p.note === null,
+    },
+    {
+      name: '本仓没有、主检出让有 ⇒ main-checkout + 明确 NOTE',
+      input: { explicit: undefined, repoRoot: 'R:/repo/.worktrees/lane', mainCheckoutRoot: 'R:/repo' },
+      exists: (p) => !String(p).includes('.worktrees'),
+      expect: (p) => p.via === 'main-checkout' && /跨仓登记册/.test(p.note ?? ''),
+    },
+    {
+      name: '两处都没有 ⇒ missing（由调用方 exit 2，不许回落成绿）',
+      input: { explicit: undefined, repoRoot: 'R:/repo/.worktrees/lane', mainCheckoutRoot: 'R:/repo' },
+      exists: () => false,
+      expect: (p) => p.via === 'missing' && p.note === null,
+    },
+  ];
+  let pickPassed = 0;
+  const pickFailures = [];
+  for (const item of pickCases) {
+    let ok = false;
+    try {
+      ok = item.expect(pickRegistry({ ...item.input, exists: item.exists }));
+    } catch (error) {
+      ok = 'threw: ' + (error && error.message ? error.message : String(error));
+    }
+    if (ok === true) {
+      pickPassed += 1;
+      console.log('[selftest] PASS registry-pick: ' + item.name);
+    } else {
+      pickFailures.push(item.name);
+      console.log('[selftest] FAIL registry-pick: ' + item.name + ' assert=' + ok);
+    }
+  }
   console.log(
     '[selftest] fixtures=' + FIXTURES.length + ' passed=' + passed + ' failed=' + failures.length,
   );
-  return failures.length === 0 ? 0 : 1;
+  console.log(
+    '[selftest] registry-picks=' +
+      pickCases.length +
+      ' passed=' +
+      pickPassed +
+      ' failed=' +
+      pickFailures.length,
+  );
+  return failures.length === 0 && pickFailures.length === 0 ? 0 : 1;
 }
 
 process.exit(main(process.argv.slice(2)));

@@ -707,6 +707,20 @@ alias = "check:api-docs"
 # BL-162: OpenAPI 契约门。BL-162 之前 `validate-openapi.mjs` 只被人手跑（mise.toml/pom.xml/scripts 里 0 引用），
 # 契约漂移能一路合进 develop。现在它是 `test:cp` / `validate` 的依赖 ⇒ 跑 CP 测试就会查契约。
 # 失败时输出 path 数 + 首个失败点 + 修复提示；成功侧输出 path 数与校验面统计。
+# task-164 立、task-168 接线：Flyway 迁移号登记核对（判据本体在 scripts/check-migration-numbers.mjs，
+# 五条判据夹具 + 四条「登记册定位」夹具，全部由 node scripts/check-migration-numbers.mjs --selftest 跑）。
+# **exit 0/1/2 三态**：0 = 干净；1 = 有 finding（重号 / 登记册落后 / 新号未登记，逐条打 code + 文件）；
+#   2 = **判不了**（迁移目录或登记册读不到、登记册头三个值解析不出）—— 2 不是绿，这条门不会把「读不到」当通过。
+# 跨仓前置：登记册是 **workspace 文件**（one/internal/A03-xihe/docs/migration-numbers.md），不在本仓。
+#   定位顺序 = -- --registry <path> > 本仓兄弟目录 ../internal/… > **主检出**（git rev-parse --git-common-dir 的父目录）。
+#   lane 在 .worktrees/<slot> 时走第三条，并在输出里打 NOTE 跨仓登记册；三条都不成立 ⇒ exit 2 + 两条修法。
+# **不接 validate**（与 check:dev-i18n-drift / check:e2e-bypass 同纪律：先证明它能响，再谈挂上流水线）。
+# 改本任务必须同批改 zh/en 的 DEV-002 §4（**en 的 §4 不是同一节，两侧各查、别按编号平移**）。
+[tasks."check:migrations"]
+run = "node scripts/check-migration-numbers.mjs"
+description = "Gate: Flyway migration numbers must be unique and registered in workspace migration-numbers.md (1 = finding, 2 = cannot answer — 2 is NOT green; cross-repo registry via pass-through arg --registry <path>)"
+alias = "check:migrations"
+
 [tasks."check:openapi"]
 run = "node scripts/validate-openapi.mjs"
 description = "Validate docs/api/openapi.yaml (structure + frozen contract slices); dependency of test:cp and validate"
