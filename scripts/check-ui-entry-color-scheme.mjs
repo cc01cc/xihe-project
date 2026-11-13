@@ -28,6 +28,8 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = join(HERE, "..");
 const UI_ROOT = join(REPO_ROOT, "packages", "ui");
 const SKIP_DIRS = new Set(["node_modules", "dist", ".vite", "coverage", "test-results", "playwright-report"]);
+// 点开头的目录一律跳过：`.local/` 里是 gitignored 的备份/实验稿（实测有一份 `preview-real.fixed.bak.html`），
+// 把它算进「入口族」会报一条永远修不掉的 MISS —— 假阳性会让整条门被当噪音（D-1074）。
 
 const WANTED = '<meta name="color-scheme" content="light dark"';
 
@@ -50,7 +52,7 @@ export function judge(html) {
 
 function walk(dir, acc = []) {
   for (const name of readdirSync(dir)) {
-    if (SKIP_DIRS.has(name)) continue;
+    if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
     const full = join(dir, name);
     const st = statSync(full);
     if (st.isDirectory()) walk(full, acc);
