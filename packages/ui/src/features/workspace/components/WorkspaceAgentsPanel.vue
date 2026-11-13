@@ -954,7 +954,16 @@ async function bindCreatedPrincipal() {
             error.value = t("workspace.agentBindForbidden");
             return;
         }
-        await api.updateWorkspaceAgentCap(props.workspaceId, principalId, permissions.value);
+        // task-433（47A / D-1109）：与行级绑定 `bindExistingAgent` **同一口径** —— 用户没在创建面
+        // 勾任何权限时**省略**第三参，让 CP 记 `capSource=baseline`（继承角色基线）。原样发 `[]`
+        // 是被 47A 取代的旧口径：wire 上是显式零权限，真栈 A/B 实测把新建智能体冻成「无工具权限」
+        //（证据 internal/A03-xihe/evidence/2026-11-14-instance-flow-audit/cap-source-ab.json）。
+        // 显式勾了权限则原样发，保留用户意图（与编辑面 `capMode==='explicit'` 一致）。
+        await api.updateWorkspaceAgentCap(
+            props.workspaceId,
+            principalId,
+            permissions.value.length > 0 ? permissions.value : undefined,
+        );
         createdPrincipalId.value = null;
         createdPrincipalMeta.value = null;
         clearPendingPrincipalId();

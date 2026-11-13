@@ -553,7 +553,14 @@ describe("WorkspaceAgentsPanel pending principal recovery", () => {
         await restored.find('[data-testid="agent-principal-bind"]').trigger("click");
         await flushPromises();
 
-        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(WORKSPACE_ID, PENDING_ID, []);
+        // task-433（47A / D-1109）：创建后绑定与行级绑定**同一口径** —— 用户没在创建面勾权限时
+        // 必须省略第三参（继承角色基线）。旧断言写死 `[]`，那是被 47A 取代的口径：wire 上是
+        // **显式零权限**，真栈 A/B 实测会把新建智能体冻成「无工具权限」（证据 cap-source-ab.json）。
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PENDING_ID,
+            undefined,
+        );
         expect(pendingCard(restored).exists()).toBe(false);
         expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).not.toHaveProperty(
             pendingKey,
@@ -679,6 +686,44 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         ).toBeUndefined();
         // 绑定后必须重新读取列表（与创建后的刷新同一口径）。
         expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(2);
+        wrapper.unmount();
+    });
+
+    /**
+     * task-433 正例：用户在创建面**显式勾了**权限，绑定就必须原样发 explicit（不能被「默认继承」
+     * 一刀切吞掉）。与上一条（未勾 ⇒ undefined）成对，钉住「默认继承 ≠ 禁止显式」。
+     */
+    it("create-then-bind keeps explicitly checked permissions (no baseline override)", async () => {
+        const newId = "cccccccc-3333-4333-8333-cccccccccccc";
+        // 创建面的权限勾选框由投影里的工作区动作原子派生 ⇒ 必须给与兄弟用例同一份投影。
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: newId,
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-14T00:00:00Z",
+        });
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        const wrapper = await mountOpenedPanel();
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("ExplicitAgent");
+        await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
+        await flushPromises();
+        // 权限勾选框在「刚创建未绑定」卡片里（v-if createdPrincipalId），不在创建表单内。
+        const box = wrapper.find('[data-testid^="agent-cap-"]');
+        expect(box.exists(), "未绑定卡片必须能显式勾权限").toBe(true);
+        const actionClass = (box.attributes("data-testid") ?? "").replace("agent-cap-", "");
+        await box.setValue(true);
+        await wrapper.find('[data-testid="agent-principal-bind"]').trigger("click");
+        await flushPromises();
+
+        const [wsArg, principalArg, permissionsArg] =
+            apiMock.updateWorkspaceAgentCap.mock.calls[0] ?? [];
+        expect(wsArg).toBe(WORKSPACE_ID);
+        expect(principalArg).toBe(newId);
+        expect(Array.isArray(permissionsArg)).toBe(true);
+        expect(permissionsArg).toEqual(
+            expect.arrayContaining([expect.objectContaining({ actionClass })]),
+        );
         wrapper.unmount();
     });
 
