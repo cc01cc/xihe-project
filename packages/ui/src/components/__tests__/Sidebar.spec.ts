@@ -319,6 +319,10 @@ describe("Sidebar", () => {
         // `sidebar-workspace-groups`（工作区分组）；「标题在前、列表在后」这条意图不变，
         // 只换锚点 —— 空组态下内层 `sidebar-session-list` 根本不渲染，钉它会变成空断言。
         const html = wrapper.html();
+        // 前置条件：锚点必须真的存在。少了这一条，`indexOf` 双 -1 也能让下面的比较失败得
+        // 「对」，而更糟的是**老代码上它会以 -1 参与比较** —— 换锚点前后必须能区分：
+        // 改前的代码里没有 `sidebar-workspace-groups`，这一行就是红的那一行。
+        expect(html.indexOf('data-testid="sidebar-workspace-groups"')).toBeGreaterThan(-1);
         expect(html.indexOf('data-testid="sidebar-workspace"')).toBeLessThan(
             html.indexOf('data-testid="sidebar-workspace-groups"'),
         );

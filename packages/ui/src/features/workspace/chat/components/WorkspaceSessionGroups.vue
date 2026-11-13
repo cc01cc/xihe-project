@@ -248,6 +248,7 @@ onMounted(async () => {
                 v-for="workspace in orderedWorkspaces"
                 :key="workspace.id"
                 :data-testid="`sidebar-workspace-group-${workspace.id}`"
+                :data-snapshot="isCurrentGroup(workspace.id) ? 'live' : 'lazy'"
                 class="mb-1"
             >
                 <div class="flex items-center gap-1">
@@ -256,6 +257,11 @@ onMounted(async () => {
                         :data-testid="`sidebar-workspace-group-toggle-${workspace.id}`"
                         :aria-expanded="isExpanded(workspace.id)"
                         :aria-label="workspaceLabel(workspace)"
+                        :title="
+                            isCurrentGroup(workspace.id)
+                                ? undefined
+                                : t('sidebar.groupSnapshotHint')
+                        "
                         class="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click="toggleGroup(workspace.id)"
                     >
