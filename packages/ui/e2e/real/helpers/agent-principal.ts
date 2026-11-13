@@ -364,6 +364,9 @@ export async function openAgentSessionSelector(page: Page): Promise<void> {
         const mobileEntry = page.getByTestId("workspace-toolbar-new-chat-mobile");
         if (await isVisible(desktopEntry)) {
             await desktopEntry.click();
+            // task-373 / `D-1236`：搜索行 icon 现在是两项菜单（工作区新建 / 独立会话新建），
+            // 触发器 testid 不变 ⇒ 这里补一次菜单项点击，语义仍是「在此工作区新建会话」。
+            await page.getByTestId("sidebar-new-chat-workspace").click();
         } else if (await isVisible(mobileEntry)) {
             await mobileEntry.click();
         } else {

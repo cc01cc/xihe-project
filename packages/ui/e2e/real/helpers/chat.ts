@@ -36,6 +36,9 @@ export async function ensureWorkspaceChat(page: Page): Promise<void> {
     } else {
         await sidebarNew.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
         await sidebarNew.click();
+        // task-373 / `D-1236`：搜索行 icon 现在是两项菜单（工作区新建 / 独立会话新建），
+        // 触发器 testid 不变 ⇒ 这里补一次菜单项点击，语义仍是「在此工作区新建会话」。
+        await page.getByTestId("sidebar-new-chat-workspace").click();
     }
     await textarea.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
 }

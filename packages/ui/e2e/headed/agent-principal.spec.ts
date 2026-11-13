@@ -576,6 +576,9 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         // 工作区此刻已**没有可用 agent**（唯一绑定的那个刚被禁用），所以正确的 UX 不是弹出选择器，
         // 而是说明真实原因（"已绑定的 Agent 已被禁用"）+ 给出去管理的入口；选择器不该出现。
         await page.getByTestId("sidebar-new-chat").click();
+        // task-373 / `D-1236`：搜索行 icon 现在是两项菜单（工作区新建 / 独立会话新建），
+        // 触发器 testid 不变 ⇒ 这里补一次菜单项点击，语义仍是「在此工作区新建会话」。
+        await page.getByTestId("sidebar-new-chat-workspace").click();
         const unavailableHint = page.getByTestId("workspace-agent-unavailable-hint");
         await expect(unavailableHint, "the UI must explain why no Agent is selectable").toBeVisible(
             {

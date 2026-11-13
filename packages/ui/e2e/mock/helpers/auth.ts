@@ -97,6 +97,12 @@ export interface MockSessionRecord {
 
 export interface MockSessionOptions {
     sessions?: MockSessionRecord[];
+    /**
+     * task-373 / `D-1228`：独立会话（`workspace_id IS NULL`）。它们走
+     * `GET /sessions?scope=workspaceless`，与 `sessions`（工作区作用域）是**两份**数据，
+     * 不是一份里挑 null —— 后者会让「不带 scope 逐字节不变」这条契约在夹具里就破掉。
+     */
+    workspacelessSessions?: MockSessionRecord[];
     workspaceId?: string;
     messages?: Record<string, Array<Record<string, unknown>>>;
     createSession?: boolean;
@@ -777,12 +783,12 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
 
 export async function setupMockSessions(page: Page, options: MockSessionOptions = {}) {
     const now = new Date().toISOString();
-    const sessions = (options.sessions ?? []).map((session) => ({
+    const mapSession = (session: MockSessionRecord, workspaceId: string | null) => ({
         id: session.id,
         title: session.title,
         createdAt: session.createdAt ?? now,
         updatedAt: session.updatedAt ?? session.createdAt ?? now,
-        workspaceId: session.workspaceId ?? options.workspaceId ?? "workspace-1",
+        workspaceId,
         modelProvider: null,
         modelName: null,
         archived: false,
@@ -805,7 +811,15 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             "agentPrincipalId" in session
                 ? (session.agentPrincipalId ?? null)
                 : MOCK_BOUND_PRINCIPAL_ID,
-    }));
+    });
+    // task-373：两种作用域共用同一条映射（含 agentPrincipalId 的默认值口径），差别只有
+    // workspaceId —— 独立会话是显式 null，不是缺字段。
+    const sessions = (options.sessions ?? []).map((session) =>
+        mapSession(session, session.workspaceId ?? options.workspaceId ?? "workspace-1"),
+    );
+    const workspaceless = (options.workspacelessSessions ?? []).map((session) =>
+        mapSession(session, null),
+    );
     const createRootBranch = (createdAt: string): MockBranch[] => [
         {
             branchId: MOCK_ROOT_BRANCH_ID,
@@ -817,7 +831,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     ];
     const messages = options.messages ?? {};
     const branches = new Map<string, MockBranch[]>(
-        sessions.map((session) => [session.id, createRootBranch(now)]),
+        [...sessions, ...workspaceless].map((session) => [session.id, createRootBranch(now)]),
     );
 
     // PLAN-0608 C′: the UI now creates sessions on the workspace-addressed path
@@ -830,10 +844,23 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
 
     await page.route(matchesSessionCreate, async (route) => {
         if (route.request().method() === "GET") {
+            // task-373 / `D-1236` 甲案：不带 scope 逐字节不变；带 workspaceless 回独立会话；
+            // 未知值 fail-closed 400（与 CP 同口径，夹具不替契约放宽）。
+            const scope = new URL(route.request().url()).searchParams.get("scope");
+            if (scope !== null && scope !== "workspaceless") {
+                await route.fulfill({
+                    status: 400,
+                    contentType: "application/problem+json",
+                    body: JSON.stringify({ code: "INVALID_REQUEST", detail: "unknown scope" }),
+                });
+                return;
+            }
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ sessions }),
+                body: JSON.stringify({
+                    sessions: scope === "workspaceless" ? workspaceless : sessions,
+                }),
             });
             return;
         }
@@ -842,18 +869,21 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
                 title?: string;
                 agentPrincipalId?: string;
             } | null;
+            // task-373：`POST /sessions`（无工作区段）= 独立会话；工作区路径仍落工作区。
+            const isWorkspaceless = new URL(route.request().url()).pathname === "/api/v1/sessions";
             const created = {
                 id: `mock-session-${Date.now()}`,
                 title: body?.title ?? "New Chat",
                 agentPrincipalId: body?.agentPrincipalId ?? null,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                workspaceId: "workspace-1",
+                workspaceId: isWorkspaceless ? null : "workspace-1",
                 modelProvider: null,
                 modelName: null,
                 archived: false,
             };
-            sessions.unshift(created);
+            if (isWorkspaceless) workspaceless.unshift(created);
+            else sessions.unshift(created);
             branches.set(created.id, createRootBranch(created.createdAt));
             await route.fulfill({
                 status: 201,
@@ -983,7 +1013,9 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
                 return;
             }
         }
-        const session = sessions.find((item) => item.id === sessionId);
+        const session =
+            sessions.find((item) => item.id === sessionId) ??
+            workspaceless.find((item) => item.id === sessionId);
         if (route.request().method() === "GET" && session) {
             await route.fulfill({
                 status: 200,
