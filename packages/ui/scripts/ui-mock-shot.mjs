@@ -150,6 +150,9 @@ const SHOTS = [
         path: "/settings/user/llm-provider",
         app: true,
         expand: ["[data-testid=global-rail-toggle]", "[data-testid=global-rail-menu-settings]"],
+        // 菜单打开后若把鼠标挪走，`pointerleave` 会在 160ms 后把它关掉（GlobalRailModule 的
+        // 真实行为）⇒ 指针必须留在触发器上，否则这张图会变成「展开态但没有菜单」。
+        keepPointer: true,
     },
 ];
 
@@ -803,8 +806,9 @@ async function shootOne(page, base, shot, outDir) {
         for (const el of document.querySelectorAll("[data-mock-canvas] *")) el.scrollTop = 0;
     });
     // 鼠标停在左栏会留下 hover 底色；挪到内容区空白处，避免"看起来像同时选中两项"。
-    // task-189：`hover` 镜头的画面**就是**悬停态，挪走会把菜单关掉 ⇒ 这类镜头不挪鼠标。
-    if (!shot.hover) {
+    // task-189：`hover` 镜头（画面就是悬停态）与 `keepPointer` 镜头（弹层靠指针位置维持）
+    // **都不能挪鼠标** —— 挪走 = pointerleave = 菜单按 160ms 关闭，交付图里就没有菜单了。
+    if (!shot.hover && !shot.keepPointer) {
         await page.mouse.move(VIEWPORT.width - 200, VIEWPORT.height - 100);
         await page.waitForTimeout(400);
     }
@@ -894,7 +898,11 @@ async function shootOne(page, base, shot, outDir) {
     return {
         id: shot.id,
         name: shot.name,
-        url: base + "/preview-mock.html" + shot.query,
+        // task-189：`app` 镜头跑的是**真路由**（`base + shot.path`），此前这里一律写
+        // `preview-mock.html` + `shot.query` ⇒ 真页面镜头的 manifest 记成
+        // `preview-mock.htmlundefined`，即「图从哪来」这件事记错了。证据包的 url 必须可复算，
+        // 记错来源比缺字段更糟（照着它无法重建图）。
+        url: shot.app ? base + shot.path : base + "/preview-mock.html" + (shot.query ?? ""),
         file: mainFile,
         sha256_16: stable.digest,
         size,
