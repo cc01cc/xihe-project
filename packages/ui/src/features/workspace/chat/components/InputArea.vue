@@ -250,9 +250,25 @@ const activeToTargetIds = computed(() =>
     ),
 );
 
+/**
+ * task-450（F-12 / D-1273）：用户**是否动过**定向栏。
+ * wire 上「省略 toParticipantIds」= 旧单响应者路径（主体作答），「显式 []」= 谁都不通知（CP 抑制）。
+ * 清空 chips 是**明确的用户意图**，不能退化成「没提收件人」——真栈实测过这个退化：
+ * 清空后请求体根本没有该键，CP 于是 fanOut，智能体照常回话
+ * （evidence/2026-11-14-instance-flow-audit/task450-empty-to-payload.json）。
+ */
+const toTargetsTouched = ref(false);
+
 function onToTargetsFieldChange(ids: string[]): void {
     toTargetIds.value = [...ids];
+    toTargetsTouched.value = true;
 }
+
+/** 发送用的 TO 载荷：非空 ⇒ 数组；空但动过 ⇒ **显式 []**；从未动过 ⇒ undefined（省略）。 */
+const toTargetsPayload = computed(() => {
+    if (activeToTargetIds.value.length > 0) return [...activeToTargetIds.value];
+    return toTargetsTouched.value ? [] : undefined;
+});
 
 /**
  * PLAN-0630 M5b (D30-14)：`抄送`栏 = 旁听名单（多选 chips，2026-11-04 起为「输入 + 候选浮层」）。
@@ -793,7 +809,7 @@ async function handleSend() {
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
             activeSpeakAsId.value,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
-            activeToTargetIds.value.length > 0 ? [...activeToTargetIds.value] : undefined,
+            toTargetsPayload.value,
         );
     else
         emit(
@@ -802,7 +818,7 @@ async function handleSend() {
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
             activeSpeakAsId.value,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
-            activeToTargetIds.value.length > 0 ? [...activeToTargetIds.value] : undefined,
+            toTargetsPayload.value,
         );
 }
 

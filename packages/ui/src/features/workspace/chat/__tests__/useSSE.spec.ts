@@ -1194,3 +1194,33 @@ describe("tool_result 权威 status 与 refusalCode（PLAN-0649 M3）", () => {
         expect(liveCall()?.status).toBe("failed");
     });
 });
+
+/**
+ * task-450（F-12 / D-1273）：wire 契约 —— **省略**与**显式空集**必须区分。
+ * CP `ChatToTargets.isExplicitEmpty` 只认显式 `[]` 才抑制；旧写法 `length > 0` 会把
+ * 用户「清空收件人」的意图吞成「没提收件人」，真栈实测因此仍 fanOut（task450-empty-to-payload.json）。
+ */
+describe("useSSE · task-450 TO 载荷的省略与显式空集", () => {
+    async function sendWith(toParticipantIds?: string[]) {
+        const fetchMock = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({ ok: true, json: async () => ({ runId: RUN_ID }) } as Response);
+        vi.stubGlobal("fetch", fetchMock);
+        const sse = useSSE(SESSION_ID);
+        await sse.sendMessage({ content: "hello", branchId: BRANCH_ID, toParticipantIds });
+        await flushPromises();
+        const init = fetchMock.mock.calls[0]?.[1];
+        return JSON.parse(String(init?.body)) as Record<string, unknown>;
+    }
+
+    it("显式空集 ⇒ 请求体带 toParticipantIds: []", async () => {
+        const body = await sendWith([]);
+        expect(Object.prototype.hasOwnProperty.call(body, "toParticipantIds")).toBe(true);
+        expect(body.toParticipantIds).toEqual([]);
+    });
+
+    it("未提供 ⇒ 请求体不含该键（旧单响应者路径）", async () => {
+        const body = await sendWith(undefined);
+        expect(Object.prototype.hasOwnProperty.call(body, "toParticipantIds")).toBe(false);
+    });
+});

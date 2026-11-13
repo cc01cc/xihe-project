@@ -910,7 +910,10 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             // PLAN-0630 M5b (D30-14)：cc 旁听名单；服务端对非 UUID 条目 400，非本会话参与者 fail-closed 忽略。
             if (cc && cc.length > 0) body.cc = cc;
             // PLAN-0665 M1：显式 TO 集合 ⇒ 每个被选 AGENT 各自起 run（排序由 CP 负责）。
-            if (toParticipantIds && toParticipantIds.length > 0) {
+            // task-450（F-12 / D-1273）：**空数组也要发**。CP 区分「省略」与「显式 []」
+            // （ChatToTargets.isExplicitEmpty）：前者走旧单响应者路径，后者抑制并释放 admission。
+            // 旧写法 `length > 0` 把用户「清空收件人」的意图吞成了「没提收件人」。
+            if (toParticipantIds) {
                 body.toParticipantIds = toParticipantIds;
             }
             if (model) {

@@ -172,7 +172,7 @@ describe("InputArea 定向发送多选（PLAN-0665 M2 T2.1）", () => {
         expect(emitted![0][4]).toEqual([PRIMARY_ID, HELPER_ID]);
     });
 
-    it("removes a target chip and stops sending it", async () => {
+    it("removes the last target chip ⇒ emits an EXPLICIT empty set (task-450 / F-12)", async () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
@@ -187,6 +187,56 @@ describe("InputArea 定向发送多选（PLAN-0665 M2 T2.1）", () => {
         await wrapper.get('[data-testid="chat-input"]').setValue("hello");
         await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
         await flushPromises();
+        // task-450（F-12 / D-1273）：旧断言是 toBeUndefined()，那正是被裁掉的旧行为 ——
+        // 「用户显式清空收件人」在 wire 上被表达成「没提收件人」，CP 于是按默认路由 fanOut。
+        // CP 只认**显式空数组**才抑制（ChatToTargets.isExplicitEmpty），所以这里必须是 []。
+        expect(wrapper.emitted("send")![0][4]).toEqual([]);
+    });
+});
+
+/**
+ * task-450（F-12 / D-1273）：**省略**与**显式空集**是两种意图，不能混。
+ * 真栈取证：清空全部 To chip 后 UI 请求体根本没有 toParticipantIds 键
+ * （evidence/2026-11-14-instance-flow-audit/task450-empty-to-payload.json）⇒ CP 走默认路由，
+ * 智能体照常回话，抑制分支没触发。这里钉住「触碰过 ⇒ 空集也要发」。
+ */
+describe("InputArea · task-450 省略 vs 显式空集", () => {
+    it("从未触碰定向栏 ⇒ 第 5 个参数仍是 undefined（保留旧单响应者路径）", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await wrapper.get('[data-testid="chat-input"]').setValue("no recipients touched");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
         expect(wrapper.emitted("send")![0][4]).toBeUndefined();
+    });
+
+    it("排队路径同样带显式空集（不能只有立即发送修了）", async () => {
+        storeState.participants = roster();
+        const wrapper = mount(InputArea, {
+            props: { sessionId: "session-1", queueMode: true },
+            global: {
+                plugins: [
+                    createI18n({
+                        legacy: false,
+                        locale: "zh-CN",
+                        fallbackLocale: "zh-CN",
+                        messages,
+                    }),
+                ],
+                stubs,
+            },
+        });
+        await flushPromises();
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        await wrapper.get('[data-testid="to-targets-chip-remove"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="chat-input"]').setValue("queued, nobody addressed");
+        // 排队态的按钮是 chat-queue-button（InputArea.vue:1503），不是 chat-send-button
+        await wrapper.get('[data-testid="chat-queue-button"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("queue")![0][4]).toEqual([]);
     });
 });
