@@ -173,7 +173,13 @@ const SHOTS = [
         path: "/members",
         app: true,
         waitFor: "[data-testid=org-tree-label-ou-rd]",
-        expand: ["[data-testid=org-tree-toggle-ou-rd]", "[data-testid=org-tree-label-ou-rd]"],
+        // 三步：展开研发部 → 展开平台组（子单元的名字进注册表，「所在单元」列才不会退化成 id）
+        // → 选中研发部。展开是**真点击**，所以第二级懒加载也在图里被证一次。
+        expand: [
+            "[data-testid=org-tree-toggle-ou-rd]",
+            "[data-testid=org-tree-toggle-ou-platform]",
+            "[data-testid=org-tree-label-ou-rd]",
+        ],
     },
 ];
 

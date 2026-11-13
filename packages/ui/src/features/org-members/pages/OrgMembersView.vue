@@ -59,7 +59,7 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
                     disabled
                     :data-testid="action.testid"
                     :title="t('orgMembers.writeHint')"
-                    class="rounded-md border px-2 py-1 text-sm text-muted-foreground opacity-60 cursor-not-allowed"
+                    class="rounded-md border bg-muted/30 px-2 py-1 text-sm text-muted-foreground cursor-not-allowed"
                 >
                     {{ t(action.labelKey) }}
                 </button>

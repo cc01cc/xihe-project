@@ -193,7 +193,9 @@ function retryChildren(item: OrgTreeItem) {
                             <button
                                 v-if="fi.hasChildren"
                                 type="button"
-                                :aria-label="isExpanded ? 'collapse' : 'expand'"
+                                :aria-label="
+                                    isExpanded ? t('orgMembers.collapse') : t('orgMembers.expand')
+                                "
                                 :data-testid="'org-tree-toggle-' + fi.value.key"
                                 class="rounded p-0.5 hover:bg-accent"
                                 @click.stop="handleToggle"

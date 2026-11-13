@@ -93,7 +93,7 @@ const errorDesc = computed(() =>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto">
             <p v-if="!unit" data-testid="org-member-hint" class="p-4 text-sm text-muted-foreground">
-                {{ t("orgMembers.membersEmpty") }}
+                {{ t("orgMembers.selectUnit") }}
             </p>
             <p
                 v-else-if="loading"
