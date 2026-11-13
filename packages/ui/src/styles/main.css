@@ -169,13 +169,43 @@
      * utility（scrollbar-thin/scrollbar-gutter-*）M1 逐面翻）。thin = 不占布局宽度；
      * gutter stable = 预留滚动槽，治"消息列表出现/消失滚动条时的布局抖动"。
      */
+    /*
+     * task-294：滚动条 thumb 用**专用** token，不用 --border。
+     * 判据是 thumb vs track 的对比度 ≥ 3:1（WCAG 1.4.11 非文本对比度），不是"看起来有边框"：
+     *   --border  oklch(0.922 0 0) → 浅色 1.155:1（#E5E5E5 对 #F5F5F5）
+     *              oklch(1 0 0 / 10%) → 深色 1.256:1（合成后 #222323 对 #0A0A0A）
+     *   候选 --muted-foreground oklch(0.708 0 0)：深色 7.663:1 过、**浅色只有 2.37:1 不过**
+     * ⇒ 单一值 oklch(0.6 0 0) 是实测唯一同时过两套主题的档（浅 3.623 / 深 5.013）。
+     * track 仍保持 transparent：**不许**为了凑比值把 track 改成不透明 —— 判据是 thumb vs track，
+     * 若 track 不透明，比值的分母就成了我们自己画出来的颜色，等于自己给自己出题。
+     */
+    :root {
+        --scrollbar-thumb: oklch(0.6 0 0);
+        /*
+         * task-294：color-scheme 的权威声明。缺它时浏览器把原生控件（滚动条、焦点环、
+         * checkbox/radio、日期选择器、autofill 底）一律按浅色渲染 —— 实测切深色后
+         * 原生 textarea 仍是 rgb(255,255,255)。<meta name="color-scheme"> 只是 CSS
+         * 加载前的前置提示，这里才是准绳（CSS 声明优先于 meta）。
+         */
+        color-scheme: light;
+    }
+
+    /*
+     * 深色：**类落在 <html> 本身**（index.html:35 / preview.html:23 / preview-dockview.html:23
+     * 都是 document.documentElement.classList.add("dark")），故用 :root.dark。
+     * 不用 :root:has(.dark) —— :has() 只匹配**后代**、不含自身，在本仓这种写法下永不命中（死代码）。
+     */
+    :root.dark {
+        color-scheme: dark;
+    }
+
     html {
         scrollbar-gutter: stable;
     }
 
     * {
         scrollbar-width: thin;
-        scrollbar-color: var(--border) transparent;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
     }
 }
 
