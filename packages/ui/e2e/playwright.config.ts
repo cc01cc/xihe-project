@@ -2,10 +2,18 @@ import { defineConfig, type ReporterDescription } from "@playwright/test";
 import { SERVER_START_TIMEOUT_MS, TEST_TIMEOUT_MS } from "./timeouts";
 import { mockApiEnvFor, resolveExpectedChain } from "./helpers/chain";
 
-const UI_PORT = process.env.XIHE_UI_PORT || "12630",
+// task-368 / D-1226：默认端口不得落在共享 stack 段（事实源 scripts/lib/stack-ports.mjs）。
+// 旧默认 12630 = stack-1 ui ⇒ 未设 XIHE_UI_PORT 的调用静默绑到 stack-1，读数指向别的对象
+// （假信号生成器，D-1219 同族）。改用非栈端口 12750；未设 env 时下方明示正在用默认值。
+const UI_PORT = process.env.XIHE_UI_PORT || "12750",
     externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === "1";
 const e2eProfile = process.env.XIHE_E2E_PROFILE || "all",
     headed = process.env.XIHE_E2E_HEADED === "1";
+
+// task-368 / D-1226：未设 XIHE_UI_PORT 时明示正在使用默认端口（避免「有个 ui 在 12750」被误读成栈）。
+if (!process.env.XIHE_UI_PORT) {
+    console.log(`[e2e] XIHE_UI_PORT 未设置 ⇒ 使用默认端口 ${UI_PORT}（非 stack 段；task-368 / D-1226）`);
+}
 
 /**
  * task-80：**链路声明 + 自证**。
