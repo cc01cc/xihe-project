@@ -324,7 +324,7 @@ test.describe("Config Settings (three layers)", () => {
         await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
     });
 
-    test("approval-policy is instance-writable, workspace-overridable and user-hidden", async ({
+    test("approval-policy is instance-writable, per-workspace visible and user-hidden", async ({
         page,
     }) => {
         await mockConfigAPIs(page);
@@ -337,14 +337,48 @@ test.describe("Config Settings (three layers)", () => {
         await ensureDomainExpanded(page, "approval-policy");
         await expectTriggerLabel(page, "config-select-approval-policy-mode", "manual");
 
-        // PLAN-0560 的「工作区覆盖段」已随 task-253 一并移除（用户 2026-11-10 裁定，提交
-        // 51c1d2a40）：工作区设置页没有「配置」标签，全局 config 也不再有 workspace 层 ——
-        // 覆盖语义只剩 instance → user 两层（见 stores/config.ts 的 ConfigLayer 收窄）。
-        // 因此这里不再验证「在 workspace 页上改 approval-policy」，改为验证它不在工作区页出现：
-        // 「撤销」本身有业务含义 ⇒ 断言它，而不是删掉不提（task-112 的判据）。
+        // task-468（D-1330 改向）：**原断言「工作区页不得出现 approval-policy」是过期判据**。
+        // 它引的是 task-253（用户 2026-11-10 裁定，51c1d2a40）退役**全局**工作区配置层；而
+        // `d0864b59e`（PLAN-0773 M4-1 / task-190，**Lead 2026-11-13 裁定形态 B2**）把配置 tab 按
+        // **按工作区**的层接回了同一 URL 树（`?tab=config`），同批 `lib/settingsIa.ts` 收窄为
+        // `Exclude<ConfigLayer, "workspace">` ⇒ **全局设置仍三层，退役事实在全局面继续成立**。
+        // M4-1 后有两笔规格跟随（`76bc895a3` / `99355bc4e`）**漏了本处**；它长期被上面那条
+        // trigger 断言的红遮住，task-464 修好草稿同步后才露出来。同文件「三 tab + 域集由 SSOT
+        // 派生」那条与本处曾**互相矛盾**（同一 URL 一边断言域集等于 SSOT、一边断言该域 count=0），
+        // 套件自身绿灯即反证本处过期 ⇒ **翻面而不是删断言**（删了将来有人把 tab 拿掉也不会红，task-112）。
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-        await expect(page.getByTestId("config-domain-approval-policy")).toHaveCount(0);
+        await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
+        // **判据判别力（Lead 补充要求 / runtime-1 复核点）**：不是把 count=0 翻成「存在」就完事 ——
+        // 期望集**从 SSOT 取**、落点**从 DOM 取**，两侧对撞（与「三 tab + 域集由 SSOT 派生」那条同源，
+        // spec 不另抄域名清单）；再加一条**反向层守卫**：实例独占域不得出现在工作区面。
+        // 两者合起来才能区分「per-workspace 面按本层矩阵渲染」与「随便渲染了一堆卡」（D-1281 空断言）。
+        const expectedDomains = [...LAYER_DOMAINS.workspace];
+        expect(expectedDomains.length).toBeGreaterThan(0);
+        expect(expectedDomains).toContain("approval-policy");
+        const renderedTestIds = await page.evaluate(() =>
+            Array.from(document.querySelectorAll("[data-testid]")).map(
+                (el) => el.getAttribute("data-testid") ?? "",
+            ),
+        );
+        // 每个 SSOT 域都要在本页留下带该域名的 testid 落点（通用面板 / 专用分区 / source-summary 都算，
+        // 「用什么组件渲染」不是判据 —— 同「三 tab」那条的教训）。
+        const missingDomains = expectedDomains.filter(
+            (domain) => !renderedTestIds.some((id) => id.includes(domain)),
+        );
+        expect(missingDomains).toEqual([]);
+        // 反向：从 SSOT 派生一个**实例独占域**（在 instance 矩阵、不在 workspace 矩阵），断言它不在本页。
+        // 不写死域名 ⇒ 矩阵变了这条自动跟着变，不会静默失效。
+        const instanceOnly = LAYER_DOMAINS.instance.find(
+            (domain) => !LAYER_DOMAINS.workspace.includes(domain),
+        );
+        expect(instanceOnly, "instance 矩阵里应存在不属于工作区层的域").toBeDefined();
+        await expect(page.getByTestId(`config-domain-${instanceOnly}`)).toHaveCount(0);
+        await expect(page.getByTestId("config-domain-approval-policy")).toBeVisible();
+        // **写面（原标题里的 workspace-overridable）本轮不钉**：`PUT /api/v1/config/workspace/{domain}`
+        // 在契约里仍 `deprecated: true`（`openapi.yaml:3276`），UI 已消费但契约收口在 **BL-571** 另卡
+        // ⇒ 现在钉成判据等于用测试锁死一条待收口的路径（Lead 裁定：本轮只翻读面）。标题已随之改名，
+        // 不留「名字承诺了覆盖、实际没断言」的缺口。
 
         // user 层仍不可写（显式例外）：层×域矩阵里 user 层没有 approval-policy，
         // 直链落「该组合不存在」的 404 视图（V3/V25），而不是渲染一块点不动的面板。
@@ -354,13 +388,16 @@ test.describe("Config Settings (three layers)", () => {
     });
 
     // 已删除：「saving the approval mode goes through the workspace endpoint」（task-112）。
-    // 删除理由：它钉的是 `PUT /api/v1/config/workspace/approval-policy` 这条写路径，而工作区
-    // 配置层已按 task-253（用户 2026-11-10 裁定，提交 51c1d2a40）整体废弃 —— 产品侧不再
-    // 有任何入口能触发该请求。**保留它会要求产品把已废弃的写入路径加回来**，那是拿测试反向
-    // 绑架产品。同层端点仍在服务的部分由实例层/用户层的保存用例覆盖：
+    // 当时理由：task-253 退役工作区配置层后，产品侧没有入口能触发
+    // `PUT /api/v1/config/workspace/approval-policy`，保留它等于要求产品把废弃路径加回来
+    // （拿测试反向绑架产品）。
+    // **task-468 更新（D-1330）**：该前提已被 M4-1 / B2 取代 —— per-workspace 配置面接回后
+    // 这条写路径**又有入口了**（`WorkspaceConfigPanel` → `ConfigLayerPanels layer="workspace"`）。
+    // 但契约仍标 deprecated（`openapi.yaml:3276`，BL-571 收口另卡）⇒ **写面判据等 BL-571 收口后
+    // 再钉**，本轮不恢复；「工作区层不再发任何 /config/workspace 请求」这条旧撤销事实**已不成立**，
+    // 不再由任何断言承重（别把它当现状引用）。同层端点仍在服务的部分由实例层/用户层保存用例覆盖：
     //   · 「saving a value goes through the layer endpoint」（本文件，instance/logging）
-    //   · approval-policy 的层语义由「approval-policy is instance-writable…」覆盖
-    // 「工作区层不再发任何 /config/workspace 请求」这条撤销事实，由上面的正面守卫承重。
+    //   · approval-policy 的层语义由上面那条（instance 可写 / per-workspace 可见 / user 层 404）覆盖
 
     test("user layer drops instance-only domains and the instructions field", async ({ page }) => {
         await mockConfigAPIs(page);

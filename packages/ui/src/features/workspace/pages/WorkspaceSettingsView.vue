@@ -25,10 +25,14 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 // PLAN-0560：每工作区设置页（常规/成员）。
 // PLAN-0565：「成员」tab（裁定 #2——EDITOR 只读可见、VIEWER 不渲染）。
 //
-// task-253（用户 2026-11-10 裁定）：**移除「配置」tab 与域段路由**
-// （/workspace/:id/settings/:domain）。全局 config 的 workspace 层已在 UI 侧失效（契约侧由
-// task-250 只标 deprecated），工作区内部设置面本轮不重新设计 ⇒ 这里只保留不依赖该层的 tab。
-// 删除理由不是「看起来多余」：留着它就会继续 PUT/GET /config/workspace/**，而这层已废弃。
+// task-253（用户 2026-11-10 裁定）：曾**移除「配置」tab 与域段路由**
+// （/workspace/:id/settings/:domain），因为**全局** config 的 workspace 层在 UI 侧失效。
+// **该状态已被 PLAN-0773 M4-1 / task-190 取代（Lead 2026-11-13 裁定形态 B2，提交 d0864b59e）**：
+// 配置 tab 按**按工作区**的层接回同一 URL 树（`?tab=config`，见下方 tabs 与模板），
+// 同批 `lib/settingsIa.ts` 收窄为 `Exclude<ConfigLayer, "workspace">` ⇒ **全局设置仍三层**，
+// task-253 的退役事实在全局面继续成立。两者不是同一层，别把本段读成「配置 tab 是残留」。
+// （task-468 / D-1330：本段旧表述与下方 tabs 并存曾误导排查，把过期 e2e 断言当成产品缺陷。）
+// 写面 `PUT /config/workspace/{domain}` 契约仍标 deprecated（openapi:3276，BL-571 收口另卡）。
 //
 // D-1019 / task-209（用户 2026-11-12 裁定「一次性改完、不留旧兼容」）：**再撤掉 `mcp` /
 // `credentials` / `knowledge` 三个 tab**。它们与 `/resources/{mcp,credentials}?layer=WORKSPACE`
