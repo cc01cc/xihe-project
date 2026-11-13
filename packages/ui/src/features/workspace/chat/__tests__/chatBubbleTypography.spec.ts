@@ -22,20 +22,43 @@ const uiRoot = process.cwd();
 const readStyle = (relativePath: string): string =>
     readFileSync(resolve(uiRoot, relativePath), "utf8");
 
-/** 取顶层规则的声明块原文；找不到 selector 视为契约破坏。 */
-function declarationBlock(css: string, selector: string): string {
-    const open = css.indexOf(`${selector} {`);
-    if (open < 0) throw new Error(`样式契约缺失：找不到规则 ${selector}`);
-    let depth = 0;
-    const start = open + selector.length;
-    for (let index = start; index < css.length; index += 1) {
-        if (css[index] === "{") depth += 1;
-        else if (css[index] === "}") {
-            depth -= 1;
-            if (depth === 0) return css.slice(open, index + 1);
+/**
+ * 取**全部**匹配规则的声明块（按出现顺序），找不到时返回空数组。
+ *
+ * task-362：`main.css` 现在有**两处**顶层 `:root` —— `bc98a2459` 为 `color-scheme` 与滚动条
+ * 加了一个更早的 `:root`，字阶 token 留在原来那一处。旧 helper 只取**第一处**匹配，于是在
+ * `:root` 变 2 块之后永远读不到字阶块（红在「取哪一块」，不在「token 对不对」）。
+ * 字阶 token 定义在第几处 `:root` **不是**契约内容，所以取块方式必须与块数无关。
+ */
+function declarationBlocks(css: string, selector: string): string[] {
+    const blocks: string[] = [];
+    let from = 0;
+    for (;;) {
+        const open = css.indexOf(`${selector} {`, from);
+        if (open < 0) return blocks;
+        let depth = 0;
+        let end = -1;
+        for (let index = open + selector.length; index < css.length; index += 1) {
+            if (css[index] === "{") depth += 1;
+            else if (css[index] === "}") {
+                depth -= 1;
+                if (depth === 0) {
+                    end = index;
+                    break;
+                }
+            }
         }
+        if (end < 0) throw new Error(`样式契约解析失败：${selector} 的声明块未闭合`);
+        blocks.push(css.slice(open, end + 1));
+        from = end + 1;
     }
-    throw new Error(`样式契约解析失败：${selector} 的声明块未闭合`);
+}
+
+/** 取第一处匹配的声明块；找不到 selector 视为契约破坏。 */
+function declarationBlock(css: string, selector: string): string {
+    const blocks = declarationBlocks(css, selector);
+    if (blocks.length === 0) throw new Error(`样式契约缺失：找不到规则 ${selector}`);
+    return blocks[0] as string;
 }
 
 const typeset = readStyle("src/styles/typeset.css");
@@ -55,11 +78,28 @@ describe("chat bubble typography（PLAN-0631 T3.3 WFont）", () => {
         wrapper.unmount();
     });
 
-    it("气泡正文 token 锚在 14px / 1.55（--text-sm 对）", () => {
-        const roots = declarationBlock(main, ":root");
+    it("气泡正文 token 锚在 14px / 1.55（--text-sm 对），且字阶 token 全站只定义一次", () => {
+        const roots = declarationBlocks(main, ":root").join("\n");
+        expect(roots.length, "main.css 至少要有一处顶层 :root").toBeGreaterThan(0);
         expect(roots).toContain("--text-sm: 0.875rem");
         expect(roots).toContain("--text-sm--line-height: 1.55");
         expect(roots).toContain("--leading-relaxed: 1.55");
+
+        // 不变量：**字阶 token 全站只定义一次，主题切换不改字号节奏**。
+        //
+        // 上面三条 toContain 的搜索面已从「第一处 :root」放宽到「全部 :root」（task-362，
+        // D-1200 事前批：更松必须事前批）——放宽的部分由下面这条唯一性断言守着：
+        // 以后真有人按主题重定义 `--text-sm`，这里会**红**；红着改到「含目标 token 的那个块」
+        // = 有人看了一眼；绿着放过 = 没人知道约定变了。
+        expect(main.match(/--text-sm:\s/g)?.length ?? 0, "--text-sm 只能定义一次").toBe(1);
+        expect(
+            main.match(/--text-sm--line-height:\s/g)?.length ?? 0,
+            "--text-sm--line-height 只能定义一次",
+        ).toBe(1);
+        expect(
+            main.match(/--leading-relaxed:\s/g)?.length ?? 0,
+            "--leading-relaxed 只能定义一次",
+        ).toBe(1);
     });
 
     it("typeset 重定义 markstream 正文 token，段落字号跟随 --text-sm", () => {

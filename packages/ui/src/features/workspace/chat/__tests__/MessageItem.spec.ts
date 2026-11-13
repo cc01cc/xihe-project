@@ -381,7 +381,8 @@ describe("MessageItem responder identity", () => {
         expect(
             wrapper.get('[data-testid="message-responder-role"]').attributes("data-session-role"),
         ).toBe("MEMBER");
-        expect(wrapper.get('[data-testid="message-responder-initials"]').text()).toBe("RB");
+        // D-1142 ①：缩写恰好 1 个字符 ⇒ "Review Bot" 是 "R"，不是 "RB"。
+        expect(wrapper.get('[data-testid="message-responder-initials"]').text()).toBe("R");
         wrapper.unmount();
     });
 
@@ -695,7 +696,8 @@ describe("MessageItem actor badges (PLAN-0659 T1.2)", () => {
         const dot = wrapper.get('[data-testid="message-responder-initials"]');
         expect(dot.attributes("data-actor-principal-id")).toBe("part-agent-beta");
         expect(dot.attributes("data-actor-kind")).toBe("AGENT");
-        expect(dot.text()).toBe("AB");
+        // D-1142 ①：缩写恰好 1 个字符 ⇒ "Agent Beta" 是 "A"，不是 "AB"。
+        expect(dot.text()).toBe("A");
         wrapper.unmount();
     });
 

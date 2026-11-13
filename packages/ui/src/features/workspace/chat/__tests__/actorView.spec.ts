@@ -27,7 +27,9 @@ describe("actorOf (PLAN-0659 T1.2)", () => {
     it("derives name, initials, kind and the DOM identity from the participant row", () => {
         expect(actorOf(participant(), "未知用户")).toEqual({
             name: "Agent Alpha",
-            initials: "AA",
+            // D-1142 ①：缩写**恰好 1 个字符**（首个有效词的首字）——不是"少显示一个字"的取舍，
+            // 而是 12.25px/14px 的圆装不下两个字符（task-292 实测）。
+            initials: "A",
             kind: "AGENT",
             principalId: "part-agent-alpha",
         });
@@ -57,8 +59,16 @@ describe("actorOf (PLAN-0659 T1.2)", () => {
             }),
             "未知用户",
         );
+        const agent = actorOf(participant(), "未知用户");
         expect(human?.kind).toBe("HUMAN");
-        expect(human?.initials).toBe("AL");
+        expect(agent?.kind).toBe("AGENT");
+        // D-1142 ① 之后 "Ada Lovelace" 与 "Agent Alpha" 的首字母**都是 A**。
+        expect(human?.initials).toBe("A");
+        // 这条断言本身是**证据**，不是补丁：两个主体的 initials 完全相同、而下面的 kind
+        // 仍能把它们分开 ⇒ 「可辨」**不可能**来自首字母，只能来自 kind。
+        // 换夹具名把首字母分开，等于把这条证据抹掉，换回"反正首字母不同所以能分辨"的弱版本。
+        expect(agent?.initials).toBe(human?.initials);
+        expect(agent?.kind).not.toBe(human?.kind);
     });
 });
 
