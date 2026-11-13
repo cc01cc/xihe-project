@@ -2975,6 +2975,19 @@ const messages = {
                     modelNoConnections:
                         "没有可用的对话连接。可留空沿用平台默认，或先到「模型与连接」建一个。",
                     modelLoadFailed: "模型目录没加载出来。可留空沿用平台默认，或重试。",
+                    // task-401 编辑半（cp-1 task-413 / dedd832a5 已把模型三字段接进 PATCH）。
+                    editCta: "编辑模型意图",
+                    editTitle: "编辑模型意图",
+                    editBody:
+                        "改这条智能体的默认模型与白名单。名称与说明不在这个写面上（契约只收模型意图与文档）。",
+                    currentIntent: "当前模型意图",
+                    currentIntentNone: "未设置（沿用平台默认）",
+                    clearModel: "清除模型意图（回到平台默认）",
+                    editWhitelistHint: "换模型会清掉旧白名单；勾「只允许这个模型」则写成新白名单。",
+                    editNoChange: "选满三段，或勾选清除，才有可写的改动。",
+                    editSubmit: "保存",
+                    updated: "模型意图已更新",
+                    presetGuard: "系统预置智能体的模型意图不可修改。",
                     disabled: "已停用",
                     deleteTitle: "删除平台智能体",
                     deleteBody: "删除「{name}」后，所有工作区都将失去这个智能体。此操作不可撤销。",
@@ -6559,6 +6572,19 @@ const messages = {
                         "No usable chat connection. Leave it empty to inherit the platform default, or create one under Models & connections first.",
                     modelLoadFailed:
                         "The model catalog did not load. Leave it empty to inherit the platform default, or retry.",
+                    editCta: "Edit model intent",
+                    editTitle: "Edit model intent",
+                    editBody:
+                        "Change this agent's default model and allow-list. Name and description are not on this write face (the contract takes model intent and documents only).",
+                    currentIntent: "Current model intent",
+                    currentIntentNone: "Not set (inherits the platform default)",
+                    clearModel: "Clear model intent (back to the platform default)",
+                    editWhitelistHint:
+                        'Changing the model clears the old allow-list; tick "Allow only this model" to write a new one.',
+                    editNoChange: "Pick all three, or tick clear, so there is something to write.",
+                    editSubmit: "Save",
+                    updated: "Model intent updated",
+                    presetGuard: "A system preset agent's model intent cannot be changed.",
                     disabled: "Disabled",
                     deleteTitle: "Delete platform agent",
                     deleteBody:

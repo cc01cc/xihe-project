@@ -316,13 +316,63 @@ export async function handleInstanceResource(
             // description / disabled ⇒ 一边掩盖真栈 400，一边让人以为实例层能改名改模型。
             // 现按契约拒绝；实例层的改名/改模型写面是 CP 缺口（task-413），不是 UI 缺口。
             // documents 本身不在本 lane 建模（无消费方），故合法请求回当前行。
-            const documentKeys = new Set(["hooks", "contextPolicy", "delegationPolicy"]);
+            // task-401 编辑半：cp-1 `task-413`（dedd832a5）把模型意图三字段接进了同一个 PATCH。
+            const documentKeys = new Set([
+                "hooks",
+                "contextPolicy",
+                "delegationPolicy",
+                "defaultModelProvider",
+                "defaultModelName",
+                "allowedModels",
+            ]);
             const keys = Object.keys(body);
             const foreign = keys.find((key) => !documentKeys.has(key));
             if (keys.length === 0 || foreign !== undefined)
                 return badRequest("INVALID_REQUEST", foreign);
             const current = agents[index] as MockInstanceAgent;
-            return { status: 200, body: current };
+            // 模型三字段：present 替换 / absent 保留 / 显式 null 清除（契约语义）。
+            const has = (key: string) => Object.prototype.hasOwnProperty.call(body, key);
+            const updated: MockInstanceAgent = {
+                ...current,
+                ...(has("defaultModelProvider")
+                    ? {
+                          defaultModelProvider: str(body.defaultModelProvider).trim() || null,
+                      }
+                    : {}),
+                ...(has("defaultModelName")
+                    ? { defaultModelName: str(body.defaultModelName).trim() || null }
+                    : {}),
+                ...(has("allowedModels")
+                    ? {
+                          allowedModels: Array.isArray(body.allowedModels)
+                              ? body.allowedModels
+                                    .filter(
+                                        (item): item is Record<string, unknown> =>
+                                            typeof item === "object" && item !== null,
+                                    )
+                                    .map((item) => ({
+                                        provider: str(item.provider).trim(),
+                                        model: str(item.model).trim(),
+                                    }))
+                                    .filter((item) => item.provider && item.model)
+                              : null,
+                      }
+                    : {}),
+            };
+            agents.splice(index, 1, updated);
+            // 回的是 `AgentPrincipalUpdateView`（回读存量），不是整行。
+            return {
+                status: 200,
+                body: {
+                    principalId: updated.principalId,
+                    defaultModelProvider: updated.defaultModelProvider,
+                    defaultModelName: updated.defaultModelName,
+                    allowedModels: updated.allowedModels,
+                    hooks: null,
+                    contextPolicy: null,
+                    delegationPolicy: null,
+                },
+            };
         }
         if (upper === "DELETE") {
             agents.splice(index, 1);

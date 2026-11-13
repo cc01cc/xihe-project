@@ -2,19 +2,19 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Bot, Plus, Trash2 } from "@lucide/vue";
+import { Bot, Pencil, Plus, Trash2 } from "@lucide/vue";
 
 import { useAuthStore } from "../../stores/auth";
-import { useConfigStore } from "../../stores/config";
-import { chatModelNamesOf, listProviderCatalog } from "../../services/providerConnectionService";
-import { getProviderInfo } from "../../types/provider";
-import type { ProviderDefinition } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
+import { ApiError } from "../../composables/api";
+import { mappedErrorCopy } from "../../lib/errorMessages";
 import {
     createInstanceAgent,
     deleteInstanceAgent,
     listInstanceAgents,
+    updateInstanceAgent,
     type InstanceAgent,
+    type InstanceAgentUpdateRequest,
 } from "../../services/instanceResources";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -47,10 +47,12 @@ import {
 } from "../ui/dialog";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import SettingsErrorSurface from "./SettingsErrorSurface.vue";
+import AgentModelBindingFields, {
+    type AgentModelBindingDraft,
+} from "./AgentModelBindingFields.vue";
 
 /**
  * task-165 · 实例层「平台智能体」面板（`/settings/instance/agents`）。
@@ -65,7 +67,6 @@ import SettingsErrorSurface from "./SettingsErrorSurface.vue";
  */
 const { t, locale } = useI18n();
 const auth = useAuthStore();
-const configStore = useConfigStore();
 
 /**
  * 写侧（task-69 行 2，PLAN-0767 T3/T4）：CP 写面是**双门** ——
@@ -101,89 +102,104 @@ const formDescription = ref("");
 const deleteTarget = ref<InstanceAgent | null>(null);
 
 /**
- * task-401 / `D-1248`：创建时的**模型意图**（provider＞连接＞模型）。
+ * task-401 / `D-1248`：模型意图草稿（创建与编辑共用 `AgentModelBindingFields`）。
  *
- * <p>契约：`POST /instance/agent-principals` 的 body 就是 `AgentPrincipalCreateRequest`，
- * 已含 `defaultModelProvider` / `defaultModelName` / `allowedModels`（openapi.yaml:6950），
- * CP `InstanceAgentPrincipalService#create:56-60` 透传 ⇒ 这是纯 UI 缺口，不是后端缺口。</p>
+ * <p>创建：`POST /instance/agent-principals` 的 body 就是 `AgentPrincipalCreateRequest`，早已含
+ * 模型三字段 ⇒ 三段全空就一个模型键都不发（沿用平台默认），选满才发。</p>
  *
- * <p>连接**只用于挑模型**，不上 wire —— 契约原文「the principal never holds a provider
- * connection」。模型身份在 UI 侧是 connectionId+modelId，落到载荷是 provider+model。</p>
- *
- * <p>数据全部复用既有状态：`configStore.providerConnections` + `modelCache.providers`
- * （`GET /models` 按 connectionId 聚合），不建第二份连接/目录状态。</p>
- *
- * <p>**编辑半不在这里**：`PATCH /instance/agent-principals/{id}` 只收 documents
- * （additionalProperties:false）⇒ 实例层改模型是 CP 缺口（task-413）。不建会 400 的假入口。</p>
+ * <p>编辑：cp-1 `task-413`（dedd832a5）把三字段接进了同一个 PATCH（`AgentPrincipalUpdateRequest`，
+ * present 替换 / absent 保留 / 显式 null 清除，provider 与 name 在合并结果上 both-or-neither）。
+ * 名称与说明**仍不在**这个写面上 ⇒ 编辑弹窗只改模型意图，不假装能改名。</p>
  */
-const formProvider = ref("");
-const formConnectionId = ref("");
-const formModel = ref("");
-const formRestrictModel = ref(false);
-const bindingLoading = ref(false);
-const providerDefs = ref<ProviderDefinition[]>([]);
-
-const chatConnections = computed(() =>
-    configStore.providerConnections.filter((item) => item.operation === "chat" && item.enabled),
-);
-const providerOptions = computed(() =>
-    [...new Set(chatConnections.value.map((item) => item.providerId))].map((id) => ({
-        id,
-        label:
-            providerDefs.value.find((item) => item.id === id)?.displayName ??
-            getProviderInfo(id)?.name ??
-            id,
-    })),
-);
-const connectionOptions = computed(() =>
-    chatConnections.value.filter((item) => item.providerId === formProvider.value),
-);
-const selectedConnection = computed(
-    () => chatConnections.value.find((item) => item.id === formConnectionId.value) ?? null,
-);
-const modelOptions = computed(() =>
-    selectedConnection.value
-        ? chatModelNamesOf(selectedConnection.value, configStore.modelCache.providers)
-        : [],
-);
-/** 半组选择不是合法载荷：要么三个都空（沿用平台默认），要么三个都有。 */
-const bindingComplete = computed(() => {
-    const picked = [formProvider.value, formConnectionId.value, formModel.value].filter(Boolean);
-    return picked.length === 0 || picked.length === 3;
-});
-const bindingUnavailable = computed(
-    () => configStore.providerConnectionsError || Boolean(configStore.modelError),
-);
-
-async function loadBindingOptions(): Promise<void> {
-    bindingLoading.value = true;
-    try {
-        // 目录失败不阻塞：提供方名退化为 id，连接与模型目录仍可用（两个 store loader 自吞错误）。
-        const catalog = listProviderCatalog()
-            .then((response) => response.providers ?? [])
-            .catch((cause: unknown) => {
-                logger.warn("Provider catalog load failed", cause);
-                return [] as ProviderDefinition[];
-            });
-        const [defs] = await Promise.all([
-            catalog,
-            configStore.loadProviderConnections(),
-            configStore.fetchModels(),
-        ]);
-        providerDefs.value = defs;
-    } finally {
-        bindingLoading.value = false;
-    }
+function emptyBinding(): AgentModelBindingDraft {
+    return { provider: "", connectionId: "", model: "", restrict: false };
 }
 
-// 级联重置：换提供方就丢连接与模型，换连接就按目录重取模型（首个 chat 模型，与 ProviderHub 同口径）。
-watch(formProvider, () => {
-    formConnectionId.value = "";
-    formModel.value = "";
-});
-watch(formConnectionId, () => {
-    formModel.value = modelOptions.value[0] ?? "";
-});
+const createBinding = ref<AgentModelBindingDraft>(emptyBinding());
+const editTarget = ref<InstanceAgent | null>(null);
+const editBinding = ref<AgentModelBindingDraft>(emptyBinding());
+const editClear = ref(false);
+const editError = ref<string | null>(null);
+
+/** 半组选择不是合法载荷：要么三个都空，要么三个都有。 */
+function bindingComplete(binding: AgentModelBindingDraft): boolean {
+    const picked = [binding.provider, binding.connectionId, binding.model].filter(Boolean);
+    return picked.length === 0 || picked.length === 3;
+}
+
+function modelIntentOf(binding: AgentModelBindingDraft) {
+    return {
+        defaultModelProvider: binding.provider,
+        defaultModelName: binding.model,
+        // 省略 = 不限制（契约 null = unrestricted）；勾选才是白名单。
+        ...(binding.restrict
+            ? { allowedModels: [{ provider: binding.provider, model: binding.model }] }
+            : {}),
+    };
+}
+
+/**
+ * 编辑载荷：没有可写的改动就回 null（提交禁用）——「不改就不写」，也避开 `minProperties: 1` 的 400。
+ * 白名单规则：勾选 = 写新白名单；没勾但**换了模型** = 显式 null 清掉旧白名单（否则旧白名单还指着
+ * 旧模型）；没勾且模型没变 = 省略该键（保留存量，不静默清数据）。
+ */
+function editPayload(): InstanceAgentUpdateRequest | null {
+    if (editClear.value) {
+        return { defaultModelProvider: null, defaultModelName: null, allowedModels: null };
+    }
+    const binding = editBinding.value;
+    if (!binding.model || !bindingComplete(binding)) return null;
+    const target = editTarget.value;
+    const changed =
+        binding.provider !== (target?.modelProvider ?? "") ||
+        binding.model !== (target?.modelName ?? "");
+    // 不改就不写：预填后原样保存会白写一次（还多一条审计），所以「与存量相同且没勾白名单」
+    // 视为无改动 ⇒ 提交禁用。勾了白名单就算改动（存量白名单不在列表投影里，无法比对）。
+    if (!changed && !binding.restrict) return null;
+    return {
+        defaultModelProvider: binding.provider,
+        defaultModelName: binding.model,
+        ...(binding.restrict
+            ? { allowedModels: [{ provider: binding.provider, model: binding.model }] }
+            : changed
+              ? { allowedModels: null }
+              : {}),
+    };
+}
+
+const canSubmitEdit = computed(() => editPayload() !== null);
+
+function openEdit(agent: InstanceAgent): void {
+    editTarget.value = agent;
+    editBinding.value = emptyBinding();
+    editClear.value = false;
+    editError.value = null;
+}
+
+async function submitEdit(): Promise<void> {
+    const target = editTarget.value;
+    const payload = editPayload();
+    if (!target || !payload || submitting.value) return;
+    submitting.value = true;
+    editError.value = null;
+    try {
+        await updateInstanceAgent(target.id, payload);
+        editTarget.value = null;
+        toast.success(t("settings.instanceResources.agents.updated"));
+        await load();
+    } catch (cause) {
+        // 系统预置（origin=SYSTEM_PRESET）由 CP 回 403 GUARD_MODEL_INTENT_IMMUTABLE ⇒ 本地化点名，
+        // 不直显 CP 英文 detail（与凭据/成员面板同口径）。
+        const code = cause instanceof ApiError ? cause.problem.code : undefined;
+        editError.value =
+            code === "GUARD_MODEL_INTENT_IMMUTABLE"
+                ? t("settings.instanceResources.agents.presetGuard")
+                : (mappedErrorCopy(code) ?? t("settings.instanceResources.actionFailed"));
+        logger.warn("Failed to update instance agent model intent", cause);
+    } finally {
+        submitting.value = false;
+    }
+}
 
 const countLabel = computed(() =>
     t("settings.instanceResources.agents.count", { count: agents.value.length }),
@@ -229,16 +245,14 @@ watch(
 function openCreate(): void {
     formName.value = "";
     formDescription.value = "";
-    formProvider.value = "";
-    formConnectionId.value = "";
-    formModel.value = "";
-    formRestrictModel.value = false;
+    createBinding.value = emptyBinding();
     actionError.value = null;
     createOpen.value = true;
-    void loadBindingOptions();
 }
 
-const canSubmit = computed(() => Boolean(formName.value.trim()) && bindingComplete.value);
+const canSubmit = computed(
+    () => Boolean(formName.value.trim()) && bindingComplete(createBinding.value),
+);
 
 async function submitCreate(): Promise<void> {
     if (!canSubmit.value || submitting.value) return;
@@ -249,20 +263,7 @@ async function submitCreate(): Promise<void> {
             name: formName.value.trim(),
             ...(formDescription.value.trim() ? { description: formDescription.value.trim() } : {}),
             // 留空 = 不写模型意图，由 CP 沿用平台默认 llm-provider 偏好解析（不假装选了）。
-            ...(formModel.value
-                ? {
-                      defaultModelProvider: formProvider.value,
-                      defaultModelName: formModel.value,
-                      // 省略 = 不限制（契约 null = unrestricted）；勾选才是白名单。
-                      ...(formRestrictModel.value
-                          ? {
-                                allowedModels: [
-                                    { provider: formProvider.value, model: formModel.value },
-                                ],
-                            }
-                          : {}),
-                  }
-                : {}),
+            ...(createBinding.value.model ? modelIntentOf(createBinding.value) : {}),
         });
         createOpen.value = false;
         toast.success(t("settings.instanceResources.agents.created"));
@@ -448,6 +449,23 @@ async function confirmDelete(): Promise<void> {
                                         <Button
                                             variant="ghost"
                                             size="icon-sm"
+                                            :data-testid="`instance-agent-edit-${agent.id}`"
+                                            :disabled="!canWrite"
+                                            :title="
+                                                canWrite
+                                                    ? t('settings.instanceResources.agents.editCta')
+                                                    : t(
+                                                          'settings.instanceResources.writeAtomMissing',
+                                                          { atom: writeAtom },
+                                                      )
+                                            "
+                                            @click="openEdit(agent)"
+                                        >
+                                            <Pencil class="size-3.5" aria-hidden="true" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon-sm"
                                             :data-testid="`instance-agent-delete-${agent.id}`"
                                             :disabled="!canWrite"
                                             :title="
@@ -504,158 +522,7 @@ async function confirmDelete(): Promise<void> {
                                 data-testid="instance-agents-form-description"
                             />
                         </div>
-                        <!--
-                            task-401 / D-1248：模型意图三段（provider＞连接＞模型）。
-                            控件全部用栈内 vendor（Select / Checkbox），中性色 —— 低频可逆动作不上强调色
-                            （注意力预算 L2）；只有「半组选择」这一条阻塞判据用 destructive 文字。
-                        -->
-                        <div
-                            class="space-y-2 rounded-md border border-border p-3"
-                            data-testid="instance-agents-form-model"
-                        >
-                            <div class="space-y-1">
-                                <Label>{{
-                                    t("settings.instanceResources.agents.fieldModel")
-                                }}</Label>
-                                <p class="text-xs text-muted-foreground">
-                                    {{ t("settings.instanceResources.agents.modelHint") }}
-                                </p>
-                            </div>
-                            <div class="grid gap-2 sm:grid-cols-3">
-                                <div class="space-y-1">
-                                    <Label class="text-xs" for="instance-agent-model-provider">
-                                        {{
-                                            t(
-                                                "settings.instanceResources.agents.modelProviderLabel",
-                                            )
-                                        }}
-                                    </Label>
-                                    <Select
-                                        v-model="formProvider"
-                                        :disabled="bindingLoading || providerOptions.length === 0"
-                                    >
-                                        <SelectTrigger
-                                            id="instance-agent-model-provider"
-                                            class="w-full"
-                                            data-testid="instance-agents-form-provider"
-                                        >
-                                            <SelectValue
-                                                :placeholder="
-                                                    t(
-                                                        'settings.instanceResources.agents.modelProviderLabel',
-                                                    )
-                                                "
-                                            />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem
-                                                v-for="option in providerOptions"
-                                                :key="option.id"
-                                                :value="option.id"
-                                            >
-                                                {{ option.label }}
-                                            </SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div class="space-y-1">
-                                    <Label class="text-xs" for="instance-agent-model-connection">
-                                        {{
-                                            t(
-                                                "settings.instanceResources.agents.modelConnectionLabel",
-                                            )
-                                        }}
-                                    </Label>
-                                    <Select
-                                        v-model="formConnectionId"
-                                        :disabled="bindingLoading || !formProvider"
-                                    >
-                                        <SelectTrigger
-                                            id="instance-agent-model-connection"
-                                            class="w-full"
-                                            data-testid="instance-agents-form-connection"
-                                        >
-                                            <SelectValue
-                                                :placeholder="
-                                                    t(
-                                                        'settings.instanceResources.agents.modelConnectionLabel',
-                                                    )
-                                                "
-                                            />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem
-                                                v-for="option in connectionOptions"
-                                                :key="option.id"
-                                                :value="option.id"
-                                            >
-                                                {{ option.label }}
-                                            </SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div class="space-y-1">
-                                    <Label class="text-xs" for="instance-agent-model-name">
-                                        {{ t("settings.instanceResources.agents.modelNameLabel") }}
-                                    </Label>
-                                    <Select
-                                        v-model="formModel"
-                                        :disabled="bindingLoading || !formConnectionId"
-                                    >
-                                        <SelectTrigger
-                                            id="instance-agent-model-name"
-                                            class="w-full"
-                                            data-testid="instance-agents-form-model-name"
-                                        >
-                                            <SelectValue
-                                                :placeholder="
-                                                    t(
-                                                        'settings.instanceResources.agents.modelNameLabel',
-                                                    )
-                                                "
-                                            />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem
-                                                v-for="name in modelOptions"
-                                                :key="name"
-                                                :value="name"
-                                            >
-                                                {{ name }}
-                                            </SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            </div>
-                            <p
-                                v-if="!bindingLoading && chatConnections.length === 0"
-                                class="text-xs text-muted-foreground"
-                                data-testid="instance-agents-model-no-connections"
-                            >
-                                {{ t("settings.instanceResources.agents.modelNoConnections") }}
-                            </p>
-                            <p
-                                v-if="bindingUnavailable"
-                                class="text-xs text-muted-foreground"
-                                data-testid="instance-agents-model-load-failed"
-                            >
-                                {{ t("settings.instanceResources.agents.modelLoadFailed") }}
-                            </p>
-                            <p
-                                v-if="!bindingComplete"
-                                class="text-xs text-destructive"
-                                data-testid="instance-agents-model-incomplete"
-                            >
-                                {{ t("settings.instanceResources.agents.modelIncomplete") }}
-                            </p>
-                            <label v-if="formModel" class="flex items-center gap-2 text-xs">
-                                <Checkbox
-                                    v-model="formRestrictModel"
-                                    data-testid="instance-agents-form-restrict"
-                                />
-                                {{ t("settings.instanceResources.agents.modelRestrict") }}
-                            </label>
-                        </div>
+                        <AgentModelBindingFields v-model="createBinding" />
                     </div>
                     <DialogFooter>
                         <Button
@@ -671,6 +538,92 @@ async function confirmDelete(): Promise<void> {
                             @click="submitCreate"
                         >
                             {{ t("settings.instanceResources.agents.createSubmit") }}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <!-- task-401 编辑半：只改模型意图（契约 PATCH 不收名称/说明），不建会 400 的假入口。 -->
+            <Dialog
+                :open="editTarget !== null"
+                @update:open="(open: boolean) => !open && (editTarget = null)"
+            >
+                <DialogContent data-testid="instance-agents-edit-dialog">
+                    <DialogHeader>
+                        <DialogTitle>{{
+                            t("settings.instanceResources.agents.editTitle")
+                        }}</DialogTitle>
+                        <DialogDescription>
+                            {{ t("settings.instanceResources.agents.editBody") }}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div class="space-y-3">
+                        <div class="space-y-1">
+                            <Label>{{
+                                t("settings.instanceResources.agents.currentIntent")
+                            }}</Label>
+                            <p class="text-sm" data-testid="instance-agents-edit-current">
+                                <template v-if="editTarget?.modelName">
+                                    {{ editTarget?.modelProvider }} / {{ editTarget?.modelName }}
+                                </template>
+                                <template v-else>{{
+                                    t("settings.instanceResources.agents.currentIntentNone")
+                                }}</template>
+                            </p>
+                        </div>
+                        <AgentModelBindingFields
+                            v-model="editBinding"
+                            :intent="
+                                editTarget
+                                    ? {
+                                          provider: editTarget.modelProvider ?? '',
+                                          model: editTarget.modelName ?? '',
+                                      }
+                                    : null
+                            "
+                            field-prefix="instance-agents-edit-form"
+                            hint-prefix="instance-agents-edit-model"
+                            :disabled="editClear"
+                        />
+                        <p class="text-xs text-muted-foreground">
+                            {{ t("settings.instanceResources.agents.editWhitelistHint") }}
+                        </p>
+                        <label class="flex items-center gap-2 text-xs">
+                            <Checkbox
+                                v-model="editClear"
+                                data-testid="instance-agents-edit-clear"
+                            />
+                            {{ t("settings.instanceResources.agents.clearModel") }}
+                        </label>
+                        <p
+                            v-if="!canSubmitEdit"
+                            class="text-xs text-muted-foreground"
+                            data-testid="instance-agents-edit-nochange"
+                        >
+                            {{ t("settings.instanceResources.agents.editNoChange") }}
+                        </p>
+                        <p
+                            v-if="editError"
+                            class="text-xs text-destructive"
+                            data-testid="instance-agents-edit-error"
+                        >
+                            {{ editError }}
+                        </p>
+                    </div>
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            data-testid="instance-agents-edit-cancel"
+                            @click="editTarget = null"
+                        >
+                            {{ t("settings.instanceResources.cancel") }}
+                        </Button>
+                        <Button
+                            :disabled="!canSubmitEdit || submitting"
+                            data-testid="instance-agents-edit-submit"
+                            @click="submitEdit"
+                        >
+                            {{ t("settings.instanceResources.agents.editSubmit") }}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

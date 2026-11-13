@@ -67,14 +67,17 @@ vi.mock("../../../services/instanceResources", async (importOriginal) => {
         listInstanceAgents: vi.fn<typeof actual.listInstanceAgents>(),
         createInstanceAgent: vi.fn<typeof actual.createInstanceAgent>(),
         deleteInstanceAgent: vi.fn<typeof actual.deleteInstanceAgent>(),
+        updateInstanceAgent: vi.fn<typeof actual.updateInstanceAgent>(),
     };
 });
 
 import {
     createInstanceAgent,
     listInstanceAgents,
+    updateInstanceAgent,
     type InstanceAgent,
 } from "../../../services/instanceResources";
+import { ApiError } from "../../../composables/api";
 import { listProviderCatalog } from "../../../services/providerConnectionService";
 import { Select } from "../../ui/select";
 import { Checkbox } from "../../ui/checkbox";
@@ -178,6 +181,12 @@ beforeEach(() => {
     };
     configState.loadProviderConnections.mockResolvedValue(undefined);
     configState.fetchModels.mockResolvedValue(undefined);
+    vi.mocked(updateInstanceAgent).mockResolvedValue({
+        principalId: "agent-1",
+        defaultModelProvider: "anthropic",
+        defaultModelName: "claude-sonnet-4-5",
+        allowedModels: null,
+    });
     vi.mocked(listProviderCatalog).mockResolvedValue({
         catalogRevision: "r1",
         providers: [{ id: "anthropic", displayName: "Anthropic" }],
@@ -473,6 +482,173 @@ describe("InstanceAgentsPanel · task-401 模型意图（创建半）", () => {
         );
         await submit(wrapper);
         expect(payload()).toEqual({ name: "评审助手" });
+        wrapper.unmount();
+    });
+});
+
+describe("InstanceAgentsPanel · task-401 模型意图（编辑半，cp-1 task-413 契约）", () => {
+    type PanelWrapper = ReturnType<typeof mountPanel>;
+
+    /** 存量意图恰好落在可见 chat 连接的目录里 ⇒ 三段可预填。 */
+    function storedAgent(): InstanceAgent {
+        return {
+            ...agent("agent-1", "代码评审助手"),
+            modelProvider: "anthropic",
+            modelName: "claude-sonnet-4-5",
+        };
+    }
+
+    async function openEdit(wrapper: PanelWrapper): Promise<void> {
+        await wrapper.get('[data-testid="instance-agent-edit-agent-1"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="instance-agents-edit-dialog"]').exists()).toBe(true);
+        expect(wrapper.findAllComponents(Select)).toHaveLength(3);
+    }
+
+    async function pickEdit(wrapper: PanelWrapper, index: number, value: string): Promise<void> {
+        wrapper.findAllComponents(Select)[index]!.vm.$emit("update:modelValue", value);
+        await flushPromises();
+    }
+
+    function patchPayload(): Record<string, unknown> {
+        const call = vi.mocked(updateInstanceAgent).mock.calls[0];
+        expect(call).toBeDefined();
+        return call![1] as unknown as Record<string, unknown>;
+    }
+
+    it("行有编辑入口，点开显示存量意图；预填后原样保存视为无改动（不白写一次）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+
+        expect(wrapper.get('[data-testid="instance-agents-edit-current"]').text()).toBe(
+            "anthropic / claude-sonnet-4-5",
+        );
+        // 预填真的发生了：连接段拿到了存量模型所属的那条连接。
+        const connection = wrapper.findAllComponents(Select)[1]!;
+        expect(connection.props("modelValue")).toBe("conn-chat");
+        expect(wrapper.find('[data-testid="instance-agents-edit-nochange"]').exists()).toBe(true);
+        expect(
+            wrapper.get('[data-testid="instance-agents-edit-submit"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(updateInstanceAgent).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("换模型：PATCH 只带模型三键（名称/说明不在这个写面上），未勾白名单 ⇒ 显式 null 清旧白名单", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        await pickEdit(wrapper, 2, "claude-haiku-4-5");
+        await wrapper.get('[data-testid="instance-agents-edit-submit"]').trigger("click");
+        await flushPromises();
+
+        expect(vi.mocked(updateInstanceAgent).mock.calls[0]![0]).toBe("agent-1");
+        expect(patchPayload()).toEqual({
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-haiku-4-5",
+            allowedModels: null,
+        });
+        wrapper.unmount();
+    });
+
+    it("勾「只允许这个模型」：白名单写成新模型；模型没变也算改动（存量白名单不在列表投影里）", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        // 编辑弹窗里有两个 Checkbox：三段里的「只允许这个模型」在前，面板的「清除」在后。
+        // （vendored Checkbox 的 attrs 不落在组件 wrapper 的 attributes() 上 ⇒ 按 testid 认领会落空，
+        //   这里按渲染顺序取，并由下面的载荷断言兜住「取错了」这种情况。）
+        const boxes = wrapper.findAllComponents(Checkbox);
+        expect(boxes).toHaveLength(2);
+        boxes[0]!.vm.$emit("update:modelValue", true);
+        await flushPromises();
+        await wrapper.get('[data-testid="instance-agents-edit-submit"]').trigger("click");
+        await flushPromises();
+
+        expect(patchPayload()).toEqual({
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-sonnet-4-5",
+            allowedModels: [{ provider: "anthropic", model: "claude-sonnet-4-5" }],
+        });
+        wrapper.unmount();
+    });
+
+    it("勾清除：三键全 null（契约 both-or-neither），三段随之禁用", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        await wrapper.get('[data-testid="instance-agents-edit-clear"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.findAllComponents(Select)[0]!.props("disabled")).toBe(true);
+        await wrapper.get('[data-testid="instance-agents-edit-submit"]').trigger("click");
+        await flushPromises();
+
+        expect(patchPayload()).toEqual({
+            defaultModelProvider: null,
+            defaultModelName: null,
+            allowedModels: null,
+        });
+        wrapper.unmount();
+    });
+
+    it("存量意图映射不到可见连接：不猜一条连接塞给用户（当前意图照显示，可重选或清除）", async () => {
+        mockedList.mockResolvedValue({
+            agents: [{ ...storedAgent(), modelProvider: "mistral", modelName: "mistral-large" }],
+            count: 1,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+
+        expect(wrapper.get('[data-testid="instance-agents-edit-current"]').text()).toBe(
+            "mistral / mistral-large",
+        );
+        expect(wrapper.findAllComponents(Select)[0]!.props("modelValue")).toBe("");
+        expect(wrapper.findAllComponents(Select)[1]!.props("modelValue")).toBe("");
+        expect(wrapper.find('[data-testid="instance-agents-edit-nochange"]').exists()).toBe(true);
+        expect(updateInstanceAgent).not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("系统预置 403 GUARD_MODEL_INTENT_IMMUTABLE：本地化点名，不直显 CP 英文 detail，弹窗保窗", async () => {
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        vi.mocked(updateInstanceAgent).mockRejectedValue(
+            new ApiError({
+                code: "GUARD_MODEL_INTENT_IMMUTABLE",
+                detail: "system preset model intent is immutable",
+                status: 403,
+            }),
+        );
+        const wrapper = mountPanel();
+        await flushPromises();
+        await openEdit(wrapper);
+        await pickEdit(wrapper, 2, "claude-haiku-4-5");
+        await wrapper.get('[data-testid="instance-agents-edit-submit"]').trigger("click");
+        await flushPromises();
+
+        const shown = wrapper.get('[data-testid="instance-agents-edit-error"]').text();
+        expect(shown).toBe("系统预置智能体的模型意图不可修改。");
+        expect(shown).not.toContain("immutable");
+        // 保窗：用户能看到失败原因并改选，而不是弹窗关掉只剩一个 toast。
+        expect(wrapper.find('[data-testid="instance-agents-edit-dialog"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("缺动作原子：编辑入口 disabled 不隐藏（与删除同口径，D-1136 不给死路）", async () => {
+        authState.atoms = new Set<string>();
+        mockedList.mockResolvedValue({ agents: [storedAgent()], count: 1 });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const edit = wrapper.get('[data-testid="instance-agent-edit-agent-1"]');
+        expect(edit.attributes("disabled")).toBeDefined();
+        expect(edit.attributes("title")).toContain("MANAGE_AGENT_PRINCIPALS");
         wrapper.unmount();
     });
 });

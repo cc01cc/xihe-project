@@ -97,9 +97,64 @@ async function stubModelFaces(page: Page): Promise<void> {
     );
 }
 
-/** 创建面：GET 列表 / POST 创建（按 body 承载模型三字段，回 201）。 */
-async function stubAgentFace(page: Page): Promise<void> {
-    const rows: Array<Record<string, unknown>> = [];
+const SEED_AGENT = {
+    principalId: "agent-seed",
+    name: "存量助手",
+    description: null,
+    templateId: null,
+    templateName: null,
+    defaultModelProvider: "anthropic",
+    defaultModelName: "claude-sonnet-4-5",
+    allowedModels: null,
+    createdAt: "2026-11-14T00:00:00.000Z",
+    disabled: false,
+};
+
+/**
+ * 智能体面：GET 列表 / POST 创建（201，按 body 承载模型三字段）/ PATCH 模型意图。
+ * PATCH 照 cp-1 `task-413`（dedd832a5）语义：present 替换、absent 保留、显式 null 清除；
+ * 回 `AgentPrincipalUpdateView`（不是整行）。名称/说明/disabled 不在写面上 ⇒ 400。
+ */
+async function stubAgentFace(page: Page, seed: Array<Record<string, unknown>> = []): Promise<void> {
+    const rows: Array<Record<string, unknown>> = [...seed];
+    await page.route(/\/api\/v1\/instance\/agent-principals\/[^/?]+(\?.*)?$/, async (route) => {
+        if (route.request().method() !== "PATCH") {
+            return route.fulfill(json({ code: "METHOD_NOT_ALLOWED" }, 405));
+        }
+        const id = new URL(route.request().url()).pathname.split("/").pop();
+        const index = rows.findIndex((row) => row.principalId === id);
+        if (index < 0) return route.fulfill(json({ code: "NOT_FOUND" }, 404));
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        const allowed = new Set([
+            "defaultModelProvider",
+            "defaultModelName",
+            "allowedModels",
+            "hooks",
+            "contextPolicy",
+            "delegationPolicy",
+        ]);
+        const keys = Object.keys(body);
+        const foreign = keys.filter((key) => !allowed.has(key));
+        if (keys.length === 0 || foreign.length > 0) {
+            return route.fulfill(
+                json({ code: "INVALID_REQUEST", detail: foreign.join(",") || "empty" }, 400),
+            );
+        }
+        const current = rows[index] as Record<string, unknown>;
+        const updated = { ...current, ...body };
+        rows.splice(index, 1, updated);
+        return route.fulfill(
+            json({
+                principalId: id,
+                defaultModelProvider: updated.defaultModelProvider ?? null,
+                defaultModelName: updated.defaultModelName ?? null,
+                allowedModels: updated.allowedModels ?? null,
+                hooks: null,
+                contextPolicy: null,
+                delegationPolicy: null,
+            }),
+        );
+    });
     await page.route(/\/api\/v1\/instance\/agent-principals(\?.*)?$/, async (route) => {
         const method = route.request().method();
         if (method === "GET") {
@@ -159,6 +214,22 @@ function captureCreate(page: Page) {
         (request) =>
             request.method() === "POST" &&
             new URL(request.url()).pathname === "/api/v1/instance/agent-principals",
+        { timeout: EXPECT_TIMEOUT_MS },
+    );
+}
+
+async function pickIn(page: Page, triggerTestId: string, option: string): Promise<void> {
+    await page.getByTestId(triggerTestId).click({ timeout: ACTION_TIMEOUT_MS });
+    await page
+        .getByRole("option", { name: option, exact: true })
+        .click({ timeout: ACTION_TIMEOUT_MS });
+}
+
+function capturePatch(page: Page, id: string) {
+    return page.waitForRequest(
+        (request) =>
+            request.method() === "PATCH" &&
+            new URL(request.url()).pathname === `/api/v1/instance/agent-principals/${id}`,
         { timeout: EXPECT_TIMEOUT_MS },
     );
 }
@@ -269,5 +340,73 @@ test.describe("instance agent model intent · mobile (task-401)", () => {
         await expect(rowOf(page, "E2E 移动模型")).toContainText("anthropic / claude-sonnet-4-5", {
             timeout: EXPECT_TIMEOUT_MS,
         });
+    });
+});
+
+test.describe("instance agent model intent on edit (task-401 · cp-1 task-413)", () => {
+    test.beforeEach(async ({ page }) => {
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        await stubPermissions(page);
+        await stubModelFaces(page);
+        await stubAgentFace(page, [{ ...SEED_AGENT }]);
+    });
+
+    test("真指针换模型：预填后无改动禁用，改了才 PATCH，行回显新模型", async ({ page }) => {
+        await page.goto(PANEL_URL);
+        await page
+            .getByTestId("instance-agent-edit-agent-seed")
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        await expect(page.getByTestId("instance-agents-edit-dialog")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("instance-agents-edit-current")).toHaveText(
+            "anthropic / claude-sonnet-4-5",
+            { timeout: EXPECT_TIMEOUT_MS },
+        );
+        // 存量意图映射到可见连接 ⇒ 三段预填；原样保存没有可写的改动 ⇒ 不白写一次。
+        await expect(page.getByTestId("instance-agents-edit-submit")).toBeDisabled();
+
+        await pickIn(page, "instance-agents-edit-form-model-name", "claude-haiku-4-5");
+        const patched = capturePatch(page, "agent-seed");
+        await page.getByTestId("instance-agents-edit-submit").click({ timeout: ACTION_TIMEOUT_MS });
+        // 名称/说明不在这个写面上；未勾白名单且换了模型 ⇒ 显式 null 清旧白名单。
+        expect((await patched).postDataJSON()).toEqual({
+            defaultModelProvider: "anthropic",
+            defaultModelName: "claude-haiku-4-5",
+            allowedModels: null,
+        });
+        await expect(rowOf(page, "存量助手")).toContainText("anthropic / claude-haiku-4-5", {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+    });
+});
+
+test.describe("instance agent model intent · mobile edit (task-401)", () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test.beforeEach(async ({ page }) => {
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        await stubPermissions(page);
+        await stubModelFaces(page);
+        await stubAgentFace(page, [{ ...SEED_AGENT }]);
+    });
+
+    test("390×844：勾清除 ⇒ 三键全 null，行模型列回 —（沿用平台默认）", async ({ page }) => {
+        await page.goto(PANEL_URL);
+        await page
+            .getByTestId("instance-agent-edit-agent-seed")
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        await expect(page.getByTestId("instance-agents-edit-dialog")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        await page.getByTestId("instance-agents-edit-clear").click({ timeout: ACTION_TIMEOUT_MS });
+        const patched = capturePatch(page, "agent-seed");
+        await page.getByTestId("instance-agents-edit-submit").click({ timeout: ACTION_TIMEOUT_MS });
+        expect((await patched).postDataJSON()).toEqual({
+            defaultModelProvider: null,
+            defaultModelName: null,
+            allowedModels: null,
+        });
+        await expect(rowOf(page, "存量助手")).toContainText("—", { timeout: EXPECT_TIMEOUT_MS });
     });
 });

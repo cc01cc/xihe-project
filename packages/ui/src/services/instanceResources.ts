@@ -318,7 +318,54 @@ export function createInstanceAgent(input: InstanceAgentCreateRequest): Promise<
 }
 
 /**
- * task-401 / `D-1248`：这里原先有一个 `updateInstanceAgent(id, {name, description, disabled})`。
+ * task-401 / `D-1248` + cp-1 `task-413`（dedd832a5）：实例层 PATCH 现在收**模型意图三字段**
+ * （外加 documents），`additionalProperties: false`、`minProperties: 1`。
+ * 语义（契约原文）：present key 替换、absent key 保留存量、显式 null 清除；
+ * `defaultModelProvider` 与 `defaultModelName` 在**合并结果**上 both-or-neither。
+ * 名称/说明/disabled **仍不在**这个写面上 ⇒ 不发（发了就是 400）。
+ */
+export interface InstanceAgentUpdateRequest {
+    defaultModelProvider?: string | null;
+    defaultModelName?: string | null;
+    allowedModels?: Array<{ provider: string; model: string }> | null;
+}
+
+/** PATCH 回的是 `AgentPrincipalUpdateView`（回读存量），**不是**整行智能体。 */
+export interface InstanceAgentUpdateView {
+    principalId: string;
+    defaultModelProvider: string | null;
+    defaultModelName: string | null;
+    allowedModels: Array<{ provider: string; model: string }> | null;
+}
+
+function normalizeUpdateView(value: unknown): InstanceAgentUpdateView {
+    const raw = asRecord(value);
+    const list = Array.isArray(raw.allowedModels) ? raw.allowedModels : [];
+    return {
+        principalId: str(raw.principalId) || str(raw.id),
+        defaultModelProvider: nullableStr(raw.defaultModelProvider),
+        defaultModelName: nullableStr(raw.defaultModelName),
+        allowedModels: list.length
+            ? list.map((item) => {
+                  const entry = asRecord(item);
+                  return { provider: str(entry.provider), model: str(entry.model) };
+              })
+            : null,
+    };
+}
+
+export function updateInstanceAgent(
+    id: string,
+    input: InstanceAgentUpdateRequest,
+): Promise<InstanceAgentUpdateView> {
+    return request<unknown>(withId(BASE.agents, id), {
+        method: "PATCH",
+        body: JSON.stringify(input),
+    }).then(normalizeUpdateView);
+}
+
+/**
+ * 历史留痕：这里原先有一个 `updateInstanceAgent(id, {name, description, disabled})`。
  * 它与契约不符且**无任何消费方**：`PATCH /instance/agent-principals/{id}` 的 body 是
  * `AgentPrincipalUpdateRequest`（只有 hooks / contextPolicy / delegationPolicy，
  * `additionalProperties: false`；控制器走 `parseDocuments`）⇒ 发 name/description 会 400。
