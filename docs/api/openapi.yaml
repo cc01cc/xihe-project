@@ -3294,6 +3294,7 @@ paths:
         - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid }, description: 'Required while the deprecated workspace layer is still served; the instance and user layers ignore it.' }
       responses:
         '200': { description: Updated }
+        '400': { description: 'DOMAIN_NOT_WORKSPACE_WRITABLE — 模型 4 域已退出工作区层（T2.4 / D-1122 49A）' }
         '403': { $ref: '#/components/responses/Problem' }
   /api/v1/config/user/{domain}:
     put:
