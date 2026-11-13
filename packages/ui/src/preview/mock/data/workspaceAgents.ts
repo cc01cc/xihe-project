@@ -262,6 +262,89 @@ export function agentRoleBindingsOf(principalId: string): MockAgentRoleBindingRo
  * `PUT /workspaces/{ws}/agents/{pid}` 的判定：**省略 permissions ⇒ baseline**，传数组 ⇒ explicit。
  * 返回 CP 的响应形状；未知主体回 null（调用方转 404），不做通配成功。
  */
+/**
+ * task-469（417 P1-6）：角色 → 原子天花板（**mock 近似**，真值在 CP 的角色定义）。
+ * **不用 `roleBindings.atomSummary`**：那是**截断的显示摘要**（种子里 atomCount=5 /
+ * atomsTruncated=true 而 summary 只有 3 条），拿它当权威会少算原子。
+ */
+const ROLE_ATOM_CEILING: Record<string, MockAgentAtom[]> = {
+    [ROLE_EDITOR]: [
+        { actionClass: "file_read", resource: "workspace" },
+        { actionClass: "file_write", resource: "workspace" },
+        { actionClass: "tool_execute", resource: "workspace" },
+    ],
+    [ROLE_VIEWER]: [{ actionClass: "file_read", resource: "workspace" }],
+};
+
+/** live 读面的 mock 投影（契约 `EffectiveCapView`，openapi:6994，**7 个 required**）。 */
+export interface MockEffectiveCapView {
+    principalId: string;
+    workspaceId: string;
+    effectiveCap: MockAgentAtom[];
+    capSource: { binding: "binding-snapshot" | "role-binding" };
+    provenance: { principalGrantIds: string[]; bindingGrantIds: string[] };
+    defaultGrants: { readFace: string[] };
+    bound: boolean;
+}
+
+function sameAtom(a: MockAgentAtom, b: MockAgentAtom): boolean {
+    return a.actionClass === b.actionClass && (a.resource ?? "*") === (b.resource ?? "*");
+}
+
+/**
+ * **LIVE 求值（mock 近似）**，不是快照的副本 —— 两条机制都会造成 **live ≠ snapshot**：
+ * - 有 cap 绑定行（`capSource === "explicit"`）⇒ `binding-snapshot`：绑定原子**保留到主体生效上限**
+ *   （与角色天花板求交）⇒ 快照里超出天花板的原子在 live 面**消失**（PID_EXPLICIT 的 credential_use）。
+ * - 否则（baseline / 旧响应 / 未绑定）⇒ `role-binding`：live = 角色天花板本身 ⇒ 继承态快照是 `[]`
+ *   而 live 非空（PID_INHERIT）。**显式零权限仍是零**（`[]` 不是「用基线」，D-1109）。
+ * 两条各有机制 ⇒ 判据能区分「读了 live」与「换了个字段的快照」（D-1281）。
+ *
+ * <p>`provenance` 的 id 是**合成确定值**（同一主体每次一致），**不是真 CP grant 行**；
+ * `bindingGrantIds` 用角色绑定行 id。`bound` = **是否存在 cap 绑定行**，与列表行里表示
+ * 「是否绑定到工作区」的 `bound` **不是同一件事**，不要混用。</p>
+ */
+export function effectiveCapOfAgent(
+    workspaceId: string,
+    principalId: string,
+): MockEffectiveCapView | null {
+    if (workspaceId !== MOCK_AGENT_WORKSPACE_ID) return null;
+    const row = agents.find((item) => item.principalId === principalId);
+    if (!row) return null;
+    const bindings = roleBindings.filter(
+        (item) => item.principalId === principalId && item.scopeId === workspaceId,
+    );
+    const ceiling: MockAgentAtom[] = [];
+    for (const binding of bindings) {
+        for (const atom of ROLE_ATOM_CEILING[binding.roleId] ?? []) {
+            if (!ceiling.some((item) => sameAtom(item, atom))) ceiling.push(atom);
+        }
+    }
+    const hasCapBinding = row.capSource === "explicit";
+    const effectiveCap = (
+        hasCapBinding
+            ? row.permissionsSnapshot.filter((atom) => ceiling.some((item) => sameAtom(item, atom)))
+            : ceiling
+    )
+        .slice()
+        .sort((a, b) =>
+            `${a.actionClass}:${a.resource ?? "*"}`.localeCompare(
+                `${b.actionClass}:${b.resource ?? "*"}`,
+            ),
+        );
+    return {
+        principalId,
+        workspaceId,
+        effectiveCap,
+        capSource: { binding: hasCapBinding ? "binding-snapshot" : "role-binding" },
+        provenance: {
+            principalGrantIds: [`g1f0c4d2-7b3e-4c55-8f10-${principalId.slice(-12)}`],
+            bindingGrantIds: hasCapBinding ? [] : bindings.map((item) => item.bindingId),
+        },
+        defaultGrants: { readFace: ["workspace-member"] },
+        bound: hasCapBinding,
+    };
+}
+
 export function setWorkspaceAgentCap(
     workspaceId: string,
     principalId: string,
@@ -406,6 +489,17 @@ export async function handleWorkspaceAgentResource(
                 ? problem(404, "WORKSPACE_AGENT_NOT_FOUND", "Workspace Agent binding not found")
                 : { status: 204, body: null };
         }
+    }
+    // task-469（417 P1-6）：live 生效权限读面。**显式接线** —— 未知 suffix 仍回 null ⇒ 404
+    // MOCK_ENDPOINT_MISSING，不用通配 200 掩盖缺口（D-1248）。非 GET 落到同样的 null 分支
+    // （与 memories 子资源同口径；mock 不复刻 Spring 的 405 形状）。
+    const effectiveCapMatch = path.match(/^\/workspaces\/([^/]+)\/agents\/([^/]+)\/effective-cap$/);
+    if (effectiveCapMatch && method === "GET") {
+        const [, workspaceId, principalId] = effectiveCapMatch;
+        const view = effectiveCapOfAgent(workspaceId, principalId);
+        return view
+            ? { status: 200, body: view }
+            : problem(404, "WORKSPACE_AGENT_NOT_FOUND", "Workspace Agent binding not found");
     }
     const memoryMatch = path.match(
         /^\/workspaces\/([^/]+)\/agents\/([^/]+)\/memories(?:\/([^/]+))?$/,

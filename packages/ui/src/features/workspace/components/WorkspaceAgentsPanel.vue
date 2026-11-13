@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
@@ -14,6 +14,7 @@ import {
     type ApiRole,
     type SelfPermissionsView,
     type WorkspaceAgentBinding,
+    type WorkspaceAgentEffectiveCap,
     type WorkspaceAgentMemory,
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
@@ -73,6 +74,10 @@ const createdPrincipalMeta = ref<{
 const recoveryUnavailable = ref(false);
 const permissions = ref<WorkspaceAgentPermission[]>([]),
     editingPrincipalId = ref<string | null>(null),
+    // task-469：live 生效权限面（详情/编辑区打开时读一次；与快照并存，见 loadEffectiveCap）。
+    effectiveCap = ref<WorkspaceAgentEffectiveCap | null>(null),
+    effectiveCapLoading = ref(false),
+    effectiveCapError = ref(""),
     /**
      * 47A（D-1109）：上限的**两种来源在 wire 上是不同语义**，所以用三态而不是一个 flag ——
      * `inherit` = **省略** `permissions`（CP 记 `capSource=baseline`）；
@@ -989,7 +994,49 @@ function startEditing(agent: WorkspaceAgentBinding) {
     // 47A：回显以 CP 记的 `capSource` 为准（`baseline` ⇒ 继承态）；更早的响应没有该字段时按显式处理。
     capMode.value = agent.capSource === "baseline" ? "inherit" : "explicit";
     error.value = "";
+    // task-469（417 P1-6）：打开编辑区时读**一次** live 生效权限（不是每行一次请求）。
+    void loadEffectiveCap(agent.principalId);
 }
+
+/**
+ * task-469（417 P1-6）：**当前生效权限（LIVE）**，与列表的冻结上限快照**并存且各自标注**。
+ *
+ * <p>契约 `EffectiveCapView`（openapi:6994）明写 effectiveCap 是 LIVE `resolveCapFor` 求值、
+ * **NOT the stored permissionsSnapshot** ⇒ 两者语义不同：快照回答「CP 记录的冻结上限是什么」，
+ * 本面回答「它现在实际能做什么」。**不拿 live 覆盖快照**（覆盖会把两种语义混成一句话，D-1281）。</p>
+ *
+ * <p>失败**显式呈现**（`workspace-agent-effective-cap-error`），**不静默回落到快照** —— 回落会让
+ * 「读了 live」与「显示快照」在界面上分不开。也不写面板级 `error`（那是列表加载失败的位置，
+ * 混用会让只读面失败看起来像列表坏了）。</p>
+ */
+async function loadEffectiveCap(principalId: string) {
+    effectiveCapLoading.value = true;
+    effectiveCapError.value = "";
+    effectiveCap.value = null;
+    try {
+        const view = await api.getWorkspaceAgentEffectiveCap(props.workspaceId, principalId);
+        // 竞态守卫：读回来时若已切到别的主体或已关闭编辑区，丢弃这次结果，不覆盖当前面。
+        if (editingPrincipalId.value !== principalId) return;
+        effectiveCap.value = view;
+    } catch (cause) {
+        if (editingPrincipalId.value !== principalId) return;
+        effectiveCapError.value = agentErrorMessage(
+            cause,
+            "workspace.agentEffectiveCapForbidden",
+            "workspace.agentEffectiveCapError",
+        );
+    } finally {
+        if (editingPrincipalId.value === principalId) effectiveCapLoading.value = false;
+    }
+}
+
+// 关闭编辑区（保存成功 :1006 / 取消按钮）时清掉 live 面，避免下次打开先闪上一次的主体的权限。
+watch(editingPrincipalId, (id) => {
+    if (id !== null) return;
+    effectiveCap.value = null;
+    effectiveCapError.value = "";
+    effectiveCapLoading.value = false;
+});
 
 async function saveCap(agent: WorkspaceAgentBinding) {
     if (saving.value || canManageWorkspaceAgents.value !== true) return;
@@ -1390,9 +1437,12 @@ async function unbind(agent: WorkspaceAgentBinding) {
                 </button>
             </div>
             <!-- task-417 P1-6（408 盘点）：下面每行的能力徽标是 **CP 记录的冻结上限快照**，不是当前生效权限。
-                 公开读面只给 permissionsSnapshot + capSource（WorkspaceAgentController:294-297），
-                 真源 resolveCapFor 是 CP 内部求值、**没有公开读面** ⇒ UI 不得声称「这就是它现在的权限」。
-                 缺 CP 读面这条已在 417 报告里登记（不在 UI 私造字段）。 -->
+                 列表读面给 permissionsSnapshot + capSource（WorkspaceAgentController:294-297）。
+                 **task-469 更新**：原注释「真源 resolveCapFor 没有公开读面」**已过期** —— cp-2 task-448
+                 落了 `GET /workspaces/{ws}/agents/{pid}/effective-cap`（WorkspaceAgentController:84，
+                 契约 EffectiveCapView / openapi:6994）。现在**详情/编辑区打开时读一次 live** 并单独标注
+                 （见下方 workspace-agent-effective-cap）；**列表仍用快照**（避免每行一次请求），
+                 两者并存不互相覆盖。UI 仍不得拿快照声称「这就是它现在的权限」。 -->
             <p
                 class="text-xs text-muted-foreground"
                 data-testid="workspace-agent-cap-snapshot-hint"
@@ -1563,6 +1613,117 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     </div>
                 </div>
                 <div v-else class="space-y-2 border-t pt-3">
+                    <!-- task-469（417 P1-6）：**当前生效权限（实时）**。与列表的冻结上限快照并存、
+                         各自标注，不互相覆盖（契约 EffectiveCapView：LIVE resolveCapFor，NOT snapshot）。
+                         打开编辑区读一次；失败显式呈现，不静默回落到快照（D-1281）。 -->
+                    <div class="space-y-1" data-testid="workspace-agent-effective-cap">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span
+                                class="text-xs font-medium"
+                                data-testid="workspace-agent-effective-cap-label"
+                            >
+                                {{ t("workspace.agentEffectiveCapLabel") }}
+                            </span>
+                            <span
+                                v-if="effectiveCap"
+                                class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
+                                :data-testid="`workspace-agent-effective-cap-binding-${agent.principalId}`"
+                            >
+                                {{
+                                    effectiveCap.capSource.binding === "binding-snapshot"
+                                        ? t("workspace.agentEffectiveCapBindingSnapshot")
+                                        : t("workspace.agentEffectiveCapBindingRole")
+                                }}
+                            </span>
+                            <span
+                                v-if="effectiveCap"
+                                class="rounded border px-1.5 py-0.5 text-xs text-muted-foreground"
+                                :data-testid="`workspace-agent-effective-cap-bound-${agent.principalId}`"
+                            >
+                                {{
+                                    effectiveCap.bound
+                                        ? t("workspace.agentEffectiveCapBound")
+                                        : t("workspace.agentEffectiveCapUnbound")
+                                }}
+                            </span>
+                        </div>
+                        <p
+                            class="text-xs text-muted-foreground"
+                            data-testid="workspace-agent-effective-cap-hint"
+                        >
+                            {{ t("workspace.agentEffectiveCapHint") }}
+                        </p>
+                        <p
+                            v-if="effectiveCapLoading"
+                            role="status"
+                            class="text-xs text-muted-foreground"
+                            data-testid="workspace-agent-effective-cap-loading"
+                        >
+                            {{ t("workspace.agentEffectiveCapLoading") }}
+                        </p>
+                        <p
+                            v-else-if="effectiveCapError"
+                            role="alert"
+                            class="text-xs text-destructive"
+                            data-testid="workspace-agent-effective-cap-error"
+                        >
+                            {{ effectiveCapError }}
+                        </p>
+                        <template v-else-if="effectiveCap">
+                            <div
+                                class="flex flex-wrap gap-1.5"
+                                data-testid="workspace-agent-effective-cap-atoms"
+                            >
+                                <span
+                                    v-for="permission in effectiveCap.effectiveCap"
+                                    :key="`${permission.actionClass}:${permission.resource ?? '*'}`"
+                                    class="rounded border px-1.5 py-0.5 text-xs"
+                                >
+                                    {{ actionLabel(permission.actionClass) }} ·
+                                    {{ permission.resource ?? "*" }}
+                                </span>
+                                <span
+                                    v-if="effectiveCap.effectiveCap.length === 0"
+                                    class="text-xs text-muted-foreground"
+                                    data-testid="workspace-agent-effective-cap-empty"
+                                >
+                                    {{ t("workspace.agentEffectiveCapEmpty") }}
+                                </span>
+                            </div>
+                            <!-- provenance：命中来源的 grant 行 id（不是原子名）。计数 + 逐个 id 都给，
+                                 因为「哪几行授权造成了这个结果」正是本面相对快照的新信息。 -->
+                            <p
+                                class="text-xs text-muted-foreground"
+                                data-testid="workspace-agent-effective-cap-provenance"
+                            >
+                                {{ t("workspace.agentEffectiveCapProvenancePrincipal") }}
+                                {{ effectiveCap.provenance.principalGrantIds.length }} ·
+                                {{ t("workspace.agentEffectiveCapProvenanceBinding") }}
+                                {{ effectiveCap.provenance.bindingGrantIds.length }}
+                            </p>
+                            <div
+                                class="flex flex-wrap gap-1"
+                                data-testid="workspace-agent-effective-cap-provenance-ids"
+                            >
+                                <code
+                                    v-for="grantId in [
+                                        ...effectiveCap.provenance.principalGrantIds,
+                                        ...effectiveCap.provenance.bindingGrantIds,
+                                    ]"
+                                    :key="grantId"
+                                    class="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground"
+                                >
+                                    {{ grantId }}
+                                </code>
+                            </div>
+                            <p
+                                class="text-xs text-muted-foreground"
+                                data-testid="workspace-agent-effective-cap-read-face"
+                            >
+                                {{ t("workspace.agentEffectiveCapReadFace") }}
+                            </p>
+                        </template>
+                    </div>
                     <!-- 47A（D-1109）：两态在 UI 上必须可区分，且请求体按态分支（见 saveCap）——
                          继承 = 省略 permissions（baseline）；显式 = 传数组（其中 [] = 零权限）。 -->
                     <div class="flex flex-wrap items-center gap-3" data-testid="agent-cap-mode">

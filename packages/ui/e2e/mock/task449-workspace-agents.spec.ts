@@ -126,4 +126,87 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
             INHERIT,
         );
     });
+
+    // task-469（417 P1-6）：**live 生效权限面**的浏览器判据。核心是「live 与快照分得开」：
+    // 快照里有的原子 live 里没有（超出主体生效上限），继承态反过来 live 比快照多。
+    // 只断言「live 面存在」的话，把快照换个字段喂进来也能绿（D-1281）。
+    test("task-469：打开详情读一次 live，命中来源/bound/provenance 渲染，且 live ≠ snapshot", async ({
+        page,
+    }) => {
+        const liveRequests: string[] = [];
+        page.on("request", (req) => {
+            if (req.url().includes("/effective-cap")) liveRequests.push(req.url());
+        });
+        await page.goto(URL);
+        // **用 disabled 行而不是 explicit 行**：本文件上一条用例会把 explicit 的上限 PUT 成继承，
+        // 而 preview 链路的 mock 夹具是**整个 vite 进程共享**的（没有 HTTP reset 面）⇒ 拿 explicit
+        // 当样本会让本条依赖用例顺序（与 ui-1 task-467 修掉的 shuffle 顺序依赖同族）。
+        // disabled 行没有任何用例写它，且它的 live ≠ snapshot 方向正好相反：
+        // 快照有 1 条 file_read，而它**没有角色绑定行** ⇒ 天花板空 ⇒ live 为空（见 coverage spec 的边界留痕）。
+        const pid = PIDS.disabled;
+        const row = page.getByTestId(`workspace-agent-${pid}`);
+        await expect(row).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        // 快照面有 1 条原子徽标 + 1 条来源徽标；**列表阶段不发 live 请求**（避免每行一次）。
+        await expect(
+            row.getByTestId("workspace-agent-cap").locator("span.rounded.border"),
+        ).toHaveCount(2);
+        expect(liveRequests).toHaveLength(0);
+        await page
+            .getByTestId(`workspace-agent-edit-cap-${pid}`)
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        const face = row.getByTestId("workspace-agent-effective-cap");
+        await expect(face.getByTestId("workspace-agent-effective-cap-label")).toHaveText(
+            copy("workspace.agentEffectiveCapLabel"),
+            { timeout: EXPECT_TIMEOUT_MS },
+        );
+        await expect(page.getByTestId(`workspace-agent-effective-cap-binding-${pid}`)).toHaveText(
+            copy("workspace.agentEffectiveCapBindingSnapshot"),
+        );
+        await expect(page.getByTestId(`workspace-agent-effective-cap-bound-${pid}`)).toHaveText(
+            copy("workspace.agentEffectiveCapBound"),
+        );
+        const atoms = face.getByTestId("workspace-agent-effective-cap-atoms");
+        await expect(atoms).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        // live 面**一条都没有**（快照那 1 条超出天花板）⇒ 空态照实说，精确计数不是 ≥。
+        await expect(atoms.locator("span.rounded.border")).toHaveCount(0);
+        await expect(face.getByTestId("workspace-agent-effective-cap-empty")).toBeVisible();
+        await expect(
+            face.getByTestId("workspace-agent-effective-cap-provenance-ids"),
+        ).toBeVisible();
+        // **只读一次**：不是每行一次，也不是每次渲染一次。
+        expect(liveRequests).toHaveLength(1);
+        expect(liveRequests[0]).toContain(
+            `/workspaces/${MOCK_AGENT_WORKSPACE_ID}/agents/${pid}/effective-cap`,
+        );
+        // 另一行的快照面不受影响 ⇒ live 没有覆盖快照（两者语义不同）。
+        await expect(page.getByTestId(`workspace-agent-cap-source-${PIDS.inherit}`)).toHaveText(
+            INHERIT,
+        );
+    });
+
+    test("task-469：继承态 live 比快照多（role-binding + 无绑定行），空快照不等于空权限", async ({
+        page,
+    }) => {
+        await page.goto(URL);
+        const pid = PIDS.inherit;
+        const row = page.getByTestId(`workspace-agent-${pid}`);
+        await expect(row).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await expect(page.getByTestId(`workspace-agent-cap-source-${pid}`)).toHaveText(INHERIT);
+        await page
+            .getByTestId(`workspace-agent-edit-cap-${pid}`)
+            .click({ timeout: ACTION_TIMEOUT_MS });
+        await expect(page.getByTestId(`workspace-agent-effective-cap-binding-${pid}`)).toHaveText(
+            copy("workspace.agentEffectiveCapBindingRole"),
+            {
+                timeout: EXPECT_TIMEOUT_MS,
+            },
+        );
+        await expect(page.getByTestId(`workspace-agent-effective-cap-bound-${pid}`)).toHaveText(
+            copy("workspace.agentEffectiveCapUnbound"),
+        );
+        const atoms = row.getByTestId("workspace-agent-effective-cap-atoms");
+        // 角色天花板三条原子（mock 的 WS_EDITOR），而该行快照是空数组。
+        await expect(atoms.locator("span.rounded.border")).toHaveCount(3);
+        await expect(row.getByTestId("workspace-agent-effective-cap-empty")).toHaveCount(0);
+    });
 });

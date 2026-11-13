@@ -295,3 +295,139 @@ describe("mock 权限投影的工作区档授予（task-449 浏览器实测补�
         expect(denied.workspaces).toEqual(granted.workspaces);
     });
 });
+
+/**
+ * task-469（417 P1-6）：**live 生效权限读面**的 mock 判据。核心不是「有这条路由」，而是
+ * **它真的按 live 语义求值**：与快照分得开（两个方向都有样本）、命中来源两态、显式零权限仍是零、
+ * 未知 suffix 仍 404（不通配 200 掩盖缺口，D-1248）。契约 `EffectiveCapView`（openapi:6994）7 required。
+ */
+describe("mock live effective-cap 读面（task-469）", () => {
+    const capUrl = (pid: string) => `/workspaces/${WS}/agents/${pid}/effective-cap`;
+    const viewOf = async (pid: string) => {
+        const answer = await call(handler, capUrl(pid));
+        expect(answer.status).toBe(200);
+        return answer.body as Record<string, unknown>;
+    };
+    const FILE_READ = { actionClass: "file_read", resource: "workspace" };
+    const FILE_WRITE = { actionClass: "file_write", resource: "workspace" };
+    const TOOL_EXECUTE = { actionClass: "tool_execute", resource: "workspace" };
+    const EDITOR_CEILING = [FILE_READ, FILE_WRITE, TOOL_EXECUTE];
+
+    it("六行都能读到 live 面，7 个 required 字段齐全且类型对", async () => {
+        for (const pid of Object.values(MOCK_AGENT_PRINCIPAL_IDS)) {
+            const view = await viewOf(pid);
+            expect(Object.keys(view).sort()).toEqual(
+                [
+                    "bound",
+                    "capSource",
+                    "defaultGrants",
+                    "effectiveCap",
+                    "principalId",
+                    "provenance",
+                    "workspaceId",
+                ].sort(),
+            );
+            expect(view.principalId).toBe(pid);
+            expect(view.workspaceId).toBe(WS);
+            expect(Array.isArray(view.effectiveCap)).toBe(true);
+            expect(typeof view.bound).toBe("boolean");
+            expect(["binding-snapshot", "role-binding"]).toContain(
+                (view.capSource as { binding: string }).binding,
+            );
+            const provenance = view.provenance as Record<string, unknown>;
+            expect(Array.isArray(provenance.principalGrantIds)).toBe(true);
+            expect(Array.isArray(provenance.bindingGrantIds)).toBe(true);
+            expect(Array.isArray((view.defaultGrants as { readFace: unknown }).readFace)).toBe(
+                true,
+            );
+        }
+    });
+
+    it("binding-snapshot：绑定原子保留到主体生效上限 ⇒ live 比快照少一条（不是快照副本）", async () => {
+        const pid = MOCK_AGENT_PRINCIPAL_IDS.explicit;
+        const view = await viewOf(pid);
+        expect(view.capSource).toEqual({ binding: "binding-snapshot" });
+        expect(view.bound).toBe(true);
+        // 快照三条（含 credential_use），live 只剩天花板内的两条 —— **精确相等**，不用包含判据。
+        expect(view.effectiveCap).toEqual([FILE_READ, FILE_WRITE]);
+        const snapshot = rowOf(await call(handler, agentsUrl).then((a) => a.body), pid)
+            .permissionsSnapshot as unknown[];
+        expect(snapshot).toHaveLength(3);
+        expect(view.effectiveCap).not.toEqual(snapshot);
+        // binding-snapshot 情形 bindingGrantIds 为空（契约原文）。
+        expect((view.provenance as { bindingGrantIds: unknown[] }).bindingGrantIds).toEqual([]);
+    });
+
+    it("role-binding：继承态快照是空数组而 live 是角色天花板 ⇒ 另一个方向的 live ≠ snapshot", async () => {
+        const pid = MOCK_AGENT_PRINCIPAL_IDS.inherit;
+        const view = await viewOf(pid);
+        expect(view.capSource).toEqual({ binding: "role-binding" });
+        expect(view.bound).toBe(false);
+        expect(view.effectiveCap).toEqual(EDITOR_CEILING);
+        const snapshot = rowOf(await call(handler, agentsUrl).then((a) => a.body), pid)
+            .permissionsSnapshot as unknown[];
+        expect(snapshot).toEqual([]);
+        // 命中来源的 grant 行 id = 该主体的角色绑定行（不是编的常量）。
+        expect((view.provenance as { bindingGrantIds: unknown[] }).bindingGrantIds).toEqual(
+            agentRoleBindingsOf(pid).map((binding) => binding.bindingId),
+        );
+    });
+
+    it("显式零权限仍是零（不回落角色天花板）——[] 不是「用基线」（D-1109）", async () => {
+        const view = await viewOf(MOCK_AGENT_PRINCIPAL_IDS.zero);
+        expect(view.capSource).toEqual({ binding: "binding-snapshot" });
+        expect(view.effectiveCap).toEqual([]);
+        expect(view.bound).toBe(true);
+    });
+
+    it("未绑定行：role-binding + 空天花板 + bound=false，空态不伪装成有权限", async () => {
+        const view = await viewOf(MOCK_AGENT_PRINCIPAL_IDS.unbound);
+        expect(view.capSource).toEqual({ binding: "role-binding" });
+        expect(view.effectiveCap).toEqual([]);
+        expect(view.bound).toBe(false);
+        expect((view.provenance as { bindingGrantIds: unknown[] }).bindingGrantIds).toEqual([]);
+    });
+
+    it("effectiveCap 已排序（契约：byte-identical to the internal cap and sorted）", async () => {
+        for (const pid of Object.values(MOCK_AGENT_PRINCIPAL_IDS)) {
+            const view = await viewOf(pid);
+            const keys = (
+                view.effectiveCap as Array<{ actionClass: string; resource?: string }>
+            ).map((atom) => `${atom.actionClass}:${atom.resource ?? "*"}`);
+            expect(keys).toEqual([...keys].sort());
+        }
+    });
+
+    it("未知 suffix / 未知主体 / 别的工作区一律 404，不用通配 200 掩盖缺口", async () => {
+        const pid = MOCK_AGENT_PRINCIPAL_IDS.explicit;
+        const unknownSuffix = await call(handler, `${capUrl(pid)}-nope`);
+        expect(unknownSuffix.status).toBe(404);
+        expect((unknownSuffix.body as { code: string }).code).toBe("MOCK_ENDPOINT_MISSING");
+        const unknownPrincipal = await call(
+            handler,
+            capUrl("00000000-0000-4000-8000-000000000000"),
+        );
+        expect(unknownPrincipal.status).toBe(404);
+        expect((unknownPrincipal.body as { code: string }).code).toBe("WORKSPACE_AGENT_NOT_FOUND");
+        const otherWorkspace = await call(
+            handler,
+            `/workspaces/not-the-mock-ws/agents/${pid}/effective-cap`,
+        );
+        expect(otherWorkspace.status).toBe(404);
+    });
+
+    it("mock 边界留痕：天花板权威是角色绑定行，不是 row.roleIds 那个显示字段", async () => {
+        // disabled / legacy 两行**没有角色绑定行**（种子里只有 explicit/zero/inherit 三条）
+        // ⇒ 天花板为空 ⇒ live 为空，即使 row.roleIds 写着 EDITOR。这是 mock 的既有数据形态，
+        // **本批不改夹具数据去凑判据**（D-1319）；真值在 CP 的角色绑定，mock 只近似到绑定行这一层。
+        for (const pid of [MOCK_AGENT_PRINCIPAL_IDS.disabled, MOCK_AGENT_PRINCIPAL_IDS.legacy]) {
+            expect(agentRoleBindingsOf(pid)).toEqual([]);
+            const view = await viewOf(pid);
+            expect(view.effectiveCap).toEqual([]);
+            expect(view.capSource).toEqual({
+                binding:
+                    pid === MOCK_AGENT_PRINCIPAL_IDS.disabled ? "binding-snapshot" : "role-binding",
+            });
+        }
+    });
+});

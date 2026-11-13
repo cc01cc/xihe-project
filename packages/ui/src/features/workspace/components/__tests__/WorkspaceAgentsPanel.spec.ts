@@ -15,6 +15,8 @@ const apiMock = vi.hoisted(() => ({
     createAgentPrincipal: vi.fn<(input: unknown) => Promise<unknown>>(),
     updateWorkspaceAgentCap: vi.fn<() => Promise<unknown>>(),
     deleteWorkspaceAgent: vi.fn<() => Promise<void>>(),
+    // task-469（417 P1-6）：live 生效权限读面（详情/编辑区打开时读一次）。
+    getWorkspaceAgentEffectiveCap: vi.fn<() => Promise<unknown>>(),
     disableAgentPrincipal: vi.fn<(principalId: string) => Promise<void>>(),
     // PLAN-0621 F-01：权威能力投影（CP `GET /me/permissions`）。
     getSelfPermissions: vi.fn<() => Promise<unknown>>(),
@@ -131,6 +133,17 @@ beforeEach(() => {
     apiMock.deleteWorkspaceAgent.mockResolvedValue(undefined);
     apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
     apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
+    // task-469：默认给一个合法 live 视图（各用例按需覆盖）；reset 清掉未消费的 once 队列（BL-359）。
+    apiMock.getWorkspaceAgentEffectiveCap.mockReset();
+    apiMock.getWorkspaceAgentEffectiveCap.mockResolvedValue({
+        principalId: "77777777-7777-4777-8777-777777777777",
+        workspaceId: WORKSPACE_ID,
+        effectiveCap: [],
+        capSource: { binding: "role-binding" },
+        provenance: { principalGrantIds: [], bindingGrantIds: [] },
+        defaultGrants: { readFace: ["workspace-member"] },
+        bound: false,
+    });
 });
 
 afterEach(() => {
@@ -1857,5 +1870,188 @@ describe("WorkspaceAgentsPanel cap snapshot provenance (task-417 P1-6)", () => {
             wrapper.get('[data-testid="workspace-agent-cap"]').findAll("span.rounded.border"),
         ).toHaveLength(atoms.length + 1);
         expect(wrapper.find('[data-testid="workspace-agent-cap-empty"]').exists()).toBe(false);
+    });
+});
+
+/**
+ * task-469（417 P1-6）：**live 生效权限面**。判据的核心不是「有没有渲染」，而是
+ * **它与快照分得开**：夹具刻意让 live ≠ snapshot（两个方向都有），并断言两面**同时**各自显示自己的值。
+ * 只断言「live 面存在」的话，把快照换个字段名喂进来也能绿（D-1281 空断言）。
+ */
+describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => {
+    const PID_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+    const PID_B = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+    const GRANT_A = "g1f0c4d2-7b3e-4c55-8f10-aaaaaaaaaaa1";
+    const GRANT_B = "g1f0c4d2-7b3e-4c55-8f10-aaaaaaaaaaa2";
+    const CREDENTIAL_RESOURCE = "credential:11111111-2222-3333-4444-555555555555";
+    const tt = (key: string) => i18n.global.t(key);
+    const snapshotAtoms = [
+        { actionClass: "file_read", resource: "workspace" },
+        { actionClass: "file_write", resource: "workspace" },
+        { actionClass: "credential_use", resource: CREDENTIAL_RESOURCE },
+    ];
+    // live 比快照**少一条**：绑定原子保留到主体生效上限（角色天花板里没有 credential_use）。
+    const liveAtoms = [
+        { actionClass: "file_read", resource: "workspace" },
+        { actionClass: "file_write", resource: "workspace" },
+    ];
+    const row = (principalId: string, permissionsSnapshot: unknown[], capSource: string) => ({
+        principalId,
+        name: `agent-${principalId.slice(-4)}`,
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot,
+        capSource,
+        bound: true,
+        disabled: false,
+    });
+    const liveView = (over: Record<string, unknown> = {}) => ({
+        principalId: PID_A,
+        workspaceId: WORKSPACE_ID,
+        effectiveCap: liveAtoms,
+        capSource: { binding: "binding-snapshot" },
+        provenance: { principalGrantIds: [GRANT_A], bindingGrantIds: [] },
+        defaultGrants: { readFace: ["workspace-member"] },
+        bound: true,
+        ...over,
+    });
+    async function mountRows(rows: unknown[], view: unknown) {
+        apiMock.getWorkspaceAgents.mockResolvedValue(rows);
+        apiMock.getWorkspaceAgentEffectiveCap.mockResolvedValue(view);
+        return mountOpenedPanel();
+    }
+    async function openEditing(wrapper: VueWrapper, principalId: string) {
+        await wrapper
+            .get(`[data-testid="workspace-agent-edit-cap-${principalId}"]`)
+            .trigger("click");
+        await flushPromises();
+    }
+    const liveFace = (wrapper: VueWrapper) =>
+        wrapper.get('[data-testid="workspace-agent-effective-cap"]');
+
+    it("reads live once per opened detail, addressed by workspace + principal", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit"), row(PID_B, liveAtoms, "explicit")],
+            liveView(),
+        );
+        // 列表阶段**不发** live 请求（避免每行一次）。
+        expect(apiMock.getWorkspaceAgentEffectiveCap).not.toHaveBeenCalled();
+        await openEditing(wrapper, PID_A);
+        expect(apiMock.getWorkspaceAgentEffectiveCap).toHaveBeenCalledTimes(1);
+        expect(apiMock.getWorkspaceAgentEffectiveCap).toHaveBeenCalledWith(WORKSPACE_ID, PID_A);
+    });
+
+    it("live and snapshot coexist: live drops the over-ceiling atom, the other row keeps its snapshot", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit"), row(PID_B, snapshotAtoms, "explicit")],
+            liveView(),
+        );
+        await openEditing(wrapper, PID_A);
+        expect(wrapper.get('[data-testid="workspace-agent-effective-cap-label"]').text()).toBe(
+            tt("workspace.agentEffectiveCapLabel"),
+        );
+        const atoms = liveFace(wrapper).get('[data-testid="workspace-agent-effective-cap-atoms"]');
+        // live 只有两条，且**不含**快照里那条超出天花板的 credential_use。
+        expect(atoms.findAll("span.rounded.border")).toHaveLength(liveAtoms.length);
+        expect(atoms.text()).not.toContain(CREDENTIAL_RESOURCE);
+        // **另一行的快照面仍在，且仍按快照渲染三条** ⇒ live 没有覆盖快照（两者语义不同）。
+        const otherSnapshot = wrapper.get(`[data-testid="workspace-agent-cap-source-${PID_B}"]`);
+        expect(otherSnapshot.text()).toBe(tt("workspace.agentCapExplicit"));
+        expect(
+            wrapper
+                .findAll('[data-testid="workspace-agent-cap"]')[0]
+                .findAll("span.rounded.border"),
+        ).toHaveLength(snapshotAtoms.length + 1);
+    });
+
+    it("binding-snapshot and role-binding render their own hit source and bound state", async () => {
+        const bound = await mountRows([row(PID_A, snapshotAtoms, "explicit")], liveView());
+        await openEditing(bound, PID_A);
+        expect(
+            bound.get(`[data-testid="workspace-agent-effective-cap-binding-${PID_A}"]`).text(),
+        ).toBe(tt("workspace.agentEffectiveCapBindingSnapshot"));
+        expect(
+            bound.get(`[data-testid="workspace-agent-effective-cap-bound-${PID_A}"]`).text(),
+        ).toBe(tt("workspace.agentEffectiveCapBound"));
+
+        // 继承态：快照是 []，live 是角色天花板 ⇒ **live 比快照多**（第二个方向的 live ≠ snapshot）。
+        const roleReach = await mountRows(
+            [row(PID_A, [], "baseline")],
+            liveView({
+                capSource: { binding: "role-binding" },
+                bound: false,
+                provenance: { principalGrantIds: [GRANT_A], bindingGrantIds: [GRANT_B] },
+            }),
+        );
+        await openEditing(roleReach, PID_A);
+        expect(
+            roleReach.get(`[data-testid="workspace-agent-effective-cap-binding-${PID_A}"]`).text(),
+        ).toBe(tt("workspace.agentEffectiveCapBindingRole"));
+        expect(
+            roleReach.get(`[data-testid="workspace-agent-effective-cap-bound-${PID_A}"]`).text(),
+        ).toBe(tt("workspace.agentEffectiveCapUnbound"));
+        expect(
+            roleReach
+                .get('[data-testid="workspace-agent-effective-cap-atoms"]')
+                .findAll("span.rounded.border"),
+        ).toHaveLength(liveAtoms.length);
+    });
+
+    it("provenance shows both grant-row counts and the ids themselves", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit")],
+            liveView({
+                provenance: { principalGrantIds: [GRANT_A], bindingGrantIds: [GRANT_B] },
+            }),
+        );
+        await openEditing(wrapper, PID_A);
+        const provenance = wrapper.get('[data-testid="workspace-agent-effective-cap-provenance"]');
+        expect(provenance.text()).toContain(tt("workspace.agentEffectiveCapProvenancePrincipal"));
+        expect(provenance.text()).toContain(tt("workspace.agentEffectiveCapProvenanceBinding"));
+        const ids = wrapper.get('[data-testid="workspace-agent-effective-cap-provenance-ids"]');
+        expect(ids.text()).toContain(GRANT_A);
+        expect(ids.text()).toContain(GRANT_B);
+        expect(wrapper.get('[data-testid="workspace-agent-effective-cap-read-face"]').text()).toBe(
+            tt("workspace.agentEffectiveCapReadFace"),
+        );
+    });
+
+    it("a failed live read is shown as a failure, never silently replaced by the snapshot", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([row(PID_A, snapshotAtoms, "explicit")]);
+        apiMock.getWorkspaceAgentEffectiveCap.mockRejectedValue(new ApiError("FORBIDDEN"));
+        const wrapper = await mountOpenedPanel();
+        await openEditing(wrapper, PID_A);
+        expect(wrapper.get('[data-testid="workspace-agent-effective-cap-error"]').text()).toBe(
+            tt("workspace.agentEffectiveCapForbidden"),
+        );
+        // 失败时**不渲染原子面**（回落快照会让「读了 live」与「显示快照」分不开，D-1281）。
+        expect(wrapper.find('[data-testid="workspace-agent-effective-cap-atoms"]').exists()).toBe(
+            false,
+        );
+        // 也不写面板级 error（那是列表加载失败的位置）。
+        expect(wrapper.find('[data-testid="workspace-agents-error"]').exists()).toBe(false);
+    });
+
+    it("switching to another principal replaces the live face instead of flashing the previous one", async () => {
+        const wrapper = await mountRows(
+            [row(PID_A, snapshotAtoms, "explicit"), row(PID_B, liveAtoms, "explicit")],
+            liveView(),
+        );
+        await openEditing(wrapper, PID_A);
+        expect(
+            wrapper.get('[data-testid="workspace-agent-effective-cap-provenance-ids"]').text(),
+        ).toContain(GRANT_A);
+        apiMock.getWorkspaceAgentEffectiveCap.mockResolvedValue(
+            liveView({
+                principalId: PID_B,
+                provenance: { principalGrantIds: [GRANT_B], bindingGrantIds: [] },
+            }),
+        );
+        await openEditing(wrapper, PID_B);
+        const ids = wrapper.get('[data-testid="workspace-agent-effective-cap-provenance-ids"]');
+        expect(ids.text()).toContain(GRANT_B);
+        expect(ids.text()).not.toContain(GRANT_A);
+        expect(apiMock.getWorkspaceAgentEffectiveCap).toHaveBeenCalledTimes(2);
     });
 });

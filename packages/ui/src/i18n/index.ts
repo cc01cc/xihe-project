@@ -572,7 +572,23 @@ const messages = {
             noAgentCapabilities: "无工具权限",
             agentCapSnapshotLabel: "冻结上限快照",
             agentCapSnapshotHint:
-                "下列徽标是 CP 在绑定时记录的冻结上限快照，不是当前生效权限；实际生效由 CP 按角色绑定实时求值，UI 目前没有该读面。",
+                "下列徽标是 CP 在绑定时记录的冻结上限快照，不是当前生效权限；当前生效权限在打开「编辑工作区角色」时实时读取并单独标注。",
+            // task-469（417 P1-6）：live 生效权限面。**与快照两套文案**，不共用 —— 共用会让用户
+            // 把「冻结上限」与「现在实际能做什么」读成同一件事（D-1281）。
+            agentEffectiveCapLabel: "当前生效权限（实时）",
+            agentEffectiveCapHint:
+                "这是 CP 实时求值的结果，与上方冻结上限快照不是同一件事；快照是绑定时记录的上限。",
+            agentEffectiveCapLoading: "正在读取当前生效权限…",
+            agentEffectiveCapError: "当前生效权限读取失败",
+            agentEffectiveCapForbidden: "无权读取当前生效权限（需要工作区成员身份）",
+            agentEffectiveCapBindingSnapshot: "命中：能力绑定行",
+            agentEffectiveCapBindingRole: "命中：工作区角色授权",
+            agentEffectiveCapBound: "存在能力绑定行",
+            agentEffectiveCapUnbound: "无绑定行（按角色授权生效）",
+            agentEffectiveCapEmpty: "当前无任何生效权限",
+            agentEffectiveCapProvenancePrincipal: "主体授权行",
+            agentEffectiveCapProvenanceBinding: "绑定授权行",
+            agentEffectiveCapReadFace: "本读面默认授予：工作区成员",
             editAgentCap: "编辑工作区角色",
             saveAgentCap: "保存权限",
             unbindAgent: "解绑",
@@ -4110,7 +4126,23 @@ const messages = {
             noAgentCapabilities: "No tool permissions",
             agentCapSnapshotLabel: "Frozen cap snapshot",
             agentCapSnapshotHint:
-                "The badges below are the frozen cap snapshot CP recorded at binding time, not the permissions in effect now. Live authority is evaluated by CP from role bindings; the UI has no read face for it yet.",
+                "The badges below are the frozen cap snapshot CP recorded at binding time, not the permissions in effect now. Effective permissions are read live and labelled separately when you open “Edit workspace role”.",
+            // task-469 (417 P1-6): live effective-cap face. Separate copy from the snapshot on purpose.
+            agentEffectiveCapLabel: "Effective permissions (live)",
+            agentEffectiveCapHint:
+                "This is CP's live evaluation, not the same thing as the frozen cap snapshot above; the snapshot is the ceiling recorded at binding time.",
+            agentEffectiveCapLoading: "Loading effective permissions…",
+            agentEffectiveCapError: "Could not load effective permissions",
+            agentEffectiveCapForbidden:
+                "Not allowed to read effective permissions (workspace membership required)",
+            agentEffectiveCapBindingSnapshot: "Hit: cap binding row",
+            agentEffectiveCapBindingRole: "Hit: workspace role grants",
+            agentEffectiveCapBound: "Cap binding row present",
+            agentEffectiveCapUnbound: "No binding row (role grants apply)",
+            agentEffectiveCapEmpty: "No permissions in effect",
+            agentEffectiveCapProvenancePrincipal: "Principal grant rows",
+            agentEffectiveCapProvenanceBinding: "Binding grant rows",
+            agentEffectiveCapReadFace: "Read-face default grant: workspace members",
             editAgentCap: "Edit workspace role",
             saveAgentCap: "Save permissions",
             unbindAgent: "Unbind",

@@ -926,6 +926,31 @@ export interface WorkspaceAgentPermission {
     resource?: string;
 }
 
+/**
+ * task-469（417 P1-6）：`GET /workspaces/{ws}/agents/{pid}/effective-cap` 的 UI 投影。
+ * 契约名 **`EffectiveCapView`**（`docs/api/openapi.yaml:6994`，**7 个字段全 required**）。
+ *
+ * <p>**与 `permissionsSnapshot` 不是同一件事，两者并存不互相覆盖**：契约原文说 effectiveCap 是
+ * **LIVE `resolveCapFor` 求值**（binding 原子保留到主体生效上限）、与内部 cap 逐字节相同且已排序，
+ * **NOT the stored permissionsSnapshot**。快照 = CP 记录的冻结上限（列表徽标用它，已标注「快照」）；
+ * 本面 = 「它现在实际能做什么」。拿 live 覆盖快照会把两种语义混成一句话（D-1281）。</p>
+ *
+ * <p>`capSource.binding` 是**能力原子层的命中来源**：`binding-snapshot` = 命中 cap 绑定行；
+ * `role-binding` = 命中工作区角色授权（没有绑定行）。`bound` = 是否存在 cap 绑定行（false = 走角色授权）。
+ * `provenance` 给两侧 grant 行 id（`binding-snapshot` 情形 `bindingGrantIds` 为空）。
+ * `defaultGrants.readFace` = 本读面的默认授予集 = **工作区成员**（门在原子层求值，不做角色名特判）
+ * ⇒ 这是**只读面**，可见性不按 `canManageWorkspaceAgents` 收。</p>
+ */
+export interface WorkspaceAgentEffectiveCap {
+    principalId: string;
+    workspaceId: string;
+    effectiveCap: WorkspaceAgentPermission[];
+    capSource: { binding: "binding-snapshot" | "role-binding" };
+    provenance: { principalGrantIds: string[]; bindingGrantIds: string[] };
+    defaultGrants: { readFace: string[] };
+    bound: boolean;
+}
+
 /** CP 的 `GET /api/v1/me/permissions` 投影（PLAN-0621 F-01：前端唯一的权威能力来源）。 */
 export interface SelfPermissionsView {
     userId: string;
@@ -4265,6 +4290,69 @@ export const api = {
             `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}`,
             { method: "DELETE" },
         );
+    },
+    /**
+     * task-469（417 P1-6）：**当前生效权限**读面（LIVE，非快照）。CP 侧
+     * `WorkspaceAgentController:84` → `resolveCapWithSourceFor(actor, pid, ws)` → `toEffectiveCapView`，
+     * 审计记 `effective_cap_read`（只记 actor/workspace/principal，不记 cap 值）。
+     *
+     * <p>**fail-closed 解析**：7 个 required 缺任一 / 形状不对 ⇒ **抛错**，由调用方显式呈现失败。
+     * **不降级成 `permissionsSnapshot`** —— 那会让「读了 live」与「显示快照」在界面上分不开，
+     * 正是 D-1281 要挡的空断言形态；也不静默补默认值（补出来的 bound/provenance 是编的）。</p>
+     */
+    async getWorkspaceAgentEffectiveCap(
+        workspaceId: string,
+        principalId: string,
+    ): Promise<WorkspaceAgentEffectiveCap> {
+        const raw = await request<unknown>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/effective-cap`,
+        );
+        const record = asRecord(raw);
+        const capSource = asRecord(record?.capSource);
+        const provenance = asRecord(record?.provenance);
+        const defaultGrants = asRecord(record?.defaultGrants);
+        const binding = capSource?.binding;
+        const grantIds = (value: unknown): string[] | null =>
+            Array.isArray(value) && value.every((item) => typeof item === "string")
+                ? (value as string[])
+                : null;
+        const principalGrantIds = grantIds(provenance?.principalGrantIds);
+        const bindingGrantIds = grantIds(provenance?.bindingGrantIds);
+        const readFace = grantIds(defaultGrants?.readFace);
+        if (
+            !record ||
+            typeof record.principalId !== "string" ||
+            typeof record.workspaceId !== "string" ||
+            !Array.isArray(record.effectiveCap) ||
+            !isEnumValue(binding, ["binding-snapshot", "role-binding"] as const) ||
+            principalGrantIds === null ||
+            bindingGrantIds === null ||
+            readFace === null ||
+            typeof record.bound !== "boolean"
+        ) {
+            throw new Error(
+                "effective-cap response is malformed (EffectiveCapView requires 7 fields)",
+            );
+        }
+        // 原子逐项校验：`{actionClass, resource?}`（resource 只在存在时给，同 toValue:322-335）。
+        const effectiveCap: WorkspaceAgentPermission[] = record.effectiveCap.map((item) => {
+            const atom = asRecord(item);
+            if (!atom || typeof atom.actionClass !== "string") {
+                throw new Error("effective-cap atom is malformed");
+            }
+            return typeof atom.resource === "string"
+                ? { actionClass: atom.actionClass, resource: atom.resource }
+                : { actionClass: atom.actionClass };
+        });
+        return {
+            principalId: record.principalId,
+            workspaceId: record.workspaceId,
+            effectiveCap,
+            capSource: { binding },
+            provenance: { principalGrantIds, bindingGrantIds },
+            defaultGrants: { readFace },
+            bound: record.bound,
+        };
     },
     async updateSession(id: string, patch: SessionBindingPatch): Promise<SessionResponse> {
         return normalizeSession(
