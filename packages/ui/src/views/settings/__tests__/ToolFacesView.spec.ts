@@ -86,6 +86,12 @@ const unclassifiedFace: PolicyToolFaceView = {
  * task-74：工具面的 instance scope 对端是 `MANAGE_WORKSPACE_POLICY` **动作原子**
  * （`policy/PolicyController.java:166-168` 的 `isAdmin()` 就是它），不是 `cap:instance:admin`。
  * `atoms` 默认跟随 `admin` 开关（本 spec 不测判据轴，只测页面行为）；给 `atoms` 单独赋值才测轴。
+ *
+ * task-416 补（归因：task-414 `58a57c9e3` 漏改的消费方）：`canManageWorkspace` 已改为
+ * **只认 `workspace:admin` 能力位 / 工作区投影**，不再由 `ownerId` 推断属主。
+ * CP 的 `CapabilityProjectionService` 对属主本就下发 `workspaceAdminOf` ⇒ 真实属主一定带这一位。
+ * 旧夹具只写 `ownerId`、`workspaceAdminOf: []`，那是**现实中不存在的属主**；三条用例因此变红。
+ * 修法是让夹具与 CP 投影一致（属主 ⇒ 带 `workspaceAdminOf`），不是放宽产品判据。
  */
 function seedIdentity(
     options: { admin?: boolean; workspaceOwner?: boolean; atoms?: string[] } = {},
@@ -98,7 +104,8 @@ function seedIdentity(
             capabilities: {
                 isInstanceAdmin: options.admin === true,
                 isInstanceSuper: false,
-                workspaceAdminOf: [],
+                // 属主 ⇒ CP 投影里必带 workspace:admin（见上方 task-416 注）
+                workspaceAdminOf: options.workspaceOwner === false ? [] : [WORKSPACE_ID],
             },
         }),
     );
