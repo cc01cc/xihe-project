@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
+import { createPinia } from "pinia";
 
 /**
  * task-156：设置页「← 返回聊天」只在移动端保留。
@@ -64,7 +65,9 @@ describe("SettingsLayout 返回聊天入口 (task-156)", () => {
     it("keeps the back-to-chat button only on mobile (container is lg:hidden)", () => {
         const wrapper = mount(SettingsLayout, {
             global: {
-                plugins: [i18n],
+                // task-429：task-341（b14f0195b）给 SettingsLayout 加了 useAuthStore()（:29），
+                // 需要 active Pinia。fresh store 无 token ⇒ hydrateWorkspace 早退（auth.ts:472），不发请求。
+                plugins: [i18n, createPinia()],
                 stubs: {
                     SettingsSidebar: { template: '<div data-testid="settings-sidebar-stub" />' },
                     SettingsLayerHeader: {
