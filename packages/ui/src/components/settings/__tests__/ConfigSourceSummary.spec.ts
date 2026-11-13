@@ -66,3 +66,41 @@ describe("ConfigSourceSummary（F-07 审计明细默认收起）", () => {
         expect(row.text()).toContain("继承自 实例层");
     });
 });
+
+describe("ConfigSourceSummary（task-386 / D-1232 实例模型凭据归属标注）", () => {
+    const NOTE = '[data-testid="config-source-own-credential-llm-provider"]';
+    const TOGGLE = '[data-testid="config-source-summary-toggle-llm-provider"]';
+
+    function mountWithNote(ownCredentialNote?: boolean) {
+        return mount(ConfigSourceSummary, {
+            props: {
+                domain: "llm-provider",
+                layer: "user" as const,
+                meta: meta([{ key: "profile", source: "instance" }]),
+                ...(ownCredentialNote === undefined ? {} : { ownCredentialNote }),
+            },
+        });
+    }
+
+    it("判据①：调用方判定成立 ⇒ 标注可见，文案说「凭据」而不是「连接」", () => {
+        const note = mountWithNote(true).get(NOTE);
+        expect(note.text()).toBe("此模型将使用你自己的凭据");
+    });
+
+    it("判据②：判定不成立（false / 不传）⇒ 不渲染标注", () => {
+        expect(mountWithNote(false).find(NOTE).exists()).toBe(false);
+        expect(mountWithNote().find(NOTE).exists()).toBe(false);
+    });
+
+    it("判据③：只展示 —— 不改摘要折叠态、不增减明细行、不新增可操作控件", async () => {
+        const withNote = mountWithNote(true);
+        const without = mountWithNote(false);
+        expect(withNote.get(TOGGLE).attributes("aria-expanded")).toBe("false");
+        await withNote.get(TOGGLE).trigger("click");
+        await without.get(TOGGLE).trigger("click");
+        expect(withNote.findAll('[data-testid^="config-source-row-"]').length).toBe(
+            without.findAll('[data-testid^="config-source-row-"]').length,
+        );
+        expect(withNote.findAll("button").length).toBe(without.findAll("button").length);
+    });
+});
