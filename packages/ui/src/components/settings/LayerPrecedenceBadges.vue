@@ -42,7 +42,9 @@ const badges = computed(() =>
                 {{ t("settings.ia.fourLayerOrderLabel") }}
             </span>
             <template v-for="(badge, index) in badges" :key="badge.id">
-                <span v-if="index > 0" class="text-muted-foreground/60" aria-hidden="true">→</span>
+                <span v-if="index > 0" class="text-xs text-muted-foreground/60" aria-hidden="true"
+                    >→</span
+                >
                 <span
                     :data-testid="'layer-badge-' + badge.id"
                     :data-active="badge.active ? 'true' : undefined"
