@@ -1099,10 +1099,10 @@ async function main() {
         return;
     }
     // 交付批次 = SHOTS（`--only` 时按 id 收窄）；临时加拍镜头追加在后面，manifest 带 adHoc 标记。
-const extraShots = opts.extraShots.map(parseExtraShot);
-const shots = (opts.only ? SHOTS.filter((shot) => opts.only.has(shot.id)) : SHOTS.slice()).concat(
-    opts.only ? extraShots.filter((shot) => opts.only.has(shot.id)) : extraShots,
-);
+    const extraShots = opts.extraShots.map(parseExtraShot);
+    const shots = (
+        opts.only ? SHOTS.filter((shot) => opts.only.has(shot.id)) : SHOTS.slice()
+    ).concat(opts.only ? extraShots.filter((shot) => opts.only.has(shot.id)) : extraShots);
     if (shots.length === 0) throw new Error("--only 没有匹配到任何镜头");
 
     const git = gitState();
