@@ -351,29 +351,38 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
         // **判据判别力（Lead 补充要求 / runtime-1 复核点）**：不是把 count=0 翻成「存在」就完事 ——
         // 期望集**从 SSOT 取**、落点**从 DOM 取**，两侧对撞（与「三 tab + 域集由 SSOT 派生」那条同源，
-        // spec 不另抄域名清单）；再加一条**反向层守卫**：实例独占域不得出现在工作区面。
+        // spec 不另抄域名清单）；再加**反向层守卫**：实例独占域不得出现在工作区面。
         // 两者合起来才能区分「per-workspace 面按本层矩阵渲染」与「随便渲染了一堆卡」（D-1281 空断言）。
         const expectedDomains = [...LAYER_DOMAINS.workspace];
         expect(expectedDomains.length).toBeGreaterThan(0);
         expect(expectedDomains).toContain("approval-policy");
-        const renderedTestIds = await page.evaluate(() =>
-            Array.from(document.querySelectorAll("[data-testid]")).map(
+        // **取样范围收进本层配置面板容器**（runtime-1 加固建议二，task-468 后续）：原先在全 document
+        // 取 testid ⇒ 页面别处（如导航）出现含域名的 testid 就能满足正向断言，而反向仍 0，理论上可同绿。
+        // 收进容器后两侧同口径。**不收敛到 `config-domain-` 前缀**：工作区 4 域里 agent-templates 走
+        // 专用面板 + `config-source-summary-<domain>`（见「三 tab」那条注释），只认通用前缀会**假红**。
+        const configPanel = page.getByTestId("ws-settings-config");
+        await expect(configPanel).toBeVisible();
+        const renderedTestIds = await configPanel.evaluate((panel) =>
+            Array.from(panel.querySelectorAll("[data-testid]")).map(
                 (el) => el.getAttribute("data-testid") ?? "",
             ),
         );
-        // 每个 SSOT 域都要在本页留下带该域名的 testid 落点（通用面板 / 专用分区 / source-summary 都算，
-        // 「用什么组件渲染」不是判据 —— 同「三 tab」那条的教训）。
+        // 每个 SSOT 域都要在**本层面板内**留下带该域名的 testid 落点（通用面板 / 专用分区 /
+        // source-summary 都算，「用什么组件渲染」不是判据 —— 同「三 tab」那条的教训）。
         const missingDomains = expectedDomains.filter(
             (domain) => !renderedTestIds.some((id) => id.includes(domain)),
         );
         expect(missingDomains).toEqual([]);
-        // 反向：从 SSOT 派生一个**实例独占域**（在 instance 矩阵、不在 workspace 矩阵），断言它不在本页。
-        // 不写死域名 ⇒ 矩阵变了这条自动跟着变，不会静默失效。
-        const instanceOnly = LAYER_DOMAINS.instance.find(
+        // 反向：从 SSOT 派生**全部**实例独占域（在 instance 矩阵、不在 workspace 矩阵），逐个断言不在。
+        // runtime-1 加固建议一：原 `.find` 只守第一个（他实算 1/8），改 `.filter` ⇒ **同成本守 8/8**。
+        // 不写死域名 ⇒ 矩阵变了自动跟着变；**显式挡空集**（空集会让这条退化成空断言）。
+        const instanceOnlyDomains = LAYER_DOMAINS.instance.filter(
             (domain) => !LAYER_DOMAINS.workspace.includes(domain),
         );
-        expect(instanceOnly, "instance 矩阵里应存在不属于工作区层的域").toBeDefined();
-        await expect(page.getByTestId(`config-domain-${instanceOnly}`)).toHaveCount(0);
+        expect(instanceOnlyDomains.length).toBeGreaterThan(0);
+        for (const domain of instanceOnlyDomains) {
+            await expect(page.getByTestId(`config-domain-${domain}`)).toHaveCount(0);
+        }
         await expect(page.getByTestId("config-domain-approval-policy")).toBeVisible();
         // **写面（原标题里的 workspace-overridable）本轮不钉**：`PUT /api/v1/config/workspace/{domain}`
         // 在契约里仍 `deprecated: true`（`openapi.yaml:3276`），UI 已消费但契约收口在 **BL-571** 另卡
