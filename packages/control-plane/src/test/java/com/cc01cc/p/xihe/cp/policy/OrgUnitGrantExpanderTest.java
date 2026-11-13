@@ -249,6 +249,44 @@ class OrgUnitGrantExpanderTest {
      * hands back transient rows. {@code AuthorizationGrant} fills {@code id}/{@code createdAt} in
      * {@code @PrePersist}, so a non-null id would prove a write went through JPA.
      */
+    /**
+     * `M2-8c` evaluation arm: a row that reached the table **without passing the write gate** (a
+     * direct insert, a migration, an older writer) is still dropped here — the write side and the
+     * evaluation side each have to work on their own, and this is the only way to prove it: the
+     * write side cannot be part of the fixture, or the test would just be checking itself.
+     *
+     * <p>The mixed case is the load-bearing one: the governance row on the same unit still expands,
+     * and `union(...)` never contains the workspace write atom — so "the group expansion does not
+     * open the workspace write face" is asserted on the atoms, not on the row count.</p>
+     */
+    @Test
+    void directlyInsertedIllegalRowIsStillFilteredAtEvaluation() {
+        List<AuthorizationGrant> onlyIllegal = expander.expand(user(), new OrgUnitGrantExpander.Rows(
+                tree(),
+                memberOf(UNIT_A),
+                List.of(binding(UNIT_A, ROLE_CONTENT, "CONTENT_EDITOR",
+                        atoms("READ_ORG_UNIT_MEMBERS", ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+                        OrgUnitGovernancePolicy.ATOM_READ_ORG_UNIT_MEMBERS,
+                        ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT))));
+        assertTrue(onlyIllegal.isEmpty(),
+                "两处判据各自生效：写面缺席时，求值侧必须自己把非法行拦下");
+
+        List<AuthorizationGrant> mixed = expander.expand(user(), new OrgUnitGrantExpander.Rows(
+                tree(),
+                memberOf(UNIT_A),
+                List.of(binding(UNIT_A, ROLE_CONTENT, "CONTENT_EDITOR",
+                                atoms("READ_ORG_UNIT_MEMBERS", ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+                                OrgUnitGovernancePolicy.ATOM_READ_ORG_UNIT_MEMBERS,
+                                ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT),
+                        binding(UNIT_A, ROLE_LEADER_A, "ORG_LEADER_A", MANAGE_ATOMS, "MANAGE_ORG_UNITS"))));
+        assertEquals(1, mixed.size(), "只有治理行被展开，非法行被丢弃");
+
+        Set<GrantIntersectionEvaluator.PermissionAtom> unionAtoms = new GrantIntersectionEvaluator().union(mixed);
+        assertTrue(unionAtoms.stream().noneMatch(atom ->
+                        ToolFaceRegistry.ACTION_WRITE_WORKSPACE_CONTENT.equals(atom.actionClass())),
+                "组展开不得把 workspace 写面原子带进求值器，即使表里被直插了这样一行: " + unionAtoms);
+    }
+
     @Test
     void expandedRowsAreTransientAndTheExpanderCannotPersist() {
         assertEquals(0, OrgUnitGrantExpander.class.getDeclaredConstructors()[0].getParameterCount(),

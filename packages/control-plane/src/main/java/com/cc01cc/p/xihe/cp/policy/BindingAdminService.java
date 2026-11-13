@@ -278,6 +278,67 @@ public class BindingAdminService {
         }
     }
 
+    /**
+     * PLAN-0773 M2-8c: the org-unit role-binding write gate — the write side's call into the
+     * governance whitelist.
+     *
+     * <p>An org-unit binding hands a role to the unit's whole subtree, and its atoms are
+     * projected as {@code instance} rows (§4.1.1) — a role carrying a workspace-content atom
+     * would therefore spread that atom to every workspace its members can reach. The whitelist
+     * that forbids this ({@code D-1118}: atoms ⊆ MANAGE_ORG_UNITS / MANAGE_ORG_UNIT_MEMBERS /
+     * READ_ORG_UNIT_MEMBERS) lives in {@link OrgUnitGovernancePolicy} and nowhere else; this
+     * method is the write-side entry into it, {@code OrgUnitGrantExpander} is the
+     * evaluation-side entry (same class, same predicate). Each entry must work on its own: a row
+     * that reaches the table by any other route is still filtered at evaluation.
+     *</p>
+     *
+     * <p><b>Where the writer is.</b> {@code org_unit_role_bindings} is {@code M1-9}'s table and
+     * does not exist yet, so no code path in this repository can insert such a row today. This
+     * gate is the mandatory first call for the writer that lands with it, and the reason it is
+     * here — in the service that owns binding writes — is the same reason
+     * {@code requireScopeKeepsItsOwner} is here: a guard lives next to the write it forbids,
+     * not in a caller that can be forgotten. Stated rather than papered over: the proof available
+     * today is "refused <b>and no writer was reached</b>", not "count(*) unchanged" — the
+     * latter would only say the table happens to be empty.</p>
+     *
+     * @param roleIds the roles the org-unit binding would grant (may be null/empty)
+     * @throws CpApiException {@code 409 ORG_SCOPE_ROLE_FORBIDDEN} naming the role and the
+     *                        offending atoms; {@code 404 ROLE_NOT_FOUND} for an unresolved
+     *                        role (fail closed — an unknown role is not an empty one)
+     */
+    public void requireOrgUnitRoleBindingsAreGovernance(java.util.Collection<UUID> roleIds) {
+        if (roleIds == null || roleIds.isEmpty()) {
+            return;
+        }
+        Set<UUID> distinct = new LinkedHashSet<>(roleIds);
+        Map<UUID, List<String>> atomsByRole = new LinkedHashMap<>();
+        for (AccessRolePermission permission : permissions.findByIdRoleIdIn(distinct)) {
+            UUID roleId = permission.roleId();
+            if (roleId != null) {
+                atomsByRole.computeIfAbsent(roleId, id -> new ArrayList<>()).add(permission.actionClass());
+            }
+        }
+        Map<UUID, String> roleNameById = new LinkedHashMap<>();
+        for (AccessRole role : roles.findAllById(distinct)) {
+            roleNameById.put(role.getId(), role.getName());
+        }
+        for (UUID roleId : distinct) {
+            String roleName = roleNameById.get(roleId);
+            if (roleName == null) {
+                throw new CpApiException(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND",
+                        "Role not found: " + roleId);
+            }
+            List<String> atoms = atomsByRole.getOrDefault(roleId, List.of());
+            List<String> offending = OrgUnitGovernancePolicy.offendingAtoms(atoms);
+            if (!offending.isEmpty()) {
+                logger.warn("[POLICY] event=org_unit_role_bindings_rejected"
+                                + " reason=non_governance_role roleId={} roleName={} atoms={}",
+                        roleId, roleName, String.join(",", offending));
+            }
+            OrgUnitGovernancePolicy.requireGovernanceRole(roleName, atoms);
+        }
+    }
+
     /** Structural validation: subject/role existence, subject type, terminal subject state. */
     private Map<BindingKey, UUID> validateAndCollect(List<RoleAdminViews.BindingInput> requested) {
         if (requested == null) {
