@@ -33,21 +33,16 @@ import type { ProviderConnection } from "../../../types/providerConnection";
  * 「不实现＝无影响」。</p>
  */
 /**
- * 夹具行类型：**正常行仍绑产品类型** `ProviderConnection`（15 字段 + `operation` 枚举都受类型门管）。
+ * 夹具行类型：**单一产品类型** `ProviderConnection`（15 字段 + `operation` 枚举全受类型门管）。
  *
- * <p>只有 `conn-image-primary` 那一行例外：它的现值是 `"image"`，而契约
- * `openapi.yaml:8054/8153/8239/8304/8452` 的 enum 只有 `[chat, embedding]`（UI `ApiTypeOperation` 同）
- * ⇒ **第三处夹具漂移**（与 scope 小写同族）。本卡**不改那行一个字节**：runtime-1 的 08:40 判定集
- * 依赖它逐字未动，改值属另一张卡的裁定（已报 Lead 与 runtime-1，他建议另开卡）。</p>
- *
- * <p><b>放宽的作用域也是判据的一部分</b>（runtime-1 复核意见）：先前写成
- * `Omit<…,"operation"> & { operation: string }` 会让**每一行**都失去枚举校验（将来任何一行拼错
- * operation 都不被类型门抓到）。现在收窄成**联合**：漂移行只允许字面量 `"image"`，其余行必须是
- * 合法 `ProviderConnection` ⇒ 拼错值两个分支都不匹配，类型门照样红。裁定改 `chat` 后应删掉
- * `DriftedImageRow` 整个分支，收回单一产品类型。</p>
+ * <p>task-454 期间这里曾有一个 `DriftedImageRow` 联合分支，用来容纳 `conn-image-primary` 的
+ * 非法值 `operation: "image"`（当时不改那行一个字节，因为 runtime-1 的判定集依赖它逐字未动）。
+ * **task-457 裁定后该分支已删**：CP `ApiInputTypeService.java:21` 的 `OPERATIONS` 只有
+ * `[chat, embedding]`，且 `:41-49` 在加载注册表时就校验 ⇒ `image` 在 CP 启动即被拒，不是合法 wire 值。
+ * 那行已改 `chat`（图像语义由**模型能力** `gpt-image-1.capabilities.image` 承载，契约就是这么分的），
+ * 于是放宽的理由消失，类型收回单一产品类型 —— **放宽的作用域也是判据的一部分**（runtime-1 复核意见），
+ * 现在任何一行拼错 operation 都会被类型门当场抓住，而不是只靠运行时断言。</p>
  */
-type DriftedImageRow = Omit<ProviderConnection, "operation"> & { operation: "image" };
-type MockConnectionRow = ProviderConnection | DriftedImageRow;
 
 export interface MockResourceResult {
     status: number;
@@ -57,7 +52,7 @@ export interface MockResourceResult {
 type ReadJsonBody = () => Promise<Record<string, unknown>>;
 
 /** 种子四行：三条原有（只把 scope 改大写，其余逐字未动）+ 一条新增 INSTANCE chat 连接。 */
-const SEED: readonly MockConnectionRow[] = [
+const SEED: readonly ProviderConnection[] = [
     {
         id: "conn-claude-primary",
         providerId: "anthropic",
@@ -77,16 +72,22 @@ const SEED: readonly MockConnectionRow[] = [
     },
     {
         id: "conn-embed-primary",
-        providerId: "openai",
+        // task-457：CP 里唯一支持 dashscope-multimodal-embedding 的 provider 是 dashscope-qwen
+        // （providers.json:109-118）；openai 只支持 openai-chat-completions（:11），而 CP
+        // create:213 按 catalog.supportedPair(providerId, type, version) 校验 ⇒ 原「openai +
+        // openai-embeddings」是**双重非法**（型不存在 + 组合不成立）。只改 apiTypeId 会造出新漂移，
+        // 所以 providerId 一起对齐。modelDiscovery 取该 pair 的 override `manual`（:115），
+        // 手填模型随之给一条（manual 发现方式下列表不能为空，否则这条连接在 UI 里选不出模型）。
+        providerId: "dashscope-qwen",
         connectionKey: "conn-embed-primary",
-        apiTypeId: "openai-embeddings",
+        apiTypeId: "dashscope-multimodal-embedding",
         apiTypeVersion: 1,
         operation: "embedding",
         label: "嵌入模型主连接",
         scope: "INSTANCE",
         baseUrl: null,
-        modelDiscovery: "curated",
-        manualModels: [],
+        modelDiscovery: "manual",
+        manualModels: ["multimodal-embedding-v1"],
         hasKey: true,
         enabled: true,
         status: "READY",
@@ -96,9 +97,13 @@ const SEED: readonly MockConnectionRow[] = [
         id: "conn-image-primary",
         providerId: "openai",
         connectionKey: "conn-image-primary",
-        apiTypeId: "openai-chat",
+        // task-457：`image` 不是合法 operation（CP OPERATIONS 只有 chat/embedding，加载即校验）。
+        // 这条连接在 CP 语义下就是**chat 型连接**，图像能力挂在模型上（gpt-image-1.capabilities.image）。
+        // label 保留原文（它是用户起的名字，不是契约值）；`chatModelsOf` 按 capabilities.chat 过滤后
+        // 这条仍为空 ⇒ 对话模型选择器行为不变（已跑判定集实测，不是预判）。
+        apiTypeId: "openai-chat-completions",
         apiTypeVersion: 1,
-        operation: "image",
+        operation: "chat",
         label: "图像生成连接",
         scope: "INSTANCE",
         baseUrl: null,
@@ -138,14 +143,21 @@ const MODEL_CATALOG: Readonly<
         { name: "claude-sonnet-4-5", capabilities: { chat: true } },
         { name: "claude-haiku-4-5", capabilities: { chat: true } },
     ],
-    "conn-image-primary": [{ name: "gpt-image-1", capabilities: { image: true } }],
+    // task-457：这行 operation 由非法的 `image` 改为 `chat`（CP 只有 chat/embedding）⇒ 它现在是
+    // **chat 型连接**，就必须带 chat 模型，否则「chat 连接却选不出任何对话模型」是新的假可用。
+    // `gpt-image-1` 保留：图像能力由**模型能力**承载（契约的分法），不是由 operation 承载。
+    "conn-image-primary": [
+        { name: "gpt-4o", capabilities: { chat: true } },
+        { name: "gpt-4o-mini", capabilities: { chat: true } },
+        { name: "gpt-image-1", capabilities: { image: true } },
+    ],
     "conn-claude-secondary": [
         { name: "claude-opus-4-1", capabilities: { chat: true } },
         { name: "claude-sonnet-4-5", capabilities: { chat: true } },
     ],
 };
 
-let rows: MockConnectionRow[] = SEED.map((row) => ({
+let rows: ProviderConnection[] = SEED.map((row) => ({
     ...row,
     manualModels: [...row.manualModels],
 }));
@@ -157,7 +169,7 @@ export function resetProviderConnectionFixture(): void {
     created = 0;
 }
 
-export function providerConnectionRows(): readonly MockConnectionRow[] {
+export function providerConnectionRows(): readonly ProviderConnection[] {
     return rows;
 }
 
@@ -202,7 +214,7 @@ function problem(status: number, code: string, detail: string): MockResourceResu
     };
 }
 
-function modelNamesOf(row: MockConnectionRow): string[] {
+function modelNamesOf(row: ProviderConnection): string[] {
     const catalog = MODEL_CATALOG[row.id];
     if (catalog) return catalog.map((model) => model.name);
     return row.operation === "chat" && row.modelDiscovery === "manual" ? [...row.manualModels] : [];
@@ -245,7 +257,7 @@ export async function handleProviderConnectionResource(
         const manualModels = Array.isArray(body.manualModels)
             ? body.manualModels.filter((item): item is string => typeof item === "string")
             : [];
-        const row: MockConnectionRow = {
+        const row: ProviderConnection = {
             id: `conn-mock-created-${created}`,
             providerId,
             connectionKey,

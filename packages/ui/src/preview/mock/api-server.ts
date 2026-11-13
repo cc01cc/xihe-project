@@ -1073,83 +1073,140 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
 
                 // Provider 面（llm-provider 页 = ProviderHub）：目录 / 连接 / 模型目录 / 输入类型。
                 /**
-                 * task-284 ②a 前置（Lead 裁②，D-1281 假可用族）：这块原先缺 `defaultApiType` 与
+                 * task-284 ②a 前置（D-1281 假可用族）：这块原先缺 `defaultApiType` 与
                  * `supportedApiTypes`（`ProviderDefinition.required` 八项里的两项，`openapi.yaml:8069`），
                  * 而 `ProviderHub:710` 读 `provider.defaultApiType.apiTypeId`、`:716` 读
                  * `supportedApiTypes.find(...)` ⇒ 点「连接」选 provider 后 `resetForm` 当场抛
                  * `Cannot read properties of undefined (reading 'apiTypeId')`，表单永不出现
                  * ⇒ **mock 车道的「新建连接」入口一直不可用**（按钮渲染了但一点就抛）。
-                 * 浏览器实测与红先判据见 `__tests__/providerConnections.coverage.spec.ts` 与
-                 * `e2e/mock/task284-instance-provider.spec.ts`。
                  *
-                 * 同批修三处形状漂移（照契约，不发明字段）：`catalogRevision` `mock-1` → `v3`
-                 * （enum `[v1,v2,v3]`，`:8065`；带 per-API-Type capability 就该是 v3）；
-                 * `credential.type` `api_key` → `api-key`（enum `[api-key,none]`，`:8108`）；
-                 * `supports` `{chat,embedding,image}` → `{customBaseUrl,streaming,tools,vision}`
-                 * （`ProviderSupports.required=[customBaseUrl,streaming]`，`:8113`）。
+                 * task-457（D-1304，Lead 裁同批对齐）：**改为逐字镜像 CP 真源**，不再用 mock 近似值。
+                 * 真源 = `packages/control-plane/src/main/resources/provider-catalog/providers.json`
+                 * （openai `:2-15`、anthropic `:16-29`、dashscope-qwen `:100-122`）。据此纠正 284 那批的
+                 * 近似：`adapter` openai 是 **native-litellm**（不是 openai-compatible）、`modelDiscovery`
+                 * 是 **remote-models**（不是 curated）、chat 型 `capability.vision` 是 **false**（不是 true）、
+                 * `credential.placeholder` 用 CP 原文、`supports` 补 `toolsPartial`/`visionPartial`。
                  *
-                 * **诚实边界**：`catalogRevision: "v3"` 也是 **mock 近似值，不是 CP 事实** —— v1/v2/v3
-                 * 是有语义的契约版本（v2 加 per-API-Type tools capability，v3 加 vision，`:8065`），
-                 * 这里挑 v3 只因为夹具带了 capability 字段，**不代表 mock 实现了 v3 的全部语义**
-                 * （runtime-1 复核意见：别只对一半字段标近似）。`supports` 与 `capability` 的布尔值同样是 **mock 近似**（不是 CP 事实，
-                 * CP 的 vendor 声明另有真源）；`supportedApiTypes` 只列 `/api-input-types` 现有的两型
-                 * （anthropic-messages v1 / openai-chat v1）⇒ 连接夹具里 `conn-embed-primary` 引用的
-                 * `openai-embeddings` **仍不在目录里**，点那条连接的「管理」可能同族抛错。
-                 * 那是第三处漂移，本批**只报不改**（runtime-1 窗口前不多引入变量；已报 Lead 归卡）。
+                 * **为什么加第三个 provider**：CP `ProviderConnectionService.create:213` 调
+                 * `catalog.supportedPair(providerId, apiTypeId, version)` ⇒ **类型按 provider 约束**；
+                 * CP 里唯一支持 `dashscope-multimodal-embedding` 的是 **dashscope-qwen**（providers.json:109-118），
+                 * openai 只支持 openai-chat-completions（`:11`）⇒ 夹具那条 embedding 连接原先挂在 openai 上
+                 * 是**非法组合**，只改 apiTypeId 会造出新漂移（runtime-1 前置核查要求）⇒ 连 providerId 一起对齐。
+                 *
+                 * **诚实边界（仍是 mock，不是 CP）**：① 这里只搬 CP 23 个 provider 里的 **3 个**、5 个 API Type
+                 * 里的 **3 个** —— 是**子集**，不是另一套词表；② `catalogRevision: "v3"` 表示夹具带了
+                 * per-API-Type tools+vision capability（契约 `:8065` 的 v3 语义），**不代表 mock 实现了 v3 全部行为**；
+                 * ③ 连接的写面仍不复刻 key 唯一性 / revision CAS / 真 verify（见 data/providerConnections.ts）。
                  */
                 if (path === "/provider-catalog") {
                     return respond(200, {
                         catalogRevision: "v3",
                         providers: [
                             {
-                                id: "anthropic",
-                                displayName: "Anthropic",
+                                id: "openai",
+                                displayName: "OpenAI",
                                 category: "recommended",
-                                description: "Anthropic Claude 系列模型",
+                                description: "GPT 系列模型，支持流式与工具调用。",
                                 adapter: "native-litellm",
-                                litellmProvider: "anthropic",
-                                defaultBaseUrl: "https://api.anthropic.com/v1",
-                                modelDiscovery: "curated",
-                                credential: { type: "api-key", required: true, placeholder: null },
+                                litellmProvider: "openai",
+                                defaultBaseUrl: "https://api.openai.com/v1",
+                                modelDiscovery: "remote-models",
+                                supportedApiTypes: [
+                                    {
+                                        apiTypeId: "openai-chat-completions",
+                                        version: 1,
+                                        capability: { tools: true, vision: false },
+                                    },
+                                ],
+                                defaultApiType: {
+                                    apiTypeId: "openai-chat-completions",
+                                    version: 1,
+                                },
+                                credential: {
+                                    type: "api-key",
+                                    required: true,
+                                    placeholder: "sk-...",
+                                },
                                 supports: {
                                     customBaseUrl: true,
                                     streaming: true,
                                     tools: true,
                                     vision: true,
+                                    toolsPartial: false,
+                                    visionPartial: false,
                                 },
+                            },
+                            {
+                                id: "anthropic",
+                                displayName: "Anthropic",
+                                category: "recommended",
+                                description: "Claude 系列模型，支持流式与工具调用。",
+                                adapter: "native-litellm",
+                                litellmProvider: "anthropic",
+                                defaultBaseUrl: "https://api.anthropic.com/v1",
+                                modelDiscovery: "remote-models",
                                 supportedApiTypes: [
                                     {
                                         apiTypeId: "anthropic-messages",
                                         version: 1,
-                                        capability: { tools: true, vision: true },
+                                        capability: { tools: true, vision: false },
                                     },
                                 ],
                                 defaultApiType: { apiTypeId: "anthropic-messages", version: 1 },
-                            },
-                            {
-                                id: "openai",
-                                displayName: "OpenAI",
-                                category: "recommended",
-                                description: "OpenAI GPT / 图像生成",
-                                adapter: "openai-compatible",
-                                litellmProvider: "openai",
-                                defaultBaseUrl: "https://api.openai.com/v1",
-                                modelDiscovery: "curated",
-                                credential: { type: "api-key", required: true, placeholder: null },
+                                credential: {
+                                    type: "api-key",
+                                    required: true,
+                                    placeholder: "sk-ant-...",
+                                },
                                 supports: {
                                     customBaseUrl: true,
                                     streaming: true,
                                     tools: true,
                                     vision: true,
+                                    toolsPartial: false,
+                                    visionPartial: false,
                                 },
+                            },
+                            {
+                                id: "dashscope-qwen",
+                                displayName: "通义千问 Qwen",
+                                category: "recommended",
+                                description: "阿里云百炼 Qwen 系列，兼容模式接入。",
+                                adapter: "native-litellm",
+                                litellmProvider: "dashscope",
+                                defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                modelDiscovery: "remote-models",
                                 supportedApiTypes: [
                                     {
-                                        apiTypeId: "openai-chat",
+                                        apiTypeId: "openai-chat-completions",
                                         version: 1,
                                         capability: { tools: true, vision: true },
                                     },
+                                    {
+                                        apiTypeId: "dashscope-multimodal-embedding",
+                                        version: 1,
+                                        defaultBaseUrl: "https://dashscope.aliyuncs.com/api/v1",
+                                        modelDiscovery: "manual",
+                                        capability: { tools: false, vision: false },
+                                    },
                                 ],
-                                defaultApiType: { apiTypeId: "openai-chat", version: 1 },
+                                defaultApiType: {
+                                    apiTypeId: "openai-chat-completions",
+                                    version: 1,
+                                },
+                                credential: {
+                                    type: "api-key",
+                                    required: true,
+                                    placeholder: "sk-...",
+                                },
+                                supports: {
+                                    customBaseUrl: true,
+                                    streaming: true,
+                                    tools: true,
+                                    vision: true,
+                                    toolsPartial: true,
+                                    visionPartial: true,
+                                },
                             },
                         ],
                     });
@@ -1211,28 +1268,52 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     // 新建连接的手填模型走 verify 回显，不在这里另造一份名字。
                     return respond(200, mockModelCatalogResponse());
                 }
+                /**
+                 * task-457：API Type 注册表同样**逐字镜像 CP**
+                 * （`control-plane/src/main/resources/api-input-types/api-input-types.json`）。
+                 * 旧值有两处漂移：`openai-chat` 在 CP 不存在（真名 **openai-chat-completions**），
+                 * 且 `path`/`requestShape`/`responseShape`/`streamShape` 是 mock 自造的简写
+                 * （CP 的 path 不含 `/v1` 前缀，前缀由 **requiredBaseSuffix** 承载）。
+                 * 同批补 `requiredBaseSuffix` —— 它是契约 **required** 字段（`openapi.yaml:8050/:8057`），
+                 * 旧 mock 漏了它（UI `types/providerConnection.ts:51-60 ApiInputType` 也漏，已另报 Lead）。
+                 * 只搬夹具用得到的 3 型（CP 共 5 型）：**子集，不是另一套词表**。
+                 */
                 if (path === "/api-input-types") {
                     return respond(200, {
                         types: [
+                            {
+                                apiTypeId: "openai-chat-completions",
+                                version: 1,
+                                operation: "chat",
+                                method: "POST",
+                                path: "/chat/completions",
+                                requiredBaseSuffix: "/v1",
+                                requestShape:
+                                    "messages, model, stream, tools, temperature, max_tokens",
+                                responseShape: "choices, usage",
+                                streamShape: "chat.completion.chunk",
+                            },
                             {
                                 apiTypeId: "anthropic-messages",
                                 version: 1,
                                 operation: "chat",
                                 method: "POST",
-                                path: "/v1/messages",
-                                requestShape: "messages",
-                                responseShape: "messages",
-                                streamShape: "sse",
+                                path: "/messages",
+                                requiredBaseSuffix: "/v1",
+                                requestShape: "messages, model, stream, tools, max_tokens",
+                                responseShape: "content, usage",
+                                streamShape: "message.delta",
                             },
                             {
-                                apiTypeId: "openai-chat",
+                                apiTypeId: "dashscope-multimodal-embedding",
                                 version: 1,
-                                operation: "chat",
+                                operation: "embedding",
                                 method: "POST",
-                                path: "/v1/chat/completions",
-                                requestShape: "chat",
-                                responseShape: "chat",
-                                streamShape: "sse",
+                                path: "/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding",
+                                requiredBaseSuffix: "/api/v1",
+                                requestShape: "model, input.contents, parameters.dimension",
+                                responseShape: "output.embeddings, usage, requestId",
+                                streamShape: "none",
                             },
                         ],
                     });

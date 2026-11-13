@@ -158,15 +158,25 @@ describe("mock provider 连接夹具被路由消费（task-454）", () => {
         }
     });
 
-    it("原有 embedding / image 两行的模型目录逐字保留（加行不改现有行）", async () => {
+    /**
+     * 判据前提被 task-457 裁定改过，这里**明写为什么改**，不是为了让红变绿：
+     * 旧判据是「embedding / image 两行模型目录逐字保留（加行不改现有行）」—— 那是 454 期间
+     * 「不动 runtime-1 已复核的行」的承诺。457 裁定 `operation: image` 非法（CP 加载注册表即拒），
+     * 该行改 chat ⇒ **它现在是 chat 型连接**，继续钉「只有一个 image 模型」等于钉住一个非法状态。
+     * 新判据：① 未受影响的主连接逐字不变；② 该行**保留** gpt-image-1 的 image 能力（图像语义搬到模型能力上）；
+     * ③ 该行同时带 ≥2 个 chat 模型（否则「chat 连接选不出对话模型」是新的假可用，D-1281 同族）。
+     */
+    it("主连接模型目录逐字不变；image 行改 chat 后保留图像模型且带 ≥2 个 chat 模型", async () => {
         const catalog = mockModelCatalogResponse();
         expect(catalog.providers["conn-claude-primary"].models.map((m) => m.name)).toEqual([
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
         ]);
-        expect(catalog.providers["conn-image-primary"].models).toEqual([
-            { name: "gpt-image-1", capabilities: { image: true } },
-        ]);
+        const imageRow = catalog.providers["conn-image-primary"].models;
+        expect(imageRow).toContainEqual({ name: "gpt-image-1", capabilities: { image: true } });
+        expect(
+            imageRow.filter((model) => model.capabilities.chat === true).length,
+        ).toBeGreaterThanOrEqual(2);
     });
 
     it("POST 真的落库：201 回裸连接，且 GET 回读多一行（旧实现 200 但行数不变 = 假成功）", async () => {
@@ -272,7 +282,8 @@ describe("mock provider 连接夹具被路由消费（task-454）", () => {
     it("未实现的 suffix 仍回 null ⇒ 上层 404 MOCK_ENDPOINT_MISSING（不做通配 200）", async () => {
         const answer = await call(
             handler,
-            LIST + "/conn-claude-primary/api-type-change-impact?apiTypeId=openai-chat&version=1",
+            LIST +
+                "/conn-claude-primary/api-type-change-impact?apiTypeId=openai-chat-completions&version=1",
         );
         expect(answer.status).toBe(404);
         expect((answer.body as { code: string }).code).toBe("MOCK_ENDPOINT_MISSING");
@@ -377,6 +388,134 @@ describe("mock provider 目录形状照契约（task-284 ②a 前置）", () => 
             expect(typeof provider.credential.required).toBe("boolean");
             expect(typeof provider.supports.customBaseUrl).toBe("boolean");
             expect(typeof provider.supports.streaming).toBe("boolean");
+        }
+    });
+});
+
+/**
+ * task-457（D-1304 / Lead 裁同批对齐）：**mock 必须镜像 CP 真源**，不是「内部自洽就算对」。
+ *
+ * <p>真源（只读实读，develop）：① `ApiInputTypeService.java:21` `OPERATIONS = List.of("chat",
+ * "embedding")` + `:41-49 validate()` 加载注册表即校验 ⇒ CP 启动就拒 `image`；② 注册表
+ * `src/main/resources/api-input-types/api-input-types.json` 只有 5 型：openai-chat-completions /
+ * anthropic-messages / mimo-responses / dashscope-multimodal-embedding / dashscope-generation；
+ * ③ `ProviderConnectionService.create:213` 调 `catalog.supportedPair(providerId, apiTypeId, version)`
+ * ⇒ **类型按 provider 约束**（不是全局任选）；④ `provider-catalog/providers.json` 里 openai 只支持
+ * openai-chat-completions（`:11`），唯一支持 dashscope-multimodal-embedding 的是 **dashscope-qwen**
+ * （`:109-118`）⇒ 「openai 的连接用 embedding 型」在 CP 是非法组合。</p>
+ *
+ * <p>这四条判据就是四处漂移的照妖镜：operation=image（非法枚举）、openai-chat / openai-embeddings
+ * （CP 无此 id）、embedding 行挂在 openai（provider×type 非法组合）、operation 与类型不一致
+ * （CP 由类型推导，客户端声明不算）。**先红后绿**，不是修完补测。</p>
+ */
+describe("mock provider 夹具镜像 CP 真源（task-457）", () => {
+    interface CatalogShape {
+        providers: Array<{
+            id: string;
+            supportedApiTypes: Array<{
+                apiTypeId: string;
+                version: number;
+                capability?: { tools?: boolean; vision?: boolean };
+            }>;
+        }>;
+    }
+    interface TypesShape {
+        types: Array<{ apiTypeId: string; version: number; operation: string }>;
+    }
+
+    async function faces() {
+        const catalog = (await call(handler, "/provider-catalog")).body as CatalogShape;
+        const types = (await call(handler, "/api-input-types")).body as TypesShape;
+        const list = (await call(handler, "/provider-connections")).body as {
+            connections: Array<{
+                id: string;
+                providerId: string;
+                apiTypeId: string;
+                apiTypeVersion: number;
+                operation: string;
+            }>;
+        };
+        return { catalog, types, connections: list.connections };
+    }
+
+    it("每行 operation 都在 CP 枚举 [chat, embedding] 内（image 非法）", async () => {
+        const { connections } = await faces();
+        for (const row of connections) {
+            expect(["chat", "embedding"], row.id + " operation=" + row.operation).toContain(
+                row.operation,
+            );
+        }
+    });
+
+    it("type id 词表用 CP 注册表真名（不是 openai-chat / openai-embeddings）", async () => {
+        const { catalog, types, connections } = await faces();
+        const declared = new Set(types.types.map((type) => type.apiTypeId));
+        expect(declared.has("openai-chat"), "CP 无 openai-chat，真名 openai-chat-completions").toBe(
+            false,
+        );
+        expect(declared.has("openai-embeddings"), "CP 无此型").toBe(false);
+        for (const id of declared) {
+            expect(
+                [
+                    "openai-chat-completions",
+                    "anthropic-messages",
+                    "mimo-responses",
+                    "dashscope-multimodal-embedding",
+                    "dashscope-generation",
+                ],
+                id,
+            ).toContain(id);
+        }
+        for (const provider of catalog.providers) {
+            for (const pair of provider.supportedApiTypes) {
+                expect(declared.has(pair.apiTypeId), provider.id + " / " + pair.apiTypeId).toBe(
+                    true,
+                );
+            }
+        }
+        for (const row of connections) {
+            expect(declared.has(row.apiTypeId), row.id + " / " + row.apiTypeId).toBe(true);
+        }
+    });
+
+    it("每行 (providerId, apiTypeId, version) 是 catalog 里的 supported pair（CP create:213 同门）", async () => {
+        const { catalog, connections } = await faces();
+        for (const row of connections) {
+            const provider = catalog.providers.find((item) => item.id === row.providerId);
+            expect(
+                provider,
+                row.id + " providerId=" + row.providerId + " 不在 catalog",
+            ).toBeDefined();
+            expect(
+                provider?.supportedApiTypes.some(
+                    (pair) =>
+                        pair.apiTypeId === row.apiTypeId && pair.version === row.apiTypeVersion,
+                ),
+                row.id + " 的 provider×type 组合在 CP 非法",
+            ).toBe(true);
+        }
+    });
+
+    it("每行 operation 与其 API Type 的 operation 一致（CP 由类型推导，不由客户端声明）", async () => {
+        const { types, connections } = await faces();
+        for (const row of connections) {
+            const type = types.types.find(
+                (item) => item.apiTypeId === row.apiTypeId && item.version === row.apiTypeVersion,
+            );
+            expect(type, row.id + " 的类型不在注册表").toBeDefined();
+            expect(row.operation, row.id + " operation 应与类型一致").toBe(type?.operation);
+        }
+    });
+
+    it("capability 照 CP providers.json（openai/anthropic 的 chat 型 vision=false，不是 mock 拍的 true）", async () => {
+        const { catalog } = await faces();
+        for (const id of ["openai", "anthropic"]) {
+            const provider = catalog.providers.find((item) => item.id === id);
+            expect(provider, id).toBeDefined();
+            expect(provider?.supportedApiTypes.length, id).toBe(1);
+            const pair = provider?.supportedApiTypes[0];
+            expect(pair?.capability?.tools, id + " providers.json:11/:25").toBe(true);
+            expect(pair?.capability?.vision, id + " providers.json:11/:25").toBe(false);
         }
     });
 });
