@@ -294,7 +294,10 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
 });
 
 test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
-    test("ProviderHub creates, verifies, manages and deletes a connection", async ({ page }) => {
+    // task-174：原用例是「建连接→截图→验证→删除→取消→删除→确认」，截图夹在中间 ⇒ 非 linux 的
+    // skip 会截断后段（验证/删除/取消三条断言全丢）。建连接这一段抽成**共用前置**，
+    // 视觉用例与行为用例各跑一次；**不把两张合并**，合起来又会夹一次截图。
+    async function setupProviderHubWithConnection(page: Page) {
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
@@ -396,7 +399,11 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             timeout: EXPECT_TIMEOUT_MS,
         });
         await expect(connectionCard.getByText("已连接")).toBeVisible();
-        await expectPlatformScreenshot(page, "plan-269-provider-connected.png");
+        return { hub, connectionCard };
+    }
+
+    test("ProviderHub creates, verifies, manages and deletes a connection", async ({ page }) => {
+        const { hub, connectionCard } = await setupProviderHubWithConnection(page);
 
         await connectionCard.getByRole("button", { name: "验证", exact: true }).click();
         await expect(hub.getByText("刚刚验证")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
@@ -411,6 +418,13 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
         await expect(confirmModal).toBeVisible();
         await page.getByTestId("provider-delete-confirm").click();
         await expect(hub.getByText("尚未新建连接")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    });
+
+    test("renders the connected provider card (visual baseline)", async ({ page }) => {
+        // 读就绪断言留在截图之前：它在 Windows 上照样执行，只有截图本身被 skip。
+        const { connectionCard } = await setupProviderHubWithConnection(page);
+        await expect(connectionCard.getByText("已连接")).toBeVisible();
+        await expectPlatformScreenshot(page, "plan-269-provider-connected.png");
     });
 
     test("MCP JSON validation and Data import preview are recoverable", async ({ page }) => {
@@ -544,7 +558,10 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         // updated in this change). The functional assertions above carry the coverage.
     });
 
-    test("mobile workspace exposes Files and Chat Sheets without overflow", async ({ page }) => {
+    // task-174：原用例「开 files sheet→截图→关→开 chat sheet→溢出测量」，截图夹在中间 ⇒
+    // 非 linux 的 skip 会让 chat sheet 可见性与溢出测量两条断言一起消失。前置抽成 helper，
+    // 行为用例保留全部断言（不含截图），视觉用例只截图。
+    async function openMobileFilesSheet(page: Page) {
         test.setTimeout(TEST_TIMEOUT_MS);
         await page.setViewportSize({ width: 390, height: 844 });
         await setupMockAuth(page);
@@ -568,7 +585,10 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         await page.reload();
         await page.getByTestId("workspace-toolbar-files-mobile").click();
         await expect(page.getByTestId("mobile-files-sheet")).toBeVisible();
-        await expectPlatformScreenshot(page, "plan-269-mobile-files-sheet.png");
+    }
+
+    test("mobile workspace exposes Files and Chat Sheets without overflow", async ({ page }) => {
+        await openMobileFilesSheet(page);
         await page.getByTestId("sheet-close").click();
         await page.getByTestId("mobile-chat-open").click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
@@ -583,6 +603,11 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
         // policy-mode controls (uncommitted T1.13 UI). Refresh it in the baseline
         // follow-up (snapshots are not updated here); the sheet/overflow assertions
         // above carry the coverage.
+    });
+
+    test("renders the mobile Files sheet baseline (acceptance lane)", async ({ page }) => {
+        await openMobileFilesSheet(page);
+        await expectPlatformScreenshot(page, "plan-269-mobile-files-sheet.png");
     });
 
     test("PDF opens through the application FileEditor path", async ({ page }) => {

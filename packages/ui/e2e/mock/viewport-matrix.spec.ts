@@ -134,14 +134,21 @@ test.describe("PLAN-269 viewport matrix: desktop-720p", () => {
 test.describe("PLAN-269 viewport matrix: mobile", () => {
     test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 
-    test("Files and Chat sheets remain bounded on mobile", async ({ page }) => {
+    // task-174：原用例「开 files sheet→两断言→截图→关→开 chat sheet→溢出/可见性两断言」，
+    // 截图夹在中间 ⇒ 非 linux 的 skip 会让后段三条断言消失。前置抽成 helper：
+    // 行为用例保留全部断言（不含截图），视觉用例只截图。
+    async function openMobileSheets(page: Page) {
         await setupViewportFixtures(page);
         await page.goto("/workspace/workspace-1");
         await page.getByTestId("workspace-toolbar-files-mobile").click();
         const filesSheet = page.getByTestId("mobile-files-sheet");
         await expect(filesSheet).toBeVisible();
         await expect(filesSheet.getByTestId("workspace-empty-state")).toBeVisible();
-        await expectPlatformScreenshot(filesSheet, "plan-269-viewport-mobile-files.png");
+        return { filesSheet };
+    }
+
+    test("Files and Chat sheets remain bounded on mobile", async ({ page }) => {
+        await openMobileSheets(page);
         await page.getByTestId("sheet-close").click();
         await page.getByTestId("mobile-chat-open").click();
         await expect(page.getByTestId("mobile-chat-sheet")).toBeVisible();
@@ -151,5 +158,10 @@ test.describe("PLAN-269 viewport matrix: mobile", () => {
         // policy-mode controls (uncommitted T1.13 UI). Refresh it in the baseline
         // follow-up (snapshots are not updated here); the bounded-sheet assertions
         // above carry the coverage.
+    });
+
+    test("renders the mobile Files sheet baseline (viewport matrix)", async ({ page }) => {
+        const { filesSheet } = await openMobileSheets(page);
+        await expectPlatformScreenshot(filesSheet, "plan-269-viewport-mobile-files.png");
     });
 });

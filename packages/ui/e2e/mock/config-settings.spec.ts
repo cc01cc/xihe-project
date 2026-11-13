@@ -205,13 +205,30 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
         await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
         await expect(page.locator('[data-testid^="config-domain-"]')).toHaveCount(0);
-        await expectPlatformScreenshot(page, "config-workspace-tab.png");
 
         // MCP 仍在「自己独立的界面」上 —— 只是从工作区设置的 tab 换成了资源区的工作区层
         // （`/resources/mcp?layer=WORKSPACE`）。**行为断言不变**：进得去、文本框在。
         await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         await expect(page.getByTestId("resources-header")).toBeVisible();
         await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
+    });
+
+    // task-174：原用例是「断言…→截图→goto MCP→断言…→截图」，截图夹在中间 ⇒ 非 linux 的 skip
+    // 会把后半段一起截断。两张基线各归一条视觉用例，**断言全留在行为用例**；本条只留
+    // 「页面挂载了」这一条读就绪断言（它在截图之前执行，Windows 上照样跑）。
+    // 每条视觉用例**只拍一张**：`expectPlatformScreenshot` 在非 linux 会 skip，
+    // 一张用例里拍两张就必然有一张后面还跟着语句（第二条就永远到不了）。
+    test("renders the workspace settings baseline", async ({ page }) => {
+        await mockConfigAPIs(page);
+        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
+        await expectPlatformScreenshot(page, "config-workspace-tab.png");
+    });
+
+    test("renders the MCP resource baseline", async ({ page }) => {
+        await mockConfigAPIs(page);
+        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await expect(page.getByTestId("resources-header")).toBeVisible();
         await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
     });
 

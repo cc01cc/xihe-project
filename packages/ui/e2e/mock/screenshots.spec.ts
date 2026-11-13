@@ -373,7 +373,11 @@ for (const route of allRoutes) {
         // 字体落地再拍：字体没到时文本度量未定（显式事件等待，不是等时间）。
         await page.evaluate(() => document.fonts.ready.then(() => true));
 
-        await expectPlatformScreenshot(page, route.name + ".png");
+        // task-174：console 断言必须在截图**之前** —— 截图在非 linux 平台会 `test.skip()`，
+        // skip 会中止用例体，放在后面等于「Windows 上这条断言永远不跑」（原顺序就是这样）。
+        // 语义也更强：截图前已确认这一页零 console error。
         expect(errors).toEqual([]);
+
+        await expectPlatformScreenshot(page, route.name + ".png");
     });
 }
