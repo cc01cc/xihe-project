@@ -6,6 +6,7 @@ import type { ConfigDomain, ConfigKeyMeta, ConfigLayer } from "../../stores/conf
 import { isInstanceOnlyForUser, settingsDomainPath } from "../../lib/settingsIa";
 import ConfigDomainSummary from "./ConfigDomainSummary.vue";
 import JsonFieldEditor from "./JsonFieldEditor.vue";
+import { formatJsonText } from "./jsonFieldFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
@@ -199,6 +200,25 @@ function fieldReadonly(field: DomainField): boolean {
  */
 function isMultilineValueField(field: DomainField): boolean {
     return field.type === "json" || field.type === "textarea";
+}
+
+/**
+ * task-216 R1：**只读态的 JSON 也按「载入即格式化」显示**。
+ *
+ * <p>为什么补这一路：格式化此前只发生在 `JsonFieldEditor`（可编辑态）里，而只读分支渲染的是
+ * 原文 span（见上条 task-23/P2-6）。于是「整域只读 / 层只读」时单行 JSON 仍是一行长文本 ——
+ * 用户看到的可读性取决于**存储里存得缩进没缩进**，而那不是他能控制的东西。</p>
+ *
+ * <p>为什么复用 `formatJsonText` 而不是就地 `JSON.parse`：它的失败语义已经是被 24 条单测钉住的
+ * 「原样返回 + 给 error、绝不改写」，这里**只取 `text`**（只读态没有输入框可挂错误提示）。
+ * 非法 JSON ⇒ 逐字节等于原文；空串 ⇒ 空串（外面仍回落 `settings.empty`）。</p>
+ *
+ * <p>**只影响显示**：`editing` 草稿、`props.entries`、save 载荷一律不动 —— 只读态本来也不发保存。</p>
+ */
+function readonlyValueText(field: DomainField): string {
+    const raw = editing.value[field.key] ?? "";
+    if (field.type !== "json") return raw;
+    return formatJsonText(raw).text;
 }
 
 /**
@@ -815,7 +835,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                                   "****" +
                                   editing[field.key].slice(-4)
                                 : t("settings.notSet")
-                            : editing[field.key] || t("settings.empty")
+                            : readonlyValueText(field) || t("settings.empty")
                     }}
                 </span>
 
