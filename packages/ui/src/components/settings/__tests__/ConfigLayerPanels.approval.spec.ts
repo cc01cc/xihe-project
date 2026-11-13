@@ -68,8 +68,11 @@ async function mountApprovalPanel() {
 async function saveAskActionClasses(
     wrapper: Awaited<ReturnType<typeof mountApprovalPanel>>["wrapper"],
 ) {
-    await wrapper.find('[data-testid="config-domain-toggle-approval-policy"]').trigger("click");
-    await flushPromises();
+    // task-225 起域卡默认展开 ⇒ 字段行已在 DOM 里（只在旧形态下兜底点一次）。
+    if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+        await wrapper.find('[data-testid="config-domain-toggle-approval-policy"]').trigger("click");
+        await flushPromises();
+    }
 
     const textarea = wrapper.find(
         '[data-testid="config-field-approval-policy-askActionClasses"] textarea',
@@ -126,8 +129,12 @@ describe("ConfigLayerPanels approval-policy askActionClasses 保存形状（task
 
     it("非法 JSON 文本不发出 PUT（本地先挡，而不是让 CP 回 400）", async () => {
         const { wrapper, calls } = await mountApprovalPanel();
-        await wrapper.find('[data-testid="config-domain-toggle-approval-policy"]').trigger("click");
-        await flushPromises();
+        if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+            await wrapper
+                .find('[data-testid="config-domain-toggle-approval-policy"]')
+                .trigger("click");
+            await flushPromises();
+        }
         await wrapper
             .find('[data-testid="config-field-approval-policy-askActionClasses"] textarea')
             .setValue("[not json");

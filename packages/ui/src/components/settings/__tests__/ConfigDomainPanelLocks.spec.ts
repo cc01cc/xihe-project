@@ -79,7 +79,10 @@ async function mountPanel(entry: ConfigKeyMeta) {
             ],
         },
     });
-    await wrapper.find("button").trigger("click");
+    // task-225 起域卡默认展开（用户「默认都是合拢的」）⇒ 只在字段行缺失时兜底点一次。
+    if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+        await wrapper.find("button").trigger("click");
+    }
     return wrapper;
 }
 

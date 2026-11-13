@@ -31,6 +31,8 @@ const i18n = createI18n({
                 configSourceInstance: "instance",
                 configSourceUser: "user",
                 configSourceUserOverride: "Personal override",
+                // task-225（默认展开）暴露的夹具缺口：本行原先被折叠挡住 ⇒ 裸键守卫空过。
+                configSourceInheritedAbove: "Inherited from above",
                 configSourceInstanceDefault: "Instance default",
                 configSourceOverridable: "Overridable below",
                 configCardFieldCount: "{count} fields",
@@ -94,8 +96,9 @@ async function mountPanel(options: {
     });
     await flushPromises();
     // 字段行只在域卡**展开后**才渲染（v-if）—— 不展开就断言"没有徽标"是假阴性。
+    // task-225 起默认展开 ⇒ 只有「字段行还不在 DOM 里」时才点一次（两态都可断言）。
     const toggle = wrapper.find("button");
-    if (toggle.exists()) {
+    if (!wrapper.find('[data-testid^="config-field-"]').exists() && toggle.exists()) {
         await toggle.trigger("click");
         await flushPromises();
     }

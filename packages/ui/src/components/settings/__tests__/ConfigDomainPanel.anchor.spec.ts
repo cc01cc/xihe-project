@@ -87,8 +87,11 @@ async function mountAtUserRag(options: { hash?: string } = {}) {
 }
 
 async function expand(wrapper: Awaited<ReturnType<typeof mountAtUserRag>>["wrapper"]) {
-    await wrapper.find("button").trigger("click");
-    await flushPromises();
+    // task-225 起域卡默认展开 ⇒ 只在字段行缺失时点一次（两态都成立）。
+    if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+        await wrapper.find("button").trigger("click");
+        await flushPromises();
+    }
 }
 
 afterEach(() => {
@@ -113,7 +116,10 @@ describe("ConfigDomainPanel anchor jump (T2.4 / T2.5)", () => {
     it("TC-A2: 同页 hash 变化 ⇒ 目标行获得焦点与高亮 class（1.6 s 后撤销）", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true });
         const { wrapper, router } = await mountAtUserRag();
-        // 未带 hash 时行还没展开、也不该有高亮
+        // task-225 起默认展开 ⇒ 先由用户收起，再验证「带 hash 会把它自动展开」（这条断言因此更强：
+        // 不是「默认就没渲染」，而是「收起来之后还能被锚点重新打开」）。
+        await wrapper.get("button").trigger("click");
+        await flushPromises();
         expect(wrapper.find('[data-testid="config-field-rag-topK"]').exists()).toBe(false);
 
         await router.push({ path: "/settings/user/rag", hash: "#topK" });

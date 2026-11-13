@@ -63,7 +63,10 @@ async function mountForLayer(layer: "instance" | "user") {
         },
         global: { plugins: [i18n, makeRouter()] },
     });
-    await wrapper.find("button").trigger("click"); // 展开域卡，行才渲染
+    // task-225 起域卡默认展开 ⇒ 行已渲染；只在旧形态（字段行缺失）下点一次。
+    if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+        await wrapper.find("button").trigger("click");
+    }
     return wrapper;
 }
 

@@ -133,12 +133,19 @@ describe("ConfigSettings job-policy (PLAN-0373)", () => {
         expect(LAYER_DOMAINS.user).not.toContain("job-policy");
     });
 
+    /**
+     * task-225 起域卡默认展开 ⇒ 首屏就把 12 个域的字段行全部挂载（每行一个 reka `FieldRoot`），
+     * mount 成本随之上升：实测单跑该用例 **1.7 s**（`--reporter=verbose`，2026-11-13），
+     * 但在 46 文件的串行批里超过 vitest 默认 5 s ⇒ 这里显式给 10 s（`test-timeout-budget` 的
+     * test 档 ≤10 s，仍在预算内，不申请 timeout-exempt）。**不是放宽断言**：断言一条没改。
+     */
     it("renders the job-policy panel with both fields on the instance tab", async () => {
         const wrapper = await mountView();
 
         const panel = wrapper.find('[data-testid="config-domain-job-policy"]');
         expect(panel.exists()).toBe(true);
-        await panel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await panel.find("button").trigger("click");
 
         const defaultField = wrapper.find(
                 '[data-testid="config-field-job-policy-defaultTimeoutSecs"]',
@@ -150,13 +157,41 @@ describe("ConfigSettings job-policy (PLAN-0373)", () => {
         // maxTimeoutSecs 保持可编辑。
         expect(defaultField.find("input").exists()).toBe(false);
         expect(maxField.find("input").exists()).toBe(true);
-    });
+    }, 10_000);
+
+    /**
+     * task-225 判据②：**进入页面零点击即可看到全部字段**（用户原话「默认都是合拢的，用户还得多次点击」）。
+     *
+     * <p>这条**完全不点任何折叠控件** —— 断言的是初始 DOM（不是 class 名），并用「点一次就收起」
+     * 证明折叠能力仍在（用户要能收起，不是把折叠删掉）。</p>
+     */
+    it("job-policy 首屏零点击即见两字段，折叠仍作为显式动作保留（task-225）", async () => {
+        const wrapper = await mountView();
+
+        // 零点击：字段行已在 DOM 里（渲染结果，不是 class）
+        expect(
+            wrapper.find('[data-testid="config-field-job-policy-defaultTimeoutSecs"]').exists(),
+        ).toBe(true);
+        expect(
+            wrapper.find('[data-testid="config-field-job-policy-maxTimeoutSecs"]').exists(),
+        ).toBe(true);
+        const toggle = wrapper.find('[data-testid="config-domain-toggle-job-policy"]');
+        expect(toggle.attributes("aria-expanded")).toBe("true");
+
+        // 折叠保留：一次点击即收起（能力没被删，只是默认态反过来）
+        await toggle.trigger("click");
+        await flushPromises();
+        expect(
+            wrapper.find('[data-testid="config-field-job-policy-defaultTimeoutSecs"]').exists(),
+        ).toBe(false);
+    }, 10_000);
 
     it("locks defaultTimeoutSecs behind the env badge and keeps maxTimeoutSecs editable", async () => {
         const wrapper = await mountView();
 
         const panel = wrapper.find('[data-testid="config-domain-job-policy"]');
-        await panel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await panel.find("button").trigger("click");
 
         const lockedRow = wrapper.find(
                 '[data-testid="config-field-job-policy-defaultTimeoutSecs"]',
@@ -202,7 +237,8 @@ describe("ConfigSettings Agent template and approval policy (PLAN-0374)", () => 
 
         const approvalPanel = wrapper.find('[data-testid="config-domain-approval-policy"]');
         expect(approvalPanel.exists()).toBe(true);
-        await approvalPanel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await approvalPanel.find("button").trigger("click");
         expect(
             wrapper
                 .find('[data-testid="config-field-approval-policy-askActionClasses"] textarea')
@@ -222,7 +258,8 @@ describe("ConfigSettings Agent template and approval policy (PLAN-0374)", () => 
     it("saves askActionClasses as a JSON array value through the selected config layer", async () => {
         const wrapper = await mountView(),
             panel = wrapper.find('[data-testid="config-domain-approval-policy"]');
-        await panel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await panel.find("button").trigger("click");
 
         const field = wrapper.find(
             '[data-testid="config-field-approval-policy-askActionClasses"] textarea',
@@ -366,7 +403,8 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
 
         const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
         expect(panel.exists()).toBe(true);
-        await panel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await panel.find("button").trigger("click");
 
         for (const key of [
             "runMaxTurns",
@@ -387,7 +425,8 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
 
         const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
         expect(panel.exists()).toBe(true);
-        await panel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await panel.find("button").trigger("click");
 
         for (const key of [
             "loopRepeatWarn",
@@ -460,7 +499,8 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
 
         const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
         expect(panel.exists()).toBe(true);
-        await panel.find("button").trigger("click");
+        if (!wrapper.find('[data-testid^="config-field-"]').exists())
+            await panel.find("button").trigger("click");
         for (const tab of ["config-tab-instance", "config-tab-user"]) {
             if (tab !== "config-tab-instance") {
                 await wrapper.find(`[data-testid="${tab}"]`).trigger("click");

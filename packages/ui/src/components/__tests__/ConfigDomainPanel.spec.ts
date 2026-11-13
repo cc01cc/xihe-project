@@ -19,6 +19,28 @@ const i18n = createI18n({
                     "This key only takes effect at the instance layer: user and workspace layers neither inherit nor can modify it",
                 configCardFieldCount: "{count} fields",
                 configCardExpandHint: "Expand to see all settings",
+                // task-225（默认展开）暴露的夹具缺口：这些行原先被折叠挡住、从未渲染，
+                // 于是「裸 i18n 键」守卫一直是**空过**的。补键不放宽断言（守卫照旧全量扫渲染结果）。
+                configSourceInstance: "instance",
+                configSourceEnv: "环境变量锁定",
+                configSourceOverridable: "可被覆盖",
+                configSourceInstanceOnly: "仅 instance",
+                configSourceInheritedAbove: "继承自上层",
+                configSourceReadonly: "只读",
+                configSourceUser: "个人覆盖",
+                configSourceUserOverride: "个人覆盖此项",
+                configSourceNone: "未设置",
+                envLockedHint: "env 覆盖",
+                adminLockedBadge: "由管理员锁定",
+                adminLockReason: "锁定原因：{reason}",
+                adminLockValueAtInstance: "以实例层取值为准",
+                driftedBadge: "漂移",
+                driftedOption: "漂移：{value}",
+                driftedClear: "清除",
+                driftedHint: "候选集里没有该值",
+                customOption: "自定义",
+                customPlaceholder: "输入",
+                customBack: "回到候选列表",
             },
             common: { save: "Save" },
         },
@@ -65,18 +87,37 @@ function mountPanel(props: Record<string, unknown> = {}) {
 }
 
 async function expandPanel(wrapper: ReturnType<typeof mountPanel>) {
-    await wrapper.find("button").trigger("click");
+    // task-225 起域卡默认展开 ⇒ 只在字段行缺失时点一次（两态都成立）。
+    if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+        await wrapper.find("button").trigger("click");
+    }
 }
 
 describe("ConfigDomainPanel", () => {
-    it("TC-F10: the collapsed card shows the chevron beside the title, a field count and a preview line", async () => {
+    /**
+     * task-225（用户 2026-11-13：「默认都是合拢的，用户还得多次点击」）：域卡**默认展开**。
+     *
+     * <p>判据分两半，且两半都必须有数：①**初始 DOM 里字段就可见**（零点击，数的是
+     * `config-field-*` 节点数而不是 class 名）；②折叠**能力保留**且可逆 —— 点一下才出现
+     * 箭头/计数/摘要行（原先这些是"默认态"的外观，现在它们是"用户收起后"的外观）。</p>
+     */
+    it("TC-F10: 默认展开（零点击可见字段）；点标题才收起，收起态才显示 chevron/计数/摘要", async () => {
         const wrapper = mountPanel({ entries: {} });
         const toggle = wrapper.get('[data-testid="config-domain-toggle-test"]');
 
-        // 折叠态：箭头与标签同行（不再是一个远在 1080 px 卡右端的 ▸）
+        // ① 默认态 = 展开：不看 class，看「字段行是否已在 DOM 里」
+        expect(toggle.attributes("aria-expanded")).toBe("true");
+        expect(toggle.text()).toContain("▾");
+        expect(toggle.text()).toContain("Test Domain");
+        expect(wrapper.findAll('[data-testid^="config-field-"]')).toHaveLength(4);
+        expect(wrapper.find('[data-testid="config-domain-preview-test"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="config-domain-field-count-test"]').exists()).toBe(false);
+
+        // ② 用户显式收起：箭头与标签同行（不再是一个远在 1080 px 卡右端的 ▸）
+        await toggle.trigger("click");
         expect(toggle.attributes("aria-expanded")).toBe("false");
         expect(toggle.text()).toContain("▸");
-        expect(toggle.text()).toContain("Test Domain");
+        expect(wrapper.findAll('[data-testid^="config-field-"]')).toHaveLength(0);
         // 摘要行：没有级联摘要时回落成「展开查看全部设置」
         expect(toggle.get('[data-testid="config-domain-preview-test"]').text()).toBe(
             "Expand to see all settings",
@@ -86,23 +127,61 @@ describe("ConfigDomainPanel", () => {
             "4 fields",
         );
 
-        // 给了 summary 就显示 summary（用户偏好那类域有内容可给）
+        // 给了 summary 就显示 summary（用户偏好那类域有内容可给）—— 同样只在收起态可见
         const withSummary = mountPanel({ entries: {}, summary: "deepseek / model" });
+        await withSummary.get('[data-testid="config-domain-toggle-test"]').trigger("click");
         expect(withSummary.get('[data-testid="config-domain-preview-test"]').text()).toBe(
             "deepseek / model",
         );
 
-        await expandPanel(wrapper);
-        expect(
-            wrapper.get('[data-testid="config-domain-toggle-test"]').attributes("aria-expanded"),
-        ).toBe("true");
-        expect(wrapper.find('[data-testid="config-domain-preview-test"]').exists()).toBe(false);
+        // 折叠能力保留且可逆：再点一次回到展开态
+        await toggle.trigger("click");
+        expect(toggle.attributes("aria-expanded")).toBe("true");
+        expect(wrapper.findAll('[data-testid^="config-field-"]')).toHaveLength(4);
     });
+    /**
+     * task-225 判据①：可读性（对比度有数）。**数值判定在卡面**（token 计算值，WCAG 2.x 公式，
+     * 由 `oklch → sRGB → 相对亮度` 推得，见 task-225 卡面 §对比度读数）：
+     *   标签：`--muted-foreground`(108,108,108) 对 `--background`(245,245,245) = **4.84:1**（过 4.5，余量仅 8%）
+     *         ⇒ 改 `text-foreground`(10,10,10) = **18.15:1**
+     *   锁定值：`--muted-foreground` 对 `--muted`(232,232,232) = **4.30:1（未过 4.5）**
+     *         ⇒ 改 `text-foreground` = **16.11:1**
+     *   控件边框：裸 `border` 取 `--border`(229) 对 `--background` = **1.15:1（白底上几乎看不见）**
+     *         ⇒ 改 `border-foreground/50`（10 以 50% 叠在 245 上 = 128）= **3.62:1**（过 WCAG 1.4.11 的 3:1）
+     *
+     * <p>jsdom 没有级联与布局 ⇒ 这里只能钉住**决定对比度的类**（数值断言在真实浏览器里做，
+     * 否则 @supports/变量解析差异会让断言在 jsdom 里恒真）。</p>
+     */
+    it("可读性：标签/锁定值/控件边框都用够对比度的既有 token（task-225）", async () => {
+        const wrapper = mountPanel({
+            entries: { model: "db-model", maxTokens: "4096" },
+            envLocked: { maxTokens: "8192" },
+        });
+
+        // ① 标签块与 FieldLabel 不再用 muted-foreground（4.84:1 且 12px 正文字号余量太薄）
+        const labelBlock = wrapper.get(
+            String.raw`[data-testid="config-field-test-model"] .text-foreground.w-1\/3`,
+        );
+        expect(labelBlock.classes()).toContain("text-foreground");
+        expect(labelBlock.find("label").classes()).toContain("text-foreground");
+
+        // ② 可编辑控件的边框：不是裸 border（=--border 1.15:1），而是 foreground/50（3.62:1）
+        const control = wrapper.get('[data-testid="config-field-test-model"] input');
+        expect(control.classes()).toContain("border-foreground/50");
+        expect(control.classes()).not.toContain("border-input");
+
+        // ③ env 锁定值（只读 chip）：文字用 foreground（16.11:1），底色仍 muted（不改语义）
+        const locked = wrapper.get('[data-testid="config-env-lock-test-maxTokens"]');
+        expect(locked.classes()).toContain("text-foreground");
+        expect(locked.classes()).toContain("bg-muted");
+        expect(locked.text()).toBe("8192");
+    });
+
     it("TC1: renders all schema fields when entries is empty", async () => {
         const wrapper = mountPanel({ entries: {} });
         await expandPanel(wrapper);
 
-        const labels = wrapper.findAll(String.raw`.text-muted-foreground.w-1\/3`);
+        const labels = wrapper.findAll(String.raw`.text-foreground.w-1\/3`);
         expect(labels).toHaveLength(4);
         expect(labels[0].text()).toBe("Provider");
         expect(labels[1].text()).toBe("API Key");

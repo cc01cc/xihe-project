@@ -49,8 +49,10 @@ async function mountReadonly(schema: DomainField[], entries: Record<string, stri
         },
         global: { plugins: [i18n, router] },
     });
-    // 域面板默认折叠：先展开，字段行才进 DOM（与 ConfigDomainPanelLocks.spec.ts 同法）。
-    await wrapper.find("button").trigger("click");
+    // task-225 起域卡默认展开 ⇒ 字段行挂载即渲染；这里只为旧形态（字段行缺失）兜底点一次。
+    if (!wrapper.find('[data-testid^="config-field-"]').exists()) {
+        await wrapper.find("button").trigger("click");
+    }
     return wrapper;
 }
 

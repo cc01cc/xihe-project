@@ -74,18 +74,36 @@ const emit = defineEmits<{
  */
 const canDeleteOverride = computed(() => props.layer === "instance");
 
-const expanded = ref(false),
+/**
+ * task-225（用户 2026-11-13：「默认都是合拢的，用户还得多次点击」）：域卡**默认展开**，
+ * 折叠只保留为用户的显式动作（能力不删，用户仍可收起）。
+ *
+ * <p>草稿 `editing` 的初始化原先写在 `toggle()` 里（展开那一刻从 `entries` 取一次）；默认展开后
+ * 那条路径不再触发，必须改成 `watch(expanded, …, { immediate: true })`，否则首屏输入框全空 ——
+ * 那比折叠更糟：看起来像「本域没有配置」。语义与原来一致（每次**展开**时重取一次），只是多了一次
+ * 挂载时的初始化。</p>
+ */
+const expanded = ref(true),
     editing = ref<Record<string, string>>({});
+
+function initDraft(): Record<string, string> {
+    const init: Record<string, string> = {};
+    for (const field of props.schema) {
+        init[field.key] = props.entries[field.key] ?? "";
+    }
+    return init;
+}
+
+watch(
+    expanded,
+    (open) => {
+        if (open) editing.value = initDraft();
+    },
+    { immediate: true },
+);
 
 function toggle() {
     expanded.value = !expanded.value;
-    if (expanded.value) {
-        const init: Record<string, string> = {};
-        for (const field of props.schema) {
-            init[field.key] = props.entries[field.key] ?? "";
-        }
-        editing.value = init;
-    }
 }
 
 function isLocked(key: string): boolean {
@@ -548,10 +566,10 @@ function handleReset(key: string) {
                         : ''
                 "
             >
-                <div class="min-w-0 w-1/3 text-muted-foreground">
+                <div class="min-w-0 w-1/3 text-foreground">
                     <FieldLabel
                         :for="hasControl(field) ? controlId(field) : undefined"
-                        class="flex items-center gap-1 text-xs font-normal text-muted-foreground"
+                        class="flex items-center gap-1 text-xs font-normal text-foreground"
                     >
                         <span class="block truncate">{{ field.label }}</span>
                         <span
@@ -617,7 +635,7 @@ function handleReset(key: string) {
                 <template v-if="isLocked(field.key)">
                     <span
                         :data-testid="`config-env-lock-${domain}-${field.key}`"
-                        class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-muted-foreground"
+                        class="min-w-0 flex-1 truncate px-2 py-1 text-sm border rounded bg-muted text-foreground"
                         :title="t('settings.envLockedHint')"
                         :aria-label="t('settings.configSourceEnv')"
                     >
@@ -660,7 +678,7 @@ function handleReset(key: string) {
                         :id="controlId(field)"
                         :data-testid="`config-custom-${domain}-${field.key}`"
                         :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                        class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                        class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
                         :placeholder="t('settings.customPlaceholder')"
                     />
                     <Select
@@ -682,7 +700,7 @@ function handleReset(key: string) {
                         <SelectTrigger
                             :id="controlId(field)"
                             :data-testid="`config-select-${domain}-${field.key}`"
-                            class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                            class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
                         >
                             <SelectValue />
                         </SelectTrigger>
@@ -718,7 +736,7 @@ function handleReset(key: string) {
                     rows="3"
                     :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                    class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
                     :class="field.type === 'json' ? 'font-mono' : ''"
                     :placeholder="field.type === 'json' ? 'JSON' : ''"
                 />
@@ -736,7 +754,7 @@ function handleReset(key: string) {
                         as="input"
                         :id="controlId(field)"
                         :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                        class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                        class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
                         type="number"
                         :max="field.max"
                         :title="field.max ? `≤ ${field.max}` : undefined"
@@ -752,7 +770,7 @@ function handleReset(key: string) {
                     v-model="editing[field.key]"
                     :id="controlId(field)"
                     :disabled="!isWritable(field.key) || isLayerReadonly(field)"
-                    class="min-w-0 flex-1 px-2 py-1 text-sm border rounded bg-background"
+                    class="min-w-0 flex-1 px-2 py-1 text-sm border border-foreground/50 rounded bg-background"
                     :type="field.type === 'password' ? 'password' : 'text'"
                 />
 
