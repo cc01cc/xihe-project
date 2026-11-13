@@ -2578,6 +2578,31 @@ function ensureRefreshed(): Promise<boolean> {
     return attempt;
 }
 
+/**
+ * task-427 P1：单飞刷新只解决「刷新几次」，不解决「几个请求先吃了 401」。
+ * 并发请求带着过期 token 出门 ⇒ 一串 401 + 瞬时错误态。这里在**出门前**判 `exp`，
+ * 快过期就先等同一个单飞刷新再发。
+ *
+ * <p>只读 JWT 的 `exp` 当**时钟提示**，不验签（客户端没有密钥，也不需要）——授权判定仍全在 CP。
+ * 解不出 / 没有 `exp` / 不是三段式 ⇒ 一律返回 false，退回既有 401 路径，行为逐字不变。</p>
+ */
+const REFRESH_SKEW_SECONDS = 30;
+
+function accessTokenExpiresSoon(token: string | null): boolean {
+    if (!token) return false;
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    try {
+        const payload = JSON.parse(
+            atob((parts[1] as string).replace(/-/g, "+").replace(/_/g, "/")),
+        ) as { exp?: number };
+        if (typeof payload.exp !== "number") return false;
+        return payload.exp - Math.floor(Date.now() / 1000) <= REFRESH_SKEW_SECONDS;
+    } catch {
+        return false;
+    }
+}
+
 const authSyncCallbacks = new Set<(accessToken: string) => void>();
 
 /** auth store registers to keep its in-memory token ref in sync after a silent refresh. */
@@ -2665,10 +2690,6 @@ function hasSessionMaterial(): boolean {
 async function checkedFetch(path: string, options?: RequestInit): Promise<Response> {
     const hasBody = options?.body !== undefined && options.body !== null,
         includeContentType = hasBody && !(options?.body instanceof FormData),
-        res = await fetch(endpoint(path), {
-            ...options,
-            headers: apiAuthHeaders(options?.headers, includeContentType),
-        }),
         isAuthEndpoint =
             path === "/auth/login" ||
             path === "/auth/register" ||
@@ -2676,6 +2697,20 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
         // PLAN-0498 T3.1: a wrong reveal step-up password is a 401 domain outcome,
         // not session expiry — it must stay inline in the reveal dialog.
         isStepUpEndpoint = /^\/credentials\/[^/]+\/reveal$/.test(path);
+    // task-427：预刷新。失败不在这里登出 —— 让下面的 401 路径按既有语义处理，
+    // 免得把「刷新暂时失败」升级成「会话已死」。
+    if (
+        !isAuthEndpoint &&
+        !isStepUpEndpoint &&
+        localStorage.getItem("xihe-refresh-token") !== null &&
+        accessTokenExpiresSoon(localStorage.getItem("xihe-token"))
+    ) {
+        await ensureRefreshed();
+    }
+    const res = await fetch(endpoint(path), {
+        ...options,
+        headers: apiAuthHeaders(options?.headers, includeContentType),
+    });
     if (res.status === 401 && !isAuthEndpoint && !isStepUpEndpoint) {
         // PLAN-0546: silent refresh with single-flight, then one replay. Logout only when
         // the refresh itself fails or the replayed request is still 401 (no second refresh).

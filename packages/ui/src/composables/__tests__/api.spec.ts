@@ -3023,3 +3023,63 @@ describe("BL-422: one 401 end state, whichever channel noticed it", () => {
         registerForceLogout(() => undefined);
     });
 });
+
+/**
+ * task-427 P1（A 反馈）：单飞刷新（PLAN-0546）已经在了，但**并发请求仍会各自先吃一个 401**
+ * —— 它们带着过期 token 出门，回来才去刷新。用户看到一串瞬时错误态 + 控制台噪声。
+ * 修法：出门前看 access token 的 `exp`，快过期就**先等单飞刷新**再发（预刷新）。
+ * 判据不是「刷新只调一次」（旧实现也满足），而是「**没有任何业务请求带着过期 token 发出**」。
+ */
+describe("proactive refresh before expiry (task-427)", () => {
+    function b64url(value: unknown): string {
+        return btoa(JSON.stringify(value))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+    }
+    function jwtWithExp(expSeconds: number): string {
+        return `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url({ exp: expSeconds })}.sig`;
+    }
+    function jsonRes(status: number, body: unknown): Response {
+        return {
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(body),
+            headers: { get: () => null },
+        } as unknown as Response;
+    }
+    const REFRESH_URL = "/api/v1/auth/refresh";
+
+    it("过期 token + 三个并发请求：先刷新一次，业务请求全部带新 token", async () => {
+        const now = Math.floor(Date.now() / 1000);
+        const fresh = jwtWithExp(now + 900);
+        localStorage.setItem("xihe-token", jwtWithExp(now - 10));
+        localStorage.setItem("xihe-refresh-token", "valid-refresh");
+        fetchSpy.mockImplementation(async (url: unknown) =>
+            url === REFRESH_URL
+                ? jsonRes(200, { accessToken: fresh, refreshToken: "new-refresh" })
+                : jsonRes(200, { sessions: [] }),
+        );
+
+        await Promise.all([api.getSessions(), api.getSessions(), api.getSessions()]);
+
+        const calls = fetchSpy.mock.calls;
+        expect(calls.filter(([p]) => p === REFRESH_URL).length).toBe(1);
+        expect(calls[0]?.[0]).toBe(REFRESH_URL);
+        const business = calls.filter(([p]) => p !== REFRESH_URL);
+        expect(business.length).toBe(3);
+        for (const [, init] of business) {
+            const headers = (init as RequestInit).headers as Record<string, string>;
+            expect(headers["Authorization"]).toBe(`Bearer ${fresh}`);
+        }
+    });
+
+    it("token 仍有效时不预刷新（不给每个请求加一次刷新往返）", async () => {
+        const now = Math.floor(Date.now() / 1000);
+        localStorage.setItem("xihe-token", jwtWithExp(now + 900));
+        localStorage.setItem("xihe-refresh-token", "valid-refresh");
+        fetchSpy.mockImplementation(async () => jsonRes(200, { sessions: [] }));
+        await api.getSessions();
+        expect(fetchSpy.mock.calls.filter(([p]) => p === REFRESH_URL).length).toBe(0);
+    });
+});
