@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -43,15 +44,18 @@ public class WorkspaceAgentController {
     private final AgentMemoryService agentMemoryService;
     private final AgentMemoryWriteAuthorizer memoryWriteAuthorizer;
     private final ObjectMapper objectMapper;
+    private final AuditLogger auditLogger;
 
     public WorkspaceAgentController(AgentPrincipalService agentPrincipalService,
                                     AgentMemoryService agentMemoryService,
                                     AgentMemoryWriteAuthorizer memoryWriteAuthorizer,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    AuditLogger auditLogger) {
         this.agentPrincipalService = agentPrincipalService;
         this.agentMemoryService = agentMemoryService;
         this.memoryWriteAuthorizer = memoryWriteAuthorizer;
         this.objectMapper = objectMapper;
+        this.auditLogger = auditLogger;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -65,6 +69,28 @@ public class WorkspaceAgentController {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("agents", views);
             return ResponseEntity.ok(response);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * task-448 (D-1286 / ui-2 417 P1-6): the live-cap public read face. Returns the LIVE
+     * resolveCapFor evaluation (not the stored snapshot) plus its hit source and grant provenance,
+     * so the UI can read the true effective cap. Additive (D-206 reversible); the gate is workspace
+     * membership — the same sensitivity class as the snapshot list above, no privilege escalation.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{principalId}/effective-cap")
+    public ResponseEntity<?> effectiveCap(@PathVariable String workspaceId, @PathVariable String principalId) {
+        try {
+            String actor = requireActor();
+            AgentPrincipalService.EffectiveCapResult result =
+                    agentPrincipalService.resolveCapWithSourceFor(actor, principalId, workspaceId);
+            // Read-face access audit: actor/workspace/principal only — never the cap value itself.
+            auditLogger.record(null, "workspace-agent", "effective_cap_read",
+                    "principalId=" + principalId, workspaceId, actor);
+            return ResponseEntity.ok(toEffectiveCapView(result));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -281,6 +307,28 @@ public class WorkspaceAgentController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    /** task-448: serialize the live-cap read face. effectiveCap is a Jackson-2 node => JacksonNodeExit. */
+    private Map<String, Object> toEffectiveCapView(AgentPrincipalService.EffectiveCapResult result) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("principalId", result.principalId().toString());
+        view.put("workspaceId", result.workspaceId().toString());
+        view.put("effectiveCap", JacksonNodeExit.toDocument(objectMapper, result.effectiveCap()));
+        // Hit source at the capability-atom layer: which layer granted the binding atoms.
+        Map<String, Object> capSource = new LinkedHashMap<>();
+        capSource.put("binding", result.bindingSource());
+        view.put("capSource", capSource);
+        // P1-1 provenance: the grant-row ids behind the evaluation (audit already holds the full chain).
+        Map<String, Object> provenance = new LinkedHashMap<>();
+        provenance.put("principalGrantIds", result.principalGrantIds().stream().map(UUID::toString).toList());
+        provenance.put("bindingGrantIds", result.bindingGrantIds().stream().map(UUID::toString).toList());
+        view.put("provenance", provenance);
+        // P1-2 defaultGrants: the read-face authorization default grant set (workspace members; the
+        // gate is membership, evaluated at the atom layer — no role-name special-case).
+        view.put("defaultGrants", Map.of("readFace", List.of("OWNER", "EDITOR", "VIEWER")));
+        view.put("bound", result.bound());
+        return view;
     }
 
     private Map<String, Object> toView(AgentPrincipalService.WorkspaceAgentView view) {

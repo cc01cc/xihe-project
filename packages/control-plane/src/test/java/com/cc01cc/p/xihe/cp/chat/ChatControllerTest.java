@@ -191,6 +191,10 @@ class ChatControllerTest extends AbstractH2Test {
     @Autowired
     private HealthMonitor healthMonitor;
 
+    /** task-448 wave / D-1295: the governor slot count is the mechanism quantity for "no admission leak". */
+    @Autowired
+    private com.cc01cc.p.xihe.cp.policy.ResourceGovernor resourceGovernor;
+
     @MockitoSpyBean
     private AnswererChain answererChain;
 
@@ -2383,6 +2387,11 @@ class ChatControllerTest extends AbstractH2Test {
                         "SELECT count(*) FROM chat_run_transport_attempts WHERE CAST(run_id AS VARCHAR) = ?",
                         Integer.class, runId),
                 "a suppressed submission never reaches the transport");
+        // D-1295 (mechanism quantity, not the run terminal state): the suppression branch must release
+        // the governor admission slots — a leaked slot would starve later submissions even though the
+        // Run row already reads "succeeded".
+        assertEquals(0, resourceGovernor.inflightForRun(runId),
+                "suppression must release the governor admission slots (no slot leak)");
         // Unlike mention suppression, nobody is named ⇒ no fan-out at all.
         Mockito.verify(wakeFanOutService, Mockito.never()).fanOut(Mockito.any(), Mockito.anyString(),
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any());

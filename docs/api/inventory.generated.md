@@ -5,11 +5,11 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**355** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 255 · 服务间 100
+- 规模：**356** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 256 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（355 / 355 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（356 / 356 个操作带 tag）。
 
-## public（255 operations · 公开 · 17 tags）
+## public（256 operations · 公开 · 17 tags）
 
 ### auth（11）
 
@@ -95,7 +95,7 @@
 | `DELETE /api/v1/workspaces/{workspaceId}/roots/{rootId}` | `deleteWorkspaceRoot` | `bearerAuth` | Soft-delete a root (PLAN-0639 D39-3) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/runtime/release` | `releaseWorkspaceRuntime` | `bearerAuth` | Release workspace execution resources (any accessible member) | 公开 |
 
-### agent（26）
+### agent（27）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -121,6 +121,7 @@
 | `GET /api/v1/workspaces/{workspaceId}/agents` | `listWorkspaceAgents` | `bearerAuth` | List the Agent principals a Workspace can use | 公开 |
 | `PUT /api/v1/workspaces/{workspaceId}/agents/{principalId}` | `setWorkspaceAgentCap` | `bearerAuth` | Add or update one Workspace Agent binding cap | 公开 |
 | `DELETE /api/v1/workspaces/{workspaceId}/agents/{principalId}` | `unbindWorkspaceAgent` | `bearerAuth` | Remove one Workspace Agent binding | 公开 |
+| `GET /api/v1/workspaces/{workspaceId}/agents/{principalId}/effective-cap` | `getWorkspaceAgentEffectiveCap` | `bearerAuth` | Read the live effective cap of one Workspace Agent | 公开 |
 | `GET /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories` | `listWorkspaceAgentMemories` | `bearerAuth` | [DEPRECATED] List one agent's memory (subject-level route preferred) | 公开 |
 | `POST /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories` | `createWorkspaceAgentMemory` | `bearerAuth` | [DEPRECATED] Write one agent memory assertion (subject-level route preferred) | 公开 |
 | `PATCH /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories/{memoryId}` | `updateWorkspaceAgentMemory` | `bearerAuth` | [DEPRECATED] Edit one agent memory assertion (subject-level route preferred) | 公开 |

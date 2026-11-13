@@ -768,19 +768,66 @@ public class AgentPrincipalService {
      */
     @Transactional(readOnly = true)
     public JsonNode resolveCapFor(UUID principalId, UUID workspaceId) {
+        // task-448 (C1): the cap value has a single computation point — evaluateCap. The public
+        // live-cap read face (resolveCapWithSourceFor) delegates to the same evaluation, so the wire
+        // cap and the internal consumers can never diverge. V16 no-cache semantics are unchanged.
+        return toJson(evaluateCap(principalId, workspaceId).effective());
+    }
+
+    /**
+     * task-448 (D-1286): the single cap evaluation point (C1). Computes exactly what
+     * {@link #resolveCapFor(UUID, UUID)} always computed — binding permissions retained to the
+     * principal's effective ceiling — and additionally records the hit source (which layer granted
+     * the binding atoms) and the grant-row provenance, which the public read face exposes. Keeping
+     * the computation here (rather than a second copy in the read face) is what guarantees the live
+     * read face and the internal consumers agree atom-for-atom.
+     */
+    private CapEvaluation evaluateCap(UUID principalId, UUID workspaceId) {
         ActiveWorkspaceBinding binding = requireActiveWorkspaceBinding(principalId, workspaceId);
         AgentPrincipal principal = binding.principal();
-        Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions =
-                principalEffectiveAtoms(principal.getId(), workspaceId);
-        Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions = binding.workspaceAgent() == null
-                // PLAN-0629: access granted by a workspace role binding, no binding row involved.
-                ? evaluator.union(orgUnitGrants.merge(grantRepository.findScopedGrants(
-                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId(),
-                        GrantSources.EVALUATION_SOURCES, workspaceId),
-                        orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
-                                principal.getId())))
-                : parsePermissions(binding.workspaceAgent().getPermissionsSnapshot());
-        return toJson(retainCovered(bindingPermissions, principalPermissions));
+        AtomEvaluation principalEval = principalEffectiveAtomsWithProvenance(principal.getId(), workspaceId);
+        Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions;
+        String bindingSource;
+        List<UUID> bindingGrantIds;
+        if (binding.workspaceAgent() == null) {
+            // PLAN-0629: access granted by a workspace role binding, no binding row involved.
+            List<AuthorizationGrant> roleGrantRows = grantRepository.findScopedGrants(
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId(),
+                    GrantSources.EVALUATION_SOURCES, workspaceId);
+            java.util.Collection<AuthorizationGrant> expanded =
+                    orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId());
+            bindingPermissions = evaluator.union(orgUnitGrants.merge(roleGrantRows, expanded));
+            bindingSource = "role-binding";
+            bindingGrantIds = grantIds(roleGrantRows, expanded);
+        } else {
+            bindingPermissions = parsePermissions(binding.workspaceAgent().getPermissionsSnapshot());
+            bindingSource = "binding-snapshot";
+            bindingGrantIds = List.of();
+        }
+        Set<GrantIntersectionEvaluator.PermissionAtom> effective =
+                retainCovered(bindingPermissions, principalEval.atoms());
+        return new CapEvaluation(effective, bindingSource, principalEval.grantIds(), bindingGrantIds, binding);
+    }
+
+    /** task-448: effective cap plus hit source and grant provenance (the single evaluation result). */
+    private record CapEvaluation(Set<GrantIntersectionEvaluator.PermissionAtom> effective,
+                                 String bindingSource, List<UUID> principalGrantIds,
+                                 List<UUID> bindingGrantIds, ActiveWorkspaceBinding binding) {}
+
+    /** task-448: an atom set plus the grant-row ids that produced it (read-face provenance). */
+    private record AtomEvaluation(Set<GrantIntersectionEvaluator.PermissionAtom> atoms, List<UUID> grantIds) {}
+
+    /** task-448: distinct grant-row ids across the scoped rows and the org-unit expansion. */
+    private static List<UUID> grantIds(List<AuthorizationGrant> rows,
+                                       java.util.Collection<AuthorizationGrant> expanded) {
+        List<UUID> ids = new java.util.ArrayList<>();
+        for (AuthorizationGrant grant : rows) {
+            ids.add(grant.getId());
+        }
+        for (AuthorizationGrant grant : expanded) {
+            ids.add(grant.getId());
+        }
+        return ids.stream().distinct().toList();
     }
 
     /** 2026-11-04 P0（task-24）：主体的默认模型身份；未设置时两个字段都为 null。 */
@@ -811,6 +858,44 @@ public class AgentPrincipalService {
     public JsonNode resolveSessionCap(String principalIdValue, String workspaceIdValue) {
         return resolveCapFor(principalIdValue, workspaceIdValue);
     }
+
+    /**
+     * task-448 (D-1286 / ui-2 417 P1-6): the public <b>live-cap</b> read face. The stored
+     * {@code permissionsSnapshot} can lag the live evaluation (a narrowed/revoked principal grant
+     * takes effect on the next submission, V16), so the UI could only honestly annotate the snapshot
+     * as "not the true source". This returns the LIVE {@link #resolveCapFor} evaluation plus its hit
+     * source and grant-row provenance, letting the UI read the true effective cap.
+     *
+     * <p>Gate = workspace membership — the same sensitivity class as the snapshot list read face
+     * ({@link #listWorkspaceAgents}), evaluated at the capability-atom layer (no role-name
+     * special-case). Single computation point: delegates to {@link #evaluateCap} (C1); a disabled
+     * principal answers {@code 409 AGENT_PRINCIPAL_DISABLED} and an unbound workspace {@code 403},
+     * exactly as the internal evaluation does.</p>
+     */
+    @Transactional(readOnly = true)
+    public EffectiveCapResult resolveCapWithSourceFor(String actorIdValue, String principalIdValue,
+                                                      String workspaceIdValue) {
+        UUID actorId = parseUuid(actorIdValue, "INVALID_ACTOR");
+        UUID principalId = parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL");
+        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE");
+        requireWorkspaceMember(actorId, workspaceId);
+        CapEvaluation eval = evaluateCap(principalId, workspaceId);
+        AgentPrincipal principal = eval.binding().principal();
+        return new EffectiveCapResult(principalId, workspaceId, toJson(eval.effective()),
+                eval.bindingSource(), eval.principalGrantIds(), eval.bindingGrantIds(),
+                eval.binding().workspaceAgent() != null, principal.getDisabledAt() != null);
+    }
+
+    /**
+     * task-448: live-cap read-face result. {@code effectiveCap} is byte-identical to
+     * {@link #resolveCapFor}; {@code bindingSource} is the hit source of the binding atoms
+     * ({@code binding-snapshot} or {@code role-binding}); the grant-id lists are the provenance
+     * (P1-1). A disabled principal never reaches a 200 here (409 upstream), so {@code disabled} is
+     * always false on the wire and kept only to document the state dimension.
+     */
+    public record EffectiveCapResult(UUID principalId, UUID workspaceId, JsonNode effectiveCap,
+                                     String bindingSource, List<UUID> principalGrantIds,
+                                     List<UUID> bindingGrantIds, boolean bound, boolean disabled) {}
 
     /**
      * PLAN-0622 M1.3: existence check expressed through the single entry — the binding/active
@@ -965,20 +1050,31 @@ public class AgentPrincipalService {
      */
     private Set<GrantIntersectionEvaluator.PermissionAtom> principalEffectiveAtoms(UUID principalId,
                                                                                   UUID workspaceId) {
-        // role 行是模板/默认能力的唯一权威源（2026-11-04 裁定），但 credential_binding 是**活跃**机制
-        // （PLAN-0494 把凭证原子合并到主体上），不是 legacy 快照 —— 它必须与 role 一起参与求值，
-        // 否则"绑了凭证但主体已有角色行"会让凭证原子永远进不了会话 cap（本单 task-29 实测）。
+        // task-448 (C1): thin delegate — the computation (and its grant provenance) lives in one place.
+        return principalEffectiveAtomsWithProvenance(principalId, workspaceId).atoms();
+    }
+
+    /**
+     * task-448: the principal effective-atom computation plus the grant-row ids that produced it.
+     * role 行是模板/默认能力的唯一权威源（2026-11-04 裁定），但 credential_binding 是**活跃**机制
+     * （PLAN-0494 把凭证原子合并到主体上），不是 legacy 快照 —— 它必须与 role 一起参与求值，
+     * 否则"绑了凭证但主体已有角色行"会让凭证原子永远进不了会话 cap（本单 task-29 实测）。
+     */
+    private AtomEvaluation principalEffectiveAtomsWithProvenance(UUID principalId, UUID workspaceId) {
         List<AuthorizationGrant> roleRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 List.of(GrantSources.ROLE, GrantSources.CREDENTIAL_BINDING), workspaceId);
         java.util.Collection<AuthorizationGrant> expanded =
                 orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId);
         if (!roleRows.isEmpty()) {
-            return evaluator.union(orgUnitGrants.merge(roleRows, expanded));
+            return new AtomEvaluation(evaluator.union(orgUnitGrants.merge(roleRows, expanded)),
+                    grantIds(roleRows, expanded));
         }
-        return evaluator.union(orgUnitGrants.merge(grantRepository.findScopedGrants(
+        List<AuthorizationGrant> evaluationRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                GrantSources.EVALUATION_SOURCES, workspaceId), expanded));
+                GrantSources.EVALUATION_SOURCES, workspaceId);
+        return new AtomEvaluation(evaluator.union(orgUnitGrants.merge(evaluationRows, expanded)),
+                grantIds(evaluationRows, expanded));
     }
 
     /**
