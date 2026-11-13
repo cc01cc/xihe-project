@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../../i18n";
 import SessionParticipantsPanel from "../SessionParticipantsPanel.vue";
-import { selectModelValue, setSelectValue } from "../../../../test-utils/select";
+import { findSelectRoot, selectModelValue, setSelectValue } from "../../../../test-utils/select";
+import { SelectItem } from "@/components/ui/select";
 import { useUserQuestionsStore } from "../../stores/userQuestions";
 import type {
     ParticipantReadCursor,
@@ -22,11 +23,20 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             removeSessionParticipant: vi.fn<() => Promise<void>>(),
             updateSessionParticipant: vi.fn<() => Promise<void>>(),
             advanceParticipantCursor: vi.fn<() => Promise<ParticipantReadCursor>>(),
+            // task-452（F-15）：名册添加入口的两个新消费点
+            getWorkspaceAgents: vi.fn<() => Promise<unknown[]>>(),
+            addSessionParticipant: vi.fn<() => Promise<void>>(),
         },
     };
 });
 
-import { api, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST } from "../../../../composables/api";
+vi.mock("../../../../lib/workspaceContext", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../lib/workspaceContext")>();
+    // 只覆盖读当前工作区，其余导出保持真实（整模块替换会打断 migrateLegacyWorkspace 等消费方）
+    return { ...actual, readTabWorkspaceId: () => "ws-1" };
+});
+
+import { ApiError, api, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST } from "../../../../composables/api";
 
 const getParticipants = vi.mocked(api.getSessionParticipants);
 const removeParticipant = vi.mocked(api.removeSessionParticipant);
@@ -643,5 +653,99 @@ describe("participant read cursor advance (PLAN-0660 T5.6)", () => {
         // 失败不改本地状态：徽标仍是服务端的 3。
         expect(wrapper.get('[data-testid="participant-mention-badge-p-me"]').text()).toContain("3");
         expect(getParticipants).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * task-452（F-15 / Lead 裁 P1）：会话名册**添加入口**。
+ * 缺口原文：CP 有 POST …/participants，UI 无入口 ⇒ 已绑工作区的第二个智能体永远进不了名册，
+ * 于是 To/抄送候选里搜不到它（候选只来自 SessionParticipantView[]）⇒ 多智能体定向堵在第一步。
+ */
+describe("SessionParticipantsPanel · task-452 添加智能体进名册", () => {
+    const ADDABLE = {
+        principalId: "a10fe61d-3eca-4b12-b45e-f77238d237f1",
+        name: "审计MiMo助手",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-14T00:00:00Z",
+        permissionsSnapshot: [],
+        capSource: "baseline",
+        bound: true,
+        disabled: false,
+    };
+
+    function rosterResponse(items: SessionParticipantView[] = [AGENT, HUMAN]) {
+        return { participants: items, capabilities: ALL_CAPS } as SessionParticipantListResponse;
+    }
+
+    beforeEach(() => {
+        getParticipants.mockResolvedValue(rosterResponse());
+        vi.mocked(api.getWorkspaceAgents).mockResolvedValue([
+            ADDABLE,
+            { ...ADDABLE, principalId: AGENT.principalId, name: "已在名册" },
+            { ...ADDABLE, principalId: "disabled-1", name: "已停用", disabled: true },
+            { ...ADDABLE, principalId: "unbound-1", name: "未绑定", bound: false },
+        ]);
+        vi.mocked(api.addSessionParticipant).mockResolvedValue(undefined);
+    });
+
+    it("manage=true 渲染添加入口，候选排除已在名册/已停用/未绑定", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="participants-add-agent"]').exists()).toBe(true);
+        // reka Select 的 item 只在弹层打开时进 DOM ⇒ 单测钉组件 props（真实点击路径归 Playwright）
+        const addSelect = findSelectRoot(wrapper, '[data-testid="participants-add-agent-select"]');
+        const values = addSelect!.findAllComponents(SelectItem).map((item) => item.props("value"));
+        expect(values).toEqual([ADDABLE.principalId]);
+    });
+
+    it("选中后点添加 ⇒ POST 契约字段 + 工作区上下文，并重新拉名册", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+        await setSelectValue(
+            wrapper,
+            '[data-testid="participants-add-agent-select"]',
+            ADDABLE.principalId,
+        );
+        await wrapper.get('[data-testid="participants-add-agent-submit"]').trigger("click");
+        await flushPromises();
+        expect(api.addSessionParticipant).toHaveBeenCalledWith(
+            "session-1",
+            { principalKind: "AGENT", principalId: ADDABLE.principalId },
+            "ws-1",
+        );
+        expect(getParticipants.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("409 已存在 ⇒ 本地化行内提示，名册不被摧毁", async () => {
+        vi.mocked(api.addSessionParticipant).mockRejectedValue(
+            new ApiError({
+                status: 409,
+                code: "PARTICIPANT_ALREADY_EXISTS",
+                detail: "already a participant",
+            }),
+        );
+        const wrapper = mountPanel();
+        await flushPromises();
+        await setSelectValue(
+            wrapper,
+            '[data-testid="participants-add-agent-select"]',
+            ADDABLE.principalId,
+        );
+        await wrapper.get('[data-testid="participants-add-agent-submit"]').trigger("click");
+        await flushPromises();
+        const err = wrapper.get('[data-testid="participants-add-error"]');
+        expect(err.text()).toBe(i18n.global.t("workspace.participantAddExists"));
+        expect(err.text()).not.toContain("already a participant");
+        expect(wrapper.find('[data-testid="participants-list"]').exists()).toBe(true);
+    });
+    it("manage=false 不渲染添加入口（能力门，不按角色名特判）", async () => {
+        getParticipants.mockResolvedValue({
+            participants: [AGENT],
+            capabilities: { view: true, manage: false, mention: true },
+        } as SessionParticipantListResponse);
+        const wrapper = mountPanel();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="participants-add-agent"]').exists()).toBe(false);
     });
 });

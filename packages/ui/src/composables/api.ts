@@ -3449,6 +3449,32 @@ export const api = {
             },
         );
     },
+    /**
+     * task-452（F-15 / Lead 裁 P1）：把主体**加入会话名册** —— `POST …/participants`（CP 201）。
+     *
+     * 为什么需要：`RecipientField` 的定向/抄送候选只来自会话名册（`SessionParticipantView[]`），
+     * 而名册此前**没有任何 UI 添加入口** ⇒ 已绑工作区的第二个智能体永远无法被首次定向
+     * （B′ 绑定成功 ≠ 能被 @ 到，与 F-09/F-11 同族：授权门通过 ≠ 路径能走通）。
+     *
+     * 契约（`SessionParticipantController#add`）：body 必填 `principalKind` + `principalId`，
+     * 可选 `role`/`wakePolicy`/`respondPolicy`/`wakeConfig`/`deliveryDefaults`；工作区上下文走
+     * `X-Workspace-Id` 头（由 `request` 的 tab 上下文注入，调用方也可显式覆盖）。
+     * 已知错误：`PARTICIPANT_ALREADY_EXISTS`（409，幂等重放）。调用方按 code 本地化，不直显英文 detail。
+     */
+    async addSessionParticipant(
+        sessionId: string,
+        body: { principalKind: "AGENT" | "HUMAN"; principalId: string; role?: string },
+        workspaceId?: string,
+    ): Promise<void> {
+        await request<void>(`/sessions/${encodeURIComponent(sessionId)}/participants`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}),
+            },
+            body: JSON.stringify(body),
+        });
+    },
     async removeSessionParticipant(sessionId: string, participantId: string): Promise<void> {
         await request<void>(
             `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,

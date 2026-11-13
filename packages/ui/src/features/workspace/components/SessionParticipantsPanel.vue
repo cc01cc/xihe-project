@@ -21,7 +21,22 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { MessageCircleQuestion } from "@lucide/vue";
-import { ApiError, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST, api } from "../../../composables/api";
+import {
+    ApiError,
+    PARTICIPANT_CURSOR_ADVANCE_TO_LATEST,
+    api,
+    type WorkspaceAgentBinding,
+} from "../../../composables/api";
+import { readTabWorkspaceId } from "../../../lib/workspaceContext";
+import { logger } from "../../../lib/logger";
+import { Button } from "@/components/ui/button";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import ParticipantRow from "./ParticipantRow.vue";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import { useUserQuestionsStore } from "../stores/userQuestions";
@@ -100,6 +115,87 @@ const emit = defineEmits<{
 }>();
 
 const canView = computed(() => capabilities.value.view);
+
+/**
+ * task-452（F-15 / Lead 裁 P1）：把**已绑本工作区的智能体**加入会话名册。
+ *
+ * 为什么必须有这个入口：composer 的定向/抄送候选只来自 `SessionParticipantView[]`（会话名册），
+ * 名册此前只能由 CP 侧写入 ⇒ 工作区里绑好的第二个智能体**永远搜不到、发不出去**，
+ * 多智能体协作堵在第一步（授权门通过 ≠ 路径能走通，与 F-09/F-11 同族）。
+ * 后端能力早就有：`POST /api/v1/sessions/{id}/participants`（201，重放 409）。
+ *
+ * 能力门沿用面板既有的 `capabilities.manage`（CP 派生），**不按角色名特判**。
+ */
+const workspaceAgents = ref<WorkspaceAgentBinding[]>([]);
+const addSelection = ref("");
+const adding = ref(false);
+const addError = ref("");
+
+const addCandidates = computed(() => {
+    const inRoster = new Set(
+        (participants.value ?? [])
+            .filter((item) => item.principalKind === "AGENT")
+            .map((item) => item.principalId),
+    );
+    // 已在名册的（含被软停用的行）不重复提供；未绑定/已停用的主体不能用于新会话。
+    return workspaceAgents.value.filter(
+        (agent) => agent.bound && !agent.disabled && !inRoster.has(agent.principalId),
+    );
+});
+
+const canAddParticipants = computed(
+    () =>
+        Boolean(props.sessionId) && !loading.value && !forbidden.value && capabilities.value.manage,
+);
+
+async function loadWorkspaceAgents(): Promise<void> {
+    const workspaceId = readTabWorkspaceId();
+    if (!workspaceId) {
+        workspaceAgents.value = [];
+        return;
+    }
+    try {
+        workspaceAgents.value = (await api.getWorkspaceAgents(workspaceId)) ?? [];
+    } catch (error) {
+        // 候选拉取失败不摧毁名册：入口降级为空候选 + 行内提示，已有行照常可操作。
+        logger.warn("session participants: load workspace agents failed", error);
+        workspaceAgents.value = [];
+    }
+}
+
+async function addAgentParticipant(): Promise<void> {
+    if (!props.sessionId || !addSelection.value || adding.value || !capabilities.value.manage)
+        return;
+    adding.value = true;
+    addError.value = "";
+    try {
+        await api.addSessionParticipant(
+            props.sessionId,
+            { principalKind: "AGENT", principalId: addSelection.value },
+            readTabWorkspaceId() ?? undefined,
+        );
+        addSelection.value = "";
+        await store.load(props.sessionId);
+        await loadWorkspaceAgents();
+    } catch (error) {
+        addError.value =
+            error instanceof ApiError && error.problem?.code === "PARTICIPANT_ALREADY_EXISTS"
+                ? t("workspace.participantAddExists")
+                : t("workspace.participantAddFailed");
+    } finally {
+        adding.value = false;
+    }
+}
+
+watch(
+    () => [props.sessionId, capabilities.value.manage] as const,
+    ([id, manage]) => {
+        addSelection.value = "";
+        addError.value = "";
+        if (id && manage) void loadWorkspaceAgents();
+    },
+    { immediate: true },
+);
 
 async function load(): Promise<void> {
     await store.load(props.sessionId);
@@ -207,6 +303,59 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
                 :title="t('userQuestions.title')"
                 >{{ t("userQuestions.pendingCount", { count: pendingQuestionCount }) }}</span
             >
+        </p>
+        <!--
+            task-452（F-15）：名册添加入口。放在状态分支**之前**，空名册时也能加人
+            （空名册恰恰是最需要它的时候）。能力门 = CP 派生的 capabilities.manage。
+        -->
+        <div
+            v-if="canAddParticipants"
+            class="mb-2 flex items-center gap-1.5"
+            data-testid="participants-add-agent"
+        >
+            <Select v-model="addSelection">
+                <SelectTrigger
+                    class="h-7 flex-1 text-xs"
+                    data-testid="participants-add-agent-select"
+                    :aria-label="t('workspace.participantAddLabel')"
+                >
+                    <SelectValue :placeholder="t('workspace.participantAddPlaceholder')" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem
+                        v-for="agent in addCandidates"
+                        :key="agent.principalId"
+                        :value="agent.principalId"
+                        :data-testid="`participants-add-option-${agent.principalId}`"
+                    >
+                        {{ agent.name }}
+                    </SelectItem>
+                </SelectContent>
+            </Select>
+            <Button
+                size="sm"
+                variant="outline"
+                class="h-7 shrink-0 text-xs"
+                data-testid="participants-add-agent-submit"
+                :disabled="!addSelection || adding"
+                @click="addAgentParticipant"
+            >
+                {{ t("workspace.participantAddAction") }}
+            </Button>
+        </div>
+        <p
+            v-if="canAddParticipants && addCandidates.length === 0"
+            class="mb-2 text-muted-foreground"
+            data-testid="participants-add-empty"
+        >
+            {{ t("workspace.participantAddNone") }}
+        </p>
+        <p
+            v-if="addError"
+            class="mb-2 break-all text-destructive"
+            data-testid="participants-add-error"
+        >
+            {{ addError }}
         </p>
         <p v-if="!props.sessionId" class="text-muted-foreground" data-testid="participants-empty">
             {{ t("workspace.participantsEmptyNoSession") }}
