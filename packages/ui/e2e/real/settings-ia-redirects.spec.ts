@@ -13,11 +13,18 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
  * ⏳ 待补的两条 —— **V2（三条旧路径 redirect）** 与 **V3（层×域矩阵外组合 404 + 零请求）**。
  * 重复断言已在同一文件里做过的事只会拉长真栈窗口，不增加覆盖面。</p>
  *
- * <p><b>task-253（2026-11-10，Q-1110-45）已把工作区块配置层整体退役</b>：`?tab=config` 入口与
+ * <p><b>task-253（2026-11-10，Q-1110-45）曾把工作区块配置层整体退役</b>：当时 `?tab=config` 入口与
  * `ws-settings-domain-` 系列容器都不存在了 ⇒ 原文 V2 第三条（`/workspace/:id/settings?tab=config`）
  * 与「工作区旧 tab 入口仍渲染配置页签」用例整条删除，原位留 (a) 标注；V3 里同样指向已删面的
  * 反向断言（`ws-settings-domain-page` count 0，断「不存在的东西不存在」）也一并删除 —— 留着只会
  * 让人误以为有覆盖。存活判据：V2 的两条全局旧路径 redirect + V3 的层×域 404 与零工作区层请求。</p>
+ *
+ * <p><b>⚠ 上面那段「`?tab=config` 入口不存在了」只对 task-253 → M4-1 之间成立</b>（2026-11-13
+ * `task-348` 更正）：PLAN-0773 M4-1（task-190，`d0864b59e`）把工作区配置 tab 按 **per-workspace 层**
+ * 接了回来，`?tab=config` 与 `ws-settings-tab-config` / `ws-settings-config` 两个 testid 现在都存在；
+ * 仍不存在的只是 `ws-settings-domain-` 系列（域段页随 task-253 消失，未随 M4-1 回来）。
+ * 真栈对这条 tab 的覆盖：`approval-policy.spec.ts:128,155` 是**走到该 tab 上再做审批断言**，
+ * 不判这两个 testid 的存在性本身 ⇒ 「`?tab=config` 能进、落点正确」这条目前只有 mock 车道在钉。</p>
  *
  * <p>判据出处：`plans/PLAN-0752-XH-settings-information-architecture/verify.md`
  * - V2：`/settings/config`、`/settings/policy` 两条全局旧路径都能到达实例层默认域（断言最终 URL 与落点）。
@@ -156,8 +163,20 @@ test("@host PLAN-0752 V2 两条旧设置路径重定向到实例层默认域", a
 
 // (a) 删 —— 「工作区旧 tab 入口仍渲染配置页签」（原 @host PLAN-0752 V2 第三条）：task-253 把工作区
 // 配置层整体退役后，`ws-settings-tab-config` 与 `ws-settings-config` 两个 testid 在
-// WorkspaceSettingsView.vue 里都已不存在（现存页签只有 general|mcp|members|credentials|knowledge）
-// ⇒ 断言对象消失，整条删除。幸存页签的可得性由 mock 车道 plan-0752-settings-ia.spec.ts 覆盖。
+// WorkspaceSettingsView.vue 里都已不存在 ⇒ 当时断言对象消失，整条删除。
+//
+// ⚠ **这段话只对 task-253 → M4-1 之间的那一段成立，不要把它当现状读**（2026-11-13 `task-348` 更正）：
+// PLAN-0773 M4-1（task-190，`d0864b59e`）把工作区配置 tab **按 per-workspace 层接了回来**
+// （`ConfigLayer` 新增 `workspace`），两个 testid 现在是**存在的** —— `ws-settings-tab-config`
+// 与 `ws-settings-config` 都在，现存页签是 `general|config`。当时那句「现存页签只有
+// general|mcp|members|credentials|knowledge」也已全部过期（mcp/members/credentials/knowledge
+// 分别随 task-209 / task-236 撤走）。
+// 保留这段而不是删掉：它记录的是「曾有一段时间它们不存在」这个事实（墓碑形态）。
+// 现状判据在 mock 车道（都能跑，不必相信这段注释）：
+//   - `plan-0752-settings-ia.spec.ts` —— 两个 testid 的存在/不挂载 + 防复活守卫
+//   - `config-settings.spec.ts:225,236` —— `?tab=config` 的直接进入与高亮
+// 真栈侧对这条 tab 的用例**不复活**：`approval-policy.spec.ts:128,155` 已走到 `?tab=config`（当审批
+// 断言的前置），但「`?tab=config` 落点 = 配置页签且高亮」这条判据目前只在 mock 车道（见文件头）。
 
 test("@host PLAN-0752 V3 用户层矩阵外组合 404 且不发工作区层配置请求", async ({
     page,
