@@ -607,7 +607,7 @@ async function handleReset(domain: string, key: string) {
         <template v-if="domain === 'llm-provider'">
             <div class="border rounded-lg mb-2 overflow-hidden" data-testid="provider-partition">
                 <div class="px-4 py-3 bg-muted/30 space-y-1">
-                    <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <div class="text-xs font-medium tracking-wide text-muted-foreground">
                         {{ t("settings.providerPartitionKicker") }}
                     </div>
                     <h3 class="text-base font-semibold" data-testid="provider-hub-section-title">

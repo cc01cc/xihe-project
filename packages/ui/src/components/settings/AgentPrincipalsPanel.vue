@@ -269,7 +269,7 @@ onMounted(refresh);
     <div data-testid="agent-principals-panel">
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
-                <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <p class="mb-1 text-xs tracking-widest text-muted-foreground">
                     {{ t("settings.eyebrow.agentPrincipals") }}
                 </p>
                 <h1

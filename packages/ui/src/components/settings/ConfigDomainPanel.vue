@@ -647,7 +647,7 @@ function handleReset(key: string) {
                         }}
                     </span>
                     <span
-                        class="text-xs uppercase tracking-wide px-1.5 py-0.5 rounded border"
+                        class="text-xs tracking-wide px-1.5 py-0.5 rounded border"
                         :class="
                             isAdminLocked(field.key)
                                 ? 'border-rose-500/60 text-rose-600'
@@ -798,7 +798,7 @@ function handleReset(key: string) {
                 <span
                     v-if="isDrifted(field)"
                     :data-testid="`config-drift-${domain}-${field.key}`"
-                    class="shrink-0 text-xs uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
+                    class="shrink-0 text-xs tracking-wide px-1.5 py-0.5 rounded border border-amber-500/60 text-amber-600"
                     :title="t('settings.driftedHint')"
                     >{{ t("settings.driftedBadge") }}</span
                 >

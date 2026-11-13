@@ -261,7 +261,7 @@ const layerHeaderClass =
         "shrink-0 rounded px-1.5 py-px font-mono text-xs font-normal ring-1 ring-border ring-inset",
     /** 二级组标签（域 / 资源 / 运维·安全）：12px + uppercase + tracking（task-50 C1）。 */
     sectionLabelClass =
-        "h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+        "h-auto px-0 pb-1 pl-4 pr-2 pt-2 text-xs font-medium tracking-wider text-muted-foreground",
     /**
      * 条目：`pl-6` 三级缩进；13px（task-50 C1：与 14px 层组标题拉开一档）。
      * task-50：删掉 `border-l-2 border-l-transparent` —— 6px 圆角 + 2px 竖线 = 用户看到的「半截括号」。

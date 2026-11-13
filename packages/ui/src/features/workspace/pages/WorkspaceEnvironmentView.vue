@@ -438,7 +438,7 @@ onBeforeUnmount(stopPolling);
     <section class="min-h-full bg-background px-4 py-8 sm:px-8">
         <div class="mx-auto max-w-5xl">
             <header class="mb-8 border-b pb-5">
-                <p class="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                <p class="text-xs font-medium tracking-widest text-muted-foreground">
                     {{ t("workspace.environmentEyebrow") }}
                 </p>
                 <h1

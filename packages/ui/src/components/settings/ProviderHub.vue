@@ -1010,7 +1010,7 @@ onMounted(() => {
 <template>
     <section data-testid="provider-hub" class="space-y-6 rounded-xl border bg-card p-5 sm:p-7">
         <header>
-            <div class="text-xs font-semibold uppercase tracking-widest text-primary">
+            <div class="text-xs font-semibold tracking-widest text-primary">
                 {{ t("settings.providerHub.kicker") }}
             </div>
             <h3 class="mt-1 text-xl font-semibold tracking-tight">
@@ -1902,7 +1902,7 @@ onMounted(() => {
                     </p>
                     <template v-for="group in pickerGroups" :key="group.label">
                         <div
-                            class="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                            class="px-3 pb-1 pt-3 text-xs font-semibold tracking-wider text-muted-foreground"
                         >
                             {{ group.label }}
                         </div>

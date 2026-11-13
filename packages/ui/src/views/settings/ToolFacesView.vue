@@ -168,7 +168,7 @@ onMounted(() => {
             <div>
                 <p
                     v-if="!props.embedded"
-                    class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground"
+                    class="mb-1 text-xs tracking-widest text-muted-foreground"
                 >
                     {{ t("settings.eyebrow.policy") }}
                 </p>

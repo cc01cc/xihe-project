@@ -281,7 +281,7 @@ onMounted(() => {
         <SettingsPermissionGate variant="no-atom" />
         <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
-                <p class="mb-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <p class="mb-1 text-xs tracking-widest text-muted-foreground">
                     {{ t("settings.eyebrow.audit") }}
                 </p>
                 <h1
@@ -499,9 +499,7 @@ onMounted(() => {
                     </div>
 
                     <div>
-                        <h3
-                            class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground"
-                        >
+                        <h3 class="mb-2 text-xs font-medium tracking-widest text-muted-foreground">
                             {{ t("settings.auditItems") }}
                         </h3>
                         <div
@@ -665,9 +663,7 @@ onMounted(() => {
                     </div>
 
                     <div v-if="detail.attempts.length > 0">
-                        <h3
-                            class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground"
-                        >
+                        <h3 class="mb-2 text-xs font-medium tracking-widest text-muted-foreground">
                             {{ t("settings.auditAttempts") }}
                         </h3>
                         <ul class="space-y-2">
@@ -691,9 +687,7 @@ onMounted(() => {
                     </div>
 
                     <div data-testid="settings-audit-events">
-                        <h3
-                            class="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground"
-                        >
+                        <h3 class="mb-2 text-xs font-medium tracking-widest text-muted-foreground">
                             {{ t("settings.auditEvents") }}
                         </h3>
                         <div

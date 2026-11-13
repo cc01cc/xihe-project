@@ -31,9 +31,7 @@ const languageLabel = computed(() => props.language);
 <template>
     <div data-testid="workspace-code-editor" class="flex flex-col h-full">
         <div class="flex items-center justify-between px-3 py-1 border-b bg-muted/30 shrink-0">
-            <span class="text-xs font-mono text-muted-foreground uppercase">{{
-                languageLabel
-            }}</span>
+            <span class="text-xs font-mono text-muted-foreground">{{ languageLabel }}</span>
             <span class="text-xs text-muted-foreground">{{ doc.split("\n").length }} lines</span>
         </div>
         <div ref="host" class="flex-1 overflow-auto" />

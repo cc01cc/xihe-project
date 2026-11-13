@@ -260,7 +260,7 @@ function focusInput(): void {
                 >
                     <span class="truncate text-sm font-medium">{{ candidate.displayName }}</span>
                     <span
-                        class="ml-auto shrink-0 rounded-full border px-1.5 py-px font-mono text-xs uppercase tracking-wide text-muted-foreground"
+                        class="ml-auto shrink-0 rounded-full border px-1.5 py-px font-mono text-xs tracking-wide text-muted-foreground"
                         >{{ candidate.role }}</span
                     >
                 </button>

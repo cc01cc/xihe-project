@@ -349,7 +349,7 @@ async function loadJobOutput(reset: boolean) {
                     <span class="font-medium text-foreground">{{ t("chat.jobOutputTitle") }}</span>
                     <span
                         v-if="displayJobStatus"
-                        class="rounded px-1.5 py-0.5 text-xs uppercase"
+                        class="rounded px-1.5 py-0.5 text-xs"
                         :class="jobStatusClass(displayJobStatus)"
                         data-testid="job-status"
                         >{{ t(`chat.jobStatus.${displayJobStatus}`) }}</span

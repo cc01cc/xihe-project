@@ -537,9 +537,7 @@ onBeforeUnmount(() => {
                         >
                     </div>
                     <div>
-                        <p
-                            class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                        >
+                        <p class="mb-1 text-xs font-medium tracking-wide text-muted-foreground">
                             {{ t("chat.approvalAction") }}
                         </p>
                         <p data-testid="approval-action" class="text-sm whitespace-pre-wrap">
@@ -547,9 +545,7 @@ onBeforeUnmount(() => {
                         </p>
                     </div>
                     <div>
-                        <p
-                            class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                        >
+                        <p class="mb-1 text-xs font-medium tracking-wide text-muted-foreground">
                             {{ t("chat.approvalDetails") }}
                         </p>
                         <pre

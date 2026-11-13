@@ -80,7 +80,7 @@ const active = ref("rag");
                     </SidebarHeader>
                     <SidebarContent class="px-1">
                         <SidebarGroup>
-                            <SidebarGroupLabel class="gap-2 mk-caption uppercase tracking-wide"
+                            <SidebarGroupLabel class="gap-2 mk-caption tracking-wide"
                                 >域 <span class="font-mono mk-caption">12</span></SidebarGroupLabel
                             >
                             <SidebarGroupContent>
@@ -108,7 +108,7 @@ const active = ref("rag");
                         </SidebarGroup>
                         <SidebarSeparator />
                         <SidebarGroup>
-                            <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
+                            <SidebarGroupLabel class="mk-caption tracking-wide"
                                 >实例运维</SidebarGroupLabel
                             >
                             <SidebarGroupContent>
@@ -124,7 +124,7 @@ const active = ref("rag");
                         </SidebarGroup>
                         <SidebarSeparator />
                         <SidebarGroup>
-                            <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
+                            <SidebarGroupLabel class="mk-caption tracking-wide"
                                 >安全与权限</SidebarGroupLabel
                             >
                             <SidebarGroupContent>

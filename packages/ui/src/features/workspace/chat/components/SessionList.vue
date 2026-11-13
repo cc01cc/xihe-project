@@ -235,7 +235,7 @@ async function confirmDelete() {
     <div data-testid="sidebar-session-list" class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
         <div v-for="(sessions, group) in sessionStore.groupedSessions" :key="group">
             <div v-if="sessions.length" class="px-1 py-2">
-                <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                <span class="text-xs font-medium text-muted-foreground tracking-wider">
                     {{ t(timeGroupLabels[group]) }}
                 </span>
             </div>

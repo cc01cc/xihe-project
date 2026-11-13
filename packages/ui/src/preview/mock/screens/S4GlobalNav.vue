@@ -187,7 +187,7 @@ const toggleExpanded = () => {
                         </SidebarHeader>
                         <SidebarContent class="px-1">
                             <SidebarGroup>
-                                <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
+                                <SidebarGroupLabel class="mk-caption tracking-wide"
                                     >模块</SidebarGroupLabel
                                 >
                                 <SidebarGroupContent>
@@ -211,7 +211,7 @@ const toggleExpanded = () => {
                             </SidebarGroup>
                             <SidebarSeparator />
                             <SidebarGroup>
-                                <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
+                                <SidebarGroupLabel class="mk-caption tracking-wide"
                                     >设置 · 实例层</SidebarGroupLabel
                                 >
                                 <SidebarGroupContent>
@@ -250,7 +250,7 @@ const toggleExpanded = () => {
                             </SidebarGroup>
                             <SidebarSeparator />
                             <SidebarGroup>
-                                <SidebarGroupLabel class="mk-caption uppercase tracking-wide"
+                                <SidebarGroupLabel class="mk-caption tracking-wide"
                                     >实例运维</SidebarGroupLabel
                                 >
                                 <SidebarGroupContent>

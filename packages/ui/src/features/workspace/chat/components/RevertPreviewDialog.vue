@@ -270,9 +270,7 @@ function submit() {
                 </div>
 
                 <div data-testid="revert-preview-paths">
-                    <p
-                        class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                    >
+                    <p class="mb-1 text-xs font-medium tracking-wide text-muted-foreground">
                         {{ t("chat.checkpointPreviewPathsTitle") }}
                     </p>
                     <ul
