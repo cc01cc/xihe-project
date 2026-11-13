@@ -32,6 +32,19 @@ export const WORKSPACE_LAYOUT_STORAGE_PREFIX = "xihe-layout-ws:";
 
 /** Icon rail: fixed width, icon-only (ruling #1). */
 export const RAIL_WIDTH = 56;
+
+/**
+ * GlobalRail 的展开态宽度（`task-189` / `BL-584`；D-896 要求双态 + 可见切换控件）。
+ *
+ * **本组件的状态与 `GlobalLayoutState`（navOpen / navWidth）不是同一条**：后者是工作区内部
+ * NavPanel 的几何（见本文件顶部 S2 注记）；全局条是跨模块导航，联动会让「收起全局条」
+ * 顺带收起工作区导航面板 —— 两个不同的 UI 对象共用一颗开关，是回归不是复用。
+ * 因此这里只补**宽度常量**，状态键仍是 GlobalRail 自己的 `xihe-global-rail`（`{ open, width }`
+ * 一个对象，折叠态与展开态宽度分开存）。
+ */
+export const GLOBAL_RAIL_OPEN_WIDTH_DEFAULT = 192;
+export const GLOBAL_RAIL_OPEN_WIDTH_MIN = 160;
+export const GLOBAL_RAIL_OPEN_WIDTH_MAX = 280;
 /** Navigation panel (default 280, range 220-360). */
 export const NAV_WIDTH_DEFAULT = 280;
 export const NAV_WIDTH_MIN = 220;

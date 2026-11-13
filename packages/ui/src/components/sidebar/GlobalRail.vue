@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useStorage } from "@vueuse/core";
-import { Boxes, Briefcase, LogOut, Settings } from "@lucide/vue";
+import { LogOut, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
-import { defaultLayerPath, defaultResourcePath } from "../../lib/settingsIa";
+import {
+    GLOBAL_RAIL_OPEN_WIDTH_DEFAULT,
+    GLOBAL_RAIL_OPEN_WIDTH_MAX,
+    GLOBAL_RAIL_OPEN_WIDTH_MIN,
+} from "../../composables/useWorkspaceLayout";
+import { GLOBAL_MODULES, isModulePathMatch, type GlobalModuleId } from "../../lib/globalModules";
 import {
     Sidebar,
     SidebarContent,
@@ -18,63 +23,121 @@ import {
     SidebarProvider,
     SidebarRail,
 } from "../ui/sidebar";
+import GlobalRailModule from "./GlobalRailModule.vue";
 
 /**
  * PLAN-0762 T2.1/T2.3 —— 全局导航条（GlobalRail，DEV-010 §10.1 的唯一正名）。
  *
- * <p>主区只留一个模块：工作台（D-924 命名修正：模块名是「工作台」，工作区只是工作台
- * 模块内的对象，不是模块名）。D-933（用户 2026-11-11 裁定）：「管理」按钮直接移除、
- * 不设替代入口 —— config-locks/roles 本就是设置区安全组的 ADMIN-only 条目（导航已按
- * 能力过滤，PLAN-0556/0585 语义不变）；「设置」移到 footer、登出上方。</p>
+ * <p>主区只留三个模块：工作台（D-924 命名修正：模块名是「工作台」，工作区只是工作台模块内
+ * 的对象，不是模块名）、资源、设置。D-933：「管理」按钮直接移除、不设替代入口 ——
+ * config-locks/roles 本就是设置区安全组的 ADMIN-only 条目；「设置」在 footer、登出上方。</p>
  *
- * <p>双态是对 PLAN-0582 S2 的 supersede：56px 图标 ↔ 图标+文字（Sidebar 的
- * collapsible="icon" + SidebarRail hover + ⌘/Ctrl+B）。与工作区内部的 navOpen 是两条
- * 独立状态：本组件的持久化键是 xihe-global-rail-open，不写 xihe-layout-global
- * （后者仍由 useWorkspaceLayout 单一 owner 管工作区几何）。</p>
+ * <p><b>双态（task-189 / BL-584 / D-896）</b>：56px 图标栏 ↔ 图标+文字宽栏。**必须有可见的
+ * 切换控件**（`global-rail-toggle`：`aria-expanded` + `aria-label` + 键盘可达）—— 只靠
+ * `SidebarRail` 的悬停与 ⌘/Ctrl+B 能切，但**没有可见入口**，这正是用户反复说「导航栏仍然
+ * 不可展开」的原因。折叠态与展开态宽度**分开存**在同一份状态对象里（`{ open, width }`）：
+ * 收起不改宽度、展开回原宽（PLAN-0582 的同一条纪律）。</p>
+ *
+ * <p><b>为什么状态键不是 `xihe-layout-global`</b>：那个键的 `navOpen` / `navWidth` 是**工作区
+ * 内部 NavPanel** 的几何（`composables/useWorkspaceLayout.ts` 顶部 S2 注记明说「全局条的双态
+ * 与这里拥有的 navOpen / navWidth 不是同一条状态」）⇒ 写进去会让「收起全局条」顺带收起工作区
+ * 导航面板。两个不同的 UI 对象共用一颗开关，那是回归不是复用。故本组件用独立键
+ * `xihe-global-rail` = `{ open, width }`（一个对象、两种宽度分开存，不设第二份布尔状态）。</p>
+ *
+ * <p><b>二级菜单（task-189 / BL-578 / D-896）</b>：每个模块项都带二级菜单，载体是
+ * `DropdownMenu`（`side=right` / `align=start`，D-896 的选型裁定：不用 `NavigationMenu`
+ * —— 语义重复且自带 viewport 容器；不用 `Menubar`）。菜单内容**全部由 SSOT 派生**
+ * （`lib/globalModules.ts` 投影 `settingsIa.ts` 的资源矩阵与域矩阵），本组件与行组件里都不写
+ * 任何页面清单。折叠态只剩 56px 图标时，悬浮即打开菜单 —— 这是「这个图标是什么」的通道。</p>
  */
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
 
-/** 双态持久化：独立 key，不与 xihe-layout-global / xihe-layout-ws:* 串味。 */
-const railOpen = useStorage("xihe-global-rail-open", false);
+interface GlobalRailState {
+    open: boolean;
+    /** 展开态宽度（px）。折叠态宽度恒为 vendor 的 `--sidebar-width-icon`（3.5rem = 56px）。 */
+    width: number;
+}
 
-const workbenchActive = computed(() => (route.path ?? "").startsWith("/workspace"));
+const RAIL_STORAGE_KEY = "xihe-global-rail";
+/** 旧键（布尔形态，task-64 起使用）：一次性迁移后清除，避免同一语义两个键并存。 */
+const LEGACY_RAIL_OPEN_KEY = "xihe-global-rail-open";
+
+const railState = useStorage<GlobalRailState>(RAIL_STORAGE_KEY, {
+    open: false,
+    width: GLOBAL_RAIL_OPEN_WIDTH_DEFAULT,
+});
+
 /**
- * PLAN-0772 M2（design.md 目标 1）：第三个顶层入口「资源」。
- *
- * <p>为什么是独立入口而不是并入设置（决策 1）：资源面不参与层×域矩阵、不消费设置区任何机制，
- * 只是曾经借住在 `/settings` 下 ⇒ 搬走不拆机制；业界（GitLab / GitHub）同样把「设置」与
- * 「被管理的实体」分成两个入口。</p>
+ * 旧布尔键迁移（task-189）：只在「没有新键且旧键为 true」时生效一次，随后清掉旧键。
+ * 不清掉的话，用户下次收起再刷新会被旧键顶回去 —— 两个键写同一语义时，迟到的那份赢。
  */
-const resourcesActive = computed(() => (route.path ?? "").startsWith("/resources"));
-/** D-933：config-locks / roles 归设置模块 —— /settings 前缀即激活，不再有 admin 子态。 */
-const settingsActive = computed(() => (route.path ?? "").startsWith("/settings"));
+function migrateLegacyRailKey() {
+    try {
+        const storage = globalThis.localStorage;
+        if (!storage) return;
+        if (storage.getItem(RAIL_STORAGE_KEY)) {
+            storage.removeItem(LEGACY_RAIL_OPEN_KEY);
+            return;
+        }
+        if (storage.getItem(LEGACY_RAIL_OPEN_KEY) === "true") {
+            railState.value = { ...railState.value, open: true };
+        }
+        storage.removeItem(LEGACY_RAIL_OPEN_KEY);
+    } catch {
+        // localStorage 被禁用（隐私模式）时保持默认折叠态：不影响导航可用性。
+    }
+}
+migrateLegacyRailKey();
 
-function goWorkbench() {
-    void router.push("/workspace");
+const railOpen = computed({
+    get: () => railState.value.open,
+    set: (value: boolean) => {
+        railState.value = { ...railState.value, open: value };
+    },
+});
+
+const railWidthCss = computed(() => {
+    const raw = Number.isFinite(railState.value.width)
+        ? railState.value.width
+        : GLOBAL_RAIL_OPEN_WIDTH_DEFAULT;
+    const clamped = Math.min(GLOBAL_RAIL_OPEN_WIDTH_MAX, Math.max(GLOBAL_RAIL_OPEN_WIDTH_MIN, raw));
+    return `${clamped}px`;
+});
+
+/** 二级菜单的打开者（同一时刻只开一个：两个菜单同时开着会互相遮挡）。 */
+const openMenuId = ref<GlobalModuleId | null>(null);
+
+function isModuleActive(basePath: string) {
+    return isModulePathMatch(basePath, route.path ?? "");
 }
 
-function goResources() {
-    void router.push(defaultResourcePath());
+function navigate(path: string) {
+    openMenuId.value = null;
+    void router.push(path);
 }
 
-function goSettings() {
-    void router.push(defaultLayerPath("instance"));
+function onMenuOpenChange(moduleId: GlobalModuleId, open: boolean) {
+    if (open) openMenuId.value = moduleId;
+    else if (openMenuId.value === moduleId) openMenuId.value = null;
 }
 
 function handleLogout() {
     auth.logout();
     void router.push("/login");
 }
+
+const contentModules = computed(() => GLOBAL_MODULES.filter((module) => module.id !== "settings"));
+const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id === "settings"));
 </script>
 
 <template>
     <SidebarProvider
         v-model:open="railOpen"
         class="h-full w-auto min-h-0 shrink-0"
-        :style="{ '--sidebar-width': '12rem', '--sidebar-width-icon': '3.5rem' }"
+        :style="{ '--sidebar-width': railWidthCss, '--sidebar-width-icon': '3.5rem' }"
     >
         <Sidebar
             collapsible="icon"
@@ -86,22 +149,18 @@ function handleLogout() {
 
                 几何（本仓 `--spacing` = 3.5px 步进，`main.css:302`）：
                   `size-8` = 8 × 3.5 = 28px；`my-2` = 2 × 3.5 = 7px（上下各一）
-                  槽位块高 = 7 + 28 + 7 = 42 ⇒ 下方分组的 `p-4`(14) 把首个按钮推到 y = 42 + 14 = **56**
+                  槽位块高 = 7 + 28 + 7 = 42 ⇒ 下方分组的 `p-4`(14) 把首个按钮推到 y = 42 + 14 = 56
                   （改前 y = 14 ⇒ 净下移 42px，与 `56 = 28 + 14×2` 是同一条等式，不用 32）
                 水平：折起态 rail 56px ⇒ `self-center` 天然居中（(56 − 28) / 2 = 14 每侧）。
 
                 配色为什么用 token 而不是 #000/#fff（`[源码]` styles/themes/color-shadcn-neutral.css）：
                   亮色 `--primary: oklch(0.205 0 0)`（近黑）/ `--primary-foreground: oklch(0.985 0 0)`（近白）
                   暗色 `--primary: oklch(0.922 0 0)`（近白）/ `--primary-foreground: oklch(0.205 0 0)`（近黑）
-                ⇒ `bg-primary text-primary-foreground` **天然就是"亮黑底白字 / 暗白底黑字"**，无需 `dark:` 分支、不写死颜色。
+                ⇒ `bg-primary text-primary-foreground` 天然就是「亮色黑底白字 / 暗色白底黑字」，无需 dark 分支。
 
-                不可点击（用户没要求可点）：`pointer-events-none` + 无 hover 态 —— 避免"看着能点却没反应"。
-
-                可达性选 `aria-hidden="true"`：这里只是品牌**占位/装饰**，"XH" 是缩写、页面上没有展开处，
-                读屏读成「X H」是噪音；产品名由 `<title>` 与登录页品牌文本承担。
-                **将来换真 logo 时必须连 aria 一起换**：纯展示用 `role="img" aria-label="<产品名>"`；
-                若可点回首页则改 `<a aria-label="回到工作台">` 并补 `focus-visible` 环与 Enter/Space ——
-                别把这里的 `aria-hidden` 复制过去，那会让品牌名对读屏彻底消失。
+                不可点击（用户没要求可点）：`pointer-events-none` + 无 hover 态。
+                `aria-hidden`：这里只是品牌占位/装饰；将来换真 logo 时必须连 aria 一起换
+                （纯展示用 `role=img aria-label`；可点回首页则改 `<a>` 并补 `focus-visible` 环）。
             -->
             <div
                 data-testid="global-rail-logo"
@@ -113,66 +172,66 @@ function handleLogout() {
             <SidebarContent>
                 <!--
                     task-50 B2：折起态（icon 栏）内距 14px =（56 − 28）/ 2。
-                    为什么不是 `p-3`：本仓 `--spacing` 是 **3.5px 步进**（`main.css:302` `0.21875rem`），
-                    `p-3`=10.5px 会留 3.5px 偏移；按钮是 vendor `size-8!` = 8 步 = **28px**。
-                    为什么要改：vendor 的 `p-2` 是给 48px 栏设计的常量，我们覆盖成 56px 后
-                    「宽度」和「内距」各自合理、相乘才错 ⇒ 图标中心偏 −5px（改前实测）。
+                    为什么不是 `p-3`：本仓 `--spacing` 是 3.5px 步进（`main.css:302`），`p-3`=10.5px
+                    会留 3.5px 偏移；按钮是 vendor `size-8!` = 8 步 = 28px。vendor 的 `p-2` 是给
+                    48px 栏设计的常量，我们覆盖成 56px 后「宽度」与「内距」各自合理、相乘才错。
                 -->
                 <SidebarGroup class="group-data-[collapsible=icon]:p-4">
                     <SidebarGroupContent>
                         <SidebarMenu>
-                            <SidebarMenuItem>
-                                <SidebarMenuButton
-                                    data-testid="global-rail-module-workbench"
-                                    :is-active="workbenchActive"
-                                    :aria-current="workbenchActive ? 'page' : undefined"
-                                    class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
-                                    :tooltip="t('sidebar.workbench')"
-                                    @click="goWorkbench"
-                                >
-                                    <Briefcase class="size-4 shrink-0" aria-hidden="true" />
-                                    <span class="truncate group-data-[collapsible=icon]:hidden">{{
-                                        t("sidebar.workbench")
-                                    }}</span>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
-                            <SidebarMenuItem>
-                                <SidebarMenuButton
-                                    data-testid="global-rail-module-resources"
-                                    :is-active="resourcesActive"
-                                    :aria-current="resourcesActive ? 'page' : undefined"
-                                    class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
-                                    :tooltip="t('sidebar.resources')"
-                                    @click="goResources"
-                                >
-                                    <Boxes class="size-4 shrink-0" aria-hidden="true" />
-                                    <span class="truncate group-data-[collapsible=icon]:hidden">{{
-                                        t("sidebar.resources")
-                                    }}</span>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
+                            <GlobalRailModule
+                                v-for="module in contentModules"
+                                :key="module.id"
+                                :module="module"
+                                :open="openMenuId === module.id"
+                                :collapsed="!railOpen"
+                                :active="isModuleActive(module.basePath)"
+                                :active-path="route.path ?? ''"
+                                @navigate="navigate"
+                                @update:open="(open: boolean) => onMenuOpenChange(module.id, open)"
+                            />
                         </SidebarMenu>
                     </SidebarGroupContent>
                 </SidebarGroup>
             </SidebarContent>
-            <!-- task-50 B2：footer 与顶部组同一内距，折起态两个图标各自居中，不出现「一个偏左一个居中」。 -->
+            <!-- task-50 B2：footer 与顶部组同一内距，折起态两个图标各自居中。 -->
             <SidebarFooter class="group-data-[collapsible=icon]:p-4">
                 <SidebarMenu>
+                    <!--
+                        task-189 双态切换控件（D-896 的「必须有可见切换控件」）：
+                        `aria-expanded` 反映真实状态、`aria-label` 随态变化、原生 button ⇒
+                        Enter/Space 可切；折叠态它自己也有 tooltip（rail 里没有文字时靠它认路）。
+                    -->
                     <SidebarMenuItem>
                         <SidebarMenuButton
-                            data-testid="global-rail-module-settings"
-                            :is-active="settingsActive"
-                            :aria-current="settingsActive ? 'page' : undefined"
-                            class="data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium"
-                            :tooltip="t('sidebar.settings')"
-                            @click="goSettings"
+                            data-testid="global-rail-toggle"
+                            :aria-expanded="railOpen"
+                            :aria-label="railOpen ? t('sidebar.collapse') : t('sidebar.expand')"
+                            :tooltip="railOpen ? undefined : t('sidebar.expand')"
+                            @click="railOpen = !railOpen"
                         >
-                            <Settings class="size-4 shrink-0" aria-hidden="true" />
+                            <PanelLeftClose
+                                v-if="railOpen"
+                                class="size-4 shrink-0"
+                                aria-hidden="true"
+                            />
+                            <PanelLeftOpen v-else class="size-4 shrink-0" aria-hidden="true" />
                             <span class="truncate group-data-[collapsible=icon]:hidden">{{
-                                t("sidebar.settings")
+                                t("sidebar.collapse")
                             }}</span>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
+                    <GlobalRailModule
+                        v-for="module in footerModules"
+                        :key="module.id"
+                        :module="module"
+                        :open="openMenuId === module.id"
+                        :collapsed="!railOpen"
+                        :active="isModuleActive(module.basePath)"
+                        :active-path="route.path ?? ''"
+                        @navigate="navigate"
+                        @update:open="(open: boolean) => onMenuOpenChange(module.id, open)"
+                    />
                     <SidebarMenuItem>
                         <SidebarMenuButton
                             data-testid="global-rail-logout"

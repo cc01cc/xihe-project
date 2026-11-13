@@ -130,6 +130,27 @@ const SHOTS = [
         app: true,
         expand: "[data-testid=settings-skills-import]",
     },
+    // task-189（D-896 / BL-584 / BL-578）：全局条双态 + 二级菜单。
+    // 13 = **折叠态**（56px）+ 悬停打开的「资源」二级菜单 —— 折叠态只剩图标，悬浮菜单是
+    //      「这个图标是什么 / 点下去有哪些页」的唯一通道，所以这张就是 D-896 的验收图；
+    // 14 = **展开态**（图标 + 文字）+ 点开的「设置」二级菜单 —— 双态控件（`global-rail-toggle`）
+    //      与「一级模块 = 菜单入口」两件事同屏。
+    // ⚠️ 13 依赖**新 context 的默认折叠态**，顺序不能与 14 颠倒（14 会把状态写成展开并留在
+    //    localStorage 里）；`--only 13,14` 按本顺序为真，倒序拍会得到两张展开图。
+    {
+        id: "13",
+        name: "global-rail-collapsed",
+        path: "/settings/user/llm-provider",
+        app: true,
+        hover: "[data-testid=global-rail-module-resources]",
+    },
+    {
+        id: "14",
+        name: "global-rail-expanded",
+        path: "/settings/user/llm-provider",
+        app: true,
+        expand: ["[data-testid=global-rail-toggle]", "[data-testid=global-rail-menu-settings]"],
+    },
 ];
 
 /**
@@ -749,10 +770,23 @@ async function shootOne(page, base, shot, outDir) {
             );
         }
         await page.evaluate(() => document.fonts.ready);
-        if (shot.expand) {
+        // task-189：`expand` 允许**数组**（按顺序连点），用于「先切双态、再开二级菜单」这类
+        // 需要两步才能到达的画面；字符串形态保持原语义（单次点击），旧镜头零改动。
+        const expandSteps = shot.expand
+            ? Array.isArray(shot.expand)
+                ? shot.expand
+                : [shot.expand]
+            : [];
+        for (const selector of expandSteps) {
             // 域面板默认折叠；审计图要看字段级内容 ⇒ 点开再拍（这也是 B 轻量版要证的一种交互）。
-            await page.click(shot.expand, { timeout: 10000 });
+            await page.click(selector, { timeout: 10000 });
             await page.waitForTimeout(500);
+        }
+        if (shot.hover) {
+            // task-189：折叠态的二级菜单**只有悬浮才开**（D-896 把它定为折叠态的可读性通道）⇒
+            // 交付图必须由真悬浮触发，不能用 click 假装。等 160ms 打开延迟 + 弹层定位落定。
+            await page.hover(shot.hover, { timeout: 10000 });
+            await page.waitForTimeout(900);
         }
         await page.waitForTimeout(600);
     } else {
@@ -769,8 +803,11 @@ async function shootOne(page, base, shot, outDir) {
         for (const el of document.querySelectorAll("[data-mock-canvas] *")) el.scrollTop = 0;
     });
     // 鼠标停在左栏会留下 hover 底色；挪到内容区空白处，避免"看起来像同时选中两项"。
-    await page.mouse.move(VIEWPORT.width - 200, VIEWPORT.height - 100);
-    await page.waitForTimeout(400);
+    // task-189：`hover` 镜头的画面**就是**悬停态，挪走会把菜单关掉 ⇒ 这类镜头不挪鼠标。
+    if (!shot.hover) {
+        await page.mouse.move(VIEWPORT.width - 200, VIEWPORT.height - 100);
+        await page.waitForTimeout(400);
+    }
 
     // 三种取景：整窗元素（element）/ 单页长图（fullPage 画布）/ 整屏画布（默认 1920×1080）。
     const target = shot.element
