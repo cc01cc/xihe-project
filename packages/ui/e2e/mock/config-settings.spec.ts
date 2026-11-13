@@ -3,6 +3,8 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel, selectByTestId } from "../helpers/select";
+// task-204：域集合唯一来源是 SSOT（`stores/config.ts#LAYER_DOMAINS`），spec 里不另抄一份清单。
+import { LAYER_DOMAINS } from "../../src/stores/config";
 
 // BL-318：`shows an error banner when layer config cannot be loaded` 用
 // `route.abort("connectionrefused")` **故意**制造网络失败（验"保存失败"横幅），逐条放行该信号。
@@ -179,32 +181,70 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toBeVisible();
     });
 
-    // task-112：原用例是「工作区设置页的『配置』标签签里按域铺面板」。该标签与域段路由已被
-    // task-253（用户 2026-11-10 裁定，提交 51c1d2a40）移除 —— 留着它就会继续 PUT/GET
-    // /config/workspace/**，而这层已废弃（src/stores/config.ts：ConfigLayer 收窄成 instance|user，
-    // 任何还想传 workspace 的调用点在 typecheck 当场失败）。
+    // task-112 原用例是「工作区设置页的『配置』标签里按域铺面板」；task-253（用户 2026-11-10 裁定，
+    // 提交 51c1d2a40）移除了该标签与域段，本条因此被翻成**正面守卫**（断言「配置 tab 不存在 +
+    // 没有任何域面板」）。
     //
-    // 保留但改成**正面守卫**：断言「五个存活标签在、配置标签不在、没有任何域面板」——
-    // 纯删除会让撤销的事实消失，将来有人把 config 标签加回来没有任何东西会红；改写成断言后，
-    // 「不存在」本身成为一条被持续验证的契约（可执行的注释）。
-    test("workspace settings page keeps the surviving tabs and renders no config domains (task-253/task-209)", async ({
+    // **task-204（Lead 2026-11-13）：契约又翻回来了** —— PLAN-0773 M4-1（`d0864b59e`）有意把
+    // per-workspace 层加回来（`ConfigLayer` 加 `workspace`、`LAYER_DOMAINS.workspace` = 同一张 8 域
+    // 矩阵、工作区设置页长出「配置」tab + 域面板）⇒ 原断言会红，而它红得**对**：契约变了，判据必须跟。
+    //
+    // 翻面**不删**：删断言只能证明「这一刻没写」，将来有人再把 tab 拿掉时不会有任何东西变红。
+    // 反过来写之后，被持续验证的契约是「恰好三个 tab（general/members/config）+ 域面板集合等于 SSOT」。
+    test("workspace settings page: 三 tab + 配置域面板集合由 SSOT 派生（task-204 翻面）", async ({
         page,
     }) => {
         await mockConfigAPIs(page);
-        // ?tab=config 已不在 tab 白名单里 ⇒ 兜底回落 general（WorkspaceSettingsView.vue tabFromQuery）。
+        // ?tab=config 现在是 tab 白名单成员 ⇒ 落在 config 本身（不再兜底回落 general）。
         await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
 
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
-        // task-209 / D-1019：mcp / credentials / knowledge 三个资源 tab 已撤到资源区（不再是双入口）。
-        // 断言保留为**正面守卫**（原来这里是 `ws-settings-tab-mcp` 为可见）：删掉它只能证明"这一刻没写"，
-        // 有人把 mcp tab 加回来时不会有任何东西变红。
+        await expect(page.getByTestId("ws-settings-tab-members")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
+        // 计数**写死 3**（不是 ≥3）：tab 增删都必须在这里显式改判据，不能静默长出新 tab。
+        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(3);
+        // task-209 / D-1019：mcp / credentials / knowledge 三个资源 tab 仍不在（已撤到资源区，非双入口）。
         await expect(page.getByTestId("ws-settings-tab-mcp")).toHaveCount(0);
         await expect(page.getByTestId("ws-settings-tab-credentials")).toHaveCount(0);
         await expect(page.getByTestId("ws-settings-tab-knowledge")).toHaveCount(0);
-        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
-        await expect(page.getByTestId("ws-settings-tab-config")).toHaveCount(0);
-        await expect(page.locator('[data-testid^="config-domain-"]')).toHaveCount(0);
+
+        // 生效 tab：tab 按钮没有 `aria-selected`，高亮实现是 `border-primary`（WorkspaceSettingsView.vue）。
+        await expect(page.getByTestId("ws-settings-tab-config")).toHaveClass(/border-primary/);
+
+        // 域落点**从 DOM 取**、期望集合**从 SSOT 取**（`LAYER_DOMAINS.workspace`），再对撞：
+        // spec 里不另抄一份域名清单（抄的那份一定会漂，且漂了没人知道）。
+        // 注意 4 个域是**专用分区**而不是通用面板（`ConfigLayerPanels.vue`）：llm-provider 走
+        // `provider-partition`，agent-templates / api-request-templates / embedding 走专用面板 +
+        // `config-source-summary-<domain>`；其余 5 个域走 `config-domain-toggle-<domain>`。
+        // 只认通用 toggle 会漏 3 个域 —— 这正是本条第一版判据红掉的原因（把「渲染方式」当成了「域」）。
+        const expectedDomains = [...LAYER_DOMAINS.workspace];
+        expect(expectedDomains.length).toBeGreaterThan(0);
+        // 判据：**每个 SSOT 域都要在 DOM 里留下带该域名的 testid 落点**（通用面板、专用分区、
+        // source-summary 都算，因为「用什么组件渲染」不是本条的判据 —— 那 4 个专用域本来就没有
+        // 通用 toggle；第一版按通用 toggle 判，红了 3 个域，红得对但判据选错了层次）。
+        const missingDomains = await page.evaluate((domains: string[]) => {
+            const testIds = Array.from(document.querySelectorAll("[data-testid]")).map(
+                (el) => el.getAttribute("data-testid") ?? "",
+            );
+            return domains.filter((domain) => !testIds.some((id) => id.includes(domain)));
+        }, expectedDomains);
+        expect(missingDomains).toEqual([]);
+
+        // 反向：**渲染出来的通用域必须是 SSOT 的成员**（防止页面自己发明域/拼错域名）。
+        const renderedGenericDomains = await page
+            .locator('[data-testid^="config-domain-toggle-"]')
+            .evaluateAll((els) =>
+                els.map((el) =>
+                    (el.getAttribute("data-testid") ?? "").replace("config-domain-toggle-", ""),
+                ),
+            );
+        expect(renderedGenericDomains.length).toBeGreaterThan(0);
+        expect(
+            renderedGenericDomains.filter(
+                (domain: string) => !expectedDomains.includes(domain as never),
+            ),
+        ).toEqual([]);
 
         // MCP 仍在「自己独立的界面」上 —— 只是从工作区设置的 tab 换成了资源区的工作区层
         // （`/resources/mcp?layer=WORKSPACE`）。**行为断言不变**：进得去、文本框在。
