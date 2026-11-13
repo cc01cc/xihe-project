@@ -142,11 +142,14 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         expect(wrapper.find('[data-testid="workspace-settings-title"]').text()).toBe("工作区设置");
         expect(wrapper.find('[data-testid="settings-layer-header"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-settings-tab-general"]').exists()).toBe(true);
-        // 工作区配置 tab 随 workspace 配置层一起移除（那块面走已废弃的 /config/workspace/**）。
-        expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(false);
+        // PLAN-0773 M4-1（task-190）：配置 tab 回来了 —— 但这次是**按工作区**的层
+        // （`ConfigLayer` 新增 `workspace`，`SettingsLayer` 同批收窄成 Exclude）。
+        // 这条从 task-253 的「正面守卫（不存在）」翻成「正面守卫（存在）」：留下的理由不变 ——
+        // 纯删除只能证明"这一刻没写"，有人再撤掉它时不会有任何东西变红。
+        expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(true);
         // task-209 / D-1019：mcp / credentials / knowledge 三个 tab 与资源区双入口 ⇒ 撤。
         // 断言写成**正面守卫**（计数为 0）而不是删掉这几行：删掉只能证明"这一刻没写"，加回来时没人会红。
-        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(3);
         for (const removed of ["mcp", "credentials", "knowledge"]) {
             expect(wrapper.find(`[data-testid="ws-settings-tab-${removed}"]`).exists()).toBe(false);
             expect(wrapper.find(`[data-testid="ws-settings-${removed}"]`).exists()).toBe(false);
@@ -188,7 +191,7 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
 
         expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-resource-moved"]').exists()).toBe(false);
-        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(3);
         wrapper.unmount();
     });
 

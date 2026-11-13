@@ -545,7 +545,15 @@ describe("useConfigStore", () => {
             store.clearForUserSwitch();
 
             // PLAN-0766：workspace-default 也是全局层的成员，切换/登出时必须一起清。
-            expect(store.layerConfig).toEqual({ instance: {}, "workspace-default": {}, user: {} });
+            // PLAN-0773 M4-1（task-190）：per-workspace 层 `workspace` 也进 `layerConfig`，登出/切换
+            // 必须一起清 —— 它是**按工作区**的行集，比 workspace-default 更敏感（换人不许看到上一个
+            // 工作区的值）。断言写全键而不是只断言"某键为空"，否则新增层被漏清时它不会红。
+            expect(store.layerConfig).toEqual({
+                instance: {},
+                "workspace-default": {},
+                workspace: {},
+                user: {},
+            });
             expect(store.envOverridden).toEqual({});
         });
     });
