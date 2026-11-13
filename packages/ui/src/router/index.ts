@@ -233,7 +233,9 @@ const router = createRouter({
                     meta: { settingsLayer: "user" as const, settingsDomain: domain },
                 })),
                 // PLAN-0766（task-160）：共享工作区默认层。域集来自 stores/config 的
-                // WORKSPACE_WRITABLE 镜像（8 个 UI 域；service-only 的 context-templates 不在 config API 里）。
+                // WORKSPACE_WRITABLE 镜像 —— D-1122 / T2.4 后是 **4 个 UI 域**（4 个行为域；
+                // service-only 的 context-templates 不在 config API 里）。模型 4 域已退出该层，
+                // 所以它们的 `/settings/workspace-default/<域>` **不再注册**（不是注册了再 400）。
                 ...LAYER_DOMAINS["workspace-default"].map((domain) => ({
                     path: `workspace-default/${domain}`,
                     name: `settings-workspace-default-domain-${domain}`,

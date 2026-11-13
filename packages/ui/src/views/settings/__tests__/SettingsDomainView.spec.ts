@@ -68,6 +68,9 @@ const messages = {
         settings: {
             domainLogging: "日志",
             domainRag: "检索增强（RAG）",
+            // D-1122 / T2.4：workspace-default 层的承载域改为 agent-runtime（模型域已退出该层）。
+            domainAgentRuntime: "智能体运行时",
+            domainAgentRuntimeHint: "控制智能体运行时的轮次/预算",
             domainApprovalPolicy: "审批策略",
             saveFailed: "保存失败",
             ia: {
@@ -350,7 +353,7 @@ describe("SettingsDomainView workspace-default layer", () => {
         state.layerLoading.value = false;
         state.layerConfig.value = {
             instance: { rag: { chunkSize: "512" } },
-            "workspace-default": { rag: { chunkSize: "1024" } },
+            "workspace-default": { "agent-runtime": { instructions: "x" } },
             user: {},
         };
         state.loadLayerDomains.mockClear();
@@ -358,10 +361,14 @@ describe("SettingsDomainView workspace-default layer", () => {
     });
 
     it("renders the workspace-default domain page with four-layer precedence badges", async () => {
-        const wrapper = mountView("workspace-default", "rag");
+        // D-1122 / T2.4：rag 已退出该层（矩阵里没有 ⇒ 路由不注册）⇒ 这里改用仍在矩阵里的
+        // agent-runtime 作为承载页；「rag 在该层 404」由 settingsIa.spec 的 route 断言负责。
+        const wrapper = mountView("workspace-default", "agent-runtime");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-domain-view"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="settings-domain-title"]').text()).toContain("检索增强");
+        expect(wrapper.find('[data-testid="settings-domain-title"]').text()).toContain(
+            "智能体运行时",
+        );
         const badges = wrapper.findAll('[data-testid^="layer-badge-"]');
         expect(badges.map((badge) => badge.text())).toEqual([
             "工作区",
@@ -383,7 +390,7 @@ describe("SettingsDomainView workspace-default layer", () => {
 
     it("fails open to read-only (not 403) when the atom is missing", async () => {
         state.atom = false;
-        const wrapper = mountView("workspace-default", "rag");
+        const wrapper = mountView("workspace-default", "agent-runtime");
         await flushPromises();
         // 页面照常取数（CP 允许任何已认证用户读该层），只是控件只读 + 信息条说明。
         expect(wrapper.find('[data-testid="settings-domain-view"]').exists()).toBe(true);

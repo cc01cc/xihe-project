@@ -10,11 +10,15 @@ import {
  *
  * <p>为什么单独成模块（task-66）：路由注册、左栏、404 判定三处必须用**同一份**矩阵，
  * 否则"左栏能看到但路由 404"这类不一致会随域分批实施反复出现。矩阵本身不在前端另造：
- * `LAYER_DOMAINS`（stores/config）已是 CP `ConfigService.java:90-96` 两组白名单的镜像
- * （实例 12 / 用户 9 / 工作区 9），本模块只做**查询与分组**。</p>
+ * `LAYER_DOMAINS`（stores/config）已是 CP 白名单的镜像 —— **实例 12 / 用户 9 /
+ * 工作区层 4**（工作区层 = `workspace-default` 与 per-workspace 层共用同一张矩阵），
+ * 本模块只做**查询与分组**。</p>
  *
- * <p>注意 `logging` 只有实例层：CP 的 `WORKSPACE_WRITABLE_DOMAINS` 不含它，
- * 所以工作区层是 9 域而不是 10（design.md §3.2，2026-11-10 修正）。</p>
+ * <p><b>2026-11-13 D-1122 49A / PLAN-0766 T2.4 后工作区层是 4 域</b>（agent-runtime /
+ * approval-policy / agent-templates / job-policy）：模型 4 域（llm-provider / context-policy /
+ * embedding / rag）退出了工作区层。注意 `logging` 只有实例层（`WORKSPACE_WRITABLE_DOMAINS`
+ * 从不含它），`context-templates` 是 service-only（通用 config API 不收）。改这里之前先核
+ * CP `ConfigService.java` 的 `WORKSPACE_WRITABLE_DOMAINS` 与 `WORKSPACE_DEFAULT_WRITABLE_DOMAINS`。</p>
  */
 
 /**
@@ -166,10 +170,12 @@ export const MODEL_CONFIG_DOMAINS: readonly ConfigDomain[] = [
 /**
  * 组**只在哪几层成组**（D-1122 口径，2026-11-13）：instance / user 两层。
  *
- * <p>「层能不能成组」与「矩阵里有没有这些域」是**两个问题**：矩阵（`LAYER_DOMAINS`）今天仍把
- * llm-provider / context-policy 列在 workspace-default 里（那是 D-1122 还没改的存量），但**裁定**说
- * 模型配置不往工作区层拉 ⇒ 组页、组路由、左栏组条目都只认这两层。等 D-1122 把矩阵改完，
- * 这里一行都不用动（`MODEL_CONFIG_LAYERS` 是政策、矩阵是事实，分开才能各说各话）。</p>
+ * <p>「层能不能成组」与「矩阵里有没有这些域」是**两个问题**，2026-11-13 起两者已经一致但**仍旧分开
+ * 写**：矩阵（`LAYER_DOMAINS`）在 T2.4 之后已把模型域从工作区层移除（workspace-default /
+ * workspace 都是 4 域，`modelConfigDomainsForLayer('workspace-default')` = 空），所以今天
+ * `MODEL_CONFIG_LAYERS` 只是把「政策」写死一次，让它在矩阵再次变化时**不需要跟着改**。
+ * 反过来若把两者合并（组只在矩阵非空时出现），矩阵一改就会**静默**让组页消失或出现 ——
+ * 「政策」与「事实」分开写，才能各说各话且漂移可见。</p>
  */
 export const MODEL_CONFIG_LAYERS: readonly SettingsLayer[] = ["instance", "user"];
 
@@ -178,7 +184,7 @@ export function isModelConfigGroupLayer(layer: SettingsLayer): boolean {
     return MODEL_CONFIG_LAYERS.includes(layer);
 }
 
-/** 组在该层实际承载的域（交集）：instance 3 段 / user 3 段 / workspace-default 2 段（无 api-request-templates）。 */
+/** 组在该层实际承载的域（交集）：instance 3 段 / user 3 段 / workspace-default **0 段**（T2.4 后工作区层无模型域）。 */
 export function modelConfigDomainsForLayer(layer: SettingsLayer): ConfigDomain[] {
     return MODEL_CONFIG_DOMAINS.filter((domain) => LAYER_DOMAINS[layer].includes(domain));
 }

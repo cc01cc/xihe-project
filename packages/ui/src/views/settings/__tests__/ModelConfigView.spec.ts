@@ -117,19 +117,16 @@ describe("ModelConfigView（task-227 合页不合域）", () => {
         expect(wrapper.find('[data-testid="settings-model-config-save-all"]').exists()).toBe(false);
     });
 
-    it("user 层同样是三段；workspace-default 层只有矩阵里的两段（派生）", async () => {
+    it("user 层同样是三段；workspace-default 层矩阵交集为空（D-1122 / T2.4）", async () => {
         const user = await mountView("user"),
             wsDefault = await mountView("workspace-default");
         await flushPromises();
         expect(user.findAll('[data-testid^="stub-domain-"]')).toHaveLength(3);
         await flushPromises();
-        // 组件本身仍按矩阵派生（这里直连组件、绕过路由）：矩阵里有两段就画两段。
-        // 「工作区层不该有组」是**路由/导航层**政策（MODEL_CONFIG_LAYERS），在 settingsIaGroup.spec 断。
-        expect(
-            wsDefault
-                .findAll('[data-testid^="stub-domain-"]')
-                .map((node) => node.attributes("data-testid")),
-        ).toEqual(["stub-domain-llm-provider", "stub-domain-context-policy"]);
+        // 组件本身按矩阵派生（这里直连组件、绕过路由）。T2.4 后模型域已退出工作区层 ⇒
+        // 交集为空 ⇒ **一段都不画**（不是"画了再禁用"）。「工作区层不该有组」仍是路由/导航层
+        // 政策（MODEL_CONFIG_LAYERS），在 settingsIaGroup.spec 断；这里是"矩阵事实"那一半。
+        expect(wsDefault.findAll('[data-testid^="stub-domain-"]')).toHaveLength(0);
     });
 
     it("无 cap:instance:admin ⇒ 403 视图，且不挂载面板（不请求数据）", async () => {

@@ -32,7 +32,7 @@ describe("settingsIa · 模型配置组（task-227）", () => {
         });
     });
 
-    it("每层几段 = 矩阵交集（instance 3 / user 3 / workspace-default 2）", () => {
+    it("每层几段 = 矩阵交集（instance 3 / user 3 / workspace-default 0）", () => {
         expect(modelConfigDomainsForLayer("instance")).toEqual([
             "llm-provider",
             "context-policy",
@@ -43,11 +43,10 @@ describe("settingsIa · 模型配置组（task-227）", () => {
             "context-policy",
             "api-request-templates",
         ]);
-        // workspace-default 的矩阵里没有 api-request-templates ⇒ 只有两段（派生，不是写死两段）。
-        expect(modelConfigDomainsForLayer("workspace-default")).toEqual([
-            "llm-provider",
-            "context-policy",
-        ]);
+        // D-1122 / T2.4（2026-11-13）：矩阵里的模型 4 域已退出工作区层 ⇒ 交集是**空**。
+        // 这条从"matrix 里还剩两段"翻成"0 段"，正是 T2.4 落在 UI 侧的可执行判据；
+        // 组页/组路由/左栏组条目同时消失（政策 MODEL_CONFIG_LAYERS 不用改）。
+        expect(modelConfigDomainsForLayer("workspace-default")).toEqual([]);
         // 三个成员域在实例层都真实存在（否则组会把不存在的段画出来）。
         for (const domain of MODEL_CONFIG_DOMAINS) {
             expect(LAYER_DOMAINS.instance).toContain(domain);
@@ -58,8 +57,8 @@ describe("settingsIa · 模型配置组（task-227）", () => {
         const instance = navItemsForLayer("instance"),
             user = navItemsForLayer("user"),
             // D-1122 验收行（Lead 2026-11-13 加码）：工作区层 nav 里**不含**组 id —— 「不注册路由」只保证
-            // 不 404，不保证菜单不出现死链，两者必须分开断。矩阵里的两个域仍以普通叶子出现（那是
-            // D-1122 还没改的存量，组政策在 MODEL_CONFIG_LAYERS，不跟矩阵走）。
+            // 不 404，不保证菜单不出现死链，两者必须分开断。T2.4 落定后矩阵里也没有那两个域了，
+            // 所以这里同时钉住「没有组条目」与「没有模型叶子」（政策 MODEL_CONFIG_LAYERS 仍是两层政策）。
             wsDefault = navItemsForLayer("workspace-default");
         expect(instance).toHaveLength(LAYER_DOMAINS.instance.length - 2);
         expect(instance[0]).toEqual({
@@ -75,8 +74,17 @@ describe("settingsIa · 模型配置组（task-227）", () => {
         expect(settingsGroupPath("workspace-default")).toBe(
             "/settings/workspace-default/model-config",
         );
+        // D-1122 / T2.4 后工作区层连模型**叶子**也没有了（矩阵已移除）⇒ 既没有组条目、
+        // 也没有 llm-provider / context-policy 两个叶子；断言翻面而不是删掉 —— 删掉就只剩
+        // 「这一刻没画」，将来矩阵回退时不会有任何东西变红。
         expect(wsDefault.map((item) => item.id)).not.toContain("model-config");
-        expect(wsDefault.map((item) => item.id)).toContain("llm-provider");
-        expect(wsDefault.map((item) => item.id)).toContain("context-policy");
+        expect(wsDefault.map((item) => item.id)).not.toContain("llm-provider");
+        expect(wsDefault.map((item) => item.id)).not.toContain("context-policy");
+        expect(wsDefault.map((item) => item.id)).toEqual([
+            "agent-runtime",
+            "approval-policy",
+            "agent-templates",
+            "job-policy",
+        ]);
     });
 });

@@ -16,6 +16,7 @@ import ConfigSourceSummary from "./ConfigSourceSummary.vue";
 import AgentTemplatesPanel from "./AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "./ContextTemplatesPanel.vue";
 import EmbeddingSettingsPanel from "./EmbeddingSettingsPanel.vue";
+import { isEmbeddingWriteLayer } from "../../services/embeddingProfile";
 import LlmDefaultProfilePanel from "./LlmDefaultProfilePanel.vue";
 import ProviderHub from "./ProviderHub.vue";
 import { logger } from "../../lib/logger";
@@ -408,7 +409,9 @@ const editableFieldCount = computed<number>(() => {
         // 用户层：ProviderHub = 连接管理列表，没有行内字段。
         return props.layer === "instance" ? 3 : 0;
     }
-    if (domain === "embedding") return 1; // 连接选择（EmbeddingSettingsPanel）
+    // 连接选择（EmbeddingSettingsPanel）。D-1122 / T2.4：embedding 已退出工作区层 ⇒
+    // 那两层**没有**可编辑字段（面板根本不渲染，见下方分派守卫），不是"渲染了但禁用"。
+    if (domain === "embedding") return isEmbeddingWriteLayer(props.layer) ? 1 : 0;
     if (domain === "agent-templates") return 7; // 名称/描述/prompt/工具模式/角色/provider/model
     if (domain === "api-request-templates") return 3; // 类型选择/名称/正文
     const meta = configStore.layerMeta[props.layer]?.[domain] ?? {};
@@ -673,8 +676,11 @@ async function handleReset(domain: string, key: string) {
             />
         </template>
         <!-- PLAN-0764 T1.5：实例层同样走专用面板（profile 单元）；旧通用表单的 model/dimensions
-             两键不在 CP schema 里（validateEmbeddingLayer 只收 profile），是必 400 的错配。 -->
-        <template v-else-if="domain === 'embedding'">
+             两键不在 CP schema 里（validateEmbeddingLayer 只收 profile），是必 400 的错配。
+             D-1122 / T2.4：**工作区层不渲染这一块** —— 那里的 PUT 必得 400（域已退出工作区层），
+             而卡级要求是「前端不画不该做的按钮」，不是「画了再禁用」。`isEmbeddingWriteLayer` 是
+             同一条判据的机器形式（矩阵改回来时这里会自动恢复）。 -->
+        <template v-else-if="domain === 'embedding' && isEmbeddingWriteLayer(layer)">
             <EmbeddingSettingsPanel
                 :layer="layer"
                 :saving="savingDomains[domain] || false"
@@ -686,6 +692,12 @@ async function handleReset(domain: string, key: string) {
                 :meta="configStore.layerMeta[layer]['embedding'] || {}"
             />
         </template>
+        <!-- D-1122 / T2.4 第二道保险：embedding 落到**非写层**（workspace / workspace-default）时
+             整块不渲染 —— 既不挂 EmbeddingSettingsPanel，也**不许落回**下面的通用
+             ConfigDomainPanel（那会画出 CP 必 400 的 model/dimensions 两键，正是 PLAN-0764 修掉的错配）。
+             该域在这两层已退出矩阵 ⇒ 页面本就不可达；这一支是给「将来矩阵被改回 / 有人绕过路由直挂」
+             留的机器判据，不是产品路径。 -->
+        <template v-else-if="domain === 'embedding'" />
         <ConfigDomainPanel
             v-else
             :domain="domain"

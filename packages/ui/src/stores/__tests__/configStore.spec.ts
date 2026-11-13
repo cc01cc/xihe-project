@@ -587,15 +587,17 @@ describe("域注册矩阵（task-155：从死页 ConfigSettings.spec 迁移）",
     it("agent-runtime：实例/个人可写，工作区默认层同样登记", () => {
         expect(LAYER_DOMAINS.instance).toContain("agent-runtime");
         expect(LAYER_DOMAINS.user).toContain("agent-runtime");
-        // PLAN-0766：workspace-default 是 9 − 1 = 8 域（不含 service-only 的 context-templates）。
+        // D-1122 / T2.4：workspace-default 是 4 域（5 − 1，不含 service-only 的 context-templates）。
         expect(LAYER_DOMAINS["workspace-default"]).toContain("agent-runtime");
     });
 
-    it("llm-provider：三层都可写且保留在合并视图", () => {
+    it("llm-provider：实例/个人可写且保留在合并视图，工作区层已退出（D-1122 / T2.4）", () => {
         expect(INSTANCE_DOMAINS).toContain("llm-provider");
         expect(LAYER_DOMAINS.instance).toContain("llm-provider");
         expect(LAYER_DOMAINS.user).toContain("llm-provider");
-        expect(LAYER_DOMAINS["workspace-default"]).toContain("llm-provider");
+        // 翻面不删（D-1122 49A / PLAN-0766 T2.4，2026-11-13）：模型 4 域退出工作区层，
+        // CP WORKSPACE_WRITABLE_DOMAINS 已不含它 ⇒ 这一向从"含"变"不含"。
+        expect(LAYER_DOMAINS["workspace-default"]).not.toContain("llm-provider");
         // 与 api-request-templates 相反：它是可在合并视图读的域（agent/context 模板才 explicit-only）。
         expect(CONFIG_DOMAINS).toContain("llm-provider");
     });

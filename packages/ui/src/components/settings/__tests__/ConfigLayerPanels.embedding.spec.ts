@@ -49,7 +49,7 @@ vi.mock("vue-sonner", () => ({
     },
 }));
 
-async function mountEmbedding(layer: "instance" | "user") {
+async function mountEmbedding(layer: "instance" | "user" | "workspace" | "workspace-default") {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
         const url = typeof input === "string" ? input : input.url;
         if (url.includes("provider-catalog")) {
@@ -98,5 +98,34 @@ describe("ConfigLayerPanels embedding 域分派（PLAN-0764 T1.5）", () => {
         expect(panel.exists()).toBe(true);
         expect(panel.props("layer")).toBe("user");
         expect(wrapper.findComponent(DomainPanelStub).exists()).toBe(false);
+    });
+
+    /**
+     * D-1122 49A / PLAN-0766 T2.4（2026-11-13）：embedding 退出工作区层 ⇒ 那两层**一个写入口都不许画**。
+     *
+     * <p>为什么必须另立一条而不是"信矩阵"：矩阵保证**路由不注册**，但不保证组件在被人直挂时不出入口
+     * （D-1122 的验收就是「路由不注册」与「菜单不出现」分开断，这里同理再加第三条「组件不出写入口」）。
+     * 关键否定是**不许落回通用 ConfigDomainPanel** —— 那会画出 CP 必 400 的 model/dimensions 两键，
+     * 正是 PLAN-0764 修掉的错配；只断"没有专用面板"会让这个回退通道静默通过。</p>
+     */
+    it.each(["workspace", "workspace-default"] as const)(
+        "%s 层不渲染任何 embedding 写入口（专用面板与通用表单都不画）",
+        async (layer) => {
+            const wrapper = await mountEmbedding(layer);
+            expect(wrapper.findComponent(EmbeddingPanelStub).exists()).toBe(false);
+            expect(wrapper.findComponent(DomainPanelStub).exists()).toBe(false);
+            expect(wrapper.find('[data-testid="embedding-settings"]').exists()).toBe(false);
+            // 可编辑字段数同样为 0：徽标不得出现"1 项可编辑"而实际一个控件都没有。
+            const counts = wrapper.emitted("editable-count") ?? [];
+            expect(counts.at(-1)).toEqual([0]);
+        },
+    );
+
+    it("instance / user 层的可编辑字段数仍是 1（不是把 embedding 一律记 0）", async () => {
+        for (const layer of ["instance", "user"] as const) {
+            const wrapper = await mountEmbedding(layer);
+            const counts = wrapper.emitted("editable-count") ?? [];
+            expect(counts.at(-1)).toEqual([1]);
+        }
     });
 });

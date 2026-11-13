@@ -7,10 +7,12 @@ import { humanizeErrorCode } from "../../lib/errorMessages";
 import {
     embeddingConnections,
     fetchEmbeddingEffective,
+    isEmbeddingWriteLayer,
     saveEmbeddingProfile,
     testEmbedding,
     type EmbeddingEffectiveProfile,
     type EmbeddingTestResult,
+    type EmbeddingWriteLayer,
 } from "../../services/embeddingProfile";
 import { useConfigStore, type ConfigLayer } from "../../stores/config";
 import type { ProviderConnection } from "../../types/providerConnection";
@@ -26,6 +28,11 @@ import {
 const props = defineProps<{
     // task-253：工作区层已从 UI 移除。PLAN-0764 T1.5：实例层也渲染本面板（写 profile 单元），
     // 连接仍按消费用户 scope 解析（CP strictResolveConnection），实例层只负责默认身份。
+    //
+    // D-1122 / T2.4：embedding 退出工作区层 ⇒ 本面板**只在 instance / user 两层挂载**
+    // （分派守卫在 ConfigLayerPanels.vue）。prop 类型仍是 ConfigLayer（它由矩阵派生、
+    // 不在这里收窄），真正的收窄在 saveEmbeddingProfile 的签名 + 下面的 persistLayer
+    // 双保险：签名挡住"写了不该写的层"，persistLayer 挡住"渲染了不该渲染的层"。
     layer: ConfigLayer;
     saving?: boolean;
     readonly?: boolean;
@@ -37,6 +44,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n(),
     configStore = useConfigStore();
+/**
+ * D-1122 / T2.4：只有 instance / user 能写 embedding profile（工作区层没有该写面）。
+ * 为 null 时两个写入口直接返回 —— 「前端不画不该做的按钮」在**类型层**也成立。
+ */
+const persistLayer = computed<EmbeddingWriteLayer | null>(() =>
+    isEmbeddingWriteLayer(props.layer) ? props.layer : null,
+);
 // Pre-load fallback only; the server-served contract wins once loaded.
 const FALLBACK_MODEL = "tongyi-embedding-vision-flash-2026-03-06";
 const FALLBACK_DIMENSION = 768;
@@ -106,12 +120,14 @@ async function load() {
 }
 
 async function handleSave() {
+    const writeLayer = persistLayer.value;
+    if (!writeLayer) return;
     if (!selectedConnection.value) {
         toast.error(t("settings.embeddingSelectRequired"));
         return;
     }
     try {
-        await saveEmbeddingProfile(props.layer, {
+        await saveEmbeddingProfile(writeLayer, {
             providerId: selectedConnection.value.providerId,
             connectionKey: selectedConnection.value.connectionKey,
             model: contractModel.value,
@@ -126,8 +142,10 @@ async function handleSave() {
 }
 
 async function handleClear() {
+    const writeLayer = persistLayer.value;
+    if (!writeLayer) return;
     try {
-        await saveEmbeddingProfile(props.layer, null);
+        await saveEmbeddingProfile(writeLayer, null);
         toast.success(t("settings.embeddingCleared"));
         await load();
         emit("saved");

@@ -33,13 +33,19 @@ import {
 // 所以旧的 `knowledgeRedirectTarget` 用例整段退场 —— 缺口落点改由 `/resources/knowledge` 承担。
 
 describe("settings IA matrix", () => {
-    it("keeps the CP layer counts 12 / 9 plus the 8-domain shared workspace-default layer", () => {
+    it("keeps the CP layer counts 12 / 9 plus the 4-domain shared workspace-default layer", () => {
         expect(domainsForLayer("instance")).toHaveLength(12);
         expect(domainsForLayer("user")).toHaveLength(9);
-        // PLAN-0766（task-160）：CP 的 WORKSPACE_WITABLE 是 9 域，但 context-templates 是
-        // service-only 域（config API 只收 12 个 UI 域）⇒ UI 矩阵是 9 − 1 = 8，且不含
-        // per-workspace 的旧 workspace 层（task-253 已退役）。
-        expect(domainsForLayer("workspace-default")).toHaveLength(8);
+        // D-1122 49A / PLAN-0766 T2.4（2026-11-13）：模型 4 域退出工作区层 ⇒ CP 的
+        // WORKSPACE_WRITABLE_DOMAINS 变 5 域（4 个行为域 + service-only 的 context-templates），
+        // 与 UI_DOMAINS（12）求交 = 4 域（ConfigService.java:115-118）。
+        // 逐域钉死（不是只钉个数）：谁把模型域加回来，下面的 toEqual 立刻红。
+        expect(domainsForLayer("workspace-default")).toEqual([
+            "agent-runtime",
+            "approval-policy",
+            "agent-templates",
+            "job-policy",
+        ]);
         // task-77：断言**语义顺序**，不再断言字面量（旧写法 `["instance","workspace-default","user"]`
         // 因 reverse 后恰好相等而长期假绿）。判据：低 → 高为 instance < personal < workspace-default
         // （与取值优先级 `workspace > workspace-default > personal > instance` 同义）。
@@ -63,16 +69,29 @@ describe("settings IA matrix", () => {
         expect(layersForDomain("approval-policy")).toEqual(["instance", "workspace-default"]);
         expect(layersForDomain("job-policy")).toEqual(["instance", "workspace-default"]);
         expect(layersForDomain("agent-profile")).toEqual(["instance", "user"]);
-        // 顺序 = 显示顺序（低 → 高，取 SETTINGS_LAYERS 的过滤结果）：instance → user → workspace-default
-        expect(layersForDomain("rag")).toEqual(["instance", "user", "workspace-default"]);
+        // D-1122 / T2.4：模型 4 域退出工作区层 ⇒ 它们**不再**出现在 workspace-default。
+        // 这四条是与 CP WORKSPACE_WRITABLE_DOMAINS 逐域对齐的机器判据（矩阵被改回即红）。
+        expect(layersForDomain("rag")).toEqual(["instance", "user"]);
+        expect(layersForDomain("llm-provider")).toEqual(["instance", "user"]);
+        expect(layersForDomain("context-policy")).toEqual(["instance", "user"]);
+        expect(layersForDomain("embedding")).toEqual(["instance", "user"]);
     });
 
-    it("routes only the eight writable domains on the workspace-default layer", () => {
+    it("routes only the four writable domains on the workspace-default layer", () => {
         // PLAN-0766 T3.1/T3.3：路由注册与左栏共用同一矩阵 ⇒ 这里锁死「哪些域有页」。
-        expect(resolveLayerRoute("workspace-default", "llm-provider")).toEqual({
+        expect(resolveLayerRoute("workspace-default", "agent-runtime")).toEqual({
             ok: true,
             layer: "workspace-default",
-            domain: "llm-provider",
+            domain: "agent-runtime",
+        });
+        // D-1122 / T2.4：模型域退出该层 ⇒ 它们的路径**不再注册**（不是"注册了再 400"）。
+        expect(resolveLayerRoute("workspace-default", "llm-provider")).toEqual({
+            ok: false,
+            reason: "domain-not-in-layer",
+        });
+        expect(resolveLayerRoute("workspace-default", "embedding")).toEqual({
+            ok: false,
+            reason: "domain-not-in-layer",
         });
         // 不可写域 = 矩阵里没有 ⇒ 路由不注册 ⇒ 同一条路径落到 404 兜底。
         expect(resolveLayerRoute("workspace-default", "agent-profile")).toEqual({
@@ -92,8 +111,10 @@ describe("settings IA matrix", () => {
         expect(settingsDomainPath("workspace-default", "rag")).toBe(
             "/settings/workspace-default/rag",
         );
+        // 默认页 = 矩阵第一项。T2.4 后第一项是 agent-runtime（模型域已退出该层），
+        // 所以这条断言同时钉住「默认页跟着矩阵走」与「模型域不再作首域」两件事。
         expect(defaultLayerPath("workspace-default")).toBe(
-            "/settings/workspace-default/llm-provider",
+            "/settings/workspace-default/agent-runtime",
         );
     });
     it("marks exactly the three user-layer gaps as instance-only for the user layer", () => {

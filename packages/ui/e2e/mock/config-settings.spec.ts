@@ -186,8 +186,10 @@ test.describe("Config Settings (three layers)", () => {
     // 没有任何域面板」）。
     //
     // **task-204（Lead 2026-11-13）：契约又翻回来了** —— PLAN-0773 M4-1（`d0864b59e`）有意把
-    // per-workspace 层加回来（`ConfigLayer` 加 `workspace`、`LAYER_DOMAINS.workspace` = 同一张 8 域
-    // 矩阵、工作区设置页长出「配置」tab + 域面板）⇒ 原断言会红，而它红得**对**：契约变了，判据必须跟。
+    // per-workspace 层加回来（`ConfigLayer` 加 `workspace`、`LAYER_DOMAINS.workspace` = 同一张矩阵、
+    // 工作区设置页长出「配置」tab + 域面板）⇒ 原断言会红，而它红得**对**：契约变了，判据必须跟。
+    // D-1122 49A / PLAN-0766 T2.4（2026-11-13）：那张矩阵已从 8 域缩到 **4 域**（模型 4 域退出
+    // 工作区层）—— 本条不写死数（`expectedDomains` 从 SSOT 取），所以自动跟着变。
     //
     // 翻面**不删**：删断言只能证明「这一刻没写」，将来有人再把 tab 拿掉时不会有任何东西变红。
     // 反过来写之后，被持续验证的契约是「恰好两个 tab（general/config）+ 域面板集合等于 SSOT」。

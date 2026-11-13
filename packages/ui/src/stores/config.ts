@@ -122,14 +122,17 @@ export function isDomainReadableWithoutAdmin(domain: ConfigDomain): boolean {
 
 /**
  * `workspace-default`（部署级共享默认，PLAN-0766/D-928）与 `workspace`（per-workspace，
- * PLAN-0773 M4-1）**共用**这张矩阵：CP 侧两者都由 `WORKSPACE_WRITABLE_DOMAINS` 约束，
- * 且都要经过「通用 config API 只能服务 12 个 UI 域」这一层过滤 ⇒ UI 侧就是 9 − 1 = 8 域。
+ * PLAN-0773 M4-1）**共用**这张矩阵：CP 侧两者都由 `WORKSPACE_WRITABLE_DOMAINS` 约束。
+ *
+ * <p><b>2026-11-13 D-1122 49A / PLAN-0766 T2.4</b>：模型 4 域（llm-provider / context-policy /
+ * embedding / rag）**退出工作区层** —— 它们在实例层与用户层仍可写、工作区层仍可读合并值，但
+ * 不再是工作区层（含 workspace-default）的可写面。CP 侧 `ConfigService.java:102-103` 的
+ * `WORKSPACE_WRITABLE_DOMAINS` 已是 5 域（4 个行为域 + service-only 的 `context-templates`），
+ * 通用 config API 只能服务 12 个 UI 域 ⇒ `WORKSPACE_DEFAULT_WRITABLE` = 交集 = **4 域**
+ * （`ConfigService.java:115-118`）。这里列的就是那 4 域，**逐域与 CP 派生集对齐**
+ * （判据：`stores/__tests__/configStore.spec.ts` 的矩阵事实断言 + 本文件无 5 域残留）。</p>
  */
 const GENERIC_WORKSPACE_DOMAINS = [
-    "llm-provider",
-    "context-policy",
-    "embedding",
-    "rag",
     "agent-runtime",
     "approval-policy",
     "agent-templates",
@@ -138,12 +141,11 @@ const GENERIC_WORKSPACE_DOMAINS = [
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
     instance: INSTANCE_DOMAINS,
-    // PLAN-0766：CP `WORKSPACE_WRITABLE_DOMAINS` 是 9 域（b05aad952 ConfigService.java:94），
-    // 但 `context-templates` 是 service-only 域 —— 契约明写 config API 只收 12 个 UI 域，
-    // 其余（context-templates / pricing）返回 INVALID_DOMAIN。所以 UI 侧矩阵是 9 − 1 = 8 域，
-    // 这里刻意不列 context-templates，避免左栏出现一个点进去必然失败的入口。
+    // T2.4 后 CP `WORKSPACE_WRITABLE_DOMAINS` 是 5 域，其中 `context-templates` 是 service-only
+    // （契约明写 config API 只收 12 个 UI 域，其余返回 INVALID_DOMAIN）⇒ 交集 4 域。
+    // 刻意不列 context-templates：列了就是左栏出现一个点进去必然失败的入口。
     "workspace-default": GENERIC_WORKSPACE_DOMAINS,
-    // PLAN-0773 M4-1：**per-workspace 层**与 `workspace-default` 用的是**同一张 8 域矩阵**，
+    // PLAN-0773 M4-1：**per-workspace 层**与 `workspace-default` 用的是**同一张 4 域矩阵**，
     // 且共用同一个数组常量 —— 不是巧合，是同一个 CP 常量 `WORKSPACE_WRITABLE_DOMAINS` 的两个落库面：
     // 一个写"某一工作区自己的行"，一个写"没显式覆盖时的部署级默认行"。分成两份数组等于
     // 允许两层的可写域集漂移（今天相同、明天有人只改一处），而契约里它们是**同一个集合**。

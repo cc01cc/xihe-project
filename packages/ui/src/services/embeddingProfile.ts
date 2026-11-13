@@ -50,10 +50,26 @@ export function fetchEmbeddingEffective(workspaceId?: string): Promise<Embedding
     return request<EmbeddingEffectiveProfile>(`/config/embedding/effective${query}`);
 }
 
-/** task-253：工作区层移除后，embedding profile 只能写实例/用户两层。 */
+/**
+ * embedding 写入口所在的层 —— **只有 instance / user 两层**。
+ *
+ * <p>为什么不是 `ConfigLayer`（D-1122 49A / PLAN-0766 T2.4，2026-11-13）：模型 4 域
+ * （llm-provider / context-policy / embedding / rag）**退出了工作区层**，CP 侧
+ * `WORKSPACE_WRITABLE_DOMAINS` 已不含它们 ⇒ 对 `workspace` / `workspace-default` 发
+ * `PUT /config/<layer>/embedding` 必得 400。签名保留 `ConfigLayer` 等于把「能发必失败的
+ * 请求」当成接口的一部分（宽签名留在外面），等于等着下一个调用点再把 400 报成产品缺陷
+ * —— 卡级要求是**前端不画不该做的按钮**，类型层就该发不出去。</p>
+ */
+export type EmbeddingWriteLayer = Extract<ConfigLayer, "instance" | "user">;
+
+/** 类型守卫：把「只有 instance/user 能写 embedding」变成可执行判据（组件层做第二道保险）。 */
+export function isEmbeddingWriteLayer(layer: ConfigLayer): layer is EmbeddingWriteLayer {
+    return layer === "instance" || layer === "user";
+}
+
+/** task-253 / D-1122：embedding profile 只能写实例/用户两层（工作区层不再有该写面）。 */
 export function saveEmbeddingProfile(
-    // PLAN-0766：embedding 是 9 个可写 workspace-default 域之一 ⇒ 签名跟随 ConfigLayer。
-    layer: ConfigLayer,
+    layer: EmbeddingWriteLayer,
     profile: EmbeddingProfileInput | null,
 ): Promise<void> {
     const body: Record<string, string> = {};
