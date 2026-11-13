@@ -69,7 +69,9 @@ public final class AgentPrincipalTestSupport {
                     // covered by the Spring/integration contract tests.
                     mock(com.cc01cc.p.xihe.cp.policy.GrantabilityGuard.class),
                     // D-180 锁序：unit envs pass a permissive instance-mutex mock.
-                    mock(com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository.class));
+                    mock(com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository.class),
+                    // PLAN-0773 M2-8b: no org-unit rows ⇒ the read points behave as before.
+                    com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows());
         }
     }
 

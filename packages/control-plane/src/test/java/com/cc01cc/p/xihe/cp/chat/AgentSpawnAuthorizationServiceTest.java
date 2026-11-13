@@ -58,7 +58,8 @@ class AgentSpawnAuthorizationServiceTest {
         delegationBudget = mock(DelegationBudgetService.class);
         service = new AgentSpawnAuthorizationService(policy, approvals, sse, audit, delegationBudget,
                 new RequesterAuthority(mock(AuthorizationGrantRepository.class),
-                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class)));
+                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class),
+                        com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows()));
 
         String runId = "11111111-1111-1111-1111-111111111111";
         String toolCallId = "33333333-3333-3333-3333-333333333333";

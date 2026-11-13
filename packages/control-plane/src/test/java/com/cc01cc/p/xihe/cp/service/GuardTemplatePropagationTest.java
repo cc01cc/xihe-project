@@ -91,7 +91,9 @@ class GuardTemplatePropagationTest {
                 // guard's own decisions are covered by Spring/integration tests).
                 mock(com.cc01cc.p.xihe.cp.policy.GrantabilityGuard.class),
                 // D-180 锁序：unit envs pass a permissive instance-mutex mock.
-                mock(com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository.class));
+                mock(com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository.class),
+                // PLAN-0773 M2-8b: no org-unit rows ⇒ the read points behave as before.
+                com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows());
         // PLAN-0629（2026-11-04 裁定）：建 principal 现在总会解析默认实例角色并写角色绑定，
         // 所以纯 Mockito 测试必须提供角色目录桩——这不是放宽校验，而是补齐新依赖。
         // D-180: the default role is validated (name → id) before the write, so BOTH catalog lookups

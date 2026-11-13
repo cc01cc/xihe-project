@@ -80,7 +80,8 @@ class SessionParticipantServiceTest {
                 mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class),
                 mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class), access,
                 new RequesterAuthority(mock(AuthorizationGrantRepository.class),
-                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class)));
+                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class),
+                        com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows()));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);

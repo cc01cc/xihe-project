@@ -38,13 +38,35 @@ public class RequesterAuthority {
     private final AuthorizationGrantRepository grantRepository;
     private final GrantIntersectionEvaluator evaluator;
     private final AuthzContext authzContext;
+    private final OrgUnitGrants orgUnitGrants;
 
     public RequesterAuthority(AuthorizationGrantRepository grantRepository,
                               GrantIntersectionEvaluator evaluator,
-                              AuthzContext authzContext) {
+                              AuthzContext authzContext,
+                              OrgUnitGrants orgUnitGrants) {
         this.grantRepository = grantRepository;
         this.evaluator = evaluator;
         this.authzContext = authzContext;
+        this.orgUnitGrants = orgUnitGrants;
+    }
+
+    /**
+     * PLAN-0773 M2-8b: the scoped rows <b>plus</b> whatever the subject holds through its org units.
+     *
+     * <p>Every evaluation read goes through this one method, so "did we wire this site?" is a grep
+     * for <b>one</b> name rather than an audit of four call shapes ({@code tasks.md:106}: forgetting
+     * one site means silently granting less, which no test of the other three would catch). The
+     * org-unit rows are in-memory {@code AuthorizationGrant}s with {@code scopeType='instance'} and
+     * are unioned here, never persisted.</p>
+     *
+     * <p>Adding rows cannot widen a decision beyond what the same role would grant through a
+     * binding: {@code M2-8c}'s whitelist limits org-unit roles to governance atoms, and the
+     * expansion drops anything else ({@link OrgUnitGovernancePolicy#filterGovernanceRoles}). The
+     * union is taken on the evaluator's own atom type, so resource matching stays in one place.</p>
+     */
+     private List<AuthorizationGrant> withOrgUnitGrants(String principalType, UUID subjectId,
+                                                       List<AuthorizationGrant> scopedGrants) {
+        return OrgUnitGrants.merge(scopedGrants, orgUnitGrants.forPrincipal(principalType, subjectId));
     }
 
     /** The request's subject id, or {@code null} when the request has no authenticated user. */
@@ -105,8 +127,9 @@ public class RequesterAuthority {
         }
         UUID subjectId = UUID.fromString(request.userId());
         Set<GrantIntersectionEvaluator.PermissionAtom> grants = evaluator.union(
-                grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, subjectId,
-                        GrantSources.EVALUATION_SOURCES, scopeWorkspaceId));
+                withOrgUnitGrants(GrantPrincipalPathResolver.USER, subjectId,
+                        grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, subjectId,
+                                GrantSources.EVALUATION_SOURCES, scopeWorkspaceId)));
         return evaluator.allows(request, List.of(grants));
     }
 
@@ -121,8 +144,9 @@ public class RequesterAuthority {
         }
         Set<GrantIntersectionEvaluator.PermissionAtom> atoms;
         try {
-            atoms = evaluator.union(grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
-                    subjectId, GrantSources.EVALUATION_SOURCES, workspaceId));
+            atoms = evaluator.union(withOrgUnitGrants(AuthzContext.SUBJECT_USER, subjectId,
+                    grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
+                            subjectId, GrantSources.EVALUATION_SOURCES, workspaceId)));
         } catch (RuntimeException e) {
             // Fail closed: an unreadable/!canonical grant row must never widen authority.
             logger.error("[POLICY] event=action_atom_evaluation_failed subject={} workspaceId={}"
@@ -146,8 +170,9 @@ public class RequesterAuthority {
         }
         LinkedHashSet<String> sources = new LinkedHashSet<>();
         try {
-            for (AuthorizationGrant grant : grantRepository.findScopedGrants(
-                    AuthzContext.SUBJECT_USER, subjectId, GrantSources.EVALUATION_SOURCES, workspaceId)) {
+            for (AuthorizationGrant grant : withOrgUnitGrants(AuthzContext.SUBJECT_USER, subjectId,
+                    grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
+                            subjectId, GrantSources.EVALUATION_SOURCES, workspaceId))) {
                 if (grant.getPermissions() == null) {
                     continue;
                 }
@@ -195,8 +220,9 @@ public class RequesterAuthority {
             return Set.of();
         }
         try {
-            return evaluator.union(grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
-                    subjectId, GrantSources.EVALUATION_SOURCES, workspaceId));
+            return evaluator.union(withOrgUnitGrants(AuthzContext.SUBJECT_USER, subjectId,
+                    grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
+                            subjectId, GrantSources.EVALUATION_SOURCES, workspaceId)));
         } catch (RuntimeException e) {
             logger.error("[POLICY] event=tool_permission_evaluation_failed subject={} workspaceId={}"
                     + " failureType={}", subjectId, workspaceId, e.getClass().getSimpleName(), e);

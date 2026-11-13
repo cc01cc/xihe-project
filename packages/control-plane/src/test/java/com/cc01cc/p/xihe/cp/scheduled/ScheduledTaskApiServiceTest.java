@@ -1,5 +1,9 @@
 package com.cc01cc.p.xihe.cp.scheduled;
 
+import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantExpander;
+import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantSource;
+import com.cc01cc.p.xihe.cp.policy.OrgUnitGrants;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -25,6 +29,7 @@ import org.mockito.Mockito;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -87,7 +92,8 @@ class ScheduledTaskApiServiceTest {
         sessionParticipantRepository = Mockito.mock(SessionParticipantRepository.class);
         service = new ScheduledTaskApiService(repository, dispatcher, workspaceService, sessionService,
                 evaluator, grantRepository, agentPrincipalRepository, workspaceAgentRepository,
-                userRepository, auditLogger, eventManager, sessionParticipantRepository);
+                userRepository, auditLogger, eventManager, sessionParticipantRepository,
+                com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows());
         when(repository.countByWorkspaceIdAndStatusIn(any(), anyCollection())).thenReturn(0L);
         when(repository.countByWorkspaceIdAndUserIdAndStatusIn(any(), any(), anyCollection()))
                 .thenReturn(0L);
@@ -162,6 +168,62 @@ class ScheduledTaskApiServiceTest {
         CpApiException error = assertThrows(CpApiException.class, () -> service.create(
                 WORKSPACE_ID, USER_ID, cronRequest("* * * * *", "UTC")));
         assertEquals("SCHEDULED_TASK_PRINCIPAL_LIMIT", error.getCode());
+    }
+
+    /**
+     * `M2-8b` gate 3 (`ScheduledTaskApiService`): this gate reads the subject's org-unit grants too —
+     * and, because the whitelist is applied inside the expansion, **they can never widen it**.
+     *
+     * <p>Both halves are asserted, because a wiring that silently widens an unrelated gate would
+     * be a privilege leak nobody asked for:</p>
+     * <ol>
+     *   <li>an org-unit binding carrying {@code CREATE_SCHEDULED_TASK} (non-governance) is
+     *       <b>dropped</b> before the decision ⇒ still {@code 403}. This is the filter doing its
+     *       job at a gate whose own atom is not a governance atom;</li>
+     *   <li>an org-unit binding carrying a <i>governance</i> atom ({@code MANAGE_ORG_UNITS}) is kept
+     *       but still doesn't satisfy this gate ⇒ {@code 403} — the expansion adds authority only
+     *       where that atom is what is being asked for.</li>
+     * </ol>
+     *
+     * <p>Uses a real {@link GrantIntersectionEvaluator} on purpose: with a stubbed {@code allows}
+     * this test would prove nothing about what reached the decision.</p>
+     */
+    @Test
+    void create_isNotWidenedByOrgUnitGrants() {
+        when(repository.save(any())).thenAnswer(invocation -> {
+            ScheduledTask task = invocation.getArgument(0);
+            task.setId(UUID.randomUUID());
+            return task;
+        });
+
+        for (String atom : List.of(ToolFaceRegistry.ACTION_CREATE_SCHEDULED_TASK,
+                ToolFaceRegistry.ACTION_MANAGE_ORG_UNITS)) {
+            ScheduledTaskApiService withOrgUnits = serviceWithOrgUnitGrant(atom);
+            CpApiException refused = assertThrows(CpApiException.class, () -> withOrgUnits.create(
+                    WORKSPACE_ID, USER_ID, delayRequest(Instant.now().plus(2, ChronoUnit.HOURS))),
+                    "org-unit grants must not authorize this gate with atom " + atom);
+            assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatus());
+            verify(repository, never()).save(any());
+        }
+    }
+
+    /** A service whose org-unit source grants one governance-or-not atom to the human actor. */
+    private ScheduledTaskApiService serviceWithOrgUnitGrant(String atom) {
+        UUID unit = UUID.fromString("00000000-0000-4000-8000-0000000000a0");
+        UUID role = UUID.fromString("22222222-2222-4222-8222-222222222221");
+        var permissions = new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode();
+        permissions.addObject().put("actionClass", atom).put("resource", "*");
+        OrgUnitGrantSource source = member -> new OrgUnitGrantExpander.Rows(
+                List.of(new OrgUnitGrantExpander.UnitRow(unit, "root")),
+                List.of(new OrgUnitGrantExpander.MembershipRow(
+                        OrgUnitGrantExpander.MEMBER_HUMAN, UUID.fromString(USER_ID), unit)),
+                List.of(new OrgUnitGrantExpander.RoleBindingRow(unit, role, "ORG_ROLE",
+                        List.of(atom), permissions)));
+        return new ScheduledTaskApiService(repository, dispatcher, workspaceService, sessionService,
+                new GrantIntersectionEvaluator(), grantRepository, agentPrincipalRepository,
+                workspaceAgentRepository, userRepository, auditLogger, eventManager,
+                sessionParticipantRepository,
+                new OrgUnitGrants(new OrgUnitGrantExpander(), source));
     }
 
     // ── create 权限与 agent 边界 ───────────────────────────────────────────

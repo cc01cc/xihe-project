@@ -27,7 +27,7 @@ public final class DeclaredAtomAuthority extends RequesterAuthority {
 
     /** Denies every atom unless it is declared here. */
     public DeclaredAtomAuthority(String... atoms) {
-        super(null, null, null);
+        super(null, null, null, OrgUnitGrantsTestFixture.withoutRows());
         this.declared = Set.of(atoms);
     }
 

@@ -93,6 +93,8 @@ public class ScheduledTaskApiService {
     private final AuditLogger auditLogger;
     private final WorkspaceEventManager workspaceEventManager;
     private final SessionParticipantRepository sessionParticipants;
+    /** PLAN-0773 M2-8b: org-unit governance grants join the scheduled-task action gate. */
+    private final com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants;
 
     public ScheduledTaskApiService(ScheduledTaskRepository scheduledTaskRepository,
                                    ScheduledTaskDispatcher dispatcher,
@@ -105,7 +107,8 @@ public class ScheduledTaskApiService {
                                    UserRepository userRepository,
                                    AuditLogger auditLogger,
                                    WorkspaceEventManager workspaceEventManager,
-                                   SessionParticipantRepository sessionParticipants) {
+                                   SessionParticipantRepository sessionParticipants,
+                                   com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants) {
         this.scheduledTaskRepository = scheduledTaskRepository;
         this.dispatcher = dispatcher;
         this.workspaceService = workspaceService;
@@ -118,6 +121,7 @@ public class ScheduledTaskApiService {
         this.auditLogger = auditLogger;
         this.workspaceEventManager = workspaceEventManager;
         this.sessionParticipants = sessionParticipants;
+        this.orgUnitGrants = orgUnitGrants;
     }
 
     /** 读 DTO createdBy（0486 #9：principal 名 + 类型 human/agent）。 */
@@ -428,8 +432,9 @@ public class ScheduledTaskApiService {
         UUID subjectId = creator.agentPrincipalId() == null ? creator.userId() : creator.agentPrincipalId();
         boolean allowed;
         try {
-            var permissions = evaluator.union(grantRepository.findScopedGrants(subjectType,
-                    subjectId, GrantSources.EVALUATION_SOURCES, workspaceId));
+            var permissions = evaluator.union(orgUnitGrants.merge(grantRepository.findScopedGrants(subjectType,
+                    subjectId, GrantSources.EVALUATION_SOURCES, workspaceId),
+                    orgUnitGrants.forPrincipal(subjectType, subjectId)));
             PolicyRequest request = new PolicyRequest(policyTool, List.of(actionClass),
                     List.of(workspaceId.toString()), ToolShape.OPAQUE, userId,
                     workspaceId.toString(), null);

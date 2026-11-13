@@ -41,7 +41,8 @@ class ActionAtomDeniedLogTest {
 
     @BeforeEach
     void setUp() {
-        authority = new RequesterAuthority(grants, evaluator, authzContext);
+        authority = new RequesterAuthority(grants, evaluator, authzContext,
+                OrgUnitGrantsTestFixture.withoutRows());
         appender = new ListAppender<>();
         appender.start();
         logger = (Logger) LoggerFactory.getLogger(RequesterAuthority.class);

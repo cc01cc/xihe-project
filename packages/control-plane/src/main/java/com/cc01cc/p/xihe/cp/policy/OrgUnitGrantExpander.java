@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -57,6 +58,7 @@ import java.util.UUID;
  *
  * @author PLAN-0773 M2-8a
  */
+@Component
 public final class OrgUnitGrantExpander {
 
     /** {@code source} label on expanded rows. In-memory only — never written to {@code grants}. */

@@ -38,7 +38,11 @@ class RequesterAuthorityAllowsForUserEquivalenceTest {
     @BeforeEach
     void setUp() {
         grants = mock(AuthorizationGrantRepository.class);
-        authority = new RequesterAuthority(grants, evaluator, mock(AuthzContext.class));
+        // M2-8b: the org-unit source is empty here on purpose — this test pins the behaviour of
+        // the *existing* (non-org-unit) atoms before and after the wiring, so feeding it rows would
+        // test the new path instead of the equivalence.
+        authority = new RequesterAuthority(grants, evaluator, mock(AuthzContext.class),
+                OrgUnitGrantsTestFixture.withoutRows());
     }
 
     /** The pre-A1 implementation, verbatim, so both sides evaluate the same request. */

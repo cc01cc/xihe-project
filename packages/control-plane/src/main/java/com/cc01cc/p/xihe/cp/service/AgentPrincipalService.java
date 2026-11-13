@@ -92,6 +92,8 @@ public class AgentPrincipalService {
     private final AccessRoleRepository roleRepository;
     private final AccessRolePermissionRepository rolePermissionRepository;
     private final RoleGrantMaterializer roleMaterializer;
+    /** PLAN-0773 M2-8b: the subject's org-unit governance grants join every evaluation read. */
+    private final com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants;
 
     public AgentPrincipalService(AgentPrincipalRepository agentPrincipalRepository,
                                  AuthorizationGrantRepository grantRepository,
@@ -110,7 +112,8 @@ public class AgentPrincipalService {
                                  RoleGrantMaterializer roleMaterializer,
                                  RequesterAuthority requesterAuthority,
                                  com.cc01cc.p.xihe.cp.policy.GrantabilityGuard grantability,
-                                 com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository owners) {
+                                 com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository owners,
+                                 com.cc01cc.p.xihe.cp.policy.OrgUnitGrants orgUnitGrants) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
         this.authService = authService;
@@ -126,6 +129,7 @@ public class AgentPrincipalService {
         this.roleRepository = roleRepository;
         this.rolePermissionRepository = rolePermissionRepository;
         this.roleMaterializer = roleMaterializer;
+        this.orgUnitGrants = orgUnitGrants;
         this.requesterAuthority = requesterAuthority;
         this.grantability = grantability;
         this.owners = owners;
@@ -770,9 +774,11 @@ public class AgentPrincipalService {
                 principalEffectiveAtoms(principal.getId(), workspaceId);
         Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions = binding.workspaceAgent() == null
                 // PLAN-0629: access granted by a workspace role binding, no binding row involved.
-                ? evaluator.union(grantRepository.findScopedGrants(
+                ? evaluator.union(orgUnitGrants.merge(grantRepository.findScopedGrants(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId(),
-                        GrantSources.EVALUATION_SOURCES, workspaceId))
+                        GrantSources.EVALUATION_SOURCES, workspaceId),
+                        orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
+                                principal.getId())))
                 : parsePermissions(binding.workspaceAgent().getPermissionsSnapshot());
         return toJson(retainCovered(bindingPermissions, principalPermissions));
     }
@@ -965,12 +971,14 @@ public class AgentPrincipalService {
         List<AuthorizationGrant> roleRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 List.of(GrantSources.ROLE, GrantSources.CREDENTIAL_BINDING), workspaceId);
+        java.util.Collection<AuthorizationGrant> expanded =
+                orgUnitGrants.forPrincipal(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId);
         if (!roleRows.isEmpty()) {
-            return evaluator.union(roleRows);
+            return evaluator.union(orgUnitGrants.merge(roleRows, expanded));
         }
-        return evaluator.union(grantRepository.findScopedGrants(
+        return evaluator.union(orgUnitGrants.merge(grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                GrantSources.EVALUATION_SOURCES, workspaceId));
+                GrantSources.EVALUATION_SOURCES, workspaceId), expanded));
     }
 
     /**
@@ -991,6 +999,14 @@ public class AgentPrincipalService {
      * </ol>
      * Capability atoms and agent-forbidden atoms are skipped: the materializer never turns them
      * into grants, so counting them would invent a capability the evaluator drops anyway.
+     *
+     * <p><b>PLAN-0773 M2-8b: org-unit grants are deliberately <i>not</i> merged here</b> — this is a
+     * write-side baseline ({@code D-1109}: what the write path copies into a workspace agent cap),
+     * not an evaluation gate. The org-unit rows are {@code instance}-scope governance grants;
+     * copying them into a workspace cap would widen a snapshot beyond the scope it models, and a
+     * boundary crossed by accident is harder to notice than one that is merely missing (an
+     * under-grant shows up as a 403, an over-grant shows up as nothing at all). Registered as
+     * {@code TODO(M2-8b follow-up)} rather than silently wired.</p>
      */
     private Set<GrantIntersectionEvaluator.PermissionAtom> roleBaselineAtoms(UUID principalId,
                                                                             UUID workspaceId) {

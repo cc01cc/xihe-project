@@ -20,8 +20,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -97,7 +97,8 @@ class SessionParticipantWakeProjectionWiringTest {
                 mock(AgentPrincipalRepository.class), users, workspaces, grants, projection,
                 mock(EventStoreRepository.class), access,
                 new RequesterAuthority(mock(AuthorizationGrantRepository.class),
-                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class)));
+                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class),
+                        com.cc01cc.p.xihe.cp.policy.OrgUnitGrantsTestFixture.withoutRows()));
     }
 
     private SessionParticipantService.AddRequest scheduleAdd() {
