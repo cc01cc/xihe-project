@@ -677,9 +677,7 @@ function boundBaseFromLog(log, fallbackBase) {
 function mockApiEnvPatch() {
     const raw = process.env.XIHE_UI_MOCK_API;
     if (raw === undefined || raw === "") {
-        console.log(
-            "[ui-mock-shot] XIHE_UI_MOCK_API 未设置 ⇒ 临时 dev server 默认补 1（mock 态）",
-        );
+        console.log("[ui-mock-shot] XIHE_UI_MOCK_API 未设置 ⇒ 临时 dev server 默认补 1（mock 态）");
         return { XIHE_UI_MOCK_API: "1" };
     }
     if (raw !== "1") {
