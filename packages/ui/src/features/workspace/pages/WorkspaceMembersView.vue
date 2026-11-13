@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
@@ -30,6 +30,16 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 const panelReadonly = computed(() =>
     auth.workspace?.workspaceRole === undefined ? undefined : !auth.canManageWorkspace,
 );
+
+/**
+ * task-470：管理面判据（task-414）读的是 `/me/permissions` **原子投影**，而启动路径只加载
+ * `capabilities`（`App.vue` 的 `refreshCapabilities`）——两者不是同一个面。成员页此前不加载投影，
+ * 于是**直连或刷新本页**的真实 OWNER 也拿到只读面板（先逛过设置页才正常，因为那边会加载）。
+ * 这里与 `DataControlsView.vue` 同形：单飞、失败 fail-closed，不新增契约、不改判据。
+ */
+onMounted(() => {
+    void auth.ensureSelfPermissions();
+});
 </script>
 
 <template>

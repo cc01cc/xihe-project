@@ -21,6 +21,50 @@ interface MockMember {
 let members: MockMember[];
 let seq = 0;
 
+/**
+ * task-470：把 `/me/permissions` 投影**挂上**，并逐用例只翻 `workspaceAdmin` 这一个布尔。
+ *
+ * <p>为什么必须挂：task-414 把管理面判据迁到能力原子后，`stores/auth.ts` 的
+ * `canManageWorkspace = canWorkspaceAdmin(id) || workspaceProjection?.workspaceAdmin === true`
+ * **完全不看 `workspaceRole`**。夹具此前只给 role=OWNER、不挂投影 ⇒ 判据恒 false ⇒ 加人表单恒隐藏，
+ * OWNER 的两条用例红在「元素 disabled/不可见」而不是产品缺陷。</p>
+ *
+ * <p>为什么四条用例都要挂（而不是只给 OWNER 挂）：投影**缺失**时任何角色都只读，
+ * 那样 EDITOR/VIEWER 的「表单隐藏」就**不携带角色判别力**（把 OWNER 改成 VIEWER 照样绿）。
+ * 判别力来自**同一投影面下的差异** —— 四条都 present，只差 `workspaceAdmin`。</p>
+ */
+async function serveProjection(
+    page: import("@playwright/test").Page,
+    options: { role: string; workspaceAdmin: boolean },
+): Promise<void> {
+    await page.route("**/api/v1/me/permissions", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                instanceCapabilities: [],
+                instancePermissions: [],
+                workspaces: [
+                    {
+                        workspaceId: WORKSPACE_ID,
+                        workspaceRole: options.role,
+                        workspaceAdmin: options.workspaceAdmin,
+                        // 角色基线写权限：真实 CP 给 OWNER/EDITOR `WRITE_WORKSPACE_CONTENT`，VIEWER 没有。
+                        // 不给的话 `canViewMembers`（投影已知时 = 可写 || 可管理）会把 EDITOR 判成
+                        // **连列表都看不到** —— 那不是本用例要测的只读态，是另一种权限缺失。
+                        // 管理面的判别力仍只由 `workspaceAdmin` 这一个布尔承担。
+                        permissions:
+                            options.role === "VIEWER"
+                                ? []
+                                : [{ actionClass: "WRITE_WORKSPACE_CONTENT", resource: "*" }],
+                    },
+                ],
+            }),
+        }),
+    );
+}
+
 function makeMember(username: string, role: string, userId: string): MockMember {
     return {
         userId,
@@ -40,6 +84,8 @@ test.describe("PLAN-0565 workspace members tab", () => {
             makeMember("editor", "EDITOR", "u-editor"),
         ];
         await setupMockAuth(page);
+        // task-470：默认投影 = OWNER + workspaceAdmin:true（后注册的路由优先，个别用例可再覆盖）。
+        await serveProjection(page, { role: "OWNER", workspaceAdmin: true });
         await page.route("**/api/v1/workspaces/workspace-1/members**", async (route) => {
             const method = route.request().method();
             const url = new URL(route.request().url());
@@ -213,6 +259,8 @@ test.describe("PLAN-0565 workspace members tab", () => {
                 }),
             );
         });
+        // task-470：投影 present 但 workspaceAdmin=false —— 「隐藏」这才可归因于本角色无该能力。
+        await serveProjection(page, { role: "EDITOR", workspaceAdmin: false });
         // task-236（M4-3）：EDITOR 直达一级成员页（旧 ?tab=members 会重定向到这里）。
         await page.goto(`/workspace/${WORKSPACE_ID}/members`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-members-page")).toBeVisible();
@@ -238,6 +286,8 @@ test.describe("PLAN-0565 workspace members tab", () => {
                 }),
             );
         });
+        // task-470：同上，VIEWER 也是「投影在、能力位为 false」，不是「投影没来」。
+        await serveProjection(page, { role: "VIEWER", workspaceAdmin: false });
         await page.goto(`/workspace/${WORKSPACE_ID}/settings`, { waitUntil: "load" });
         // 设置页不再有成员 tab（单入口）。
         await expect(page.getByTestId("ws-settings-tab-members")).toHaveCount(0);
@@ -248,5 +298,42 @@ test.describe("PLAN-0565 workspace members tab", () => {
         await expect(page.getByTestId("workspace-members-page")).toBeVisible();
         await expect(page.getByTestId("ws-members-panel")).toHaveCount(0);
         await expect(page.getByTestId("ws-members-row")).toHaveCount(0);
+    });
+
+    /**
+     * task-470：钉「**谁负责加载投影**」。管理面判据读 `/me/permissions`，而启动只加载 capabilities；
+     * 成员页若不再自己请求它，直连/刷新本页的真实 OWNER 会拿到只读面板。删掉 onMounted 这条就红。
+     */
+    test("成员页挂载即请求原子投影（防回归：删 onMounted 就红）", async ({ page }) => {
+        const projection = page.waitForRequest((request) =>
+            request.url().includes("/api/v1/me/permissions"),
+        );
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`, { waitUntil: "load" });
+        await projection;
+        await expect(page.getByTestId("workspace-members-page")).toBeVisible();
+    });
+
+    /**
+     * task-470 正对照：**同一份 EDITOR 夹具**，只把 `workspaceAdmin` 翻成 true ⇒ 表单必须变可见。
+     * 没有这条，上面 EDITOR 的「隐藏」仍可能由别的门槛顺手挡住（投影缺失、页壳没挂、选择器错）；
+     * 有了这条，「隐藏 ⇄ 可见」随**这一个布尔**翻转，判据才真正锚在能力位上。
+     */
+    test("EDITOR 夹具 + workspaceAdmin=true ⇒ 加人表单可见（判别力正对照）", async ({ page }) => {
+        await page.addInitScript(() => {
+            sessionStorage.setItem(
+                "xihe-workspace",
+                JSON.stringify({
+                    id: "workspace-1",
+                    name: "Mock Workspace",
+                    workspaceRole: "EDITOR",
+                    ownerId: "owner-1",
+                }),
+            );
+        });
+        await serveProjection(page, { role: "EDITOR", workspaceAdmin: true });
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`, { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-members-page")).toBeVisible();
+        await expect(page.getByTestId("ws-members-add")).toBeVisible();
+        await expect(page.getByTestId("ws-members-add-input")).toBeEnabled();
     });
 });

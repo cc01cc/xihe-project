@@ -91,6 +91,48 @@ describe("WorkspaceMembersView（M4-3 / task-236）", () => {
         wrapper.unmount();
     });
 
+    /**
+     * task-470：管理面判据（task-414）读的是 `/me/permissions` 原子投影，但**成员页此前不加载它**
+     * ——`App.vue` 启动只调 `refreshCapabilities()`（capabilities，不是 permissions），
+     * 调用方全集里也没有成员页 ⇒ 真实 OWNER **直连或刷新成员页**时投影恒 null ⇒ 面板恒只读。
+     * 这条钉的是「**谁负责把投影加载起来**」，不是「谁读它」——删掉 onMounted 就会红。
+     */
+    it("挂载即加载原子投影：成员页自己请求 /me/permissions", async () => {
+        const fetchSpy = vi.spyOn(globalThis, "fetch");
+        const wrapper = await mountPage();
+        const urls = fetchSpy.mock.calls.map(([input]) =>
+            typeof input === "string" ? input : (input as Request).url,
+        );
+        expect(urls.some((url) => url.includes("/me/permissions"))).toBe(true);
+        wrapper.unmount();
+    });
+
+    /**
+     * task-470 判据②（Lead/runtime-1 复核点）：**投影失败不得挡住列表渲染**。
+     * 修只读缺口最容易顺手做出的回归是「等投影成功才渲染」⇒ 投影 500 时变白屏，
+     * 那是用只读缺口换一个更重的缺陷。这里钉：投影 500 ⇒ 面板与列表照常在。
+     */
+    it("投影请求失败时成员面板仍渲染（fail-closed 不等于白屏）", async () => {
+        const auth = (await import("../../../stores/auth")).useAuthStore();
+        auth.workspace = { id: WORKSPACE_ID, name: "Ws", workspaceRole: "OWNER" } as never;
+        vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+            const url = typeof input === "string" ? input : (input as Request).url;
+            if (url.includes("/me/permissions")) {
+                return Promise.resolve(new Response("{}", { status: 500 }));
+            }
+            if (url.includes(`/workspaces/${WORKSPACE_ID}/members`)) {
+                return Promise.resolve(
+                    new Response(JSON.stringify({ members: [] }), { status: 200 }),
+                );
+            }
+            return Promise.resolve(new Response("{}", { status: 200 }));
+        });
+        const wrapper = await mountPage();
+        expect(wrapper.findComponent(WorkspaceMembersPanel).exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-members-page"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
     it("readonly 推导与设置页 tab 时代同一份：OWNER 可管理、EDITOR 只读", async () => {
         const auth = (await import("../../../stores/auth")).useAuthStore();
         let wrapper = await mountPage();
