@@ -429,16 +429,29 @@ public class SessionService {
     }
 
     private Session lockForDelete(String sessionId, String userId, String workspaceId) {
-        requireWorkspace(userId, workspaceId);
+        // D-1247 (task-399): rename/delete of a workspace-less session must not depend on a
+        // workspace context. A request that carries one keeps the original order (gate, then row
+        // lock); without one the row decides — workspace rows still answer 409, independent rows
+        // are judged by ownership alone.
+        boolean hasWorkspaceContext = workspaceId != null && !workspaceId.isBlank();
+        if (hasWorkspaceContext) {
+            requireWorkspace(userId, workspaceId);
+        } else if (userId == null || userId.isBlank()) {
+            throw CpApiException.workspaceContextRequired();
+        }
         UUID sessionUuid = UUID.fromString(sessionId);
         dbLockTimeout.apply();
         Session lockedSession = sessionRepository.findByIdForUpdate(sessionUuid)
                 .orElseThrow(() -> new CpApiException(
                         HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
         entityManager.refresh(lockedSession);
+        boolean workspaceless = lockedSession.getWorkspaceId() == null;
+        if (!workspaceless && !hasWorkspaceContext) {
+            throw CpApiException.workspaceContextRequired();
+        }
         if (lockedSession.isArchived()
                 || !userId.equals(lockedSession.getUserId())
-                || !workspaceId.equals(lockedSession.getWorkspaceId())) {
+                || (!workspaceless && !workspaceId.equals(lockedSession.getWorkspaceId()))) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
         }
         if (forkRequestRepository.existsBySourceSessionIdAndState(

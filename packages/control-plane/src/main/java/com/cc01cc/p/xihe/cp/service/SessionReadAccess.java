@@ -77,32 +77,48 @@ public class SessionReadAccess {
     }
 
     /**
-     * Resolve the session and its visibility decision. Performs the workspace-context blank check
-     * only; workspace accessibility is enforced by the guards that need it (HTTP read faces), so
-     * the roster guard keeps its historical semantics untouched.
+     * Resolve the session and its visibility decision. Workspace accessibility is enforced by the
+     * guards that need it (HTTP read faces), so the roster guard keeps its historical semantics.
+     *
+     * <p>D-1247 (task-399): a workspace-less session ({@code workspace_id IS NULL}, V145) belongs to
+     * its user, not to a workspace, so neither the workspace-context blank check nor the workspace
+     * equality filter applies to it — otherwise the caller's ambient workspace (which the
+     * interceptor resolves server-side from membership) would 404 every independent session.
+     * Workspace-bound rows keep both checks verbatim.</p>
      */
     @Transactional(readOnly = true)
     public Resolved resolve(String actorId, String workspaceId, String sessionId) {
-        if (workspaceId == null || workspaceId.isBlank()) {
-            throw CpApiException.workspaceContextRequired();
-        }
         Session session = sessionRepository.findById(parseUuid(sessionId))
-                .filter(found -> !found.isArchived() && workspaceId.equals(found.getWorkspaceId()))
+                .filter(found -> !found.isArchived())
                 .orElseThrow(SessionReadAccess::sessionNotFound);
+        boolean workspaceless = session.getWorkspaceId() == null;
+        if (!workspaceless) {
+            if (workspaceId == null || workspaceId.isBlank()) {
+                throw CpApiException.workspaceContextRequired();
+            }
+            if (!workspaceId.equals(session.getWorkspaceId())) {
+                throw sessionNotFound();
+            }
+        }
         UUID actorUuid = actorUuid(actorId);
         boolean owner = actorUuid != null && session.getUserId() != null
                 && actorUuid.toString().equals(session.getUserId());
         boolean invitedHuman = !owner && actorUuid != null && participantRepository
                 .existsBySessionIdAndPrincipalKindAndPrincipalIdAndDisabledAtIsNull(
                         session.getId(), SessionParticipant.KIND_HUMAN, actorUuid);
-        boolean manager = !owner && !invitedHuman && canManage(actorId, workspaceId, session);
+        // The manager tier needs a workspace: canManage -> WorkspaceService.isWorkspaceMember
+        // parses workspaceId as a UUID (WorkspaceService.java:306) and would NPE on null. A
+        // workspace-less session has no workspace to manage, so its roster stays owner/invited.
+        // Not a regression: these rows were unreachable (404/409) before this change.
+        boolean manager = !owner && !invitedHuman && !workspaceless
+                && canManage(actorId, workspaceId, session);
         return new Resolved(session, new AccessDecision(owner, invitedHuman, manager));
     }
 
     /** Historical {@code requireCurrent}: owner-only, 404 otherwise (write/mutation faces). */
     public Session requireOwned(String actorId, String workspaceId, String sessionId) {
-        requireWorkspace(actorId, workspaceId);
         Resolved resolved = resolve(actorId, workspaceId, sessionId);
+        requireWorkspaceFor(actorId, workspaceId, resolved.session());
         if (!resolved.access().owner()) {
             throw sessionNotFound();
         }
@@ -111,8 +127,8 @@ public class SessionReadAccess {
 
     /** PLAN-0668 read faces: owner or invited enabled HUMAN; 404 otherwise. */
     public Session requireReadable(String actorId, String workspaceId, String sessionId) {
-        requireWorkspace(actorId, workspaceId);
         Resolved resolved = resolve(actorId, workspaceId, sessionId);
+        requireWorkspaceFor(actorId, workspaceId, resolved.session());
         if (!resolved.access().readAllowed()) {
             throw sessionNotFound();
         }
@@ -146,6 +162,18 @@ public class SessionReadAccess {
                 List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS), List.of("*"),
                 ToolShape.OPAQUE, actorId, workspaceId, session.getId().toString());
         return grantAuthorizationService.allowsUserOnly(request);
+    }
+
+    /**
+     * D-1247 (task-399): membership is enforced for workspace-bound sessions only. A workspace-less
+     * session has no workspace to be a member of — its authority is the owner/invited decision, so
+     * requiring a workspace here would make the user's own independent sessions unreachable.
+     */
+    private void requireWorkspaceFor(String actorId, String workspaceId, Session session) {
+        if (session.getWorkspaceId() == null) {
+            return;
+        }
+        requireWorkspace(actorId, workspaceId);
     }
 
     private void requireWorkspace(String actorId, String workspaceId) {

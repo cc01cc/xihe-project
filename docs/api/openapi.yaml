@@ -1301,9 +1301,9 @@ paths:
         '500': { description: INTERNAL_ERROR; fork publication failed after request validation, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '503': { description: FORK_CLEANUP_PENDING; child remains unpublished and can be retried with the same key, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}:
-    get: { tags: [session], operationId: getSession, summary: Get one session by id, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    patch: { tags: [session], operationId: updateSession, summary: Update session metadata, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
-    delete: { tags: [session], operationId: deleteSession, summary: Delete one session, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+    get: { tags: [session], operationId: getSession, summary: Get one session by id, description: 'D-1247 (task-399): a workspace-less session (workspace_id null) belongs to its user, so it is reachable regardless of the caller workspace context — the interceptor resolves an ambient workspace from membership even without a header. Workspace-bound sessions keep the original rule: a non-blank, accessible, matching workspace is required (409 WORKSPACE_CONTEXT_REQUIRED / 404 SESSION_NOT_FOUND). Read = owner or enabled HUMAN participant.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    patch: { tags: [session], operationId: updateSession, summary: Update session metadata, description: 'D-1247 (task-399): a workspace-less session (workspace_id null) belongs to its user, so it is reachable regardless of the caller workspace context — the interceptor resolves an ambient workspace from membership even without a header. Workspace-bound sessions keep the original rule: a non-blank, accessible, matching workspace is required (409 WORKSPACE_CONTEXT_REQUIRED / 404 SESSION_NOT_FOUND). Write = owner only; an invited participant still gets 404.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SessionUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
+    delete: { tags: [session], operationId: deleteSession, summary: Delete one session, description: 'D-1247 (task-399): a workspace-less session (workspace_id null) belongs to its user, so it is reachable regardless of the caller workspace context — the interceptor resolves an ambient workspace from membership even without a header. Workspace-bound sessions keep the original rule: a non-blank, accessible, matching workspace is required (409 WORKSPACE_CONTEXT_REQUIRED / 404 SESSION_NOT_FOUND). Write = owner only.', security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/bind-defaults:
     post:
       tags: [session]
@@ -1398,6 +1398,7 @@ paths:
       tags: [session]
       operationId: getSessionDerivedState
       summary: Get derived state of one session
+      description: 'D-1247 (task-399): a workspace-less session (workspace_id null) belongs to its user, so it is reachable regardless of the caller workspace context — the interceptor resolves an ambient workspace from membership even without a header. Workspace-bound sessions keep the original rule: a non-blank, accessible, matching workspace is required (409 WORKSPACE_CONTEXT_REQUIRED / 404 SESSION_NOT_FOUND). Read = owner or enabled HUMAN participant.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -1669,6 +1670,10 @@ paths:
         (R7): the server advances them off the event stream, client reporting lands in 0624.
         A participant view deliberately carries **no** cap snapshot — the cap is resolved live via
         `resolveCapFor(principalId, workspaceId)` (Lead ruling 2026-11-02, D23-20 follow-up).
+        D-1247 (task-399): a workspace-less session (workspace_id null) is roster-readable by its owner
+        or an enabled HUMAN participant regardless of the caller workspace context; the manager tier
+        does not apply to it (there is no workspace to manage). Workspace-bound rows keep the shipped
+        owner / invited / manager roster rule and the workspace equality check.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
       responses:
