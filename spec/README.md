@@ -185,7 +185,7 @@ PLAN-0522 建立前端遥测上报与中央中继 proposed 草案（本地 sink 
 | `update` | 更新现有契约 |
 | `supersede` | 用新契约替代旧契约 |
 
-契约、代码、DEV 摘要、OpenAPI/事件 schema 和测试必须在同一变更波次同步。一个根级 SPEC 文件同一时间只能由一个 active PLAN 承接；其他 PLAN 只能在自己的 `spec/` 中提出草案。
+契约、代码、DEV 摘要、OpenAPI/事件 schema 和测试必须在同一变更波次同步。一个根级 SPEC 文件同一时间只能由一个 active 承接体承接（XH：Lead 派发并含验收口径的 task 卡，或用户明确要求的 PLAN——2026-11-13 D-1129 起 task 卡与 PLAN 同等资格；其他项目仍以 PLAN 为准）；非承接体只能在自己的 `spec/` 中提出草案。
 
 `one/plans/` 与 `A03-xihe/` 是独立 Git 仓库。两边的提交、HEAD、工作区状态和 evidence 分别记录，不能用 one 的 PLAN 提交代表 A03 文档已落地。
 
