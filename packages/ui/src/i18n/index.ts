@@ -1826,12 +1826,8 @@ const messages = {
                     "实例级注册表待实现（D-951 排期）：本入口现在点不进页面。能看的是工作区层（工作区设置 → 智能体）与个人层（设置 → 智能体主体）；实例级注册表补齐后，这里会变成可管理的「平台智能体」。",
                 gapNoteMcp:
                     "MCP 服务器只有工作区归属（mcp_remote_servers / mcp_stdio_servers 的 workspace_id 非空），实例层与个人层没有承载；接口也只有工作区面。",
-                gapNoteCredentials:
-                    "凭据只有 USER 与 WORKSPACE 两种归属（ck_credentials_owner_type），实例层没有承载。",
                 gapNoteKnowledge:
                     "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个代理端点且按 workspace 分区，因此没有可管理的“库”。",
-                gapNoteKnowledgeMcp:
-                    "个人层没有知识库实体（CP 无库表、按 workspace 分区），也没有用户级 MCP 服务器（只有工作区归属）；入口先留位。",
                 navMonitoring: "监控",
                 navData: "数据",
                 navToolFaces: "工具分类",
@@ -5163,12 +5159,8 @@ const messages = {
                     "The instance-level registry is not implemented yet (scheduled as D-951), so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the personal layer (Settings → Agent principals). Once the registry lands, this becomes a manageable Platform agents page.",
                 gapNoteMcp:
                     "MCP servers are workspace-owned only (mcp_remote_servers / mcp_stdio_servers have a non-null workspace_id) and the API surface is workspace-only, so neither the instance nor the personal layer can host one.",
-                gapNoteCredentials:
-                    "Credentials can only be owned by a USER or a WORKSPACE (ck_credentials_owner_type), so the instance layer has nothing to carry.",
                 gapNoteKnowledge:
                     'The control plane has no knowledge-base entity (no table, no CRUD): only four proxy endpoints partitioned by workspace, so there is no manageable "library".',
-                gapNoteKnowledgeMcp:
-                    "The personal layer has no knowledge-base entity (no CP table, partitioned by workspace) and no user-level MCP servers (workspace-owned only); the entry stays here for now.",
                 navMonitoring: "Monitoring",
                 navData: "Data",
                 navToolFaces: "Tool classes",

@@ -48,13 +48,11 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
         keys: [
             "settings.ia.entryCount",
             "settings.ia.gapNoteAgent",
-            "settings.ia.gapNoteCredentials",
             "settings.ia.gapNoteKnowledge",
-            "settings.ia.gapNoteKnowledgeMcp",
             "settings.ia.gapNoteMcp",
             "settings.ia.layerWorkspaceDefault",
         ],
-        note: "渲染出 7 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。",
+        note: "渲染出 5 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。（原 7 键中的两个「知识库·MCP」聚合键已由 task-129 从两侧 locale 删除：无任何 IA 条目引用 ⇒ 死键、渲染不出来，故同批从台账移除。）",
     },
     "features/workspace/__tests__/WorkspaceView.spec.ts": {
         keys: [
