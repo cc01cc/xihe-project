@@ -197,10 +197,24 @@ public class SkillCatalogSourceService {
             String description = listing.includeDescriptions()
                     ? renderableDescription(item.description())
                     : null;
-            lines.add(description == null ? display : display + SEPARATOR + description);
+            String line = description == null ? display : display + SEPARATOR + description;
+            lines.add(line + skillIdSuffix(item.skillId()));
         }
         return new ComponentView(listing.status(), SOURCE, List.copyOf(lines), listing.truncated(),
                 listing.diagnostics());
+    }
+
+    /**
+     * task-441 (F-11, D-1277): the rendered line carries the skillId so the model can call
+     * {@code skill_read} (uuid-only, PLAN-0628 M2b) — with only a name on the line the read
+     * credential check has nothing to address. The token is a <b>suffix</b> bracket
+     * ({@code [skillId=<uuid>]}) on purpose: the Agent keys its ledger on everything before the
+     * first {@code SEPARATOR} ({@code line.split(" — ", 1)[0]}), so a suffix leaves that name — and
+     * every ledger/dedupe key — unchanged, while a prefix would rewrite them. A null skillId (a
+     * snapshot row predating the id) renders no token rather than the literal {@code null}.
+     */
+    private static String skillIdSuffix(UUID skillId) {
+        return skillId == null ? "" : " [skillId=" + skillId + "]";
     }
 
     /**

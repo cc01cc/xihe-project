@@ -150,8 +150,13 @@ class SkillCatalogRenderFixtureTest {
                             + ": an item without a description must render the display name alone"
                             + " (a dangling separator reads as a description that is missing)");
                 } else {
-                    assertTrue(items.get(index).endsWith(separator + description), name
-                            + ": item " + index + " is not `display + separator + description`");
+                    // task-441 (D-1277): the line ends with the skillId suffix bracket; the
+                    // description tail sits immediately before it (the suffix never reorders parts).
+                    String skillId = testCase.path("listing").path("items").path(index)
+                            .path("skillId").asText("");
+                    String suffix = skillId.isEmpty() ? "" : " [skillId=" + skillId + "]";
+                    assertTrue(items.get(index).endsWith(separator + description + suffix), name
+                            + ": item " + index + " is not `display + separator + description + skillId`");
                 }
             }
         }

@@ -103,7 +103,7 @@ class SkillCatalogSourceServiceTest {
 
         SkillCatalogSourceService.ComponentView view = service.resolve(request(40));
 
-        assertEquals(List.of("writing — d"), view.items());
+        assertEquals(List.of("writing — d [skillId=" + skill.getId() + "]"), view.items());
         assertEquals(SkillCatalogSourceService.STATUS_READY, view.status());
         assertTrue(view.diagnostics().isEmpty());
     }
@@ -187,7 +187,8 @@ class SkillCatalogSourceServiceTest {
 
         SkillCatalogSourceService.ComponentView view = service.resolve(request(40));
 
-        assertEquals(List.of("alpha — a", "beta — b"), view.items());
+        assertEquals(List.of("alpha — a [skillId=" + one.getId() + "]",
+                "beta — b [skillId=" + two.getId() + "]"), view.items());
         assertTrue(view.diagnostics().isEmpty());
     }
 
@@ -201,7 +202,7 @@ class SkillCatalogSourceServiceTest {
                 new SkillCatalogSourceService.Request(null, USER_ID, WORKSPACE_ID, 40, false,
                         SkillCatalogSourceService.SORT_BINDING));
 
-        assertEquals(List.of("alpha"), view.items());
+        assertEquals(List.of("alpha [skillId=" + skill.getId() + "]"), view.items());
     }
 
     /**
@@ -230,11 +231,12 @@ class SkillCatalogSourceServiceTest {
         SkillCatalogSourceService.ComponentView view = service.resolve(request(40));
 
         assertEquals(List.of(
-                "alpha — padded description",
-                "beta",
-                "delta",
-                "gamma — Extract action items from a meeting transcript",
-                "epsilon"), view.items());
+                "alpha — padded description [skillId=" + padded.getId() + "]",
+                "beta [skillId=" + empty.getId() + "]",
+                "delta [skillId=" + blank.getId() + "]",
+                "gamma — Extract action items from a meeting transcript [skillId="
+                        + multiline.getId() + "]",
+                "epsilon [skillId=" + nullDescription.getId() + "]"), view.items());
         // The invariant the Agent relies on: no rendered item spans a line, and none carries edge
         // whitespace (its own `strip()` would then change CP's bytes).
         for (String item : view.items()) {

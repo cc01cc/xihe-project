@@ -41,7 +41,7 @@ from .injection_budget import InjectionLedger, charge_assembly, conservative_tok
 from .nested_injection import ledger_for_context
 
 #: One line of framing, charged like any other entry (otherwise the block could exceed its cap).
-HEADER = "Available skills (name — description); load full text by name when relevant:"
+HEADER = "Available skills (name — description); load full text by skillId when relevant:"
 
 #: Ledger key of the header, so it participates in charging and in ``charged_keys`` dedupe.
 HEADER_KEY = "skill_catalog:header"

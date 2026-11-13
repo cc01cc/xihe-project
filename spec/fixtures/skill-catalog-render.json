@@ -1,7 +1,7 @@
 {
   "$comment": "PLAN-0628 M3 cross-language contract: the skills listing CP renders and the block the Agent puts into ${xh.skill_catalog} must agree byte-for-byte. CP's SkillCatalogSourceService.view(Listing) produces `componentView` from `listing`; the Agent's context/skill_catalog.render_from_component_sources turns that same `componentView` into `agent.expectedContent`. Both suites read THIS file: packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/skill/SkillCatalogRenderFixtureTest.java and packages/agent/tests/unit/test_skill_catalog_render_contract.py. Listing items carry only the fields the renderers read (skillId, qualifiedName, name, description, tier); version/contentHash/oversize never reach a rendered line. `listing.items[].descriptionRendered` (optional) is the hand-written expectation for a DIRTY stored description (surrounding whitespace / empty / embedded line break) after CP's render-time normalisation; absent means \"rendered verbatim\", explicit null means \"treated as no description, no separator\". The three dirty-description-* cases pin the M3b rulings A/B/C; their expectations are written by hand, never generated from the implementation. Changing a case means changing the contract.",
-  "rule": "CP renders one line per item: display + ' — ' + description, where display = name unless a name collision forces the qualifiedName; CP never truncates a line, never adds framing and never adds the truncation sentence (D28-41: reserved budget belongs to the final renderer). The Agent prepends `header`, keeps a prefix of CP's lines within the skills cap, and appends `truncationNote` whenever the listing is incomplete - either because its own budget cut it or because CP already reported truncated=true.",
-  "header": "Available skills (name — description); load full text by name when relevant:",
+  "rule": "CP renders one line per item: display + ' — ' + description + ' [skillId=<uuid>]' (task-441/D-1277: the suffix carries the uuid skill_read needs; it sits after the description so the Agent ledger key - everything before the first ' — ' - is unchanged), where display = name unless a name collision forces the qualifiedName; CP never truncates a line, never adds framing and never adds the truncation sentence (D28-41: reserved budget belongs to the final renderer). The Agent prepends `header`, keeps a prefix of CP's lines within the skills cap, and appends `truncationNote` whenever the listing is incomplete - either because its own budget cut it or because CP already reported truncated=true.",
+  "header": "Available skills (name — description); load full text by skillId when relevant:",
   "separator": " — ",
   "truncationNote": "（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
   "cases": [
@@ -55,9 +55,9 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "alpha — Summarize a document and keep its headings intact",
-          "beta — Turn a bug report into a reproduction checklist",
-          "gamma — Extract action items from a meeting transcript"
+          "alpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000001]",
+          "beta — Turn a bug report into a reproduction checklist [skillId=00000000-0000-4000-8000-000000000002]",
+          "gamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000003]"
         ],
         "truncated": false,
         "diagnostics": []
@@ -66,7 +66,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\nbeta — Turn a bug report into a reproduction checklist\ngamma — Extract action items from a meeting transcript",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nalpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000001]\nbeta — Turn a bug report into a reproduction checklist [skillId=00000000-0000-4000-8000-000000000002]\ngamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000003]",
         "expectedStatus": "ready",
         "expectedTruncated": false,
         "expectedDiagnostics": [],
@@ -115,8 +115,8 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "user:instance:instance:writing — Edit prose for clarity",
-          "user:workspace:ws-scope:ws:ws-one:writing — Shared team writing guide"
+          "user:instance:instance:writing — Edit prose for clarity [skillId=00000000-0000-4000-8000-000000000004]",
+          "user:workspace:ws-scope:ws:ws-one:writing — Shared team writing guide [skillId=00000000-0000-4000-8000-000000000005]"
         ],
         "truncated": false,
         "diagnostics": [
@@ -127,7 +127,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nuser:instance:instance:writing — Edit prose for clarity\nuser:workspace:ws-scope:ws:ws-one:writing — Shared team writing guide",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nuser:instance:instance:writing — Edit prose for clarity [skillId=00000000-0000-4000-8000-000000000004]\nuser:workspace:ws-scope:ws:ws-one:writing — Shared team writing guide [skillId=00000000-0000-4000-8000-000000000005]",
         "expectedStatus": "ready",
         "expectedTruncated": false,
         "expectedDiagnostics": [],
@@ -178,8 +178,8 @@
         "status": "truncated",
         "source": "skill_bindings",
         "items": [
-          "alpha — First skill kept before the cut",
-          "beta — Second skill kept before the cut"
+          "alpha — First skill kept before the cut [skillId=00000000-0000-4000-8000-000000000006]",
+          "beta — Second skill kept before the cut [skillId=00000000-0000-4000-8000-000000000007]"
         ],
         "truncated": true,
         "diagnostics": [
@@ -190,7 +190,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — First skill kept before the cut\nbeta — Second skill kept before the cut\n（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nalpha — First skill kept before the cut [skillId=00000000-0000-4000-8000-000000000006]\nbeta — Second skill kept before the cut [skillId=00000000-0000-4000-8000-000000000007]\n（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
         "expectedStatus": "truncated",
         "expectedTruncated": true,
         "expectedDiagnostics": [
@@ -315,11 +315,11 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "user:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget — Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content",
-          "user:instance:instance:beta — Turn a bug report into a reproduction checklist that names the failing request, the expected response, the observed response, and the smallest workspace state that reproduces it, without asking the reporter to read source code",
-          "user:instance:instance:gamma — Extract action items from a meeting transcript",
-          "user:instance:instance:delta — Draft a changelog section from merged pull requests",
-          "user:instance:instance:epsilon — Check a commit message against the repository conventions"
+          "user:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget — Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content [skillId=00000000-0000-4000-8000-000000000008]",
+          "user:instance:instance:beta — Turn a bug report into a reproduction checklist that names the failing request, the expected response, the observed response, and the smallest workspace state that reproduces it, without asking the reporter to read source code [skillId=00000000-0000-4000-8000-000000000009]",
+          "user:instance:instance:gamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000010]",
+          "user:instance:instance:delta — Draft a changelog section from merged pull requests [skillId=00000000-0000-4000-8000-000000000011]",
+          "user:instance:instance:epsilon — Check a commit message against the repository conventions [skillId=00000000-0000-4000-8000-000000000012]"
         ],
         "truncated": false,
         "diagnostics": [
@@ -330,7 +330,7 @@
         "windowTokens": 8000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nuser:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget — Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content\n（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nuser:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget — Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content [skillId=00000000-0000-4000-8000-000000000008]\n（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
         "expectedStatus": "truncated",
         "expectedTruncated": true,
         "expectedDiagnostics": [
@@ -431,9 +431,9 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "alpha",
-          "beta",
-          "gamma"
+          "alpha [skillId=00000000-0000-4000-8000-000000000013]",
+          "beta [skillId=00000000-0000-4000-8000-000000000014]",
+          "gamma [skillId=00000000-0000-4000-8000-000000000015]"
         ],
         "truncated": false,
         "diagnostics": []
@@ -442,7 +442,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha\nbeta\ngamma",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nalpha [skillId=00000000-0000-4000-8000-000000000013]\nbeta [skillId=00000000-0000-4000-8000-000000000014]\ngamma [skillId=00000000-0000-4000-8000-000000000015]",
         "expectedStatus": "ready",
         "expectedTruncated": false,
         "expectedDiagnostics": [],
@@ -490,8 +490,8 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "alpha — Summarize a document and keep its headings intact",
-          "gamma — Extract action items from a meeting transcript"
+          "alpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000016]",
+          "gamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000017]"
         ],
         "truncated": false,
         "diagnostics": []
@@ -500,7 +500,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\ngamma — Extract action items from a meeting transcript",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nalpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000016]\ngamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000017]",
         "expectedStatus": "ready",
         "expectedTruncated": false,
         "expectedDiagnostics": [],
@@ -548,8 +548,8 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "alpha — Summarize a document and keep its headings intact",
-          "gamma"
+          "alpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000018]",
+          "gamma [skillId=00000000-0000-4000-8000-000000000019]"
         ],
         "truncated": false,
         "diagnostics": []
@@ -558,7 +558,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\ngamma",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nalpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000018]\ngamma [skillId=00000000-0000-4000-8000-000000000019]",
         "expectedStatus": "ready",
         "expectedTruncated": false,
         "expectedDiagnostics": [],
@@ -606,8 +606,8 @@
         "status": "ready",
         "source": "skill_bindings",
         "items": [
-          "alpha — Summarize a document and keep its headings intact",
-          "gamma — Extract action items from a meeting transcript"
+          "alpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000020]",
+          "gamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000021]"
         ],
         "truncated": false,
         "diagnostics": []
@@ -616,7 +616,7 @@
         "windowTokens": 128000,
         "assembledTokens": 0,
         "maxTokens": null,
-        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\ngamma — Extract action items from a meeting transcript",
+        "expectedContent": "Available skills (name — description); load full text by skillId when relevant:\nalpha — Summarize a document and keep its headings intact [skillId=00000000-0000-4000-8000-000000000020]\ngamma — Extract action items from a meeting transcript [skillId=00000000-0000-4000-8000-000000000021]",
         "expectedStatus": "ready",
         "expectedTruncated": false,
         "expectedDiagnostics": [],
