@@ -600,28 +600,52 @@ public class SessionService {
             }
             providerConnectionId = candidates.getFirst().getId().toString();
         }
+        ProviderConnection connection;
         try {
             // PLAN-0505 I6/V10: take the same connection row lock as the delete
             // path so a concurrent connection delete cannot slip a dangling
             // session binding between its check and its delete.
             apiRequestTemplates.lockConnection(providerConnectionId);
-            ProviderConnection connection = providerConnectionService.requireUsableForOwner(
+            connection = providerConnectionService.requireUsableForOwner(
                     providerConnectionId, userId, workspaceId);
             if (requestedProvider != null && !requestedProvider.isBlank()
                     && !connection.getProviderId().equals(requestedProvider.trim())) {
                 throw new IllegalArgumentException("Provider connection does not match model provider");
             }
-            if (!java.util.Objects.equals(session.getWorkspaceId(), workspaceId)
+            // task-418 (D-1247 residual): a workspace-less session belongs to its USER, so the
+            // workspace-equality half does not apply to it — the caller's context is the server-side
+            // ambient workspace (TenantContextInterceptor fallback), never the row's null column.
+            // The user-equality half stays verbatim, and a workspace-bound row keeps BOTH halves
+            // unchanged. Same shape as the task-399 fix in SessionReadAccess / lockForDelete; this is
+            // the second, independent copy of that filter, reached by PATCH binding / api-template.
+            boolean workspaceless = session.getWorkspaceId() == null;
+            if ((!workspaceless && !java.util.Objects.equals(session.getWorkspaceId(), workspaceId))
                     || !session.getUserId().equals(userId)) {
                 throw new IllegalArgumentException("Session ownership mismatch");
             }
-            session.setProviderConnectionId(connection.getId().toString());
-            session.setConnectionRevision(connection.getRevision());
-            if (session.getModelProvider() == null || session.getModelProvider().isBlank()) {
-                session.setModelProvider(connection.getProviderId());
-            }
         } catch (IllegalArgumentException e) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_UNAVAILABLE", e.getMessage());
+        }
+        // task-418 / D-1256 ②: a workspace-less session belongs to its user and outlives any workspace
+        // membership, so a WORKSPACE-scoped connection must not travel inside it (it would keep working
+        // after the user leaves that workspace, and dangle if the workspace is deleted). USER and
+        // INSTANCE connections stay bindable (D-922). Before this gate the same case was refused only
+        // accidentally — SessionService#bindApiTemplate re-checks usability with the session's own null
+        // workspace — and surfaced as a generic INVALID_REQUEST that told the user nothing.
+        //
+        // Deliberately OUTSIDE the wrapper above: CpApiException EXTENDS IllegalArgumentException, so a
+        // problem code thrown inside that try is re-coded to PROVIDER_CONNECTION_UNAVAILABLE (measured
+        // in this card's first run). That swallowing is task-425's family; this gate only keeps its own
+        // code by standing outside it, and changes no other refusal's shape.
+        if (session.getWorkspaceId() == null
+                && ProviderConnection.OWNER_WORKSPACE.equals(connection.getOwnerType())) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_CONNECTION_FORBIDDEN",
+                    "An independent session can only bind a user-level or instance-level connection");
+        }
+        session.setProviderConnectionId(connection.getId().toString());
+        session.setConnectionRevision(connection.getRevision());
+        if (session.getModelProvider() == null || session.getModelProvider().isBlank()) {
+            session.setModelProvider(connection.getProviderId());
         }
     }
 
