@@ -463,38 +463,6 @@ public class SessionService {
     }
 
     @Transactional
-    public Session update(String sessionId, String userId, String workspaceId,
-                          String title, String modelProvider, String modelName) {
-        return update(sessionId, userId, workspaceId, title, modelProvider, modelName, null);
-    }
-
-    @Transactional
-    public Session update(String sessionId, String userId, String workspaceId,
-                          String title, String modelProvider, String modelName,
-                          String providerConnectionId) {
-        Session session = lockCurrentForMutation(sessionId, userId, workspaceId);
-        if (title != null) {
-            if (title.isBlank()) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "title must not be blank");
-            }
-            session.setTitle(title.trim());
-        }
-        if (modelProvider != null) {
-            session.setModelProvider(modelProvider.isBlank() ? null : modelProvider.trim());
-        }
-        if (modelName != null) {
-            session.setModelName(modelName.isBlank() ? null : modelName.trim());
-        }
-        if (providerConnectionId != null) {
-            bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
-        }
-        if (modelProvider != null || modelName != null || providerConnectionId != null) {
-            bindApiTemplate(session, null);
-        }
-        return sessionRepository.save(session);
-    }
-
-    @Transactional
     public Session updateBinding(String sessionId, String userId, String workspaceId, String title,
                                  String provider, String model, String connectionId, Long revision,
                                  ContextTemplateService.TemplateSelection selection, boolean confirmed) {
