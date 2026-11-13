@@ -1957,6 +1957,10 @@ const messages = {
             llmInstanceModelLabel: "默认模型",
             llmInstanceModelPlaceholder: "填写模型名，或从目录建议中选择",
             llmInstanceModelNoCatalog: "该提供方暂无可用模型目录（仍可手填模型名）",
+            llmInstanceSuggestionPick: "建议（点选填入，也可直接手填）：",
+            llmInstanceSuggestionMore: "另有 {count} 个未列出（可直接手填）",
+            llmInstanceCatalogUnavailable:
+                "提供方目录未加载：提供方、模型、连接槽位仍可直接填写，保存不受影响。",
             llmInstanceConnectionKeyLabel: "连接槽位",
             llmInstanceConnectionKeyHelp:
                 "默认 default；需与使用者侧同名连接槽位一致（否则运行期会报连接冲突、不回落）。",
@@ -5392,6 +5396,10 @@ const messages = {
             llmInstanceModelPlaceholder: "Type a model name or pick a catalog suggestion",
             llmInstanceModelNoCatalog:
                 "No model catalog for this provider (you can still type a model name)",
+            llmInstanceSuggestionPick: "Suggestions (click to fill, or type your own):",
+            llmInstanceSuggestionMore: "{count} more not listed (type freely)",
+            llmInstanceCatalogUnavailable:
+                "Provider catalog not loaded: provider, model and connection slot can still be typed by hand; saving is unaffected.",
             llmInstanceConnectionKeyLabel: "Connection slot",
             llmInstanceConnectionKeyHelp:
                 "Defaults to default; it must match a slot name on the consuming side (otherwise the runtime reports a connection conflict, no fallback).",

@@ -31,7 +31,12 @@ vi.mock("vue-sonner", () => ({
     },
 }));
 vi.mock("vue-i18n", () => ({
-    useI18n: () => ({ t: (key: string) => key }),
+    // task-288：带插值参数时把参数拼进返回值，否则「另有 {count} 个」这类文案的 N
+    // 在断言里根本看不见（只返回 key 就等于把该参数从测试面上删掉了）。
+    useI18n: () => ({
+        t: (key: string, params?: Record<string, unknown>) =>
+            params ? `${key}:${JSON.stringify(params)}` : key,
+    }),
 }));
 
 import { toast } from "vue-sonner";
@@ -220,6 +225,105 @@ describe("LlmDefaultProfilePanel（PLAN-0764 T1.6）", () => {
         expect(
             (empty.find("[data-testid='llm-instance-save']").element as HTMLButtonElement).disabled,
         ).toBe(true);
+    });
+
+    it("task-288: 模型/连接槽建议渲染成可见可点填的按钮，不再是不可见的 datalist", async () => {
+        const store = seedStore();
+        const wrapper = mountPanel("instance");
+        await flushPromises();
+        await setOnlySelectValue(wrapper, "anthropic");
+
+        // 建议是**渲染出来的**元素（旧方案 <datalist> 只在输入时由浏览器弹出，DOM 里查不到可点项）
+        expect(wrapper.find("datalist").exists()).toBe(false);
+        const suggestion = wrapper.find(
+            "[data-testid='llm-instance-model-suggestion-claude-sonnet-4-5']",
+        );
+        expect(suggestion.exists()).toBe(true);
+        await suggestion.trigger("click");
+        expect(
+            (wrapper.find("[data-testid='llm-instance-model']").element as HTMLInputElement).value,
+        ).toBe("claude-sonnet-4-5");
+
+        // 连接槽同理
+        expect(
+            wrapper.find("[data-testid='llm-instance-connection-key-suggestion-default']").exists(),
+        ).toBe(true);
+
+        // 自由输入不受建议限制：保留手填能力（实例默认不要求本层有连接）
+        await wrapper.find("[data-testid='llm-instance-model']").setValue("not-in-catalog-model");
+        expect(
+            (wrapper.find("[data-testid='llm-instance-model']").element as HTMLInputElement).value,
+        ).toBe("not-in-catalog-model");
+        expect(store).toBeTruthy();
+    });
+
+    it("task-288: 建议超过 6 个时折叠为「另有 N 个」，展示上限不裁剪数据", async () => {
+        const store = seedStore();
+        const names = Array.from({ length: 9 }, (_, index) => `model-${index}`);
+        store.modelCache = {
+            models: {},
+            providers: {
+                "conn-claude": {
+                    providerId: "anthropic",
+                    status: "ready",
+                    models: names.map((name) => ({ name, capabilities: { chat: true } })),
+                },
+            },
+            lastFetched: 1,
+        } as never;
+        const wrapper = mountPanel("instance");
+        await flushPromises();
+        await setOnlySelectValue(wrapper, "anthropic");
+
+        const chips = wrapper.findAll("[data-testid^='llm-instance-model-suggestion-model-']");
+        expect(chips).toHaveLength(6);
+        expect(wrapper.find("[data-testid='llm-instance-model-suggestion-more']").text()).toContain(
+            "3",
+        );
+    });
+
+    it("task-288 判据③: 提供方目录为空时三槽不崩，且统一提示覆盖模型/连接槽", async () => {
+        mockedCatalog.mockResolvedValue({ catalogRevision: "r1", providers: [] } as never);
+        seedStore();
+        const wrapper = mountPanel("instance");
+        await flushPromises();
+
+        const notice = wrapper.find("[data-testid='llm-instance-catalog-unavailable']");
+        expect(notice.exists()).toBe(true);
+        // 提示必须**同时**说清三槽都能手填（只写在提供方字段下等于没覆盖模型/连接槽）
+        expect(notice.text()).toContain("settings.llmInstanceCatalogUnavailable");
+
+        // 三个槽位都还在、都还能填
+        expect(wrapper.find("[data-testid='llm-instance-provider']").exists()).toBe(true);
+        const model = wrapper.find("[data-testid='llm-instance-model']");
+        await model.setValue("typed-model");
+        expect((model.element as HTMLInputElement).value).toBe("typed-model");
+        await wrapper.find("[data-testid='llm-instance-connection-key']").setValue("default");
+        // 目录为空时模型字段要给出「可手填」说明，而不是空白
+        expect(wrapper.find("[data-testid='llm-instance-model-no-catalog']").exists()).toBe(true);
+    });
+
+    it("task-288 判据①: provider trigger 回落 vendor 默认样式（不再手搓覆盖）", async () => {
+        seedStore();
+        const wrapper = mountPanel("instance");
+        await flushPromises();
+        const trigger = wrapper.find("[data-testid='llm-instance-provider']");
+        const classes = trigger.classes();
+        // vendor 默认档位（注意高度是 data 变体，不是字面 h-8）
+        expect(classes).toContain("data-[size=default]:h-8");
+        expect(classes).toContain("rounded-lg");
+        expect(classes).toContain("bg-transparent");
+        expect(classes).toContain("border-input");
+        expect(classes).toContain("pl-2.5");
+        expect(classes).toContain("pr-2");
+        expect(classes).toContain("py-2");
+        // 手搓版的四个类必须消失，否则就是又回到这一处例外
+        expect(classes).not.toContain("bg-background");
+        expect(classes).not.toContain("px-2");
+        expect(classes).not.toContain("rounded");
+        // 唯一保留的覆盖是布局需要的 w-full（vendor 默认 w-fit）
+        expect(classes).toContain("w-full");
+        expect(trigger.attributes("data-slot")).toBe("select-trigger");
     });
 
     it("连接槽非法时保存禁用并给出内联错误", async () => {

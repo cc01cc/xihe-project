@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
+import { Button } from "@/components/ui/button";
 import {
     Select,
     SelectContent,
@@ -132,6 +133,28 @@ const modelSuggestions = computed(() => {
     );
 });
 
+/**
+ * task-288：建议列表最多渲染 6 个可点项，其余折叠成「另有 N 个」。
+ * 模型目录可能几十条，全铺开会把这一栏挤成半屏；**这是展示上限、不是数据裁剪** ——
+ * 自由输入仍可填任意值，隐藏项不会造成不可达。
+ */
+const SUGGESTION_CHIP_LIMIT = 6;
+const visibleModelSuggestions = computed(() =>
+    modelSuggestions.value.slice(0, SUGGESTION_CHIP_LIMIT),
+);
+const hiddenModelSuggestionCount = computed(() =>
+    Math.max(0, modelSuggestions.value.length - SUGGESTION_CHIP_LIMIT),
+);
+const visibleConnectionKeySuggestions = computed(() =>
+    connectionKeySuggestions.value.slice(0, SUGGESTION_CHIP_LIMIT),
+);
+const hiddenConnectionKeySuggestionCount = computed(() =>
+    Math.max(0, connectionKeySuggestions.value.length - SUGGESTION_CHIP_LIMIT),
+);
+
+/** 提供方目录整个没加载出来（判据③）：三个槽位都还能手填，但要一次说清。 */
+const catalogUnavailable = computed(() => !loading.value && providers.value.length === 0);
+
 const connectionKeyInvalid = computed(() => {
     const value = connectionKey.value.trim();
     return !CONNECTION_KEY_PATTERN.test(value) || value.length > 64;
@@ -246,6 +269,18 @@ onMounted(load);
             {{ t("common.loading") }}
         </div>
         <template v-else>
+            <!--
+                task-288 判据③：提供方目录整个没加载出来时（catalogProviders=[]），
+                三个槽位其实都还能手填，但原来的提示只挂在提供方字段下面 ⇒ 用户以为整块坏了。
+                这里在**三个字段之上**统一说一句，说明「都还能填、保存不受影响」。
+            -->
+            <p
+                v-if="catalogUnavailable"
+                class="text-xs text-muted-foreground"
+                data-testid="llm-instance-catalog-unavailable"
+            >
+                {{ t("settings.llmInstanceCatalogUnavailable") }}
+            </p>
             <div class="space-y-1">
                 <label class="text-xs text-muted-foreground">
                     {{ t("settings.llmInstanceProviderLabel") }}
@@ -255,10 +290,17 @@ onMounted(load);
                     :disabled="readonly || localSaving"
                     @update:model-value="(value) => (providerId = String(value ?? ''))"
                 >
-                    <SelectTrigger
-                        data-testid="llm-instance-provider"
-                        class="w-full border rounded px-2 py-1.5 text-sm bg-background disabled:opacity-60"
-                    >
+                    <!--
+                        task-288：原来这里是**手搓 trigger 类**（w-full border rounded px-2 py-1.5
+                        text-sm bg-background disabled:opacity-60），逐项偏离 vendor 默认：
+                        rounded(4px) vs rounded-lg、px-2 vs pl-2.5/pr-2、bg-background vs
+                        bg-transparent、并自带 border 覆盖 border-input。⇒ 高度以外的计算样式
+                        与全站 147 处 SelectTrigger 都不同，这一处不该有例外。
+                        vendor 的 class 是**合并式覆盖**（cn() = tailwind-merge），所以只传布局
+                        真正需要的 w-full（vendor 默认 w-fit，在表单列里要撑满）；圆角/内边距/
+                        描边/底色一律回落 vendor 默认。
+                    -->
+                    <SelectTrigger data-testid="llm-instance-provider" class="w-full">
                         <SelectValue :placeholder="t('settings.llmInstanceProviderPlaceholder')" />
                     </SelectTrigger>
                     <SelectContent>
@@ -289,14 +331,55 @@ onMounted(load);
                     data-testid="llm-instance-model"
                     :disabled="readonly || localSaving"
                     :placeholder="t('settings.llmInstanceModelPlaceholder')"
-                    list="llm-instance-model-suggestions"
                     class="w-full border rounded px-2 py-1.5 text-sm bg-background disabled:opacity-60"
                     autocomplete="off"
                 />
-                <datalist id="llm-instance-model-suggestions">
-                    <option v-for="name in modelSuggestions" :key="name" :value="name" />
-                </datalist>
-                <p v-if="modelSuggestions.length === 0" class="text-xs text-muted-foreground">
+                <!--
+                    task-288：原方案是 `<datalist>` —— 它只在用户**开始输入时**由浏览器弹出，
+                    没输入就完全看不见 ⇒ 用户看到的是一个裸文本框，以为「实例默认模型」根本没有
+                    可选项（用户质问原话：「实例默认模型又是什么情况」）。
+                    现在把建议**渲染出来**（可见、可点填），同时保留自由输入：目录外的模型名
+                    照样能手填 —— 实例默认不要求本层有连接（见 modelSuggestions 的注释）。
+                    用 vendor `Button` 而不是手搓 span：栈内已有组件优先，点击语义/禁用态/焦点环
+                    直接继承 vendor 行为。
+                -->
+                <div
+                    v-if="modelSuggestions.length > 0"
+                    class="flex flex-wrap items-center gap-1"
+                    data-testid="llm-instance-model-suggestions"
+                >
+                    <span class="text-xs text-muted-foreground">
+                        {{ t("settings.llmInstanceSuggestionPick") }}
+                    </span>
+                    <Button
+                        v-for="name in visibleModelSuggestions"
+                        :key="name"
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        :disabled="readonly || localSaving"
+                        :data-testid="`llm-instance-model-suggestion-${name}`"
+                        @click="model = name"
+                    >
+                        {{ name }}
+                    </Button>
+                    <span
+                        v-if="hiddenModelSuggestionCount > 0"
+                        class="text-xs text-muted-foreground"
+                        data-testid="llm-instance-model-suggestion-more"
+                    >
+                        {{
+                            t("settings.llmInstanceSuggestionMore", {
+                                count: hiddenModelSuggestionCount,
+                            })
+                        }}
+                    </span>
+                </div>
+                <p
+                    v-else
+                    class="text-xs text-muted-foreground"
+                    data-testid="llm-instance-model-no-catalog"
+                >
                     {{ t("settings.llmInstanceModelNoCatalog") }}
                 </p>
             </div>
@@ -309,13 +392,42 @@ onMounted(load);
                     v-model="connectionKey"
                     data-testid="llm-instance-connection-key"
                     :disabled="readonly || localSaving"
-                    list="llm-instance-connection-key-suggestions"
                     class="w-full border rounded px-2 py-1.5 text-sm bg-background disabled:opacity-60"
                     autocomplete="off"
                 />
-                <datalist id="llm-instance-connection-key-suggestions">
-                    <option v-for="key in connectionKeySuggestions" :key="key" :value="key" />
-                </datalist>
+                <!-- task-288：同模型字段 —— datalist 不可见，改为可见可点填的建议行。 -->
+                <div
+                    v-if="connectionKeySuggestions.length > 0"
+                    class="flex flex-wrap items-center gap-1"
+                    data-testid="llm-instance-connection-key-suggestions"
+                >
+                    <span class="text-xs text-muted-foreground">
+                        {{ t("settings.llmInstanceSuggestionPick") }}
+                    </span>
+                    <Button
+                        v-for="key in visibleConnectionKeySuggestions"
+                        :key="key"
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        :disabled="readonly || localSaving"
+                        :data-testid="`llm-instance-connection-key-suggestion-${key}`"
+                        @click="connectionKey = key"
+                    >
+                        {{ key }}
+                    </Button>
+                    <span
+                        v-if="hiddenConnectionKeySuggestionCount > 0"
+                        class="text-xs text-muted-foreground"
+                        data-testid="llm-instance-connection-key-suggestion-more"
+                    >
+                        {{
+                            t("settings.llmInstanceSuggestionMore", {
+                                count: hiddenConnectionKeySuggestionCount,
+                            })
+                        }}
+                    </span>
+                </div>
                 <p class="text-xs text-muted-foreground">
                     {{ t("settings.llmInstanceConnectionKeyHelp") }}
                 </p>
