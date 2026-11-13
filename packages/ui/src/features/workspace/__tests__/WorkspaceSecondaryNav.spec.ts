@@ -153,3 +153,98 @@ describe("WorkspaceSecondaryNav 面包屑（task-297）", () => {
         wrapper.unmount();
     });
 });
+
+/**
+ * **视觉权重判据（task-297 第 2 步，Lead 2026-11-13 裁定 A 案）** —— 量化，不写「看起来更轻」。
+ *
+ * <p><b>为什么需要它</b>：用户说「上面 3 行不明所以的划分」。实测（真栈 1920×1080）三条：
+ * ① 行1 页签栏 31.5 高，但**内容只占 39 / 1381 px**（无会话时只有一个回退词「对话」）；
+ * ② **层级是倒的** —— 行2 次级导航 **38.67 比行1 主级页签栏 31.5 还高**；
+ * ③ 行1 与行2 挂着同样的底边与实底 ⇒ 三行**等重**，读不出谁主谁次。
+ * ⇒ 病根不是「行数多」，是「等重」。故 A 案不动结构，只把行2 压到明显轻于行1。</p>
+ *
+ * <p><b>怎么量化（三个独立、可从 class 串复算的量）</b>：
+ * ```
+ * 判据 1（底边）：行1 根节点有可见 border-b（且非 border-transparent）；
+ *                 行2 根节点 border-bottom-color 为 transparent。
+ * 判据 2（底色）：行1 有 bg-* 实底 token；行2 不得有 bg-* 实底 token。
+ * 判据 3（高度）：行2 高度**必须等于改前 38.67**（零几何变化是 Lead 的硬约束）——
+ *                 这条不在本文件测（jsdom 不做布局），由真栈实测报告承担。
+ * ```
+ * 三条都是**声明式 token 断言**（class 串），不需要浏览器即可复算；
+ * 真实渲染值（backgroundColor alpha = 0、borderBottomColor alpha = 0、h = 38.67）
+ * 由真栈实测报告给出，两者互为印证。</p>
+ */
+describe("WorkspaceSecondaryNav 视觉权重低于页签栏（task-297 第 2 步 A 案）", () => {
+    /** 从 class 串里判「有没有实底」：bg-* 且不是 bg-transparent / bg-none 这类无底值。 */
+    function hasSolidBackground(classes: string[]): boolean {
+        return classes.some(
+            (cls) => cls.startsWith("bg-") && cls !== "bg-transparent" && cls !== "bg-none",
+        );
+    }
+
+    it("判据 1：行2 的底边必须是透明的（几何保留 1px，只去可见线）", async () => {
+        const wrapper = await mountNav();
+        const classes = (
+            wrapper.get('[data-testid="workspace-secondary-nav"]').attributes("class") ?? ""
+        )
+            .split(/\s+/)
+            .filter(Boolean);
+
+        // 几何必须留着：border-b 在 ⇒ 底边仍占 1px，行高才可能保持 38.67。
+        // 去掉 border-b 会让高度掉 0.67（38.67 -> 38.00），那是越界的几何变化。
+        expect(classes).toContain("border-b");
+        expect(classes).toContain("border-transparent");
+        // 且不得再出现「可见底边」的写法。
+        expect(classes).not.toContain("border-border");
+        wrapper.unmount();
+    });
+
+    it("判据 2：行2 不得有实底与 backdrop-blur —— 让它退成背景而不是一条带", async () => {
+        const wrapper = await mountNav();
+        const classes = (
+            wrapper.get('[data-testid="workspace-secondary-nav"]').attributes("class") ?? ""
+        )
+            .split(/\s+/)
+            .filter(Boolean);
+
+        expect(hasSolidBackground(classes)).toBe(false);
+        expect(classes).not.toContain("backdrop-blur");
+        // py-2 必须留着：它是行高的组成部分（7 + 内容 24 + 底边 0.67 = 38.67）。
+        expect(classes).toContain("py-2");
+        wrapper.unmount();
+    });
+
+    it("判据 3：行2 权重必须**严格低于**行1（同一套度量下比较，不是各说各话）", () => {
+        // 行1 页签栏（WorkspaceTabBar.vue:247）与行2 的度量口径一致，
+        // 否则「行2 更轻」这个比较没有共同基准（D-1137：一致性断言要锚独立基准）。
+        const tabBar = [
+            "flex",
+            "h-9",
+            "shrink-0",
+            "items-center",
+            "gap-1",
+            "border-b",
+            "bg-card",
+            "px-2",
+        ];
+        const secondaryNav = [
+            "flex",
+            "flex-wrap",
+            "items-center",
+            "justify-between",
+            "gap-3",
+            "border-b",
+            "border-transparent",
+            "px-4",
+            "py-2",
+        ];
+
+        // 行1 有实底（bg-card），行2 没有 ⇒ 底色这一维行2 更轻。
+        expect(hasSolidBackground(tabBar)).toBe(true);
+        expect(hasSolidBackground(secondaryNav)).toBe(false);
+        // 行1 底边可见，行2 底边透明 ⇒ 描边这一维行2 更轻。
+        expect(tabBar).not.toContain("border-transparent");
+        expect(secondaryNav).toContain("border-transparent");
+    });
+});

@@ -37,7 +37,7 @@ const containerLabel = computed(() => t("workspaceNav.workspaceContainer"));
     <nav
         data-testid="workspace-secondary-nav"
         :aria-label="t('workspaceNav.ariaLabel')"
-        class="flex flex-wrap items-center justify-between gap-3 border-b bg-background/95 px-4 py-2 backdrop-blur"
+        class="flex flex-wrap items-center justify-between gap-3 border-b border-transparent px-4 py-2"
     >
         <ul class="flex flex-wrap items-center gap-1" role="tablist">
             <li v-for="item in items" :key="item.id" role="none">
