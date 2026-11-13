@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { CalendarClock, LayoutGrid, Server, Settings } from "@lucide/vue";
 import { api } from "../composables/api";
 import {
     migrateLegacyWorkspace,
@@ -54,33 +55,80 @@ const router = createRouter({
             meta: { requiresAuth: true },
             children: [
                 {
+                    // PLAN-0773 M4-4（task-190）：工作区内部二级导航的外壳。
+                    // 子路由保持原有 name 与相对段，导航项由 `meta.workspacePage` 派生
+                    // （`lib/workspacePages.ts` + `features/workspace/composables/useWorkspaceNav.ts`），
+                    // 本文件是**页面清单的唯一来源**：加一页 = 加一条带 meta 的记录，导航自动跟上。
                     path: "",
-                    name: "workspace",
-                    component: () => import("../features/workspace/pages/WorkspaceView.vue"),
-                },
-                {
-                    path: "chat/:sessionId",
-                    name: "workspace-chat",
-                    component: () => import("../features/workspace/pages/WorkspaceView.vue"),
-                },
-                {
-                    path: "environment",
-                    name: "workspace-environment",
-                    component: () =>
-                        import("../features/workspace/pages/WorkspaceEnvironmentView.vue"),
-                },
-                {
-                    path: "scheduled-tasks",
-                    name: "workspace-scheduled-tasks",
-                    component: () => import("../features/workspace/pages/ScheduledTasksView.vue"),
-                },
-                {
-                    // task-253：工作区配置层已从 UI 移除（域段路由 /settings/:domain 随之退役）。
-                    // 工作区内部设置面本轮不重新设计，只剩不带域段的入口。
-                    path: "settings",
-                    name: "workspace-settings",
-                    component: () =>
-                        import("../features/workspace/pages/WorkspaceSettingsView.vue"),
+                    component: () => import("../features/workspace/pages/WorkspaceShell.vue"),
+                    children: [
+                        {
+                            path: "",
+                            name: "workspace",
+                            component: () =>
+                                import("../features/workspace/pages/WorkspaceView.vue"),
+                            meta: {
+                                workspacePage: {
+                                    id: "workbench",
+                                    labelKey: "workspaceNav.workbench",
+                                    order: 10,
+                                    icon: LayoutGrid,
+                                },
+                            },
+                        },
+                        {
+                            // 聊天页属于工作台容器内部（不进二级导航：它没有独立入口，
+                            // 入口是会话列表），所以**不带** `meta.workspacePage`。
+                            path: "chat/:sessionId",
+                            name: "workspace-chat",
+                            component: () =>
+                                import("../features/workspace/pages/WorkspaceView.vue"),
+                        },
+                        {
+                            path: "environment",
+                            name: "workspace-environment",
+                            component: () =>
+                                import("../features/workspace/pages/WorkspaceEnvironmentView.vue"),
+                            meta: {
+                                workspacePage: {
+                                    id: "environment",
+                                    labelKey: "workspaceNav.environment",
+                                    order: 20,
+                                    icon: Server,
+                                },
+                            },
+                        },
+                        {
+                            path: "scheduled-tasks",
+                            name: "workspace-scheduled-tasks",
+                            component: () =>
+                                import("../features/workspace/pages/ScheduledTasksView.vue"),
+                            meta: {
+                                workspacePage: {
+                                    id: "scheduled-tasks",
+                                    labelKey: "workspaceNav.scheduledTasks",
+                                    order: 30,
+                                    icon: CalendarClock,
+                                },
+                            },
+                        },
+                        {
+                            // task-253：工作区配置层已从 UI 移除（域段路由 /settings/:domain 随之退役）。
+                            // PLAN-0773 M4-1 会把工作区层配置页加回来（本卡只做导航骨架）。
+                            path: "settings",
+                            name: "workspace-settings",
+                            component: () =>
+                                import("../features/workspace/pages/WorkspaceSettingsView.vue"),
+                            meta: {
+                                workspacePage: {
+                                    id: "settings",
+                                    labelKey: "workspaceNav.settings",
+                                    order: 40,
+                                    icon: Settings,
+                                },
+                            },
+                        },
+                    ],
                 },
             ],
         },

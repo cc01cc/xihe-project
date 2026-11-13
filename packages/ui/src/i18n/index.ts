@@ -65,6 +65,17 @@ const messages = {
             previewUnsupported: "该类型无法在预览内查看，请下载后用外部程序打开",
             previewBudgetNote: "预览预算 {budget}，超出部分需显式加载",
         },
+        workspaceNav: {
+            // PLAN-0773 M4-4（task-190）：工作区内部二级导航与面包屑的文案。
+            // 页面清单不在这里 —— 标签 key 挂在路由 `meta.workspacePage.labelKey` 上。
+            ariaLabel: "工作区页面导航",
+            breadcrumbLabel: "工作区导航位置",
+            workspaceContainer: "工作区",
+            workbench: "工作台",
+            environment: "环境",
+            scheduledTasks: "定时任务",
+            settings: "设置",
+        },
         sidebar: {
             newChat: "新建对话",
             noWorkspace: "当前没有可用工作区",
@@ -97,6 +108,8 @@ const messages = {
             logout: "退出登录",
             collapse: "收起侧边栏",
             expand: "展开侧边栏",
+            // task-189 / D-896：全局条的二级菜单触发器（折叠态用 sr-only，靠 aria-label 命名）。
+            moduleMenu: "打开模块页面菜单",
             pendingApprovalBadge: "待审批",
             pendingApprovalBanner: "有会话等待审批",
             pendingApprovalCount: "项待处理",
@@ -3319,6 +3332,15 @@ const messages = {
                 "This type cannot be previewed inline; download it and open it with an external program.",
             previewBudgetNote: "Preview budget {budget}; anything beyond it loads only on request.",
         },
+        workspaceNav: {
+            ariaLabel: "Workspace page navigation",
+            breadcrumbLabel: "Workspace location",
+            workspaceContainer: "Workspace",
+            workbench: "Workbench",
+            environment: "Environment",
+            scheduledTasks: "Scheduled tasks",
+            settings: "Settings",
+        },
         sidebar: {
             newChat: "New Chat",
             noWorkspace: "No workspace available yet",
@@ -3350,6 +3372,7 @@ const messages = {
             logout: "Logout",
             collapse: "Collapse sidebar",
             expand: "Expand sidebar",
+            moduleMenu: "Open module pages menu",
             pendingApprovalBadge: "Pending approval",
             pendingApprovalBanner: "A session is waiting for approval",
             pendingApprovalCount: "items pending",
