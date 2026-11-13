@@ -70,6 +70,11 @@ public class OrgUnitAccess {
         return new Scope(membership.get().orgUnitId(), membership.get().path());
     }
 
+    /** The request's actor id (null when anonymous), e.g. the granted_by of a write. */
+    public UUID currentSubjectId() {
+        return authority.currentSubjectId();
+    }
+
     /** The request's actor id as the audit stream wants it (a string), or null when anonymous. */
     public String currentActorId() {
         UUID caller = authority.currentSubjectId();

@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.service.OrgUnitMemberService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitReadService;
+import com.cc01cc.p.xihe.cp.service.OrgUnitRoleBindingService;
 import com.cc01cc.p.xihe.cp.service.OrgUnitWriteService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
@@ -48,15 +49,21 @@ public class OrgUnitController {
     /** G1 body: `confirmAffected` is opt-in, and required only when the move affects workspaces. */
     public record MemberMoveBody(Boolean confirmAffected) {}
 
+    /** Whole-set write: the body is the complete role set, not a delta (see the contract). */
+    public record RoleBindingsBody(java.util.List<String> roleIds) {}
+
     private final OrgUnitReadService readService;
     private final OrgUnitWriteService writeService;
     private final OrgUnitMemberService memberService;
+    private final OrgUnitRoleBindingService roleBindingService;
 
     public OrgUnitController(OrgUnitReadService readService, OrgUnitWriteService writeService,
-                             OrgUnitMemberService memberService) {
+                             OrgUnitMemberService memberService,
+                             OrgUnitRoleBindingService roleBindingService) {
         this.readService = readService;
         this.writeService = writeService;
         this.memberService = memberService;
+        this.roleBindingService = roleBindingService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -103,6 +110,13 @@ public class OrgUnitController {
     public void removeMember(@PathVariable String unitId, @PathVariable String memberId,
                              @RequestParam String memberKind) {
         memberService.remove(unitId, memberId, memberKind);
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/{unitId}/role-bindings")
+    public OrgUnitWireView.RoleBindings replaceRoleBindings(
+            @PathVariable String unitId, @RequestBody RoleBindingsBody body) {
+        return roleBindingService.replace(unitId, body.roleIds());
     }
 
     @PreAuthorize("isAuthenticated()")

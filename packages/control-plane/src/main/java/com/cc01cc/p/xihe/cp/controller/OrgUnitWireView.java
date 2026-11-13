@@ -33,6 +33,9 @@ public final class OrgUnitWireView {
      * empty array is a real answer (no workspace is affected), and a client that branches on
      * presence rather than emptiness is the one thing this shape must not allow.
      */
+    /** Stored binding set, ordered by role id (the contract's byte-identical-reads guarantee). */
+    public record RoleBindings(List<UUID> roleIds) {}
+
     public record MemberMoved(UUID memberId, UUID fromOrgUnitId, UUID toOrgUnitId,
                               List<UUID> affectedWorkspaceIds, String auditEvent) {}
 
