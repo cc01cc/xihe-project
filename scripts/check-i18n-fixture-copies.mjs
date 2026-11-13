@@ -44,16 +44,29 @@ const REPO_ROOT = resolve(SELF_DIR, "..");
 /** one 工作区根 —— 证据包落在 one 的 internal/ 下，不在 A03-xihe 仓里（两个独立 git 仓） */
 const ONE_ROOT = resolve(REPO_ROOT, "..");
 const DEFAULT_UI_ROOT = join(REPO_ROOT, "packages", "ui");
-const BASELINE_PATH = join(
-    ONE_ROOT,
-    "internal",
-    "A03-xihe",
-    "evidence",
-    "2026-11-13-i18n-fixture-copies",
-    "baseline.json",
-);
+const EVIDENCE_DIR = join(ONE_ROOT, "internal", "A03-xihe", "evidence", "2026-11-13-i18n-fixture-copies");
+/** 现行尺（cjk4）基线；旧尺（len6, a=22）留档在 baseline-len6.json，永不删除 */
+const BASELINE_PATH = join(EVIDENCE_DIR, "baseline.json");
+const LEGACY_BASELINE_PATHS = {
+    len6: join(EVIDENCE_DIR, "baseline-len6.json"),
+    cjk4: join(EVIDENCE_DIR, "baseline.json"),
+};
 
-const DEFAULT_MIN_VALUE_LEN = 6;
+/**
+ * 值的合格判据（「尺」）。换尺必须同时留旧尺基线，否则「变好了」和「尺松了」长得一样。
+ *   len6 : 长度 >= 6（2026-11-13 首版尺，a=22）
+ *   cjk4 : 含 CJK 则长度 >= 4，否则 >= 6（现行尺，a=29）
+ * 换尺理由：len6 会把中文 4 字文案（新建会话 / 暂无会话）滤掉，而 ratchet 只管
+ * 「不许变大」—— 少报就是放松门，中文短文案那半边等于没设防。
+ */
+const RULERS = {
+    len6: { label: "len>=6", qualifies: (v) => v.length >= 6 },
+    cjk4: {
+        label: "CJK>=4 或 ASCII>=6",
+        qualifies: (v) => (/[\u3400-\u9fff\uf900-\ufaff]/.test(v) ? v.length >= 4 : v.length >= 6),
+    },
+};
+const DEFAULT_RULER = "cjk4";
 const SKIP_DIRS = new Set([
     "node_modules",
     ".git",
@@ -93,9 +106,10 @@ function parseArgs(argv) {
         verbose: false,
         selftest: false,
         writeBaseline: false,
-        minLen: DEFAULT_MIN_VALUE_LEN,
+        ruler: DEFAULT_RULER,
+        minLen: null,
         uiRoot: DEFAULT_UI_ROOT,
-        baseline: BASELINE_PATH,
+        baseline: null,
     };
     for (let i = 0; i < argv.length; i += 1) {
         const a = argv[i];
@@ -105,6 +119,8 @@ function parseArgs(argv) {
         else if (a === "--write-baseline") opts.writeBaseline = true;
         else if (a === "--ui-root") opts.uiRoot = resolve(argv[(i += 1)]);
         else if (a === "--min-len") opts.minLen = Number(argv[(i += 1)]);
+        else if (a === "--ruler") opts.ruler = argv[(i += 1)];
+        else if (a === "--baseline-legacy") opts.baselineLegacy = resolve(argv[(i += 1)]);
         else if (a === "--baseline") opts.baseline = resolve(argv[(i += 1)]);
         else if (a === "--help" || a === "-h") {
             process.stdout.write("见本文件头部注释\n");
@@ -227,7 +243,20 @@ function collectUsages(ts, sf) {
 }
 
 /** 从 i18n 源抽取叶子值（AST：messages 对象里的字符串字面量） */
-function loadRealValues(ts, i18nFile, minLen) {
+/** 当前生效的判据：--min-len 覆盖优先（临时探针用），否则按 --ruler 取名尺 */
+function resolveQualifier(opts) {
+    if (opts.minLen != null) {
+        return { name: "custom", label: "len>=" + opts.minLen, qualifies: (v) => v.length >= opts.minLen };
+    }
+    const ruler = RULERS[opts.ruler];
+    if (!ruler) {
+        process.stderr.write("[i18n-copies] 未知尺：" + opts.ruler + "（可选 " + Object.keys(RULERS).join(" / ") + "）\n");
+        process.exit(2);
+    }
+    return { name: opts.ruler, ...ruler };
+}
+
+function loadRealValues(ts, i18nFile, qualifies) {
     if (!existsSync(i18nFile)) {
         process.stderr.write("[i18n-copies] 找不到 i18n 源：" + i18nFile + "\n");
         process.exit(2);
@@ -235,7 +264,7 @@ function loadRealValues(ts, i18nFile, minLen) {
     const { sf } = parseFile(ts, i18nFile);
     const values = new Set();
     for (const s of stringsIn(ts, sf, sf, "all")) {
-        if (s.value.length >= minLen) values.add(s.value);
+        if (qualifies(s.value)) values.add(s.value);
     }
     return values;
 }
@@ -318,8 +347,8 @@ function analyzeFile(ts, file, realValues) {
     };
 }
 
-function scan(ts, uiRoot, minLen) {
-    const realValues = loadRealValues(ts, join(uiRoot, "src", "i18n", "index.ts"), minLen);
+function scan(ts, uiRoot, qualifies) {
+    const realValues = loadRealValues(ts, join(uiRoot, "src", "i18n", "index.ts"), qualifies);
     const rows = [];
     let unresolvedFiles = 0;
     for (const file of collectTestFiles(uiRoot)) {
@@ -358,7 +387,7 @@ function selftest(ts, opts) {
         'it("selftest", () => { expect("搜索会话...").toBe("搜索会话..."); });\n';
     try {
         writeFileSync(probePath, body, "utf8");
-        const { rows } = scan(ts, opts.uiRoot, opts.minLen);
+        const { rows } = scan(ts, opts.uiRoot, resolveQualifier(opts).qualifies);
         const hit = rows.find((r) => r.rel === probeRel);
         const ok = Boolean(hit) && hit.counts.a > 0;
         process.stdout.write(
@@ -388,15 +417,18 @@ function main() {
     const ts = loadTs(opts.uiRoot);
     if (opts.selftest) process.exit(selftest(ts, opts));
 
-    const { rows, aFiles, realValueCount, unresolvedFiles } = scan(ts, opts.uiRoot, opts.minLen);
-    const baseline = readBaseline(opts.baseline);
+    const qualifier = resolveQualifier(opts);
+    const { rows, aFiles, realValueCount, unresolvedFiles } = scan(ts, opts.uiRoot, qualifier.qualifies);
+    /** 基线按尺分文件：旧尺 len6 留档，永不删除（换尺必须两个数都在盘上） */
+    const baselinePath = opts.baseline ?? LEGACY_BASELINE_PATHS[qualifier.name] ?? BASELINE_PATH;
+    const baseline = readBaseline(baselinePath);
     const baselineSet = new Set(baseline.files ?? []);
     const newBeyondBaseline = aFiles.filter((f) => !baselineSet.has(f));
     const fixedNotReconciled = [...baselineSet].filter((f) => !aFiles.includes(f)).sort();
 
     if (opts.writeBaseline) {
         writeFileSync(
-            opts.baseline,
+            baselinePath,
             JSON.stringify(
                 {
                     note: "task-318 ratchet 基线：只许缩小。收账后手工重跑 --write-baseline。",
@@ -410,7 +442,9 @@ function main() {
             ) + "\n",
             "utf8",
         );
-        process.stdout.write("[i18n-copies] 基线已写入 " + opts.baseline + "（a=" + aFiles.length + "）\n");
+        process.stdout.write(
+            "[i18n-copies] 基线已写入 " + baselinePath + "（尺=" + qualifier.label + "，a=" + aFiles.length + "）\n",
+        );
         process.exit(0);
     }
 
@@ -422,7 +456,8 @@ function main() {
             JSON.stringify(
                 {
                     realValues: realValueCount,
-                    minValueLen: opts.minLen,
+                    ruler: qualifier.name,
+                    rulerLabel: qualifier.label,
                     filesScannedWithCopies: rows.length,
                     unresolvedFixtureRefs: unresolvedFiles,
                     tierCounts: tiers,
@@ -438,6 +473,17 @@ function main() {
         process.exit(newBeyondBaseline.length === 0 ? 0 : 1);
     }
 
+    const legacyLines = [];
+    for (const [name, p] of Object.entries(LEGACY_BASELINE_PATHS)) {
+        if (name === qualifier.name) continue;
+        const other = readBaseline(p);
+        if (other.files && other.files.length > 0) {
+            legacyLines.push(
+                "[i18n-copies] 留档（另一把尺 " + (RULERS[name]?.label ?? name) + "）：a=" + other.files.length + "  " + p,
+            );
+        }
+    }
+    process.stdout.write("[i18n-copies] 尺 = " + qualifier.label + "（--ruler " + qualifier.name + "）\n");
     process.stdout.write(
         "[i18n-copies] 真源叶子值 " +
             realValueCount +
@@ -454,7 +500,8 @@ function main() {
             tiers.c +
             "；基线 a=" +
             baselineSet.size +
-            "\n",
+            "\n" +
+            (legacyLines.length > 0 ? legacyLines.join("\n") + "\n" : ""),
     );
     if (opts.verbose) {
         process.stdout.write("\n| 文件 | 档 | a | b | c | 被断言/定位的值（行） |\n| --- | --- | --- | --- | --- | --- |\n");
