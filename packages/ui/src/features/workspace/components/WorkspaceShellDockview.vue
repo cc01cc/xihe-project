@@ -3,6 +3,11 @@ import { computed, defineComponent, h, ref, watch } from "vue";
 import { DockviewVue, type DockviewReadyEvent, type VueComponent } from "dockview-vue";
 import { themeLight } from "dockview-core";
 import { DOCKVIEW_OPTIONS } from "../../../lib/dockview";
+// BL-564：产品侧此前从未引入 dockview 基础样式（翻旗后布局会散架）。基础 CSS 必须排在
+// dockview-theme.css **之前**（theme 是对 `--dv-*` 变量的覆写层）。选择器全是 `.dv-*` /
+// `.dockview-host`，默认路径（手写 dock）的 DOM 里不存在 ⇒ 不影响产品默认面。
+import "dockview-vue/dist/styles/dockview.css";
+import "../../../styles/dockview-theme.css";
 import DockviewPanelHost from "./DockviewPanelHost.vue";
 import {
     DOCK_TAB_IDS,
@@ -18,7 +23,7 @@ import {
  *   ① 树能被**关闭**（`removePanel`，面板与 40px rail 一起消失）—— 不是折叠；
  *   ② 关闭后能从**容器内**重开：组头 `rightHeaderActionsComponent` 的「+」菜单；
  *   ③ 能指定投到**中栏或右栏**：**从哪个容器的组头点「+」，就投进哪个容器**
- *      （菜单读 `IDockviewHeaderActionsProps.group` 判断自己是中栏组还是 dock 组）——
+ *      （菜单按几何判本组在主列左侧还是右侧 ⇒ 中栏/右栏，写进 placements）——
  *      不需要新词、不需要新状态，入口本身就在容器里；
  *   ④ 中栏与右栏**共用一个实例**：本组件只有一个 `DockviewVue`，右栏是它的第二个 group。
  *
@@ -64,6 +69,15 @@ const dockApi = ref<DockviewReadyEvent["api"] | null>(null);
 /** sync 期间抑制 dockview 回调 ⇒ 自己删面板不会被当成用户关闭。 */
 let syncing = false;
 
+/**
+ * 判据③的投放记录：面板 id → 目标容器。**组件局部、不持久化**（S1 不落新盘，D-1222 ⑥）。
+ * 由组头「+」菜单在点击时写入（target 由被点组头所在容器决定），sync 时消费。
+ * 缺省：树 → 中栏，dock 面板 → 右栏。
+ */
+const placements = ref<Record<string, "center" | "dock">>({});
+const placementOf = (id: string): "center" | "dock" =>
+    placements.value[id] ?? (id === TREE_PANEL_ID ? "center" : "dock");
+
 const treeWidth = computed(() => (props.treeCollapsed ? TREE_COLLAPSED_WIDTH : TREE_WIDTH_DEFAULT));
 const dockWidth = computed(() => props.dockWidth ?? DOCK_WIDTH_DEFAULT);
 
@@ -72,46 +86,29 @@ function ensureMain(api: NonNullable<typeof dockApi.value>): void {
     api.addPanel({ id: MAIN_PANEL_ID, component: MAIN_PANEL_ID, title: "" });
 }
 
-/** 树面板：在则只改宽（不重挂，保住 FileTreePanel 内部状态），不在则按目标建。 */
-function syncTree(api: NonNullable<typeof dockApi.value>): void {
-    const existing = api.getPanel(TREE_PANEL_ID);
-    if (!props.treeOpen) {
-        if (existing) api.removePanel(existing);
-        return;
-    }
-    const width = treeWidth.value;
-    if (existing) {
-        existing.api.setConstraints({ minimumWidth: width, maximumWidth: width });
-        existing.api.setSize({ width });
-        return;
-    }
-    const reference = props.dockTabs[0] ?? MAIN_PANEL_ID;
-    api.addPanel({
-        id: TREE_PANEL_ID,
-        component: TREE_PANEL_ID,
-        title: props.treeLabel,
-        position: { direction: "left", referencePanel: reference },
-        initialWidth: width,
-        minimumWidth: width,
-        maximumWidth: width,
-    });
-}
-
-/** dock 组：首个面板落在主列右侧（= 第二个 group），其余同组。 */
+/**
+ * dock 面板：缺省落主列**右侧**（右栏容器），其余同组；被「+」投到中栏的落主列左侧。
+ *
+ * 注意 dockview 语义（实测 run2 纠正）：`direction: "left" | "right"` 是**新建一个 group**，
+ * 不是往同组加 tab ⇒ 并排的树/主列/dock 各自是一个 group，同属一个实例（判据④）。
+ */
 function syncDock(api: NonNullable<typeof dockApi.value>): void {
     const open = props.dockTabs;
-    const first = open[0];
+    // 右栏锚点 = 第一个目标为右栏的打开面板；投到中栏的面板不能当右栏锚点。
+    const anchor = open.find((id) => placementOf(id) === "dock") ?? open[0];
     for (const id of open) {
         if (api.getPanel(id)) continue;
+        const toCenter = placementOf(id) === "center";
         api.addPanel({
             id,
             component: id,
             title: props.labels[id] ?? id,
-            initialWidth: id === first ? dockWidth.value : undefined,
-            position:
-                id === first
-                    ? { direction: "right", referencePanel: MAIN_PANEL_ID }
-                    : { referencePanel: first },
+            initialWidth: !toCenter && id === anchor ? dockWidth.value : undefined,
+            position: toCenter
+                ? { direction: "left", referencePanel: MAIN_PANEL_ID }
+                : id === anchor
+                  ? { direction: "right", referencePanel: MAIN_PANEL_ID }
+                  : { referencePanel: anchor },
             inactive: id !== props.activeDockTab,
         });
     }
@@ -124,14 +121,52 @@ function syncDock(api: NonNullable<typeof dockApi.value>): void {
     if (active) active.api.setActive();
 }
 
+/**
+ * 树面板：关闭 ⇒ removePanel（rail 一起消失，判据①）；宽度变化 ⇒ **移除后按新宽重建**。
+ *
+ * 为什么重建而不是 setSize：实测 run2 对已存在面板调 `setConstraints + setSize` 不生效
+ * （折叠后 rail 仍 240，且无 pageerror）。重建与 legacy 路径同构 —— 手写栏折叠时本来就
+ * `v-if` 卸载 FileTreePanel ⇒ 不丢额外状态。宽度用库的 `api.width` 读回，不自己记账。
+ */
+function syncTree(api: NonNullable<typeof dockApi.value>): void {
+    const existing = api.getPanel(TREE_PANEL_ID);
+    if (!props.treeOpen) {
+        if (existing) api.removePanel(existing);
+        return;
+    }
+    const width = treeWidth.value;
+    if (existing) {
+        if (Math.round(existing.api.width) === width) return;
+        api.removePanel(existing);
+    }
+    // 目标容器由 placements 决定（判据③）。syncDock 先跑 ⇒ 右栏锚点此刻已存在；
+    // 此前误在 syncDock 之前拿 dockTabs[0]（默认 'monitor'）当 referencePanel ⇒ dockview 抛
+    // `referencePanel 'monitor' does not exist` 并中断整个 sync（实测 run1 全红根因）。
+    const dockAnchor = props.dockTabs.find((id) => placementOf(id) === "dock") ?? props.dockTabs[0];
+    const position =
+        placementOf(TREE_PANEL_ID) === "dock"
+            ? { direction: "right" as const, referencePanel: dockAnchor ?? MAIN_PANEL_ID }
+            : { direction: "left" as const, referencePanel: MAIN_PANEL_ID };
+    api.addPanel({
+        id: TREE_PANEL_ID,
+        component: TREE_PANEL_ID,
+        title: props.treeLabel,
+        position,
+        initialWidth: width,
+        minimumWidth: width,
+        maximumWidth: width,
+    });
+}
+
 function syncPanels(): void {
     const api = dockApi.value;
     if (!api) return;
     syncing = true;
     try {
         ensureMain(api);
-        syncTree(api);
+        // 顺序固定：dock 先于树 —— 树投右栏时要拿 dock 面板当 referencePanel。
         syncDock(api);
+        syncTree(api);
     } finally {
         syncing = false;
     }
@@ -165,23 +200,33 @@ watch(
 
 /**
  * 组头「+」菜单（判据②③）。dockview-vue 的 `rightHeaderActionsComponent` 收一个 Vue 组件，
- * props 由库注入（`IDockviewHeaderActionsProps`：group / panels / containerApi …）。
- * 这里用 `defineComponent + h` 就地定义，闭包直接拿本组件的 props/emit —— 不另建文件、不另建状态。
- * 菜单形态沿用产品既有 overflow 菜单（button + 绝对定位列表），不引入第二套设计语言。
+ * props 由库注入（`IDockviewHeaderActionsProps`）。这里用 `defineComponent + h` 就地定义，
+ * 闭包直接拿本组件的 props/emit/placements —— 不另建文件、不另建持久状态。
+ *
+ * **目标容器怎么判**（实测纠正）：树自己是独立 group ⇒ 「本组含 main」只能认出主列组，
+ * 认不出「主列左侧的树组」也属中栏。dockview 没有公开的区域 API ⇒ 用几何：本组左边界
+ * 在主列组左边 ⇒ 中栏，否则右栏。主列组经产品自己的 `data-dockview-panel="main"` 钩子定位
+ * （不依赖测试 testid）。点击时现算，不用 computed 缓存 DOM 读数。
  */
 const PanelAddMenu = defineComponent({
     name: "DockviewPanelAddMenu",
     props: {
         panels: { type: Array, required: false, default: () => [] },
     },
-    setup(menuProps) {
+    setup() {
         const open = ref(false);
-        /** 本组是中栏组（含 main）还是 dock 组 ⇒ 决定重开投放目标（判据③）。 */
-        const target = computed<"center" | "dock">(() =>
-            (menuProps.panels as Array<{ id: string }>).some((p) => p.id === MAIN_PANEL_ID)
+        const rootRef = ref<HTMLElement | null>(null);
+        const resolveTarget = (): "center" | "dock" => {
+            const own = rootRef.value?.closest(".dv-groupview");
+            const mainGroup = document
+                .querySelector('[data-dockview-panel="main"]')
+                ?.closest(".dv-groupview");
+            if (!own || !mainGroup) return "center";
+            if (own === mainGroup) return "center";
+            return own.getBoundingClientRect().left < mainGroup.getBoundingClientRect().left
                 ? "center"
-                : "dock",
-        );
+                : "dock";
+        };
         const closedDock = computed(() =>
             DOCK_PANEL_IDS.filter((id) => !props.dockTabs.includes(id)),
         );
@@ -191,10 +236,12 @@ const PanelAddMenu = defineComponent({
             "w-full rounded px-2 py-1.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
         const reopen = (id: string) => {
             open.value = false;
-            emit("reopen-panel", { id, target: target.value });
+            const target = resolveTarget();
+            placements.value = { ...placements.value, [id]: target };
+            emit("reopen-panel", { id, target });
         };
         return () =>
-            h("div", { class: "relative flex items-center" }, [
+            h("div", { ref: rootRef, class: "relative flex items-center" }, [
                 h(
                     "button",
                     {
@@ -255,20 +302,26 @@ const headerActionsComponent = PanelAddMenu as unknown as VueComponent;
 
 <template>
     <DockviewVue
-        class="h-full w-full"
+        class="dockview-host h-full w-full"
         v-bind="DOCKVIEW_OPTIONS"
         :theme="themeLight"
         :right-header-actions-component="headerActionsComponent"
         @ready="onReady"
     >
         <template #panel-main>
-            <DockviewPanelHost tab-id="main"><slot name="center" /></DockviewPanelHost>
+            <DockviewPanelHost tab-id="main" data-dockview-panel="main"
+                ><slot name="center"
+            /></DockviewPanelHost>
         </template>
         <template #panel-tree>
-            <DockviewPanelHost tab-id="tree"><slot name="tree" /></DockviewPanelHost>
+            <DockviewPanelHost tab-id="tree" data-dockview-panel="tree"
+                ><slot name="tree"
+            /></DockviewPanelHost>
         </template>
         <template v-for="id in DOCK_PANEL_IDS" :key="id" #[`panel-${id}`]>
-            <DockviewPanelHost :tab-id="id"><slot :name="id" /></DockviewPanelHost>
+            <DockviewPanelHost :tab-id="id" :data-dockview-panel="id"
+                ><slot :name="id"
+            /></DockviewPanelHost>
         </template>
     </DockviewVue>
 </template>
