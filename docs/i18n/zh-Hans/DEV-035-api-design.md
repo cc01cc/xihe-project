@@ -45,6 +45,8 @@ tags:
 - 【已落地】code 模式 ^[A-Z][A-Z0-9_]+$、SNAKE_UPPER；requestId 必填（C2）。
 - 【业界建议】type 成员**恒为 "about:blank"**，细分语义全部走 code；不建站点 problem 类型 URI 注册表（YAGNI，单应用无多服务共类型需求）。**解决缺口 G6**。
 - 【业界建议】title 用该 status 的标准短语（RFC 9457 SHOULD），detail 写人能读的修复提示；机器分支只认 code + status。**解决缺口 C5 的一半**（instance 成员继续不用，文档显式说明理由）。
+- 【已落地·服务层】组绑定的治理白名单拒绝 = `409 ORG_SCOPE_ROLE_FORBIDDEN`（`D-1118`）：角色的原子集合不在组治理白名单内即拒，未知角色按 fail closed 处理（未知 ≠ 空集）。实现在 `BindingAdminService.requireOrgUnitRoleBindingsAreGovernance`；**该 409 尚无 HTTP 端点**（组绑定写入端点属 `PLAN-0773` `M2-11`），故 `openapi.yaml` 只登记响应形态（`components.responses.OrgScopeRoleForbidden`），**不挂到任何路径上**——契约只描述存在的东西。客户端只认 `status` + `code`，不解析 `detail` 文本。
+- 【内部·禁止入契约】`XH001` = PostgreSQL **SQLSTATE**（`V165` 环检测触发器 `RAISE EXCEPTION USING ERRCODE = 'XH001'`），属 **DB 内部码**：它不出现在任何 problem body 的 `code` 里，**客户端不得依赖**；本仓服务层当前**还没有**到 409 业务码的映射（映射随 `M2-11` 端点落地补，届时对外仍只暴露稳定业务码）。判据是「不按 message 文本分支」：文本会变、会翻译、且不在任何契约里，故环检测用独立 SQLSTATE 而非约束冲突。
 - 【已裁定·待排期】**错误码集中登记**（用户 2026-11-11 批）：把散在 DEV-014/inventory 散文里的全部 code（WORKSPACE_CONTEXT_REQUIRED、BRANCH_RUN_MISMATCH、FOLLOW_UP_QUEUE_NOT_EMPTY、BRANCH_LOCK 等）收进本文附录码表，openapi 按端点引用。落盘时先建表，DEV-014 改引用随窗口排期。
 
 ## 4. 命名与数据格式

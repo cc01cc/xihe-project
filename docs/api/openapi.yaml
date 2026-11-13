@@ -6067,6 +6067,15 @@ components:
           description: Always no-store for a throttle response
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ResourceExhaustedProblem' } } }
+    OrgScopeRoleForbidden:
+      description: >-
+        409 ORG_SCOPE_ROLE_FORBIDDEN — the role's action-atom set is not inside the org-unit
+        governance whitelist, so the binding is refused (fail closed: an unknown role is not an
+        empty one) — D-1118. **Shape only**: no operation in this contract returns it yet; the
+        org-unit binding write endpoint lands with PLAN-0773 M2-11 and will reference this response.
+        It is declared here so a client can branch on status + code (never on detail text) before
+        that endpoint exists.
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   schemas:
     ConversationThreadCreateRequest:
       type: object
