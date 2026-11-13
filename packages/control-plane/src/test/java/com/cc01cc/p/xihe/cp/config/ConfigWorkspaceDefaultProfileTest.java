@@ -63,34 +63,37 @@ class ConfigWorkspaceDefaultProfileTest {
 
     @Test
     void fiveHopPriority_defaultBeatsUserAndInstanceLosesToWorkspace() {
-        configService.putLayer("instance", "llm-provider",
-            Map.of("imageProvider", "inst"), "admin", null, null);
-        configService.putLayer("user", "llm-provider",
-            Map.of("imageProvider", "usr"), "user", userA, null);
-        configService.putLayer("workspace-default", "llm-provider",
-            Map.of("imageProvider", "def"), "admin", null, null);
+        // T2.4: the model 4 domains left both workspace-scoped layers, so the five-hop
+        // chain is pinned on agent-runtime (writable at instance / user /
+        // workspace-default / workspace alike).
+        configService.putLayer("instance", "agent-runtime",
+            Map.of("runMaxTurns", "10"), "admin", null, null);
+        configService.putLayer("user", "agent-runtime",
+            Map.of("runMaxTurns", "20"), "user", userA, null);
+        configService.putLayer("workspace-default", "agent-runtime",
+            Map.of("runMaxTurns", "30"), "admin", null, null);
 
         // default beats the user row ...
-        assertEquals("def", configService.resolve("llm-provider", "imageProvider", userA, null));
+        assertEquals("30", configService.resolve("agent-runtime", "runMaxTurns", userA, null));
         // ... and the instance row.
-        assertEquals("def", configService.resolve("llm-provider", "imageProvider", null, null));
+        assertEquals("30", configService.resolve("agent-runtime", "runMaxTurns", null, null));
 
         // ... and loses whole to an explicit workspace row.
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("imageProvider", "wrk"), "user", null, wsA);
-        assertEquals("wrk", configService.resolve("llm-provider", "imageProvider", userA, wsA));
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("runMaxTurns", "40"), "user", null, wsA);
+        assertEquals("40", configService.resolve("agent-runtime", "runMaxTurns", userA, wsA));
 
         // effective source follows the same hop.
         assertEquals("workspace",
-            configService.effective("llm-provider", userA, wsA).source());
+            configService.effective("agent-runtime", userA, wsA).source());
         assertEquals("workspace-default",
-            configService.effective("llm-provider", userA, null).source());
+            configService.effective("agent-runtime", userA, null).source());
 
         // clearing the default falls back to user, then instance.
-        configService.deleteKey("workspace-default", "llm-provider", "imageProvider",
+        configService.deleteKey("workspace-default", "agent-runtime", "runMaxTurns",
             "admin", null, null);
-        assertEquals("usr", configService.resolve("llm-provider", "imageProvider", userA, null));
-        assertEquals("inst", configService.resolve("llm-provider", "imageProvider", null, null));
+        assertEquals("20", configService.resolve("agent-runtime", "runMaxTurns", userA, null));
+        assertEquals("10", configService.resolve("agent-runtime", "runMaxTurns", null, null));
     }
 
     @Test
@@ -105,49 +108,60 @@ class ConfigWorkspaceDefaultProfileTest {
                 Map.of("connectionDefaultTemplates", "{}"), "admin", null, null));
         assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", templates.getCode());
 
-        // one of the eight is writable and resolves for any consumer.
+        // one of the four behavior domains is writable and resolves for any consumer.
         configService.putLayer("workspace-default", "job-policy",
             Map.of("defaultTimeoutSecs", "60"), "admin", null, null);
         assertEquals("60", configService.resolve("job-policy", "defaultTimeoutSecs", userA, wsA));
     }
 
     @Test
-    void workspaceDefaultWritableSet_isTheUiIntersection_andWorkspaceLayerIsNotNarrowed() {
-        // task-183 requirement 1: workspace-default writes are WORKSPACE_WRITABLE ∩ UI_DOMAINS.
-        for (String domain : java.util.List.of("llm-provider", "context-policy", "embedding", "rag",
-                "agent-runtime", "approval-policy", "agent-templates", "job-policy")) {
+    void workspaceDefaultWritableSet_isTheFourBehaviorDomains_andWorkspaceLayerHoldsFive() {
+        // T2.4 (D-1122 49A): the model 4 domains left BOTH workspace-scoped layers.
+        // workspace-default = the four behavior domains (WORKSPACE_WRITABLE ∩ UI_DOMAINS).
+        for (String domain : java.util.List.of("agent-runtime", "approval-policy", "agent-templates", "job-policy")) {
             assertTrue(ConfigService.isLayerWritable("workspace-default", domain), domain);
+        }
+        for (String domain : java.util.List.of("llm-provider", "context-policy", "embedding", "rag")) {
+            assertFalse(ConfigService.isLayerWritable("workspace-default", domain), domain);
         }
         assertFalse(ConfigService.isLayerWritable("workspace-default", "context-templates"));
         assertFalse(ConfigService.isLayerWritable("workspace-default", "api-request-templates"));
         assertFalse(ConfigService.isLayerWritable("workspace-default", "pricing"));
 
-        // task-183 requirement 4: the *workspace* layer keeps its own nine-domain set,
-        // including the service-only context-templates domain — not narrowed by this card.
+        // The per-workspace layer holds the four behavior domains plus the service-only
+        // context-templates; the model 4 domains are gone here too.
         assertTrue(ConfigService.isLayerWritable("workspace", "context-templates"));
         assertTrue(ConfigService.isLayerWritable("workspace", "api-request-templates"));
+        for (String domain : java.util.List.of("agent-runtime", "approval-policy", "agent-templates", "job-policy")) {
+            assertTrue(ConfigService.isLayerWritable("workspace", domain), domain);
+        }
+        for (String domain : java.util.List.of("llm-provider", "context-policy", "embedding", "rag")) {
+            assertFalse(ConfigService.isLayerWritable("workspace", domain), domain);
+        }
     }
 
     @Test
     void explicitOnlyEmbedding_wholeUnitWriteAndClear() {
+        // T2.4: embedding left the workspace layers; the whole-unit write/clear mechanic is
+        // pinned on the user layer, where embedding stays writable.
         String profile = "{\"providerId\":\"dashscope\",\"connectionKey\":\"emb\","
             + "\"model\":\"" + EmbeddingProfileService.FIXED_MODEL + "\"}";
-        configService.putLayer("workspace-default", "embedding",
-            Map.of("profile", profile), "admin", null, null);
-        assertEquals(profile, configService.layerEntries("workspace-default", "embedding", null, null)
+        configService.putLayer("user", "embedding",
+            Map.of("profile", profile), "admin", userA, null);
+        assertEquals(profile, configService.layerEntries("user", "embedding", userA, null)
             .get("profile"));
 
         // partial unit fails closed (schema/unit validation rejects it; the
         // controller maps this family to 400 INVALID_REQUEST).
         assertThrows(IllegalArgumentException.class, () ->
-            configService.putLayer("workspace-default", "embedding",
-                Map.of("profile", "{\"providerId\":\"dashscope\"}"), "admin", null, null));
+            configService.putLayer("user", "embedding",
+                Map.of("profile", "{\"providerId\":\"dashscope\"}"), "admin", userA, null));
 
         // an empty body clears the whole layer row so the layer inherits again
         // (same whole-unit clear semantics as every other layer).
-        configService.putLayer("workspace-default", "embedding",
-            Map.of(), "admin", null, null);
-        assertNull(configService.layerEntries("workspace-default", "embedding", null, null)
+        configService.putLayer("user", "embedding",
+            Map.of(), "admin", userA, null);
+        assertNull(configService.layerEntries("user", "embedding", userA, null)
             .get("profile"));
     }
 

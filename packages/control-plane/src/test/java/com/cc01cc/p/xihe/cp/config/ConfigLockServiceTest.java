@@ -63,25 +63,28 @@ class ConfigLockServiceTest {
             List<ConfigEntity> rows = configRepo.findByLayerAndDomain("instance", domain);
             configRepo.deleteAll(rows);
         }
+        // T2.4: the workspace-layer rows in this class live on agent-runtime (rag left the layer).
         for (UUID ws : List.of(wsA)) {
-            configRepo.deleteAll(configRepo.findByWorkspaceIdAndDomain(ws, "rag"));
+            configRepo.deleteAll(configRepo.findByWorkspaceIdAndDomain(ws, "agent-runtime"));
         }
-        configRepo.deleteAll(configRepo.findByUserIdAndDomain(userA, "rag"));
+        configRepo.deleteAll(configRepo.findByUserIdAndDomain(userA, "agent-runtime"));
     }
 
     @Test
     void lockPinsInstanceValueAboveWorkspaceAndUser() {
-        configService.putLayer("workspace", "rag", Map.of("chunkSize", "8000"), "test", null, wsA);
-        configService.putLayer("user", "rag", Map.of("chunkSize", "7000"), "test", userA, null);
+        // T2.4: rag left the workspace layer; the pin runs on agent-runtime, which is
+        // writable at both user and workspace layers.
+        configService.putLayer("workspace", "agent-runtime", Map.of("runMaxTurns", "80"), "test", null, wsA);
+        configService.putLayer("user", "agent-runtime", Map.of("runMaxTurns", "70"), "test", userA, null);
 
-        adminService.lock("rag", "chunkSize", null, "统一分块，避免检索质量漂移", "4096", 0L, "admin");
+        adminService.lock("agent-runtime", "runMaxTurns", null, "统一上限，避免漂移", "40", 0L, "admin");
 
-        assertEquals("4096", configService.resolve("rag", "chunkSize", userA, wsA));
-        assertEquals("4096", configService.effective("rag", userA, wsA).entries().get("chunkSize"));
-        assertFalse(configService.overrides("workspace", List.of("rag"), userA, wsA)
-                .getOrDefault("rag", Map.of()).containsKey("chunkSize"));
-        assertFalse(configService.overrides("user", List.of("rag"), userA, wsA)
-                .getOrDefault("rag", Map.of()).containsKey("chunkSize"));
+        assertEquals("40", configService.resolve("agent-runtime", "runMaxTurns", userA, wsA));
+        assertEquals("40", configService.effective("agent-runtime", userA, wsA).entries().get("runMaxTurns"));
+        assertFalse(configService.overrides("workspace", List.of("agent-runtime"), userA, wsA)
+                .getOrDefault("agent-runtime", Map.of()).containsKey("runMaxTurns"));
+        assertFalse(configService.overrides("user", List.of("agent-runtime"), userA, wsA)
+                .getOrDefault("agent-runtime", Map.of()).containsKey("runMaxTurns"));
     }
 
     @Test
@@ -180,23 +183,24 @@ class ConfigLockServiceTest {
 
     @Test
     void unlockKeepsValueByDefaultAndCanClear() {
-        configService.putLayer("workspace", "rag", Map.of("chunkSize", "8000"), "test", null, wsA);
+        // T2.4: agent-runtime replaces rag (see lockPinsInstanceValueAboveWorkspaceAndUser).
+        configService.putLayer("workspace", "agent-runtime", Map.of("runMaxTurns", "80"), "test", null, wsA);
         ConfigLockAdminService.KeyView lock =
-                adminService.lock("rag", "chunkSize", null, "临时", "4096", 0L, "admin");
+                adminService.lock("agent-runtime", "runMaxTurns", null, "临时", "40", 0L, "admin");
 
-        adminService.unlock("rag", "chunkSize", lock.revision(), false, "admin");
-        assertNotNull(configService.instanceValue("rag", "chunkSize"));
-        assertEquals("8000", configService.resolve("rag", "chunkSize", userA, wsA));
+        adminService.unlock("agent-runtime", "runMaxTurns", lock.revision(), false, "admin");
+        assertNotNull(configService.instanceValue("agent-runtime", "runMaxTurns"));
+        assertEquals("80", configService.resolve("agent-runtime", "runMaxTurns", userA, wsA));
 
         ConfigLockAdminService.KeyView relock =
-                adminService.lock("rag", "chunkSize", null, "临时", "4096", 0L, "admin");
-        adminService.unlock("rag", "chunkSize", relock.revision(), true, "admin");
-        assertNull(configService.instanceValue("rag", "chunkSize"));
-        assertEquals("8000", configService.resolve("rag", "chunkSize", userA, wsA));
+                adminService.lock("agent-runtime", "runMaxTurns", null, "临时", "40", 0L, "admin");
+        adminService.unlock("agent-runtime", "runMaxTurns", relock.revision(), true, "admin");
+        assertNull(configService.instanceValue("agent-runtime", "runMaxTurns"));
+        assertEquals("80", configService.resolve("agent-runtime", "runMaxTurns", userA, wsA));
 
         // idempotent unlock
-        adminService.unlock("rag", "chunkSize", 0L, false, "admin");
-        assertFalse(lockService.find("rag", "chunkSize").isPresent());
+        adminService.unlock("agent-runtime", "runMaxTurns", 0L, false, "admin");
+        assertFalse(lockService.find("agent-runtime", "runMaxTurns").isPresent());
     }
 
     @Test

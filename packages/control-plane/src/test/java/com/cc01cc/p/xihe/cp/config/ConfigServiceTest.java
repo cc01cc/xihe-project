@@ -77,19 +77,21 @@ class ConfigServiceTest {
     }
 
     @Test
-    void resolve_workspaceOverridesUserOverridesInstance() {
-        // PLAN-0504: llm-provider identity moved to the profile unit; the
-        // generic per-key resolution chain still applies to the kept keys.
-        // PLAN-0523 T3.6: imageProvider is the remaining scalar llm-provider
-        // key (sampling keys retired to per-model modelParams, decision #13).
+    void resolve_workspaceLayerRefusesModelDomains_andUserStillBeatsInstance() {
+        // T2.4 / D-1122 49A: llm-provider left the workspace layer. The chain now tops out
+        // at user over instance, and the workspace-layer write answers the layer verdict.
         configService.putLayer("instance", "llm-provider",
             Map.of("imageProvider", "inst"), "admin", null, null);
         configService.putLayer("user", "llm-provider",
             Map.of("imageProvider", "usr"), "user", userA, null);
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("imageProvider", "wrk"), "user", null, wsA);
 
-        assertEquals("wrk",
+        ConfigService.ConfigAccessException refused =
+                assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("workspace", "llm-provider",
+                Map.of("imageProvider", "wrk"), "user", null, wsA));
+        assertTrue(refused.getMessage().contains("not writable at the workspace layer"));
+
+        assertEquals("usr",
             configService.resolveDomain("llm-provider", userA, wsA).get("imageProvider"));
         assertEquals("usr",
             configService.resolveDomain("llm-provider", userA, null).get("imageProvider"));
@@ -110,13 +112,15 @@ class ConfigServiceTest {
 
     @Test
     void resolve_workspaceLayerIsIsolatedByWorkspaceId() {
-        configService.putLayer("workspace", "rag",
-            Map.of("chunkSize", "256"), "user", null, wsA);
-        configService.putLayer("workspace", "rag",
-            Map.of("chunkSize", "2048"), "user", null, wsB);
+        // T2.4: rag left the workspace layer; the isolation mechanic is pinned on
+        // agent-runtime, which is writable at both user and workspace layers.
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("runMaxTurns", "256"), "user", null, wsA);
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("runMaxTurns", "2048"), "user", null, wsB);
 
-        assertEquals("256", configService.resolveDomain("rag", null, wsA).get("chunkSize"));
-        assertEquals("2048", configService.resolveDomain("rag", null, wsB).get("chunkSize"));
+        assertEquals("256", configService.resolveDomain("agent-runtime", null, wsA).get("runMaxTurns"));
+        assertEquals("2048", configService.resolveDomain("agent-runtime", null, wsB).get("runMaxTurns"));
     }
 
     @Test
@@ -357,8 +361,9 @@ class ConfigServiceTest {
             Map.of("imageProvider", "usr"), "user", userA, null);
         configService.putLayer("user", "agent-profile",
             Map.of("userName", "Alice"), "user", userA, null);
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("imageProvider", "wrk"), "user", userA, wsA);
+        // T2.4: llm-provider left the workspace layer; the workspace hop runs on job-policy.
+        configService.putLayer("workspace", "job-policy",
+            Map.of("defaultTimeoutSecs", "120"), "user", userA, wsA);
 
         Map<String, Map<String, String>> userOverrides = configService.overrides(
             "user", List.of("llm-provider", "agent-profile"), userA, wsA);
@@ -366,22 +371,26 @@ class ConfigServiceTest {
         assertEquals(Map.of("userName", "Alice"), userOverrides.get("agent-profile"));
 
         Map<String, Map<String, String>> workspaceOverrides = configService.overrides(
-            "workspace", List.of("llm-provider", "agent-profile"), userA, wsA);
-        assertEquals(Map.of("imageProvider", "wrk"), workspaceOverrides.get("llm-provider"));
+            "workspace", List.of("llm-provider", "agent-profile", "job-policy"), userA, wsA);
+        assertFalse(workspaceOverrides.containsKey("llm-provider"),
+                "no llm-provider row can exist at the workspace layer after T2.4");
         assertFalse(workspaceOverrides.containsKey("agent-profile"));
+        assertEquals(Map.of("defaultTimeoutSecs", "120"), workspaceOverrides.get("job-policy"));
     }
 
     @Test
     void overrides_areScopedByUserAndWorkspace() {
-        configService.putLayer("user", "llm-provider",
-            Map.of("imageProvider", "u-a"), "user", userA, null);
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("imageProvider", "w-a"), "user", userA, wsA);
+        // T2.4: llm-provider left the workspace layer; the scoping mechanic runs on
+        // agent-runtime, the one behavior domain writable at BOTH user and workspace.
+        configService.putLayer("user", "agent-runtime",
+            Map.of("runMaxTurns", "60"), "user", userA, null);
+        configService.putLayer("workspace", "agent-runtime",
+            Map.of("runMaxTurns", "120"), "user", userA, wsA);
 
         assertTrue(configService.overrides(
-            "user", List.of("llm-provider"), userB, wsA).isEmpty());
+            "user", List.of("agent-runtime"), userB, wsA).isEmpty());
         assertTrue(configService.overrides(
-            "workspace", List.of("llm-provider"), userA, wsB).isEmpty());
+            "workspace", List.of("agent-runtime"), userA, wsB).isEmpty());
     }
 
     @Test
@@ -531,15 +540,17 @@ class ConfigServiceTest {
     }
 
     @Test
-    void putLayer_llmProfileWorkspaceLayerAcceptedWithReadyWorkspaceConnection() {
+    void putLayer_llmProfileWorkspaceLayerVerdictPrecedesReadyWorkspaceConnection() {
+        // T2.4 (B-3): the layer verdict runs before connection validation — a ready
+        // WORKSPACE connection no longer makes a workspace-layer llm profile writable.
         saveConnection("WORKSPACE", wsA.toString(), "xiaomi", "default", true, "READY");
 
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("profile", profile("xiaomi", "default", "mimo-v2.5")),
-            "user", userA, wsA);
-
-        assertEquals(profile("xiaomi", "default", "mimo-v2.5"),
-            configService.layerEntries("workspace", "llm-provider", null, wsA).get("profile"));
+        ConfigService.ConfigAccessException refused =
+                assertThrows(ConfigService.ConfigAccessException.class, () ->
+            configService.putLayer("workspace", "llm-provider",
+                Map.of("profile", profile("xiaomi", "default", "mimo-v2.5")),
+                "user", userA, wsA));
+        assertTrue(refused.getMessage().contains("not writable at the workspace layer"));
     }
 
     @Test
@@ -588,23 +599,21 @@ class ConfigServiceTest {
     }
 
     @Test
-    void effectiveLlmProfile_workspaceWinsWholeThenUserThenInstance() {
+    void effectiveLlmProfile_userWinsThenInstance_workspaceLayerGone() {
+        // T2.4 / D-1122 49A: the workspace layer no longer holds llm-provider, so the chain
+        // tops out at user over instance even when a workspace is addressed.
         saveConnection("USER", userA.toString(), "openai", true, "READY");
-        saveConnection("WORKSPACE", wsA.toString(), "xiaomi", true, "READY");
         configService.putLayer("instance", "llm-provider",
             Map.of("profile", profile("deepseek", "default", "instance-model")),
             "admin", null, null);
         configService.putLayer("user", "llm-provider",
             Map.of("profile", profile("openai", "default", "user-model")),
             "user", userA, null);
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("profile", profile("xiaomi", "default", "workspace-model")),
-            "user", null, wsA);
 
         ConfigService.EffectiveLlmProfile effective =
             configService.effectiveLlmProfile(userA, wsA);
-        assertEquals("xiaomi", effective.profile().providerId());
-        assertEquals("workspace", effective.profileScope());
+        assertEquals("openai", effective.profile().providerId());
+        assertEquals("user", effective.profileScope());
 
         effective = configService.effectiveLlmProfile(userA, null);
         assertEquals("openai", effective.profile().providerId());
@@ -642,12 +651,12 @@ class ConfigServiceTest {
     }
 
     @Test
-    void resolveLlmProfile_workspaceProfileUsesWorkspaceConnection() {
-        saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
+    void resolveLlmProfile_workspaceRowStillWinsWhenPresentAsLegacyData() {
+        // T2.4: the API can no longer create a workspace-layer llm profile (the write answers
+        // the layer verdict), but the read chain still honours a legacy row — pinned via a raw
+        // row so the evaluation order stays tested after the write path closed.
         saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
-            "user", null, wsA);
+        saveRawProfile("workspace", null, wsA, profile("deepseek", "default", "deepseek-chat"));
 
         ConfigService.ResolvedLlmProfile resolved =
             configService.resolveLlmProfile(userA, wsA);
@@ -718,21 +727,6 @@ class ConfigServiceTest {
     }
 
     @Test
-    void resolveLlmProfile_workspaceProfilePrefersWorkspaceOverInstanceConnection() {
-        saveConnection("WORKSPACE", wsA.toString(), "deepseek", "default", true, "READY");
-        saveConnection("INSTANCE", instanceIdentity.ownerId(), "deepseek",
-            "default", true, "READY");
-        configService.putLayer("workspace", "llm-provider",
-            Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
-            "user", null, wsA);
-
-        ConfigService.ResolvedLlmProfile resolved =
-            configService.resolveLlmProfile(userA, wsA);
-        assertEquals("WORKSPACE", resolved.connectionOwnerType());
-        assertEquals(wsA.toString(), resolved.connectionOwnerId());
-    }
-
-    @Test
     void resolveLlmProfile_instanceProfileFallsBackToInstanceConnection() {
         saveConnection("INSTANCE", instanceIdentity.ownerId(), "deepseek",
             "default", true, "READY");
@@ -774,31 +768,32 @@ class ConfigServiceTest {
     }
 
     @Test
-    void putLayer_llmProfileWorkspaceLayerRejectedWhenOnlyUserConnection() {
+    void putLayer_llmProfileWorkspaceLayerVerdictPrecedesConnectionValidation() {
+        // T2.4 (B-3): with only a USER connection ready, the workspace-layer write now dies
+        // at the layer gate — the "No ready provider connection" verdict is unreachable here.
         saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
 
-        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+        ConfigService.ConfigAccessException refused =
+                assertThrows(ConfigService.ConfigAccessException.class, () ->
             configService.putLayer("workspace", "llm-provider",
                 Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
                 "user", null, wsA));
-
-        assertTrue(error.getMessage().contains(
-            "No ready provider connection for profile: deepseek/default"));
+        assertTrue(refused.getMessage().contains("not writable at the workspace layer"));
     }
 
     @Test
-    void putLayer_llmProfileLegacyFallbackAllowsWorkspaceToUseUserConnectionWhenEnabled() {
-        // Legacy validation allowed a workspace profile to be accepted by a
-        // ready user connection (workspaceId present, userId = actor). Strict
-        // mode rejects it; the transition switch restores the old behavior.
+    void putLayer_llmProfileLegacyFallbackDoesNotBypassTheLayerVerdict() {
+        // T2.4: the legacy-fallback switch governs connection validation, not layer
+        // writability — the workspace layer refuses llm-provider either way.
         saveConnection("USER", userA.toString(), "deepseek", "default", true, "READY");
         setLegacyFallback(true);
         try {
-            configService.putLayer("workspace", "llm-provider",
-                Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
-                "user", userA, wsA);
-            assertEquals(profile("deepseek", "default", "deepseek-chat"),
-                configService.layerEntries("workspace", "llm-provider", null, wsA).get("profile"));
+            ConfigService.ConfigAccessException refused =
+                assertThrows(ConfigService.ConfigAccessException.class, () ->
+                configService.putLayer("workspace", "llm-provider",
+                    Map.of("profile", profile("deepseek", "default", "deepseek-chat")),
+                    "user", userA, wsA));
+            assertTrue(refused.getMessage().contains("not writable at the workspace layer"));
         } finally {
             setLegacyFallback(false);
         }

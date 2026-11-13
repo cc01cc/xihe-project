@@ -73,26 +73,44 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
 
     @Test
     void put_adminWithAtom_succeedsAndLayerIsReadable() {
+        // T2.4: rag left the workspace-default layer with the model 4 domains, so the
+        // positive write runs on a behavior domain (job-policy).
         String admin = adminToken();
         ResponseEntity<Map> put = restTemplate.exchange(
-            url("/api/v1/config/workspace-default/rag"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("topK", "7"), authHeaders(admin)), Map.class);
+            url("/api/v1/config/workspace-default/job-policy"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultTimeoutSecs", "70"), authHeaders(admin)), Map.class);
         assertEquals(HttpStatus.OK, put.getStatusCode());
 
         // The shared default layer is readable by any authenticated caller.
         ResponseEntity<Map> layerView = restTemplate.exchange(
-            url("/api/v1/config/rag?layer=workspace-default"), HttpMethod.GET,
+            url("/api/v1/config/job-policy?layer=workspace-default"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(userToken())), Map.class);
         assertEquals(HttpStatus.OK, layerView.getStatusCode());
-        assertEquals("7", layerView.getBody().get("topK"));
+        assertEquals("70", layerView.getBody().get("defaultTimeoutSecs"));
 
         // Effective view for a user/workspace without their own row picks it up.
         String user = userToken();
         ResponseEntity<Map> effective = restTemplate.exchange(
-            url("/api/v1/config/rag"), HttpMethod.GET,
+            url("/api/v1/config/job-policy"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(user)), Map.class);
         assertEquals(HttpStatus.OK, effective.getStatusCode());
-        assertEquals("7", effective.getBody().get("topK"));
+        assertEquals("70", effective.getBody().get("defaultTimeoutSecs"));
+    }
+
+    @Test
+    void put_modelDomainsAnswer400DomainNotWorkspaceWritable_onThisLayer() {
+        // T2.4 refusal pin (half of the 4-domains × 2-layers pair; the workspace-layer half
+        // lives in ConfigControllerTest): each model domain that left the workspace layer
+        // must answer the layer verdict — 400 + DOMAIN_NOT_WORKSPACE_WRITABLE — on this
+        // layer, before any body validation could answer a different 400.
+        String admin = adminToken();
+        for (String domain : java.util.List.of("llm-provider", "context-policy", "embedding", "rag")) {
+            ResponseEntity<Map> resp = restTemplate.exchange(
+                url("/api/v1/config/workspace-default/" + domain), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("anything", "x"), authHeaders(admin)), Map.class);
+            assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode(), domain);
+            assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"), domain);
+        }
     }
 
     @Test
@@ -107,8 +125,8 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
 
     @Test
     void put_apiRequestTemplatesDomain_isRejectedEvenThoughExplicitOnly() {
-        // api-request-templates is EXPLICIT_ONLY but NOT one of the eight WORKSPACE_WRITABLE ∩
-        // UI_DOMAINS domains, so the workspace-default layer must refuse it
+        // api-request-templates is EXPLICIT_ONLY but NOT one of the four WORKSPACE_WRITABLE ∩
+        // UI_DOMAINS behavior domains, so the workspace-default layer must refuse it
         // (instance-only stays instance-only).
         ResponseEntity<Map> resp = restTemplate.exchange(
             url("/api/v1/config/workspace-default/api-request-templates"), HttpMethod.PUT,
@@ -160,26 +178,27 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
 
     @Test
     void delete_clearsRow_andChainInheritsAgain() {
+        // T2.4: the clear-chain runs on a behavior domain (rag left the layer).
         String admin = adminToken();
-        restTemplate.exchange(url("/api/v1/config/instance/rag"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("topK", "3"), authHeaders(admin)), Map.class);
-        restTemplate.exchange(url("/api/v1/config/workspace-default/rag"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("topK", "7"), authHeaders(admin)), Map.class);
+        restTemplate.exchange(url("/api/v1/config/instance/job-policy"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultTimeoutSecs", "30"), authHeaders(admin)), Map.class);
+        restTemplate.exchange(url("/api/v1/config/workspace-default/job-policy"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultTimeoutSecs", "70"), authHeaders(admin)), Map.class);
 
         ResponseEntity<Map> hit = restTemplate.exchange(
-            url("/api/v1/config/rag"), HttpMethod.GET,
+            url("/api/v1/config/job-policy"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(userToken())), Map.class);
-        assertEquals("7", hit.getBody().get("topK"));
+        assertEquals("70", hit.getBody().get("defaultTimeoutSecs"));
 
         ResponseEntity<Map> del = restTemplate.exchange(
-            url("/api/v1/config/workspace-default/rag/topK"), HttpMethod.DELETE,
+            url("/api/v1/config/workspace-default/job-policy/defaultTimeoutSecs"), HttpMethod.DELETE,
             new HttpEntity<>(authHeaders(admin)), Map.class);
         assertEquals(HttpStatus.OK, del.getStatusCode());
 
         ResponseEntity<Map> after = restTemplate.exchange(
-            url("/api/v1/config/rag"), HttpMethod.GET,
+            url("/api/v1/config/job-policy"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(userToken())), Map.class);
-        assertEquals("3", after.getBody().get("topK"));
+        assertEquals("30", after.getBody().get("defaultTimeoutSecs"));
     }
 
     @Test
@@ -193,19 +212,20 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
 
     @Test
     void meta_layerViewsExposeWorkspaceDefaultProvenance() {
+        // T2.4: rag left the layer, so the provenance assertions run on job-policy.
         String admin = adminToken();
-        restTemplate.exchange(url("/api/v1/config/workspace-default/rag"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("topK", "7"), authHeaders(admin)), Map.class);
+        restTemplate.exchange(url("/api/v1/config/workspace-default/job-policy"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultTimeoutSecs", "70"), authHeaders(admin)), Map.class);
 
         ResponseEntity<Map> meta = restTemplate.exchange(
-            url("/api/v1/config/rag/meta?layer=workspace-default"), HttpMethod.GET,
+            url("/api/v1/config/job-policy/meta?layer=workspace-default"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(admin)), Map.class);
         assertEquals(HttpStatus.OK, meta.getStatusCode());
         assertTrue(meta.getBody().get("keys") instanceof java.util.List);
         java.util.List<Map<String, Object>> keys = (java.util.List<Map<String, Object>>) meta.getBody().get("keys");
-        Map<String, Object> topK = keys.stream()
-            .filter(k -> "topK".equals(k.get("key"))).findFirst().orElseThrow();
-        assertEquals("workspace-default", topK.get("source"));
+        Map<String, Object> jobRow = keys.stream()
+            .filter(k -> "defaultTimeoutSecs".equals(k.get("key"))).findFirst().orElseThrow();
+        assertEquals("workspace-default", jobRow.get("source"));
 
         // The workspace layer view sees the default row as workspace-default provenance.
         String token = userToken();
@@ -214,13 +234,13 @@ class ConfigWorkspaceDefaultLayerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(token);
         headers.set("X-Workspace-Id", workspaceId);
         ResponseEntity<Map> wsMeta = restTemplate.exchange(
-            url("/api/v1/config/rag/meta?layer=workspace"), HttpMethod.GET,
+            url("/api/v1/config/job-policy/meta?layer=workspace"), HttpMethod.GET,
             new HttpEntity<>(headers), Map.class);
         assertEquals(HttpStatus.OK, wsMeta.getStatusCode());
         java.util.List<Map<String, Object>> wsKeys =
             (java.util.List<Map<String, Object>>) wsMeta.getBody().get("keys");
         Map<String, Object> wsTopK = wsKeys.stream()
-            .filter(k -> "topK".equals(k.get("key"))).findFirst().orElseThrow();
+            .filter(k -> "defaultTimeoutSecs".equals(k.get("key"))).findFirst().orElseThrow();
         assertEquals("workspace-default", wsTopK.get("source"));
     }
 }

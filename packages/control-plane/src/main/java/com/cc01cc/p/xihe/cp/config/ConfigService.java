@@ -93,19 +93,20 @@ public class ConfigService {
           "agent-runtime", "agent-profile", "user-preference", "agent-templates", "context-templates");
 
     /**
-     * The workspace layer's writable set (9 domains). It still contains
-     * {@code context-templates} because that layer predates the generic config API and
-     * keeps its own dedicated template surface — the workspace layer is NOT narrowed by
-     * task-183 (only the workspace-default layer is, see below).
+     * The workspace layer's writable set (5 domains after D-1122 49A / PLAN-0766 T2.4):
+     * the four behavior domains plus {@code context-templates}, which predates the generic
+     * config API and keeps its own dedicated template surface. The four model domains
+     * (llm-provider, context-policy, embedding, rag) left the workspace layer with T2.4 —
+     * they stay writable at the instance and user layers, and readable merged-effective.
      */
     private static final Set<String> WORKSPACE_WRITABLE_DOMAINS = Set.of(
-        "llm-provider", "context-policy", "embedding", "rag", "agent-runtime",
-          "approval-policy", "agent-templates", "context-templates", "job-policy");
+        "agent-runtime", "approval-policy", "agent-templates", "context-templates", "job-policy");
 
     /**
      * D-928 / PLAN-0766 task-183: the workspace-default layer is the generic config API's
      * shared default layer, so its writable set is {@code WORKSPACE_WRITABLE ∩ UI_DOMAINS}
-     * = the eight domains the generic read/meta face can serve. {@code context-templates}
+     * = the four behavior domains the generic read/meta face can serve (T2.4: the model
+     * 4 domains left the workspace layer, so the intersection is 4, not 8). {@code context-templates}
      * is service-only (it has no meta view in the generic API) — accepting a write here
      * would persist a layer that no generic read surface can serve, the same hole
      * {@code api-request-templates} already has (it stays instance-only). Those two
@@ -155,9 +156,10 @@ public class ConfigService {
             case "instance" -> true;
             case "user" -> USER_WRITABLE_DOMAINS.contains(domain) || isExplicitOnlyDomain(domain);
             case "workspace" -> WORKSPACE_WRITABLE_DOMAINS.contains(domain) || isExplicitOnlyDomain(domain);
-            // D-928 / PLAN-0766 (task-183): exactly the eight WORKSPACE_WRITABLE ∩ UI_DOMAINS
-            // domains — no explicit-only extension (api-request-templates stays instance-only)
-            // and no service-only domain (context-templates has no generic read face).
+            // D-928 / PLAN-0766 (task-183) + T2.4: exactly the four WORKSPACE_WRITABLE ∩
+            // UI_DOMAINS behavior domains — no explicit-only extension (api-request-templates
+            // stays instance-only) and no service-only domain (context-templates has no
+            // generic read face).
             case "workspace-default" -> WORKSPACE_DEFAULT_WRITABLE_DOMAINS.contains(domain);
             default -> false;
         };
@@ -1014,9 +1016,10 @@ public class ConfigService {
                 }
             }
             case "workspace-default" -> {
-                // D-928 / PLAN-0766 (task-183): exactly the eight WORKSPACE_WRITABLE ∩ UI_DOMAINS
-                // domains, with its own 400 code (task-158 contract) instead of the generic 403
-                // mapping; context-templates is excluded (service-only, no generic read face).
+                // D-928 / PLAN-0766 (task-183) + T2.4: exactly the four WORKSPACE_WRITABLE ∩
+                // UI_DOMAINS behavior domains, with its own 400 code (task-158 contract)
+                // instead of the generic 403 mapping; context-templates is excluded
+                // (service-only, no generic read face).
                 if (!WORKSPACE_DEFAULT_WRITABLE_DOMAINS.contains(domain)) {
                     throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
                             "DOMAIN_NOT_WORKSPACE_WRITABLE",
@@ -1522,7 +1525,7 @@ public class ConfigService {
                             + "; reason: " + adminLockReasons(domain).get(configKey));
         }
         // task-183: DELETE is a write too — the workspace-default layer must refuse domains
-        // outside its eight writable domains *before* the template-specific checks below, so
+        // outside its four writable domains *before* the template-specific checks below, so
         // context-templates/api-request-templates answer the same 400 as a PUT would.
         if (ConfigLayerResolver.LAYER_WORKSPACE_DEFAULT.equals(layer)
                 && !WORKSPACE_DEFAULT_WRITABLE_DOMAINS.contains(domain)) {

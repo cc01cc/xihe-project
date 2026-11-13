@@ -159,6 +159,8 @@ class ConfigControllerTest extends AbstractH2Test {
 
     @Test
     void workspaceLayer_resolvesOverUserAndInstance() {
+        // T2.4: llm-provider left the workspace layer with the model 4 domains; the
+        // resolution chain now runs on a behavior domain (job-policy).
         String token = userToken();
         String workspaceId = workspaceIdFor(token);
         assertNotNull(workspaceId);
@@ -166,37 +168,56 @@ class ConfigControllerTest extends AbstractH2Test {
         HttpHeaders headers = authHeaders(token);
         headers.set("X-Workspace-Id", workspaceId);
         ResponseEntity<Map> putInstance = restTemplate.exchange(
-            url("/api/v1/config/instance/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("imageProvider", "inst-prov"), authHeaders(adminToken())), Map.class);
+            url("/api/v1/config/instance/job-policy"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultTimeoutSecs", "40"), authHeaders(adminToken())), Map.class);
         assertEquals(HttpStatus.OK, putInstance.getStatusCode());
 
         ResponseEntity<Map> putWorkspace = restTemplate.exchange(
-            url("/api/v1/config/workspace/llm-provider"), HttpMethod.PUT,
-            new HttpEntity<>(Map.of("imageProvider", "ws-prov"), headers), Map.class);
+            url("/api/v1/config/workspace/job-policy"), HttpMethod.PUT,
+            new HttpEntity<>(Map.of("defaultTimeoutSecs", "90"), headers), Map.class);
         assertEquals(HttpStatus.OK, putWorkspace.getStatusCode());
 
         ResponseEntity<Map> resolved = restTemplate.exchange(
-            url("/api/v1/config/llm-provider?workspaceId=" + workspaceId), HttpMethod.GET,
+            url("/api/v1/config/job-policy?workspaceId=" + workspaceId), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
         assertEquals(HttpStatus.OK, resolved.getStatusCode());
-        assertEquals("ws-prov", resolved.getBody().get("imageProvider"));
+        assertEquals("90", resolved.getBody().get("defaultTimeoutSecs"));
 
         ResponseEntity<Map> layerView = restTemplate.exchange(
-            url("/api/v1/config/llm-provider?layer=workspace&workspaceId=" + workspaceId), HttpMethod.GET,
+            url("/api/v1/config/job-policy?layer=workspace&workspaceId=" + workspaceId), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
         assertEquals(HttpStatus.OK, layerView.getStatusCode());
-        assertEquals("ws-prov", layerView.getBody().get("imageProvider"));
+        assertEquals("90", layerView.getBody().get("defaultTimeoutSecs"));
 
         ResponseEntity<Map> instanceView = restTemplate.exchange(
-            url("/api/v1/config/llm-provider?layer=instance"), HttpMethod.GET,
+            url("/api/v1/config/job-policy?layer=instance"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(token)), Map.class);
         assertEquals(HttpStatus.FORBIDDEN, instanceView.getStatusCode());
 
         ResponseEntity<Map> adminInstanceView = restTemplate.exchange(
-            url("/api/v1/config/llm-provider?layer=instance"), HttpMethod.GET,
+            url("/api/v1/config/job-policy?layer=instance"), HttpMethod.GET,
             new HttpEntity<>(authHeaders(adminToken())), Map.class);
         assertEquals(HttpStatus.OK, adminInstanceView.getStatusCode());
-        assertEquals("inst-prov", adminInstanceView.getBody().get("imageProvider"));
+        assertEquals("40", adminInstanceView.getBody().get("defaultTimeoutSecs"));
+    }
+
+    @Test
+    void put_modelDomainsAnswer400DomainNotWorkspaceWritable_onWorkspaceLayer() {
+        // T2.4 refusal pin (workspace-layer half of 4-domains × 2-layers; the
+        // workspace-default half lives in ConfigWorkspaceDefaultLayerTest). The caller
+        // reaches the layer gate (member with the H1 atom), and the layer verdict —
+        // 400 DOMAIN_NOT_WORKSPACE_WRITABLE — must precede any body validation.
+        String token = userToken();
+        String workspaceId = workspaceIdFor(token);
+        HttpHeaders headers = authHeaders(token);
+        headers.set("X-Workspace-Id", workspaceId);
+        for (String domain : java.util.List.of("llm-provider", "context-policy", "embedding", "rag")) {
+            ResponseEntity<Map> resp = restTemplate.exchange(
+                url("/api/v1/config/workspace/" + domain + "?workspaceId=" + workspaceId),
+                HttpMethod.PUT, new HttpEntity<>(Map.of("anything", "x"), headers), Map.class);
+            assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode(), domain);
+            assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", resp.getBody().get("code"), domain);
+        }
     }
 
     @Test
@@ -720,9 +741,10 @@ class ConfigControllerTest extends AbstractH2Test {
         evidence("editor/mcp-config", mcp);
         assertEquals(HttpStatus.OK, mcp.getStatusCode(), String.valueOf(mcp.getBody()));
 
+        // T2.4: llm-provider left the workspace layer; the editor write runs on job-policy.
         ResponseEntity<Map> config = restTemplate.exchange(
-                url("/api/v1/config/workspace/llm-provider?workspaceId=" + targetWorkspaceId),
-                HttpMethod.PUT, new HttpEntity<>(Map.of("imageProvider", "editor-prov"), headers),
+                url("/api/v1/config/workspace/job-policy?workspaceId=" + targetWorkspaceId),
+                HttpMethod.PUT, new HttpEntity<>(Map.of("defaultTimeoutSecs", "60"), headers),
                 Map.class);
         evidence("editor/config-workspace", config);
         assertEquals(HttpStatus.OK, config.getStatusCode(), String.valueOf(config.getBody()));
@@ -747,9 +769,11 @@ class ConfigControllerTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Workspace-Id", targetWorkspaceId);
 
+        // T2.4: job-policy keeps this test measuring the coarse guard, not the domain gate
+        // (llm-provider would be refused by the domain gate too, muddying the measured layer).
         ResponseEntity<Map> put = restTemplate.exchange(
-                url("/api/v1/config/workspace/llm-provider"), HttpMethod.PUT,
-                new HttpEntity<>(Map.of("imageProvider", "viewer-prov"), headers), Map.class);
+                url("/api/v1/config/workspace/job-policy"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of("defaultTimeoutSecs", "10"), headers), Map.class);
         evidence("viewer/config-workspace(coarse-guard)", put);
         assertEquals(HttpStatus.FORBIDDEN, put.getStatusCode(), String.valueOf(put.getBody()));
         assertEquals("WORKSPACE_READ_ONLY", put.getBody().get("code"),

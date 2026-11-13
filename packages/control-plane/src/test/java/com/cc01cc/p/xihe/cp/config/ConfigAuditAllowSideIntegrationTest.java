@@ -35,8 +35,10 @@ class ConfigAuditAllowSideIntegrationTest extends AbstractReusableIntegrationTes
     private static final String DOMAIN = "logging";
 
     /** A domain writable at the workspace-default and user layers (logging is instance-only). */
-    private static final String LAYERED_DOMAIN = "rag";
-    private static final Map<String, String> LAYERED_ENTRY = Map.of("chunkSize", "7000");
+    // T2.4: agent-runtime replaces rag as the layered-domain fixture — rag left both
+    // workspace-scoped layers; agent-runtime is writable at workspace-default AND user.
+    private static final String LAYERED_DOMAIN = "agent-runtime";
+    private static final Map<String, String> LAYERED_ENTRY = Map.of("runMaxTurns", "70");
     private static final String I1_ACTOR = "task309-i1-writer";
     private static final String W1_ACTOR = "task309-w1-writer";
     private static final String H1_ACTOR = "task309-h1-writer";
