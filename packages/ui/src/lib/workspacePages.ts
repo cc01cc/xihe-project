@@ -21,7 +21,7 @@ export const WORKSPACE_ROOT_PREFIX = "/workspace";
 /** 路由 `meta.workspacePage` 的形状（挂在路由记录上，由本文件的守卫函数校验）。 */
 export interface WorkspacePageMeta {
     /** 稳定 id：导航锚点、图标映射与测试都用它，不用页面名。 */
-    id: "workbench" | "environment" | "scheduled-tasks" | "settings" | "resources" | "members";
+    id: "sessions" | "environment" | "scheduled-tasks" | "settings" | "resources" | "members";
     /** i18n 标签 key（两侧 locale 必须都有 —— 缺失由 `lint:i18n` 拦）。 */
     labelKey: string;
     /** 导航顺序（与路由声明顺序解耦：改路由顺序不该改导航顺序）。 */

@@ -71,7 +71,9 @@ const messages = {
             ariaLabel: "工作区页面导航",
             breadcrumbLabel: "工作区导航位置",
             workspaceContainer: "工作区",
-            workbench: "工作台",
+            // task-217（用户 10:5x）：工作区**内部这一页**是会话列表 ⇒ 页名「会话」。
+            // 「工作台」只允许出现在**模块层**（全局 rail + 落地页，`sidebar.workbench` 仍是「工作台」，D-924 不变）。
+            sessions: "会话",
             environment: "环境",
             scheduledTasks: "定时任务",
             // PLAN-0773 M4-2（task-210）：本工作区资源页（`/workspace/:id/resources`）。
@@ -3345,7 +3347,7 @@ const messages = {
             ariaLabel: "Workspace page navigation",
             breadcrumbLabel: "Workspace location",
             workspaceContainer: "Workspace",
-            workbench: "Workbench",
+            sessions: "Sessions",
             environment: "Environment",
             scheduledTasks: "Scheduled tasks",
             resources: "Resources",

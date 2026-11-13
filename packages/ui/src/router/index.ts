@@ -61,8 +61,10 @@ const router = createRouter({
                                 import("../features/workspace/pages/WorkspaceView.vue"),
                             meta: {
                                 workspacePage: {
-                                    id: "workbench",
-                                    labelKey: "workspaceNav.workbench",
+                                    // task-217：页 id 与页名都是「会话」——「工作台」是**模块层**名字（`sidebar.workbench`，D-924），
+                                    // 不再当工作区内部的页名；id 是导航锚点与 testid 来源，必须和页名同心。
+                                    id: "sessions",
+                                    labelKey: "workspaceNav.sessions",
                                     order: 10,
                                     icon: LayoutGrid,
                                 },

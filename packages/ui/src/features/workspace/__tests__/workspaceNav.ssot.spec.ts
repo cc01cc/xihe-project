@@ -6,7 +6,8 @@ import { workspacePageOfMeta } from "../../../lib/workspacePages";
  * PLAN-0773 `M4-4`（`task-190`）的**机器判据**：工作区二级导航项必须**由路由表派生**。
  *
  * <p>本文件不测组件外观（那是 e2e 的事），只钉住三条「手写清单会立刻破」的不变量：
- * ① 带 `meta.workspacePage` 的记录数 = 5（工作台 / 环境 / 定时任务 / **资源** / 设置）；
+ * ① 带 `meta.workspacePage` 的记录数 = 5（**会话** / 环境 / 定时任务 / **资源** / 设置）；
+ * （`task-217`：页名由「工作台」改成「会话」——「工作台」是模块层名字，D-924；id 同步 `workbench → sessions`。）
  * （4→5 是 PLAN-0773 M4-2 / task-210 加的工作区资源页；旧断言把 4 写死了，加页时它**必须**红 —
  * 那正是它存在的理由。）
  * ② 顺序由 `order` 决定而不是路由声明顺序；③ 地址由 `router.resolve` 生成（换段只改路由表）。</p>
@@ -28,7 +29,7 @@ const withPage = pageRecords
 describe("工作区二级导航 SSOT（路由 meta 派生）", () => {
     it("工作区页 = 5 条，且顺序由 order 决定", () => {
         expect(withPage.map((entry) => entry.page?.id)).toEqual([
-            "workbench",
+            "sessions",
             "environment",
             "scheduled-tasks",
             // M4-2（task-210）：资源页插在定时任务与设置之间（order 35，给 M4-3 的「成员」留 45 空档）。
