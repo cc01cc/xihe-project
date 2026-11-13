@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { i18n } from "../../../i18n";
 import { CONFIG_DOMAINS, INSTANCE_DOMAINS, LAYER_DOMAINS } from "../../../stores/config";
+import { jsonDocText, setJsonDoc } from "../../../components/settings/__tests__/jsonEditorAsserts";
 
 const routerSpies = vi.hoisted(() => ({
     push: vi.fn<(location: unknown) => Promise<void>>(),
@@ -239,10 +240,12 @@ describe("ConfigSettings Agent template and approval policy (PLAN-0374)", () => 
         expect(approvalPanel.exists()).toBe(true);
         if (!wrapper.find('[data-testid^="config-field-"]').exists())
             await approvalPanel.find("button").trigger("click");
+        // task-286 断言翻面：json 字段已从 `<textarea>` 换成 CodeMirror 6（`JsonFieldEditor`），
+        // testid 从 `config-field-*` 变为 `config-json-*`。本行原来断言「该字段渲染成 textarea」，
+        // 现在断言**同一件事的新形态**：该字段渲染出 json 编辑器容器。
+        // 没有改成 `getByRole("textbox")` 之类的泛化匹配 —— 那会连别的可编辑元素一起匹配上，是削弱。
         expect(
-            wrapper
-                .find('[data-testid="config-field-approval-policy-askActionClasses"] textarea')
-                .exists(),
+            wrapper.find('[data-testid="config-json-approval-policy-askActionClasses"]').exists(),
         ).toBe(true);
     });
 
@@ -261,10 +264,11 @@ describe("ConfigSettings Agent template and approval policy (PLAN-0374)", () => 
         if (!wrapper.find('[data-testid^="config-field-"]').exists())
             await panel.find("button").trigger("click");
 
-        const field = wrapper.find(
-            '[data-testid="config-field-approval-policy-askActionClasses"] textarea',
-        );
-        await field.setValue('["CREATE_TEMPLATE"]');
+        // task-286 断言翻面：原断言依赖 `textarea.value`，CodeMirror 无该属性
+        // ⇒ 改为写入并断言编辑器文档文本。判据一字未动：这个值必须原样进 PUT body。
+        const jsonTestId = "config-json-approval-policy-askActionClasses";
+        setJsonDoc(wrapper, jsonTestId, '["CREATE_TEMPLATE"]');
+        expect(jsonDocText(wrapper, jsonTestId)).toBe('["CREATE_TEMPLATE"]');
         const saveLabel = i18n.global.t("common.save"),
             saveButton = panel.findAll("button").find((button) => button.text() === saveLabel);
         expect(saveButton).toBeTruthy();

@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from "pinia";
 import ConfigLayerPanels from "../ConfigLayerPanels.vue";
 import { i18n } from "../../../i18n";
 import { useConfigStore } from "../../../stores/config";
+import { jsonDocText, setJsonDoc } from "./jsonEditorAsserts";
 
 /**
  * task-156 / D-1001：`approval-policy.askActionClasses` 是 `type: "json"` 字段，
@@ -74,11 +75,14 @@ async function saveAskActionClasses(
         await flushPromises();
     }
 
-    const textarea = wrapper.find(
-        '[data-testid="config-field-approval-policy-askActionClasses"] textarea',
-    );
-    expect(textarea.exists()).toBe(true);
-    await textarea.setValue('["CREATE_TEMPLATE"]');
+    // task-286 断言翻面：该 json 字段已从 `<textarea>` 换成 CodeMirror 6，
+    // testid 也从 `config-field-*` 变为 `config-json-*`。
+    // 原断言依赖 `textarea.value`，CodeMirror 无该属性 ⇒ 改为断言编辑器文档文本。
+    // 语义不变：仍是「写进这个字段的值」—— 只是入口从 DOM 属性换成 `EditorState.doc`。
+    const jsonTestId = "config-json-approval-policy-askActionClasses";
+    expect(wrapper.find(`[data-testid="${jsonTestId}"]`).exists()).toBe(true);
+    setJsonDoc(wrapper, jsonTestId, '["CREATE_TEMPLATE"]');
+    expect(jsonDocText(wrapper, jsonTestId)).toBe('["CREATE_TEMPLATE"]');
 
     const saveLabel = i18n.global.t("common.save"),
         saveButton = wrapper.findAll("button").find((button) => button.text() === saveLabel);
@@ -135,9 +139,12 @@ describe("ConfigLayerPanels approval-policy askActionClasses 保存形状（task
                 .trigger("click");
             await flushPromises();
         }
-        await wrapper
-            .find('[data-testid="config-field-approval-policy-askActionClasses"] textarea')
-            .setValue("[not json");
+        // task-286 断言翻面：同上 —— 原断言依赖 `textarea.value`，CodeMirror 无该属性
+        // ⇒ 改为 `setJsonDoc` 写文档文本。本用例判的是「非法 JSON 不发 PUT」，
+        // 写入口换了但判据（PUT 次数为 0）一字未动。
+        const jsonTestId = "config-json-approval-policy-askActionClasses";
+        setJsonDoc(wrapper, jsonTestId, "[not json");
+        expect(jsonDocText(wrapper, jsonTestId)).toBe("[not json");
 
         const saveLabel = i18n.global.t("common.save"),
             saveButton = wrapper.findAll("button").find((button) => button.text() === saveLabel);
