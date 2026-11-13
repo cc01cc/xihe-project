@@ -5,6 +5,7 @@
  *
  * 真源：packages/control-plane/src/main/resources/config-schemas/*.json（13 域）
  * 展平规则：嵌套 object → 点号键；additionalProperties 为对象 → type "map"；type 数组取首标量；
+ * "map" 额外带 mapValueFields（值对象属性，供按行渲染）；
  * enum → type "enum" + enumValues（中文 label 见 fieldLabels.ts，不并入本模块）。
  */
 
@@ -13,6 +14,8 @@ export type SchemaFieldType = "string" | "integer" | "number" | "boolean" | "enu
 export interface SchemaField {
     key: string;
     type: SchemaFieldType;
+    /** type "map" 的值对象属性（键名不含前缀）；其他类型不出现。 */
+    mapValueFields?: SchemaField[];
     enumValues?: { value: string; label?: string }[];
     description?: string;
 }
@@ -263,7 +266,69 @@ const CATALOG_JSON = `{
         },
         {
             "key": "models",
-            "type": "map"
+            "type": "map",
+            "mapValueFields": [
+                {
+                    "key": "maxInputTokens",
+                    "type": "integer"
+                },
+                {
+                    "key": "tokenizerRef",
+                    "type": "string"
+                },
+                {
+                    "key": "softThresholdPct",
+                    "type": "number"
+                },
+                {
+                    "key": "hardThresholdPct",
+                    "type": "number"
+                },
+                {
+                    "key": "keepRecentMessages",
+                    "type": "integer"
+                },
+                {
+                    "key": "agentsMdMaxBytes",
+                    "type": "integer"
+                },
+                {
+                    "key": "envMaxBytes",
+                    "type": "integer"
+                },
+                {
+                    "key": "pruneWindowChars",
+                    "type": "integer"
+                },
+                {
+                    "key": "recoveryBand",
+                    "type": "number"
+                },
+                {
+                    "key": "maxConsecutiveIneffective",
+                    "type": "integer"
+                },
+                {
+                    "key": "summaryProvider",
+                    "type": "enum",
+                    "enumValues": [
+                        {
+                            "value": "llm"
+                        },
+                        {
+                            "value": "rule"
+                        }
+                    ]
+                },
+                {
+                    "key": "summaryModel",
+                    "type": "string"
+                },
+                {
+                    "key": "summaryTimeoutMs",
+                    "type": "integer"
+                }
+            ]
         }
     ],
     "context-templates": [
@@ -340,6 +405,20 @@ const CATALOG_JSON = `{
         {
             "key": "modelParams",
             "type": "map",
+            "mapValueFields": [
+                {
+                    "key": "maxTokens",
+                    "type": "integer"
+                },
+                {
+                    "key": "temperature",
+                    "type": "number"
+                },
+                {
+                    "key": "timeout",
+                    "type": "integer"
+                }
+            ],
             "description": "Per-model sampling parameters (PLAN-0523 decision #9/#12): map of model name to optional {maxTokens, temperature, timeout}. PUT replaces the whole map; an empty object clears. Layer-scoped (whole-domain override)."
         }
     ],

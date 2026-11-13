@@ -25,6 +25,18 @@ import type { ProviderDefinition } from "../../types/providerConnection";
 import { listProviderCatalog } from "../../services/providerConnectionService";
 import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { DOMAIN_LABEL_KEY } from "../../lib/settingsIa";
+import ContextModelOverrides from "./ContextModelOverrides.vue";
+import {
+    CONTEXT_POLICY_DOMAIN,
+    DEFAULTS_KEY,
+    DEFAULTS_PREFIX,
+    MODELS_KEY,
+    composeDefaults,
+    defaultsLeaves,
+    decomposeDefaults,
+    parseObjectValue,
+    valueToText,
+} from "./contextPolicyForm";
 
 /**
  * PLAN-0560 T2.4: 域清单 + 摘要 + 保存/重置 + ProviderHub/embedding/templates 分派，
@@ -158,15 +170,70 @@ function providerDisplayName(providerId: string): string {
     );
 }
 
+/**
+ * task-285：`context-policy` 的控件按 catalog 的 typed 叶子生成，**不再手写两个 JSON 框**。
+ *
+ * <p>用户原话：「压缩为什么用的是 JSON 呀？它不是就一个值就可以了吗？」——`defaults` 不是「一个值」，
+ * 它是装了 13 个类型化键的包；**控件清单必须来自 `configSchemaCatalog`**（生成物，真源是 CP 的
+ * `config-schemas/context-policy.json`），在这里手抄第二份就等于新造一个会漂的 SSOT。</p>
+ *
+ * <p>两处「为什么不是全都有范围校验」是**实测**不是取舍：`ConfigDomainPanel.numberRule` 的判据是
+ * `Number.isInteger(num) && num >= 1 && num <= max`，所以 ①小数键（三个比例）套上去会恒红；
+ * ②`keepRecentMessages` 的 CP 下界是 **0**，套上去会把合法的 0 判错。故只给「下界 ≥1 的整数键」
+ * 加 `max`，其余交给 CP 校验（越界返回 400，UI 显示服务端错误）。</p>
+ */
+const CTX_POLICY_MAX: Record<string, number> = {
+    agentsMdMaxBytes: 262144,
+    envMaxBytes: 65536,
+    maxInputTokens: 10000000,
+    pruneWindowChars: 2000000,
+    maxConsecutiveIneffective: 10,
+    summaryTimeoutMs: 60000,
+};
+
+function ctxPolicySummaryProviderLabel(value: string): string {
+    return value === "llm"
+        ? t("settings.ctxSummaryProviderLlm")
+        : t("settings.ctxSummaryProviderRule");
+}
+
+function ctxPolicyFields(): DomainField[] {
+    return defaultsLeaves().map((leaf) => {
+        const label = t(`settings.ctx.${leaf.key}`);
+        const key = DEFAULTS_PREFIX + leaf.key;
+        if (leaf.type === "boolean") return { key, label, type: "select", options: boolOptions };
+        if (leaf.type === "enum") {
+            return {
+                key,
+                label,
+                type: "select",
+                options: (leaf.enumValues ?? []).map((option) => ({
+                    label: ctxPolicySummaryProviderLabel(option.value),
+                    value: option.value,
+                })),
+            };
+        }
+        if (leaf.type === "integer" || leaf.type === "number") {
+            const max = CTX_POLICY_MAX[leaf.key];
+            // 布尔字段这里用 select + boolOptions：本文件既有布尔键（useRegistry / useSupervisor /
+            // providerRequestFingerprintEnabled）都是这个形态，保持一致；不新引入 Switch 控件类型
+            // 是为了不碰 ConfigDomainPanel 的渲染分支（task-286 正在改那一段，交界处已划死）。
+            return max === undefined
+                ? { key, label, type: "number" }
+                : { key, label, type: "number", max };
+        }
+        return { key, label, type: "text" };
+    });
+}
+
 const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
     // PLAN-0523 T3.6 (决策 #13): llm-provider 不再有通用表单字段——默认身份
     // profile / 每模型 modelParams 均由「模型提供方」分区（ProviderHub）就地编辑；
     // 旧 imageProvider/三采样键随 schema 与迁移退役（imageProvider 键保留给冻结的图像块）。
     "llm-provider": [],
-    "context-policy": [
-        { key: "defaults", label: t("settings.fieldCompactionDefaults"), type: "json" },
-        { key: "models", label: t("settings.fieldCompactionModels"), type: "json" },
-    ],
+    // task-285：`defaults` 的 13 个类型化键逐个给控件；`models` 是按模型覆盖子表，
+    // 由下方 <ContextModelOverrides> 渲染（**不在这里出现**，所以本域没有 json 字段了）。
+    "context-policy": ctxPolicyFields(),
     "approval-policy": [
         {
             key: "mode",
@@ -439,6 +506,15 @@ watchEffect(() => emit("editable-count", editableFieldCount.value));
  */
 function entriesFor(domain: string): Record<string, string> {
     const entries = configStore.layerConfig[props.layer][domain] || {};
+    // task-285：`defaults` 是一段 JSON 文本，面板按「一个 key 一个控件」渲染，
+    // 所以这里把它摊成 `defaults.<leaf>` 的扁平行；写回时由 composeContextPolicyPayload 合回。
+    if (domain === CONTEXT_POLICY_DOMAIN) {
+        const out: Record<string, string> = {};
+        for (const [leaf, text] of Object.entries(decomposeDefaults(entries[DEFAULTS_KEY]))) {
+            out[DEFAULTS_PREFIX + leaf] = text;
+        }
+        return out;
+    }
     if (domain !== "user-preference") return entries;
     return { ...entries, language: settings.language };
 }
@@ -509,6 +585,38 @@ function generateSummary(domain: string): string {
     return "";
 }
 
+/**
+ * task-285：把「逐字段草稿」合回 CP 认的两个键（`defaults` / `models` 的 JSON 文本）。
+ *
+ * <p>三条判据的落点：
+ * ② **往返字节不变** —— 深度相等时 `composeDefaults` 返回 `null`，这里就不往 payload 里放该键
+ *   （`handleSave` 对空 payload 直接跳过 PUT）。真正改动过才重排版。
+ * ④ **未登记键不丢** —— 重组以**原始对象**为底，只覆盖/删除本表单认识的键。
+ *</p>
+ *
+ * <p>为什么「不在 body 里的叶子 = 取消该键」是安全的：`ConfigDomainPanel.handleSave` 只过滤
+ * 「空值 / 锁定 / 不可写 / 实例专属落到下层」四种；而 context-policy 的 CP meta 键是 `defaults`
+ * 与 `models` 两个整键，**不存在** `defaults.<leaf>` 级别的锁定或不可写，所以叶子缺席只可能是
+ * 「本来就没设 / 用户清空了」，两种都该等于删键。</p>
+ */
+function composeContextPolicyPayload(body: Record<string, string>): Record<string, string> {
+    const entries = configStore.layerConfig[props.layer][CONTEXT_POLICY_DOMAIN] || {};
+    const out: Record<string, string> = {};
+    if (MODELS_KEY in body) out[MODELS_KEY] = body[MODELS_KEY];
+    const drafts: Record<string, string> = {};
+    for (const [key, value] of Object.entries(body)) {
+        if (key.startsWith(DEFAULTS_PREFIX)) drafts[key.slice(DEFAULTS_PREFIX.length)] = value;
+    }
+    // 保存来自 models 子表时不要顺手重写 defaults（那会把「没动过」变成「动过」）。
+    const defaultsTouched = !(MODELS_KEY in body) || Object.keys(drafts).length > 0;
+    if (defaultsTouched) {
+        for (const leaf of defaultsLeaves()) if (!(leaf.key in drafts)) drafts[leaf.key] = "";
+        const text = composeDefaults(entries[DEFAULTS_KEY], drafts);
+        if (text !== null) out[DEFAULTS_KEY] = text;
+    }
+    return out;
+}
+
 function validateJsonFields(domain: string, body: Record<string, string>): string | null {
     for (const field of domainSchemas.value[domain] ?? []) {
         if (field.type !== "json") continue;
@@ -544,6 +652,7 @@ async function handleSave(domain: string, body: Record<string, string>) {
     // task-125（D-899，方案 B）：user-preference.language 走 setLanguage（PLAN-0602 唯一
     // 状态机），从 CP payload 剥离 —— 双写必然漂移（启动只读 localStorage，CP 值是死水）。
     let payload = body;
+    if (domain === CONTEXT_POLICY_DOMAIN) payload = composeContextPolicyPayload(body);
     if (domain === "user-preference" && "language" in body) {
         const { language, ...rest } = body;
         if (language) settings.setLanguage(language as Language);
@@ -551,6 +660,11 @@ async function handleSave(domain: string, body: Record<string, string>) {
     }
     savingDomains.value[domain] = true;
     try {
+        // task-285：`context-policy` 的逐字段表单在「什么都没改」时 payload 会是空对象
+        // （`composeDefaults` 深度相等就返回 null ⇒ 不放 defaults；models 子表 unchanged 直接不 emit）。
+        // 这种情况必须**静默返回**：既不发空 PUT（有清库语义风险），也不报「已保存」——
+        // 报成功而实际一个请求都没发，就是把「跳过」伪装成「通过」。
+        if (Object.keys(payload).length === 0 && domain !== "user-preference") return;
         // 只剩 language 被剥离时可能为空 —— 空 PUT 有清库语义风险，跳过（语言已成功应用）。
         if (Object.keys(payload).length > 0) {
             await configStore.putLayerConfig(props.layer, domain, payload);
@@ -574,6 +688,30 @@ async function handleReset(domain: string, key: string) {
         // task-125：language 的重置 = 回默认语言（走同一状态机），不写 CP。
         if (domain === "user-preference" && key === "language") {
             settings.setLanguage(DEFAULT_LOCALE);
+            await reloadLayer();
+            toast.success(`${key} ${t("common.reset")}`);
+            return;
+        }
+        // task-285：`defaults.<leaf>` 不是服务端的独立行，「重置」只能整键重写 —— 把该键从
+        // `defaults` 对象里去掉后写回；去掉后对象为空且是实例层 ⇒ 直接删掉 `defaults` 整行，
+        // 恢复「整域继承」，而不是把一个空对象钉在实例层。
+        if (domain === CONTEXT_POLICY_DOMAIN && key.startsWith(DEFAULTS_PREFIX)) {
+            const leaf = key.slice(DEFAULTS_PREFIX.length);
+            const entries = configStore.layerConfig[props.layer][domain] || {};
+            const obj = parseObjectValue(entries[DEFAULTS_KEY]);
+            const drafts: Record<string, string> = {};
+            for (const field of defaultsLeaves()) {
+                drafts[field.key] = field.key === leaf ? "" : valueToText(obj[field.key]);
+            }
+            const text = composeDefaults(entries[DEFAULTS_KEY], drafts);
+            if (text !== null) {
+                const empty = Object.keys(parseObjectValue(text)).length === 0;
+                if (props.layer === "instance" && empty) {
+                    await configStore.deleteInstanceKey(domain, DEFAULTS_KEY);
+                } else {
+                    await configStore.putLayerConfig(props.layer, domain, { [DEFAULTS_KEY]: text });
+                }
+            }
             await reloadLayer();
             toast.success(`${key} ${t("common.reset")}`);
             return;
@@ -712,6 +850,15 @@ async function handleReset(domain: string, key: string) {
             :user-entries="userEntriesFor(domain)"
             @save="handleSave(domain, $event)"
             @reset="handleReset(domain, $event)"
+        />
+        <!-- task-285：`context-policy` 的第二个键（models）是「按模型覆盖」子表。
+             它**不进** domainSchemas，所以该域页面上一个 json 字段都没有；未登记键由子表原样保留。 -->
+        <ContextModelOverrides
+            v-if="domain === 'context-policy'"
+            :models-raw="(configStore.layerConfig[layer][domain] || {}).models || ''"
+            :readonly="readonly"
+            :saving="savingDomains[domain] || false"
+            @save="handleSave(domain, $event)"
         />
     </div>
 </template>

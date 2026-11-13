@@ -62,6 +62,13 @@ function leaf(key, node) {
         type = node?.additionalProperties?.type === "object" ? "map" : "json";
     else if (type === "array") type = "json";
     const field = { key, type: String(type ?? "string") };
+    // task-285：map 值型也要能渲染「每行只暴露该行真实可用的键」——
+    // 早先只给 type "map"，值对象的属性就丢了（`context-policy.models` 的 12 个按模型覆盖键、
+    // `llm-provider.modelParams`）。只加这一个可选字段，不改既有 key/type 语义。
+    if (field.type === "map") {
+        const valueFields = flatten(node?.additionalProperties, "");
+        if (valueFields.length > 0) field.mapValueFields = valueFields;
+    }
     if (Array.isArray(node?.enum)) field.enumValues = node.enum.map((value) => ({ value }));
     if (node?.description) field.description = node.description;
     return field;
@@ -117,6 +124,7 @@ const HEAD = [
         "map" +
         DQ +
         "；type 数组取首标量；",
+    " * " + DQ + "map" + DQ + " 额外带 mapValueFields（值对象属性，供按行渲染）；",
     " * enum → type " +
         DQ +
         "enum" +
@@ -133,6 +141,8 @@ const HEAD = [
     "export interface SchemaField {",
     "    key: string;",
     "    type: SchemaFieldType;",
+    "    /** type " + DQ + "map" + DQ + " 的值对象属性（键名不含前缀）；其他类型不出现。 */",
+    "    mapValueFields?: SchemaField[];",
     "    enumValues?: { value: string; label?: string }[];",
     "    description?: string;",
     "}",
