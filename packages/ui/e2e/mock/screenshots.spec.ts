@@ -152,6 +152,10 @@ for (const route of allRoutes) {
                 });
                 return;
             }
+            // task-466（D-1322 / D-1363）：这条分支**已覆盖两种形态**（`/api/v1/sessions` 与
+            // `/api/v1/workspaces/{id}/sessions` 都以 `/sessions` 结尾）⇒ 本 spec 无需另加会话集合桩。
+            // **不要在这条之后再插一条 `{sessions: []}` 正则桩**：LIFO 后注册优先，会把下面给真会话行的
+            // 桩盖成空集 ⇒ 断言变空断言（D-1281 同族，task-461 注释里写明「不许照抄到需要内容的场景」）。
             if (requestUrl.pathname.endsWith("/sessions")) {
                 await route2.fulfill({
                     status: 200,
