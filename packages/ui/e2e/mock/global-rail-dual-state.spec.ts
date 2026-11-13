@@ -2,13 +2,17 @@
 import { expect, test } from "./helpers/mock-test";
 
 /**
- * task-189 / BL-584 / BL-578 / D-896：全局条双态 + 二级菜单的**真浏览器证据**。
+ * task-189 / BL-584 / BL-578 / D-896（**④b 已由 D-899 推翻**，`task-259` 回退）：
+ * 全局条双态 + 二级菜单的**真浏览器证据**。
  *
  * <p>为什么必须是 Playwright 而不是 jsdom：本卡要证明的三件事都在「真实布局 + 真实 popup」上——
  * ① 折叠/展开的**实测宽度**（56px ↔ 192/224px，vendor Sidebar 的 `--sidebar-width` 变量参与），
  * ② `DropdownMenu` 的 popup 真的挂在 body 上并可按 `side=right` 定位，
  * ③ 键盘（Tab → Enter/Space）能开菜单与切态。这三条 jsdom 全测不了（reka-ui 的程序化选择
- * 与 popup 定位在 jsdom 下不存在，见 `packages/ui/AGENTS.md` §Reka UI 交互陷阱）。</p>
+ * 与 popup 定位在 jsdom 下不存在，见 `packages/ui/AGENTS.md` §Reka UI 交互陷阱）。
+ * ④（`task-259`）**指针停在模块行上不开菜单** —— 这是一条"什么都没发生"的断言，只有真实
+ * 浏览器 + 真墙钟等待才判得了（jsdom 里没有指针合成，删 handler 与没触发同读数）。它与
+ * 第 1 条用例里「chevron 点击后菜单出现」**成对**：只留前者会变成"删了菜单也算绿"。</p>
  */
 
 /** 折叠态 56px（vendor `--sidebar-width-icon: 3.5rem`）；断言留 ±8px 容差（边框/内距）。 */
@@ -48,21 +52,57 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         await expect(page.getByTestId("global-rail")).toBeVisible();
     }
 
-    test("折叠态悬浮打开二级菜单，内容由 SSOT 派生（资源 5 项）", async ({ page }) => {
+    /**
+     * task-259（回退 `83b4fd213` 的悬停通道）：**折叠态指针停住不出现菜单** + **点 chevron 才出现**
+     * —— 两条一起才证明「删对了通道」而不是「把菜单删了」（D-899 判 BL-578 缓做，
+     * `D-896 ④b` 的悬浮方向由用户本人推翻；点击/键盘通道仍成立）。
+     *
+     * <p>为什么 jsdom 不足以判这条：`pointerenter` 是浏览器合成事件，`trigger("pointerenter")`
+     * 只能证明"我们把 handler 接上了"，删掉 handler 与"指针真的没触发"在单测里同一个读数；
+     * 这里用**真实指针 + 真墙钟等待**，判据是"等过足够长时间后菜单依然不存在"。</p>
+     */
+    test("折叠态悬浮不打开二级菜单（D-899 回退），chevron 点击才打开且内容由 SSOT 派生", async ({
+        page,
+    }) => {
         await gotoRail(page);
 
         const rail = page.getByTestId("global-rail");
         const collapsedBox = await rail.boundingBox();
         expect(collapsedBox?.width ?? 999).toBeLessThan(RAIL_COLLAPSED_MAX);
 
-        // 折叠态只有图标 ⇒ 悬浮是「这个图标是什么」的唯一通道（D-896）。
-        await page.getByTestId("global-rail-module-resources").hover();
+        // ① 反向断言：指针停在模块行上 900ms（远大于历史上那条 160ms 打开延迟）⇒ 菜单**不存在**。
+        // 用 toHaveCount(0) 而不是 not.toBeVisible：关闭态 reka 直接不挂载内容，
+        // "不可见"对"没渲染"与"渲染了但藏起来"两种实现都成立 ⇒ 判据会过松。
+        //
+        // 用 `mouse.move` 而不是 `hover()`：`hover()` 带 actionability 检查，一旦有人把悬浮通道
+        // 加回来，菜单（reka 默认 modal）会把内容区标成 `pointer-events:none` ⇒ `hover()` 永远等不到
+        // "可接收指针事件" ⇒ 整条用例**以 30s 超时收场**（实测反例输入：把 `@pointerenter` 接回
+        // 打开通道，本用例红为 "Test timeout of 30000ms exceeded"，看不出是哪条判据红）。
+        // `mouse.move` 不做该检查 ⇒ 断言落在 toHaveCount 上，同一次反例输入的失败信息是
+        // "Expected: 0 / Received: 1"，直接点出是「菜单真出现了」。
+        const row = await page.getByTestId("global-rail-module-resources").boundingBox();
+        if (!row) throw new Error("折叠态模块行没有 bounding box（rail 没渲染出来）");
+        await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2);
+        await page.waitForTimeout(900);
+        await expect(page.getByTestId("global-rail-menu-content-resources")).toHaveCount(0);
+        // 触发器的 aria 状态也没被指针改过（悬浮不改变可访问性状态）。
+        await expect(page.getByTestId("global-rail-menu-resources")).toHaveAttribute(
+            "aria-expanded",
+            "false",
+        );
+
+        // ② 正例（**点击通道**）：折叠态 chevron 是 `sr-only`（视觉让位、键盘仍可达，见下一条用例的
+        // 键盘 Enter），Playwright 的 actionability 会拒绝点不可见元素 —— 这不是缺陷，而是折叠态的
+        // 事实：**折叠态用键盘、展开态用点击**。所以先把栏展开，再点同一行的 chevron。
         const menu = page.getByTestId("global-rail-menu-content-resources");
+        await page.getByTestId("global-rail-toggle").click();
+        await expect
+            .poll(async () => (await rail.boundingBox())?.width ?? 0, { timeout: 3_000 })
+            .toBeGreaterThan(RAIL_EXPANDED_MIN);
+        await page.getByTestId("global-rail-menu-resources").click();
         await expect(menu).toBeVisible();
-        // **「开着」还不够，必须「一直开着」**（task-189 实测抓到的一次真缺陷）：
-        // 指针停住不动，菜单若在 160ms 后自己关掉又打开（周期 ≈700ms 的自激开关），
-        // 上面那句 `toBeVisible()` 正好落在开的那一帧 ⇒ 断言全过、产品是坏的。
-        // 判据：停在同一位置等过两个关闭周期后，仍然可见。
+        // 「开着」还不够：历史上正是这里被 hover 计时器关掉又重开（周期 ≈700ms 的自激开关）
+        // ⇒ 等过两个周期后仍必须可见（R1：观察窗 ≥ 触发阈值 3 倍）。
         await page.waitForTimeout(900);
         await expect(menu).toBeVisible();
 

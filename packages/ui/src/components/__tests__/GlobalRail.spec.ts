@@ -24,6 +24,11 @@ const messages = {
             // `sidebar.moduleMenu`，而本夹具的 messages 没这条 ⇒ 该文件在 HEAD 上就红
             // （"渲染结果里出现裸 i18n 键"）。补键不改判据、不放宽断言。
             moduleMenu: "打开模块页面菜单",
+            // 夹具补齐（task-259 顺带；与本次回退无关的存量缺口）：`GLOBAL_MODULES` 自
+            // `dc3603db6`（组织成员页）起多了一个 `org-members` 模块，其 labelKey 是
+            // `sidebar.orgMembers`，而本夹具没这条 ⇒ 本文件在 HEAD 上就红（渲染结果里出现裸键）。
+            // 补键不放宽任何断言。
+            orgMembers: "组织成员",
         },
     },
 };
@@ -122,14 +127,20 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         patchAuth(true); // 即便管理员：D-933 —— 管理按钮已直接移除，不设替代入口。
         const wrapper = await mountRail();
         expect(wrapper.get('[data-testid="global-rail"]').exists()).toBe(true);
-        // PLAN-0772 M2 起主区**不再只有工作台**：资源是第三个顶层入口、排在主区第二项。
+        // PLAN-0772 M2 起主区**不再只有工作台**：资源是第三个顶层入口。
         // （本用例原名为 "workbench only in the main area"，PLAN-0772 之后那句话已是假话 ⇒ task-293 改掉。）
+        // `dc3603db6`（组织成员页）又加了 `org-members` 模块，但本断言没跟着改 ⇒ 本文件在 HEAD 上
+        // 就红（"主区只有两项"是过期事实）。task-259 同批修正：顺序 = GLOBAL_MODULES 的声明序。
         const main = wrapper.get('[data-testid="global-rail"] [data-slot="sidebar-content"]');
         expect(
             main
                 .findAll('[data-testid^="global-rail-module-"]')
                 .map((n) => n.attributes("data-testid")),
-        ).toEqual(["global-rail-module-workbench", "global-rail-module-resources"]);
+        ).toEqual([
+            "global-rail-module-workbench",
+            "global-rail-module-org-members",
+            "global-rail-module-resources",
+        ]);
         expect(wrapper.get('[data-testid="global-rail-module-workbench"]').text()).toContain(
             "工作台",
         );

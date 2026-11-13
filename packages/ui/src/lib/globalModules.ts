@@ -24,15 +24,6 @@ import {
  * <p>判据（可复算）：本文件**不得出现** `/resources/`、`/settings/instance/` 这类路径字面量，
  * 也不得出现域/资源的名字字符串 —— 一旦出现就说明有人把清单手写回来了。
  */
-/**
- * 折叠态「悬浮即开菜单」的延迟（ms）。
- *
- * <p>为什么是同一个常量而不是两处 `160`：延迟手感必须一致，而**两处独立写死的数字迟早
- * 分叉**（一处调了另一处没调，用户看到的是「上面的菜单快、下面的菜单慢」）。放在 lib 里
- * 由 `GlobalRail.vue`（模块行）与 `GlobalRailModule.vue`（行内 hover）共用。</p>
- */
-export const RAIL_HOVER_OPEN_DELAY_MS = 160;
-
 export type GlobalModuleId = "workbench" | "org-members" | "resources" | "settings";
 
 export interface GlobalMenuItem {

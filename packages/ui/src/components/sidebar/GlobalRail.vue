@@ -45,11 +45,17 @@ import GlobalRailModule from "./GlobalRailModule.vue";
  * 导航面板。两个不同的 UI 对象共用一颗开关，那是回归不是复用。故本组件用独立键
  * `xihe-global-rail` = `{ open, width }`（一个对象、两种宽度分开存，不设第二份布尔状态）。</p>
  *
- * <p><b>二级菜单（task-189 / BL-578 / D-896）</b>：每个模块项都带二级菜单，载体是
+ * <p><b>二级菜单（task-189 / D-896 / D-899）</b>：每个模块项都带二级菜单，载体是
  * `DropdownMenu`（`side=right` / `align=start`，D-896 的选型裁定：不用 `NavigationMenu`
  * —— 语义重复且自带 viewport 容器；不用 `Menubar`）。菜单内容**全部由 SSOT 派生**
  * （`lib/globalModules.ts` 投影 `settingsIa.ts` 的资源矩阵与域矩阵），本组件与行组件里都不写
- * 任何页面清单。折叠态只剩 56px 图标时，悬浮即打开菜单 —— 这是「这个图标是什么」的通道。</p>
+ * 任何页面清单。</p>
+ *
+ * <p><b>打开通道只有两条：行内 chevron 点击、键盘 Tab/Enter</b>（`task-259` 回退）。**没有**
+ * 「折叠态悬浮即开」：`D-896 ④b`（用户「不论是否折叠都要有悬浮二级菜单」）在同日 10:0x 由
+ * 用户本人推翻 —— `D-899` 原话「悬浮二级菜单放 bl 先不做，太丑了」⇒ 不进产品 MVP、登记
+ * `BL-578` 缓做。`task-189` 曾把该通道实现出来并绑定 `collapsed`，属违规实现，`task-259`
+ * 已整条删除（连同 `RAIL_HOVER_OPEN_DELAY_MS`）。**改这一块前先核该面 D 号的最新状态**。</p>
  */
 const { t } = useI18n();
 const router = useRouter();
@@ -202,7 +208,6 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                                 :key="module.id"
                                 :module="module"
                                 :open="openMenuId === module.id"
-                                :collapsed="!railOpen"
                                 :active="isModuleActive(module.basePath)"
                                 :active-path="route.path ?? ''"
                                 @navigate="navigate"
@@ -227,7 +232,6 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                         :key="module.id"
                         :module="module"
                         :open="openMenuId === module.id"
-                        :collapsed="!railOpen"
                         :active="isModuleActive(module.basePath)"
                         :active-path="route.path ?? ''"
                         @navigate="navigate"

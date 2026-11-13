@@ -130,11 +130,16 @@ const SHOTS = [
         app: true,
         expand: "[data-testid=settings-skills-import]",
     },
-    // task-189（D-896 / BL-584 / BL-578）：全局条双态 + 二级菜单。
-    // 13 = **折叠态**（56px）+ 悬停打开的「资源」二级菜单 —— 折叠态只剩图标，悬浮菜单是
-    //      「这个图标是什么 / 点下去有哪些页」的唯一通道，所以这张就是 D-896 的验收图；
+    // task-189（D-896 / BL-584）/ task-259（D-899 回退）：全局条双态。
+    // 13 = **折叠态**（56px）—— `task-259` 删掉了「折叠态悬停打开二级菜单」通道（D-899 判
+    //      BL-578 缓做、`D-896 ④b` 被用户本人推翻）⇒ 这张图现在**只有折叠态本身**，不再有菜单；
+    //      折叠态的菜单证据改由 `e2e/mock/global-rail-dual-state.spec.ts` 的「点 chevron 后出现」
+    //      承担（jsdom 与截图都替代不了点击通道的真浏览器验证）。
+    //      **在册基线仍是旧图**（图里还有那个菜单）：`task-259` 禁区写明「不碰 mock 基线（另批重拍）」
+    //      ⇒ 本脚本只改注释与语义，图留在基线批次一起重拍；在那之前对 13 号的判据是"已知过期"，
+    //      不要拿它当"折叠态有悬浮菜单"的证据。
     // 14 = **展开态**（图标 + 文字）+ 点开的「设置」二级菜单 —— 双态控件（`global-rail-toggle`）
-    //      与「一级模块 = 菜单入口」两件事同屏。
+    //      与「一级模块 = 菜单入口」两件事同屏（点击通道，与折叠态无关）。
     // ⚠️ 13 依赖**新 context 的默认折叠态**，顺序不能与 14 颠倒（14 会把状态写成展开并留在
     //    localStorage 里）；`--only 13,14` 按本顺序为真，倒序拍会得到两张展开图。
     {
@@ -150,8 +155,9 @@ const SHOTS = [
         path: "/settings/user/llm-provider",
         app: true,
         expand: ["[data-testid=global-rail-toggle]", "[data-testid=global-rail-menu-settings]"],
-        // 菜单打开后若把鼠标挪走，`pointerleave` 会在 160ms 后把它关掉（GlobalRailModule 的
-        // 真实行为）⇒ 指针必须留在触发器上，否则这张图会变成「展开态但没有菜单」。
+        // 菜单是**点击打开**的受控浮层：点完把指针挪到内容区空白处不会关菜单，但 `keepPointer`
+        // 仍然保留 —— 它证明的是「指针停在触发器上时菜单不被任何指针逻辑关掉」（`task-259` 删掉
+        // 指针通道后这条更强：现在没有任何计时器能关它）。
         keepPointer: true,
     },
     // task-240（PLAN-0773 M3 批 A）：组织成员页（全局模块 `/members`，真路由真组件）。
@@ -884,8 +890,9 @@ async function shootOne(page, base, shot, outDir) {
             await page.waitForTimeout(500);
         }
         if (shot.hover) {
-            // task-189：折叠态的二级菜单**只有悬浮才开**（D-896 把它定为折叠态的可读性通道）⇒
-            // 交付图必须由真悬浮触发，不能用 click 假装。等 160ms 打开延迟 + 弹层定位落定。
+            // `task-259`：悬浮**不再**打开菜单（D-899 回退）⇒ 这里只剩「把指针停在某元素上」这一个
+            // 语义（拍悬停态底色之类）。历史上这一步是为了等 160ms 打开延迟，那个常量已删除；
+            // 900ms 静置保留，它的作用变成「等过任何可能的延时逻辑后取景」（防拍在过渡中间）。
             await page.hover(shot.hover, { timeout: 10000 });
             await page.waitForTimeout(900);
         }
@@ -904,8 +911,9 @@ async function shootOne(page, base, shot, outDir) {
         for (const el of document.querySelectorAll("[data-mock-canvas] *")) el.scrollTop = 0;
     });
     // 鼠标停在左栏会留下 hover 底色；挪到内容区空白处，避免"看起来像同时选中两项"。
-    // task-189：`hover` 镜头（画面就是悬停态）与 `keepPointer` 镜头（弹层靠指针位置维持）
-    // **都不能挪鼠标** —— 挪走 = pointerleave = 菜单按 160ms 关闭，交付图里就没有菜单了。
+    // `hover` 镜头（画面就是悬停态）与 `keepPointer` 镜头（画面里有靠指针位置维持的浮层）
+    // **都不能挪鼠标**：挪走等于把悬停态拍成了常态（`task-259` 后已没有"指针离开就关菜单"的
+    // 计时器，但这条取景纪律对 hover 镜头本身仍然成立）。
     if (!shot.hover && !shot.keepPointer) {
         await page.mouse.move(VIEWPORT.width - 200, VIEWPORT.height - 100);
         await page.waitForTimeout(400);

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../i18n";
+import * as globalModuleExports from "../globalModules";
 import {
     GLOBAL_MODULES,
     globalModule,
     isModulePathMatch,
     moduleForPath,
     ORG_MEMBERS_PATH,
-    RAIL_HOVER_OPEN_DELAY_MS,
     WORKBENCH_PATH,
 } from "../globalModules";
 import {
@@ -102,7 +102,13 @@ describe("globalModules：模块路径判定", () => {
         expect(moduleForPath("/chat/abc")?.id).toBeUndefined();
     });
 
-    it("悬停开菜单的延迟是同一个常量（不在两处各写一个数字）", () => {
-        expect(RAIL_HOVER_OPEN_DELAY_MS).toBe(160);
+    /**
+     * task-259（回退 `83b4fd213` 的悬停通道）的**存在性反向断言**：常量必须消失。
+     * 组件级「指针停住不出现」由 `components/__tests__/GlobalRail.spec.ts` 与 e2e
+     * `global-rail-dual-state.spec.ts` 各自钉住；本条只保证没有人把这条通道的**脚手架**留在
+     * lib 层（留常量 = 下一个人重新接线只差两行）。
+     */
+    it("lib 里不再有「悬停打开延迟」常量（BL-578 缓做，D-899）", () => {
+        expect(Object.keys(globalModuleExports)).not.toContain("RAIL_HOVER_OPEN_DELAY_MS");
     });
 });
