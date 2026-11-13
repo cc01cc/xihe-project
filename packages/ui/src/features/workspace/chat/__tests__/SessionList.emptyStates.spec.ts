@@ -30,10 +30,11 @@ const noSession = zhSidebar.emptyNoSession as Branch;
 
 // `oxlint` 的 `vitest/require-mock-type-parameters` 是阻断规则：`vi.fn()` 必须带类型参数，
 // 否则 `mockResolvedValue` 的入参就是 `never`，夹具写错了也不会红。
-const { pushSpy, listWorkspaces, getSessions } = vi.hoisted(() => ({
+const { pushSpy, listWorkspaces, getSessions, getWorkspacelessSessions } = vi.hoisted(() => ({
     pushSpy: vi.fn<Router["push"]>(),
     listWorkspaces: vi.fn<() => Promise<unknown[]>>(),
     getSessions: vi.fn<(workspaceId?: string) => Promise<unknown>>(),
+    getWorkspacelessSessions: vi.fn<() => Promise<unknown>>(),
 }));
 
 vi.mock("vue-router", async (importOriginal) => {
@@ -49,7 +50,10 @@ vi.mock("vue-router", async (importOriginal) => {
 // 把整个模块换成手搓对象会让「两套归一化」从这个 spec 里开始。
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../../composables/api")>();
-    return { ...actual, api: { ...actual.api, listWorkspaces, getSessions } };
+    return {
+        ...actual,
+        api: { ...actual.api, listWorkspaces, getSessions, getWorkspacelessSessions },
+    };
 });
 
 function sessionRecord(id: string, title: string, workspaceId: string) {
@@ -99,6 +103,13 @@ beforeEach(() => {
     pushSpy.mockReset();
     listWorkspaces.mockReset();
     getSessions.mockReset();
+    // task-373 / `D-1236`：「一个分组都没有」空态现在还要求**独立会话分组也不显示**
+    // （`WorkspaceSessionGroups.vue:278` 的 `!hasWorkspace && !showStandalone`）。
+    // 不桩这条读面，jsdom 里真 fetch 失败 ⇒ 分组带错渲染 ⇒ showStandalone 为真 ⇒
+    // ③b 的前提（一个分组都没有）根本不成立。独立会话自己的判据在
+    // `WorkspaceSessionGroups.standalone.spec.ts`，这里只把前提摆正，不重复钉。
+    getWorkspacelessSessions.mockReset();
+    getWorkspacelessSessions.mockResolvedValue({ sessions: [], workspace: null });
 });
 
 describe("左栏工作区分组（task-352）", () => {
