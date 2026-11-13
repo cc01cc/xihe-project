@@ -26,8 +26,10 @@ const CHAIN_HINT: Record<"index" | "preview", string> = {
 
 export default async function chainProof(): Promise<void> {
     const expected = resolveExpectedChain();
+    // task-398 / D-1241：默认端口须与 playwright.config.ts 的 UI_PORT 默认一致且离 stack 段（旧 12630=stack-1 ui，
+    // 未设 env 时 config 起 12750 而探针打 12630 ⇒ 被测对象不在场，D-1219 同族）。
     const base = (
-        process.env.XIHE_E2E_BASE_URL ?? `http://localhost:${process.env.XIHE_UI_PORT || "12630"}`
+        process.env.XIHE_E2E_BASE_URL ?? `http://localhost:${process.env.XIHE_UI_PORT || "12750"}`
     ).replace(/\/$/, "");
     const url = `${base}${CHAIN_PROBE_PATH}`;
 
