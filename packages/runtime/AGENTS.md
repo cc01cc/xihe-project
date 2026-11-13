@@ -29,6 +29,7 @@
 
 ### Build output & target watermark
 - **构建产物外置**：`A03-xihe/.cargo/config.toml` 把 target 指向 `<one>/.tmp/cargo-target/main`（相对路径，**不要写盘符**；需要临时覆盖时用 `CARGO_TARGET_DIR`，其优先级更高）。裸 `cargo build/check` 与 rust-analyzer 都走这条；**不要删除/提交该配置**，也不要再生成 `packages/runtime/target`。
+- **target 热不热差一个数量级（task-238，2026-11-13 实测）**：`<one>/.tmp/cargo-target/main` 此前**不存在**（冷启）⇒ 首次 `cargo build --bin xihe-runtime` **66 s**；此后热态增量 build **7–31 s**、`clippy --all-targets` 热态一次 **~10 s**（冷态还要用 clippy 把依赖重编一遍，本次未单独计时）⇒ **改 runtime 前先确认 target 是热的，别冷启**。
 - 改 runtime 构建/依赖后跑一次 `mise run check:runtime-target`（12GB normal / 15GB warn / 20GB force 或 H 余量 <5GB force；watch 级别只打印）。`mise run dev:host` 启动前会自动跑一次该检查（task-16）。
 
 ## Project Structure
