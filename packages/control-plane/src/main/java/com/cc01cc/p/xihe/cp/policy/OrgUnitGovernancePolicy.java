@@ -128,10 +128,27 @@ public final class OrgUnitGovernancePolicy {
      * @param roleAtomNames atom names of the role being bound
      */
     public static void requireGovernanceRole(Collection<String> roleAtomNames) {
+        requireGovernanceRole(null, roleAtomNames);
+    }
+
+    /**
+     * The same gate, with the role named in the refusal.
+     *
+     * <p>{@code M2-8a}'s strict expansion arm hits rows that the write side never saw, so the message
+     * must say <i>which</i> role is being refused and <i>which</i> atom put it outside the
+     * whitelist; identifying a row by "one of your roles" is not actionable. The judgement is
+     * still {@link #offendingAtoms} — this overload only words the refusal, it does not loosen
+     * or tighten it, and both arms therefore cannot drift apart.</p>
+     *
+     * @param roleName      the role being bound, or {@code null} when the caller has no name to give
+     * @param roleAtomNames atom names of that role
+     */
+    public static void requireGovernanceRole(String roleName, Collection<String> roleAtomNames) {
         List<String> offending = offendingAtoms(roleAtomNames);
         if (!offending.isEmpty()) {
+            String subject = roleName == null || roleName.isBlank() ? "role" : "role '" + roleName + "'";
             throw new CpApiException(HttpStatus.CONFLICT, CODE_FORBIDDEN,
-                    "role is not an org-unit governance role; atom(s) outside the whitelist: "
+                    subject + " is not an org-unit governance role; atom(s) outside the whitelist: "
                             + String.join(",", offending));
         }
     }
