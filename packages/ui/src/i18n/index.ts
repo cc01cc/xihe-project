@@ -2908,6 +2908,9 @@ const messages = {
                 columnUpdated: "更新时间",
                 columnActions: "操作",
                 writeAtomMissing: "当前账号缺动作原子 {atom}（CP 写面要它，这里只禁用不隐藏）",
+                writeGateLoading: "正在读取权限，稍候即可操作（尚未判定，不代表账号缺权限）",
+                writeGateError: "权限读取失败，暂时无法判定写权限。",
+                writeGateRetry: "重试",
                 credentials: {
                     title: "实例凭据",
                     subtitle:
@@ -6497,6 +6500,11 @@ const messages = {
                 columnActions: "Actions",
                 writeAtomMissing:
                     "This account lacks the action atom {atom} (CP requires it on writes; disabled, not hidden)",
+                writeGateLoading:
+                    "Reading permissions; actions unlock once resolved (not yet decided, this does not mean the account lacks permission)",
+                writeGateError:
+                    "Could not read permissions, so write access cannot be decided yet.",
+                writeGateRetry: "Retry",
                 credentials: {
                     title: "Instance credentials",
                     subtitle:

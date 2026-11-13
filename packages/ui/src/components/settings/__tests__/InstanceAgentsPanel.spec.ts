@@ -13,6 +13,9 @@ const authState = vi.hoisted(() => ({
     isAdmin: true,
     isAuthenticated: true,
     atoms: new Set<string>(["MANAGE_AGENT_PRINCIPALS"]),
+    // task-420：写门三态的 SSOT 是投影**读取状态**，不是「原子集合是否为空」。
+    // 默认 ready = 已读到（多数用例判已读态的 allowed/denied）。
+    selfPermissionsStatus: "ready" as "idle" | "loading" | "ready" | "error",
     ensureSelfPermissions: vi.fn<() => Promise<boolean>>(),
 }));
 
@@ -21,6 +24,7 @@ vi.mock("../../../stores/auth", () => ({
         ensureSelfPermissions: authState.ensureSelfPermissions,
         isAuthenticated: authState.isAuthenticated,
         hasInstanceAdminCapability: authState.isAdmin,
+        selfPermissionsStatus: authState.selfPermissionsStatus,
         hasInstanceAtom: (atom: string) => authState.atoms.has(atom),
     }),
 }));
@@ -113,6 +117,7 @@ beforeEach(() => {
     authState.isAdmin = true;
     authState.isAuthenticated = true;
     authState.atoms = new Set(["MANAGE_AGENT_PRINCIPALS"]);
+    authState.selfPermissionsStatus = "ready";
     authState.ensureSelfPermissions.mockResolvedValue(true);
     mockedList.mockResolvedValue({ agents: [], count: 0 });
     configState.providerConnections = [
@@ -262,6 +267,62 @@ describe("InstanceAgentsPanel", () => {
         const notice = wrapper.find('[data-testid="instance-agents-write-disabled"]');
         expect(notice.exists()).toBe(true);
         expect(notice.text()).toContain("MANAGE_AGENT_PRINCIPALS");
+        expect(notice.attributes("data-gate-state")).toBe("denied");
+
+        wrapper.unmount();
+    });
+
+    /**
+     * task-420（D-1254）三态回归：投影**未判定**（加载中 / 读取失败）不得渲染成「缺原子」。
+     * 真栈因果探针（delay / abort）证实二态实现会让真管理员看到确定性拒绝，失败态还永久禁用。
+     * 这三条与上面那条 denied 一起，钉住「禁用+报原子」只是**四态之一**，不是唯一正常态。
+     */
+    it("投影加载中：禁用但说「正在读取权限」，不点名原子", async () => {
+        authState.selfPermissionsStatus = "loading";
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const create = wrapper.find('[data-testid="instance-agents-create"]');
+        expect(create.attributes("disabled")).toBeDefined();
+        const notice = wrapper.find('[data-testid="instance-agents-write-disabled"]');
+        expect(notice.exists()).toBe(true);
+        expect(notice.attributes("data-gate-state")).toBe("loading");
+        expect(notice.text()).not.toContain("MANAGE_AGENT_PRINCIPALS");
+        expect(notice.text()).toContain("正在读取权限");
+        expect(wrapper.find('[data-testid="instance-agents-write-gate-retry"]').exists()).toBe(
+            false,
+        );
+
+        wrapper.unmount();
+    });
+
+    it("投影读取失败：禁用 + 说读取失败 + 给重试出口，点重试真的再取一次", async () => {
+        authState.selfPermissionsStatus = "error";
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const notice = wrapper.find('[data-testid="instance-agents-write-disabled"]');
+        expect(notice.attributes("data-gate-state")).toBe("error");
+        expect(notice.text()).not.toContain("MANAGE_AGENT_PRINCIPALS");
+        expect(notice.text()).toContain("权限读取失败");
+        const before = authState.ensureSelfPermissions.mock.calls.length;
+        const retry = wrapper.find('[data-testid="instance-agents-write-gate-retry"]');
+        expect(retry.exists()).toBe(true);
+        await retry.trigger("click");
+        await flushPromises();
+        expect(authState.ensureSelfPermissions.mock.calls.length).toBe(before + 1);
+
+        wrapper.unmount();
+    });
+
+    it("投影已读且含原子：可写，且不再渲染任何禁用理由", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(
+            wrapper.find('[data-testid="instance-agents-create"]').attributes("disabled"),
+        ).toBeUndefined();
+        expect(wrapper.find('[data-testid="instance-agents-write-disabled"]').exists()).toBe(false);
 
         wrapper.unmount();
     });

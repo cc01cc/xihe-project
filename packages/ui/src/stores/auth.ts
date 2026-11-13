@@ -99,6 +99,15 @@ export const useAuthStore = defineStore("auth", () => {
      */
     const ATOM_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
     const selfPermissions = ref<SelfPermissionsView | null>(null);
+    /**
+     * task-420（D-1254）：投影的**读取状态**，与「投影内容」分开存。
+     *
+     * <p>为什么必须分开：selfPermissions === null 同时代表「还没读」与「读失败」两种情况，
+     * 消费方只看内容就把两者都渲染成「账号缺原子」—— 真管理员在加载中/读取失败时看到确定性的
+     * 拒绝文案（delay/abort 因果探针实测，证据 internal/A03-xihe/evidence/
+     * 2026-11-14-instance-flow-audit/ 图 16-19）。状态是 SSOT，写门三态由它派生。</p>
+     */
+    const selfPermissionsStatus = ref<"idle" | "loading" | "ready" | "error">("idle");
     let selfPermissionsRequest: Promise<boolean> | null = null;
     /** Instance-scope atom names; workspace-scope atoms live under `workspaces[].permissions` and
      * must never unlock an instance-scope surface. */
@@ -148,12 +157,15 @@ export const useAuthStore = defineStore("auth", () => {
     function loadSelfPermissions(): Promise<boolean> {
         if (!token.value) return Promise.resolve(false);
         if (selfPermissionsRequest) return selfPermissionsRequest;
+        selfPermissionsStatus.value = "loading";
         selfPermissionsRequest = (async () => {
             try {
                 selfPermissions.value = await api.getSelfPermissions();
+                selfPermissionsStatus.value = "ready";
                 return true;
             } catch (cause) {
                 selfPermissions.value = null;
+                selfPermissionsStatus.value = "error";
                 logger.warn(
                     "Failed to load self permissions: " +
                         (cause instanceof Error ? cause.message : cause),
@@ -174,6 +186,7 @@ export const useAuthStore = defineStore("auth", () => {
 
     function clearSelfPermissions() {
         selfPermissions.value = null;
+        selfPermissionsStatus.value = "idle";
         selfPermissionsRequest = null;
     }
 
@@ -593,6 +606,7 @@ export const useAuthStore = defineStore("auth", () => {
         hasInstanceAdminCapability,
         isInstanceSuper,
         selfPermissions,
+        selfPermissionsStatus,
         hasInstanceAtom,
         canManageRoles,
         canReadInstanceContent,

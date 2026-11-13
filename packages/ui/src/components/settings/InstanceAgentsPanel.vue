@@ -5,6 +5,7 @@ import { toast } from "vue-sonner";
 import { Bot, Pencil, Plus, Trash2 } from "@lucide/vue";
 
 import { useAuthStore } from "../../stores/auth";
+import { useInstanceWriteGate } from "../../composables/useInstanceWriteGate";
 import { logger } from "../../lib/logger";
 import { ApiError } from "../../composables/api";
 import { mappedErrorCopy } from "../../lib/errorMessages";
@@ -83,12 +84,24 @@ const auth = useAuthStore();
  * sees」）⇒ 平台智能体列表对**任何登录用户**都可见。此前用能力位把整块面板挡在 403 卡后面，
  * 属 **UI 比 CP 严** —— 藏了用户本来能看的东西（与 R10 同侧，比「宽」更难发现：用户不会报错，只会说看不到）。</p>
  */
-const canWrite = computed(
-    () => auth.hasInstanceAdminCapability && auth.hasInstanceAtom("MANAGE_AGENT_PRINCIPALS"),
-);
-
 /** 动作原子名同时也是按钮禁用理由的文案参数（与 CP 守卫原文一致，便于对账）。 */
 const writeAtom = "MANAGE_AGENT_PRINCIPALS";
+
+/**
+ * task-420（D-1254）：写门从二态改**三态**（判据在 `useInstanceWriteGate`，此处只消费）。
+ * 二态时「投影加载中 / 读取失败」都落进 `!canWrite` 并点名原子 ⇒ 真管理员看到确定性拒绝；
+ * 现在只有 `denied`（已读到且确实缺）才点名，`loading` 说加载中、`error` 给重试出口。
+ * `canWrite` 语义不变（= CP 双门都过），所以既有 `:disabled="!canWrite"` 一处都不用改。
+ */
+const { canWrite, state: writeGateState, retry: retryWriteGate } = useInstanceWriteGate(writeAtom);
+
+/** 禁用理由随状态走：加载中/读取失败不得冒充「缺原子」（四个写面入口共用同一份）。 */
+const writeGateTitle = computed(() => {
+    if (writeGateState.value === "allowed") return undefined;
+    if (writeGateState.value === "loading") return t("settings.instanceResources.writeGateLoading");
+    if (writeGateState.value === "error") return t("settings.instanceResources.writeGateError");
+    return t("settings.instanceResources.writeAtomMissing", { atom: writeAtom });
+});
 
 const agents = ref<InstanceAgent[]>([]);
 const loading = ref(false);
@@ -321,13 +334,7 @@ async function confirmDelete(): Promise<void> {
                     <Button
                         data-testid="instance-agents-create"
                         :disabled="!canWrite"
-                        :title="
-                            canWrite
-                                ? undefined
-                                : t('settings.instanceResources.writeAtomMissing', {
-                                      atom: writeAtom,
-                                  })
-                        "
+                        :title="writeGateTitle"
                         @click="openCreate"
                     >
                         <Plus class="size-4" aria-hidden="true" />
@@ -339,11 +346,29 @@ async function confirmDelete(): Promise<void> {
             <!-- 无动作原子 ⇒ **disabled 不隐藏**（先例口径 `components/resources/ResourceLayerTabs.vue:74`）：
                  隐藏会让人以为产品没这个能力，而 CP 说的是「你没这个原子」。 -->
             <p
-                v-if="!canWrite"
+                v-if="writeGateState !== 'allowed'"
                 data-testid="instance-agents-write-disabled"
+                :data-gate-state="writeGateState"
                 class="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
             >
-                {{ t("settings.instanceResources.writeAtomMissing", { atom: writeAtom }) }}
+                <template v-if="writeGateState === 'loading'">
+                    {{ t("settings.instanceResources.writeGateLoading") }}
+                </template>
+                <template v-else-if="writeGateState === 'error'">
+                    {{ t("settings.instanceResources.writeGateError") }}
+                    <Button
+                        data-testid="instance-agents-write-gate-retry"
+                        variant="link"
+                        size="sm"
+                        class="h-auto p-0 align-baseline text-xs"
+                        @click="retryWriteGate"
+                    >
+                        {{ t("settings.instanceResources.writeGateRetry") }}
+                    </Button>
+                </template>
+                <template v-else>
+                    {{ t("settings.instanceResources.writeAtomMissing", { atom: writeAtom }) }}
+                </template>
             </p>
 
             <SettingsErrorSurface :cause="loadCause" :retry="load" />
@@ -378,13 +403,7 @@ async function confirmDelete(): Promise<void> {
                     <Button
                         data-testid="instance-agents-empty-create"
                         :disabled="!canWrite"
-                        :title="
-                            canWrite
-                                ? undefined
-                                : t('settings.instanceResources.writeAtomMissing', {
-                                      atom: writeAtom,
-                                  })
-                        "
+                        :title="writeGateTitle"
                         @click="openCreate"
                     >
                         <Plus class="size-4" aria-hidden="true" />
@@ -454,10 +473,7 @@ async function confirmDelete(): Promise<void> {
                                             :title="
                                                 canWrite
                                                     ? t('settings.instanceResources.agents.editCta')
-                                                    : t(
-                                                          'settings.instanceResources.writeAtomMissing',
-                                                          { atom: writeAtom },
-                                                      )
+                                                    : writeGateTitle
                                             "
                                             @click="openEdit(agent)"
                                         >
@@ -471,10 +487,7 @@ async function confirmDelete(): Promise<void> {
                                             :title="
                                                 canWrite
                                                     ? t('settings.instanceResources.delete')
-                                                    : t(
-                                                          'settings.instanceResources.writeAtomMissing',
-                                                          { atom: writeAtom },
-                                                      )
+                                                    : writeGateTitle
                                             "
                                             @click="deleteTarget = agent"
                                         >
