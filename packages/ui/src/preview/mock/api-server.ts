@@ -23,6 +23,10 @@ import {
 } from "./data/sessions";
 // task-449 / D-1287（D-1281 同形）：工作区智能体夹具 —— capSource 四态 + 记忆/角色绑定 + 写面判定。
 import { handleWorkspaceAgentResource } from "./data/workspaceAgents";
+import {
+    handleProviderConnectionResource,
+    mockModelCatalogResponse,
+} from "./data/providerConnections";
 import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
 import {
     MOCK_ORG_UNITS,
@@ -1099,83 +1103,62 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         ],
                     });
                 }
-                if (path === "/provider-connections") {
-                    return respond(200, {
-                        connections: [
-                            {
-                                id: "conn-claude-primary",
-                                providerId: "anthropic",
-                                connectionKey: "conn-claude-primary",
-                                apiTypeId: "anthropic-messages",
-                                apiTypeVersion: 1,
-                                operation: "chat",
-                                label: "Claude 主连接",
-                                scope: "instance",
-                                baseUrl: null,
-                                modelDiscovery: "curated",
-                                manualModels: [],
-                                hasKey: true,
-                                enabled: true,
-                                status: "READY",
-                                revision: 1,
-                            },
-                            {
-                                id: "conn-embed-primary",
-                                providerId: "openai",
-                                connectionKey: "conn-embed-primary",
-                                apiTypeId: "openai-embeddings",
-                                apiTypeVersion: 1,
-                                operation: "embedding",
-                                label: "嵌入模型主连接",
-                                scope: "instance",
-                                baseUrl: null,
-                                modelDiscovery: "curated",
-                                manualModels: [],
-                                hasKey: true,
-                                enabled: true,
-                                status: "READY",
-                                revision: 1,
-                            },
-                            {
-                                id: "conn-image-primary",
-                                providerId: "openai",
-                                connectionKey: "conn-image-primary",
-                                apiTypeId: "openai-chat",
-                                apiTypeVersion: 1,
-                                operation: "image",
-                                label: "图像生成连接",
-                                scope: "instance",
-                                baseUrl: null,
-                                modelDiscovery: "curated",
-                                manualModels: [],
-                                hasKey: true,
-                                enabled: true,
-                                status: "READY",
-                                revision: 1,
-                            },
-                        ],
-                    });
+                /**
+                 * task-454 / D-1301：这里原先是**无方法守卫**的静态列表 ⇒ POST 也回 200 + 原样三行
+                 * （假保存：UI 弹「已保存」而列表不变，验「能建连接」必假绿），且三行 scope 是小写
+                 * `instance`（CP 枚举与 `ProviderScope` 都是大写）⇒ 全被渲染成「User」徽标。
+                 * 现在夹具与写面都在 `data/providerConnections.ts`，这里只做一次 dispatch
+                 * （与 task-449 的工作区智能体同形）。未知 suffix 仍 404 `MOCK_ENDPOINT_MISSING`。
+                 */
+                if (/^\/provider-connections(\/|$)/.test(path)) {
+                    const connMethod = req.method ?? "GET";
+                    const readConnBody = (): Promise<Record<string, unknown>> =>
+                        new Promise((resolveBody) => {
+                            let raw = "";
+                            req.on("data", (chunk: unknown) => {
+                                raw += String(chunk);
+                            });
+                            req.on("end", () => {
+                                try {
+                                    resolveBody(
+                                        raw ? (JSON.parse(raw) as Record<string, unknown>) : {},
+                                    );
+                                } catch {
+                                    resolveBody({});
+                                }
+                            });
+                        });
+                    void handleProviderConnectionResource(connMethod, path, url, readConnBody)
+                        .then((result) => {
+                            if (!result) {
+                                return respond(404, {
+                                    type: "about:blank",
+                                    title: "Not Found",
+                                    status: 404,
+                                    code: "MOCK_ENDPOINT_MISSING",
+                                    requestId: "mock-request",
+                                });
+                            }
+                            options.log?.(`[mock-api] ${connMethod} ${path} → ${result.status}`);
+                            return result.status === 204
+                                ? respond(204, null)
+                                : respond(result.status, result.body);
+                        })
+                        .catch((cause: unknown) => {
+                            options.log?.(
+                                `[mock-api] ${connMethod} ${path} 处理失败：${String(cause)}`,
+                            );
+                            respond(500, {
+                                code: "MOCK_HANDLER_FAILED",
+                                requestId: "mock-request",
+                            });
+                        });
+                    return;
                 }
                 if (path === "/models") {
-                    return respond(200, {
-                        providers: {
-                            "conn-claude-primary": {
-                                providerId: "anthropic",
-                                connectionId: "conn-claude-primary",
-                                status: "ready",
-                                models: [
-                                    { name: "claude-sonnet-4-5", capabilities: { chat: true } },
-                                    { name: "claude-haiku-4-5", capabilities: { chat: true } },
-                                ],
-                            },
-                            "conn-image-primary": {
-                                providerId: "openai",
-                                connectionId: "conn-image-primary",
-                                status: "ready",
-                                models: [{ name: "gpt-image-1", capabilities: { image: true } }],
-                            },
-                        },
-                    });
+                    // task-454：目录与连接夹具同源（key = connectionId，条目带 connectionId），
+                    // 新建连接的手填模型走 verify 回显，不在这里另造一份名字。
+                    return respond(200, mockModelCatalogResponse());
                 }
                 if (path === "/api-input-types") {
                     return respond(200, {
