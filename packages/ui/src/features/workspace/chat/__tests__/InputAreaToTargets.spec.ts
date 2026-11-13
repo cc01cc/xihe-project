@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import InputArea from "../components/InputArea.vue";
+import RecipientField from "../components/RecipientField.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
 
 /**
@@ -296,5 +297,36 @@ describe("InputArea · task-453 定向发送让位默认代发", () => {
         const args = await send(wrapper);
         expect(args[4]).toBeUndefined();
         expect(args[2]).toBe(PRIMARY_ID);
+    });
+});
+
+/** task-453 follow-up（Lead 准）：让位后抄送候选按**有效**代发排除，而不是原始默认值。 */
+describe("InputArea · task-453 让位后的抄送候选", () => {
+    it("To 非空让位 ⇒ 默认代发那个人重新可被抄送", async () => {
+        storeState.canSpeakAs = true;
+        storeState.speakAsCandidates = roster();
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+        // 抄送栏默认收起，先展开才有 RecipientField（cc-expand）
+        await wrapper.get('[data-testid="cc-expand"]').trigger("click");
+        await flushPromises();
+        const ccField = () =>
+            wrapper.findAllComponents(RecipientField).find((f) => f.props("testid") === "cc");
+        const candidateIds = () => {
+            const field = ccField();
+            expect(field, "抄送栏必须已展开").toBeTruthy();
+            return (field!.props("candidates") as { participantId: string }[]).map(
+                (c) => c.participantId,
+            );
+        };
+        const idsBefore = candidateIds();
+        expect(idsBefore).not.toContain(PRIMARY_ID);
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        const idsAfter = candidateIds();
+        expect(idsAfter).toContain(PRIMARY_ID);
+        expect(idsAfter).not.toContain(HELPER_ID);
     });
 });

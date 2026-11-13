@@ -311,7 +311,9 @@ const ccCandidates = computed(() =>
         (item) =>
             !item.disabledAt &&
             Boolean(item.displayName) &&
-            item.participantId !== activeSpeakAsId.value &&
+            // task-453 follow-up（Lead 准）：按**有效**代发排除 —— 让位时没有代发身份，
+            // 不该把默认代发那个人从抄送候选里剔掉。
+            item.participantId !== effectiveSpeakAsId.value &&
             !activeToTargetIds.value.includes(item.participantId),
     ),
 );
