@@ -75,6 +75,16 @@ describe("defaults 往返与保留", () => {
         expect("keepRecentMessages" in next).toBe(false);
     });
 
+    it("判据 ②：写进去一次之后再往返也是 null（幂等，不会每次保存都重排版）", () => {
+        const drafts = decomposeDefaults(DEFAULTS_RAW);
+        drafts.summaryProvider = "llm";
+        const first = composeDefaults(DEFAULTS_RAW, drafts) as string;
+        // 第二次：拿第一次的产物当原文，草稿取它的分解值 ⇒ 必须判定「没变化」。
+        expect(composeDefaults(first, decomposeDefaults(first))).toBeNull();
+        // 且第一次的产物本身就是可再次解析的合法 JSON（不是半截文本）。
+        expect(() => JSON.parse(first)).not.toThrow();
+    });
+
     it("数字/布尔按类型写回，不是一律写字符串", () => {
         const drafts = decomposeDefaults(undefined);
         drafts.softThresholdPct = "0.75";
