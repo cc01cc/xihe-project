@@ -165,6 +165,16 @@ export const useConfigStore = defineStore("config", () => {
         user: {},
     });
     const layerLoading = ref(false);
+    /**
+     * BL-619：**per-layer** 加载标志。`layerLoading` 是瞬时全局标志 —— 任何一层在飞的加载都会翻转它，
+     * 而「首次加载遮罩」只能看**当前层**是否在加载。否则 A 层的加载会把 B 层的面板卸载，B 层重新挂载
+     * 又发一次加载 ⇒ 自持回环（`SettingsDomainView.vue:99-105` 记的是同一条回环在另一个视图上的形态）。
+     */
+    const layerLoadingByLayer = ref<Record<ConfigLayer, boolean>>({
+        instance: false,
+        "workspace-default": false,
+        user: false,
+    });
     /** domain -> key -> env-effective value when an env overlay wins (decision #22). */
     const envOverridden = ref<Record<string, Record<string, string>>>({});
     /** PLAN-0554: layer -> domain -> key -> provenance metadata. */
@@ -281,16 +291,30 @@ export const useConfigStore = defineStore("config", () => {
         }
     }
 
+    /** BL-619：读写 per-layer 标志，并让全局 `layerLoading` 继续反映「是否有任何层在加载」。 */
+    function setLayerLoading(layer: ConfigLayer, loading: boolean): void {
+        layerLoadingByLayer.value = { ...layerLoadingByLayer.value, [layer]: loading };
+        layerLoading.value = Object.values(layerLoadingByLayer.value).some(Boolean);
+    }
+
+    /** BL-619：设置页的首次加载遮罩只认**当前层**，不认别的层在飞的加载。 */
+    function isLayerLoading(layer: ConfigLayer): boolean {
+        return layerLoadingByLayer.value[layer] ?? false;
+    }
+
     /**
      * PLAN-0307 T2.17: load one layer's entries for all writable domains of that
      * layer, together with the env-lock metadata (`includeMeta=true`).
      */
     async function loadLayerDomains(layer: ConfigLayer): Promise<void> {
-        layerLoading.value = true;
+        setLayerLoading(layer, true);
         error.value = null;
         try {
             const domains = LAYER_DOMAINS[layer];
-            const results = await Promise.all(
+            // BL-619：**按域隔离**。旧写法 `Promise.all` 让任一个域 500 时整层 reject ⇒ `layerConfig`
+            // 永不落库 ⇒ 设置页 `hasLayerData` 恒假 ⇒ 首次加载遮罩反复卸载/重挂面板（README §0 的回环）。
+            // 失败域仍必须显式呈现（`error` 落文案 + 调用方照旧收到 reject），不许变成静默成功。
+            const settled = await Promise.allSettled(
                 domains.map(async (domain) => {
                     const [body, metaBody] = await Promise.all([
                         request<{
@@ -312,21 +336,34 @@ export const useConfigStore = defineStore("config", () => {
             const nextMeta: Record<string, Record<string, ConfigKeyMeta>> = {
                 ...layerMeta.value[layer],
             };
-            for (const { domain, body, metaBody } of results) {
-                nextLayer[domain] = body.entries ?? {};
-                nextEnv[domain] = body.envOverridden ?? {};
-                nextMeta[domain] = Object.fromEntries(
-                    (metaBody.keys ?? []).map((item) => [item.key, item]),
-                );
-            }
+            const failedDomains: string[] = [];
+            settled.forEach((result, index) => {
+                const domain = domains[index];
+                if (result.status === "fulfilled") {
+                    const { body, metaBody } = result.value;
+                    nextLayer[domain] = body.entries ?? {};
+                    nextEnv[domain] = body.envOverridden ?? {};
+                    nextMeta[domain] = Object.fromEntries(
+                        (metaBody.keys ?? []).map((item) => [item.key, item]),
+                    );
+                    return;
+                }
+                failedDomains.push(domain);
+            });
             layerConfig.value = { ...layerConfig.value, [layer]: nextLayer };
             envOverridden.value = nextEnv;
             layerMeta.value = { ...layerMeta.value, [layer]: nextMeta };
+            if (failedDomains.length > 0) {
+                const message = `config domains failed to load: ${failedDomains.join(", ")}`;
+                error.value = message;
+                throw new Error(message);
+            }
         } catch (e) {
-            error.value = e instanceof Error ? e.message : "Failed to load layer config";
+            error.value =
+                error.value ?? (e instanceof Error ? e.message : "Failed to load layer config");
             throw e;
         } finally {
-            layerLoading.value = false;
+            setLayerLoading(layer, false);
         }
     }
 
@@ -504,6 +541,8 @@ export const useConfigStore = defineStore("config", () => {
         error,
         layerConfig,
         layerLoading,
+        layerLoadingByLayer,
+        isLayerLoading,
         envOverridden,
         layerMeta,
         modelError,

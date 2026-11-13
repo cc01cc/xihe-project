@@ -246,11 +246,11 @@ describe("ConfigSettings API request templates (PLAN-0439 rename of PLAN-0414)",
         wrapper.unmount();
     });
 
-    // QUARANTINED BL-619（到期 2026-11-20，修复卡 task-188）：根因 = `Promise.all` 单域 500 ⇒
-    // 整层 reject ⇒ `layerConfig` 从不落库 ⇒ `hasLayerData` 恒假 ⇒ `ConfigSettings.vue:45` 的
-    // `showInitialLoading` 卸载门把 ConfigLayerPanels 卸载/重挂载 ⇒ 实例级守卫随实例消失 ⇒ 无限回环。
-    // 单跑即打爆 worker（35 s / 6.8 万请求 / 4 GB 堆 OOM）；隔离期间**少跑 1 例**，修好同批删本 quarantine。
-    it.skip("[QUARANTINED BL-619 到期 2026-11-20] flags metadata load failure through the panel error surface", async () => {
+    // BL-619（task-188 修复，2026-11-13）：本条曾因「`Promise.all` 单域 500 ⇒ 整层 reject ⇒
+    // `layerConfig` 从不落库 ⇒ `hasLayerData` 恒假 ⇒ 面板卸载/重挂载无限回环」而单跑打爆 worker
+    // （35 s / 6.8 万请求 / 4 GB 堆 OOM），故 09:3x 起被 `[QUARANTINED]` 隔离。修复 = 按域隔离 +
+    // per-layer 加载门（`stores/config.ts:309` / `ConfigSettings.vue:47`）；判据 = 本条收敛（实测 79 次请求 / <10 s）。
+    it("flags metadata load failure through the panel error surface", async () => {
         vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
             const url = typeof input === "string" ? input : input.url;
             if (url.includes("/api-input-types") || url.includes("api-request-templates")) {

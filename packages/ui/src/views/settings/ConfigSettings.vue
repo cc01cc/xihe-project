@@ -42,7 +42,11 @@ const fetchError = ref(false);
 const hasLayerData = computed(
     () => Object.keys(configStore.layerConfig[activeTab.value] ?? {}).length > 0,
 );
-const showInitialLoading = computed(() => configStore.layerLoading && !hasLayerData.value);
+// BL-619：卸载门只认**当前层**是否在加载。用全局 `layerLoading` 会被别的层的加载翻转 ⇒
+// 「A 层加载 ⇒ 面板卸载 ⇒ 重挂载再发一次加载 ⇒ 再卸载」自持回环（README §0 的回路）。
+const showInitialLoading = computed(
+    () => configStore.isLayerLoading(activeTab.value) && !hasLayerData.value,
+);
 const exporting = ref(false),
     importing = ref(false),
     importWarnings = ref<string[]>([]),
