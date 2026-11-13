@@ -26,6 +26,17 @@
  *                 => E_MIGRATION_NOT_REGISTERED (only NEW numbers; the historical rows are not
  *                 required to be rewritten).
  *
+ * SCOPE OF CHECK 3 IS A KNAPSACK, NOT A DESIGN (Lead ruling 2026-11-13, task-164)
+ *   "Anywhere in the document" depends on the registry CURRENTLY splitting "already used" across
+ *   three sections (2 = V1-V147, 2.1 = V135+, 2.2 = V148-V159). Narrowing it to section 2.1 would
+ *   report ~150 false positives on a clean tree, i.e. the gate would be born red and therefore
+ *   get bypassed (D-1074: a gate nobody can keep green is no gate).
+ *   ==> If the registry is ever reorganised into ONE table of used numbers, NARROW THIS BACK to
+ *   that table. The criterion ("a new number must be registered") has not changed and must not;
+ *   only the range where it is read is provisional, and this comment is the only place that says
+ *   so — a range widening that nobody remembers is indistinguishable from a range that was always
+ *   wrong.
+ *
  * NUMERIC, NEVER LEXICOGRAPHIC
  *   Versions are compared as integers. "V19" > "V100" and "V16" < "V160" under string order;
  *   a lexicographic max is a wrong max, and a wrong max makes the "next free number" wrong in
@@ -116,7 +127,8 @@ function splitRow(line) {
  * Registered numbers are collected from every "| V<n> |" row in the document rather than from
  * section 2.1 alone: the real registry splits "already used" across sections 2 (V1-V147), 2.1
  * (V135+) and 2.2 (V148-V159), so a 2.1-only membership test would report ~150 false positives
- * on a clean tree. See the evidence package for that reading.
+ * on a clean tree. See the evidence package for that reading, and the file header ("SCOPE OF
+ * CHECK 3 IS A KNAPSACK") for when this widening must be undone.
  */
 export function parseRegistry(text) {
   const upper = { bounds: null, fileCount: null, next: null };
