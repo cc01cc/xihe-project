@@ -201,6 +201,31 @@ describe("GlobalRail (PLAN-0762 T2.1/T2.3/T2.4)", () => {
         ]);
     });
 
+    /**
+     * task-224（用户 2026-11-13 直述「展开全局导航栏后，左上角的 LOGO 不用移动位置」）：
+     * logo 槽位原来写 `self-center` —— 那句「天然居中 (56 − 28) / 2 = 14」只对**折起态**成立；
+     * 展开态栏宽 192px，`self-center` 是「居中于当前宽度」⇒ logo 右移 (192 − 56) / 2 = 68px。
+     * 改成固定左内距 `ml-3.5`（= 3.5 × 3.5 = 14px，与折起态逐像素相同）+ `self-start`。
+     *
+     * <p>为什么断言落在 class 而不落在坐标：jsdom 没有布局，`getBoundingClientRect()` 恒 0
+     * ⇒ 坐标断言恒真（假绿）。这里只证明**决定位置的类被换掉了**，真实 x 由 task-224 卡面的
+     * 1920 双态截图读数承担：两态 x 相同；反证 = 换回 `self-center` ⇒ 展开态右移 68px。</p>
+     */
+    it("logo 用固定左内距（两态同 x），不用 self-center（task-224）", async () => {
+        patchAuth();
+        const wrapper = await mountRail();
+        const logo = wrapper.get('[data-testid="global-rail-logo"]');
+        const classes = logo.classes();
+        expect(classes).not.toContain("self-center");
+        expect(classes).toContain("self-start");
+        expect(classes).toContain("ml-3.5");
+        // 本卡不改这些（尺寸 28px / 纵向 7px 上下）：写进断言是为了让「顺手改样式」当场红。
+        expect(classes).toContain("size-8");
+        expect(classes).toContain("my-2");
+        // 两态都只有这一个 logo 槽位（展开态不渲染第二份）。
+        expect(wrapper.findAll('[data-testid="global-rail-logo"]')).toHaveLength(1);
+    });
+
     it("is icon-only by default and expands to icon+text via the rail handle (dual state)", async () => {
         patchAuth();
         const wrapper = await mountRail();

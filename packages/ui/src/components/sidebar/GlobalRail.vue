@@ -152,7 +152,14 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
                   `size-8` = 8 × 3.5 = 28px；`my-2` = 2 × 3.5 = 7px（上下各一）
                   槽位块高 = 7 + 28 + 7 = 42 ⇒ 下方分组的 `p-4`(14) 把首个按钮推到 y = 42 + 14 = 56
                   （改前 y = 14 ⇒ 净下移 42px，与 `56 = 28 + 14×2` 是同一条等式，不用 32）
-                水平：折起态 rail 56px ⇒ `self-center` 天然居中（(56 − 28) / 2 = 14 每侧）。
+                水平（task-224 改）：**两态同 x 才是判据，居中不是**。
+                  改前写的是 `self-center` —— 它只对**折起态**成立（56px 栏 ⇒ (56 − 28) / 2 = 14 每侧）；
+                  展开态栏宽 192px，`self-center` 意味着「水平居中于当前宽度」⇒ logo 右移 (192 − 56) / 2 = 68px。
+                  判据只算了折起态就宣布「天然居中」= 判据只覆盖一半状态（用户 2026-11-13 看截图直述「展开后 logo 不该移动」）。
+                  现在固定左内距：`ml-3.5` = 3.5 × 3.5 = 14px，与折起态居中位置逐像素相同，且不随宽度变化；
+                  配 `self-start`：交叉轴对齐不再参与水平定位（父级是 flex 列，`self-*` 管交叉轴）。
+                  读数（1920 双态截图）：折起/展开 logo `getBoundingClientRect().x` 均为 14 + rail 起点，两态相同；
+                  反证：换回 `self-center` ⇒ 展开态 x 右移 68px（task-224 卡面第 ③ 条）。
 
                 配色为什么用 token 而不是 #000/#fff（`[源码]` styles/themes/color-shadcn-neutral.css）：
                   亮色 `--primary: oklch(0.205 0 0)`（近黑）/ `--primary-foreground: oklch(0.985 0 0)`（近白）
@@ -166,7 +173,7 @@ const footerModules = computed(() => GLOBAL_MODULES.filter((module) => module.id
             <div
                 data-testid="global-rail-logo"
                 aria-hidden="true"
-                class="pointer-events-none my-2 flex size-8 shrink-0 items-center justify-center self-center bg-primary text-primary-foreground select-none"
+                class="pointer-events-none my-2 flex size-8 shrink-0 items-center justify-center self-start ml-3.5 bg-primary text-primary-foreground select-none"
             >
                 <span class="text-[11px] leading-none font-semibold tracking-[-0.01em]">XH</span>
             </div>
