@@ -253,6 +253,16 @@ description = "Fail (exit 1) when the latest surefire reports show zero executed
 run = "node scripts/check-cp-baseline.mjs"
 description = "Classify CP surefire failures against scripts/cp-known-baseline.json (exit 0 only if every failure is a fresh known baseline; run after mise run test:cp)"
 
+# task-192（infra-1，2026-11-13）：把「有没有漏迁移测试」从人的记忆变成一条可跑的答案。
+# 脚本本体与清单 8 条由 cp-2 的 task-181 交付（0e0d5d50d，9/9 selftest），本卡只接线，不改脚本、不改清单。
+# 判据一句话：这条任务存在 ⇒「有没有漏」由脚本回答；不存在 ⇒ 仍由人的记忆回答。
+# 为什么走 wrapper：本机 mise 用 cmd.exe 执行 run 串，`$(... ... --test-filter)` 不会被展开（2026-11-13 09:54 实测：mvn 报
+# No tests matching pattern "$(node ../../scripts/check-migration-test-coverage.mjs --test-filter)" were executed）。
+# wrapper 只做「求清单 + spawn mvn」，判据仍在 check-migration-test-coverage.mjs 里；不并入 test:cp（否则会吞掉 mvn 输出）。
+[tasks."test:cp:migration"]
+run = "node scripts/run-migration-tests.mjs"
+description = "Run only the CP tests that cover registered Flyway migrations (filter comes from scripts/check-migration-test-coverage.mjs --test-filter; exits non-zero when the migration→test mapping has a gap)"
+
 [tasks."test:runtime"]
 run = "node ../../scripts/cargo-run.mjs test"
 description = "Run the runtime test suite (all, sandbox tests need Docker)"
