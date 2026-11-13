@@ -174,9 +174,16 @@ export interface ApiWorkspace {
  * （task-48 夹具自编响应、task-60 兜底静默 `200 {}`），判据不能建在那种车道上；
  * 编译期判据不依赖任何车道的数据源（D-1094 / task-49 §4）。
  *
- * 与契约的差额（`openapi.yaml:6573` 的 `Workspace` 共 15 个 wire 字段）：`generation`（required）
- * **不在** `ApiWorkspace` 里。本判据只比对「类型 ↔ 清单」，看不见「契约 ↔ 类型」的缺口 —— 那一轴属
- * PLAN-0763 的 A+ 生成腿（task-242 `ui-type-drift.md`），此处不重复造第二条生成腿。
+ * 与契约的差额（`openapi.yaml` 的 `components.schemas.Workspace`，单行 YAML；**别引用行号** ——
+ * 卡面原写的 `openapi.yaml:6573` 在 task-62 实测时已经指到 `ProviderRequestFingerprintDispatch` 上，
+ * 真位置是 `:6926`，而它会继续漂）：wire 共 **15** 个字段，`ApiWorkspace` 只有 14 个，差额分三类 ——
+ * ① **缺 1 个**：`generation`（契约 required）；② **契约 required 却标成可选 5 个**：`ownerId` /
+ * `storageBackend` / `storageRef` / `storageMode` / `executionMode`（类型比契约松 ⇒ 读方无法假设必有）；
+ * ③ **契约可空却收窄成非空 2 个**：`createdAt` / `updatedAt`（类型谎报非空 ⇒ CP 回 `null` 时归一化成
+ * `undefined`，类型上却写着 `string`）。
+ * 本判据只比对「类型 ↔ 清单」，对上面三类**全都瞎** —— 那一轴属 PLAN-0763 的 A+ 生成腿
+ * （task-242 `ui-type-drift.md`），此处不重复造第二条生成腿；写在这里是为了让下一个读注释的人
+ * 别把「差额只有 `generation`」当成事实。
  */
 export const WORKSPACE_WIRE_FIELDS = [
     "id",
