@@ -121,6 +121,23 @@ const messages = {
             // PLAN-0773 M4-3（task-236）：成员提升为一级页（order 45），导航标签同派生。
             members: "成员",
         },
+        // task-373 / `D-1228` + `D-1236`：独立会话（无工作区）的页与新建弹窗。
+        standaloneChat: {
+            untitled: "未命名会话",
+            loading: "正在加载会话…",
+            failed: "会话加载失败",
+        },
+        standaloneDialog: {
+            title: "新建独立会话",
+            body: "独立会话不属于任何工作区。选一个个人智能体作为这条会话的应答者。",
+            loading: "正在加载个人智能体…",
+            emptyTitle: "还没有个人智能体",
+            emptyBody: "独立会话需要一个个人智能体来应答。先创建一个，再回来新建会话。",
+            emptyAction: "去创建智能体",
+            create: "创建会话",
+            creating: "正在创建…",
+            failed: "操作失败",
+        },
         sidebar: {
             newChat: "新建会话",
             noWorkspace: "当前没有可用工作区",
@@ -160,6 +177,12 @@ const messages = {
             groupSessionsLoading: "正在加载会话…",
             groupSessionsFailed: "这个分组的会话加载失败",
             groupNewSession: "在此工作区新建会话",
+            // task-373 / `D-1236`：命名取「独立」而不是「仅对话」（说的是能力上限，来了工具就过期）
+            // 或「未分组」（说的是缺失，暗示待归类）—— 它是与工作区平级的正面属性。en = Standalone。
+            standaloneGroup: "独立会话",
+            newChatStandalone: "新建独立会话",
+            standaloneLoading: "正在加载独立会话…",
+            standaloneFailed: "独立会话加载失败",
             // 非当前工作区的分组是**展开时拉取的快照**：折叠再展开不重拉（判据③），
             // 所以别处对该组会话的增删要刷新后才看得到。这条提示是「不静默陈旧」的最低成本做法。
             groupSnapshotHint: "展开时加载；该工作区在别处有变动时，刷新页面后才会显示最新列表",
@@ -2191,6 +2214,12 @@ const messages = {
                 statusUnreachable: "无法连接",
                 statusDisabled: "已停用",
                 statusUnverified: "待验证",
+                // task-385（D-1233）：保存 profile 后连接未就绪 / ghost 的 inline 警示（不阻断保存）。
+                profileWarningUnverified:
+                    "连接未就绪：配置已保存，但当前解析不了该模型，运行时发送会返回 409。",
+                profileWarningGhost:
+                    "配置引用的连接已不可见：配置已保存，但当前解析不了该模型，运行时发送会返回 409。",
+                profileWarningDismiss: "知道了",
                 neverVerified: "未验证",
                 justVerified: "刚刚验证",
                 minutesAgo: "{count} 分钟前验证",
@@ -2537,6 +2566,8 @@ const messages = {
             workspaceConfigMovedGo: "前往当前工作区设置",
             workspaceConfigMovedNoWorkspace: "当前没有工作区上下文，无法前往工作区设置",
             configSourceTitle: "生效来源",
+            // task-386（D-1232）：消费层实例模型旁标注凭据归属（只展示，不改行为）。
+            configOwnCredentialNote: "此模型将使用你自己的凭据",
             configSourceEnv: "环境变量锁定",
             configSourceWorkspace: "工作区层",
             configSourceWorkspaceDefault: "工作区默认层",
@@ -3542,6 +3573,24 @@ const messages = {
             settings: "Settings",
             members: "Members",
         },
+        // task-373 / D-1228 + D-1236: the workspace-less session page and its create dialog.
+        standaloneChat: {
+            untitled: "Untitled session",
+            loading: "Loading session…",
+            failed: "Failed to load this session",
+        },
+        standaloneDialog: {
+            title: "New standalone session",
+            body: "A standalone session belongs to no workspace. Pick a personal agent to answer in it.",
+            loading: "Loading personal agents…",
+            emptyTitle: "No personal agent yet",
+            emptyBody:
+                "A standalone session needs a personal agent to answer. Create one, then come back.",
+            emptyAction: "Create an agent",
+            create: "Create session",
+            creating: "Creating…",
+            failed: "Operation failed",
+        },
         sidebar: {
             newChat: "New session",
             noWorkspace: "No workspace available yet",
@@ -3583,6 +3632,10 @@ const messages = {
             groupSessionsLoading: "Loading sessions…",
             groupSessionsFailed: "Failed to load this group’s sessions",
             groupNewSession: "New session in this workspace",
+            standaloneGroup: "Standalone",
+            newChatStandalone: "New standalone session",
+            standaloneLoading: "Loading standalone sessions…",
+            standaloneFailed: "Failed to load standalone sessions",
             groupSnapshotHint:
                 "Loaded on expand; if this workspace changes elsewhere, reload the page to see the latest list",
             workspacesSection: "Workspaces",
@@ -5693,6 +5746,11 @@ const messages = {
                 statusUnreachable: "Unreachable",
                 statusDisabled: "Disabled",
                 statusUnverified: "Unverified",
+                profileWarningUnverified:
+                    "Connection not ready: saved, but this model cannot be resolved now — sending will return 409.",
+                profileWarningGhost:
+                    "The referenced connection is no longer visible: saved, but this model cannot be resolved now — sending will return 409.",
+                profileWarningDismiss: "Dismiss",
                 neverVerified: "Never verified",
                 justVerified: "Just verified",
                 minutesAgo: "Verified {count} min ago",
@@ -6051,6 +6109,7 @@ const messages = {
             workspaceConfigMovedNoWorkspace:
                 "No workspace context is available; cannot open workspace settings",
             configSourceTitle: "Effective source",
+            configOwnCredentialNote: "This model will use your own credentials",
             configSourceEnv: "Env lock",
             configSourceWorkspace: "Workspace layer",
             configSourceWorkspaceDefault: "Workspace default layer",
