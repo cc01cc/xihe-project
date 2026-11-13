@@ -117,6 +117,20 @@ public class ConfigService {
             .filter(UI_DOMAINS::contains)
             .collect(Collectors.toUnmodifiableSet());
 
+    /**
+     * task-344 / D-1213: {@code api-request-templates} keys whose WHOLE-ROW clear stays forbidden, and
+     * the one reason each one carries. Before task-344 the guard was keyed on the DOMAIN, so every key of
+     * the domain answered 409 even though only published revisions are actually immutable — the same
+     * "guard wider than the rule it protects" shape task-343 fixed on the write side. Every key NOT
+     * listed here takes the generic clear path (audit row + idempotent 200), which is what the contract
+     * for {@code DELETE /api/v1/config/{instance|workspace-default}/{domain}/{key}} already promises.
+     * <p>Adding an entry is a deliberate act: a key belongs here only if clearing it would destroy
+     * something that cannot be re-created through the dedicated writer.
+     */
+    private static final Map<String, String> BLOCKED_CLEAR_KEYS = Map.of(
+        "templates",
+        "published template revisions are immutable and a whole-row clear would erase their history");
+
     /** Decision #17: instructions is instance-level behaviour, never user/workspace writable. */
     private static final Map<String, Set<String>> INSTANCE_ONLY_KEYS = Map.of(
         "agent-runtime", Set.of("instructions",
@@ -1501,10 +1515,18 @@ public class ConfigService {
         };
     }
 
+    /**
+     * task-344 / D-1213: what one whole-key clear actually removed. The number is part of the
+     * response on purpose — clearing a shared layer's {@code providerModelBindings} wipes EVERY
+     * connection's binding on that layer, and "you just removed N bindings" has to be readable by
+     * the caller (a UI confirmation cannot quote a value it never receives).
+     */
+    public record ClearedKey(String key, int entries) {}
+
     @Transactional
-    public void deleteKey(String layer, String domain, String configKey, String changedBy,
-                          UUID userId, UUID workspaceId) {
-        deleteKeyInternal(layer, domain, configKey, changedBy, userId, workspaceId, false);
+    public ClearedKey deleteKey(String layer, String domain, String configKey, String changedBy,
+                                UUID userId, UUID workspaceId) {
+        return deleteKeyInternal(layer, domain, configKey, changedBy, userId, workspaceId, false);
     }
 
     /**
@@ -1516,8 +1538,8 @@ public class ConfigService {
         deleteKeyInternal("instance", domain, configKey, changedBy, null, null, true);
     }
 
-    private void deleteKeyInternal(String layer, String domain, String configKey, String changedBy,
-                                   UUID userId, UUID workspaceId, boolean bypassAdminLock) {
+    private ClearedKey deleteKeyInternal(String layer, String domain, String configKey, String changedBy,
+                                        UUID userId, UUID workspaceId, boolean bypassAdminLock) {
         if (!bypassAdminLock && isAdminLocked(domain, configKey)) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
                     "CONFIG_KEY_LOCKED",
@@ -1533,20 +1555,49 @@ public class ConfigService {
                     "DOMAIN_NOT_WORKSPACE_WRITABLE",
                     "Domain is not writable at the workspace-default layer: " + domain);
         }
-        if ("api-request-templates".equals(domain)) {
+        String blockedReason = "api-request-templates".equals(domain) ? BLOCKED_CLEAR_KEYS.get(configKey) : null;
+        if (blockedReason != null) {
             throw new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
-                    "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", "Use the dedicated template/binding writer");
+                    "API_REQUEST_TEMPLATE_REVISION_IMMUTABLE",
+                    "Config key cannot be cleared: " + blockedReason
+                            + "; use the dedicated template/binding writer");
         }
         if ("embedding".equals(domain) && !"profile".equals(configKey)) {
             throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
                     "INVALID_REQUEST", "Embedding config only has the whole profile unit");
         }
         Optional<ConfigEntity> existing = findExisting(layer, domain, configKey, userId, workspaceId);
-        if (existing.isPresent()) {
-            ConfigEntity entity = existing.get();
-            createAudit(entity, entity.getConfigValue(), null, changedBy);
-            repo.delete(entity);
-            publishLoggingChanged(domain, layer);
+        if (existing.isEmpty()) {
+            // Idempotent by contract (openapi.yaml:3216): clearing a key that is not there still
+            // answers 200, with an explicit zero instead of a silently missing field.
+            return new ClearedKey(configKey, 0);
+        }
+        ConfigEntity entity = existing.get();
+        int entries = clearedEntries(entity.getConfigValue());
+        createAudit(entity, entity.getConfigValue(), null, changedBy);
+        repo.delete(entity);
+        publishLoggingChanged(domain, layer);
+        return new ClearedKey(configKey, entries);
+    }
+
+    /**
+     * task-344: top-level entry count of the value a whole-key clear is about to remove.
+     * {@code providerModelBindings} counts connection bindings, {@code connectionDefaultTemplates}
+     * counts per-connection defaults; an unparsable or blank value counts as 0 (the row is still
+     * deleted — the count only ever reports what was readable).
+     */
+    private int clearedEntries(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(value);
+            if (node.isObject() || node.isArray()) {
+                return node.size();
+            }
+            return 1;
+        } catch (JsonProcessingException malformed) {
+            return 0;
         }
     }
 

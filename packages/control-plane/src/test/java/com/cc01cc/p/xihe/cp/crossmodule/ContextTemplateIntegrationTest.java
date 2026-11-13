@@ -24,6 +24,7 @@ import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
+import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -35,6 +36,7 @@ import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.service.InstanceIdentityService;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -102,6 +104,7 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     @Autowired private SessionRepository sessionRepository;
     @Autowired private ChatRunRepository chatRunRepository;
     @Autowired private ProviderConnectionRepository providerConnectionRepository;
+    @Autowired private ConfigJpaRepository configs;
     @Autowired private ApiRequestTemplateService apiRequestTemplates;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private HealthMonitor healthMonitor;
@@ -466,6 +469,106 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         assertFalse(String.valueOf(read.getBody().get("providerModelBindings")).contains(connectionId),
                 "type change must not leave an incompatible instance-layer binding: "
                         + read.getBody().get("providerModelBindings"));
+    }
+
+
+    // ---- task-344 / D-1213: the whole-key clear follows the KEY, not the domain ----
+
+    @Test
+    void instanceBindingKeyClearsWithAReceiptWhilePublishedTemplatesStillRefuse() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        var connection = instanceChatConnection("ctx-clear-instance");
+        String connectionId = connection.getId().toString();
+        assertEquals(HttpStatus.OK, restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates"), HttpMethod.PUT,
+                new HttpEntity<>(Map.of(
+                        "templates", "[" + publishedFragment(1, "实例模板 v1") + "]",
+                        "providerModelBindings", "{\"" + connectionId + "\":{\"clear-model\":{\"layer\":\"instance\",\"templateId\":\""
+                                + TEMPLATE_ID + "\",\"version\":1}}}"),
+                        bearerJson(token)),
+                Map.class).getStatusCode());
+
+        // positive half: a non-templates key really is clearable, and the receipt says how many
+        // bindings went with it (the whole-row clear on a shared layer removes EVERY connection entry)
+        ResponseEntity<Map> cleared = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates/providerModelBindings"), HttpMethod.DELETE,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, cleared.getStatusCode(), String.valueOf(cleared.getBody()));
+        assertEquals("ok", cleared.getBody().get("status"));
+        Map<?, ?> receipt = (Map<?, ?>) cleared.getBody().get("cleared");
+        assertEquals("providerModelBindings", receipt.get("key"));
+        assertEquals(1, ((Number) receipt.get("entries")).intValue(), String.valueOf(cleared.getBody()));
+        ResponseEntity<Map> after = restTemplate.exchange(
+                url("/api/v1/config/api-request-templates?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, after.getStatusCode());
+        assertFalse(after.getBody().containsKey("providerModelBindings"), String.valueOf(after.getBody()));
+
+        // idempotent by contract: clearing again answers 200 with an explicit zero, not 404
+        ResponseEntity<Map> again = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates/providerModelBindings"), HttpMethod.DELETE,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, again.getStatusCode(), String.valueOf(again.getBody()));
+        assertEquals(0, ((Number) ((Map<?, ?>) again.getBody().get("cleared")).get("entries")).intValue());
+
+        // negative half: the key that IS immutable still refuses, and the body says why
+        ResponseEntity<Map> refused = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates/templates"), HttpMethod.DELETE,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(), String.valueOf(refused.getBody()));
+        assertEquals("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE", refused.getBody().get("code"));
+        assertTrue(String.valueOf(refused.getBody().get("detail")).contains("immutable"),
+                String.valueOf(refused.getBody()));
+    }
+
+    /**
+     * The task-332 residual row: {@code connectionDefaultTemplates = "{}"} at the instance layer, written
+     * by the dedicated writer (it always upserts) and impossible to remove through any API before task-344.
+     */
+    @Test
+    void emptyBindingRowOnTheInstanceLayerCanFinallyBeCleared() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        // Reuse the instance row if an earlier test already wrote one: findExisting() looks the key up
+        // by (layer, domain, key), so a second row with the same triple would make it ambiguous.
+        ConfigEntity residual = configs.findByLayerAndDomain("instance", "api-request-templates").stream()
+                .filter(row -> "connectionDefaultTemplates".equals(row.getConfigKey()))
+                .findFirst().orElseGet(() -> {
+                    ConfigEntity created = new ConfigEntity();
+                    created.setLayer("instance");
+                    created.setDomain("api-request-templates");
+                    created.setConfigKey("connectionDefaultTemplates");
+                    return created;
+                });
+        residual.setConfigValue("{}");
+        residual.setUpdatedBy("test");
+        configs.saveAndFlush(residual);
+
+        ResponseEntity<Map> cleared = restTemplate.exchange(
+                url("/api/v1/config/instance/api-request-templates/connectionDefaultTemplates"),
+                HttpMethod.DELETE, new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, cleared.getStatusCode(), String.valueOf(cleared.getBody()));
+        assertEquals(0, ((Number) ((Map<?, ?>) cleared.getBody().get("cleared")).get("entries")).intValue());
+
+        ResponseEntity<Map> after = restTemplate.exchange(
+                url("/api/v1/config/api-request-templates?layer=instance"), HttpMethod.GET,
+                new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.OK, after.getStatusCode());
+        assertFalse(after.getBody().containsKey("connectionDefaultTemplates"), String.valueOf(after.getBody()));
+    }
+
+    /**
+     * task-183 keeps the domain gate BEFORE the key judgment at the workspace-default layer: that layer
+     * cannot serve this domain at all, so there is no row here to clear and the answer stays 400.
+     * Recorded as-is on purpose — reordering the two guards would be a separate ruling.
+     */
+    @Test
+    void workspaceDefaultLayerStillRefusesTheTemplateDomainBeforeTheKeyJudgment() {
+        grantInstanceAdmin(UUID.fromString(userId));
+        ResponseEntity<Map> refused = restTemplate.exchange(
+                url("/api/v1/config/workspace-default/api-request-templates/providerModelBindings"),
+                HttpMethod.DELETE, new HttpEntity<>(bearerJson(token)), Map.class);
+        assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(), String.valueOf(refused.getBody()));
+        assertEquals("DOMAIN_NOT_WORKSPACE_WRITABLE", refused.getBody().get("code"));
     }
 
     // ---- T1.3 / V3: explicit Session binding ----

@@ -407,8 +407,7 @@ public class ConfigController {
                     HttpStatus.CONFLICT, "CONFIG_ENV_LOCKED", "Env-locked config key cannot be deleted");
         }
         try {
-            configService.deleteKey("instance", domain, key, "admin", null, null);
-            return ResponseEntity.ok(Map.of("status", "ok"));
+            return ResponseEntity.ok(cleared("instance", domain, key));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         } catch (ConfigService.ConfigAccessException e) {
@@ -434,6 +433,20 @@ public class ConfigController {
         return writeLayer("workspace-default", domain, body, "admin", null, null, DOOR_W1);
     }
 
+    /**
+     * task-344 / D-1213: the clear receipt returned by both config DELETE doors. {@code entries}
+     * is the number of top-level entries the removed row held — for {@code providerModelBindings}
+     * that is the number of connection bindings on THIS layer (a whole-key clear wipes every
+     * connection's binding, not just one), for {@code connectionDefaultTemplates} the number of
+     * per-connection defaults. It is additive to the documented {@code 200 Cleared}, and it exists
+     * so a caller can state "this removes N" instead of quoting prose nobody sees.
+     */
+    private Map<String, Object> cleared(String layer, String domain, String key) {
+        ConfigService.ClearedKey cleared = configService.deleteKey(layer, domain, key, "admin", null, null);
+        return Map.of("status", "ok",
+                "cleared", Map.of("key", cleared.key(), "entries", cleared.entries()));
+    }
+
     @PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_WORKSPACE_DEFAULT_CONFIG')")
     @DeleteMapping("/api/v1/config/workspace-default/{domain}/{key}")
     public ResponseEntity<Map<String, Object>> deleteWorkspaceDefaultConfig(
@@ -452,8 +465,7 @@ public class ConfigController {
                     HttpStatus.CONFLICT, "CONFIG_ENV_LOCKED", "Env-locked config key cannot be deleted");
         }
         try {
-            configService.deleteKey("workspace-default", domain, key, "admin", null, null);
-            return ResponseEntity.ok(Map.of("status", "ok"));
+            return ResponseEntity.ok(cleared("workspace-default", domain, key));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         } catch (ConfigService.ConfigAccessException e) {
