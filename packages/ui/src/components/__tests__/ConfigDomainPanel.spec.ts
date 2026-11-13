@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import ConfigDomainPanel, { type DomainField } from "../settings/ConfigDomainPanel.vue";
+import { jsonDocText, setJsonDoc } from "../settings/__tests__/jsonEditorAsserts";
 import { createI18n } from "vue-i18n";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { openSelectAt, selectCount, selectItemTexts, selectValueAt } from "../../test-utils/select";
@@ -41,6 +42,11 @@ const i18n = createI18n({
                 customOption: "自定义",
                 customPlaceholder: "输入",
                 customBack: "回到候选列表",
+                // task-411：json 域走 JsonFieldEditor，它渲染 settings.jsonValid / jsonFormat。
+                // 夹具缺这两键 ⇒「裸 i18n 键」守卫在 TC9 上红（与上面 task-225 同一类缺口）。
+                // 补键不放宽断言：守卫照旧全量扫渲染结果。
+                jsonValid: "Valid JSON",
+                jsonFormat: "Format",
             },
             common: { save: "Save" },
         },
@@ -333,19 +339,34 @@ describe("ConfigDomainPanel", () => {
         expect(emitted![0][0]).not.toHaveProperty("model");
     });
 
-    it("TC9: json fields render a textarea and are emitted verbatim", async () => {
+    /**
+     * task-411：json 域自 task-286 起走 `JsonFieldEditor`（CodeMirror 6，宿主是 div，
+     * **没有原生 textarea**）⇒ 旧断言 `wrapper.find("textarea")` 是规格落后产品。
+     * 这里按 `settings/__tests__/jsonEditorAsserts.ts` 的「翻面不放松」口径改钉真实渲染面：
+     * 判据仍是**同一件事**——「写进这个字段的值会原样进 save payload」，只是入口从
+     * `textarea.value` 换成 `EditorState.doc`（官方 `EditorView.findFromDOM`，不给产品开测试后门）。
+     * 另补一条旧版没有的判据：加载即格式化（task-286 判据①）后的文档逐字节等于缩进态期望串。
+     */
+    it("TC9: json 字段渲染 CodeMirror 编辑器，键入值原样进 save payload", async () => {
         const jsonSchema: DomainField[] = [{ key: "defaults", label: "Defaults", type: "json" }],
             wrapper = mountPanel({
                 schema: jsonSchema,
                 entries: { defaults: '{"softThresholdPct":0.8}' },
             });
         await expandPanel(wrapper);
+        await flushPromises();
 
-        const textarea = wrapper.find("textarea");
-        expect(textarea.exists()).toBe(true);
-        expect(textarea.element.value).toBe('{"softThresholdPct":0.8}');
+        // ① 编辑器真的挂上了：容器存在 + 里面有 EditorView（jsonDocText 找不到就抛，不静默假绿）。
+        const testId = "config-json-test-defaults";
+        expect(wrapper.find(`[data-testid="${testId}"]`).exists()).toBe(true);
+        // ② 加载即格式化：期望串独立写死（不调产品的 formatJsonText，避免自证）。
+        expect(jsonDocText(wrapper, testId)).toBe('{\n  "softThresholdPct": 0.8\n}');
 
-        await textarea.setValue('{"softThresholdPct":0.9}');
+        // ③ 键入新值（整段替换 = 旧 setValue 的等价入口）；首次格式化之后不再自动重排。
+        setJsonDoc(wrapper, testId, '{"softThresholdPct":0.9}');
+        await flushPromises();
+        expect(jsonDocText(wrapper, testId)).toBe('{"softThresholdPct":0.9}');
+
         await wrapper
             .findAll("button")
             .filter((b) => b.text() === "Save")[0]
