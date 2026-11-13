@@ -231,7 +231,13 @@ describe("useAuthStore", () => {
         expect(JSON.parse(sessionStorage.getItem("xihe-workspace") ?? "{}").id).toBe(wsB.id);
     });
 
-    it("computes viewer read-only and editor write roles", () => {
+    /**
+     * task-414（RBAC P0-2）：本用例原来断言「角色名 OWNER ⇒ canManageWorkspace」，那正是硬规则禁止的
+     * 角色名特判。改为**能力位驱动**并补一条负例（角色名 OWNER 但无 admin 能力 ⇒ 不可管理）——
+     * 断言是**加强**不是放宽：写侧三条保持原样（无投影时回落 CP/旧 CP 兼容路径），管理侧现在要求能力位。
+     * 真实 OWNER 不会因此丢入口：CP 的 `CapabilitiesView.workspaceAdminOf` 就列出他管理的工作区。
+     */
+    it("computes viewer read-only and editor write roles; management follows the admin capability", () => {
         const store = useAuthStore();
         store.$patch({ workspace: { id: WORKSPACE_ID, name: "ws", workspaceRole: "VIEWER" } });
         expect(store.canWriteWorkspace).toBe(false);
@@ -243,6 +249,20 @@ describe("useAuthStore", () => {
 
         store.$patch({ workspace: { id: WORKSPACE_ID, name: "ws", workspaceRole: "OWNER" } });
         expect(store.canWriteWorkspace).toBe(true);
+        // 角色名不再给管理权：没有 admin 能力位就是不可管理（硬规则「禁角色名特判」）。
+        expect(store.canManageWorkspace).toBe(false);
+
+        store.$patch({
+            user: {
+                id: "u1",
+                email: "a@test.com",
+                capabilities: {
+                    isInstanceAdmin: false,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [WORKSPACE_ID],
+                },
+            },
+        });
         expect(store.canManageWorkspace).toBe(true);
     });
 

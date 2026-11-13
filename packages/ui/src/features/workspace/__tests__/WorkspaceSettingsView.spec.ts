@@ -226,6 +226,20 @@ describe("WorkspaceSettingsView OWNER 编辑与删除 (PLAN-0560 T2.6/T3.3 迁�
         // migrateLegacyWorkspace 会把 localStorage 旧键归一化为 {id,name}，
         // 角色必须直写 per-tab sessionStorage 才能进入 OWNER 分支。
         localStorage.removeItem("xihe-workspace");
+        // task-414：编辑/删除的权威是 `workspace:admin` 能力位，不是角色名 OWNER。
+        // 真实 OWNER 必带该能力（WS_OWNER 含 workspace:admin(cap)）⇒ 夹具从登录态恢复它。
+        localStorage.setItem(
+            "xihe-user",
+            JSON.stringify({
+                id: "u1",
+                email: "owner@test.com",
+                capabilities: {
+                    isInstanceAdmin: false,
+                    isInstanceSuper: false,
+                    workspaceAdminOf: [WORKSPACE_ID],
+                },
+            }),
+        );
         sessionStorage.setItem(
             "xihe-workspace",
             JSON.stringify({

@@ -98,11 +98,32 @@ describe("WorkspaceMembersView（M4-3 / task-236）", () => {
         expect(wrapper.findComponent(WorkspaceMembersPanel).props("readonly")).toBeUndefined();
         wrapper.unmount();
 
+        // task-414：管理面的权威是 `workspace:admin` 能力位（CP CapabilitiesView.workspaceAdminOf），
+        // 不再是角色名 OWNER。真实 OWNER 一定带这条能力（WS_OWNER 角色含 workspace:admin(cap)），
+        // 所以夹具补上能力位才是「真实 OWNER」，只写角色名的夹具测的是已退役的特判路径。
+        auth.user = {
+            id: "u1",
+            email: "owner@test.com",
+            capabilities: {
+                isInstanceAdmin: false,
+                isInstanceSuper: false,
+                workspaceAdminOf: [WORKSPACE_ID],
+            },
+        } as never;
         auth.workspace = { id: WORKSPACE_ID, name: "Ws", workspaceRole: "OWNER" } as never;
         wrapper = await mountPage();
         expect(wrapper.findComponent(WorkspaceMembersPanel).props("readonly")).toBe(false);
         wrapper.unmount();
 
+        auth.user = {
+            id: "u1",
+            email: "editor@test.com",
+            capabilities: {
+                isInstanceAdmin: false,
+                isInstanceSuper: false,
+                workspaceAdminOf: [],
+            },
+        } as never;
         auth.workspace = { id: WORKSPACE_ID, name: "Ws", workspaceRole: "EDITOR" } as never;
         wrapper = await mountPage();
         expect(wrapper.findComponent(WorkspaceMembersPanel).props("readonly")).toBe(true);

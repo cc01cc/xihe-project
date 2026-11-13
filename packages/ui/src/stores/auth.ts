@@ -191,6 +191,42 @@ export const useAuthStore = defineStore("auth", () => {
     }
 
     /**
+     * task-414（RBAC P0-2）：工作区层判据的**权威来源**是 `/me/permissions` 投影里该工作区那一条
+     * （`CapabilityProjectionService.WorkspacePermissions`：`workspaceRole` / `workspaceAdmin` /
+     * `permissions[]`）。硬规则「权限面先定能力原子」：**禁止**按角色名（`=== "OWNER"` /
+     * `!== "VIEWER"`）判可见性与可写性 —— 自定义角色持原子却被判无权、角色名是 OWNER 但原子被撤却仍给入口，
+     * 两个方向都会让 UI 与 CP 权威不一致（CP 仍 403，所以不是提权，是可用性/一致性缺陷）。
+     *
+     * **防删注释（实测依据，别改成某个 MANAGE_* 原子）**：真栈 `/roles` 实测 WS_OWNER 15 项里
+     * **没有** `MANAGE_WORKSPACE_MEMBERS`（连 OWNER 也没有）⇒ 成员管理面的对端是 `workspaceAdmin`
+     * **能力位**；把 `canManageWorkspace` 映射到动作原子会连 OWNER 一起判无权。
+     * 证据：internal/A03-xihe/evidence/2026-11-14-instance-flow-audit/task414-role-atoms.json。
+     */
+    const ATOM_WRITE_WORKSPACE_CONTENT = "WRITE_WORKSPACE_CONTENT";
+    /** 当前工作区在投影里的那一条；`null` = 还没读到 / 不是成员（两者都不等于「无权」）。 */
+    const workspaceProjection = computed(() => {
+        const id = workspace.value?.id;
+        if (!id) return null;
+        return (selfPermissions.value?.workspaces ?? []).find((w) => w.workspaceId === id) ?? null;
+    });
+    /**
+     * 工作区级判据只认**通配资源**的原子：`WRITE_WORKSPACE_CONTENT@file-1` 是对单个文件的授权，
+     * 不能据此打开整个工作区的写面（与 `hasInstanceAtom` 的成员测试口径不同，那边 CP 就是成员测试）。
+     */
+    const workspaceAtoms = computed<Set<string>>(() => {
+        const rows = workspaceProjection.value?.permissions ?? [];
+        return new Set(
+            rows.filter((a) => !a.resource || a.resource === "*").map((a) => a.actionClass),
+        );
+    });
+    function hasWorkspaceAtom(actionClass: string): boolean {
+        return workspaceAtoms.value.has(actionClass);
+    }
+    /** 投影已读到**且**含当前工作区 —— 只有这时原子判据才算权威（task-420 三态同源）。 */
+    const workspacePermissionsKnown = computed(
+        () => selfPermissionsStatus.value === "ready" && workspaceProjection.value !== null,
+    );
+    /**
      * `workspace:admin` for one workspace. An instance administrator administers every workspace
      * (CP's `AuthzContext.canWorkspaceAdmin` resolves the same way), so the local check includes the
      * instance capability on top of the explicit id list.
@@ -213,10 +249,20 @@ export const useAuthStore = defineStore("auth", () => {
         const ownerId = workspace.value?.ownerId;
         return ownerId && user.value?.id && ownerId === user.value.id ? "OWNER" : "EDITOR";
     });
-    const canWriteWorkspace = computed(
-        () => workspace.value?.canWrite ?? workspaceRole.value !== "VIEWER",
+    /**
+     * task-414：投影可用时**只**看原子；不可用时回落 CP 自己给的 `canWrite`（仍是服务端权威），
+     * 最后才是旧 CP 兼容的角色推断 —— 那条分支只为「老 CP 不返回投影」保留，**不是**主判据。
+     */
+    const canWriteWorkspace = computed(() => {
+        if (workspacePermissionsKnown.value) return hasWorkspaceAtom(ATOM_WRITE_WORKSPACE_CONTENT);
+        return workspace.value?.canWrite ?? workspaceRole.value !== "VIEWER";
+    });
+    /** 管理面 = `workspace:admin` 能力位（实例管理员对工作区同样成立，见 canWorkspaceAdmin 的 CP parity）。 */
+    const canManageWorkspace = computed(
+        () =>
+            canWorkspaceAdmin(workspace.value?.id) ||
+            workspaceProjection.value?.workspaceAdmin === true,
     );
-    const canManageWorkspace = computed(() => workspaceRole.value === "OWNER");
 
     /**
      * BL-344：能力位**三态**。`undefined` = 还不知道（工作区仍在加载/刷新），
@@ -240,9 +286,13 @@ export const useAuthStore = defineStore("auth", () => {
      * BL-344：`undefined`（未知）**不等于**无权 —— 调用方"未知时不销毁子树、不回落 tab"，
      * 只有确定 `false` 才隐藏/回落。
      */
-    const canViewMembers = computed<boolean | undefined>(() =>
-        workspaceRoleKnown.value ? workspaceRole.value !== "VIEWER" : undefined,
-    );
+    const canViewMembers = computed<boolean | undefined>(() => {
+        // task-414：投影可用时按原子/能力位判（可写或可管理 ⇒ 可见），不看 VIEWER 这个名字。
+        if (workspacePermissionsKnown.value) {
+            return canWriteWorkspace.value || canManageWorkspace.value;
+        }
+        return workspaceRoleKnown.value ? workspaceRole.value !== "VIEWER" : undefined;
+    });
 
     /**
      * PLAN-0328 decision #56 / PLAN-0559: workspace OWNER (or instance ADMIN) may
