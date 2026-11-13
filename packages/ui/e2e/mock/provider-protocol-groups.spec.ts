@@ -110,9 +110,8 @@ test.describe("Provider protocol groups (PLAN-0364 M4, discovery modes per PLAN-
     test("groups by protocol family, shows supports read-only, and lists current discovery modes", async ({
         page,
     }) => {
-        // task-112：ProviderHub 只挂在**用户层**的 llm-provider 域页上（ConfigLayerPanels.vue：
-        // 实例层渲染的是「去用户层配置」的指引块 provider-instance-go-user，ProviderHub 那一支
-        // 带 scope="USER"）。原宿主是已废弃的工作区「配置」标签（task-253 / 51c1d2a40）。
+        // ProviderHub 挂在 llm-provider 域页上，实例层与用户层**同一个组件**（task-284 / D-1140）；
+        // 本用例只验用户层（scope=USER）。原宿主是已废弃的工作区「配置」标签（task-253 / 51c1d2a40）。
         await page.goto("/settings/user/llm-provider", { waitUntil: "load" });
         await expect(page.getByTestId("provider-hub")).toBeVisible();
 

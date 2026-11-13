@@ -41,11 +41,25 @@ import type {
 
 const props = withDefaults(
     defineProps<{
+        /** 连接归属层：用户层建 USER、实例层建 INSTANCE。 */
         scope: ProviderScope;
+        /**
+         * 本组件读写哪一层 `llm-provider` 配置（默认身份 `profile`、按模型采样参数、
+         * 连接默认模板与按模型绑定）。
+         *
+         * <p>task-284（D-1140）：默认 `user` 保持既有挂载不变；实例层显式传 `"instance"`，
+         * 于是两层共用<b>同一个组件与同一套数据流</b>，差别只在两处词表（层 / 连接归属三态）。</p>
+         *
+         * <p>只允许这两个值：`llm-provider` 域的设置层矩阵里本来就只有 instance / user
+         * （`lib/settingsIa.ts`）；类型收窄在这里，比在调用点做 `as` 更能挡住「顺手接到
+         * workspace-default」。</p>
+         */
+        layer?: "instance" | "user";
         workspaceId?: string;
         readonly?: boolean;
     }>(),
     {
+        layer: "user",
         readonly: false,
     },
 );
@@ -94,12 +108,14 @@ const configStore = useConfigStore(),
 // list; a stored profile whose connection is no longer visible renders as an
 // amber "kept" entry (drift, spec/ui-surfaces.md S2).
 /**
- * task-253：全局设置面配置层为 instance / workspace-default / user，本组件只挂在用户层（ConfigLayerPanels 的非实例
- * 分支），所以这里固定 user —— 原来的 scope==="WORKSPACE" 分支正是工作区层写入。
- * 注意：连接自身的 `scope`（ProviderConnection.scope）是**另一根轴**（连接归属哪个层），
- * 不随本次移除变化。
+ * task-284（D-1140）：本组件在用户层与实例层**同一个挂载点**（ConfigLayerPanels 一处 `ProviderHub`）。
+ * `layer` 由父组件按当前设置层传入，读写都落该层 —— 原来这里硬编码 `"user"`，实例层因此只能挂一个
+ * 3 字段面板（D-1140 判定的缺陷原始形态）。
+ *
+ * 注意两根轴别混：连接自身的 `scope`（ProviderConnection.scope = USER/WORKSPACE/INSTANCE）描述
+ * 「这条连接属于谁」，`layer` 描述「这份配置写在哪一层」。
  */
-const currentLayer = computed(() => "user" as const),
+const currentLayer = computed(() => props.layer),
     layerLlmEntries = computed<Record<string, string>>(
         () => configStore.layerConfig[currentLayer.value]?.["llm-provider"] ?? {},
     ),
@@ -142,7 +158,7 @@ const resourceLimits = ref<{
 } | null>(null);
 /** 限额表单的校验结论由子组件暴露（`hasError`），保存前读一次，非法就不发请求。 */
 const limitsRef = ref<{ hasError: boolean } | null>(null);
-const formScope = ref<"USER" | "WORKSPACE">("USER"),
+const formScope = ref<ProviderScope>(props.scope),
     saving = ref(false),
     verifyingId = ref<string | null>(null);
 const pickerSearch = ref("");
@@ -229,8 +245,9 @@ async function saveBinding(model: string | null, value: string) {
     if (value && !option) return;
     bindingBusy.value = true;
     try {
-        // task-253：模板配置层固定 user（默认模板与按模型绑定都写用户层）。
-        const layer = "user" as const;
+        // task-284：模板配置层跟随 `layer` —— 实例层的默认模板与按模型绑定写实例层，
+        // 用户层写用户层（task-253 时期这里固定 user，因为组件只挂用户层）。
+        const layer = currentLayer.value;
         const entries = await readTemplateConfig(layer);
         if (model === null) {
             const refs = parseMap<TemplateRef>(entries.connectionDefaultTemplates);
@@ -285,6 +302,17 @@ function chatModelsOf(connection: ProviderConnection): string[] {
     return connection.operation === "chat" && connection.modelDiscovery === "manual"
         ? connection.manualModels
         : [];
+}
+
+/**
+ * 连接归属层的展示文案（三态）。task-284 之前只有 WORKSPACE/USER 两态，且实例层的连接在 mock 里是小写
+ * `"instance"` ⇒ 落到 else 分支被渲染成「User」。词表唯一来源是 `ProviderScope`，这里穷举它，
+ * 未知名不再静默降级成「个人」。
+ */
+function scopeLabel(scope: ProviderScope): string {
+    if (scope === "INSTANCE") return t("settings.providerHub.scopeInstance");
+    if (scope === "WORKSPACE") return t("settings.providerHub.scopeWorkspace");
+    return t("settings.providerHub.scopeUser");
 }
 
 /**
@@ -1134,9 +1162,7 @@ onMounted(() => {
                                         >{{ t("settings.providerHub.badgeDefault") }}</span
                                     >
                                     <span class="text-xs text-muted-foreground">{{
-                                        defaultConnection.scope === "WORKSPACE"
-                                            ? t("settings.providerHub.scopeWorkspace")
-                                            : t("settings.providerHub.scopeUser")
+                                        scopeLabel(defaultConnection.scope)
                                     }}</span>
                                     <span
                                         class="inline-flex items-center gap-1.5 text-xs font-semibold"
@@ -1213,9 +1239,7 @@ onMounted(() => {
                                             connection.connectionKey
                                         }}</span>
                                         <span class="text-xs text-muted-foreground">{{
-                                            connection.scope === "WORKSPACE"
-                                                ? t("settings.providerHub.scopeWorkspace")
-                                                : t("settings.providerHub.scopeUser")
+                                            scopeLabel(connection.scope)
                                         }}</span>
                                         <span
                                             class="inline-flex items-center gap-1.5 text-xs font-semibold"
@@ -1290,11 +1314,7 @@ onMounted(() => {
                             {{ activeConnection.connectionKey }}
                         </h4>
                         <p class="mt-1 text-xs text-muted-foreground">
-                            {{
-                                activeConnection.scope === "WORKSPACE"
-                                    ? t("settings.providerHub.scopeWorkspace")
-                                    : t("settings.providerHub.scopeUser")
-                            }}
+                            {{ scopeLabel(activeConnection.scope) }}
                             ·
                             {{ activeConnection.label }}
                         </p>

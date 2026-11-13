@@ -355,33 +355,25 @@ describe("ConfigSettings 模型提供方分区 (PLAN-0523 T3.1)", () => {
         wrapper.unmount();
     });
 
-    it("实例层渲染默认偏好编辑器，不渲染连接管理", async () => {
+    it("实例层与个人层挂同一个连接管理（D-1140：不再是单独的 3 字段面板）", async () => {
         const wrapper = await mountView();
         // 默认激活 instance tab（管理员）。
-        // PLAN-0764 T1.6（task-150）：引导块 → 可编辑的「实例默认模型」偏好。
         const partition = wrapper.find('[data-testid="provider-partition"]');
-        expect(partition.text()).toContain("实例默认模型");
-        // task-152 定稿话术（task-167）：整组层序 + 连接归属供给层 + 末位共享实例兜底。
-        expect(partition.text()).toContain("工作区 > 工作区默认 > 个人 > 实例");
-        expect(partition.text()).toContain("实例共享连接");
-        expect(wrapper.find('[data-testid="llm-instance-default"]').exists()).toBe(true);
-        expect(wrapper.find("provider-hub-stub").exists()).toBe(false);
+        // D-1140 的判据是「挂的是同一个组件」，不是「长得像」⇒ 实例层同样渲染 ProviderHub。
+        expect(partition.find("provider-hub-stub").exists()).toBe(true);
+        // 旧的实例专属 3 字段面板已无挂载点（文件保留，见 task-284 的删除另立步）。
+        expect(wrapper.find('[data-testid="llm-instance-default"]').exists()).toBe(false);
+        // 逐层说明同步改口径：旧文案「实例层只保存默认的 provider、模型与连接槽位」已不再成立。
+        expect(partition.text()).toContain("实例连接");
+        expect(partition.text()).not.toContain("只保存默认的 provider");
         wrapper.unmount();
     });
 
-    it("实例层只提供前往用户层的入口（task-253：工作区层入口已移除）", async () => {
+    it("实例层不再有「前往个人层管理连接」入口（D-1140：实例层自己管连接）", async () => {
         const wrapper = await mountView();
-        const goUser = wrapper.find('[data-testid="provider-instance-go-user"]');
-        expect(goUser.exists()).toBe(true);
-        // task-253：工作区配置层从 UI 移除 ⇒ 那个「前往工作区层」按钮不再存在。
+        expect(wrapper.find('[data-testid="provider-instance-go-user"]').exists()).toBe(false);
+        // task-253：工作区配置层从 UI 移除 ⇒ 那个「前往工作区层」按钮同样不存在。
         expect(wrapper.find('[data-testid="provider-instance-go-workspace"]').exists()).toBe(false);
-
-        await goUser.trigger("click");
-        await flushPromises();
-        expect(wrapper.find('[data-testid="config-tab-user"]').classes()).toContain(
-            // PLAN-0631 色彩方案：选中指示从 --primary 改为 --brand（蓝只在"身份"位置）。
-            "border-primary",
-        );
         wrapper.unmount();
     });
 

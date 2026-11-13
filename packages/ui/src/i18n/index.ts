@@ -1949,7 +1949,7 @@ const messages = {
             providerPartitionDesc:
                 "自上而下：先在连接管理新建连接并就地设定默认（默认连接置顶、每连接默认模型置顶、每模型参数就地配置）。",
             providerPartitionDescInstance:
-                "实例层只保存默认的 provider、模型与连接槽位；连接归属随配置供给层（实例配置用消费用户的连接，不可用时回退共享实例连接）。",
+                "实例层与个人层是同一套结构：可以在实例层建多条实例连接（scope=INSTANCE）与多个模型，配出来的模型属于实例，本实例下的主体按权限取用；「设为默认」写出的 profile 只是该层的默认身份（派生值），不是第二套真源。",
             providerInstanceNote:
                 "模型配置按 工作区 > 工作区默认 > 个人 > 实例 的顺序取第一组存在的配置；连接归属提供该配置的那一层，仅当该层连接不可用时才回退到实例共享连接，不会改用其他层的个人或工作区连接。",
             providerInstanceGoUser: "前往个人层管理连接",
@@ -2017,6 +2017,7 @@ const messages = {
                 delete: "删除",
                 setAsDefault: "设为默认",
                 scopeWorkspace: "Workspace",
+                scopeInstance: "Instance",
                 scopeUser: "User",
                 apiTypeReadonly: "接口类型 · 只读",
                 endpoint: "请求地址",
@@ -5389,7 +5390,7 @@ const messages = {
             providerPartitionDesc:
                 "Top-down: create connections in Connections and set defaults in place (default connection pinned, each connection's default model pinned, per-model parameters inline).",
             providerPartitionDescInstance:
-                "The instance layer stores only the default provider, model and connection slot; the connection follows the layer that supplied the profile (an instance profile uses the consuming user's connection, falling back to the shared instance connection when unavailable).",
+                'The instance layer mirrors the personal layer: create several instance connections (scope=INSTANCE) and several models there. Models configured at this layer belong to the instance and are consumed by its subjects according to their permissions; the profile written by "Set as default" is only this layer\'s default identity (a derived value), not a second source of truth.',
             providerInstanceNote:
                 "Profiles resolve as a whole unit in the order workspace > workspace-default > personal > instance; the connection belongs to the layer that supplied the profile, falling back to the shared instance connection only when that layer's connection is unavailable - connections from other layers are never used.",
             providerInstanceGoUser: "Go to the personal layer to manage connections",
@@ -5461,6 +5462,7 @@ const messages = {
                 delete: "Delete",
                 setAsDefault: "Set as default",
                 scopeWorkspace: "Workspace",
+                scopeInstance: "Instance",
                 scopeUser: "User",
                 apiTypeReadonly: "API type · Read-only",
                 endpoint: "Endpoint",

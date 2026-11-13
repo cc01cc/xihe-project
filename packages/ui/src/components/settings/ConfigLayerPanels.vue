@@ -17,7 +17,6 @@ import AgentTemplatesPanel from "./AgentTemplatesPanel.vue";
 import ContextTemplatesPanel from "./ContextTemplatesPanel.vue";
 import EmbeddingSettingsPanel from "./EmbeddingSettingsPanel.vue";
 import { isEmbeddingWriteLayer } from "../../services/embeddingProfile";
-import LlmDefaultProfilePanel from "./LlmDefaultProfilePanel.vue";
 import ProviderHub from "./ProviderHub.vue";
 import { logger } from "../../lib/logger";
 import { getProviderInfo } from "../../types/provider";
@@ -472,16 +471,24 @@ function envLockedFor(domain: string): Record<string, string> {
  * 的 fieldReadonly / isLocked / isWritable 三个判据同源。</p>
  *
  * <p>专用面板没有统一 schema，按各自面板的字段级控件数固定折算（见注释）；连接管理页
- * （user llm-provider 的 ProviderHub）没有行内字段，记 0 —— 连接是「条目」不是「字段」，
- * 两种量纲不混。</p>
+ * （llm-provider 的 ProviderHub，实例层与用户层同一个组件 —— task-284）没有行内字段，记 0 ——
+ * 连接是「条目」不是「字段」，两种量纲不混。</p>
  */
+/**
+ * task-284：`llm-provider` 域只出现在 instance / user 两层（层×域矩阵在 `lib/settingsIa.ts`），
+ * 而本组件的 `layer` prop 是 `ConfigLayer`（含 `workspace`）。在这里收窄一次，ProviderHub 的
+ * `layer` prop 就能保持两值联合，不必在组件里处理一个永远不会到来的层。
+ */
+const llmProviderLayer = computed<"instance" | "user">(() =>
+    props.layer === "instance" ? "instance" : "user",
+);
 const editableFieldCount = computed<number>(() => {
     const domain = props.domain;
     if (!domain || props.readonly) return 0;
     if (domain === "llm-provider") {
-        // 实例层：provider 选择 / 默认模型 / 连接槽位 三个字段（LlmDefaultProfilePanel）。
-        // 用户层：ProviderHub = 连接管理列表，没有行内字段。
-        return props.layer === "instance" ? 3 : 0;
+        // task-284：两层都挂 ProviderHub = 连接管理列表，**都没有行内字段**。
+        // （task-284 之前实例层挂的是 LlmDefaultProfilePanel，记 3 个行内字段；那张面板已不再挂载。）
+        return 0;
     }
     // 连接选择（EmbeddingSettingsPanel）。D-1122 / T2.4：embedding 已退出工作区层 ⇒
     // 那两层**没有**可编辑字段（面板根本不渲染，见下方分派守卫），不是"渲染了但禁用"。
@@ -780,21 +787,17 @@ async function handleReset(domain: string, key: string) {
                     </p>
                 </div>
                 <div class="px-4 py-3 space-y-3">
-                    <template v-if="layer === 'instance'">
-                        <!-- PLAN-0764 T1.6（task-150）：实例层从引导块改为「默认偏好」编辑器；
-                             连接仍留在个人/工作区层，实例只存 provider+connectionKey+model 整单元。 -->
-                        <LlmDefaultProfilePanel :layer="layer" :readonly="readonly" />
-                        <div class="flex flex-wrap gap-2">
-                            <button
-                                data-testid="provider-instance-go-user"
-                                class="px-3 py-1 text-xs border rounded hover:bg-muted"
-                                @click="emit('switch-layer', 'user')"
-                            >
-                                {{ t("settings.providerInstanceGoUser") }}
-                            </button>
-                        </div>
-                    </template>
-                    <ProviderHub v-else scope="USER" :readonly="readonly" />
+                    <!-- task-284（D-1140）：实例层与用户层挂【同一个】ProviderHub，只由 layer / scope 两个
+                         prop 区分 —— D-1140 的判据是「挂的是同一个组件 / 同一套数据流」，不是「长得像」。
+                         实例层配置出来的模型属于实例：连接 scope=INSTANCE、配置写 layer=instance；
+                         CP 的解析链仍以该层 `profile` 为真源（ChatModelResolutionService.java:91-97 调
+                         ConfigService.resolveLlmProfile），所以「设为默认」写出的 profile 是**派生值**，
+                         不是第二套真源 —— 过渡态，待 CP 卡改成「从连接实体推默认」后 UI 一行不用改。 -->
+                    <ProviderHub
+                        :layer="llmProviderLayer"
+                        :scope="layer === 'instance' ? 'INSTANCE' : 'USER'"
+                        :readonly="readonly"
+                    />
                     <ConfigSourceSummary
                         v-if="layer !== 'instance'"
                         domain="llm-provider"

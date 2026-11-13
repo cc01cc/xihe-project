@@ -7,10 +7,12 @@ import { i18n } from "../../../i18n";
 import { useConfigStore } from "../../../stores/config";
 
 /**
- * PLAN-0764 T1.6（task-150）：llm-provider 域的层分派。
- * 旧实现：实例层只有引导块（无编辑入口）；新实现：实例层渲染 LlmDefaultProfilePanel
- * （provider+model 偏好，连接留在个人/工作区层），用户层仍走 ProviderHub 连接管理。
- * 本 spec 只锁分派；面板自身行为见 LlmDefaultProfilePanel.spec.ts。
+ * task-284（D-1140）：llm-provider 域的层分派 —— 实例层与个人层挂**同一个** `ProviderHub`，
+ * 只由 `layer`（写哪层配置）与 `scope`（连接归属）两个 prop 区分。
+ *
+ * 历史：task-150 起实例层挂的是 `LlmDefaultProfilePanel`（3 字段：provider / 连接槽位 / 模型），
+ * 用户层挂 ProviderHub —— 那个「两份外观相似的实现」正是 D-1140 判定的缺陷原始形态。本 spec 锁两件事：
+ * ① 两层都用 ProviderHub，且 layer/scope 逐层正确；② 旧 3 字段面板**不再**出现在任何一层。
  */
 const LlmDefaultPanelStub = defineComponent({
     name: "LlmDefaultProfilePanel",
@@ -26,6 +28,7 @@ const ProviderHubStub = defineComponent({
     name: "ProviderHub",
     props: {
         scope: { type: String, required: true },
+        layer: { type: String, default: "user" },
         readonly: { type: Boolean, default: false },
     },
     template: '<div data-testid="provider-hub-stub" />',
@@ -88,26 +91,29 @@ async function mountLlm(layer: "instance" | "user") {
     return wrapper;
 }
 
-describe("ConfigLayerPanels llm-provider 域分派（PLAN-0764 T1.6）", () => {
+describe("ConfigLayerPanels llm-provider 域分派（task-284 / D-1140）", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
     });
 
-    it("instance 层渲染默认偏好面板，不再是引导块/ProviderHub", async () => {
+    it("instance 层渲染 ProviderHub(layer=instance, scope=INSTANCE)", async () => {
         const wrapper = await mountLlm("instance");
-        expect(wrapper.findComponent(LlmDefaultPanelStub).exists()).toBe(true);
-        expect(wrapper.findComponent(LlmDefaultPanelStub).props("layer")).toBe("instance");
-        expect(wrapper.findComponent(ProviderHubStub).exists()).toBe(false);
+        expect(wrapper.findComponent(ProviderHubStub).exists()).toBe(true);
+        expect(wrapper.findComponent(ProviderHubStub).props("layer")).toBe("instance");
+        expect(wrapper.findComponent(ProviderHubStub).props("scope")).toBe("INSTANCE");
+        // 旧 3 字段面板不再挂载（文件保留，删它另立步）。
+        expect(wrapper.findComponent(LlmDefaultPanelStub).exists()).toBe(false);
         expect(wrapper.findComponent(DomainPanelStub).exists()).toBe(false);
-        // 引导块及其跳转按钮仍在（连接管理入口），但不再是唯一内容。
-        expect(wrapper.find("[data-testid='provider-instance-go-user']").exists()).toBe(true);
-        // task-157：实例 llm-provider 页的「可编辑字段数」= 3（provider/model/连接槽位）。
-        expect(wrapper.emitted("editable-count")?.at(-1)).toEqual([3]);
+        // 「前往个人层管理连接」入口随同构撤掉：实例层自己就有连接管理。
+        expect(wrapper.find("[data-testid='provider-instance-go-user']").exists()).toBe(false);
+        // task-157：连接管理页没有行内字段 ⇒ 次量纲 M=0（两层同一口径）。
+        expect(wrapper.emitted("editable-count")?.at(-1)).toEqual([0]);
     });
 
-    it("user 层仍渲染 ProviderHub(scope=USER) 连接管理，不动", async () => {
+    it("user 层渲染同一个 ProviderHub(layer=user, scope=USER)，行为不变", async () => {
         const wrapper = await mountLlm("user");
         expect(wrapper.findComponent(ProviderHubStub).exists()).toBe(true);
+        expect(wrapper.findComponent(ProviderHubStub).props("layer")).toBe("user");
         expect(wrapper.findComponent(ProviderHubStub).props("scope")).toBe("USER");
         expect(wrapper.findComponent(LlmDefaultPanelStub).exists()).toBe(false);
         // task-157：连接管理页没有行内字段 ⇒ 次量纲 M=0（不显示），不与「字段」口径混。

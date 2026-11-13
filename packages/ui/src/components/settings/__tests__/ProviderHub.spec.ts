@@ -660,6 +660,35 @@ describe("ProviderHub 就地默认与每模型配置 (PLAN-0523 T3.2/T3.3)", () 
         wrapper.unmount();
     });
 
+    it("实例层把「设为默认」写到 instance 层（task-284 / D-1140：同一套数据流，只换层）", async () => {
+        mockHubFetch();
+        vi.mocked(listProviderConnections).mockResolvedValue({ connections: [user, second] });
+        // 实例层的挂载形态（ConfigLayerPanels）：scope=INSTANCE 决定新建连接归属，layer=instance 决定配置写哪层。
+        const wrapper = mount(ProviderHub, { props: { scope: "INSTANCE", layer: "instance" } });
+        await flushPromises();
+        try {
+            await useConfigStore().loadLayerDomains("instance");
+        } catch {
+            // 与 mountHub 同口径：取数失败不影响本用例要断言的行为。
+        }
+        await flushPromises();
+
+        await wrapper
+            .get('[data-testid="provider-connection-default-second-connection"]')
+            .trigger("click");
+        await flushPromises();
+
+        const instancePuts = requestPuts().filter((call) =>
+            call.url.includes("/config/instance/llm-provider"),
+        );
+        expect(instancePuts).toHaveLength(1);
+        expect(instancePuts[0]!.body.profile).toBe(
+            JSON.stringify({ providerId: "other", connectionKey: "secondary", model: "other-1" }),
+        );
+        // 关键负例：同一动作不得顺手写 user 层 —— 否则 profile 会变成两处真源（不是「派生值」）。
+        expect(llmPuts()).toHaveLength(0);
+        wrapper.unmount();
+    });
     it("set-as-default keeps the stored model when it exists in the target catalog", async () => {
         // 默认连接为 user-connection；stored model other-1 在目标连接目录中 → 保留。
         mockHubFetch({

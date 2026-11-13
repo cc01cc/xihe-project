@@ -1,4 +1,13 @@
-export type ProviderScope = "USER" | "WORKSPACE";
+/**
+ * 连接归属层（`ProviderConnection.owner_type` 的 UI 侧词表）。
+ *
+ * <p>task-284（D-1140 / D-922）：实例层与用户层同构后，连接也能归属实例 ——
+ * CP 侧的枚举值就是 `ProviderConnection.OWNER_INSTANCE = "INSTANCE"`（大写），本类型与它逐字对齐；
+ * 曾长期只有 USER/WORKSPACE 两值，属 UI 类型漂移。
+ * 注意与<b>设置层</b>（`SettingsLayer` = instance/user/workspace-default）是两根轴：
+ * 本类型描述「这条连接属于谁」，设置层描述「这份配置写在哪一层」。</p>
+ */
+export type ProviderScope = "USER" | "WORKSPACE" | "INSTANCE";
 export type ProviderAdapter = "native-litellm" | "openai-compatible" | "manual-model";
 export type ProviderCredentialType = "api-key" | "none";
 export type ApiTypeOperation = "chat" | "embedding";
