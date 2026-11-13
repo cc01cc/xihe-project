@@ -472,6 +472,13 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 **`roles` 端点不能作为首绑入口**：新主体没有 cap，直接调它会返回
 `409 ROLE_BINDING_EXCEEDS_CAP`（`role atoms exceed the agent's workspace cap: …`）。**这是设计，不是缺陷** —— 放宽它等于允许"角色可无 cap 授予"，会破坏 PLAN-0629 的 cap 不变量。
 
+**instance 作用域绑定的 cap 语义（BL-314，2026-11-13 补）**
+
+- **行为**：绑定作用域由授权上下文推导（`AgentPrincipalRoleBindingService.bind` 的 `authWorkspaceId`），**不带 workspace 上下文 = instance 作用域**；此时 `assertWithinCap(principalId, roleId, scope.id()=null)` 在 `AgentBindingAtomPolicy.java:150-153` **直接返回**（`if (workspaceId == null) return;`）⇒ **instance 绑定不做 cap 比较，也不会返回 `409 ROLE_BINDING_EXCEEDS_CAP`**。
+- **为什么这样定**：cap 是「主体在**某个工作区**里的能力上限」（`caps.resolveCapFor(principalId, workspaceId)`）。instance 绑定没有工作区可解析，**没有分母就无法判「超出」**；硬算只能退化成「拿别的工作区的上限去判」——那才是真错。同一条规则也写在该类注释里（`AgentBindingAtomPolicy.java:142-144`：“Instance-scope bindings have no workspace cap and pass by construction”）。
+- **用户会看到什么**：同一个含 `USE_WORKSPACE_RUNTIME` 的 `WS_EDITOR` —— `POST /api/v1/agent-principals/{id}/roles` **不带** `X-Workspace-Id`/`?workspaceId=` ⇒ **成功**，绑定落 instance 作用域；**带** workspace 上下文 ⇒ `409 ROLE_BINDING_EXCEEDS_CAP`。**两处行为不同是因为作用域不同，不是漂移**；且 instance 绑定**不会**让主体在任何工作区获得该原子，工作区面仍由 `workspace_agents` 的 cap 快照决定。
+- **哪个闸门不受作用域影响**：`assertAgentBindable(roleId)`（`AgentBindingAtomPolicy.java:132-139`）在 cap 之前执行（调用点 `AgentPrincipalRoleBindingService.java:167`），**与作用域无关** ⇒ `WS_OWNER` 这类含禁授原子的角色，无论哪个作用域都是 `409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS`。
+
 **授权口径（两处不同，别混）**
 
 | 动作 | 授权 | workspace 上下文怎么传 |
