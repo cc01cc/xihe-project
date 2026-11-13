@@ -27,7 +27,8 @@ export interface Session {
     title: string;
     createdAt: string;
     updatedAt: string;
-    workspaceId?: string;
+    /** task-373 / `D-1228`：独立会话 = null；工作区会话 = 其 id。 */
+    workspaceId?: string | null;
     /** PLAN-0689 D-54: response-only projection from the Session PRIMARY participant. UI never writes it. */
     agentPrincipalId?: string | null;
     /** PLAN-0655 T1.5: `SPAWN` = a delegated child session (tree + badge + budget chip). */

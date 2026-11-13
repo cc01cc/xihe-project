@@ -534,6 +534,22 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
+    /**
+     * task-373 / `D-1228`：进入「独立会话」上下文（无工作区）。
+     *
+     * <p>为什么必须清：CP 的会话读门按 workspace **相等**过滤
+     * （`SessionReadAccess#resolve`），带着 tab 工作区头去读一个 `workspace_id IS NULL`
+     * 的会话必然 404；只有不带（或空）头的请求才走行探针（`ChatController` D-47-05）。</p>
+     *
+     * <p>内存 ref 与 sessionStorage **两份一起清** —— 只清一份会让 `apiAuthHeaders`
+     * （读 storage）与 `currentWorkspaceId`（读 ref）分叉。不清会话缓存：左栏那一组仍要
+     * 显示用户刚才的会话（调用方先把 live 投影存进按组缓存）。</p>
+     */
+    function enterWorkspaceless(): void {
+        workspace.value = null;
+        clearTabWorkspace();
+    }
+
     const currentWorkspaceId = computed(() => workspace.value?.id ?? null);
 
     // PLAN-0546: silent refresh (api.ts) writes new tokens to localStorage; keep the
@@ -589,6 +605,7 @@ export const useAuthStore = defineStore("auth", () => {
         canManageWorkspace,
         canViewMembers,
         currentWorkspaceId,
+        enterWorkspaceless,
         login,
         register,
         adoptGuardSession,

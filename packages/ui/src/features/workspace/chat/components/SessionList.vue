@@ -11,7 +11,7 @@ import type { Session } from "../../../../types";
 import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
 import SessionItem from "./SessionItem.vue";
-import { workspaceChatPath } from "../../../../lib/routes";
+import { standaloneChatPath, workspaceChatPath } from "../../../../lib/routes";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 
 const { t } = useI18n();
@@ -31,6 +31,10 @@ const auth = useAuthStore();
  *    （日期分组属于 live 投影的口径），且**只读**：改名/分叉/删除的写入走的是
  *    `X-Workspace-Id` 里的 tab 上下文，就地改会打到当前工作区 —— 选中则交给上层先切上下文。</p>
  *
+ * <p>③ **`standalone`**（task-373 / `D-1228`）⇒ 独立会话分组的快照：没有工作区可切，
+ *    选中走 `standaloneChatPath`；写入（改名/分叉/删除）一律关闭 —— CP 的会话写面仍取
+ *    `TenantContext` 的 workspace，独立会话的写面要等 CP 侧补，前端不假装能改。</p>
+ *
  * <p>空态（分组空 / 整列空 / 搜不到）**不在本组件**：那是分组层的判据，见
  * `WorkspaceSessionGroups.vue`。同一个组件里既渲染行又渲染两种空，正是 `task-349` 的原病。</p>
  */
@@ -40,8 +44,10 @@ const props = withDefaults(
         sessions?: Session[] | null;
         /** 这份列表属于哪个工作区（判只读、判 tab 上下文切换）。 */
         workspaceId?: string | null;
+        /** task-373：独立会话分组（无工作区）——只读快照 + 独立会话路由。 */
+        standalone?: boolean;
     }>(),
-    { sessions: null, workspaceId: null },
+    { sessions: null, workspaceId: null, standalone: false },
 );
 
 const emit = defineEmits<{ "new-session": []; "select-foreign-session": [id: string] }>();
@@ -51,6 +57,8 @@ const listSessions = computed<Session[]>(() =>
 const isForeignGroup = computed(
     () => Boolean(props.workspaceId) && props.workspaceId !== auth.currentWorkspaceId,
 );
+/** 别组快照与独立会话都不可就地写：写入走的是 tab 工作区上下文，会打到别处。 */
+const canMutate = computed(() => !isForeignGroup.value && !props.standalone);
 /** 快照模式没有日期分组的权威口径（那是 store 的 `getTimeGroup`），故只按时序遍历。 */
 const timeGroups = computed<Record<string, Session[]>>(() => {
     if (!props.sessions) return sessionStore.groupedSessions;
@@ -75,6 +83,12 @@ const timeGroupLabels: Record<string, string> = {
 };
 
 function handleSelect(id: string) {
+    // 独立会话：没有工作区可切，直接进独立会话页（task-373 / `D-1228`）。
+    if (props.standalone) {
+        sessionStore.selectSession(id);
+        void router.push(standaloneChatPath(id));
+        return;
+    }
     // 别的工作区分组：选中 = 先切 tab 上下文再进会话（写入必须落在那个工作区）。
     if (isForeignGroup.value) {
         emit("select-foreign-session", id);
@@ -290,7 +304,7 @@ async function confirmDelete() {
                 :delegated="row.session.kind === 'SPAWN'"
                 :delegation-usage="delegationUsage(row.session.id)"
                 :indent="row.child"
-                :can-mutate="!isForeignGroup"
+                :can-mutate="canMutate"
                 @select="handleSelect"
                 @rename="handleRename"
                 @delete="handleDelete"

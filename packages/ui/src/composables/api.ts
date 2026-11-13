@@ -358,7 +358,8 @@ export interface ApiAdminUser {
 export interface ApiSession {
     id: string;
     title: string;
-    workspaceId?: string;
+    /** task-373 / `D-1228`：独立会话 = 显式 null（不是缺字段）。 */
+    workspaceId?: string | null;
     /** PLAN-0689 D-54: response-only projection from the Session PRIMARY participant. UI never writes it. */
     agentPrincipalId?: string | null;
     createdAt?: string;
@@ -2303,14 +2304,19 @@ function normalizeSession(
         throw new InvalidSessionProjectionError("archived", "expected boolean");
     }
     const workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(record.workspace);
+    // task-373 / `D-1228`：独立会话的 `workspaceId` 是**显式 null**（CP 视图里键在、值为 null）。
+    // 缺键或类型不对仍然 fail-closed —— 「没有工作区」与「投影坏了」是两件事，不能互相冒充。
+    // 此前这里硬要求非空字符串 ⇒ 独立会话在**所有**读面上都被判坏行（列表丢弃、详情抛错），
+    // 于是「无工作区会话能在界面上被找到」在投影层就不可能成立。
+    const workspaceless = "workspaceId" in record && record.workspaceId === null;
     const workspaceId =
         typeof record.workspaceId === "string" && record.workspaceId.length > 0
             ? record.workspaceId
             : workspace?.id;
-    if (!workspaceId) {
+    if (!workspaceId && !workspaceless) {
         throw new InvalidSessionProjectionError(
             "workspaceId",
-            "expected string (no workspace fallback either)",
+            "expected string or explicit null (no workspace fallback either)",
         );
     }
     return {
@@ -2318,7 +2324,7 @@ function normalizeSession(
         ...(archived === undefined ? {} : { archived }),
         title:
             typeof record.title === "string" && record.title.length > 0 ? record.title : "Untitled",
-        workspaceId,
+        workspaceId: workspaceId ?? null,
         agentPrincipalId:
             typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
         // PLAN-0655 T1.5 / PLAN-0659 T1.4：委派 lineage 必须在 list 投影里透传。
@@ -3076,6 +3082,40 @@ function parseSkillImportResponse(
     };
 }
 
+/**
+ * task-373 / `D-1236`：`GET /sessions` 的两种作用域（workspace 与 workspaceless）共用**同一条**
+ * 行归一化与 D4 列表策略 —— 一行坏 ⇒ 丢弃并 WARN，其余照常渲染。复制一份会把「缺字段填默认值」
+ * 这条静默归一化变成两份（`task-42` §4 记过同一形态），也会让两个作用域的坏行行为悄悄分叉。
+ */
+function normalizeSessionListPayload(payload: unknown): SessionListResponse {
+    const root = asRecord(payload),
+        rawSessions = Array.isArray(root?.sessions)
+            ? root.sessions
+            : Array.isArray(payload)
+              ? payload
+              : null;
+    if (!rawSessions) throw new Error("Invalid sessions response: missing sessions");
+    // D4 list policy: one malformed row is dropped and named in a WARN; the rest of the list
+    // (and the session tree) still renders. Single-item faces below keep throwing.
+    const sessions: SessionResponse[] = [];
+    for (const raw of rawSessions) {
+        try {
+            sessions.push(normalizeSession(raw, { requireDetailFields: false }));
+        } catch (error) {
+            const field = error instanceof InvalidSessionProjectionError ? error.field : "unknown";
+            const rowId = asRecord(asRecord(raw)?.session)?.id ?? asRecord(raw)?.id ?? "<unknown>";
+            console.warn("[sessions] dropping malformed row", {
+                field,
+                rowId,
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    return {
+        sessions,
+        workspace: normalizeWorkspace(root?.workspace),
+    };
+}
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -3135,39 +3175,27 @@ export const api = {
      * tab 上下文打架。</p>
      */
     async getSessions(workspaceId?: string): Promise<SessionListResponse> {
-        const payload = await request<unknown>(
+        return normalizeSessionListPayload(
+            await request<unknown>(
                 "/sessions",
                 workspaceId ? { headers: { "X-Workspace-Id": workspaceId } } : undefined,
             ),
-            root = asRecord(payload),
-            rawSessions = Array.isArray(root?.sessions)
-                ? root.sessions
-                : Array.isArray(payload)
-                  ? payload
-                  : null;
-        if (!rawSessions) throw new Error("Invalid sessions response: missing sessions");
-        // D4 list policy: one malformed row is dropped and named in a WARN; the rest of the list
-        // (and the session tree) still renders. Single-item faces below keep throwing.
-        const sessions: SessionResponse[] = [];
-        for (const raw of rawSessions) {
-            try {
-                sessions.push(normalizeSession(raw, { requireDetailFields: false }));
-            } catch (error) {
-                const field =
-                    error instanceof InvalidSessionProjectionError ? error.field : "unknown";
-                const rowId =
-                    asRecord(asRecord(raw)?.session)?.id ?? asRecord(raw)?.id ?? "<unknown>";
-                console.warn("[sessions] dropping malformed row", {
-                    field,
-                    rowId,
-                    message: error instanceof Error ? error.message : String(error),
-                });
-            }
-        }
-        return {
-            sessions,
-            workspace: normalizeWorkspace(root?.workspace),
-        };
+        );
+    },
+    /**
+     * task-373 / `D-1236` 甲案（CP 侧 = cp-1 task-390）：读「我的独立会话」。
+     *
+     * <p>不带 `scope` 时 `GET /sessions` 逐字节不变；带 `scope=workspaceless` 命中 V145 的部分索引
+     * （`WHERE workspace_id IS NULL`）。**显式空 `X-Workspace-Id`**：独立会话的定义就是不依附工作区，
+     * 而用户可能根本没有工作区上下文 —— 空值既压住 `apiAuthHeaders` 的 tab 自动注入，又被 CP 拦截器的
+     * `!isBlank()` 跳过（与 {@link createOwnAgentPrincipal} 同一套「无工作区上下文」标记）。</p>
+     */
+    async getWorkspacelessSessions(): Promise<SessionListResponse> {
+        return normalizeSessionListPayload(
+            await request<unknown>("/sessions?scope=workspaceless", {
+                headers: { "X-Workspace-Id": "" },
+            }),
+        );
     },
     async getSession(id: string): Promise<SessionResponse> {
         return normalizeSession(await request<unknown>(`/sessions/${encodeURIComponent(id)}`));
@@ -3310,6 +3338,30 @@ export const api = {
         return normalizeSession(
             await request<unknown>(path, {
                 method: "POST",
+                body: JSON.stringify(body),
+            }),
+        );
+    },
+    /**
+     * task-373 / `D-1228`：新建**独立会话**（无工作区）。
+     *
+     * <p>与 {@link createSession} 分开而不是加参数：那条路径按 tab 上下文选
+     * `/workspaces/{id}/sessions`，而独立会话必须**永远**落 `POST /sessions` 且不带工作区输入 ——
+     * CP `SessionCreationService` 只在 path/header/body 三处全空时才走 `workspaceless` 分支。
+     * 空 `X-Workspace-Id` 是「无工作区上下文」标记（见 {@link createOwnAgentPrincipal}）。</p>
+     *
+     * <p>`agentPrincipalId` 仍是必填（CP `SessionService#createAgentSession` 缺它 400）：独立会话的
+     * PRIMARY 取自**个人**智能体（`listMyAgentPrincipals`），不是工作区智能体。</p>
+     */
+    async createStandaloneSession(
+        agentPrincipalId: string,
+        title?: string,
+    ): Promise<SessionResponse> {
+        const body = title === undefined ? { agentPrincipalId } : { title, agentPrincipalId };
+        return normalizeSession(
+            await request<unknown>("/sessions", {
+                method: "POST",
+                headers: { "X-Workspace-Id": "" },
                 body: JSON.stringify(body),
             }),
         );

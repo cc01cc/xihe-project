@@ -130,6 +130,8 @@ export const useSessionStore = defineStore("session", () => {
         storeGeneration += 1;
         sessions.value = [];
         sessionsByWorkspace.value = {};
+        workspacelessSessions.value = [];
+        workspacelessLoaded.value = false;
         currentSessionId.value = null;
         error.value = null;
         attachments.value = {};
@@ -192,6 +194,46 @@ export const useSessionStore = defineStore("session", () => {
             [workspaceId]: page.sessions.map(toSession),
         };
         return sessionsByWorkspace.value[workspaceId]!;
+    }
+
+    /**
+     * task-373 / `D-1228` + `D-1236`：独立会话（无工作区）的**独立投影**。
+     *
+     * <p>与 `sessionsByWorkspace` 同三条约束：不覆盖当前工作区的 live 投影、命中缓存不重拉、
+     * 归一化只走 `toSession`。差别是它没有 workspace 键 —— 一个用户只有一份，且它**不属于**
+     * 任何工作区分组（左栏沉底渲染，为 0 隐藏）。</p>
+     */
+    const workspacelessSessions = ref<Session[]>([]);
+    const workspacelessLoaded = ref(false);
+    async function loadWorkspacelessSessions(force = false): Promise<Session[]> {
+        if (workspacelessLoaded.value && !force) return workspacelessSessions.value;
+        const page = await api.getWorkspacelessSessions();
+        workspacelessSessions.value = page.sessions.map(toSession);
+        workspacelessLoaded.value = true;
+        return workspacelessSessions.value;
+    }
+
+    /** 新建独立会话后立刻可见（不等下一次列表刷新）；CP 仍是权威，这里只是本地视图。 */
+    function addWorkspacelessSession(record: ApiSession): Session {
+        const session = toSession(record);
+        workspacelessSessions.value = [
+            session,
+            ...workspacelessSessions.value.filter((item) => item.id !== session.id),
+        ];
+        workspacelessLoaded.value = true;
+        return session;
+    }
+
+    /**
+     * task-373：离开工作区上下文（进独立会话页）前，把 live 投影存进按组缓存。
+     * 不存的话那一组会立刻显示成「该组暂无会话」—— 数据还在，只是换了投影来源（假空态）。
+     */
+    function cacheLiveSessionsFor(workspaceId: string): void {
+        if (workspaceId in sessionsByWorkspace.value) return;
+        sessionsByWorkspace.value = {
+            ...sessionsByWorkspace.value,
+            [workspaceId]: [...sessions.value],
+        };
     }
 
     async function loadSession(id: string): Promise<Session> {
@@ -340,6 +382,11 @@ export const useSessionStore = defineStore("session", () => {
         loadSessions,
         sessionsByWorkspace,
         loadWorkspaceSessions,
+        workspacelessSessions,
+        workspacelessLoaded,
+        loadWorkspacelessSessions,
+        cacheLiveSessionsFor,
+        addWorkspacelessSession,
         loadSession,
         applySessionRecord,
         createSession,

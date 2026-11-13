@@ -7,6 +7,7 @@ import {
     FolderOpen,
     FolderTree,
     LogOut,
+    MessageSquare,
     PanelLeftClose,
     PanelLeftOpen,
     Plus,
@@ -14,13 +15,20 @@ import {
     Settings,
     X,
 } from "@lucide/vue";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import StandaloneSessionDialog from "./StandaloneSessionDialog.vue";
 import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
 import WorkspaceSessionGroups from "../../features/workspace/chat/components/WorkspaceSessionGroups.vue";
 import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
 // PLAN-0762 T2.1：NavRail 已提升为全局层（components/sidebar/GlobalRail.vue，App.vue 常驻），
 // 本组件不再自带 rail —— 它只负责工作区模块的导航面板。
-import { workspacePath } from "../../lib/routes";
+import { standaloneChatPath, workspacePath } from "../../lib/routes";
 import { useSessionStore } from "../../stores/session";
 import { defaultLayerPath } from "../../lib/settingsIa";
 
@@ -88,6 +96,20 @@ async function startNewChat() {
     }
     const workspaceId = auth.currentWorkspaceId;
     await router.push({ path: workspacePath(workspaceId), query: { newChat: "1" } });
+}
+
+/**
+ * task-373 / `D-1236`：新建入口 = 搜索行 icon 的**两项菜单**（区头 ⊕ 仍是「新建工作区」，
+ * 两者不混用，D-1206）。独立会话不进任何工作区，所以它不能复用 `startNewChat`。
+ */
+const standaloneDialogOpen = ref(false);
+
+function openStandaloneDialog() {
+    standaloneDialogOpen.value = true;
+}
+
+function onStandaloneCreated(sessionId: string) {
+    void router.push(standaloneChatPath(sessionId));
 }
 
 function toggleSidebar() {
@@ -249,7 +271,9 @@ function handleLogout() {
                 而顶部这个按钮**不携带对象**（不知道在哪个工作区）。
                 降级为与搜索同行的 icon 按钮：size-7（7×3.5 = 24.5px）+ 透明底 + size-4 图标，
                 填充色 `--primary` → 透明 ⇒ 左栏 L3 强调占用 1 → 0（注意力预算：每屏 ≤2）。
-                `data-testid="sidebar-new-chat"` 保持不变（8 处 e2e 引用它，改 testid 等于改别人的断言）。
+                `data-testid="sidebar-new-chat"` 保持不变（e2e 引用它，改 testid 等于改别人的断言）。
+                task-373 / `D-1236`：它现在是**两项菜单的触发器**（在此工作区新建 / 新建独立会话），
+                不再是直接新建 —— 所以点它的 e2e 要再点一次菜单项（同批已改）。
             -->
             <div class="px-3 pb-2">
                 <div class="flex items-center gap-1">
@@ -279,20 +303,48 @@ function handleLogout() {
                             <X class="size-3.5" aria-hidden="true" />
                         </button>
                     </div>
-                    <button
-                        type="button"
-                        data-testid="sidebar-new-chat"
-                        class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        :aria-label="t('sidebar.newChat')"
-                        :title="t('sidebar.newChat')"
-                        @click="startNewChat"
-                    >
-                        <Plus class="size-4" aria-hidden="true" />
-                    </button>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger as-child>
+                            <button
+                                type="button"
+                                data-testid="sidebar-new-chat"
+                                class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                :aria-label="t('sidebar.newChat')"
+                                :title="t('sidebar.newChat')"
+                            >
+                                <Plus class="size-4" aria-hidden="true" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" class="w-60">
+                            <DropdownMenuItem
+                                data-testid="sidebar-new-chat-workspace"
+                                @select="startNewChat"
+                            >
+                                <FolderTree class="size-4" aria-hidden="true" />
+                                {{ t("sidebar.groupNewSession") }}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                data-testid="sidebar-new-chat-standalone"
+                                @select="openStandaloneDialog"
+                            >
+                                <MessageSquare class="size-4" aria-hidden="true" />
+                                {{ t("sidebar.newChatStandalone") }}
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
             </div>
 
-            <WorkspaceSessionGroups @new-session="startNewChatInWorkspace" />
+            <WorkspaceSessionGroups
+                @new-session="startNewChatInWorkspace"
+                @new-standalone-session="openStandaloneDialog"
+            />
+
+            <StandaloneSessionDialog
+                :show="standaloneDialogOpen"
+                @close="standaloneDialogOpen = false"
+                @created="onStandaloneCreated"
+            />
 
             <div
                 v-if="isMobile"

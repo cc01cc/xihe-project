@@ -21,7 +21,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { ChevronRight, FolderTree, Loader2, Plus } from "@lucide/vue";
+import { ChevronRight, FolderTree, Loader2, MessageSquare, Plus } from "@lucide/vue";
 import { api, ApiError, type ApiWorkspace } from "../../../../composables/api";
 import type { Session } from "../../../../types";
 import { useAuthStore } from "../../../../stores/auth";
@@ -36,7 +36,10 @@ const router = useRouter();
 const auth = useAuthStore();
 const sessionStore = useSessionStore();
 
-const emit = defineEmits<{ "new-session": [workspaceId: string] }>();
+const emit = defineEmits<{
+    "new-session": [workspaceId: string];
+    "new-standalone-session": [];
+}>();
 
 const workspaces = ref<ApiWorkspace[]>([]);
 const listLoading = ref(true);
@@ -50,7 +53,6 @@ const failedGroups = ref<Record<string, string>>({});
  * 它是只增的数组而不是计数器 —— 出问题时能看出「为谁拉过」，计数只能告诉你「拉过几次」。
  */
 const groupRequests = ref<string[]>([]);
-defineExpose({ expanded, groupRequests, toggleGroup, ensureGroup, isExpanded });
 
 const currentWorkspaceId = computed(() => auth.currentWorkspaceId);
 const searchQuery = computed(() => sessionStore.searchQuery.trim().toLowerCase());
@@ -85,8 +87,60 @@ function visibleSessions(workspaceId: string): Session[] {
     return all.filter((session) => session.title.toLowerCase().includes(searchQuery.value));
 }
 
-const hasAnyVisibleSession = computed(() =>
-    orderedWorkspaces.value.some((workspace) => visibleSessions(workspace.id).length > 0),
+/**
+ * task-373 / `D-1228` + `D-1236`：独立会话分组（无工作区）。
+ *
+ * <p>三条裁定：命名「独立会话」；**为 0 隐藏分组**；位置沉底（`D-1221`）。它不属于任何
+ * 工作区，所以不参与按组懒加载 —— 一个用户只有一份，首屏一次请求就够（要知道有没有，
+ * 才能决定渲不渲染）。</p>
+ *
+ * <p>读失败时**仍然渲染分组**并给重试：静默隐藏会把「读失败」伪装成「你没有独立会话」。</p>
+ */
+const standaloneExpanded = ref(true);
+const standaloneLoading = ref(false);
+const standaloneError = ref<string | null>(null);
+const standaloneSessions = computed(() => sessionStore.workspacelessSessions);
+const visibleStandalone = computed(() => {
+    if (!isSearching.value) return standaloneSessions.value;
+    return standaloneSessions.value.filter((session) =>
+        session.title.toLowerCase().includes(searchQuery.value),
+    );
+});
+const showStandalone = computed(
+    () => standaloneSessions.value.length > 0 || standaloneError.value !== null,
+);
+
+async function loadStandalone(): Promise<void> {
+    standaloneLoading.value = true;
+    standaloneError.value = null;
+    try {
+        await sessionStore.loadWorkspacelessSessions();
+    } catch (cause) {
+        standaloneError.value =
+            cause instanceof ApiError ? cause.message : t("sidebar.standaloneFailed");
+        logger.error("Load standalone sessions failed", cause);
+    } finally {
+        standaloneLoading.value = false;
+    }
+}
+
+function retryStandalone(): void {
+    void sessionStore.loadWorkspacelessSessions(true).then(
+        () => {
+            standaloneError.value = null;
+        },
+        (cause: unknown) => {
+            standaloneError.value =
+                cause instanceof ApiError ? cause.message : t("sidebar.standaloneFailed");
+            logger.error("Retry standalone sessions failed", cause);
+        },
+    );
+}
+
+const hasAnyVisibleSession = computed(
+    () =>
+        orderedWorkspaces.value.some((workspace) => visibleSessions(workspace.id).length > 0) ||
+        visibleStandalone.value.length > 0,
 );
 
 async function loadWorkspaces(): Promise<void> {
@@ -174,11 +228,24 @@ watch(
 );
 
 onMounted(async () => {
+    // 独立会话与工作区列表互不依赖：并行发，谁先回都不挡谁。
+    void loadStandalone();
     await loadWorkspaces();
     const first = currentWorkspaceId.value ?? orderedWorkspaces.value[0]?.id ?? null;
     if (!first) return;
     if (!isExpanded(first)) expanded.value = [...expanded.value, first];
     await ensureGroup(first);
+});
+
+// expose 放在声明之后：`defineExpose` 的对象字面量是就地求值的，提前引用后面的 const 会撞 TDZ。
+defineExpose({
+    expanded,
+    groupRequests,
+    toggleGroup,
+    ensureGroup,
+    isExpanded,
+    standaloneExpanded,
+    loadStandalone,
 });
 </script>
 
@@ -208,7 +275,7 @@ onMounted(async () => {
 
         <!-- 空态一：一个分组都没有（不是「没选工作区」—— `D-1206` 废掉了那个态）。 -->
         <div
-            v-else-if="!hasWorkspace"
+            v-else-if="!hasWorkspace && !showStandalone"
             data-testid="sidebar-empty-no-workspace"
             class="px-3 py-8 text-center"
         >
@@ -343,6 +410,69 @@ onMounted(async () => {
                             {{ t("sidebar.newChat") }}
                         </button>
                     </div>
+                </div>
+            </section>
+
+            <!-- task-373 / `D-1236`：独立会话沉底（`D-1221`），为 0 隐藏；读失败仍渲染 + 重试。 -->
+            <section v-if="showStandalone" data-testid="sidebar-standalone-group" class="mb-1">
+                <div class="flex items-center gap-1">
+                    <button
+                        type="button"
+                        data-testid="sidebar-standalone-group-toggle"
+                        :aria-expanded="standaloneExpanded"
+                        :aria-label="t('sidebar.standaloneGroup')"
+                        class="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click="standaloneExpanded = !standaloneExpanded"
+                    >
+                        <ChevronRight
+                            class="size-3.5 shrink-0 transition-transform"
+                            :class="{ 'rotate-90': standaloneExpanded }"
+                            aria-hidden="true"
+                        />
+                        <MessageSquare class="size-4 shrink-0 opacity-70" aria-hidden="true" />
+                        <span class="truncate">{{ t("sidebar.standaloneGroup") }}</span>
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="sidebar-standalone-group-new"
+                        :aria-label="t('sidebar.newChatStandalone')"
+                        :title="t('sidebar.newChatStandalone')"
+                        class="shrink-0 rounded-md p-1 text-sidebar-foreground transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        @click="emit('new-standalone-session')"
+                    >
+                        <Plus class="size-3.5" aria-hidden="true" />
+                    </button>
+                </div>
+
+                <div v-if="standaloneExpanded" data-testid="sidebar-standalone-group-body">
+                    <div
+                        v-if="standaloneLoading"
+                        data-testid="sidebar-standalone-loading"
+                        class="flex items-center justify-center gap-2 px-3 py-4 text-xs text-muted-foreground"
+                    >
+                        <Loader2 class="size-3 animate-spin" aria-hidden="true" />
+                        {{ t("sidebar.standaloneLoading") }}
+                    </div>
+                    <div
+                        v-else-if="standaloneError"
+                        data-testid="sidebar-standalone-error"
+                        class="px-3 py-4 text-center"
+                    >
+                        <p class="text-xs text-sidebar-foreground">{{ standaloneError }}</p>
+                        <button
+                            type="button"
+                            data-testid="sidebar-standalone-retry"
+                            class="mt-2 rounded-md border border-sidebar-border px-2 py-0.5 text-xs hover:bg-sidebar-accent"
+                            @click="retryStandalone"
+                        >
+                            {{ t("common.retry") }}
+                        </button>
+                    </div>
+                    <SessionList
+                        v-else-if="visibleStandalone.length"
+                        :sessions="visibleStandalone"
+                        standalone
+                    />
                 </div>
             </section>
         </template>

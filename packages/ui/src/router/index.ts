@@ -420,8 +420,25 @@ const router = createRouter({
             component: () => import("../views/auth/OnboardingView.vue"),
         },
         {
-            // Legacy bookmarks (e.g. removed /chat/:sessionId) recover to the
-            // Workspace-first landing instead of a blank unmatched-route view.
+            // task-373 / `D-1228` + `D-1236`：独立会话（无工作区）的聊天页。
+            // **不是**工作区路由的复活：没有 workspaceId 段、不写 tab 工作区上下文、
+            // 不带工作区 chrome（页签栏/文件树/dock 都属于工作区）。`ChatPanel` 只吃
+            // sessionId，所以这里复用它，toolMode 保持默认 none（无工作区 ⇒ 无文件上下文）。
+            path: "/chat/:sessionId",
+            component: () => import("../layouts/AppLayout.vue"),
+            meta: { requiresAuth: true },
+            children: [
+                {
+                    path: "",
+                    name: "standalone-chat",
+                    component: () => import("../views/chat/StandaloneChatView.vue"),
+                },
+            ],
+        },
+        {
+            // Legacy bookmarks recover to the Workspace-first landing instead of a
+            // blank unmatched-route view. (`/chat/:sessionId` is a real route again
+            // since task-373 — it now means a workspace-less Session.)
             path: "/:pathMatch(.*)*",
             redirect: "/workspace",
         },

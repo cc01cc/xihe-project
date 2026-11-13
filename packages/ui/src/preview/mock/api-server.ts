@@ -537,6 +537,14 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                 const methodIsGet = (req.method ?? "GET") === "GET";
                 if (path === "/sessions" && methodIsGet) {
                     // `api.getSessions()`：顶层 `{sessions:[…]}`（也接受裸数组，这里按信封给）。
+                    // task-373 / `D-1236` 甲案：`scope=workspaceless` 是**另一份**读面（独立会话）。
+                    // 这里同样给合法空集（本文件的口径：不给假行，空态是真实形态）；未知值 fail-closed
+                    // 400，与 CP 同口径。要在浏览器里看到非空的独立会话分组，用 e2e 夹具的
+                    // `setupMockSessions(page, { workspacelessSessions: [...] })`（task-25 再丰富预览数据）。
+                    const sessionScope = url.searchParams.get("scope");
+                    if (sessionScope !== null && sessionScope !== "workspaceless") {
+                        return respond(400, { code: "INVALID_REQUEST", detail: "unknown scope" });
+                    }
                     return respond(200, { sessions: [] });
                 }
                 if (path === "/agent-principals" && methodIsGet) {
