@@ -49,6 +49,11 @@ import java.util.function.Function;
  * <p>Both entry points are wired by {@code M2-8c}; M1-9 lands the judgement only, together with
  * its tests, because the table it would validate does not exist yet.</p>
  *
+ * <p><b>Who reaches this judgement (scope order):</b> a caller with neither a membership row nor
+ * an instance-scope governance atom is a <b>404</b>, never a 403; a caller holding the atom without
+ * a membership row is the instance-level holder and sees the whole tree (design §4.2). That order
+ * lives in {@code OrgUnitAccess}, the single scope resolver both faces share.</p>
+ *
  * @author PLAN-0773 M1-9
  */
 public final class OrgUnitGovernancePolicy {
