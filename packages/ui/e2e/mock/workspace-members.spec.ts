@@ -163,9 +163,9 @@ test.describe("PLAN-0565 workspace members tab", () => {
     test("OWNER sees the tab, adds a member by username and removes one via confirm", async ({
         page,
     }) => {
-        await page.goto(`/workspace/${WORKSPACE_ID}/settings`, { waitUntil: "load" });
-        await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-        await page.getByTestId("ws-settings-tab-members").click();
+        // task-236（M4-3）：成员提升为一级页 —— 直达 /members，不再经设置页 tab。
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`, { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-members-page")).toBeVisible();
         await expect(page.getByTestId("ws-members-list")).toBeVisible();
         await expect(page.getByTestId("ws-members-row")).toHaveCount(2);
 
@@ -189,8 +189,8 @@ test.describe("PLAN-0565 workspace members tab", () => {
     });
 
     test("unknown username surfaces the ruling-6 copy without adding a row", async ({ page }) => {
-        await page.goto(`/workspace/${WORKSPACE_ID}/settings`, { waitUntil: "load" });
-        await page.getByTestId("ws-settings-tab-members").click();
+        // task-236（M4-3）：直达一级成员页。
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`, { waitUntil: "load" });
         await expect(page.getByTestId("ws-members-list")).toBeVisible();
 
         await page.getByTestId("ws-members-add-input").fill("ghost");
@@ -213,8 +213,9 @@ test.describe("PLAN-0565 workspace members tab", () => {
                 }),
             );
         });
-        await page.goto(`/workspace/${WORKSPACE_ID}/settings?tab=members`, { waitUntil: "load" });
-        await expect(page.getByTestId("ws-settings-members")).toBeVisible();
+        // task-236（M4-3）：EDITOR 直达一级成员页（旧 ?tab=members 会重定向到这里）。
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`, { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-members-page")).toBeVisible();
         await expect(page.getByTestId("ws-members-panel")).toContainText(
             "仅工作区所有者可以管理成员。",
         );
@@ -225,7 +226,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
         await expect(page.getByTestId("ws-members-row")).toHaveCount(2);
     });
 
-    test("VIEWER has no members tab and ?tab=members falls back to general", async ({ page }) => {
+    test("VIEWER：成员页不渲染列表；旧 ?tab=members 深链重定向到成员页", async ({ page }) => {
         await page.addInitScript(() => {
             sessionStorage.setItem(
                 "xihe-workspace",
@@ -238,11 +239,14 @@ test.describe("PLAN-0565 workspace members tab", () => {
             );
         });
         await page.goto(`/workspace/${WORKSPACE_ID}/settings`, { waitUntil: "load" });
+        // 设置页不再有成员 tab（单入口）。
         await expect(page.getByTestId("ws-settings-tab-members")).toHaveCount(0);
 
+        // 旧深链 ?tab=members ⇒ 重定向到一级成员页（不回落、不 404），页壳在、列表不渲染。
         await page.goto(`/workspace/${WORKSPACE_ID}/settings?tab=members`, { waitUntil: "load" });
-        await expect(page.getByTestId("ws-settings-general")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-members")).toHaveCount(0);
+        await expect(page).toHaveURL(`/workspace/${WORKSPACE_ID}/members`);
+        await expect(page.getByTestId("workspace-members-page")).toBeVisible();
+        await expect(page.getByTestId("ws-members-panel")).toHaveCount(0);
         await expect(page.getByTestId("ws-members-row")).toHaveCount(0);
     });
 });

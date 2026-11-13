@@ -8,9 +8,10 @@
  * `workspace-members` 30s 超时的根因）。
  *
  * 修法：能力位三态（`unknown` / `true` / `false`）。本用例断言：
- *  1. 未知（`undefined`）时成员 tab 可见、面板**挂载**；
+ *  1. 未知（`undefined`）时成员面板**挂载**（task-236 M4-3：宿主换成一级成员页
+ *     `/workspace/:id/members`——设置页 tab 已撤，BL-344 语义随面板迁入新页）；
  *  2. 未知期间重渲染**不重建**面板（DOM 节点 identity 不变 ⇒ 子树状态不会被销毁）；
- *  3. 确定无权（`false`）时才回落 `general` 且面板卸载（"未知"与"无权"必须分开）。
+ *  3. 确定无权（`false`）时才卸载面板（"未知"与"无权"必须分开；不发明 403 页）。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
@@ -23,7 +24,7 @@ const WORKSPACE_ID = "77777777-7777-4777-8777-777777777777";
 
 const routeState = vi.hoisted(() => ({
     workspaceId: "77777777-7777-4777-8777-777777777777",
-    query: { tab: "members" } as Record<string, string>,
+    query: {} as Record<string, string>,
 }));
 
 vi.mock("vue-router", () => ({
@@ -38,12 +39,12 @@ vi.mock("vue-router", () => ({
     createWebHistory: () => ({}),
     useRoute: () =>
         ({
-            name: "workspace-settings",
-            path: `/workspace/${routeState.workspaceId}/settings`,
+            name: "workspace-members",
+            path: `/workspace/${routeState.workspaceId}/members`,
             params: { workspaceId: routeState.workspaceId },
             query: routeState.query,
             hash: "",
-            fullPath: `/workspace/${routeState.workspaceId}/settings`,
+            fullPath: `/workspace/${routeState.workspaceId}/members`,
             matched: [],
             redirectedFrom: undefined,
             meta: {},
@@ -101,9 +102,9 @@ function mockFetch() {
 }
 
 async function mountView() {
-    const WorkspaceSettingsView = (await import("../../workspace/pages/WorkspaceSettingsView.vue"))
+    const WorkspaceMembersView = (await import("../../workspace/pages/WorkspaceMembersView.vue"))
         .default;
-    return mount(WorkspaceSettingsView, {
+    return mount(WorkspaceMembersView, {
         global: {
             plugins: [i18n],
             stubs: { RouterLink: { template: "<a><slot /></a>" } },
@@ -115,21 +116,21 @@ async function mountView() {
 describe("BL-344 能力位三态：未知不销毁成员面板", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
-        routeState.query = { tab: "members" };
+        routeState.query = {};
         sessionStorage.clear();
         localStorage.clear();
         vi.restoreAllMocks();
         mockFetch();
     });
 
-    it("未知（工作区未加载）⇒ 成员 tab 可见且面板挂载", async () => {
+    it("未知（工作区未加载）⇒ 面板挂载", async () => {
         const auth = (await import("../../../stores/auth")).useAuthStore();
         expect(auth.workspace).toBeNull();
         expect(auth.canViewMembers).toBeUndefined();
 
         const wrapper = await mountView();
         await vi.waitFor(() => {
-            expect(wrapper.find('[data-testid="ws-settings-members"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="ws-members-panel"]').exists()).toBe(true);
         });
         wrapper.unmount();
     });
@@ -137,10 +138,10 @@ describe("BL-344 能力位三态：未知不销毁成员面板", () => {
     it("未知期间重渲染不重建面板（子树状态不被销毁）", async () => {
         const wrapper = await mountView();
         await vi.waitFor(() => {
-            expect(wrapper.find('[data-testid="ws-settings-members"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="ws-members-panel"]').exists()).toBe(true);
         });
 
-        const panel = wrapper.find('[data-testid="ws-settings-members"]');
+        const panel = wrapper.find('[data-testid="ws-members-panel"]');
         const firstElement = panel.element;
         const auth = (await import("../../../stores/auth")).useAuthStore();
         // 仍然是"未知"（工作区依旧没加载）：不得因此重建子树。
@@ -148,15 +149,15 @@ describe("BL-344 能力位三态：未知不销毁成员面板", () => {
         auth.$patch({});
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find('[data-testid="ws-settings-members"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="ws-settings-members"]').element).toBe(firstElement);
+        expect(wrapper.find('[data-testid="ws-members-panel"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-members-panel"]').element).toBe(firstElement);
         wrapper.unmount();
     });
 
-    it("确定无权（VIEWER）才回落 general 并卸载面板", async () => {
+    it("确定无权（VIEWER）才卸载面板（不发明 403 页）", async () => {
         const wrapper = await mountView();
         await vi.waitFor(() => {
-            expect(wrapper.find('[data-testid="ws-settings-members"]').exists()).toBe(true);
+            expect(wrapper.find('[data-testid="ws-members-panel"]').exists()).toBe(true);
         });
 
         const auth = (await import("../../../stores/auth")).useAuthStore();
@@ -169,7 +170,7 @@ describe("BL-344 能力位三态：未知不销毁成员面板", () => {
 
         expect(auth.canViewMembers).toBe(false);
         await vi.waitFor(() => {
-            expect(wrapper.find('[data-testid="ws-settings-members"]').exists()).toBe(false);
+            expect(wrapper.find('[data-testid="ws-members-panel"]').exists()).toBe(false);
         });
         wrapper.unmount();
     });

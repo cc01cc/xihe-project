@@ -149,8 +149,10 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(true);
         // task-209 / D-1019：mcp / credentials / knowledge 三个 tab 与资源区双入口 ⇒ 撤。
         // 断言写成**正面守卫**（计数为 0）而不是删掉这几行：删掉只能证明"这一刻没写"，加回来时没人会红。
-        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(3);
-        for (const removed of ["mcp", "credentials", "knowledge"]) {
+        // task-236（M4-3）：成员 tab 提升为一级页（/workspace/:id/members）⇒ 设置页只剩
+        // 常规 + 配置两个 tab；正面守卫计数防「tab 被悄悄加回来」。
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
+        for (const removed of ["mcp", "credentials", "knowledge", "members"]) {
             expect(wrapper.find(`[data-testid="ws-settings-tab-${removed}"]`).exists()).toBe(false);
             expect(wrapper.find(`[data-testid="ws-settings-${removed}"]`).exists()).toBe(false);
         }
@@ -191,7 +193,21 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
 
         expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-resource-moved"]').exists()).toBe(false);
-        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(3);
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
+        wrapper.unmount();
+    });
+
+    it("旧 ?tab=members 重定向到一级成员页（task-236 M4-3：单入口，不回落不 404）", async () => {
+        routeState.query = { tab: "members" };
+        const wrapper = await mountView();
+        await flushPromises();
+
+        expect(routerSpies.replace).toHaveBeenCalledWith({
+            name: "workspace-members",
+            params: { workspaceId: WORKSPACE_ID },
+        });
+        // 设置页自己不再渲染任何成员面。
+        expect(wrapper.find('[data-testid="ws-settings-members"]').exists()).toBe(false);
         wrapper.unmount();
     });
 

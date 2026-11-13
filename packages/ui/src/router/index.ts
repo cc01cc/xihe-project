@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { Boxes, CalendarClock, LayoutGrid, Server, Settings } from "@lucide/vue";
+import { Boxes, CalendarClock, LayoutGrid, Server, Settings, Users } from "@lucide/vue";
 import { api } from "../composables/api";
 import {
     migrateLegacyWorkspace,
@@ -151,6 +151,22 @@ const router = createRouter({
                                     labelKey: "workspaceNav.settings",
                                     order: 40,
                                     icon: Settings,
+                                },
+                            },
+                        },
+                        {
+                            // PLAN-0773 M4-3（task-236）：成员从设置页 tab 提升为一级页。
+                            // order 45 是 task-210 预留值：不重排既有 10/20/30/35/40。
+                            path: "members",
+                            name: "workspace-members",
+                            component: () =>
+                                import("../features/workspace/pages/WorkspaceMembersView.vue"),
+                            meta: {
+                                workspacePage: {
+                                    id: "members",
+                                    labelKey: "workspaceNav.members",
+                                    order: 45,
+                                    icon: Users,
                                 },
                             },
                         },

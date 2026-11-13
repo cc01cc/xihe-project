@@ -6,7 +6,7 @@ import { workspacePageOfMeta } from "../../../lib/workspacePages";
  * PLAN-0773 `M4-4`（`task-190`）的**机器判据**：工作区二级导航项必须**由路由表派生**。
  *
  * <p>本文件不测组件外观（那是 e2e 的事），只钉住三条「手写清单会立刻破」的不变量：
- * ① 带 `meta.workspacePage` 的记录数 = 5（**会话** / 环境 / 定时任务 / **资源** / 设置）；
+ * ① 带 `meta.workspacePage` 的记录数 = 6（**会话** / 环境 / 定时任务 / **资源** / 设置 / **成员**）；
  * （`task-217`：页名由「工作台」改成「会话」——「工作台」是模块层名字，D-924；id 同步 `workbench → sessions`。）
  * （4→5 是 PLAN-0773 M4-2 / task-210 加的工作区资源页；旧断言把 4 写死了，加页时它**必须**红 —
  * 那正是它存在的理由。）
@@ -27,7 +27,7 @@ const withPage = pageRecords
     .sort((a, b) => (a.page?.order ?? 0) - (b.page?.order ?? 0));
 
 describe("工作区二级导航 SSOT（路由 meta 派生）", () => {
-    it("工作区页 = 5 条，且顺序由 order 决定", () => {
+    it("工作区页 = 6 条，且顺序由 order 决定", () => {
         expect(withPage.map((entry) => entry.page?.id)).toEqual([
             "sessions",
             "environment",
@@ -35,8 +35,10 @@ describe("工作区二级导航 SSOT（路由 meta 派生）", () => {
             // M4-2（task-210）：资源页插在定时任务与设置之间（order 35，给 M4-3 的「成员」留 45 空档）。
             "resources",
             "settings",
+            // M4-3（task-236）：成员从设置页 tab 提升为一级页（order 45 = task-210 预留值，不重排）。
+            "members",
         ]);
-        expect(withPage.map((entry) => entry.page?.order)).toEqual([10, 20, 30, 35, 40]);
+        expect(withPage.map((entry) => entry.page?.order)).toEqual([10, 20, 30, 35, 40, 45]);
     });
 
     it("聊天页不是二级导航项（它没有独立入口）", () => {

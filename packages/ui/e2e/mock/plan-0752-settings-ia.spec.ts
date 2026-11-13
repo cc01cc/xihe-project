@@ -138,10 +138,11 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
             );
         }
 
-        // 存活 tab 只有「常规 / 成员」两个容器（成员 tab 在能力位未知时保留，BL-344）。
+        // task-236（M4-3）：成员提升为一级页（/workspace/:id/members）——设置页成员 tab 已撤
+        // （BL-344 三态语义随面板迁入成员页）；存活容器仍是 2 个（常规 + 配置）。
         await page.goto("/workspace/ws-1/settings");
         await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-tab-members")).toBeVisible();
+        await expect(page.getByTestId("ws-settings-tab-members")).toHaveCount(0);
         await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
         await expect(page.getByTestId("ws-settings-resource-moved")).toHaveCount(0);
         // 工作区设置页在 AppLayout 壳内（页签形态），工作区 Sidebar 照常 1 份。

@@ -25,31 +25,40 @@ async function openSettings(page: Page): Promise<void> {
 }
 
 test.describe("会话矩阵 M4 — 三角色渲染", () => {
-    test("OWNER：成员 tab 与管理动作区可见", async ({ page }) => {
+    test("OWNER：一级成员页可见，设置页管理动作区可见", async ({ page }) => {
         await setupMockAuth(page); // 默认 workspaceRole = OWNER
         await setupMockSessions(page, { sessions: [] });
-        await openSettings(page);
+        // task-236（M4-3）：成员提升为一级页 —— OWNER 在 /members 看到成员面板本体。
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`);
         await expect(
-            page.getByTestId("ws-settings-tab-members"),
-            "members tab visible for OWNER",
+            page.getByTestId("workspace-members-page"),
+            "members page visible for OWNER",
         ).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
+        await expect(page.getByTestId("ws-members-panel")).toBeVisible();
+        await openSettings(page);
         await expect(
             page.getByTestId("ws-settings-edit"),
             "manage block visible for OWNER",
         ).toBeVisible();
     });
 
-    test("VIEWER：成员 tab 不渲染，管理动作区不出现", async ({ page }) => {
+    test("VIEWER：成员页不渲染成员列表，管理动作区不出现", async ({ page }) => {
         await setupMockAuth(page, { workspace: { workspaceRole: "VIEWER" } });
         await setupMockSessions(page, { sessions: [] });
+        // task-236（M4-3）：设置页无成员 tab、无管理动作区；直进成员页也不渲染列表（不发明 403 页）。
         await openSettings(page);
         await expect(
             page.getByTestId("ws-settings-tab-members"),
-            "VIEWER must not see the members tab",
+            "VIEWER must not see a settings members tab",
         ).toHaveCount(0);
         await expect(
             page.getByTestId("ws-settings-edit"),
             "VIEWER has no manage block",
+        ).toHaveCount(0);
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`);
+        await expect(
+            page.getByTestId("ws-members-panel"),
+            "VIEWER must not see the members panel",
         ).toHaveCount(0);
     });
 

@@ -79,6 +79,8 @@ const messages = {
             // PLAN-0773 M4-2（task-210）：本工作区资源页（`/workspace/:id/resources`）。
             resources: "资源",
             settings: "设置",
+            // PLAN-0773 M4-3（task-236）：成员提升为一级页（order 45），导航标签同派生。
+            members: "成员",
         },
         sidebar: {
             newChat: "新建对话",
@@ -852,6 +854,8 @@ const messages = {
             settingsDesc:
                 "本工作区的常规信息与成员。配置统一在设置区按 实例 / 工作区默认 / 个人 管理；资源（MCP / 凭据 / 技能 / 智能体 / 知识库）统一在资源区按层管理。",
             settingsTabGeneral: "常规",
+            // task-236（M4-3）：成员页（/workspace/:id/members）的描述文案。
+            membersPageDesc: "管理本工作区的成员：按用户名添加、调整角色或移除。",
             // PLAN-0773 M4-1（task-190）：工作区「配置」tab —— 按**本工作区**的层读写（直连既有端点）。
             settingsTabConfig: "配置",
             settingsConfigLoading: "正在加载本工作区的配置…",
@@ -3358,6 +3362,7 @@ const messages = {
             scheduledTasks: "Scheduled tasks",
             resources: "Resources",
             settings: "Settings",
+            members: "Members",
         },
         sidebar: {
             newChat: "New Chat",
@@ -4171,6 +4176,8 @@ const messages = {
             settingsDesc:
                 "General info and members for this workspace. Configuration lives in Settings per instance / workspace default / personal layer; resources (MCP / credentials / skills / agents / knowledge) live in the resources module, managed per layer.",
             settingsTabGeneral: "General",
+            membersPageDesc:
+                "Manage this workspace's members: add by username, change roles, or remove.",
             settingsTabConfig: "Configuration",
             settingsConfigLoading: "Loading this workspace configuration…",
             settingsConfigLoadFailed: "Failed to load this workspace configuration",

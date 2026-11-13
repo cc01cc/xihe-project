@@ -98,11 +98,12 @@ test.describe("@host PLAN-0565 workspace members", () => {
             if (msg.type() === "error") consoleErrors.push(msg.text());
         });
         seedWorkspaceContext(page, owner, "OWNER");
-        await page.goto(`/workspace/${owner.workspaceId}/settings?tab=members`, {
+        // task-236（M4-3）：成员是一级页了 —— 直达 /members（旧 ?tab=members 深链重定向到此）。
+        await page.goto(`/workspace/${owner.workspaceId}/members`, {
             waitUntil: "load",
         });
 
-        await expect(page.getByTestId("ws-settings-members")).toBeVisible({
+        await expect(page.getByTestId("workspace-members-page")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
         await expect(page.getByTestId("ws-members-row").first()).toBeVisible({

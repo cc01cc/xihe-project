@@ -10,7 +10,6 @@ import { api, ApiError } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
-import WorkspaceMembersPanel from "../components/WorkspaceMembersPanel.vue";
 import WorkspaceConfigPanel from "../components/WorkspaceConfigPanel.vue";
 import { resourcePath } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
@@ -40,7 +39,9 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 // 的 `?tab=config` 同口径，那条回落行为已被 `e2e/mock/config-settings.spec.ts:194-195` 与
 // `e2e/real/approval-policy.spec.ts:128` 当作既有契约在用；②旧链接来自书签/文档/外部引用，
 // 回落到一个能解释「东西搬到哪了」的页面比 404 更有用（404 只能让人以为页面坏了）。
-type SettingsTab = "config" | "general" | "members";
+// task-236（M4-3）：「成员」已提升为一级页 /workspace/:id/members —— 本页只剩
+// 配置 / 常规两个 tab；旧 ?tab=members 深链**重定向**到新页（见下方 watch），不回落不 404。
+type SettingsTab = "config" | "general";
 
 /**
  * 已迁到资源区的三个旧 tab。`knowledge` 在资源区是 **G3 缺口页**（CP 无库实体，见
@@ -62,8 +63,7 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 
 /** `?tab=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function tabFromQuery(q: unknown): SettingsTab {
-    if (q === "config") return "config";
-    return q === "members" ? "members" : "general";
+    return q === "config" ? "config" : "general";
 }
 const activeTab = ref<SettingsTab>(tabFromQuery(route.query.tab));
 
@@ -100,10 +100,22 @@ const legacyResourceLink = computed(() => {
 watch(
     () => route.query.tab,
     (q) => {
+        // task-236（M4-3）：成员是**一级页**了 —— 旧 ?tab=members 深链直接 replace 过去
+        // （单入口：设置页不再留成员 tab；内容同一组件，PLAN-0626 深链契约 = 链接仍可用）。
+        if (q === "members") {
+            if (workspaceId.value) {
+                void router.replace({
+                    name: "workspace-members",
+                    params: { workspaceId: workspaceId.value },
+                });
+            }
+            return;
+        }
         legacyTab.value = legacyResourceTab(q);
         const next = tabFromQuery(q);
         if (next !== activeTab.value) activeTab.value = next;
     },
+    { immediate: true },
 );
 
 // task-253：域段模式（/workspace/:id/settings/:domain）随工作区配置层一起移除 ——
@@ -117,25 +129,12 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
         { key: "config", label: t("workspace.settingsTabConfig") },
         { key: "general", label: t("workspace.settingsTabGeneral") },
     ];
-    // BL-344：`canViewMembers` 是三态 —— 未知（`undefined`）时**保留**成员 tab，
-    // 只有确定无权（`false`）才隐藏；否则能力位一抖动 tab 就会消失再回来。
-    if (auth.canViewMembers !== false) {
-        base.push({ key: "members", label: t("workspace.settingsTabMembers") });
-    }
     return base;
 });
 
-// PLAN-0565: VIEWER 若直接落在已隐藏的成员 tab（含 ?tab=members 直链与载入后
-// 角色刷新），回退到常规 tab；载入前 workspaceRole 为空视为可见，由面板自行处理 403。
-// BL-344：回退判据从 `!visible` 收紧为 `visible === false` —— 未知不回落（否则面板
-// 会被卸载重挂，`addUsername` 里用户已经输入的内容会丢）。
-watch(
-    () => auth.canViewMembers,
-    (visible) => {
-        if (visible === false && activeTab.value === "members") activeTab.value = "general";
-    },
-    { immediate: true },
-);
+// task-236（M4-3）：成员 tab 已撤（提升为一级页）—— VIEWER 深链 ?tab=members 由上方
+// watch 直接重定向到成员页；成员页自己按 canViewMembers 三态决定是否渲染面板
+// （BL-344 语义移入 WorkspaceMembersView.vue，本页不再承载）。
 
 const loadError = ref(""),
     loading = ref(false);
@@ -523,20 +522,6 @@ onMounted(() => {
                                 </div>
                             </div>
                         </div>
-                    </div>
-
-                    <div
-                        v-else-if="activeTab === 'members' && auth.canViewMembers !== false"
-                        data-testid="ws-settings-members"
-                    >
-                        <WorkspaceMembersPanel
-                            :workspace-id="workspaceId"
-                            :readonly="
-                                auth.workspace?.workspaceRole === undefined
-                                    ? undefined
-                                    : !auth.canManageWorkspace
-                            "
-                        />
                     </div>
                 </template>
             </div>

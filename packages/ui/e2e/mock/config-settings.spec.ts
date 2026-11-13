@@ -190,7 +190,8 @@ test.describe("Config Settings (three layers)", () => {
     // 矩阵、工作区设置页长出「配置」tab + 域面板）⇒ 原断言会红，而它红得**对**：契约变了，判据必须跟。
     //
     // 翻面**不删**：删断言只能证明「这一刻没写」，将来有人再把 tab 拿掉时不会有任何东西变红。
-    // 反过来写之后，被持续验证的契约是「恰好三个 tab（general/members/config）+ 域面板集合等于 SSOT」。
+    // 反过来写之后，被持续验证的契约是「恰好两个 tab（general/config）+ 域面板集合等于 SSOT」。
+    // task-236（M4-3）：成员提升为一级页 /workspace/:id/members —— 成员 tab 已撤（下方正面守卫）。
     test("workspace settings page: 三 tab + 配置域面板集合由 SSOT 派生（task-204 翻面）", async ({
         page,
     }) => {
@@ -200,10 +201,11 @@ test.describe("Config Settings (three layers)", () => {
 
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
-        await expect(page.getByTestId("ws-settings-tab-members")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
-        // 计数**写死 3**（不是 ≥3）：tab 增删都必须在这里显式改判据，不能静默长出新 tab。
-        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(3);
+        // 计数**写死 2**（不是 ≥2）：tab 增删都必须在这里显式改判据，不能静默长出新 tab。
+        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
+        // task-236（M4-3）正面守卫：成员 tab 已提升为一级页，不得复活成设置页 tab。
+        await expect(page.getByTestId("ws-settings-tab-members")).toHaveCount(0);
         // task-209 / D-1019：mcp / credentials / knowledge 三个资源 tab 仍不在（已撤到资源区，非双入口）。
         await expect(page.getByTestId("ws-settings-tab-mcp")).toHaveCount(0);
         await expect(page.getByTestId("ws-settings-tab-credentials")).toHaveCount(0);
