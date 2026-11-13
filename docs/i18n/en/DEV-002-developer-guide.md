@@ -183,6 +183,13 @@ mise run test:mock
 # read-only ledger (BL/PLAN) validation, run from the ONE workspace root; report-only (not part of `validate`)
 mise run ledger:validate
 
+# Font subset coverage gate (task-258): source-used codepoints ⊆ the vendored subset + BOTH asset
+# copies (internal/A03-xihe/assets/fonts and packages/ui/src/assets/fonts) byte-identical + the
+# check-font-face selftest green (fixture proves the runtime gate can still go red). Measured
+# 1.1-2.8 s; part of `validate` (T1 leaf tier - no package build, no side effects). Criteria and
+# negative cases: ONE-side internal/A03-xihe/docs/font-stack-decision.md 7.2.
+mise run check:font
+
 # A03 private docs index gate, run from the ONE workspace root: top-level md registered / links exist /
 # §2 subdir counts match disk / S4 row-decidability / H6 (§1.0 ownership table = 8 rows × 5 cols with
 # executable criteria) / H7 (references to `status: deprecated` docs). Since 2026-11-12 this task runs

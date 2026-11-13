@@ -16,8 +16,10 @@
  * 结果「英文一套字、中文另一套字」，且不同机器表现不同。这里改为同源 woff2 子集：
  * 中文与拉丁来自**同一字体**的两种脚本，离线可用、跨机器一致。
  *
- * 体积：cjk 317.5 KB + latin 18.0 KB（源字体 16.95 MB 按产品实际用字子集化，1,375 码点）。
- * 覆盖门：internal/A03-xihe/scripts/check-font-subset.mjs（源码新增汉字不在子集里就点名）。
+ * 体积：cjk 341.0 KB + latin 18.8 KB（源字体 16.95 MB 按产品实际用字子集化，1,472 码点）。
+ * 覆盖门：`mise run check:font`（= A03-xihe/scripts/run-font-gate.mjs）—— 源码用字 ⊆ 子集 + 两份产物
+ * sha256 一致 + face 门自证；已并入 `mise run validate`。改一个汉字就要重跑，判据见
+ * ONE 侧 internal/A03-xihe/docs/font-stack-decision.md §7.2。
  * 许可：SIL OFL 1.1，见 ./src/assets/fonts/LICENSE-NOTICE.md。
  *
  * font-weight: 100 900 是**声明覆盖范围**：子集保留了 wght 轴（100-900）。
