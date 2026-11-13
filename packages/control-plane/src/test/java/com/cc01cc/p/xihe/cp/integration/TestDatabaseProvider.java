@@ -2,12 +2,15 @@ package com.cc01cc.p.xihe.cp.integration;
 
 import com.cc01cc.p.xihe.cp.support.TestContainerLabels;
 import org.flywaydb.core.Flyway;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -44,6 +47,19 @@ public final class TestDatabaseProvider {
     private static final String USERNAME = "test";
     private static final String PASSWORD = TestDataFactory.PASSWORD;
     private static final String DRIVER = "org.postgresql.Driver";
+
+    private static final Logger LOG = LoggerFactory.getLogger(TestDatabaseProvider.class);
+
+    /**
+     * task-199（2026-11-13）：**只在显式设了 env 时才放宽容器启动预算**。名字与建议值写在这里是因为
+     * "环境变量名就是契约"，但**默认值不存在**：未设 ⇒ 不调用 {@code withStartupTimeout}，走 Testcontainers
+     * 自己的 readiness 预算（与改前逐字节一致）。
+     *
+     * <p>为什么不改默认值：真栈那次 62.19 s 的 {@code ContainerLaunchException} 是**负载下的假红**
+     * （同镜像同机 09:05/09:12 两轮绿），但"挂死"也是真实可能 —— 把默认预算调到 180 s 等于把挂死判据
+     * 放宽给所有人和所有 CI 机器。所以这里只提供一个**显式开关**，谁遇到假红谁自己设。</p>
+     */
+    private static final String STARTUP_TIMEOUT_ENV = "XIHE_TESTCONTAINER_STARTUP_TIMEOUT";
 
     private static final Object LOCK = new Object();
     private static final AtomicInteger SEQUENCE = new AtomicInteger();
@@ -119,9 +135,35 @@ public final class TestDatabaseProvider {
                         .withPassword(PASSWORD)
                         // task-104 债②：带本轮 run id（缺省无标签 ⇒ 与打标前逐项一致）。
                         .withLabels(TestContainerLabels.runId());
+                long startupTimeoutSeconds = startupTimeoutSeconds();
+                if (startupTimeoutSeconds > 0) {
+                    started.withStartupTimeout(Duration.ofSeconds(startupTimeoutSeconds));
+                    LOG.info("Testcontainers startup timeout = {} s (from {})",
+                            startupTimeoutSeconds, STARTUP_TIMEOUT_ENV);
+                }
                 started.start();
                 container = started;
             }
+        }
+    }
+
+    /**
+     * 读 {@link #STARTUP_TIMEOUT_ENV}（秒）。缺省/空白 ⇒ 0（= 不做任何改动）；给了但不合法 ⇒ fail-fast，
+     * 不静默回落到默认值（"我设了却没生效"比"没设"更难查）。
+     */
+    private static long startupTimeoutSeconds() {
+        String raw = System.getenv(STARTUP_TIMEOUT_ENV);
+        if (raw == null || raw.isBlank()) {
+            return 0L;
+        }
+        try {
+            long seconds = Long.parseLong(raw.trim());
+            if (seconds <= 0) {
+                throw new IllegalStateException(STARTUP_TIMEOUT_ENV + " must be a positive integer (seconds), got: " + raw);
+            }
+            return seconds;
+        } catch (NumberFormatException failure) {
+            throw new IllegalStateException(STARTUP_TIMEOUT_ENV + " must be a positive integer (seconds), got: " + raw, failure);
         }
     }
 
