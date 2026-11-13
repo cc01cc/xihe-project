@@ -65,6 +65,42 @@ const messages = {
             previewUnsupported: "该类型无法在预览内查看，请下载后用外部程序打开",
             previewBudgetNote: "预览预算 {budget}，超出部分需显式加载",
         },
+        orgMembers: {
+            // PLAN-0773 M3（task-240）：全局模块「组织成员」读面。404 与 403 是**两个语义**：
+            // 404 ORG_UNIT_NOT_FOUND = 非成员/不存在（不许说「没权限」）；403 FORBIDDEN = 缺
+            // READ_ORG_UNIT_MEMBERS 原子（权限问题，明写「不是后端缺口」）。写面按钮全禁用。
+            title: "组织成员",
+            desc: "按组织架构查看人类成员与智能体；写操作随后续批次开放，当前为只读预览。",
+            searchPlaceholder: "在可见组织树内搜索名称…",
+            searchEmpty: "没有命中的组织单元。",
+            treeEmpty: "当前账号不在任何组织单元中，或组织树为空。",
+            treeLoading: "正在加载组织树…",
+            treeError: "组织树加载失败",
+            retry: "重试",
+            notFoundTitle: "无法查看组织单元",
+            notFoundDesc: "该组织单元不存在，或当前账号不是任何单元的成员。",
+            atomDeniedTitle: "缺少读取权限",
+            atomDeniedDesc:
+                "当前身份缺少 READ_ORG_UNIT_MEMBERS 权限原子；这是权限问题，不是后端缺口。",
+            membersTitle: "单元成员",
+            includeDescendants: "含下级",
+            colName: "名称",
+            colKind: "类型",
+            colUnit: "所在单元",
+            kindHuman: "人类",
+            kindAgent: "智能体",
+            membersEmpty: "该单元没有成员。",
+            membersLoading: "正在加载成员…",
+            membersError: "成员列表加载失败",
+            writeHint:
+                "写操作（新建/改名/移动单元、增删成员、改角色）随 PLAN-0773 M3-3 批次开放，当前为只读预览。",
+            writeNewUnit: "新建子单元",
+            writeRename: "改名",
+            writeMove: "搬移",
+            writeAddMember: "加成员",
+            writeRemoveMember: "移成员",
+            writeChangeRole: "改角色",
+        },
         workspaceNav: {
             // PLAN-0773 M4-4（task-190）：工作区内部二级导航与面包屑的文案。
             // 页面清单不在这里 —— 标签 key 挂在路由 `meta.workspacePage.labelKey` 上。
@@ -107,6 +143,9 @@ const messages = {
             settings: "设置",
             // PLAN-0762 T2.3 / D-924：模块名只能是「工作台」；「工作区」只是工作台模块内的对象。
             workbench: "工作台",
+            // PLAN-0773 M3（task-240）：全局模块「组织成员」（实例级组织树 + 单元成员，
+            // Lead 裁 (a) 全局模块落点；与工作区成员资格页 workspaceNav.members 是两个面）。
+            orgMembers: "组织成员",
             // PLAN-0772 M2：第三个顶层入口。资源面已搬出 /settings（层 tab 在页内）。
             resources: "资源",
             languageMenu: "界面语言",
@@ -3353,6 +3392,39 @@ const messages = {
                 "This type cannot be previewed inline; download it and open it with an external program.",
             previewBudgetNote: "Preview budget {budget}; anything beyond it loads only on request.",
         },
+        orgMembers: {
+            title: "Org members",
+            desc: "Browse humans and agent principals by org structure; write actions open in a later batch — read-only preview.",
+            searchPlaceholder: "Search names in the visible tree…",
+            searchEmpty: "No org unit matched.",
+            treeEmpty: "This account belongs to no org unit, or the tree is empty.",
+            treeLoading: "Loading org tree…",
+            treeError: "Failed to load the org tree",
+            retry: "Retry",
+            notFoundTitle: "Org unit unavailable",
+            notFoundDesc: "The unit does not exist, or this account is not a member of any unit.",
+            atomDeniedTitle: "Missing read permission",
+            atomDeniedDesc:
+                "This identity lacks the READ_ORG_UNIT_MEMBERS permission atom — a permission issue, not a backend gap.",
+            membersTitle: "Unit members",
+            includeDescendants: "Include sub-units",
+            colName: "Name",
+            colKind: "Type",
+            colUnit: "Unit",
+            kindHuman: "Human",
+            kindAgent: "Agent",
+            membersEmpty: "No members in this unit.",
+            membersLoading: "Loading members…",
+            membersError: "Failed to load members",
+            writeHint:
+                "Write actions (create/rename/move units, add/remove members, change roles) open in PLAN-0773 M3-3 — read-only preview.",
+            writeNewUnit: "New sub-unit",
+            writeRename: "Rename",
+            writeMove: "Move",
+            writeAddMember: "Add member",
+            writeRemoveMember: "Remove member",
+            writeChangeRole: "Change role",
+        },
         workspaceNav: {
             ariaLabel: "Workspace page navigation",
             breadcrumbLabel: "Workspace location",
@@ -3389,6 +3461,7 @@ const messages = {
             empty: "No conversations",
             settings: "Settings",
             workbench: "Workbench",
+            orgMembers: "Org members",
             // PLAN-0772 M2: third top-level entry; resources moved out of /settings.
             resources: "Resources",
             workspace: "Workspace",

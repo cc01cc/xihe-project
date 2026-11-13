@@ -11,6 +11,12 @@ import { mockWorkspaceEnvironment, mockWorkspaceJobs } from "./data/workspaceEnv
 import { handleInstanceResource } from "./data/instanceResources";
 import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
 import {
+    MOCK_ORG_UNITS,
+    MOCK_ORG_UNIT_MEMBERS,
+    mockOrgUnitDescendants,
+    mockOrgUnitSearch,
+} from "./data/orgUnits";
+import {
     mockCredentialEvents,
     mockCredentialList,
     mockCredentialReferences,
@@ -261,7 +267,12 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
             // 只在 XIHE_UI_MOCK_API=1 时存在 ⇒ 正常 dev 的 index.html 行为逐字节不变。
             server.middlewares.use((req, _res, next) => {
                 const url = req.url ?? "/";
-                if (/^\/(settings|workspace|resources)(\/|$)/.test(url) && !url.includes(".")) {
+                // task-240：组织成员页（/members）也是真路由真组件，同一个 dev-only 入口；
+                // 不加这一段它会被 Vite 兜底成 index.html，拿不到 mock 登录态与语言固定。
+                if (
+                    /^\/(settings|workspace|resources|members)(\/|$)/.test(url) &&
+                    !url.includes(".")
+                ) {
                     req.url = "/preview-real.html";
                 }
                 next();
@@ -366,6 +377,37 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         workspaceId: MOCK_WORKSPACE.id,
                         cachedAt: new Date().toISOString(),
                         items: [],
+                    });
+                }
+
+                /**
+                 * PLAN-0773 M3（task-240）：组织单元读面（openapi.yaml :6040）。
+                 * 形状按契约：`{ nodes }` / `{ members }` —— 不是裸数组（api.ts 的信封校验会抛）。
+                 * `parentId` = 直接子级、`q` = 名搜（服务端忽略 parentId），夹具见 data/orgUnits.ts。
+                 */
+                if (path === "/org-units" && (req.method ?? "GET") === "GET") {
+                    const parentId = url.searchParams.get("parentId");
+                    const q = url.searchParams.get("q");
+                    if (q) return respond(200, { nodes: mockOrgUnitSearch(q) });
+                    if (parentId) {
+                        return respond(200, {
+                            nodes: MOCK_ORG_UNITS.filter((unit) => unit.parentId === parentId),
+                        });
+                    }
+                    return respond(200, {
+                        nodes: MOCK_ORG_UNITS.filter((unit) => unit.parentId === null),
+                    });
+                }
+                const membersMatch = /^\/org-units\/([^/]+)\/members$/.exec(path);
+                if (membersMatch && (req.method ?? "GET") === "GET") {
+                    const unitId = decodeURIComponent(membersMatch[1]);
+                    const includeDescendants =
+                        url.searchParams.get("includeDescendants") === "true";
+                    const scope = includeDescendants ? mockOrgUnitDescendants(unitId) : [unitId];
+                    return respond(200, {
+                        members: MOCK_ORG_UNIT_MEMBERS.filter((member) =>
+                            scope.includes(member.orgUnitId),
+                        ),
                     });
                 }
 

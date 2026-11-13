@@ -1,5 +1,5 @@
 import type { Component } from "vue";
-import { Boxes, Briefcase, Settings } from "@lucide/vue";
+import { Boxes, Briefcase, Network, Settings } from "@lucide/vue";
 import {
     defaultLayerPath,
     DOMAIN_LABEL_KEY,
@@ -33,7 +33,7 @@ import {
  */
 export const RAIL_HOVER_OPEN_DELAY_MS = 160;
 
-export type GlobalModuleId = "workbench" | "resources" | "settings";
+export type GlobalModuleId = "workbench" | "org-members" | "resources" | "settings";
 
 export interface GlobalMenuItem {
     /** 稳定 id：资源 id / 配置域 id / 工作台自身。 */
@@ -63,6 +63,13 @@ export interface GlobalModuleDef {
  */
 export const WORKBENCH_PATH = "/workspace";
 
+/**
+ * 组织成员模块的落地路径（PLAN-0773 M3 / task-240，Lead 裁 (a)：实例级面进全局模块）。
+ * 与工作台同构：模块只有一条全局路由，二级菜单只有「回到本页」一项，也不是手写路径字面量
+ * —— 路由表里的 `/members` 与本常量同源（判据同 WORKBENCH_PATH 注释）。
+ */
+export const ORG_MEMBERS_PATH = "/members";
+
 function resourceItems(): GlobalMenuItem[] {
     return RESOURCE_DEFS.map((def) => ({
         id: def.id,
@@ -91,6 +98,15 @@ export const GLOBAL_MODULES: readonly GlobalModuleDef[] = [
         basePath: WORKBENCH_PATH,
         path: WORKBENCH_PATH,
         items: workbenchItems(),
+    },
+    {
+        id: "org-members",
+        labelKey: "sidebar.orgMembers",
+        // Lead 2026-11-13 裁：图标 Network（与成员页已用的 Users 区分，两个 Users 并列会点错）。
+        icon: Network,
+        basePath: ORG_MEMBERS_PATH,
+        path: ORG_MEMBERS_PATH,
+        items: [{ id: "org-members", labelKey: "sidebar.orgMembers", path: ORG_MEMBERS_PATH }],
     },
     {
         id: "resources",

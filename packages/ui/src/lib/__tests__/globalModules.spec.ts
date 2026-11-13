@@ -5,6 +5,7 @@ import {
     globalModule,
     isModulePathMatch,
     moduleForPath,
+    ORG_MEMBERS_PATH,
     RAIL_HOVER_OPEN_DELAY_MS,
     WORKBENCH_PATH,
 } from "../globalModules";
@@ -24,11 +25,23 @@ import {
  * **对撞**，任何一侧手写了一份新清单（改动了域/资源但没改投影、或反过来），这里会红。</p>
  */
 describe("globalModules：菜单内容由 SSOT 派生", () => {
-    it("三个模块，顺序与 id 固定", () => {
+    it("四个模块，顺序与 id 固定", () => {
+        // task-240（PLAN-0773 M3，Lead 裁 (a) 全局模块落点）：组织成员是实例级面，进全局 rail
+        // 第 2 位（工作台之后）——入口按作用域归位：实例级面进全局模块，工作区作用域面进容器页。
         expect(GLOBAL_MODULES.map((module) => module.id)).toEqual([
             "workbench",
+            "org-members",
             "resources",
             "settings",
+        ]);
+    });
+
+    it("组织成员模块：单一路由 + 单一项 + 指向 ORG_MEMBERS_PATH（与工作台同构）", () => {
+        const orgMembers = globalModule("org-members");
+        expect(orgMembers.path).toBe(ORG_MEMBERS_PATH);
+        expect(orgMembers.basePath).toBe(ORG_MEMBERS_PATH);
+        expect(orgMembers.items).toEqual([
+            { id: "org-members", labelKey: "sidebar.orgMembers", path: ORG_MEMBERS_PATH },
         ]);
     });
 

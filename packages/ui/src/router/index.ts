@@ -315,7 +315,20 @@ const router = createRouter({
         },
         {
             /**
-             * PLAN-0772 M2（design.md 目标 1 + 决策 10）：资源面独立成**第三个顶层入口**。
+             * PLAN-0773 M3（task-240，Lead 2026-11-13 裁 (a) 全局模块落点）：组织成员页。
+             * 实例级面（org-units 契约明写 org 与 workspace 平行、不过滤工作区），进全局
+             * rail 第 4 项；与工作区容器页 /workspace/:id/members（成员资格面，task-236）
+             * 是两个面、两条入口，不互相挂载。GlobalRail 在 App.vue 全局渲染，本页不带工作区
+             * 上下文。当前只读：写面（M3-3）按钮禁用 + 说明。
+             */
+            path: "/members",
+            name: "org-members",
+            component: () => import("../features/org-members/pages/OrgMembersView.vue"),
+            meta: { requiresAuth: true },
+        },
+        {
+            /**
+             * PLAN-0772 M2（design.md 目标 1 + 决策 10）：资源面独立成**第三个顶层入口**。**
              *
              * <p>旧资源入口（原先挂在 `/settings/**` 下的凭据 / MCP / 技能 / 智能体 / 知识库）
              * **一次性删除、不留 redirect** —— 用户 2026-11-12 裁定「不用考虑旧的兼容性，要改就全改，

@@ -154,6 +154,19 @@ const SHOTS = [
         // 真实行为）⇒ 指针必须留在触发器上，否则这张图会变成「展开态但没有菜单」。
         keepPointer: true,
     },
+    // task-240（PLAN-0773 M3 批 A）：组织成员页（全局模块 `/members`，真路由真组件）。
+    // 15 = 首屏 —— 懒加载只发首个 `GET /org-units`（根节点未展开，图里没有子级）；
+    // 16 = 展开「研发部」并选中 ⇒ 右侧成员表出现（「含下级」默认开 ⇒ 子单元的人也在，
+    //      「所在单元」列显示各自**实际**单元，fixture 见 preview/mock/data/orgUnits.ts）。
+    // 两张图同时覆盖「树 + 列表 + 禁用写面 + 404/403 文案位置」的静态元素自审。
+    { id: "15", name: "org-members-tree", path: "/members", app: true },
+    {
+        id: "16",
+        name: "org-members-selected",
+        path: "/members",
+        app: true,
+        expand: ["[data-testid=org-tree-toggle-ou-rd]", "[data-testid=org-tree-label-ou-rd]"],
+    },
 ];
 
 /**

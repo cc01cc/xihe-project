@@ -240,6 +240,31 @@ export interface ApiWorkspaceMember {
 export type MemberAssignableRole = "EDITOR" | "VIEWER";
 
 /**
+ * PLAN-0773 M2-11（批 A）：组织单元树节点（`GET /api/v1/org-units`）。
+ * 字段以 openapi.yaml `OrgUnitNode` 为准；`hasChildren` 是懒加载的唯一依据 —— UI 不猜。
+ */
+export interface ApiOrgUnitNode {
+    id: string;
+    name: string;
+    parentId: string | null;
+    depth: number;
+    hasChildren: boolean;
+}
+
+/**
+ * PLAN-0773 M2-11（批 A）：组织单元成员（人类与智能体同表，`memberKind` 区分，M3-2）。
+ * `orgUnitId` 是**成员实际所在单元**（org_unit_members 对 (memberKind, memberId) 唯一），
+ * 不是父单元 —— 批 A 里这个字段曾被填错、被断言抓出，fixture 必须按真实语义造。
+ * 契约明写本视图**不带角色/权限**（openapi.yaml listOrgUnitMembers 描述），UI 不造角色列。
+ */
+export interface ApiOrgUnitMember {
+    memberKind: "human" | "agent_principal";
+    memberId: string;
+    orgUnitId: string;
+    displayName: string | null;
+}
+
+/**
  * PLAN-0610 W3-2a: the role/binding administration surface (`/api/v1/roles`, `/api/v1/bindings`).
  *
  * <p>`scopeClass` is the atom's SSOT classification: `instance` atoms are only meaningful on an
@@ -4707,6 +4732,31 @@ export const api = {
             headers: workspaceHeaders(wsId),
         });
     },
+    /**
+     * PLAN-0773 M3-1（task-240）：组织单元树读面。`parentId` 缺省取可见树顶；`q` 是
+     * **子树内**名搜（服务端忽略 parentId）——UI 不许把 q 发成全局搜索。
+     */
+    async listOrgUnits(params: { parentId?: string; q?: string } = {}): Promise<ApiOrgUnitNode[]> {
+        const search = new URLSearchParams();
+        if (params.parentId) search.set("parentId", params.parentId);
+        if (params.q) search.set("q", params.q);
+        const suffix = search.size > 0 ? `?${search.toString()}` : "";
+        const data = await apiGet<{ nodes: ApiOrgUnitNode[] }>(`/org-units${suffix}`);
+        return data.nodes;
+    },
+
+    /** PLAN-0773 M3-2（task-240）：`includeDescendants=true` 列整棵子树成员。 */
+    async listOrgUnitMembers(
+        unitId: string,
+        opts: { includeDescendants?: boolean } = {},
+    ): Promise<ApiOrgUnitMember[]> {
+        const suffix = opts.includeDescendants ? "?includeDescendants=true" : "";
+        const data = await apiGet<{ members: ApiOrgUnitMember[] }>(
+            `/org-units/${encodeURIComponent(unitId)}/members${suffix}`,
+        );
+        return data.members;
+    },
+
     async listWorkspaceMembers(wsId: string): Promise<ApiWorkspaceMember[]> {
         const response = await request<unknown[]>(
             `/workspaces/${encodeURIComponent(wsId)}/members`,
