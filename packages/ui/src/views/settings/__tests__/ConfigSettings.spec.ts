@@ -86,6 +86,24 @@ async function mountView() {
 }
 
 /**
+ * 断言前置：确保域卡处于**展开**态。
+ *
+ * 卡片的可折叠状态（`ConfigDomainPanel` 的 `expanded`）**按组件实例保存**，而切层（instance ⇄ user）
+ * 复用同一实例 ⇒ 先展开过实例层再切到用户层时，这张卡仍是展开的；此时再点一次标题按钮会把它**收起**，
+ * 于是「点一下按钮就能看到字段」这个假设不成立（实测：用户层断言前卡片是 `▸`，全部 `config-field-*` 都取不到）。
+ * 判据用「字段是否已在 DOM 里」，不依赖 aria 属性 —— 展开与否的**结果**才是断言要用的东西。
+ */
+async function ensureDomainExpanded(
+    wrapper: ReturnType<typeof mount>,
+    domain: string,
+): Promise<void> {
+    const fields = wrapper.findAll(`[data-testid^="config-field-${domain}-"]`);
+    if (fields.length > 0) return;
+    const toggle = wrapper.find(`[data-testid="config-domain-toggle-${domain}"]`);
+    await toggle.trigger("click");
+}
+
+/**
  * PLAN-0610 W5a: instance administration is the `cap:instance:admin` capability carried by
  * `/auth/me`; the retired `role` string must not grant anything.
  */
@@ -392,8 +410,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
 
         await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
         await flushPromises();
-        const userPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
-        await userPanel.find("button").trigger("click");
+        await ensureDomainExpanded(wrapper, "agent-runtime");
         expect(
             wrapper.find('[data-testid="config-field-agent-runtime-loopRepeatWarn"]').exists(),
         ).toBe(true);
@@ -418,8 +435,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
 
         await wrapper.find('[data-testid="config-tab-user"]').trigger("click");
         await flushPromises();
-        const userPanel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
-        await userPanel.find("button").trigger("click");
+        await ensureDomainExpanded(wrapper, "agent-runtime");
         expect(
             wrapper.find('[data-testid="config-field-agent-runtime-runMaxTurns"]').exists(),
         ).toBe(true);
@@ -449,8 +465,7 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
             if (tab !== "config-tab-instance") {
                 await wrapper.find(`[data-testid="${tab}"]`).trigger("click");
                 await flushPromises();
-                const next = wrapper.find('[data-testid="config-domain-agent-runtime"]');
-                await next.find("button").trigger("click");
+                await ensureDomainExpanded(wrapper, "agent-runtime");
             }
             const field = wrapper.find(
                 '[data-testid="config-field-agent-runtime-providerRequestFingerprintEnabled"]',
