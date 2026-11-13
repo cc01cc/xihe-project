@@ -37,6 +37,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync, rmSync, existsSync 
 import { join, relative, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { execFileSync } from "node:child_process";
 
 const SELF_DIR = dirname(fileURLToPath(import.meta.url));
 /** A03-xihe 仓库根（本脚本所在仓） */
@@ -364,6 +365,57 @@ function scan(ts, uiRoot, qualifies) {
     return { rows, aFiles, realValueCount: realValues.size, unresolvedFiles };
 }
 
+/** 本地时间 + 显式偏移（ISO 8601）。基线是「某时刻」的产物，时刻必须自带时区。 */
+function isoTimestamp(d) {
+    const pad = (n) => (n < 10 ? "0" + n : "" + n);
+    const off = -d.getTimezoneOffset();
+    const sign = off >= 0 ? "+" : "-";
+    const abs = Math.abs(off);
+    return (
+        d.getFullYear() +
+        "-" +
+        pad(d.getMonth() + 1) +
+        "-" +
+        pad(d.getDate()) +
+        "T" +
+        pad(d.getHours()) +
+        ":" +
+        pad(d.getMinutes()) +
+        ":" +
+        pad(d.getSeconds()) +
+        sign +
+        pad(Math.floor(abs / 60)) +
+        ":" +
+        pad(abs % 60)
+    );
+}
+
+/**
+ * 基线是「某时刻某个树状态」的产物。只记时刻不记树状态，数字就没有出处：
+ * 下一个读者无法判断"当时是不是有并行改动在跑"。返回相对 UI 根的路径。
+ */
+function dirtyFilesAtMeasure(uiRoot) {
+    try {
+        const out = execFileSync("git", ["-C", REPO_ROOT, "status", "--porcelain"], {
+            encoding: "utf8",
+            timeout: 20000,
+        });
+        const prefix = relative(REPO_ROOT, uiRoot).split("\\").join("/") + "/";
+        const files = [];
+        for (const raw of out.split("\n")) {
+            if (raw.trim().length < 4) continue;
+            let p = raw.slice(3).trim();
+            const arrow = p.indexOf(" -> ");
+            if (arrow !== -1) p = p.slice(arrow + 4);
+            p = p.replace(/^"|"$/g, "").split("\\").join("/");
+            if (p.startsWith(prefix)) files.push(p.slice(prefix.length));
+        }
+        return files.sort();
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+
 function readBaseline(path) {
     if (!existsSync(path)) return { files: [] };
     try {
@@ -427,12 +479,20 @@ function main() {
     const fixedNotReconciled = [...baselineSet].filter((f) => !aFiles.includes(f)).sort();
 
     if (opts.writeBaseline) {
+        const dirty = dirtyFilesAtMeasure(opts.uiRoot);
+        const dirtyFiles = Array.isArray(dirty) ? dirty : [];
+        const dirtyNote = Array.isArray(dirty) ? undefined : "git status 取不到：" + dirty.error;
+        const measuredAt = isoTimestamp(new Date());
         writeFileSync(
             baselinePath,
             JSON.stringify(
                 {
                     note: "task-318 ratchet 基线：只许缩小。收账后手工重跑 --write-baseline。",
-                    measuredAt: new Date().toISOString(),
+                    ruler: qualifier.name,
+                    rulerLabel: qualifier.label,
+                    measuredAt,
+                    dirtyAtMeasure: dirtyFiles,
+                    ...(dirtyNote ? { dirtyAtMeasureNote: dirtyNote } : {}),
                     uiRoot: relative(ONE_ROOT, opts.uiRoot).split("\\").join("/"),
                     aCount: aFiles.length,
                     files: aFiles,
@@ -443,7 +503,18 @@ function main() {
             "utf8",
         );
         process.stdout.write(
-            "[i18n-copies] 基线已写入 " + baselinePath + "（尺=" + qualifier.label + "，a=" + aFiles.length + "）\n",
+            "[i18n-copies] 基线已写入 " +
+                baselinePath +
+                "（尺=" +
+                qualifier.label +
+                "，a=" +
+                aFiles.length +
+                "，measuredAt=" +
+                measuredAt +
+                "，dirtyAtMeasure=" +
+                dirtyFiles.length +
+                " 个）\n" +
+                (dirtyNote ? "[i18n-copies] " + dirtyNote + "\n" : ""),
         );
         process.exit(0);
     }
