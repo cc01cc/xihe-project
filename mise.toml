@@ -486,11 +486,12 @@ alias = "format"
 #    实测 errors=0 / warnings=124，而 redocly 只按 errors 退出、本命令也没设 --max-warnings ⇒ 不制造恒红。
 # 不接的两类（同卡 10b / 10d）：check:docs-gates 走 monitor 第⑧问（慢且依赖其它仓状态，接进来会拖垮每次提交）；
 # 其余 report-only 门只登记不接 —— 接进去等于把 report-only 偷偷变阻断，那是策略变更，不是接线。
-# task-258：check:font 进 validate（T1 叶子档，实测 1.1–2.8 s，纯只读）。理由与 check:mise-env / check:openapi:lint
-# 同源：一条「已绿但零自动执行者」的门不是门 —— 字体门自 task-72 起就是这样，代价是 104 个字静默回落系统字体
-# 而所有构建/类型/E2E 门全绿（用户 13:5x 实拍才看见）。
-depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:commit-msg", "check:font", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
-description = "Run all quality gates — check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + check:font + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
+# task-266 / D-1132 / D-1133：`check:font` 已**从 validate 摘除**（2026-11-13）。字体自托管整案缓做（BL-622），
+# 实现（产物 + 四脚本 + 决策稿）搬去 ONE 侧 `internal/A03-xihe/deferred/font-self-hosted/`。
+# 任务定义仍留在下方 `[tasks."check:font"]`（可手动复跑），但**不再是任何门的依赖** ——
+# 一条指向已搬走脚本的门挂在这里，会让 validate 恒红（这正是 D-1133 说的「留着就是干扰」）。
+depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+description = "Run all quality gates — check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
 alias = "validate"
 
 [tasks."validate:full"]
@@ -673,16 +674,17 @@ run = "node scripts/run-branch-scope.mjs --repo ."
 description = "Module-branch write-surface gate: only packages/<module>/**, docs/i18n/** (and docs/api/openapi.yaml for m/cp) may change on m/<module> branches (0 clean / 1 E_SHARED_FILE_WRITE / 2 usage-or-environment)"
 alias = "check:branch-scope"
 
-# task-258：字体覆盖门 —— 用户实拍 /members 页「组织」的「织」字形不对，实测子集自 2026-11-11
-# `21a94abc1` 后从未重建，104 个源码在用字不在子集里；且该门当时**没有任何自动执行者**。
-# 归 **T1 叶子档**（不触发包、无副作用、不起栈）：只读源码字符集与产物 sha256，毫秒~秒级，
-# 所以可以直接进 `validate` 而不违反「mise 改动升 W2」的代价约束（见 docs/font-stack-decision.md §7.2）。
-# 两步见 scripts/run-font-gate.mjs：①源码用字 ⊆ 子集 + **两份产物 sha256 一致**（重建只更新 internal、
-# 忘了拷 packages/ui 时屏上仍是旧子集，而旧版门全绿）②check-font-face --selftest 自证夹具可用。
-# 反例（门真在拦）：故意在某棵 ui 树的 src 里加一个子集外的字 ⇒ exit 1 并点名该码点。
+# task-266 / D-1132 / D-1133：字体覆盖门 —— **已摘门，任务保留供手动复跑**（2026-11-13）。
+# `check:font` 曾于 task-258 接入 `validate`（作为 T1 叶子档），D-1132 把自托管整案缓做后从 validate 摘除。
+# 任务定义不删：D-1133 要求「摘除不是删除」，且 `mise tasks --json` 里仍能看到它 ⇒ 恢复时不用重建接线。
+# 脚本在 ONE 侧缓做区（跨仓，用 `git rev-parse --git-common-dir` 定位，不是相对路径）：
+#   internal/A03-xihe/deferred/font-self-hosted/scripts/run-font-gate.mjs
+# 手动复跑（恢复前自查）：`node <ONE 根>/internal/A03-xihe/deferred/font-self-hosted/scripts/run-font-gate.mjs`
+# 现在直接跑本任务会 exit 2（E_ENV：找不到 A03-xihe/scripts/run-font-gate.mjs）—— **这是预期的**，
+# 因为它已搬走；恢复步骤见 internal/A03-xihe/deferred/font-self-hosted/README.md 第 3、4 节。
 [tasks."check:font"]
-run = "node scripts/run-font-gate.mjs"
-description = "Font subset coverage gate (task-258): source-used codepoints ⊆ vendored subset + both asset copies (internal/ and packages/ui/src) byte-identical + check-font-face selftest green; 0 pass / 1 assertion red / 2 infra"
+run = "node ../internal/A03-xihe/deferred/font-self-hosted/scripts/run-font-gate.mjs"
+description = "Font subset coverage gate — REMOVED from validate by D-1132 (font self-hosting deferred, BL-622); task kept for manual re-runs per D-1133. Scripts live in ONE-side internal/A03-xihe/deferred/font-self-hosted/"
 alias = "check:font"
 
 [tasks."check:ports"]

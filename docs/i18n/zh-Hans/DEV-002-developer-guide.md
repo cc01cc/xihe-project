@@ -132,7 +132,7 @@ sequenceDiagram
 | `mise run test:runtime:lib:gate` | BL-262 竞态复验门：串行 1 + 并行 3 连跑（里程碑/竞态修复后跑；**不进 `validate`**） |
 | `mise run test:runtime:lib:ignored:isolated` / `:functional` / `:mxc` | BL-262 ignored 套件三档（显式列名 + 实测超时；`:mxc` 的 4 条 MXC 边界用例需 `XIHE_MXC_EXECUTABLE`，缺 env 会按可执行消息失败；**不进 `validate`**） |
 | `mise run ledger:validate` | 只读校验台账（BL/PLAN 结构，在 ONE 工作区根运行）；**报告不阻断**，保留工具退出码 |
-| `mise run check:font` | **字体子集覆盖门**（task-258）：源码用字 ⊆ vendored 子集 + **两份产物 sha256 逐文件一致** + `check-font-face --selftest` 自证；实测 1.1–2.8 s，已并入 `validate`（T1 叶子档）。判据与反例见 ONE 侧 `internal/A03-xihe/docs/font-stack-decision.md` §7.2 |
+| `mise run check:font` | **字体子集覆盖门 —— 已缓做，不在 `validate` 里**（task-258 曾接入，D-1132 于 2026-11-13 摘除）。任务定义保留供手动复跑（D-1133「摘除不是删除」），直接跑会 exit 2 找不脚本，**这是预期的**：脚本已搬到 ONE 侧 `internal/A03-xihe/deferred/font-self-hosted/`。产品现用系统字体栈 |
 | `mise run check:docs-index` | **A03 私有文档索引门**（`one/` 根运行）：顶层 md 是否全部登记 / 链接是否存在 / §2 子目录计数是否等于实测 / S4 行是否可判定 / **H6 §1.0 所有权表形态与措辞**（8 行 × 5 列、过期判据必须含命令或阈值）/ **H7 已废弃文档引用**。2026-11-12 起本任务带 `--strict-deprecated` ⇒ **H7 阻断**（同批已把 `dev-hot-loop.md` 那行从「试行」改标 `status: deprecated`，先绿再上闸）；**仍不接 `validate`** |
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |

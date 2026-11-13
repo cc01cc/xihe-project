@@ -9,46 +9,21 @@
 @import "./typeset.css";
 
 /*
- * 字体（task-72 / D-833）：自托管 Noto Sans SC 子集，一份包决定所有机器。
+ * 字体（task-72 / D-833 → **D-1132 撤下 → D-1133 搬出产品包**，2026-11-13）：MVP 阶段**不做自托管字体**，
+ * 用系统字体栈。整套自托管实现（子集产物 + 构建/覆盖/断言/聚合四脚本 + 决策稿）已搬到 ONE 侧
+ * internal/A03-xihe/deferred/font-self-hosted/（**缓做区，不是历史区**）。
  *
- * 为什么：此前 --font-sans 首位的 "Geist Variable" 依赖 Google Fonts 的远程 @import，
- * 实测拿到不到就不生效（CDP 平台字体报告 custom=false，即系统字体在画）；中文则退回本机雅黑/思源，
- * 结果「英文一套字、中文另一套字」，且不同机器表现不同。这里改为同源 woff2 子集：
- * 中文与拉丁来自**同一字体**的两种脚本，离线可用、跨机器一致。
+ * 为什么搬走而不是留着：留着 woff2 + 门脚本会让后来人以为「字体是做了的」——
+ * 「不删」≠「不干扰」（D-1133）。恢复前必须满足的六条可执行判据在该目录 README 第 3 节。
  *
- * 体积：cjk 341.0 KB + latin 18.8 KB（源字体 16.95 MB 按产品实际用字子集化，1,472 码点）。
- * 覆盖门：`mise run check:font`（= A03-xihe/scripts/run-font-gate.mjs）—— 源码用字 ⊆ 子集 + 两份产物
- * sha256 一致 + face 门自证；已并入 `mise run validate`。改一个汉字就要重跑，判据见
- * ONE 侧 internal/A03-xihe/docs/font-stack-decision.md §7.2。
- * 许可：SIL OFL 1.1，见 ./src/assets/fonts/LICENSE-NOTICE.md。
+ * 为什么回系统栈（D-1132 三条事实，详见该目录 README 第 1 节）：
+ *   1. 系统字体对 CJK 全覆盖 ⇒「子集过期 → 静默回落」这**整族失效模式消失**（撤下前实测积压 104 缺字）；
+ *   2. 自托管的真实收益是换机一致性，MVP 还没到多机分发阶段（宽差实测仅 0.15%）；
+ *   3. 代价不是 328 KB，是**常开的高频门** —— 源码每加一个汉字就过期一次。
  *
- * font-weight: 100 900 是**声明覆盖范围**：子集保留了 wght 轴（100-900）。
- * 漏写时浏览器把 face 只登记在 weight=normal，document.fonts 里读到的描述符就是 "normal"（探测见
- * internal/A03-xihe/scripts/check-font-face.mjs）；届时若再给同族补第二个字重文件会路由到错的 face。
+ * 撤下前此处有两条字体面声明（cjk 341.0 KB + latin 18.8 KB / 1,472 码点 / SIL OFL 1.1），
+ * 现已全部移除 —— 判据要求本文件对该声明关键字的机械命中为 0，故提及时只写中文名不写关键字。
  */
-@font-face {
-    font-family: "Noto Sans SC";
-    src: url("../assets/fonts/noto-sans-sc-cjk.woff2") format("woff2");
-    font-weight: 100 900;
-    font-style: normal;
-    font-display: swap;
-    unicode-range: U+2E80-2FFF, U+3000-303F, U+3040-9FFF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
-}
-@font-face {
-    font-family: "Noto Sans SC";
-    src: url("../assets/fonts/noto-sans-sc-latin.woff2") format("woff2");
-    font-weight: 100 900;
-    font-style: normal;
-    font-display: swap;
-    /* 拉丁片用**精确**码点范围（由 build-font-subset.mjs 生成，随子集刷新）：
-       宽范围会漏掉产品实际用到但不在常见块里的符号（实测：⑦⑧、⌘、①② 等 13 个被漏 ⇒ 静默回落系统字体）。 */
-    unicode-range:
-        U+20-7E, U+A5, U+A7, U+A9, U+B1, U+B7, U+D7, U+394, U+2013-2014, U+201C-201D, U+2022,
-        U+2026, U+2032-2033, U+203A, U+2190-2194, U+21B3, U+21BA, U+21D0, U+21D2, U+2208, U+2212,
-        U+222A, U+2248, U+2260, U+2264-2265, U+22EE-22EF, U+2318, U+2460-2467, U+2500, U+25B6,
-        U+25B8, U+25BC, U+25BE, U+25C0, U+25CF, U+25F7, U+26A0, U+2713, U+FE0F, U+1F4C1, U+1F4C4,
-        U+1F512;
-}
 
 /*
  * PLAN-0631 M2（D31-M2-视觉语言 = B 密集）：默认视觉语言 = B，token 直接落
@@ -139,9 +114,15 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
-    /* 首位是上文自托管的 Noto Sans SC 子集（中英同族、离线可用）；后面是**系统 fallback**：
-       字体文件没加载到时不白屏，只是回到本机字体（此时跨机器不一致，但至少可读）。 */
-    --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    /* 纯系统字体栈（D-1132，自托管已缓做）。顺序依据 —— **中文优先，不是拉丁优先**：
+       ① 中文族排在前面时，中英文落在**同一族**（实测 A 栈：zh/lat/混排 CDP 全部报 Microsoft YaHei，
+          latW 241.50）；把 "Segoe UI" 提到首位会让中英**拆成两族**（实测 B 栈：lat=Segoe UI、
+          zh=Microsoft YaHei、混排 Segoe UI×8 + 雅黑×5 ⇒ 同一行两种字形基线不同，正是自托管当初要消灭的
+          「英文一套字、中文另一套字」）。
+       ② "PingFang SC" 在前是给 macOS 的：Windows 没有它，实测自动落到次位，行为不变。
+       ③ system-ui 只作兜底（实测 C 栈 system-ui 首位会命中 Microsoft YaHei UI 变体，与雅黑不是同一族）。
+       判据（可复算）：CDP CSS.getPlatformFontsForNode 取 zh/lat/混排三段，全部同族 = 通过。 */
+    --font-sans: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
     --font-heading: var(--font-sans);
     --color-chart-5: var(--chart-5);
     --color-chart-4: var(--chart-4);

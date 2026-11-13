@@ -183,11 +183,11 @@ mise run test:mock
 # read-only ledger (BL/PLAN) validation, run from the ONE workspace root; report-only (not part of `validate`)
 mise run ledger:validate
 
-# Font subset coverage gate (task-258): source-used codepoints ⊆ the vendored subset + BOTH asset
-# copies (internal/A03-xihe/assets/fonts and packages/ui/src/assets/fonts) byte-identical + the
-# check-font-face selftest green (fixture proves the runtime gate can still go red). Measured
-# 1.1-2.8 s; part of `validate` (T1 leaf tier - no package build, no side effects). Criteria and
-# negative cases: ONE-side internal/A03-xihe/docs/font-stack-decision.md 7.2.
+# Font subset coverage gate - DEFERRED, NOT part of `validate` any more. It WAS wired into validate
+# by task-258; D-1132 removed it on 2026-11-13 together with the whole font self-hosting effort
+# (BL-622). The task definition is kept for manual re-runs (D-1133 "removal is not deletion"); running
+# it now exits 2 because the scripts moved to ONE-side internal/A03-xihe/deferred/font-self-hosted/.
+# Product uses the system font stack today; reinstate criteria: that directory's README section 3.
 mise run check:font
 
 # A03 private docs index gate, run from the ONE workspace root: top-level md registered / links exist /

@@ -62,9 +62,12 @@ const winlong = params.get("winlong") === "1";
  * 文字族：`--font-sans` 首位是 Geist Variable，**Geist 没有中文字形** ⇒ 中文整段 fallback 到系统
  * sans-serif（Windows = 微软雅黑），中英文的字重与 x-height 完全不同，混排看起来「不协调」。
  * 这里显式声明中文回退，让中英文落在相近的中性无衬线族上。
+ *
+ * `"Noto Sans SC"` 已移除（D-1132 / D-1133，task-266）：该族此前靠 `main.css` 的 `@font-face` 提供，
+ * 那条声明随字体自托管缓做一并删除 ⇒ 留着这个名字已经从「确定命中自托管子集」变成
+ * 「装了这字体就命中、没装就落下一族」的环境相关行为，而这里只差一个不再存在的族。
  */
 [data-mock-canvas] {
-    font-family:
-        "Geist Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: "Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 }
 </style>
