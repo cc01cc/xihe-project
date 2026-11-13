@@ -15,7 +15,7 @@ import {
 } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
-import SessionList from "../../features/workspace/chat/components/SessionList.vue";
+import WorkspaceSessionGroups from "../../features/workspace/chat/components/WorkspaceSessionGroups.vue";
 import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
 // PLAN-0762 T2.1：NavRail 已提升为全局层（components/sidebar/GlobalRail.vue，App.vue 常驻），
 // 本组件不再自带 rail —— 它只负责工作区模块的导航面板。
@@ -81,6 +81,14 @@ function expandSidebar() {
 }
 
 const panelStyle = computed(() => (props.isMobile ? { width: "100%" } : undefined));
+
+/**
+ * task-352 / `D-1206`：分组头与会话项各自的「新建」都落到**那个工作区**，不是当前工作区。
+ * 路径形式 `/workspace/{id}?newChat=1` 由路由守卫写 tab 上下文，所以这里只负责跳。
+ */
+function startNewChatInWorkspace(workspaceId: string) {
+    void router.push({ path: workspacePath(workspaceId), query: { newChat: "1" } });
+}
 
 async function startNewChat() {
     if (!auth.currentWorkspaceId) {
@@ -254,7 +262,7 @@ function handleLogout() {
                 </div>
             </div>
 
-            <SessionList />
+            <WorkspaceSessionGroups @new-session="startNewChatInWorkspace" />
 
             <div
                 v-if="isMobile"

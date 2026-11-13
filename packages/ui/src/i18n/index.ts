@@ -143,6 +143,23 @@ const messages = {
             deletePending: "删除中…",
             deleteFailed: "删除会话失败",
             empty: "暂无会话",
+            // task-352 / `D-1206`：左栏是「工作区分组 + 会话项」。两个空态只在各自状态渲染，
+            // **不得合并成一块**（合并 = 两态又变回同一块）；出口也不同（建工作区 / 建会话）。
+            emptyNoWorkspace: {
+                title: "还没有工作区",
+                body: "工作区是左栏的一级分组。新建一个工作区后，它的会话会作为一组出现在这里。",
+                action: "新建工作区",
+            },
+            emptyNoSession: {
+                title: "这个工作区暂无会话",
+                body: "新建一个会话就能开始对话；会话会归到它所在工作区的分组下。",
+            },
+            emptyNoMatch: "没有匹配的会话",
+            groupsLoading: "正在加载工作区…",
+            groupsFailed: "工作区列表加载失败",
+            groupSessionsLoading: "正在加载会话…",
+            groupSessionsFailed: "这个分组的会话加载失败",
+            groupNewSession: "在此工作区新建会话",
             settings: "设置",
             // PLAN-0762 T2.3 / D-924：模块名只能是「工作台」；「工作区」只是工作台模块内的对象。
             workbench: "工作台",
@@ -3542,6 +3559,24 @@ const messages = {
             deletePending: "Deleting…",
             deleteFailed: "Failed to delete the session",
             empty: "No sessions",
+            // task-352 / `D-1206`: the rail is "workspace groups + session rows". The two empty
+            // states render only in their own state and must never be merged into one block
+            // (that would collapse them again); their exits differ (create workspace / session).
+            emptyNoWorkspace: {
+                title: "No workspaces yet",
+                body: "A workspace is a top-level group in this rail. Create one and its sessions will appear as a group here.",
+                action: "Create a workspace",
+            },
+            emptyNoSession: {
+                title: "No sessions in this workspace yet",
+                body: "Create a session to start chatting; it will be listed under its workspace group.",
+            },
+            emptyNoMatch: "No matching sessions",
+            groupsLoading: "Loading workspaces…",
+            groupsFailed: "Failed to load workspaces",
+            groupSessionsLoading: "Loading sessions…",
+            groupSessionsFailed: "Failed to load this group’s sessions",
+            groupNewSession: "New session in this workspace",
             settings: "Settings",
             workbench: "Workbench",
             orgMembers: "Org members",

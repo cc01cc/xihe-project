@@ -3125,8 +3125,20 @@ export const api = {
     bootstrapStatus() {
         return request<{ initialized: boolean }>("/auth/bootstrap-status");
     },
-    async getSessions(): Promise<SessionListResponse> {
-        const payload = await request<unknown>("/sessions"),
+    /**
+     * task-352 / `D-1206`：`workspaceId` 是**显式**的 workspace 选择。
+     *
+     * <p>CP 的列表是 workspace 作用域的（`SessionController#list` 取 `TenantContext`），
+     * 而 `/api/v1/workspaces/{id}/sessions` 只有 POST —— 想按 workspace 读列表，唯一的路就是
+     * 带 `X-Workspace-Id`。省略参数时沿用 `apiAuthHeaders` 注入的 tab 上下文（行为不变）。
+     * 显式头优先（api.ts 的 `hasWorkspaceHeader` 判断，大小写不敏感），所以这里不会与
+     * tab 上下文打架。</p>
+     */
+    async getSessions(workspaceId?: string): Promise<SessionListResponse> {
+        const payload = await request<unknown>(
+                "/sessions",
+                workspaceId ? { headers: { "X-Workspace-Id": workspaceId } } : undefined,
+            ),
             root = asRecord(payload),
             rawSessions = Array.isArray(root?.sessions)
                 ? root.sessions

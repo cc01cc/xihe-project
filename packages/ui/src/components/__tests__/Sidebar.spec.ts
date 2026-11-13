@@ -8,6 +8,7 @@ import { i18n as appI18n } from "../../i18n";
 import { useSessionStore } from "../../stores/session";
 import { useAuthStore } from "../../stores/auth";
 import { useAgentStore } from "../../stores/agent";
+import { api } from "../../composables/api";
 
 /**
  * D-1162 ③：夹具**必须读真源**。
@@ -83,6 +84,17 @@ beforeEach(() => {
     routeState.name = "workspace-chat";
     routeState.path = "/workspace/ws-test/chat/session-1";
     routeState.params = {};
+    //
+    // task-352 / `D-1206`：左栏现在是「工作区分组 + 会话项」，它自己要两个取数面 ——
+    // `GET /workspaces`（分组头）与按组拉会话。这里给一份最小夹具（当前工作区、零会话），
+    // 需要别的数据的用例自己再 `vi.spyOn`（后设者优先）即可。
+    vi.spyOn(api, "listWorkspaces").mockResolvedValue([
+        { id: "ws-test", name: "Default Workspace" },
+    ] as Awaited<ReturnType<typeof api.listWorkspaces>>);
+    vi.spyOn(api, "getSessions").mockResolvedValue({
+        sessions: [],
+        workspace: null,
+    } as Awaited<ReturnType<typeof api.getSessions>>);
 });
 
 const i18n = createI18n({
@@ -303,9 +315,12 @@ describe("Sidebar", () => {
         expect(rows[0]!.attributes("aria-current")).toBe("page");
 
         // The workspace row now precedes the session list instead of trailing it.
+        // task-352：会话列表的容器从 `sidebar-session-list`（单列表）换成了
+        // `sidebar-workspace-groups`（工作区分组）；「标题在前、列表在后」这条意图不变，
+        // 只换锚点 —— 空组态下内层 `sidebar-session-list` 根本不渲染，钉它会变成空断言。
         const html = wrapper.html();
         expect(html.indexOf('data-testid="sidebar-workspace"')).toBeLessThan(
-            html.indexOf('data-testid="sidebar-session-list"'),
+            html.indexOf('data-testid="sidebar-workspace-groups"'),
         );
 
         await rows[0]!.trigger("click");

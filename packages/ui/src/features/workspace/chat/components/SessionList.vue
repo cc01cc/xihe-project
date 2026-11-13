@@ -20,14 +20,52 @@ const sessionStore = useSessionStore();
 const chatStore = useChatStore();
 const agentStore = useAgentStore();
 const auth = useAuthStore();
+
+/**
+ * task-352 / `D-1206`：本组件从「左栏唯一的列表」降级为**一个工作区分组**的会话行渲染器。
+ *
+ * <p>两种数据来源，判据不同：
+ * ① **省略 `sessions`** ⇒ 仍是当前工作区的 live 投影（`sessionStore.sessions`），
+ *    时间分组头（今天/昨天/更早）与「点会话即打开」的行为逐字不变；
+ * ② **传入 `sessions`** ⇒ 这是别的工作区分组的**懒加载快照**。它只渲染行，不再自己分组
+ *    （日期分组属于 live 投影的口径），且**只读**：改名/分叉/删除的写入走的是
+ *    `X-Workspace-Id` 里的 tab 上下文，就地改会打到当前工作区 —— 选中则交给上层先切上下文。</p>
+ *
+ * <p>空态（分组空 / 整列空 / 搜不到）**不在本组件**：那是分组层的判据，见
+ * `WorkspaceSessionGroups.vue`。同一个组件里既渲染行又渲染两种空，正是 `task-349` 的原病。</p>
+ */
+const props = withDefaults(
+    defineProps<{
+        /** 传入时渲染这份快照（其它工作区分组）；省略则渲染当前工作区的 live 投影。 */
+        sessions?: Session[] | null;
+        /** 这份列表属于哪个工作区（判只读、判 tab 上下文切换）。 */
+        workspaceId?: string | null;
+    }>(),
+    { sessions: null, workspaceId: null },
+);
+
+const emit = defineEmits<{ "new-session": []; "select-foreign-session": [id: string] }>();
+const listSessions = computed<Session[]>(() =>
+    props.sessions ? props.sessions : sessionStore.sessions,
+);
+const isForeignGroup = computed(
+    () => Boolean(props.workspaceId) && props.workspaceId !== auth.currentWorkspaceId,
+);
+/** 快照模式没有日期分组的权威口径（那是 store 的 `getTimeGroup`），故只按时序遍历。 */
+const timeGroups = computed<Record<string, Session[]>>(() => {
+    if (!props.sessions) return sessionStore.groupedSessions;
+    const sorted = [...props.sessions].sort((a, b) =>
+        (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
+    );
+    return { foreign: sorted };
+});
+
 const pendingDeleteSessionId = ref<string | null>(null);
 const deleteLoading = ref(false);
 const forkingSessionId = ref<string | null>(null);
 const pendingForkKeys = new Map<string, string>();
 const pendingDeleteSession = computed(
-    () =>
-        sessionStore.sessions.find((session) => session.id === pendingDeleteSessionId.value) ??
-        null,
+    () => listSessions.value.find((session) => session.id === pendingDeleteSessionId.value) ?? null,
 );
 
 const timeGroupLabels: Record<string, string> = {
@@ -37,8 +75,13 @@ const timeGroupLabels: Record<string, string> = {
 };
 
 function handleSelect(id: string) {
+    // 别的工作区分组：选中 = 先切 tab 上下文再进会话（写入必须落在那个工作区）。
+    if (isForeignGroup.value) {
+        emit("select-foreign-session", id);
+        return;
+    }
     sessionStore.selectSession(id);
-    const session = sessionStore.sessions.find((item) => item.id === id);
+    const session = listSessions.value.find((item) => item.id === id);
     const workspaceId = session?.workspaceId ?? auth.currentWorkspaceId;
     if (workspaceId) router.push(workspaceChatPath(workspaceId, id));
 }
@@ -61,7 +104,7 @@ const terminalRunStatuses = new Set(["succeeded", "failed", "partial", "ambiguou
 /** Delegated children grouped under their parent session (children may live in any time group). */
 const childrenByParent = computed(() => {
     const map = new Map<string, Session[]>();
-    for (const session of sessionStore.sessions) {
+    for (const session of listSessions.value) {
         if (session.kind === "SPAWN" && session.spawnedFromSessionId) {
             const children = map.get(session.spawnedFromSessionId) ?? [];
             children.push(session);
@@ -98,9 +141,7 @@ function rowsFor(sessions: Session[]): Array<{ session: Session; child: boolean 
 /** Read-only budget chips; fetched once per delegated session, cached per list lifetime. */
 const delegationUsageBySession = ref(new Map<string, DelegationUsageView>());
 const delegatedSessionIds = computed(() =>
-    sessionStore.sessions
-        .filter((session) => session.kind === "SPAWN")
-        .map((session) => session.id),
+    listSessions.value.filter((session) => session.kind === "SPAWN").map((session) => session.id),
 );
 
 watch(
@@ -123,7 +164,7 @@ function delegationUsage(sessionId: string): DelegationUsageView | null {
 }
 
 async function handleFork(id: string) {
-    const session = sessionStore.sessions.find((item) => item.id === id);
+    const session = listSessions.value.find((item) => item.id === id);
     if (!session || sessionStore.currentSessionId !== id || forkingSessionId.value) return;
 
     forkingSessionId.value = id;
@@ -233,8 +274,8 @@ async function confirmDelete() {
 
 <template>
     <div data-testid="sidebar-session-list" class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
-        <div v-for="(sessions, group) in sessionStore.groupedSessions" :key="group">
-            <div v-if="sessions.length" class="px-1 py-2">
+        <div v-for="(sessions, group) in timeGroups" :key="group">
+            <div v-if="sessions.length && timeGroupLabels[group]" class="px-1 py-2">
                 <span class="text-xs font-medium text-muted-foreground tracking-wider">
                     {{ t(timeGroupLabels[group]) }}
                 </span>
@@ -249,17 +290,12 @@ async function confirmDelete() {
                 :delegated="row.session.kind === 'SPAWN'"
                 :delegation-usage="delegationUsage(row.session.id)"
                 :indent="row.child"
+                :can-mutate="!isForeignGroup"
                 @select="handleSelect"
                 @rename="handleRename"
                 @delete="handleDelete"
                 @fork="handleFork"
             />
-        </div>
-        <div
-            v-if="sessionStore.filteredSessions.length === 0"
-            class="px-3 py-8 text-center text-sm text-muted-foreground"
-        >
-            {{ t("sidebar.empty") }}
         </div>
     </div>
 

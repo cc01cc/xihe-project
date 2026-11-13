@@ -17,6 +17,11 @@ const props = withDefaults(
         delegationUsage?: DelegationUsageView | null;
         /** Rendered indented under its parent row. */
         indent?: boolean;
+        /**
+         * task-352：其它工作区分组里的会话只能「点进去」，不能就地改名/分叉/删除 ——
+         * 这些写入走的是 `X-Workspace-Id` 里的 tab 上下文，就地改会打到当前工作区。
+         */
+        canMutate?: boolean;
     }>(),
     {
         pendingCount: 0,
@@ -24,6 +29,7 @@ const props = withDefaults(
         delegated: false,
         delegationUsage: null,
         indent: false,
+        canMutate: true,
     },
 );
 
@@ -103,7 +109,7 @@ function handleRenameKeydown(e: KeyboardEvent) {
         :aria-label="session.title"
         @click="handleClick"
         @keydown="handleKeydown"
-        @contextmenu="handleContextMenu"
+        @contextmenu="canMutate && handleContextMenu($event)"
     >
         <MessageSquareText class="size-4 shrink-0 opacity-70" />
         <div v-if="isRenaming" class="flex-1 min-w-0">
@@ -158,29 +164,31 @@ function handleRenameKeydown(e: KeyboardEvent) {
                 class="absolute w-40 py-1 rounded-lg border bg-popover shadow-lg"
                 :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
             >
-                <button
-                    class="w-full px-3 py-1.5 text-left text-sm hover:bg-accent transition-colors"
-                    @click="startRename"
-                >
-                    {{ t("sidebar.rename") }}
-                </button>
-                <button
-                    v-if="isActive"
-                    type="button"
-                    class="w-full px-3 py-1.5 text-left text-sm hover:bg-accent transition-colors disabled:opacity-50"
-                    data-testid="session-item-fork"
-                    :disabled="forkBusy"
-                    @click.stop="handleFork"
-                >
-                    {{ forkBusy ? t("sidebar.forking") : t("sidebar.fork") }}
-                </button>
-                <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors"
-                    data-testid="session-item-delete"
-                    @click="handleDelete"
-                >
-                    {{ t("sidebar.delete") }}
-                </button>
+                <template v-if="canMutate">
+                    <button
+                        class="w-full px-3 py-1.5 text-left text-sm hover:bg-accent transition-colors"
+                        @click="startRename"
+                    >
+                        {{ t("sidebar.rename") }}
+                    </button>
+                    <button
+                        v-if="isActive"
+                        type="button"
+                        class="w-full px-3 py-1.5 text-left text-sm hover:bg-accent transition-colors disabled:opacity-50"
+                        data-testid="session-item-fork"
+                        :disabled="forkBusy"
+                        @click.stop="handleFork"
+                    >
+                        {{ forkBusy ? t("sidebar.forking") : t("sidebar.fork") }}
+                    </button>
+                    <button
+                        class="w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors"
+                        data-testid="session-item-delete"
+                        @click="handleDelete"
+                    >
+                        {{ t("sidebar.delete") }}
+                    </button>
+                </template>
             </div>
         </div>
     </Teleport>

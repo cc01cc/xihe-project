@@ -129,6 +129,7 @@ export const useSessionStore = defineStore("session", () => {
     function resetForUserSwitch() {
         storeGeneration += 1;
         sessions.value = [];
+        sessionsByWorkspace.value = {};
         currentSessionId.value = null;
         error.value = null;
         attachments.value = {};
@@ -170,6 +171,27 @@ export const useSessionStore = defineStore("session", () => {
         } finally {
             loadPromise = null;
         }
+    }
+
+    /**
+     * task-352 / `D-1206`：左栏按工作区分组，**展开某组才拉该组**。
+     *
+     * <p>三条约束（都写在卡面的反向读数里）：
+     * ① 这个缓存按 workspace 分键，不覆盖当前工作区的 live 投影（`sessions`）；
+     * ② 缓存命中就不再发请求 —— 「折叠再展开不重拉」靠的是 `has(workspaceId)`，不是节流；
+     * ③ 归一化只有一条路：仍然走 `toSession`。另起一套映射会把「缺字段填默认值」这条
+     *    静默归一化复制成两份（`task-42` §4 已记过同一形态）。</p>
+     */
+    const sessionsByWorkspace = ref<Record<string, Session[]>>({});
+    async function loadWorkspaceSessions(workspaceId: string): Promise<Session[]> {
+        if (workspaceId in sessionsByWorkspace.value)
+            return sessionsByWorkspace.value[workspaceId]!;
+        const page = await api.getSessions(workspaceId);
+        sessionsByWorkspace.value = {
+            ...sessionsByWorkspace.value,
+            [workspaceId]: page.sessions.map(toSession),
+        };
+        return sessionsByWorkspace.value[workspaceId]!;
     }
 
     async function loadSession(id: string): Promise<Session> {
@@ -316,6 +338,8 @@ export const useSessionStore = defineStore("session", () => {
         filteredSessions,
         groupedSessions,
         loadSessions,
+        sessionsByWorkspace,
+        loadWorkspaceSessions,
         loadSession,
         applySessionRecord,
         createSession,
