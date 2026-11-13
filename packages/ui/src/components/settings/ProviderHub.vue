@@ -17,6 +17,7 @@ import { Button } from "../ui/button";
 import { profileReadiness } from "./llmProfileNotices";
 import { Search } from "@lucide/vue";
 import {
+    chatModelNamesOf,
     createProviderConnection,
     deleteProviderConnection,
     listProviderCatalog,
@@ -307,15 +308,16 @@ const savingDefault = ref(false),
         >
     >({});
 
-/** Chat models usable as the layer default model for a connection. */
+/**
+ * 一条连接下可用于对话的模型名。**task-284（D-1140 同构判据）：改为委托唯一口径**
+ * `providerConnectionService.chatModelNamesOf`（task-401 抽出，`AgentModelBindingFields` 已在用，
+ * 且有专门 spec `providerConnectionService.chatModels.spec.ts` 钉住）。此前本组件持一份**逐字同逻辑的副本**，
+ * 该 helper 的注释里就写着「迁移到本 helper 是后续项」—— 同构判据要的是「同一套数据流」，
+ * 两份副本迟早漂（例如目录校验或 manual 回落条件改一处忘另一处）。行为不变：入参仍是本组件的
+ * `modelCatalogs`（`GET /models` 的 providers 映射），只是算法不再重复实现。
+ */
 function chatModelsOf(connection: ProviderConnection): string[] {
-    const catalog = modelCatalogs.value[connection.id],
-        models = catalog?.connectionId === connection.id ? catalog.models : [],
-        chat = models.filter((model) => model.capabilities?.chat).map((model) => model.name);
-    if (chat.length) return chat;
-    return connection.operation === "chat" && connection.modelDiscovery === "manual"
-        ? connection.manualModels
-        : [];
+    return chatModelNamesOf(connection, modelCatalogs.value);
 }
 
 /**

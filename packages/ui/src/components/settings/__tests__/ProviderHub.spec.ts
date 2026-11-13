@@ -33,7 +33,12 @@ vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
     readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
 }));
 
-vi.mock("../../../services/providerConnectionService", () => ({
+// task-284：改为 spread importOriginal —— `chatModelNamesOf` **保持真实现**（它是「一条连接下可用于
+// 对话的模型」的唯一口径，ProviderHub 现在委托它而不是持副本）。先前是 factory-only mock，只列了网络
+// 函数 ⇒ 组件一旦用到未列出的导出就是 undefined，渲染直接抛（本次迁移实测 8 条红）。与
+// InstanceAgentsPanel.spec.ts 同口径：只换需要断言的网络面，纯函数留真。
+vi.mock("../../../services/providerConnectionService", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../services/providerConnectionService")>()),
     listProviderCatalog:
         vi.fn<typeof import("../../../services/providerConnectionService").listProviderCatalog>(),
     listProviderConnections:
