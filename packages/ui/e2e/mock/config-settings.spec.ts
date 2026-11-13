@@ -1,10 +1,28 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import type { Page } from "@playwright/test";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 // task-204：域集合唯一来源是 SSOT（`stores/config.ts#LAYER_DOMAINS`），spec 里不另抄一份清单。
 import { LAYER_DOMAINS } from "../../src/stores/config";
+
+/**
+ * 断言前置：确保域卡处于**展开**态 —— 只在「字段还不在 DOM 里」时点标题按钮。
+ *
+ * 为什么不能照旧「点一次标题按钮就是展开」：`ConfigDomainPanel` 的 `expanded` 自 task-225
+ * （`9e63df3d2`，用户 2026-11-13「默认都是合拢的，用户还得多次点击」）起默认 **true**，
+ * 那一次点击于是反过来变成**收起**，断言前 `config-field-<domain>-*` 一个都取不到
+ * （实测：失败时卡片是 `▸` +「N 项 展开查看全部设置」）。
+ *
+ * 判据用「字段是否已在 DOM 里」，不依赖 `aria-expanded` —— 展开与否的**结果**才是断言要用的东西。
+ * 与 BL-621（`6c5e9640f`）单测侧的 `ensureDomainExpanded` 同一判据，这里是 e2e 侧的同形修法。
+ * 断言本身一行未放宽。
+ */
+async function ensureDomainExpanded(page: Page, domain: string): Promise<void> {
+    if ((await page.locator(`[data-testid^="config-field-${domain}-"]`).count()) > 0) return;
+    await page.getByTestId(`config-domain-toggle-${domain}`).click();
+}
 
 // BL-318：`shows an error banner when layer config cannot be loaded` 用
 // `route.abort("connectionrefused")` **故意**制造网络失败（验"保存失败"横幅），逐条放行该信号。
@@ -176,8 +194,9 @@ test.describe("Config Settings (three layers)", () => {
         await mockConfigAPIs(page);
         // 旧：/settings/config 的 instance 层签里展开 agent-runtime；新：instance 层的 agent-runtime 域页（一页一域）。
         await page.goto("/settings/instance/agent-runtime", { waitUntil: "load" });
+        await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
 
-        await page.getByTestId("config-domain-agent-runtime").locator("button").first().click();
+        await ensureDomainExpanded(page, "agent-runtime");
         await expect(page.getByTestId("config-field-agent-runtime-instructions")).toBeVisible();
     });
 
@@ -286,7 +305,7 @@ test.describe("Config Settings (three layers)", () => {
         // PLAN-0364 决策 #9（supersede PLAN-0337 选项①）：instance 层可写默认。
         const instanceDomain = page.getByTestId("config-domain-approval-policy");
         await expect(instanceDomain).toBeVisible();
-        await instanceDomain.locator("button").first().click();
+        await ensureDomainExpanded(page, "approval-policy");
         await expectTriggerLabel(page, "config-select-approval-policy-mode", "manual");
 
         // PLAN-0560 的「工作区覆盖段」已随 task-253 一并移除（用户 2026-11-10 裁定，提交
@@ -332,7 +351,7 @@ test.describe("Config Settings (three layers)", () => {
         // 不再静默隐藏（隐藏会让人以为没这项），而是渲染成只读行 + 「仅实例层」徽标。
         await page.goto("/settings/user/agent-runtime", { waitUntil: "load" });
         await expect(page.getByTestId("config-domain-agent-runtime")).toBeVisible();
-        await page.getByTestId("config-domain-agent-runtime").locator("button").first().click();
+        await ensureDomainExpanded(page, "agent-runtime");
         const instructions = page.getByTestId("config-field-agent-runtime-instructions");
         await expect(instructions).toBeVisible();
         await expect(
@@ -373,7 +392,7 @@ test.describe("Config Settings (three layers)", () => {
         await expect(page.getByTestId("config-domain-logging")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
-        await page.getByTestId("config-domain-logging").locator("button").first().click();
+        await ensureDomainExpanded(page, "logging");
         await selectByTestId(page, "config-select-logging-levelCp", "ERROR");
 
         const [request] = await Promise.all([
