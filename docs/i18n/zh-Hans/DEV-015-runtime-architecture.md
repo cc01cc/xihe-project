@@ -235,3 +235,18 @@ PLAN-0641 M5（B3=(a)）把第 2 层的静态表按**根级 profile** 分级（�
 - **值来源表（spec §2.1）**：docker 模式 `cwd=/workspace`（挂载点）、`platform=linux`、`shell=xihe-shell`；host/mxc 模式 **`cwd` 禁报宿主绝对路径 → null**、`shell` 直启无 shell 层 → null、`platform`=Runtime 执行面 OS；模式未知 → 三值 null（CP 记 `unknown`）。`HostSnapshot`（`environment.rs`）为未接线非事实源，不复用。
 - **安全边界**：`host_root`、凭据、宿主路径不进响应；`observedAt` 为报告时 RFC3339，只进诊断且**不作幂等键**；缺文件语义由 PLAN-0427 `files/read` 的 `found` 承载，与本 route 正交。
 - 缺失事实一律 `null`（非编造）；CP 对缺键/`null` 统一落 `env_status=unknown`。
+
+## 8. 构建身份与探针（BL-324，2026-11-13）
+
+- **问题**：`XIHE_BUILD_COMMIT` 全仓只有读取点、没有生产注入点（BL-496/BL-535 实测）⇒ runtime 的 `commit` 常为 `null`，「这栈跑的是不是当前代码」只能靠进程启动时间间接推。CP 侧早有 `build-info.properties`（`cpBuild.runningCommit`），runtime/agent 没有对应物。
+- **做法**：`packages/runtime/build.rs` 在构建期跑 `git rev-parse --short=12 HEAD`，用 `cargo:rustc-env=XH_RUNTIME_BUILD_COMMIT` 埋进产物；干净树 `<sha12>`、工作树有未提交改动 `<sha12>-dirty`（与 CP 的 `<sha12>[-dirty]` 同形态）。值只来自 git，**不硬编码**；git 不可用（tarball / Docker 构建）⇒ `unknown`。读面在 `packages/runtime/src/build_info.rs`。
+- **读面（二选一的结论：选既有探针，不新增路由、不用启动日志）**：`GET /ready` 的 `commit` 字段。理由三条 ——
+  - `/internal/v1/runtime/**` 今天没有版本字段（`/health` 是纯文本 `OK`，`/internal/v1/runtime/diagnostics` 承载 checkpoint 投影与 `bootId`），新增 `/internal/v1/runtime/version` 属**契约面扩张**（要同批改 `docs/api/openapi.yaml`、inventory 与契约门），超出本卡写作用域；
+  - `/ready` 早已返回 `version` + `commit`（PLAN-0534），CP `HealthMonitor.java:50` 就在轮询它（`parseProbe` 读 JSON 的 `version`/`commit`，`HealthMonitor.java:74-75`）⇒ 本卡只换**值来源**，形状不动；
+  - 日志行会被轮转、格式随时可改，做判据比 JSON 字段脆。
+- **不回落空串**：读不到时是字面量 `unknown`（不是 `""`、不是 `null`）—— 空值会被下游读成「字段存在但为空」，与「读不到」在判据上无法区分；`unknown` 才是显式值。
+- **部署期覆盖保留**：`XIHE_BUILD_COMMIT` 只在构建期值缺失时生效（PLAN-0534 的 env-first 兼容位）。反过来说：埋了 sha 之后，忘设 env 不再让身份变 `null`。
+- **判据命令**（不连栈、不读 env）：`<cargo-target>/debug/xihe-runtime --print-build-commit` ⇒ 干净树 `<sha12>`、改一个字节重建 `<sha12>-dirty`。**两次读数必须不同** —— 只在干净树上读一次，永远分不出「埋了 sha」与「写死了 sha」。
+- **内部面可以、`/api/v1` 不透传新增字段**：build commit 属**部署事实**，与 `AGENTS.md` 禁止透传的 `pid`/`wrapperPid`/`policyPath`/`mxcTier` 这类**实现字段**不同。判据两条：① `git -C A03-xihe grep -c XH_RUNTIME_BUILD_COMMIT -- packages/control-plane` ⇒ **0 命中**（CP 没有任何读取这个编译期变量的路径）；② `/api/v1/version` 的 `modules.runtime.commit` 是**既有**字段（`VersionController.java:54-59` 取 `HealthMonitor` 的 `runtime.commit()`），字段与形状不变，本卡只让它的值从 `null` 变成真 sha。
+- **已知边界（诚实登记）**：dirty 位是**构建期快照** —— `src/`、`tests/`、`Cargo.toml`、`Cargo.lock`、`build.rs` 之外的改动（README、`seccomp-profile.json`）不会刷新它，改一次源码或 `cargo clean -p xihe-runtime` 即可；未跟踪但未被 `.gitignore` 覆盖的文件算脏，`logs/`、`target/`、`.xihe-*` 不算脏；脏判定只扫**本 crate 目录**（别的包/别的 lane 的未提交改动不该把 runtime 标脏）。
+- **不做**：`dev-stack.mjs` 的消费接线（`scripts/**` 属 infra-1 侧）、CP 的 `build-info`、`/api/v1/**` 形状。

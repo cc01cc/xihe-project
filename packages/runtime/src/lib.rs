@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod build_info;
 pub mod channel;
 pub mod channel_proto;
 pub mod checkpoint;

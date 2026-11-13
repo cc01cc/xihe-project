@@ -18,6 +18,7 @@
 ### File-Scoped
 - Unit test: `cargo test --locked --lib test_name`
 - Lint single file: `cargo clippy --locked -- -W clippy::pedantic`
+- 构建身份（不连栈）：`<cargo-target>/debug/xihe-runtime --print-build-commit` ⇒ `<sha12>[-dirty]` 或 `unknown`（见 DEV-015 §8、BL-324）
 
 ### Full Suite
 - `cargo build --locked` — 编译

@@ -36,6 +36,7 @@ use crate::import_job::{ImportManager, ImportRequest, list_source_directory};
 use tokio::sync::Mutex;
 use workspace_events::WorkspaceEventWatchers;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
+use xihe_runtime::build_info;
 use xihe_runtime::checkpoint::CheckpointStorageMode;
 use xihe_runtime::checkpoint::GIT_LOG_DEFAULT_LIMIT;
 use xihe_runtime::checkpoint::NestedRepoPolicy;
@@ -905,7 +906,9 @@ async fn health() -> &'static str {
 /// `/health` is always 200 (liveness), `/ready` is 200 only after `ready` flag true.
 async fn ready(State(app): State<Arc<AppState>>) -> impl IntoResponse {
     let version = env!("CARGO_PKG_VERSION");
-    let commit = build_commit();
+    // task-238/BL-324：值来自构建期埋点（`build.rs`），见 `xihe_runtime::build_info`。
+    // 读不到时是 `unknown` 而不是空串/null，见该模块文档「为什么不是空串」。
+    let commit = build_info::build_commit();
     if app.ready.load(Ordering::Relaxed) {
         (
             StatusCode::OK,
@@ -931,16 +934,11 @@ async fn ready(State(app): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
-/// PLAN-0534: optional deployment commit. Invalid/missing values stay `None`.
-fn build_commit() -> Option<String> {
-    let raw = std::env::var("XIHE_BUILD_COMMIT").ok()?;
-    let value = raw.trim();
-    if (7..=40).contains(&value.len()) && value.chars().all(|c| c.is_ascii_hexdigit()) {
-        Some(value.to_string())
-    } else {
-        None
-    }
-}
+// PLAN-0534 的 commit 读面已迁到 `xihe_runtime::build_info`（task-238/BL-324）：
+// 先读**构建期埋入**的值，`XIHE_BUILD_COMMIT` 降级为「埋点缺失时的部署期覆盖位」，
+// 两者都没有 ⇒ `unknown`（不再回落到 `None`/null，因为「读不到」必须与「值是空」可区分）。
+// 旧函数体（只读 env、非法值默默变 None）已删——有钱难买早知道：quiet fallback 就是
+// 「字段恒为 null 但没人知道为什么」的那个形态。
 
 fn runtime_error_status(error: &RuntimeError) -> StatusCode {
     match error {
@@ -3880,6 +3878,12 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // task-238：判据命令 —— 直接读**产物里**埋的构建身份，不连栈、不依赖 env、不启动 tokio。
+    // 它回答的是「这个二进制是谁编译的」；「正在跑的那个进程是谁编译的」查 `GET /ready` 的 commit。
+    if args.iter().any(|arg| arg == "--print-build-commit") {
+        println!("{}", xihe_runtime::build_info::build_commit());
+        return Ok(());
+    }
     if args.iter().any(|arg| arg == "--file-worker") {
         return tokio::runtime::Builder::new_current_thread()
             .enable_all()
