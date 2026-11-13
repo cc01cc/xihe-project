@@ -1,3 +1,9 @@
+/**
+ * 本文件测的组件是 **`../ContextTemplatesPanel.vue`**（不是同名的 ApiRequestTemplatesPanel.vue ——
+ * 那个文件不存在）。命名漂移是历史遗留：域键叫 `api-request-templates`，组件后来改名为
+ * ContextTemplatesPanel。**改该组件的人请 grep 组件名而不是文件名**，否则会误判「没有单测」。
+ * （runtime-1 在 task-409 复核时照出；重命名文件会动 import 路径，另批再做。）
+ */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import Panel from "../ContextTemplatesPanel.vue";
