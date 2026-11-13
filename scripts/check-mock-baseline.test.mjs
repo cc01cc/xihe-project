@@ -7,7 +7,11 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { compareWithBaseline, summarizeReport } from "./check-mock-baseline.mjs";
+import {
+    compareWithBaseline,
+    evaluateFlakyPolicy,
+    summarizeReport,
+} from "./check-mock-baseline.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-mock-baseline.mjs", import.meta.url));
 
@@ -71,6 +75,43 @@ test("summarizeReport extracts counts and skip titles", () => {
     assert.deepEqual(summary.skipNames, ["registered skip A"]);
 });
 
+test("task-179: summarizeReport 带出 flaky 用例名与文件名", () => {
+    const summary = summarizeReport({
+        suites: [
+            {
+                file: "e2e/mock/heavy.spec.ts",
+                specs: [
+                    {
+                        title: "heavy case",
+                        tests: [
+                            {
+                                status: "flaky",
+                                expectedStatus: "passed",
+                                results: [{ status: "timedOut" }, { status: "passed" }],
+                            },
+                        ],
+                    },
+                ],
+                suites: [],
+            },
+        ],
+        stats: { expected: 1, skipped: 0, unexpected: 0, flaky: 1 },
+    });
+    assert.deepEqual(summary.flakyCases, [{ title: "heavy case", file: "e2e/mock/heavy.spec.ts" }]);
+});
+
+test("task-179: evaluateFlakyPolicy 纯函数分支（空 flaky ⇒ 无 error/warning）", () => {
+    const policy = evaluateFlakyPolicy({
+        flakyCases: [],
+        changedSpecs: { specs: [] },
+        history: [],
+        env: {},
+    });
+    assert.deepEqual(policy.errors, []);
+    assert.deepEqual(policy.warnings, []);
+    assert.deepEqual(policy.entry.flaky, []);
+});
+
 test("PLAN-0735 zero-flaky design: flaky=0 ⇒ exit 0", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
     try {
@@ -94,38 +135,158 @@ test("PLAN-0735 zero-flaky design: flaky=0 ⇒ exit 0", () => {
     }
 });
 
-test("PLAN-0735 zero-flaky design: flaky=1 ⇒ exit 1 unless --allow-drift", () => {
+// ---------------------------------------------------------------------------
+// task-179（Lead 裁定 2026-11-13）：flaky 移出精确比对，改由四条正交判据处理。
+// 判据核心是下面那对**阴性对照**：改动面内 flaky ⇒ exit 1；同一份报告把该 spec
+// 移出改动面 ⇒ WARN（带用例名与环境证据）+ exit 0。
+// ---------------------------------------------------------------------------
+const FLAKY_REPORT = {
+    suites: [
+        {
+            file: "e2e/mock/chat.spec.ts",
+            specs: [
+                {
+                    title: "flaky case A",
+                    tests: [
+                        {
+                            status: "flaky",
+                            expectedStatus: "passed",
+                            results: [{ status: "timedOut" }, { status: "passed" }],
+                        },
+                    ],
+                },
+                {
+                    title: "registered skip A",
+                    tests: [
+                        {
+                            status: "skipped",
+                            expectedStatus: "skipped",
+                            results: [{ status: "skipped" }],
+                        },
+                    ],
+                },
+            ],
+            suites: [],
+        },
+    ],
+    stats: { expected: 283, skipped: 1, unexpected: 0, flaky: 1 },
+};
+
+function runFlaky(dir, extra = [], history = null) {
+    const reportFile = path.join(dir, "report.json");
+    const baselineFile = path.join(dir, "baseline.json");
+    const historyFile = path.join(dir, "history.json");
+    fs.writeFileSync(reportFile, JSON.stringify(FLAKY_REPORT));
+    fs.writeFileSync(
+        baselineFile,
+        JSON.stringify({
+            counts: { expected: 283, skipped: 1, failed: 0, flaky: 0 },
+            skipNames: ["registered skip A"],
+        }),
+    );
+    if (history) fs.writeFileSync(historyFile, JSON.stringify(history));
+    return spawnSync(
+        process.execPath,
+        [
+            SCRIPT,
+            "--report",
+            reportFile,
+            "--baseline",
+            baselineFile,
+            "--flaky-history",
+            historyFile,
+            "--no-probe-procs",
+            ...extra,
+        ],
+        { encoding: "utf8" },
+    );
+}
+
+test("task-179: flaky 不再进精确比对，改动面外只 WARN + exit 0", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
     try {
-        const flaky = {
-            ...REPORT,
-            stats: { ...REPORT.stats, unexpected: 0, flaky: 1 },
-        };
+        const result = runFlaky(dir, ["--changed-specs", "e2e/mock/unrelated.spec.ts"]);
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.doesNotMatch(result.stderr, /E_MOCK_BASELINE_DRIFT/);
+        assert.match(result.stdout, /MOCK_FLAKY_OUTSIDE_CHANGED_SPEC/);
+        assert.match(result.stdout, /flaky case A/);
+        assert.match(result.stdout, /head=/);
+        assert.match(result.stdout, /procs=/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-179 判据①: 改动面内 flaky ⇒ E_MOCK_FLAKY_IN_CHANGED_SPEC / exit 1", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const result = runFlaky(dir, ["--changed-specs", "e2e/mock/chat.spec.ts"]);
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_MOCK_FLAKY_IN_CHANGED_SPEC/);
+        assert.match(result.stderr, /flaky case A/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-179 判据③: 基线 counts.flaky 非 0 ⇒ E_MOCK_BASELINE_FLAKY_NONZERO / exit 2", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const reportFile = path.join(dir, "report.json");
         const baselineFile = path.join(dir, "baseline.json");
+        fs.writeFileSync(
+            reportFile,
+            JSON.stringify({ ...REPORT, stats: { ...REPORT.stats, flaky: 0 } }),
+        );
         fs.writeFileSync(
             baselineFile,
             JSON.stringify({
-                counts: { expected: 283, skipped: 2, failed: 0, flaky: 0 },
+                counts: { expected: 283, skipped: 2, failed: 0, flaky: 3 },
                 skipNames: ["registered skip A"],
             }),
         );
-        const reportFile = path.join(dir, "report.json");
-        fs.writeFileSync(reportFile, JSON.stringify(flaky));
-        const rejected = spawnSync(
+        const result = spawnSync(
             process.execPath,
-            [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
+            [SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--no-probe-procs"],
             { encoding: "utf8" },
         );
-        assert.equal(rejected.status, 1);
-        assert.match(rejected.stderr, /E_MOCK_BASELINE_DRIFT/);
-        assert.match(rejected.stderr, /flaky: baseline=0 actual=1/);
-        const accepted = spawnSync(
-            process.execPath,
-            [SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--allow-drift"],
-            { encoding: "utf8" },
+        assert.equal(result.status, 2, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_MOCK_BASELINE_FLAKY_NONZERO/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-179 判据④: 同一用例名连续 3 轮 ⇒ E_MOCK_FLAKY_PERSISTENT / exit 1", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const result = runFlaky(
+            dir,
+            ["--changed-specs", "e2e/mock/unrelated.spec.ts"],
+            [
+                { at: "2026-11-13T00:00:00.000Z", head: "aaa", flaky: ["flaky case A"] },
+                { at: "2026-11-13T01:00:00.000Z", head: "bbb", flaky: ["flaky case A"] },
+            ],
         );
-        assert.equal(accepted.status, 0);
-        assert.match(accepted.stdout, /drift accepted/);
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stderr, /E_MOCK_FLAKY_PERSISTENT/);
+        assert.match(result.stderr, /file a BL/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-179: 连续不到 3 轮 ⇒ 不升级（只 WARN / exit 0）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-"));
+    try {
+        const result = runFlaky(
+            dir,
+            ["--changed-specs", "e2e/mock/unrelated.spec.ts"],
+            [{ at: "2026-11-13T00:00:00.000Z", head: "aaa", flaky: ["flaky case A"] }],
+        );
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.doesNotMatch(result.stderr, /E_MOCK_FLAKY_PERSISTENT/);
+        assert.match(result.stdout, /MOCK_FLAKY_OUTSIDE_CHANGED_SPEC/);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -394,7 +555,11 @@ test("task-244: --allow-stale-report 接受陈旧报告（仍判 drift）", () =
 test("task-244: 纯 mtime 伪影（clean 且提交早于报告）不判红", () => {
     const root = makeRepo();
     try {
-        const spec = commitSpec(root, "packages/ui/e2e/mock/artifact.spec.ts", "test('a', () => {});\n");
+        const spec = commitSpec(
+            root,
+            "packages/ui/e2e/mock/artifact.spec.ts",
+            "test('a', () => {});\n",
+        );
         const files = writeLane(root, "2026-01-05T00:00:00Z");
         // checkout / 编辑只改 mtime，不改内容：这条在 naive 判据下会被假红（实测本仓 8 条同类）。
         const now = new Date();
@@ -411,7 +576,11 @@ test("task-244: 纯 mtime 伪影（clean 且提交早于报告）不判红", () 
 test("task-244: 已跟踪但改过的 spec（dirty）比报告新 ⇒ exit 2", () => {
     const root = makeRepo();
     try {
-        const spec = commitSpec(root, "packages/ui/e2e/mock/edited.spec.ts", "test('a', () => {});\n");
+        const spec = commitSpec(
+            root,
+            "packages/ui/e2e/mock/edited.spec.ts",
+            "test('a', () => {});\n",
+        );
         const files = writeLane(root, "2026-01-02T00:00:00Z");
         fs.writeFileSync(spec, "test('a', () => { /* edited */ });\n");
         const result = runInRepo(root, files);

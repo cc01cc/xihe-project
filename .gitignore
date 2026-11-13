@@ -4,6 +4,8 @@
 packages/ui/e2e/.mock-report.json
 # task-48: 子集跑（显式列 spec 文件 / test:mock:smoke）的独立报告，不得覆盖全量报告。
 packages/ui/e2e/.mock-report.subset.json
+# task-179: flaky 历史（判据 ④「连续 ≥3 轮」的输入）；本机运行产物，不入库。
+packages/ui/e2e/.mock-flaky-history.json
 # D32-26 T2: mvn -Dxihe.build.suffix=-b builds into 	arget-b/; keep every per-runner build dir ignored.
 **/target-*/
 **/Cargo.lock

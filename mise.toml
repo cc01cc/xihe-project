@@ -185,6 +185,17 @@ alias = "test:mock:smoke"
 # (written by test:mock above via the playwright config JSON reporter) and compares counts
 # + skip titles against packages/ui/e2e/mock-baseline.json. Drift ⇒ exit 1 unless
 # --allow-drift is passed explicitly. The report is a runtime artifact and stays untracked.
+#
+# task-179 (Lead ruling 2026-11-13): `expected`/`skipped`/`failed` stay exact; `flaky` is NOT
+# compared exactly (concurrent lanes made that cycle-false-red). Instead four orthogonal rules:
+#   (1) flaky case ∩ spec files this change touched ⇒ E_MOCK_FLAKY_IN_CHANGED_SPEC, exit 1;
+#   (2) flaky outside that surface ⇒ WARN only, but names every case + that run's env evidence
+#       (HEAD sha / porcelain lines / port / workers / java+node process counts);
+#   (3) the baseline's `counts.flaky` MUST stay 0 — the gate rejects a non-zero baseline
+#       (E_MOCK_BASELINE_FLAKY_NONZERO) so nobody can silence flaky by editing the baseline;
+#   (4) the same case in >=3 consecutive runs ⇒ E_MOCK_FLAKY_PERSISTENT and file a BL.
+# Self-test: `node scripts/check-mock-baseline.mjs --selftest` (6 fixtures incl. the
+# negative-control pair: inside the change surface ⇒ exit 1, same report moved out ⇒ exit 0).
 [tasks."check:mock-baseline"]
 run = "node scripts/check-mock-baseline.mjs"
 dir = "."
