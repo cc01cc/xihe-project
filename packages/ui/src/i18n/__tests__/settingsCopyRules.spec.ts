@@ -46,8 +46,11 @@ const LOCALES = ["zh-CN", "en-US"] as const;
  * <p>Lead 硬要求（判据③）：名单删掉后把 `resources.reasonCapability` 改回旧文案，门**仍红**
  * ⇒ 守它的是扫描面而不是名单。变异实测见 `internal/A03-xihe/evidence/2026-11-15-226-next-batch-candidates/task-26-impl.md`。</p>
  */
-// 批 1 纳入 resources（task-26），批 2 纳入 workspace（task-36）。
-const SCANNED_NAMESPACES = ["settings", "resources", "workspace"] as const;
+// 扫描面全集（加命名空间请改这一行 + 在 README/证据里同步）：
+// settings / resources / workspace / orgMembers —— 批 1 resources（task-26）、
+// 批 2 workspace（task-36）、批 3 orgMembers（task-47）。
+// 纪律：任何命名空间进来之前，必须先把它名下命中清到 0（批内全绿）；进来后不许再为同一 key 立精确名单。
+const SCANNED_NAMESPACES = ["settings", "resources", "workspace", "orgMembers"] as const;
 
 function scannedCopy(locale: (typeof LOCALES)[number]): Flat {
     const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
