@@ -486,6 +486,21 @@ test.describe("Policy management (desktop)", () => {
     test("approval classify-and-allow classifies first and hands back a once decision", async ({
         page,
     }) => {
+        // 夹具缺能力：`canClassifyTools = isAdmin || canManageWorkspace`（PLAN-0328 #56 /
+        // task-414 起改走能力原子），而 `setupMockAuth` 的默认夹具**零能力**且本用例没有
+        // `page.route("**/api/v1/me/permissions")` ⇒ 分类入口 `approval-classify-entry` 根本不渲染。
+        // 这是**夹具缺口**不是产品缺陷（modal 里 `允许一次`/`拒绝` 在，状态条也写着「仅 OWNER/ADMIN 可分类」）。
+        // 同文件其它用例（工具分类页、移动端）都用同一手法给实例管理员能力 ⇒ 这里保持一致。
+        await page.addInitScript(() => {
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
+                }),
+            );
+        });
         const state = installPolicyApi(page);
         await installApprovalSSE(page);
         const calls = installDecisionRoute(page);
@@ -574,6 +589,17 @@ test.describe("Policy management (mobile)", () => {
     });
 
     test("classify-and-allow works in the mobile approval sheet", async ({ page }) => {
+        // 夹具缺能力（同桌面用例）：默认零能力 ⇒ `canClassifyTools` 为 false ⇒ 分类入口不渲染。
+        await page.addInitScript(() => {
+            localStorage.setItem(
+                "xihe-user",
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
+                }),
+            );
+        });
         const state = installPolicyApi(page);
         await installApprovalSSE(page);
         const calls = installDecisionRoute(page);
