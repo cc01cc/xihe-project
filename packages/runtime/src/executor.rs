@@ -197,6 +197,7 @@ impl InFlightExecutions {
     /// Executions currently registered for one workspace (cancel-retained entries
     /// included). A pure registry read: no container probe, so counting can never
     /// resurrect a stopped sandbox.
+    #[cfg(test)]
     pub fn count_for_workspace(&self, workspace_id: &str) -> usize {
         self.inner
             .lock()
@@ -208,6 +209,7 @@ impl InFlightExecutions {
 
     /// PLAN-0463：注册条目携带的 invocation id（迟到终止新 target 的来源）。
     /// 纯读取，不做容器探测。
+    #[cfg(test)]
     pub fn invocation_id_for(&self, tool_call_id: &str) -> Option<String> {
         self.inner
             .lock()

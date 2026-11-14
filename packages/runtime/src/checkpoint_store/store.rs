@@ -87,6 +87,7 @@ impl LockOwner {
     /// `evaluated_start_token` is looked up for `pid` by the caller (injected
     /// in tests). A vanished process or a different start token means the PID
     /// was recycled, so the on-disk owner is stale.
+    #[cfg(test)]
     pub fn looks_stale(&self, evaluated_start_token: Option<u64>) -> bool {
         match (self.process_start_token, evaluated_start_token) {
             (Some(stored), Some(current)) => stored != current,
@@ -233,6 +234,7 @@ impl Store {
     }
 
     /// Read the diagnostic lock owner, if the lock file exists and is valid.
+    #[cfg(test)]
     pub fn lock_owner(&self) -> Result<Option<LockOwner>, StoreError> {
         let path = self.lock_path();
         let bytes = match fs::read(&path) {

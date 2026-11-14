@@ -59,6 +59,7 @@ pub fn build_commit() -> String {
 }
 
 /// `commit=<值> version=<CARGO_PKG_VERSION>` —— 给日志/诊断用的一行文本。
+#[cfg(test)]
 pub fn describe() -> String {
     format!(
         "commit={} version={}",

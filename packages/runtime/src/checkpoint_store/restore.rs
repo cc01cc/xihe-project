@@ -4,14 +4,22 @@
 //! deletion, chunking and crash markers). It restores one slice into a target
 //! directory so T1.11 can verify every byte independently of the manifest.
 
+#[cfg(test)]
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(test)]
+use std::path::{Component, Path};
+#[cfg(test)]
 use std::time::Instant;
 
+#[cfg(test)]
 use serde_json::Value;
 
+#[cfg(test)]
 use super::blob::read_blob;
+#[cfg(test)]
 use super::manifest::Manifest;
+#[cfg(test)]
 use super::store::Store;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -57,6 +65,7 @@ pub enum RestoreError {
     },
 }
 
+#[cfg(test)]
 fn io_error(path: &Path, source: std::io::Error) -> RestoreError {
     RestoreError::Io {
         path: path.to_path_buf(),
@@ -64,6 +73,7 @@ fn io_error(path: &Path, source: std::io::Error) -> RestoreError {
     }
 }
 
+#[cfg(test)]
 fn safe_relative(path: &str) -> Result<PathBuf, RestoreError> {
     let relative = Path::new(path);
     if relative.is_absolute()
@@ -78,6 +88,7 @@ fn safe_relative(path: &str) -> Result<PathBuf, RestoreError> {
 
 /// Restore one slice into `target` (files only; symlinks are rejected rather
 /// than silently materialized as regular files).
+#[cfg(test)]
 pub fn restore_slice_to_dir(
     store: &Store,
     root_id: &str,

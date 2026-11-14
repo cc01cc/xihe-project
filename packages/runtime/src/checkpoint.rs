@@ -20,7 +20,9 @@
 //! Restore execution lives in [`crate::checkpoint_revert`]; this module owns the
 //! primitives it consumes (isolated env, scratch index/excludes, git plumbing).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -32,7 +34,9 @@ use thiserror::Error;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::checkpoint_store::audit::{self, AuditFinding, AuditReport, DualPendingRecord};
+use crate::checkpoint_store::audit::{self, DualPendingRecord};
+#[cfg(test)]
+use crate::checkpoint_store::audit::{AuditFinding, AuditReport};
 use crate::checkpoint_store::capture::{
     CaptureOptions, CaptureResult, GitTreeEntry, capture_from_git_entries,
     capture_root_with_options, read_tail_manifest, tail_slice,
@@ -1509,6 +1513,7 @@ impl ShadowGit {
 
     /// Replay pending dual-write audit records. This is a harness entry, not a
     /// product CLI: capture never performs this synchronous comparison.
+    #[cfg(test)]
     pub async fn audit_dual_pending(
         &self,
         root_filter: Option<&str>,
@@ -2120,6 +2125,7 @@ impl ShadowGit {
     /// the first per-ref failure stops the run (the chain stays contiguous) and
     /// the command can be re-run until `failed == 0`. The shadow is only read
     /// (`GIT_OPTIONAL_LOCKS=0`), never rewritten.
+    #[cfg(test)]
     pub async fn migrate_shadow_slices_to_store(
         &self,
         workspace_id: &str,
@@ -2291,6 +2297,7 @@ impl ShadowGit {
     }
 
     /// Raw blob bytes from the shadow (`git cat-file blob <oid>`).
+    #[cfg(test)]
     async fn git_blob_bytes(&self, env: &[(String, String)], oid: &str) -> Result<Vec<u8>> {
         let output = self
             .run_git(&["cat-file", "blob", oid], env, None, self.call_timeout)

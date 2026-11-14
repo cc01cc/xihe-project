@@ -576,6 +576,7 @@ pub fn capture_root(
 /// Capture one root, excluding workspace-declared roots from `nested_roots`
 /// (0639 multi-root semantics: a declared root owns its own slice chain).
 #[allow(clippy::needless_update)]
+#[cfg(test)]
 pub fn capture_root_with_declared_roots(
     store: &Store,
     root: &Path,

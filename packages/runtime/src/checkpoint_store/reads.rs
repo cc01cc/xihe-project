@@ -4,7 +4,10 @@ use std::fs;
 
 use serde::Serialize;
 
-use super::manifest::{Manifest, ManifestDiff, ManifestError};
+#[cfg(test)]
+use super::manifest::ManifestDiff;
+#[cfg(test)]
+use super::manifest::{Manifest, ManifestError};
 use super::refs;
 use super::store::Store;
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -122,6 +125,7 @@ pub fn list_slices(store: &Store, root_id: &str) -> Result<SliceList, ReadError>
     })
 }
 
+#[cfg(test)]
 pub fn diff_refs(
     store: &Store,
     root_id: &str,
@@ -135,11 +139,13 @@ pub fn diff_refs(
     Ok(from_manifest.diff(&to_manifest))
 }
 
+#[cfg(test)]
 fn resolve_ref(store: &Store, root_id: &str, git_ref: &str) -> Result<refs::RefRecord, ReadError> {
     refs::read_ref(store, root_id, git_ref)?
         .ok_or_else(|| ReadError::UnmappedRef(git_ref.to_owned()))
 }
 
+#[cfg(test)]
 fn read_manifest(store: &Store, manifest_id: &str) -> Result<Manifest, ReadError> {
     let path = store.manifest_path(manifest_id);
     let bytes = match fs::read(&path) {
