@@ -189,6 +189,54 @@ export const MOCK_ROOT_TREES: Record<string, MockFsNode> = {
 
 export const MOCK_PRIMARY_ROOT_ID = "mock-root-main";
 
+/* ------------------------------------------------------------------------------------------------
+ * 视觉夹具**变体**（task-534）：默认树里 dotfile 与空目录各 0 条 ——
+ * 于是「dotfile 置灰 / 空目录淡样式」这两条视觉判据在真浏览器里**没有取样对象**
+ * （jsdom 又没有样式表，取不到 computed color）。
+ *
+ * 这里**不改默认树**：task-25 V1–V3 钉住了默认树的行数与顺序，动它就是动别人的判据。
+ * 变体只在 localStorage 开关 `xihe-mock-tree-variant=visual` 时被 `selectRootTrees()` 选中，
+ * 产品默认路径与既有 e2e 读数一概不受影响（引用面见 `grep MOCK_ROOT_TREES_VISUAL`）。
+ * ---------------------------------------------------------------------------------------------- */
+const VISUAL_ROOT: MockFsNode = dir("", [
+    dir("src", [text("main.ts", "export const ok = true;\n")]),
+    // 空目录（≠ logs）：D-1234「空目录可见 + 淡样式」的取样对象。
+    dir("empty-notes", []),
+    // 空 logs：D-1234 的合法例外，必须**隐藏**（与上面那个空目录形成对照）。
+    dir("logs", []),
+    // 两个 dotfile：D-1234「可见、排普通条目之后、置灰」的取样对象。
+    text(".env.local", "XIHE_MOCK_TREE=visual\n"),
+    text(".editorconfig", "root = true\n"),
+    text("README.md", "# 视觉夹具变体\n\ndotfile / 空目录 / 空 logs 三条取样对象都在这里。\n"),
+]);
+
+const VISUAL_DOCS: MockFsNode = dir("", [
+    text("README.md", "# 变体第二根\n\n多根分组仍需可分辨。\n"),
+]);
+
+/** 与 `MOCK_ROOT_TREES` 同键（rootId 由 `api-server.ts` 的 roots 元数据给出，不能换键）。 */
+export const MOCK_ROOT_TREES_VISUAL: Record<string, MockFsNode> = {
+    "mock-root-main": VISUAL_ROOT,
+    "mock-root-docs": VISUAL_DOCS,
+};
+
+/** 变体开关：只在 mock/preview 运行时读 localStorage，构建期与产品代码都不读。 */
+export const MOCK_TREE_VARIANT_KEY = "xihe-mock-tree-variant";
+export const MOCK_TREE_VARIANTS = ["default", "visual"] as const;
+export type MockTreeVariant = (typeof MOCK_TREE_VARIANTS)[number];
+
+export function selectRootTrees(): Record<string, MockFsNode> {
+    if (typeof localStorage === "undefined") return MOCK_ROOT_TREES;
+    try {
+        return localStorage.getItem(MOCK_TREE_VARIANT_KEY) === "visual"
+            ? MOCK_ROOT_TREES_VISUAL
+            : MOCK_ROOT_TREES;
+    } catch {
+        // 隐私模式等取不到 localStorage ⇒ 回默认树（绝不让 mock 因为一个开关而挂掉）。
+        return MOCK_ROOT_TREES;
+    }
+}
+
 function isError(value: unknown): value is MockFsError {
     return typeof value === "object" && value !== null && "code" in value;
 }
@@ -196,7 +244,8 @@ function isError(value: unknown): value is MockFsError {
 /** rootId 缺省 = 主根；未知 rootId **必须报错**，静默回落会让「多根可分辨」的验收假绿。 */
 function rootTree(rootId: string | undefined): MockFsNode | MockFsError {
     const id = rootId ?? MOCK_PRIMARY_ROOT_ID;
-    const tree = MOCK_ROOT_TREES[id];
+    // task-534：变体只在开关打开时生效；默认路径与既有读数一字不变。
+    const tree = selectRootTrees()[id];
     if (!tree) return { code: "UNKNOWN_ROOT", detail: id };
     return tree;
 }
