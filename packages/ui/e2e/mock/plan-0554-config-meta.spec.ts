@@ -191,10 +191,26 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
     );
 }
 
+/**
+ * 展开 rag 域卡，**只展开、不切换**（task-474）。
+ *
+ * <p>旧写法 `domain.locator("button").first().click()` 是**盲点第一个按钮**：`ConfigDomainPanel.vue`
+ * 的头部按钮 `config-domain-toggle-${domain}` 就排第一，而域卡自 `9e63df3d2 feat(ui): 配置域卡默认展开`
+ * 起**默认展开**（`:90 const expanded = ref(true)`）⇒ 那一下点击是在**收起**卡片 ⇒ 字段全被 `v-if="expanded"`
+ * 摘掉 ⇒ 4 条用例红在「字段找不到」。**产品没错**（默认展开是有意的），错的是这条交互假设过期（D-1333 第一类）。
+ * 所以：只在 `aria-expanded === "false"` 时点，并**正向前置**断言字段真的可见 —— 万一以后默认态再翻回折叠，
+ * 这里仍会展开成功，而不会静默地什么都不做。</p>
+ */
 async function openRag(page: import("@playwright/test").Page) {
     const domain = page.getByTestId("config-domain-rag");
     await expect(domain).toBeVisible();
-    await domain.locator("button").first().click();
+    const toggle = page.getByTestId("config-domain-toggle-rag");
+    if ((await toggle.getAttribute("aria-expanded")) === "false") {
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    }
+    // 字段只在展开态渲染（`ConfigDomainPanel.vue:627` 的 `v-if="expanded"`）⇒ 可见即「卡确实是开的」。
+    await expect(page.getByTestId("config-field-rag-chunkSize")).toBeVisible();
 }
 
 test.describe("PLAN-0554 config provenance", () => {
