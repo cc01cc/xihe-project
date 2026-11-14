@@ -307,6 +307,27 @@ fn probe_windows_host() -> Result<BackendCapabilitySnapshot> {
     }
 }
 
+/// **NOT on the production path (task-559, 2026-11-14).**
+///
+/// Production one-shot execution goes through `job_engine::start_windows`, which
+/// validates cwd via `job_engine::validate_cwd` for BOTH execution modes. This
+/// entry point has had no production caller since `a844f5737` (PLAN-0397 M1);
+/// only this module's own `#[cfg(test)]` code calls it.
+///
+/// It is also **weaker** than the production path:
+///
+/// - grants come from `request.filesystem` (caller-supplied) instead of being
+///   derived from the workspace by `build_host_job` / `build_mxc_job`;
+/// - the host branch (`execute_host`) performs no path check at all;
+/// - `cwd` is mandatory here, while `validate_cwd` falls back to the first
+///   writable grant when no cwd is supplied.
+///
+/// Do not re-wire it — route new callers through `job_engine`. Re-wiring this
+/// function is equivalent to bypassing `job_engine::validate_cwd`, and it would
+/// look like reusing an existing strong check: 谁把它重新接线，就等价于绕过
+/// `validate_cwd`，而它看起来像是在复用一条已有的强校验。
+///
+/// `tests/dead_code_wiring_guard.rs` enforces the no-new-callers part.
 pub async fn execute(request: ProcessRequest) -> Result<ProcessResult> {
     if request.contract_version != CONTRACT_VERSION {
         return Err(RuntimeError::Unsupported {
@@ -374,6 +395,8 @@ pub async fn execute(request: ProcessRequest) -> Result<ProcessResult> {
     }
 }
 
+/// Same status as execute: test-only, weaker than `job_engine::validate_cwd`.
+/// See `execute` above before reusing this helper (task-559).
 fn cwd_within_grants(cwd: &Path, filesystem: &FilesystemPolicy) -> bool {
     let Ok(cwd) = std::fs::canonicalize(cwd) else {
         return false;
@@ -390,6 +413,8 @@ fn cwd_within_grants(cwd: &Path, filesystem: &FilesystemPolicy) -> bool {
         })
 }
 
+/// Same status as execute: test-only, weaker than `job_engine::validate_cwd`.
+/// See `execute` above before reusing this helper (task-559).
 async fn execute_host(request: ProcessRequest) -> Result<ProcessResult> {
     #[cfg(not(windows))]
     {
