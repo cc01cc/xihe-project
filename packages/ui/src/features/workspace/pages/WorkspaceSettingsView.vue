@@ -11,6 +11,8 @@ import { logger } from "../../../lib/logger";
 import { clearTabWorkspace, writeTabWorkspace } from "../../../lib/workspaceContext";
 import { workspacePath } from "../../../lib/routes";
 import WorkspaceConfigPanel from "../components/WorkspaceConfigPanel.vue";
+import WorkspaceMcpPanel from "../components/WorkspaceMcpPanel.vue";
+import WorkspaceSkillsPanel from "../../../components/resources/WorkspaceSkillsPanel.vue";
 import { resourcePath } from "../../../lib/settingsIa";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
@@ -34,6 +36,11 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 // （task-468 / D-1330：本段旧表述与下方 tabs 并存曾误导排查，把过期 e2e 断言当成产品缺陷。）
 // 写面 `PUT /config/workspace/{domain}` 契约仍标 deprecated（openapi:3276，BL-571 收口另卡）。
 //
+// **D-1432 / task-41（用户 2026-11-15 裁定）：MCP 与技能的「本工作区」层搬回本页**（反向 D-1023）。
+// 只搬这两项、只搬 WORKSPACE 层：`credentials` / `knowledge` **仍留在资源区**（用户没点它们），
+// 实例层 / 个人层也在资源区不动。资源区对应层改为**指路**（`WorkspaceLayerMovedNotice`，
+// 语义沿用 D-1023：不 404、不静默跳走）。旧的 `?tab=mcp` 从「回落常规 + 迁移提示」**变成真页签**。
+//
 // D-1019 / task-209（用户 2026-11-12 裁定「一次性改完、不留旧兼容」）：**再撤掉 `mcp` /
 // `credentials` / `knowledge` 三个 tab**。它们与 `/resources/{mcp,credentials}?layer=WORKSPACE`
 // 渲染的是**同一个组件**（`WorkspaceMcpPanel` / `CredentialsPanel ownerType=WORKSPACE`，
@@ -45,16 +52,17 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 // 回落到一个能解释「东西搬到哪了」的页面比 404 更有用（404 只能让人以为页面坏了）。
 // task-236（M4-3）：「成员」已提升为一级页 /workspace/:id/members —— 本页只剩
 // 配置 / 常规两个 tab；旧 ?tab=members 深链**重定向**到新页（见下方 watch），不回落不 404。
-type SettingsTab = "config" | "general";
+type SettingsTab = "config" | "mcp" | "skills" | "general";
 
 /**
- * 已迁到资源区的三个旧 tab。`knowledge` 在资源区是 **G3 缺口页**（CP 无库实体，见
- * `KnowledgeResourceView.vue` 的说明）⇒ 这里只负责"指路"，不承诺新页面有写面。
+ * 仍留在资源区的两个旧 tab（D-1432 后 `mcp` 已搬回本页成为真页签，不再走"指路"这条）。
+ * `knowledge` 在资源区是 **G3 缺口页**（CP 无库实体，见 `KnowledgeResourceView.vue` 的说明）
+ * ⇒ 这里只负责"指路"，不承诺新页面有写面。
  */
-type LegacyResourceTab = "mcp" | "credentials" | "knowledge";
+type LegacyResourceTab = "credentials" | "knowledge";
 
 function legacyResourceTab(q: unknown): LegacyResourceTab | null {
-    return q === "mcp" || q === "credentials" || q === "knowledge" ? q : null;
+    return q === "credentials" || q === "knowledge" ? q : null;
 }
 
 const route = useRoute(),
@@ -67,7 +75,8 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 
 /** `?tab=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function tabFromQuery(q: unknown): SettingsTab {
-    return q === "config" ? "config" : "general";
+    if (q === "config" || q === "mcp" || q === "skills") return q;
+    return "general";
 }
 const activeTab = ref<SettingsTab>(tabFromQuery(route.query.tab));
 
@@ -76,8 +85,6 @@ const legacyTab = ref<LegacyResourceTab | null>(legacyResourceTab(route.query.ta
 
 function legacyResourceName(tab: LegacyResourceTab | null): string {
     switch (tab) {
-        case "mcp":
-            return t("settings.ia.resourceMcp");
         case "credentials":
             return t("settings.ia.resourceCredentials");
         case "knowledge":
@@ -89,8 +96,6 @@ function legacyResourceName(tab: LegacyResourceTab | null): string {
 
 const legacyResourceLink = computed(() => {
     switch (legacyTab.value) {
-        case "mcp":
-            return `${resourcePath("mcp")}?layer=WORKSPACE`;
         case "credentials":
             return `${resourcePath("credentials")}?layer=WORKSPACE`;
         case "knowledge":
@@ -131,6 +136,11 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
         // （`ConfigLayer` 新增 `workspace`），不是 task-253 退役的那层废弃全局入口。
         // 域清单不在这里：面板只渲染 `layer="workspace"`，域集由 `LAYER_DOMAINS` 交给它。
         { key: "config", label: t("workspace.settingsTabConfig") },
+        // D-1432 / task-41：MCP 与技能的「本工作区」层搬回本页（只这两项、只这一层）。
+        // 它们不按角色过滤：MCP 的写面由面板的 `readonly` 门守（与搬家前资源页同一门），
+        // 技能面板本身没有写面 —— 两处都不是「藏起来」而是「看得见但改不了」。
+        { key: "mcp", label: t("workspace.settingsTabMcp") },
+        { key: "skills", label: t("workspace.settingsTabSkills") },
         { key: "general", label: t("workspace.settingsTabGeneral") },
     ];
     return base;
@@ -414,6 +424,23 @@ onMounted(async () => {
                     </div>
 
                     <WorkspaceConfigPanel v-if="activeTab === 'config'" />
+
+                    <!--
+                        D-1432 / task-41：搬回来的两个面板。**权限门必须跟着搬** ——
+                        `task-209` 记过一次真事故：`McpResourceView` 搬出 /settings 时漏了
+                        `:readonly="!auth.canWriteWorkspace"`，VIEWER 在资源页看到可编辑 JSON 框。
+                        技能面板没有写面（只读呈现 + 明写「写操作未开放」），故无 readOnly prop 可传。
+                    -->
+                    <div v-if="activeTab === 'mcp'" data-testid="ws-settings-mcp">
+                        <WorkspaceMcpPanel
+                            :workspace-id="workspaceId"
+                            :readonly="!auth.canWriteWorkspace"
+                        />
+                    </div>
+
+                    <div v-if="activeTab === 'skills'" data-testid="ws-settings-skills">
+                        <WorkspaceSkillsPanel :workspace-id="workspaceId" />
+                    </div>
 
                     <div v-if="activeTab === 'general'" data-testid="ws-settings-general">
                         <div class="border rounded-lg mb-2 overflow-hidden">

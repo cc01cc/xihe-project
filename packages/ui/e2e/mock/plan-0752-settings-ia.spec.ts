@@ -63,13 +63,13 @@ test.beforeEach(async ({ page }) => {
                 capabilities: {
                     isInstanceAdmin: true,
                     isInstanceSuper: true,
-                    workspaceAdminOf: ["ws-1"],
+                    workspaceAdminOf: ["11111111-1111-4111-8111-111111111111"],
                 },
             }),
         );
         localStorage.setItem(
             "xihe-workspace",
-            JSON.stringify({ id: "ws-1", name: "Mock Workspace" }),
+            JSON.stringify({ id: "11111111-1111-4111-8111-111111111111", name: "Mock Workspace" }),
         );
     });
 });
@@ -117,17 +117,20 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
             body: JSON.stringify({ documents: [], stats: {} }),
         }),
     );
-    await page.route("**/api/v1/workspaces/ws-1", (route: any) =>
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111", (route: any) =>
         route.fulfill({
             status: 200,
             contentType: "application/json",
-            body: JSON.stringify({ id: "ws-1", name: "Mock Workspace" }),
+            body: JSON.stringify({
+                id: "11111111-1111-4111-8111-111111111111",
+                name: "Mock Workspace",
+            }),
         }),
     );
 }
 
 test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-253 退役）", () => {
-    // (a) 删 —— 域段深链「/workspace/ws-1/settings/rag 渲染单域页」：工作区块配置层整体退役
+    // (a) 删 —— 域段深链「/workspace/11111111-1111-4111-8111-111111111111/settings/rag 渲染单域页」：工作区块配置层整体退役
     //     （task-253 / Q-1110-45），域段路由与单域页都不会回来，断言对象已不存在。
     // (a) 删 —— 「approval-policy 域段暴露 policy/tool-faces 页签」：域内页签随域页一起删除；
     //     tool-faces 能力仍在实例层（ToolFacesView + 其 spec 保留），工作区入口按 Lead 裁定认下削减。
@@ -140,11 +143,13 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
         const configRequests: string[] = [];
         await mockSettingsAPIs(page, configRequests);
 
-        // task-209 / D-1019：`mcp` / `credentials` / `knowledge` 三个 tab 与资源区双入口 ⇒ 撤。
-        // 旧深链（书签/文档/外部引用）**不做 404**：回落到「常规」，并就地点名搬去哪 + 给直链。
-        // 判据写成正面守卫：三个旧容器计数为 0、提示条在、链接地址是资源区对应层。
-        for (const legacy of ["mcp", "credentials", "knowledge"] as const) {
-            await page.goto(`/workspace/ws-1/settings?tab=${legacy}`);
+        // D-1432 / task-41（用户 2026-11-15 裁定）：`mcp` 已**搬回**本页成为真页签 ⇒ 只剩
+        // `credentials` / `knowledge` 走「回落 + 指路」这条；对这两个的判据不变 ——
+        // 旧深链不做 404：回落「常规」+ 点名搬去哪 + 直链，容器与 tab 计数都为 0。
+        for (const legacy of ["credentials", "knowledge"] as const) {
+            await page.goto(
+                `/workspace/11111111-1111-4111-8111-111111111111/settings?tab=${legacy}`,
+            );
             // task-253 起工作区设置页自带标题头（不再借用 SettingsLayerHeader 的「设置 › 工作区层」面包屑）。
             await expect(page.getByTestId("workspace-settings-header")).toBeVisible();
             await expect(page.getByTestId("ws-settings-general")).toBeVisible();
@@ -158,11 +163,11 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
         }
 
         // task-236（M4-3）：成员提升为一级页（/workspace/:id/members）——设置页成员 tab 已撤
-        // （BL-344 三态语义随面板迁入成员页）；存活容器仍是 2 个（常规 + 配置）。
-        await page.goto("/workspace/ws-1/settings");
+        // （BL-344 三态语义随面板迁入成员页）；D-1432 后存活容器 = 4 个（常规 + 配置 + MCP + 技能）。
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings");
         await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-members")).toHaveCount(0);
-        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
+        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(4);
         await expect(page.getByTestId("ws-settings-resource-moved")).toHaveCount(0);
         // 工作区设置页在 AppLayout 壳内（页签形态），工作区 Sidebar 照常 1 份。
         await expect(page.getByTestId("sidebar")).toHaveCount(1);
@@ -342,7 +347,7 @@ test.describe("PLAN-0752 V12 移动端 375×812（三态记录）", () => {
         // (a) 删 —— 「工作区域段页在移动端无横向滚动」取样：域段页随 task-253 退役，改由
         //     「工作区设置页 tab 形态」承担移动端宽屏取样（见下方 goto /settings 变体）。
         //     留档证据（v12-workspace-domain-mobile.png）保留在 .local/evidence，不再随跑更新。
-        await page.goto("/workspace/ws-1/settings");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings");
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         // 本行与下面两条取样是 task-253 之后**尚未在车道首跑**的新断言（本卡不跑 Playwright）。
         // 首跑若 workspace-settings-header 因工作区拉取时序不稳而不可见，优先加 waitFor/断言前置等待，不要删断言。

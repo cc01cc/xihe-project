@@ -544,6 +544,39 @@ export function defaultResourcePath(): string {
     return resourceLayerPath("credentials", resourceDef("credentials").defaultLayer);
 }
 
+/**
+ * 已迁回**工作区设置**的资源（D-1432 / task-41，是 D-1023 / task-209 的反向裁定）。
+ *
+ * <p>只搬 **WORKSPACE 这一层**：MCP 与技能的「本工作区」层改由
+ * /workspace/:id/settings?tab=&lt;id&gt; 承载，其余层（实例 / 个人）仍在资源区。</p>
+ *
+ * <p>为什么是一个常量而不是散在组件里的判断：资源区指路页、工作区设置页签、工作区资源页
+ * 三处对同一件事生效；写成三份判断就会像 task-209 那样「文案与权限各自漂移」。这份清单是
+ * 唯一出处，三处都从这里派生。</p>
+ */
+export const WORKSPACE_SETTINGS_RESOURCE_IDS = ["mcp", "skills"] as const;
+export type WorkspaceSettingsResourceId = (typeof WORKSPACE_SETTINGS_RESOURCE_IDS)[number];
+
+export function isWorkspaceSettingsResource(id: ResourceId): id is WorkspaceSettingsResourceId {
+    return (WORKSPACE_SETTINGS_RESOURCE_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * 该资源的「本工作区」层是否已迁到工作区设置 —— **只有真正存在 WORKSPACE 层的资源**才可能为真
+ * （knowledge 的 layerRules 为空，永远不会被这条判据命中，这是派生结果而非白名单）。
+ */
+export function workspaceLayerMoved(id: ResourceId): boolean {
+    return isWorkspaceSettingsResource(id) && layersForResource(id).includes("WORKSPACE");
+}
+
+/** 工作区设置页 + 资源页签的深链：/workspace/:id/settings?tab=mcp。 */
+export function workspaceSettingsResourcePath(
+    workspaceId: string,
+    id: WorkspaceSettingsResourceId,
+): string {
+    return "/workspace/" + workspaceId + "/settings?tab=" + id;
+}
+
 export interface SettingsNavItem {
     id: string;
     labelKey: string;

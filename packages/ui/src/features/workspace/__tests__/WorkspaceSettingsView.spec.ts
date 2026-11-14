@@ -11,6 +11,9 @@ const routeState = vi.hoisted(() => ({
     query: {} as Record<string, string>,
 }));
 
+/** 工作区角色（D-1432 权限门用例要切 VIEWER；默认 OWNER = 可写）。 */
+const roleState = vi.hoisted(() => ({ workspaceRole: "OWNER" as "OWNER" | "EDITOR" | "VIEWER" }));
+
 const routerSpies = vi.hoisted(() => ({
     push: vi.fn<(location: unknown) => Promise<void>>(),
     replace: vi.fn<(location: unknown) => Promise<void>>(),
@@ -51,6 +54,28 @@ const RouterLinkStub = {
     template: '<a :data-to="String(to)"><slot /></a>',
 };
 
+/**
+ * D-1432 / task-41 搬回来的两个面板：用替身挂在这里，断言「页签真的把面板挂出来了」+
+ * 「只读门 prop 真的传下去了」。替身形状按 packages/ui/AGENTS.md 的 async 替身约定写成
+ * 组件对象（本 spec 直接同步 vi.mock，不涉及 defineAsyncComponent）。
+ * 承重：**删掉 WorkspaceSettingsView 里的 `:readonly="!auth.canWriteWorkspace"` ⇒ 必红**。
+ */
+vi.mock("../components/WorkspaceMcpPanel.vue", () => ({
+    default: {
+        name: "WorkspaceMcpPanel",
+        props: ["workspaceId", "readonly"],
+        template:
+            "<div data-testid='stub-mcp-panel' :data-ws='workspaceId' :data-readonly='String(readonly)' />",
+    },
+}));
+vi.mock("../../../components/resources/WorkspaceSkillsPanel.vue", () => ({
+    default: {
+        name: "WorkspaceSkillsPanel",
+        props: ["workspaceId"],
+        template: "<div data-testid='stub-skills-panel' :data-ws='workspaceId' />",
+    },
+}));
+
 vi.mock("vue-sonner", () => ({
     toast: {
         success: vi.fn<(message?: unknown) => string | number>(),
@@ -84,7 +109,11 @@ function mockConfigFetchResponse(input: RequestInfo | URL): Promise<Response> {
         return Promise.resolve(
             new Response(
                 JSON.stringify(
-                    makeWorkspace({ id: WORKSPACE_ID, name: "Workspace", workspaceRole: "OWNER" }),
+                    makeWorkspace({
+                        id: WORKSPACE_ID,
+                        name: "Workspace",
+                        workspaceRole: roleState.workspaceRole,
+                    }),
                 ),
                 { status: 200 },
             ),
@@ -123,6 +152,7 @@ beforeEach(() => {
     routeState.workspaceId = WORKSPACE_ID;
     routeState.domain = "";
     routeState.query = {};
+    roleState.workspaceRole = "OWNER";
     localStorage.setItem("xihe-token", "test-token");
     // PLAN-0610 W3-2b: the wire no longer carries `role`; this spec covers the workspace settings
     // tabs, which are gated by the workspace role/ownership, not by instance capabilities.
@@ -132,7 +162,7 @@ beforeEach(() => {
 });
 
 describe("WorkspaceSettingsView (PLAN-0560)", () => {
-    it("renders the workspace header and only the surviving tabs (task-209 撤资源双入口)", async () => {
+    it("renders the workspace header and the four tabs (D-1432 搬回 mcp/skills)", async () => {
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="workspace-settings-page"]').exists()).toBe(true);
@@ -147,12 +177,13 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
         // 这条从 task-253 的「正面守卫（不存在）」翻成「正面守卫（存在）」：留下的理由不变 ——
         // 纯删除只能证明"这一刻没写"，有人再撤掉它时不会有任何东西变红。
         expect(wrapper.find('[data-testid="ws-settings-tab-config"]').exists()).toBe(true);
-        // task-209 / D-1019：mcp / credentials / knowledge 三个 tab 与资源区双入口 ⇒ 撤。
-        // 断言写成**正面守卫**（计数为 0）而不是删掉这几行：删掉只能证明"这一刻没写"，加回来时没人会红。
-        // task-236（M4-3）：成员 tab 提升为一级页（/workspace/:id/members）⇒ 设置页只剩
-        // 常规 + 配置两个 tab；正面守卫计数防「tab 被悄悄加回来」。
-        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
-        for (const removed of ["mcp", "credentials", "knowledge", "members"]) {
+        // D-1432 / task-41（用户 2026-11-15 裁定）：mcp 与 skills 的**本工作区层**搬回来了；
+        // credentials / knowledge 仍在资源区（用户没点它们），members 仍是一级页。
+        expect(wrapper.find('[data-testid="ws-settings-tab-mcp"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-tab-skills"]').exists()).toBe(true);
+        // 正面守卫计数：加/撤页签都必须来这里改，否则红（删掉这几行只能证明"这一刻没写"）。
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(4);
+        for (const removed of ["credentials", "knowledge", "members"]) {
             expect(wrapper.find(`[data-testid="ws-settings-tab-${removed}"]`).exists()).toBe(false);
             expect(wrapper.find(`[data-testid="ws-settings-${removed}"]`).exists()).toBe(false);
         }
@@ -160,7 +191,6 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
     });
 
     it.each([
-        ["mcp", "mcp", "MCP"],
         ["credentials", "credentials", "凭据"],
         ["knowledge", "knowledge", "知识库"],
     ])(
@@ -193,7 +223,7 @@ describe("WorkspaceSettingsView (PLAN-0560)", () => {
 
         expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="ws-settings-resource-moved"]').exists()).toBe(false);
-        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(2);
+        expect(wrapper.findAll('[data-testid^="ws-settings-tab-"]')).toHaveLength(4);
         wrapper.unmount();
     });
 
@@ -431,5 +461,79 @@ describe("WorkspaceSettingsView 投影加载（task-472 / D-1367）", () => {
 
         expect(wrapper.find('[data-testid="ws-settings-config"]').exists()).toBe(true);
         expect(projectionCalls()).toBe(1);
+    });
+});
+
+/**
+ * D-1432 / task-41：搬回来的两个页签。
+ *
+ * 守两件事，缺一都不算数：
+ * 1 **页签真的挂面板**（不是只有个空 div）；
+ * 2 **权限门 prop 真的传下去** —— `task-209` 记过一次真事故（搬家漏 `:readonly`，VIEWER 看到可编辑
+ *   JSON 框）。这里的 VIEWER 用例就是那次事故的机器守卫：把 `:readonly="!auth.canWriteWorkspace"`
+ *   删掉 ⇒ `data-readonly` 变成 `"false"` ⇒ 红。
+ */
+describe("WorkspaceSettingsView — 搬回来的 mcp / skills 页签（D-1432）", () => {
+    it("?tab=mcp ⇒ 挂载本工作区 MCP 面板，OWNER 下 readonly=false", async () => {
+        routeState.query = { tab: "mcp" };
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-mcp"]').exists()).toBe(true);
+        const panel = wrapper.find('[data-testid="stub-mcp-panel"]');
+        expect(panel.exists()).toBe(true);
+        expect(panel.attributes("data-ws")).toBe(WORKSPACE_ID);
+        expect(panel.attributes("data-readonly")).toBe("false");
+        wrapper.unmount();
+    });
+
+    it("权限门承重：VIEWER ⇒ MCP 面板 readonly=true（去掉 :readonly 这条必红）", async () => {
+        routeState.query = { tab: "mcp" };
+        const wrapper = await mountView();
+        // 本用例守的是**绑定**（模板是否把 !canWriteWorkspace 传到 readonly），不是取数路径；
+        // 取数/角色解析在 auth store 自己的 spec 里钉。所以直接改 store 的工作区角色再等一次渲染。
+        const { useAuthStore } = await import("../../../stores/auth");
+        const auth = useAuthStore();
+        auth.workspace = {
+            ...(auth.workspace as Record<string, unknown>),
+            workspaceRole: "VIEWER",
+            canWrite: false,
+        } as typeof auth.workspace;
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="stub-mcp-panel"]').attributes("data-readonly")).toBe(
+            "true",
+        );
+        wrapper.unmount();
+    });
+
+    it("?tab=skills ⇒ 挂载本工作区技能面板（该面板无写面，故无 readonly prop 可传）", async () => {
+        routeState.query = { tab: "skills" };
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-skills"]').exists()).toBe(true);
+        const panel = wrapper.find('[data-testid="stub-skills-panel"]');
+        expect(panel.exists()).toBe(true);
+        expect(panel.attributes("data-ws")).toBe(WORKSPACE_ID);
+        // 结构性说明：这个面板没有 readonly/disabled 面（写面未接线），门是 vacuous 而不是"已处理"。
+        expect(panel.attributes("data-readonly")).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("点页签把 ?tab= 写进 URL（可分享深链；general 作为默认页签省略）", async () => {
+        routeState.query = { tab: "config" };
+        const wrapper = await mountView();
+
+        await wrapper.find('[data-testid="ws-settings-tab-mcp"]').trigger("click");
+        expect(routerSpies.push).toHaveBeenCalledWith({ query: { tab: "mcp" } });
+        wrapper.unmount();
+    });
+
+    it("旧 ?tab=mcp 不再走「迁到资源区」提示条（它已是真页签）", async () => {
+        routeState.query = { tab: "mcp" };
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-resource-moved"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-settings-mcp"]').exists()).toBe(true);
+        wrapper.unmount();
     });
 });

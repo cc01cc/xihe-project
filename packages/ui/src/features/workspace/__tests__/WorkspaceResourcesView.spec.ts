@@ -29,6 +29,11 @@ const messages = {
         },
         resources: {
             nameAgents: "智能体",
+            workspaceLayerMovedTitle: "这项资源的「本工作区」层已迁到工作区设置",
+            workspaceLayerMovedBody: "「{name}」的本工作区层现在在工作区设置里管理。",
+            workspaceLayerMovedAction: "打开工作区设置",
+            workspaceLayerMovedNoWorkspace: "先在左侧选择一个工作区。",
+            workspaceLayerMovedInlineHint: "以下资源的「本工作区」层已迁到工作区设置：",
             layerTab: {
                 credentials: { USER: "个人", WORKSPACE: "本工作区", INSTANCE: "平台" },
                 mcp: { WORKSPACE: "本工作区", INSTANCE: "平台" },
@@ -108,6 +113,9 @@ const RouterLinkStub = {
 const DERIVED_IDS = RESOURCE_DEFS.filter((def) =>
     def.layerRules.some((rule) => rule.layer === "WORKSPACE"),
 ).map((def) => def.id);
+/** D-1432 / task-41：已迁到工作区设置的资源 —— 页签里去掉、改指路（独立复算，不读页面常量）。 */
+const MOVED_IDS = ["mcp", "skills"] as const;
+const TAB_IDS = DERIVED_IDS.filter((id) => !(MOVED_IDS as readonly string[]).includes(id));
 
 async function mountPage(): Promise<ReturnType<typeof mount>> {
     const { default: WorkspaceResourcesView } = await import("../pages/WorkspaceResourcesView.vue");
@@ -136,9 +144,20 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         const tabIds = wrapper
             .findAll('[data-testid^="ws-resources-tab-"]')
             .map((node) => node.attributes("data-testid")?.replace("ws-resources-tab-", ""));
-        expect(tabIds).toEqual([...DERIVED_IDS]);
+        // D-1432：派生结果减去「已迁走」的两个 = 本页页签。
+        expect(tabIds).toEqual([...TAB_IDS]);
         // 派生结果本身钉住一次（矩阵顺序），防止有人把 filter 条件改成「全部资源」还绿。
         expect([...DERIVED_IDS]).toEqual(["credentials", "mcp", "skills", "agents"]);
+        expect([...TAB_IDS]).toEqual(["credentials", "agents"]);
+        // 已迁走的两个不进页签，但在「已迁」提示行里**有名字有直链**（指路而不是消失）。
+        expect(wrapper.find('[data-testid="ws-resources-tab-mcp"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-tab-skills"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="ws-resources-moved-link-mcp"]').attributes("href")).toBe(
+            "/workspace/ws-1/settings?tab=mcp",
+        );
+        expect(
+            wrapper.find('[data-testid="ws-resources-moved-link-skills"]').attributes("href"),
+        ).toBe("/workspace/ws-1/settings?tab=skills");
         // knowledge **自然不入选**：它的 layerRules 为空（G3 缺口），不是被白名单挡掉的。
         expect(
             RESOURCE_DEFS.find((def) => def.id === "knowledge")?.layerRules.some(
@@ -160,33 +179,47 @@ describe("工作区资源页（M4-2 / task-210）", () => {
 
     it("切资源：换面板 + 把选中项写进 URL（深链可分享）", async () => {
         const wrapper = await mountPage();
-        await wrapper.get('[data-testid="ws-resources-tab-skills"]').trigger("click");
+        await wrapper.get('[data-testid="ws-resources-tab-agents"]').trigger("click");
         await flushPromises();
-        expect(wrapper.find('[data-testid="resource-view-skills"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="resource-view-agents"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(false);
-        expect(replaceSpy).toHaveBeenCalledWith({ query: { resource: "skills" } });
+        expect(replaceSpy).toHaveBeenCalledWith({ query: { resource: "agents" } });
     });
 
-    it("深链与非法值：?resource=mcp 生效；?resource=knowledge 回落派生首项", async () => {
+    it("深链：?resource=mcp（已迁）⇒ 就地指路卡 + 深链，不静默换成别的资源", async () => {
         routeState.query = { resource: "mcp" };
         let wrapper = await mountPage();
-        expect(wrapper.find('[data-testid="resource-view-mcp"]').exists()).toBe(true);
+        // 不静默：仍是「mcp 被选中」的状态，页面上是一张说明卡而不是别人的面板。
+        expect(wrapper.find('[data-testid="resource-view-mcp"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(false);
+        const notice = wrapper.get('[data-testid="workspace-layer-moved"]');
+        expect(notice.exists()).toBe(true);
+        expect(
+            wrapper.find('[data-testid="workspace-layer-moved-action"]').attributes("href"),
+        ).toBe("/workspace/ws-1/settings?tab=mcp");
         wrapper.unmount();
 
-        // knowledge 不在派生集合里 ⇒ 回落首项（而不是渲染 G3 缺口页当「本工作区资源」）。
+        // knowledge 不在派生集合里（G3 缺口）⇒ 回落首个**未迁**资源。
         routeState.query = { resource: "knowledge" };
         wrapper = await mountPage();
         expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="resource-view-knowledge"]').exists()).toBe(false);
     });
 
+    it("非法/缺口资源回落：?resource=knowledge 落回首个未迁资源（面板照常渲染）", async () => {
+        routeState.query = { resource: "knowledge" };
+        const wrapper = await mountPage();
+        expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="workspace-layer-moved"]').exists()).toBe(false);
+    });
+
     it("平台 / 个人层只作只读引用：链接按该资源的 layerRules 派生（mcp 无个人层）", async () => {
-        routeState.query = { resource: "skills" };
+        routeState.query = { resource: "agents" };
         let wrapper = await mountPage();
-        const skillRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
-        expect(skillRefs.map((node) => node.attributes("href"))).toEqual([
-            "/resources/skills?layer=USER",
-            "/resources/skills?layer=INSTANCE",
+        const agentRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
+        expect(agentRefs.map((node) => node.attributes("href"))).toEqual([
+            "/resources/agents?layer=USER",
+            "/resources/agents?layer=INSTANCE",
         ]);
         wrapper.unmount();
 

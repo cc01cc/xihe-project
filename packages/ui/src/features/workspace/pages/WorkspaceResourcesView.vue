@@ -6,10 +6,13 @@ import {
     RESOURCE_DEFS,
     resourceDef,
     resourcePath,
+    workspaceLayerMoved,
     type ResourceId,
     type ResourceLayer,
+    type WorkspaceSettingsResourceId,
 } from "../../../lib/settingsIa";
 import { RESOURCE_VIEWS } from "../../../lib/resourceViews";
+import WorkspaceLayerMovedNotice from "../../../components/settings/WorkspaceLayerMovedNotice.vue";
 
 /**
  * PLAN-0773 **M4-2**（task-210）：`/workspace/:id/resources` —— 本工作区的资源页。
@@ -26,11 +29,18 @@ import { RESOURCE_VIEWS } from "../../../lib/resourceViews";
  *       与 design 的 `/workspace/:id/resources` 不符（M4-6 的旧链接 302 目标也指着后者）。</li>
  * </ul>
  *
+ * <p><b>D-1432 / task-41（用户 2026-11-15 裁定）—— 本页的「已迁资源」处理：</b>
+ * MCP 与技能的**本工作区层搬回工作区设置** ⇒ 这两个资源**不再出现在本页页签里**，页签上方给一行
+ * 「已迁到工作区设置」的直链说明；深链 `?resource=mcp` **不静默回落到别的资源**，而是就地渲染同一张
+ * 指路卡（`WorkspaceLayerMovedNotice`）。凭据 / 智能体（以及将来真正落在本层的资源）照旧渲染面板 ——
+ * 「把整页清空」与「悄悄少两个页签」都不是本裁定要的结果。</p>
+ *
  * <p><b>三个 SSOT 纪律（这页自己不持有一份清单）</b>：</p>
  * <ol>
  *   <li>资源清单 = `RESOURCE_DEFS` 里**真实有 WORKSPACE 层**的那些（`layerRules`），只在本文件
  *       派生一次；页面不写死 `["skills","mcp",...]`。**`knowledge` 因此自然不入选** ——
- *       它的 `layerRules` 为空（G3 缺口：CP 无库实体），所以这是**派生结果**而不是白名单过滤</li>
+ *       它的 `layerRules` 为空（G3 缺口：CP 无库实体），所以这是**派生结果**而不是白名单过滤；
+ *       已迁资源同样来自派生（`workspaceLayerMoved()` 读同一份 `WORKSPACE_SETTINGS_RESOURCE_IDS`）</li>
  *   <li>「哪个 id 对应哪个组件」= `lib/resourceViews.ts` 的唯一映射（本卡把这表从 `router/index.ts`
  *       搬出来，路由与这页**都读它**）</li>
  *   <li>层标签 = 既有 `resources.layerTab.<资源>.<层>` i18n 键（全局资源页的层 tab 用的同一批），
@@ -42,17 +52,26 @@ import { RESOURCE_VIEWS } from "../../../lib/resourceViews";
  */
 const WORKSPACE_LAYER: ResourceLayer = "WORKSPACE";
 
-/** 唯一派生口径：`RESOURCE_DEFS` 里有 WORKSPACE 层的资源（顺序即矩阵顺序）。 */
-const WORKSPACE_RESOURCE_IDS: readonly ResourceId[] = RESOURCE_DEFS.filter((def) =>
+/** 派生口径 ①：`RESOURCE_DEFS` 里有 WORKSPACE 层的资源（顺序即矩阵顺序）—— 用于**深链校验**。 */
+const WORKSPACE_LAYER_RESOURCE_IDS: readonly ResourceId[] = RESOURCE_DEFS.filter((def) =>
     def.layerRules.some((rule) => rule.layer === WORKSPACE_LAYER),
 ).map((def) => def.id);
+
+/** 派生口径 ②：已迁到工作区设置的那几个（本页要指路）；③ 页签 = ① 减 ②。 */
+const MOVED_RESOURCE_IDS: readonly WorkspaceSettingsResourceId[] =
+    WORKSPACE_LAYER_RESOURCE_IDS.filter((id): id is WorkspaceSettingsResourceId =>
+        workspaceLayerMoved(id),
+    );
+const TAB_RESOURCE_IDS: readonly ResourceId[] = WORKSPACE_LAYER_RESOURCE_IDS.filter(
+    (id) => !workspaceLayerMoved(id),
+);
 
 /**
  * 视图表只装载**本页会用到**的那几个（`markRaw` + 模块级建一次）：每次渲染都新建
  * async 组件会让 Vue 反复重建子树（层切换变成整片重挂）。
  */
 const RESOURCE_VIEW_COMPONENTS = new Map<ResourceId, Component>(
-    WORKSPACE_RESOURCE_IDS.map((id) => [id, markRaw(defineAsyncComponent(RESOURCE_VIEWS[id]))]),
+    TAB_RESOURCE_IDS.map((id) => [id, markRaw(defineAsyncComponent(RESOURCE_VIEWS[id]))]),
 );
 
 const route = useRoute();
@@ -63,9 +82,9 @@ const workspaceId = computed(() => String(route.params.workspaceId ?? "").trim()
 
 /** `?resource=` 的唯一解析口径（读与写都走它，避免两处各写一份白名单）。 */
 function resourceFromQuery(q: unknown): ResourceId {
-    return typeof q === "string" && (WORKSPACE_RESOURCE_IDS as readonly string[]).includes(q)
+    return typeof q === "string" && (WORKSPACE_LAYER_RESOURCE_IDS as readonly string[]).includes(q)
         ? (q as ResourceId)
-        : WORKSPACE_RESOURCE_IDS[0];
+        : TAB_RESOURCE_IDS[0];
 }
 
 const activeResource = ref<ResourceId>(resourceFromQuery(route.query.resource));
@@ -79,7 +98,7 @@ watch(
 );
 
 const tabs = computed(() =>
-    WORKSPACE_RESOURCE_IDS.map((id) => ({ id, label: t(resourceDef(id).labelKey) })),
+    TAB_RESOURCE_IDS.map((id) => ({ id, label: t(resourceDef(id).labelKey) })),
 );
 
 function selectResource(id: ResourceId) {
@@ -89,7 +108,16 @@ function selectResource(id: ResourceId) {
     void router.replace({ query: { ...route.query, resource: id } });
 }
 
-const activeView = computed(() => RESOURCE_VIEW_COMPONENTS.get(activeResource.value));
+/** 当前资源是否已迁走（深链 `?resource=mcp` 也要落在指路卡上，不静默换资源）。 */
+const activeMovedId = computed<WorkspaceSettingsResourceId | null>(() =>
+    workspaceLayerMoved(activeResource.value)
+        ? (activeResource.value as WorkspaceSettingsResourceId)
+        : null,
+);
+
+const activeView = computed(() =>
+    activeMovedId.value ? undefined : RESOURCE_VIEW_COMPONENTS.get(activeResource.value),
+);
 
 /**
  * 其它层（平台 / 用户）—— **只作只读引用**。取自同一份 `layerRules`（顺序由 `RESOURCE_LAYERS`
@@ -107,6 +135,11 @@ function layerLabel(id: ResourceId, layer: ResourceLayer): string {
 
 function referenceHref(id: ResourceId, layer: ResourceLayer): string {
     return `${resourcePath(id)}?layer=${layer}`;
+}
+
+/** 已迁资源在工作区设置里的深链（页签 id 与资源 id 同名，见 WorkspaceSettingsView 的 tabs）。 */
+function movedHref(id: WorkspaceSettingsResourceId): string {
+    return `/workspace/${workspaceId.value}/settings?tab=${id}`;
 }
 </script>
 
@@ -136,6 +169,27 @@ function referenceHref(id: ResourceId, layer: ResourceLayer): string {
             </button>
         </div>
 
+        <!--
+            D-1432 / task-41：已迁到工作区设置的资源在这页**不再开页签**，
+            但仍要「就地说明 + 直链」—— 否则用户只看到页签少了两个，无处可问。
+        -->
+        <div
+            v-if="MOVED_RESOURCE_IDS.length > 0"
+            data-testid="ws-resources-moved-hint"
+            class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-xs text-muted-foreground"
+        >
+            <span>{{ t("resources.workspaceLayerMovedInlineHint") }}</span>
+            <RouterLink
+                v-for="id in MOVED_RESOURCE_IDS"
+                :key="id"
+                :to="movedHref(id)"
+                :data-testid="`ws-resources-moved-link-${id}`"
+                class="text-foreground underline-offset-2 hover:underline"
+            >
+                {{ t(resourceDef(id).labelKey) }}
+            </RouterLink>
+        </div>
+
         <!-- 平台 / 用户层：只读引用（不在这里编辑，也不给层切换入口）。 -->
         <div
             v-if="referenceLayers.length > 0"
@@ -160,6 +214,9 @@ function referenceHref(id: ResourceId, layer: ResourceLayer): string {
                 :layer="WORKSPACE_LAYER"
                 :workspace-id="workspaceId"
             />
+            <div v-else-if="activeMovedId" class="p-4">
+                <WorkspaceLayerMovedNotice :resource="activeMovedId" :workspace-id="workspaceId" />
+            </div>
         </div>
     </div>
 </template>

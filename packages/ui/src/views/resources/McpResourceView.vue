@@ -2,11 +2,9 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import InstanceMcpPanel from "../../components/settings/InstanceMcpPanel.vue";
-import WorkspaceMcpPanel from "../../features/workspace/components/WorkspaceMcpPanel.vue";
-import ResourceWorkspaceRequired from "../../components/resources/ResourceWorkspaceRequired.vue";
+import WorkspaceLayerMovedNotice from "../../components/settings/WorkspaceLayerMovedNotice.vue";
 import { resolveResourceLayer, type ResourceLayer } from "../../lib/settingsIa";
 import { readTabWorkspaceId } from "../../lib/workspaceContext";
-import { useAuthStore } from "../../stores/auth";
 
 /**
  * PLAN-0772 M2：MCP 资源页（`/resources/mcp?layer=WORKSPACE|INSTANCE`）。
@@ -14,30 +12,29 @@ import { useAuthStore } from "../../stores/auth";
  * <p>只有两层：`mcp_remote_servers.workspace_id NOT NULL`（audit §F G1）⇒ 没有个人层，
  * 所以 `?layer=USER` 会被 `resolveResourceLayer` 落回默认层（`WORKSPACE`），而不是渲染一张空页。</p>
  *
- * <p><b>task-209（D-1019）</b>：本页接管「工作区设置 → MCP」tab 之后，**必须同时接管它的只读门**
- * （`!auth.canWriteWorkspace`）。撤 tab 前那个入口传的是 `:readonly="!auth.canWriteWorkspace"`
- * （VIEWER 看到禁用 textarea、无保存按钮，见旧 `e2e/mock/plan-0560-settings.spec.ts`），
- * 若这里不传，VIEWER 在资源页会看到一个**可编辑**的 JSON 配置框 —— 属于「搬家顺手丢权限门」。</p>
+ * <p><b>D-1432 / task-41（用户 2026-11-15 裁定）</b>：MCP 的「本工作区」层**搬回工作区设置**
+ * （`/workspace/:id/settings?tab=mcp`），本页的 WORKSPACE 层改为**指路**，不再渲染面板。
+ * 这是 task-209（D-1019）的反向处理，语义沿用同一条 —— 不 404、不静默跳走：
+ * 说明搬到哪了 + 一条能直接点过去的深链。实例层不受影响。</p>
+ *
+ * <p><b>搬家必核权限门</b>（task-209 记过一次真事故：`McpResourceView` 搬出 `/settings` 后漏了
+ * `:readonly="!auth.canWriteWorkspace"`，VIEWER 看到可编辑的 JSON 框）：那一面现在由
+ * 工作区设置页的 `mcp` 页签承接，门跟着搬过去（`WorkspaceSettingsView.vue`）—— 本页已无编辑面。</p>
  */
 /**
- * task-210（PLAN-0773 M4-2）：**两个可选 prop** 让工作区资源页
- * （`/workspace/:id/resources`）**钉死本工作区层**。
- *
- * <p>不传时行为与全局资源页逐字节相同：层仍由 `?layer=` 解析、workspace 仍取本页签上下文
- * （`readTabWorkspaceId`）。工作区页传 `layer="WORKSPACE"` + 路由里的 workspaceId ⇒
- * 页面自己建立前提，不依赖「上一个页面写过页签上下文」这种隐性顺序。</p>
+ * task-210（PLAN-0773 M4-2）：两个可选 prop 让工作区页/资源页**钉死本工作区层**。
+ * 搬回设置后工作区资源页不再挂本视图（那一页对已迁资源走指路），但 prop 契约保留：
+ * 它也是「层不由 `?layer=` 决定」的唯一表达方式，删掉会让深链解析重新变成隐式顺序问题。
  */
 const props = defineProps<{ layer?: ResourceLayer; workspaceId?: string }>();
 
 const route = useRoute();
-const auth = useAuthStore();
 const layer = computed(() => props.layer ?? resolveResourceLayer("mcp", route.query.layer));
 /** 先看显式 prop（工作区页），再回落本页签上下文（全局资源页的既有口径）。 */
-const workspaceId = computed(() => props.workspaceId?.trim() || readTabWorkspaceId());
+const workspaceId = computed(() => props.workspaceId?.trim() || readTabWorkspaceId() || "");
 </script>
 
 <template>
     <InstanceMcpPanel v-if="layer === 'INSTANCE'" />
-    <ResourceWorkspaceRequired v-else-if="!workspaceId" />
-    <WorkspaceMcpPanel v-else :workspace-id="workspaceId" :readonly="!auth.canWriteWorkspace" />
+    <WorkspaceLayerMovedNotice v-else resource="mcp" :workspace-id="workspaceId" />
 </template>

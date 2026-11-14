@@ -63,13 +63,16 @@ test.describe("Config Settings (three layers)", () => {
                     capabilities: {
                         isInstanceAdmin: true,
                         isInstanceSuper: true,
-                        workspaceAdminOf: ["ws-1"],
+                        workspaceAdminOf: ["11111111-1111-4111-8111-111111111111"],
                     },
                 }),
             );
             localStorage.setItem(
                 "xihe-workspace",
-                JSON.stringify({ id: "ws-1", name: "Mock Workspace" }),
+                JSON.stringify({
+                    id: "11111111-1111-4111-8111-111111111111",
+                    name: "Mock Workspace",
+                }),
             );
         });
     });
@@ -115,12 +118,17 @@ test.describe("Config Settings (three layers)", () => {
             });
         });
         // PLAN-0560: workspace settings page resolves the workspace context first.
-        await page.route("**/api/v1/workspaces/ws-1", (route: any) =>
-            route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ id: "ws-1", name: "Mock Workspace" }),
-            }),
+        await page.route(
+            "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111",
+            (route: any) =>
+                route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        id: "11111111-1111-4111-8111-111111111111",
+                        name: "Mock Workspace",
+                    }),
+                }),
         );
         await page.route("**/api/v1/config/**", async (route: any) => {
             const url = new URL(route.request().url()),
@@ -242,22 +250,26 @@ test.describe("Config Settings (three layers)", () => {
     // 翻面**不删**：删断言只能证明「这一刻没写」，将来有人再把 tab 拿掉时不会有任何东西变红。
     // 反过来写之后，被持续验证的契约是「恰好两个 tab（general/config）+ 域面板集合等于 SSOT」。
     // task-236（M4-3）：成员提升为一级页 /workspace/:id/members —— 成员 tab 已撤（下方正面守卫）。
-    test("workspace settings page: 三 tab + 配置域面板集合由 SSOT 派生（task-204 翻面）", async ({
+    test("workspace settings page: 四 tab + 配置域面板集合由 SSOT 派生（task-204 翻面）", async ({
         page,
     }) => {
         await mockConfigAPIs(page);
         // ?tab=config 现在是 tab 白名单成员 ⇒ 落在 config 本身（不再兜底回落 general）。
-        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings?tab=config", {
+            waitUntil: "load",
+        });
 
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-general")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
-        // 计数**写死 2**（不是 ≥2）：tab 增删都必须在这里显式改判据，不能静默长出新 tab。
-        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(2);
+        // 计数**写死 4**（不是 ≥4）：tab 增删都必须在这里显式改判据，不能静默长出新 tab。
+        // D-1432 / task-41（用户 2026-11-15 裁定）：mcp 与 skills 搬回本页 ⇒ 2 → 4。
+        await expect(page.locator('[data-testid^="ws-settings-tab-"]')).toHaveCount(4);
         // task-236（M4-3）正面守卫：成员 tab 已提升为一级页，不得复活成设置页 tab。
         await expect(page.getByTestId("ws-settings-tab-members")).toHaveCount(0);
-        // task-209 / D-1019：mcp / credentials / knowledge 三个资源 tab 仍不在（已撤到资源区，非双入口）。
-        await expect(page.getByTestId("ws-settings-tab-mcp")).toHaveCount(0);
+        // D-1432：mcp / skills 的「本工作区」层搬回来了；credentials / knowledge 仍在资源区（用户没点）。
+        await expect(page.getByTestId("ws-settings-tab-mcp")).toHaveCount(1);
+        await expect(page.getByTestId("ws-settings-tab-skills")).toHaveCount(1);
         await expect(page.getByTestId("ws-settings-tab-credentials")).toHaveCount(0);
         await expect(page.getByTestId("ws-settings-tab-knowledge")).toHaveCount(0);
 
@@ -298,11 +310,24 @@ test.describe("Config Settings (three layers)", () => {
             ),
         ).toEqual([]);
 
-        // MCP 仍在「自己独立的界面」上 —— 只是从工作区设置的 tab 换成了资源区的工作区层
-        // （`/resources/mcp?layer=WORKSPACE`）。**行为断言不变**：进得去、文本框在。
+        // D-1432 / task-41（用户 2026-11-15 裁定）：MCP 的「本工作区」层**搬回工作区设置**
+        // （`?tab=mcp`）；资源区的对应层改成指路卡。**行为断言不变**：进得去、文本框在 ——
+        // 只是落点从 `/resources/mcp?layer=WORKSPACE` 换回 `?tab=mcp`。
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings?tab=mcp", {
+            waitUntil: "load",
+        });
+        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
+        await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
+
+        // 反向：资源区那一层不再挂面板，而是「就地说明 + 直链」（不 404、不静默跳走）。
         await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         await expect(page.getByTestId("resources-header")).toBeVisible();
-        await expect(page.getByTestId("mcp-config-textarea")).toBeVisible();
+        await expect(page.getByTestId("mcp-config-textarea")).toHaveCount(0);
+        await expect(page.getByTestId("workspace-layer-moved")).toBeVisible();
+        await expect(page.getByTestId("workspace-layer-moved-action")).toHaveAttribute(
+            "href",
+            "/workspace/11111111-1111-4111-8111-111111111111/settings?tab=mcp",
+        );
     });
 
     // task-174：原用例是「断言…→截图→goto MCP→断言…→截图」，截图夹在中间 ⇒ 非 linux 的 skip
@@ -312,7 +337,9 @@ test.describe("Config Settings (three layers)", () => {
     // 一张用例里拍两张就必然有一张后面还跟着语句（第二条就永远到不了）。
     test("renders the workspace settings baseline", async ({ page }) => {
         await mockConfigAPIs(page);
-        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings?tab=config", {
+            waitUntil: "load",
+        });
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expectPlatformScreenshot(page, "config-workspace-tab.png");
     });
@@ -346,7 +373,9 @@ test.describe("Config Settings (three layers)", () => {
         // trigger 断言的红遮住，task-464 修好草稿同步后才露出来。同文件「三 tab + 域集由 SSOT
         // 派生」那条与本处曾**互相矛盾**（同一 URL 一边断言域集等于 SSOT、一边断言该域 count=0），
         // 套件自身绿灯即反证本处过期 ⇒ **翻面而不是删断言**（删了将来有人把 tab 拿掉也不会红，task-112）。
-        await page.goto("/workspace/ws-1/settings?tab=config", { waitUntil: "load" });
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings?tab=config", {
+            waitUntil: "load",
+        });
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
         await expect(page.getByTestId("ws-settings-tab-config")).toBeVisible();
         // **判据判别力（Lead 补充要求 / runtime-1 复核点）**：不是把 count=0 翻成「存在」就完事 ——
