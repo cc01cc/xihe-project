@@ -90,6 +90,14 @@ export interface MockSessionRecord {
     id: string;
     title: string;
     agentPrincipalId?: string | null;
+    /**
+     * task-590：会话投影里的 provider 绑定。**发送路径的前提** ——
+     * `ChatPanel.guardProviderBinding` 先看会话行的 `providerConnectionId`（BL-270），
+     * 没有就回落 `POST /sessions/{id}/bind-defaults`，而 mock 车道**不会重放**被拦下的消息
+     * （实测：只有 toast，没有 `POST /chat`、没有气泡）。
+     * ⇒ 夹具要让"能发送"这件事**不需要时序**：直接让投影自带绑定，而不是桩 bind-defaults 再等重放。
+     */
+    providerConnectionId?: string | null;
     createdAt?: string;
     updatedAt?: string;
     workspaceId?: string;
@@ -121,7 +129,24 @@ let warnedLegacyWorkspaceEvents = false;
 /** task-100：`XH_FIXTURE_MONITOR=sse` 同样只喊一次。 */
 let warnedLegacyMonitor = false;
 
+/**
+ * task-590：构造一条**能走完发送路径**的会话记录（投影自带 provider 绑定）。
+ *
+ * <p>用法：`setupMockSessions(page, { sessions: [sendableSession({ id, title })] })` ——
+ * 之后按 Enter 就会真发 `POST /api/v1/chat`、乐观气泡上屏、输入框被清空；**不需要**
+ * `bind-defaults` 桩，也不依赖「被拦下的消息会被重放」这个产品内部时机（mock 车道没有）。</p>
+ *
+ * <p>反向控制：同一条会话去掉 `providerConnectionId`（默认值就是 null）⇒ 发送被
+ * `guardProviderBinding` 拦下，不会出现 `POST /chat`。判据见
+ * `e2e/mock/task590-sendable-fixture.spec.ts`。</p>
+ */
+export function sendableSession(session: MockSessionRecord): MockSessionRecord {
+    return { providerConnectionId: MOCK_PROVIDER_CONNECTION_ID, ...session };
+}
+
 const MOCK_ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";
+/** task-590：夹具默认 provider 连接 id（只用于"看起来已绑定"的投影，不对应真实连接）。 */
+const MOCK_PROVIDER_CONNECTION_ID = "conn-mock-sendable";
 /** Default bound Agent principal for fixture Sessions (see `setupMockSessions`). */
 const MOCK_BOUND_PRINCIPAL_ID = "00000000-0000-4000-8000-0000000000a1";
 type MockBranch = {
@@ -811,6 +836,9 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         workspaceId,
         modelProvider: null,
         modelName: null,
+        // task-590：投影自带 provider 绑定 ⇒ guard 不拦、不需要 bind-defaults 重放。
+        providerConnectionId:
+            "providerConnectionId" in session ? (session.providerConnectionId ?? null) : null,
         archived: false,
         // `MockSessionRecord.agentPrincipalId` used to be dropped here, so a fixture could
         // not model a Session that already has a bound Agent — the UI then detoured every
@@ -835,7 +863,10 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     // task-373：两种作用域共用同一条映射（含 agentPrincipalId 的默认值口径），差别只有
     // workspaceId —— 独立会话是显式 null，不是缺字段。
     const sessions = (options.sessions ?? []).map((session) =>
-        mapSession(session, session.workspaceId ?? options.workspaceId ?? "11111111-1111-4111-8111-111111111111"),
+        mapSession(
+            session,
+            session.workspaceId ?? options.workspaceId ?? "11111111-1111-4111-8111-111111111111",
+        ),
     );
     const workspaceless = (options.workspacelessSessions ?? []).map((session) =>
         mapSession(session, null),
@@ -900,6 +931,8 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
                 workspaceId: isWorkspaceless ? null : "11111111-1111-4111-8111-111111111111",
                 modelProvider: null,
                 modelName: null,
+                // task-590：新建设会话与既有会话同形（投影字段集必须一致，否则 typecheck:e2e 记账）。
+                providerConnectionId: null,
                 archived: false,
             };
             if (isWorkspaceless) workspaceless.unshift(created);
