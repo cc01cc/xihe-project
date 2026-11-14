@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it } from "vitest";
 import { mockApiPlugin } from "../api-server";
+import { API_REQUEST_TEMPLATE_FIXTURE } from "../data/apiRequestTemplates";
 import {
     mockModelCatalogResponse,
     providerConnectionRows,
@@ -282,11 +283,10 @@ describe("mock provider 连接夹具被路由消费（task-454）", () => {
     });
 
     it("未实现的 suffix 仍回 null ⇒ 上层 404 MOCK_ENDPOINT_MISSING（不做通配 200）", async () => {
-        const answer = await call(
-            handler,
-            LIST +
-                "/conn-claude-primary/api-type-change-impact?apiTypeId=openai-chat-completions&version=1",
-        );
+        // task-459 前本用例拿 `api-type-change-impact` 当「未实现」的例子；那条现已实现（回 200）
+        // ⇒ 换成**真正未知**的 suffix，三条判据（404 / CP 侧不懂的 code / 不通配 200）原样保留。
+        // 这是 D-1319「数据/产品变了就改期望」而不是放宽：新 suffix 永远不该被实现。
+        const answer = await call(handler, LIST + "/conn-claude-primary/not-a-real-suffix");
         expect(answer.status).toBe(404);
         expect((answer.body as { code: string }).code).toBe("MOCK_ENDPOINT_MISSING");
     });
@@ -519,5 +519,130 @@ describe("mock provider 夹具镜像 CP 真源（task-457）", () => {
             expect(pair?.capability?.tools, id + " providers.json:11/:25").toBe(true);
             expect(pair?.capability?.vision, id + " providers.json:11/:25").toBe(false);
         }
+    });
+});
+
+describe("mock api-type-change-impact 面 + API 请求模板夹具（task-459）", () => {
+    let handler: ApiHandler;
+    beforeEach(() => {
+        resetProviderConnectionFixture();
+        handler = mountApiHandler();
+    });
+
+    function chatRow() {
+        const row = providerConnectionRows().find((item) => item.operation === "chat");
+        if (!row) throw new Error("夹具里没有 chat 连接，用例前提不成立");
+        return row;
+    }
+
+    it("回契约 6 字段（openapi.yaml:8191），currentType 取行、targetType 取 query", async () => {
+        const row = chatRow();
+        const answer = await call(
+            handler,
+            `/provider-connections/${row.id}/api-type-change-impact?apiTypeId=openai-chat-completions&version=1`,
+        );
+        expect(answer.status).toBe(200);
+        const body = answer.body as Record<string, unknown>;
+        // 键集合逐一钉住：多一个字段（mock 自造）或少一个（契约 required 漏给）都红。
+        expect(Object.keys(body).sort()).toEqual([
+            "compatibleTemplates",
+            "connectionRevision",
+            "currentType",
+            "incompatibleOverrides",
+            "sessionRebindCount",
+            "targetType",
+        ]);
+        expect(body.connectionRevision).toBe(row.revision);
+        expect(body.currentType).toEqual({
+            apiTypeId: row.apiTypeId,
+            version: row.apiTypeVersion,
+        });
+        expect(body.targetType).toEqual({ apiTypeId: "openai-chat-completions", version: 1 });
+        // mock 不建模引用：这两项是局限不是事实，钉住以免有人当「真无影响」消费。
+        expect(body.incompatibleOverrides).toEqual([]);
+        expect(body.sessionRebindCount).toBe(0);
+    });
+
+    it("compatibleTemplates 由已发布夹具派生：含匹配项、**不含 draft**", async () => {
+        const row = chatRow();
+        const answer = await call(
+            handler,
+            `/provider-connections/${row.id}/api-type-change-impact?apiTypeId=openai-chat-completions&version=1`,
+        );
+        const templates = (answer.body as { compatibleTemplates: Array<Record<string, unknown>> })
+            .compatibleTemplates;
+        // 非空是本卡的核心判据：空集时「选了模板才发 PATCH」的门永远过不去。
+        expect(templates.length).toBeGreaterThan(0);
+        const published = API_REQUEST_TEMPLATE_FIXTURE.filter(
+            (item) =>
+                item.status === "published" &&
+                item.apiTypeId === "openai-chat-completions" &&
+                item.apiTypeVersion === 1,
+        );
+        expect(templates.map((item) => item.templateId)).toEqual(published.map((item) => item.id));
+        expect(templates.every((item) => item.layer === "instance")).toBe(true);
+        const draft = API_REQUEST_TEMPLATE_FIXTURE.filter((item) => item.status === "draft");
+        expect(draft.length).toBeGreaterThan(0);
+        for (const item of draft) {
+            expect(templates.map((option) => option.templateId)).not.toContain(item.id);
+        }
+    });
+
+    it("未知连接 404 用 CP 原码；缺 query / version 非法 400", async () => {
+        const missing = await call(
+            handler,
+            "/provider-connections/conn-does-not-exist/api-type-change-impact?apiTypeId=openai-chat-completions&version=1",
+        );
+        expect(missing.status).toBe(404);
+        expect((missing.body as { code: string }).code).toBe("PROVIDER_CONNECTION_NOT_FOUND");
+        const row = chatRow();
+        for (const bad of [
+            "",
+            "?version=1",
+            "?apiTypeId=openai-chat-completions",
+            "?apiTypeId=openai-chat-completions&version=0",
+            "?apiTypeId=openai-chat-completions&version=abc",
+        ]) {
+            const answer = await call(
+                handler,
+                `/provider-connections/${row.id}/api-type-change-impact${bad}`,
+            );
+            expect(answer.status).toBe(400);
+            expect((answer.body as { code: string }).code).toBe("INVALID_REQUEST");
+        }
+    });
+
+    it("非 GET 不通配（回 null ⇒ 上层 404 MOCK_ENDPOINT_MISSING）", async () => {
+        const row = chatRow();
+        const answer = await call(
+            handler,
+            `/provider-connections/${row.id}/api-type-change-impact?apiTypeId=openai-chat-completions&version=1`,
+            "POST",
+            {},
+        );
+        expect(answer.status).toBe(404);
+        expect((answer.body as { code: string }).code).toBe("MOCK_ENDPOINT_MISSING");
+    });
+
+    it("config 读面真的给 templates（根因②的直接判据）：entries.templates 是非空 JSON", async () => {
+        const answer = await call(
+            handler,
+            "/config/api-request-templates?layer=instance&includeMeta=true",
+        );
+        expect(answer.status).toBe(200);
+        const entries = (answer.body as { entries: Record<string, string> }).entries;
+        expect(typeof entries.templates).toBe("string");
+        const parsed = JSON.parse(entries.templates) as Array<{ id: string; status: string }>;
+        expect(parsed.map((item) => item.id)).toEqual(
+            API_REQUEST_TEMPLATE_FIXTURE.map((item) => item.id),
+        );
+        // UI 侧 `listVisibleTemplates()` 会再 filter published ⇒ 至少一条能进选项。
+        expect(parsed.filter((item) => item.status === "published").length).toBeGreaterThan(0);
+        // user 层仍是 {}（mock 的层语义没改，别为了「两层都有」去改 mergedEntries）。
+        const userLayer = await call(
+            handler,
+            "/config/api-request-templates?layer=user&includeMeta=true",
+        );
+        expect((userLayer.body as { entries: Record<string, string> }).entries).toEqual({});
     });
 });

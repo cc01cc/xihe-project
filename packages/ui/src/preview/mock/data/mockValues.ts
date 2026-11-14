@@ -6,6 +6,8 @@
  * api-request-templates 无 config-schema（CP 侧专用面板承载），其内容由 MockSinglePage 手工排布。
  */
 
+import { apiRequestTemplateEntries } from "./apiRequestTemplates";
+
 export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
     "agent-profile": {
         userName: "xihe-operator",
@@ -160,4 +162,8 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
         theme: "dark",
         language: "zh-CN",
     },
+    // task-459：此前本域**没有任何夹具**（既无 config-schema 又不在本表）⇒ `entriesFor` 回 {} ⇒
+    // `entries.templates` undefined ⇒ `parseTemplates` 回 [] ⇒ `ProviderHub` 的模板选项恒空
+    // （切类型保存被 `:858-869` 的门挡住）。夹具与其派生函数在 `data/apiRequestTemplates.ts`。
+    "api-request-templates": apiRequestTemplateEntries(),
 };
