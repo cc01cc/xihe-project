@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -472,6 +472,16 @@ const { resizing: treeResizing } = treeBridge;
 
 function setTreePanel(el: unknown): void {
     treePanelEl.value = (el as SplitterPanelExposed | null) ?? null;
+    if (!el) return;
+    // task-551：`:ref` 在 253ms 就已经投递到组件实例（真栈打点：setTreePanel 多次调用、panelRef 已被赋值），
+    // 所以修法就落在**这里**（与 ref 投递同刻），而不是再补一个 watcher。
+    // 原来的 `watch(treePanelCollapsed)` 只在 false→true 变化时调 collapse()；而 1180 档该值挂载首帧
+    // 就为 true（`narrowViewport` ≤1439 恒真）⇒ 永远没有变化 ⇒ collapse() 一次都不执行
+    // （真栈打点 collapse 调用次数 = 0），rail 靠 v-if 已渲染 ⇒ 看着折叠、宽度仍是展开态（220px / main 597）。
+    void nextTick(() => {
+        if (treePanelCollapsed.value) treeBridge.collapse();
+        else treeBridge.resizeToWidth(treeWidth.value);
+    });
 }
 
 watch(treePanelEl, (panel) => {

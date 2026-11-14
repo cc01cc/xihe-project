@@ -7,6 +7,7 @@ import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
 import {
     SPLITTER_REFERENCE_WIDTH,
+    TREE_COLLAPSED_WIDTH,
     TREE_WIDTH_DEFAULT,
     TREE_WIDTH_MAX,
     TREE_WIDTH_MIN,
@@ -775,6 +776,12 @@ describe("WorkspaceWorkbench file tree as splitter panel (PLAN-0753 T3)", () => 
         const panels = wrapper.findAll("[data-panel]");
         // 收起是渲染态：rail 内只剩展开按钮，文件树与 handle 都不渲染。
         expect(panels[0].get('[data-testid="workspace-tree-expand"]').exists()).toBe(true);
+        // task-551：名字里写了「40px rail」就必须断言宽度 —— 只断言 rail 内容会让 220px 的假折叠
+        // （内容已切换、宽度仍是展开百分比）静默通过；这正是本卡漏到今天的原因。
+        const collapsedPercent = (TREE_COLLAPSED_WIDTH / SPLITTER_REFERENCE_WIDTH) * 100;
+        expect(Number(panels[0].attributes("data-panel-size"))).toBeLessThanOrEqual(
+            collapsedPercent + 0.1,
+        );
         expect(panels[0].find('[data-testid="workspace-file-tree"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="tree-resizer"]').exists()).toBe(false);
         // 收起不改宽度：存储仍是 280（PLAN-0582 §1.5-A）。
