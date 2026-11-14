@@ -86,9 +86,29 @@ const messages = {
             image: "图片",
             attachFile: "附件",
             voice: "语音输入",
-            input: { workspaceLessNoTargets: "独立会话不支持选择发送对象、代发与附件（仅纯对话）" },
+            input: {
+                workspaceLessNoTargets: "独立会话不支持附件（仅纯对话）",
+                workspaceLessDropped: "独立会话不支持附件，本条已去掉附件后发送",
+                toLabel: "代发身份",
+                toTargetsLabel: "发送",
+                toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
+                ccHint: "普通通知（可能被免打扰屏蔽）",
+                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
+                toEmptyHint: "本条不会通知任何参与者",
+                toEmptyHintDismiss: "知道了",
+                ccLabel: "抄送",
+                ccAdd: "添加…",
+                ccRemove: "移除抄送",
+                ccCollapse: "收起抄送",
+                recipientPlaceholder: "输入名字…",
+                recipientRemove: "移除",
+                recipientHint: "↑↓ 选择 · Enter 确认 · Tab 补全 · Esc 关闭",
+                recipientEmpty: "没有匹配的成员",
+                recipientUnknown: "没有找到这个成员",
+            },
             delegation: { button: "委派", reasonUnknown: "未知原因" },
         },
+        workspace: { speakAsLabel: "以此身份发言", participantUnknownName: "未知用户" },
         multimodal: { image: "图片", screenshot: "截取屏幕", voice: "语音输入" },
         common: { cancel: "取消" },
     },
@@ -153,51 +173,124 @@ describe("task-555 独立会话的附件入口", () => {
 });
 
 /**
- * task-30 ②（用户报障：提示条写着「独立会话不支持…（仅纯对话）」，旁边还摆着「抄送」「委派」）。
+ * task-30 ② 建表 → **task-49 重排**：composer 能力的「会话类型 × 栏目」对照表。
  *
- * <p>根因不是"忘了两处 if"，而是**文案与控件集合之间没有机器判据**：`showSpeakAs` /
- * `showToTargets` 各自带着 `!workspaceLess`，`showCcSection` 与 delegate 的 `visible` 却没有，
- * 却没有任何用例会因为"漏了门"而红。这张表就是把两者钉在一起 —— 以后新增 composer 入口时，
- * 只要它属于 CP 对独立会话封禁的能力（as / to / cc / 附件），就必须先在这里登记，
- * 否则「独立会话不该有它」这件事永远不会被测到。</p>
+ * <p>task-30 建这张表的原因：文案与控件集合之间没有机器判据 —— `showSpeakAs` / `showToTargets`
+ * 各自带 `!workspaceLess`，而 `showCcSection` 与 delegate 的 `visible` 却没有，却没有用例会因此变红。</p>
+ *
+ * <p>task-49（`task-48` 落库后）：CP 已允许独立会话发送给成员 / 抄送 / 代发 ⇒ 这三项从**负例翻成正例**；
+ * 附件三件套（图片 / 附件 / 截屏）与委派**保持负例**。所以表从「一张负例表」改为「每格显式声明期望」的
+ * 对照表 —— 否则「全表正例」会让它变成**恒真断言**（表还在，判别力没了）。</p>
+ *
+ * <p>当前 7 行 × 2 会话类型 = **14 格**，其中负例 **4 格**（图片 / 附件 / 截屏 / 委派 在独立会话下），
+ * 正例 10 格；下面的自检用例把这个分布也钉住。</p>
  */
 type CapabilityProbe = {
     /** 能力名（用户语言，与 hint 文案的措辞对齐）。 */
     capability: string;
     /** 该能力在 composer 里的唯一 DOM 锚点。 */
     probe: string;
+    /** 工作区会话下的期望（对照侧）。 */
+    workspace: "present" | "absent";
+    /** 独立会话下的期望（本卡核心）。 */
+    workspaceLess: "present" | "absent";
 };
 
 const CAPABILITY_PROBES: CapabilityProbe[] = [
-    { capability: "代发身份（以某参与者身份发送）", probe: '[data-testid="speak-as-bar"]' },
-    { capability: "发送多选（TO）", probe: '[data-testid="to-targets-bar"]' },
-    { capability: "抄送（CC）", probe: '[data-testid="cc-expand"]' },
-    { capability: "委派", probe: '[data-testid="chat-delegate-button"]' },
-    { capability: "图片", probe: '[aria-label="入口-图片"]' },
-    { capability: "附件", probe: '[aria-label="入口-附件"]' },
-    { capability: "截屏", probe: '[aria-label="入口-截屏"]' },
+    // —— task-49 放开的三个收件人面：两种会话都必须渲染 ——
+    {
+        capability: "代发身份（以某参与者身份发送）",
+        probe: '[data-testid="speak-as-bar"]',
+        workspace: "present",
+        workspaceLess: "present",
+    },
+    {
+        capability: "发送多选（TO）",
+        probe: '[data-testid="to-targets-bar"]',
+        workspace: "present",
+        workspaceLess: "present",
+    },
+    {
+        capability: "抄送（CC）",
+        probe: '[data-testid="cc-expand"]',
+        workspace: "present",
+        workspaceLess: "present",
+    },
+    // —— 保持负例：委派（会让工具能力被间接使用）与附件三件套（CP 仍 400）——
+    {
+        capability: "委派",
+        probe: '[data-testid="chat-delegate-button"]',
+        workspace: "present",
+        workspaceLess: "absent",
+    },
+    {
+        capability: "图片",
+        probe: '[aria-label="入口-图片"]',
+        workspace: "present",
+        workspaceLess: "absent",
+    },
+    {
+        capability: "附件",
+        probe: '[aria-label="入口-附件"]',
+        workspace: "present",
+        workspaceLess: "absent",
+    },
+    {
+        capability: "截屏",
+        probe: '[aria-label="入口-截屏"]',
+        workspace: "present",
+        workspaceLess: "absent",
+    },
 ];
 
-describe("task-30 表驱动守卫：hint 声称不支持的能力 → 一个控件都不许在", () => {
-    it("独立会话：表里每一项都不渲染", async () => {
+type SessionKind = "workspace" | "workspaceLess";
+
+/** 一格 = 能力 × 会话类型；把「期望 vs 实际」摊平成可读的失败清单。 */
+function surveyCapabilities(wrapper: ReturnType<typeof mountComposer>, kind: SessionKind) {
+    return CAPABILITY_PROBES.map((row) => ({
+        capability: row.capability,
+        session: kind,
+        expected: row[kind],
+        actual: wrapper.find(row.probe).exists() ? "present" : "absent",
+    }));
+}
+
+describe("task-49 表驱动守卫：每个能力 × 会话类型都有显式期望", () => {
+    it("独立会话：三个收件人面在、附件三件套与委派不在", async () => {
         const wrapper = mountComposer(standaloneRoute());
         await flushPromises();
 
-        const leaked = CAPABILITY_PROBES.filter((row) => wrapper.find(row.probe).exists()).map(
-            (row) => row.capability,
-        );
-        expect(leaked, "独立会话（仅纯对话）下这些能力的控件仍在渲染").toEqual([]);
+        const cells = surveyCapabilities(wrapper, "workspaceLess");
+        const wrong = cells.filter((cell) => cell.expected !== cell.actual);
+        expect(
+            wrong,
+            "独立会话下这些格与期望不符（task-49 放开 TO/CC/代发，附件与委派仍禁用）",
+        ).toEqual([]);
         wrapper.unmount();
     });
 
-    it("工作区会话（负向对照）：表里每一项都必须渲染 —— 否则这张表在空转", async () => {
+    it("工作区会话（对照侧）：同一张表的正例格全部渲染", async () => {
         const wrapper = mountComposer(workspaceRoute());
         await flushPromises();
 
-        const missing = CAPABILITY_PROBES.filter((row) => !wrapper.find(row.probe).exists()).map(
-            (row) => row.capability,
-        );
-        expect(missing, "工作区会话缺这些入口 = 功能回归，或夹具喂空导致上一条假绿").toEqual([]);
+        const cells = surveyCapabilities(wrapper, "workspace");
+        const wrong = cells.filter((cell) => cell.expected !== cell.actual);
+        expect(wrong, "工作区会话缺这些入口 = 功能回归，或夹具喂空导致上一条假绿").toEqual([]);
         wrapper.unmount();
+    });
+
+    it("表本身有判别力：14 格里负例恰好 4 格（删光负例 ⇒ 本用例红）", () => {
+        const cells = CAPABILITY_PROBES.flatMap((row) => [
+            { session: "workspace" as const, expected: row.workspace },
+            { session: "workspaceLess" as const, expected: row.workspaceLess },
+        ]);
+        const negatives = cells.filter((cell) => cell.expected === "absent");
+        expect(cells).toHaveLength(14);
+        expect(
+            negatives,
+            "负例格数变了：要么有人把「仍不支持」的能力放开，要么把表格改成了恒真断言",
+        ).toHaveLength(4);
+        // 恒真防护：负例只能出现在独立会话列 —— 若某天工作区会话也出负例，说明表的期望写反了。
+        expect(new Set(negatives.map((cell) => cell.session))).toEqual(new Set(["workspaceLess"]));
     });
 });

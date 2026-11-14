@@ -244,9 +244,7 @@ const workspaceLess = computed(() => isWorkspaceLessRoute(route));
 // 一个永远点不动的按钮不会告诉用户"为什么"，而 composer 里的 workspaceLessNoTargets 已经写明原因。
 const attachmentLocked = computed(() => workspaceLess.value);
 
-const showSpeakAs = computed(
-    () => !workspaceLess.value && participantsStore.canSpeakAs && speakAsOptions.value.length > 0,
-);
+const showSpeakAs = computed(() => participantsStore.canSpeakAs && speakAsOptions.value.length > 0);
 
 /** 只有真的选了候选才带 `asParticipantId`：空串不发，避免把"以某人身份"误当默认行为。 */
 const activeSpeakAsId = computed(() =>
@@ -269,7 +267,7 @@ const agentParticipants = computed(() =>
     ),
 );
 
-const showToTargets = computed(() => !workspaceLess.value && agentParticipants.value.length > 0);
+const showToTargets = computed(() => agentParticipants.value.length > 0);
 
 const activeToTargetIds = computed(() =>
     toTargetIds.value.filter((id) =>
@@ -381,9 +379,7 @@ const ccCandidates = computed(() =>
 );
 
 /** 有抄送可选项（或已有 chips）时才出现抄送入口（与旧的 showCcBar 门一致）。 */
-const showCcSection = computed(
-    () => !workspaceLess.value && (ccCandidates.value.length > 0 || ccIds.value.length > 0),
-);
+const showCcSection = computed(() => ccCandidates.value.length > 0 || ccIds.value.length > 0);
 
 /**
  * 2026-11-04 用户裁定（composer 打磨）：抄送栏**默认收起**为「抄送 +」小按钮 —— ≥2 agent 的

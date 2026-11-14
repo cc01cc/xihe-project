@@ -22,6 +22,7 @@ vi.mock("vue-sonner", () => ({
     toast: {
         success: vi.fn<(message: string) => void>(),
         error: vi.fn<(message: string) => void>(),
+        warning: vi.fn<(message: string) => void>(),
     },
 }));
 
@@ -1195,5 +1196,130 @@ describe("Problem detail surfacing (BL-288)", () => {
         expect(calls.some((message) => /加载消息失败|Failed to load messages/.test(message))).toBe(
             true,
         );
+    });
+});
+
+/**
+ * task-49 判据 **2a（mock 层证据）**：独立会话发送前的**兜底预剥离**只允许吃掉附件。
+ *
+ * <p>⚠️ 这条**不覆盖 wire**：请求体字段是否真被 CP 接受、是否真起 run，要 2b 真栈另跑。
+ * 这里钉的是**函数边界**（`ChatPanel.handleSend` → `SSEStream.sendMessage` 的实参）—— 即
+ * 「UI 有没有在发出去之前把用户选的 to/cc/as 悄悄删掉」这件事，它在哪一层被决定就在哪一层被断言。</p>
+ *
+ * <p>为什么不在 dev mock 实例里抓 `POST /api/v1/chat`：该实例的 `POST /sessions/{id}/bind-defaults`
+ * 路由缺失（404）且 SSE 未建立 ⇒ 发送路径在 mock 实例上根本走不到发请求那一步，抓不到请求体。
+ * 这条缺口本身另立卡，见交付说明 —— **别把「抓不到」当成「没问题」**。</p>
+ */
+describe("task-49 独立会话预剥离（2a：函数边界，非 wire）", () => {
+    const WORKSPACE_LESS_SID = SESSION_ID;
+
+    function workspaceLessRouter() {
+        const router = createRouter({
+            history: createMemoryHistory(),
+            routes: [{ path: "/chat/:sessionId", component: { template: "<div />" } }],
+        });
+        return router;
+    }
+
+    /** 独立会话（`/chat/:sessionId`，无 workspaceId 段）+ 已绑会话 ⇒ 绑定守卫零开销放行。 */
+    async function mountWorkspaceLess() {
+        const sendMessage = vi.fn<(...args: unknown[]) => Promise<{ runId: string }>>(async () => ({
+            runId: RUN_ID,
+        }));
+        useSessionStore().applySessionRecord({
+            id: WORKSPACE_LESS_SID,
+            title: "独立会话",
+            workspaceId: null,
+            agentPrincipalId: "00000000-0000-4000-8000-0000000000a1",
+            modelProvider: "deepseek",
+            modelName: "deepseek-flash",
+            providerConnectionId: "conn-1",
+            connectionRevision: 2,
+            createdAt: "2026-11-04T10:00:00Z",
+            updatedAt: "2026-11-04T10:00:00Z",
+        } as never);
+        const router = workspaceLessRouter();
+        await router.push("/chat/" + WORKSPACE_LESS_SID);
+        await router.isReady();
+        const wrapper = mount(ChatPanel, {
+            props: { sessionId: WORKSPACE_LESS_SID },
+            global: {
+                plugins: [i18n, router],
+                stubs: {
+                    // 只桩「发送出口」：SSEStream 被替换成带 sendMessage 的替身 ⇒ 我们断言的是**实参**。
+                    SSEStream: { template: "<span />", methods: { sendMessage } },
+                    // InputArea 真身的 clearDraft 会在发送后被调用；桩掉后必须也提供，否则
+                    // 抛 unhandled rejection（`inputComponent.value?.clearDraft is not a function`）。
+                    InputArea: { template: "<span />", methods: { clearDraft: () => undefined } },
+                    MessageList: true,
+                    SessionPolicyControls: true,
+                    SessionContextTemplate: true,
+                    ContextSourcesU1: true,
+                },
+            },
+        });
+        await flushPromises();
+        return { wrapper, sendMessage };
+    }
+
+    /**
+     * 从 composer 侧触发一次发送（InputArea 的真身已被桩掉，这里发它本该发的事件）。
+     *
+     * ⚠️ `ChatPanel.onInputSend` 是**位置参数**（`:1060-1068`：content, attachments, asParticipantId, cc,
+     * toParticipantIds），不是对象 —— 传对象会让五个值全落到 `content` 上，断言会红在
+     * "字段 undefined" 而误判成产品缺陷（本卡实测踩过：见 commit body 的 2a 段）。
+     */
+    async function emitSend(
+        wrapper: Awaited<ReturnType<typeof mountWorkspaceLess>>["wrapper"],
+        payload: {
+            attachments?: unknown[];
+            asParticipantId?: string;
+            cc?: string[];
+            toParticipantIds?: string[];
+        },
+    ) {
+        wrapper
+            .findComponent(InputArea)
+            .vm.$emit(
+                "send",
+                "task-49 2a",
+                payload.attachments,
+                payload.asParticipantId,
+                payload.cc,
+                payload.toParticipantIds,
+            );
+        await flushPromises();
+    }
+
+    it("正例：to / cc / as 三样都必须原样交给发送出口", async () => {
+        const { wrapper, sendMessage } = await mountWorkspaceLess();
+        await emitSend(wrapper, {
+            asParticipantId: "p-self",
+            cc: ["p-human"],
+            toParticipantIds: ["p-other"],
+        });
+
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        const [, options] = sendMessage.mock.calls[0] as [string, Record<string, unknown>];
+        // 断言的是**有值**（不是"存在这个字段"）：空数组/undefined 都算失败 ——
+        // 这正是 task-49 修的缺陷形态（字段被剥成 undefined，用户面前零效果）。
+        expect(options.asParticipantId, "代发身份被预剥离吃掉了").toBe("p-self");
+        expect(options.cc, "抄送被预剥离吃掉了").toEqual(["p-human"]);
+        expect(options.toParticipantIds, "发送目标被预剥离吃掉了").toEqual(["p-other"]);
+        expect(vi.mocked(toast.warning), "没有附件时不该弹「已丢弃」").not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("负例：附件仍必须被剥掉，并且**说出来**（有附件才响 warning）", async () => {
+        const { wrapper, sendMessage } = await mountWorkspaceLess();
+        await emitSend(wrapper, {
+            attachments: [{ fileId: "file-1", name: "a.txt", size: 1, mimeType: "text/plain" }],
+        });
+
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        const [, options] = sendMessage.mock.calls[0] as [string, Record<string, unknown>];
+        expect(options.attachments, "独立会话附件仍 400（D-1436 裁定 3）⇒ 必须剥").toBeUndefined();
+        expect(vi.mocked(toast.warning), "剥了东西就必须说出来").toHaveBeenCalledTimes(1);
+        wrapper.unmount();
     });
 });

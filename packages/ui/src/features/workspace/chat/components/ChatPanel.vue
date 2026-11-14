@@ -1084,28 +1084,21 @@ async function submitMessage(input: {
         return;
     }
     /*
-     * task-547 F-A（第二道闸）：独立会话（无工作区）在 CP 侧**不支持** To/CC/代发/附件 ——
-     * `ChatController.java:616-629` 对任一非空直接 400 `WORKSPACE_LESS_FEATURE_FORBIDDEN`。
-     * 组合器已经不给这些入口（InputArea 的 showSpeakAs/showToTargets），但队列重放、键盘快捷路径
-     * 与旧草稿都可能带着它们到这里 ⇒ 发送前统一剥掉，并**说出来**（不静默改写用户的请求内容）。
+     * task-547 F-A（第二道闸）：独立会话（无工作区）发送前的**兜底剥离**。
+     *
+     * <p>历史：CP 曾对 TO/CC/代发/附件任一非空直接 400 `WORKSPACE_LESS_FEATURE_FORBIDDEN`，
+     * 所以这里按**路由**（不是错误码）统一剥掉四项。**task-49（D-1436/D-1438 后）已放开三项**：
+     * 独立会话可以发送给成员（TO）、抄送（CC）与代发（as）—— 预剥离留着它们才是缺陷：
+     * CP 已经有能力，UI 却在这里静默丢字段，用户面前零效果（`cp-1` 的对照表就是这么查出本函数的）。</p>
+     *
+     * <p>**附件仍然剥**（`D-1436` 裁定 3：独立会话附件仍 400）。这一项保留原语义：剥掉并**说出来**，
+     * 不静默改写用户的请求内容。队列重放 / 键盘快捷路径 / 旧草稿都可能带着附件到这里。</p>
      */
     if (isWorkspaceLessRoute(route)) {
-        const dropped = {
-            to: (toParticipantIds ?? []).length,
-            cc: (cc ?? []).length,
-            as: asParticipantId ? 1 : 0,
-            attachments: (attachments ?? []).length,
-        };
-        const droppedTotal = dropped.to + dropped.cc + dropped.as + dropped.attachments;
-        if (droppedTotal > 0) {
-            console.warn(
-                "[task-547] workspace-less Session 不支持 TO/CC/代发/附件，已丢弃",
-                dropped,
-            );
+        const dropped = { attachments: (attachments ?? []).length };
+        if (dropped.attachments > 0) {
+            console.warn("[task-49] workspace-less Session 不支持附件，已丢弃", dropped);
             toast.warning(t("chat.input.workspaceLessDropped"));
-            toParticipantIds = undefined;
-            cc = undefined;
-            asParticipantId = undefined;
             attachments = undefined;
         }
     }
