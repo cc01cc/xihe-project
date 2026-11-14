@@ -5,7 +5,11 @@ import {
     stubSessionProjectionsForAllSessions,
     type SessionProjectionOptions,
 } from "./session-projections";
-import { installWorkspaceEventStream, type WorkspaceStreamScenario } from "./context-events";
+import {
+    installChatSessionEventStream,
+    installWorkspaceEventStream,
+    type WorkspaceStreamScenario,
+} from "./context-events";
 import { fulfillWorkspaceDetail } from "./workspace-fixture";
 
 export interface MockSSEStream {
@@ -38,7 +42,20 @@ export interface MockSSEStream {
 }
 
 export interface MockAuthOptions {
-    sse?: MockSSEStream;
+    /**
+     * 聊天流（`GET /api/v1/events?sessionId=…`）的桩形态（task-62）：
+     * - **省略（默认）**：装**永不关闭**的空流（`installChatSessionEventStream`）。真实 CP 这条流
+     *   就是长连接；旧默认是有限体 ⇒ 客户端 `isConnected` 恒 false ⇒ `SSEStream.handleSend`
+     *   只 `console.warn` 就 return ⇒ **`POST /api/v1/chat` 一次都不发**，而"忘了传 sse"的
+     *   发送用例会静默变成一个空测试（点发送、界面无反应、只要不断言 wire 就照样绿）。
+     * - 对象：装可按 token/usage/error 驱动的轮次流（既有行为，一字未改）。
+     * - `false`：**退回旧口径**（一次性 `retry: 5000` 有限体）。需要「连接不建立」或靠
+     *   `page.on("request")` 观察这条 URL 的 spec 必须显式选它 —— in-page `fetch` 覆盖
+     *   不会在网络上留下 request 事件。
+     *
+     * 全局对照测量也可用 `XH_FIXTURE_CHAT_EVENTS=finite`（形态照 `XH_FIXTURE_WORKSPACE_EVENTS`）。
+     */
+    sse?: MockSSEStream | false;
     /**
      * PLAN-0639 M2: extra workspace fields merged into both workspace seeds
      * (localStorage + sessionStorage), e.g. `roots` for the grouped file tree.
@@ -435,7 +452,9 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         );
     }
 
-    if (!options.sse) {
+    if (options.sse === false || process.env.XH_FIXTURE_CHAT_EVENTS === "finite") {
+        // 显式选择的旧口径：一次性 `route.fulfill`（有限体）。Playwright 没有流式 fulfill，
+        // 所以这条桩必定结束响应体 ⇒ 客户端 clean_close ⇒ isConnected 恒 false。
         await page.route("**/api/v1/events**", async (route) => {
             await route.fulfill({
                 status: 200,
@@ -443,6 +462,9 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 body: "retry: 5000\n\n",
             });
         });
+    } else if (!options.sse) {
+        // task-62 默认：聊天流长连接（真实 CP 的形态）。忘了传 sse 不再是「静默发不出去」。
+        await installChatSessionEventStream(page);
     }
 
     await page.route("**/api/v1/chat", async (route) => {

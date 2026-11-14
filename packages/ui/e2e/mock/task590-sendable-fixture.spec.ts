@@ -62,7 +62,10 @@ test.describe("task-590 mock 发送路径夹具", () => {
 
     test("不装夹具 ⇒ 0 条 POST /chat、无气泡、输入框内容仍在（反向控制）", async ({ page }) => {
         const reads = watchPosts(page);
-        await setupMockAuth(page);
+        // 显式选「旧有限体口径」（task-62）：本用例的判据就是**连接不建立 ⇒ 发送静默不发生**，
+        // 默认值已改为真实长连接（chat 流永不关闭），「不装夹具」不再等于「发不出去」。
+        // 这里不放松任何断言，只是把「要靠超时证明的否定」重新钉回它原本的前提。
+        await setupMockAuth(page, { sse: false });
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "未绑定会话" }] });
         await openAndSend(page);
 

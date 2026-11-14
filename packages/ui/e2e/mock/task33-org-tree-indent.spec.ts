@@ -120,17 +120,6 @@ async function stubOrgUnits(page: Page) {
     });
 }
 
-async function seedMockAuth(page: Page) {
-    // 键与 `helpers/auth.ts:258-274` 同源（token / user），只是不装任何 route。
-    await page.addInitScript(() => {
-        localStorage.setItem("xihe-token", "mock-token");
-        localStorage.setItem(
-            "xihe-user",
-            JSON.stringify({ id: "user-1", email: "test@xihe.local", name: "Test User" }),
-        );
-    });
-}
-
 test.describe("task-33 组织树层级缩进（真浏览器）", () => {
     test.beforeEach(async ({ page }) => {
         await setupMockAuth(page);
