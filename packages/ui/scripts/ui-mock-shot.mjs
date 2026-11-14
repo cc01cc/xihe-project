@@ -221,11 +221,13 @@ const SHOTS = [
         app: true,
         waitFor: "[data-testid=org-tree-label-ou-rd]",
         // 展开研发部 → 选中研发部（「含下级」默认开 ⇒ 张安那一行在列表里）→ 点行开抽屉。
-        // 行 testid = `org-member-row-<memberId>`（`OrgUnitMemberList.vue:162`），点行即开，无 URL 状态。
+        // 点的是行内**按钮** `org-member-open-<memberId>`（`OrgUnitMemberList.vue:165-170`）：
+        // 行 `<tr>`（`org-member-row-*`）**没有** click handler，点行中心只会命中「所在单元」单元格
+        // —— 实测点 <tr> 拍出来的图与不点的 16 号**逐字节相同**（同一 sha 44570 B），即「点了但抽屉没开」。
         expand: [
             "[data-testid=org-tree-toggle-ou-rd]",
             "[data-testid=org-tree-label-ou-rd]",
-            "[data-testid=org-member-row-mock-user]",
+            "[data-testid=org-member-open-mock-user]",
         ],
     },
     {
@@ -240,7 +242,7 @@ const SHOTS = [
             "[data-testid=org-tree-toggle-ou-rd]",
             "[data-testid=org-tree-toggle-ou-platform]",
             "[data-testid=org-tree-label-ou-rd]",
-            "[data-testid=org-member-row-ap-codebot]",
+            "[data-testid=org-member-open-ap-codebot]",
         ],
     },
     // task-54：环境页（真路由 + 真组件）。workspaceId 必须用 mock 夹具里那个真 uuid
@@ -1739,8 +1741,10 @@ async function runSelftest() {
     // 两张图点的是不是同一行，只有 memberId 说得清。
     const detailRows = ["17", "18"].map((id) => {
         const expand = SHOTS.find((shot) => shot.id === id)?.expand ?? [];
-        const hit = expand.find((selector) => selector.includes("org-member-row-"));
-        return hit ? /org-member-row-([^\]"]+)/.exec(hit)?.[1] : undefined;
+        // 必须钉**行内按钮** `org-member-open-*`：行 `<tr>` 没有 click handler，
+        // 点它拍出来的图与「什么都没点」逐字节相同（task-54 实测）。
+        const hit = expand.find((selector) => selector.includes("org-member-open-"));
+        return hit ? /org-member-open-([^\]"]+)/.exec(hit)?.[1] : undefined;
     });
     check(
         "SHOTS: 成员详情双态点到**不同成员**（HUMAN=mock-user / AGENT=ap-codebot）",
