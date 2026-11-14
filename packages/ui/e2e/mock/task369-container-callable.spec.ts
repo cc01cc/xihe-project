@@ -200,16 +200,72 @@ test("S2 树宽可拖：拖中缝后宽度真的变，并写回持久键（原 S
     page,
 }) => {
     await openWorkbench(page);
-    expect(Math.round(await railWidth(page))).toBe(TREE_WIDTH_DEFAULT);
+    // **必须等宽度稳定再断言**：挂载后树宽会先落在库默认的最小宽 200，再由产品值纠到 240
+    // （`addPanel({initialWidth})` 不被库兑现 ⇒ 我们靠同步后的 setSize 补）。裸读会读到中间帧，
+    // 表现为「Expected 240 / Received 200」的假红 —— 这个假红先后在 R2/R3 两轮里出现过。
+    await expect
+        .poll(async () => Math.round(await railWidth(page)), { timeout: EXPECT_TIMEOUT_MS })
+        .toBe(TREE_WIDTH_DEFAULT);
     // **认缝要用接线标记**：容器里有两条缝（树↔主列、主列↔右栏），`.dv-sash` 的 DOM 顺序
     // 不能当语义用（按 `.first()` 取到的可能不是树那条 —— 实测拖不动 240 就是这个原因）。
     const sash = page.locator('.dv-sash[data-dock-sash-a11y="true"]');
-    const box = await sash.boundingBox();
-    if (!box) throw new Error("树↔主列那道缝（已接线）不存在");
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2, { steps: 6 });
-    await page.mouse.up();
+    /**
+     * 拖之前先做**命中测试**：dockview 会在布局变化时替换 sash 元素，`boundingBox()` 与
+     * `mouse.down()` 之间若发生一次重建，按下点就落到树面板上 —— 手势无效（实测偶发 1/4），
+     * 更糟的是 mouseup 会在树里触发一次点击（实测出现过一次 `Execution context was destroyed`，
+     * 页面被那次误点带走了）。所以：按下前用 `elementFromPoint` 证明「这个点真的是缝」，
+     * 不成立就重新取坐标再试（有界 3 次）；重试的是**手势定位**，判据仍是「宽度真的变 + 回写」。
+     */
+    const dragBy = async (dx: number): Promise<void> => {
+        // **按下前先等缝自身几何稳定**：产品在挂载后会重试写宽（首帧的 setSize 会被库的首轮布局
+        // 覆盖），每次 apply 都可能触发一次重排 ⇒ 缝在 100 ms 级别上会移动/重建。这时
+        // 「量坐标 → 按下」之间就隔了一次重排，按下点落到树面板上、整次拖拽无效（实测约 1/2）。
+        // 等的是缝的矩形两次采样一致（readiness probe），不是 sleep。
+        await page.waitForFunction(
+            () => {
+                const el = document.querySelector<HTMLElement>(
+                    '.dv-sash[data-dock-sash-a11y="true"]',
+                );
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                const key = `${Math.round(r.left)}/${Math.round(r.width)}`;
+                const box = globalThis as { __xh369Sash?: { at: number; key: string } };
+                const now = performance.now();
+                if (!box.__xh369Sash || box.__xh369Sash.key !== key) {
+                    box.__xh369Sash = { at: now, key };
+                    return false;
+                }
+                return now - box.__xh369Sash.at >= 300;
+            },
+            undefined,
+            { timeout: EXPECT_TIMEOUT_MS, polling: 50 },
+        );
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const box = await sash.boundingBox();
+            if (!box) throw new Error("树↔主列那道缝（已接线）不存在");
+            const cx = box.x + box.width / 2;
+            const cy = box.y + box.height / 2;
+            const hittable = await page.evaluate(
+                ([x, y]) => {
+                    const el = document.querySelector<HTMLElement>(
+                        '.dv-sash[data-dock-sash-a11y="true"]',
+                    );
+                    const top = document.elementFromPoint(x, y);
+                    if (!el || !top) return false;
+                    return top === el || el.contains(top) || top.contains(el);
+                },
+                [cx, cy] as const,
+            );
+            if (!hittable) continue;
+            await page.mouse.move(cx, cy);
+            await page.mouse.down();
+            await page.mouse.move(cx + dx, cy, { steps: 8 });
+            await page.mouse.up();
+            return;
+        }
+        throw new Error("缝的中心点连续 3 次都无法命中（被面板盖住或元素在抖动）");
+    };
+    await dragBy(80);
     // 变宽且不超过产品夹取上限 320（与手写分支 `clampTreeWidth` 同界）。
     await expect
         .poll(async () => Math.round(await railWidth(page)), { timeout: EXPECT_TIMEOUT_MS })

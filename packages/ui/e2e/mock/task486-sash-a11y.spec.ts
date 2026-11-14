@@ -32,7 +32,16 @@ const WORKSPACE_PATH = `/workspace/${WORKSPACE_ID}`;
 const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}${WORKSPACE_ID}`;
 const SASH_LABEL = "调整文件树宽度";
 
-async function openWorkbench(page: Page): Promise<void> {
+/**
+ * 打开工作台并**等树宽落到期望值**。
+ *
+ * 为什么必须等：挂载后树宽先落在库默认最小宽 200，再由产品值纠到 240（`addPanel({initialWidth})`
+ * 不被库兑现 ⇒ 依赖同步后的 setSize）。裸读会读到中间帧，判据会在「产品对、读数早」上假红。
+ */
+async function openWorkbench(
+    page: Page,
+    expectedTreeWidth: number = TREE_WIDTH_DEFAULT,
+): Promise<void> {
     await page.goto(WORKSPACE_PATH);
     await page.waitForSelector('[data-testid="workspace-workbench"]', {
         state: "attached",
@@ -42,6 +51,9 @@ async function openWorkbench(page: Page): Promise<void> {
         state: "attached",
         timeout: EXPECT_TIMEOUT_MS,
     });
+    await expect
+        .poll(() => treeWidth(page), { timeout: EXPECT_TIMEOUT_MS })
+        .toBe(expectedTreeWidth);
 }
 
 /** 树组宽度（树在 dockview 里的真实几何，不是 store 值）。 */
@@ -145,7 +157,7 @@ test("②b 折叠态仍锁 40px：键盘在那道缝上不改变宽度（rail �
     await page.addInitScript((key) => {
         localStorage.setItem(key, JSON.stringify({ treeCollapsed: true }));
     }, LAYOUT_KEY);
-    await openWorkbench(page);
+    await openWorkbench(page, TREE_COLLAPSED_WIDTH);
     const collapsed = await treeWidth(page);
     expect(collapsed, "折叠态是 40px rail").toBe(TREE_COLLAPSED_WIDTH);
 
@@ -199,6 +211,6 @@ test("⑤ 宽度写回持久键，reload 后保持（单一 writer 不变）", a
     await expect.poll(async () => storedTreeWidth(page), { timeout: EXPECT_TIMEOUT_MS }).toBe(wide);
 
     await page.reload();
-    await openWorkbench(page);
+    await openWorkbench(page, wide);
     expect(await treeWidth(page), "reload 后宽度应保持").toBe(wide);
 });
