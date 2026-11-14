@@ -339,6 +339,17 @@
                 </configuration>
                 <executions>
                     <execution>
+                        <id>checkstyle-check-early</id>
+                        <!-- task-583（Lead 2026-11-14 派；cp-1 查实 33bd1786e1 带未用 import 进主干）：
+                             这道门原来**没有显式 phase**，而 checkstyle:check 的 Mojo 默认相位是 verify
+                             （maven-checkstyle-plugin 3.6.0 的 plugin.xml: <phase>verify</phase>）。
+                             日常开发命令是 `mvn -o -q test-compile` / `mvn -o test -Dtest=X`（本包
+                             AGENTS.md §命令），它们**到不了 verify** ⇒ 门从不执行，红也看不见。
+                             这里钉死在 validate（生命周期最前一档）：任何走生命周期的 mvn 命令都会先过
+                             checkstyle，且失败发生在编译之前（比 verify 早，比"记得单独跑"可靠）。
+                             代价实测 2.2 s（mvn -o -q checkstyle:check 全量，基线 0 违规）；
+                             逃生口与 Maven 惯例一致：-Dcheckstyle.skip=true（显式、可见、不默认关）。 -->
+                        <phase>validate</phase>
                         <goals>
                             <goal>check</goal>
                         </goals>

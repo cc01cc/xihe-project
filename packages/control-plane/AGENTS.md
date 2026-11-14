@@ -40,6 +40,8 @@ mvn -o -q test "-Dtest=CpArchitectureTest"
 
 `-Dtest=...` 替换为具体测试类（必要时加 `#method`）。完整 `mvn -o test` 只在测试波次或里程碑执行；不要把全量测试当作每次小改的默认门禁。
 
+**task-583 起 Checkstyle 已绑到 `validate` 相位**：上面每条命令（含 `mvn -o -q test-compile`、`mvn -o test -Dtest=X`）都会先过 checkstyle，违规在编译前就红 ⇒ 清单里的 `mvn -o -q checkstyle:check` 只剩「只想单独跑这一道门」的用途。代价实测 2.2 s（全量，基线 0 违规）；显式跳过用 `-Dcheckstyle.skip=true`（不默认关）。
+
 ### L2 全量的标准做法：2 shard（唯一允许的并行）
 
 单进程全量 **598 s**（2654 测试 / 362 类），2 shard 并行 **301–343 s**（**−49.6%**）。**一次只允许一个"会写 `target/` 且产生权威测量"的全量执行体** —— 两个并发 `mvn test` 会共享 `target/classes`、`target/test-classes`、`target/surefire-reports*`，Maven 无锁，结果是**静默互覆盖 → 假绿/假红**（2026-11-02 实测：shard 把报告写成 `surefire-reports-shard-a/b`，读默认目录者只看到半个套件）。需要两个**完整** `mvn test` 同树并行时用 `D32-26 T2`：`"-Dxihe.build.suffix=-b"`（PowerShell 必须加引号）。
@@ -96,7 +98,7 @@ mvn -PnativeTest,native-build,native-test-probe -Dtest=NativeImageCompatibilityP
 
 `native-test-probe` 只编译 probe，并让 Spring Test AOT 与 Native Build Tools 共用 probe-only test output；这验证组件兼容性，不替代 native-compat host lane。
 
-`mvn checkstyle:check` 对 `checkstyle.xml` 全部规则按 severity=error 阻断（POM `violationSeverity=error` + `failOnViolation=true`）；基线为 0 违规，任何新增违规都会使命令失败。规则与项目约定的对齐取舍（单行 getter、测试方法下划线命名、logger 常量白名单）见 PLAN-0458 evidence，不得未经裁定回退为 warning 或加全局抑制。
+`mvn checkstyle:check` 对 `checkstyle.xml` 全部规则按 severity=error 阻断（POM `violationSeverity=error` + `failOnViolation=true`）；基线为 0 违规，任何新增违规都会使命令失败。**task-583（2026-11-14）之前它没有显式 `<phase>`**，而该 Mojo 默认相位是 `verify` ⇒ 日常 `test-compile`/`test` 到不了那一档，门实际上从不执行（结果：一条未用 import 走到主干，见 `33bd1786e1`）；现已钉在 `validate`（`pom.xml` 的 execution id = `checkstyle-check-early`），不是靠「记得单独跑」。规则与项目约定的对齐取舍（单行 getter、测试方法下划线命名、logger 常量白名单）见 PLAN-0458 evidence，不得未经裁定回退为 warning 或加全局抑制。
 
 ArchUnit 1.5.1 仅在 test scope。`CpArchitectureRuleProbeTest` 验证分类、正反向 bytecode 与逻辑归属，不代表生产边界已符合；`CpArchitectureTest` 严格检查实际生产类型，不使用存量忽略。当前重构基线会因既有违规失败，报告写入 `target/cp-architecture/baseline.json`；不得为求绿删除导入、冻结豁免或改为只跑探针。按领域切片修复后重新检查。归属图的类型循环诊断不直接宣称状态 writer 环，完整强连接分组与有上限的循环示例分开记录。
 
