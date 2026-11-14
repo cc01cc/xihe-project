@@ -213,6 +213,7 @@ pub async fn scope<F: std::future::Future>(effective: EffectiveWait, future: F) 
 }
 
 /// 同 `scope`，并携带本次调用的关联键（spec S5.1）。
+#[cfg(test)]
 pub async fn scope_with_correlation<F: std::future::Future>(
     effective: EffectiveWait,
     correlation: Correlation,

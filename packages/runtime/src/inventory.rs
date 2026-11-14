@@ -65,6 +65,7 @@ pub fn scan_with_env(
     InventoryResult::Clean
 }
 
+#[cfg(test)]
 pub fn scan_at_startup(host_root: &Path) -> InventoryResult {
     // Read env without unsafe: use std::env::var which is safe to call (reading is safe, only set_var is unsafe)
     // clippy: allow reading env

@@ -143,11 +143,13 @@ impl WorkspaceRegistry {
 
     // PLAN-0347 T1.2: state-mutating methods are crate-private; every write
     // goes through `Lifecycle` (single authoritative write path, invariant I2).
+    #[cfg(test)]
     pub(crate) async fn register(&self, ws_id: &str, workspace_path: &str) {
         self.register_with_spec(ws_id, workspace_path, SecurityProfile::Strict, 0, "")
             .await;
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_with_spec(
         &self,
         ws_id: &str,
@@ -432,6 +434,7 @@ fn collect_consistency_issues(
 /// Looks up the workspace by the ID extracted from the request
 /// header (e.g. `X-Workspace-Id`). Updates the last-active
 /// timestamp so idle tracking is accurate.
+#[cfg(test)]
 pub async fn get_instance_for_request(
     registry: &WorkspaceRegistry,
     workspace_id: &str,

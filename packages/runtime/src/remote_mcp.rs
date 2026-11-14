@@ -187,6 +187,7 @@ pub struct RemoteMcpConnector {
     bearer_token: String,
     next_id: AtomicU64,
     session_id: Mutex<Option<String>>,
+    #[cfg(test)]
     last_event_id: Mutex<Option<String>>,
     /// MCP servers may negotiate down from our default (e.g. DeepWiki caps
     /// at 2025-11-25 and rejects later calls carrying 2026-07-28).
@@ -243,6 +244,7 @@ impl RemoteMcpConnector {
             bearer_token,
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
+            #[cfg(test)]
             last_event_id: Mutex::new(None),
             protocol_version: Mutex::new(MCP_PROTOCOL_VERSION.to_string()),
             request_states,
@@ -322,6 +324,7 @@ impl RemoteMcpConnector {
     }
 
     /// Reconnects to the server's resumable SSE channel.
+    #[cfg(test)]
     pub async fn get_events(
         &self,
         cancellation: &CancellationToken,
@@ -504,6 +507,7 @@ fn parse_sse_events(body: &str) -> Result<Vec<Value>, RemoteMcpError> {
         .collect()
 }
 
+#[cfg(test)]
 fn last_sse_event_id(body: &str) -> Option<String> {
     body.lines()
         .filter_map(|line| line.strip_prefix("id:"))
@@ -852,6 +856,7 @@ mod tests {
             bearer_token: "access-live".into(),
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
+            #[cfg(test)]
             last_event_id: Mutex::new(None),
             protocol_version: Mutex::new(MCP_PROTOCOL_VERSION.to_string()),
             request_states: states,
@@ -1029,6 +1034,7 @@ mod tests {
             bearer_token: "access-live".into(),
             next_id: AtomicU64::new(1),
             session_id: Mutex::new(None),
+            #[cfg(test)]
             last_event_id: Mutex::new(None),
             protocol_version: Mutex::new(MCP_PROTOCOL_VERSION.to_string()),
             request_states: RequestStateStore::default(),

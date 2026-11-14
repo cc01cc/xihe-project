@@ -235,6 +235,7 @@ impl Lifecycle {
     /// Startup/periodic rebuild (I1: registry is a cache). Derives lifecycle
     /// state from live Docker facts; entries absent from Docker cannot be
     /// reconstructed and are simply absent (404 on later access).
+    #[cfg(test)]
     pub async fn rebuild_from_instances(&self, live: Vec<(String, InstanceState)>) {
         let _guard = self.transitions.lock().await;
         for (ws_id, state) in live {

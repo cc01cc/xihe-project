@@ -204,6 +204,7 @@ pub fn resolve_hosts_sync(host_root: &str, roots: &[String], ws_id: &str) -> Res
 }
 
 // Sync variant for tests where async not needed and hostRoot is already a TempDir (exists).
+#[cfg(test)]
 pub fn resolve_host_path_sync(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
     let mut hosts = resolve_hosts_sync(host_root, &[storage_ref.to_string()], ws_id)?;
     Ok(hosts.remove(0))

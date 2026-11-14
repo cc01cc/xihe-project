@@ -348,6 +348,7 @@ impl WorkspaceEnsurer {
     }
 
     /// Test/embedding hook: override the materialization timeout (source=injected).
+    #[cfg(test)]
     pub fn with_materialize_timeout(mut self, timeout: Duration) -> Self {
         self.materialize_timeout = timeout;
         self.materialize_timeout_source = "injected";
