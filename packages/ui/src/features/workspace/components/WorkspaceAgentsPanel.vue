@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
+import { mergeMemoryEnabled, readMemoryEnabled, readMemoryTypesMissing } from "./memoryPolicy";
 import { logger } from "../../../lib/logger";
 import {
     ApiError,
@@ -557,13 +558,22 @@ async function unbindSkill(agent: WorkspaceAgentBinding, binding: AgentSkillBind
     }
 }
 
-/** 记忆是否注入上下文：`contextPolicy.memory.enabled !== false`（缺省=启用，UI 不自造默认）。 */
-const memoryEnabled = computed<boolean>(() => {
-    const policy = memoryAgent.value?.contextPolicy ?? null;
-    const memory = policy?.memory;
-    if (!memory || typeof memory !== "object") return true;
-    return (memory as Record<string, unknown>).enabled !== false;
-});
+/**
+ * 记忆是否注入上下文：判据在 `memoryPolicy.ts#readMemoryEnabled`（**只有 `enabled === true`
+ * 才算开**，`null` = 契约明写的 "memory off"）。
+ *
+ * <p>旧实现是 `enabled !== false` + 注释「缺省=启用」，与契约的「缺省 false」正好相反：
+ * 新主体 CP 判关、UI 画开（`task-58`）。口径搬进纯函数是为了让这条有一个**能被变异咬住**的
+ * 判据 —— 内联写法改回去，`memoryEnabled` 的用例不会红（`task-44` M4 的教训）。</p>
+ */
+const memoryEnabled = computed<boolean>(() =>
+    readMemoryEnabled(memoryAgent.value?.contextPolicy ?? null),
+);
+
+/** 开着但 `types` 为空：契约说这不写入 ⇒ 照实提示，不把开关画成"关"（那会变成点了没反应）。 */
+const memoryTypesMissing = computed<boolean>(() =>
+    readMemoryTypesMissing(memoryAgent.value?.contextPolicy ?? null),
+);
 
 /**
  * 「启用记忆」开关：`PATCH /agent-principals/{id}` 的 `contextPolicy` 是**整对象替换**，
@@ -573,13 +583,9 @@ async function toggleMemoryEnabled(agent: WorkspaceAgentBinding, next: boolean) 
     if (memoryToggleBusy.value) return;
     memoryToggleBusy.value = true;
     memoryToggleError.value = "";
-    const base = (agent.contextPolicy ?? {}) as Record<string, unknown>;
-    const currentMemory =
-        base.memory && typeof base.memory === "object"
-            ? (base.memory as Record<string, unknown>)
-            : {};
     try {
-        const merged = { ...base, memory: { ...currentMemory, enabled: next } };
+        // 合并规则在纯函数里（整对象替换 ⇒ 只改 memory.enabled，writeMode/passive/types 全保留）。
+        const merged = mergeMemoryEnabled(agent.contextPolicy ?? null, next);
         await api.updateAgentPrincipalContextPolicy(agent.principalId, merged);
         // BL-364/365：不可变更新。原先直接给入参对象的 `contextPolicy` 赋值，就地改写父层/store
         // 交来的对象 ⇒ 测试夹具与所有持有同一引用的消费方都会被污染（BL-359 实测）。
@@ -1929,6 +1935,20 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             {{ t("workspace.agentMemoryEnabledToggle") }}
                         </label>
                     </div>
+                    <!--
+                        契约：`types: []` 等价"记忆实际不写入" ⇒ 开关开着也不生效。
+                        照实提示，**不**把开关画成"关" —— 那样用户点了没反应，是另一种谎。
+
+                        **必须在这一行 flex 之外**：上面那行是 `flex items-center`，把这段放进
+                        去会跟 `flex-1` 的折叠按钮抢宽度（窄档折行、按钮文字被挤）。
+                    -->
+                    <p
+                        v-if="memoryTypesMissing && canWriteMemories === true"
+                        class="mt-1 text-xs text-amber-600 dark:text-amber-500"
+                        :data-testid="`agent-memory-no-types-${agent.principalId}`"
+                    >
+                        {{ t("workspace.agentMemoryNoTypes") }}
+                    </p>
                     <div
                         v-if="memoryPrincipalId === agent.principalId"
                         :id="`agent-memory-panel-${agent.principalId}`"

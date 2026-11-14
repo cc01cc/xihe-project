@@ -81,6 +81,7 @@ vi.mock("../../../../stores/auth", () => ({
 import { ApiError } from "../../../../composables/api";
 import WorkspaceAgentsPanel from "../WorkspaceAgentsPanel.vue";
 import WorkspaceAgentManagementDialog from "../WorkspaceAgentManagementDialog.vue";
+import { expectNoInternalFacts } from "../../../../test-utils/copyAsserts";
 
 /**
  * PLAN-0626 M3：面板没有 `open` 开关 —— 挂载即打开（dock 标签激活 / 移动端弹窗），
@@ -1314,7 +1315,10 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
         bound: true,
         disabled: false,
         // 「启用记忆」开关必须与现值合并且不丢其它 key。
-        contextPolicy: { window: 5, memory: { policyVersion: 1 } },
+        // task-58：`enabled` 必须**显式 true** —— 契约缺省是 false，本组用例测的是"记忆开着时的
+        // 写入面"（新建记忆按钮 `:disabled="!memoryEnabled"`），靠"缺省=开"的老口径会变成
+        // 用一个错误的默认值撑起五条用例。
+        contextPolicy: { window: 5, memory: { policyVersion: 1, enabled: true } },
     };
     const toggle = `[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`;
 
@@ -2209,5 +2213,118 @@ describe("WorkspaceAgentsPanel task-44 deep-link expansion", () => {
         expect(apiMock.getWorkspaceAgentMemories).not.toHaveBeenCalled();
         expect(apiMock.getAgentRoles).not.toHaveBeenCalled();
         expect(apiMock.getWorkspaceAgentEffectiveCap).not.toHaveBeenCalled();
+    });
+});
+
+// ── task-58：记忆开关的契约口径（缺省 = 关；整对象合并；读失败不画成开/关）────────────────
+// 旧实现 `memoryEnabled = contextPolicy.memory.enabled !== false` + 注释「缺省=启用」与契约
+// 「缺省 false」相反 ⇒ 新主体 CP 判关、UI 画开，用户以为已开而实际从未打开。
+describe("WorkspaceAgentsPanel task-58 memory toggle contract", () => {
+    const PRINCIPAL_ID = "abababab-abab-4bab-8bab-abababababab";
+    const SWITCH = `[data-testid="agent-memory-enabled-${PRINCIPAL_ID}"]`;
+    const NO_TYPES = `[data-testid="agent-memory-no-types-${PRINCIPAL_ID}"]`;
+    const MEMORY_WRITE_GRANTED = {
+        userId: "99999999-9999-4999-8999-999999999999",
+        instanceCapabilities: [],
+        instancePermissions: [],
+        workspaces: [
+            {
+                workspaceId: WORKSPACE_ID,
+                workspaceAdmin: false,
+                permissions: [{ actionClass: "MEMORY_WRITE", resource: WORKSPACE_ID }],
+            },
+        ],
+    };
+
+    function agentRow(contextPolicy: Record<string, unknown> | null) {
+        return {
+            principalId: PRINCIPAL_ID,
+            name: "memory agent",
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-02T00:00:00Z",
+            permissionsSnapshot: [],
+            bound: true,
+            disabled: false,
+            contextPolicy,
+        };
+    }
+
+    /**
+     * 「启用记忆」开关读的是 `memoryAgent`（**当前展开的那个主体**），所以必须先展开记忆段再断言；
+     * 未展开时 `memoryAgent` 为 null，开关会恒显示"关"——那是"没在看在"而不是"关着"。
+     */
+    async function mountWithPolicy(contextPolicy: Record<string, unknown> | null) {
+        apiMock.getSelfPermissions.mockResolvedValue(MEMORY_WRITE_GRANTED);
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentRow(contextPolicy)]);
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(`[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("contextPolicy 为 null ⇒ 开关是「关」（契约：null = memory off，缺省 false）", async () => {
+        const wrapper = await mountWithPolicy(null);
+
+        // 判据 ③（卡面）：把判定改回 `!== false`，这条必红。
+        expect(wrapper.get(SWITCH).attributes("data-state")).toBe("unchecked");
+    });
+
+    it("没有 memory 段 ⇒ 也是「关」（不信「缺省=启用」这条自造默认）", async () => {
+        const wrapper = await mountWithPolicy({ window: 5 });
+
+        expect(wrapper.get(SWITCH).attributes("data-state")).toBe("unchecked");
+    });
+
+    it("{memory:{enabled:true}} ⇒ 开关是「开」（两侧读数一致的另一半）", async () => {
+        const wrapper = await mountWithPolicy({ memory: { enabled: true } });
+
+        expect(wrapper.get(SWITCH).attributes("data-state")).toBe("checked");
+    });
+
+    it("切换开关时整对象合并：writeMode / passive / types 与顶层键一个都不丢", async () => {
+        const wrapper = await mountWithPolicy({
+            window: 5,
+            memory: { enabled: true, writeMode: "tool", passive: "summary", types: ["fact"] },
+        });
+        apiMock.updateAgentPrincipalContextPolicy.mockResolvedValue(undefined);
+
+        await wrapper.get(SWITCH).trigger("click");
+        await flushPromises();
+
+        // `contextPolicy` 是整对象替换 ⇒ 只发 {memory:{enabled}} 会把其余键清掉。
+        expect(apiMock.updateAgentPrincipalContextPolicy).toHaveBeenCalledWith(PRINCIPAL_ID, {
+            window: 5,
+            memory: { enabled: false, writeMode: "tool", passive: "summary", types: ["fact"] },
+        });
+    });
+
+    it("开着但 types 为空 ⇒ 开关仍是开，另给「实际不写入」的提示（不画成关）", async () => {
+        const wrapper = await mountWithPolicy({ memory: { enabled: true, types: [] } });
+
+        expect(wrapper.get(SWITCH).attributes("data-state")).toBe("checked");
+        const hint = wrapper.get(NO_TYPES).text();
+        expect(hint).toBe(i18n.global.t("workspace.agentMemoryNoTypes"));
+        // 同一套文案纪律（公共件，按键组调用）：不把契约细节写进用户文案。
+        expectNoInternalFacts(hint, "workspace.agentMemoryNoTypes");
+    });
+
+    it("选了类型 ⇒ 不出现该提示", async () => {
+        const wrapper = await mountWithPolicy({ memory: { enabled: true, types: ["fact"] } });
+
+        expect(wrapper.find(NO_TYPES).exists()).toBe(false);
+    });
+
+    it("列表读失败 ⇒ 不渲染成「开」也不渲染成「关」（没有开关可点）", async () => {
+        apiMock.getSelfPermissions.mockResolvedValue(MEMORY_WRITE_GRANTED);
+        // 用普通 Error（不是 ApiError）⇒ 落 `t("workspace.agentLoadFailed")` 分支，拿到本地化文案。
+        apiMock.getWorkspaceAgents.mockRejectedValue(new Error("boom"));
+
+        const wrapper = await mountOpenedPanel();
+
+        expect(wrapper.find('[data-testid^="agent-memory-enabled-"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="agent-error"]').text()).toContain(
+            i18n.global.t("workspace.agentLoadFailed"),
+        );
     });
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { i18n } from "../../../i18n";
+import { expectNoInternalFacts } from "../../../test-utils/copyAsserts";
 import { setSelectValue } from "../../../test-utils/select";
 
 /** task-44：智能体分支要 `router.push` 到工作区；这里只钉"推到哪"，真实导航由 E2E 覆盖。 */
@@ -368,7 +369,7 @@ describe("task-44 agent 深链文案：不把实现事实写给用户", () => {
         ].join(" ");
 
         // 用户看到 "409" 会去搜「409 是什么」，而他要知道的只是「这件事在工作区里做」。
-        expect(copy).not.toMatch(/409|403|MANAGE_[A-Z_]+|effective-cap|\/api\//);
-        expect(copy.length).toBeGreaterThan(0);
+        // 判据在公共件里、**按键组**调用：合法出现错误码的错误提示不该被这条误伤（task-58 复用）。
+        expectNoInternalFacts(copy, "orgMembers.agentOpen{Desc,Cost}");
     });
 });
