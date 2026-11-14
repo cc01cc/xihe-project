@@ -8,15 +8,18 @@
  * 铁律（写死在代码里，不是口头约定）：
  * - **工作树脏（有未提交改动）时默认拒绝出图**（exit 1 并列出脏路径）：图必须钉在 commit sha 上，
  *   脏树上拍的图 sha 再稳也只对应当下那一团未提交的东西，事后没人能证明它对应哪条提交。
- * - `--allow-dirty` **只用于自查迭代，不得用于交付批次**。它会把 `allowDirty: true` 写进 manifest，
- *   所以"这个批次的图是不是脏树拍的"事后可查 —— 不要把它当成"加个 flag 就能出图"的日常通道。
+ * - `--allow-dirty` **必须配 `--dirty-proof <json>`**：对**每一个**脏路径逐条声明一条可复算命令，
+ *   脚本亲自跑它、把 command / exit / 实际输出写进 `manifest.dirtyNonRendering`，缺一条就 exit 1 点名。
+ *   **单独传 `--allow-dirty` 等于没传**（照样出不了图，task-40 rev8 实测：只加这个 flag 时
+ *   `loadDirtyProofs` 直接抛错，连一张都拍不到）—— 它不是"加个 flag 就能出图"的日常通道，
+ *   而是"脏改动确实不影响像素"这条**证明**的开关；证明拿不出来就不该出图。
  *
  * 用法（cwd 任意，路径都相对本文件推导）：
  *   node packages/ui/scripts/ui-mock-shot.mjs
  *   node packages/ui/scripts/ui-mock-shot.mjs --out ../../.tmp/xh/ui-mock-shot
  *   node packages/ui/scripts/ui-mock-shot.mjs --url http://127.0.0.1:5199   # 复用已起的 dev server
  *   node packages/ui/scripts/ui-mock-shot.mjs --only 01,04                  # 只适合迭代自查
- *   node packages/ui/scripts/ui-mock-shot.mjs --allow-dirty                 # 脏树自查，禁止用于交付
+ *   node packages/ui/scripts/ui-mock-shot.mjs --allow-dirty --dirty-proof ./dirty-proof.json  # 脏树：每条脏路径都要有证明
  *
  * 退出码：0 成功；1 参数/环境/工作树脏；2 dev server 起不来；3 截图不确定（连拍 sha 不一致）/被裁/折行。
  *
@@ -505,7 +508,7 @@ function parseArgs(argv) {
                     "  三种字段：focus=<CSS 选择器>（脚本聚焦，可重复）／tab=<整数>（键盘路径，与 focus 互斥）／expectFocus=<CSS 选择器>（拍前断言 activeElement 命中）。",
                     "  注意：同一次调用里既 --only 又 --extra-shot 时，--only 必须点名额外镜头的 id，否则它会被过滤掉。",
                     "--chromium-arg 可重复传，原样进 chromium.launch 的 args（例：--chromium-arg=--disable-gpu 强制软件合成）；它和 channel/版本一起写进 manifest.browser。",
-                    "工作树脏时默认 exit 1；--allow-dirty --dirty-proof <json> 用于「脏改动不影响像素」的交付批次（每个脏路径一条可复算命令 + 实际输出）。",
+                    "工作树脏时默认 exit 1；--allow-dirty **必须**配 --dirty-proof <json>（每个脏路径一条可复算命令 + 实际输出，脚本亲自跑并记录），单独传 --allow-dirty 无效。",
                     "--selftest 只跑探活自检（不开浏览器、不起 dev server），用于验证「探不到要快速失败且报全 URL」。",
                 ].join("\n") + "\n",
             );
@@ -985,8 +988,14 @@ async function assertActiveElement(page, selector, shotId) {
 async function applyFocusSteps(page, shot) {
     const plan = focusPlan(shot);
     for (const selector of plan.focus) {
-        if ((await page.locator(selector).count()) === 0) {
-            throw new Error(shot.id + " focus 目标不存在: " + selector);
+        // task-40 rev8（2026-11-15 实测）：`#app` 有子节点 ≠ 目标页已挂载 —— 直接 `count()` 判存在
+        // 会在首帧就报「目标不存在」（实测 /settings 与 /workspace/…/chat/… 两条都是这样，
+        // 而探针显示那两个选择器明明在页面上）。所以这里**有界等待**它挂载，超时才判不存在：
+        // 判据仍是"不许沉默"，只是把"来不及"和"真的没有"分开 —— 前者等，后者报。
+        try {
+            await page.locator(selector).first().waitFor({ state: "attached", timeout: 15000 });
+        } catch {
+            throw new Error(shot.id + " focus 目标不存在（等 15s 仍未挂载）: " + selector);
         }
         await page.locator(selector).first().focus({ timeout: 10000 });
         const focused = await page.evaluate((sel) => {
@@ -1105,11 +1114,12 @@ async function shootOne(page, base, shot, outDir) {
             await page.hover(shot.hover, { timeout: 10000 });
             await page.waitForTimeout(900);
         }
-        // task-40：焦点步骤放在指针工作之后 —— 焦点环必须是最后一手，否则会被后续 click/hover 抢走。
+        await page.waitForTimeout(600);
+        // task-40：焦点步骤放在指针工作与静置之后 —— 焦点环必须是最后一手（否则会被后续 click/hover
+        // 抢走），但也不能早于静置（rev8 实测：早于静置时目标页还没挂载，恒报"不存在"）。
         if (FOCUS_STEP_KEYS.some((key) => shot[key] !== undefined)) {
             await applyFocusSteps(page, shot);
         }
-        await page.waitForTimeout(600);
     } else {
         await page.waitForFunction(
             () => document.querySelectorAll("[data-mock-canvas]").length === 1,
