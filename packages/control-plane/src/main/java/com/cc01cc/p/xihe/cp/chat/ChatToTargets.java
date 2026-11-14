@@ -22,8 +22,10 @@ import java.util.UUID;
  *       (D6: set order must not fork the request identity).</li>
  * </ul>
  *
- * <p>Entries are participant ids, not principal ids. Authz classification (AGENT-only in M1) lives in
- * {@code SessionParticipantService#authorizeToTargets} because it needs the roster.</p>
+ * <p>Entries are participant ids, not principal ids. The target gate lives in
+ * {@code SessionParticipantService#authorizeToTargets} because it needs the roster; since task-65 it
+ * asks for DELIVERABILITY of both kinds (a HUMAN target is notified, an AGENT target answers), not
+ * for the caller's speak-as rights.</p>
  */
 final class ChatToTargets {
 

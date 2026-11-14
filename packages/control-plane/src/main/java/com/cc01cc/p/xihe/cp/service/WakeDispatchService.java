@@ -179,8 +179,10 @@ public class WakeDispatchService {
         // "the delivery target exists, is enabled and lives in this session" (above) — NOT "may this
         // subject speak", which is what D23-08 answers and is always false for another human.
         if (SessionParticipant.KIND_HUMAN.equals(participant.getPrincipalKind())) {
-            notifyHuman(sessionId, participant, auditLabel, wakeRoundId, parentRunId);
-            return new WakeFireResult(false, null, "notify");
+            // task-65: the detail says whether the push could actually be handed to the user channel.
+            // "notified" with a dead channel would be accounting that claims a delivery nobody got.
+            return new WakeFireResult(false, null, "notify",
+                    notifyHuman(sessionId, participant, auditLabel, wakeRoundId, parentRunId));
         }
 
         // D23-08: waking an AGENT writes chat_runs.agent_principal_id, so it carries the SAME
@@ -437,39 +439,48 @@ public class WakeDispatchService {
      * —— 不含计数、不含正文；端口可空注入（null ⇒ no-op，既有行为不变）；失败只记
      * `event=user_channel_push_failed` 可计数日志，**不在 dispatch 路径重试**。</p>
      */
-    private void notifyHuman(UUID sessionId, SessionParticipant participant,
-                             String triggerSource, String wakeRoundId, String parentRunId) {
+    private String notifyHuman(UUID sessionId, SessionParticipant participant,
+                               String triggerSource, String wakeRoundId, String parentRunId) {
         audit(sessionId, participant.getId(), triggerSource, wakeRoundId, "notify",
                 null, null, parentRunId);
-        if (userChannel != null && participant.getPrincipalId() != null) {
-            String userId = participant.getPrincipalId().toString();
-            String hintSessionId = sessionId.toString();
-            String hintParticipantId = participant.getId().toString();
-            Runnable push = () -> {
-                try {
-                    userChannel.participantNotified(userId, hintSessionId, hintParticipantId);
-                } catch (RuntimeException failure) {
-                    logger.warn("[LIFECYCLE] service=cp event=user_channel_push_failed userId={} "
-                                    + "reason={} sessionId={}", userId,
-                            failure.getClass().getSimpleName(), sessionId);
-                }
-            };
-            // PLAN-0660 T5.5 (timing gap): the hint is only a hint — it may never precede the
-            // durable notify row. Registering afterCommit makes "commit first, push second" the
-            // ordering the receiver relies on; on rollback the synchronization never fires, so a
-            // rolled-back notify reaches nobody. Without an active synchronization (direct or
-            // non-transactional calls) the push stays synchronous — the port is fire-and-forget.
-            if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        push.run();
-                    }
-                });
-            } else {
-                push.run();
-            }
+        if (userChannel == null || participant.getPrincipalId() == null) {
+            // task-65: opening a TO guard onto a silent no-op would be worse than the 400 it replaced.
+            // The durable notify row is still written (the accounting stays true: a notify happened,
+            // the unread counter derives from it), but the push could not be handed over — that is an
+            // ERROR and a wire-visible detail, never a quiet nothing.
+            logger.error("[LIFECYCLE] service=cp event=notify_undeliverable sessionId={} participantId={} "
+                            + "round={} reason={}", sessionId, participant.getId(), wakeRoundId,
+                    userChannel == null ? "user_channel_absent" : "principal_missing");
+            return "notify_hint_unavailable";
         }
+        String userId = participant.getPrincipalId().toString();
+        String hintSessionId = sessionId.toString();
+        String hintParticipantId = participant.getId().toString();
+        Runnable push = () -> {
+            try {
+                userChannel.participantNotified(userId, hintSessionId, hintParticipantId);
+            } catch (RuntimeException failure) {
+                logger.warn("[LIFECYCLE] service=cp event=user_channel_push_failed userId={} "
+                                + "reason={} sessionId={}", userId,
+                        failure.getClass().getSimpleName(), sessionId);
+            }
+        };
+        // PLAN-0660 T5.5 (timing gap): the hint is only a hint — it may never precede the
+        // durable notify row. Registering afterCommit makes "commit first, push second" the
+        // ordering the receiver relies on; on rollback the synchronization never fires, so a
+        // rolled-back notify reaches nobody. Without an active synchronization (direct or
+        // non-transactional calls) the push stays synchronous — the port is fire-and-forget.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    push.run();
+                }
+            });
+        } else {
+            push.run();
+        }
+        return null;
     }
 
     /**

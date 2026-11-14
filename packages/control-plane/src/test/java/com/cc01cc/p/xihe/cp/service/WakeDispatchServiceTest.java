@@ -132,6 +132,82 @@ class WakeDispatchServiceTest {
         assertAuditOutcome("refused");
     }
 
+    // ── task-65: the HUMAN path must be deliverable, and muted must not reach it ─────────────
+
+    @Test
+    void humanRespondMutedIsStillNotified() {
+        SessionParticipant human = new SessionParticipant(SESSION_ID, "HUMAN", UUID.randomUUID(),
+                "MEMBER", 30, "MENTION", SessionParticipant.RESPOND_MUTED);
+        human.setId(PARTICIPANT_ID);
+        when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(human));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "to", ROUND, SESSION_ID, null);
+
+        assertEquals("notify", result.outcome(),
+                "task-65 / user ruling: TO is the important @ — muted must not swallow it");
+        assertFalse("skipped_muted".equals(result.outcome()));
+        assertAuditOutcome("notify");
+    }
+
+    @Test
+    void humanNotifyWithoutUserChannelIsMarkedUndeliverableAndLogsError() {
+        SessionParticipant human = new SessionParticipant(SESSION_ID, "HUMAN", UUID.randomUUID(),
+                "MEMBER", 30, "MENTION", "ALWAYS");
+        human.setId(PARTICIPANT_ID);
+        when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(human));
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                        WakeDispatchService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        WakeDispatchService.WakeFireResult result;
+        try {
+            result = service.fire(PARTICIPANT_ID, "to", ROUND, SESSION_ID, null);
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertEquals("notify", result.outcome(), "the durable notify row is still written");
+        assertEquals("notify_hint_unavailable", result.detail(),
+                "task-65: a notify nobody can be pushed to is NOT a silent success");
+        assertTrue(appender.list.stream().anyMatch(event ->
+                        event.getLevel() == ch.qos.logback.classic.Level.ERROR
+                                && event.getFormattedMessage().contains("event=notify_undeliverable")),
+                () -> "the absent user channel must be loud: " + appender.list);
+    }
+
+    @Test
+    void humanNotifyWithUserChannelHandsTheHintOverAndReportsNoDetail() {
+        SessionParticipant human = new SessionParticipant(SESSION_ID, "HUMAN", UUID.randomUUID(),
+                "MEMBER", 30, "MENTION", "ALWAYS");
+        human.setId(PARTICIPANT_ID);
+        when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(human));
+        java.util.List<String> pushed = new java.util.ArrayList<>();
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "userChannel",
+                new com.cc01cc.p.xihe.cp.event.UserChannelPort() {
+                    @Override
+                    public void participantNotified(String userId, String sessionId, String participantId) {
+                        pushed.add(userId + "/" + sessionId + "/" + participantId);
+                    }
+
+                    @Override
+                    public void questionChanged(String userId, String questionId, String sessionId,
+                                                String state) {
+                        // unused here
+                    }
+                });
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "to", ROUND, SESSION_ID, null);
+
+        assertEquals("notify", result.outcome());
+        assertNull(result.detail(), "a handed-over hint needs no detail token");
+        assertEquals(java.util.List.of(human.getPrincipalId() + "/" + SESSION_ID + "/" + PARTICIPANT_ID),
+                pushed, "the human must actually be reachable through the port");
+    }
+
     @Test
     void humanRecipientIsNotifiedNotRun() {
         // PLAN-0660 T3.1: make the fake speak-as gate actually refuse, the way it always does in

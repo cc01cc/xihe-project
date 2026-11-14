@@ -114,6 +114,8 @@ class WakeDispatchHintCommitTimingTest extends AbstractH2Test {
                     "mention", "wake:mention:test", UUID.fromString(sessionId), null, null);
             assertTrue("notify".equals(result.outcome()),
                     "the HUMAN path returns notify: " + result.outcome());
+            org.junit.jupiter.api.Assertions.assertNull(result.detail(),
+                    "task-65: a hint handed to the port needs no undeliverable token");
             // INSIDE the transaction: the push must not have happened yet — the notify row is not
             // durable, so a receiver acting on a push here would read the OLD unread count.
             assertEquals(0, pushedSessionIds.size(),

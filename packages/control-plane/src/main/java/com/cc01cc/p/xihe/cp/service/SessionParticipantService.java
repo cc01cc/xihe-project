@@ -551,15 +551,22 @@ public class SessionParticipantService {
      * D23-08 judgment as {@code asParticipantId} — a fan-out selector must not become an
      * authorization bypass.
      *
-     * <p>M1 accepts <b>AGENT participants only</b>: a human target is refused with
-     * {@code 400 INVALID_REQUEST} (not 403 — the caller may legitimately speak as themselves; this
-     * is a selector that is not supported yet). The refusal is the PLAN-0665 Q3 fan-out invariant,
-     * <b>not</b> a BL-238 dependency: BL-238 was closed by PLAN-0660 M4 (2026-11-04) and the wake
-     * path does notify humans now ({@code WakeDispatchService.fire} -> {@code notifyHuman}). What is
-     * still missing is the <b>accounting</b>: a human target's outcome is {@code notify}, which is
-     * not {@code deferred}, so {@code WakeFanOutService.targetedFanOut} would file it under
-     * {@code failedTargets[]} and log {@code to_target_dispatch_failed} at ERROR. Human TO opens
-     * when the 202 contract gains a notified bucket — a wire change, not a guard removal.</p>
+     * <p>task-65 (D-1438 兑现②) splits the two questions this method used to conflate:</p>
+     * <ul>
+     *   <li><b>speak-as</b> — "may the caller act AS this participant?" stays in
+     *       {@link #authorizeAsParticipant}, including the impersonation refusal for another human
+     *       ({@code :599-604}). That is the {@code asParticipantId} question and it does not change.</li>
+     *   <li><b>deliverability</b> — "may the caller hand this participant a notification?" is what a
+     *       TO target actually asks. Its conditions are the ones CC observers have always used
+     *       (roster membership + enabled): the target must be visible to the caller, must belong to
+     *       THIS session, and must not be disabled. A human target is thereby legal, and an AGENT
+     *       target no longer needs the caller to own it — the same rule CC already applies.</li>
+     * </ul>
+     *
+     * <p>Concretely the old AGENT-only whitelist was <b>unreachable for the case it claimed to
+     * block</b>: a human target other than the caller died earlier in the speak-as gate with
+     * {@code 403 PARTICIPANT_CAP_DENIED}, so deleting the whitelist alone would have opened only
+     * "TO yourself". The guard had to move to a delivery check, not disappear.</p>
      *
      * @return authorized rows in the caller's selection order (first-seen, already de-duplicated)
      */
@@ -571,17 +578,29 @@ public class SessionParticipantService {
         }
         List<SessionParticipant> authorized = new ArrayList<>(targetParticipantIds.size());
         for (UUID target : targetParticipantIds) {
-            SessionParticipant row = authorizeAsParticipantInTransaction(actorId, workspaceId,
-                    sessionId, target.toString());
-            if (!SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "toParticipantIds currently accepts AGENT participants only; a human target "
-                                + "is a notification, not a run, and the TO accounting has no "
-                                + "notified bucket yet");
-            }
-            authorized.add(row);
+            authorized.add(authorizeDeliverableInTransaction(actorId, workspaceId, sessionId,
+                    target.toString()));
         }
         return authorized;
+    }
+
+    /**
+     * task-65: the TO target gate — <b>delivery</b> permission, deliberately NOT speak-as. A caller
+     * who may read this Session may notify any of its enabled participants (that is exactly what CC
+     * has always done); whether the caller could impersonate the target is a different question and
+     * is answered only for {@code asParticipantId}.
+     */
+    private SessionParticipant authorizeDeliverableInTransaction(String actorId, String workspaceId,
+                                                                 String sessionId, String targetId) {
+        Session session = requireVisibleSession(actorId, workspaceId, sessionId);
+        SessionParticipant row = participantRepository
+                .findByIdAndSessionId(parseUuid(targetId, "PARTICIPANT_NOT_FOUND"), session.getId())
+                .orElseThrow(SessionParticipantService::participantNotFound);
+        if (row.getDisabledAt() != null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "PARTICIPANT_DISABLED",
+                    "This participant is disabled and cannot be a delivery target");
+        }
+        return row;
     }
 
     private SessionParticipant authorizeAsParticipantInTransaction(String actorId, String workspaceId,

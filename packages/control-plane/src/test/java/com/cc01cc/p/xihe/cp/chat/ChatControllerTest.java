@@ -2524,6 +2524,101 @@ class ChatControllerTest extends AbstractH2Test {
                 "an absent detail is omitted, not serialized as null");
     }
 
+    // ── task-65: TO a HUMAN is delivery, not speak-as (D-1438 兑现②) ────────────────────────
+
+    /** A HUMAN roster row — TO/CC targets may be humans since task-65. */
+    private SessionParticipant seedHumanMember(String respondPolicy) {
+        SessionParticipant row = new SessionParticipant(UUID.fromString(sessionId),
+                SessionParticipant.KIND_HUMAN, UUID.randomUUID(), SessionParticipant.ROLE_MEMBER, 5,
+                SessionParticipant.WAKE_MENTION, respondPolicy);
+        return sessionParticipantRepository.saveAndFlush(row);
+    }
+
+    /** Number of durable {@code wake_dispatch} rows for one participant with one outcome. */
+    private java.util.List<String> wakeDispatchPayloads() {
+        return jdbcTemplate.queryForList(
+                "SELECT payload::text FROM context_events WHERE event_type = 'wake_dispatch' "
+                        + "AND CAST(session_id AS VARCHAR) = ?", String.class, sessionId);
+    }
+
+    private long wakeDispatchRows(String participantId, String outcome) {
+        return wakeDispatchPayloads().stream()
+                .filter(payload -> payload.contains("\"participantId\":\"" + participantId + "\"")
+                        && payload.contains("\"outcome\":\"" + outcome + "\""))
+                .count();
+    }
+
+    private ResponseEntity<Map> postChatWithCc(String content, java.util.List<String> ccParticipantIds) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", content);
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("branchId", branchId);
+        request.put("cc", ccParticipantIds); // wire field name is `cc` (ChatController:529)
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+    }
+
+    @Test
+    void chat_toAHumanTargetNotifiesWithoutARun_evenWhenMuted() {
+        SessionParticipant human = seedHumanMember(SessionParticipant.RESPOND_MUTED);
+        String[] pair = seedMentionPair("HumanToTargetE");
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo("给同事的重要通知",
+                List.of(pair[1], human.getId().toString()));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                "task-65: HUMAN TO is no longer 400 INVALID_REQUEST");
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> notified = (List<Map<String, String>>) body.get("notifiedTargets");
+        assertNotNull(notified, "task-65: a TO'd human lands in notifiedTargets[]");
+        assertEquals(1, notified.size());
+        assertEquals(human.getId().toString(), notified.get(0).get("participantId"));
+        assertEquals("notify", notified.get(0).get("reason"));
+        assertFalse(notified.get(0).containsKey("detail"),
+                "the user-channel bean is wired here, so nothing was undeliverable");
+        assertNull(body.get("failedTargets"), "a notified human is never a failure");
+        assertEquals(1, wakeDispatchRows(human.getId().toString(), "notify"),
+                "the durable notify row is the delivery fact (not just a 202)");
+        assertEquals(0, wakeDispatchRows(human.getId().toString(), "skipped_muted"),
+                "user ruling: TO is the important @ — muted must not swallow it");
+        // The AGENT target still answers with its own run; TO runs are user-triggered (origin
+        // 'user_submission'), so origin=scheduled would be the wrong assertion here.
+        @SuppressWarnings("unchecked")
+        List<String> runIds = (List<String>) body.get("runIds");
+        assertNotNull(runIds);
+        assertEquals(1, runIds.size(), "the AGENT target gets exactly one run: " + runIds);
+        assertEquals(1, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ? "
+                                + "AND CAST(agent_principal_id AS VARCHAR) = ?", Integer.class,
+                        sessionId, pair[2]),
+                "the AGENT target owns a run; the HUMAN target must own none");
+    }
+
+    @Test
+    void chat_ccAMutedHumanStillNotifies() {
+        SessionParticipant human = seedHumanMember(SessionParticipant.RESPOND_MUTED);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithCc("抄送一条普通通知",
+                List.of(human.getId().toString()));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "cc of a human must be accepted: " + response.getBody());
+        await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> {
+            assertEquals(1, wakeDispatchRows(human.getId().toString(), "notify"),
+                    "user ruling: CC is an ordinary notification, not swallowed by muted");
+            assertEquals(0, wakeDispatchRows(human.getId().toString(), "skipped_muted"));
+        });
+    }
+
     @Test
     void chat_absentTo_keepsLegacySingleResponderPath() {
         seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,

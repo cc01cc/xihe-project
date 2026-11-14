@@ -278,6 +278,67 @@ class SessionParticipantServiceTest {
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus());
     }
 
+    // ------------------------------------------------------------ task-65: TO = delivery, not speak-as
+
+    @Test
+    void toTargetsAcceptAnotherHumanBecauseDeliveryIsNotImpersonation() {
+        SessionParticipant colleague = new SessionParticipant(SESSION_ID, "HUMAN",
+                UUID.fromString(STRANGER), "MEMBER", 20, "MENTION", "WHEN_MENTIONED");
+        when(participants.findByIdAndSessionId(colleague.getId(), SESSION_ID))
+                .thenReturn(Optional.of(colleague));
+
+        List<SessionParticipant> authorized = service.authorizeToTargets(OWNER, WORKSPACE,
+                SESSION_ID.toString(), List.of(colleague.getId()));
+
+        assertEquals(List.of(colleague), authorized,
+                "task-65: notifying a colleague is not impersonating them");
+        // The two questions stay separate: the SAME row is still un-speakable-as.
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> service.authorizeAsParticipant(OWNER, WORKSPACE, SESSION_ID.toString(),
+                        colleague.getId().toString()));
+        assertEquals("PARTICIPANT_CAP_DENIED", refused.getCode(),
+                "speak-as keeps the D23-08 impersonation guard; TO must not inherit it");
+    }
+
+    @Test
+    void toTargetMustBelongToThisSession() {
+        UUID foreignParticipant = UUID.randomUUID();
+        when(participants.findByIdAndSessionId(foreignParticipant, SESSION_ID))
+                .thenReturn(Optional.empty());
+
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> service.authorizeToTargets(OWNER, WORKSPACE, SESSION_ID.toString(),
+                        List.of(foreignParticipant)));
+
+        assertEquals("PARTICIPANT_NOT_FOUND", refused.getCode());
+        assertEquals(HttpStatus.NOT_FOUND, refused.getStatus());
+    }
+
+    @Test
+    void toTargetMustNotBeDisabled() {
+        SessionParticipant disabled = new SessionParticipant(SESSION_ID, "HUMAN",
+                UUID.fromString(STRANGER), "MEMBER", 20, "MENTION", "WHEN_MENTIONED");
+        disabled.setDisabledAt(java.time.Instant.now());
+        when(participants.findByIdAndSessionId(disabled.getId(), SESSION_ID))
+                .thenReturn(Optional.of(disabled));
+
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> service.authorizeToTargets(OWNER, WORKSPACE, SESSION_ID.toString(),
+                        List.of(disabled.getId())));
+
+        assertEquals("PARTICIPANT_DISABLED", refused.getCode(),
+                "task-65: a disabled target is a delivery refusal, not a suppression");
+        assertEquals(HttpStatus.FORBIDDEN, refused.getStatus());
+    }
+
+    @Test
+    void emptyToSelectionAsksNoAuthorizationQuestion() {
+        assertEquals(List.of(),
+                service.authorizeToTargets(OWNER, WORKSPACE, SESSION_ID.toString(), List.of()));
+        assertEquals(List.of(),
+                service.authorizeToTargets(OWNER, WORKSPACE, SESSION_ID.toString(), null));
+    }
+
     @Test
     void anAdministratorCannotSpeakForAnAgentInSomeoneElsesSession() {
         Session otherOwnersSession = mock(Session.class);

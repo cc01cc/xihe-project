@@ -1925,8 +1925,10 @@ public class ConfigService {
             if (com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_HUMAN.equals(kind)
                     && defaultsToTo(entry)) {
                 throw new IllegalArgumentException(
-                        "a HUMAN defaultParticipant cannot default to 'to' (TO is AGENT-only, "
-                                + "D-1438); use 'cc' or 'mention_only': " + principalId);
+                        "a HUMAN defaultParticipant cannot default to 'to' (a HUMAN target is a "
+                                + "notification, never a responder, so defaulting every message to it "
+                                + "would only fan out noise; D-1438, task-65 kept this domain "
+                                + "prohibition); use 'cc' or 'mention_only': " + principalId);
             }
         }
     }

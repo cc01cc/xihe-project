@@ -553,8 +553,9 @@ public class ChatController {
             ccParticipantIds = parsedCc;
         }
         // PLAN-0665 M1 (D6/Q3): explicit TO target set. Shape is validated here (fail-closed
-        // 400 INVALID_REQUEST; never silently dropped); roster authz + AGENT-only classification
-        // runs with the other participant gates further down. Empty/absent ⇒ today's single-TO path.
+        // 400 INVALID_REQUEST; never silently dropped); roster authz runs with the other participant
+        // gates further down (task-65: DELIVERY permission for both kinds, not speak-as — a HUMAN
+        // target is notified, an AGENT target answers). Empty/absent ⇒ today's single-TO path.
         List<UUID> toParticipantIds;
         // task-443 (F-12 / D-1273): an explicit empty array means "notify nobody" (suppress the
         // primary); an absent field keeps the legacy single-responder path. parse() collapses both,

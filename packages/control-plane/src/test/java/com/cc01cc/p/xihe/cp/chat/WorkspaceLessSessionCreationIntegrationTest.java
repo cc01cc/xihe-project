@@ -148,7 +148,7 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
     }
 
     @Test
-    void workspaceLessChatDoorRejectsWorkspaceOnlyFeatures() {
+    void workspaceLessChatDoorRejectsWorkspaceOnlyFeatures() throws Exception {
         String sessionId = createWorkspaceless();
         String branchId = rootBranch(sessionId);
         Reply attachments = send(null, "POST", "/api/v1/chat",
@@ -160,22 +160,26 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
         assertEquals("WORKSPACE_LESS_FEATURE_FORBIDDEN", attachments.body().path("code").asText());
         assertTrue(chatRuns.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId, Pageable.ofSize(10)).isEmpty());
 
-        // D-1438 (task-48): the fan-out half of this method was flipped, not deleted — TO/CC are
-        // participants and no longer refused, but TO stays AGENT-only, so a HUMAN target must still
-        // be refused (by the participant gate, not by the workspace-less gate).
+        // D-1438 / task-65: TO is no longer AGENT-only — a HUMAN target is DELIVERED as a
+        // notification (zero runs), so the participant gate asks for deliverability, not speak-as.
+        // This harness has no agent, so admission now stops at a LATER gate (202, or 503
+        // AGENT_UNAVAILABLE/readiness) — the point is that it is no longer the TO gate's refusal.
         Reply joined = send(null, "POST", "/api/v1/sessions/" + sessionId + "/participants",
                 """
                 {"principalKind":"HUMAN","principalId":"%s"}""".formatted(userId));
         assertEquals(201, joined.status(), joined.body().toString());
         String humanParticipantId = joined.body().path("participantId").asText();
-        Reply fanout = send(null, "POST", "/api/v1/chat",
-                """
-                {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none",
-                "toParticipantIds":["%s"]}"""
-                        .formatted(sessionId, branchId, humanParticipantId));
-        assertEquals(400, fanout.status(), fanout.body().toString());
-        assertEquals("INVALID_REQUEST", fanout.body().path("code").asText(),
-                "D-1438: TO answers with its own run, so a HUMAN target stays AGENT-only");
+        try (java.io.InputStream stream = subscribe(sessionId, "").body()) {
+            Reply fanout = send(null, "POST", "/api/v1/chat",
+                    """
+                    {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none",
+                    "toParticipantIds":["%s"]}"""
+                            .formatted(sessionId, branchId, humanParticipantId));
+            assertTrue(fanout.status() == 202 || fanout.status() == 503,
+                    "task-65: a HUMAN TO target is admitted: " + fanout.body());
+            assertNotEquals("INVALID_REQUEST", fanout.body().path("code").asText(),
+                    "task-65: the TO gate no longer refuses a HUMAN target: " + fanout.body());
+        }
     }
 
     @Test
