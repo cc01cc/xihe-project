@@ -34,6 +34,7 @@ import {
     useSplitterPanelBridge,
     type SplitterPanelExposed,
 } from "../../../composables/useSplitterPanelBridge";
+import { useSplitterPanelWidthSync } from "../../../composables/useSplitterPanelWidthSync";
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
@@ -260,6 +261,23 @@ watch(
     { deep: true },
 );
 
+/**
+ * 离散动作（收起/展开树）**立刻**落盘，不等 250ms 去抖（task-2）。
+ *
+ * 去抖的理由是拖拽期的写放大（P2-9），而折叠是一次点击一次的离散状态：让它排在一个
+ * 拖拽用的合并窗口后面，等于给「点了收起但没写盘」留了 250ms 的窗口。实测判据
+ * （`e2e/mock/task353-center-container.spec.ts` 的「收起必须写进 treeCollapsed」）正是
+ * 点完收起就同步读 localStorage ⇒ 落在窗口内就红（本轮 task-2 的读数：落盘 t≈286ms，
+ * 而读发生在 ~200ms）。契约面不变：键、值、单一 writer 都不动，只是把这一笔提前写。
+ * 只跟 `layout.treeCollapsed`（用户的持久状态），不跟 `treeCollapsedForSqueeze`
+ * （窄视口/挤压的**渲染**态，按 DESIGN 永不落盘）。
+ */
+watch(
+    () => layout.value.treeCollapsed,
+    () => layoutWriter.flush(),
+    { flush: "post" },
+);
+
 onBeforeUnmount(() => layoutWriter.flush());
 if (typeof window !== "undefined") {
     // S3b P2 (audit): a reload/close within the coalescing window would drop the last
@@ -476,22 +494,89 @@ const treeBridge = useSplitterPanelBridge({
 });
 const { resizing: treeResizing } = treeBridge;
 
+/**
+ * 每个 panel 实例只 bootstrap 一次（task-2 / 原 task-613 的修法）。
+ *
+ * 为什么必须这道门（根因，[实测] mock lane stack 探针）：Vue 的**函数 ref 在该 vnode 每次
+ * patch 时都会被回调**（`@vue/runtime-core` 的 `patch()`：`if (ref != null && parentComponent)
+ * setRef(...)`，而 `setRef` 对函数 ref 无条件 `rawRef(value, refs)`），reka 的 SplitterGroup
+ * 每写一次 layout 就重渲染（`reka-ui@2.11.0 dist/Splitter/SplitterGroup.js:517` 的
+ * `renderSlot(_ctx.$slots, "default", { layout: layout.value })`）⇒ **一次指针拖拽 = 每帧一次
+ * patch = 每帧一次本函数**。bootstrap 若跟着每帧跑，就等于对同一实例反复 `resize(存储宽)`
+ * （实测栈：`resizePanel` ← `useSplitterPanelBridge.ts` 的 `resizeToWidth` ← 本函数），
+ * 把 reka 刚应用的拖拽增量整段撤销：拖拽帧 `prev=[17.28,82.72]` 被写回 `[20.73,79.27]`
+ * （= 存储宽 240px / 组宽 1158），于是 rail 恒 240、aria-valuenow 恒 21、release 也写不到新值。
+ * 键盘路径不走 patch（reka 的 resizeHandler 是 imperative），所以一直好使 —— 这就是
+ * 「键盘通、指针静默失效」的全部差别。
+ *
+ * 保留 task-551 的语义：bootstrap 仍发生在**ref 投递同刻**（不靠 collapse 变化触发），
+ * 所以窄视口首帧即折叠的情形照旧生效；只是「同一实例再次投递」不再重复执行。
+ * 实例换了（工作区切换/重挂载，含卸载时的 `null` 投递）会重置这道门。
+ */
+let bootstrappedTreePanel: unknown = null;
+
 function setTreePanel(el: unknown): void {
     treePanelEl.value = (el as SplitterPanelExposed | null) ?? null;
-    if (!el) return;
+    if (!el) {
+        bootstrappedTreePanel = null;
+        return;
+    }
     // task-551：`:ref` 在 253ms 就已经投递到组件实例（真栈打点：setTreePanel 多次调用、panelRef 已被赋值），
     // 所以修法就落在**这里**（与 ref 投递同刻），而不是再补一个 watcher。
     // 原来的 `watch(treePanelCollapsed)` 只在 false→true 变化时调 collapse()；而 1180 档该值挂载首帧
     // 就为 true（`narrowViewport` ≤1439 恒真）⇒ 永远没有变化 ⇒ collapse() 一次都不执行
     // （真栈打点 collapse 调用次数 = 0），rail 靠 v-if 已渲染 ⇒ 看着折叠、宽度仍是展开态（220px / main 597）。
+    if (el === bootstrappedTreePanel) return;
+    bootstrappedTreePanel = el;
     void nextTick(() => {
-        if (treePanelCollapsed.value) treeBridge.collapse();
-        else treeBridge.resizeToWidth(treeWidth.value);
+        // 折叠初始态**不**在这里 collapse()：reka 的 `collapsePanel` 要求 layout 已初始化
+        // （`assert(panelSize != null)`），首帧常常还在那个窗口里 —— 原来的「每 patch 重投递」
+        // 靠反复重试把这枪补上了，收成 once 之后就没有第二枪（实测：1180 档停在 expanded/220px，
+        // task-2 回归读数）。折叠初值改由模板的 `:default-size` 承载：layout 初始化时就取
+        // collapsedSize，不需要任何 imperative 调用（task-551 的语义因此**更强**，不再依赖时序）。
+        if (treePanelCollapsed.value) return;
+        treeBridge.resizeToWidth(treeWidth.value);
     });
 }
 
 watch(treePanelEl, (panel) => {
     treeBridge.panelRef.value = panel;
+});
+
+/**
+ * store → 面板 的**显式**通道（task-2 / 原 task-613 修法的第二半，缺它就会把
+ * 「拖拽被撤销」换成「宽度再也改不动」）。
+ *
+ * 为什么必须显式写：把 `setTreePanel` 收成「每实例一次」之后，「每次 patch 都重投递一次 store 宽」
+ * 那条隐式通道没了 —— 而它在修复前是**唯一**把 `treeWidth` 写进 reka layout 的通用通道。其余
+ * `resizeToWidth` 调用点各自只管一件事：键盘 `useSplitterPanelBridge.ts:143`、双击 `:155`、
+ * 折叠态切换 `本文件:534`、nav 侧 `AppLayout.vue:182`。少了这条通用通道，凡不是这三条动作
+ * 来源的宽度变更都会静默失效；最现实的一例就在 release 路径上：`clampTreeWidth` 会**取整**
+ * （`useWorkspaceLayout.ts:183-186`），拖到 239.4 时 store 是 240 而面板停在 239.4，没人纠正。
+ *
+ * 与拖拽**不会打架**，两道判据：
+ *   ① 结构判据：拖拽期间 store **根本不写** —— `commit` 只在 `onDragging(false)` / 键盘 / 双击
+ *      三处被调（`useSplitterPanelBridge.ts:120/144/156`），`@resize` 只喂宽度气泡
+ *      ⇒ 本 watcher 在拖拽帧逻辑上不可能触发。
+ *   ② 兜底判据：`treeResizing`（= bridge 的 `draggingActive`）为真时直接 return —— 将来若有人
+ *      在拖拽中写 store，也不会回灌成「自我强写」循环（那正是本次 bug 的形态）。
+ * 折叠态同样跳过：折叠由 reka 的 `collapse()` 管，写回展开宽会把 40px rail 顶回去。
+ *
+ * 为什么监听里还有 `splitterWidth`（[实测] 没有它会假绿）：reka 侧收/发的是**百分比**
+ * （task-94 B），px→% 用的是 `treePercentOf` 里的组宽；而组宽在挂载期是变长的
+ * （宿主链有 `transition-[flex-grow] duration-300`，实测 410→1158）。用未稳的组宽换算出来的 %
+ * 在组宽变大后就不再等于存储的 px：实测修掉每帧写回之后，拖到 200px 落盘、reload 起来渲染成
+ * **207px**（17.8% × 1162）。所以组宽变化也要按存储 px 重算一次 —— 这同时就是
+ * 「持久化是 px」这个契约的落点（窗口变宽时面板保持 px，而不是保持 %）。
+ * 组宽只在窗口/容器变化时变，拖拽期不变 ⇒ 不会与拖拽打架；且 apply 只写 layout、不写 store、
+ * 不改组宽 ⇒ 没有回灌环。
+ */
+useSplitterPanelWidthSync({
+    width: treeWidth,
+    groupSize: splitterWidth,
+    isDragging: treeResizing,
+    isCollapsed: () => treePanelCollapsed.value,
+    apply: (widthPx) => treeBridge.resizeToWidth(widthPx),
 });
 
 // `treeCollapsed`（用户/窄视口收起）与 `treeYielded`（挤压让位）都是**渲染**状态：
@@ -912,7 +997,9 @@ defineExpose({ openDockTab });
                         as-child
                         size-unit="%"
                         collapsible
-                        :default-size="treeDefaultPercent"
+                        :default-size="
+                            treePanelCollapsed ? treeCollapsedPercent : treeDefaultPercent
+                        "
                         :min-size="treeMinPercent"
                         :max-size="treeMaxPercent"
                         :collapsed-size="treeCollapsedPercent"
