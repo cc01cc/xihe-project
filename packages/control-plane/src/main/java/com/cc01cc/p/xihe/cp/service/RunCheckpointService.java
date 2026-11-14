@@ -399,17 +399,19 @@ public class RunCheckpointService {
     }
 
     /**
-     * Startup sweep (PLAN-0338 slice model): capture terminal Runs that have no
-     * checkpoint projection row at all — a CP crash before the terminal capture
-     * (or an upgrade from the interval model where no row was ever written).
+     * Startup sweep (PLAN-0338 slice model): capture terminal Runs whose **primary root** has no
+     * captured row — a CP crash before the terminal capture, an upgrade from the interval model, or
+     * (task-591) a multi-root Run where the primary root degraded while a secondary root succeeded.
+     * The selection predicate and {@link #capturedRoots} must agree on what "captured" means, at the
+     * root level, or a partially captured Run is never repaired.
      * Bounded to {@link #MAX_SWEEP_RUNS} rows per boot; each capture is
-     * idempotent, so repeating the sweep is safe. Returns the number of rows
-     * captured in this pass.
+     * idempotent, so repeating the sweep is safe. Returns the number of Runs
+     * this pass persisted at least one captured row for.
      */
     public int captureTerminalRuns() {
         List<ChatRun> runs;
         try {
-            runs = chatRuns.findTerminalRunsWithoutCheckpoint(TERMINAL_RUN_STATUSES,
+            runs = chatRuns.findTerminalRunsWithoutPrimaryCheckpoint(TERMINAL_RUN_STATUSES,
                     PageRequest.of(0, MAX_SWEEP_RUNS));
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_sweep_failed failureType={}",

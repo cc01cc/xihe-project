@@ -555,7 +555,7 @@ class RunCheckpointServiceTest {
     @Test
     void startupSweepCapturesTerminalRunWithoutRowOnce() {
         ChatRun terminal = runWithStatus("ambiguous");
-        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any()))
                 .thenReturn(List.of(terminal));
         when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
         when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), true))
@@ -572,7 +572,7 @@ class RunCheckpointServiceTest {
     void startupSweepSkipsRunsThatAlreadyHaveARow() {
         seedCapturedRow();
         ChatRun terminal = runWithStatus("succeeded");
-        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any()))
                 .thenReturn(List.of(terminal));
         when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
 
@@ -583,7 +583,7 @@ class RunCheckpointServiceTest {
 
     @Test
     void startupSweepFailureNeverThrows() {
-        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any()))
                 .thenThrow(new IllegalStateException("checkpoint store down"));
 
         assertEquals(0, service.captureTerminalRuns());
@@ -598,7 +598,7 @@ class RunCheckpointServiceTest {
     void sweepCountsARunWhereOnlyTheSecondaryRootWasCaptured() {
         String secondaryRoot = "44444444-4444-4444-4444-444444444444";
         ChatRun terminal = runWithStatus("succeeded");
-        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any()))
                 .thenReturn(List.of(terminal));
         when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
         when(workspaceRootRepository
@@ -616,6 +616,52 @@ class RunCheckpointServiceTest {
         assertTrue(rows.stream().anyMatch(row -> secondaryRoot.equals(row.getRootId())
                         && RunCheckpoint.STATE_CAPTURED.equals(row.getState())),
                 "the table is the authority: the secondary root really was captured");
+    }
+
+    /**
+     * task-591: a Run whose secondary root is already captured but whose primary root has no captured
+     * row is selected again (the predicate is root-level), and the re-run writes **only** the missing
+     * primary row — the captured secondary root is skipped, so the sweep stays idempotent.
+     */
+    @Test
+    void sweepRefillsOnlyTheMissingPrimaryRoot() {
+        String secondaryRoot = "55555555-5555-5555-5555-555555555555";
+        RunCheckpoint secondary = new RunCheckpoint();
+        secondary.setId(UUID.randomUUID());
+        secondary.setSourceRunId(RUN_ID);
+        secondary.setWorkspaceId(WORKSPACE_ID);
+        secondary.setRootId(secondaryRoot);
+        secondary.setState(RunCheckpoint.STATE_CAPTURED);
+        secondary.setSliceRef("refs/xihe/slices/secondary-root");
+        secondary.setChangedFiles("[]");
+        secondary.setCapturedAt(Instant.now());
+        secondary.setSourceSessionId(SESSION_ID);
+        secondary.setOpaqueNestedRepos("[]");
+        secondary.setCreatedAt(Instant.now());
+        secondary.setUpdatedAt(Instant.now());
+        rows.add(secondary);
+
+        ChatRun terminal = runWithStatus("succeeded");
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any()))
+                .thenReturn(List.of(terminal));
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
+        when(workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(WORKSPACE_ID)))
+                .thenReturn(List.of(
+                        rootRow(WORKSPACE_ID, "H:/ws/primary", 0),
+                        rootRow(secondaryRoot, "H:/ws/secondary", 1)));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+
+        assertEquals(1, service.captureTerminalRuns());
+
+        verify(client, times(1)).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
+        verify(client, never()).capture(WORKSPACE_ID, secondaryRoot, RUN_ID, USER_ID,
+                captureCallId(RUN_ID), false);
+        assertEquals(2, rows.size(), "only the missing primary root row is appended");
+        assertTrue(rows.stream().anyMatch(row -> WORKSPACE_ID.equals(row.getRootId())
+                        && RunCheckpoint.STATE_CAPTURED.equals(row.getState())),
+                "the primary root row is what the re-run repairs");
     }
 
     @Test

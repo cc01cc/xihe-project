@@ -64,7 +64,7 @@ class ChatRunRecoveryServiceTest {
         });
         when(chatRunRepository.findByStatus("cancelling")).thenReturn(List.of());
         when(chatRunRepository.findRecoverableRuns(any())).thenReturn(List.of());
-        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any())).thenReturn(List.of());
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any())).thenReturn(List.of());
         service = new ChatRunRecoveryService(chatRunRepository, approvalRepository, activeRunRegistry,
                 terminalService, historyWriter, runCheckpointService);
     }
@@ -154,7 +154,7 @@ class ChatRunRecoveryServiceTest {
                         List.of(), null, null));
 
         ChatRun terminal = runWithStatus("ambiguous");
-        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+        when(chatRunRepository.findTerminalRunsWithoutPrimaryCheckpoint(any(), any()))
                 .thenReturn(List.of(terminal));
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(terminal));

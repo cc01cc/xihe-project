@@ -200,15 +200,23 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
             @Param("createdBefore") Instant createdBefore);
 
     /**
-     * PLAN-0338 切片模型启动补偿：已终态但没有任何 checkpoint 投影行的 run
-     * （进程在终态捕获前退出，或升级前从未写过行）。原生 SQL 是因为
-     * {@code run_checkpoints.source_run_id} 经 {@link com.cc01cc.p.xihe.cp.entity.UuidStringConverter}
-     * 映射为字符串，JPQL 无法与 {@code chat_runs.id}（UUID）直接比较。
-     * 调用方按页取用，保证单次启动的补偿量有界。
+     * PLAN-0338 切片模型启动补偿：已终态但**主根**没有 captured 投影行的 run
+     * （进程在终态捕获前退出、升级前从未写过行，或多根 workspace 里主根失败而副根成功）。
+     *
+     * <p>task-591：谓词与 {@code RunCheckpointService.capturedRoots(...)} 必须表达同一件事 ——
+     * 「这一行是不是主根的 captured 行」：{@code root_id} 为空/空白的老行等价于主根（同一处的
+     * {@code isBlank(rootId) ? workspaceId : rootId}），且 captured 含 {@code abnormal-captured}。
+     * 用「任一行存在即排除」会让「主根 degraded + 副根 captured」的 run 永远不再被选中，
+     * 主根行永久缺失。原生 SQL 是因为 {@code run_checkpoints.source_run_id} 经
+     * {@link com.cc01cc.p.xihe.cp.entity.UuidStringConverter} 映射为字符串，JPQL 无法与
+     * {@code chat_runs.id}（UUID）直接比较。调用方按页取用，保证单次启动的补偿量有界。
      */
     @Query(value = "select r.* from chat_runs r where r.status in (:statuses) "
-            + "and not exists (select 1 from run_checkpoints c where c.source_run_id = r.id)",
+            + "and not exists (select 1 from run_checkpoints c "
+            + "where c.source_run_id = r.id "
+            + "and coalesce(nullif(c.root_id, ''), r.workspace_id::text) = r.workspace_id::text "
+            + "and c.state in ('captured', 'abnormal-captured'))",
             nativeQuery = true)
-    List<ChatRun> findTerminalRunsWithoutCheckpoint(@Param("statuses") Collection<String> statuses,
+    List<ChatRun> findTerminalRunsWithoutPrimaryCheckpoint(@Param("statuses") Collection<String> statuses,
             Pageable pageable);
 }
