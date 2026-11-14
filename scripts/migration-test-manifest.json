@@ -48,6 +48,12 @@
       "className": "V156PersonalSkillScopeTest",
       "namedFor": "个人技能层 DDL 契约（V156 / task-221）",
       "reason": "名按 V 号 + 特性命名：DDL 即契约，CHECK 各分支与四列唯一键在全新库的 Flyway 上断言。"
+    },
+    {
+      "path": "packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/migration/ConfigScopeUniqueIndexPgTest.java",
+      "className": "ConfigScopeUniqueIndexPgTest",
+      "namedFor": "索引名 + 拒绝语义（V12 / V153，task-363）",
+      "reason": "名按被断言的索引与约束语义命名，不按「迁移」命名：四个 partial unique index 的 DDL 在 V12__config_tiers_and_mcp_split.sql:119-121 与 V153__workspace_default_config_layer.sql:32（cp-1 task-130 在迁移文件里复核过，不是只信 javadoc），断言的是「同名索引存在 + 第二行插入返回 23505」。注意它用 @Testcontainers 直连 PG（不是 TestDatabaseProvider 的共享实例），docker 冻结期能否实跑见 task-130 报告。"
     }
   ]
 }
