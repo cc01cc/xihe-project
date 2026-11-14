@@ -116,7 +116,7 @@ import { Button } from "@/components/ui/button";
                         <AlertDescription>
                             当前账号没有 <span class="font-mono">instance:roles:manage</span>
                             能力位，角色页不会发起任何请求。
-                            <span class="font-semibold">这不是后端缺口</span>——是权限没授到位。
+                            <span class="font-semibold">这不是功能没提供</span>——是权限没授到位。
                         </AlertDescription>
                         <AlertAction>
                             <Button size="sm" variant="outline">申请授权</Button>

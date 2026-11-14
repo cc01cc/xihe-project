@@ -68,7 +68,9 @@ const messages = {
         orgMembers: {
             // PLAN-0773 M3（task-240）：全局模块「组织成员」读面。404 与 403 是**两个语义**：
             // 404 ORG_UNIT_NOT_FOUND = 非成员/不存在（不许说「没权限」）；403 FORBIDDEN = 缺
-            // READ_ORG_UNIT_MEMBERS 原子（权限问题，明写「不是后端缺口」）。写面按钮全禁用。
+            // READ_ORG_UNIT_MEMBERS 原子（权限问题，明写「不是功能没提供」）。写面按钮全禁用。
+            // task-509 补提交：403 卡**仍点名缺失原子**（`OrgMembersView.spec.ts` 与
+            // `packages/ui/AGENTS.md` 的 atom-denied 口径都要求点名），只把内部术语换成用户话。
             title: "组织成员",
             desc: "按组织架构查看人类成员与智能体；写操作随后续批次开放，当前为只读预览。",
             searchPlaceholder: "在可见组织树内搜索名称…",
@@ -81,7 +83,7 @@ const messages = {
             notFoundDesc: "该组织单元不存在，或当前账号不是任何单元的成员。",
             atomDeniedTitle: "缺少读取权限",
             atomDeniedDesc:
-                "当前身份缺少 READ_ORG_UNIT_MEMBERS 权限原子；这是权限问题，不是后端缺口。",
+                "当前身份缺少 READ_ORG_UNIT_MEMBERS 权限原子；这是授权问题，不是功能没提供。",
             membersTitle: "单元成员",
             includeDescendants: "含下级",
             colName: "名称",
@@ -3646,7 +3648,7 @@ const messages = {
             notFoundDesc: "The unit does not exist, or this account is not a member of any unit.",
             atomDeniedTitle: "Missing read permission",
             atomDeniedDesc:
-                "This identity lacks the READ_ORG_UNIT_MEMBERS permission atom — a permission issue, not a backend gap.",
+                "This identity lacks the READ_ORG_UNIT_MEMBERS permission atom — a permission issue, not a missing feature.",
             membersTitle: "Unit members",
             includeDescendants: "Include sub-units",
             colName: "Name",

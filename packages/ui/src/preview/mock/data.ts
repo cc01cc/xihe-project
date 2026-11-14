@@ -35,8 +35,11 @@ export interface NavItem {
     badge?: string;
     // 示例，非真实名单；真实缺口以 settings-ui-issue-inventory N-09 / C-01 为准
     /**
-     * 后端缺口（settings-ui-issue-inventory N-09）：**这个能力本身不存在**，不是「本域没配」。
-     * 渲染成禁用 + 右侧「后端缺口」文字标记——不能只靠变淡区分（灰度截图下就分不出来了）。
+     * 能力未提供（settings-ui-issue-inventory N-09）：**这个能力本身不存在**，不是「本域没配」。
+     * task-509 补提交：稿面上**不写**内部术语/缺口编号（曾写「后端缺口」），用户读到的是状态。
+     * 注意现状 —— 这个 flag 目前在 preview 里只被 `navReconciliation.spec` 用于核对条目集合，
+     * **没有组件据它渲染可见文本**（`grep \.gap\b src/preview` 只剩本声明）；要做文字标记时
+     * 用「暂不可用」，不要捡回「缺口」。
      */
     gap?: boolean;
     /** 能力存在但本层 0 项配置（C-01）：可点，右侧「未配置」虚线标记。 */
@@ -138,7 +141,7 @@ export const domains: NavItem[] = domainsForLayer("instance").map((domain) =>
 );
 
 // 运维/安全组同样**生成**：分组名与条目的唯一正文是 `instanceOpsGroups()`。
-// 两条状态标记属**示例数据**（「数据管理未配置」「审计日志后端缺口」），产品里由真实数据决定。
+// 两条状态标记属**示例数据**（「数据管理未配置」「审计日志能力未提供」），产品里由真实数据决定。
 export const opsItems: NavItem[] = groupItems("ops").map((nav) =>
     nav.id === "data" ? { ...nav, unconfigured: true } : nav,
 );
