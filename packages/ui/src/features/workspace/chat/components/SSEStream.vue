@@ -311,11 +311,16 @@ async function handleSend(
         connectSession(sessionId);
         const ready = await waitForConnection(5000);
         if (!ready) {
-            const msg = "SSE connection not established";
-            logger.warn(msg);
+            // task-63: the refusal must be user-visible AND localized — before this the toast
+            // carried the raw English literal, so a zh-Hans user got an untranslated dead end
+            // with no cue about what to do next. The log keeps the English form on purpose
+            // (logs are for operators, the toast is for the user).
+            logger.warn("SSE connection not established");
             agentStore.setStatus("idle");
             chatStore.setSessionRunState(sessionId, "idle");
-            toast.error(msg);
+            toast.error(t("chat.sseNotConnected"), {
+                description: t("chat.sseNotConnectedHint"),
+            });
             return null;
         }
     }

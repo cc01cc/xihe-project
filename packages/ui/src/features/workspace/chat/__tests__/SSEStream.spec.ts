@@ -6,6 +6,16 @@ import { i18n } from "../../../../i18n";
 import { useChatStore } from "../stores/chat.ts";
 import { chatTransport } from "@/services/chatTransport";
 import SSEStream from "../components/SSEStream.vue";
+import { toast } from "vue-sonner";
+
+vi.mock("vue-sonner", () => ({
+    toast: {
+        error: vi.fn<() => void>(),
+        warning: vi.fn<() => void>(),
+        success: vi.fn<() => void>(),
+        info: vi.fn<() => void>(),
+    },
+}));
 
 vi.mock("@/services/chatTransport", () => ({
     chatTransport: {
@@ -315,5 +325,100 @@ describe("SSEStream terminal error scoping", () => {
         expect(chatStore.isStreaming(sessionId)).toBe(false);
         expect(chatStore.getSessionRunState(sessionId).status).toBe("idle");
         wrapper.unmount();
+    });
+});
+
+/**
+ * task-63: a send that never reaches the server must be *seen*, not just logged.
+ *
+ * The four card criteria live here as two tests: (1) the refusal is a localized toast the user
+ * reads in their own language (NOT the old English literal, and not merely `logger.warn` — 判据④
+ * forbids "console.warn exists" as evidence of anything user-visible); (2) nothing was consumed
+ * from the transcript, so the composer keeps its draft; (3) after the connection recovers the very
+ * next send goes through with no reload.
+ */
+describe("SSEStream send refusal (task-63)", () => {
+    type SendMessage = (content: string, options: { branchId: string }) => Promise<unknown>;
+
+    function mountStream(sessionId = "task63-session") {
+        return mount(SSEStream, {
+            props: { sessionId, active: true },
+            global: { plugins: [i18n] },
+        });
+    }
+
+    /** The transport accepts the request but never opens the stream ⇒ isConnected stays false. */
+    function neverOpens() {
+        vi.mocked(chatTransport.sendMessages).mockImplementation(async () => undefined);
+    }
+
+    /** The transport opens the stream ⇒ the wrapper's isConnected flips to true. */
+    function opensStream() {
+        vi.mocked(chatTransport.sendMessages).mockImplementation(async (_sessionId, options) => {
+            await options.onopen?.(new Response(null, { status: 200 }));
+        });
+    }
+
+    it("shows a localized error and consumes nothing when the stream never connects", async () => {
+        vi.useFakeTimers();
+        try {
+            neverOpens();
+            const wrapper = mountStream();
+            const chatStore = useChatStore();
+
+            const pending = (wrapper.vm as unknown as { sendMessage: SendMessage }).sendMessage(
+                "hello",
+                { branchId: "task63-branch" },
+            );
+            await vi.advanceTimersByTimeAsync(6000);
+            await expect(pending).resolves.toBeNull();
+
+            // (1) user-visible + localized — the assertion is on the toast payload, not on logs.
+            expect(toast.error).toHaveBeenCalledWith(i18n.global.t("chat.sseNotConnected"), {
+                description: i18n.global.t("chat.sseNotConnectedHint"),
+            });
+            expect(i18n.global.t("chat.sseNotConnected")).not.toContain("SSE connection");
+
+            // (2) the refusal consumed nothing: no optimistic message reached the transcript.
+            expect(chatStore.getMessages("task63-session")).toHaveLength(0);
+            wrapper.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("sends on the next attempt once the connection recovers, without a reload", async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal(
+                "fetch",
+                vi.fn<typeof fetch>().mockResolvedValue({
+                    ok: true,
+                    status: 202,
+                    json: async () => ({
+                        status: "accepted",
+                        sessionId: "task63-session",
+                        runId: "task63-run",
+                        messageId: "task63-message",
+                    }),
+                } as Response),
+            );
+            neverOpens();
+            const wrapper = mountStream();
+            const vm = wrapper.vm as unknown as { sendMessage: SendMessage };
+
+            const refused = vm.sendMessage("first", { branchId: "task63-branch" });
+            await vi.advanceTimersByTimeAsync(6000);
+            await expect(refused).resolves.toBeNull();
+
+            // Same component instance, no remount and no page reload.
+            opensStream();
+            const delivered = vm.sendMessage("second", { branchId: "task63-branch" });
+            await vi.advanceTimersByTimeAsync(6000);
+            await expect(delivered).resolves.not.toBeNull();
+            wrapper.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
