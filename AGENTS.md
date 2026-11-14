@@ -17,11 +17,11 @@
 
 ## Setup
 
-- 使用 `mise install` 和 `mise run setup` 安装固定工具链与依赖；前置条件及模块命令见 DEV-002。
-- 日常 host 开发 `mise run dev:host`（仅 PostgreSQL 在 Docker，CP/Agent/Runtime/UI 原生）：起栈前跑 `check:runtime-target`（FORCE 线 ≥20GB 或 H 余量 <5GB 阻止启动），Agent 等 CP `/actuator/health`==200 才起（超时显式失败并给 CP 日志路径）。并行栈 `mise run dev:stack -- --stack 2`；`--stack` 有两义（`dev-stack.mjs --stack 1` 是栈号、`cp-build-clean.mjs --stack stack-1` 是目录名，误传 `1` 会静默 exit 0）。`dev:host` 不写租约、`dev:stack` 才写 ⇒ 起过之后见 `orphan`+`lease-pid-dead` 属正常，`node scripts/dev-stack.mjs acquire --stack <n>` 认领即 `healthy`。
-- **docker 冻结（用户裁定；产品面/测试面/默认值三面一起冻，解冻时一起解）**：工作区 docker 执行后端**不可用** —— 默认 `storageMode=direct_attach`；`POST /api/v1/workspaces` 的 `storageMode` **必填无默认值**（缺 ⇒ 400）；显式 `managed_import` ⇒ 409；既有 docker 工作区的执行/文件/环境/会话/聊天 ⇒ 503，**fail-closed 不回退宿主**；产品面必须在调用前提示并指向 `direct_attach`；测试面 `@Tag("docker-frozen")` 默认排除、E2E 用 `--include-docker-frozen` 恢复。**冻结命令（禁止误启）**：`dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build`。范围与解冻步骤见 DEV-018「docker 后端冻结范围」。
-- **Runtime target 缓存**：worktree 保持**独立** target（共享会在 target 锁上串行，Windows 上服务占用 exe 会让另一 worktree 构建失败）；`XH_CARGO_TARGET_ROOT` 决定 target 家族位置（优先级 `CARGO_TARGET_DIR` > 该变量 > 旧推导，指向不存在/相对路径即 fail-fast；**本机值在 gitignored 的 `mise.local.toml`，仓库内不写机器绝对路径**）；经 `scripts/cargo-run.mjs` 的 mise cargo 任务落该根，裸 cargo/IDE 仍按 `.cargo/config.toml`（残余）。布局、覆盖范围与换盘见 DEV-002 §6。
-- `mise run dev:reset` 默认 dry-run；显式重置前检查备份与数据范围（清库前必须声明目标栈与库身份）。`reset-admin` 的临时密码**不得**写入脚本/源码/日志；持久位置是 gitignored 的 `.local/dev/admin-password`（已有持久文件时改 `.env.local` 不再生效）。凭据四层序、`-WriteBack` 与 `dev:host:status` 字段见 DEV-002 §4。`mise run clean` 是**永久删除**入口（不进回收站），执行前确认无构建/服务占用。
+- 工具链与依赖安装、前置条件 → **DEV-002 §2「环境与安装」**（`mise install` / `mise run setup`）。
+- 日常起栈 `dev:host`、并行栈 `dev:stack --stack <n>`、`--stack` 两义陷阱，以及 `dev:host` 之后 `orphan` + `lease-pid-dead` 属正常（`dev-stack.mjs acquire --stack <n>` 认领即 `healthy`）→ **DEV-002 §3「模式 A：dev:host」** 与 **§4.10「`dev-stack` 状态与租约契约」**。
+- **docker 冻结（产品面 / 测试面 / 默认值三面一起冻）**：工作区 docker 后端不可用，默认 `direct_attach`，`managed_import` ⇒ 409、既有 docker 工作区 ⇒ 503 且 fail-closed 不回退宿主；**禁止误启** `dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` → **DEV-018「docker 后端冻结范围」**。
+- Runtime target 缓存：`XH_CARGO_TARGET_ROOT` 定家族位置、worktree 保持独立 target、本机值在 gitignored `mise.local.toml` → **DEV-002 §6「Rust 构建缓存策略」**。
+- 重置与清理：`dev:reset` 默认 dry-run；`reset-admin` 临时密码不得入库；**`mise run clean` 是永久删除入口（不进回收站）** → **DEV-002 §4「全栈调试」**。
 
 ## Commands
 

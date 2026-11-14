@@ -167,6 +167,8 @@ updated: 2026-10-25
 
 **若确需改 Docker 分支代码**（`backend.rs` / `container_runtime.rs` / `executor.rs` 的 Docker 分支 / `environment.rs` / `sandbox/`）：descope 该子任务并另立计划，不在冻结期内顺手改。`xihe/workspace:latest` 的镜像供给**不再是产品首用前置**。
 
+**冻结命令（禁止误启）**：`dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` —— 这五条会拉起 Docker 全栈或构建工作区镜像，冻结期内一律不跑；要取证先走下方「解冻步骤」。
+
 | 面 | 冻结后的行为 | 依据 |
 |---|---|---|
 | **默认值** | `storageMode` **无默认值**：`POST /api/v1/workspaces` 缺该字段 → `400 INVALID_REQUEST`（指向 `direct_attach`）；DTO/实体/环境视图的兜底值统一为 `direct_attach`；枚举值 `managed_import` **保留**（解冻要用），只改默认 | PLAN-0618 M2 决策 #7/#8 |

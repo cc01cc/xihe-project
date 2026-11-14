@@ -449,6 +449,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
   ```
   `--json` 同名字段在 `devAdmin` 块里（`{user, source, envFile, stack, database, persistedPath, hasFile, wouldGenerate, upsert, upsertAt, upsertReason, bootSource, bootAt}`）；`node scripts/stack-run.mjs env-json --stack <n>` 的 `devAdmin` 块同源同口径（供 PowerShell 侧消费）。`source` 五值：`env`（OS env，显式覆盖）/ `file`（`.local/dev/admin-password`，真相）/ `env-file`（`.env` 链，`via` 后缀指明是哪个文件；仅无文件时）/ `generated`（本次生成并落盘，只出现在 `start` 日志）/ `missing`（三层都没有；`status` 的活视图，**下次起栈会生成并落盘**）。`upsert`/`bootSource` 是**上一次 `start` 的落库结果**（`ok`/`failed`/`skipped`/`not-run` + 原因；`bootSource` 是那次起栈实际用的层），而 `source` 是**活视图**（现在再起一次会用哪层）—— 两个时间基不同，不一致时行尾会补 `bootSource=…(上次起栈 <时间>)`。`status` 自己不做 upsert（读命令不产生副作用）。**这四类读数都不含密码值、长度或 hash。**
 - **`.env` 链只做首次种子（B′）**：只要该 checkout 已有持久文件，**改了 `.env.local` 不再生效** —— 看 `status` 的 `source` 确认（`file` = 文件在生效；`env-file` = 还没有文件、走种子）。这也正是「一个 checkout 一份持久源」的落地方式；要换密码用 `mise run reset-admin`，不要改 `.env.local`。**恢复/轮换**：`mise run reset-admin`（内部带 `-WriteBack`）成功后会把**同一个值**写回 `.local/dev/admin-password`（打印 `written=<相对路径>`，不打印值），让 DB 与文件不再漂。**直接调 `scripts/reset-admin.ps1` 默认不写回**——`start` 的起栈 upsert 也走这个 wrapper，默认写回等于每次起栈都改写持久文件，那属另一种语义，未启用。
+- **清理与重置的不可恢复边界**：`mise run dev:reset` 默认 dry-run（真重置前确认备份与数据范围，清库前声明目标栈与库身份）；**`mise run clean` 是永久删除入口（不进回收站）**，执行前确认无构建/服务占用；`reset-admin` 的临时密码**不得**写入脚本/源码/日志，持久位置是 gitignored 的 `.local/dev/admin-password`（已有持久文件时改 `.env.local` 不再生效）。
 
 ### springdoc 调试面（`/v3/api-docs`、`/swagger-ui/**`）—— 默认关闭（task-244 / PLAN-0763 D-800）
 
