@@ -14,6 +14,27 @@ const query = ref("");
 const selectedKey = ref<string | null>(null);
 
 /**
+ * 层级缩进：**步长 16 + 基准 8**，与工作区文件树同一套（\`FileTreeNode.vue:41\` 的
+ * \`depth * 16 + 8\`、\`TreeNodeList.vue:125\` 的 \`level * 16 + 8\`）。
+ *
+ * <p>task-33（用户截图报障）：本页此前**只有 loading / error 两种占位行**做了缩进
+ * （且写的是 \`level * 16\`，缺基准 8），正常行一处都没有 ⇒ depth 0/1/2 的行首 x 完全相同，
+ * 用户看到的"分析组在数据部下面却没有缩进"就是这个。占位态与正常态用不同基准是**同一个 bug
+ * 的第二次出现**，所以两处一起收。常量只在本页定义、三处共用，模板里不出现 16/8 字面量。</p>
+ *
+ * <p><b>抽 helper 的人请先看这里</b>：\`16/8\` 目前有**三个副本**（上述两个文件 + 本页），
+ * 统一抽走要另立卡（本卡写面只到 org-members），别只改一处。</p>
+ */
+const INDENT_STEP = 16;
+const INDENT_BASE = 8;
+/**
+ * reka 的 `flattenItems` 给的是 **1 基** `level`（根节点 = 1，实测：根行按 `level * 16` 得到
+ * 24px）⇒ 这里减 1 换成 0 基深度，最上层才是基准 8px，与文件树的 `depth * 16 + 8`（depth 0 起）对齐。
+ * 写成 `level - 1` 而不是改模板里的调用点：调用点三处都只说"第几层"，换算只在这里做。
+ */
+const indentOf = (level: number) => INDENT_BASE + (level - 1) * INDENT_STEP;
+
+/**
  * 展开 = 懒加载的扳机。reka 把展开态写进 expandedIds ⇒ 对每个**新展开**的节点
  * 调 ensureChildren（内部按 hasChildren / 已拉取去重——重复展开/搜索命中不重复发请求），
  * 同时把展开集落 localStorage（M3-1「记住展开」）。
@@ -184,7 +205,7 @@ function retryChildren(item: OrgTreeItem) {
                         <span
                             v-if="fi.value.key.endsWith(LOADING_SUFFIX)"
                             class="flex items-center gap-2 text-muted-foreground"
-                            :style="{ paddingLeft: fi.level * 16 + 'px' }"
+                            :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                         >
                             <LoaderCircle class="size-4 animate-spin" />
                             {{ t("orgMembers.treeLoading") }}
@@ -192,7 +213,7 @@ function retryChildren(item: OrgTreeItem) {
                         <span
                             v-else-if="fi.value.key.endsWith(ERROR_SUFFIX)"
                             class="flex items-center gap-2"
-                            :style="{ paddingLeft: fi.level * 16 + 'px' }"
+                            :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                         >
                             <span class="text-muted-foreground">{{
                                 t("orgMembers.treeError")
@@ -220,9 +241,16 @@ function retryChildren(item: OrgTreeItem) {
                                 <ChevronRight v-else class="size-4" />
                             </button>
                             <span v-else class="size-4" />
+                            <!--
+                                task-33：正常行的层级缩进挂在 label 上（内联），**不包一层容器** ——
+                                行容器已有 \`px-2\`，包容器会让"整行 hover/选中底色"的起点（行首）
+                                与内容起点（缩进）脱开，视觉上就是"底色从行首开始、文字却缩进"。
+                                内联在 label 上则底色边界不变，只有文字位移；chevron 列同理不动。
+                            -->
                             <button
                                 type="button"
                                 class="min-w-0 flex-1 truncate text-left"
+                                :style="{ paddingLeft: indentOf(fi.level) + 'px' }"
                                 :data-testid="'org-tree-label-' + fi.value.key"
                                 @click.stop="pick(fi.value, handleSelect)"
                             >

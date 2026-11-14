@@ -239,3 +239,90 @@ describe("OrgMembersView 404 ⇔ 403 双文案（卡面 ②：不许混用）", 
         wrapper.unmount();
     });
 });
+
+/**
+ * task-33（用户截图报障）：层级缩进 + 层级语义。
+ *
+ * <p>症状：研发部 / 数据部 / 分析组 三行左对齐无差别。根因不是数据（`分析组` 的 parentId 确实是
+ * `数据部`）而是渲染：本页**只有 loading / error 占位行**做缩进，正常行一处都没有。</p>
+ *
+ * <p>判据（可复算）：depth d 的行首文字缩进 = `INDENT_BASE + d * INDENT_STEP` = 8 / 24 / 40 px；
+ * 行容器的 `aria-level` = 1 / 2 / 3。**注意 `aria-level` 是 reka 自己设的**
+ * （`reka-ui@2.11.0 dist/Tree/TreeItem.js:141` 的 `"aria-level": __props.level`，`level` 为 1 基），
+ * 不是我们绑的 —— 这里断言它是**防回归**：①`v-bind="fi.bind"` 必须继续把 `level` 传下去
+ * （漏传 ⇒ 属性消失）；②将来若有人想在页面上覆盖它，会立刻红。</p>
+ */
+describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
+    const D_ROOT = { id: "d-root", name: "研发部", parentId: null, depth: 0, hasChildren: true };
+    const D_CHILD = {
+        id: "d-child",
+        name: "平台组",
+        parentId: "d-root",
+        depth: 1,
+        hasChildren: true,
+    };
+    const D_GRAND = {
+        id: "d-grand",
+        name: "存储组",
+        parentId: "d-child",
+        depth: 2,
+        hasChildren: false,
+    };
+
+    function deepHandler(url: URL) {
+        if (url.pathname.endsWith("/org-units")) {
+            const parentId = url.searchParams.get("parentId");
+            if (parentId === "d-root") return { status: 200, body: { nodes: [D_CHILD] } };
+            if (parentId === "d-child") return { status: 200, body: { nodes: [D_GRAND] } };
+            return { status: 200, body: { nodes: [D_ROOT] } };
+        }
+        return { status: 200, body: { members: [] } };
+    }
+
+    /** 展开到三层都可见。 */
+    async function expandAll(wrapper: Awaited<ReturnType<typeof mountView>>) {
+        await wrapper.get('[data-testid="org-tree-toggle-d-root"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="org-tree-toggle-d-child"]').trigger("click");
+        await flushPromises();
+    }
+
+    it("缩进随层级递增：8 / 24 / 40 px，相邻差 = 一个步长（16）", async () => {
+        mockFetch(deepHandler);
+        const wrapper = await mountView();
+        await expandAll(wrapper);
+
+        const leftOf = (key: string) =>
+            wrapper.get(`[data-testid="org-tree-label-${key}"]`).attributes("style") ?? "";
+
+        // 缩进挂在 label 上（不包容器）：行容器已有 px-2，包容器会让 hover/选中底色与文字脱开。
+        expect(leftOf("d-root")).toContain("padding-left: 8px");
+        expect(leftOf("d-child")).toContain("padding-left: 24px");
+        expect(leftOf("d-grand")).toContain("padding-left: 40px");
+        wrapper.unmount();
+    });
+
+    it("aria-level = 1 / 2 / 3（reka 由 level 派生，我们只钉不覆盖）", async () => {
+        mockFetch(deepHandler);
+        const wrapper = await mountView();
+        await expandAll(wrapper);
+
+        const levelOf = (key: string) =>
+            wrapper.get(`[data-testid="org-tree-node-${key}"]`).attributes("aria-level");
+
+        // 同一处顺带钉住一条旧账（Lead 裁定：复活一个死属性要被证明）：
+        // `org-tree-node-*` 这个 testid 在模板里写了很久，而 vendor `TreeItem` 的
+        // `inheritAttrs: false` 把它丢掉了 ⇒ 从来没进过 DOM。上面这两行能取到元素，
+        // 本身就已经证明它复活了；这里再显式断言「三行都在」，防止将来又退回静默丢弃。
+        for (const key of ["d-root", "d-child", "d-grand"]) {
+            expect(
+                wrapper.find(`[data-testid="org-tree-node-${key}"]`).exists(),
+                `org-tree-node-${key} 未进 DOM：vendor TreeItem 又把 $attrs 丢了`,
+            ).toBe(true);
+        }
+        expect(levelOf("d-root")).toBe("1");
+        expect(levelOf("d-child")).toBe("2");
+        expect(levelOf("d-grand")).toBe("3");
+        wrapper.unmount();
+    });
+});
