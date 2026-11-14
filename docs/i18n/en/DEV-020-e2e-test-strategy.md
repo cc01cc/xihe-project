@@ -243,6 +243,12 @@ Read priority (`scripts/lib/cp-jar-sidecar.mjs`, step 0 of the preflight artifac
 - **Triage order** (when stuck at "create session"): ① READY provider → ② request path/headers (`X-Workspace-Id`) → **only then** suspect lane capability. Both the mock and approval lanes were measured to **support** UI session creation (control probes returned 201 in both).
 
 
+### 3.7 E2E fixture self-test gate (`mise run test:e2e:fixtures`; added by task-98 when it moved down from `AGENTS.md`)
+
+The fixture state machines under `packages/ui/e2e/fixtures/` have their own gate: `mise run test:e2e:fixtures` (= `node --test "e2e/fixtures/__tests__/*.test.mjs"` in `packages/ui`), **already wired into `mise run validate`**, running after the UI unit tests and before E2E. It only exercises the fake-LLM `mode=chain` state machines (session cursor / retry replay / exhaustion fallback) and **starts no stack, opens no browser, and takes seconds**.
+
+**Changing a state machine under `packages/ui/e2e/fixtures/` requires running this first**: a broken fixture shows up on a real stack as "a tool mysteriously does not appear", which costs far more to triage than this gate.
+
 ## 4. References
 
 - Test strategy decision framework is maintained as a workspace skill.

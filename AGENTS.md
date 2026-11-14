@@ -82,11 +82,11 @@
 ## Testing
 
 - 跨服务契约按受影响边界跑真实集成链路；全量验证只在里程碑或 PLAN 收尾执行。
-- UI/浏览器消费者必须做真实 Playwright 验证。Sandbox/direct-attach/WorkspaceStorage 使用隔离 DB/root 的 host profile；每次结果都 teardown，不可达依赖必须失败而非静默通过。
-- **默认排除的测试面要显式知道**（2026-11-06 审计）：docker 冻结 `@Tag("docker-frozen")` 6 条（`WorkspaceServiceCustomPathTest` 整类无报告）、LiveChain 两类、Agent `integration` marker（默认 30/1471 deselected）分别见 DEV-018「docker 后端冻结范围」、DEV-020、DEV-021；它们**默认不跑不等于已覆盖**。
-- **e2e 夹具自测是门禁的一部分**：`mise run test:e2e:fixtures`（= `packages/ui` 的 `node --test "e2e/fixtures/__tests__/*.test.mjs"`）已并入 `mise run validate`，排在 UI 单测之后、E2E 之前。它只跑夹具自身的状态机（fake LLM `mode=chain` 的会话游标 / 重试重放 / 耗尽回落），不起栈、不开浏览器、秒级；**改 `packages/ui/e2e/fixtures/` 下的模式机必须先跑这条**——夹具坏了在真栈上的表现是"工具莫名不出现"，排障成本远高于这条门。
-- Compose E2E 不证明 Runtime-created Sandbox 行为；Mock/Compose/Host E2E profile 串行运行，避免本机 Docker/浏览器资源 OOM。profile/命令见 DEV-020/021/022/023。
-- Route/SSE/Flyway/tool-surface 变更须同批更新 OpenAPI/inventory 和受影响包文档，按 `xc-cross-cutting-checklist` 执行。
+- UI/浏览器消费者必须做真实 Playwright 验证；Sandbox/direct-attach/WorkspaceStorage 用隔离 DB/root 的 host profile，每次 teardown，不可达依赖必须失败而非静默通过。
+- **默认不跑 ≠ 已覆盖**：docker 冻结 `@Tag("docker-frozen")` 6 条、LiveChain 两类、Agent `integration` marker 默认排除；计数以 **DEV-018** / **DEV-020** / **DEV-021** 为准。
+- **改 `packages/ui/e2e/fixtures/` 模式机必先跑 `mise run test:e2e:fixtures`**（并入 `validate`，UI 单测后、E2E 前；不起栈、秒级）—— 夹具坏了在真栈上表现为「工具莫名不出现」（DEV-020 §3.7）。
+- Compose E2E 不证明 Runtime-created Sandbox 行为；Mock/Compose/Host profile 串行防 OOM（DEV-020/021/022/023）。
+- Route/SSE/Flyway/tool-surface 变更须同批更新 OpenAPI/inventory 与受影响包文档（`xc-cross-cutting-checklist`）。
 
 ## Telemetry and Logging
 
@@ -136,11 +136,11 @@
 - **合并前必跑 UI 单测**：`cd packages/ui && pnpm exec vitest run`（全量 ~150 s）。`validate` 的 `test` 依赖 `test:ui`，但 `validate` 极少真跑 ⇒ 红点会被当存量基线长期放过（2026-11-06 实测 develop 上 14 红/5 文件，`BL-357`）。
 - **合并分支前先校验分支自身**：`node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`（门禁只看 develop 历史，分支内的超宽/缺引用要到合并后才暴露；白名单规则见 `DEV-002` §8.1）。
 
-## 测试与验证基座（2026-11-08 固化指针；正文以 SSOT 为准）
+## 测试与验证基座（指针；正文以 SSOT 为准，路径相对 `internal/A03-xihe/docs/`）
 
-- **验证分级**：L0 受影响子集（默认）/ L1 波次（里程碑打点）/ L2 全量（仅三触发点：PLAN verify 判定、跨层契约合并前、归档/发布前）；host E2E 与浏览器全套恒归 L2。
-- **候选与窗口**：`internal/A03-xihe/docs/l2-window-protocol.md` §19–§20（lane→候选树→develop 八步、I1–I5、窗口冻结 §20.6）。
-- **测试超时**：`internal/A03-xihe/docs/test-timeout-budget.md`（action/expect 10 s、test 30 s、boot 120 s；>10 s 必须 `timeout-exempt`；`mise run lint:e2e` = 预算门 + 块注释门 task-66）。
-- **测试成本/context 根因**：`internal/A03-xihe/docs/test-suite-cost.md` §1–§7；复用设计 `test-context-reuse-design.md`。
-- **dev 热循环与 lane 同步**：`internal/A03-xihe/docs/dev-hot-loop.md` —— **§11（lane 同步，merge→分类→hot/mvn/restart）仍有效**；§1–§10 已按 D-818 ① 判废弃，状态看该文 §0 判定表。
-- **团队角色/并行度**：`internal/A03-xihe/docs/team-roster.md`（常驻 6 工位；**不设编译位上限**——lane 独立分支+独立构建目录，并行度按写面冲突与机器余量算（D-936，2026-11-11）；测量值班 16:00–18:00 独占）。
+- **验证分级**：L0 受影响子集（默认）/ L1 波次（里程碑）/ L2 全量（三触发点：卡面验收、跨层契约合并前、归档/发布前）；host E2E 与浏览器全套恒归 L2。
+- **候选与窗口**：`l2-window-protocol.md` §19–§20（八步、I1–I5、窗口冻结 §20.6）。
+- **测试超时**：`test-timeout-budget.md`（10/30/120 s；>10 s 须 `timeout-exempt`；`mise run lint:e2e`）。
+- **测试成本根因**：`test-suite-cost.md` §1–§7；复用设计 `test-context-reuse-design.md`。
+- **dev 热循环/lane 同步**：`dev-hot-loop.md`（§11 有效；§1–§10 按 D-818 ① 废弃，看 §0 判定表）。
+- **团队角色/并行度**：`team-roster.md`（6 工位；不设编译位上限 D-936；测量值班 16:00–18:00 独占）。
