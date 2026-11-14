@@ -23,6 +23,7 @@ vi.mock("vue-sonner", () => ({
         success: vi.fn<(message: string) => void>(),
         error: vi.fn<(message: string) => void>(),
         warning: vi.fn<(message: string) => void>(),
+        info: vi.fn<(message: string) => void>(),
     },
 }));
 
@@ -39,6 +40,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             createSessionBranch: vi.fn<typeof api.createSessionBranch>(),
             getFollowUpQueue: vi.fn<typeof api.getFollowUpQueue>(),
             enqueueFollowUp: vi.fn<typeof api.enqueueFollowUp>(),
+            enqueueFollowUpDetailed: vi.fn<typeof api.enqueueFollowUpDetailed>(),
             withdrawFollowUp: vi.fn<typeof api.withdrawFollowUp>(),
             continueFollowUpQueue: vi.fn<typeof api.continueFollowUpQueue>(),
             getSessionDerivedState: vi.fn<typeof api.getSessionDerivedState>(),
@@ -199,6 +201,7 @@ beforeEach(() => {
     vi.mocked(api.createSessionBranch).mockReset();
     vi.mocked(api.getFollowUpQueue).mockReset().mockResolvedValue(followUpSnapshot());
     vi.mocked(api.enqueueFollowUp).mockReset();
+    vi.mocked(api.enqueueFollowUpDetailed).mockReset();
     vi.mocked(api.withdrawFollowUp).mockReset();
     vi.mocked(api.continueFollowUpQueue).mockReset();
     vi.mocked(api.getSessionDerivedState).mockReset();
@@ -931,14 +934,14 @@ describe("ChatPanel Follow-up queue", () => {
             .mockReset()
             .mockResolvedValueOnce(followUpSnapshot())
             .mockResolvedValue(snapshot);
-        vi.mocked(api.enqueueFollowUp).mockResolvedValue(snapshot);
+        vi.mocked(api.enqueueFollowUpDetailed).mockResolvedValue({ snapshot, replayed: false });
         const wrapper = mountPanel();
         await flushPromises();
 
         wrapper.findComponent(InputArea).vm.$emit("queue", "run the next check", []);
         await flushPromises();
 
-        expect(api.enqueueFollowUp).toHaveBeenCalledWith(
+        expect(api.enqueueFollowUpDetailed).toHaveBeenCalledWith(
             SESSION_ID,
             expect.objectContaining({
                 content: "run the next check",
@@ -975,9 +978,12 @@ describe("ChatPanel Follow-up queue", () => {
     });
 
     it("reuses the request key for an identical retry after an ambiguous network failure", async () => {
-        vi.mocked(api.enqueueFollowUp)
+        vi.mocked(api.enqueueFollowUpDetailed)
             .mockRejectedValueOnce(new Error("connection lost"))
-            .mockResolvedValue(queuedFollowUpSnapshot("retry the same queue action"));
+            .mockResolvedValue({
+                snapshot: queuedFollowUpSnapshot("retry the same queue action"),
+                replayed: false,
+            });
         const wrapper = mountPanel();
         await flushPromises();
         const input = wrapper.findComponent(InputArea);
@@ -987,9 +993,98 @@ describe("ChatPanel Follow-up queue", () => {
         input.vm.$emit("queue", "retry the same queue action", []);
         await flushPromises();
 
-        const calls = vi.mocked(api.enqueueFollowUp).mock.calls;
+        const calls = vi.mocked(api.enqueueFollowUpDetailed).mock.calls;
         expect(calls).toHaveLength(2);
         expect(calls[0]?.[2]).toBe(calls[1]?.[2]);
+    });
+
+    /**
+     * task-125（D-1480-S1）：**陈旧键**才是缺陷。
+     *
+     * <p>「失败后立即重发」是正确重试（上一条用例钉着），不能改；缺陷在于失败留下的幂等键
+     * **没有寿命**：用户 abandon 这次失败（改稿 / 切走 / 隔了很久），之后再发**同一内容**时，
+     * 判据仍复用旧键 ⇒ CP 按幂等键把它当重放 ⇒ 返回旧 snapshot ⇒ 前端照常提示「已排队」并清稿 ⇒
+     * **这一条真实的新消息没有入队**。所以键必须在「重试窗口」之后失效。</p>
+     *
+     * <p>窗口取值依据：失败分支本身会 refreshFollowUpQueue（首次请求其实已落地时队列会把它显示出来），
+     * 所以需要复用键保护的真实重试只发生在**秒级**；超过窗口就按「新动作」处理。</p>
+     */
+    it("失败后过了保留窗口，再发同内容必须换新键（陈旧键不得把新消息当重放）", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+        try {
+            vi.mocked(api.enqueueFollowUpDetailed)
+                .mockRejectedValueOnce(new Error("connection lost"))
+                .mockResolvedValue({
+                    snapshot: queuedFollowUpSnapshot("same content"),
+                    replayed: false,
+                });
+            const wrapper = mountPanel();
+            await flushPromises();
+            const input = wrapper.findComponent(InputArea);
+
+            input.vm.$emit("queue", "same content", []);
+            await flushPromises();
+
+            // 用户 abandon 这次失败；很久之后才再次主动发**同一内容**。
+            clock.mockReturnValue(1_700_000_000_000 + 31 * 60_000);
+            input.vm.$emit("queue", "same content", []);
+            await flushPromises();
+
+            const calls = vi.mocked(api.enqueueFollowUpDetailed).mock.calls;
+            expect(calls).toHaveLength(2);
+            expect(calls[0]?.[2]).not.toBe(calls[1]?.[2]);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    /**
+     * task-125 (c′)：**重放必须被说出来**。
+     *
+     * <p>CP 用状态码区分「命中既有幂等键（200）」与「新建（202）」（`ChatController:364-365`），
+     * 而 UI 原来只看 body ⇒ 重放被当成新入队：报「已排队」并清稿 ⇒ 用户以为这条新消息进了队列。
+     * 正确行为 = 提示「此前已提交，未新建」且**不清稿**（这条内容并没有被入队）。</p>
+     */
+    it("命中 CP 的重放 ⇒ 提示此前已提交且不清稿", async () => {
+        vi.mocked(api.enqueueFollowUpDetailed).mockResolvedValue({
+            snapshot: queuedFollowUpSnapshot("already there"),
+            replayed: true,
+        });
+        // InputArea 真身在这里被桩掉（mountPanel 用 auto-stub），拿不到暴露的 clearDraft ⇒
+        // 用一个记账桩把「有没有清稿」变成可断言的事实。
+        const clearDraft = vi.fn<() => void>();
+        const wrapper = mount(ChatPanel, {
+            props: { sessionId: SESSION_ID },
+            global: {
+                plugins: [i18n, testRouter()],
+                stubs: {
+                    SSEStream: true,
+                    InputArea: { template: "<span />", methods: { clearDraft } },
+                    MessageList: true,
+                    SessionPolicyControls: true,
+                    SessionContextTemplate: true,
+                    ContextSourcesU1: true,
+                },
+            },
+        });
+        await flushPromises();
+        vi.mocked(toast.success).mockClear();
+        vi.mocked(toast.info).mockClear();
+        // 挂载期可能已经清过一次稿（chatPanel:1158 的另一条路径）⇒ 只观察这次排队动作。
+        clearDraft.mockClear();
+
+        wrapper.findComponent(InputArea).vm.$emit("queue", "already there", []);
+        await flushPromises();
+
+        expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+            i18n.global.t("chat.followUpAlreadyQueued"),
+        );
+        // 精确到「没有报已排队」：同一次交互里别的成功提示不归这条用例管。
+        expect(vi.mocked(toast.success)).not.toHaveBeenCalledWith(
+            i18n.global.t("chat.followUpQueued"),
+        );
+        // 没有新建 ⇒ 不能清稿，否则等于替用户丢掉这条内容。
+        expect(clearDraft).not.toHaveBeenCalled();
     });
 });
 

@@ -3083,3 +3083,36 @@ describe("proactive refresh before expiry (task-427)", () => {
         expect(fetchSpy.mock.calls.filter(([p]) => p === REFRESH_URL).length).toBe(0);
     });
 });
+
+// ── task-125 (c′)：重放是**传输层事实**（HTTP 状态），不在 body 里 ────────────────
+describe("api.enqueueFollowUpDetailed", () => {
+    const body = {} as Parameters<typeof api.enqueueFollowUp>[1];
+    // jsonRes 是文件里某个 describe 的局部 helper，这里自备一个同口径的。
+    const res = (status: number, payload: unknown): Response =>
+        ({
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(payload),
+        }) as unknown as Response;
+
+    it("200 ⇒ replayed=true：CP 用 200 表示命中既有幂等键（body 是既有资源）", async () => {
+        fetchSpy.mockResolvedValueOnce(res(200, { sessionId: SESSION_ID }));
+
+        const result = await api.enqueueFollowUpDetailed(SESSION_ID, body, "idem-1");
+
+        expect(result.replayed).toBe(true);
+        expect((result.snapshot as unknown as { sessionId: string }).sessionId).toBe(SESSION_ID);
+        const [path, init] = fetchSpy.mock.calls[0]!;
+        expect(String(path)).toContain(`/sessions/${SESSION_ID}/follow-ups`);
+        expect((init as RequestInit).method).toBe("POST");
+        expect((init as RequestInit).headers).toMatchObject({ "Idempotency-Key": "idem-1" });
+    });
+
+    it("202 ⇒ replayed=false：新建已接受", async () => {
+        fetchSpy.mockResolvedValueOnce(res(202, { sessionId: SESSION_ID }));
+
+        const result = await api.enqueueFollowUpDetailed(SESSION_ID, body, "idem-2");
+
+        expect(result.replayed).toBe(false);
+    });
+});

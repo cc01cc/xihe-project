@@ -215,7 +215,29 @@ const followUpQueue = ref<ApiFollowUpQueueSnapshot | null>(null),
 const followUpQueueSubmitting = ref(false),
     followUpQueueContinuing = ref(false);
 const followUpQueueBusyItemId = ref<string | null>(null),
-    pendingFollowUpKeys = new Map<string, Map<string, string>>();
+    /**
+     * task-125（D-1480-S1）：**每会话一个「上一次排队尝试」槽**，不是「每个签名一个键」。
+     *
+     * <p>键的语义是「这次尝试可能已经到达 CP，重发必须复用它」—— 它只属于**同一份未改动的草稿的
+     * 上一次尝试**。按签名缓存会让「失败 → 用户放弃 → 之后又发同样内容」复用旧键，CP 按幂等键
+     * 把新消息当重放（`FollowUpQueueService.enqueue:149-155`，命中即返回旧 snapshot 并
+     * `replayed=true`），而前端照常提示「已排队」并清稿 ⇒ **这条消息静默丢失**
+     * （缺陷档：task-123 F1；四步见 task-125 卡面）。</p>
+     *
+     * <p>为什么不给签名加「用户动作代次」：那样连**真重试**也会换键 —— 首次请求其实已落地时
+     * 会重复入队，比丢一条更糟（用户被通知两次）。槽 + 寿命才能既保住真重试、又让陈旧键失效。</p>
+     */
+    pendingFollowUpKey = new Map<string, { signature: string; key: string; at: number }>();
+/**
+ * task-125 (b)：键的保留窗口。失败分支本身会 `refreshFollowUpQueue`（首次请求其实已落地时
+ * 队列会把那条显示出来），所以需要复用键保护的真实重试只发生在**秒级**；超过窗口就按「新动作」处理。
+ */
+const FOLLOW_UP_KEY_TTL_MS = 60_000;
+// task-125 (b)：切会话即清 —— 换回来时旧槽已无意义，也避免按会话累积。
+watch(
+    () => props.sessionId,
+    () => pendingFollowUpKey.clear(),
+);
 let followUpQueueRequestId = 0,
     followUpQueueSubmitGeneration = 0,
     followUpQueueActionGeneration = 0;
@@ -776,7 +798,10 @@ useComposeDeeplink({
             to: payload.to,
             cc: payload.cc,
         });
-        return result === "applied";
+        // task-126 F3：`blocked_unsat` 也要**消费**参数 —— 它不可满足（id 不在本会话名册），
+        // 留着只会让 URL 永久带 `?compose=`、每次重试刷 warn。用户可见提示由 InputArea 自己渲染
+        // （`compose-deeplink-unsat-hint`），所以这里只负责"已消费"这一件事。
+        return result === "applied" || result === "blocked_unsat";
     },
 });
 
@@ -951,16 +976,20 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
         binding?.provider ?? null,
         binding?.model ?? null,
     ]);
-    const sessionKeys = pendingFollowUpKeys.get(sessionId) ?? new Map<string, string>();
-    const idempotencyKey = sessionKeys.get(signature) ?? crypto.randomUUID();
-    sessionKeys.set(signature, idempotencyKey);
-    pendingFollowUpKeys.set(sessionId, sessionKeys);
+    // task-125：只有在「同一份草稿 + 还在保留窗口内」时才复用键（= 真重试）；否则是新动作。
+    const previousAttempt = pendingFollowUpKey.get(sessionId);
+    const reuseKey =
+        previousAttempt !== undefined &&
+        previousAttempt.signature === signature &&
+        Date.now() - previousAttempt.at < FOLLOW_UP_KEY_TTL_MS;
+    const idempotencyKey = reuseKey ? previousAttempt.key : crypto.randomUUID();
+    pendingFollowUpKey.set(sessionId, { signature, key: idempotencyKey, at: Date.now() });
     const requestGeneration = ++followUpQueueSubmitGeneration;
 
     followUpQueueSubmitting.value = true;
     followUpQueueError.value = null;
     try {
-        const snapshot = await api.enqueueFollowUp(
+        const { snapshot, replayed } = await api.enqueueFollowUpDetailed(
             sessionId,
             {
                 content,
@@ -976,12 +1005,19 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
             return;
         followUpQueue.value = snapshot;
         followUpQueueError.value = null;
-        if (sessionKeys.get(signature) === idempotencyKey) {
-            sessionKeys.delete(signature);
-            if (sessionKeys.size === 0) pendingFollowUpKeys.delete(sessionId);
+        // 成功（含 CP 的 replayed 重放）即消费该槽：下一次同内容是新动作。
+        if (pendingFollowUpKey.get(sessionId)?.key === idempotencyKey) {
+            pendingFollowUpKey.delete(sessionId);
         }
-        inputComponent.value?.clearDraft?.();
-        toast.success(t("chat.followUpQueued"));
+        if (replayed) {
+            // task-125 (c′)：CP 用 200 表示「命中既有幂等键」，这一条**没有新建**。
+            // 不能报「已排队」：用户会以为自己发了两条；也不能清稿：这条内容并没有被入队，
+            // 清掉等于替用户丢掉它。
+            toast.info(t("chat.followUpAlreadyQueued"));
+        } else {
+            inputComponent.value?.clearDraft?.();
+            toast.success(t("chat.followUpQueued"));
+        }
         void refreshFollowUpQueue(sessionId);
     } catch (cause) {
         if (props.sessionId !== sessionId || requestGeneration !== followUpQueueSubmitGeneration)

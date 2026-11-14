@@ -4432,6 +4432,31 @@ export const api = {
             },
         );
     },
+    /**
+     * task-125 (c')：CP 用 **HTTP 状态码**表达「这次排队是重放还是新建」——
+     * `ChatController:364-365` `status(result.replayed() ? OK : ACCEPTED)`，即 **200 = 命中了既有
+     * 幂等键（body 是既有资源）/ 202 = 新建已接受**，响应体里**没有**这个字段。
+     *
+     * <p>`request()` 只做 `res.json()`，会把这个**传输层事实**丢掉；所以这里走 `apiRaw` 读状态码。
+     * 不在 CP 的 body 里再复制一份：那会让同一事实有两个判据源，两份必然漂。</p>
+     */
+    async enqueueFollowUpDetailed(
+        sessionId: string,
+        body: ApiFollowUpCreateRequest,
+        idempotencyKey: string,
+    ): Promise<{ snapshot: ApiFollowUpQueueSnapshot; replayed: boolean }> {
+        const response = await apiRaw(`/sessions/${encodeURIComponent(sessionId)}/follow-ups`, {
+            method: "POST",
+            headers: { "Idempotency-Key": idempotencyKey },
+            body: JSON.stringify(body),
+        });
+        if (response.status === 204)
+            return { snapshot: undefined as unknown as ApiFollowUpQueueSnapshot, replayed: false };
+        return {
+            snapshot: (await response.json()) as ApiFollowUpQueueSnapshot,
+            replayed: response.status === 200,
+        };
+    },
     withdrawFollowUp(sessionId: string, itemId: string): Promise<ApiFollowUpQueueSnapshot> {
         return request<ApiFollowUpQueueSnapshot>(
             `/sessions/${encodeURIComponent(sessionId)}/follow-ups/${encodeURIComponent(itemId)}`,

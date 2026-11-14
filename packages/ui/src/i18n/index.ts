@@ -1352,6 +1352,10 @@ const messages = {
                 // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
+                // task-126 F3：深链「不可满足」提示。只点名 id（名册里查不到这些人 ⇒ 没有名字可取），
+                // 第二句必须说清「为什么是 id」+「用户该做什么」，否则等于没说。
+                composeDeeplinkUnsat: "{count} 个收件人不在本会话，已忽略：{ids}",
+                composeDeeplinkUnsatWhy: "按 id 展示是因为名册里查不到这些人，请手动确认收件人",
                 // task-49（task-48 落库后）：独立会话**已能**发给成员/抄送/代发，「发送」「抄送」两栏照常渲染；
                 // 这行只剩附件这一件事要解释 —— 它是**可见原因**（不是 tooltip），不是「为什么少两个控件」。
                 workspaceLessNoTargets: "独立会话不支持附件（仅纯对话）",
@@ -1428,6 +1432,7 @@ const messages = {
             followUpQueueLoadFailed: "读取后续队列失败",
             followUpQueueFailed: "后续队列操作失败",
             followUpQueued: "已加入后续队列",
+            followUpAlreadyQueued: "此条此前已提交，未新建",
             sseNotConnected: "消息未发送：实时连接未建立",
             sseNotConnectedHint: "请再点一次发送，客户端会自动重连。",
             followUpWithdrawn: "已从后续队列撤回",
@@ -5136,6 +5141,13 @@ const messages = {
                 toEmptyHint:
                     "This message notifies no participant (it is still recorded in this session)",
                 toEmptyHintDismiss: "Got it",
+                // task-126 F3: deep-link "unsatisfiable" hint. Ids only — these people are not in the
+                // session roster, so there is no display name to show; the second line says why and what
+                // the user should do next.
+                composeDeeplinkUnsat:
+                    "{count} recipient(s) are not in this session and were ignored: {ids}",
+                composeDeeplinkUnsatWhy:
+                    "Ids are shown because these people cannot be found in the roster; please confirm the recipients manually",
                 workspaceLessNoTargets:
                     "A standalone Session does not support attachments (plain chat only)",
                 workspaceLessDropped:
@@ -5214,6 +5226,7 @@ const messages = {
             followUpQueueLoadFailed: "Could not load the Follow-up queue",
             followUpQueueFailed: "Follow-up queue action failed",
             followUpQueued: "Added to the Follow-up queue",
+            followUpAlreadyQueued: "This Follow-up was already submitted; nothing new was queued",
             sseNotConnected: "Message not sent: the live connection is not established",
             sseNotConnectedHint: "Send again — the client retries the connection automatically.",
             followUpWithdrawn: "Removed from the Follow-up queue",
