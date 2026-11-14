@@ -132,6 +132,8 @@ const messages = {
         standaloneDialog: {
             title: "新建独立会话",
             body: "独立会话不属于任何工作区。选一个个人智能体作为这条会话的应答者。",
+            // task-547 F-A：先把限制说清（CP 对 workspace-less Session 的 TO/CC/代发/附件一律 400）。
+            limits: "独立会话只能纯对话：不支持定向发送、代发与附件（创建后组合器也不会提供这些入口）。",
             loading: "正在加载个人智能体…",
             emptyTitle: "还没有个人智能体",
             emptyBody: "独立会话需要一个个人智能体来应答。先创建一个，再回来新建会话。",
@@ -389,6 +391,8 @@ const messages = {
             // 只写「无文件系统授权限制」会让人以为完全没有边界，而 host 模式下 cwd 仍受 grants 约束
             // （runtime-1 实测 job_engine/mod.rs:1106-1140）。
             sandboxEnforcement: "无文件系统授权限制（工作区路径边界仍生效）",
+            // task-550 / Q-i 第二半（用户裁定）：会话头常显的第二句。
+
             sandboxEnforcementSnapshot: "决策快照照冻，仅标注 enforcement=none",
             panelMonitor: "监控",
             // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
@@ -1213,6 +1217,9 @@ const messages = {
                 // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
                 toTargetsLabel: "定向发送",
                 toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
+                // task-547 F-A：独立会话下「发送」「定向」不渲染；这行是**可见原因**（不是 tooltip）。
+                workspaceLessNoTargets: "独立会话不支持定向发送、代发与附件（仅纯对话）",
+                workspaceLessDropped: "独立会话不支持定向发送/代发/附件，本次已按纯对话发送",
                 speakAsOverriddenByTo: "已指定定向发送的响应者，本条不代发",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
@@ -3705,6 +3712,7 @@ const messages = {
         standaloneDialog: {
             title: "New standalone session",
             body: "A standalone session belongs to no workspace. Pick a personal agent to answer in it.",
+            limits: "A standalone session is plain chat only: no directed sends, no delegation, no attachments (the composer will not offer them either).",
             loading: "Loading personal agents…",
             emptyTitle: "No personal agent yet",
             emptyBody:
@@ -3958,6 +3966,7 @@ const messages = {
                 "No filesystem authorization checks (workspace path boundary still applies)",
             sandboxEnforcementSnapshot:
                 "Decision snapshot is frozen; it only records enforcement=none",
+
             panelMonitor: "Monitor",
             // BL-335: SSE subscriber limit (429) persistent banner.
             sseSubscriberLimitTitle: "Live updates stopped.",
@@ -4828,6 +4837,10 @@ const messages = {
                 toLabel: "To",
                 toTargetsLabel: "Send to",
                 toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
+                workspaceLessNoTargets:
+                    "A standalone Session does not support directed sends, delegation or attachments (plain chat only)",
+                workspaceLessDropped:
+                    "Standalone Sessions do not support directed sends/delegation/attachments; sent as plain chat",
                 speakAsOverriddenByTo:
                     "Directed recipients are set; this message is not sent as anyone",
                 ccLabel: "Cc",
