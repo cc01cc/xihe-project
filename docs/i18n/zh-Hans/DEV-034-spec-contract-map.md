@@ -119,3 +119,26 @@ tags:
 **实测读数（2026-11-13，`develop 542217e1d`，`mvn test -Dtest=RouteContractParityTest`，窗口 `VW-20261113-02`）**：`implemented=289 documented=347`；missing `total=5 framework=5 frozen-gap=0 unexpected=0`；extra `total=63 cross-service/kept-by-design=59 frozen-gap=0 planned=4 unexpected=0`；`param-name-exempt=0`。两侧 `unexpected` 均为 0。
 
 **旧读数留痕（已过期，勿引用）**：2026-11-11 `develop 5da8cc2dd` 时为 `implemented=219 documented=270`、extra `total=56`；两天内契约面涨到 **347** operations（`docs/api/inventory.generated.md` 自述行）⇒ 引用旧数会得出「缺口 77 条」的假结论。同形读数的入库证据（本窗输出与其逐字符相同）：`internal/A03-xihe/evidence/2026-11-12-parity-rerun/README.md`。
+
+## 9. 四道契约门与治理口径（task-99；2026-11-15 从 `AGENTS.md` 下沉）
+
+**改接口的顺序固定**：先改 `docs/api/openapi.yaml`（`requestBody`、错误码、示例）→ 再改代码 → 最后跑契约门。**顺序反了等于先上车后补票。**
+
+**四道门各管一轴，禁止混用**（混用会得出「有缺口」或「已覆盖」的错误结论）：
+
+| 轴 | 守门人 | 覆盖什么 / 不覆盖什么 |
+| --- | --- | --- |
+| 语法 + 冻结切片 | `check:openapi`（BL-162，`scripts/validate-openapi.mjs`） | 语法与冻结切片；**用 oxfmt 当 YAML 解析器，因此不报重复键** |
+| contract ↔ code | `RouteContractParityTest`（BL-320） | live `RequestMappingHandlerMapping` 与契约的五类读数；豁免表规则见 §8 |
+| 规范级自洽（`$ref` 可解析 / `operationId` 唯一 / 无 unused） | `check:openapi:lint`（redocly，dev-only） | **report-only 起步**：默认恒 exit 0，显式 `--enforce` 才阻断 |
+| doc ↔ contract | `check:api-docs`（生成器 `--check`） | PLAN-0763 M4；只证明生成物与契约一致，不证明语义正确 |
+
+**各服务原生文档一律降级为调试/对账产物**：CP `/v3/api-docs` 默认关闭（`XIHE_SPRINGDOC_ENABLED=true` 或 dev/e2e/test profile 才开，PLAN-0763 M6）；**实测比 live mapping 少报 15 条路由，且完全不收录 `/internal/**`**；Agent 的 HTTP 面 SSOT 同样是 `docs/api/openapi.yaml`（§1 ①②），其 `/openapi.json` 只用于漂移对账。
+
+**分组与快照**：`openapi.yaml` 用 `tags` + `x-tagGroups`（public 17 / internal 3，**2026-11-10 读数**；契约面增长后这两个数会变，引用前先数）；MCP tool 面的权威是 `tools/list` 握手，`docs/api/mcp-tools.md` 只是快照（§4，状态随文件落地翻转）。
+
+**`proposed` 不是运行事实**：`spec/README.md` 是项目契约入口；Security 是 authentication / principal / role / scope / authorization 的**唯一正文 owner**；一个根 SPEC 同时只由一个 active PLAN 承接，XH PLAN 须声明 Spec Impact 并与 DEV/OpenAPI/测试同批同步。
+
+**台账依据**：上述治理口径来自用户裁定 **D-800**（2026-11-10「API 契约治理」，见台账）；本节与 §8 的分工是「门管哪个轴（本节）」与「豁免怎么收（§8）」。
+
+**配置域与 env 登记**：`{domain}` 合法集合的权威是 `ConfigService.DOMAINS`（14 域，**schema 文件集合不是权威**）⇒ DEV-014「配置域权威与新增域流程」；`XIHE_*` 变量登记 ⇒ workspace skill `xc-cross-cutting-checklist` §env 变量登记（`check-mise-env` 的 SSOT）。

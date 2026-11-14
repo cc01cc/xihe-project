@@ -119,3 +119,26 @@ Exemptions are **literal entries only; regex scanning is forbidden** (regex woul
 **Measured reading (2026-11-13, `develop 542217e1d`, `mvn test -Dtest=RouteContractParityTest`, window `VW-20261113-02`)**: `implemented=289 documented=347`; missing `total=5 framework=5 frozen-gap=0 unexpected=0`; extra `total=63 cross-service/kept-by-design=59 frozen-gap=0 planned=4 unexpected=0`; `param-name-exempt=0`. Both sides `unexpected=0`.
 
 **Superseded reading (do not cite)**: on 2026-11-11 `develop 5da8cc2dd` it was `implemented=219 documented=270`, extra `total=56`; the contract surface grew to **347** operations within two days (`docs/api/inventory.generated.md` self-report line) ⇒ citing the old numbers yields the false conclusion “77 gaps”. The committed evidence byte-identical to this window's output: `internal/A03-xihe/evidence/2026-11-12-parity-rerun/README.md`.
+
+## 9. The four contract gates and their governance (task-99; moved down from `AGENTS.md` on 2026-11-15)
+
+**The order for changing an API is fixed**: edit `docs/api/openapi.yaml` first (`requestBody`, error codes, examples) → then the code → then run the contract gates. **Reversing the order means boarding the train and buying the ticket later.**
+
+**Each of the four gates owns exactly one axis; mixing them is forbidden** (mixing yields the false conclusions "there is a gap" or "already covered"):
+
+| Axis | Gatekeeper | What it covers / what it does not |
+| --- | --- | --- |
+| Syntax + frozen slice | `check:openapi` (BL-162, `scripts/validate-openapi.mjs`) | Syntax and the frozen slice; **it uses oxfmt as the YAML parser, so it does not report duplicate keys** |
+| contract ↔ code | `RouteContractParityTest` (BL-320) | the five reading classes between live `RequestMappingHandlerMapping` and the contract; exemption rules are in §8 |
+| Spec-level self-consistency (`$ref` resolvable / `operationId` unique / no unused) | `check:openapi:lint` (redocly, dev-only) | **starts as report-only**: it always exits 0 by default and blocks only with an explicit `--enforce` |
+| doc ↔ contract | `check:api-docs` (generator `--check`) | PLAN-0763 M4; it only proves the generated artefact matches the contract, never that the semantics are right |
+
+**Every service-native document is demoted to a debugging/reconciliation artefact**: CP `/v3/api-docs` is off by default (only with `XIHE_SPRINGDOC_ENABLED=true` or under the dev/e2e/test profile, PLAN-0763 M6); **measured, it reports 15 fewer routes than live mapping and does not include `/internal/**` at all**; the Agent's HTTP surface SSOT is likewise `docs/api/openapi.yaml` (§1 ①②), and its `/openapi.json` exists only for drift reconciliation.
+
+**Grouping and snapshots**: `openapi.yaml` uses `tags` + `x-tagGroups` (public 17 / internal 3 — **a 2026-11-10 reading**; both numbers change as the contract surface grows, so count before citing); the MCP tool surface's authority is the `tools/list` handshake, and `docs/api/mcp-tools.md` is only a snapshot (§4, flip the status when the file lands).
+
+**`proposed` is not a runtime fact**: `spec/README.md` is the project contract entry; Security is the **single prose owner** for authentication / principal / role / scope / authorization; one root SPEC is carried by exactly one active PLAN at a time, and an XH PLAN must declare its Spec Impact and sync DEV/OpenAPI/tests in the same batch.
+
+**Decision basis**: the governance wording above comes from the user ruling **D-800** (2026-11-10, "API contract governance", see the ledger); the split between this section and §8 is "which axis a gate owns (here)" vs "how exemptions are collected (§8)".
+
+**Config domains and env registration**: the authority for the legal `{domain}` set is `ConfigService.DOMAINS` (14 domains; **the set of schema files is not the authority**) ⇒ DEV-014 "配置域权威与新增域流程" (zh only); registering `XIHE_*` variables ⇒ the workspace skill `xc-cross-cutting-checklist` §env 变量登记 (the `check-mise-env` SSOT).

@@ -42,26 +42,9 @@
 
 ## SPEC Contract Layer
 
-- `spec/README.md` 是项目契约入口；`proposed` 是目标草案**不得当运行事实**；Security 是 authentication/principal/role/scope/authorization 的唯一正文 owner；一个根 SPEC 同时只由一个 active PLAN 承接，XH PLAN 声明 Spec Impact 并同批同步 DEV/OpenAPI/测试；SPEC 为 Agent/GitHub-only（不走文档站 frontmatter），细则见 `spec/README.md`、`writing-guide.md`、DEV-030。
-
-### API 契约治理（2026-11-10 用户裁定，见台账 D-800）
-
-- **`docs/api/openapi.yaml` 是 API wire 契约的唯一 SSOT，并且是人工维护的**（CP 源码 springdoc 注解实测为 0；运行时 `/v3/api-docs` 只是反射产物）。**代码与之背离时改代码**，不得拿文档迁就现状。
-- **改接口顺序固定**：先改 yaml（`requestBody`、错误码、示例）→ 再改代码 → 最后跑契约门。顺序反了等于先上车后补票。
-- **四条契约门各管一轴，禁止混用**（混用会得出「有缺口」或「已覆盖」的错误结论）：
-
-  | 轴 | 守门人 |
-  | --- | --- |
-  | 语法 + 冻结切片 | `check:openapi`（BL-162，`scripts/validate-openapi.mjs`；**用 oxfmt 当 YAML 解析器，不报重复键**） |
-  | contract ↔ code | `RouteContractParityTest`（BL-320，用 live `RequestMappingHandlerMapping`，带豁免表） |
-  | 规范级自洽（`$ref` 可解析 / `operationId` 唯一 / 无 unused） | `check:openapi:lint`（redocly，dev-only，**report-only 起步**） |
-  | doc ↔ contract | `check:api-docs`（生成器 `--check`，PLAN-0763 M4） |
-
-- **`RouteContractParityTest` 判据**：五类读数 `implemented / documented / missing / extra / unexpected`，两侧 `unexpected` **必须为 0**（新增路由未登记契约即红，不是警告）；豁免**只认字面量条目、禁止正则扫描**，四张豁免表的收纳范围与逐条注释要求见 **DEV-034 §8**；`KNOWN_GAPS` 只收存量缺口且自清洁，`PLANNED_APIS` 与它反向、代码落地即删；**缺口不得新塞**。最近实测读数见 DEV-034 §8。
-- **配置域 `{domain}`**：合法集合的权威是 `ConfigService.DOMAINS`（14 域），**schema 文件集合不是权威**；`api-request-templates` 没有 schema、由 `ApiRequestTemplateService` 整域承载；新增域 = 登记 `DOMAINS` +（若走通用校验）加 schema + 同批更新 `ConfigDomainSchemaCoverageTest`。细节见 DEV-014「配置域权威与新增域流程」。
-- **各服务原生文档一律降级为调试/对账产物**：CP `/v3/api-docs` 默认关闭（`XIHE_SPRINGDOC_ENABLED=true` 或 dev/e2e/test profile 才开，PLAN-0763 M6）；springdoc 实测比 live mapping **少报 15 条路由**且**完全不收录 `/internal/**`**；**Agent 的 HTTP 面 SSOT 同样是本 yaml**，其 `/openapi.json` 只用于漂移对账。
-- 分组与快照：`openapi.yaml` 用 `tags` + `x-tagGroups`（public 17 / internal 3）；MCP tool 面见 `docs/api/mcp-tools.md`（**权威是 `tools/list` 握手，文档是快照**）；契约地图见 DEV-034。
-- env 变量登记（`XIHE_*`）见 `one/.agents/skills/xc-cross-cutting-checklist/SKILL.md` §env 变量登记（`check-mise-env` 门的 SSOT；新增变量须同批登记）。
+- `spec/README.md` 是项目契约入口，`proposed` 不得当运行事实；Security 是认证/主体/角色/scope/授权正文的唯一 owner；一个根 SPEC 同时只由一个 active PLAN 承接，XH PLAN 声明 Spec Impact 并同批同步 DEV/OpenAPI/测试（细则 `spec/README.md`、`writing-guide.md`、DEV-030）。
+- **API 契约治理（D-800）**：`docs/api/openapi.yaml` 是人工维护的唯一 SSOT，改接口顺序固定（yaml → 代码 → 门）；**四道门各管一轴、禁止混用**，`RouteContractParityTest` 两侧 `unexpected` 必须为 0 ⇒ 四门清单 / springdoc 对账 / 分组快照 / `proposed` 口径全在 **DEV-034 §8–§9**（双语）。
+- **配置域与 env**：`{domain}` 权威是 `ConfigService.DOMAINS`（14 域，schema 文件集合不是权威）⇒ **DEV-014「配置域权威与新增域流程」**（单语）；`XIHE_*` 登记 ⇒ `xc-cross-cutting-checklist` §env 变量登记。
 
 ## Code Style and Cross-Boundary Rules
 
