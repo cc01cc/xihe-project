@@ -663,6 +663,48 @@ public class ChatController {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
         }
+        // task-110 (Lead ruling B; source cp-1 task-106): "as = my own participant row" with NO TO
+        // target is a DEAD LETTER, not a mode. The chain, all of it upstream of the HTTP call:
+        //   as = the caller's own HUMAN row => responder.principalKind = HUMAN
+        //   => ChatSubmissionService:203-207 stores agent_principal_id = NULL (V92 FK: a human id can
+        //      never be stored) => :1787 resolveSystemInstructionsForRun(null)
+        //   => AgentPrincipalService:302-303 parseUuid(null, INVALID_AGENT_PRINCIPAL) THROWS at :1844
+        //   => the upstream request is never built => the Agent never receives anything, while the user
+        //      message IS persisted and the error code points at principal CONFIGURATION, which is not
+        //      where the problem is.
+        // Mention hand-off cannot save it either: with an explicit as, MentionParser:125 keeps
+        // suppressesPrimary false on purpose (an explicit as is never suppressed by mentions), so the
+        // fan-out at :963-970 never runs and mentioned agents are not woken.
+        //
+        // Why refuse instead of closing it as SUPPRESSED_NO_RESPONDER (option A): D-1273 gives that
+        // terminal state the meaning THE CALLER EXPLICITLY ASKED FOR NO ANSWER (explicit TO=[]).
+        // Reaching it from an accidental dead end would dress a broken request up as a designed one:
+        // the caller never said "do not answer", they said "I am speaking as myself".
+        //
+        // Why the cell is exactly TO-absent: with TO non-empty as must equal TO[0] (:577-581), so
+        // "as = my own row" is already 400 PARTICIPANT_SELF_TARGET there (task-104), and an explicit
+        // TO=[] must keep its D-1273 meaning (pinned by the explicit-empty-TO cases). Nothing else can
+        // reach the NULL-responder dispatch, so this is the only place the refusal is needed - and it
+        // is a precondition, evaluated before any run or message row exists.
+        if (asParticipantId != null && !asParticipantId.isBlank()
+                && toParticipantIds.isEmpty() && !explicitNoResponder) {
+            SessionParticipantService.Responder selfAs =
+                    sessionParticipantService.responderFor(UUID.fromString(sessionId), asParticipantId);
+            // Kind-agnostic predicate, same source as task-104: an AGENT row carries an agent principal
+            // id, which never equals a user id, so "as = an agent" + no TO stays untouched.
+            if (selfAs != null && isSelfPrincipal(selfAs.principalId(), userId)
+                    && selfAs.participantId() != null
+                    && selfAs.participantId().toString().equalsIgnoreCase(asParticipantId)) {
+                logger.info("[LIFECYCLE] service=cp event=chat_as_self_without_target requestId={} "
+                                + "sessionId={} participantId={}", currentRequestId(), sessionId,
+                        selfAs.participantId());
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                        "AS_SELF_WITHOUT_TARGET",
+                        "asParticipantId names the caller's own participant while toParticipantIds "
+                                + "is absent: nothing could answer");
+            }
+        }
+
         // PLAN-0665 M1/Q3 + task-65: every explicit TO target is authorized for DELIVERY (roster
         // membership + enabled), never as a speak-as bypass — a selector must not become an
         // impersonation door.

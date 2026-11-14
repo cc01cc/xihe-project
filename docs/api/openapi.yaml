@@ -1902,6 +1902,16 @@ paths:
             that is the normal fan-out shape (the submission Run belongs to a target), not a
             contradiction. Mentioning your own name in `content` is not a self-delivery and is never
             refused: the caller's own row is dropped from the mention and cc roster instead.
+            AS_SELF_WITHOUT_TARGET when `asParticipantId` names the caller's own participant row AND
+            `toParticipantIds` is absent (task-110). That combination used to be ACCEPTED and then die
+            asynchronously: a HUMAN responder clears `chat_runs.agent_principal_id` (it can never hold a
+            user id — the column has a FK to agent_principals), so the run was assembled with no
+            principal and refused as INVALID_AGENT_PRINCIPAL — a code that points at principal
+            configuration, which is not where the problem is — after the user message had already been
+            persisted. It is refused at admission now, before any row exists. An explicit
+            `toParticipantIds: []` is NOT this case: it keeps its own meaning (202 +
+            terminalOutcome=suppressed_no_responder). `as` naming an AGENT with no TO remains a normal
+            speak-as submission.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }

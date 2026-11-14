@@ -2910,6 +2910,111 @@ class ChatControllerTest extends AbstractH2Test {
                 "cc to yourself carries no information — it must not become a notify row");
     }
 
+    // ── task-110: as = my own participant + TO absent is a dead letter, refused at admission ───────
+
+    /**
+     * task-110 judgement ①: naming your own participant as the speaker while giving TO no target used
+     * to be ACCEPTED and then die asynchronously: responder = HUMAN ⇒ {@code agent_principal_id = NULL}
+     * ⇒ {@code resolveSystemInstructionsForRun(null)} ⇒ {@code AgentPrincipalService.parseUuid(null)}
+     * throws {@code INVALID_AGENT_PRINCIPAL} ⇒ the Agent never received an HTTP request, while the user
+     * message stayed persisted and the error code pointed at principal configuration. Asserting the
+     * message count is what separates "refused before persistence" from "accepted, then failed".
+     */
+    @Test
+    void chat_asOwnParticipantWithoutTo_isRefusedBeforeAnyRun() {
+        SessionParticipant self = seedSelfHumanMember(5);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChat("我自己说一句，但没指定谁来答", self.getId().toString());
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(),
+                () -> "as=self + no TO must be refused at admission: " + response.getBody());
+        Map body = java.util.Objects.requireNonNull(response.getBody());
+        assertEquals("AS_SELF_WITHOUT_TARGET", body.get("code"));
+        // The old failure mode still surfaced a code — the point is that it named the WRONG thing.
+        assertNotEquals("INVALID_AGENT_PRINCIPAL", body.get("code"),
+                "the new refusal must never borrow the principal-configuration code");
+        assertEquals(0, sessionMessageCount(), "the refusal precedes persistence");
+        assertEquals(0, sessionRunCount(), "and no run row exists to die later");
+    }
+
+    /**
+     * task-110 judgement ② (do-not-break): an EXPLICIT {@code toParticipantIds: []} keeps its D-1273
+     * meaning even when `as` names the caller — "I deliberately asked for no answer" is a designed
+     * terminal state, and it never reaches dispatch, so there is no dead letter to fix here.
+     */
+    @Test
+    void chat_asOwnParticipantWithExplicitEmptyTo_staysSuppressedNoResponder() {
+        SessionParticipant self = seedSelfHumanMember(5);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithToAs("我说话，也不要回答", List.of(),
+                self.getId().toString());
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "explicit TO=[] keeps its own meaning: " + response.getBody());
+        Map body = java.util.Objects.requireNonNull(response.getBody());
+        assertEquals("succeeded", body.get("status"));
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, body.get("terminalOutcome"),
+                "D-1273: an explicit empty selection is a designed suppression, not the new 400");
+        // The suppressed path still persists ONE user_submission run — it is terminalized, never
+        // dispatched — so the proof that nothing can die later is the durable outcome + the
+        // NULL responder stamp, not a zero run count.
+        String runId = (String) body.get("runId");
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, jdbcTemplate.queryForObject(
+                        "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                        String.class, runId),
+                "the durable row carries the same outcome token");
+        assertNull(jdbcTemplate.queryForObject(
+                        "SELECT CAST(agent_principal_id AS VARCHAR) FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                        String.class, runId),
+                "the suppressed run has no responder stamp (nothing was dispatched, so nothing dies)");
+        assertEquals(0, wakeDispatchPayloads().size(), "no hand-off was attempted at all");
+    }
+
+    /**
+     * task-110 judgement ③ (do-not-break): `as` naming an AGENT participant with no TO is the ordinary
+     * speak-as path — the agent answers its own run. The guard is kind-agnostic over principalId, and
+     * an agent principal id never equals a user id, so this must stay untouched.
+     */
+    @Test
+    void chat_asAgentWithoutTo_stillDispatchesToThatAgent() {
+        String primaryId = primaryParticipantId();
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChat("以 Primary 身份发言", primaryId);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "as=AGENT + no TO is the normal path: " + response.getBody());
+        Map body = java.util.Objects.requireNonNull(response.getBody());
+        assertEquals(1, sessionRunCount());
+        String runId = (String) body.get("runId");
+        assertNotNull(runId);
+        assertNotNull(jdbcTemplate.queryForObject(
+                "SELECT CAST(agent_principal_id AS VARCHAR) FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                String.class, runId),
+                "the run belongs to the agent it dispatched to (not a NULL-responder dead letter)");
+    }
+
+    /**
+     * task-110 judgement ④ (precedence): with a NON-empty TO the same speaker is already refused by
+     * task-104 as PARTICIPANT_SELF_TARGET (:577-581 forces as == TO[0]). The new guard must not take
+     * that cell over — two refusals for two different mistakes, each naming its own cause.
+     */
+    @Test
+    void chat_asOwnParticipantWithTo_keepsTheSelfTargetCode() {
+        SessionParticipant self = seedSelfHumanMember(5);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithToAs("发给我自己",
+                List.of(self.getId().toString()), self.getId().toString());
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("PARTICIPANT_SELF_TARGET",
+                java.util.Objects.requireNonNull(response.getBody()).get("code"),
+                "the TO-facing refusal keeps its own code; the new one is only for TO-absent");
+    }
+
     @Test
     void chat_absentTo_keepsLegacySingleResponderPath() {
         seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,
