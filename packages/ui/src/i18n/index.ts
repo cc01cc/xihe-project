@@ -104,6 +104,20 @@ const messages = {
             writeAddMember: "加成员",
             writeRemoveMember: "移成员",
             writeChangeRole: "改角色",
+            // task-44（D-1440 / A 方案）：智能体的权限 / 技能 / 记忆都在工作区里管理 ⇒ 本页只做深链。
+            // 文案纪律（Lead 2026-11-15 裁定）：**不写实现事实** —— 不出现 409、原子名、端点名、
+            // 「工作区行 vs 实例行」这类我们内部怎么存的说法；用户要知道的只是"这件事在工作区里做"。
+            agentOpenTitle: "在目标工作区打开",
+            agentOpenDesc:
+                "这个智能体的权限、技能与记忆都在具体工作区里管理；本页只负责把你送到那个工作区，不在这里重复实现。",
+            agentOpenPickerLabel: "目标工作区",
+            agentOpenButton: "打开智能体面板",
+            agentOpenLoading: "正在读取你可以访问的工作区…",
+            agentOpenError: "读取工作区列表失败，无法确定打开位置。",
+            agentOpenEmpty: "你在任何工作区里都不是成员，暂时没有可打开的位置。",
+            agentOpenHint:
+                "落地后会自动展开这个智能体；在该工作区没有管理权限时，面板只给只读视图。",
+            agentOpenCost: "这里不提供绑定操作：绑定归属取决于你打开的那个工作区。",
             detailTitle: "成员详情",
             detailDesc: "只读视图：工作区成员角色、访问角色绑定、权限可得性与所属单元。",
             detailKindLabel: "类型",
@@ -428,7 +442,13 @@ const messages = {
             // task-550 / Q-i 第二半（用户裁定）：会话头常显。**两半都要在** ——
             // 只写「无文件系统授权限制」会让人以为完全没有边界，而 host 模式下 cwd 仍受 grants 约束
             // （runtime-1 实测 job_engine/mod.rs:1106-1140）。
-            sandboxEnforcement: "无文件系统授权限制（工作区路径边界仍生效）",
+            // task-7（2026-11-15，Lead 裁 **A 版**）：括号里原写「工作区路径边界仍生效」，会被读成
+            // 「文件被限制在工作区内」。实测**只约束 cwd** —— validate_cwd 仅做 canonicalize + 落在
+            // grants 内（:1122 / :1124-1132），Job Object 只管 kill-on-close（win.rs:58-92），全 runtime
+            // 无 CreateRestrictedToken / AppContainer / 完整性级别 ⇒ 改成「只限启动目录，不限读写范围」。
+            // B 版（再补「命令以你的系统账户身份运行」）**被否**：+19 列会触发 1024 档折行（卡面停止
+            // 条件），且括号里那半句已足以表达「没有沙箱保护」；若后续实测 1024 不折行可另立小卡。
+            sandboxEnforcement: "无文件系统授权限制（只限启动目录，不限读写范围）",
             // task-550 / Q-i 第二半（用户裁定）：会话头常显的第二句。
 
             sandboxEnforcementSnapshot: "决策快照照冻，仅标注 enforcement=none",
@@ -3774,6 +3794,22 @@ const messages = {
             writeAddMember: "Add member",
             writeRemoveMember: "Remove member",
             writeChangeRole: "Change role",
+            // task-44 (D-1440 / option A): an agent's permissions, skills and memory are managed
+            // inside a workspace, so this page only deep-links. Same copy discipline as zh: no
+            // error codes, atom names or endpoints — the user only needs "this happens in a workspace".
+            agentOpenTitle: "Open in a workspace",
+            agentOpenDesc:
+                "This agent's permissions, skills and memory are all managed inside a specific workspace; this page only takes you there and does not duplicate them.",
+            agentOpenPickerLabel: "Target workspace",
+            agentOpenButton: "Open agent panel",
+            agentOpenLoading: "Reading the workspaces you can access…",
+            agentOpenError: "Could not list workspaces, so the target cannot be determined.",
+            agentOpenEmpty:
+                "You are not a member of any workspace, so there is nothing to open yet.",
+            agentOpenHint:
+                "The panel opens with this agent expanded; without management rights there it stays read-only.",
+            agentOpenCost:
+                "No binding happens here: which workspace you open decides where a binding would land.",
             detailTitle: "Member detail",
             detailDesc:
                 "Read-only: workspace member role, access-role bindings, permission visibility and org unit.",
@@ -4095,8 +4131,11 @@ const messages = {
             panelCode: "Code",
             panelChanges: "Changes",
             // task-550: session-header annotation; both halves are mandatory (see zh comment).
+            // task-7 (2026-11-15, Lead ruled option A): the old parenthetical "workspace path
+            // boundary still applies" reads as "files are confined to the workspace", but the engine
+            // only constrains the start directory — see the zh comment for the three source anchors.
             sandboxEnforcement:
-                "No filesystem authorization checks (workspace path boundary still applies)",
+                "No filesystem authorization checks (start directory only; read/write scope is not limited)",
             sandboxEnforcementSnapshot:
                 "Decision snapshot is frozen; it only records enforcement=none",
 
