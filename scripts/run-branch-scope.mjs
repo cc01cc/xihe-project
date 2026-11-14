@@ -9,7 +9,7 @@
  * 实测 2026-11-11 队列头 c0d8f056 的 W2 门梯：check:branch-scope exit=1 / 0.2s / MODULE_NOT_FOUND。
  *
  * 做法：用 `git rev-parse --git-common-dir` 定位**主仓库**（worktree 与主 checkout 返回同一个值，
- * 实测 H:/zeogit/one/A03-xihe/.git），再取它的父目录 = ONE 工作区根，脚本就从那里解析。
+ * 实测 `<ONE>/A03-xihe/.git`，<ONE> = ONE 工作区根；task-119 起不写本机盘符），再取它的父目录 = ONE 工作区根，脚本就从那里解析。
  * 这样主 checkout / 任意 worktree / 任意盘符都不依赖相对路径深度。
  *
  * 用法：node scripts/run-branch-scope.mjs --repo . [--branch <ref>] [--json]

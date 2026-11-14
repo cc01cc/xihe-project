@@ -45,7 +45,7 @@ export const REUSE_BUDGET_SECONDS = 60;
  *   **end-to-end rebuild = 77.26 s** — `[wait-for-cp] CP ready ... after 77.26s (budget 240.0s,
  *   rebuild path)`, with runtime cargo **cold-compiling in parallel** (near worst-case CPU
  *   contention on this machine; wall start→CP health 200 = 89.2 s). Evidence:
- *   `H:/zeogit/one/.tmp/xh/task-180/{SUMMARY.md,rebuild.log}`; the old fixed 60 s window died
+ *   `one/.tmp/xh/task-180/{SUMMARY.md,rebuild.log}`（相对 ONE 工作区根；task-119 起不写本机盘符）; the old fixed 60 s window died
  *   exactly here on 2026-11-11 (task-178 event ①: ECONNREFUSED after 60.0 s);
  *   support  `mvn -o -q -DskipTests clean test-compile` = 22.5 s solo (C: build dir, warm maven
  *             repo, no competing compile) — the compile phase alone, not the end-to-end number;

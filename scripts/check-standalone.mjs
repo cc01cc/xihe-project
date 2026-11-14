@@ -230,11 +230,23 @@ function scanForbiddenPaths(root) {
     { re: /[A-Za-z]:[\\/]+zeolib\b/i, label: "this machine's shared cache (…:\\zeolib)" },
     { re: /C:[\\/]+Progra~1/i, label: "hardcoded Windows program-file path (C:\\Progra~1)" },
   ];
+  // 机器路径"有意例外"清单（task-119；每条带理由与日期）。
+  // 判据：路径是**夹具/样本/历史说明**用途 ⇒ 进本表；是**运行期解析**用途 ⇒ 真违规，改代码不改门。
+  const MACHINE_LAYOUT_EXEMPT = [
+    { prefix: "docs/", why: "历史说明允许引用旧路径（门初建时的既有豁免）", since: "2026-11-13" },
+    { prefix: "packages/ui/e2e/", why: "e2e fixture 里的既有样例字符串（门初建时的既有豁免）", since: "2026-11-13" },
+    {
+      prefix: "packages/ui/src/preview/",
+      why: "预览 mock 的**样本数据**：mockData.ts:851-852 自述「证明本机真实 tool arguments 里盘符路径就长这样」⇒ 改成相对路径会让该 mock 失去存在意义",
+      since: "2026-11-15",
+    },
+  ];
   let sampleDrivePaths = 0;
   for (const file of walkFiles(root)) {
     const rel = relative(root, file).replaceAll("\\", "/");
-    // 排除理由见文件头注释：docs/ 允许历史说明；packages/ui/e2e/** 是既有 fixture 字符串。
-    const fixtureOrHistory = rel.startsWith("docs/") || rel.startsWith("packages/ui/e2e/");
+    // 排除面：**只对 MACHINE_LAYOUT 生效**（XIHE_ONE_ROOT / legacy message / parentRef 对下列路径仍全量生效）。
+    // 每条必须带理由与日期 —— 裸路径表会变成"没人记得为什么"的豁免黑洞（task-119）。
+    const machineLayoutExempt = MACHINE_LAYOUT_EXEMPT.find((entry) => rel.startsWith(entry.prefix));
     let text = "";
     try {
       text = readFileSync(file, "utf8");
@@ -249,17 +261,19 @@ function scanForbiddenPaths(root) {
       if (/cannot locate the one workspace root/.test(line)) {
         violations.push(`${rel}:${index + 1} legacy ONE-root error message`);
       }
-      if (fixtureOrHistory) return;
-      for (const pattern of MACHINE_LAYOUT) {
-        if (pattern.re.test(line)) violations.push(`${rel}:${index + 1} ${pattern.label}`);
-      }
-      if (/\b[A-Za-z]:[\\/]/.test(line)) sampleDrivePaths += 1;
+      // parentRef 与豁免面**无关**：任何文件引用仓外脚本都会在单 clone 里炸，豁免面不再跳它
+      // （2026-11-15 task-119 实测：docs/ + e2e/ + preview/ 三处豁免面里 parentRef 缺失目标数 = 0 ⇒ 收紧无新红）。
       for (const match of line.matchAll(parentRef)) {
         const target = match[1];
         if (!existsSync(join(root, "scripts", target))) {
           violations.push(`${rel}:${index + 1} parent scripts reference whose target is not in repo: ${target}`);
         }
       }
+      if (machineLayoutExempt) return; // 豁免面只豁免**机器布局**这一类；XIHE_ONE_ROOT / legacy / parentRef 已在上方全量判过
+      for (const pattern of MACHINE_LAYOUT) {
+        if (pattern.re.test(line)) violations.push(`${rel}:${index + 1} ${pattern.label}`);
+      }
+      if (/\b[A-Za-z]:[\\/]/.test(line)) sampleDrivePaths += 1;
     });
   }
   report.sampleDrivePaths = sampleDrivePaths;
@@ -272,7 +286,7 @@ try {
     ok = checkStandaloneRuntime(report.extractRoot);
     const violations = scanForbiddenPaths(report.extractRoot);
     report.violations = violations;
-    record("forbidden-path scan（docs/ 豁免）", {
+    record("forbidden-path scan（例外面 3 条：docs/ · packages/ui/e2e/ · packages/ui/src/preview/，见 MACHINE_LAYOUT_EXEMPT）", {
       ok: violations.length === 0,
       note: violations.length === 0 ? "0 violation" : `${violations.length} violation(s)`,
       violations: violations.slice(0, 40),
