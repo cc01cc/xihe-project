@@ -649,6 +649,14 @@ pub struct MxcPolicyRequest {
 /// process environment and the sandbox. The previous implementation merged
 /// `std::env::vars()` whenever the caller supplied any variable, which handed
 /// the child every CP/agent/provider secret the Runtime had loaded.
+///
+/// Do not treat this as 「the minimal set we chose」: MXC's `process.env`
+/// **replaces** the child environment instead of extending it. Measured
+/// 2026-11-14 (task-545): a policy carrying a single variable and no
+/// `SystemRoot`/`PATH` fails with `CreateProcessW(PROC_THREAD_ATTRIBUTE_SECURITY_ENVIRONMENT)`
+/// `failed: WIN32_ERROR(203)`. So these entries are the minimum the child needs
+/// to launch at all — adding a variable is not harmless, and removing one breaks
+/// process creation.
 pub const SANDBOX_ENV_ALLOWLIST: &[&str] = &[
     "PATH",
     "Path",
@@ -681,6 +689,26 @@ pub fn sandbox_env(extra: &BTreeMap<String, String>) -> BTreeMap<String, String>
     environment.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     environment
 }
+
+/// Policy keys that make MXC's isolation-tier choice depend on the requested
+/// policy instead of only on host capability.
+///
+/// `base_container_runner.rs:643-664` (`is_usable_for_request`) reads them:
+/// `capture_denials.is_some()` switches to the native-capture path, while
+/// `denied_paths`/`enumerate_paths` require the PSEC contract to support them; when
+/// it cannot, MXC falls back to AppContainer + host DACL mutation (official
+/// `docs/process-container/os-version-support.md:40-43, 51-56`).
+///
+/// task-562 (2026-11-14): the generated policy deliberately stays free of these
+/// keys. That is what makes 「the tier is identical for every job on this host」
+/// true, and therefore what makes the per-job tier readout unnecessary. If a key
+/// is ever added, that premise dies and `mxc_policy_never_tiers_on_policy_content`
+/// goes red — then re-decide whether per-job tier logging becomes necessary.
+pub const TIER_DEPENDENT_POLICY_KEYS: &[(&str, &str)] = &[
+    ("filesystem", "deniedPaths"),
+    ("filesystem", "enumeratePaths"),
+    ("processContainer", "captureDenials"),
+];
 
 pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
     let command_line = std::iter::once(request.program.clone())
@@ -1332,6 +1360,81 @@ mod tests {
         assert_eq!(
             unknown.degradation_reason().as_deref(),
             Some("isolation tier unknown")
+        );
+    }
+
+    /// task-562 tripwire: reports which tier-dependent keys a policy carries.
+    /// Empty for everything `build_mxc_policy` produces today.
+    fn tier_dependent_keys(policy: &serde_json::Value) -> Vec<String> {
+        super::TIER_DEPENDENT_POLICY_KEYS
+            .iter()
+            .filter(|(section, key)| policy.get(*section).and_then(|v| v.get(*key)).is_some())
+            .map(|(section, key)| format!("{section}.{key}"))
+            .collect()
+    }
+
+    /// task-562: the generated MXC policy must not carry `deniedPaths` /
+    /// `enumeratePaths` / `captureDenials`.
+    ///
+    /// Why: those keys make the MXC isolation tier depend on the requested
+    /// policy instead of only on host capability (`base_container_runner.rs:643-664`;
+    /// official `os-version-support.md:40-43, 51-56`), so one host could run some
+    /// jobs on T1 BaseContainer and others on T3 AppContainer + DACL mutation.
+    /// Today every job on a host lands on the same tier, which is why per-job tier
+    /// logging is not wired (task-545 decision, 2026-11-14).
+    ///
+    /// If this test fails: re-decide whether per-job tier logging became necessary
+    /// (passing `--log-file` in `job_mxc_adapter`) instead of deleting the assertion.
+    #[test]
+    fn mxc_policy_never_tiers_on_policy_content() {
+        let request =
+            |env: BTreeMap<String, String>, readonly: Vec<PathBuf>| super::MxcPolicyRequest {
+                program: r"C:\\tools\\node\\node.exe".to_string(),
+                args: vec!["-e".to_string(), "1".to_string()],
+                cwd: PathBuf::from(r"C:\\ws"),
+                env,
+                timeout_ms: 5_000,
+                read_only_roots: readonly,
+                read_write_roots: vec![PathBuf::from(r"C:\\ws")],
+            };
+        let mut with_env = BTreeMap::new();
+        with_env.insert("XH_CALLER_MARKER".to_string(), "1".to_string());
+        let variants = [
+            super::build_mxc_policy(&request(BTreeMap::new(), Vec::new())),
+            super::build_mxc_policy(&request(with_env, Vec::new())),
+            super::build_mxc_policy(&request(
+                BTreeMap::new(),
+                vec![PathBuf::from(r"C:\\shared")],
+            )),
+        ];
+        for policy in variants {
+            let found = tier_dependent_keys(&policy);
+            assert!(
+                found.is_empty(),
+                "generated MXC policy carries tier-dependent keys {found:?}; see task-562"
+            );
+        }
+    }
+
+    /// task-562 mutation check: the tripwire must fire on a policy that carries
+    /// the keys, otherwise it could silently never trigger.
+    #[test]
+    fn tier_tripwire_detects_a_hand_written_violation() {
+        let mut policy = serde_json::json!({
+            "filesystem": { "readonlyPaths": [], "readwritePaths": [] },
+            "processContainer": { "capabilities": [] },
+        });
+        policy["filesystem"]["deniedPaths"] = serde_json::json!(["C:/secrets"]);
+        policy["filesystem"]["enumeratePaths"] = serde_json::json!(["C:/shared"]);
+        policy["processContainer"]["captureDenials"] = serde_json::json!({ "mode": "block" });
+        let found = tier_dependent_keys(&policy);
+        assert_eq!(
+            found,
+            vec![
+                "filesystem.deniedPaths".to_string(),
+                "filesystem.enumeratePaths".to_string(),
+                "processContainer.captureDenials".to_string(),
+            ]
         );
     }
 
