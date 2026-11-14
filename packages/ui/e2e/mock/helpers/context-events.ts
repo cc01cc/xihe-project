@@ -208,3 +208,74 @@ export async function pushWorkspaceEvent(page: Page, name: string, data: unknown
         [name, data] as const,
     );
 }
+
+
+/**
+ * 会话聊天流（`GET /api/v1/events?sessionId=…`，见 `useSSE.ts:821`）的**长连接**桩 —— task-62。
+ *
+ * <p><b>为什么需要它</b>：mock 车道原来的默认桩是 `page.route("**\/api/v1/events**")` 回
+ * `"retry: 5000\n\n"` 的**有限体**。`route.fulfill` 必定结束响应体 ⇒ 客户端 `clean_close` ⇒
+ * `isConnected=false` ⇒ `SSEStream.vue:310-314` 直接 `console.warn` 后 return ⇒
+ * **`POST /api/v1/chat` 一次都不发**。于是「忘了在 `setupMockAuth` 传 `sse`」这件事，
+ * 会让整条发送用例**静默变成一个空测试**：点发送、界面无反应、用例只要不断言 wire 就照样绿。</p>
+ *
+ * <p><b>只截 `sessionId=` 那一支</b>：`/api/v1/events` 同时被工作区上下文流用
+ * （`?workspaceId=…`）。那条流已经有自己的桩（`installWorkspaceEventStream` 走
+ * `/api/v1/workspaces/{id}/events`；上下文流由 `installContextEventStream` 负责），
+ * 这里只接管「聊天流」，避免把别人的读面一起改掉。</p>
+ *
+ * <p><b>可覆盖</b>：调用方传 `sse: false`（或设 `XH_FIXTURE_CHAT_EVENTS=finite`）时**不装**
+ * 本桩，退回旧的有限体口径 —— 需要断言「连接没建立」或靠 `page.on("request")` 观察这条 URL
+ * 的 spec 必须显式选择旧口径（in-page `fetch` 覆盖不会在网络上留下 request 事件）。</p>
+ */
+export async function installChatSessionEventStream(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+        const encode = (value: string) => new TextEncoder().encode(value);
+        (window as unknown as Record<string, unknown>).__pushChatEvent = (
+            name: string,
+            data: unknown,
+        ) => {
+            controller?.enqueue(encode(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
+        };
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (input, init) => {
+            const url =
+                typeof input === "string"
+                    ? input
+                    : input instanceof Request
+                      ? input.url
+                      : String(input);
+            // 只接管聊天流：带 sessionId 的那一支（上下文流是 workspaceId，另有桩）。
+            if (url.includes("/api/v1/events") && url.includes("sessionId=")) {
+                const body = new ReadableStream<Uint8Array>({
+                    start(next) {
+                        controller = next;
+                        next.enqueue(encode("retry: 1000\n\n"));
+                    },
+                    cancel() {
+                        controller = null;
+                    },
+                });
+                return new Response(body, {
+                    status: 200,
+                    headers: { "Content-Type": "text/event-stream" },
+                });
+            }
+            return originalFetch(input, init);
+        };
+    });
+}
+
+/** 往页面推一条聊天流事件（`event: <name>` + JSON data）。留给需要逐帧驱动的用例。 */
+export async function pushChatEvent(page: Page, name: string, data: unknown): Promise<void> {
+    await page.evaluate(
+        ([eventName, payload]) => {
+            const w = window as unknown as {
+                __pushChatEvent?: (name: string, data: unknown) => void;
+            };
+            w.__pushChatEvent?.(eventName, payload);
+        },
+        [name, data] as const,
+    );
+}
