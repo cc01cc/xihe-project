@@ -543,8 +543,13 @@ public class SessionParticipantService {
      *
      * <p>M1 accepts <b>AGENT participants only</b>: a human target is refused with
      * {@code 400 INVALID_REQUEST} (not 403 — the caller may legitimately speak as themselves; this
-     * is a selector that is not supported yet). Human TO is blocked on BL-238 (the wake path refuses
-     * every human participant) and is a separate plan.</p>
+     * is a selector that is not supported yet). The refusal is the PLAN-0665 Q3 fan-out invariant,
+     * <b>not</b> a BL-238 dependency: BL-238 was closed by PLAN-0660 M4 (2026-11-04) and the wake
+     * path does notify humans now ({@code WakeDispatchService.fire} -> {@code notifyHuman}). What is
+     * still missing is the <b>accounting</b>: a human target's outcome is {@code notify}, which is
+     * not {@code deferred}, so {@code WakeFanOutService.targetedFanOut} would file it under
+     * {@code failedTargets[]} and log {@code to_target_dispatch_failed} at ERROR. Human TO opens
+     * when the 202 contract gains a notified bucket — a wire change, not a guard removal.</p>
      *
      * @return authorized rows in the caller's selection order (first-seen, already de-duplicated)
      */
@@ -560,8 +565,9 @@ public class SessionParticipantService {
                     sessionId, target.toString());
             if (!SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "toParticipantIds currently accepts AGENT participants only; "
-                                + "human targets are a later plan");
+                        "toParticipantIds currently accepts AGENT participants only; a human target "
+                                + "is a notification, not a run, and the TO accounting has no "
+                                + "notified bucket yet");
             }
             authorized.add(row);
         }

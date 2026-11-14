@@ -198,6 +198,26 @@ class SessionReadAccessTest {
         assertEquals("WORKSPACE_FORBIDDEN", owned.getCode());
     }
 
+    /**
+     * D-1436 (task-48 phase-1 finding): a workspace-less session has no workspace tier to consult,
+     * so the manager lookup answers {@code false} instead of parsing a null workspace id.
+     *
+     * <p>The manager tier is scoped by {@code role_bindings.scope_type ∈ {instance, workspace}}
+     * (V87:49-52) — there is no session-scoped role binding, so "no workspace context" cannot mean
+     * "manager". Before this guard the null id flowed into
+     * {@code WorkspaceService.isWorkspaceMember} → {@code UUID.fromString(null)} (NPE), which the
+     * roster face surfaced as a 500 to an invited HUMAN.</p>
+     */
+    @Test
+    void workspacelessSessionManagerLookupAnswersFalseInsteadOfNpe() {
+        when(session.getWorkspaceId()).thenReturn(null);
+        when(grants.allowsUserOnly(any())).thenReturn(false);
+
+        assertFalse(access.canManage(INVITED, null, session),
+                "a workspace-less session has no manager tier; false, never an exception");
+        verify(workspaces, never()).isWorkspaceMember(any(), any());
+    }
+
     @Test
     void ownerGuardDoesNotConsultParticipantOrGrantTables() {
         access.requireOwned(OWNER, WORKSPACE, SESSION_ID.toString());

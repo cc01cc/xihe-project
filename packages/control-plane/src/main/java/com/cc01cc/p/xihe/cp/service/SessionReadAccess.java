@@ -106,9 +106,9 @@ public class SessionReadAccess {
         boolean invitedHuman = !owner && actorUuid != null && participantRepository
                 .existsBySessionIdAndPrincipalKindAndPrincipalIdAndDisabledAtIsNull(
                         session.getId(), SessionParticipant.KIND_HUMAN, actorUuid);
-        // The manager tier needs a workspace: canManage -> WorkspaceService.isWorkspaceMember
-        // parses workspaceId as a UUID (WorkspaceService.java:306) and would NPE on null. A
-        // workspace-less session has no workspace to manage, so its roster stays owner/invited.
+        // The manager tier needs a workspace: canManage answers false without a workspace context
+        // (D-1436 guards the null id instead of letting it reach WorkspaceService). A workspace-less
+        // session has no workspace to manage, so its roster stays owner/invited.
         // Not a regression: these rows were unreachable (404/409) before this change.
         boolean manager = !owner && !invitedHuman && !workspaceless
                 && canManage(actorId, workspaceId, session);
@@ -140,6 +140,10 @@ public class SessionReadAccess {
      * the roster guard and any future caller cannot drift. Requires
      * {@code MANAGE_WORKSPACE_AGENTS} at workspace scope or {@code MANAGE_WORKSPACE_MEMBERS} at
      * instance scope (the atom-level replacement for the old administrator-name bypass).
+     *
+     * <p>Without a workspace context (a workspace-less session, D-1436) the workspace tiers are not
+     * reachable, so the answer is {@code false} — the owner and the instance atom are still decided
+     * on their own terms above it.</p>
      */
     public boolean canManage(String actorId, String workspaceId, Session session) {
         if (actorId == null) {
@@ -154,6 +158,16 @@ public class SessionReadAccess {
                 ToolShape.OPAQUE, actorId, null, session.getId().toString()));
         if (instanceAdministrator) {
             return true;
+        }
+        // D-1436 (task-48 phase-1 finding): a workspace-less session has no workspace tier. The
+        // manager tier is *workspace*-scoped by construction (role_bindings.scope_type is exactly
+        // {instance, workspace}, V87:49-52 — there is no session-scoped binding), so "no workspace
+        // context" can only mean "not a manager". Falling through parsed the null id in
+        // WorkspaceService.isWorkspaceMember (WorkspaceService.java:317) and threw NPE, which the
+        // roster face (SessionParticipantService.list -> the capabilities block) turned into a 500
+        // for an invited HUMAN reading a workspace-less session.
+        if (workspaceId == null || workspaceId.isBlank()) {
+            return false;
         }
         if (!workspaceService.isWorkspaceMember(workspaceId, actorId)) {
             return false;

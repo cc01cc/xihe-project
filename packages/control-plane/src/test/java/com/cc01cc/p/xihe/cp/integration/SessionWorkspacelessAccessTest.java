@@ -321,6 +321,32 @@ class SessionWorkspacelessAccessTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * D-1436 (task-48 phase-1 finding, shipped ahead of the feature): an invited HUMAN opening the
+     * roster of a workspace-less session answers 200, not a 500.
+     *
+     * <p>Reachable before any new feature landed: the owner may already add a HUMAN participant to a
+     * workspace-less session, and that guest may read it (owner OR enabled HUMAN participant, D1/D5).
+     * {@code SessionParticipantService.list} then asks {@code canManage(actor, null, session)} for
+     * the capability block; the null workspace reached {@code WorkspaceService.isWorkspaceMember}
+     * and its {@code UUID.fromString(workspaceId)} (WorkspaceService.java:317) threw NPE.</p>
+     *
+     * <p>The guest owns no workspace on purpose: with one, the interceptor's ambient fallback would
+     * supply a non-null id and hide the defect behind the shipped 403.</p>
+     */
+    @Test
+    void invitedHumanReadsTheRosterOfAWorkspacelessSessionWithoutAnyWorkspace() throws Exception {
+        AuthResponse owner = register("access-roster-owner");
+        AuthResponse guest = register("access-roster-guest");
+        Session session = saveSession(null, owner.getUser().getId(), "independent roster");
+        saveParticipant(session.getId(), guest.getUser().getId(), null);
+
+        mockMvc.perform(authorized(get("/api/v1/sessions/" + session.getId() + "/participants"), guest, null))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.participants").isArray())
+                .andExpect(jsonPath("$.capabilities.manage").value(false));
+    }
+
     @Test
     void rosterAndDerivedStateKeepTheWorkspaceBoundary() throws Exception {
         AuthResponse owner = register("access-aux-ws");
