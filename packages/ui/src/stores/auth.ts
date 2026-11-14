@@ -533,6 +533,12 @@ export const useAuthStore = defineStore("auth", () => {
                 return;
             }
             const current = await api.getWorkspace(tabWorkspaceId);
+            // task-601：**await 之后要复核 tab 上下文**。进入 ws-less（独立会话）时
+            // `enterWorkspaceless()` 会把 ref 与 sessionStorage 两份一起清，但本函数在 await 前
+            // 就捕获了 `tabWorkspaceId`；旧写法直接把结果写回去 ⇒ 已清空的上下文被「复活」，
+            // 之后 approvals 轮询与 MCP 握手就继续拿旧工作区身份（ws-less 页上的泄漏源之一）。
+            // 结果只写回给**仍然是发起者**的那个上下文，否则丢弃。
+            if (readTabWorkspaceId() !== tabWorkspaceId) return;
             workspace.value = current;
             writeTabWorkspace(current);
         } catch (cause) {
@@ -555,6 +561,9 @@ export const useAuthStore = defineStore("auth", () => {
         if (!token.value || !tabWorkspaceId) return;
         try {
             const current = await api.getWorkspace(tabWorkspaceId);
+            // task-601：同 hydrateWorkspace —— await 期间上下文可能已被清空（进入 ws-less），
+            // 写回会把旧身份复活，因此只有仍是发起者时才落地。
+            if (readTabWorkspaceId() !== tabWorkspaceId) return;
             workspace.value = current;
             writeTabWorkspace(current);
         } catch (cause) {

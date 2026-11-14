@@ -58,6 +58,31 @@ const pendingPollIntervalMs = 10_000;
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
+ * task-601：轮询的生命周期**跟随工作区上下文**，而不是「壳挂载起、壳卸载停」。
+ *
+ * <p>修前：定时器只在 onMounted 起一次，进入 ws-less（独立会话）上下文后仍在跑；每次 tick 里虽然
+ * 有 `!auth.currentWorkspaceId` 早退，但**进入那一瞬在途的请求**仍带着旧工作区头落地（实测：
+ * `approvals/pending` 在清空 tab 上下文前 3ms 发出）⇒ ws-less 页上出现「上一个工作区的待审批」。</p>
+ *
+ * <p>现在：无上下文 ⇒ 停表 + 取消在途 + 清投影；有上下文 ⇒ 重新起表。取消在途这一步是必要的，
+ * 只停表会让已经发出去的请求继续带着旧身份回来。</p>
+ */
+function stopPendingPolling() {
+    if (pendingPollTimer) {
+        clearInterval(pendingPollTimer);
+        pendingPollTimer = null;
+    }
+    agentStore.abortPendingRefresh();
+}
+
+function startPendingPolling() {
+    stopPendingPolling();
+    refreshPendingApprovals();
+    if (!auth.isAuthenticated || !auth.currentWorkspaceId) return;
+    pendingPollTimer = setInterval(refreshPendingApprovals, pendingPollIntervalMs);
+}
+
+/**
  * PLAN-0753 T3: the navigation panel's resize handle id. reka derives the
  * `data-panel-resize-handle-id` attribute from it, and the bridge locates the
  * handle by the same value in its capture-phase keyboard router.
@@ -248,6 +273,19 @@ watch(
     },
 );
 
+// task-601：工作区上下文一变为空（进入 ws-less / 登出）就停表 + 取消在途；再拿到上下文时重起。
+watch(
+    () => auth.currentWorkspaceId,
+    (workspaceId) => {
+        if (!workspaceId) {
+            stopPendingPolling();
+            agentStore.clearPendingApprovals();
+            return;
+        }
+        startPendingPolling();
+    },
+);
+
 watch(
     () => [auth.user?.id, auth.currentWorkspaceId] as const,
     ([userId, workspaceId], previous) => {
@@ -307,8 +345,7 @@ onMounted(() => {
     void auth.hydrateWorkspace();
     // PLAN-0660 T5.6：已登录才开流（未登录的壳不该对着空 token 起一轮退避重连）。
     if (auth.isAuthenticated) userChannel.start();
-    refreshPendingApprovals();
-    pendingPollTimer = setInterval(refreshPendingApprovals, pendingPollIntervalMs);
+    startPendingPolling();
 });
 
 onUnmounted(() => {
