@@ -277,9 +277,12 @@ describe("CredentialsPanel (PLAN-0498 T1.1/T1.3)", () => {
             ownerType: "WORKSPACE",
             ownerId: WORKSPACE_ID,
         });
-        expect(bodyEl('[data-testid="credentials-scope-note"]')?.textContent).toContain(
-            "owner_type=WORKSPACE",
-        );
+        // task-509（Lead 2026-11-14 裁 ①）：这一句在凭据页**用户可见**，不能把库里的归属列名
+        // （owner_type）印上去。判据反向钉：说清"当前工作区"，且**明写不许出现列名** ——
+        // 「必须出现 Y」抓不到「两个都出现」的半修状态。
+        const scopeNote = bodyEl('[data-testid="credentials-scope-note"]')?.textContent ?? "";
+        expect(scopeNote).toContain("当前工作区");
+        expect(scopeNote).not.toContain("owner_type");
         expect(wrapper.text()).toContain("ws key");
         expect(bodyEl('[data-testid="credentials-workspace-missing"]')).toBeNull();
     });

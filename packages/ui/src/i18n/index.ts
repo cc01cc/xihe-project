@@ -3453,7 +3453,9 @@ const messages = {
             owner: "归属",
             ownerUser: "我的凭据",
             ownerWorkspace: "工作区凭据",
-            scopeWorkspaceNote: "这里只列归属本工作区的凭据（owner_type=WORKSPACE）。",
+            // task-509 补提交（Lead 2026-11-14 裁 ①）：列名不上界面。这句在凭据页可见，
+            // 用户要知道的是「这一屏管哪个工作区」，不是数据库里的归属列叫什么。
+            scopeWorkspaceNote: "这里只列属于当前工作区的凭据。",
             ownerWorkspaceSelect: "选择工作区",
             token: "Token",
             accessKey: "Access Key",
@@ -7148,8 +7150,7 @@ const messages = {
             owner: "Owner",
             ownerUser: "My credentials",
             ownerWorkspace: "Workspace credentials",
-            scopeWorkspaceNote:
-                "This list only shows credentials owned by this workspace (owner_type=WORKSPACE).",
+            scopeWorkspaceNote: "This list only shows credentials that belong to this workspace.",
             ownerWorkspaceSelect: "Select workspace",
             token: "Token",
             accessKey: "Access key",
