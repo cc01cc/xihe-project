@@ -1810,8 +1810,9 @@ const messages = {
         // 里唯一被改的一条（Q4 技能也要分层），其余四屏沿用同一套措辞。
         resources: {
             navGroup: "资源",
-            // 资源模块的中性名（左栏与页面标题共用）；层内名（如「平台智能体」）留给 tab。
-            nameAgents: "智能体",
+            // task-96：`nameAgents`（「智能体」）已删 —— 资源区不再有智能体页（用户裁定
+            // 「智能体是组织成员，不是资源」）。层内名仍在 `settings.ia.resourceAgents`（平台智能体）
+            // 与 `settings.ia.resourceAgentPrincipals`（智能体主体）里，分别被两个新落点复用。
             // D-1432 / task-41：MCP 与技能的「本工作区」层搬回工作区设置后，资源区的指路文案。
             // 语义与 D-1023 的反向一致：不 404、不静默跳走 —— 说明搬到哪了 + 一条直链。
             workspaceLayerMovedTitle: "这项资源的「本工作区」层已迁到工作区设置",
@@ -1852,12 +1853,8 @@ const messages = {
                     WORKSPACE: "本工作区技能",
                     INSTANCE: "全平台技能",
                 },
-                agents: {
-                    USER: "我的主体",
-                    // PLAN-0772 task-203：工作区层 = 成员/绑定面（`WorkspaceAgentsPanel`）。
-                    WORKSPACE: "本工作区智能体",
-                    INSTANCE: "平台智能体",
-                },
+                // task-96：`agents` 段已删 —— `ResourceLayerTabs` 的 `resourceId` 是 `ResourceId`，
+                // 智能体撤出资源面后这个键**物理不可达**（三层标签由落点页各自持有）。
             },
             tabsLabel: "资源层",
             disabledHint: "置灰的层仍留在页面上（不隐藏），点了不会切过去；原因见下。",
@@ -5611,7 +5608,6 @@ const messages = {
         // PLAN-0772 M2: the resources module (a new top-level entry after leaving /settings).
         resources: {
             navGroup: "Resources",
-            nameAgents: "Agents",
             workspaceLayerMovedTitle:
                 "The workspace layer of this resource moved to workspace settings",
             workspaceLayerMovedBody:
@@ -5652,11 +5648,7 @@ const messages = {
                     WORKSPACE: "Workspace skills",
                     INSTANCE: "Platform skills",
                 },
-                agents: {
-                    USER: "My principals",
-                    WORKSPACE: "Workspace agents",
-                    INSTANCE: "Platform agents",
-                },
+                // task-96：`agents` 段已删（与 zh 同步）—— 资源面不再有智能体，层标签键不可达。
             },
             tabsLabel: "Resource layer",
             disabledHint:

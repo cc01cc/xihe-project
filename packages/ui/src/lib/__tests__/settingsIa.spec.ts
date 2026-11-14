@@ -207,12 +207,14 @@ describe("instance ops groups", () => {
     });
 });
 describe("资源×层矩阵（PLAN-0772 M2）", () => {
-    it("五个资源 + 各自的真实层（缺的层不许自己补）", () => {
+    it("四个资源 + 各自的真实层（缺的层不许自己补）", () => {
+        // task-96（用户裁定「智能体是组织成员，不是资源」）：智能体撤出资源面 ⇒ 5 → 4。
+        // 三层落点仍各有页面，但**不在资源区**（个人 → `/members`、平台 → 实例层设置页、工作区不变），
+        // 旧 URL 由 `router/index.ts` 302 承接；判据在 `router/__tests__/agentLandingRoutes.spec.ts`。
         expect(RESOURCE_DEFS.map((def) => def.id)).toEqual([
             "credentials",
             "mcp",
             "skills",
-            "agents",
             "knowledge",
         ]);
         // 凭据三层都是真实体（`owner_type = USER / WORKSPACE / INSTANCE`，D-1007）。
@@ -227,30 +229,18 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
                 (rule) => rule.layer === "USER",
             ),
         ).toEqual({ layer: "USER" });
-        // 智能体三层（task-203，用户 2026-11-12「成员入口的 agent principal 也别漏了」）：
-        // 个人主体（`agent-principals`）+ **工作区成员/绑定面**（`WorkspaceAgentsPanel`，
-        // 写面 CP 守工作区档原子 `MANAGE_WORKSPACE_AGENTS`）+ 平台智能体（实例层读面开放，
-        // 写面双门由 `InstanceAgentsPanel.canWrite` 守；task-447 去掉 tab 上过窄的能力位门槛）。
-        expect(layersForResource("agents")).toEqual(["USER", "WORKSPACE", "INSTANCE"]);
         // 知识库是后端缺口（G3），一层都没有。
         expect(layersForResource("knowledge")).toEqual([]);
     });
 
-    it("resourceGroups() = 5 条目，且只有 knowledge 是缺口（无 path）", () => {
+    it("resourceGroups() = 4 条目，且只有 knowledge 是缺口（无 path）", () => {
         const items = resourceGroups();
-        expect(items.map((item) => item.id)).toEqual([
-            "credentials",
-            "mcp",
-            "skills",
-            "agents",
-            "knowledge",
-        ]);
+        expect(items.map((item) => item.id)).toEqual(["credentials", "mcp", "skills", "knowledge"]);
         // 硬编码路径：搬家后一律 `/resources/<id>`（层在 ?layer，不进路径段）。
         expect(items.map((item) => item.path)).toEqual([
             "/resources/credentials",
             "/resources/mcp",
             "/resources/skills",
-            "/resources/agents",
             undefined,
         ]);
         const gapped = items.filter((item) => (item.gaps ?? []).length > 0);
@@ -275,9 +265,8 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
     it("深链形态：`?layer=` 大写、层不进路径段", () => {
         expect(resourcePath("skills")).toBe("/resources/skills");
         expect(resourceLayerPath("skills", "WORKSPACE")).toBe("/resources/skills?layer=WORKSPACE");
-        // task-203：智能体工作区层是**可分享深链**（成员/绑定面），大小写与缺省都走同一解析器。
-        expect(resourceLayerPath("agents", "WORKSPACE")).toBe("/resources/agents?layer=WORKSPACE");
-        expect(resolveResourceLayer("agents", "workspace")).toBe("WORKSPACE");
+        // 大小写都收：换 skills（有 WORKSPACE 层）继续钉同一解析器。
+        expect(resolveResourceLayer("skills", "workspace")).toBe("WORKSPACE");
         // 默认层**不因新增层而改变**（仍是个人主体）：工作区层只在显式 `?layer=` 时进入。
         expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
         expect(defaultResourcePath()).toBe("/resources/credentials?layer=USER");
@@ -299,7 +288,7 @@ describe("资源×层矩阵（PLAN-0772 M2）", () => {
         // 挂门槛会让非管理员**连读都读不到**（比看不到按钮严重得多，与 skills 个人层同一裁定）。
         expect(requires).toEqual([{ capability: "instance:admin" }]);
         // 逐条钉「读面开放」不是漏写：这两条实例层规则**必须**只有 layer 字段。
-        for (const id of ["mcp", "agents", "skills"] as const) {
+        for (const id of ["mcp", "skills"] as const) {
             expect(
                 RESOURCE_DEFS.find((def) => def.id === id)!.layerRules.find(
                     (rule) => rule.layer === "INSTANCE",

@@ -14,7 +14,8 @@ import { provideSidebarContext } from "@/components/ui/sidebar/utils";
  */
 const messages = {
     "zh-CN": {
-        resources: { navGroup: "资源", nameAgents: "智能体" },
+        // task-96：`nameAgents` 随资源区智能体页一起删（夹具不再替过期文案背书）。
+        resources: { navGroup: "资源" },
         settings: {
             ia: {
                 resourceCredentials: "凭据",
@@ -95,7 +96,8 @@ describe("SettingsResourceNav（资源模块左栏）", () => {
         wrapper.unmount();
     });
 
-    it("routes the four real resources and never links the gap", () => {
+    // task-96：资源由 5 → 4（智能体撤出资源区）⇒ 真链接由 4 → 3，计数徽标由 5 → 4。
+    it("routes the three real resources and never links the gap", () => {
         const wrapper = mountNav();
         const real = wrapper.findAll('[data-testid^="settings-nav-resource-"]').filter((node) => {
             const id = node.attributes("data-testid") ?? "";
@@ -107,14 +109,13 @@ describe("SettingsResourceNav（资源模块左栏）", () => {
             "settings-nav-resource-credentials",
             "settings-nav-resource-mcp",
             "settings-nav-resource-skills",
-            "settings-nav-resource-agents",
         ]);
         // 路径形态的判据在 `settingsIa.spec` 里（`resourceGroups()` 的 path 与 `resourcePath()` 同源）：
         // 这里只锁「哪几条是真链接」，不复制第二份路径字面量（复制就会漂）。
-        expect(real.map((node) => node.text())).toEqual(["凭据", "MCP 服务器", "技能", "智能体"]);
+        expect(real.map((node) => node.text())).toEqual(["凭据", "MCP 服务器", "技能"]);
         // task-293：组标签的条目计数与 `resourceGroups()` 实际条数一致（5 = 4 真 + 1 缺口）。
         // 稿面 S1 一直画着「资源 5」，代码此前没渲染 ⇒ 这一行钉住「稿面画的读数在页面上真的有」。
-        expect(wrapper.get('[data-testid="resources-nav-count"]').text()).toBe("5");
+        expect(wrapper.get('[data-testid="resources-nav-count"]').text()).toBe("4");
         wrapper.unmount();
     });
 

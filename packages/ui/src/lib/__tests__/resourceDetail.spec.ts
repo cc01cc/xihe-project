@@ -12,8 +12,9 @@ describe("resourceDetailPath（资源详情深链）", () => {
         expect(resourceDetailPath("credentials", "USER", "cred-1")).toBe(
             "/resources/credentials/cred-1?layer=USER",
         );
-        expect(resourceDetailPath("agents", "WORKSPACE", "principal-1")).toBe(
-            "/resources/agents/principal-1?layer=WORKSPACE",
+        // task-96：智能体已撤出资源区（没有详情页了）⇒ 换 MCP 的 WORKSPACE 层继续钉「层进 query」。
+        expect(resourceDetailPath("mcp", "WORKSPACE", "srv-1")).toBe(
+            "/resources/mcp/srv-1?layer=WORKSPACE",
         );
     });
 

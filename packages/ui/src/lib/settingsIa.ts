@@ -354,8 +354,16 @@ export type ResourceLayer = "INSTANCE" | "WORKSPACE" | "USER";
 /** 显示顺序 = 层进顺序的**反序**（高 → 低）：我的 → 本工作区 → 全平台。 */
 export const RESOURCE_LAYERS: readonly ResourceLayer[] = ["USER", "WORKSPACE", "INSTANCE"];
 
-/** 资源面的五个资源（一资源一页 + 层 tab，不是每层一页：design.md 决策 2）。 */
-export type ResourceId = "credentials" | "mcp" | "skills" | "agents" | "knowledge";
+/**
+ * 资源面的四个资源（一资源一页 + 层 tab，不是每层一页：design.md 决策 2）。
+ *
+ * <p><b>`agents` 曾在这里是第五个（task-96 摘除）</b>：用户裁定「**智能体是组织成员，不是资源**」
+ * ⇒ 资源区不再有智能体页。三个层的落点各自独立（个人 → 组织成员页 `/members`、平台 →
+ * 实例层 `/settings/instance/agent-principals`、工作区不变），旧 URL 在 `router/index.ts` 里
+ * 302 到这些落点（**不在** `lib/legacyRoutes.ts` —— 那个文件是「一次性删除、不留 redirect」语义）。
+ * 能力面**一个都没删**：三个面板本体原样保留。</p>
+ */
+export type ResourceId = "credentials" | "mcp" | "skills" | "knowledge";
 
 /**
  * 某一层的进入门槛。**只允许两种来源**，都必须是 CP 自己守卫的原文，不许写角色名特判
@@ -445,34 +453,6 @@ export const RESOURCE_DEFS: readonly ResourceDef[] = [
             { layer: "INSTANCE" },
         ],
         defaultLayer: "WORKSPACE",
-    },
-    {
-        id: "agents",
-        // 模块级中性名（**不是** `settings.ia.resourceAgents` = 平台智能体）：资源页标题与左栏标签
-        // 都要对默认层（USER=个人主体）成立，用层内名会得到「/resources/agents 标题写着平台智能体、
-        // 当前层却是我的主体」这种自相矛盾的页面（实测 2026-11-12 探针抓到的）。
-        labelKey: "resources.nameAgents",
-        /**
-         * 三层（task-203，用户 2026-11-12「成员入口的 agent principal 也别漏了」）：
-         * - 个人层 = `agent-principals`（`created_by=self` 的个人视图）；
-         * - **工作区层 = 成员 / 绑定面**（`WorkspaceAgentsPanel`；读面 `WorkspaceAgentController`
-         *   全 `@PreAuthorize("isAuthenticated()")`，写面绑定由 CP 的 `BindingController` /
-         *   `BindingAdminService` 守 **`MANAGE_WORKSPACE_AGENTS`**（工作区档原子，`PermissionAtomCatalog.java:125`
-         *   与 `PrincipalGrantActionCatalog.java:84` 要求具体 workspace UUID）。⇒ tab 门只需要
-         *   「有工作区上下文」，动作原子交给面板与 CP，不在这里重复挡、也不编造原子名）；
-         * - 实例层 = 平台智能体（D-1006 B4）。**读面不挂门槛**：CP
-         *   `InstanceAgentPrincipalController:75` 是 `@PreAuthorize("isAuthenticated()")`（类头 `:33-36`
-         *   明写任何已认证调用者看到同一份列表）；写面才是双门 `INSTANCE_PRINCIPAL_WRITE_GATE`
-         *   （`:61-62` = 能力位 `instance:admin` **and** 原子 `MANAGE_AGENT_PRINCIPALS`），由
-         *   `InstanceAgentsPanel` 的 `canWrite` 守（A 类双门，防删注释在该面板）。task-447（D-1286）
-         *   去掉这里的 `requires`：它比 CP 读面窄，会让非管理员连读都读不到（与 skills 同裁定）。
-         */
-        layerRules: [
-            { layer: "USER" },
-            { layer: "WORKSPACE", needsWorkspace: true },
-            { layer: "INSTANCE" },
-        ],
-        defaultLayer: "USER",
     },
     {
         id: "knowledge",

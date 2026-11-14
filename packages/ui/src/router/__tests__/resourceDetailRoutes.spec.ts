@@ -35,12 +35,13 @@ function location(
 }
 
 describe("资源详情路由表形状（task-228）", () => {
-    it("四个可管理资源各一条详情路由；knowledge 不在「可管理资源」集合里", () => {
-        expect([...RESOURCE_DETAIL_IDS]).toEqual(["credentials", "mcp", "skills", "agents"]);
+    // task-96：智能体撤出资源区 ⇒ 可管理资源由 4 变 3（knowledge 仍不在集合里，它是 G3 缺口）。
+    it("三个可管理资源各一条详情路由；knowledge 不在「可管理资源」集合里", () => {
+        expect([...RESOURCE_DETAIL_IDS]).toEqual(["credentials", "mcp", "skills"]);
     });
 
     it("路由名 = resources-<id>-detail，路径段 = <id>/:pk", () => {
-        for (const id of ["credentials", "mcp", "skills", "agents", "knowledge"] as const) {
+        for (const id of ["credentials", "mcp", "skills", "knowledge"] as const) {
             expect(resourceDetailRouteName(id)).toBe(`resources-${id}-detail`);
             expect(resourceDetailRoutePath(id)).toBe(`${id}/:pk`);
         }
@@ -89,8 +90,8 @@ describe("?layer= 强制（缺省/非法都落到默认层并 replace 回 URL）
     });
 
     it("规范化层时保留其余 query 与 hash", () => {
-        const redirect = normalizeResourceLayerQuery("agents")(
-            location("resources-agents-detail", { layer: "bogus", from: "list" }, "#body"),
+        const redirect = normalizeResourceLayerQuery("credentials")(
+            location("resources-credentials-detail", { layer: "bogus", from: "list" }, "#body"),
         );
         expect(redirect).toMatchObject({
             query: { layer: "USER", from: "list" },

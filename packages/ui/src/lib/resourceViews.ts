@@ -20,6 +20,5 @@ export const RESOURCE_VIEWS = {
     credentials: () => import("../views/resources/CredentialsResourceView.vue"),
     mcp: () => import("../views/resources/McpResourceView.vue"),
     skills: () => import("../views/resources/SkillsResourceView.vue"),
-    agents: () => import("../views/resources/AgentsResourceView.vue"),
     knowledge: () => import("../views/resources/KnowledgeResourceView.vue"),
 } satisfies Record<ResourceId, ResourceViewLoader>;

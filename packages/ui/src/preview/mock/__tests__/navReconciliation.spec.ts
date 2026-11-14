@@ -30,15 +30,16 @@ import {
  * 有条目被搬走）。</p>
  */
 describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
-    // task-485（2026-11-14）：`agent-profile` 迁出设置区 ⇒ 实例层 12 → **11 域**（17 → 16）、
-    // 用户层 9 → **8 域**。资源段仍是 5（搬家只动资源面，与域矩阵无关）。
-    it("设置区两个层：实例层 16 = 11 域 + 2 运维 + 3 安全；用户层 8 = 8 域；资源 5", () => {
-        expect(NAV_COUNTS).toEqual({ instance: 16, user: 8, resources: 5 });
+    // task-485（2026-11-14）：`agent-profile` 迁出设置区 ⇒ 实例层 12 → **11 域**。
+    // task-96（2026-11-15）：智能体撤出资源面（资源 5 → **4**），同时实例层安全组多一条
+    // 「平台智能体」（3 → **4**）⇒ 实例层 16 → **17**（11 + 2 + 4）。
+    it("设置区两个层：实例层 17 = 11 域 + 2 运维 + 4 安全；用户层 8 = 8 域；资源 4", () => {
+        expect(NAV_COUNTS).toEqual({ instance: 17, user: 8, resources: 4 });
         expect(domains).toHaveLength(11);
         expect(opsItems).toHaveLength(2);
-        expect(securityItems).toHaveLength(3);
-        // 硬编码 5：资源搬走后设置区一条都不该剩；资源模块恰好 5 条。
-        expect(resourceItems).toHaveLength(5);
+        expect(securityItems).toHaveLength(4);
+        // 硬编码 4：资源搬走后设置区一条都不该剩；资源模块恰好 4 条（智能体已撤）。
+        expect(resourceItems).toHaveLength(4);
     });
 
     it("用户层只剩 8 个配置域（资源 3 条已搬走；task-485 再撤 agent-profile）", () => {
@@ -61,15 +62,15 @@ describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
         expect(missingNavMeta).toEqual([]);
     });
 
-    it("对账表逐段可加：实例段之和 16 / 用户段之和 8 / 资源段 5", () => {
+    it("对账表逐段可加：实例段之和 17 / 用户段之和 8 / 资源段 4", () => {
         const sum = (needle: string) =>
             NAV_RECONCILIATION.filter((row) => row.segment.includes(needle)).reduce(
                 (total, row) => total + row.count,
                 0,
             );
-        expect(sum("实例层")).toBe(16);
+        expect(sum("实例层")).toBe(17);
         expect(sum("用户层")).toBe(8);
-        expect(sum("资源模块")).toBe(5);
+        expect(sum("资源模块")).toBe(4);
     });
 });
 

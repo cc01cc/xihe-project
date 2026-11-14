@@ -17,13 +17,9 @@ import { shouldUseBrowserBack } from "../../lib/resourceDetail";
 import { readTabWorkspaceId } from "../../lib/workspaceContext";
 import { useCredentialsStore } from "../../stores/credentials";
 import { logger } from "../../lib/logger";
-import {
-    listInstanceAgents,
-    listInstanceCredentials,
-    listInstanceMcpServers,
-} from "../../services/instanceResources";
+import { listInstanceCredentials, listInstanceMcpServers } from "../../services/instanceResources";
 import { collectFields, type BooleanLabels, type DetailFields } from "./detailFields";
-import type { AgentRoleBinding, AgentSkillBinding } from "../../composables/api";
+// task-96：`AgentRoleBinding` / `AgentSkillBinding` 随智能体详情读面一起删除（该资源已撤出资源区）。
 import type { CredentialEventView, CredentialReference } from "../../types";
 import { Button } from "../../components/ui/button";
 
@@ -48,9 +44,7 @@ import { Button } from "../../components/ui/button";
  * | skills | WORKSPACE | `api.getWorkspaceSkills`（`:3678`）；该层**没有**单条正文读面 ⇒ 明写原因 |
  * | skills | INSTANCE | `api.getSkillDefinition`（`:3698`，`includeBody=true`）—— 单条定义读面自带正文，**不再**多打一次列表请求 |
  * | skills | USER | `api.getSkillDefinition`（`:3698`，`includeBody=true`）—— CP 只返回**调用者自己的**个人定义（`openapi:5465`「takes no id (the caller is the owner)」），所以他人个人技能不可见是同一条契约；`T2b.3` 起不再是「未接线」态 |
- * | agents | USER | `api.listMyAgentPrincipals`（`:3408`） |
- * | agents | WORKSPACE | `api.getWorkspaceAgents`（`:3438`）+ `getAgentRoles`（`:3511`）+ `getAgentSkills`（`:3602`） |
- * | agents | INSTANCE | `listInstanceAgents`（`instanceResources.ts:222`） |
+ * | 智能体 | （已撤出资源区，task-96） | 资源区不再有该资源 ⇒ 详情页不再是它的入口；个人→`/members`、平台→`/settings/instance/agent-principals`（307 行注释见 `router/index.ts` 的 302） |
  * | knowledge | （0 层，G3） | 无实体 ⇒ 未接线诚实态 |
  * | 全部 | — | 诊断读面 `api.getHealth`（`:4268`，**只在错误态**用它区分"后端不健康"与"这一条读不到"） |
  *
@@ -356,141 +350,6 @@ async function loadSkills(): Promise<void> {
     phase.value = "ready";
 }
 
-async function loadAgents(): Promise<void> {
-    if (layer.value === "WORKSPACE") {
-        if (!workspaceId.value) {
-            unwiredReasonKey.value = "resources.detail.unwired.reasons.noWorkspace";
-            phase.value = "unwired";
-            return;
-        }
-        const binding = findOrNull(
-            await api.getWorkspaceAgents(workspaceId.value),
-            (entry) => entry.principalId === pk.value,
-        );
-        if (!binding) {
-            phase.value = "not-found";
-            return;
-        }
-        const fields = collectFields(
-            binding,
-            [
-                ["principalId", binding.principalId],
-                ["name", binding.name],
-                ["template", binding.templateName],
-                ["bound", binding.bound],
-                ["disabled", binding.disabled],
-                ["defaultModel", binding.defaultModelName],
-                ["allowedModels", binding.allowedModels?.length],
-                ["hooks", binding.hooks],
-                ["contextPolicy", binding.contextPolicy],
-                ["createdAt", binding.createdAt],
-            ],
-            boolLabels(),
-        );
-
-        const [roles, skills] = await Promise.allSettled([
-            api.getAgentRoles(workspaceId.value, pk.value),
-            api.getAgentSkills(workspaceId.value, pk.value),
-        ]);
-        const sections: DetailSection[] = [];
-        if (roles.status === "fulfilled") {
-            sections.push({
-                titleKey: "resources.detail.sections.roles",
-                emptyKey: "resources.detail.empty.roles",
-                items: roles.value.map((role: AgentRoleBinding) => ({
-                    name: role.displayName || role.name,
-                    meta: [role.scopeType, role.roleId, `${role.atomCount}`],
-                })),
-            });
-        }
-        if (skills.status === "fulfilled") {
-            sections.push({
-                titleKey: "resources.detail.sections.skills",
-                emptyKey: "resources.detail.empty.skills",
-                items: skills.value.map((bindingSkill: AgentSkillBinding) => ({
-                    name: bindingSkill.name,
-                    meta: [bindingSkill.skillId, bindingSkill.scopeType ?? ""].filter(Boolean),
-                })),
-            });
-        }
-        model.value = {
-            title: binding.name || binding.principalId,
-            subtitle: layerLabel(layer.value),
-            fields,
-            sections,
-            noteKey:
-                roles.status === "rejected" || skills.status === "rejected"
-                    ? "resources.detail.notes.partialRead"
-                    : undefined,
-        };
-        phase.value = "ready";
-        return;
-    }
-
-    if (layer.value === "INSTANCE") {
-        const rows = await listInstanceAgents();
-        const row = findOrNull(rows.agents, (entry) => entry.id === pk.value);
-        if (!row) {
-            phase.value = "not-found";
-            return;
-        }
-        const fields = collectFields(
-            row,
-            [
-                ["name", row.name],
-                ["template", row.templateName],
-                ["modelProvider", row.modelProvider],
-                ["modelName", row.modelName],
-                ["disabled", row.disabled],
-                ["createdAt", row.createdAt],
-            ],
-            boolLabels(),
-            row.states,
-        );
-        model.value = {
-            title: row.name,
-            subtitle: layerLabel(layer.value),
-            fields,
-            sections: [],
-        };
-        phase.value = "ready";
-        return;
-    }
-
-    // USER：个人智能体主体（`created_by=self`）。
-    const principal = findOrNull(
-        await api.listMyAgentPrincipals(),
-        (entry) => entry.principalId === pk.value,
-    );
-    if (!principal) {
-        phase.value = "not-found";
-        return;
-    }
-    const fields = collectFields(
-        principal,
-        [
-            ["principalId", principal.principalId],
-            ["name", principal.name],
-            ["template", principal.templateName],
-            ["disabled", principal.disabled],
-            ["defaultModel", principal.defaultModelName],
-            ["createdAt", principal.createdAt],
-        ],
-        boolLabels(),
-    );
-    const noteKey = workspaceId.value
-        ? undefined
-        : "resources.detail.notes.needWorkspaceForBindings";
-    model.value = {
-        title: principal.name || principal.principalId,
-        subtitle: layerLabel(layer.value),
-        fields,
-        sections: [],
-        noteKey,
-    };
-    phase.value = "ready";
-}
-
 async function loadMcp(): Promise<void> {
     if (layer.value === "INSTANCE") {
         const { servers } = await listInstanceMcpServers();
@@ -603,10 +462,6 @@ async function load(): Promise<void> {
             }
             case "skills": {
                 await loadSkills();
-                break;
-            }
-            case "agents": {
-                await loadAgents();
                 break;
             }
             case "mcp": {

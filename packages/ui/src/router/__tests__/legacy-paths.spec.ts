@@ -49,7 +49,8 @@ const GUARD: GuardFixture = {
         ["/resources/credentials", "resources-credentials"],
         ["/resources/mcp", "resources-mcp"],
         ["/resources/skills", "resources-skills"],
-        ["/resources/agents", "resources-agents"],
+        // task-96：`/resources/agents` 不再是资源页（改为 302 到新落点）⇒ 从「存活」侧移出。
+        // 它的 302 判据在 `router/__tests__/agentLandingRoutes.spec.ts`。
         ["/resources/knowledge", "resources-knowledge"],
     ],
     surviving: {
@@ -91,12 +92,12 @@ describe("旧资源路径不在路由表（task-301 / PLAN-0772 T2.3）", () => 
     });
 
     /**
-     * 反向自检一：五条新资源路径**必须**能解析到真实 name，且表里有精确 path。
+     * 反向自检一：四条新资源路径**必须**能解析到真实 name，且表里有精确 path。
      *
      * <p>若判据一/二写错（例如 `resolve` 对所有路径都回兜底、或 `routes` 表没装配），
      * 本条立刻红 —— 它要求"存活"这一侧在**同一套判据**下得到相反结果。</p>
      */
-    it("反向自检：五条新资源路径解析到真实 name 且表里有它们（判据有分辨力）", () => {
+    it("反向自检：四条新资源路径解析到真实 name 且表里有它们（判据有分辨力）", () => {
         for (const [path, name] of GUARD.live) {
             expect({ path, resolved: router.resolve(path).name }).toEqual({ path, resolved: name });
             expect({ path, inTable: exactRoutePaths().includes(path) }).toEqual({

@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHistory, type RouteLocationRaw } from "vue-router";
 import { Boxes, CalendarClock, LayoutGrid, Server, Settings, Users } from "@lucide/vue";
 import { api } from "../composables/api";
 import {
@@ -37,6 +37,40 @@ const SETTINGS_GROUP_VIEWS: Record<string, () => Promise<unknown>> = {
     "model-config": () => import("../views/settings/ModelConfigView.vue"),
     "agent-config": () => import("../views/settings/AgentConfigView.vue"),
 };
+
+/**
+ * task-96（用户裁定「智能体是组织成员，不是资源」）：资源区不再有智能体页 ⇒ 旧 URL **302** 到新家。
+ *
+ * <p><b>为什么 302 写在本文件、不写 `lib/legacyRoutes.ts`</b>：那个文件的自述语义是「一次性删除、
+ * 不留 redirect」（决策 10，用户 2026-11-12），消费者 `router/__tests__/legacy-paths.spec.ts` 与
+ * `e2e/mock/resources-ia.spec.ts` 都按「旧资源路径必须 404」断言。一个文件同时承担两种相反语义，
+ * 下一个人必然挑对自己方便的那条。302 的既有先例全在本文件（`instance/agent-profile`、
+ * `workspace-default/agent-templates`、`tool-faces`），本条与它们同形。</p>
+ *
+ * <p><b>分流口径</b>（三条落点由 `task-91` 建成）：</p>
+ * <ul>
+ *   <li>`?layer=INSTANCE` ⇒ 实例层「平台智能体」页（`settings-instance-agent-principals`）；</li>
+ *   <li>`?layer=WORKSPACE` ⇒ 该工作区的成员页（智能体在工作区侧一直是**成员/绑定**面）。
+ *       workspaceId 先取 `?workspaceId=`（历史深链可能带），再回退页签上下文
+ *       （`readTabWorkspaceId()` = sessionStorage `xihe-workspace`，`lib/workspaceContext.ts:33`）；
+ *       **两者都没有时不猜工作区**，回组织成员页；</li>
+ *   <li>其余（缺省 / `?layer=USER` / 非法值）⇒ 组织成员页（资源侧默认层就是 `USER`，且用户
+ *       2026-11-14 ④ 已裁定「智能体个人属于成员管理，并不是在设置域里面」）。</li>
+ * </ul>
+ *
+ * <p>**不返回 404**：这些 URL 在文档、e2e 与用户书签里都存在，404 的支持成本高于一次跳转 ——
+ * 与 `agent-profile` 那条（下方 `instance/agent-profile`）同一理由。</p>
+ */
+function agentResourceLocation(to: { query: Record<string, unknown> }): RouteLocationRaw {
+    const raw = typeof to.query.layer === "string" ? to.query.layer.toUpperCase() : "";
+    if (raw === "INSTANCE") return { name: "settings-instance-agent-principals" };
+    if (raw === "WORKSPACE") {
+        const fromQuery = typeof to.query.workspaceId === "string" ? to.query.workspaceId : null;
+        const workspaceId = fromQuery ?? readTabWorkspaceId();
+        return workspaceId ? "/workspace/" + workspaceId + "/members" : { name: "org-members" };
+    }
+    return { name: "org-members" };
+}
 
 const router = createRouter({
     history: createWebHistory(),
@@ -450,6 +484,22 @@ const router = createRouter({
                     component: () => import("../views/resources/ResourceDetailView.vue"),
                     meta: { resourceId: "knowledge" },
                     beforeEnter: normalizeResourceLayerQuery("knowledge"),
+                },
+                /**
+                 * task-96：资源区的智能体页已摘除（用户裁定「智能体是组织成员，不是资源」）。
+                 * 旧 URL 302 到新家（分流见 `agentResourceLocation`）；**详情**也 302 到列表级落点 ——
+                 * 详情页没有独立新家，让书签落到列表比 404 好。
+                 *
+                 * <p>两条都必须显式写在这里：列表与详情原先由 `RESOURCE_DEFS` **派生**，摘除定义后
+                 * 它们会连同路由一起消失，留下的 URL 就变成 404 —— 而 404 洽洽是本卡要避免的那件事。</p>
+                 */
+                {
+                    path: "agents",
+                    redirect: (to) => agentResourceLocation(to),
+                },
+                {
+                    path: "agents/:pk",
+                    redirect: (to) => agentResourceLocation(to),
                 },
                 {
                     // 资源模块的 404（`/resources/<不存在>`）：不写 meta.resourceId，避免布局拿不到

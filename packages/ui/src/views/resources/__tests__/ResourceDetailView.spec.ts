@@ -372,73 +372,9 @@ describe("ResourceDetailView — 技能/知识库（未接线诚实态）", () =
     });
 });
 
-describe("ResourceDetailView — 智能体（三层）与 MCP", () => {
-    it("agents 的 WORKSPACE 层能进（宿主 = 工作区绑定读面），带角色/技能绑定区块", async () => {
-        setRoute({
-            resourceId: "agents",
-            layer: "WORKSPACE",
-            pk: "principal-1",
-            workspace: "ws-1",
-        });
-        apiMock.getWorkspaceAgents.mockResolvedValue([
-            {
-                principalId: "principal-1",
-                name: "评审主体",
-                templateId: null,
-                templateName: "评审模板",
-                createdAt: "2026-11-01T00:00:00Z",
-                permissionsSnapshot: [],
-                bound: true,
-                disabled: false,
-                defaultModelProvider: null,
-                defaultModelName: null,
-            },
-        ]);
-        apiMock.getAgentRoles.mockResolvedValue([
-            {
-                bindingId: "rb-1",
-                roleId: "role-1",
-                name: "审查员",
-                displayName: "审查员",
-                scopeType: "workspace",
-                scopeId: "ws-1",
-                scopeName: "工作区",
-                isSystem: false,
-                grantedBy: null,
-                atomSummary: [],
-                atomCount: 2,
-                atomsTruncated: false,
-            },
-        ]);
-        apiMock.getAgentSkills.mockResolvedValue([
-            {
-                bindingId: "sb-1",
-                skillId: "skill-1",
-                name: "部署技能",
-                description: null,
-                sourceType: "instance",
-                sourceName: null,
-                scopeType: "workspace",
-                scopeId: "ws-1",
-                activatedAt: null,
-                boundAt: null,
-            },
-        ]);
-
-        const wrapper = mountView();
-        await flushPromises();
-
-        expect(wrapper.get('[data-testid="resource-detail-title"]').text()).toBe("评审主体");
-        expect(wrapper.get('[data-testid="resource-detail-section-roles"]').text()).toContain(
-            "审查员",
-        );
-        expect(wrapper.get('[data-testid="resource-detail-section-skills"]').text()).toContain(
-            "部署技能",
-        );
-        expect(apiMock.getWorkspaceAgents).toHaveBeenCalledWith("ws-1");
-        expect(apiMock.getAgentRoles).toHaveBeenCalledWith("ws-1", "principal-1");
-    });
-
+// task-96：智能体详情（三层）随资源区摘除一并删除 —— 该资源不再有详情页，
+// 旧 URL 在 `router/index.ts` 里 302 到新落点（判据在 `router/__tests__/agentLandingRoutes.spec.ts`）。
+describe("ResourceDetailView — MCP", () => {
     it("MCP 工作区层：配置来自 stdio-servers、运行状态来自 mcp/servers", async () => {
         setRoute({ resourceId: "mcp", layer: "WORKSPACE", pk: "fs-server", workspace: "ws-1" });
         apiMock.getStdioServers.mockResolvedValue({

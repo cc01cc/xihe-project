@@ -63,12 +63,13 @@ const ICONS: Record<string, typeof Wrench> = {
     data: Database,
     "config-locks": LockKeyhole,
     roles: ShieldCheck,
+    // task-96：平台智能体的新家（`instanceOpsGroups()` 的安全组）；不加这一条 `missingNavMeta` 会红。
+    "agent-principals": Bot,
     audit: ScrollText,
-    // 资源模块的 5 个 id 来自 `resourceGroups()`（agents/mcp/credentials/skills/knowledge）；
+    // 资源模块的 id 来自 `resourceGroups()`（mcp/credentials/skills/knowledge）；
     // 同一组 id 在 `SettingsResourceNav.vue` 的 `RESOURCE_ICONS` 里另有一份组件内映射——
     // 两边都要有，否则 `missingNavMeta` 会把缺图标的条目记成「无图标」。
-    // 资源面是独立模块（`/resources/*`）；`resourceGroups()` 现为 **4 真 + 1 缺口**（缺口 = knowledge `G3`）。
-    agents: Bot,
+    // 资源面是独立模块（`/resources/*`）；`resourceGroups()` 现为 **3 真 + 1 缺口**（缺口 = knowledge `G3`）。
     mcp: Wrench,
     credentials: KeyRound,
     skills: ScrollText,
@@ -92,8 +93,8 @@ const LABELS: Record<string, string> = {
     data: "数据管理",
     "config-locks": "配置锁定",
     roles: "角色与权限",
+    "agent-principals": "平台智能体",
     audit: "审计日志",
-    agents: "智能体",
     mcp: "MCP 服务",
     credentials: "凭据",
     skills: "技能",
@@ -188,8 +189,8 @@ export const NAV_RECONCILIATION: { segment: string; count: number }[] = [
 /**
  * 徽标口径（与产品 `SettingsSidebar.vue` 的入口数一致：域 + ops 条目；资源已搬走不再计入）。
  *
- * <p>PLAN-0772 M2 的三个数：实例层 **17** = 12 域 + 2 运维 + 3 安全（原 22 减去 5 资源）；
- * 用户层 **9** = 9 域（原 12 减去 3 资源）；资源模块 **5** = 5 资源条目。</p>
+ * <p>PLAN-0772 M2 的三个数（task-485 撤 agent-profile、task-96 撤智能体资源并加平台智能体入口后）：
+ * 实例层 **17** = 11 域 + 2 运维 + 4 安全；用户层 **8** = 8 域；资源模块 **4** = 4 资源条目。</p>
  */
 export const NAV_COUNTS = {
     instance: domains.length + opsItems.length + securityItems.length,

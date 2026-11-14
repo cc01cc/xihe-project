@@ -77,7 +77,8 @@ describe("StandaloneSessionDialog (task-373)", () => {
         expect(create).not.toHaveBeenCalled();
         await wrapper.get('[data-testid="standalone-dialog-create-agent"]').trigger("click");
         await flushPromises();
-        expect(router.currentRoute.value.path).toBe("/resources/agents");
+        // task-96：资源区智能体页已摘除 ⇒ 出口直达个人智能体的新家（组织成员页）。
+        expect(router.currentRoute.value.path).toBe("/members");
         expect(wrapper.emitted("close")).toHaveLength(1);
         wrapper.unmount();
     });

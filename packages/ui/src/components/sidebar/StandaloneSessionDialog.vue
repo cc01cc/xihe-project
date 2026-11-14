@@ -71,7 +71,10 @@ async function create(): Promise<void> {
 
 function goToAgents(): void {
     emit("close");
-    void router.push("/resources/agents");
+    // task-96：资源区的智能体页已摘除 ⇒ 个人智能体的新家是组织成员页（用户 2026-11-14 ④
+    // 「智能体个人属于成员管理」）。**不再经 `/resources/agents` 中转**：那条路径现在是 302，
+    // 二次跳转会让「新建会话时发现没有智能体 ⇒ 去建一个」的路径多一次地址栏闪烁。
+    void router.push("/members");
 }
 
 // immediate：以「已打开」状态挂载（调用方用 v-if 或直接 :show="true"）时也要取候选，

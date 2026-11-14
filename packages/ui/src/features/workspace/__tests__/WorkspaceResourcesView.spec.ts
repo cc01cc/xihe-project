@@ -28,7 +28,6 @@ const messages = {
             },
         },
         resources: {
-            nameAgents: "智能体",
             workspaceLayerMovedTitle: "这项资源的「本工作区」层已迁到工作区设置",
             workspaceLayerMovedBody: "「{name}」的本工作区层现在在工作区设置里管理。",
             workspaceLayerMovedAction: "打开工作区设置",
@@ -38,7 +37,6 @@ const messages = {
                 credentials: { USER: "个人", WORKSPACE: "本工作区", INSTANCE: "平台" },
                 mcp: { WORKSPACE: "本工作区", INSTANCE: "平台" },
                 skills: { USER: "个人", WORKSPACE: "本工作区", INSTANCE: "平台" },
-                agents: { USER: "个人", WORKSPACE: "本工作区", INSTANCE: "平台" },
                 knowledge: {},
             },
         },
@@ -94,7 +92,6 @@ vi.mock("../../../lib/resourceViews", async () => {
             credentials: stub("credentials"),
             mcp: stub("mcp"),
             skills: stub("skills"),
-            agents: stub("agents"),
             knowledge: stub("knowledge"),
         },
     };
@@ -147,8 +144,9 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         // D-1432：派生结果减去「已迁走」的两个 = 本页页签。
         expect(tabIds).toEqual([...TAB_IDS]);
         // 派生结果本身钉住一次（矩阵顺序），防止有人把 filter 条件改成「全部资源」还绿。
-        expect([...DERIVED_IDS]).toEqual(["credentials", "mcp", "skills", "agents"]);
-        expect([...TAB_IDS]).toEqual(["credentials", "agents"]);
+        // task-96：智能体撤出资源面 ⇒ 派生集合里不再有它（工作区层入口在 dock tab 与管理弹窗，不在这页）。
+        expect([...DERIVED_IDS]).toEqual(["credentials", "mcp", "skills"]);
+        expect([...TAB_IDS]).toEqual(["credentials"]);
         // 已迁走的两个不进页签，但在「已迁」提示行里**有名字有直链**（指路而不是消失）。
         expect(wrapper.find('[data-testid="ws-resources-tab-mcp"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="ws-resources-tab-skills"]').exists()).toBe(false);
@@ -177,13 +175,17 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         expect(wrapper.find('[data-testid^="resource-layer-tab-"]').exists()).toBe(false);
     });
 
-    it("切资源：换面板 + 把选中项写进 URL（深链可分享）", async () => {
+    it("页签只剩 credentials（mcp/skills 已迁、智能体随资源区摘除）；点它不产生多余 replace", async () => {
         const wrapper = await mountPage();
-        await wrapper.get('[data-testid="ws-resources-tab-agents"]').trigger("click");
+        const tabs = wrapper.findAll('[data-testid^="ws-resources-tab-"]');
+        expect(tabs.map((node) => node.attributes("data-testid"))).toEqual([
+            "ws-resources-tab-credentials",
+        ]);
+        expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(true);
+        // 深链写回只发生在**切换**时；唯一页签上点一下不该写 URL（否则每次点击都多一条历史）。
+        await wrapper.get('[data-testid="ws-resources-tab-credentials"]').trigger("click");
         await flushPromises();
-        expect(wrapper.find('[data-testid="resource-view-agents"]').exists()).toBe(true);
-        expect(wrapper.find('[data-testid="resource-view-credentials"]').exists()).toBe(false);
-        expect(replaceSpy).toHaveBeenCalledWith({ query: { resource: "agents" } });
+        expect(replaceSpy).not.toHaveBeenCalled();
     });
 
     it("深链：?resource=mcp（已迁）⇒ 就地指路卡 + 深链，不静默换成别的资源", async () => {
@@ -214,12 +216,13 @@ describe("工作区资源页（M4-2 / task-210）", () => {
     });
 
     it("平台 / 个人层只作只读引用：链接按该资源的 layerRules 派生（mcp 无个人层）", async () => {
-        routeState.query = { resource: "agents" };
+        // credentials 三层都真实存在 ⇒ 引用条 = 个人 + 平台（本工作区那层就是本页自己，不列）。
+        routeState.query = { resource: "credentials" };
         let wrapper = await mountPage();
-        const agentRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
-        expect(agentRefs.map((node) => node.attributes("href"))).toEqual([
-            "/resources/agents?layer=USER",
-            "/resources/agents?layer=INSTANCE",
+        const credentialRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
+        expect(credentialRefs.map((node) => node.attributes("href"))).toEqual([
+            "/resources/credentials?layer=USER",
+            "/resources/credentials?layer=INSTANCE",
         ]);
         wrapper.unmount();
 
