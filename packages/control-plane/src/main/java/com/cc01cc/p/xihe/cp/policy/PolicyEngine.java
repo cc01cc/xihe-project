@@ -44,6 +44,33 @@ public class PolicyEngine {
         this.hardGuard = new HardGuard();
     }
 
+    /** task-533: 声明键生产者；缺失时资源原样透传（旧行为逐字不变）。 */
+    private FsResourceKeys fsResourceKeys;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFsResourceKeys(FsResourceKeys producer) {
+        this.fsResourceKeys = producer;
+    }
+
+    /**
+     * Q-d 第 2 步（task-533）：把看起来是路径的请求资源换成 {@code fs:} 声明键。
+     *
+     * <p>今天 {@code PolicyResourceExtractor} 只产 {@code credential:}/{@code skill:} ⇒ 恒返回原值。
+     * 这是<b>唯一可能的正确结果</b>（两侧都没有路径资源），不是「接线没生效」；等提取器真的产出
+     * 路径，求交才会走到 {@code phys} 键上。</p>
+     */
+    private List<String> declarationResources(String workspaceId, List<String> resources) {
+        if (fsResourceKeys == null || resources == null || resources.isEmpty()) {
+            return resources;
+        }
+        return resources.stream()
+                .map(resource -> {
+                    String declaration = fsResourceKeys.declarationKeyFor(workspaceId, resource);
+                    return declaration == null ? resource : declaration;
+                })
+                .toList();
+    }
+
     /** Checks hard guard and current grants before the approval resolver is allowed to run. */
     public boolean allowsByGrant(PolicyContext context, String toolName, String body, String sessionId,
                                  String userId, String workspaceId, boolean userPrincipalOnly) {
@@ -55,7 +82,8 @@ public class PolicyEngine {
                 : new ToolFaceRegistry(context.extraFaces());
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
-                PolicyResourceExtractor.extract(body), face.shape(), userId, workspaceId, sessionId);
+                declarationResources(workspaceId, PolicyResourceExtractor.extract(body)),
+                face.shape(), userId, workspaceId, sessionId);
         var hardDeny = hardGuard.checkWorkspaceResources(toolName, request.resources())
                 .or(() -> hardGuard.check(request));
         if (hardDeny.isPresent()) {
@@ -223,7 +251,8 @@ public class PolicyEngine {
 
         ToolFaceRegistry.Face face = registry.faceOf(toolName);
         PolicyRequest request = new PolicyRequest(toolName, List.of(face.actionClass()),
-                PolicyResourceExtractor.extract(body), face.shape(), userId, workspaceId, sessionId);
+                declarationResources(workspaceId, PolicyResourceExtractor.extract(body)),
+                face.shape(), userId, workspaceId, sessionId);
 
         var hardDeny = hardGuard.check(request);
         if (hardDeny.isPresent()) {
