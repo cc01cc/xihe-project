@@ -664,6 +664,16 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             });
             return;
         }
+        // task-475（Lead 裁 C，2026-11-14）：**只给这两种形态，不补 `/workspaces/{id}/sessions`**。
+        // 依据是实测而不是偏好 —— 12 条 mock 录制 trace 聚合（r17 + workspace-members，12 passed /
+        // 0 failed / flaky 0）：`GET /api/v1/sessions` 18 次（带 `X-Workspace-Id` 选工作区，
+        // `composables/api.ts:3254-3261`）、`GET /api/v1/sessions?scope=workspaceless` 6 次
+        // （`:3270-3276`）、`GET /api/v1/workspaces/{id}/sessions` **0 次**。该路径在 CP 只有 POST
+        // （`docs/api/openapi.yaml:1194-1195`；`api.ts:3248-3250` 原文即「只有 POST」）⇒ 卡面
+        // 「兜底缺工作区形态」的前提在产品上不成立，补它是空转防御（膨胀门：被否决的更简方案 = 这段注释）。
+        // 顺带记住为什么本地桩看起来"是必需的"：本 handler 之后的 `**/api/v1/**` blanket 桩（LIFO
+        // 后注册者胜）会盖掉这里，所以 spec 里那 13 处两形态桩是对 POST 路径形态的防御性外推（真受害面
+        // 5 处），不是缺口的证据；要退役它们只能**主动删除**，不能靠"这里已经有了"。
         if (url.match(/\/api\/v1\/sessions(?:\?.*)?$/) && route.request().method() === "GET") {
             await route.fulfill({
                 status: 200,
