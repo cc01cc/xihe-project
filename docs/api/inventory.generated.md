@@ -5,13 +5,13 @@
 > 人工叙述版（含路由迁移对照、调用方、错误契约 —— 这些 yaml 表达不了）仍在 [inventory.md](./inventory.md)，本文件**不替代**它。
 
 - 契约：`docs/api/openapi.yaml`（OpenAPI 3.1.0）
-- 规模：**356** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 256 · 服务间 100
+- 规模：**357** operations ／ **2** 个分组 ／ **20** 个 tag；面分布 公开 257 · 服务间 100
 - security 列：`bearerAuth` = 声明了 bearer 方案；`public` = 显式 `security: []`；`—` = 未声明（全局 security 为空，实际语义也按公开处理）。未声明共 0 个操作。
-- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（356 / 356 个操作带 tag）。
+- 分组口径：两级 —— 顶层 `x-tagGroups`（public 17 tags / internal 3 tags）÷ `operation.tags[0]`（357 / 357 个操作带 tag）。
 
-## public（256 operations · 公开 · 17 tags）
+## public（257 operations · 公开 · 17 tags）
 
-### auth（11）
+### auth（12）
 
 | METHOD path | operationId | security | summary | 面 |
 | --- | --- | --- | --- | --- |
@@ -26,6 +26,7 @@
 | `GET /api/v1/oauth/callback` | `oauthCallback` | `public` | OAuth redirect callback | 公开 |
 | `POST /api/v1/oauth/revoke` | `revokeOAuthSession` | `bearerAuth` | Revoke an OAuth session | 公开 |
 | `POST /api/v1/oauth/sessions` | `startOAuthSession` | `bearerAuth` | Start an OAuth session for a provider | 公开 |
+| `GET /api/v1/workspaces/{workspaceId}/members/{userId}/effective-permissions` | `workspaceMemberEffectivePermissions` | `bearerAuth` | Effective capabilities of one workspace member (task-52) | 公开 |
 
 ### admin（26）
 
