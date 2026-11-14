@@ -2734,6 +2734,182 @@ class ChatControllerTest extends AbstractH2Test {
                 java.util.Objects.requireNonNull(response.getBody()).get("code"));
     }
 
+    // ── task-104: delivering to YOURSELF is refused at the delivery gate (cp-1 task-100 ①) ─────
+
+    /**
+     * A HUMAN roster row that IS the authenticated caller.
+     *
+     * <p>task-103 §A measured that {@code GET /sessions/{id}/participants} returns every row of the
+     * session with no caller filter, so such a row really does reach the UI TO candidates. It only
+     * exists when someone explicitly added the caller (or a workspace-less default roster listed
+     * them) — the reachability is conditional, the hole is not: a direct API client needs no UI at
+     * all. Hence the guard on the delivery gate, not on the composer.</p>
+     */
+    private SessionParticipant seedSelfHumanMember(int orderIndex) {
+        SessionParticipant row = new SessionParticipant(UUID.fromString(sessionId),
+                SessionParticipant.KIND_HUMAN, UUID.fromString(userId),
+                SessionParticipant.ROLE_MEMBER, orderIndex, SessionParticipant.WAKE_MENTION,
+                SessionParticipant.RESPOND_WHEN_MENTIONED);
+        return sessionParticipantRepository.saveAndFlush(row);
+    }
+
+    /** The roster shows a HUMAN participant by {@code users.username} (SessionParticipantService:937). */
+    private String selfDisplayName() {
+        return userRepository.findById(UUID.fromString(userId)).orElseThrow().getUsername();
+    }
+
+    private int sessionRunCount() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
+                Integer.class, sessionId);
+        return count == null ? 0 : count;
+    }
+
+    private int sessionMessageCount() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM messages WHERE CAST(session_id AS VARCHAR) = ?",
+                Integer.class, sessionId);
+        return count == null ? 0 : count;
+    }
+
+    private ResponseEntity<Map> postChatWithToAs(String content, List<String> toParticipantIds,
+                                                 String asParticipantId) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", content);
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("branchId", branchId);
+        request.put("toParticipantIds", toParticipantIds);
+        request.put("asParticipantId", asParticipantId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+    }
+
+    /**
+     * task-104 judgement ①: naming your own participant row as a TO target is refused with its own
+     * code — not silently dropped (a dropped target would turn the caller's explicit intent into a
+     * request that answers something else) and not accepted (the notification would tell the author
+     * about the message the author just wrote, and a self-only set can only ever reach the
+     * human-only suppression: 202 + suppressed_no_responder, i.e. "accepted, nobody will answer").
+     */
+    @Test
+    void chat_toTheCallersOwnParticipantIsRejectedWithAnExplicitCode() {
+        SessionParticipant self = seedSelfHumanMember(5);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo("给未来的自己留一条",
+                List.of(self.getId().toString()));
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(),
+                () -> "self-delivery must be refused, not accepted: " + response.getBody());
+        assertEquals("PARTICIPANT_SELF_TARGET",
+                java.util.Objects.requireNonNull(response.getBody()).get("code"));
+        assertEquals(0, sessionRunCount(), "the refusal happens before any run row exists");
+        assertEquals(0, sessionMessageCount(), "and before the user message is persisted");
+        assertEquals(0, wakeDispatchRows(self.getId().toString(), "notify"),
+                "nobody was notified — least of all the caller");
+    }
+
+    /**
+     * task-104 judgement ②: a self target mixed with a real one refuses the WHOLE request. Partial
+     * delivery (notify the agent, drop the self silently) is exactly the "silent drop" the card
+     * forbids — the same rule §5b already states for failed pre-checks.
+     */
+    @Test
+    void chat_toSelfTogetherWithAnAgentTargetRefusesTheWholeRequest() {
+        String[] pair = seedMentionPair("ToSelfPlusAgentI");
+        SessionParticipant self = seedSelfHumanMember(5);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo("通知一个智能体，顺便通知自己",
+                List.of(self.getId().toString(), pair[1]));
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(),
+                () -> "a mixed self+agent set is refused whole: " + response.getBody());
+        assertEquals("PARTICIPANT_SELF_TARGET",
+                java.util.Objects.requireNonNull(response.getBody()).get("code"));
+        assertEquals(0, sessionRunCount(), "no partial delivery: the agent target gets no run either");
+        assertEquals(0, wakeDispatchRows(pair[1], "notify"));
+        assertEquals(0, wakeDispatchRows(self.getId().toString(), "notify"));
+    }
+
+    /**
+     * task-104 judgement ③ (the over-blocking half): an AGENT target that equals the speaker is the
+     * NORMAL fan-out shape — task-87 derives {@code as} from the first AGENT target and every TO run
+     * belongs to a target. A blanket "as must not be a target" rule would refuse this request, so the
+     * guard is stated over the CALLER's identity only. Pinned, because a future "as ∈ TO is
+     * suspicious" cleanup would break fan-out silently (the same way task-87's dropped guard did).
+     */
+    @Test
+    void chat_asTheAgentWhoseRowIsAlsoTheTarget_staysAccepted() {
+        String[] pair = seedMentionPair("ToSelfAgentOwnerK");
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithToAs("以 Primary 身份发给 Primary",
+                List.of(pair[0]), pair[0]);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "as == TO[0] for an AGENT is the normal shape: " + response.getBody());
+        Map body = java.util.Objects.requireNonNull(response.getBody());
+        assertEquals(1, runIds(body).size());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
+                Integer.class, sessionId));
+    }
+
+    /**
+     * task-104, @-self half: the caller's own row is dropped from the mention roster (task-103 §A
+     * made "@ yourself" conditionally reachable), so mentioning your own name never creates a
+     * self-notification — and never suppresses the answer either, because a message that merely
+     * contains its author's name is not an addressing act.
+     */
+    @Test
+    void chat_mentioningOwnNameDoesNotNotifyTheCaller() {
+        // Order matters: the caller's own row sits FIRST in roster order, so a round that still
+        // contained it would have written its notify row before the mentioned agent's run could even
+        // start. That makes "0 notify rows for self" a deterministic assertion instead of a race
+        // against the wake pool (D-1455: an assertion that can pass for the wrong reason is not one).
+        seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 10);
+        AgentPrincipal member = seedMentionablePrincipal("MentionTargetSelfJ");
+        seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, 20);
+        SessionParticipant self = seedSelfHumanMember(0);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo(
+                "@" + selfDisplayName() + " @" + member.getName() + " 先记一下", null);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "a display name in the body is text, not an error: " + response.getBody());
+        // Settle probe: the mention hand-off really happened (this is not a "nothing was enqueued"
+        // green). Once this agent owns its wake run, the earlier recipient (self, order 0) — had it
+        // been a recipient at all — would already have its durable row.
+        assertWakeRunAndReply(member.getId().toString());
+        assertEquals(0, wakeDispatchRows(self.getId().toString(), "notify"),
+                "no durable notify for the person who wrote the message");
+        assertEquals(0, wakeDispatchRows(self.getId().toString(), "skipped_muted"));
+    }
+
+    /** task-104, cc half: cc to yourself resolves against the same self-filtered roster ⇒ ignored. */
+    @Test
+    void chat_ccOwnParticipantIsIgnoredInsteadOfNotifyingTheCaller() {
+        SessionParticipant self = seedSelfHumanMember(5);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithCc("抄送给自己",
+                List.of(self.getId().toString()));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "cc stays lenient: " + response.getBody());
+        assertEquals(0, wakeDispatchRows(self.getId().toString(), "notify"),
+                "cc to yourself carries no information — it must not become a notify row");
+    }
+
     @Test
     void chat_absentTo_keepsLegacySingleResponderPath() {
         seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,

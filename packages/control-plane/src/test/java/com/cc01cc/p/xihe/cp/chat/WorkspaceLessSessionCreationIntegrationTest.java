@@ -164,11 +164,19 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
         // notification (zero runs), so the participant gate asks for deliverability, not speak-as.
         // This harness has no agent, so admission now stops at a LATER gate (202, or 503
         // AGENT_UNAVAILABLE/readiness) — the point is that it is no longer the TO gate's refusal.
+        // task-104 narrows WHICH human: somebody else stays admissible (task-65 unchanged), the
+        // caller's own row is refused. Both halves are contract-level (real HTTP, real 400 body).
+        String peerUserId = register("wsless-peer").getUser().getId();
         Reply joined = send(null, "POST", "/api/v1/sessions/" + sessionId + "/participants",
                 """
-                {"principalKind":"HUMAN","principalId":"%s"}""".formatted(userId));
+                {"principalKind":"HUMAN","principalId":"%s"}""".formatted(peerUserId));
         assertEquals(201, joined.status(), joined.body().toString());
         String humanParticipantId = joined.body().path("participantId").asText();
+        Reply joinedSelf = send(null, "POST", "/api/v1/sessions/" + sessionId + "/participants",
+                """
+                {"principalKind":"HUMAN","principalId":"%s"}""".formatted(userId));
+        assertEquals(201, joinedSelf.status(), joinedSelf.body().toString());
+        String selfParticipantId = joinedSelf.body().path("participantId").asText();
         try (java.io.InputStream stream = subscribe(sessionId, "").body()) {
             Reply fanout = send(null, "POST", "/api/v1/chat",
                     """
@@ -179,6 +187,17 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
                     "task-65: a HUMAN TO target is admitted: " + fanout.body());
             assertNotEquals("INVALID_REQUEST", fanout.body().path("code").asText(),
                     "task-65: the TO gate no longer refuses a HUMAN target: " + fanout.body());
+
+            // task-104: the same request against the caller's OWN participant row is a 400 with its
+            // own code — the door that used to deliver a notification to the author is closed.
+            Reply selfFanout = send(null, "POST", "/api/v1/chat",
+                    """
+                    {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none",
+                    "toParticipantIds":["%s"]}"""
+                            .formatted(sessionId, branchId, selfParticipantId));
+            assertEquals(400, selfFanout.status(), "task-104: self-delivery is refused: " + selfFanout.body());
+            assertEquals("PARTICIPANT_SELF_TARGET", selfFanout.body().path("code").asText(),
+                    "task-104: the refusal names its own code: " + selfFanout.body());
         }
     }
 

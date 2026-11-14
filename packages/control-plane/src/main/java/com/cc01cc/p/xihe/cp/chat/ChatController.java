@@ -675,6 +675,33 @@ public class ChatController {
             } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
+            // task-104 (source: cp-1 task-100 review ① + task-103 roster reading): "deliver to
+            // yourself" is not a delivery. The delivery gate above checks roster membership and
+            // enabled-ness only, and the roster does NOT filter the caller out (task-103 §A: the CP
+            // returns every row of the session), so a client — the UI today, any direct API client
+            // tomorrow — could name its own participant row as a TO target. What that produces is not
+            // a notification anyone needs: the message is already in the conversation the caller is
+            // reading, and when it is the ONLY target the run reaches the human-only suppression
+            // below (202 + suppressed_no_responder = "accepted, nobody will ever answer"). Refusing
+            // loudly is the product answer; silently dropping the target would hide the caller's
+            // intent instead (D-1273/§5b: a failed pre-check refuses the whole request).
+            //
+            // The rule is stated over the CALLER's identity, never over "as ∈ TO". An AGENT target
+            // equal to `as` is the NORMAL shape — task-87 derives `as` from the first AGENT target and
+            // every fan-out run belongs to a target — so a blanket "as must not be a target" rule
+            // would break TO=[agent] and TO=[agent, agent] (pinned by
+            // chat_twoTargets_carriesNotifiedBucketIn202Body). A caller's own row can only be a HUMAN
+            // one: AGENT rows carry agent principal ids, which never equal a user id.
+            for (SessionParticipant toRow : toTargetRows) {
+                if (isSelfParticipant(toRow, userId)) {
+                    logger.info("[LIFECYCLE] service=cp event=chat_self_target_rejected requestId={} "
+                                    + "sessionId={} participantId={}",
+                            currentRequestId(), sessionId, toRow.getId());
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                            "PARTICIPANT_SELF_TARGET",
+                            "toParticipantIds must not contain the caller's own participant");
+                }
+            }
             // task-87 (from task-80 §B): the submission Run belongs to a target that can ANSWER —
             // the first AGENT in request order — not blindly to TO[0]. With as = TO[0] a HUMAN first
             // target went through the speak-as gate and answered 403 PARTICIPANT_CAP_DENIED, while
@@ -1038,6 +1065,23 @@ public class ChatController {
     }
 
     /**
+     * task-104: is this roster row the caller themselves?
+     *
+     * <p>Same predicate the cursor path already uses ({@code SessionParticipantService.advanceCursor}:
+     * a HUMAN row whose {@code principal_id} is the actor's user id). It is written kind-agnostically
+     * on purpose: an AGENT row's {@code principal_id} is an agent principal id, which never equals a
+     * user id, so the comparison cannot fire for an agent target — the shape that MUST stay legal.
+     */
+    private static boolean isSelfParticipant(SessionParticipant row, String userId) {
+        return row != null && isSelfPrincipal(row.getPrincipalId(), userId);
+    }
+
+    private static boolean isSelfPrincipal(java.util.UUID principalId, String userId) {
+        return principalId != null && userId != null
+                && userId.equalsIgnoreCase(principalId.toString());
+    }
+
+    /**
      * Decision v15: the PRIMARY participant row id, or {@code null} when the Session has no PRIMARY.
      * Used only to tell "the UI defaulted the field" apart from "the owner is answering as a member".
      */
@@ -1050,15 +1094,36 @@ public class ChatController {
             return null;
         }
     }
-    /** PLAN-0624 M4: the current roster as parser entries (the list is already order_index-ordered). */
+    /**
+     * PLAN-0624 M4: the current roster as parser entries (the list is already order_index-ordered).
+     *
+     * <p>task-104: the caller's OWN row is dropped here. task-103 measured that the CP roster is the
+     * session's full row set with no caller filter, so `@myself` used to resolve to the caller and
+     * produce a durable {@code wake_dispatch outcome=notify} for the person who just wrote the
+     * message — a notification with no information in it, and (when it was the only recipient) a
+     * suppression round whose hand-off could only fail. Dropping the row instead of refusing the
+     * request is deliberate: a display name in the message body is text, not an addressing act —
+     * refusing the whole message because its author's name appears in it would be hostile. The same
+     * filter therefore also keeps the caller out of their own cc observer list.
+     */
     private List<MentionParser.RosterEntry> mentionRoster(String userId, String workspaceId,
                                                           String sessionId) {
         try {
-            return sessionParticipantService.list(userId, workspaceId, sessionId).participants().stream()
-                    .map(view -> new MentionParser.RosterEntry(
-                            view.participantId(), view.principalKind(), view.displayName(),
-                            view.role(), view.respondPolicy(), view.disabledAt()))
-                    .toList();
+            List<MentionParser.RosterEntry> entries = new ArrayList<>();
+            for (com.cc01cc.p.xihe.cp.service.SessionParticipantService.ParticipantView view
+                    : sessionParticipantService.list(userId, workspaceId, sessionId).participants()) {
+                if (isSelfPrincipal(view.principalId(), userId)) {
+                    // Observable, not silent: the cc path can only report "not_in_roster" for this id,
+                    // so the reason it was dropped has to be stated where it is dropped.
+                    logger.info("[LIFECYCLE] service=cp event=mention_roster_self_excluded requestId={} "
+                                    + "sessionId={} participantId={}", requestIdOrNull(), sessionId,
+                            view.participantId());
+                    continue;
+                }
+                entries.add(new MentionParser.RosterEntry(view.participantId(), view.principalKind(),
+                        view.displayName(), view.role(), view.respondPolicy(), view.disabledAt()));
+            }
+            return entries;
         } catch (RuntimeException noRoster) {
             // BL-273: a roster failure must be VISIBLE — silently returning an empty roster degrades a
             // DB/permission fault into "@mention suppression quietly stopped working" with no alert.

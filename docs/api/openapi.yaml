@@ -1893,6 +1893,15 @@ paths:
             the request carries attachments (files stay workspace-scoped on the service path).
             After D-1438 that code's ONLY remaining meaning is attachments: TO / CC /
             asParticipantId are no longer refused on a workspace-less session.
+            PARTICIPANT_SELF_TARGET when a `toParticipantIds` entry IS the caller's own participant
+            row, i.e. its `principalId` is the caller's user id (task-104). A notification addressed
+            to its own author carries no information, and a self-only target set can only end as
+            `202 + terminalOutcome=suppressed_no_responder` ("accepted, nobody will ever answer"),
+            so the whole request is refused rather than partially delivered. The guard is stated over
+            the CALLER's identity: `asParticipantId` may equal an AGENT `toParticipantIds` entry —
+            that is the normal fan-out shape (the submission Run belongs to a target), not a
+            contradiction. Mentioning your own name in `content` is not a self-delivery and is never
+            refused: the caller's own row is dropped from the mention and cc roster instead.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetails' }
