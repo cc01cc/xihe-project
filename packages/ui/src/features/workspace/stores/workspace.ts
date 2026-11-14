@@ -378,6 +378,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 loadTreePending -= 1;
                 const targetId: string = workspaceId.value;
                 if (!targetId) break;
+                // task-532：排队者若**目标层已经加载完**就不该整轮重跑。
+                //
+                // 修前这里只判 targetId ⇒ 首载期间来第二次调用（面板 onMounted 与 Workbench 的
+                // workspaceId watch 是两个触发点）时，第二轮必然把同一份树再拉一遍：实测
+                // list_directory 14 次 = 7 path × 2 轮，首行 5.9–6.1 s（task-531 证据包）。
+                // 跳过条件只认「已加载的同 id」—— 切工作区时 loadedWorkspaceId 不同，照常重拉。
+                if (loadedWorkspaceId.value === targetId) continue;
                 loading.value = true;
                 try {
                     const nodes = await fetchDirectoryTree("");
