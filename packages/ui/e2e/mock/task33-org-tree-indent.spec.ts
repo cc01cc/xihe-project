@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { setupMockAuth } from "./helpers/auth";
 // 走 mock 车道的公共失败门禁（BL-318）：console error / pageerror / 非预期 >=400 自动断言。
 import { expect, test } from "./helpers/mock-test";
 
@@ -68,6 +69,57 @@ async function readRow(page: Page, key: string): Promise<RowReading> {
  * （例如要会话投影夹具），**必须在本 spec 之后再给 `/org-units` 注册自己的 route**：
  * Playwright 的 route 是 **LIFO**（后注册的优先匹配），顺序写反就会被 `200 {}` 吃掉。</p>
  */
+/**
+ * 组织树自桩：在 setupMockAuth 之后注册 ⇒ 按 Playwright 的 LIFO 规则先匹配，
+ * 盖过它那条回答 200 {}（空对象）的 /api/v1/** 兜底（helpers/auth.ts:487，注释 :891 自己写着）。
+ *
+ * <p>为什么两条都要：setupMockAuth 负责 /auth/me 与十来个 config 端点 —— 否则冷启动打真 dev
+ * server，一旦它的代理 502，本 spec 会红在「控制台有错误」上（实测 2026-11-15 04:41 全车道三条
+ * 用例 60 s 超时，根因就是 localhost:12750 全端点 502）；而 /org-units 必须由本文件提供，
+ * 因为兜底的 200 {} 会让树变成空的 —— 空对象比 404 更难查：页面不报错，只是「数据看起来是空的」。</p>
+ *
+ * <p>形状对齐 composables/api.ts:253 的 ApiOrgUnitNode；hasChildren 是懒加载的唯一依据，
+ * 所以子级必须真的按 parentId 请求才会出现 —— 这也是「展开才算真加载」的判据。</p>
+ */
+async function stubOrgUnits(page: Page) {
+    const nodes: Record<string, unknown[]> = {
+        "": [
+            { id: "ou-rd", name: "研发部", parentId: null, depth: 0, hasChildren: true },
+            { id: "ou-data", name: "数据部", parentId: null, depth: 0, hasChildren: true },
+        ],
+        "ou-rd": [
+            { id: "ou-platform", name: "平台组", parentId: "ou-rd", depth: 1, hasChildren: true },
+            { id: "ou-fe", name: "前端组", parentId: "ou-rd", depth: 1, hasChildren: false },
+        ],
+        "ou-platform": [
+            {
+                id: "ou-storage",
+                name: "存储组",
+                parentId: "ou-platform",
+                depth: 2,
+                hasChildren: false,
+            },
+        ],
+        "ou-data": [
+            {
+                id: "ou-analytics",
+                name: "分析组",
+                parentId: "ou-data",
+                depth: 1,
+                hasChildren: false,
+            },
+        ],
+    };
+    await page.route(/\/api\/v1\/org-units(?:\?.*)?$/, async (route) => {
+        const parentId = new URL(route.request().url()).searchParams.get("parentId") ?? "";
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ nodes: nodes[parentId] ?? [] }),
+        });
+    });
+}
+
 async function seedMockAuth(page: Page) {
     // 键与 `helpers/auth.ts:258-274` 同源（token / user），只是不装任何 route。
     await page.addInitScript(() => {
@@ -81,7 +133,8 @@ async function seedMockAuth(page: Page) {
 
 test.describe("task-33 组织树层级缩进（真浏览器）", () => {
     test.beforeEach(async ({ page }) => {
-        await seedMockAuth(page);
+        await setupMockAuth(page);
+        await stubOrgUnits(page); // 顺序不能反：LIFO，后注册的优先
         await page.goto("/members");
         await page.waitForSelector(BASE_LABEL);
     });
