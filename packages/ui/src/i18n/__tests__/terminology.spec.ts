@@ -54,17 +54,16 @@ function copyOf(locale: "zh-CN" | "en-US", path: string): string {
  * 只钉这一对键（+ 同一文案里的帮助句），不做全文件快照：快照会因无关改动频繁红。
  */
 describe("层名词典（task-251）：同一层只有一个层名", () => {
-    it("contextTemplate.layerUser 与 gapNoteAgent 不得用「用户层 / User layer」", () => {
+    it("contextTemplate.layerUser 不得用「用户层 / User layer」", () => {
         expect(copyOf("zh-CN", "settings.contextTemplate.layerUser"), "zh 层名").toBe("个人层");
         expect(copyOf("en-US", "settings.contextTemplate.layerUser"), "en 层名").toBe(
             "Personal layer",
         );
-        expect(copyOf("zh-CN", "settings.ia.gapNoteAgent"), "zh 帮助句").not.toContain("用户层");
-        expect(
-            copyOf("en-US", "settings.ia.gapNoteAgent").toLowerCase(),
-            "en 帮助句",
-        ).not.toContain("user layer");
     });
+
+    // task-108（2026-11-15）：本规则此前还有第二个见证键 `settings.ia.gapNoteAgent`（帮助句里不得写
+    // 「用户层」）—— 该键已作为死文案删除（消费者 task-165 摘除、真入口 task-91 上线），断言随键一并收窄。
+    // 删掉的是一条**见证**，不是规则：D-1043 仍由上面 contextTemplate.layerUser 那两个精确等值断言守。
 });
 
 /**

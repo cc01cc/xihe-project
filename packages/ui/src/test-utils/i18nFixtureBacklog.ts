@@ -47,12 +47,15 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
     "components/settings/__tests__/SettingsSidebar.spec.ts": {
         keys: [
             "settings.ia.entryCount",
-            "settings.ia.gapNoteAgent",
             "settings.ia.gapNoteKnowledge",
             "settings.ia.gapNoteMcp",
             "settings.ia.layerWorkspaceDefault",
         ],
-        note: "渲染出 5 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。（原 7 键中的两个「知识库·MCP」聚合键已由 task-129 从两侧 locale 删除：无任何 IA 条目引用 ⇒ 死键、渲染不出来，故同批从台账移除。）",
+        // task-108：本台账里原来那条「实例级智能体缺口说明」的键已随死文案一起删除（消费者 task-165 摘除、
+        // 真入口 task-91 上线）。**这里故意不写出完整键名** —— `i18n-scan` 第 ③ 类会把源码里长得像键的字面量
+        // 当引用查两侧 locale，写了就 `unresolved-key` 红（task-108 实测拦下过一次）。task-129 删聚合键时
+        // 用的也是「描述而不写字面量」这个写法，照它。
+        note: "渲染出 5 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。（原 7 键中的两个「知识库·MCP」聚合键已由 task-129 从两侧 locale 删除：无任何 IA 条目引用 ⇒ 死键、渲染不出来，故同批从台账移除；「实例级智能体缺口说明」那条由 task-108 同法移除。）【task-108 实测存疑项】本条 keys 与当前渲染**不一致**：2026-11-15 vitest 实测该 spec 只渲染出 `settings.groupModelConfig`、`settings.groupAgentConfig`（2 个，且都不在本列表内）⇒ 这 4 条是历史记录、不是当前事实。闸门按 spec 路径整体放行，故不影响绿，但**别把它当读数用**。",
     },
     "features/workspace/__tests__/WorkspaceView.spec.ts": {
         keys: [

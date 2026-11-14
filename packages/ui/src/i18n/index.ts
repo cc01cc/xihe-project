@@ -2172,13 +2172,12 @@ const messages = {
                     "缺少「{atom}」权限（{code}）。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
                 atomDeniedNotGap:
                     "提示：这不是「功能未提供」——服务端已经有这个能力，只是你所在账号还没有被授予。",
-                // task-509（T-07）：内部决策号（D-951）不属于用户界面 ⇒ 换成「还没开放」。
-                // task-22（HEAD 既有红，非回归）：上一行注释里「把『个人层』统一成『用户层』」**方向错了** ——
-                // 层名 SSOT 是「个人层」（task-251 / D-1043，由 terminology.spec.ts:56-68 钉死）。
-                // 本键文案因此在 develop 上一直红；这里按 SSOT 还原，断言一字未动。
-                gapNoteAgent:
-                    "实例级平台智能体还没开放：这个入口现在打不开页面。能用的是工作区层（工作区设置 → 智能体）与个人层（设置 → 智能体主体）；实例级能力上线后，这里会变成可管理的「平台智能体」。",
-                // task-26（批 1）：同 gapNoteAgent —— 层名只能是「个人层」（D-1043）。
+                // task-108（2026-11-15）：`gapNoteAgent` 键已删 —— 3072eee0a（2026-11-10）引入时是
+                // 「实例级资源行占位」的缺口说明，消费者在 task-165（b1e5d5eec）按「转真就摘缺口」摘除，
+                // 此后 0 引用（唯一动态通道 `t(item.gapNoteKey)` 只被 gapNoteKnowledge 命中）。
+                // 文案亦已为假：实例级平台智能体真入口是 task-91 的 /settings/instance/agent-principals。
+                // D-1043「层名只能是个人层」仍由 settings.contextTemplate.layerUser 作证（terminology.spec.ts）。
+                // task-26（批 1）：层名只能是「个人层」（D-1043）。
                 gapNoteMcp:
                     "MCP 服务器目前只能在工作区范围内使用：实例层与个人层都不提供，接口也只有工作区范围，请到工作区设置里管理。",
                 gapNoteKnowledge:
@@ -5979,10 +5978,12 @@ const messages = {
                     "Missing the “{atom}” permission ({code}). This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
                 atomDeniedNotGap:
                     "Note: this is not a “feature not available yet” case — the server already supports it; your account is simply not granted.",
-                // task-22 (pre-existing red at HEAD, not a regression): layer-name SSOT is "personal layer"
-                // (task-251 / D-1043, pinned by terminology.spec.ts:56-68); "user layer" was the wrong direction.
-                gapNoteAgent:
-                    "Instance-level platform agents are not available yet, so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the personal layer (Settings → Agent principals). Once it ships, this becomes a manageable “Platform agents” page.",
+                // task-108 (2026-11-15): the `gapNoteAgent` key was deleted. Introduced by 3072eee0a (2026-11-10)
+                // as the gap note for the instance-layer resource placeholder; its consumer was removed by
+                // task-165 (b1e5d5eec) under "the real thing replaces the gap note", leaving 0 references (the only
+                // dynamic channel `t(item.gapNoteKey)` is fed by gapNoteKnowledge alone). The copy had also become
+                // false: the real instance-level entry is task-91 /settings/instance/agent-principals. D-1043 ("personal
+                // layer" is the only layer name) is still witnessed by settings.contextTemplate.layerUser.
                 gapNoteMcp:
                     "MCP servers can only be used within a workspace today: neither the instance layer nor the personal layer hosts them, and the API is workspace-scoped too. Manage them in workspace settings.",
                 gapNoteKnowledge:
