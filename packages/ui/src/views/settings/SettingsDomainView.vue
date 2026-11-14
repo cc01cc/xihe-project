@@ -17,6 +17,7 @@ import {
     resolveLayerRoute,
 } from "../../lib/settingsIa";
 import LayerPrecedenceBadges from "../../components/settings/LayerPrecedenceBadges.vue";
+import { Button } from "../../components/ui/button";
 import { logger } from "../../lib/logger";
 
 /**
@@ -311,9 +312,29 @@ watch(
             </div>
         </div>
 
-        <p v-if="fetchError" class="mt-3 text-sm text-muted-foreground">
-            {{ t("settings.saveFailed") }}
-        </p>
+        <!--
+            task-509（E-03）：取数失败**不得**借用「保存失败」文案。修前这里渲染的是
+            「保存失败，请重试」（与真正保存失败共用同一个 key），用户会把"读取失败"读成
+            "我的修改丢了"，于是重复保存或报「数据被覆盖」——而实际一个 PUT 都没发生。
+            两种失败指向两个不同的用户动作（重试读取 / 检查我的编辑），所以文案分开、并给可点的重试。
+            注意：注释里也不要写裸 i18n key —— dev 构建保留注释，兜底守卫会把注释里的 key 当成
+            渲染出裸 key（本行第一版就是这么红的）。
+        -->
+        <div
+            v-if="fetchError"
+            data-testid="settings-domain-load-failed"
+            class="mt-3 flex flex-wrap items-center gap-3"
+        >
+            <p class="text-sm text-muted-foreground">{{ t("settings.ia.domainLoadFailed") }}</p>
+            <Button
+                variant="outline"
+                size="sm"
+                data-testid="settings-domain-load-retry"
+                @click="load"
+            >
+                {{ t("settings.errorSurface.retry") }}
+            </Button>
+        </div>
 
         <div
             v-if="toolFacesTab"

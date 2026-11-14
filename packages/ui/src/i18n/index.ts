@@ -1986,8 +1986,10 @@ const messages = {
                 resourceAgentPrincipals: "智能体主体",
                 resourceMyCredentials: "我的凭据",
                 resourceKnowledgeMcp: "知识库 · MCP",
-                backendGapBadge: "后端缺口 {code}",
-                backendGapBadgeGeneric: "后端缺口",
+                // task-509（T-02）：徽标只说「暂不可用」——曾经直出「后端缺口 G4」，G 码是内部
+                // 编号，用户读到的是实现进度而不是能力状态。编号仍留在渲染处的
+                // `data-gap-codes` 属性上（调试与 e2e 用），不进任何用户可见文本。
+                backendGapBadgeGeneric: "暂不可用",
                 backendGapHint: "灰显条目暂不可用，悬停查看原因。",
                 noAtomTitle: "本页不做额外权限筛选：",
                 noAtomBody:
@@ -1996,13 +1998,15 @@ const messages = {
                 atomDeniedBody:
                     "缺少「{atom}」权限（{code}）。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
                 atomDeniedNotGap:
-                    "提示：本页不会被标记为「后端缺口」——后端已实现，只是你没被授予。",
+                    "提示：这不是「功能未提供」——服务端已经有这个能力，只是你所在账号还没有被授予。",
+                // task-509（T-07）：内部决策号（D-951）不属于用户界面 ⇒ 换成「还没开放」；
+                // 顺手把「个人层」统一成「用户层」（层称谓只留一套，见 task-227 T-03）。
                 gapNoteAgent:
-                    "实例级注册表待实现（D-951 排期）：本入口现在点不进页面。能看的是工作区层（工作区设置 → 智能体）与个人层（设置 → 智能体主体）；实例级注册表补齐后，这里会变成可管理的「平台智能体」。",
+                    "实例级平台智能体还没开放：这个入口现在打不开页面。能用的是工作区层（工作区设置 → 智能体）与用户层（设置 → 智能体主体）；实例级能力上线后，这里会变成可管理的「平台智能体」。",
                 gapNoteMcp:
-                    "MCP 服务器只有工作区归属（mcp_remote_servers / mcp_stdio_servers 的 workspace_id 非空），实例层与个人层没有承载；接口也只有工作区面。",
+                    "MCP 服务器目前只能在工作区范围内使用：实例层与用户层都不提供，接口也只有工作区范围，请到工作区设置里管理。",
                 gapNoteKnowledge:
-                    "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个代理端点且按 workspace 分区，因此没有可管理的“库”。",
+                    "知识库目前只能按工作区访问：控制面没有可管理的知识库实体，只有 4 个按工作区分区的接口，所以这里没有可管理的「库」。",
                 navMonitoring: "监控",
                 navData: "数据",
                 navToolFaces: "工具分类",
@@ -2010,6 +2014,9 @@ const messages = {
                 navConfigLocks: "配置锁定",
                 navRoles: "角色与授权",
                 navAudit: "审计日志",
+                // task-509（E-03）：**取数失败 ≠ 保存失败**。两种失败指向不同的用户动作
+                // （重试读取 / 检查我的编辑），文案不许互相借用。
+                domainLoadFailed: "配置加载失败，请重试。",
                 domainKeysCount: "本域 {count} 个配置键",
                 domainEditableCount: "可编辑 {count} 项",
                 // task-285：计数只数静态可枚举字段；`context-policy` 的按模型覆盖子表行数另计，
@@ -2342,7 +2349,7 @@ const messages = {
                 layerWorkspace: "工作区层",
                 layerUser: "个人层",
                 typeText: "文本 text",
-                typeSystemPrompt: "系统提示词 system_prompt",
+                typeSystemPrompt: "系统提示词",
                 typeRootAgentsMd: "根级 AGENTS.md",
                 typeConversationHistory: "对话历史",
                 typeToolHistory: "工具历史",
@@ -2352,7 +2359,7 @@ const messages = {
                 typeRuntimeEnvironment: "运行时环境",
                 builtinName: "内置默认模板",
                 rootRefreshHelp:
-                    "per_chat_run：每次 ChatRun 前刷新；per_session：首次成功读取/明确缺失后固定于本 Session，瞬时不可用会重试。",
+                    "每次对话运行前刷新；首次读取成功（或确认缺失）后固定在本会话，瞬时不可用会重试。",
                 moveUp: "上移组件",
                 moveDown: "下移组件",
             },
@@ -2714,8 +2721,7 @@ const messages = {
             rolesBindingsSubjectTypeUser: "账号",
             rolesBindingsSubjectTypeAgent: "智能体主体",
             rolesBindingsAgentTitle: "智能体角色绑定",
-            rolesBindingsAgentHint:
-                "为智能体主体绑定/解绑角色；保存后写入 role_bindings。种子绑定不可解绑。",
+            rolesBindingsAgentHint: "为智能体主体绑定/解绑角色；保存后立即生效。种子绑定不可解绑。",
             rolesBindingsAgentPick: "选择智能体主体",
             rolesBindingsAgentNoAgents: "当前作用域没有可管理的智能体主体。",
             rolesBindingsAgentLoading: "正在读取智能体角色绑定…",
@@ -2755,11 +2761,11 @@ const messages = {
             errorSurface: {
                 gapTitle: "该内容暂不可用",
                 gapBody:
-                    "该页面依赖的后端服务尚未提供。这不是配置或网络问题，无需重试；实现合入后会自动恢复。左侧导航中的灰色虚线条目标记同类缺口。",
+                    "该页面需要的服务端能力还没提供。这不是配置或网络问题，无需重试；上线后本页会自动恢复。左侧导航里同样是灰色的条目属于同一类。",
                 gapMore: "查看说明",
-                gapDialogTitle: "什么是后端缺口？",
+                gapDialogTitle: "为什么这一页用不了？",
                 gapDialogBody:
-                    "后端缺口是产品已经列出、但服务端尚未实现的能力。页面不会因此报错退出；待服务端实现合入后，本页面自动恢复可用。",
+                    "这类页面是产品已经规划、服务端还没提供的能力。页面不会因此报错退出；服务端支持后会自动恢复可用。",
                 dialogDismiss: "知道了",
                 generic: "请求失败，请稍后重试；若多次失败请联系管理员。",
                 forbidden: "没有权限查看此内容。",
@@ -5609,8 +5615,7 @@ const messages = {
                 resourceAgentPrincipals: "Agent principals",
                 resourceMyCredentials: "My credentials",
                 resourceKnowledgeMcp: "Knowledge base · MCP",
-                backendGapBadge: "Backend gap {code}",
-                backendGapBadgeGeneric: "Backend gap",
+                backendGapBadgeGeneric: "Unavailable",
                 backendGapHint: "Dimmed entries are unavailable; hover for details.",
                 noAtomTitle: "This page applies no extra permission filter:",
                 noAtomBody:
@@ -5619,13 +5624,13 @@ const messages = {
                 atomDeniedBody:
                     "Missing the “{atom}” permission ({code}). This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
                 atomDeniedNotGap:
-                    "Note: this page is not a backend gap — the backend exists, you are simply not granted.",
+                    "Note: this is not a “feature not available yet” case — the server already supports it; your account is simply not granted.",
                 gapNoteAgent:
-                    "The instance-level registry is not implemented yet (scheduled as D-951), so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the personal layer (Settings → Agent principals). Once the registry lands, this becomes a manageable Platform agents page.",
+                    "Instance-level platform agents are not available yet, so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the user layer (Settings → Agent principals). Once it ships, this becomes a manageable “Platform agents” page.",
                 gapNoteMcp:
-                    "MCP servers are workspace-owned only (mcp_remote_servers / mcp_stdio_servers have a non-null workspace_id) and the API surface is workspace-only, so neither the instance nor the personal layer can host one.",
+                    "MCP servers can only be used within a workspace today: neither the instance layer nor the user layer hosts them, and the API is workspace-scoped too. Manage them in workspace settings.",
                 gapNoteKnowledge:
-                    'The control plane has no knowledge-base entity (no table, no CRUD): only four proxy endpoints partitioned by workspace, so there is no manageable "library".',
+                    "Knowledge bases are workspace-scoped today: the control plane has no manageable knowledge-base entity, only four workspace-partitioned endpoints, so there is no “library” to manage here.",
                 navMonitoring: "Monitoring",
                 navData: "Data",
                 navToolFaces: "Tool classes",
@@ -5633,6 +5638,7 @@ const messages = {
                 navConfigLocks: "Config locks",
                 navRoles: "Roles & grants",
                 navAudit: "Audit log",
+                domainLoadFailed: "Failed to load this configuration; retry.",
                 domainKeysCount: "{count} config keys in this domain",
                 domainEditableCount: "{count} editable",
                 domainEditableCountNote: "(plus {rows} per-model override rows)",
@@ -5992,7 +5998,7 @@ const messages = {
                 typeRuntimeEnvironment: "Runtime environment",
                 builtinName: "Built-in default",
                 rootRefreshHelp:
-                    "per_chat_run refreshes before each ChatRun; per_session pins the first successful read or confirmed absence for this Session and retries transient failures.",
+                    "Refreshed before each chat run; pinned to the first successful read (or confirmed absence) for the session, retrying transient failures.",
                 moveUp: "Move component up",
                 moveDown: "Move component down",
             },
@@ -6366,7 +6372,7 @@ const messages = {
             rolesBindingsSubjectTypeAgent: "Agent principal",
             rolesBindingsAgentTitle: "Agent role bindings",
             rolesBindingsAgentHint:
-                "Bind or unbind roles for an agent principal; saving writes role_bindings. Seed bindings cannot be removed.",
+                "Bind or unbind roles for an agent principal; changes apply on save. Seed bindings cannot be removed.",
             rolesBindingsAgentPick: "Pick an agent principal",
             rolesBindingsAgentNoAgents: "No manageable agent principals in this scope.",
             rolesBindingsAgentLoading: "Loading agent role bindings…",
@@ -6408,11 +6414,11 @@ const messages = {
             errorSurface: {
                 gapTitle: "This content is unavailable",
                 gapBody:
-                    "This page depends on a backend capability that is not implemented yet. It is not a configuration or network problem and needs no retry; it recovers once the implementation lands. Dimmed dashed entries in the left nav mark the same kind of gap.",
+                    "This page needs a server capability that is not available yet. It is not a configuration or network problem and needs no retry; the page recovers once it ships. Dimmed entries in the left nav belong to the same group.",
                 gapMore: "What does this mean?",
-                gapDialogTitle: "What is a backend gap?",
+                gapDialogTitle: "Why is this page unavailable?",
                 gapDialogBody:
-                    "A backend gap is a capability the product lists but the server has not implemented yet. The page does not break because of it; it becomes available automatically once the server side lands.",
+                    "Pages like this are planned but not yet provided by the server. The page does not break because of it; it becomes available automatically once the server side supports it.",
                 dialogDismiss: "Got it",
                 generic:
                     "The request failed; retry, or contact an administrator if it keeps failing.",

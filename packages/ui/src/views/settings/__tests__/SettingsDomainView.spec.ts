@@ -97,10 +97,13 @@ const messages = {
                 fourLayerDetail: "工作区 → 工作区默认 → 个人 → 实例",
                 forbiddenBody: "不加载配置",
                 backToUserLayer: "去用户层",
+                // task-509（E-03）：取数失败必须有独立文案 + 重试，不许借用 saveFailed。
+                domainLoadFailed: "配置加载失败",
                 notFoundTitle: "这个页面不存在",
                 notFoundBody: "该层没有这个配置域",
                 backToDefault: "回到默认页",
             },
+            errorSurface: { retry: "重试" },
         },
         common: { loading: "加载中…" },
     },
@@ -401,5 +404,53 @@ describe("SettingsDomainView workspace-default layer", () => {
         // 无 prop 声明的 stub 把 attrs 透传到根元素；布尔属性存在即为 ""（不是 "true"）。
         expect(wrapper.find('[data-testid="panels-stub"]').attributes("readonly")).toBeDefined();
         expect(state.loadLayerDomains).toHaveBeenCalledWith("workspace-default");
+    });
+});
+
+/**
+ * task-509（E-03）：**取数失败 ≠ 保存失败**。
+ *
+ * <p>修前这一处复用 `settings.saveFailed`（「保存失败，请重试」）：用户打开页面、读配置失败，
+ * 屏幕上说的是「保存失败」 ⇒ 用户会以为**自己的修改丢了**，于是重复保存、或报「数据被覆盖」，
+ * 而实际连一个 PUT 都没发生。两种失败指向**不同的用户动作**（重试读取 / 检查我的编辑），
+ * 文案不许互相借用 —— 这是判据本身，不是措辞偏好。</p>
+ */
+describe("SettingsDomainView 取数失败态（task-509 E-03）", () => {
+    beforeEach(() => {
+        state.capability = true;
+        state.routeQuery = {};
+        state.layerConfig.value = {};
+        state.layerLoading.value = false;
+        state.replace.mockClear();
+    });
+
+    it("给「加载失败」文案 + 可点重试，而不是「保存失败」", async () => {
+        state.loadLayerDomains.mockImplementation(() => Promise.reject(new Error("500")));
+        const wrapper = mountView("instance", "rag");
+        await flushPromises();
+
+        // 反向判据：不得出现"保存失败"——它把读取失败误报成用户的编辑没保存。
+        expect(wrapper.text()).not.toContain("保存失败");
+        // 正向判据：说清是读取失败。
+        expect(wrapper.text()).toContain("加载失败");
+
+        const retry = wrapper.find('[data-testid="settings-domain-load-retry"]');
+        expect(retry.exists()).toBe(true);
+        expect(retry.text()).toContain("重试");
+    });
+
+    it("点重试会重新发起取数（不是装饰按钮）", async () => {
+        state.loadLayerDomains.mockImplementation(() => Promise.reject(new Error("500")));
+        const wrapper = mountView("instance", "rag");
+        await flushPromises();
+
+        state.loadLayerDomains.mockClear();
+        state.loadLayerDomains.mockImplementation(() => Promise.resolve());
+        await wrapper.get('[data-testid="settings-domain-load-retry"]').trigger("click");
+        await flushPromises();
+
+        expect(state.loadLayerDomains).toHaveBeenCalledWith("instance");
+        // 成功后失败态消失（重试不是只有一次机会）。
+        expect(wrapper.find('[data-testid="settings-domain-load-retry"]').exists()).toBe(false);
     });
 });

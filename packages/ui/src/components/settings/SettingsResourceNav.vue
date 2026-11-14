@@ -48,9 +48,9 @@ function iconFor(id: string): Component {
 }
 
 function gapTitle(item: ResourceNavItem): string {
-    const badge = item.gaps?.length
-        ? t("settings.ia.backendGapBadge", { code: (item.gaps ?? []).join(" / ") })
-        : t("settings.ia.backendGapBadgeGeneric");
+    // task-509（T-02）：徽标只说「暂不可用」，**不再插值缺口编号**（G3/G4 是内部编号，
+    // 用户读到的是实现进度）。编号仍留在渲染处的 `data-gap-codes` 属性上供调试与 e2e。
+    const badge = t("settings.ia.backendGapBadgeGeneric");
     const note = item.gapNoteKey ? t(item.gapNoteKey) : "";
     return note ? badge + " · " + note : badge;
 }
@@ -115,13 +115,7 @@ function gapTitle(item: ResourceNavItem): string {
                     <component :is="iconFor(item.id)" class="size-4 shrink-0" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate">{{ t(item.labelKey) }}</span>
                     <Badge variant="outline" class="shrink-0 border-dashed text-xs">
-                        {{
-                            (item.gaps ?? []).length
-                                ? t("settings.ia.backendGapBadge", {
-                                      code: (item.gaps ?? []).join(" / "),
-                                  })
-                                : t("settings.ia.backendGapBadgeGeneric")
-                        }}
+                        {{ t("settings.ia.backendGapBadgeGeneric") }}
                     </Badge>
                 </SidebarMenuButton>
             </SidebarMenuItem>

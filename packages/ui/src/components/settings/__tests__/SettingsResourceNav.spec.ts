@@ -22,11 +22,10 @@ const messages = {
                 resourceSkills: "技能",
                 resourceAgents: "平台智能体",
                 resourceKnowledge: "知识库",
-                backendGapBadge: "后端缺口 {code}",
-                backendGapBadgeGeneric: "后端缺口",
-                backendGapHint: "灰显条目为后端缺口，暂不可用；悬停可查看说明。",
-                gapNoteKnowledge:
-                    "CP 侧没有知识库实体（无表、无 CRUD），只有 4 个按 workspace 分区的代理端点。",
+                // task-509（T-02）：徽标只说「暂不可用」，缺口编号不进用户可见文本。
+                backendGapBadgeGeneric: "暂不可用",
+                backendGapHint: "灰显条目暂不可用，悬停查看原因。",
+                gapNoteKnowledge: "知识库目前只能按工作区访问：控制面没有可管理的知识库实体。",
             },
         },
     },
@@ -86,7 +85,9 @@ describe("SettingsResourceNav（资源模块左栏）", () => {
         expect(gap.exists()).toBe(true);
         expect(gap.attributes("data-gap-codes")).toBe("G3");
         expect(gap.text()).toContain("知识库");
-        expect(gap.text()).toContain("后端缺口 G3");
+        // task-509（T-02）：徽标文案不再带缺口编号 —— 编号只留在 `data-gap-codes`（上行已钉）。
+        expect(gap.text()).toContain("暂不可用");
+        expect(gap.text()).not.toMatch(/\bG\d\b/);
         // 缺口项**不渲染**成真链接（`settings-nav-resource-knowledge` 必须不存在）。
         expect(wrapper.find('[data-testid="settings-nav-resource-knowledge"]').exists()).toBe(
             false,
@@ -130,11 +131,14 @@ describe("SettingsResourceNav（资源模块左栏）", () => {
         expect(gap.attributes("aria-disabled")).toBe("true");
         // 说明不再依赖点击：组级可见 hint + 条目 title 带缺口细节。
         expect(wrapper.find('[data-testid="settings-nav-gap-hint"]').text()).toContain(
-            "灰显条目为后端缺口",
+            "灰显条目暂不可用",
         );
         const title = gap.attributes("title") ?? "";
-        expect(title).toContain("后端缺口 G3");
-        expect(title).toContain("CP 侧没有知识库实体");
+        // task-509（T-07）：title 是悬停可见文本 ⇒ 同样不许带内部编号与表名列名。
+        expect(title).toContain("暂不可用");
+        expect(title).toContain("知识库目前只能按工作区访问");
+        expect(title).not.toMatch(/\bG\d\b/);
+        expect(title).not.toMatch(/[a-z][a-z0-9]*_[a-z0-9_]+/);
         wrapper.unmount();
     });
 });
