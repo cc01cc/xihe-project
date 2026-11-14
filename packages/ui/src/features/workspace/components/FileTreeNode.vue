@@ -1,3 +1,12 @@
+<!--
+  **已不在产品路径**（task-519 / 484 复盘，2026-11-14）。
+
+  自 `abccd7004`（2026-11-03，TreeNodeList 诞生）起，文件树行由
+  `FileTree.vue → Tree(reka) → TreeNodeList.vue` 渲染，本组件**没有任何产品 import**
+  （只剩自身递归与 `d1234TreeVisibility.spec.ts` 的旧挂载点；那条 spec 已改挂产品组件）。
+  484 的 dotfile 置灰 / 空目录淡样式当初写在这里 ⇒ 在产品上是空判据，task-519 已挪进
+  `TreeNodeList.vue`。**保留待用户裁定是否删除**（删除文件需用户批准，别顺手删）。
+-->
 <script setup lang="ts">
 import { computed, type Component } from "vue";
 import {

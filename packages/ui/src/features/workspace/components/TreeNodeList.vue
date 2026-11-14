@@ -13,7 +13,7 @@ import {
     Table2,
     Terminal,
 } from "@lucide/vue";
-import { useWorkspaceStore } from "../stores/workspace";
+import { isEmptyDirectoryNode, isDotfileName, useWorkspaceStore } from "../stores/workspace";
 import type { FileNode } from "../../../types";
 import TreeItem from "../../../components/ui/tree/TreeItem.vue";
 import FileNodeMenu from "./FileNodeMenu.vue";
@@ -69,6 +69,24 @@ function handleSelect(node: FileNode) {
     ws.openFile(node.path, props.rootId);
 }
 
+/**
+ * task-519（484 复盘）：D-1234 的两条视觉判据一�must落在**产品路径**上。
+ *
+ * 判据本体在 store（`isDotfileName` / `isEmptyDirectoryNode`），这里只做渲染映射。
+ * 484 当时把它们写在 `FileTreeNode.vue` 上 —— 那个组件自 `abccd7004`（2026-11-03）起
+ * 就被本组件取代、产品路径没有任何 import ⇒ 视觉判据在产品上是空的（真页面行既没有
+ * `data-dotfile` 也没有 muted class）。挪到这里才算真的生效。
+ *
+ * 同时落成 data 属性：颜色是渲染产物，断言要能点名到行/节点而不是猜 CSS。
+ */
+function isDotfile(node: FileNode): boolean {
+    return isDotfileName(node.name);
+}
+
+function isEmptyDir(node: FileNode): boolean {
+    return isEmptyDirectoryNode(node);
+}
+
 function escapeHtml(s: string): string {
     return s
         .replace(/&/g, "&amp;")
@@ -98,8 +116,11 @@ function highlightName(name: string, query?: string): string {
                 <FileNodeMenu :node="node">
                     <button
                         class="flex w-full items-center gap-1 py-1 text-sm rounded hover:bg-accent/50 transition-colors select-none text-left"
+                        :data-dotfile="isDotfile(node) ? 'true' : undefined"
+                        :data-empty-dir="isEmptyDir(node) ? 'true' : undefined"
                         :class="{
                             'bg-accent text-accent-foreground': ws.activeFilePath === node.path,
+                            'opacity-60': isEmptyDir(node),
                         }"
                         :style="{ paddingLeft: `${level * 16 + 8}px` }"
                     >
@@ -111,12 +132,16 @@ function highlightName(name: string, query?: string): string {
                             class="size-3.5 shrink-0 text-muted-foreground"
                             aria-hidden="true"
                         />
-                        <span v-if="!searchQuery" class="truncate flex-1 ml-1">{{
-                            node.name
-                        }}</span>
+                        <span
+                            v-if="!searchQuery"
+                            class="truncate flex-1 ml-1"
+                            :class="{ 'text-muted-foreground': isDotfile(node) }"
+                            >{{ node.name }}</span
+                        >
                         <span
                             v-else
                             class="truncate flex-1 ml-1"
+                            :class="{ 'text-muted-foreground': isDotfile(node) }"
                             v-html="highlightName(node.name, searchQuery)"
                         />
                     </button>

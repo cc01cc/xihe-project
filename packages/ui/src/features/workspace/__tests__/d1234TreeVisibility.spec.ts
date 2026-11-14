@@ -5,7 +5,8 @@ import { useWorkspaceStore, isEmptyDirectoryNode } from "../stores/workspace";
 import { api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import type * as fileServiceModule from "../composables/fileService";
-import FileTreeNode from "../components/FileTreeNode.vue";
+import FileTree from "../components/FileTree.vue";
+import { i18n } from "../../../i18n";
 import type { FileNode } from "../../../types";
 
 /**
@@ -143,7 +144,16 @@ describe("D-1234 文件树可见性（task-484）", () => {
         expect(isEmptyDirectoryNode(file as FileNode)).toBe(false);
     });
 
-    it("C: 空目录节点渲染带淡样式标记，非空不带", () => {
+    // task-519 / 484 复盘：**挂产品组件**（FileTree = reka Tree + TreeNodeList，产品路径就是这条）。
+    // 旧版 mount 的是 FileTreeNode.vue —— 那个组件在产品路径上根本没有 import（被 abccd7004 起
+    // 的 TreeNodeList 取代），于是这两条断言一直在测一个不存在的页面（D-1409 同族：
+    // 判据的作用对象不在产品路径上 ⇒ 绿了也证明不了什么）。
+    // 真实 i18n 实例：产品路径上的 FileNodeMenu 用 useI18n —— 不给插件时挂载直接抛
+    // 「Need to install with app.use function」，那会让断言红成"挂载失败"而不是"判据不成立"。
+    const mountTree = (nodes: FileNode[]) =>
+        mount(FileTree, { props: { nodes }, global: { plugins: [i18n] } });
+
+    it("C: 空目录节点渲染带淡样式标记，非空不带（挂产品组件 FileTree）", () => {
         const emptyDir: FileNode = {
             name: "empty-dir",
             path: "empty-dir",
@@ -156,31 +166,13 @@ describe("D-1234 文件树可见性（task-484）", () => {
             type: "directory",
             children: [{ name: "a.ts", path: "src/a.ts", type: "file" }],
         };
-        const emptyW = mount(FileTreeNode, {
-            props: {
-                node: emptyDir,
-                depth: 0,
-                selectedPath: null,
-                expandedPaths: new Set<string>(),
-            },
-        });
-        const fullW = mount(FileTreeNode, {
-            props: {
-                node: nonEmpty,
-                depth: 0,
-                selectedPath: null,
-                expandedPaths: new Set<string>(),
-            },
-        });
-        expect(emptyW.get('[data-testid="file-tree-node"]').attributes("data-empty-dir")).toBe(
-            "true",
-        );
-        expect(
-            fullW.get('[data-testid="file-tree-node"]').attributes("data-empty-dir"),
-        ).toBeUndefined();
-        expect(emptyW.get('[data-testid="file-tree-node"]').classes().join(" ")).toContain(
-            "opacity-60",
-        );
+        const wrapper = mountTree([emptyDir, nonEmpty]);
+        const emptyRows = wrapper.findAll('[data-empty-dir="true"]');
+        expect(emptyRows, "空目录行必须带 data-empty-dir").toHaveLength(1);
+        expect(emptyRows[0].text()).toContain("empty-dir");
+        expect(emptyRows[0].classes(), "空目录要淡（opacity-60）").toContain("opacity-60");
+        // 非空目录不得带标记（否则"淡样式"就没有判别力）
+        expect(wrapper.findAll("[data-empty-dir]")).toHaveLength(1);
     });
 
     // ---- D 例外：空 logs 仍隐藏 ----
@@ -210,20 +202,18 @@ describe("D-1234 文件树可见性（task-484）", () => {
     });
 
     // ---- 渲染：dotfile 置灰，非 dotfile 不受影响 ----
-    it("dotfile 节点带置灰标记与 muted class，普通文件不带", () => {
+    it("dotfile 行带置灰标记与 muted class，普通文件不带（挂产品组件 FileTree）", () => {
         const dot: FileNode = { name: ".editorconfig", path: ".editorconfig", type: "file" };
         const plain: FileNode = { name: "a.ts", path: "a.ts", type: "file" };
-        const dotW = mount(FileTreeNode, {
-            props: { node: dot, depth: 0, selectedPath: null, expandedPaths: new Set<string>() },
-        });
-        const plainW = mount(FileTreeNode, {
-            props: { node: plain, depth: 0, selectedPath: null, expandedPaths: new Set<string>() },
-        });
-        expect(dotW.get('[data-testid="file-tree-node"]').attributes("data-dotfile")).toBe("true");
-        expect(
-            plainW.get('[data-testid="file-tree-node"]').attributes("data-dotfile"),
-        ).toBeUndefined();
-        expect(dotW.get(".truncate").classes().join(" ")).toContain("text-muted-foreground");
-        expect(plainW.get(".truncate").classes().join(" ")).not.toContain("text-muted-foreground");
+        const wrapper = mountTree([dot, plain]);
+        const dotRows = wrapper.findAll('[data-dotfile="true"]');
+        expect(dotRows, "dotfile 行必须带 data-dotfile").toHaveLength(1);
+        expect(dotRows[0].text()).toContain(".editorconfig");
+        expect(dotRows[0].get(".truncate").classes()).toContain("text-muted-foreground");
+
+        const plainRow = wrapper.findAll("button").find((b) => b.text().includes("a.ts"));
+        expect(plainRow, "普通文件行必须存在").toBeDefined();
+        expect(plainRow?.attributes("data-dotfile")).toBeUndefined();
+        expect(plainRow?.get(".truncate").classes()).not.toContain("text-muted-foreground");
     });
 });
