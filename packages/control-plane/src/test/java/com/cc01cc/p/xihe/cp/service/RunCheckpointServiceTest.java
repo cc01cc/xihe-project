@@ -913,6 +913,17 @@ class RunCheckpointServiceTest {
                 eq(SLICE_REF), eq(0), eq(0), anyInt(), anyInt());
     }
 
+    /** 组件没注入时也要留痕：计数 + 可 grep 事件名，否则这只回滚在审计面里彻底消失。 */
+    @Test
+    void unwiredAuditComponentIsCounted() {
+        seedCapturedRow();
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(revertOk(1, 0, 0));
+
+        service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
+
+        assertEquals(1, service.revertAuditUnwiredCount(), "未接线必须计数，不能静默");
+    }
+
     /** 三态之三：记账抛错（效果已发生）⇒ 结果标 failed，回滚本身不因此改判。 */
     @Test
     void bookkeepingFailureWritesRowWithResultFailed() {

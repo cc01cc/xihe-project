@@ -86,12 +86,40 @@ class CheckpointRevertAuditTest {
         }
     }
 
+    /** 空 checkpointId 不写，但必须计数 —— 否则「没发生」与「没记录」无法区分。 */
     @Test
-    void blankCheckpointIdIsNotAudited() {
+    void blankCheckpointIdIsNotAuditedButIsCounted() {
         AuditLogger audit = mock(AuditLogger.class);
-        TransactionTemplate template = passThrough();
-        new CheckpointRevertAudit(audit, template).reverted("actor-1", "ws-1", " ", "rolled_back",
-                "slice-7", 0, 0, 0, 1);
+        CheckpointRevertAudit subject = new CheckpointRevertAudit(audit, passThrough());
+        subject.reverted("actor-1", "ws-1", " ", "rolled_back", "slice-7", 0, 0, 0, 1);
         verify(audit, times(0)).recordDurableChange(any(), any(), any(), any(), any(), any());
+        assertEquals(1, subject.failureCount(), "跳过的写也必须计数");
+    }
+
+    /**
+     * sliceRef 是外部串：含 ';' / '=' 时不得伪造出第二个字段（否则 LIKE '%result=skipped%' 会命中
+     * 一条 rolled_back 行 —— 外部输入篡改筛选语义）。
+     */
+    @Test
+    void sliceRefCannotForgeAnotherField() {
+        AuditLogger audit = mock(AuditLogger.class);
+        new CheckpointRevertAudit(audit, passThrough()).reverted("actor-1", "ws-1", CHECKPOINT_ID,
+                "rolled_back", "a;result=skipped;failed=9", 0, 0, 0, 1);
+        verify(audit, times(1)).recordDurableChange(any(), any(), any(), any(), any(),
+                argThat(detail -> detail.startsWith("result=rolled_back;")
+                        && !detail.contains(";result=skipped")
+                        && detail.contains("result%3Dskipped")));
+    }
+
+    /** 零效果是合法形态：运行时什么都没做也落 rolled_back，区分靠计数不靠加态。 */
+    @Test
+    void zeroEffectRevertIsLegitimateRolledBackShape() {
+        AuditLogger audit = mock(AuditLogger.class);
+        new CheckpointRevertAudit(audit, passThrough()).reverted("actor-1", "ws-1", CHECKPOINT_ID,
+                "rolled_back", "slice-7", 0, 0, 0, 1);
+        verify(audit, times(1)).recordDurableChange(any(), any(), any(), any(), any(),
+                argThat(detail -> detail.startsWith("result=rolled_back;")
+                        && detail.contains("restored=0") && detail.contains("deleted=0")
+                        && detail.contains("failed=0")));
     }
 }

@@ -120,9 +120,34 @@ public class RunCheckpointService {
     /** task-548：回滚进 audit_logs（fail-open，效果已在 Runtime 发生、不可撤销）。 */
     private com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit revertAudit;
 
+    /** 未注入审计组件时被静默跳过的回滚数（0 才正常；非 0 = 有回滚没进审计面）。 */
+    private final java.util.concurrent.atomic.AtomicLong revertAuditUnwired =
+            new java.util.concurrent.atomic.AtomicLong();
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRevertAudit(com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit revertAudit) {
         this.revertAudit = revertAudit;
+    }
+
+    public long revertAuditUnwiredCount() {
+        return revertAuditUnwired.get();
+    }
+
+    /**
+     * 回滚审计的唯一出口：组件没注入时也留痕（可 grep 事件名 + 计数），
+     * 否则「没发生」与「没记录」在事后无法区分。
+     */
+    private void writeRevertAudit(String actorUserId, RunCheckpoint row, String resultValue,
+            String sliceRef, int restored, int deleted, int failed, int attempt) {
+        if (revertAudit == null) {
+            long count = revertAuditUnwired.incrementAndGet();
+            logger.warn("[AUDIT] event=checkpoint_revert_audit_unwired workspaceId={} checkpointId={} "
+                            + "result={} count={}",
+                    row.getWorkspaceId(), row.getId(), resultValue, count);
+            return;
+        }
+        revertAudit.reverted(actorUserId, row.getWorkspaceId(), String.valueOf(row.getId()),
+                resultValue, sliceRef, restored, deleted, failed, attempt);
     }
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
@@ -857,18 +882,17 @@ public class RunCheckpointService {
                     row.getSourceRunId(), e.getClass().getName());
         }
         if (updated == 0) {
+            // 带资源标识：将来有人查「哪几次回滚被跳过」，日志是唯一线索，不带标识的 WARN 等于没有。
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_revert_bookkeeping_skipped runId={} "
-                            + "revertState={} reason={}",
-                    row.getSourceRunId(), revertState,
-                    bookkeepingFailed ? "bookkeeping_failed" : "state_changed");
+                            + "workspaceId={} checkpointId={} sliceRef={} revertState={} reason={}",
+                    row.getSourceRunId(), row.getWorkspaceId(), row.getId(), result.sliceRef(),
+                    revertState, bookkeepingFailed ? "bookkeeping_failed" : "state_changed");
             // task-548: 记的是「谁尝试做了什么」——被跳过/记账失败的尝试同样要留行，结果标准确值。
-            if (revertAudit != null) {
-                revertAudit.reverted(actorUserId, row.getWorkspaceId(), String.valueOf(row.getId()),
-                        bookkeepingFailed
-                                ? com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.RESULT_FAILED
-                                : com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.RESULT_SKIPPED,
-                        result.sliceRef(), 0, 0, counts.failed(), row.getRevertAttemptCount());
-            }
+            writeRevertAudit(actorUserId, row,
+                    bookkeepingFailed
+                            ? com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.RESULT_FAILED
+                            : com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.RESULT_SKIPPED,
+                    result.sliceRef(), 0, 0, counts.failed(), row.getRevertAttemptCount());
             return;
         }
         row.setRevertState(revertState);
@@ -877,11 +901,8 @@ public class RunCheckpointService {
         row.setRevertedAt(now);
         row.setRevertAttemptCount(row.getRevertAttemptCount() + 1);
         // task-548: 记账成功后才记审计 —— 记账被跳过（状态被并发改过）的回滚不造假记录。
-        if (revertAudit != null) {
-            revertAudit.reverted(actorUserId, row.getWorkspaceId(), String.valueOf(row.getId()),
-                    revertState, result.sliceRef(), counts.restored(), counts.deleted(),
-                    counts.failed(), row.getRevertAttemptCount());
-        }
+        writeRevertAudit(actorUserId, row, revertState, result.sliceRef(), counts.restored(),
+                counts.deleted(), counts.failed(), row.getRevertAttemptCount());
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_reverted runId={} workspaceId={} "
                         + "revertState={} restored={} deleted={} failed={} attempt={}",
                 row.getSourceRunId(), row.getWorkspaceId(), revertState, counts.restored(), counts.deleted(),

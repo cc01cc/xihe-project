@@ -32,7 +32,10 @@ public class CheckpointRevertAudit {
     /**
      * 三态结果，{@code details} 以 {@code result=} 开头 ⇒ 可按值筛（{@code details LIKE 'result=skipped%'}）。
      *
-     * <p>{@code rolled_back} = 效果发生且记账成功；{@code partial} = 效果部分发生且记账成功；
+     * <p>{@code rolled_back} = <b>记账成功且 Runtime 报零失败</b> —— 注意这不等于「有文件被改」：
+     * 零效果（restored=0/deleted=0/failed=0，运行时什么都没做）也落 {@code rolled_back}，
+     * 与 {@code partial} 的差别靠 {@code restored/deleted/failed} 三个计数表达，不靠再加新态
+     * （态少而正交，区分靠字段）。
      * {@code skipped} = 记账被跳过（状态已被并发改过，本次没有生效状态）；{@code failed} = 效果已发生
      * 但记账抛错。<b>审计记的是「谁尝试做了什么」</b>，所以被跳过的尝试也要有行 —— 它指向「有人在动
      * 同一个 checkpoint」；把结果标成 skipped 是准确记录，不是造假（造假是标 rolled_back 而实际没回滚）。</p>
@@ -63,10 +66,14 @@ public class CheckpointRevertAudit {
     public void reverted(String actorUserId, String workspaceId, String checkpointId, String result,
             String sliceRef, int restored, int deleted, int failed, int attempt) {
         if (checkpointId == null || checkpointId.isBlank()) {
+            // 与「写失败」不同：这一支根本不会尝试写，但同样不能让缺口静默 —— 计数 + 可 grep 事件名。
+            long count = failures.incrementAndGet();
+            logger.warn("[AUDIT] event=checkpoint_revert_audit_skipped_missing_checkpoint "
+                    + "workspaceId={} result={} failures={}", workspaceId, result, count);
             return;
         }
         String detail = "result=" + result
-                + "; sliceRef=" + (sliceRef == null || sliceRef.isBlank() ? "none" : sliceRef)
+                + "; sliceRef=" + escapeField(sliceRef)
                 + "; restored=" + restored
                 + "; deleted=" + deleted
                 + "; failed=" + failed
@@ -76,13 +83,27 @@ public class CheckpointRevertAudit {
                     actorUserId, workspaceId, ACTION, RESOURCE_TYPE, checkpointId, detail));
         } catch (RuntimeException failure) {
             long count = failures.incrementAndGet();
-            logger.warn("[AUDIT] revert audit failed (fail-open, revert already applied) checkpoint={} "
-                    + "action={} failures={} cause={}", checkpointId, ACTION, count, failure.toString());
+            logger.warn("[AUDIT] event=checkpoint_revert_audit_failed (fail-open, revert already applied) "
+                    + "workspaceId={} checkpointId={} action={} failures={} cause={}",
+                    workspaceId, checkpointId, ACTION, count, failure.toString());
         }
     }
 
-    /** 失败计数（非 0 说明审计在被吞掉，需要人看）。 */
+    /** 失败/跳过计数（非 0 说明有记录没落地，需要人看；日志事件名见上，可直接 grep）。 */
     public long failureCount() {
         return failures.get();
+    }
+
+    /**
+     * {@code details} 是分号分隔的多字段串，字段值里的 {@code ;} / {@code =} / {@code %} 会把
+     * 「按字段筛」的语义冲掉（例如 sliceRef 里塞 {@code result=skipped} 就能伪造筛选命中）。
+     * 字段值统一转义，保证分隔符只在分隔位置出现；筛选只许前缀匹配 {@code LIKE 'result=<v>%'}。
+     */
+    static String escapeField(String value) {
+        if (value == null || value.isBlank()) {
+            return "none";
+        }
+        return value.replace("%", "%25").replace(";", "%3B").replace("=", "%3D")
+                .replace("\r", "%0D").replace("\n", "%0A");
     }
 }
