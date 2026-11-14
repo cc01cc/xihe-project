@@ -285,6 +285,12 @@ async function handleDelete() {
  * `editName`/`editDescription` 的字段（或在别处复用 `startEdit`）会再踩一次。顺序修正只有一处。</p>
  */
 onMounted(async () => {
+    // task-472（D-1367，健壮性/潜在缺陷）：本页的编辑入口与只读态都看 `canManageWorkspace`
+    // （auth.ts:261-265），它的**权威来源**是 `/me/permissions` 投影；页面必须自己确保投影被加载，
+    // 否则 `user.capabilities` 缺失或过期的主体（cached pre-upgrade / 深链）在这里恒只读。
+    // **void 而不 await**：不挡住工作区数据加载；该 promise 内部 try/catch 从不 reject（auth.ts:161-178）；
+    // 单飞（auth.ts:182-185）保证与配置面板共用同一次请求。
+    void auth.ensureSelfPermissions();
     await loadWorkspace();
     startEdit();
 });

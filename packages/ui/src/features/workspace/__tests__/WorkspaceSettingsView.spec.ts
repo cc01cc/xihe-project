@@ -359,3 +359,77 @@ describe("WorkspaceSettingsView 错误回退 (PLAN-0560 T4.1)", () => {
         expect(routerSpies.replace).toHaveBeenCalledWith({ name: "workspace-home" });
     });
 });
+
+/**
+ * task-472（D-1367 健壮性/潜在缺陷）：页面必须**自己确保** `/me/permissions` 投影被加载。
+ *
+ * <p><b>受影响的不是「非实例管理员的工作区 OWNER」</b> —— WS_OWNER 种子含 `workspace:admin`
+ * （`SystemAccessRoleCatalog.java:211`）⇒ CP 的 `workspaceAdminOf` 会把任何真 OWNER 列进去
+ * ⇒ `canWorkspaceAdmin` 为真 ⇒ 无投影也能管理（真账号实测复现不出）。**真正的判别条件是
+ * `user.capabilities` 缺失或过期**；本 spec 的 `xihe-user` 夹具故意不带 capabilities，正是那一类。</p>
+ */
+describe("WorkspaceSettingsView 投影加载（task-472 / D-1367）", () => {
+    function routeProjection(projection: { status: number; body?: unknown }) {
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+            (input: RequestInfo | URL) => {
+                const url = typeof input === "string" ? input : input.url;
+                if (!url.includes("/me/permissions")) return mockConfigFetchResponse(input);
+                return Promise.resolve(
+                    new Response(
+                        JSON.stringify(projection.status === 200 ? (projection.body ?? {}) : {}),
+                        { status: projection.status },
+                    ),
+                );
+            },
+        );
+    }
+
+    function projectionCalls() {
+        return (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+            (call) => {
+                const arg = call[0] as string | Request;
+                return String(typeof arg === "string" ? arg : arg.url).includes("/me/permissions");
+            },
+        ).length;
+    }
+
+    it("挂载即请求能力投影（恰好一次）", async () => {
+        routeProjection({ status: 200, body: {} });
+        await mountView();
+
+        expect(projectionCalls()).toBe(1);
+    });
+
+    it("投影给该工作区 admin 时，编辑入口出现（修前必红：没人请求投影）", async () => {
+        routeProjection({
+            status: 200,
+            body: {
+                userId: "u1",
+                instanceCapabilities: [],
+                instancePermissions: [],
+                workspaces: [{ workspaceId: WORKSPACE_ID, workspaceAdmin: true }],
+            },
+        });
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-edit"]').exists()).toBe(true);
+    });
+
+    it("投影 500 时页面仍然渲染，只是不给编辑入口（fail-closed 不是白屏）", async () => {
+        routeProjection({ status: 500 });
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="workspace-settings-page"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-general"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="ws-settings-edit"]').exists()).toBe(false);
+    });
+
+    it("配置 tab 同时挂载面板时，投影仍然只请求一次（单飞去重）", async () => {
+        routeProjection({ status: 200, body: {} });
+        routeState.query = { tab: "config" };
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="ws-settings-config"]').exists()).toBe(true);
+        expect(projectionCalls()).toBe(1);
+    });
+});

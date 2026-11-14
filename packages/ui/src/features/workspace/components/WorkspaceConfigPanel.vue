@@ -36,6 +36,12 @@ const failed = ref(false);
 const readonly = computed(() => !auth.canManageWorkspace);
 
 onMounted(async () => {
+    // task-472（D-1367，健壮性/潜在缺陷）：只读判据 `readonly` 来自 `/me/permissions` 投影
+    // （`canManageWorkspace`，auth.ts:261-265），面板必须**自己确保它被加载** —— 否则
+    // `user.capabilities` 缺失或过期的主体（cached pre-upgrade / 深链）在这里恒只读，
+    // 页面不自给自足。**void 而不 await**：投影失败不得挡住配置域加载，且该 promise
+    // 内部 try/catch 从不 reject（auth.ts:161-178）；单飞保证与设置页共用一次请求。
+    void auth.ensureSelfPermissions();
     try {
         await configStore.loadLayerDomains("workspace");
         failed.value = false;
