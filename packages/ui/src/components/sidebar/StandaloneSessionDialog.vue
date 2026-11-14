@@ -89,6 +89,16 @@ watch(
     <BaseModal :show="show" :title="t('standaloneDialog.title')" trap-focus @close="emit('close')">
         <div class="space-y-3" data-testid="standalone-dialog">
             <p class="text-sm text-muted-foreground">{{ t("standaloneDialog.body") }}</p>
+            <!--
+                task-547 F-A：**创建时就说清限制**，而不是让用户选完主体、进到会话、发出去才吃 400
+                （CP：ChatController.java:616-629，workspace-less Session 不支持 TO/CC/代发/附件）。
+            -->
+            <p
+                class="rounded border border-amber-500/40 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
+                data-testid="standalone-dialog-limits"
+            >
+                {{ t("standaloneDialog.limits") }}
+            </p>
 
             <div
                 v-if="loading"

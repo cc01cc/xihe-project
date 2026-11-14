@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, markRaw, nextTick, onBeforeUnmount, watch } from "vue";
+import { ref, computed, inject, markRaw, nextTick, onBeforeUnmount, watch } from "vue";
 import { useElementSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useAuthStore } from "../../../../stores/auth";
 import { useAgentStore } from "../../../../stores/agent";
+import { routeLocationKey } from "vue-router";
+import { isWorkspaceLessRoute } from "../workspaceLess";
 import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
@@ -215,11 +217,25 @@ watch(
 );
 /** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
 const chatStore = useChatStore();
+/** 无 router 的组件单测里注入结果为空 ⇒ 判定为「非独立会话」（见 workspaceLess.ts 注释）。 */
+const route = inject(routeLocationKey, null);
 const speakAsId = ref("");
 
 const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
 
-const showSpeakAs = computed(() => participantsStore.canSpeakAs && speakAsOptions.value.length > 0);
+/**
+ * task-547 F-A（D-1409 判据⑤）：独立会话下「发送」与「定向」**不渲染**。
+ *
+ * <p>理由不是"能力面该不该有"，而是**界面上存在一个选了之后必然 400 的控件** ——
+ * CP 对 workspace-less Session 的 as/to/cc/附件一律 `WORKSPACE_LESS_FEATURE_FORBIDDEN`。
+ * 修法是「别让用户走完三步再失败」，所以入口就不给；能说出原因的一句提示见下方
+ * `composer-workspace-less-hint`（可见文案，不是只在控制台 warn）。</p>
+ */
+const workspaceLess = computed(() => isWorkspaceLessRoute(route));
+
+const showSpeakAs = computed(
+    () => !workspaceLess.value && participantsStore.canSpeakAs && speakAsOptions.value.length > 0,
+);
 
 /** 只有真的选了候选才带 `asParticipantId`：空串不发，避免把"以某人身份"误当默认行为。 */
 const activeSpeakAsId = computed(() =>
@@ -242,7 +258,7 @@ const agentParticipants = computed(() =>
     ),
 );
 
-const showToTargets = computed(() => agentParticipants.value.length > 0);
+const showToTargets = computed(() => !workspaceLess.value && agentParticipants.value.length > 0);
 
 const activeToTargetIds = computed(() =>
     toTargetIds.value.filter((id) =>
@@ -1244,6 +1260,17 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                 （false 时不渲染，不是禁用）；候选只含我拥有的、未停用的参与者。
                 2026-11-04 用户裁定：从原生 select 改为「输入 + 候选浮层」（RecipientField），术语「发送」。
             -->
+            <!--
+                task-547 F-A：独立会话下这里**没有**「发送」「定向」两栏（见 showSpeakAs/showToTargets），
+                但必须**说出来为什么** —— 用户看到少了两个控件而没有任何解释，等于把失败换成了困惑。
+            -->
+            <p
+                v-if="workspaceLess"
+                class="px-2 text-xs text-muted-foreground"
+                data-testid="composer-workspace-less-hint"
+            >
+                {{ t("chat.input.workspaceLessNoTargets") }}
+            </p>
             <RecipientField
                 v-if="showSpeakAs"
                 :label="t('chat.input.toLabel')"

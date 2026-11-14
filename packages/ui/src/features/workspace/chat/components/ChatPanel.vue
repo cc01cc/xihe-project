@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { routeLocationKey, useRouter } from "vue-router";
+import { isWorkspaceLessRoute } from "../workspaceLess";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useChatStore } from "../stores/chat.ts";
@@ -76,6 +77,7 @@ const checkpointStore = useCheckpointStore(),
     configStore = useConfigStore(),
     sessionStore = useSessionStore();
 const router = useRouter();
+const route = inject(routeLocationKey, null);
 
 /** C1：守卫拦下时暂存这次发送，「自动绑定」成功后原样重发、关闭弹窗时把草稿还给输入框。 */
 const pendingProviderBindingSend = ref<
@@ -1076,10 +1078,36 @@ async function submitMessage(input: {
     /** PLAN-0665 M2（D4）：TO 目标集合；每个目标各自起 run。 */
     toParticipantIds?: string[];
 }) {
-    const { content, attachments, branchId, asParticipantId, cc, toParticipantIds } = input;
+    let { content, attachments, branchId, asParticipantId, cc, toParticipantIds } = input;
     if (!authStore.canWriteWorkspace) {
         toast.error(t("workspace.viewerReadOnly"));
         return;
+    }
+    /*
+     * task-547 F-A（第二道闸）：独立会话（无工作区）在 CP 侧**不支持** To/CC/代发/附件 ——
+     * `ChatController.java:616-629` 对任一非空直接 400 `WORKSPACE_LESS_FEATURE_FORBIDDEN`。
+     * 组合器已经不给这些入口（InputArea 的 showSpeakAs/showToTargets），但队列重放、键盘快捷路径
+     * 与旧草稿都可能带着它们到这里 ⇒ 发送前统一剥掉，并**说出来**（不静默改写用户的请求内容）。
+     */
+    if (isWorkspaceLessRoute(route)) {
+        const dropped = {
+            to: (toParticipantIds ?? []).length,
+            cc: (cc ?? []).length,
+            as: asParticipantId ? 1 : 0,
+            attachments: (attachments ?? []).length,
+        };
+        const droppedTotal = dropped.to + dropped.cc + dropped.as + dropped.attachments;
+        if (droppedTotal > 0) {
+            console.warn(
+                "[task-547] workspace-less Session 不支持 TO/CC/代发/附件，已丢弃",
+                dropped,
+            );
+            toast.warning(t("chat.input.workspaceLessDropped"));
+            toParticipantIds = undefined;
+            cc = undefined;
+            asParticipantId = undefined;
+            attachments = undefined;
+        }
     }
     const id = props.sessionId;
 
