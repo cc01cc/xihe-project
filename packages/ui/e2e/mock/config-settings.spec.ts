@@ -681,6 +681,13 @@ test.describe("Config Settings (three layers)", () => {
         await expect(drawer).toBeVisible();
         await expect(toggle).toHaveAttribute("aria-expanded", "true");
         await expect(drawer.locator('[data-testid^="settings-nav-domain-"]').first()).toBeVisible();
+        // task-510：抽屉是真 Sheet ⇒ 打开时焦点必须在抽屉内（修前是手搓 div，没有焦点陷阱，
+        // Tab 会跑到背后正文，读屏用户没有出口）。这里只钉"焦点在里面"这一事实，不钉实现。
+        const focusInsideDrawer = await page.evaluate(() => {
+            const el = document.querySelector('[data-testid="settings-drawer"]');
+            return Boolean(el && el.contains(document.activeElement));
+        });
+        expect(focusInsideDrawer, "抽屉打开后焦点必须在抽屉内（焦点陷阱）").toBe(true);
         await drawer.getByRole("button", { name: "关闭目录" }).click();
         await expect(page.getByTestId("settings-drawer")).toHaveCount(0);
         await expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -700,6 +707,14 @@ test.describe("Config Settings (three layers)", () => {
         await toggle.click();
         await expect(drawer).toBeVisible();
         await assertNoHorizontalScroll("抽屉打开态");
+
+        // ③ Esc 关抽屉（task-510）：修前 Esc 无反应，键盘用户只有"点遮罩"一条路。
+        // 与上面「点关闭按钮」是两条独立路径，两条都钉。
+        await page.keyboard.press("Escape");
+        await expect(page.getByTestId("settings-drawer")).toHaveCount(0, {
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
     });
 
     test("shows an error banner when layer config cannot be loaded", async ({ page }) => {

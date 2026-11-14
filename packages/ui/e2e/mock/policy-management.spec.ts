@@ -428,6 +428,17 @@ test.describe("Policy management (desktop)", () => {
             "aria-selected",
             "true",
         );
+        // task-510：页签键盘模型由 vendor Tabs（reka roving focus）提供 —— 修前是手搓
+        // <button role="tab">，方向键无反应、焦点停在第一个页签。ArrowLeft 回策略、
+        // ArrowRight 再回工具分类，确认来回都能走（且不改变本用例后续依赖的页签状态）。
+        const toolFacesTab = page.getByTestId("settings-domain-tab-tool-faces");
+        const policyTab = page.getByTestId("settings-domain-tab-policy");
+        await toolFacesTab.focus();
+        await page.keyboard.press("ArrowLeft");
+        await expect(policyTab).toHaveAttribute("aria-selected", "true");
+        await page.keyboard.press("ArrowRight");
+        await expect(toolFacesTab).toHaveAttribute("aria-selected", "true");
+
         await expect(page.getByTestId("settings-tool-faces-heading")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
