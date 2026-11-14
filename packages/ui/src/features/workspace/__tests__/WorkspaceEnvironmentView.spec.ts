@@ -181,15 +181,16 @@ describe("WorkspaceEnvironmentView job projection", () => {
         expect(statuses).toHaveLength(2);
 
         // Non-terminal job: scope + backend kind + cleanup status, never a cancel reason.
-        expect(secondary[0].text()).toContain("workspace");
-        expect(secondary[0].text()).toContain("windows-host");
+        // task-59：这三个字段的可见文本都是人话（原值只在 title/data-value 上）。
+        expect(secondary[0].text()).toContain("工作区");
+        expect(secondary[0].text()).toContain("Windows 宿主直跑");
         expect(secondary[0].text()).toContain("清理中");
         expect(secondary[0].text()).not.toContain("用户取消");
         expect(statuses[0].text()).toBe("运行中");
 
         // Terminal job: mapped cancel reason plus the raw error code.
-        expect(secondary[1].text()).toContain("run");
-        expect(secondary[1].text()).toContain("docker");
+        expect(secondary[1].text()).toContain("单次运行");
+        expect(secondary[1].text()).toContain("Docker 容器");
         expect(secondary[1].text()).toContain("用户取消");
         expect(wrapper.get('[data-testid="workspace-job-error"]').text()).toContain(
             "RUNTIME_UNAVAILABLE",
@@ -260,7 +261,7 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
         const wrapper = await mountView(),
             hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
         expect(hint.attributes("aria-disabled")).toBe("false");
-        expect(hint.text()).toContain("windows-host");
+        expect(hint.text()).toContain("Windows 宿主直跑");
         expect(hint.text()).toContain("无隔离");
     });
 
@@ -278,7 +279,7 @@ describe("WorkspaceEnvironmentView job-start capability (PLAN-0396)", () => {
         const wrapper = await mountView(),
             hint = wrapper.get('[data-testid="workspace-job-start-hint"]');
         expect(hint.attributes("aria-disabled")).toBe("false");
-        expect(hint.text()).toContain("windows-mxc");
+        expect(hint.text()).toContain("Windows MXC 沙箱");
         expect(hint.text()).toContain("沙盒隔离");
     });
 
@@ -345,7 +346,7 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
 
         expect(wrapper.find('[data-testid="workspace-execution-mode"]').exists()).toBe(false);
         const fixed = wrapper.get('[data-testid="workspace-execution-mode-fixed"]');
-        expect(fixed.text()).toContain("docker");
+        expect(fixed.text()).toContain("Docker 容器");
         expect(fixed.text()).toContain("固定");
         expect(wrapper.get('[data-testid="workspace-execution-mode-hint"]').text()).toContain(
             "只能使用 Docker",
@@ -361,7 +362,7 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
 
         const wrapper = await mountView(),
             fixed = wrapper.get('[data-testid="workspace-execution-mode-fixed"]');
-        expect(fixed.text()).toContain("windows-mxc");
+        expect(fixed.text()).toContain("Windows MXC 沙箱");
         expect(fixed.text()).toContain("历史配置");
         expect(fixed.text()).not.toContain("固定");
     });
@@ -374,7 +375,7 @@ describe("WorkspaceEnvironmentView execution mode entry (PLAN-0551)", () => {
         const wrapper = await mountView();
         expect(wrapper.find('[data-testid="workspace-execution-mode"]').exists()).toBe(false);
         expect(wrapper.get('[data-testid="workspace-execution-mode-fixed"]').text()).toContain(
-            "docker",
+            "Docker 容器",
         );
         expect(mockedApi.updateWorkspaceExecutionMode).not.toHaveBeenCalled();
     });
@@ -845,7 +846,7 @@ describe("WorkspaceEnvironmentView full-page i18n (task-52)", () => {
         const startHint = wrapper.get('[data-testid="workspace-job-start-hint"]').text();
         expect(startHint).toBe(
             interpolate(messageIn("en-US", "workspace.environmentJobCapabilitySandboxed"), {
-                backend: "windows-mxc",
+                backend: messageIn("en-US", "workspace.environmentExecutionMode.windowsMxc"),
             }),
         );
 
@@ -977,6 +978,167 @@ describe("WorkspaceEnvironmentView 存储字段人话化（task-46）", () => {
         expect(bareSnakeTokens(text)).toEqual([]);
         for (const raw of ["host_directory", "direct_attach", "managed_import"]) {
             expect(text, raw).not.toContain(raw);
+        }
+    });
+});
+
+/**
+ * task-59：**其余枚举字段也走「人话 + 未知兜底」**（task-46 只覆盖了 storage 两个字段）。
+ *
+ * <p>判据分两层，缺一不可：</p>
+ * <ol>
+ *   <li>**蛇形裸标识符**（`bareSnakeTokens`，ASCII 边界 lookaround）—— 只能抓 `host_directory` 这类；</li>
+ *   <li>**白名单式负例**：`docker` / `windows-mxc` / `stable` / `agent` 这些**不是蛇形**，
+ *       蛇形正则抓不到 ⇒ 必须逐值断言它们不出现。只写第 1 条会让判据「绿在没有蛇形标识符」，
+ *       而屏幕上明明写着 `docker`（task-59 开工时点名的部分假绿形态）。</li>
+ * </ol>
+ */
+describe("WorkspaceEnvironmentView 其余枚举字段人话化（task-59）", () => {
+    beforeEach(() => {
+        applyLocale("zh-CN");
+    });
+
+    it("状态徽标：已知值给人话，原值只留在 title / data-value 属性", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            status: "materializing",
+        } as never);
+
+        const wrapper = await mountView();
+        const badge = wrapper.get('[data-testid="workspace-environment-status"]');
+
+        expect(badge.text()).toBe("物化中");
+        // 排障信息不丢：原值在属性上，不在可见文本里。
+        expect(badge.attributes("title")).toBe("materializing");
+        expect(badge.attributes("data-value")).toBe("materializing");
+    });
+
+    it("状态徽标：未知值 → 「未知状态」，且不透传原值到可见文本", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            status: "hibernating",
+        } as never);
+
+        const wrapper = await mountView();
+        const badge = wrapper.get('[data-testid="workspace-environment-status"]');
+
+        expect(badge.text()).toBe("未知状态");
+        expect(badge.attributes("data-value")).toBe("hibernating");
+        expect(wrapper.text()).not.toContain("hibernating");
+    });
+
+    it("runtime.status 与 executionSpec.status 同一套标签 + 未知兜底", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            status: "ready",
+            runtime: { ...environment("windows-host").runtime, status: "degraded" },
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.get('[data-testid="workspace-runtime-status"]').text()).toBe("降级");
+        // executionSpec 缺省时走同一兜底，不再输出硬编码英文 "unknown"
+        expect(wrapper.text()).not.toContain("unknown");
+    });
+
+    it("执行模式给人话（docker / windows-mxc / windows-host 三个原值都不出现）", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            storageMode: "managed_import",
+            storageBackend: "host_directory",
+        } as never);
+
+        const wrapper = await mountView();
+        const fixed = wrapper.get('[data-testid="workspace-execution-mode-fixed"]');
+
+        expect(fixed.text()).toContain("Docker 容器");
+        expect(fixed.attributes("data-value")).toBe("docker");
+        // 白名单式负例：这三个值是连字符/单词形态，蛇形正则抓不到。
+        for (const raw of ["docker", "windows-mxc", "windows-host"]) {
+            expect(wrapper.text(), raw).not.toMatch(new RegExp("\\b" + raw + "\\b"));
+        }
+    });
+
+    it("capability.maturity 给人话，原值不进可见文本", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-mxc"),
+            capability: {
+                contractVersion: "v1",
+                backendKind: "windows-mxc",
+                backendRevision: "rev-1",
+                maturity: "stable",
+                executionMode: "windows-mxc",
+                available: true,
+            },
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.text()).toContain("稳定");
+        expect(wrapper.text()).not.toMatch(/\bstable\b/);
+        expect(wrapper.text()).not.toMatch(/\bexperimental\b/);
+    });
+
+    it("job.source / job.scope 给人话；未知值走兜底且原值只在属性上", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            storageMode: "direct_attach",
+            storageBackend: "host_directory",
+        } as never);
+        mockedApi.getWorkspaceJobs.mockResolvedValue([
+            job({ source: "scheduled", scope: "workspace" }),
+            job({ jobId: "job-2", source: "legacy_import", scope: "everything" }),
+        ] as never);
+
+        const wrapper = await mountView();
+        const text = wrapper.text();
+
+        expect(text).toContain("定时任务");
+        expect(text).toContain("工作区");
+        expect(text).toContain("未知发起方");
+        expect(text).toContain("未知作用域");
+        expect(text).not.toContain("legacy_import");
+        expect(text).not.toContain("everything");
+        // 已映射的 source 原值同样不得出现在可见文本里
+        expect(text).not.toMatch(/\bscheduled\b/);
+    });
+
+    it("机器判据：整页正文既无蛇形裸标识符，也无这些原值字面量", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            status: "ready",
+            storageBackend: "host_directory",
+            storageMode: "managed_import",
+            capability: {
+                contractVersion: "v1",
+                backendKind: "docker",
+                backendRevision: "rev-1",
+                maturity: "experimental",
+                executionMode: "docker",
+                available: true,
+            },
+        } as never);
+        mockedApi.getWorkspaceJobs.mockResolvedValue([
+            job({ source: "agent", scope: "session" }),
+        ] as never);
+
+        const wrapper = await mountView();
+        const text = wrapper.text();
+
+        expect(bareSnakeTokens(text)).toEqual([]);
+        // 白名单式负例（第 2 层判据）：这些原值不是蛇形，只有逐值断言才抓得住。
+        for (const raw of [
+            "docker",
+            "windows-mxc",
+            "windows-host",
+            "managed_import",
+            "direct_attach",
+            "host_directory",
+            "experimental",
+            "agent",
+            "session",
+        ]) {
+            expect(text, raw).not.toMatch(new RegExp("\\b" + raw + "\\b"));
         }
     });
 });

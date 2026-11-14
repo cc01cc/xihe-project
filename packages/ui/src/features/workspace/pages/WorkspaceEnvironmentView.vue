@@ -16,9 +16,13 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import type {
+    WorkspaceBackendMaturity,
+    WorkspaceExecutionMode,
     WorkspaceJob,
     WorkspaceJobCancelReason,
     WorkspaceJobCleanupStatus,
+    WorkspaceJobScope,
+    WorkspaceJobSource,
     WorkspaceJobStatus,
 } from "../../../types";
 
@@ -124,7 +128,8 @@ function releaseReasonLabel(reason: string | null | undefined): string {
         case "RUNTIME_UNAVAILABLE":
             return t("workspace.releaseReasonUnavailable");
         default:
-            return reason ?? "";
+            // task-59：原值不再直出（见上方 supersede）；空值与非空未知值都走兜底文案。
+            return t("workspace.releaseReasonUnknown");
     }
 }
 
@@ -176,6 +181,11 @@ const TERMINAL_JOB_STATUSES: ReadonlySet<string> = new Set([
  * （`status` yaml `:8055`、`cancelReason` `:8060`、`cleanupStatus` `:8065`）。
  * 用完整的 `Record<…>` 而不是 `Partial<…>`：契约加枚举值而这里没跟随时 `vue-tsc` 直接红，
  * 不必等人去比对 yaml。未知值一律回落 wire 原值（**不自造展示值**）。
+ *
+ * **supersede（2026-11-15，task-59 / D-1442）**：上面「未知值回落 wire 原值」这条**已收回** ——
+ * 它与「页面上不得出现 wire 标识符」直接冲突（原值透传就是本缺陷本体）。新口径：
+ * **可见文本走 `…Unknown` 文案，原值只进 `title`/`data-value` 属性**（人看人话、机器看属性，
+ * 排障信息不丢）。原关切（排障要知道 wire 给了什么）仍被满足，只是换了承载面。
  */
 const JOB_STATUS_KEY: Record<WorkspaceJobStatus, string> = {
     pending: "workspace.environmentJobStatus.pending",
@@ -206,17 +216,17 @@ const JOB_CLEANUP_STATUS_KEY: Record<WorkspaceJobCleanupStatus, string> = {
 
 function jobStatusLabel(status: string): string {
     const key = JOB_STATUS_KEY[status as WorkspaceJobStatus];
-    return key ? t(key) : status;
+    return key ? t(key) : t("workspace.environmentJobStatusUnknown");
 }
 
 function jobCancelReasonLabel(reason: string): string {
     const key = JOB_CANCEL_REASON_KEY[reason as WorkspaceJobCancelReason];
-    return key ? t(key) : reason;
+    return key ? t(key) : t("workspace.environmentJobCancelReasonUnknown");
 }
 
 function jobCleanupStatusLabel(status: string): string {
     const key = JOB_CLEANUP_STATUS_KEY[status as WorkspaceJobCleanupStatus];
-    return key ? t(key) : status;
+    return key ? t(key) : t("workspace.environmentJobCleanupStatusUnknown");
 }
 
 function isTerminalJob(status: string): boolean {
@@ -257,10 +267,11 @@ const jobStartReason = computed(() => {
                 t("workspace.environmentJobCapabilityReasonMissing"),
         });
     }
-    const backend =
-        capability.backendKind ||
-        environment.value?.executionMode ||
-        t("workspace.environmentBackendUnknown");
+    // task-59：提示语里的后端名也不能是 wire 值（原来可能直接拼出 "windows-mxc"）。
+    const rawBackend = capability.backendKind || environment.value?.executionMode || "";
+    const backend = rawBackend
+        ? executionModeLabel(rawBackend)
+        : t("workspace.environmentBackendUnknown");
     if (capability.canIsolateFilesystem === true) {
         return t("workspace.environmentJobCapabilitySandboxed", { backend });
     }
@@ -350,6 +361,84 @@ const storageModeText = computed(() =>
  * ⇒ 换词之外还要给一句「为什么不可用」，否则「托管副本」看起来像个正常选项。
  */
 const storageModeFrozen = computed(() => environment.value?.storageMode === "managed_import");
+
+/**
+ * task-59：**同一套「枚举 → 人话 + 未知兜底」再覆盖到其余枚举字段**。
+ *
+ * <p>与上面 `storageBackendLabel`/`storageModeLabel`（task-46）**共用同一个落点与同一条规则**，
+ * 不另立词表：值域来自契约或 CP 归一，未知值一律走 `…Unknown` 文案，
+ * **原值只进 `title`/`data-value` 属性**（人看人话、机器看属性 —— 这样排障信息不丢，
+ * 可见文本也不会出现 wire 标识符）。</p>
+ *
+ * <p>值域出处（逐条）：`environment.status` / `runtime.status` / `executionSpec.status` 是 CP
+ * `WorkspaceEnvironmentController.mapRuntimeState`（`:321-336`）归一出的闭集；
+ * `executionMode` 见 `openapi.yaml:8740`；`capability.maturity` 见 `:8876`；
+ * `job.source`/`job.scope` 见 `:8751`/`:8752`。契约里 `status` 是 `{type: string}`（自由字符串）
+ * ⇒ 这里的值表是**CP 归一结果**的快照，用到 `Record<string, …>` + 未知兜底，不做编译期闭集。</p>
+ */
+const STATUS_LABEL_KEY: Record<string, string> = {
+    ready: "workspace.environmentStatus.ready",
+    materializing: "workspace.environmentStatus.materializing",
+    paused: "workspace.environmentStatus.paused",
+    stopped: "workspace.environmentStatus.stopped",
+    destroying: "workspace.environmentStatus.destroying",
+    degraded: "workspace.environmentStatus.degraded",
+    blocked: "workspace.environmentStatus.blocked",
+    stale: "workspace.environmentStatus.stale",
+    unbound: "workspace.environmentStatus.unbound",
+    pending: "workspace.environmentStatus.pending",
+};
+function statusLabel(value: string): string {
+    const key = STATUS_LABEL_KEY[value.trim().toLowerCase()];
+    return key ? t(key) : t("workspace.environmentStatusUnknown");
+}
+
+/** 执行模式闭集（`openapi.yaml:8740` 的 enum）—— 连字符值不是蛇形，光靠蛇形正则抓不到。 */
+const EXECUTION_MODE_LABEL_KEY: Record<WorkspaceExecutionMode, string> = {
+    docker: "workspace.environmentExecutionMode.docker",
+    "windows-mxc": "workspace.environmentExecutionMode.windowsMxc",
+    "windows-host": "workspace.environmentExecutionMode.windowsHost",
+};
+function executionModeLabel(value: string): string {
+    const key = EXECUTION_MODE_LABEL_KEY[value as WorkspaceExecutionMode];
+    return key ? t(key) : t("workspace.environmentExecutionModeUnknown");
+}
+
+/** 后端成熟度闭集（`openapi.yaml:8876` `maturity: enum [stable, experimental]`）。 */
+const MATURITY_LABEL_KEY: Record<WorkspaceBackendMaturity, string> = {
+    stable: "workspace.environmentMaturity.stable",
+    preview: "workspace.environmentMaturity.preview",
+    experimental: "workspace.environmentMaturity.experimental",
+};
+function maturityLabel(value: string): string {
+    const key = MATURITY_LABEL_KEY[value as WorkspaceBackendMaturity];
+    return key ? t(key) : t("workspace.environmentMaturityUnknown");
+}
+
+/** Job 发起方闭集（`openapi.yaml:8751`）—— 契约是 enum，UI 类型 task-59 同步收窄。 */
+const JOB_SOURCE_LABEL_KEY: Record<WorkspaceJobSource, string> = {
+    ui: "workspace.environmentJobSource.ui",
+    agent: "workspace.environmentJobSource.agent",
+    runtime: "workspace.environmentJobSource.runtime",
+    system: "workspace.environmentJobSource.system",
+    mcp: "workspace.environmentJobSource.mcp",
+    scheduled: "workspace.environmentJobSource.scheduled",
+};
+function jobSourceLabel(value: string): string {
+    const key = JOB_SOURCE_LABEL_KEY[value as WorkspaceJobSource];
+    return key ? t(key) : t("workspace.environmentJobSourceUnknown");
+}
+
+/** Job 作用域闭集（`openapi.yaml:8752`）。 */
+const JOB_SCOPE_LABEL_KEY: Record<WorkspaceJobScope, string> = {
+    run: "workspace.environmentJobScope.run",
+    session: "workspace.environmentJobScope.session",
+    workspace: "workspace.environmentJobScope.workspace",
+};
+function jobScopeLabel(value: string): string {
+    const key = JOB_SCOPE_LABEL_KEY[value as WorkspaceJobScope];
+    return key ? t(key) : t("workspace.environmentJobScopeUnknown");
+}
 
 async function loadEnvironment() {
     const id = workspaceId.value;
@@ -544,8 +633,10 @@ onBeforeUnmount(stopPolling);
                         class="rounded-full border px-3 py-1 text-sm font-medium"
                         data-testid="workspace-environment-status"
                         :class="statusMeta.cls"
+                        :title="environment.status"
+                        :data-value="environment.status"
                     >
-                        {{ environment.status }}
+                        {{ statusLabel(environment.status) }}
                     </span>
                 </div>
 
@@ -724,10 +815,21 @@ onBeforeUnmount(stopPolling);
                                 <dt class="text-muted-foreground">
                                     {{ t("workspace.environmentFieldStatus") }}
                                 </dt>
-                                <dd>
-                                    {{
+                                <dd
+                                    :title="
                                         (environment.executionSpec ?? environment.assignment)
-                                            ?.status ?? "unknown"
+                                            ?.status ?? ''
+                                    "
+                                    :data-value="
+                                        (environment.executionSpec ?? environment.assignment)
+                                            ?.status ?? ''
+                                    "
+                                >
+                                    {{
+                                        statusLabel(
+                                            (environment.executionSpec ?? environment.assignment)
+                                                ?.status ?? "",
+                                        )
                                     }}
                                 </dd>
                             </div>
@@ -771,16 +873,17 @@ onBeforeUnmount(stopPolling);
                                                     data-testid="workspace-execution-mode-legacy"
                                                 >
                                                     {{
-                                                        currentExecutionMode ||
-                                                        t("workspace.environmentValueUnknown")
+                                                        executionModeLabel(currentExecutionMode)
                                                     }}（{{ t("workspace.executionModeLegacy") }}）
                                                 </SelectItem>
                                                 <SelectItem
                                                     v-for="mode in DIRECT_ATTACH_EXECUTION_MODES"
                                                     :key="mode"
                                                     :value="mode"
+                                                    :title="mode"
+                                                    :data-value="mode"
                                                 >
-                                                    {{ mode }}
+                                                    {{ executionModeLabel(mode) }}
                                                 </SelectItem>
                                             </SelectContent>
                                         </Select>
@@ -796,11 +899,10 @@ onBeforeUnmount(stopPolling);
                                         v-else
                                         class="min-w-0 text-right"
                                         data-testid="workspace-execution-mode-fixed"
+                                        :title="currentExecutionMode"
+                                        :data-value="currentExecutionMode"
                                     >
-                                        {{
-                                            currentExecutionMode ||
-                                            t("workspace.environmentValueUnknown")
-                                        }}
+                                        {{ executionModeLabel(currentExecutionMode) }}
                                         <span class="ml-1 text-xs text-muted-foreground">
                                             {{ managedExecutionModeLabel }}
                                         </span>
@@ -829,7 +931,9 @@ onBeforeUnmount(stopPolling);
                                     {{
                                         environment.capability.available
                                             ? t("workspace.environmentCapabilityAvailable", {
-                                                  maturity: environment.capability.maturity,
+                                                  maturity: maturityLabel(
+                                                      environment.capability.maturity,
+                                                  ),
                                               })
                                             : t("workspace.environmentCapabilityUnavailable", {
                                                   reason:
@@ -872,7 +976,14 @@ onBeforeUnmount(stopPolling);
                                 <dt class="text-muted-foreground">
                                     {{ t("workspace.environmentFieldStatus") }}
                                 </dt>
-                                <dd class="mt-1">{{ environment.runtime.status }}</dd>
+                                <dd
+                                    class="mt-1"
+                                    data-testid="workspace-runtime-status"
+                                    :title="environment.runtime.status"
+                                    :data-value="environment.runtime.status"
+                                >
+                                    {{ statusLabel(environment.runtime.status) }}
+                                </dd>
                             </div>
                             <div>
                                 <dt class="text-muted-foreground">
@@ -949,11 +1060,23 @@ onBeforeUnmount(stopPolling);
                                         class="mt-1 text-xs text-muted-foreground"
                                         data-testid="workspace-job-secondary"
                                     >
-                                        {{ job.source }} · {{ job.scope }} ·
-                                        {{
-                                            job.backendKind ??
+                                        <span :title="job.source" :data-value="job.source">{{
+                                            jobSourceLabel(job.source)
+                                        }}</span>
+                                        ·
+                                        <span :title="job.scope" :data-value="job.scope">{{
+                                            jobScopeLabel(job.scope)
+                                        }}</span>
+                                        ·
+                                        <span
+                                            v-if="job.backendKind"
+                                            :title="job.backendKind"
+                                            :data-value="job.backendKind"
+                                            >{{ executionModeLabel(job.backendKind) }}</span
+                                        >
+                                        <span v-else>{{
                                             t("workspace.environmentBackendUnknown")
-                                        }}
+                                        }}</span>
                                         <template v-if="jobDetailText(job)">
                                             · {{ jobDetailText(job) }}</template
                                         >

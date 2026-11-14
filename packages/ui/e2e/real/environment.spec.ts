@@ -69,9 +69,12 @@ test.describe("Workspace environment status", () => {
         expect((await environmentResponse).status()).toBe(200);
 
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible();
-        await expect(page.getByTestId("workspace-environment-status")).toContainText(
-            /materializing|ready/,
-        );
+        // task-59 / D-1442：徽标的**可见文本是人话**（就绪/物化中…），wire 原值只在
+        // `data-value` 属性上。原来这里断言正文含 "ready" —— 那是在断言缺陷本身。
+        const statusBadge = page.getByTestId("workspace-environment-status");
+        await expect(statusBadge).toHaveAttribute("data-value", /^(ready|materializing)$/);
+        // 可见文本不得是 lowercase wire 标识符（zh 是中文、en 是首字母大写，两者都过）。
+        await expect(statusBadge).not.toHaveText(/^[a-z][a-z_]*$/);
         await expect(page.getByText(auth.workspaceId, { exact: true }).first()).toBeVisible();
         // task-46：这两行原是一对自相矛盾的断言 —— 上一行要求页面上**出现** storageBackend 的
         // 枚举值 host_directory（把缺陷本身当成了期望），下一行又要求不出现 storagePath。
@@ -104,16 +107,17 @@ test.describe("Workspace environment status", () => {
                     );
                     await page.getByTestId("workspace-environment-refresh").click();
                     await response;
+                    // 轮询读 `data-value`（wire 值），不读可见文本 —— 可见文本是人话。
                     return (
-                        (
-                            await page.getByTestId("workspace-environment-status").textContent()
-                        )?.trim() ?? ""
+                        (await page
+                            .getByTestId("workspace-environment-status")
+                            .getAttribute("data-value")) ?? ""
                     );
                 },
                 { timeout: LONG_TIMEOUT_MS, intervals: [1000] },
             )
             .toMatch(/ready|blocked/);
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
+        await expect(statusBadge).toHaveAttribute("data-value", "ready");
         await page.screenshot({
             scale: "css",
             path: testInfo.outputPath("environment-desktop.png"),
@@ -123,7 +127,7 @@ test.describe("Workspace environment status", () => {
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("ready", {
+        await expect(statusBadge).toHaveAttribute("data-value", "ready", {
             timeout: LONG_TIMEOUT_MS,
         });
 

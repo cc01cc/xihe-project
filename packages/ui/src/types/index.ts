@@ -1225,6 +1225,15 @@ export interface WorkspaceCapabilityPreflight {
 /** Durable job lifecycle scope (`spec/execution-job-contract.md` §Scope 收口). */
 export type WorkspaceJobScope = "run" | "session" | "workspace";
 
+/**
+ * Job 发起方闭集（`openapi.yaml:8751` `WorkspaceJob.source` 的 enum）。
+ *
+ * <p>task-59：此处原先写成 `string` —— **契约有闭集、类型没跟上**，导致「值表映射」在编译期
+ * 拿不到保护（表里少一个值也不会红）。收成联合类型后，UI 侧 `Record<WorkspaceJobSource, …>`
+ * 的映射表会随契约增删而 vue-tsc 直接红。</p>
+ */
+export type WorkspaceJobSource = "ui" | "agent" | "runtime" | "system" | "mcp" | "scheduled";
+
 /** Execution backend identity; legacy/MCP-projected archives may carry `null`. */
 export type WorkspaceJobBackendKind = "docker" | "windows-mxc" | "windows-host";
 
@@ -1262,7 +1271,7 @@ export interface WorkspaceJob {
     workspaceId: string;
     sessionId: string | null;
     runId: string | null;
-    source: string;
+    source: WorkspaceJobSource;
     scope: WorkspaceJobScope;
     status: WorkspaceJobStatus;
     startedAt: string | null;
@@ -1287,7 +1296,7 @@ export interface WorkspaceJobStartRequest {
     scope?: WorkspaceJobScope;
     sessionId?: string;
     runId?: string;
-    source?: string;
+    source?: WorkspaceJobSource;
     env?: Record<string, string>;
 }
 
