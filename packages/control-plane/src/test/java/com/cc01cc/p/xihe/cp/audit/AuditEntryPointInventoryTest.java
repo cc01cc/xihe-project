@@ -42,7 +42,19 @@ class AuditEntryPointInventoryTest {
      * {@link AuditLogger} is accounted for, so a newly added write entry point turns this red
      * instead of silently escaping the inventory.
      */
-    private static final String[] NON_WRITE_PUBLIC_METHODS = {"getRecentRecords"};
+    /** Main-only scope: a class file under a {@code test-classes} output dir is not part of the surface. */
+    private static String sourceUri(JavaClass javaClass) {
+        return javaClass.getSource().map(source -> source.getUri().toString()).orElse("<none>");
+    }
+
+    private static boolean isTestClass(JavaClass javaClass) {
+        return sourceUri(javaClass).replace('\\', '/').contains("test-classes");
+    }
+
+    private static final String[] NON_WRITE_PUBLIC_METHODS = {
+            "getRecentRecords", // read face: query the audit table
+            "escapeField"       // task-598: static value escaper (task-575), neither writes nor reads a row
+    };
 
     @Test
     void auditWriteEntryPointsAreEnumeratedFromTheClassNotFromAGrepList() throws IOException {
@@ -58,10 +70,33 @@ class AuditEntryPointInventoryTest {
             callers.put(entry, "");
         }
 
+        // The class is the source of truth for `public`: computed before the call scan so a call to a
+        // non-public helper (e.g. the package-private sanitize(), called from its own package's test)
+        // cannot be mistaken for an unregistered entry point.
+        java.util.Set<String> declaredPublicMethods = new java.util.HashSet<>();
+        for (JavaMethod method : auditLogger.getMethods()) {
+            if (method.getModifiers().contains(com.tngtech.archunit.core.domain.JavaModifier.PUBLIC)) {
+                declaredPublicMethods.add(method.getName());
+            }
+        }
+
+        // task-598: DoNotIncludeTests() above let the test surface through (measured 2026-11-14: total 206
+        // with 69 test call sites vs 137 main-only), so the main-only scope is asserted from the class
+        // location here instead of trusted to the import option.
+        long testClassesExcluded = classes.stream().filter(AuditEntryPointInventoryTest::isTestClass).count();
+        assertThat(testClassesExcluded)
+                .as("the test surface must be dropped here because DoNotIncludeTests() does not drop it;"
+                        + " if this ever hits 0 the import option started working -> delete the manual filter")
+                .isPositive();
+
         int foreign = 0;
+        java.util.Set<String> foreignNames = new java.util.TreeSet<>();
         for (JavaClass javaClass : classes) {
             if (javaClass.getName().equals(AuditLogger.class.getName())) {
                 continue;
+            }
+            if (isTestClass(javaClass)) {
+                continue; // test call sites are not the audited surface
             }
             for (JavaCall<?> call : javaClass.getMethodCallsFromSelf()) {
                 String owner = call.getTarget().getOwner().getName();
@@ -70,10 +105,15 @@ class AuditEntryPointInventoryTest {
                 }
                 String name = call.getTarget().getName();
                 if (!callSites.containsKey(name)) {
-                    if (name.equals("getRecentRecords")) {
-                        continue; // read face, not a write entry point
+                    if (java.util.Arrays.asList(NON_WRITE_PUBLIC_METHODS).contains(name)) {
+                        continue; // declared non-write face, not a write entry point
+                    }
+                    if (!declaredPublicMethods.contains(name)) {
+                        continue; // task-598: a non-public method cannot be an entry point
                     }
                     foreign++;
+                    foreignNames.add(name + " <- " + javaClass.getSimpleName() + ":"
+                            + call.getSourceCodeLocation().getLineNumber());
                     continue;
                 }
                 callSites.merge(name, 1, Integer::sum);
@@ -83,17 +123,13 @@ class AuditEntryPointInventoryTest {
 
         // The class is the source of truth: every declared write method must be in the report, and the
         // report must not contain entry points the class no longer has.
-        java.util.Set<String> declaredPublicMethods = new java.util.HashSet<>();
-        for (JavaMethod method : auditLogger.getMethods()) {
-            if (method.getModifiers().contains(com.tngtech.archunit.core.domain.JavaModifier.PUBLIC)) {
-                declaredPublicMethods.add(method.getName());
-            }
-        }
         java.util.Set<String> registered = new java.util.HashSet<>(java.util.Arrays.asList(WRITE_ENTRY_POINTS));
         registered.addAll(java.util.Arrays.asList(NON_WRITE_PUBLIC_METHODS));
         assertThat(declaredPublicMethods).as(
                 "every public method of AuditLogger must be registered as a write entry point or as a"
-                        + " declared read face; a new public write method must fail here first")
+                        + " declared non-write face (task-598: escapeField turned this red for exactly"
+                        + " that reason). THIS RED IS CORRECT: it means a new public method escaped the"
+                        + " inventory, not that the gate is broken -- register it above")
                 .isSubsetOf(registered);
         assertThat(registered).as("registered methods actually exist on AuditLogger")
                 .isSubsetOf(declaredPublicMethods);
@@ -106,7 +142,8 @@ class AuditEntryPointInventoryTest {
                     .append(",\n");
         }
         json.append("  \"_total\": ").append(total).append(",\n");
-        json.append("  \"_foreignEntryPoints\": ").append(foreign).append("\n}\n");
+        json.append("  \"_foreignEntryPoints\": ").append(foreign).append(",\n");
+        json.append("  \"_testClassesExcluded\": ").append(testClassesExcluded).append("\n}\n");
 
         Path out = Path.of("target", "audit-entry-points.json");
         Files.createDirectories(out.getParent());
@@ -120,6 +157,7 @@ class AuditEntryPointInventoryTest {
         Files.writeString(detail, sb.toString(), StandardCharsets.UTF_8);
 
         assertThat(total).as("total audit call sites resolved by receiver type").isPositive();
-        assertThat(foreign).as("calls to AuditLogger methods outside the write entry-point list").isZero();
+        assertThat(foreign).as("calls to AuditLogger methods outside the write entry-point list: %s",
+                foreignNames).isZero();
     }
 }
