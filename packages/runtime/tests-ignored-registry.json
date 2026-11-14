@@ -1,0 +1,273 @@
+{
+  "schema": "runtime-ignored-registry/1",
+  "updatedAt": "2026-11-14",
+  "source": "A03-xihe/packages/runtime/**/*.rs 里的 #[ignore] 标注（注释中的文字不算）",
+  "categories": {
+    "env": "环境/特权不可得：真栈、外部 CP、MXC 宿主二进制、symlink 特权、真实 dev store",
+    "bl": "已知缺陷或环境前置挂起，必须有 BL 号承接",
+    "unowned": "无 BL、也非环境不可得（手动基准/诊断/真夹具/结构性 helper）—— 无主忽略，按缺陷登记"
+  },
+  "entries": [
+    {
+      "name": "p3_migration_tool_backfills_git_only_history",
+      "file": "src/checkpoint.rs",
+      "line": 5043,
+      "category": "unowned",
+      "reason": "T3.1 migration tool: git-only history backfill, idempotent",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "p3_migration_verify_store_matches_shadow",
+      "file": "src/checkpoint.rs",
+      "line": 5187,
+      "category": "unowned",
+      "reason": "T3.2 migration verify: store vs shadow, byte-for-byte per slice",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "p2_real_dual_backfill_fixture",
+      "file": "src/checkpoint.rs",
+      "line": 5315,
+      "category": "unowned",
+      "reason": "P2.0 real dual-backfill fixture; run with --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "p24_real_store_checks",
+      "file": "src/checkpoint.rs",
+      "line": 5416,
+      "category": "env",
+      "reason": "P2.4 real dev-store preflight + GC dry run; env-driven",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "p24_real_gc_orphan_dry_run",
+      "file": "src/checkpoint.rs",
+      "line": 5476,
+      "category": "env",
+      "reason": "P2.4 real store orphan GC dry-run; env-driven",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "v6_three_rounds_self_git_self_restore_history",
+      "file": "src/checkpoint.rs",
+      "line": 5529,
+      "category": "unowned",
+      "reason": "V6: three self->git->self rounds; every store slice restores",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "audit_dual_pending_200x",
+      "file": "src/checkpoint.rs",
+      "line": 5751,
+      "category": "unowned",
+      "reason": "manual 200x dual-write audit gate; --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "benchmark_dual_write_overhead_200x",
+      "file": "src/checkpoint.rs",
+      "line": 5807,
+      "category": "unowned",
+      "reason": "manual 200x dual-write overhead benchmark; --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "t3_5_no_git_full_chain_smoke",
+      "file": "src/checkpoint_api.rs",
+      "line": 1127,
+      "category": "unowned",
+      "reason": "T3.5(a) no-git full-chain smoke; run isolated (--ignored --test-threads=1)",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "diagnose_write_blob_10k",
+      "file": "src/checkpoint_store/blob.rs",
+      "line": 806,
+      "category": "unowned",
+      "reason": "manual 10k blob timing diagnostic; run with --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "benchmark_capture_1k_10k",
+      "file": "src/checkpoint_store/capture.rs",
+      "line": 1506,
+      "category": "unowned",
+      "reason": "manual 1k/10k capture benchmark; run with --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "benchmark_dual_phase_breakdown_200x",
+      "file": "src/checkpoint_store/capture.rs",
+      "line": 1545,
+      "category": "unowned",
+      "reason": "manual 200x dual-write phase breakdown; --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "consistency_200x_capture_restore_verify",
+      "file": "src/checkpoint_store/restore.rs",
+      "line": 281,
+      "category": "unowned",
+      "reason": "manual 1x/10x/50x/200x consistency run; --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "kill_capture_child",
+      "file": "src/checkpoint_store/restore.rs",
+      "line": 385,
+      "category": "unowned",
+      "reason": "child helper for the manual T1.11 kill test",
+      "ref": null,
+      "note": "structural helper: child entry for the manual T1.11 kill test"
+    },
+    {
+      "name": "kill_mid_capture_leaves_no_visible_slice_and_fsck_heals",
+      "file": "src/checkpoint_store/restore.rs",
+      "line": 397,
+      "category": "unowned",
+      "reason": "manual T1.11 mid-capture kill test; --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "v3_symlink_probe",
+      "file": "src/checkpoint_store/restore_full.rs",
+      "line": 1579,
+      "category": "env",
+      "reason": "V3 symlink probe: store restore is intentionally fail-closed",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "v3_git_checkout_parity",
+      "file": "src/checkpoint_store/restore_full.rs",
+      "line": 1643,
+      "category": "unowned",
+      "reason": "V3 git-checkout parity: 3 tiers x 3 slices + negative expectations",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "v5_1000_file_restore_zero_diff",
+      "file": "src/checkpoint_store/restore_full.rs",
+      "line": 2108,
+      "category": "unowned",
+      "reason": "V5: 1000-file restore must have zero content differences",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "lock_holder_helper",
+      "file": "src/checkpoint_store/store.rs",
+      "line": 566,
+      "category": "unowned",
+      "reason": "helper for lock_is_released_when_holder_process_dies",
+      "ref": null,
+      "note": "structural helper: parent runs this test in a child process with --ignored"
+    },
+    {
+      "name": "mxc_execution_captures_process_output",
+      "file": "src/process_guard.rs",
+      "line": 1163,
+      "category": "bl",
+      "reason": "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`",
+      "ref": "BL-568/task-46",
+      "note": null
+    },
+    {
+      "name": "mxc_execution_passes_cwd_and_environment",
+      "file": "src/process_guard.rs",
+      "line": 1192,
+      "category": "bl",
+      "reason": "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`",
+      "ref": "BL-568/task-46",
+      "note": null
+    },
+    {
+      "name": "mxc_timeout_terminates_the_wrapper_process_tree",
+      "file": "src/process_guard.rs",
+      "line": 1236,
+      "category": "bl",
+      "reason": "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`",
+      "ref": "BL-568/task-46",
+      "note": null
+    },
+    {
+      "name": "mxc_execution_rejects_cwd_outside_granted_root",
+      "file": "src/process_guard.rs",
+      "line": 1264,
+      "category": "bl",
+      "reason": "needs host MXC (XIHE_MXC_EXECUTABLE); run `mise run test:runtime:lib:ignored:mxc`",
+      "ref": "BL-568/task-46",
+      "note": null
+    },
+    {
+      "name": "m0_s6_self_10k",
+      "file": "tests/checkpoint_perf_m0_test.rs",
+      "line": 563,
+      "category": "unowned",
+      "reason": "P2.4 10k self performance/RSS fixture; run with --ignored --nocapture",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "test_cp_health_endpoint",
+      "file": "tests/cp_real_integration_test.rs",
+      "line": 21,
+      "category": "env",
+      "reason": "requires running Control Plane — set XIHE_CP_PORT and start CP first",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "test_cp_auth_register_login",
+      "file": "tests/cp_real_integration_test.rs",
+      "line": 33,
+      "category": "env",
+      "reason": "requires running Control Plane — set XIHE_CP_PORT and start CP first",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "mxc_file_worker_real_boundary_matrix",
+      "file": "tests/file_worker_mxc.rs",
+      "line": 109,
+      "category": "env",
+      "reason": "requires verified wxc-exec and explicit XIHE_MXC_EXECUTABLE",
+      "ref": null,
+      "note": null
+    },
+    {
+      "name": "job_engine_crash_helper",
+      "file": "tests/job_engine_process.rs",
+      "line": 720,
+      "category": "unowned",
+      "reason": "helper for runtime_crash_leaves_no_residue; run with --ignored",
+      "ref": null,
+      "note": "structural helper: child entry for runtime_crash_leaves_no_residue"
+    },
+    {
+      "name": "session_probe",
+      "file": "tests/session_probe_test.rs",
+      "line": 218,
+      "category": "unowned",
+      "reason": "M0 probe; run with: cargo test --test session_probe_test -- --ignored --nocapture",
+      "ref": null,
+      "note": null
+    }
+  ]
+}

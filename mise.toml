@@ -291,9 +291,12 @@ dir = "packages/runtime"
 alias = "test:runtime:lib:gate"
 
 # BL-262 ignored 套件三档（2026-11-04 Lead 批准；**都不进 validate**）。
-# 19 条 `--ignored` 里 0 条需要 Docker；盲跑 `--ignored` 会挂：2 条子进程 helper（单独跑无意义）、
-# 10 条 200x/10k 基准或手动诊断（分钟级）、3 条读真实 dev store（env 驱动）、1 条 symlink 需特权。
-# 故按**显式列名**分两档，其余保持手动；分类表见 one/.local/bl229-evidence/ignored-suite-triage.md。
+# task-612 更正读数：本文件原写「19 条 --ignored」，实测**29 条**（34 处 grep 命中里 5 处是注释文字）⇒
+# 数字已漂 10 条。现行口径以 packages/runtime/tests-ignored-registry.json 为准（逐条 name+file+类别+理由）：
+#   env=6（真栈/外部 CP/MXC 宿主二进制/symlink 特权/真实 dev store）、bl=4（BL-568/task-46 MXC）、
+#   unowned=19（手动 200x/10k 基准与诊断、真夹具、3 条结构性 helper）—— unowned 按缺陷登记，等分档。
+# 判据：`mise run check:runtime:ignored`（= node scripts/check-ignored-registry.mjs --check），条数不等即红并点名。
+# 三档任务仍按**显式列名**；历史分类表见 one/.local/bl229-evidence/ignored-suite-triage.md。
 #
 # 共同前置：host git ≥ 2.20（`require_git()` 是 assert，缺失即 FAIL 而非 skip）。
 # 幂等性：全部用 tempdir，不写真实 dev store / home；V3_REPORT_PATH / V3_SYMLINK_REPORT_PATH 只在
@@ -303,6 +306,14 @@ alias = "test:runtime:lib:gate"
 #   p3_migration_verify 1.44s→60s；v6_three_rounds 3.47s→60s；
 #   v3_git_checkout_parity 38.12s→180s；v5_1000_file_restore 13.51s→90s。
 # `cargo test --no-run` 先单独编译，避免冷编译时间被算进被测超时。
+[tasks."check:runtime:ignored"]
+  # task-612: 把「ignored 多少条」从注释里的手写数字变成可跑判据。约 1 s，只读源码与 registry，不编译。
+  # 不进 validate 的理由：它是「登记纪律」不是「产品正确性」，且登记更新与代码新增 ignore 常常同批；
+  # 需要它进 validate 时另裁（口径同 D-1046：接门要能自愈单命令）。
+  run = "node scripts/check-ignored-registry.mjs --check"
+  description = "task-612: runtime #[ignore] 条数与登记清单必须相等（不等即 exit 1 并点名未登记项）"
+  alias = "check:runtime:ignored"
+
 [tasks."test:runtime:lib:ignored:isolated"]
 run = [
   "node ../../scripts/cargo-run.mjs test --locked --lib --no-run",
