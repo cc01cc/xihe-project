@@ -38,7 +38,7 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         await page.route("**/api/v1/workspaces/*", async (route) => {
             const method = route.request().method(),
                 url = new URL(route.request().url());
-            const wsId = url.pathname.split("/").filter(Boolean).at(-1) ?? "workspace-1";
+            const wsId = url.pathname.split("/").filter(Boolean).at(-1) ?? "11111111-1111-4111-8111-111111111111";
             if (method === "PATCH") {
                 const body = route.request().postDataJSON() as Record<string, unknown>;
                 await route.fulfill({
@@ -147,11 +147,11 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
     test("workspace settings page saves rename and enforces exact-name delete guard", async ({
         page,
     }) => {
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // PLAN-0560: workspace settings entry routes to the workspace settings page.
         // C3: the entry now lives in the secondary nav (tab bar is session-only).
         await page.getByTestId("workspace-nav-settings").click();
-        await expect(page).toHaveURL(/\/workspace\/workspace-1\/settings/);
+        await expect(page).toHaveURL(/\/workspace\/11111111-1111-4111-8111-111111111111\/settings/);
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
 
         await page.getByTestId("ws-settings-name-input").fill("Renamed Workspace");
@@ -191,7 +191,7 @@ test.describe("Workspace chrome entries live in the rail section header (task-36
     test("add-workspace: rail header opens the dialog; the page toolbar entry is gone", async ({
         page,
     }) => {
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         await expect(page.getByTestId("sidebar-add-workspace")).toBeVisible();
         await expect(page.getByTestId("workspace-toolbar-add")).toHaveCount(0);
         await expect(page.getByTestId("workspace-toolbar-more-add-workspace")).toHaveCount(0);
@@ -207,7 +207,7 @@ test.describe("Workspace chrome entries live in the rail section header (task-36
     test("import-source: rail header opens the dialog; the page toolbar entry is gone", async ({
         page,
     }) => {
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         await expect(page.getByTestId("sidebar-import-source")).toBeVisible();
         await expect(page.getByTestId("workspace-toolbar-import-source")).toHaveCount(0);
 

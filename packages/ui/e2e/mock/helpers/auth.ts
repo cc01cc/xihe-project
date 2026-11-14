@@ -168,6 +168,9 @@ function sessionMonitorResponse(): Record<string, unknown> {
     };
 }
 
+/** task-546：mock 工作区的固定 id（形状合法 UUID，不是随机值）。 */
+export const MOCK_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+
 export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // task-100：工作区事件流必须是**长连接**。旧桩用 `route.fulfill` 给有限体，响应立刻结束 ⇒
     // 客户端 clean_close + 恒速重连（task-98 实测 101 次 / 30 s）。Playwright 没有流式 fulfill，
@@ -202,19 +205,26 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // 的短路条件是「id 命中 且已有 name 或 workspaceRole」—— seed 一旦带 name，它就直接返回内存里的
     // 对象，`GET /workspaces/{id}` 连发都不发。那时无论 wire 返回什么，多根都到不了 UI。
     // 所以这个开关同时把 seed 收窄成「只知道 id」，逼出那次请求。
+    // task-546：mock 工作区 id 必须是**形状合法的 UUID**（固定值，不随机）。
+    //
+    // 生产侧 CP 强制 `X-Workspace-Id` 是 UUID，而 mock 一直用 `workspace-1` 这种假 id ——
+    // 它自己看不出问题，直到 task-537 的守卫（router/index.ts 的 `isUuid`）按生产形态先验形状：
+    // 非 UUID 的深链一律回落到工作区列表（整条 mock 车道 `6 failed`）。
+    // 改夹具而不是松守卫：假 id 才是保真度缺陷，把守卫改松等于让产品迁就夹具。
+    // 固定值而非随机：spec 里的 URL / route 匹配 / 断言都直接写这个常量，随机值会让它们不可复算。
     const workspaceOverrides = options.rootsFromWire ? {} : (options.workspace ?? {});
     const seedWorkspace = options.rootsFromWire
-        ? { id: "workspace-1" }
+        ? { id: "11111111-1111-4111-8111-111111111111" }
         : {
-              id: "workspace-1",
+              id: "11111111-1111-4111-8111-111111111111",
               name: "Mock Workspace",
               ownerId: "user-1",
               ...workspaceOverrides,
           };
     const seedTabWorkspace = options.rootsFromWire
-        ? { id: "workspace-1" }
+        ? { id: "11111111-1111-4111-8111-111111111111" }
         : {
-              id: "workspace-1",
+              id: "11111111-1111-4111-8111-111111111111",
               name: "Mock Workspace",
               workspaceRole: "OWNER",
               ownerId: "user-1",
@@ -652,7 +662,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 body: JSON.stringify({
                     id: sessionMatch[1],
                     title: "Mock Session",
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                     archived: false,
@@ -825,7 +835,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     // task-373：两种作用域共用同一条映射（含 agentPrincipalId 的默认值口径），差别只有
     // workspaceId —— 独立会话是显式 null，不是缺字段。
     const sessions = (options.sessions ?? []).map((session) =>
-        mapSession(session, session.workspaceId ?? options.workspaceId ?? "workspace-1"),
+        mapSession(session, session.workspaceId ?? options.workspaceId ?? "11111111-1111-4111-8111-111111111111"),
     );
     const workspaceless = (options.workspacelessSessions ?? []).map((session) =>
         mapSession(session, null),
@@ -887,7 +897,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
                 agentPrincipalId: body?.agentPrincipalId ?? null,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                workspaceId: isWorkspaceless ? null : "workspace-1",
+                workspaceId: isWorkspaceless ? null : "11111111-1111-4111-8111-111111111111",
                 modelProvider: null,
                 modelName: null,
                 archived: false,
@@ -925,7 +935,7 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             body: JSON.stringify({
                 id: base?.id ?? sessionId,
                 title: base?.title ?? "Mock Session",
-                workspaceId: base?.workspaceId ?? "workspace-1",
+                workspaceId: base?.workspaceId ?? "11111111-1111-4111-8111-111111111111",
                 agentPrincipalId: base?.agentPrincipalId ?? MOCK_BOUND_PRINCIPAL_ID,
                 createdAt: base?.createdAt ?? now,
                 updatedAt: base?.updatedAt ?? now,

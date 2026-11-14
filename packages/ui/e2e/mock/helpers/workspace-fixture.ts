@@ -47,7 +47,7 @@ export interface WorkspaceWire {
  * 后者是"CP 没给这个字段"—— 两者对 `isMultiRoot` 等价，但语义不同，这里选"给了"。
  */
 export function workspaceWire(overrides: Partial<WorkspaceWire> = {}): WorkspaceWire {
-    const id = overrides.id ?? "workspace-1";
+    const id = overrides.id ?? "11111111-1111-4111-8111-111111111111";
     return {
         id,
         name: "Mock Workspace",
@@ -72,7 +72,7 @@ export function workspaceWire(overrides: Partial<WorkspaceWire> = {}): Workspace
  * 泛化匹配会让 mock 车道永远无法验"访问不存在的工作区应当 404"（D-1178）。
  */
 export const KNOWN_WORKSPACE_IDS = [
-    "workspace-1",
+    "11111111-1111-4111-8111-111111111111",
     "ws-1",
     "slice-b",
     "ws-new",

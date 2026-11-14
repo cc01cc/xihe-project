@@ -6,7 +6,7 @@ import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     RUN_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const WORKSPACE_ID = "workspace-1",
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
     SLICE_REF = "refs/xihe/workspace/slice-b";
 const CHECKPOINT_FILE_TEXT = "const answer = 1\n",
     CURRENT_FILE_TEXT = "const answer = 2\n";

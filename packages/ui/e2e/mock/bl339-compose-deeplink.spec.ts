@@ -44,7 +44,7 @@ test.describe("BL-339 深链预填", () => {
             text: "来自托盘的预填内容：帮我核对这条绑定",
             sessionId: SESSION_ID,
         });
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?compose=${compose}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${compose}`);
 
         const input = page.getByTestId("chat-input");
         await expect(input).toHaveValue("来自托盘的预填内容：帮我核对这条绑定", {
@@ -76,7 +76,7 @@ test.describe("BL-339 深链预填", () => {
 
         // `text` 缺失 ⇒ 整条忽略。
         await page.goto(
-            `/workspace/workspace-1/chat/${SESSION_ID}?compose=${encodeCompose({ to: ["x"] })}`,
+            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${encodeCompose({ to: ["x"] })}`,
         );
 
         await expect(page.getByTestId("chat-input")).toHaveValue("", { timeout: LONG_TIMEOUT_MS });

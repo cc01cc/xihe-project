@@ -203,7 +203,7 @@ test.describe("Session Management", () => {
     });
 
     test("sidebar lists all seeded sessions", async ({ page }) => {
-        await page.goto("/workspace/workspace-1/chat/sid-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/sid-1");
 
         await expect(page.locator("aside >> text=Alpha")).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -214,7 +214,7 @@ test.describe("Session Management", () => {
     });
 
     test("clicking a session selects it as active", async ({ page }) => {
-        await page.goto("/workspace/workspace-1/chat/sid-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/sid-1");
 
         await page.locator("aside >> text=Beta").click();
 
@@ -226,7 +226,7 @@ test.describe("Session Management", () => {
     });
 
     test("sidebar time group headers are visible", async ({ page }) => {
-        await page.goto("/workspace/workspace-1/chat/sid-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/sid-1");
 
         await expect(page.locator("aside >> text=今天").first()).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
@@ -239,7 +239,7 @@ test.describe("Session Management", () => {
     }) => {
         const pageErrors = await collectPageErrors(page);
         await stubSessionProjections(page);
-        await page.goto("/workspace/workspace-1/chat/sid-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/sid-1");
 
         await collapseThenReopenFromCollapsedStrip(page);
         await expectNoAdminEntryOnGlobalRail(page);
@@ -252,7 +252,7 @@ test.describe("Session Management", () => {
         test("collapse and strip re-open work at 1440 as well", async ({ page }) => {
             const pageErrors = await collectPageErrors(page);
             await stubSessionProjections(page);
-            await page.goto("/workspace/workspace-1/chat/sid-1");
+            await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/sid-1");
 
             await collapseThenReopenFromCollapsedStrip(page);
             await expectNoAdminEntryOnGlobalRail(page);

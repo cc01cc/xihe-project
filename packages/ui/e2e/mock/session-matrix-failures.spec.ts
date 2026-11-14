@@ -17,7 +17,7 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
 const SESSION_ID = "test-session";
 
 async function openAndSend(page: import("@playwright/test").Page): Promise<void> {
-    await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
     await expect(input, "composer mounts").toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await input.fill("触发一次失败");

@@ -25,11 +25,11 @@ const DOCS = [
 // 这里立刻重新变绿）。同批把「列表 + 删除 + 上传」三条行为搬到组件级
 // `src/components/__tests__/KnowledgeBaseView.spec.ts`，能力暂时没有入口但行为仍被钉住。
 // 重新启用的条件：`KnowledgeBaseView` 重新有可达挂载点（见回执「工作区知识库写面重接」建议）。
-const KNOWLEDGE_PAGE = "/workspace/workspace-1/settings?tab=knowledge";
+const KNOWLEDGE_PAGE = "/workspace/11111111-1111-4111-8111-111111111111/settings?tab=knowledge";
 
 test.describe.fixme("Knowledge Base（task-209：挂载点已撤，等重接）", () => {
     test.beforeEach(async ({ page }) => {
-        // 工作区路由需要登录态 + 工作区上下文（`workspace-1` 由夹具种入 tab 会话上下文）。
+        // 工作区路由需要登录态 + 工作区上下文（`11111111-1111-4111-8111-111111111111` 由夹具种入 tab 会话上下文）。
         await setupMockAuth(page);
     });
 

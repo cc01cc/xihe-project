@@ -7,7 +7,7 @@ import { selectByTestId } from "../helpers/select";
 test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/workspaces/[^/]+/members`] });
 
 // PLAN-0565：工作区设置页「成员」tab（裁定 #2/#3/#6/#7 的 UI 侧验收）。
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
 interface MockMember {
     userId: string;
@@ -86,7 +86,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
         await setupMockAuth(page);
         // task-470：默认投影 = OWNER + workspaceAdmin:true（后注册的路由优先，个别用例可再覆盖）。
         await serveProjection(page, { role: "OWNER", workspaceAdmin: true });
-        await page.route("**/api/v1/workspaces/workspace-1/members**", async (route) => {
+        await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/members**", async (route) => {
             const method = route.request().method();
             const url = new URL(route.request().url());
             if (method === "GET") {
@@ -252,7 +252,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
             sessionStorage.setItem(
                 "xihe-workspace",
                 JSON.stringify({
-                    id: "workspace-1",
+                    id: "11111111-1111-4111-8111-111111111111",
                     name: "Mock Workspace",
                     workspaceRole: "EDITOR",
                     ownerId: "owner-1",
@@ -279,7 +279,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
             sessionStorage.setItem(
                 "xihe-workspace",
                 JSON.stringify({
-                    id: "workspace-1",
+                    id: "11111111-1111-4111-8111-111111111111",
                     name: "Mock Workspace",
                     workspaceRole: "VIEWER",
                     ownerId: "owner-1",
@@ -323,7 +323,7 @@ test.describe("PLAN-0565 workspace members tab", () => {
             sessionStorage.setItem(
                 "xihe-workspace",
                 JSON.stringify({
-                    id: "workspace-1",
+                    id: "11111111-1111-4111-8111-111111111111",
                     name: "Mock Workspace",
                     workspaceRole: "EDITOR",
                     ownerId: "owner-1",

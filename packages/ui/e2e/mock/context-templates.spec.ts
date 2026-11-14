@@ -84,7 +84,7 @@ test.describe("Context templates (PLAN-0414)", () => {
         } | null = null;
         const sessionProjection = () => ({
             id: SESSION_ID,
-            workspaceId: "workspace-1",
+            workspaceId: "11111111-1111-4111-8111-111111111111",
             title: "Binding session",
             archived: false,
             providerConnectionId: CONNECTION_ID,
@@ -147,7 +147,7 @@ test.describe("Context templates (PLAN-0414)", () => {
             });
         });
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, { waitUntil: "load" });
 
         // Mobile viewport renders the workspace files view first and keeps
         // ChatPanel behind the "Open chat" drawer trigger; desktop shows it inline.

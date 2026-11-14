@@ -172,7 +172,7 @@ async function prepareAuth(page: Page): Promise<void> {
                 capabilities: {
                     isInstanceAdmin: true,
                     isInstanceSuper: true,
-                    workspaceAdminOf: ["workspace-1"],
+                    workspaceAdminOf: ["11111111-1111-4111-8111-111111111111"],
                 },
             }),
         );
@@ -644,7 +644,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             });
             await mockSessionProjections(page, SESSION_ID);
 
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?variant=${variant.param}`, {
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?variant=${variant.param}`, {
                 waitUntil: "load",
             });
             // 就绪用事件而不是时钟：composer 只在会话/分支投影落地后挂载。
@@ -820,7 +820,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         });
         await mockSessionProjections(page, SESSION_ID);
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         // 正文档必须真的渲染出来再量（消息投影是异步的，composer 先挂载）。
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
@@ -990,7 +990,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         });
         await mockSessionProjections(page, SESSION_ID);
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         // 模拟对比期残留：旧版把 C 的选择写进了 localStorage。
@@ -1016,7 +1016,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         expect(migrated.tokens.brand).toBe(DEFAULT_B.primary);
 
         // `?variant=b` 是「默认」的别名：不投影属性，渲染仍是 B。
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?variant=b`, {
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?variant=b`, {
             waitUntil: "load",
         });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });

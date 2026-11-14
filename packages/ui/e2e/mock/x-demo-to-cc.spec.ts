@@ -235,7 +235,7 @@ async function stubBoundSession(page: Page): Promise<void> {
     const bound = {
         id: SESSION_ID,
         title: "接口评审与排期",
-        workspaceId: "workspace-1",
+        workspaceId: "11111111-1111-4111-8111-111111111111",
         agentPrincipalId: REVIEWER.principal,
         providerConnectionId: "conn-demo",
         modelProvider: "openai",
@@ -366,7 +366,7 @@ async function stubDelegation(page: Page): Promise<void> {
         title,
         createdAt: now,
         updatedAt: now,
-        workspaceId: "workspace-1",
+        workspaceId: "11111111-1111-4111-8111-111111111111",
         agentPrincipalId: REVIEWER.principal,
         kind: parent ? "SPAWN" : null,
         spawnedFromSessionId: parent,
@@ -431,7 +431,7 @@ async function stubDelegation(page: Page): Promise<void> {
 }
 
 async function openSession(page: Page): Promise<void> {
-    await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
         timeout: LONG_TIMEOUT_MS,
     });
@@ -525,13 +525,13 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
 
     test.beforeEach(async ({ page }) => {
         await setupMockAuth(page, {
-            workspace: { id: "workspace-1", name: "产品交付线" },
+            workspace: { id: "11111111-1111-4111-8111-111111111111", name: "产品交付线" },
         });
         await setupMockSessions(page, {
             sessions: [{ id: SESSION_ID, title: "接口评审与排期" }],
         });
         await stubBoundSession(page);
-        await installDemoRuntime(page, "workspace-1");
+        await installDemoRuntime(page, "11111111-1111-4111-8111-111111111111");
     });
 
     test("①②③④ 投递 + 成员面板 + run 分组", async ({ page }) => {

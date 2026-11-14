@@ -46,10 +46,10 @@ async function setupViewportFixtures(page: Page) {
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({
-                workspaceId: "workspace-1",
+                workspaceId: "11111111-1111-4111-8111-111111111111",
                 status: "ready",
                 storageBackend: "host_directory",
-                storageRef: "workspace-1",
+                storageRef: "11111111-1111-4111-8111-111111111111",
                 executionSpec: {
                     status: "assigned",
                     generation: 1,
@@ -89,7 +89,7 @@ test.describe("PLAN-269 viewport matrix: desktop-2k", () => {
 
     test("workspace shell remains bounded on 2K", async ({ page }) => {
         await setupViewportFixtures(page);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // C3: page-entry surface is the secondary nav (tab bar is session-only).
         await expect(page.getByTestId("workspace-nav-settings")).toBeVisible();
         // W4 (PLAN-0328 T3.7) chat-first layout: the FileEditor empty state now lives
@@ -109,7 +109,7 @@ test.describe("PLAN-269 viewport matrix: desktop-1080p", () => {
 
     test("chat composer and sidebar remain usable at 1080p", async ({ page }) => {
         await setupViewportFixtures(page);
-        await page.goto("/workspace/workspace-1/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
         await expect(page.getByTestId("chat-input")).toBeVisible();
         await expect(page.getByTestId("sidebar")).toBeVisible();
         await expectNoHorizontalOverflow(page);
@@ -122,7 +122,7 @@ test.describe("PLAN-269 viewport matrix: desktop-720p", () => {
 
     test("workspace toolbar and composer remain usable at 720p", async ({ page }) => {
         await setupViewportFixtures(page);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // C3: secondary nav stays visible at 720p (toolbar tab strip retired).
         await expect(page.getByTestId("workspace-nav-settings")).toBeVisible();
         await expect(page.getByTestId("chat-input")).toBeVisible();
@@ -141,7 +141,7 @@ test.describe("PLAN-269 viewport matrix: mobile", () => {
     // 行为用例保留全部断言（不含截图），视觉用例只截图。
     async function openMobileSheets(page: Page) {
         await setupViewportFixtures(page);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         await page.getByTestId("workspace-toolbar-files-mobile").click();
         const filesSheet = page.getByTestId("mobile-files-sheet");
         await expect(filesSheet).toBeVisible();

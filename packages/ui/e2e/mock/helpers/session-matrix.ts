@@ -184,7 +184,7 @@ export async function setupMockProviderBinding(page: Page, sessionId: string): P
     const bound = {
         id: sessionId,
         title: "Matrix Session",
-        workspaceId: "workspace-1",
+        workspaceId: "11111111-1111-4111-8111-111111111111",
         providerConnectionId: "conn-matrix-default",
         connectionRevision: 1,
         modelProvider: "openai",

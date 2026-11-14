@@ -58,7 +58,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
         });
 
         test("SSE token events stream correctly", async ({ page }) => {
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             await page.evaluate(() => {
@@ -110,7 +110,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
                 });
             });
 
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Usage event should be processed (UI may or may not display it visibly)
@@ -137,7 +137,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
                 });
             });
 
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // fixture-only: 该路由已被本用例 page.route 拦截（见上），此 fetch 只验证 mock 契约，不触达真实后端
@@ -158,7 +158,7 @@ test.describe("PLAN-276: Task Continuity E2E", () => {
 
     test.describe("TaskPlan event structure", () => {
         test("taskplan events have correct structure", async ({ page }) => {
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
             await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 
             // Verify event structure by examining the context

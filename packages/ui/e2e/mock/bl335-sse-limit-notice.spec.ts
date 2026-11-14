@@ -51,7 +51,7 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1/chat/bl335-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/bl335-session");
 
         // PLAN-0712：limit 只由壳级横幅（AppLayout）渲染；页面级只在 disconnected/
         // reconnecting 时挂载。严格模式断言「有且仅有一个」，重复横幅会直接让用例红。
@@ -83,7 +83,7 @@ test.describe("BL-335 SSE 订阅上限提示", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1/chat/bl335-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/bl335-session");
 
         const notice = page.locator('[data-testid="sse-subscriber-limit-notice"]');
         await expect(notice).toHaveCount(1);

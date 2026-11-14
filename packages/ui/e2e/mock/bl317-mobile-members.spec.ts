@@ -26,7 +26,7 @@ import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "bl317-session";
 const OWNER_PARTICIPANT_ID = "part-bl317-owner";
 const AGENT_PARTICIPANT_ID = "part-bl317-agent";

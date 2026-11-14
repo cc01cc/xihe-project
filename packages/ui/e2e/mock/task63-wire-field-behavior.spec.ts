@@ -39,7 +39,7 @@ import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth } from "./helpers/auth";
 
-const WORKSPACE_ID = "workspace-1",
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
     DESCRIPTION = "多根工作区（这条描述必须活下来）",
     MCP_CONFIG = { mcpServers: { "task63-demo": { command: "node", args: ["server.js"] } } };
 
@@ -71,7 +71,7 @@ async function bootFreshTab(page: Page, wire: WireShape): Promise<Probes> {
     await setupMockAuth(page);
 
     await page.addInitScript(() => {
-        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: "workspace-1" }));
+        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }));
         localStorage.removeItem("xihe-workspace");
     });
 
@@ -121,7 +121,7 @@ async function bootFreshTab(page: Page, wire: WireShape): Promise<Probes> {
                 name: "Mock Workspace",
                 ownerId: "user-1",
                 storageBackend: "host_directory",
-                storageRef: "/mock/workspace-1",
+                storageRef: "/mock/11111111-1111-4111-8111-111111111111",
                 storageMode: "direct_attach",
                 executionMode: "windows-host",
                 workspaceRole: wire.workspaceRole ?? "OWNER",

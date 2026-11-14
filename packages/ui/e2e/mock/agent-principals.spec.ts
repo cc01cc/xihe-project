@@ -18,7 +18,7 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  *   <li><b>V8 / 矩阵 U1</b>——创建请求**不带工作区上下文**。这条必须有对照，否则断言是空的：
  *       `setupMockAuth` 会往 sessionStorage 里种 `xihe-workspace`，所以本页每一条请求默认
  *       都会被 `apiAuthHeaders` 自动加上 `X-Workspace-Id`。因此本用例同时抓
- *       `GET /me/permissions` 的 header 作为**对照**（必须等于 workspace-1），
+ *       `GET /me/permissions` 的 header 作为**对照**（必须等于 11111111-1111-4111-8111-111111111111），
  *       再抓 `POST /agent-principals` 的 header（必须没有工作区 id）。两个一起才说明
  *       "抑制生效"而不是"这个浏览器根本没发过这个头"。</li>
  *   <li><b>T3.2</b>——没有任何可管理工作区时，绑定动作给**显式提示**而不是一个点了才 403 的按钮。</li>
@@ -27,7 +27,7 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  * <p>跑法：`pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/agent-principals.spec.ts`。</p>
  */
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const CREATED_PRINCIPAL_ID = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 
 /** Screenshots are evidence, not fixtures: they go to the git-ignored evidence root. */

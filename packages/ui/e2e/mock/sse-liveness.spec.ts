@@ -80,7 +80,7 @@ async function push(page: Page, name: string, data: unknown) {
 }
 
 async function startRun(page: Page) {
-    await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     await page.locator("textarea").fill("run a long task");
     await page.locator("textarea").press("Enter");
@@ -138,7 +138,7 @@ test.describe("SSE liveness timer (S-1)", () => {
     });
 
     test("silence before the first token also reports AGENT_TIMEOUT", async ({ page }) => {
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
         await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.locator("textarea").fill("quick question");
         await page.locator("textarea").press("Enter");
@@ -170,7 +170,7 @@ test.describe("SSE liveness timer (S-1, real time)", () => {
         page,
     }) => {
         test.setTimeout(45_000); // timeout-exempt: 30s 静默 + toast 渲染余量
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
         await expect(page.locator("textarea")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
         await page.locator("textarea").fill("quick question");
         await page.locator("textarea").press("Enter");

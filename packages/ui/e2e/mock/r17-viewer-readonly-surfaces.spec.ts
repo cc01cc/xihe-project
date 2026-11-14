@@ -35,7 +35,7 @@ import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth } from "./helpers/auth";
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
 type WorkspaceRole = "VIEWER" | "EDITOR";
 
@@ -50,7 +50,7 @@ interface BootOptions {
 /**
  * 装好资源页需要的最小面：登录态 + 页签工作区（含角色）+ 兜底 API。
  *
- * 注意 `workspaces/workspace-1` 这条桩：**不要**顺手塞 `canWrite: true`。
+ * 注意 `workspaces/11111111-1111-4111-8111-111111111111` 这条桩：**不要**顺手塞 `canWrite: true`。
  * `auth.canWriteWorkspace` 的取值是 `workspace.canWrite ?? workspaceRole !== "VIEWER"`
  * （`stores/auth.ts:203-205`）⇒ 桩里带 `canWrite` 就会盖掉角色投影，VIEWER 也被判成可写，
  * 这条用例会以**假绿**的方式通过（面板真的可编辑，而断言只看到了"页面在"）。

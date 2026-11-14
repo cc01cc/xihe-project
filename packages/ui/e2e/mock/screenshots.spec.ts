@@ -22,7 +22,7 @@ const allRoutes: Route[] = [
     { path: "/register", name: "register", requiresAuth: false },
     { path: "/workspace", name: "workspace-default", requiresAuth: true },
     {
-        path: "/workspace/workspace-1/chat/test-session",
+        path: "/workspace/11111111-1111-4111-8111-111111111111/chat/test-session",
         name: "workspace-chat-session",
         requiresAuth: true,
     },
@@ -113,7 +113,7 @@ for (const route of allRoutes) {
             });
         }
 
-        if (route.path === "/workspace/workspace-1/chat/test-session") {
+        if (route.path === "/workspace/11111111-1111-4111-8111-111111111111/chat/test-session") {
             await page.addInitScript(() => {
                 localStorage.setItem(
                     "xihe-sessions",
@@ -172,7 +172,7 @@ for (const route of allRoutes) {
                     body: JSON.stringify({
                         id: sessionMatch[1],
                         title: "Screenshot Session",
-                        workspaceId: "workspace-1",
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
                         createdAt: new Date().toISOString(),
                         updatedAt: new Date().toISOString(),
                         archived: false,

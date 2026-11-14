@@ -24,8 +24,8 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
-const WORKSPACE_PATH = "/workspace/workspace-1";
-const LAYOUT_KEY = "xihe-layout-ws:workspace-1";
+const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
+const LAYOUT_KEY = "xihe-layout-ws:11111111-1111-4111-8111-111111111111";
 const AUX_PANEL = '[data-testid="workspace-aux-panel"]';
 
 /** 打开 dock（走真实 toolbar，不绕过 UI）。 */
@@ -39,7 +39,7 @@ async function openDock(page: Page, tab = "code"): Promise<void> {
     await page.waitForSelector(AUX_PANEL, { state: "attached", timeout: EXPECT_TIMEOUT_MS });
 }
 
-/** 读持久布局（`xihe-layout-ws:workspace-1`）。 */
+/** 读持久布局（`xihe-layout-ws:11111111-1111-4111-8111-111111111111`）。 */
 async function readLayout(page: Page): Promise<Record<string, unknown>> {
     return page.evaluate((key) => {
         return JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
@@ -59,10 +59,10 @@ test.beforeEach(async ({ page }) => {
                 instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
                 workspaces: [
                     {
-                        workspaceId: "workspace-1",
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
                         workspaceAdmin: true,
                         permissions: [
-                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" },
+                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "11111111-1111-4111-8111-111111111111" },
                         ],
                     },
                 ],

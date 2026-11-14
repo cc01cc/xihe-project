@@ -14,7 +14,7 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  * rotting: a `Content-Disposition` header (server decides) and its absence (`session-<id>.md`).
  */
 
-const WORKSPACE_ID = "workspace-1",
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
     SESSION_ID = "export-session",
     ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";
 const MARKDOWN_BODY = "# Exported transcript\n\n- first item\n- second item\n";

@@ -16,7 +16,7 @@ import { resolve } from "node:path";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { TREE_COLLAPSED_WIDTH, TREE_WIDTH_DEFAULT } from "../../src/composables/useWorkspaceLayout";
 
-const WORKSPACE_PATH = "/workspace/workspace-1";
+const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
 /** 图落 gitignored 的 `.tmp`（A03 仓库根上一级 = one 根），不进产品仓库。 */
 const SHOT_DIR = resolve(process.cwd(), "../../../.tmp/xh/task-353");
 
@@ -142,7 +142,7 @@ test("task-353 判据①③：文件树在中栏容器内，收起与展开的�
 
     // 折叠态与宽度分开存（PLAN-0582）：收起**不得**改写持久化的 treeWidth。
     const stored = await page.evaluate(() =>
-        JSON.parse(localStorage.getItem("xihe-layout-ws:workspace-1") ?? "{}"),
+        JSON.parse(localStorage.getItem("xihe-layout-ws:11111111-1111-4111-8111-111111111111") ?? "{}"),
     );
     expect(stored.treeCollapsed, "收起必须写进 treeCollapsed").toBe(true);
     expect(

@@ -169,7 +169,7 @@ export async function installWorkspaceEventStream(
                                     encode(
                                         "event: heartbeat\ndata: " +
                                             JSON.stringify({
-                                                workspaceId: "workspace-1",
+                                                workspaceId: "11111111-1111-4111-8111-111111111111",
                                                 sequence: 1,
                                                 type: "heartbeat",
                                             }) +

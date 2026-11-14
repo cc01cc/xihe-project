@@ -27,7 +27,7 @@ import {
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
 } from "../../src/composables/useWorkspaceLayout";
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_PATH = `/workspace/${WORKSPACE_ID}`;
 const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}${WORKSPACE_ID}`;
 const SASH_LABEL = "调整文件树宽度";

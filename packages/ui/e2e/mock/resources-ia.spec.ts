@@ -36,7 +36,7 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
     test("全局条第三入口 + 设置区左栏不再有资源条目（计数变 17 / 9）", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
 
-        await page.goto("/workspace/workspace-1/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
         const rail = page.getByTestId("global-rail-module-resources");
         await expect(rail).toBeVisible();
         // task-350：计数从 3 改 4（原因见文件头）。**不只改数字**——单独一个计数下次还会过期，
@@ -86,7 +86,7 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
             "true",
         );
 
-        // 本用例的夹具**带工作区上下文**（`setupMockAuth` 往 sessionStorage 写 workspace-1）
+        // 本用例的夹具**带工作区上下文**（`setupMockAuth` 往 sessionStorage 写 11111111-1111-4111-8111-111111111111）
         // ⇒ 「本工作区凭据」可用，点它应当写回 `?layer=WORKSPACE`。
         await page.getByTestId("resource-layer-tab-WORKSPACE").click();
         await expect(page).toHaveURL(/\/resources\/credentials\?layer=WORKSPACE/);
@@ -186,12 +186,12 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
                         {
                             skillId: "skill-ws01-repo-conventions",
                             name: "repo-conventions",
-                            definitionScope: { type: "workspace", workspaceId: "workspace-1" },
+                            definitionScope: { type: "workspace", workspaceId: "11111111-1111-4111-8111-111111111111" },
                         },
                         {
                             skillId: "skill-ws02-release-checklist",
                             name: "release-checklist",
-                            definitionScope: { type: "workspace", workspaceId: "workspace-1" },
+                            definitionScope: { type: "workspace", workspaceId: "11111111-1111-4111-8111-111111111111" },
                         },
                         // 故意混进一条 instance 行：本层页面上绝不许它显示成「本工作区技能」。
                         {

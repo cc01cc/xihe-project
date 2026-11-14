@@ -217,7 +217,7 @@ async function prepareAuth(page: Page): Promise<void> {
                 capabilities: {
                     isInstanceAdmin: true,
                     isInstanceSuper: true,
-                    workspaceAdminOf: ["workspace-1"],
+                    workspaceAdminOf: ["11111111-1111-4111-8111-111111111111"],
                 },
             }),
         );
@@ -225,7 +225,7 @@ async function prepareAuth(page: Page): Promise<void> {
         // 截图里就是一块"加载失败"）。这里是用户态布局，不是产品行为：收起 dock，
         // 让三张图的聊天列宽度一致、画面里没有无关的失败提示。
         localStorage.setItem(
-            "xihe-layout-ws:workspace-1",
+            "xihe-layout-ws:11111111-1111-4111-8111-111111111111",
             JSON.stringify({ dockCollapsed: true, dockMode: "pinned" }),
         );
     });
@@ -275,7 +275,7 @@ const approvalEvent = (requestId: string) => ({
     requestId,
     runId: RUN_ID,
     sessionId: SESSION_ID,
-    workspaceId: "workspace-1",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
     tool: "request_approval",
     action: "delete file",
     details: "workspace/README.md",
@@ -439,7 +439,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             });
             await mockSessionProjections(page, SESSION_ID);
 
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?color=${item.param}`, {
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?color=${item.param}`, {
                 waitUntil: "load",
             });
             await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -590,7 +590,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             await installPolicyModeRoute(page);
             await installApprovalSSE(page);
 
-            await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?color=${item.param}`, {
+            await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?color=${item.param}`, {
                 waitUntil: "load",
             });
             await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -730,7 +730,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         });
         await mockSessionProjections(page, SESSION_ID);
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -885,7 +885,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         await installPolicyModeRoute(page);
         await installApprovalSSE(page);
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await page.evaluate((payload) => {
             const push = (window as unknown as Record<string, unknown>).__pushApprovalEvent as (

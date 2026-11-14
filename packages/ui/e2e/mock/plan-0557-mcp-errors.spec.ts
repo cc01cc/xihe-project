@@ -135,7 +135,7 @@ function watchPageErrors(page: Page): string[] {
 test("runtime unavailable shows runtime copy, not unknown-tool copy", async ({ page }) => {
     const pageErrors = watchPageErrors(page);
     await setupPage(page, RUNTIME_UNAVAILABLE);
-    await page.goto("/workspace/workspace-1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 
     await expect(page.getByText(/工作区运行时未就绪/)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText(/工具不存在或未启用/)).toHaveCount(0);
@@ -147,7 +147,7 @@ test("runtime unavailable shows runtime copy, not unknown-tool copy", async ({ p
 test("unknown tool shows the missing-tool copy", async ({ page }) => {
     const pageErrors = watchPageErrors(page);
     await setupPage(page, UNKNOWN_TOOL);
-    await page.goto("/workspace/workspace-1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 
     await expect(page.getByText(/工具不存在或未启用/)).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     await expect(page.getByText(/工作区运行时未就绪/)).toHaveCount(0);
@@ -161,7 +161,7 @@ test.describe("mobile viewport", () => {
     test("runtime unavailable copy fits without overflow", async ({ page }) => {
         const pageErrors = watchPageErrors(page);
         await setupPage(page, RUNTIME_UNAVAILABLE);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // The file panel is collapsed on mobile until the toolbar toggle opens it.
         await page.getByTestId("workspace-toolbar-files-mobile").click();
 

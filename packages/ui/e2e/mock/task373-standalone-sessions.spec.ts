@@ -10,7 +10,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeou
  * 与工作区作用域是两份数据）。判据覆盖：分组沉底、为 0 隐藏、行可点开独立会话页、新建入口两项菜单、
  * 零工作区用户不落「还没有工作区」空态，以及代表性移动 viewport。</p>
  */
-const WS_ID = "workspace-1";
+const WS_ID = "11111111-1111-4111-8111-111111111111";
 const WS_SESSION = "11111111-1111-4111-8111-111111111111";
 const STANDALONE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const STANDALONE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

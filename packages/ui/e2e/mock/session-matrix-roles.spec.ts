@@ -15,7 +15,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
 async function openSettings(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/settings`);

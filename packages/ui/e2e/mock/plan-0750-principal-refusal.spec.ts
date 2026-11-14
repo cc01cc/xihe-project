@@ -106,7 +106,7 @@ async function useLocale(page: Page, locale: string): Promise<void> {
 }
 
 async function openAndSend(page: Page, content: string): Promise<void> {
-    await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+    await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
     await expect(input, "composer mounts").toBeVisible();
     await input.fill(content);
@@ -211,7 +211,7 @@ test.describe("PLAN-0750 V10 — 提交期 principal 拒绝的 toast 通道", ()
         const chatRequest = requests.find(
             (item) => item.method === "POST" && item.path === CHAT_API,
         );
-        expect(chatRequest?.headers["x-workspace-id"], "提交带着工作区上下文").toBe("workspace-1");
+        expect(chatRequest?.headers["x-workspace-id"], "提交带着工作区上下文").toBe("11111111-1111-4111-8111-111111111111");
 
         // 静默降级（重发 / 回退发送 / 自动 rebind）若存在，必落在这个窗口内。
         await page.waitForTimeout(600);

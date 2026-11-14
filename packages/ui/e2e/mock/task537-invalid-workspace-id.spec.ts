@@ -5,7 +5,7 @@ import { setupMockAuth } from "./helpers/auth";
 /**
  * task-537（Lead 2026-11-14 派；来自 task-397 真栈读数）：**非 UUID 的工作区路径不许渲染成空壳**。
  *
- * <p>真栈修前读数：`/workspace/workspace-1` ⇒ CP `400 X-Workspace-Id must be a UUID`（两条），
+ * <p>真栈修前读数：`/workspace/11111111-1111-4111-8111-111111111111` ⇒ CP `400 X-Workspace-Id must be a UUID`（两条），
  * 左栏「还没有工作区」、页面无任何错误文案 —— 用户看到的是「空」而不是「错」。</p>
  *
  * <p>修法（前端一行守卫）：**先验形状再写 tab 上下文**，形状不对就清上下文回工作区列表，
@@ -13,7 +13,7 @@ import { setupMockAuth } from "./helpers/auth";
  * ① 明确错误态（不是空态）② 非法 id 一次都不发给后端 ③ 合法 UUID 不被误伤（负向对照）。</p>
  */
 
-const INVALID_WORKSPACE_ID = "workspace-1"; // 真栈上撞 400 的那个 slug
+const INVALID_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111"; // 真栈上撞 400 的那个 slug
 const VALID_WORKSPACE_ID = "19e1c21c-9b93-40d8-94e6-0b371f3c7f19";
 
 async function stubWorkspaceApis(page: Page): Promise<string[]> {

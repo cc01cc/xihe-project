@@ -3,7 +3,7 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 
 // PLAN-0560：工作区设置页 IA（B#6 不做兼容、VIEWER 只读、移动端入口）。
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
 async function assertNoHorizontalOverflow(page: Page) {
     const overflow = await page.evaluate(
@@ -41,7 +41,7 @@ test.describe("PLAN-0560 workspace settings", () => {
                 body: JSON.stringify({ sessions: [] }),
             });
         });
-        await page.route("**/api/v1/workspaces/workspace-1", (route) =>
+        await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111", (route) =>
             route.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -114,7 +114,7 @@ test.describe("PLAN-0560 workspace settings", () => {
             sessionStorage.setItem(
                 "xihe-workspace",
                 JSON.stringify({
-                    id: "workspace-1",
+                    id: "11111111-1111-4111-8111-111111111111",
                     name: "Mock Workspace",
                     workspaceRole: "VIEWER",
                     ownerId: "owner-1",

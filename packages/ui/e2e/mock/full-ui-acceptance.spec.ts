@@ -98,10 +98,10 @@ async function mockSettingsApis(page: Page) {
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({
-                workspaceId: "workspace-1",
+                workspaceId: "11111111-1111-4111-8111-111111111111",
                 status: "ready",
                 storageBackend: "host_directory",
-                storageRef: "workspace-1",
+                storageRef: "11111111-1111-4111-8111-111111111111",
                 executionSpec: { status: "assigned", generation: 1, sandboxSpecHash: "spec" },
                 runtime: { status: "ready", deviceId: "device-1", lastHeartbeatAt: "now" },
             }),
@@ -154,7 +154,7 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await mockSettingsApis(page);
 
         const routes = [
-            { path: "/workspace/workspace-1/chat/session-1", marker: page.locator("textarea") },
+            { path: "/workspace/11111111-1111-4111-8111-111111111111/chat/session-1", marker: page.locator("textarea") },
             {
                 path: "/settings/instance/llm-provider",
                 marker: page.getByTestId("settings-domain-view"),
@@ -172,13 +172,13 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
                 marker: page.getByTestId("settings-monitoring-heading"),
             },
             {
-                path: "/workspace/workspace-1",
+                path: "/workspace/11111111-1111-4111-8111-111111111111",
                 // C3 (task-217): page tabs retired from the tab bar; the workspace
                 // page identity marker is the secondary-nav "会话" entry.
                 marker: page.getByTestId("workspace-nav-sessions"),
             },
             {
-                path: "/workspace/workspace-1/environment",
+                path: "/workspace/11111111-1111-4111-8111-111111111111/environment",
                 marker: page.getByTestId("workspace-environment-heading"),
             },
         ];
@@ -198,10 +198,10 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
-        await page.goto("/workspace/workspace-1/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
         // D-1229：栏头不再是工作区名按钮 ⇒ 导航走 rail 的「工作台」模块（激活态也钉在它上面）。
         await page.getByTestId("global-rail-module-workbench").click();
-        await expect(page).toHaveURL(/\/workspace\/workspace-1$/);
+        await expect(page).toHaveURL(/\/workspace\/11111111-1111-4111-8111-111111111111$/);
         await expect(page.getByTestId("global-rail-module-workbench")).toHaveAttribute(
             "aria-current",
             "page",
@@ -274,7 +274,7 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
                 ],
             },
         });
-        await page.goto("/workspace/workspace-1/chat/session-search");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-search");
         await expect(page.getByText("keep this result")).toBeVisible();
         await page.getByTestId("message-search-toggle").click();
         await page.getByPlaceholder("搜索消息…").fill("keep");
@@ -493,7 +493,7 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1/settings?tab=knowledge");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings?tab=knowledge");
         await page.locator('input[type="file"]').setInputFiles({
             name: "guide.md",
             mimeType: "text/markdown",
@@ -532,7 +532,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7) chat-first layout: the file tree stays expanded, but the
         // editor now lives in the collapsible code panel and must be opened from the
         // toolbar before the editor path is reachable.
@@ -589,7 +589,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
             }),
         );
 
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         await page.reload();
         await page.getByTestId("workspace-toolbar-files-mobile").click();
         await expect(page.getByTestId("mobile-files-sheet")).toBeVisible();
@@ -672,7 +672,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7): the PDF preview renders inside the code panel.
         await page.getByTestId("workspace-toolbar-code").click();
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
@@ -740,7 +740,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // W4 (PLAN-0328 T3.7): every FileEditor branch renders inside the code panel.
         await page.getByTestId("workspace-toolbar-code").click();
         await expect(page.getByTestId("workspace-aux-panel")).toBeVisible();
@@ -800,7 +800,7 @@ test.describe("PLAN-269 full UI acceptance: workspace and mobile", () => {
                 },
             });
         });
-        await page.goto("/workspace/workspace-1/chat/session-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
         await expect(page.locator("textarea")).toBeVisible();
         await page.getByTitle("截取屏幕").click();
         await expect(page.getByTestId("selected-attachment")).toBeVisible({

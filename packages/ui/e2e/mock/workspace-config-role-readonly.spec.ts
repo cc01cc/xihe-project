@@ -43,7 +43,7 @@ import type { Page } from "@playwright/test";
 import { setupMockAuth } from "./helpers/auth";
 import { LAYER_DOMAINS } from "../../src/stores/config";
 
-const WORKSPACE_ID = "workspace-1",
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
     PANEL = '[data-testid="ws-settings-config"]';
 
 type Role = "OWNER" | "EDITOR" | "VIEWER";

@@ -2,7 +2,7 @@ import { expect, test } from "./helpers/mock-test";
 
 test.describe("Accessibility — aria-label", () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto("/workspace/workspace-1/chat/test-session");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/test-session");
     });
 
     test("close tab button has aria-label", async ({ page }) => {

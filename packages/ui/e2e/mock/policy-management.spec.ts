@@ -5,7 +5,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { selectByLocator } from "../helpers/select";
 
 const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
-    WORKSPACE_ID = "workspace-1";
+    WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const RUN_ID = "d1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1",
     REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 const CONFLICT_ID = "22222222-2222-4222-8222-222222222222",

@@ -12,7 +12,7 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [], createSession: true });
 
-    await page.route("**/api/v1/workspaces/workspace-1/agents", async (route) => {
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents", async (route) => {
         await route.fulfill({
             status: 200,
             contentType: "application/json",
@@ -39,7 +39,7 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
         });
     });
 
-    await page.goto("/workspace/workspace-1?newChat=1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111?newChat=1");
     const selector = page.getByTestId("workspace-agent-principal-select");
     await expect(selector).toBeVisible();
     await expect(page.getByTestId("workspace-create-agent-session")).toBeDisabled();
@@ -55,7 +55,7 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     await page.getByTestId("workspace-create-agent-session").click();
 
     const createRequest = await createRequestPromise;
-    await expect(page).toHaveURL(/\/workspace\/workspace-1\/chat\/mock-session-/);
+    await expect(page).toHaveURL(/\/workspace\/11111111-1111-4111-8111-111111111111\/chat\/mock-session-/);
     await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
     // D-1167 ④（task-365 F）：工具栏 chip 删除。会话身份仍由创建请求钉住；
     // 这里钉「chip 不再出现在 workbench chrome 里」。
@@ -126,11 +126,11 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
                 instancePermissions: [],
                 workspaces: [
                     {
-                        workspaceId: "workspace-1",
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
                         workspaceRole: "OWNER",
                         workspaceAdmin: true,
                         permissions: [
-                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" },
+                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "11111111-1111-4111-8111-111111111111" },
                         ],
                     },
                 ],
@@ -139,7 +139,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     );
 
     const bindings: Array<Record<string, unknown>> = [];
-    await page.route("**/api/v1/workspaces/workspace-1/agents**", async (route) => {
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**", async (route) => {
         const request = route.request();
         if (request.method() === "GET") {
             await route.fulfill({
@@ -183,7 +183,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
                 contentType: "application/json",
                 body: JSON.stringify({
                     principalId: "agent-1",
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     permissions: body.permissions,
                 }),
             });
@@ -212,7 +212,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
         });
     });
 
-    await page.goto("/workspace/workspace-1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
     const agentManagementButton =
         (page.viewportSize()?.width ?? 1920) < 768
             ? page.getByTestId("workspace-toolbar-agents-mobile")
@@ -284,7 +284,7 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
                 instancePermissions: [{ actionClass: "MEMORY_WRITE_SELF", resource: "*" }],
                 workspaces: [
                     {
-                        workspaceId: "workspace-1",
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
                         workspaceRole: "EDITOR",
                         workspaceAdmin: false,
                         permissions: [],
@@ -296,7 +296,7 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
 
     const bindCalls: Array<Record<string, unknown>> = [];
     let createCalls = 0;
-    await page.route("**/api/v1/workspaces/workspace-1/agents**", async (route) => {
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**", async (route) => {
         if (route.request().method() === "GET") {
             await route.fulfill({
                 status: 200,
@@ -333,7 +333,7 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
         });
     });
 
-    await page.goto("/workspace/workspace-1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
     const managementButton =
         (page.viewportSize()?.width ?? 1920) < 768
             ? page.getByTestId("workspace-toolbar-agents-mobile")
@@ -366,11 +366,11 @@ async function stubOwnerPermissions(page: Page): Promise<void> {
                 instancePermissions: [],
                 workspaces: [
                     {
-                        workspaceId: "workspace-1",
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
                         workspaceRole: "OWNER",
                         workspaceAdmin: true,
                         permissions: [
-                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" },
+                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "11111111-1111-4111-8111-111111111111" },
                         ],
                     },
                 ],
@@ -409,7 +409,7 @@ function agentViewRow(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 async function openAgentsPanel(page: Page): Promise<void> {
-    await page.goto("/workspace/workspace-1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
     await page.getByTestId("workspace-toolbar-agents").click();
     await expect(page.getByRole("heading", { name: "已绑定智能体" })).toBeVisible({
         timeout: ACTION_TIMEOUT_MS,
@@ -425,7 +425,7 @@ test("a failed agent list resets the loading state, names the failure, and retry
     await stubAgentTemplates(page);
 
     let failing = true;
-    await page.route("**/api/v1/workspaces/workspace-1/agents", async (route) => {
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents", async (route) => {
         if (failing) {
             await route.fulfill({
                 status: 500,
@@ -448,7 +448,7 @@ test("a failed agent list resets the loading state, names the failure, and retry
         });
     });
 
-    await page.goto("/workspace/workspace-1");
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
     await page.getByTestId("workspace-toolbar-agents").click();
 
     // Failure is a terminal state: the spinner must not survive it, and the reason must be visible
@@ -472,7 +472,7 @@ test("one contract-violating row degrades instead of freezing the whole list", a
     await setupMockSessions(page, { sessions: [] });
     await stubOwnerPermissions(page);
     await stubAgentTemplates(page);
-    await page.route("**/api/v1/workspaces/workspace-1/agents", (route) =>
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents", (route) =>
         route.fulfill({
             status: 200,
             contentType: "application/json",

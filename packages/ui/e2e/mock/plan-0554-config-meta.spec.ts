@@ -60,13 +60,13 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
                 capabilities: {
                     isInstanceAdmin: role === "ADMIN",
                     isInstanceSuper: role === "ADMIN",
-                    workspaceAdminOf: role === "ADMIN" ? ["workspace-1"] : [],
+                    workspaceAdminOf: role === "ADMIN" ? ["11111111-1111-4111-8111-111111111111"] : [],
                 },
             }),
         );
         localStorage.setItem(
             "xihe-workspace",
-            JSON.stringify({ id: "workspace-1", name: "Mock Workspace", ownerId: "user-1" }),
+            JSON.stringify({ id: "11111111-1111-4111-8111-111111111111", name: "Mock Workspace", ownerId: "user-1" }),
         );
     }, role);
     await page.route("**/api/v1/**", async (route) => {
@@ -87,12 +87,12 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
         });
     });
     // PLAN-0560: workspace settings page resolves the workspace context first.
-    await page.route("**/api/v1/workspaces/workspace-1", (route) =>
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111", (route) =>
         route.fulfill({
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({
-                id: "workspace-1",
+                id: "11111111-1111-4111-8111-111111111111",
                 name: "Mock Workspace",
                 ownerId: "user-1",
             }),

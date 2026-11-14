@@ -21,7 +21,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * 没有该 pk"，**不是**故意回 4xx —— 后者会触发 mock 车道的 page-failure 门（那是另一条判据）。</p>
  */
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
 const CREDENTIAL = {
     id: "cred-0001",

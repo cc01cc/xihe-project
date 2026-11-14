@@ -26,7 +26,7 @@ import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-p
 import { LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "bl311-session";
 /** 中英双语正则：mock 车道默认 zh-CN，但不把断言绑死在一种语言上。 */
 const READ_ONLY_COPY = /只读|read-only/i;

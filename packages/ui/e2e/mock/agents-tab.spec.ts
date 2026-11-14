@@ -23,7 +23,7 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  * (`scripts/e2e-host.mjs` greps `@host`, which this lane does not carry).
  */
 
-const WORKSPACE_ID = "workspace-1",
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
     SESSION_ID = "session-1",
     AGENT_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
     MEMORY_ID = "memory-1";
@@ -94,7 +94,7 @@ async function setupAgentsLane(page: Page): Promise<void> {
 
     // Same pattern for the list (`{agents:[…]}`) and the 0629 memory envelope
     // (`{memories:[…]}`) — both hang off `/workspaces/{id}/agents`.
-    await page.route("**/api/v1/workspaces/workspace-1/agents**", async (route) => {
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**", async (route) => {
         const pathname = new URL(route.request().url()).pathname;
         if (pathname.endsWith("/memories")) {
             await route.fulfill({

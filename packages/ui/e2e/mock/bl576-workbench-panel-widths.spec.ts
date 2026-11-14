@@ -19,7 +19,7 @@ import type { Page } from "@playwright/test";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { TREE_WIDTH_MAX } from "../../src/composables/useWorkspaceLayout";
 
-const WORKSPACE_PATH = "/workspace/workspace-1";
+const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
 
 interface PanelGeometry {
     containerWidth: number;

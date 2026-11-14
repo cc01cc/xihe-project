@@ -34,8 +34,8 @@ import {
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
 } from "../../src/composables/useWorkspaceLayout";
 
-const WORKSPACE_PATH = "/workspace/workspace-1";
-const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}workspace-1`;
+const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
+const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}11111111-1111-4111-8111-111111111111`;
 /** 本卡的中间底线（640 属 task-504）。取 480 = dock 夹取上限，低于它说明主列又被吃回去了。 */
 const MAIN_INTERIM_FLOOR = 480;
 

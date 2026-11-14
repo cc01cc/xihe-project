@@ -59,10 +59,10 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     status: "ready",
                     storageBackend: "host_directory",
-                    storageRef: "workspace-1",
+                    storageRef: "11111111-1111-4111-8111-111111111111",
                     executionSpec: { status: "assigned", generation: 1, sandboxSpecHash: "abc" },
                     runtime: { status: "observed", deviceId: "dev-1", lastHeartbeatAt: "now" },
                 }),
@@ -81,7 +81,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
             ];
             localStorage.setItem("xihe-mock-filetree", JSON.stringify(tree));
         });
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         await expect(page.getByText("notes.md")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
 
         const search = page.getByPlaceholder("过滤文件树");
@@ -102,7 +102,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
                 JSON.stringify([{ name: "notes.md", path: "notes.md", type: "file", size: 12 }]),
             );
         });
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         const fileEntry = page.getByRole("button", { name: "notes.md", exact: true });
         await expect(fileEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
         await fileEntry.click({ button: "right" });
@@ -144,7 +144,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
                 ]),
             );
         });
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         // 目录行的可访问名带展开箭头（实测「▶ src」）⇒ 用正则而不是 exact。
         const dirEntry = page.getByRole("treeitem", { name: /src/ });
         await expect(dirEntry).toBeVisible({ timeout: LONG_TIMEOUT_MS });
@@ -166,7 +166,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         await page.addInitScript(() => {
             localStorage.setItem("xihe-mock-filetree", JSON.stringify([]));
         });
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
         await expect(page.getByText(/暂无|empty|no files/i).first()).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
@@ -186,12 +186,12 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     status: "ready",
                     storageBackend: "host_directory",
                     storageMode: "direct_attach",
-                    storageRef: "workspace-1",
-                    hostPath: "H:/mock/workspace-1",
+                    storageRef: "11111111-1111-4111-8111-111111111111",
+                    hostPath: "H:/mock/11111111-1111-4111-8111-111111111111",
                     executionMode: "windows-mxc",
                     executionSpec: { status: "assigned", generation: 1, sandboxSpecHash: "abc" },
                     runtime: { status: "observed", deviceId: "dev-1", lastHeartbeatAt: "now" },
@@ -199,12 +199,12 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1/environment");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/environment");
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible();
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
         await expect(page.getByTestId("workspace-environment-recovery")).not.toBeEmpty();
         // Storage access, as the current page expresses it: the disclosed host directory.
-        await expect(page.getByTestId("workspace-host-path")).toContainText("/mock/workspace-1");
+        await expect(page.getByTestId("workspace-host-path")).toContainText("/mock/11111111-1111-4111-8111-111111111111");
         // Execution configuration is switchable for direct-attach and explains what the switch does.
         await expectTriggerLabel(page, "workspace-execution-mode", "windows-mxc");
         await expect(page.getByTestId("workspace-execution-mode-hint")).not.toBeEmpty();
@@ -229,10 +229,10 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     status,
                     storageBackend: "host_directory",
-                    storageRef: "workspace-1",
+                    storageRef: "11111111-1111-4111-8111-111111111111",
                     executionSpec: { status: "assigned", generation: 1, sandboxSpecHash: "abc" },
                     runtime: { status: "blocked", deviceId: "dev-1", lastHeartbeatAt: "now" },
                 }),
@@ -255,7 +255,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1/environment");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/environment");
         await expect(page.getByTestId("workspace-environment-status")).toContainText("blocked");
         await expect(page.getByTestId("workspace-prepare-card")).toBeVisible();
         const prepareButton = page.getByTestId("workspace-prepare-button");

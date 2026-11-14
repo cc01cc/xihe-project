@@ -7,7 +7,7 @@ test.describe("Session switch between chat and workspace", () => {
     const sessionId = "switch-session",
         sessionTitle = "Switch Test",
         userMessage = "Hello from chat";
-    const workspaceId = "workspace-1";
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
 
     test.beforeEach(async ({ page }) => {
         // task-100：下面要断言「两个 workspace 的事件流都被请求过」（`page.on("request")`），
@@ -24,8 +24,8 @@ test.describe("Session switch between chat and workspace", () => {
                     status: 200,
                     contentType: "application/json",
                     body: JSON.stringify([
-                        { id: "workspace-1", name: "Workspace One", workspaceRole: "WS_OWNER" },
-                        { id: "workspace-2", name: "Workspace Two", workspaceRole: "WS_OWNER" },
+                        { id: "11111111-1111-4111-8111-111111111111", name: "Workspace One", workspaceRole: "WS_OWNER" },
+                        { id: "22222222-2222-4222-8222-222222222222", name: "Workspace Two", workspaceRole: "WS_OWNER" },
                     ]),
                 });
             },
@@ -104,8 +104,8 @@ test.describe("Session switch between chat and workspace", () => {
     test("workspace routes keep sessions isolated and resubscribe workspace events", async ({
         page,
     }) => {
-        const firstWorkspace = "workspace-1",
-            secondWorkspace = "workspace-2",
+        const firstWorkspace = "11111111-1111-4111-8111-111111111111",
+            secondWorkspace = "22222222-2222-4222-8222-222222222222",
             firstSession = "workspace-one-session";
         const secondSession = "workspace-two-session",
             firstMessage = "Message from workspace one";
@@ -147,11 +147,11 @@ test.describe("Session switch between chat and workspace", () => {
         });
 
         // 本用例需要**两个真实工作区**，而共享夹具的 `KNOWN_WORKSPACE_IDS`（`D-1178`）刻意
-        // 不含 `workspace-2` —— 那份名单是为了让「访问不存在的工作区应当 404」可验，不能为
-        // 本用例放宽（放宽等于把别处的负例洗掉）。所以这里在 spec 内单独回 workspace-2 的详情。
-        // 不补这条的实测后果：`GET /api/v1/workspaces/workspace-2` 404 ⇒ WorkspaceView 判定
+        // 不含 `22222222-2222-4222-8222-222222222222` —— 那份名单是为了让「访问不存在的工作区应当 404」可验，不能为
+        // 本用例放宽（放宽等于把别处的负例洗掉）。所以这里在 spec 内单独回 22222222-2222-4222-8222-222222222222 的详情。
+        // 不补这条的实测后果：`GET /api/v1/workspaces/22222222-2222-4222-8222-222222222222` 404 ⇒ WorkspaceView 判定
         // 上下文冲突并退回「选择工作区」页 ⇒ 第二个会话的正文永远不出现（本用例长期红）。
-        await page.route("**/api/v1/workspaces/workspace-2", async (route) => {
+        await page.route("**/api/v1/workspaces/22222222-2222-4222-8222-222222222222", async (route) => {
             if (route.request().method() !== "GET") {
                 await route.fallback();
                 return;
@@ -160,7 +160,7 @@ test.describe("Session switch between chat and workspace", () => {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    workspace: workspaceWire({ id: "workspace-2", name: "Workspace Two" }),
+                    workspace: workspaceWire({ id: "22222222-2222-4222-8222-222222222222", name: "Workspace Two" }),
                 }),
             });
         });
@@ -185,8 +185,8 @@ test.describe("Session switch between chat and workspace", () => {
     test("switching away from an in-flight run detaches and replays on return", async ({
         page,
     }) => {
-        const firstWorkspace = "workspace-1",
-            secondWorkspace = "workspace-2",
+        const firstWorkspace = "11111111-1111-4111-8111-111111111111",
+            secondWorkspace = "22222222-2222-4222-8222-222222222222",
             firstSession = "in-flight-session";
         const secondSession = "other-workspace-session";
         await setupMockAuth(page, { sse: { tokens: ["replayed response"], delayMs: 200 } });

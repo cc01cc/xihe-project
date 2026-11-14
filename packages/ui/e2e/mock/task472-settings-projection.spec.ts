@@ -17,7 +17,7 @@ import { setupMockAuth } from "./helpers/auth";
  * 语义本身）。这与「公共中性兜底不得 present 空工作区行」是两件事，别混用。</p>
  */
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
 const CONFIG_DOMAINS: Record<string, Record<string, string>> = {
     "llm-provider": {
@@ -42,10 +42,10 @@ async function stubBase(page: Page) {
             body: JSON.stringify({ sessions: [] }),
         });
     });
-    await page.route("**/api/v1/workspaces/workspace-1", (route) => {
+    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111", (route) => {
         const url = route.request().url();
         // 该路由是**前缀**匹配：配置域与成员等子路径交给后面的专用桩/兜底。
-        if (!/\/api\/v1\/workspaces\/workspace-1(?:\?.*)?$/.test(url)) return route.fallback();
+        if (!/\/api\/v1\/workspaces\/11111111-1111-4111-8111-111111111111(?:\?.*)?$/.test(url)) return route.fallback();
         return route.fulfill({
             status: 200,
             contentType: "application/json",

@@ -2,7 +2,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
-const WORKSPACE_ID = "workspace-1",
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
     SESSION_ID = "follow-up-session",
     RUN_ID = "33333333-3333-4333-8333-333333333333";
 const ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";

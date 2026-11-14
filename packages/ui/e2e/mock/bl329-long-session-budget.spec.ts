@@ -111,7 +111,7 @@ test.describe("BL-329 长会话窗口化预算", () => {
         await stubSessionProjections(page, SESSION_ID);
         await stubLongSession(page);
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });

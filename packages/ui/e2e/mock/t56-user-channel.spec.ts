@@ -51,7 +51,7 @@ test.use({
     mockAllow: [...DEFAULT_MOCK_ALLOW, "participants/[^/]+/cursor"],
 });
 
-const WORKSPACE_ID = "workspace-1";
+const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "t56-session";
 const OWNER_PARTICIPANT_ID = "part-t56-owner";
 const AGENT_PARTICIPANT_ID = "part-t56-agent";

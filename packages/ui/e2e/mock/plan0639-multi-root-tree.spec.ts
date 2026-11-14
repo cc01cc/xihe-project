@@ -15,7 +15,7 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const ALPHA_FILE = "alpha-root-a.md",
     BETA_FILE = "beta-root-b.md",
-    PRIMARY_ROOT_ID = "workspace-1",
+    PRIMARY_ROOT_ID = "11111111-1111-4111-8111-111111111111",
     SECONDARY_ROOT_ID = "00000000-0000-4000-8000-0000000000b2",
     SECONDARY_ROOT_ALIAS = "beta";
 
@@ -75,7 +75,7 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
     test("single-root workspace renders flat, without group headers", async ({ page }) => {
         await setupMockAuth(page);
         await seedRootTrees(page);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 
         await expect(page.getByRole("button", { name: ALPHA_FILE, exact: true })).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -102,7 +102,7 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
             ],
         });
         await seedRootTrees(page);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 
         const headers = page.getByTestId("workspace-tree-root-header");
         await expect(headers).toHaveCount(2);
@@ -143,7 +143,7 @@ test.describe("PLAN-0639 M2 multi-root file tree groups (mock)", () => {
             ],
         });
         await seedRootTrees(page);
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 
         const headers = page.getByTestId("workspace-tree-root-header");
         await expect(headers).toHaveCount(2);

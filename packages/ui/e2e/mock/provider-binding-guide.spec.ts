@@ -65,7 +65,7 @@ test.describe("C1: provider binding guide before send", () => {
                 body: JSON.stringify({
                     id: SESSION_ID,
                     title: "C1 guide",
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     // normalizeSession 的 detail 契约要求 archived 为 boolean；缺字段会被判成
                     // InvalidSessionProjectionError → onBlocked(BIND_FAILED)，toast 永远不会出现。
                     archived: false,
@@ -80,7 +80,7 @@ test.describe("C1: provider binding guide before send", () => {
             });
         });
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
         const textarea = page.locator('[data-testid="chat-input"]');
         await expect(textarea).toBeVisible();
         await textarea.fill("hello from c1");
@@ -134,7 +134,7 @@ test.describe("C1: provider binding guide before send", () => {
             }),
         );
 
-        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
         const textarea = page.locator('[data-testid="chat-input"]');
         await expect(textarea).toBeVisible();
         await textarea.fill("hello from settings entry");

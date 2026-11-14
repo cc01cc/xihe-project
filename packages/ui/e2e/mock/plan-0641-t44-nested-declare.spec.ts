@@ -52,14 +52,14 @@ test.describe("PLAN-0641 T4.4 nested-repo declare entry (mock)", () => {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    workspaceId: "workspace-1",
+                    workspaceId: "11111111-1111-4111-8111-111111111111",
                     cachedAt: new Date().toISOString(),
                     items,
                 }),
             });
         });
         let declareBody: { path?: string } | null = null;
-        await page.route("**/api/v1/workspaces/workspace-1/roots", async (route) => {
+        await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/roots", async (route) => {
             declareBody = route.request().postDataJSON() as { path?: string } | null;
             await route.fulfill({
                 status: 201,
@@ -68,7 +68,7 @@ test.describe("PLAN-0641 T4.4 nested-repo declare entry (mock)", () => {
             });
         });
 
-        await page.goto("/workspace/workspace-1");
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 
         const panel = page.getByTestId("nested-repos-panel");
         await expect(panel).toBeVisible({ timeout: LONG_TIMEOUT_MS });

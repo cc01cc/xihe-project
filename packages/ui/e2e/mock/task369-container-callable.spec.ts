@@ -32,7 +32,7 @@ import {
     TREE_WIDTH_MAX,
 } from "../../src/composables/useWorkspaceLayout";
 
-const WORKSPACE_PATH = "/workspace/workspace-1";
+const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
 const TREE_TAB_TITLE = "展开文件树";
 
 async function openWorkbench(page: Page): Promise<void> {
@@ -281,7 +281,7 @@ test("S2 树宽可拖：拖中缝后宽度真的变，并写回持久键（原 S
                     if (!raw) return null;
                     const parsed = JSON.parse(raw) as { treeWidth?: unknown };
                     return typeof parsed.treeWidth === "number" ? parsed.treeWidth : null;
-                }, "xihe-layout-ws:workspace-1"),
+                }, "xihe-layout-ws:11111111-1111-4111-8111-111111111111"),
             { timeout: EXPECT_TIMEOUT_MS },
         )
         .toBe(widened);

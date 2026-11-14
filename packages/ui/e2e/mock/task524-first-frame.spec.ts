@@ -17,8 +17,8 @@ import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
 import { WORKSPACE_LAYOUT_STORAGE_PREFIX } from "../../src/composables/useWorkspaceLayout";
 
-const WORKSPACE_PATH = "/workspace/workspace-1";
-const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}workspace-1`;
+const WORKSPACE_PATH = "/workspace/11111111-1111-4111-8111-111111111111";
+const LAYOUT_KEY = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}11111111-1111-4111-8111-111111111111`;
 const TARGET_TREE_WIDTH = 288;
 /** 判据阈值（Lead 裁定）：修后错误布局可见 < 150ms。 */
 const MAX_WRONG_MS = 150;

@@ -14,8 +14,8 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
-const WS_A = "workspace-1";
-const WS_B = "workspace-2";
+const WS_A = "11111111-1111-4111-8111-111111111111";
+const WS_B = "22222222-2222-4222-8222-222222222222";
 
 function sessionWire(id: string, title: string, workspaceId: string) {
     const now = new Date().toISOString();
@@ -116,11 +116,11 @@ test.describe("左栏工作区分组（task-352 / D-1206）", () => {
 
         // ② 首屏请求：**判据是「有没有按组扇出」，不是总数**。
         //
-        // [实测] 首屏总数 = 2，两条的 `X-Workspace-Id` 都是 `workspace-1` —— 一条来自
+        // [实测] 首屏总数 = 2，两条的 `X-Workspace-Id` 都是 `11111111-1111-4111-8111-111111111111` —— 一条来自
         // `App.vue:58`、一条来自 `WorkspaceView.vue:225`，是「拉当前工作区会话」的既有启动路径
         // （与本卡无关，改前就是 2；不带参数时 `api.ts` 用 tab 上下文补这个头）。
         // 所以真正的判据是**首屏绝不碰别的工作区**：做成「一次拉全部 workspace」时，首屏必然
-        // 出现带 `workspace-2` 的请求 ⇒ 下面这条会红。左栏自己首屏贡献 0 条：它在 store 为空时
+        // 出现带 `22222222-2222-4222-8222-222222222222` 的请求 ⇒ 下面这条会红。左栏自己首屏贡献 0 条：它在 store 为空时
         // 才调 `loadSessions()`，而 store 的 `loadPromise` 把已经在飞的请求复用掉。
         expect(sessionGets.filter((header) => header === WS_B)).toEqual([]);
         expect(sessionGets.every((header) => header === WS_A)).toBe(true);
