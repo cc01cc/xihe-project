@@ -41,7 +41,66 @@
         </script>
     </head>
     <body>
-        <div id="app"></div>
+        <!--
+            task-536：app 挂载前的静态 boot 占位（纯 HTML + 内联样式，无外链、不依赖 JS）。
+            背景：首屏 102–318ms（dev 冷编译时更久）内 body 文本长度为 0、无 skeleton、无 aria-busy，
+            用户只看到灰块。此占位在 Vue 挂载时被整体替换（`#app` 的 innerHTML 被应用覆写）。
+            深浅色沿用 head 脚本已加好的 `<html class="dark">`，语言沿用已设好的 `<html lang>` ——
+            这里只用 CSS 选择器消费这两个既有结果，不另写判定逻辑。
+            不做「延迟 200ms 才显示」：warm 路径下占位存在本身就是正确行为。
+        -->
+        <style>
+            #xh-boot {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                padding: 24px;
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    "Segoe UI",
+                    sans-serif;
+                color: #3f3f46;
+            }
+            html.dark #xh-boot {
+                color: #d4d4d8;
+            }
+            #xh-boot .xh-boot-bar {
+                height: 12px;
+                border-radius: 6px;
+                background: #e4e4e7;
+            }
+            html.dark #xh-boot .xh-boot-bar {
+                background: #27272a;
+            }
+            #xh-boot .xh-boot-bar.w-40 {
+                width: 40%;
+            }
+            #xh-boot .xh-boot-bar.w-70 {
+                width: 70%;
+            }
+            #xh-boot .xh-boot-bar.w-55 {
+                width: 55%;
+            }
+            #xh-boot .xh-boot-text {
+                font-size: 13px;
+            }
+            html[lang^="en"] #xh-boot .xh-boot-zh,
+            html:not([lang^="en"]) #xh-boot .xh-boot-en {
+                display: none;
+            }
+        </style>
+        <div id="app">
+            <div id="xh-boot" aria-busy="true" role="status" aria-live="polite">
+                <div class="xh-boot-text">
+                    <span class="xh-boot-zh">正在加载界面…</span>
+                    <span class="xh-boot-en">Loading interface…</span>
+                </div>
+                <div class="xh-boot-bar w-40"></div>
+                <div class="xh-boot-bar w-70"></div>
+                <div class="xh-boot-bar w-55"></div>
+            </div>
+        </div>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
