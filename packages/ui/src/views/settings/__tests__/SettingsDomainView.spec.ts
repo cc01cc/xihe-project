@@ -84,7 +84,7 @@ const messages = {
                 navToolFaces: "工具分类",
                 forbiddenTitle: "这一层需要实例管理员能力",
                 layerInstance: "实例配置",
-                layerWorkspaceDefault: "工作区默认值",
+                layerWorkspaceDefault: "工作区默认",
                 layerUser: "用户配置",
                 wsDefaultReadonlyTitle: "只读",
                 wsDefaultReadonlyDetail: "缺少 MANAGE_WORKSPACE_DEFAULT_CONFIG",

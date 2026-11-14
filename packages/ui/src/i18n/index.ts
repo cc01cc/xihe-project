@@ -1951,7 +1951,7 @@ const messages = {
                 layerUser: "个人配置",
                 layerWorkspace: "工作区设置",
                 // PLAN-0766（task-160）：共享工作区默认层（wire/路由段 = workspace-default）。
-                layerWorkspaceDefault: "工作区默认值",
+                layerWorkspaceDefault: "工作区默认",
                 layerInstanceShort: "实例层",
                 layerUserShort: "个人层",
                 layerWorkspaceDefaultShort: "工作区默认层",
@@ -5570,7 +5570,7 @@ const messages = {
                 layerInstance: "Instance settings",
                 layerUser: "Personal settings",
                 layerWorkspace: "Workspace settings",
-                layerWorkspaceDefault: "Workspace defaults",
+                layerWorkspaceDefault: "Workspace default",
                 layerInstanceShort: "Instance layer",
                 layerUserShort: "Personal layer",
                 layerWorkspaceDefaultShort: "Workspace default layer",

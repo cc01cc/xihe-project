@@ -67,6 +67,22 @@ describe("层名词典（task-251）：同一层只有一个层名", () => {
     });
 });
 
+/**
+ * task-82 / D-1112 裁定 #2：层**标签**（左栏 / tab / 面包屑 / 命令面板等宽度紧张处）用「工作区默认」，
+ * **去「值/层」后缀**；带「值」的「工作区默认值」是**概念名**，只留在正文句与台账/注释里。
+ * 钉死标签键，防止「概念名漏进标签」（task-82 修复前的状态就是左栏写着「工作区默认值」）。
+ */
+describe("层标签（task-82 / D-1112）：宽度紧张的标签不带「值/层」后缀", () => {
+    it("left-nav layer label is 工作区默认 / Workspace default", () => {
+        expect(copyOf("zh-CN", "settings.ia.layerWorkspaceDefault"), "zh 左栏层标签").toBe(
+            "工作区默认",
+        );
+        expect(copyOf("en-US", "settings.ia.layerWorkspaceDefault"), "en 左栏层标签").toBe(
+            "Workspace default",
+        );
+    });
+});
+
 /** 取 zh-CN 某键的渲染文案（走 messages 树，避免依赖当前 locale 状态）。 */
 function zhCopy(path: string): string {
     return (

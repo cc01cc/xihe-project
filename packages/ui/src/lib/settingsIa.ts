@@ -95,7 +95,10 @@ export function isConfigDomain(value: unknown): value is ConfigDomain {
     return typeof value === "string" && (INSTANCE_DOMAINS as readonly string[]).includes(value);
 }
 
-/** 某域在哪些层可写（**顺序 = 显示顺序（高 → 低）**，与左栏组顺序同源：`SETTINGS_LAYERS`）。 */
+/**
+ * 某域在哪些层可写（**顺序 = `SETTINGS_LAYERS` 顺序（低 → 高）**，与左栏自上而下同源）。
+ * 要「高 → 低」渲染（右栏徽标那种）的消费方必须自己取反序 —— 本函数不做这件事。
+ */
 export function layersForDomain(domain: ConfigDomain): SettingsLayer[] {
     return SETTINGS_LAYERS.filter((layer) => LAYER_DOMAINS[layer].includes(domain));
 }
