@@ -240,10 +240,17 @@ fn lexically_safe(path: &str, workspace: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
+/// task-544: the file-worker identifies itself through its argv, not through an
+/// environment marker. The marker had to be injected into the MXC policy, which
+/// was what made every file operation carry the Runtime's environment.
+fn running_as_file_worker() -> bool {
+    std::env::args().any(|argument| argument == "--file-worker")
+}
+
 /// Stage 2: Filesystem validation — canonicalize resolves symlinks,
 /// then check the real path still lies within the workspace root.
 fn resolve_canonical(path: &Path, workspace: &Path) -> Result<PathBuf> {
-    if std::env::var_os("XIHE_FILE_WORKER").is_some() {
+    if running_as_file_worker() {
         // The outer Runtime has already performed path preflight and assembled
         // the MXC filesystem policy. The data-plane worker must not resolve
         // host ancestors or discover paths outside its authorized root.

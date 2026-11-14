@@ -38,8 +38,11 @@ pub fn build_mxc_job(
     let file_worker = request.args.iter().any(|arg| arg == "--file-worker");
     let file_worker_parent = workspace.parent().map(Path::to_path_buf);
     let mut worker_env = request.env;
-    if file_worker {
-        worker_env.insert("XIHE_FILE_WORKER".to_string(), "1".to_string());
+    if file_worker && worker_env.is_empty() {
+        // task-544: the worker identifies itself through its argv
+        // (`--file-worker`), so no marker variable is needed. It still gets the
+        // allowlisted system variables so the child can initialize on Windows.
+        worker_env = crate::process_guard::sandbox_env(&BTreeMap::new());
     }
     let policy = build_mxc_policy(&MxcPolicyRequest {
         program: request.command,
@@ -151,5 +154,55 @@ mod tests {
                 .is_some_and(|paths| !paths.is_empty())
         );
         std::fs::remove_dir_all(root).expect("remove adapter test output");
+    }
+
+    /// task-544: a file-worker job must not force the caller-environment merge.
+    /// Its environment is the allowlist only, and it identifies itself by argv.
+    #[test]
+    fn file_worker_policy_env_is_allowlist_only() {
+        let root = PathBuf::from("target/.tmp")
+            .join(format!("xihe-mxc-worker-test-{}", uuid::Uuid::new_v4()));
+        let plan = build_mxc_job(
+            MxcJobRequest {
+                workspace_path: std::env::temp_dir().to_string_lossy().into_owned(),
+                command: "xihe-runtime.exe".to_string(),
+                args: vec!["--file-worker".to_string(), "--workspace".to_string()],
+                cwd: None,
+                env: BTreeMap::new(),
+                timeout_secs: 30,
+            },
+            &root,
+        )
+        .expect("mxc file-worker plan");
+        let policy_path = plan.policy_artifact.clone().expect("policy artifact");
+        let policy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&policy_path).expect("policy file"))
+                .expect("policy json");
+        let names = policy["process"]["env"]
+            .as_array()
+            .expect("file worker must still get the allowlisted system variables")
+            .iter()
+            .map(|entry| {
+                let rendered = entry.as_str().unwrap_or_default();
+                rendered
+                    .split_once('=')
+                    .map(|(key, _)| key.to_string())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !names.iter().any(|name| name == "XIHE_FILE_WORKER"),
+            "the file-worker marker must be gone: {names:?}"
+        );
+        let unexpected = names
+            .iter()
+            .filter(|name| !crate::process_guard::SANDBOX_ENV_ALLOWLIST.contains(&name.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            unexpected.is_empty(),
+            "file worker env must be allowlist-only: {unexpected:?}"
+        );
+        println!("task-552 file-worker policy env names: {names:?}");
+        std::fs::remove_dir_all(root).expect("remove worker test output");
     }
 }

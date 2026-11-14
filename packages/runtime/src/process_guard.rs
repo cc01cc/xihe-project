@@ -584,6 +584,45 @@ pub struct MxcPolicyRequest {
 /// 2026-09-19-mxc-process-sandbox/chrome-run.json` + 0393 probe3): a missing
 /// `readonlyPaths` entry for the program directory makes real programs die with
 /// `0xC0000142` before Rust could report anything.
+/// Environment variables a sandboxed child needs to initialize on Windows.
+///
+/// task-544: this list is the **only** bridge between the Runtime's own
+/// process environment and the sandbox. The previous implementation merged
+/// `std::env::vars()` whenever the caller supplied any variable, which handed
+/// the child every CP/agent/provider secret the Runtime had loaded.
+pub const SANDBOX_ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "Path",
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "ComSpec",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+];
+
+/// Builds the sandbox environment: allowlisted host variables plus the caller's
+/// explicit variables. Nothing else from the Runtime's environment crosses.
+pub fn sandbox_env(extra: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut environment = SANDBOX_ENV_ALLOWLIST
+        .iter()
+        .filter_map(|key| {
+            std::env::var(key)
+                .ok()
+                .map(|value| ((*key).to_string(), value))
+        })
+        .collect::<BTreeMap<_, _>>();
+    environment.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+    environment
+}
+
 pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
     let command_line = std::iter::once(request.program.clone())
         .chain(request.args.iter().cloned())
@@ -601,8 +640,7 @@ pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
         },
     });
     if !request.env.is_empty() {
-        let mut environment = std::env::vars().collect::<BTreeMap<_, _>>();
-        environment.extend(request.env.clone());
+        let environment = sandbox_env(&request.env);
         process["env"] = serde_json::json!(
             environment
                 .iter()
@@ -1177,6 +1215,64 @@ mod tests {
         assert_eq!(policy["network"]["egress"]["default"], "allow");
         assert_eq!(policy["network"]["ingress"]["hostLoopback"], "allow");
         assert_eq!(policy["ui"]["disable"], false);
+    }
+
+    /// task-544: a caller-supplied variable must not open the door to the
+    /// Runtime's own environment. Only allowlisted system variables and the
+    /// caller's own keys may appear in the policy.
+    #[test]
+    fn mxc_policy_env_is_limited_to_the_sandbox_allowlist() {
+        let mut caller_env = BTreeMap::new();
+        caller_env.insert("XH_CALLER_MARKER".to_string(), "1".to_string());
+        let policy = super::build_mxc_policy(&super::MxcPolicyRequest {
+            program: r"C:\tools\node\node.exe".to_string(),
+            args: Vec::new(),
+            cwd: PathBuf::from(r"C:\ws"),
+            env: caller_env,
+            timeout_ms: 1_000,
+            read_only_roots: Vec::new(),
+            read_write_roots: vec![PathBuf::from(r"C:\ws")],
+        });
+        let names = policy["process"]["env"]
+            .as_array()
+            .expect("caller env must produce a policy env block")
+            .iter()
+            .map(|entry| {
+                let rendered = entry.as_str().unwrap_or_default();
+                rendered
+                    .split_once('=')
+                    .map(|(key, _)| key.to_string())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            names.iter().any(|name| name == "XH_CALLER_MARKER"),
+            "the caller's own variable must survive: {names:?}"
+        );
+        let unexpected = names
+            .iter()
+            .filter(|name| {
+                name.as_str() != "XH_CALLER_MARKER"
+                    && !super::SANDBOX_ENV_ALLOWLIST.contains(&name.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            unexpected.is_empty(),
+            "no host variable outside the sandbox allowlist may cross: {unexpected:?}"
+        );
+        let sensitive = names
+            .iter()
+            .filter(|name| {
+                let upper = name.to_ascii_uppercase();
+                ["KEY", "TOKEN", "SECRET", "PASSWORD", "DSN", "CREDENTIAL"]
+                    .iter()
+                    .any(|needle| upper.contains(needle))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            sensitive.is_empty(),
+            "policy env must not carry credential-shaped names: {sensitive:?}"
+        );
     }
 
     #[test]
