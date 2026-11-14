@@ -14,6 +14,7 @@ import {
     Terminal,
 } from "@lucide/vue";
 import type { FileNode } from "../../../types";
+import { isDotfileName, isEmptyDirectoryNode } from "../stores/workspace";
 
 const props = defineProps<{
     node: FileNode;
@@ -31,6 +32,10 @@ const emit = defineEmits<{
 const indent = computed(() => `${props.depth * 16 + 8}px`);
 const isExpanded = computed(() => props.expandedPaths.has(props.node.path));
 const isSelected = computed(() => props.selectedPath === props.node.path);
+// task-484 / D-1234：dotfile 置灰、空目录淡样式。判据来自 store（不在模板里靠猜），
+// 同时落成 data 属性，好让断言/变异验证能精确点名而不是靠颜色。
+const isDotfile = computed(() => isDotfileName(props.node.name));
+const isEmptyDirectory = computed(() => isEmptyDirectoryNode(props.node));
 
 function getIcon(): Component {
     if (props.node.type === "directory") return isExpanded.value ? FolderOpen : Folder;
@@ -85,8 +90,13 @@ function handleContextmenu(e: MouseEvent) {
     <div>
         <div
             data-testid="file-tree-node"
+            :data-dotfile="isDotfile ? 'true' : undefined"
+            :data-empty-dir="isEmptyDirectory ? 'true' : undefined"
             class="flex items-center gap-1 py-1 text-sm cursor-pointer rounded hover:bg-accent/50 transition-colors select-none"
-            :class="{ 'bg-accent text-accent-foreground': isSelected }"
+            :class="{
+                'bg-accent text-accent-foreground': isSelected,
+                'opacity-60': isEmptyDirectory,
+            }"
             :style="{ paddingLeft: indent }"
             @click="handleClick"
             @contextmenu.prevent="handleContextmenu"
@@ -95,7 +105,9 @@ function handleContextmenu(e: MouseEvent) {
                 {{ node.type === "directory" ? (isExpanded ? "▼" : "▶") : "" }}
             </span>
             <component :is="getIcon()" class="size-3.5 shrink-0" aria-hidden="true" />
-            <span class="truncate flex-1 ml-1">{{ node.name }}</span>
+            <span class="truncate flex-1 ml-1" :class="{ 'text-muted-foreground': isDotfile }">{{
+                node.name
+            }}</span>
         </div>
         <template v-if="node.type === 'directory' && isExpanded && node.children">
             <FileTreeNode

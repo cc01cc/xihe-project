@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useWorkspaceStore } from "../stores/workspace";
+import { isHiddenTreeEntry, isRuntimeArtifactDir, useWorkspaceStore } from "../stores/workspace";
 import type { FileNode } from "../../../types";
 import Tree from "../../../components/ui/tree/Tree.vue";
 import TreeNodeList from "./TreeNodeList.vue";
@@ -32,15 +32,14 @@ const expandedArray = computed({
     },
 });
 
-function isRuntimeArtifact(name: string): boolean {
-    return name.startsWith(".xihe-") || /^container-runtime\.log(?:\..*)?$/.test(name);
-}
-
+// task-484：判据统一在 stores/workspace.ts（此前这里与 store 各写一份正则 + 一份 logs 规则，
+// 两处同形必然漂）。store 侧负责构建时过滤，这里负责已传入的 props.nodes（多根分组）二次过滤。
 function hideRuntimeArtifacts(nodes: FileNode[]): FileNode[] {
     return nodes.flatMap((node) => {
-        if (isRuntimeArtifact(node.name)) return [];
+        if (isHiddenTreeEntry(node)) return [];
         const children = node.children ? hideRuntimeArtifacts(node.children) : undefined;
-        if (node.type === "directory" && node.name === "logs" && children?.length === 0) return [];
+        if (node.type === "directory" && isRuntimeArtifactDir(node.name) && children?.length === 0)
+            return [];
         return [{ ...node, ...(children ? { children } : {}) }];
     });
 }

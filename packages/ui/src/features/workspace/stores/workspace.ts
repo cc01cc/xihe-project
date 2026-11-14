@@ -40,8 +40,71 @@ function detectLanguage(path: string): string {
     return map[ext] || "plaintext";
 }
 
-function isRuntimeArtifact(name: string): boolean {
+/**
+ * 运行产物【文件】：不进树（.xihe-* 运行时状态、容器运行时日志）。
+ * task-484：语义未变，只是从私有提升为导出 —— 原先 stores/workspace.ts 与 FileTree.vue
+ * 各写一份同样的正则，改一处会漂。
+ */
+export function isRuntimeArtifact(name: string): boolean {
     return name.startsWith(".xihe-") || /^container-runtime\.log(?:\..*)?$/.test(name);
+}
+
+/**
+ * 运行产物【目录】：不进树。
+ * Lead 2026-11-14 裁定（task-484 / D-1393）：空 `logs` 目录维持隐藏是**合法例外**，
+ * 不算 D-1234「空目录都显示」的缺口 —— 它与 .xihe-* 同属运行产物目录。
+ * 单立常量的理由：原实现把 `name === "logs"` 直接写在两处（store 与 FileTree），
+ * 而「空则隐、非空则显」这种半条规则散落两处必然不自洽；此处收成一处判据。
+ * 【不要】把这里扩成「隐藏所有 logs」—— 那会改变用户可见面，属另一个决策。
+ */
+export const RUNTIME_ARTIFACT_DIRS: readonly string[] = ["logs"];
+
+export function isRuntimeArtifactDir(name: string): boolean {
+    return RUNTIME_ARTIFACT_DIRS.includes(name);
+}
+
+/**
+ * VCS 内部目录：不进树（**.git 目录**）。
+ * D-1234 边界（台账 lead-decisions-ledger.md:9451-9452）：显示 dotfile ≠ 显示 .git ——
+ * 「不暴露版本库内部」与「不隐藏所有 dotfile」独立成立。
+ * 【关键区分】只有**目录**形态的 .git 被排除：worktree 子仓的 .git 是**文件**（gitdir 指针），
+ * 它必须保留可见可读（task-378 T3：\`.git\` 以文件呈现可读 gitdir，当目录展开/报错才红）。
+ */
+export const VCS_INTERNAL_DIRS: readonly string[] = [".git"];
+
+export function isVcsInternalDir(name: string, isDir: boolean): boolean {
+    return isDir && VCS_INTERNAL_DIRS.includes(name);
+}
+
+/** dotfile（以 `.` 开头的条目）。D-1234：可见、排普通条目之后、置灰。 */
+export function isDotfileName(name: string): boolean {
+    return name.startsWith(".");
+}
+
+/**
+ * 空目录判据（D-1234「空目录淡样式」的唯一来源）。
+ * 卡面明确要求「在 store 层露出判据，不许在模板里靠猜」⇒ 模板只消费这个函数。
+ */
+export function isEmptyDirectoryNode(node: Pick<FileNode, "type" | "children">): boolean {
+    return node.type === "directory" && (node.children?.length ?? 0) === 0;
+}
+
+/** 树里是否隐藏该条目（唯一判据；store 构建与 FileTree 渲染共用）。 */
+export function isHiddenTreeEntry(entry: { name: string; type: "file" | "directory" }): boolean {
+    return (
+        isRuntimeArtifact(entry.name) || isVcsInternalDir(entry.name, entry.type === "directory")
+    );
+}
+
+/**
+ * 同层排序（D-1234）：普通条目在前、dotfile 在后，各组内按名称升序。
+ * 目录组与文件组各自排序、目录组整体在前 —— 这部分沿用既有行为，未改。
+ */
+export function compareTreeEntries(left: { name: string }, right: { name: string }): number {
+    const leftDotfile = isDotfileName(left.name),
+        rightDotfile = isDotfileName(right.name);
+    if (leftDotfile !== rightDotfile) return leftDotfile ? 1 : -1;
+    return left.name.localeCompare(right.name);
 }
 
 /**
@@ -182,17 +245,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function fetchDirectoryTree(dirPath: string, rootId?: string): Promise<FileNode[]> {
         const nodes: FileNode[] = [];
         const res = await api.listDirectory(dirPath, requireWorkspaceId(), rootId);
-        const entries = (res?.entries ?? []).filter((entry: any) => !isRuntimeArtifact(entry.name));
-        const dirs = entries
-                .filter((e: any) => e.type === "directory")
-                .sort((a: any, b: any) => a.name.localeCompare(b.name)),
-            files = entries
-                .filter((e: any) => e.type === "file")
-                .sort((a: any, b: any) => a.name.localeCompare(b.name));
+        // task-484：过滤与排序都走上面导出的统一判据（此前过滤只挡运行产物文件、
+        // .git 目录会一路进树；排序用纯 localeCompare 让 dotfile 排到最前，与 D-1234 相反）。
+        const entries = (res?.entries ?? []).filter((entry: any) => !isHiddenTreeEntry(entry));
+        const dirs = entries.filter((e: any) => e.type === "directory").sort(compareTreeEntries),
+            files = entries.filter((e: any) => e.type === "file").sort(compareTreeEntries);
         for (const dir of dirs) {
             const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name,
                 children = await fetchDirectoryTree(childPath, rootId);
-            if (dir.name === "logs" && children.length === 0) continue;
+            // 运行产物目录：空则隐（Lead 2026-11-14 裁定的合法例外），非空则显。
+            if (isRuntimeArtifactDir(dir.name) && children.length === 0) continue;
             nodes.push({
                 name: dir.name,
                 path: childPath,
@@ -246,6 +308,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function loadTree() {
+        console.log("[LT-ENTER] wsId=" + workspaceId.value + " loading=" + loading.value + " loaded=" + loadedWorkspaceId.value);
         const currentWorkspaceId = workspaceId.value;
         if (!currentWorkspaceId) return;
         // S3a audit P1-2: a workspace switch can arrive while the previous load is in
