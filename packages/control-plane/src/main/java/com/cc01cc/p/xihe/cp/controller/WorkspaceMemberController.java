@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.controller;
 
+import com.cc01cc.p.xihe.cp.auth.CapabilityProjectionService;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.service.WorkspaceMemberService;
 import jakarta.validation.Valid;
@@ -55,6 +56,18 @@ public class WorkspaceMemberController {
             @Valid @RequestBody UpdateMemberRoleRequest request) {
         return memberService.updateMemberRole(workspaceId, userId, request.role(),
                 TenantContext.getUserId());
+    }
+
+    /**
+     * task-52: one member's effective capabilities — the same projection
+     * ({@code CapabilityProjectionService.permissionsFor}) that backs {@code GET /api/v1/me/permissions},
+     * so the two faces cannot drift. Authorization lives in the service.
+     */
+    @GetMapping("/{userId}/effective-permissions")
+    @PreAuthorize("isAuthenticated()")
+    public CapabilityProjectionService.SelfPermissions effectivePermissions(
+            @PathVariable String workspaceId, @PathVariable String userId) {
+        return memberService.effectivePermissions(workspaceId, userId, TenantContext.getUserId());
     }
 
     @DeleteMapping("/{userId}")

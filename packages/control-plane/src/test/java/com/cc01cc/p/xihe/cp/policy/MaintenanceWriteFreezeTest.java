@@ -62,7 +62,8 @@ class MaintenanceWriteFreezeTest {
         UserRepository users = Mockito.mock(UserRepository.class);
         WorkspaceMemberService service = new WorkspaceMemberService(workspaces, users, memberships,
                 Mockito.mock(AuditLogger.class), freeze("true"),
-                Mockito.mock(RequesterAuthority.class));
+                Mockito.mock(RequesterAuthority.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.auth.CapabilityProjectionService.class));
 
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.addMember("ws-1", "alice", "EDITOR", "caller-1"));
@@ -78,7 +79,8 @@ class MaintenanceWriteFreezeTest {
         UserRepository users = Mockito.mock(UserRepository.class);
         WorkspaceMemberService service = new WorkspaceMemberService(workspaces, users, memberships,
                 Mockito.mock(AuditLogger.class), freeze("false"),
-                Mockito.mock(RequesterAuthority.class));
+                Mockito.mock(RequesterAuthority.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.auth.CapabilityProjectionService.class));
 
         // Passes the freeze and lands in the ordinary authorization path, which rejects the
         // unknown workspace (not a MIGRATION_IN_PROGRESS error).

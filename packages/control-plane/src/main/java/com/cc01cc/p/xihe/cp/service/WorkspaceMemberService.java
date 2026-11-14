@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.NameFormat;
+import com.cc01cc.p.xihe.cp.auth.CapabilityProjectionService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.MemberView;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -57,19 +58,23 @@ public class WorkspaceMemberService {
     private final MaintenanceWriteFreeze writeFreeze;
     /** PLAN-0651 T1.3 (A7): the instance-administrator bypass is an action atom, not a role name. */
     private final RequesterAuthority requesterAuthority;
+    /** task-52: the ONE capability projection (the same bean {@code /me/permissions} uses). */
+    private final CapabilityProjectionService capabilityProjection;
 
     public WorkspaceMemberService(WorkspaceRepository workspaceRepository,
             UserRepository userRepository,
             WorkspaceMembershipService memberships,
             AuditLogger auditLogger,
             MaintenanceWriteFreeze writeFreeze,
-            RequesterAuthority requesterAuthority) {
+            RequesterAuthority requesterAuthority,
+            CapabilityProjectionService capabilityProjection) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.memberships = memberships;
         this.auditLogger = auditLogger;
         this.writeFreeze = writeFreeze;
         this.requesterAuthority = requesterAuthority;
+        this.capabilityProjection = capabilityProjection;
     }
 
     /** spec §3: GET list — OWNER/EDITOR see the list; VIEWER and outsiders do not. */
@@ -161,6 +166,56 @@ public class WorkspaceMemberService {
                 "workspace_member", targetId.toString(), "role=" + currentRole.canonicalName());
         logger.info("Member removed: workspace={} user={} role={} emergency={}", workspaceId,
                 targetId, currentRole.canonicalName(), !owner);
+    }
+
+    /**
+     * task-52: the effective capability atoms of ONE member of this workspace.
+     *
+     * <p>The shape and the evaluation are the SAME as {@code GET /api/v1/me/permissions}: this
+     * method only decides <b>who may look</b>, and {@link CapabilityProjectionService#permissionsFor}
+     * does all the resolving — no second rule, and nothing inside it changes. Parity is therefore
+     * structural, and it is machine-checked: for the self view the atom set and the {@code sources}
+     * keys have an empty symmetric difference against that workspace's entry in
+     * {@code /me/permissions}.</p>
+     *
+     * <p>Authorization: the caller always sees their own atoms; another subject needs the instance
+     * {@code MANAGE_WORKSPACE_MEMBERS} atom or this workspace's member-management atom (an OWNER
+     * passes through its workspace role). Every refusal — missing atom, not a member, unknown user
+     * id — answers the SAME {@code 404 MEMBER_NOT_FOUND} body on purpose (D-1437): this endpoint
+     * must never become an existence oracle.</p>
+     */
+    @Transactional(readOnly = true)
+    public CapabilityProjectionService.SelfPermissions effectivePermissions(
+            String workspaceId, String targetUserId, String callerUserId) {
+        requireWorkspaceId(workspaceId);
+        UUID workspaceUuid = UUID.fromString(workspaceId);
+        UUID target;
+        try {
+            target = targetUserId == null ? null : UUID.fromString(targetUserId);
+        } catch (IllegalArgumentException malformed) {
+            target = null;
+        }
+        if (target == null) {
+            throw memberNotFound();
+        }
+        boolean self = callerUserId != null && callerUserId.equals(target.toString());
+        if (!self) {
+            try {
+                authorize(workspaceId, callerUserId);
+            } catch (CpApiException refused) {
+                // Same body as "not a member": the caller may not learn whether the id exists.
+                throw memberNotFound();
+            }
+            if (memberships.roleOf(workspaceUuid, target).isEmpty()) {
+                throw memberNotFound();
+            }
+        }
+        return capabilityProjection.permissionsFor(target);
+    }
+
+    private static CpApiException memberNotFound() {
+        return new CpApiException(HttpStatus.NOT_FOUND, "MEMBER_NOT_FOUND",
+                "Member not found");
     }
 
     private Caller authorize(String workspaceId, String callerUserId) {
