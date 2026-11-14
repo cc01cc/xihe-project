@@ -235,6 +235,29 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // refresh being swallowed by the `loading` early-return.
     let loadTreePending = 0;
 
+    /**
+     * task-602：树加载的**上下文代号**（布尔向），进入 ws-less（独立会话）上下文时关闭。
+     *
+     * <p>为什么需要它：`loadTree` 只在 `!currentWorkspaceId` 时早退，而切到 ws-less 路由时
+     * `auth.workspace` 要到新视图 setup 里才清 ⇒ 中间这一拍仍有旧 id。实测（mock 车道，
+     * `task602-stacks.json`）导航后 +48~81ms 仍有一条 `list_directory` 发出，栈是
+     * `useWorkspaceAgentSync.handleToolResult → refreshAfterMutation → loadTree → fetchDirectoryTree`，
+     * 头带的还是旧工作区。所以判据不能只看 auth ref 的更新时机，要由路由侧显式关闭这个面。</p>
+     */
+    let treeContextClosed = false;
+
+    /** 路由宣布「进入 ws-less 上下文」时调用：关面 + 清排队 + 让已加载标记失效。 */
+    function closeTreeContext() {
+        treeContextClosed = true;
+        loadTreePending = 0;
+        loadedWorkspaceId.value = null;
+    }
+
+    /** 回到工作区上下文时调用：重新开面（不会自动加载，仍由既有触发点发起）。 */
+    function openTreeContext() {
+        treeContextClosed = false;
+    }
+
     const openFiles = ref<Map<string, OpenFile>>(new Map()),
         activeFilePath = ref<string | null>(null);
 
@@ -337,6 +360,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return;
         }
         if (loadedWorkspaceId.value === currentWorkspaceId) return;
+        // task-602：ws-less 上下文里不发树请求（旧 id 会被显式带进 POST /mcp）。
+        if (treeContextClosed) return;
 
         loading.value = true;
         setTreeError(null);
@@ -376,6 +401,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             loading.value = false;
             while (loadTreePending > 0) {
                 loadTreePending -= 1;
+                if (treeContextClosed) break;
                 const targetId: string = workspaceId.value;
                 if (!targetId) break;
                 // task-532：排队者若**目标层已经加载完**就不该整轮重跑。
@@ -832,6 +858,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     /** Reload the tree while keeping the current expansion state (M3 task 3.4). */
     async function refreshAfterMutation(keepExpandedDir?: string) {
+        // task-602：上下文已关闭（ws-less）时不得借口「mutation 落地」再发一轮树请求。
+        if (treeContextClosed) return;
         expandPathDirs(keepExpandedDir ?? "");
         // PLAN-0365 (root cause C): if a load is already running, its result is
         // stale by definition (the mutation just landed). Register a pending
@@ -1179,6 +1207,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         duplicateNode,
         createDirectory,
         refreshAfterMutation,
+        closeTreeContext,
+        openTreeContext,
         splitPdf,
         loadFullContent,
         openImportDialog,

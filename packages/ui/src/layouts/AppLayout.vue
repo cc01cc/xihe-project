@@ -19,6 +19,7 @@ import { useUserQuestionsStore } from "../features/workspace/stores/userQuestion
 import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
+import { useWorkspaceStore } from "../features/workspace/stores/workspace";
 import { workspaceChatPath } from "../lib/routes";
 import {
     NAV_WIDTH_DEFAULT,
@@ -52,6 +53,7 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 const auth = useAuthStore();
 const sessionStore = useSessionStore();
+const workspaceStore = useWorkspaceStore();
 const participantsStore = useSessionParticipantsStore();
 const userQuestionsStore = useUserQuestionsStore();
 const pendingPollIntervalMs = 10_000;
@@ -238,8 +240,12 @@ function refreshPendingApprovals() {
     if (route.name === "standalone-chat") {
         stopPendingPolling();
         agentStore.clearPendingApprovals();
+        // task-602：树加载面同样要关 —— 否则 `refreshAfterMutation`（agent 工具结果落地）会在
+        // ws-less 路由上再发一轮 `list_directory`，带着旧工作区 id（实测 +48~81ms）。
+        workspaceStore.closeTreeContext();
         return;
     }
+    workspaceStore.openTreeContext();
     if (!auth.isAuthenticated || !auth.currentWorkspaceId) {
         agentStore.clearPendingApprovals();
         return;
