@@ -238,6 +238,11 @@ beforeEach(() => {
  * 真栈实测：实例主体在任何工作区都不可用（CP 未实现 B4 的平台预置段）⇒ 旧文案「默认对所有
  * 工作区可用，无需逐工作区绑定」是**与行为矛盾的承诺**。这两条断言把「诚实」钉住：
  * 既不许恢复旧承诺，也不许把 B4 改写成「本来就要逐个绑定」（必须明写尚未实现）。
+ *
+ * task-437 收口（D-1278 / task-445）：首绑的 UI 入口在**工作区**面板（`WorkspaceAgentsPanel` 行级
+ * 「绑定到此工作区」= PUT baseline，两步序），本页只做**文案指向**、不再放同义按钮。所以文案必须
+ * 同时满足两条相反方向的约束：① 给出可操作指向（`绑定到此工作区`）；② **不承诺**主体一定出现在
+ * 该列表（列表是 REACH-GATED 三臂，B4 平台预置段未建 = BL-628）。
  */
 describe("InstanceAgentsPanel · task-437 文案诚实性（A′）", () => {
     it("zh 文案说今天真相并明标 B4 尚未实现", () => {
@@ -248,6 +253,10 @@ describe("InstanceAgentsPanel · task-437 文案诚实性（A′）", () => {
             expect(text, `${key} 必须明标尚未实现，不能抹掉 B4`).toContain("尚未实现");
             expect(text, `${key} 不得承诺无需绑定`).not.toContain("无需逐工作区绑定");
             expect(text, `${key} 不得承诺默认全局可用`).not.toContain("默认对所有工作区可用，");
+            expect(
+                text,
+                `${key} 必须给出可操作指向（工作区面板的「绑定到此工作区」），否则用户无处接入`,
+            ).toContain("绑定到此工作区");
         }
     });
 
@@ -260,6 +269,10 @@ describe("InstanceAgentsPanel · task-437 文案诚实性（A′）", () => {
             expect(text, `${key} must not promise default availability`).not.toContain(
                 "available to every workspace by default and need no per-workspace binding",
             );
+            expect(
+                text,
+                `${key} must point at the actionable entry ("Bind to this Workspace")`,
+            ).toContain("Bind to this Workspace");
         }
     });
 });

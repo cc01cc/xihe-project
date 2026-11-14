@@ -67,10 +67,22 @@ import AgentModelBindingFields, {
  * `AgentPrincipalService` 的工作区可达并集只有 REACH-GATED 一段，实例主体无 owner ⇒ 三条都不命中，
  * 因此在任何工作区都不可用。文案必须说今天真相（需显式接入 + 默认全局可见尚未实现），
  * **不得**把 B4 悄悄抹掉改写成「本来就要逐个绑定」（那是 D-1265 的错，D-1268 已更正）。
- * 缺口登记 **BL-628**（P0·cp）。工作区侧「接入已有实例主体」入口是 task-436；其探针实测**角色绑定路径无法自举**
- * （`AgentBindingAtomPolicy:91` → `AgentPrincipalService:831-841` 403），处置待 Lead 裁。
- * 所以这里**暂不提供**「绑定到工作区」动作——不是设计上不该有，而是入口尚未定案；
- * 放一个指向不存在按钮的动作会造出假出口。</p>
+ * 缺口登记 **BL-628**（P0·cp）。
+ *
+ * <p><b>「接入」的入口在工作区面板，不在这里（task-437 收口 / D-1278，前提两次更正）</b>：
+ * task-436 早先的「角色绑定路径无法自举 ⇒ 403 死循环」定性**已被推翻**（cp-2 task-444 [源码+冻结测试 BL-352]）：
+ * roles 端点**故意**不做首绑（其注释明写「roles 不能当首绑入口…我们没有放宽 cap」），首绑的正确入口是
+ * `PUT /workspaces/{ws}/agents/{pid}` —— 结构化默认绑定不受 cap 门约束（传空体 = 继承角色基线），
+ * 之后才轮得到 roles 绑角色，所以那是**两步序、不是环**。task-445 真栈实测该两步序成立：
+ * 3 个实例主体各 PUT 200 → POST roles 201 → 回读 3 条绑定，工作区智能体列表 1→4 行
+ * （证据 `internal/A03-xihe/evidence/2026-11-14-instance-flow-audit/task445-bprime-probe.json`）。
+ * **UI 入口已经存在，只是不在本页**：`WorkspaceAgentsPanel.vue` 的 `bindExistingAgent()`（:931）
+ * 对列表里**每一行**发同一个 `api.updateWorkspaceAgentCap(ws, pid, undefined)`（省略 `permissions`
+ * ⇒ CP 记 `capSource=baseline`，47A / D-1109），按钮文案 = `workspace.bindAgent`「绑定到此工作区」，
+ * testid `agent-bind-row-<pid>`。所以本页的正确形态是**文案指向那个动作**，而不是再放一个同义按钮
+ * （两个入口做同一件事 = 语义重复的第二个入口，UI 五维「按钮有意义」判它不合格）。
+ * **限制**：那个列表是 REACH-GATED 三臂（B4 平台预置段未建，BL-628）⇒ 主体是否出现在列表取决于可达性，
+ * 文案不得承诺「一定能在列表里看到它」。C（B4 全局可见，改冻结 M2）仍需用户裁。</p>
  *
  * <p><b>与用户层 `agent-principals` 的区别</b>：那一页是「我的主体身份」（`created_by=self`），
  * 这一页是**全平台可用**的平台智能体。两页文案不得都叫「智能体」而不加限定词——左栏 id 仍是

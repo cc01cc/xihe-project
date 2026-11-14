@@ -2982,11 +2982,11 @@ const messages = {
                 agents: {
                     title: "平台智能体",
                     subtitle:
-                        "平台智能体：只有实例管理员能创建。当前需在目标工作区显式接入后才能使用；默认对所有工作区可用尚未实现。",
+                        "平台智能体：只有实例管理员能创建。当前需在目标工作区显式接入后才能使用：在该工作区的「智能体」面板对它点「绑定到此工作区」；默认对所有工作区可用尚未实现。",
                     count: "{count} 个智能体",
                     emptyTitle: "还没有平台智能体",
                     emptyBody:
-                        "平台智能体建好后，还要在目标工作区显式接入才能使用；默认全局可见尚未实现。",
+                        "平台智能体建好后，还要在目标工作区显式接入才能使用：在该工作区的「智能体」面板对它点「绑定到此工作区」；默认全局可见尚未实现。",
                     emptyCta: "创建第一个平台智能体",
                     fieldName: "名称",
                     fieldNamePlaceholder: "例如：代码评审助手",
@@ -6651,11 +6651,11 @@ const messages = {
                 agents: {
                     title: "Platform agents",
                     subtitle:
-                        "Only instance administrators can create platform agents. A workspace must explicitly adopt one before it can be used; availability to every workspace by default is not implemented yet.",
+                        "Only instance administrators can create platform agents. A workspace must explicitly adopt one before it can be used: in that workspace, open the Agents panel and click “Bind to this Workspace” on the row. Availability to every workspace by default is not implemented yet.",
                     count: "{count} agents",
                     emptyTitle: "No platform agents yet",
                     emptyBody:
-                        "Once created, a platform agent still has to be adopted in the target workspace before use; global visibility by default is not implemented yet.",
+                        "Once created, a platform agent still has to be adopted in the target workspace before use: in that workspace, open the Agents panel and click “Bind to this Workspace” on the row. Global visibility by default is not implemented yet.",
                     emptyCta: "Create the first platform agent",
                     fieldName: "Name",
                     fieldNamePlaceholder: "e.g. code review assistant",
