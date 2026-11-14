@@ -437,7 +437,17 @@ async function loadRbac(principalId: string) {
                 api.getWorkspaceSkills(props.workspaceId),
             ]);
         if (generation !== rbacGeneration) return;
-        roleCandidates.value = rolesCatalog.status === "fulfilled" ? rolesCatalog.value : [];
+        // task-471（436 切片 A）：只留原子可授予智能体主体的角色。服务端 listRoles 只对
+        // **工作区层**调用方剔除含禁用原子的角色，持 MANAGE_ROLES 的**管理员视图**返回全量
+        // （契约原文 "Ignored by the MANAGE_ROLES admin view"）⇒ 过滤在消费侧做。
+        // 放在赋值处而不是模板：roleChoiceLabel 也消费 roleCandidates，且 selectedRoleId 只能
+        // 来自过滤后的选项，两处同源才不会出现「选中项不在候选里」的标签丢失。
+        roleCandidates.value =
+            rolesCatalog.status === "fulfilled"
+                ? rolesCatalog.value.filter(
+                      (role) => !role.atoms.some((atom) => atom.agentPrincipalForbidden),
+                  )
+                : [];
         const definitions = [
             ...(instanceSkillsCatalog.status === "fulfilled" ? instanceSkillsCatalog.value : []),
             ...(workspaceSkillsCatalog.status === "fulfilled" ? workspaceSkillsCatalog.value : []),

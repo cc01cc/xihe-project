@@ -1532,8 +1532,43 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
                 tokenEstimate: null,
             },
         ]);
+        // task-471: 两个角色是**判别力的前提** —— 只给一个干净角色时，
+        // 「选项列表等于 [role-editor]」在过滤被删掉后依然成立（空断言）。第二个角色带
+        // agentPrincipalForbidden 原子，过滤失效即会出现在选项里。
         apiMock.listRoles.mockResolvedValue([
-            { id: "role-editor", name: "WS_EDITOR", displayName: "Workspace editor" },
+            {
+                id: "role-editor",
+                name: "WS_EDITOR",
+                displayName: "Workspace editor",
+                description: null,
+                system: false,
+                bindingCount: 0,
+                atoms: [
+                    {
+                        name: "file_write",
+                        scopeClass: "both",
+                        capability: false,
+                        resource: "workspace",
+                    },
+                ],
+            },
+            {
+                id: "role-ws-admin",
+                name: "WS_ADMIN",
+                displayName: "Workspace admin",
+                description: null,
+                system: true,
+                bindingCount: 0,
+                atoms: [
+                    {
+                        name: "instance_admin",
+                        scopeClass: "instance",
+                        capability: true,
+                        resource: "*",
+                        agentPrincipalForbidden: true,
+                    },
+                ],
+            },
         ]);
         apiMock.getSkills.mockResolvedValue([
             {
@@ -1574,6 +1609,21 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
             PRINCIPAL_ID,
             "binding-editor",
         );
+    });
+
+    it("offers only roles whose atoms are bindable to an agent principal", async () => {
+        // task-471（436 切片 A）：服务端只对**工作区层**调用方剔除含禁用原子的角色，
+        // 持 MANAGE_ROLES 的**管理员视图**会返回全量（openapi listRoles 契约原文
+        // "Ignored by the MANAGE_ROLES admin view"）⇒ 过滤必须在消费侧做，
+        // 与 AgentRoleBindingsSection 的 task-416 判据同源（api.ts:293-300 注释）。
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        const selector = `[data-testid="agent-role-select-${PRINCIPAL_ID}"]`;
+        await openSelect(wrapper, selector);
+        // 全等而不是 toContain：同时钉「禁用角色被剔除」与「干净角色没被误藏」两个方向。
+        expect(selectItemValuesFor(wrapper, selector)).toEqual(["role-editor"]);
     });
 
     it("binds the selected role and maps 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS to localized copy", async () => {
