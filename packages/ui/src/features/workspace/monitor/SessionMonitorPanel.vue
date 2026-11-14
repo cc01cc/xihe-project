@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { RefreshCw } from "@lucide/vue";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
@@ -75,6 +76,10 @@ const attemptsLoadFailed = ref(false);
 const selectedTraceRunId = ref<string | null>(null);
 const trace = ref<RunTraceResponse | null>(null);
 const traceLoading = ref(false);
+// task-602：上下文类型以**路由**为准（与 AppLayout 的 ws-less 门同一口径）。
+// 面板自己的生命周期看不见路由语义，交给它就会在下一个人改面板时再漏回来。
+const route = useRoute();
+// 单测（jsdom、无 router）里 `useRoute()` 返回 undefined ⇒ 必须可选访问，否则面板整体崩。
 const traceLoadFailed = ref(false);
 const traceLoadingMore = ref(false);
 const traceMoreFailed = ref(false);
@@ -87,6 +92,8 @@ let rerunQueued = false;
 let unsubscribe: (() => void) | null = null;
 
 async function fetchMonitor(): Promise<void> {
+    // ws-less（独立会话）路由上不得再取上一个工作区的会话监控（会带上旧工作区头）。
+    if (route?.name === "standalone-chat") return;
     if (inFlight) {
         rerunQueued = true;
         return;

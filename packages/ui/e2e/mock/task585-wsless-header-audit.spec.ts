@@ -17,6 +17,8 @@ import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const WS_ID = "11111111-1111-4111-8111-111111111111";
 const WS_SESSION = "11111111-1111-4111-8111-111111111111";
 const STANDALONE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+/** 覆盖 AppLayout 的 10s 轮询周期，留 2s 余量。 */
+const POLL_WINDOW_MS = 12_000;
 const OUT = process.env.XIHE_WSLESS_HEADER_OUT ?? "H:/zeotmp/ui1-pw/wsless-header-audit.json";
 
 type Row = {
@@ -156,15 +158,14 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
     });
 
     /**
-     * 已知红（2026-11-14 实测，读数 `H:/zeotmp/ui1-pw/t585c.txt`）：在 ws-less 页面上，
-     * 上面两条轮询仍带着**上一个工作区**的 id —— 说明它们的 workspaceId 不是从 tab 上下文现读，
-     * 而是显式传参（`api.ts` 里 `workspaceId ? { "X-Workspace-Id": workspaceId } : {}` 那类调用面），
-     * 因此 `enterWorkspaceless()` 清上下文对它们无效。
+     * task-601 / task-602 修完转常态断言（原 `test.fixme`，红读数 `H:/zeotmp/ui1-pw/t585c.txt`）。
      *
-     * <p>用 `fixme` 而不是删掉/放宽：判据本身是对的（ws-less 上下文里不该出现任何工作区 id），
-     * 红是因为产品侧确有上下文泄漏（待裁：补调用面还是建卡）。修好后把 `fixme` 换回 `test`。</p>
+     * <p>原红的两条：ws-less 页上的 `GET /approvals/pending` 与 `POST /api/v1/mcp` 仍带上一个工作区的 id。
+     * approvals 由 task-601 修（轮询跟随路由/上下文起停 + await 后复核写回）；mcp 由 task-602 修
+     * （store 侧 `closeTreeContext()` 关掉树加载面 + 监控面板按路由门控）。判据从未放宽：
+     * ws-less 上下文里不许出现任何工作区 id。</p>
      */
-    test.fixme("ws-less 上下文里的轮询必须带空头（当前红：旧工作区 id 泄漏）", async ({ page }) => {
+    test("ws-less 上下文里的 /api/* 必须带空头（task-601/602）", async ({ page }) => {
         const rows = watchPolling(page);
         await setupMockAuth(page);
         await stubWorkspaces(page);
@@ -177,15 +178,22 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
             timeout: LONG_TIMEOUT_MS,
         });
         const boundary = rows.length;
+        const boundaryAt = Date.now();
         await page.getByTestId("sidebar-standalone-group").getByText("独立会话甲").click();
         await expect(page.getByTestId("standalone-chat-title")).toHaveText("独立会话甲", {
             timeout: EXPECT_TIMEOUT_MS,
         });
 
-        // 边界之后（含轮询的下一拍）不得带非空工作区头。
+        // 边界之后（覆盖一个轮询周期）不得带非空工作区头。
+        //
+        // 修前这里写的是「先等到边界后至少一行，再断言都不带头」—— 那是个**装置假设**：
+        // 它假定「总会有新请求」，而 task-601/602 修完之后边界后本就该**一条都没有**，
+        // 于是前置条件永远不满足（实测：poll 到 30s 超时，Received 0）。
+        // 现在改为「等满一个轮询周期（有界等待，不是固定 sleep），再断言不存在带头的行」：
+        // 断言强度不变（反而更严：连「一条请求都没有」也算通过），且不依赖产品一定要发请求。
         await expect
-            .poll(() => rows.slice(boundary).length, { timeout: LONG_TIMEOUT_MS })
-            .toBeGreaterThan(0);
+            .poll(() => Date.now() - boundaryAt, { timeout: LONG_TIMEOUT_MS, intervals: [500] })
+            .toBeGreaterThan(POLL_WINDOW_MS);
         expect(rows.slice(boundary).filter((row) => row.workspaceHeader !== "")).toEqual([]);
     });
 });
