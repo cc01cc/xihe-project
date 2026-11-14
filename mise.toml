@@ -421,7 +421,12 @@ run = "node scripts/check-mise-env.mjs"
 description = "env 变量登记门（task-131 → task-273 fail-closed → task-313 挂 validate.depends 最前）：properties 里 XIHE_* 未登记 ⇒ WARN 且 exit 1（此前 fail-closed 但零自动执行者）"
 
 [tasks."lint:cp"]
-run = "mvn checkstyle:check"
+# task-583 把 checkstyle 钉进 Maven 的 validate 相位后，本任务与 test:cp 的 mvn 会在
+# `mise run validate` 里**并发**跑（mise 的 depends 并行，实测两子任务同毫秒起止）；两者同 dir，
+# 默认都会写 packages/control-plane/target/checkstyle-*（cachefile/checker.xml/result.xml）。
+# 这里用仓库已有的 -Dxihe.build.suffix 把它挪到 target-lint/（.gitignore 的 **/target-*/ 已覆盖）
+# ⇒ 各写各的目录，不串行、不降并行。**不是笔误，别删**。
+run = 'mvn checkstyle:check "-Dxihe.build.suffix=-lint"'
 description = "Run CP lint (Checkstyle)"
 dir = "packages/control-plane"
 alias = "lint:cp"
