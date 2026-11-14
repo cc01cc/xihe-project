@@ -48,22 +48,22 @@ class CpArchitectureTest {
         assertFalse(production.contain(CpArchitectureTest.class));
 
         List<Map<String, Object>> rules = new ArrayList<>();
-        List<DescribedPredicate<JavaClass>> origins = List.of(CpArchitectureRules.CONTROLLERS,
-                CpArchitectureRules.APPLICATIONS, CpArchitectureRules.CONTROLLERS, CpArchitectureRules.PERSISTENCE,
-                // PLAN-0470 #27: technical-facility isolation + persistence-below-services.
-                DescribedPredicate.describe("crypto facility classes",
-                        type -> type.getPackageName().startsWith("com.cc01cc.p.xihe.cp.crypto.")),
-                CpArchitectureRules.REPOSITORIES);
+        // task-617: the origin predicate now comes from the rule itself (CpArchitectureRules.CLASS_TARGETS).
+        // The old positional list paired rule i with predicate i, so reordering ALL silently mislabelled
+        // every row of the baseline.
         List<DescribedPredicate<JavaClass>> targets = List.of(CpArchitectureRules.CONTROLLERS,
                 CpArchitectureRules.CONTROLLERS, CpArchitectureRules.REPOSITORIES, CpArchitectureRules.CONTROLLERS,
                 CpArchitectureRules.CP_BUSINESS_PACKAGES, CpArchitectureRules.APPLICATIONS);
         for (int index = 0; index < CpArchitectureRules.ALL.size(); index++) {
             ArchRule rule = CpArchitectureRules.ALL.get(index);
-            var origin = origins.get(index);
+            var origin = CpArchitectureRules.CLASS_TARGETS.get(rule);
             var target = targets.get(index);
-            var result = rule.evaluate(production);
+            // task-617: strict on the full import - a rule that selects nothing is red, not green.
+            var result = CpArchitectureRules.forFullImport(rule).evaluate(production);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("rule", rule.getDescription());
+            // task-617: quotable reading - how many production classes the rule actually looked at.
+            row.put("matched", production.stream().filter(origin).count());
             row.put("violationCount", result.getFailureReport().getDetails().size());
             row.put("violations", result.getFailureReport().getDetails().stream().sorted().toList());
             row.put("classPairs", production.stream().filter(origin)
@@ -143,17 +143,17 @@ class CpArchitectureTest {
 
     @Test
     void controllersDoNotDependOnControllers() {
-        CpArchitectureRules.CONTROLLER_TO_CONTROLLER.check(production);
+        CpArchitectureRules.forFullImport(CpArchitectureRules.CONTROLLER_TO_CONTROLLER).check(production);
     }
 
     @Test
     void applicationsDoNotDependOnControllers() {
-        CpArchitectureRules.APPLICATION_TO_CONTROLLER.check(production);
+        CpArchitectureRules.forFullImport(CpArchitectureRules.APPLICATION_TO_CONTROLLER).check(production);
     }
 
     @Test
     void controllersDoNotDependOnRepositories() {
-        CpArchitectureRules.CONTROLLER_TO_REPOSITORY.check(production);
+        CpArchitectureRules.forFullImport(CpArchitectureRules.CONTROLLER_TO_REPOSITORY).check(production);
     }
 
     /**
@@ -164,8 +164,9 @@ class CpArchitectureTest {
      */
     @Test
     void readServiceStaysNonTransactional() {
-        CpArchitectureRules.READ_SERVICE_IS_NOT_TRANSACTIONAL.check(production);
-        CpArchitectureRules.READ_SERVICE_METHODS_ARE_NOT_TRANSACTIONAL.check(production);
+        CpArchitectureRules.forFullImport(CpArchitectureRules.READ_SERVICE_IS_NOT_TRANSACTIONAL).check(production);
+        CpArchitectureRules.forFullImport(CpArchitectureRules.READ_SERVICE_METHODS_ARE_NOT_TRANSACTIONAL)
+                .check(production);
     }
 
     @Test
@@ -177,6 +178,6 @@ class CpArchitectureTest {
 
     @Test
     void persistenceDoesNotDependOnControllers() {
-        CpArchitectureRules.PERSISTENCE_TO_CONTROLLER.check(production);
+        CpArchitectureRules.forFullImport(CpArchitectureRules.PERSISTENCE_TO_CONTROLLER).check(production);
     }
 }

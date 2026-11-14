@@ -47,9 +47,12 @@ class CpArchitectureRuleProbeTest {
         var types = new ClassFileImporter().importClasses(GoodController.class, GoodService.class,
                 ProbeRepository.class, ProbeEntity.class);
         for (ArchRule rule : CpArchitectureRules.ALL) {
-            assertEquals(0, rule.evaluate(types).getFailureReport().getDetails().size(),
-                    () -> rule.getDescription() + "\n" + rule.evaluate(types).getFailureReport());
-            rule.check(types);
+            // task-617: probe subsets legitimately contain no crypto class / repository, so this path is the
+            // only one allowed to relax emptiness. The production path uses forFullImport (strict).
+            ArchRule probeRule = CpArchitectureRules.forProbeSubset(rule);
+            assertEquals(0, probeRule.evaluate(types).getFailureReport().getDetails().size(),
+                    () -> probeRule.getDescription() + "\n" + probeRule.evaluate(types).getFailureReport());
+            probeRule.check(types);
         }
     }
 
