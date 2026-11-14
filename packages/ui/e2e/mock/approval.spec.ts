@@ -1,6 +1,7 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { workspaceWire } from "./helpers/workspace-fixture";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
@@ -222,6 +223,23 @@ test.describe("Chat approval flow", () => {
             ],
             workspaceId: WORKSPACE_ID,
         });
+        // task-75：本 spec 的工作区 id 是**合成 id**（`cccccccc-…`，见 `:21`），而
+        // `setupMockAuth` 已把 `GET /api/v1/workspaces/{id}` 接到单一来源
+        // `helpers/workspace-fixture.ts#fulfillWorkspaceDetail`，那张表的语义是「只有
+        // `KNOWN_WORKSPACE_IDS` 里的 id 算存在，其余一律 404」（D-1178）—— 本 spec 的 id 不在表里
+        // ⇒ 恒 404 ⇒ `stores/auth.ts:544-550` 的 catch 分支清掉页签上下文 ⇒ 工作区为 null
+        // ⇒ `/workspace/<id>/chat/<sid>` 渲染不出 `chat-input`，23 条用例连锁全红（每条还带
+        // 2 条 `404 @ /api/v1/workspaces/cccccccc-…` 的 console error）。
+        // 修法：**同一份 wire 形状**（`workspaceWire`，不另编 `{id,name}`）给这个 id 补网络层桩；
+        // 后注册优先，所以必须在 `setupMockAuth` 之后。判据与断言一个字不动。
+        await page.route(`**/api/v1/workspaces/${WORKSPACE_ID}`, (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ workspace: workspaceWire({ id: WORKSPACE_ID }) }),
+            }),
+        );
+
         await installPolicyModeRoute(page);
         await installApprovalSSE(page);
     });
