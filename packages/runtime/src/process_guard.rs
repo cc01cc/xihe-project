@@ -172,6 +172,65 @@ fn platform_diagnostics() -> PlatformDiagnostics {
     }
 }
 
+/// What MXC's `--probe` says about the isolation tier it would select.
+///
+/// task-545: the probe already reports `tier` / `needsDaclAugmentation` /
+/// `warnings`, but the Runtime only read `version` out of it, so a silent
+/// downgrade T1 BaseContainer -> T3 AppContainer+DACL was invisible. Tier names
+/// come from MXC's own enforcement-tier table (T1 `base-container`, T2
+/// `appcontainer-bfs`, T3 `appcontainer`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MxcProbeReadout {
+    pub tier: Option<String>,
+    pub needs_dacl_augmentation: bool,
+    pub warnings: Vec<String>,
+}
+
+impl MxcProbeReadout {
+    pub fn from_probe_payload(payload: &serde_json::Value) -> Self {
+        Self {
+            tier: payload
+                .get("tier")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            needs_dacl_augmentation: payload
+                .get("needsDaclAugmentation")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            warnings: payload
+                .get("warnings")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// True when the probe reports the strongest tier (T1 BaseContainer). Any
+    /// other answer means the policy will be enforced by a weaker mechanism.
+    pub fn is_strongest_tier(&self) -> bool {
+        self.tier.as_deref() == Some("base-container")
+    }
+
+    /// Why the tier is not the strongest one, for logging (no policy change).
+    pub fn degradation_reason(&self) -> Option<String> {
+        if self.is_strongest_tier() {
+            return None;
+        }
+        let tier = self.tier.as_deref().unwrap_or("unknown");
+        Some(if self.needs_dacl_augmentation {
+            format!("isolation tier {tier} (appcontainer + host DACL mutation)")
+        } else {
+            format!("isolation tier {tier}")
+        })
+    }
+}
+
 fn diagnostics(engine_version: Option<String>) -> BackendDiagnostics {
     BackendDiagnostics {
         platform: Some(platform_diagnostics()),
@@ -863,6 +922,25 @@ async fn probe_mxc() -> Result<BackendCapabilitySnapshot> {
             .get("version")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
+        // task-545: record which isolation tier MXC would actually enforce. This
+        // is a log field on purpose — DEV-031/AGENTS keeps the MXC tier out of
+        // API responses, and the value must not be inferred from the policy.
+        let readout = MxcProbeReadout::from_probe_payload(&payload);
+        tracing::info!(
+            backend = "windows-mxc",
+            isolation_tier = readout.tier.as_deref().unwrap_or("unknown"),
+            needs_dacl_augmentation = readout.needs_dacl_augmentation,
+            probe_warnings = readout.warnings.len(),
+            "mxc probe: isolation tier resolved"
+        );
+        if let Some(reason) = readout.degradation_reason() {
+            tracing::warn!(
+                backend = "windows-mxc",
+                isolation_tier = readout.tier.as_deref().unwrap_or("unknown"),
+                needs_dacl_augmentation = readout.needs_dacl_augmentation,
+                "mxc probe: isolation below T1 base-container: {reason}"
+            );
+        }
         Ok(BackendCapabilitySnapshot::available(
             "windows-mxc",
             "builtin",
@@ -1220,6 +1298,43 @@ mod tests {
     /// task-544: a caller-supplied variable must not open the door to the
     /// Runtime's own environment. Only allowlisted system variables and the
     /// caller's own keys may appear in the policy.
+    /// task-545: the tier MXC actually selected must be readable from its own
+    /// probe payload, and a downgrade must be distinguishable from the top tier.
+    #[test]
+    fn mxc_probe_readout_surfaces_the_selected_isolation_tier() {
+        let strongest = super::MxcProbeReadout::from_probe_payload(&serde_json::json!({
+            "tier": "base-container",
+            "needsDaclAugmentation": false,
+            "warnings": [],
+            "probes": { "baseContainerApiPresent": true }
+        }));
+        assert_eq!(strongest.tier.as_deref(), Some("base-container"));
+        assert!(!strongest.needs_dacl_augmentation);
+        assert!(strongest.is_strongest_tier());
+        assert!(strongest.degradation_reason().is_none());
+
+        let downgraded = super::MxcProbeReadout::from_probe_payload(&serde_json::json!({
+            "tier": "appcontainer",
+            "needsDaclAugmentation": true,
+            "warnings": ["processmodel.dll missing"],
+        }));
+        assert_eq!(downgraded.tier.as_deref(), Some("appcontainer"));
+        assert!(downgraded.needs_dacl_augmentation);
+        assert!(!downgraded.is_strongest_tier());
+        let reason = downgraded.degradation_reason().unwrap_or_default();
+        assert!(reason.contains("appcontainer"), "{reason}");
+        assert!(reason.contains("DACL"), "{reason}");
+        assert_eq!(downgraded.warnings.len(), 1);
+
+        let unknown = super::MxcProbeReadout::from_probe_payload(&serde_json::json!({}));
+        assert!(unknown.tier.is_none());
+        assert!(!unknown.is_strongest_tier());
+        assert_eq!(
+            unknown.degradation_reason().as_deref(),
+            Some("isolation tier unknown")
+        );
+    }
+
     #[test]
     fn mxc_policy_env_is_limited_to_the_sandbox_allowlist() {
         let mut caller_env = BTreeMap::new();
