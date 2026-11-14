@@ -247,15 +247,18 @@ watch(
             </p>
             <!-- 右侧只留层切换入口（task-78：可编辑字段数已降级为标题徽标） -->
             <div class="ml-auto flex items-center gap-3">
-                <button
+                <!-- H-05：这枚「改去个人层」是低频逃生入口，视觉权重必须保持中性（不是 link 变体的
+                     primary 蓝）⇒ 取 ghost + 显式 muted 前景色，只把焦点环交给 vendor。 -->
+                <Button
                     v-if="instanceOnly"
-                    type="button"
+                    variant="ghost"
+                    size="xs"
                     data-testid="settings-switch-layer"
-                    class="rounded px-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    class="h-auto border-0 px-1 text-xs font-normal text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                     @click="blocked = true"
                 >
                     {{ t("settings.ia.switchToUserLayer") }}
-                </button>
+                </Button>
             </div>
         </div>
         <p

@@ -480,4 +480,35 @@ describe("ConfigDomainPanel", () => {
         await expandPanel(wrapper);
         expect(wrapper.findAll('[data-testid^="config-key-layer-badge-"]')).toHaveLength(0);
     });
+
+    /**
+     * H-05（task-227 ⑨ 类，`settings-ui-issue-inventory.md`）：折叠卡标题行与保存按钮原先都是手搓
+     * `<button>` —— 标题行一套外观、保存按钮又自带手写的 `hover:opacity-90 disabled:opacity-50`。
+     * 判据锚 vendor 契约 `data-slot="button"`（换件或退回手搓都会红），并钉住「换壳不许改形状语义」
+     * 的那几个覆盖类：少了 `whitespace-normal` 摘要行会被 nowrap 压成一行，少了 `items-start`
+     * 箭头会跑到两行中间 —— 这两条都是宽度无关的**行为级**差异，截图看不出来，只能钉 class。
+     */
+    it("H-05: 折叠卡标题行与保存按钮都是 vendor Button，覆盖类保住了两行标题", async () => {
+        const wrapper = mountPanel({ domain: "test", title: "Test Domain" });
+        const toggle = wrapper.get('[data-testid="config-domain-toggle-test"]');
+        expect(toggle.attributes("data-slot")).toBe("button");
+        expect(toggle.attributes("data-variant")).toBe("ghost");
+        expect(toggle.classes()).toEqual(
+            expect.arrayContaining(["h-auto", "w-full", "items-start", "whitespace-normal"]),
+        );
+        // 保存按钮在展开态才有（默认展开 ⇒ 先取，再收起）
+        const save = wrapper.get('[data-testid="config-save-test"]');
+        expect(save.attributes("data-slot")).toBe("button");
+        // 尺寸档取 xs 是为了贴住原形状（h-6），不许被"顺手改成 default"
+        expect(save.attributes("data-size")).toBe("xs");
+        expect(save.text()).toBe("Save");
+
+        // 折叠能力还在（默认展开 ⇒ aria-expanded=true，点一下变 false）
+        expect(toggle.attributes("aria-expanded")).toBe("true");
+        await toggle.trigger("click");
+        expect(toggle.attributes("aria-expanded")).toBe("false");
+        // 收起后保存按钮随展开内容一起消失（换壳没有把它挪出 expanded 块）
+        expect(wrapper.find('[data-testid="config-save-test"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
 });

@@ -178,16 +178,19 @@ watch(
 
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
             <div class="flex items-center gap-2 px-4 pt-3 lg:hidden">
-                <button
-                    type="button"
+                <!-- H-05：移动端抽屉开关换 vendor `Button`。`min-h-[36px]` 保留 —— 那是触控热区
+                     的既有取值（vendor `sm` 是 h-7 = 24.5px），换成它会让热区缩水 11.5px。 -->
+                <Button
+                    variant="outline"
+                    size="sm"
                     data-testid="settings-drawer-toggle"
-                    class="inline-flex min-h-[36px] items-center gap-1 rounded-md border px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                    class="min-h-[36px] gap-1 text-sm text-muted-foreground hover:text-foreground"
                     :aria-expanded="drawerOpen"
                     @click="drawerOpen = true"
                 >
-                    <Menu class="size-4" />
+                    <Menu class="size-4" aria-hidden="true" />
                     {{ t("settings.ia.menuButton") }}
-                </button>
+                </Button>
             </div>
 
             <SettingsLayerHeader :layer="layer" :domain="domainLabel">

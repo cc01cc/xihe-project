@@ -92,4 +92,27 @@ describe("ConfigDomainPanel 重置按钮的层可见性（BL-542）", () => {
         expect(wrapper.find('[data-testid="config-drift-rag-mode"]').exists()).toBe(true);
         wrapper.unmount();
     });
+
+    /**
+     * H-05（task-227 ⑨ 类）：逐键动作按钮（漂移清理 / ↺ / 保存）原先手搓 `<button>`，
+     * 同一套 `text-xs text-muted-foreground px-1` 抄了三遍、禁用态也是手写的。
+     * 判据锚 vendor 契约 `data-slot="button"`，并覆盖**全部**动作按钮（不写死某一个）：
+     * 以后新增逐键动作若退回手搓，这条会红。
+     */
+    it("TC-R4: 逐键动作与保存按钮都是 vendor Button（H-05）", async () => {
+        const wrapper = await mountForLayer("instance");
+        const actions = wrapper.findAll(
+            '[data-testid^="config-reset-"], [data-testid^="config-drift-clear-"], [data-testid="config-save-rag"]',
+        );
+        // 2 个 ↺ + 1 个漂移清理 + 1 个保存
+        expect(actions).toHaveLength(4);
+        for (const action of actions) {
+            expect(action.attributes("data-slot"), action.attributes("data-testid")).toBe("button");
+        }
+        // ↺ 是纯符号：可读名字不能只靠 title（读屏对 title 的支持不稳定）
+        expect(wrapper.get('[data-testid^="config-reset-"]').attributes("aria-label")).toBe(
+            "Reset to default",
+        );
+        wrapper.unmount();
+    });
 });

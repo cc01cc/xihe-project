@@ -230,6 +230,24 @@ describe("SettingsDomainView", () => {
         expect(notice.text()).toContain("该域仅在实例层可配置");
     });
 
+    /**
+     * H-05（task-227 ⑨ 类）：这枚按钮原先是手搓 `<button class="rounded px-1 text-xs …">`。
+     * 换 vendor `Button` 只解决「焦点环与禁用/按压反馈各写一遍」，**不许顺带升级视觉权重** ——
+     * 它是低频逃生入口，用 `link` 变体的 primary 蓝会把注意力预算从主 CTA 上抢走（DEV-011 §10）。
+     */
+    it("H-05: 「改去个人层」是 ghost Button，视觉权重保持中性", async () => {
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        const button = wrapper.get('[data-testid="settings-switch-layer"]');
+        expect(button.attributes("data-slot")).toBe("button");
+        expect(button.attributes("data-variant")).toBe("ghost");
+        expect(button.classes()).toContain("text-muted-foreground");
+        expect(button.classes()).toContain("hover:underline");
+        // 点下去仍是「说明为什么不能切」，不是导航
+        await button.trigger("click");
+        expect(wrapper.find('[data-testid="settings-layer-block-notice"]').exists()).toBe(true);
+    });
+
     it("offers no cross-layer switch for a domain the user layer can write", async () => {
         const wrapper = mountView("instance", "rag");
         await flushPromises();

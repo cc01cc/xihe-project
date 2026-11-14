@@ -10,6 +10,7 @@ import { formatJsonText } from "./jsonFieldFormat";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { Button } from "../ui/button";
 import { FieldControl, FieldError, FieldRoot } from "reka-ui";
 import { FieldDescription, FieldLabel } from "../ui/field";
 
@@ -588,10 +589,16 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
             并在标题下补一行**摘要**（有级联摘要显示摘要，没有就显示「展开查看全部设置」），
             让默认态先给内容线索再谈展开。计数徽标数的是**本卡字段数**（H4 行徽标口径）。
         -->
-        <button
+        <!-- H-05：折叠卡的整行标题是原生 <button>（语义本来就对，手搓的是外观与焦点反馈）。
+             换 vendor `Button` 后有三处必要覆盖，改之前先读：
+             ① `h-auto` —— 基类是 fixed height，这里要让两行内容决定高度；
+             ② `whitespace-normal` —— 基类 `whitespace-nowrap` 会把摘要行压成一行，折叠态就看不到截断；
+             ③ `items-start` —— 箭头要贴首行，基类 `items-center` 会把它垂直居中到两行中间。 -->
+        <Button
+            variant="ghost"
             :data-testid="`config-domain-toggle-${domain}`"
             :aria-expanded="expanded"
-            class="w-full flex items-start gap-2 px-4 py-3 text-left text-sm font-medium hover:bg-muted/50 transition-colors"
+            class="h-auto w-full items-start justify-start gap-2 whitespace-normal rounded-none px-4 py-3 text-left text-sm font-medium hover:bg-muted/50"
             @click="toggle"
         >
             <span class="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true">{{
@@ -616,7 +623,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                     {{ summary || t("settings.configCardExpandHint") }}
                 </span>
             </span>
-        </button>
+        </Button>
         <!-- PLAN-0752 T3.5：域级摘要行（数字来自 CP meta，UI 不自己算） -->
         <ConfigDomainSummary
             v-if="layer && meta && Object.keys(meta).length > 0"
@@ -899,47 +906,57 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                 <!-- 漂移清理与 ↺ 调的是同一个 handler（父层对非实例层发 PUT {key:""}），
                      所以同样只在能真正删覆盖的实例层出现；徽标保留，用户仍看得到「值不在候选集」，
                      逃生路径是直接选一个合法值再保存。 -->
-                <button
+                <Button
                     v-if="
                         canDeleteOverride &&
                         isDrifted(field) &&
                         !fieldReadonly(field) &&
                         !isLocked(field.key)
                     "
-                    class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
+                    variant="ghost"
+                    size="xs"
+                    class="h-auto shrink-0 border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
                     :data-testid="`config-drift-clear-${domain}-${field.key}`"
                     :title="t('settings.driftedClear')"
                     @click="handleReset(field.key)"
                 >
                     {{ t("settings.driftedClear") }}
-                </button>
-                <button
+                </Button>
+                <Button
                     v-if="field.allowCustom && customMode[field.key] && !fieldReadonly(field)"
-                    class="shrink-0 text-xs text-muted-foreground hover:text-foreground px-1"
+                    variant="ghost"
+                    size="xs"
+                    class="h-auto shrink-0 border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
                     :data-testid="`config-custom-exit-${domain}-${field.key}`"
                     @click="exitCustomMode(field)"
                 >
                     {{ t("settings.customBack") }}
-                </button>
+                </Button>
 
-                <button
+                <Button
                     v-if="
                         canDeleteOverride &&
                         !fieldReadonly(field) &&
                         !isLocked(field.key) &&
                         isWritable(field.key)
                     "
-                    class="text-xs text-muted-foreground hover:text-foreground px-1"
+                    variant="ghost"
+                    size="xs"
+                    class="h-auto border-0 px-1 text-xs font-normal text-muted-foreground hover:text-foreground"
                     :data-testid="`config-reset-${domain}-${field.key}`"
                     :title="t('settings.resetToDefault')"
+                    :aria-label="t('settings.resetToDefault')"
                     @click="handleReset(field.key)"
                 >
                     ↺
-                </button>
+                </Button>
             </div>
             <div v-if="!readonly" class="flex justify-end pt-1">
-                <button
-                    class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+                <!-- H-05：手搓 primary 按钮（自带 disabled:opacity-50 与 hover:opacity-90）换 vendor `Button`；
+                     尺寸取 `xs` 是为了贴住原形状（h-6 px-2 + text-xs），不改变这一行的视觉重量。 -->
+                <Button
+                    size="xs"
+                    class="px-3"
                     :data-testid="`config-save-${domain}`"
                     :disabled="
                         !schema.some((field) => isWritable(field.key) && !isLocked(field.key))
@@ -947,7 +964,7 @@ function onNumberDraft(key: string, v: string | number | null | undefined) {
                     @click="handleSave"
                 >
                     {{ t("common.save") }}
-                </button>
+                </Button>
             </div>
         </div>
     </div>
