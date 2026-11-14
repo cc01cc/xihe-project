@@ -278,6 +278,20 @@ const router = createRouter({
                     path: "user/agent-profile",
                     redirect: { name: "org-members" },
                 },
+                /**
+                 * task-485 ①：`agent-templates` 撤出工作区层 ⇒ `/settings/workspace-default/agent-templates`
+                 * 已经没有页（矩阵里没有这一格），但旧书签/document 链接仍在 ⇒ **302 到它的新家**
+                 * （智能体配置组页，实例层），不做 404。
+                 *
+                 * <p>为什么新落点是**实例层**而不是用户层：模板与角色是**治理物**（实例层发布、全工作区
+                 * 引用），用户层那份是个人副本；从"工作区默认层曾经能写模板"这条路径进来的人，意图是
+                 * 治理面。若他不具备实例层权限，落点是既有的 403 视图（与任何实例层深链一致），
+                 * 不是白屏 404 —— 两者的支持成本不同，这是本卡判据 2 原文的要求。</p>
+                 */
+                {
+                    path: "workspace-default/agent-templates",
+                    redirect: { name: "settings-instance-agent-config" },
+                },
                 {
                     path: "config",
                     redirect: () => defaultLayerPath("instance"),

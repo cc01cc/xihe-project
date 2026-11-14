@@ -166,6 +166,39 @@ describe("task-485：agent-profile 撤出设置区（302 → 成员管理）", (
 });
 
 /**
+ * task-485 ①：`agent-templates` 撤出工作区层 ⇒ `/settings/workspace-default/agent-templates` 这条
+ * 旧深层链接**302 到智能体配置组页（实例层）**，不是 404。
+ *
+ * <p>为什么单独一段：它和「智能体个人」是**两条不同的撤出面**（一个是域退出某层、一个是域退出设置区），
+ * 判据落点也不同（前者去组页、后者去成员管理）。混在一条里会让"改错落点"看起来像绿。</p>
+ */
+describe("task-485：agent-templates 撤出工作区层（302 → 智能体配置组页）", () => {
+    const RETIRED = "/settings/workspace-default/agent-templates";
+
+    it("旧路径有 redirect 记录，且目标 = 实例层智能体配置组页", () => {
+        const record = router.resolve(RETIRED).matched.at(-1);
+        expect(record?.redirect).toEqual({ name: "settings-instance-agent-config" });
+        // 目标自身可解析（防「重定向到一个被改名/被删掉的 name」）。
+        expect(router.resolve({ name: "settings-instance-agent-config" }).path).toBe(
+            "/settings/instance/agent-config",
+        );
+    });
+
+    it("反向自检：工作区层的模板域页与组页都不在了（不是「还在但改了名」）", () => {
+        expect(router.resolve("/settings/workspace-default/agent-templates").name).not.toBe(
+            "settings-workspace-default-domain-agent-templates",
+        );
+        expect(router.resolve("/settings/workspace-default/agent-config").name).toBe(
+            "settings-not-found",
+        );
+        // 但工作区层其余 3 域仍在（否则上面的「不在了」可能只是整层消失）。
+        expect(router.resolve("/settings/workspace-default/agent-runtime").name).toBe(
+            "settings-workspace-default-domain-agent-runtime",
+        );
+    });
+});
+
+/**
  * task-485 ③：「智能体配置」组页 = 注册表里的第二组。
  *
  * <p>判据三件：①instance/user 两层**都注册**了组路由；②工作区层**不注册**（撤掉 `agent-templates`

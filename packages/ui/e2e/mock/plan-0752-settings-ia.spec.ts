@@ -231,6 +231,18 @@ test.describe("task-485 智能体个人迁出设置区（302 不 404）", () => 
             await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
         });
     }
+
+    // task-485 ①：`agent-templates` 撤出工作区层 ⇒ 该层旧深层链接 302 到智能体配置组页（实例层），
+    // 不是 404。判据是**终态 URL**：既要离开旧路径，也要真落到组页（只断"不是 404"会让
+    // 重定向到任意页也算通过）。
+    test("redirects /settings/workspace-default/agent-templates to the agent-config group", async ({
+        page,
+    }) => {
+        await mockSettingsAPIs(page);
+        await page.goto("/settings/workspace-default/agent-templates", { waitUntil: "load" });
+        await expect(page).toHaveURL(/\/settings\/instance\/agent-config$/);
+        await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
+    });
 });
 
 /**
