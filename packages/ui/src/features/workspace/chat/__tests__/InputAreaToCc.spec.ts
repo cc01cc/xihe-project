@@ -4,6 +4,7 @@ import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import InputArea from "../components/InputArea.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
+import { useAuthStore } from "../../../../stores/auth";
 
 /**
  * PLAN-0630 M5b (D30-14) composer to/cc 的单元契约。
@@ -64,6 +65,10 @@ const stubs = {
 const PRIMARY_ID = "11111111-1111-4111-8111-111111111111";
 const SELF_ID = "22222222-2222-4222-8222-222222222222";
 const HELPER_ID = "33333333-3333-4333-8333-333333333333";
+/** task-115：当前登录用户（`authStore.user.id`）—— 名册里自己的真人行 `principalId` 就是它。 */
+const SELF_USER_ID = "77777777-7777-4777-8777-777777777777";
+/** 与「自己」**同名**的另一个人（用于证明剔除发生在名册层、不是结果层）。 */
+const OTHER_ADA_ID = "44444444-4444-4444-8444-444444444444";
 
 function participant(overrides: Partial<SessionParticipantView>): SessionParticipantView {
     return {
@@ -92,7 +97,12 @@ function roster(): SessionParticipantView[] {
             role: "PRIMARY",
             orderIndex: 10,
         }),
-        participant({ participantId: SELF_ID, displayName: "Ada Lovelace" }),
+        // task-115：自己的行按真判据钉住 —— HUMAN + `principalId === user id`（`types/participant.ts:28`）。
+        participant({
+            participantId: SELF_ID,
+            principalId: SELF_USER_ID,
+            displayName: "Ada Lovelace",
+        }),
         participant({
             participantId: HELPER_ID,
             principalKind: "AGENT",
@@ -399,5 +409,100 @@ describe("composer 打磨（2026-11-04 用户裁定）", () => {
         // 全宽容器（textarea 的祖先）不得再把 focus-within ring 套成满框。
         const composerBox = textarea.element.parentElement?.parentElement;
         expect(composerBox?.className ?? "").not.toContain("focus-within:ring");
+    });
+});
+
+describe("task-115：@ 自己不再把自己塞进抄送（名册口径对齐 CP mentionRoster）", () => {
+    function selfAndOthers(): SessionParticipantView[] {
+        return [
+            ...roster(),
+            participant({ participantId: OTHER_ADA_ID, displayName: "Ada Lovelace" }),
+        ];
+    }
+
+    beforeEach(() => {
+        // 真 store：把「当前登录用户」钉住 —— 否则 `isSelfPrincipalRow` 恒 false，用例等于没测
+        // （task-102 的教训：夹具身份没钉到用例声称要验的那个主体，变异能穿过去）。
+        useAuthStore().user = { id: SELF_USER_ID, email: "me@example.com" };
+        storeState.participants = roster();
+    });
+
+    it("① @ 自己 ⇒ 抄送 chips 不含自己，且正文一字不改", async () => {
+        const wrapper = mountInputArea();
+        await flushPromises();
+        const draft = "@Ada Lovelace 记一下这个";
+        await wrapper.get('[data-testid="chat-input"]').setValue(draft);
+        await flushPromises();
+
+        expect(wrapper.findAll('[data-testid="cc-chip"]')).toHaveLength(0);
+        // 不改写用户输入：CP 的判据是「名字出现在正文里是文本、不是寻址行为」
+        // （ChatController:1147-1148），所以 UI 也不能把这段文本吃掉。
+        expect(
+            (wrapper.get('[data-testid="chat-input"]').element as HTMLTextAreaElement).value,
+        ).toBe(draft);
+        wrapper.unmount();
+    });
+
+    it("② @ 自己 + @ 别人 ⇒ 只把别人加入抄送", async () => {
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await wrapper.get('[data-testid="chat-input"]').setValue("@Helper 和 @Ada Lovelace 都看下");
+        await flushPromises();
+
+        expect(
+            wrapper
+                .findAll('[data-testid="cc-chip"]')
+                .map((chip) => chip.attributes("data-participant-id")),
+        ).toEqual([HELPER_ID]);
+        wrapper.unmount();
+    });
+
+    it("③ @ AGENT 不受影响（含与 as 同行的 PRIMARY）", async () => {
+        storeState.canSpeakAs = true;
+        storeState.speakAsCandidates = roster().filter((item) => item.selfOwned);
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await wrapper.get('[data-testid="chat-input"]').setValue("@Alpha 看下这个");
+        await flushPromises();
+
+        expect(
+            wrapper
+                .findAll('[data-testid="cc-chip"]')
+                .map((chip) => chip.attributes("data-participant-id")),
+        ).toEqual([PRIMARY_ID]);
+        wrapper.unmount();
+    });
+
+    it("④ 发送时 cc 字段不含自己（显式 cc 通道没有自投递门 ⇒ 这里必须为空）", async () => {
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await wrapper.get('[data-testid="chat-input"]').setValue("@Ada Lovelace 记一下");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+
+        const emitted = wrapper.emitted("send");
+        expect(emitted).toBeTruthy();
+        // 空 cc = 不带第四个参数（`InputArea.vue` 的三态契约）；带上的话 CP 会照单全收并给本人投递。
+        expect(emitted![0][3]).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("⑤ 剔除发生在**名册层**：自己与他人同名时，@ 命中他人而不是因歧义落空", async () => {
+        // 这是「解析的输入口径」唯一的可观测差别：
+        //  - 名册层剔除（本卡做法，= CP `mentionRoster`）：重名只剩一个 ⇒ 正常命中**他人**；
+        //  - 结果层过滤（先按原始名册解析）：两条同名按 CP 的歧义规则（重名不落座）⇒ 解析为空，
+        //    结果是「谁都没被 @ 到」，用户写的 @ 白写 —— 与 CP 的答案不同。
+        storeState.participants = selfAndOthers();
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await wrapper.get('[data-testid="chat-input"]').setValue("@Ada Lovelace 记一下");
+        await flushPromises();
+
+        expect(
+            wrapper
+                .findAll('[data-testid="cc-chip"]')
+                .map((chip) => chip.attributes("data-participant-id")),
+        ).toEqual([OTHER_ADA_ID]);
+        wrapper.unmount();
     });
 });

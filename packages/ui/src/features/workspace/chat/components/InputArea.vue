@@ -287,14 +287,21 @@ const toTargetIds = ref<string[]>([]);
  */
 const currentUserId = computed(() => authStore.user?.id ?? "");
 
+/**
+ * 「这一行就是调用者本人」——**与 CP 同形**：`ChatController.java:1157` 的
+ * `isSelfPrincipal(view.principalId(), userId)` 是按 `principalId` 比、**不看** `principalKind`
+ * （AGENT 行的 `principalId` 是 agent principal id，永不等 user id ⇒ 该谓词对 AGENT 恒 false）。
+ * 两处（候选剔除 / 提及名册）共用这一个比较，避免出现「同一份数据、两套本人判定」。
+ */
+function isSelfPrincipalRow(item: SessionParticipantView): boolean {
+    return Boolean(currentUserId.value) && item.principalId === currentUserId.value;
+}
+
+/** TO/CC 候选里的「自己的真人行」：在 {@link isSelfPrincipalRow} 上加 kind 断言当绊网。 */
 function isOwnHumanRow(item: SessionParticipantView): boolean {
     // 只剔 HUMAN：AGENT 行的 `principalId` 是 agent principal id，本就不可能等于 user id，
     // 这里显式按 kind 判而不是「反正不可能相等」—— 后者在有人改投影口径时会静默变成错过滤。
-    return (
-        item.principalKind === "HUMAN" &&
-        Boolean(currentUserId.value) &&
-        item.principalId === currentUserId.value
-    );
+    return item.principalKind === "HUMAN" && isSelfPrincipalRow(item);
 }
 
 const toTargetCandidates = computed(() =>
@@ -493,10 +500,20 @@ function onCcFieldChange(ids: string[]): void {
  * T5b.2「@ 自动入抄送」：解析草稿里的 @token（规则镜像 CP 的 `MentionParser`——@ 前必须是
  * 词边界、名称贪婪最长匹配、后跟空白/结尾、重名歧义不落座、`@all` 不收），命中且未停用
  * 的参与者自动加入抄送 chips；文本里 @ 的用法不受影响。
+ *
+ * <p>task-115：**镜像面不止解析算法，还包括喂给算法的名册**。CP 在 `ChatController.mentionRoster`
+ * （`:1151-1168`，task-104）里先剔掉调用者自己那一行（`:1157` `isSelfPrincipal`），注释
+ * `:1142-1149` 写明理由是「@ 自己在正文里是文本、不是寻址行为」且「同一个过滤顺带把调用者挡在
+ * 自己的 cc 观察者名单之外」。UI 此前用的是**原始名册** ⇒ 同一条 `@自己` 在两侧答案不同
+ * （CP：不是提及；UI：是提及 ⇒ 还把它当**显式** cc id 发回去，而 CP 的显式 cc 通道没有自投递门）。
+ * 所以这里对齐的是**输入名册**：匹配规则（本函数下半段）一行未动，也不在结果上打补丁。</p>
  */
 function mentionedParticipantIds(text: string): string[] {
     const roster = (participantsStore.participants ?? []).filter(
-        (item) => !item.disabledAt && Boolean(item.displayName),
+        // `!disabledAt`：CP 把 `disabledAt` 交给 `MentionParser` 判（`RosterEntry.enabled()`，
+        // `MentionParser.java:37-40` + `:63`「disabled participants are invisible」）⇒ 两侧等价。
+        // `!isSelfPrincipalRow`：见上，与 `mentionRoster` 的 `:1157` 同口径。
+        (item) => !item.disabledAt && Boolean(item.displayName) && !isSelfPrincipalRow(item),
     );
     if (roster.length === 0 || !text.includes("@")) return [];
     const ids: string[] = [];
@@ -1272,11 +1289,83 @@ function setDraft(text: string) {
 }
 
 /**
+ * task-113 B 步（BL-339）：**丢弃必须可观测，且必须能区分两种完全不同的原因**。
+ *
+ * <p>为什么要区分「候选数 0」与「状态 null」：前者读作「名册里确实没有这些人」（真·未知 id，
+ * 按 `task-111` 的判据就该丢），后者读作「名册**还没回来**」（`sessionParticipants.ts:25` 的
+ * `participants === null` = 还没加载）。同一行 warn 若不带这个区分，下一个人看到它仍然不知道
+ * 该去查名册请求还是去查 id 拼写 —— 那这条 warn 就只是把静默换成了噪音。</p>
+ */
+function warnDroppedRecipients(
+    field: "to" | "cc",
+    dropped: string[],
+    candidateCount: number,
+): void {
+    if (dropped.length === 0) return;
+    const roster = participantsStore.participants;
+    const state =
+        roster === null
+            ? "名册尚未加载 participants === null（不是「名册里没这些人」）"
+            : `名册已加载：${roster.length} 行 / 可用候选 ${candidateCount} 个`;
+    console.warn(
+        `[compose-deeplink] ${field} 丢弃 ${dropped.length} 个 id（${state}）：${dropped.join(", ")}`,
+    );
+}
+
+/**
+ * task-113 A 步：名册**还没到**不是「丢弃」，是「还没轮到」—— 单独一条 warn，别和「名册里没这人」混。
+ */
+function warnRosterNotReady(field: "to" | "cc", wanted: string[]): void {
+    console.warn(
+        `[compose-deeplink] ${field} 暂不写入：名册尚未加载（participants === null）⇒ 保留深链参数，名册到达后重试。目标 ${wanted.length} 个 id：${wanted.join(", ")}`,
+    );
+}
+
+/**
+ * task-113 A 步（BL-339）：单个收件人栏的预填判定 —— **全有或全无**。
+ *
+ * <p>为什么不按「命中的先填、漏掉的记 warn」：那样会在界面上留下一个「似乎填好了」的状态，
+ * 而漏掉的人**不会**因为再等一会儿就出现（retry 时 `current` 非空 ⇒ 只能判"用户已选"）⇒ 用户
+ * 看到 2 个 chip 就以为通知了 3 个人。全有或全无 + 保留深链参数 ⇒ 要么如实填满，要么什么都不填
+ * 并让它可重试。</p>
+ *
+ * @returns `applied` 已写入（含「上一次已经写过同样的内容」的重试幂等）；`blocked` 不能写，须保留参数；
+ *          `empty` 载荷里没有可写的 id。
+ */
+function prefillRecipientField(
+    field: "to" | "cc",
+    wanted: string[],
+    candidates: SessionParticipantView[],
+    current: string[],
+): { state: "applied" | "blocked" | "empty"; ids: string[] } {
+    const allowed = new Set(candidates.map((item) => item.participantId));
+    const ids = wanted.filter((id) => allowed.has(id));
+    const dropped = wanted.filter((id) => !allowed.has(id));
+    if (current.length > 0) {
+        const same = current.length === ids.length && ids.every((id) => current.includes(id));
+        return { state: same && dropped.length === 0 ? "applied" : "blocked", ids };
+    }
+    if (participantsStore.participants === null) {
+        warnRosterNotReady(field, wanted);
+        return { state: "blocked", ids };
+    }
+    if (dropped.length > 0) {
+        warnDroppedRecipients(field, dropped, candidates.length);
+        return { state: "blocked", ids };
+    }
+    return { state: ids.length > 0 ? "applied" : "empty", ids };
+}
+
+/**
  * BL-339：深链预填（不代发）。只填空位、不覆盖用户已有输入与已选收件人，
  * 收件人按本会话候选过滤（未知 id 直接丢弃，不做"猜一个"）。
  * @param next - 预填载荷：正文 + 可选 to/cc（AGENT 参与者 id）。
- * @returns 三态：`applied` 已写入；`blocked` 目标位被用户内容占用（保留深链参数，稍后可能生效）；
- *          `idle` 没有可写内容（例如 id 不在候选里）—— 视为已消费，调用方应清参。
+ * @returns 三态：`applied` 已写入（可清参）；`blocked` 有内容这次写不进去（**必须保留参数**，名册到达后重试）；
+ *          `idle` 没有可写内容 —— **调用方也不得把它当"已消费"**（task-113 B 步：清参会让「名册未到就被滤空」永久不可恢复）。
+ *
+ * <p>task-113 A 步的判据（比 B 更硬）：`participants === null`（名册还没到）与「部分/全部 id 不在册」
+ * 一律返回 `blocked`，**不写任何收件人**。只有全部命中才写。这样「静默丢」在两种意义上都被消掉：
+ * 不会写一半（否则用户以为通知齐了），也不会清参（否则不可重试）。</p>
  */
 function prefillDraft(next: {
     text: string;
@@ -1286,7 +1375,10 @@ function prefillDraft(next: {
     let applied = false;
     let blocked = false;
     if (next.text) {
-        if (input.value.trim()) {
+        if (input.value === next.text) {
+            // 重试路径：正文早前已写入，幂等承认，否则 retry 永远卡在「用户已输入」。
+            applied = true;
+        } else if (input.value.trim()) {
             blocked = true;
         } else {
             input.value = next.text;
@@ -1294,32 +1386,31 @@ function prefillDraft(next: {
         }
     }
     if (next.to?.length) {
-        if (toTargetIds.value.length > 0) {
+        const outcome = prefillRecipientField(
+            "to",
+            next.to,
+            toTargetCandidates.value,
+            toTargetIds.value,
+        );
+        if (outcome.state === "applied") {
+            toTargetIds.value = outcome.ids;
+            applied = true;
+        } else if (outcome.state === "blocked") {
             blocked = true;
-        } else {
-            const allowed = new Set(toTargetCandidates.value.map((item) => item.participantId));
-            const ids = next.to.filter((id) => allowed.has(id));
-            if (ids.length) {
-                toTargetIds.value = ids;
-                applied = true;
-            }
         }
     }
     if (next.cc?.length) {
-        if (ccIds.value.length > 0) {
+        const outcome = prefillRecipientField("cc", next.cc, ccCandidates.value, ccIds.value);
+        if (outcome.state === "applied") {
+            ccIds.value = outcome.ids;
+            for (const id of outcome.ids) ccSuppressed.delete(id);
+            applied = true;
+        } else if (outcome.state === "blocked") {
             blocked = true;
-        } else {
-            const allowed = new Set(ccCandidates.value.map((item) => item.participantId));
-            const ids = next.cc.filter((id) => allowed.has(id));
-            if (ids.length) {
-                ccIds.value = ids;
-                for (const id of ids) ccSuppressed.delete(id);
-                applied = true;
-            }
         }
     }
-    if (applied) return "applied";
-    return blocked ? "blocked" : "idle";
+    if (blocked) return "blocked";
+    return applied ? "applied" : "idle";
 }
 
 /**
@@ -1343,7 +1434,16 @@ function publishComposerHeight(px: number) {
 watch(composerHeight, (h) => publishComposerHeight(h), { immediate: true });
 onBeforeUnmount(() => publishComposerHeight(0));
 
-defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
+/**
+ * task-113 A 步：名册「已加载 / 还没加载」—— 深链用它当**重试信号**。
+ *
+ * <p>为什么不由 ChatPanel 自己读 store，或把 ready 改成 Boolean(participants)：名册可能
+ * **永远不回来**（无会话 / 403 / 请求失败）⇒ 那样的 ready 会让深链连正文都不预填
+ * （task-111 已把这列为「首个错误改法」）。这里只提供信号，何时重试由 composable 决定。</p>
+ */
+const recipientsReady = computed(() => participantsStore.participants !== null);
+
+defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsReady });
 </script>
 
 <template>

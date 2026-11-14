@@ -168,6 +168,13 @@ export interface ComposeDeeplinkOptions {
     apply: (payload: ComposeDeeplink) => boolean;
     /** 组件是否已可预填（例如 ref 已挂载）。 */
     ready?: () => boolean;
+    /**
+     * task-113 A 步：**重试信号** —— 值变了就再 apply 一次（apply 返回 false 时不消费）。
+     * 用途：深链带 to/cc 而参与者名册还没加载时 apply 返回 false（保留参数），名册到达后
+     * 靠这个信号再试一次；不靠定时器，也不把 ready 抬成「名册必须已加载」（那样名册永不
+     * 返回时会连正文都不预填）。
+     */
+    retryKey?: () => unknown;
 }
 
 /**
@@ -196,8 +203,8 @@ export function useComposeDeeplink(options: ComposeDeeplinkOptions): void {
 
     let applied = false;
     watch(
-        () => options.ready?.() ?? true,
-        (ready) => {
+        [() => options.ready?.() ?? true, () => options.retryKey?.()],
+        ([ready]) => {
             if (applied || !ready) return;
             if (payload.sessionId !== undefined && payload.sessionId !== options.sessionId())
                 return;

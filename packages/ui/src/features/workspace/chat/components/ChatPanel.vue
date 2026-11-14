@@ -762,15 +762,21 @@ const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
 useComposeDeeplink({
     sessionId: () => props.sessionId,
     ready: () => Boolean(inputComponent.value?.prefillDraft),
-    // 三态语义：`applied`/`idle` 都算"已消费"（清参），只有 `blocked`（目标位被用户内容占住）
-    // 才保留参数，等用户清空草稿后再打开同一链接仍能预填。
+    // A 步：名册到达（null → 已加载）后重试一次 —— 不能靠定时器，也不能把 ready 抬成
+    // 「名册必须已加载」（名册永不返回时会连正文都不预填）。
+    retryKey: () => inputComponent.value?.recipientsReady ?? false,
+    // 三态语义（task-113 B 步改）：**只有 `applied` 算已消费**。
+    // 旧实现把 `idle` 也算已消费，而 `idle` 恰好覆盖「名册还没回来 ⇒ to/cc 被过滤一空」这个情形
+    // ⇒ 清参走的是 `replace`，收件人**永久不可恢复**（task-111 定位；第 0 步用例红的正是这里）。
+    // 现在 `idle` 与未就绪都保留参数：地址栏里留着 `?compose=` 就是「尚未消费」的可见标记，
+    // 后续（A 步）由「名册到达后重试」来消费它。
     apply: (payload) => {
         const result = inputComponent.value?.prefillDraft?.({
             text: payload.text,
             to: payload.to,
             cc: payload.cc,
         });
-        return result === "applied" || result === "idle";
+        return result === "applied";
     },
 });
 
