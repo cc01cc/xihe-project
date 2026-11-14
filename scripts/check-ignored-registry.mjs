@@ -56,7 +56,7 @@ function miseTiers(miseFile) {
   for (const line of lines) {
     const head = line.match(/^\[tasks\."test:runtime:lib:ignored:([a-z]+)"\]/);
     if (head) { current = head[1]; tiers.set(current, new Set()); continue; }
-    if (/^\[/.test(line)) { current = null; continue; }
+    if (line.startsWith("[")) { current = null; continue; }
     if (!current) continue;
     const exact = line.match(/--exact\s+([A-Za-z0-9_:]+)/);
     if (exact) tiers.get(current).add(exact[1].split("::").pop());
@@ -94,7 +94,7 @@ function check(repoRoot, registryFile, miseFile = MISE) {
   const dupNames = measured.map((m) => m.name).filter((n, i, a) => a.indexOf(n) !== i);
   const countProblems = [];
   if (measured.length !== registered.size) countProblems.push("E_COUNT_MISMATCH 实测标注 " + measured.length + " 条 ≠ 登记 " + registered.size + " 条（同名多条也算不等）");
-  for (const d of [...new Set(dupNames)]) countProblems.push("E_DUPLICATE_ANNOTATION " + d + " 被标注了多次 —— 同一测试两条 ignore");
+  for (const d of new Set(dupNames)) countProblems.push("E_DUPLICATE_ANNOTATION " + d + " 被标注了多次 —— 同一测试两条 ignore");
   const unowned = entries.filter((e) => e.category === "unowned" || !CATEGORIES.includes(e.category)).map((e) => e.name);
   const byCat = {};
   for (const c of CATEGORIES) byCat[c] = entries.filter((e) => e.category === c).length;

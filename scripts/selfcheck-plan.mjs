@@ -476,7 +476,7 @@ function checkAnchor(anchor, root = REPO_ROOT) {
     if (anchor.keyword) {
       let end = body.length;
       for (let i = at + 1; i < body.length; i++) {
-        if (/^\[tasks\./.test(body[i])) { end = i; break; }
+        if (body[i].startsWith("[tasks.")) { end = i; break; }
       }
       if (!body.slice(at, end).join("\n").includes(anchor.keyword)) {
         return { ok: false, why: `E_KEYWORD_MISSING ${anchor.file} ${anchor.symbol} 内无「${anchor.keyword}」` };

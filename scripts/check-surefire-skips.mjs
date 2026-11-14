@@ -10,7 +10,7 @@
  *   node scripts/check-surefire-skips.mjs --dir <reports 目录> --class <fqcn> [--max-skipped 0] [--json]
  * 退出码：0 = skipped ≤ 上限；1 = 超限（逐条点名 skip 原因）；2 = 报告目录/类找不到（脚本或前提问题，不是产品问题）
  */
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
 const argv = process.argv.slice(2);

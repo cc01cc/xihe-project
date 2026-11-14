@@ -31,16 +31,14 @@ const SKIP_DIRS = new Set(["node_modules", "dist", ".vite", "coverage", "test-re
 // 点开头的目录一律跳过：`.local/` 里是 gitignored 的备份/实验稿（实测有一份 `preview-real.fixed.bak.html`），
 // 把它算进「入口族」会报一条永远修不掉的 MISS —— 假阳性会让整条门被当噪音（D-1074）。
 
-const WANTED = '<meta name="color-scheme" content="light dark"';
-
 /** 单份文本的判定：只认 head 里的这一行，且 内容 必须是 light dark */
 export function judge(html) {
-  const metas = [...html.matchAll(/<meta\b[^>]*name=["\']color-scheme["\'][^>]*>/gi)].map((m) => m[0]);
+  const metas = [...html.matchAll(/<meta\b[^>]*name=["']color-scheme["'][^>]*>/gi)].map((m) => m[0]);
   if (metas.length === 0) return { ok: false, reason: "missing", meta: null };
   // 重复声明本身是错的：多份 meta 内容不同时浏览器行为不一致，也说明有人在别处又加了一份
   if (metas.length > 1) return { ok: false, reason: "duplicate", meta: metas };
   const meta = metas[0];
-  const content = (meta.match(/content=["\']([^"\']*)["\']/i) || [])[1] || "";
+  const content = (meta.match(/content=["']([^"']*)["']/i) || [])[1] || "";
   const norm = content.trim().replace(/\s+/g, " ").toLowerCase();
   if (norm !== "light dark") return { ok: false, reason: "wrong-content:" + norm, meta };
   if (!/\/>|>\s*$/.test(meta)) return { ok: false, reason: "unterminated", meta };

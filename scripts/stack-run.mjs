@@ -26,7 +26,7 @@ import {
   shortSha,
   writeBuildInfo,
 } from "./lib/cp-build-info.mjs";
-import { cpBuildRoot, readPointer, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
+import { cpBuildRoot, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 import { CARGO_TARGET_ROOT_ENV, cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { ensureEnvFromUser } from "./lib/user-env.mjs";
