@@ -2397,6 +2397,42 @@ class ChatControllerTest extends AbstractH2Test {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any());
     }
 
+    // ── task-53: the 202 body carries the notified bucket (D-1438 precondition) ─────────────
+
+    /**
+     * task-53 judgement 2, assembly half: a notified target must appear under
+     * {@code notifiedTargets[]} in the 202 body and never under {@code failedTargets[]}. Human TO is
+     * still refused by {@code authorizeToTargets} (task-48 opens that guard), so the {@code notify}
+     * outcome is injected at the fan-out boundary; what this test pins is the controller's copy,
+     * which is exactly where this bug class lives — a bucket the service computes but the response
+     * forgets to carry.
+     */
+    @Test
+    void chat_twoTargets_carriesNotifiedBucketIn202Body() {
+        String[] pair = seedMentionPair("NotifiedTargetE");
+        stubAgentSuccessReply();
+        WakeFanOutService.TargetedWake wake = new WakeFanOutService.TargetedWake(List.of(), List.of(),
+                List.of(), List.of(new WakeFanOutService.TargetedFailure(pair[1], "notify")), 1);
+        doReturn(wake).when(wakeFanOutService).targetedFanOut(Mockito.any(), anyString(), anyString(),
+                anyString(), anyString(), Mockito.anyList());
+
+        ResponseEntity<Map> response = postChatWithTo("两个目标，其中一个只发通知",
+                List.of(pair[0], pair[1]));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> notified = (List<Map<String, String>>) body.get("notifiedTargets");
+        assertNotNull(notified, "task-53: the 202 body must carry notifiedTargets[]");
+        assertEquals(1, notified.size());
+        assertEquals(pair[1], notified.get(0).get("participantId"));
+        assertEquals("notify", notified.get(0).get("reason"));
+        assertNull(body.get("failedTargets"),
+                "a delivered notice must never be reported as a failure (task-53)");
+        assertNull(body.get("deferredTargets"));
+    }
+
     @Test
     void chat_absentTo_keepsLegacySingleResponderPath() {
         seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,

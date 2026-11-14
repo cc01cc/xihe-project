@@ -218,19 +218,20 @@ public class WakeFanOutService {
      * returned in {@link TargetedWake#failedTargets()} and logged at ERROR, so the caller can report
      * it in the 202 body. A DB constraint violation here used to be swallowed into a dropped log line
      * while the response still looked complete — {@code runIds.size() + failedTargets.size() +
-     * deferredTargets.size()} must always equal the requested target count (BL-283 split "queued"
-     * out of "failed").</p>
+     * deferredTargets.size() + notifiedTargets.size()} must always equal the requested target count
+     * (BL-283 split "queued" out of "failed"; task-53 split "notified" out of "failed").</p>
      */
     public TargetedWake targetedFanOut(UUID sessionId, String workspaceId, String userId,
                                        String rootRunId, String content,
                                        List<UUID> targetParticipantIds) {
         if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
-            return new TargetedWake(List.of(), List.of(), List.of(), 0);
+            return new TargetedWake(List.of(), List.of(), List.of(), List.of(), 0);
         }
         String wakeRoundId = "wake:to:" + rootRunId;
         List<UUID> runIds = new ArrayList<>();
         List<TargetedFailure> failedTargets = new ArrayList<>();
         List<TargetedFailure> deferredTargets = new ArrayList<>();
+        List<TargetedFailure> notifiedTargets = new ArrayList<>();
         for (UUID participantId : targetParticipantIds) {
             WakeDispatchService.WakeFireResult result;
             try {
@@ -261,6 +262,17 @@ public class WakeFanOutService {
                     logger.info("[LIFECYCLE] service=cp event=to_target_deferred sessionId={} "
                                     + "targetParticipantId={} round={} runIds={}", sessionId,
                             participantId, wakeRoundId, runIds);
+                } else if ("notify".equals(reason)) {
+                    // task-53 (D-1438 precondition): a HUMAN target is delivered as a notification and
+                    // WakeDispatchService has already written the durable wake_dispatch row with
+                    // outcome=notify, so filing it under failedTargets[] with an ERROR was a projection
+                    // bug — the notice IS the delivery. Classification is by OUTCOME, not by principal
+                    // kind: this layer only holds participant ids (no roster), and reading the roster
+                    // inside the dispatch loop would create a second source of truth for "who is human".
+                    notifiedTargets.add(new TargetedFailure(participantId.toString(), reason));
+                    logger.info("[LIFECYCLE] service=cp event=to_target_notified sessionId={} "
+                                    + "targetParticipantId={} round={} runIds={}", sessionId,
+                            participantId, wakeRoundId, runIds);
                 } else {
                     failedTargets.add(new TargetedFailure(participantId.toString(), reason));
                     logger.error("[LIFECYCLE] service=cp event=to_target_dispatch_failed sessionId={} "
@@ -270,36 +282,47 @@ public class WakeFanOutService {
             }
         }
         logger.info("[LIFECYCLE] service=cp event=wake_to_handoff sessionId={} round={} targets={} "
-                        + "dispatched={} deferred={} failed={}", sessionId, wakeRoundId,
-                targetParticipantIds.size(), runIds.size(), deferredTargets.size(), failedTargets.size());
+                        + "dispatched={} deferred={} failed={} notified={}", sessionId, wakeRoundId,
+                targetParticipantIds.size(), runIds.size(), deferredTargets.size(), failedTargets.size(),
+                notifiedTargets.size());
         return new TargetedWake(List.copyOf(runIds), List.copyOf(failedTargets),
-                List.copyOf(deferredTargets), targetParticipantIds.size());
+                List.copyOf(deferredTargets), List.copyOf(notifiedTargets), targetParticipantIds.size());
     }
 
     /**
      * What one explicit TO fan-out did: the created run ids, in selection order (Q1 {@code runIds[]}),
-     * and the targets that could not be dispatched (runtime failures — pre-validation failures reject
-     * the whole request instead).
+     * and the targets that did not get a run — split into the bucket that names what actually happened
+     * (runtime failure / queued / notified — pre-validation failures reject the whole request instead).
      */
     public record TargetedWake(List<UUID> runIds, List<TargetedFailure> failedTargets,
-                               List<TargetedFailure> deferredTargets, int targets) {
+                               List<TargetedFailure> deferredTargets,
+                               List<TargetedFailure> notifiedTargets, int targets) {
         public TargetedWake {
             runIds = List.copyOf(runIds);
             failedTargets = List.copyOf(failedTargets);
             deferredTargets = List.copyOf(deferredTargets);
+            notifiedTargets = List.copyOf(notifiedTargets);
         }
 
         /**
          * Total targets accounted for: every requested target is exactly one of "dispatched (run)",
-         * "queued (deferred)" or "failed" — BL-283 made deferred a first-class outcome, so the
-         * conservation invariant is {@code runIds + failedTargets + deferredTargets == targets}.
+         * "queued (deferred)", "notified (human target)" or "failed". BL-283 made deferred a
+         * first-class outcome and task-53 did the same for notified (D-1438 precondition), so the
+         * conservation invariant is
+         * {@code runIds + failedTargets + deferredTargets + notifiedTargets == targets}.
          */
         public int accounted() {
-            return runIds.size() + failedTargets.size() + deferredTargets.size();
+            return runIds.size() + failedTargets.size() + deferredTargets.size()
+                    + notifiedTargets.size();
         }
     }
 
-    /** One TO target that did not get a run: {@code reason} is the outcome/exception simple name. */
+    /**
+     * One TO target that did not get a run: {@code reason} is the outcome/exception simple name.
+     * The name says "failure" for historical reasons only — the same shape carries the deferred and
+     * notified buckets (task-53), because the wire shape is identical ({@code participantId, reason})
+     * and a rename would have bought six diff churns without a single behaviour change.
+     */
     public record TargetedFailure(String participantId, String reason) {}
 
     /**

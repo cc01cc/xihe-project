@@ -957,6 +957,7 @@ public class ChatController {
                 runIds.add(runId);
                 List<Map<String, String>> failedTargets = new ArrayList<>();
                 List<Map<String, String>> deferredTargets = new ArrayList<>();
+                List<Map<String, String>> notifiedTargets = new ArrayList<>();
                 if (toParticipantIds.size() > 1) {
                     WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
                             UUID.fromString(sessionId), workspaceId, userId, runId, content,
@@ -966,12 +967,15 @@ public class ChatController {
                             "participantId", failure.participantId(), "reason", failure.reason())));
                     targeted.deferredTargets().forEach(deferred -> deferredTargets.add(Map.of(
                             "participantId", deferred.participantId(), "reason", deferred.reason())));
+                    targeted.notifiedTargets().forEach(notified -> notifiedTargets.add(Map.of(
+                            "participantId", notified.participantId(), "reason", notified.reason())));
                 }
                 acceptedBody.put("runIds", runIds);
-                // BL-283 (Lead ruling 2026-11-05): three explicit buckets, one invariant —
-                // runIds + failedTargets + deferredTargets = requested targets. Deferred = queued
-                // (a follow-up item waits for a slot); failed = a real dispatch error. Neither is
-                // ever silent.
+                // BL-283 (Lead ruling 2026-11-05) + task-53: four explicit buckets, one invariant —
+                // runIds + failedTargets + deferredTargets + notifiedTargets = requested targets.
+                // Deferred = queued (a follow-up item waits for a slot); notified = a HUMAN target
+                // whose delivery IS the notification (outcome=notify, no run); failed = a real
+                // dispatch error. None of them is ever silent, and only failed logs at ERROR.
                 if (!deferredTargets.isEmpty()) {
                     acceptedBody.put("deferredTargets", deferredTargets);
                     logger.info("[LIFECYCLE] service=cp event=to_fanout_deferred sessionId={} runId={} "
@@ -979,19 +983,26 @@ public class ChatController {
                             toParticipantIds.size(), runIds.size(), deferredTargets.size(),
                             failedTargets.size());
                 }
+                if (!notifiedTargets.isEmpty()) {
+                    acceptedBody.put("notifiedTargets", notifiedTargets);
+                    logger.info("[LIFECYCLE] service=cp event=to_fanout_notified sessionId={} runId={} "
+                                    + "targets={} dispatched={} deferred={} failed={} notified={}",
+                            sessionId, runId, toParticipantIds.size(), runIds.size(),
+                            deferredTargets.size(), failedTargets.size(), notifiedTargets.size());
+                }
                 if (!failedTargets.isEmpty()) {
                     acceptedBody.put("failedTargets", failedTargets);
                     logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
-                                    + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
-                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
-                            failedTargets.size());
+                                    + "targets={} dispatched={} deferred={} failed={} notified={}",
+                            sessionId, runId, toParticipantIds.size(), runIds.size(),
+                            deferredTargets.size(), failedTargets.size(), notifiedTargets.size());
                 }
                 if (runIds.size() + failedTargets.size() + deferredTargets.size()
-                        != toParticipantIds.size()) {
+                        + notifiedTargets.size() != toParticipantIds.size()) {
                     logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
-                                    + "runId={} targets={} dispatched={} deferred={} failed={}", sessionId,
-                            runId, toParticipantIds.size(), runIds.size(), deferredTargets.size(),
-                            failedTargets.size());
+                                    + "runId={} targets={} dispatched={} deferred={} failed={} notified={}",
+                            sessionId, runId, toParticipantIds.size(), runIds.size(),
+                            deferredTargets.size(), failedTargets.size(), notifiedTargets.size());
                 }
             }
             return ResponseEntity.accepted().body(acceptedBody);

@@ -1,10 +1,15 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.UUID;
@@ -27,7 +32,12 @@ import static org.mockito.Mockito.when;
  * audit label stays {@code "to"} (writing {@code "to"} into {@code chat_runs.trigger_source} violates
  * its CHECK — the real-stack defect this class now guards), (c) {@code parentRunId} stays NULL
  * (Q2), (d) one target's failure never aborts the others AND is reported in {@code failedTargets[]},
- * (e) {@code runIds + failedTargets == targets} always.</p>
+ * (e) {@code runIds + failedTargets + deferredTargets + notifiedTargets == targets} always.</p>
+ *
+ * <p>task-53 (D-1438 precondition): a HUMAN target's outcome is {@code notify} — a delivered
+ * notification IS the delivery, not a failure. It gets its own bucket, an INFO line and no ERROR
+ * log. The guard that still refuses human TO lives in
+ * {@code SessionParticipantService#authorizeToTargets} and opens with task-48.</p>
  */
 class WakeFanOutServiceTargetedTest {
 
@@ -124,8 +134,16 @@ class WakeFanOutServiceTargetedTest {
         assertThat(result.runIds()).containsExactly(reviewerRun);
     }
 
+    /**
+     * task-53 deliberately leaves {@code skipped_muted} in {@code failedTargets[]}: a muted
+     * participant is neither a delivered notice (filing it under notified would claim the user was
+     * told) nor a queued target (nothing waits for a slot) — so this is the only bucket that does
+     * not lie. What is wrong is the <b>level</b> (ERROR), not the bucket; the suppressed bucket and
+     * the level downgrade for {@code refused}/{@code skipped_muted}/{@code judged_no} are task-60,
+     * blocked on task-53. Assertions here are unchanged on purpose.
+     */
     @Test
-    void nonDispatchedOutcome_isReportedAsFailureWithItsOutcome() {
+    void unclassifiedNonDispatchedOutcome_staysInFailedTargets() {
         when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
                 anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
@@ -138,6 +156,52 @@ class WakeFanOutServiceTargetedTest {
         assertThat(result.failedTargets().get(0).reason()).isEqualTo("skipped_muted");
         assertThat(result.deferredTargets()).isEmpty();
         assertThat(result.accounted()).isEqualTo(1);
+    }
+
+    /**
+     * task-53 judgement 2/3: a HUMAN target returns {@code outcome=notify} — the durable
+     * {@code wake_dispatch} row and the actual delivery are WakeDispatchService's job and are already
+     * done by the time this returns. The target must land in {@code notifiedTargets[]}, never in
+     * {@code failedTargets[]}, and must not log {@code to_target_dispatch_failed} at ERROR: that
+     * ERROR was the projection bug this card removes. Both halves are asserted — the bucket AND the
+     * absence of any WARN/ERROR event — because a fix that only moved the bucket would still be
+     * lying in the logs.
+     */
+    @Test
+    void notifyOutcome_landsInNotifiedTargets_withNoErrorLog() {
+        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "notify"));
+
+        Logger serviceLogger = (Logger) LoggerFactory.getLogger(WakeFanOutService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        serviceLogger.addAppender(appender);
+        WakeFanOutService.TargetedWake result;
+        try {
+            result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1", ROOT_RUN.toString(),
+                    "请评审", List.of(PLANNER));
+        } finally {
+            serviceLogger.detachAppender(appender);
+        }
+
+        assertThat(result.notifiedTargets()).hasSize(1);
+        assertThat(result.notifiedTargets().get(0).participantId()).isEqualTo(PLANNER.toString());
+        assertThat(result.notifiedTargets().get(0).reason()).isEqualTo("notify");
+        assertThat(result.failedTargets()).as("a delivered notice is not a failure").isEmpty();
+        assertThat(result.deferredTargets()).isEmpty();
+        assertThat(result.accounted()).isEqualTo(1);
+
+        assertThat(appender.list).anySatisfy(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.INFO);
+            assertThat(event.getFormattedMessage()).contains("event=to_target_notified");
+        });
+        assertThat(appender.list.stream()
+                .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList())
+                .as("task-53: the notify path must not log to_target_dispatch_failed at ERROR")
+                .isEmpty();
     }
 
     /** BL-283: a target deferred by the run cap is QUEUED, not failed (Lead ruling 2026-11-05). */
