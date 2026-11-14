@@ -60,19 +60,20 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         await expect(page).toHaveURL(/\/settings/);
         // 判据是**负数**：搬家后设置区左栏一个资源条目都不该有。
         await expect(page.locator('[data-testid^="settings-nav-resource-"]')).toHaveCount(0);
-        // 计数也随之变（入口数徽标）。**用户层是 7，不是 9（task-350 第二处过期期望）**：
-        // 用户层矩阵仍是 9 个配置域，但 `1be65e6aa`（`task-227`，用户 2026-11-13 裁定「合页，不合域」）
-        // 把 3 个模型域（`llm-provider` / `context-policy` / `api-request-templates`）在左栏折成**一个**
-        // 「模型配置」组入口 ⇒ 9 − 3 + 1 = **7 个入口**。域一个都没合并（锁定/继承/env 覆盖仍按域求值），
-        // 变的只是左栏条目数。
-        await expect(page.getByTestId("settings-nav-count-user")).toHaveText("7 个入口");
-        // 实例层同理，**14 个入口**（原写 16/17，`task-350` 第三处过期期望）。可复算：
-        //    12 个配置域 − 3 个模型域 + 1 个「模型配置」组入口 = 10（同 `1be65e6aa` 的合页）
-        //  + 2 运维（`config-locks` / `audit`）+ 3 安全（`roles` 等）= 15
+        // 计数也随之变（入口数徽标）。**用户层现在是 5**（task-485 之后；此前是 7）：
+        // 用户层矩阵 8 个配置域（`agent-profile` 已迁出设置区，9 → 8）
+        //  − 3 个模型域（`llm-provider` / `context-policy` / `api-request-templates`）折 1 个「模型配置」组
+        //  − 2 个智能体域（`agent-templates` / `agent-runtime`）折 1 个「智能体配置」组（task-485 新组）
+        //  ⇒ 8 − 3 − 2 + 2 = **5 个入口**。域一个都没合并（锁定/继承/env 覆盖仍按域求值）。
+        await expect(page.getByTestId("settings-nav-count-user")).toHaveText("5 个入口");
+        // 实例层同理，**12 个入口**（task-485 之后；此前是 14）。可复算：
+        //    11 个配置域（`agent-profile` 已迁出，12 → 11）
+        //  − 3 模型域 − 2 智能体域 + 2 个组入口 = 8
+        //  + 2 运维（`config-locks` / `audit`）+ 3 安全 = 13
         //  − 1 按权限过滤（`roles` 要 `MANAGE_ROLES` 原子，本用例只给了 `isInstanceAdmin` 能力位）
-        //  ⇒ 14。用户层那笔（9 − 3 + 1 = 7）与这里是同一次变化、同一条算术，两处互证。
-        // 不再写成 `1[67]` 这种「两值之一」—— 那等于把判据放宽到不会红（`spec-assertion-strength`）。
-        await expect(page.getByTestId("settings-nav-count-instance")).toHaveText("14 个入口");
+        //  ⇒ **12**。与用户层是同一条算术（域数 − 组折叠 + 组入口），两处互证。
+        // 不再写成 `1[24]` 这种「两值之一」—— 那等于把判据放宽到不会红（`spec-assertion-strength`）。
+        await expect(page.getByTestId("settings-nav-count-instance")).toHaveText("12 个入口");
     });
 
     test("凭据：三层 tab、默认「我的凭据」、点全平台层写回 ?layer=INSTANCE", async ({ page }) => {
