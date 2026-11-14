@@ -143,6 +143,9 @@ function usage(exitCode = 2) {
   console.log('  ok              false unless facts are up AND every lease field verifies');
   console.log('');
   console.log('status adds `cpBuild` (PLAN-0662 L4; **field names are a contract** for lane scripts):');
+  console.log('                  **注意：文档里常见的 `cpBuild.commit` 并不存在** —— 字段名是 runningCommit。');
+  console.log('                  （task-477：多人按旧文档/人类可读输出 :formatCpBuild 的 commit 猜 JSON 字段，');
+  console.log('                   结果是恒 undefined ⇒ 构建祖先门恒判「读不到」/ 与 HEAD 比对恒失败。）');
   console.log('  runningCommit   stamped commit of the classes this stack\'s CP runs (null = no stamp)');
   console.log('  headCommit      git rev-parse HEAD of this checkout (null = git unavailable)');
   console.log('  behind          git rev-list --count runningCommit..headCommit (null = unknown)');
