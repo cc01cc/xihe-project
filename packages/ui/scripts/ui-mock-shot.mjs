@@ -228,6 +228,12 @@ const SHOTS = [
             "[data-testid=org-tree-toggle-ou-rd]",
             "[data-testid=org-tree-label-ou-rd]",
             "[data-testid=org-member-open-mock-user]",
+            // 末两步不是「再点开什么」，而是**把等待显式写出来**：`expand` 每步先 waitForAttached
+            // （最多 15 s）再点，而对非交互容器来说点击是空操作。抽屉开抽屉后才发起的两个读面
+            // （段① 逐个工作区拉成员、段② 实例绑定）是串行 fetch，实测 600 ms 的收尾等待不够：
+            // 第一版图里段① 写着「已查 0 个工作区」（还在加载），会被读成「他没有任何角色」。
+            "[data-testid=org-member-detail-workspace-role-rows]",
+            "[data-testid=org-member-detail-access-role-rows]",
         ],
     },
     {
@@ -243,6 +249,9 @@ const SHOTS = [
             "[data-testid=org-tree-toggle-ou-platform]",
             "[data-testid=org-tree-label-ou-rd]",
             "[data-testid=org-member-open-ap-codebot]",
+            // 同理：等智能体态的两段真的挂上（深链选择器要 listWorkspaces 回来才渲染）。
+            "[data-testid=org-member-detail-access-role-agent]",
+            "[data-testid=org-member-detail-agent-open]",
         ],
     },
     // task-54：环境页（真路由 + 真组件）。workspaceId 必须用 mock 夹具里那个真 uuid
