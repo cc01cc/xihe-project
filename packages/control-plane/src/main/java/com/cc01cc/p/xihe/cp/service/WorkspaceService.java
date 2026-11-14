@@ -583,7 +583,8 @@ public class WorkspaceService {
     }
 
     /** task-575: how many {@code workspace_created} audit writes were dropped (fail-open) since start. */
-    long createdAuditFailureCount() {
+    /** task-597: exposed for the observability outlet ({@code AuditFailOpenMetrics}); read-only. */
+    public long createdAuditFailureCount() {
         return createdAuditFailures.get();
     }
 
