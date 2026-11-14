@@ -184,8 +184,8 @@ const messages = {
         standaloneDialog: {
             title: "新建独立会话",
             body: "独立会话不属于任何工作区。选一个个人智能体作为这条会话的应答者。",
-            // task-547 F-A：先把限制说清（CP 对 workspace-less Session 的 TO/CC/代发/附件一律 400）。
-            limits: "独立会话只能纯对话：不支持选择发送对象、代发与附件（创建后组合器也不会提供这些入口）。",
+            // task-49：限制收窄到附件 —— CP 已允许 workspace-less Session 的 TO/CC/代发，只有附件仍 400。
+            limits: "独立会话只能纯对话：不支持附件（创建后组合器也不会提供图片/文件/截屏入口）。",
             loading: "正在加载个人智能体…",
             emptyTitle: "还没有个人智能体",
             emptyBody: "独立会话需要一个个人智能体来应答。先创建一个，再回来新建会话。",
@@ -1298,9 +1298,10 @@ const messages = {
                 // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
-                // task-547 F-A：独立会话下「发送」「定向」不渲染；这行是**可见原因**（不是 tooltip）。
-                workspaceLessNoTargets: "独立会话不支持选择发送对象、代发与附件（仅纯对话）",
-                workspaceLessDropped: "独立会话不支持选择发送对象/代发/附件，本次已按纯对话发送",
+                // task-49（task-48 落库后）：独立会话**已能**发给成员/抄送/代发，「发送」「抄送」两栏照常渲染；
+                // 这行只剩附件这一件事要解释 —— 它是**可见原因**（不是 tooltip），不是「为什么少两个控件」。
+                workspaceLessNoTargets: "独立会话不支持附件（仅纯对话）",
+                workspaceLessDropped: "独立会话不支持附件，本条已去掉附件后发送",
                 speakAsOverriddenByTo: "已指定发送对象（优先），本条不代发",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
@@ -3881,7 +3882,7 @@ const messages = {
         standaloneDialog: {
             title: "New standalone session",
             body: "A standalone session belongs to no workspace. Pick a personal agent to answer in it.",
-            limits: "A standalone session is plain chat only: no directed sends, no delegation, no attachments (the composer will not offer them either).",
+            limits: "A standalone session is plain chat only: no attachments (the composer will not offer image/file/screenshot entries either).",
             loading: "Loading personal agents…",
             emptyTitle: "No personal agent yet",
             emptyBody:
@@ -5024,9 +5025,9 @@ const messages = {
                     "This message notifies no participant (it is still recorded in this session)",
                 toEmptyHintDismiss: "Got it",
                 workspaceLessNoTargets:
-                    "A standalone Session does not support choosing send targets, delegation or attachments (plain chat only)",
+                    "A standalone Session does not support attachments (plain chat only)",
                 workspaceLessDropped:
-                    "Standalone Sessions do not support choosing send targets/delegation/attachments; sent as plain chat",
+                    "Standalone Sessions do not support attachments; this message was sent without them",
                 speakAsOverriddenByTo:
                     "Send targets are set (they take precedence); this message is not sent as anyone",
                 ccLabel: "Cc",
