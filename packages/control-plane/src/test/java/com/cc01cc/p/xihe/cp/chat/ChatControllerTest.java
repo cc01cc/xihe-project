@@ -2548,6 +2548,16 @@ class ChatControllerTest extends AbstractH2Test {
                 .count();
     }
 
+    @SuppressWarnings("unchecked")
+    private List<String> runIds(Map body) {
+        return (List<String>) body.get("runIds");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, String>> notifiedTargets(Map body) {
+        return (List<Map<String, String>>) body.get("notifiedTargets");
+    }
+
     private ResponseEntity<Map> postChatWithCc(String content, java.util.List<String> ccParticipantIds) {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("sessionId", sessionId);
@@ -2617,6 +2627,111 @@ class ChatControllerTest extends AbstractH2Test {
                     "user ruling: CC is an ordinary notification, not swallowed by muted");
             assertEquals(0, wakeDispatchRows(human.getId().toString(), "skipped_muted"));
         });
+    }
+
+    /**
+     * task-87 judgement 1: the SAME target set must produce the SAME answer in both orders. Before
+     * this change the Run owner was derived from toParticipantIds[0] unconditionally, so a HUMAN
+     * first target walked the speak-as gate and answered 403 PARTICIPANT_CAP_DENIED while the very
+     * same set answered 202 with the agent listed first — one set, two answers.
+     */
+    @Test
+    void chat_toHumanFirstAndAgentSecond_answersLikeAgentFirst() {
+        SessionParticipant human = seedHumanMember(SessionParticipant.RESPOND_ALWAYS);
+        String[] pair = seedMentionPair("HumanFirstToE");
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> agentFirst = postChatWithTo("先 agent 后真人",
+                List.of(pair[1], human.getId().toString()));
+        assertEquals(HttpStatus.ACCEPTED, agentFirst.getStatusCode(),
+                () -> "agent-first baseline: " + agentFirst.getBody());
+
+        ResponseEntity<Map> humanFirst = postChatWithTo("先真人后 agent",
+                List.of(human.getId().toString(), pair[1]));
+        assertEquals(HttpStatus.ACCEPTED, humanFirst.getStatusCode(),
+                () -> "task-87: human-first must not 403 — same set, order-independent answer: "
+                        + humanFirst.getBody());
+
+        // The answering run belongs to the AGENT in both orders; the human is only notified.
+        assertEquals(1, runIds(humanFirst.getBody()).size(),
+                "the AGENT target answers exactly once: " + humanFirst.getBody().get("runIds"));
+        assertNull(humanFirst.getBody().get("failedTargets"), "a human target is never a failure");
+        assertEquals(1, notifiedTargets(humanFirst.getBody()).size());
+        assertEquals(human.getId().toString(),
+                notifiedTargets(humanFirst.getBody()).get(0).get("participantId"));
+        assertEquals("notify", notifiedTargets(humanFirst.getBody()).get(0).get("reason"));
+        // Same shape as the agent-first request: one run, one notified target.
+        assertEquals(runIds(agentFirst.getBody()).size(), runIds(humanFirst.getBody()).size(),
+                "ordering must not change how many targets answer");
+        assertEquals(notifiedTargets(agentFirst.getBody()).size(),
+                notifiedTargets(humanFirst.getBody()).size());
+        await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() ->
+                assertEquals(2, wakeDispatchRows(human.getId().toString(), "notify"),
+                        "each request notifies the human exactly once"));
+        assertEquals(2, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ? "
+                                + "AND CAST(agent_principal_id AS VARCHAR) = ?", Integer.class,
+                        sessionId, pair[2]),
+                "one answering run per request, both owned by the AGENT target");
+    }
+
+    /**
+     * task-87: a TO set with no AGENT target has no responder at all — the named humans are notified
+     * and the Run is terminalized explicitly instead of silently answered by the PRIMARY.
+     */
+    @Test
+    void chat_toHumansOnly_notifiesAndSuppressesTheRun() {
+        SessionParticipant human = seedHumanMember(SessionParticipant.RESPOND_MUTED);
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChatWithTo("只发给真人的重要通知",
+                List.of(human.getId().toString()));
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                () -> "human-only TO: " + response.getBody());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertEquals(List.of(), runIds(body), "no AGENT target ⇒ nobody answers");
+        assertEquals(1, notifiedTargets(body).size(), "the addressed human still hears about it");
+        assertEquals(human.getId().toString(), notifiedTargets(body).get(0).get("participantId"));
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, body.get("terminalOutcome"));
+        assertEquals(1, wakeDispatchRows(human.getId().toString(), "notify"));
+        assertEquals(0, wakeDispatchRows(human.getId().toString(), "skipped_muted"),
+                "TO outranks muted even when no agent answers");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM messages WHERE CAST(session_id AS VARCHAR) = ? "
+                        + "AND role = 'ASSISTANT'", Integer.class, sessionId),
+                "the PRIMARY must not answer a TO set it was not part of");
+    }
+
+    /**
+     * task-87: an explicit as may not contradict the explicit TO selection (PLAN-0665 Q1). Pinned
+     * here on purpose: task-87 moved this validation while refactoring the Run-owner derivation and
+     * the guard was dropped for a moment — 224 tests stayed green, so the coverage did not exist.
+     */
+    @Test
+    void chat_asContradictingTheFirstToTargetIsRejected() {
+        String[] pair = seedMentionPair("ToConflictAsE");
+        SessionParticipant human = seedHumanMember(SessionParticipant.RESPOND_ALWAYS);
+        stubAgentSuccessReply();
+
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", "as 与 TO 首目标不一致");
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("branchId", branchId);
+        request.put("toParticipantIds", List.of(pair[1]));
+        request.put("asParticipantId", human.getId().toString());
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("INVALID_REQUEST",
+                java.util.Objects.requireNonNull(response.getBody()).get("code"));
     }
 
     @Test

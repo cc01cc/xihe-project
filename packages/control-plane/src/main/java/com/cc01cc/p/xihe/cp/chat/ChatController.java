@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ChatRunTransportAttempt;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
@@ -567,16 +568,17 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
         if (!toParticipantIds.isEmpty()) {
-            // PLAN-0665 M1/Q1: the FIRST target owns the user_submission Run (runId = runIds[0]);
-            // the remaining targets become sibling runs through the single TargetedWake entry.
-            // `asParticipantId` may not contradict the explicit selection.
+            // PLAN-0665 M1/Q1: asParticipantId may not contradict the explicit selection.
+            // task-87: the Run owner is NOT derived here any more — deciding who can ANSWER needs the
+            // roster (a HUMAN target never answers), so the derivation moved below the TO
+            // authorization. Deriving it from TO[0] unconditionally made the same target set answer
+            // 403 or 202 depending on which position the human happened to sit in.
             String firstTarget = toParticipantIds.get(0).toString();
             if (asParticipantId != null && !asParticipantId.isBlank()
                     && !asParticipantId.equalsIgnoreCase(firstTarget)) {
                 return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "asParticipantId conflicts with toParticipantIds[0]");
             }
-            asParticipantId = firstTarget;
         }
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
@@ -661,14 +663,42 @@ public class ChatController {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
         }
-        // PLAN-0665 M1/Q3: every explicit TO target passes the SAME D23-08 gate as `asParticipantId`
-        // (a fan-out selector must never become an authorization bypass). M1 accepts AGENT
-        // participants only; human TO is a later plan (blocked on BL-238).
+        // PLAN-0665 M1/Q3 + task-65: every explicit TO target is authorized for DELIVERY (roster
+        // membership + enabled), never as a speak-as bypass — a selector must not become an
+        // impersonation door.
+        SessionParticipant toRunOwner = null;
         if (!toParticipantIds.isEmpty()) {
+            List<SessionParticipant> toTargetRows;
             try {
-                sessionParticipantService.authorizeToTargets(userId, workspaceId, sessionId, toParticipantIds);
+                toTargetRows = sessionParticipantService.authorizeToTargets(userId, workspaceId,
+                        sessionId, toParticipantIds);
             } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
+            // task-87 (from task-80 §B): the submission Run belongs to a target that can ANSWER —
+            // the first AGENT in request order — not blindly to TO[0]. With as = TO[0] a HUMAN first
+            // target went through the speak-as gate and answered 403 PARTICIPANT_CAP_DENIED, while
+            // the very same set answered 202 when the agent happened to be listed first.
+            // A caller-supplied as is left untouched: that is the D23-08 speak-as path, validated
+            // above against TO[0].
+            if (asParticipantId == null || asParticipantId.isBlank()) {
+                toRunOwner = firstAgentTarget(toTargetRows);
+                if (toRunOwner != null) {
+                    asParticipantId = toRunOwner.getId().toString();
+                    try {
+                        sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId,
+                                asParticipantId);
+                    } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+                        return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(),
+                                e.getMessage());
+                    }
+                }
+            } else {
+                String explicitAs = asParticipantId;
+                toRunOwner = toTargetRows.stream()
+                        .filter(row -> row.getId().toString().equalsIgnoreCase(explicitAs))
+                        .findFirst()
+                        .orElse(null);
             }
         }
         // PLAN-0623 M1b-②: cap 与 run 归属必须出自同一个 Responder —— 在请求线程解析一次并随
@@ -895,6 +925,9 @@ public class ChatController {
             // workspace_id, V92:50-72), so an independent session has @-mentions like any other.
             List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
+            // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
+            // message can never create two runs for the same participant.
+            Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
             // PLAN-0665 M1: an explicit TO selection outranks the mention suppression — the caller
             // named exactly who should answer, so the first target always owns this run.
             boolean suppressPrimary = toParticipantIds.isEmpty()
@@ -932,6 +965,37 @@ public class ChatController {
                 }
             }
 
+            // task-87: an explicit TO set whose every target is HUMAN has no responder at all — a
+            // HUMAN target is a notification, never an answer (task-65). Mirror the explicit-empty-TO
+            // suppression (task-443 / D-1273) but keep the notifications the sender asked for: the
+            // named people still hear about it, and "nobody answered" stays observable on the Run.
+            if (!toParticipantIds.isEmpty() && toRunOwner == null) {
+                WakeFanOutService.WakeHandoff ccHandoff = wakeFanOutService.fanOut(
+                        UUID.fromString(sessionId), workspaceId, userId, runId, content, roster,
+                        ccParticipantIds, toTargetIds);
+                if (!ccHandoff.enqueued()) {
+                    logger.error("[LIFECYCLE] service=cp event=wake_handoff_lost requestId={} sessionId={} "
+                                    + "runId={} cause=explicit_to_human_only skipReason={}", requestId,
+                            sessionId, runId, ccHandoff.skipReason());
+                }
+                WakeFanOutService.TargetedWake humanWake = wakeFanOutService.targetedFanOut(
+                        UUID.fromString(sessionId), workspaceId, userId, runId, content,
+                        toParticipantIds);
+                chatRunLifecycleService.transition(runId, List.of("accepted"), "succeeded",
+                        SUPPRESSED_NO_RESPONDER, null, null, 0, 0, null);
+                governor.releaseRun(runId);
+                logger.info("[LIFECYCLE] service=cp event=chat_primary_suppressed requestId={} "
+                                + "sessionId={} runId={} cause=explicit_to_human_only targets={}",
+                        requestId, sessionId, runId, toParticipantIds.size());
+                handedOff = true;
+                Map<String, Object> humanOnlyBody = runAcceptedBody(chatRun, "succeeded", sessionId,
+                        userMessage.getId(), runId, "primary_suppressed");
+                humanOnlyBody.put("terminalOutcome", SUPPRESSED_NO_RESPONDER);
+                putTargetBuckets(humanOnlyBody, humanWake, new ArrayList<>(),
+                        toParticipantIds.size(), sessionId, runId);
+                return ResponseEntity.accepted().body(humanOnlyBody);
+            }
+
             final ProviderCredentialLeaseService.Admission dispatchAdmission =
                     admission == null ? ProviderCredentialLeaseService.Admission.none() : admission;
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
@@ -940,9 +1004,7 @@ public class ChatController {
             // recipients answer serially on the session executor, never on this thread.
             // PLAN-0630 M5b (D30-14): the composer's cc observer list rides the same round —
             // observers get a notify signal only, never a run of their own.
-            // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
-            // message can never create two runs for the same participant.
-            Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
+            // task-87: the set below is built once, above both the accept and the suppression paths.
             // D-1438 (task-48): fan-out is session+principal scoped, not workspace scoped — an
             // independent session's TO/CC round runs exactly like a workspace session's.
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
@@ -951,78 +1013,19 @@ public class ChatController {
             Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
                     userMessage.getId(), runId, null);
             if (!toParticipantIds.isEmpty()) {
-                // PLAN-0665 Q1: runId = runIds[0] (this Run = the first target); the remaining
-                // targets are dispatched through the SINGLE TargetedWake entry and answered as
-                // sibling runs. Explicit TO (not @) drives the wake, so `triggerSource="to"`.
+                // PLAN-0665 Q1 + task-87: this Run is answered by the TO target that can ANSWER
+                // (runIds[0]); every OTHER target — a HUMAN in any position included — travels the
+                // single TargetedWake entry. Removing the owner by identity instead of by index is
+                // what makes [human, agent] and [agent, human] the same request.
                 List<String> runIds = new ArrayList<>();
                 runIds.add(runId);
-                List<Map<String, String>> failedTargets = new ArrayList<>();
-                List<Map<String, String>> deferredTargets = new ArrayList<>();
-                List<Map<String, String>> notifiedTargets = new ArrayList<>();
-                List<Map<String, String>> suppressedTargets = new ArrayList<>();
-                if (toParticipantIds.size() > 1) {
-                    WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
-                            UUID.fromString(sessionId), workspaceId, userId, runId, content,
-                            toParticipantIds.subList(1, toParticipantIds.size()));
-                    targeted.runIds().forEach(id -> runIds.add(id.toString()));
-                    targeted.failedTargets().forEach(failure -> failedTargets.add(targetEntry(failure)));
-                    targeted.deferredTargets()
-                            .forEach(deferred -> deferredTargets.add(targetEntry(deferred)));
-                    targeted.notifiedTargets()
-                            .forEach(notified -> notifiedTargets.add(targetEntry(notified)));
-                    targeted.suppressedTargets()
-                            .forEach(suppressed -> suppressedTargets.add(targetEntry(suppressed)));
-                }
-                acceptedBody.put("runIds", runIds);
-                // BL-283 (Lead ruling 2026-11-05) + task-53 + task-60: FIVE explicit buckets, one
-                // invariant — runIds + failed + deferred + notified + suppressed = requested targets.
-                // Deferred = queued (a follow-up item waits for a slot); notified = a HUMAN target
-                // whose delivery IS the notification (outcome=notify, no run); suppressed = the
-                // target was deliberately not woken (muted config / judge declined / policy refused)
-                // with nothing gone wrong; failed = a real dispatch error. None is ever silent, and
-                // only failed logs at ERROR.
-                if (!deferredTargets.isEmpty()) {
-                    acceptedBody.put("deferredTargets", deferredTargets);
-                    logger.info("[LIFECYCLE] service=cp event=to_fanout_deferred sessionId={} runId={} "
-                                    + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
-                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
-                            failedTargets.size());
-                }
-                if (!notifiedTargets.isEmpty()) {
-                    acceptedBody.put("notifiedTargets", notifiedTargets);
-                    logger.info("[LIFECYCLE] service=cp event=to_fanout_notified sessionId={} runId={} "
-                                    + "targets={} dispatched={} deferred={} failed={} notified={} "
-                                    + "suppressed={}", sessionId, runId, toParticipantIds.size(),
-                            runIds.size(), deferredTargets.size(), failedTargets.size(),
-                            notifiedTargets.size(), suppressedTargets.size());
-                }
-                if (!suppressedTargets.isEmpty()) {
-                    // task-60: INFO, not ERROR — a muted / judge-declined / policy-refused target is
-                    // not a malfunction. The detail token says which of the three it was.
-                    acceptedBody.put("suppressedTargets", suppressedTargets);
-                    logger.info("[LIFECYCLE] service=cp event=to_fanout_suppressed sessionId={} "
-                                    + "runId={} targets={} dispatched={} deferred={} failed={} "
-                                    + "notified={} suppressed={}", sessionId, runId,
-                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
-                            failedTargets.size(), notifiedTargets.size(), suppressedTargets.size());
-                }
-                if (!failedTargets.isEmpty()) {
-                    acceptedBody.put("failedTargets", failedTargets);
-                    logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
-                                    + "targets={} dispatched={} deferred={} failed={} notified={} "
-                                    + "suppressed={}", sessionId, runId, toParticipantIds.size(),
-                            runIds.size(), deferredTargets.size(), failedTargets.size(),
-                            notifiedTargets.size(), suppressedTargets.size());
-                }
-                if (runIds.size() + failedTargets.size() + deferredTargets.size()
-                        + notifiedTargets.size() + suppressedTargets.size()
-                        != toParticipantIds.size()) {
-                    logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
-                                    + "runId={} targets={} dispatched={} deferred={} failed={} notified={} "
-                                    + "suppressed={}", sessionId, runId, toParticipantIds.size(),
-                            runIds.size(), deferredTargets.size(), failedTargets.size(),
-                            notifiedTargets.size(), suppressedTargets.size());
-                }
+                List<UUID> remainingTargets = new ArrayList<>(toParticipantIds);
+                remainingTargets.remove(toRunOwner.getId());
+                WakeFanOutService.TargetedWake targeted = remainingTargets.isEmpty() ? null
+                        : wakeFanOutService.targetedFanOut(UUID.fromString(sessionId), workspaceId,
+                                userId, runId, content, remainingTargets);
+                putTargetBuckets(acceptedBody, targeted, runIds, toParticipantIds.size(),
+                        sessionId, runId);
             }
             return ResponseEntity.accepted().body(acceptedBody);
         } finally {
@@ -2446,6 +2449,94 @@ public class ChatController {
             entry.put("detail", target.detail());
         }
         return entry;
+    }
+
+    /**
+     * task-87: the TO target that owns this submission's Run — the first AGENT in request order. A
+     * HUMAN target can only be notified (task-65), so it never owns an answering run.
+     */
+    private static SessionParticipant firstAgentTarget(List<SessionParticipant> targets) {
+        for (SessionParticipant row : targets) {
+            if (SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * task-87: the five-term TO accounting — runIds + failed + deferred + notified + suppressed ==
+     * requestedTargets — shared by the accepted path and the "every TO target is a HUMAN"
+     * suppression path so the two cannot drift. Event names and levels are the frozen ones
+     * (BL-283, task-53, task-60): only failed logs at ERROR. targeted is null when nothing was
+     * left to wake beyond the run owner.
+     */
+    private void putTargetBuckets(Map<String, Object> body, WakeFanOutService.TargetedWake targeted,
+                                  List<String> runIds, int requestedTargets, String sessionId,
+                                  String runId) {
+        List<Map<String, String>> failedTargets = new ArrayList<>();
+        List<Map<String, String>> deferredTargets = new ArrayList<>();
+        List<Map<String, String>> notifiedTargets = new ArrayList<>();
+        List<Map<String, String>> suppressedTargets = new ArrayList<>();
+        if (targeted != null) {
+            targeted.runIds().forEach(id -> runIds.add(id.toString()));
+            targeted.failedTargets().forEach(failure -> failedTargets.add(targetEntry(failure)));
+            targeted.deferredTargets().forEach(deferred -> deferredTargets.add(targetEntry(deferred)));
+            targeted.notifiedTargets().forEach(notified -> notifiedTargets.add(targetEntry(notified)));
+            targeted.suppressedTargets()
+                    .forEach(suppressed -> suppressedTargets.add(targetEntry(suppressed)));
+        }
+        body.put("runIds", runIds);
+
+        // BL-283 (Lead ruling 2026-11-05) + task-53 + task-60: FIVE explicit buckets, one
+        // invariant — runIds + failed + deferred + notified + suppressed = requested targets.
+        // Deferred = queued (a follow-up item waits for a slot); notified = a HUMAN target
+        // whose delivery IS the notification (outcome=notify, no run); suppressed = the
+        // target was deliberately not woken (muted config / judge declined / policy refused)
+        // with nothing gone wrong; failed = a real dispatch error. None is ever silent, and
+        // only failed logs at ERROR.
+        if (!deferredTargets.isEmpty()) {
+            body.put("deferredTargets", deferredTargets);
+            logger.info("[LIFECYCLE] service=cp event=to_fanout_deferred sessionId={} runId={} "
+                            + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
+                    requestedTargets, runIds.size(), deferredTargets.size(),
+                    failedTargets.size());
+        }
+        if (!notifiedTargets.isEmpty()) {
+            body.put("notifiedTargets", notifiedTargets);
+            logger.info("[LIFECYCLE] service=cp event=to_fanout_notified sessionId={} runId={} "
+                            + "targets={} dispatched={} deferred={} failed={} notified={} "
+                            + "suppressed={}", sessionId, runId, requestedTargets,
+                    runIds.size(), deferredTargets.size(), failedTargets.size(),
+                    notifiedTargets.size(), suppressedTargets.size());
+        }
+        if (!suppressedTargets.isEmpty()) {
+            // task-60: INFO, not ERROR — a muted / judge-declined / policy-refused target is
+            // not a malfunction. The detail token says which of the three it was.
+            body.put("suppressedTargets", suppressedTargets);
+            logger.info("[LIFECYCLE] service=cp event=to_fanout_suppressed sessionId={} "
+                            + "runId={} targets={} dispatched={} deferred={} failed={} "
+                            + "notified={} suppressed={}", sessionId, runId,
+                    requestedTargets, runIds.size(), deferredTargets.size(),
+                    failedTargets.size(), notifiedTargets.size(), suppressedTargets.size());
+        }
+        if (!failedTargets.isEmpty()) {
+            body.put("failedTargets", failedTargets);
+            logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
+                            + "targets={} dispatched={} deferred={} failed={} notified={} "
+                            + "suppressed={}", sessionId, runId, requestedTargets,
+                    runIds.size(), deferredTargets.size(), failedTargets.size(),
+                    notifiedTargets.size(), suppressedTargets.size());
+        }
+        if (runIds.size() + failedTargets.size() + deferredTargets.size()
+                + notifiedTargets.size() + suppressedTargets.size()
+                != requestedTargets) {
+            logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
+                            + "runId={} targets={} dispatched={} deferred={} failed={} notified={} "
+                            + "suppressed={}", sessionId, runId, requestedTargets,
+                    runIds.size(), deferredTargets.size(), failedTargets.size(),
+                    notifiedTargets.size(), suppressedTargets.size());
+        }
     }
 
     /**
