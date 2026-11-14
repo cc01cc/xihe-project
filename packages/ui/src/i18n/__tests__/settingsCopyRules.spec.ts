@@ -93,3 +93,40 @@ describe("设置区用户可见文案：不得出现内部编号与实现标识�
         });
     }
 });
+
+/**
+ * task-22（Lead 裁定）：**树外命名空间**的同类判据 —— 按**精确 key 名单**，不一次扩全树。
+ *
+ * <p>为什么先名单而不是全树：门原本只扫 `settings.*`，而 `resources.reasonCapability` 这类
+ * 树外文案同样会印出 wire 标识。一次扩全树必然带出存量红，红着的门当天就会被绕过
+ * （`D-1074`「开不了的门等于没有门」）⇒ 先按名单纳入**已被证实的**那几处，扩面另批。</p>
+ *
+ * <p>名单的两条纪律：① **改名即红**（下面断言 key 存在且非空）—— 否则组件换了 key、门静默失效；
+ * ② 每个 key 都跑**同一份 RULES**，不在本块另写一套判据（第二份判据必然漂）。</p>
+ */
+const OUTSIDE_SETTINGS_KEYS = [
+    "resources.reasonCapability",
+    "resources.reasonNoWorkspace",
+] as const;
+
+function copyAt(locale: (typeof LOCALES)[number], path: string): string | undefined {
+    const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
+    return flatten(message).find((entry) => entry.path === path)?.value;
+}
+
+describe("设置区之外的层/能力位文案（task-22，精确 key 名单）", () => {
+    for (const locale of LOCALES) {
+        it(`${locale}：名单内 key 存在，且不含内部编号/实现标识`, () => {
+            for (const key of OUTSIDE_SETTINGS_KEYS) {
+                const value = copyAt(locale, key);
+                expect(
+                    value,
+                    `${key} 必须存在且非空：改名或删除要同步改 OUTSIDE_SETTINGS_KEYS，否则这条门会静默失效`,
+                ).toBeTruthy();
+                for (const rule of RULES) {
+                    expect(rule.test(value!), `${key} 命中「${rule.name}」：${value}`).toBe(false);
+                }
+            }
+        });
+    }
+});

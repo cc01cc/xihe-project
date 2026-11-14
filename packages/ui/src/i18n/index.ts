@@ -1725,7 +1725,8 @@ const messages = {
             tabsLabel: "资源层",
             disabledHint: "置灰的层仍留在页面上（不隐藏），点了不会切过去；原因见下。",
             reasonNoWorkspace: "该层的数据按工作区归属：当前没有工作区上下文",
-            reasonCapability: "需要实例管理员能力（CP 侧守的是 instance:admin）",
+            // task-22（C-4 同族，树外）：点名能力位用用户语言，不写 wire 标识 instance:admin。
+            reasonCapability: "需要实例管理员能力",
             skills: {
                 panelMine: "我的技能",
                 subtitleMine:
@@ -2023,10 +2024,12 @@ const messages = {
                     "缺少「{atom}」权限（{code}）。这是授权问题，不是功能缺失：需要管理员把该权限授予你的账号（或所在角色）。",
                 atomDeniedNotGap:
                     "提示：这不是「功能未提供」——服务端已经有这个能力，只是你所在账号还没有被授予。",
-                // task-509（T-07）：内部决策号（D-951）不属于用户界面 ⇒ 换成「还没开放」；
-                // 顺手把「个人层」统一成「用户层」（层称谓只留一套，见 task-227 T-03）。
+                // task-509（T-07）：内部决策号（D-951）不属于用户界面 ⇒ 换成「还没开放」。
+                // task-22（HEAD 既有红，非回归）：上一行注释里「把『个人层』统一成『用户层』」**方向错了** ——
+                // 层名 SSOT 是「个人层」（task-251 / D-1043，由 terminology.spec.ts:56-68 钉死）。
+                // 本键文案因此在 develop 上一直红；这里按 SSOT 还原，断言一字未动。
                 gapNoteAgent:
-                    "实例级平台智能体还没开放：这个入口现在打不开页面。能用的是工作区层（工作区设置 → 智能体）与用户层（设置 → 智能体主体）；实例级能力上线后，这里会变成可管理的「平台智能体」。",
+                    "实例级平台智能体还没开放：这个入口现在打不开页面。能用的是工作区层（工作区设置 → 智能体）与个人层（设置 → 智能体主体）；实例级能力上线后，这里会变成可管理的「平台智能体」。",
                 gapNoteMcp:
                     "MCP 服务器目前只能在工作区范围内使用：实例层与用户层都不提供，接口也只有工作区范围，请到工作区设置里管理。",
                 gapNoteKnowledge:
@@ -5381,8 +5384,8 @@ const messages = {
                 "Dimmed layers stay on the page (never hidden) and cannot be selected; reasons below.",
             reasonNoWorkspace:
                 "This layer is scoped to a workspace, and there is no workspace context right now",
-            reasonCapability:
-                "Requires instance-admin capability (CP guards it with instance:admin)",
+            // task-22 (same family as C-4, outside the settings subtree): user language, no wire token.
+            reasonCapability: "Requires instance-admin capability",
             skills: {
                 panelMine: "My skills",
                 subtitleMine:
@@ -5682,8 +5685,10 @@ const messages = {
                     "Missing the “{atom}” permission ({code}). This is an authorization problem, not a missing feature: an administrator must grant that atom to your account (or role).",
                 atomDeniedNotGap:
                     "Note: this is not a “feature not available yet” case — the server already supports it; your account is simply not granted.",
+                // task-22 (pre-existing red at HEAD, not a regression): layer-name SSOT is "personal layer"
+                // (task-251 / D-1043, pinned by terminology.spec.ts:56-68); "user layer" was the wrong direction.
                 gapNoteAgent:
-                    "Instance-level platform agents are not available yet, so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the user layer (Settings → Agent principals). Once it ships, this becomes a manageable “Platform agents” page.",
+                    "Instance-level platform agents are not available yet, so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the personal layer (Settings → Agent principals). Once it ships, this becomes a manageable “Platform agents” page.",
                 gapNoteMcp:
                     "MCP servers can only be used within a workspace today: neither the instance layer nor the user layer hosts them, and the API is workspace-scoped too. Manage them in workspace settings.",
                 gapNoteKnowledge:
