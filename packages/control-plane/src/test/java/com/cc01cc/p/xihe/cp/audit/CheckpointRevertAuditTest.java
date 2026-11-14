@@ -74,6 +74,18 @@ class CheckpointRevertAuditTest {
         assertEquals(1, subject.failureCount(), "失败必须计数，否则就是静默丢记录");
     }
 
+    /** 判据：三态结果可按值筛 —— details 以 result= 开头，可 LIKE 'result=skipped%'。 */
+    @Test
+    void resultValueIsPrefixFilterableForAllThreeStates() {
+        for (String result : new String[] {"rolled_back", "partial", "skipped", "failed"}) {
+            AuditLogger audit = mock(AuditLogger.class);
+            new CheckpointRevertAudit(audit, passThrough()).reverted("actor-1", "ws-1", CHECKPOINT_ID,
+                    result, "slice-7", 0, 0, 0, 1);
+            verify(audit, times(1)).recordDurableChange(any(), any(), any(), any(), any(),
+                    argThat(detail -> detail.startsWith("result=" + result)));
+        }
+    }
+
     @Test
     void blankCheckpointIdIsNotAudited() {
         AuditLogger audit = mock(AuditLogger.class);

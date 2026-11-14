@@ -29,6 +29,17 @@ public class CheckpointRevertAudit {
     public static final String ACTION = "run_checkpoint.reverted";
     public static final String RESOURCE_TYPE = "run_checkpoint";
 
+    /**
+     * 三态结果，{@code details} 以 {@code result=} 开头 ⇒ 可按值筛（{@code details LIKE 'result=skipped%'}）。
+     *
+     * <p>{@code rolled_back} = 效果发生且记账成功；{@code partial} = 效果部分发生且记账成功；
+     * {@code skipped} = 记账被跳过（状态已被并发改过，本次没有生效状态）；{@code failed} = 效果已发生
+     * 但记账抛错。<b>审计记的是「谁尝试做了什么」</b>，所以被跳过的尝试也要有行 —— 它指向「有人在动
+     * 同一个 checkpoint」；把结果标成 skipped 是准确记录，不是造假（造假是标 rolled_back 而实际没回滚）。</p>
+     */
+    public static final String RESULT_SKIPPED = "skipped";
+    public static final String RESULT_FAILED = "failed";
+
     private static final Logger logger = LoggerFactory.getLogger(CheckpointRevertAudit.class);
 
     private final AuditLogger audit;

@@ -894,9 +894,12 @@ class RunCheckpointServiceTest {
                 eq(row.getRevertState()), eq(SLICE_REF), anyInt(), anyInt(), anyInt(), anyInt());
     }
 
-    /** 记账被跳过（状态被并发改过）的回滚不写审计 —— 不为没生效的回滚造假记录。 */
+    /**
+     * 三态之二：记账被跳过（状态被并发改过）仍要留行，但结果标 skipped ——
+     * 审计记的是「谁尝试做了什么」，跳过不等于没发生；标成 skipped 才是准确记录。
+     */
     @Test
-    void skippedBookkeepingWritesNoAuditRow() {
+    void skippedBookkeepingWritesRowWithResultSkipped() {
         seedCapturedRow();
         com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit audit =
                 mock(com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.class);
@@ -906,7 +909,27 @@ class RunCheckpointServiceTest {
 
         service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
 
-        verify(audit, times(0)).reverted(any(), any(), any(), any(), any(), anyInt(), anyInt(), anyInt(), anyInt());
+        verify(audit, times(1)).reverted(any(), eq(WORKSPACE_ID), anyString(), eq("skipped"),
+                eq(SLICE_REF), eq(0), eq(0), anyInt(), anyInt());
+    }
+
+    /** 三态之三：记账抛错（效果已发生）⇒ 结果标 failed，回滚本身不因此改判。 */
+    @Test
+    void bookkeepingFailureWritesRowWithResultFailed() {
+        seedCapturedRow();
+        com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit audit =
+                mock(com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.class);
+        service.setRevertAudit(audit);
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(revertOk(1, 0, 0));
+        when(repository.markReverted(any(), anyString(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("db down"));
+
+        RunCheckpointService.RevertOutcome outcome =
+                service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
+
+        assertEquals(RunCheckpointService.Gate.OK, outcome.gate(), "记账失败不得把回滚改判成失败");
+        verify(audit, times(1)).reverted(any(), eq(WORKSPACE_ID), anyString(), eq("failed"),
+                eq(SLICE_REF), eq(0), eq(0), anyInt(), anyInt());
     }
 
     @Test

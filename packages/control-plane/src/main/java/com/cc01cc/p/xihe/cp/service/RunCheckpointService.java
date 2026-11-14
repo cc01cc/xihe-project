@@ -847,17 +847,28 @@ public class RunCheckpointService {
         Instant now = Instant.now();
         String summary = buildRevertSummary(row, result, counts, reason);
         int updated = 0;
+        boolean bookkeepingFailed = false;
         try {
             updated = checkpoints.markReverted(row.getId(), revertState, result.sliceRef(), summary, now);
         } catch (Exception e) {
+            bookkeepingFailed = true;
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_revert_bookkeeping_failed runId={} "
                             + "failureType={}",
                     row.getSourceRunId(), e.getClass().getName());
         }
         if (updated == 0) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_revert_bookkeeping_skipped runId={} "
-                            + "revertState={} reason=state_changed",
-                    row.getSourceRunId(), revertState);
+                            + "revertState={} reason={}",
+                    row.getSourceRunId(), revertState,
+                    bookkeepingFailed ? "bookkeeping_failed" : "state_changed");
+            // task-548: 记的是「谁尝试做了什么」——被跳过/记账失败的尝试同样要留行，结果标准确值。
+            if (revertAudit != null) {
+                revertAudit.reverted(actorUserId, row.getWorkspaceId(), String.valueOf(row.getId()),
+                        bookkeepingFailed
+                                ? com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.RESULT_FAILED
+                                : com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.RESULT_SKIPPED,
+                        result.sliceRef(), 0, 0, counts.failed(), row.getRevertAttemptCount());
+            }
             return;
         }
         row.setRevertState(revertState);
