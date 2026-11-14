@@ -101,3 +101,91 @@ test("ws-less 上下文请求头审计（task-585 余项）", async ({ page }) =
             }),
     );
 });
+
+/**
+ * task-585 余项 ②：**页面级轮询**的头注入面（唯一没被主判据咬住的一类）。
+ *
+ * 主判据只覆盖「会话专有读面」；而 `GET /api/v1/approvals/pending` 与 `POST /api/v1/mcp`
+ * 是壳层轮询，不走会话路径 —— 它们带什么头，之前没有任何判据。
+ */
+test.describe("ws-less 上下文 · 页面级轮询的头", () => {
+    const POLL_PATHS = ["/api/v1/approvals/pending", "/api/v1/mcp"];
+
+    function watchPolling(page: Page): Array<{ path: string; workspaceHeader: string }> {
+        const rows: Array<{ path: string; workspaceHeader: string }> = [];
+        page.on("request", (request) => {
+            const path = new URL(request.url()).pathname;
+            if (!POLL_PATHS.includes(path)) return;
+            const headers = request.headers();
+            rows.push({ path, workspaceHeader: headers["x-workspace-id"] ?? "" });
+        });
+        return rows;
+    }
+
+    async function stubWorkspaces(page: Page): Promise<void> {
+        await page.route(
+            (url) => url.pathname === "/api/v1/workspaces",
+            async (route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify([
+                        { id: WS_ID, name: "Workspace 1", workspaceRole: "WS_OWNER" },
+                    ]),
+                });
+            },
+        );
+    }
+
+    test("反向控制：工作区上下文里的轮询**必须**带工作区头", async ({ page }) => {
+        const rows = watchPolling(page);
+        await setupMockAuth(page);
+        await stubWorkspaces(page);
+        await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+
+        // 轮询是异步的：等到至少一行读数，再断言「带的是当前工作区 id」。
+        await expect.poll(() => rows.length, { timeout: LONG_TIMEOUT_MS }).toBeGreaterThan(0);
+        expect(
+            rows.filter((row) => row.workspaceHeader !== WS_ID),
+            "工作区上下文里的轮询必须带当前工作区头（否则注入逻辑已死）",
+        ).toEqual([]);
+    });
+
+    /**
+     * 已知红（2026-11-14 实测，读数 `H:/zeotmp/ui1-pw/t585c.txt`）：在 ws-less 页面上，
+     * 上面两条轮询仍带着**上一个工作区**的 id —— 说明它们的 workspaceId 不是从 tab 上下文现读，
+     * 而是显式传参（`api.ts` 里 `workspaceId ? { "X-Workspace-Id": workspaceId } : {}` 那类调用面），
+     * 因此 `enterWorkspaceless()` 清上下文对它们无效。
+     *
+     * <p>用 `fixme` 而不是删掉/放宽：判据本身是对的（ws-less 上下文里不该出现任何工作区 id），
+     * 红是因为产品侧确有上下文泄漏（待裁：补调用面还是建卡）。修好后把 `fixme` 换回 `test`。</p>
+     */
+    test.fixme("ws-less 上下文里的轮询必须带空头（当前红：旧工作区 id 泄漏）", async ({ page }) => {
+        const rows = watchPolling(page);
+        await setupMockAuth(page);
+        await stubWorkspaces(page);
+        await setupMockSessions(page, {
+            sessions: [{ id: WS_SESSION, title: "工作区会话" }],
+            workspacelessSessions: [{ id: STANDALONE, title: "独立会话甲" }],
+        });
+        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await expect(page.getByTestId("sidebar-standalone-group")).toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
+        const boundary = rows.length;
+        await page.getByTestId("sidebar-standalone-group").getByText("独立会话甲").click();
+        await expect(page.getByTestId("standalone-chat-title")).toHaveText("独立会话甲", {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+
+        // 边界之后（含轮询的下一拍）不得带非空工作区头。
+        await expect
+            .poll(() => rows.slice(boundary).length, { timeout: LONG_TIMEOUT_MS })
+            .toBeGreaterThan(0);
+        expect(rows.slice(boundary).filter((row) => row.workspaceHeader !== "")).toEqual([]);
+    });
+});
