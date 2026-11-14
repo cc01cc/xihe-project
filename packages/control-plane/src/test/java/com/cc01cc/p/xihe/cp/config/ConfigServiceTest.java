@@ -76,6 +76,81 @@ class ConfigServiceTest {
         assertEquals("WARN", entries.get("logLevel"));
     }
 
+    // ------------------------------------------------------------------------------
+    // D-1438 (task-48): agent-runtime.defaultParticipants — the default roster a NEW
+    // workspace-less (independent) session starts with. Shape = config-schemas/agent-runtime.json;
+    // the two per-entry rules are enforced on the same write path (ConfigService).
+    // ------------------------------------------------------------------------------
+
+    private static final String HUMAN_ENTRY =
+            "[{\"principalKind\":\"HUMAN\",\"principalId\":\"%s\",\"deliveryDefaults\":[\"cc\"]}]";
+
+    private static final String AGENT_ENTRY =
+            "[{\"principalKind\":\"AGENT\",\"principalId\":\"%s\"}]";
+
+    @Test
+    void defaultParticipants_humanEntryIsAcceptedOnEveryLayerThatCanCarryIt() {
+        String value = String.format(HUMAN_ENTRY, userA);
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("defaultParticipants", value), "admin", null, null);
+        configService.putLayer("workspace-default", "agent-runtime",
+                Map.of("defaultParticipants", value), "admin", null, null);
+        configService.putLayer("user", "agent-runtime",
+                Map.of("defaultParticipants", value), "user", userA, null);
+
+        assertEquals(value, configService.layerEntries("instance", "agent-runtime", null, null)
+                .get("defaultParticipants"));
+    }
+
+    @Test
+    void defaultParticipants_agentEntryIsAcceptedAtTheUserLayer() {
+        String value = String.format(AGENT_ENTRY, userA);
+        configService.putLayer("user", "agent-runtime",
+                Map.of("defaultParticipants", value), "user", userA, null);
+
+        assertEquals(value,
+                configService.layerEntries("user", "agent-runtime", userA, null)
+                        .get("defaultParticipants"));
+    }
+
+    @Test
+    void defaultParticipants_agentEntryIsRefusedOutsideTheUserLayer() {
+        String value = String.format(AGENT_ENTRY, userA);
+        IllegalArgumentException onInstance = assertThrows(IllegalArgumentException.class,
+                () -> configService.putLayer("instance", "agent-runtime",
+                        Map.of("defaultParticipants", value), "admin", null, null));
+        assertTrue(onInstance.getMessage().contains("user layer only"), onInstance.getMessage());
+
+        IllegalArgumentException onWorkspaceDefault =
+                assertThrows(IllegalArgumentException.class,
+                        () -> configService.putLayer("workspace-default", "agent-runtime",
+                                Map.of("defaultParticipants", value), "admin", null, null));
+        assertTrue(onWorkspaceDefault.getMessage().contains("user layer only"),
+                onWorkspaceDefault.getMessage());
+    }
+
+    @Test
+    void defaultParticipants_humanEntryCannotDefaultToTo() {
+        String value = "[{\"principalKind\":\"HUMAN\",\"principalId\":\"" + userA
+                + "\",\"deliveryDefaults\":[\"to\"]}]";
+        IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class,
+                () -> configService.putLayer("user", "agent-runtime",
+                        Map.of("defaultParticipants", value), "user", userA, null));
+        assertTrue(rejected.getMessage().contains("cannot default to 'to'"), rejected.getMessage());
+    }
+
+    @Test
+    void defaultParticipants_shapeIsEnforcedByTheDomainSchema() {
+        // PRIMARY is not expressible (V92:95-96 unique index + D23-13 immutability) and the entry
+        // shape is closed, so an unknown role value must be refused before it could become a row.
+        String value = "[{\"principalKind\":\"HUMAN\",\"principalId\":\"" + userA
+                + "\",\"role\":\"PRIMARY\"}]";
+        IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class,
+                () -> configService.putLayer("user", "agent-runtime",
+                        Map.of("defaultParticipants", value), "user", userA, null));
+        assertTrue(rejected.getMessage().contains("Schema validation failed"), rejected.getMessage());
+    }
+
     @Test
     void resolve_workspaceLayerRefusesModelDomains_andUserStillBeatsInstance() {
         // T2.4 / D-1122 49A: llm-provider left the workspace layer. The chain now tops out

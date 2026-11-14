@@ -823,6 +823,9 @@ public class ConfigService {
             throw new IllegalArgumentException(
                 "Schema validation failed: " + String.join("; ", errors));
         }
+        if ("agent-runtime".equals(domain)) {
+            validateDefaultParticipants(layer, effectiveEntries);
+        }
         if ("context-templates".equals(domain)) {
             validateContextTemplateUpdate(layer, effectiveEntries, userId, workspaceId);
         }
@@ -1875,6 +1878,70 @@ public class ConfigService {
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
+    }
+
+    /**
+     * D-1438 (task-48): {@code agent-runtime.defaultParticipants} — the roster a <b>new</b>
+     * workspace-less (independent) session starts with. The shape lives in
+     * {@code config-schemas/agent-runtime.json}; the two rules JSON Schema cannot express per entry
+     * kind are enforced here, on the same write path as {@link #validateBySchema}:
+     *
+     * <ul>
+     *   <li>an {@code AGENT} entry is accepted at the <b>user</b> layer only. Agent principals
+     *       carry no workspace column (V42:1-11; the workspace binding is the separate
+     *       {@code workspace_agents} table, V42:16-26), so an instance/workspace-default default
+     *       would name a single agent for <b>every</b> user's independent sessions;</li>
+     *   <li>a {@code HUMAN} entry may not default to {@code to}: TO accepts AGENT participants
+     *       only (400 INVALID_REQUEST — PLAN-0665 Q3 / D-1438), so that default could never be
+     *       honoured. {@code cc} / {@code mention_only} stay legal.</li>
+     * </ul>
+     *
+     * <p>A stale or disabled principal is deliberately <b>not</b> rejected here: the creation path
+     * skips it with a WARN — a default must never block creating a session.</p>
+     */
+    private void validateDefaultParticipants(String layer, Map<String, String> entries) {
+        String raw = entries.get("defaultParticipants");
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        JsonNode parsed;
+        try {
+            parsed = objectMapper.readTree(raw);
+        } catch (JsonProcessingException invalidJson) {
+            throw new IllegalArgumentException("defaultParticipants must be a JSON array", invalidJson);
+        }
+        if (!parsed.isArray()) {
+            throw new IllegalArgumentException("defaultParticipants must be a JSON array");
+        }
+        boolean userLayer = "user".equals(layer);
+        for (JsonNode entry : parsed) {
+            String kind = entry.path("principalKind").asText("");
+            String principalId = entry.path("principalId").asText("");
+            if (com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_AGENT.equals(kind) && !userLayer) {
+                throw new IllegalArgumentException(
+                        "defaultParticipants may name AGENT principals at the user layer only; "
+                                + "layer=" + layer + " principalId=" + principalId);
+            }
+            if (com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_HUMAN.equals(kind)
+                    && defaultsToTo(entry)) {
+                throw new IllegalArgumentException(
+                        "a HUMAN defaultParticipant cannot default to 'to' (TO is AGENT-only, "
+                                + "D-1438); use 'cc' or 'mention_only': " + principalId);
+            }
+        }
+    }
+
+    private static boolean defaultsToTo(JsonNode entry) {
+        JsonNode delivery = entry.path("deliveryDefaults");
+        if (!delivery.isArray()) {
+            return false;
+        }
+        for (JsonNode item : delivery) {
+            if ("to".equals(item.asText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<String> validateBySchema(String domain, Map<String, String> entries) {
