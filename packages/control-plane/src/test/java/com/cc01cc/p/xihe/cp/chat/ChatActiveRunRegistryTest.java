@@ -91,6 +91,57 @@ class ChatActiveRunRegistryTest {
         assertTrue(registry.tryReserve("follow-up-queue:" + SESSION, "token-2"));
     }
 
+    // ── task-131: a parked run still counts as in flight, but the recovery drain may take it back ──
+
+    @Test
+    void aHandedOffRunStaysInFlightForItsOtherReaders() {
+        assertTrue(registry.claim(SESSION, "run-parked"));
+        assertTrue(registry.markHandedOff(SESSION, "run-parked"));
+
+        // The two guard-shaped readers must not change: a parked run still blocks compaction and
+        // must still be protected from reconciliation (releasing the claim would break both).
+        assertTrue(registry.hasActive(SESSION));
+        assertTrue(registry.isRunActiveLocally("run-parked"));
+        assertTrue(registry.isHandedOff("run-parked"));
+        assertEquals(Set.of("run-parked"), registry.activeRunIds(SESSION));
+    }
+
+    @Test
+    void theRecoveryDrainTakesBackAParkedRunButNotAnActivelyDrivenOne() {
+        registry.claim(SESSION, "run-parked");
+        registry.markHandedOff(SESSION, "run-parked");
+
+        assertTrue(registry.resumeHandedOff(SESSION, "run-parked"),
+                "the drain may take back the run this process parked");
+        assertFalse(registry.isHandedOff("run-parked"), "taking it back clears the parked mark");
+        assertFalse(registry.resumeHandedOff(SESSION, "run-parked"),
+                "a second dispatch of the same run is still refused");
+
+        registry.claim(SESSION, "run-active");
+        assertFalse(registry.resumeHandedOff(SESSION, "run-active"),
+                "a run that is genuinely being driven is not a handoff");
+    }
+
+    @Test
+    void releasingAParkedRunForgetsTheParkedMarkToo() {
+        registry.claim(SESSION, "run-parked");
+        registry.markHandedOff(SESSION, "run-parked");
+
+        assertTrue(registry.release(SESSION, "run-parked"));
+
+        assertFalse(registry.isHandedOff("run-parked"));
+        assertFalse(registry.isRunActiveLocally("run-parked"));
+        assertTrue(registry.resumeHandedOff(SESSION, "run-reused"),
+                "a run this process no longer holds (registry lost, queue kept) is claimed defensively");
+    }
+
+    @Test
+    void handingOffARunThisProcessDoesNotHoldIsARefusal() {
+        assertFalse(registry.markHandedOff(SESSION, "run-unknown"),
+                "only a run this process claimed can be parked for recovery");
+        assertFalse(registry.isHandedOff("run-unknown"));
+    }
+
     @Test
     void unknownRunsAndSessionsReportNoActivity() {
         assertFalse(registry.isRunActiveLocally("missing"));

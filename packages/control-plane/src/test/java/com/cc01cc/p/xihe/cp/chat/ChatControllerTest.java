@@ -1156,6 +1156,9 @@ class ChatControllerTest extends AbstractH2Test {
             assertEquals(run.getId().toString(), response.getBody().get("runId"));
             assertEquals(1, requestQueue.size());
         } finally {
+            // This test only proves "排进去"; clearing here is teardown, not the assertion. The
+            // matching "排出来" evidence lives in chat_queuedRunIsRedeliveredAfterTheAgentRecovers,
+            // which asserts the queue empties itself and never clears it (task-131).
             requestQueue.clear();
             AGENT_AVAILABLE.set(true);
             healthMonitor.pollHealth();
@@ -1216,26 +1219,26 @@ class ChatControllerTest extends AbstractH2Test {
             AGENT_AVAILABLE.set(true);
             healthMonitor.pollHealth();
 
-            // (2) delivery: the agent stub is reached, so an ASSISTANT message exists for this run.
-            await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> assertEquals(1,
-                    jdbcTemplate.queryForObject(
-                            "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
-                            Integer.class, queuedRunId),
-                    "the queued run must be redelivered to the agent after recovery"));
-
-            // (3) no phantom CHAT_IN_PROGRESS: run succeeded and carries no error code, and no
-            // failed frame was written into the durable history.
-            assertEquals("succeeded", jdbcTemplate.queryForObject(
-                            "SELECT status FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", String.class, queuedRunId),
-                    "a redelivered run must finish succeeded");
-            assertEquals(0, jdbcTemplate.queryForObject(
-                            "SELECT count(*) FROM chat_runs WHERE CAST(id AS VARCHAR) = ? AND error_code IS NOT NULL",
-                            Integer.class, queuedRunId),
-                    "no error code may be attached to a run that was actually delivered");
-            assertEquals(0, jdbcTemplate.queryForObject(
-                            "SELECT count(*) FROM chat_run_history WHERE CAST(run_id AS VARCHAR) = ? AND status = 'failed'",
-                            Integer.class, queuedRunId),
-                    "the CHAT_IN_PROGRESS terminal must never be written for this run");
+            // (2)+(3) delivery and no phantom CHAT_IN_PROGRESS, asserted together and polled: the
+            // ASSISTANT row appears while the run is still streaming, so the terminal state has to be
+            // awaited instead of read once (a single read of "succeeded" is a flake, not a judge).
+            await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> {
+                assertEquals(1, jdbcTemplate.queryForObject(
+                                "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
+                                Integer.class, queuedRunId),
+                        "the queued run must be redelivered to the agent after recovery");
+                Map<String, Object> row = jdbcTemplate.queryForMap(
+                        "SELECT status, error_code FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", queuedRunId);
+                assertEquals("succeeded", row.get("status"),
+                        "a redelivered run must finish succeeded, not failed/CHAT_IN_PROGRESS");
+                assertNull(row.get("error_code"),
+                        "no error code may be attached to a run that was actually delivered");
+                assertEquals(0, jdbcTemplate.queryForObject(
+                                "SELECT count(*) FROM chat_run_history WHERE CAST(run_id AS VARCHAR) = ? "
+                                        + "AND (to_status = 'failed' OR error_code IS NOT NULL)",
+                                Integer.class, queuedRunId),
+                        "the CHAT_IN_PROGRESS terminal must never be written for this run");
+            });
 
             // (4) the queue emptied itself — asserted here, never cleared in finally.
             assertEquals(0, requestQueue.size(), "the drain must consume the queue, not be cleared by the test");

@@ -26,6 +26,15 @@ import org.springframework.stereotype.Component;
 public class ChatActiveRunRegistry {
 
     private final Map<String, Set<String>> activeRuns = new ConcurrentHashMap<>();
+    /**
+     * task-131: runs this process has <b>parked</b> for transport recovery. They stay in
+     * {@link #activeRuns} on purpose — a queued run is still in flight for the Session (compaction
+     * must stay deferred, reconciliation must not call it stale) — but nobody is driving them, so
+     * the recovery drain is allowed to take them back. Keeping the distinction here, instead of
+     * releasing the claim, is what stops the drain from treating "I registered it" as "someone is
+     * running it".
+     */
+    private final Map<String, Set<String>> handedOffRuns = new ConcurrentHashMap<>();
     private final Map<String, String> reservations = new ConcurrentHashMap<>();
 
     /**
@@ -39,6 +48,7 @@ public class ChatActiveRunRegistry {
     }
 
     boolean release(String sessionId, String runId) {
+        forgetHandedOff(sessionId, runId);
         Set<String> runIds = activeRuns.get(sessionId);
         if (runIds == null) {
             return false;
@@ -53,6 +63,65 @@ public class ChatActiveRunRegistry {
     /** Startup recovery: the run survived a restart and is being resumed by this process. */
     void restore(String sessionId, String runId) {
         runIds(sessionId).add(runId);
+    }
+
+    /**
+     * task-131: parks a run this process already claimed ("handed off" for transport recovery).
+     *
+     * @return {@code false} when the run is not claimed by this process at all (nothing to park).
+     */
+    boolean markHandedOff(String sessionId, String runId) {
+        if (!isRunActiveLocally(runId)) {
+            return false;
+        }
+        handedOffIds(sessionId).add(runId);
+        return true;
+    }
+
+    /**
+     * task-131: takes a handed-off run back from the recovery drain.
+     *
+     * @return {@code true} when this run was parked by this process (the drain may dispatch it, and
+     *         it is ACTIVE again), or when nothing is registered for it at all (defensive: the
+     *         process lost the registry but kept the queue). {@code false} means a run with this id
+     *         is genuinely being driven right now, so a second dispatch must be refused.
+     */
+    boolean resumeHandedOff(String sessionId, String runId) {
+        Set<String> parked = handedOffRuns.get(sessionId);
+        if (parked != null && parked.remove(runId)) {
+            forgetHandedOff(sessionId, runId);
+            runIds(sessionId).add(runId);
+            return true;
+        }
+        return claim(sessionId, runId);
+    }
+
+    /** task-131: is this run parked for transport recovery rather than being driven? */
+    boolean isHandedOff(String runId) {
+        if (runId == null) {
+            return false;
+        }
+        for (Set<String> runIds : handedOffRuns.values()) {
+            if (runIds.contains(runId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void forgetHandedOff(String sessionId, String runId) {
+        Set<String> runIds = handedOffRuns.get(sessionId);
+        if (runIds == null) {
+            return;
+        }
+        runIds.remove(runId);
+        if (runIds.isEmpty()) {
+            handedOffRuns.remove(sessionId, runIds);
+        }
+    }
+
+    private Set<String> handedOffIds(String sessionId) {
+        return handedOffRuns.computeIfAbsent(sessionId, ignored -> ConcurrentHashMap.newKeySet());
     }
 
     /** PLAN-0645: "this Session has at least one run in flight in this process". */
