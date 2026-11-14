@@ -134,7 +134,12 @@ describe("InstanceMcpPanel", () => {
         // 非阻断提示点名**能力位**；不得是 403 卡片（那张会谎报「不是后端缺口」）。
         const notice = wrapper.find('[data-testid="instance-mcp-write-capability-notice"]');
         expect(notice.exists()).toBe(true);
-        expect(notice.text()).toContain("instance:admin");
+        // task-26（P1 修复）：原断言是 toContain("instance:admin") —— 它把**wire 标识**当成了
+        // 判据，于是 task-18/22 把文案改成用户语言后它红了。判据要的是「点名了哪个能力」，
+        // 不是「印出了内部标识」⇒ 改成用户语言正断言 + 两条负断言（旧断言位不删，改成反例）。
+        expect(notice.text()).toContain("实例管理员");
+        expect(notice.text()).not.toContain("cap:");
+        expect(notice.text()).not.toContain("instance:admin");
         expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(false);
         // 凭据候选只服务写面 ⇒ 非管理员不取（否则只会拿到 403，是无谓请求）。
         expect(mockedCredentials).not.toHaveBeenCalled();
