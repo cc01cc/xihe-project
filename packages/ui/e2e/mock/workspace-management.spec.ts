@@ -38,7 +38,9 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         await page.route("**/api/v1/workspaces/*", async (route) => {
             const method = route.request().method(),
                 url = new URL(route.request().url());
-            const wsId = url.pathname.split("/").filter(Boolean).at(-1) ?? "11111111-1111-4111-8111-111111111111";
+            const wsId =
+                url.pathname.split("/").filter(Boolean).at(-1) ??
+                "11111111-1111-4111-8111-111111111111";
             if (method === "PATCH") {
                 const body = route.request().postDataJSON() as Record<string, unknown>;
                 await route.fulfill({

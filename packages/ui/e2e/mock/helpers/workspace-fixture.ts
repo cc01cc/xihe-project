@@ -76,7 +76,7 @@ export const KNOWN_WORKSPACE_IDS = [
     "ws-1",
     "slice-b",
     "ws-new",
-    "mock-ws-main",
+    "9f8e7d6c-5b4a-4321-8fed-cba987654321",
 ] as const;
 
 export interface WorkspaceDetailOptions {

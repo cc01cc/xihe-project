@@ -147,7 +147,9 @@ test.describe("Context templates (PLAN-0414)", () => {
             });
         });
 
-        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`, {
+            waitUntil: "load",
+        });
 
         // Mobile viewport renders the workspace files view first and keeps
         // ChatPanel behind the "Open chat" drawer trigger; desktop shows it inline.

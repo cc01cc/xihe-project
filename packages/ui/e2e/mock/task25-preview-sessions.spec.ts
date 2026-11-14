@@ -1,7 +1,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { workspaceChatPath } from "../../src/lib/routes";
-import { mockSessions } from "../../src/preview/mock/data/sessions";
+import { MOCK_SESSION_WORKSPACE_ID, mockSessions } from "../../src/preview/mock/data/sessions";
 
 /**
  * task-25 D（`D-1175` 收窄重开）的**浏览器判据**，跑在 **preview 链路**上：
@@ -17,7 +17,8 @@ import { mockSessions } from "../../src/preview/mock/data/sessions";
  * `XIHE_E2E_PROFILE=mock XIHE_UI_PORT=12736 XIHE_E2E_BROWSER_CHANNEL=chrome-beta XIHE_E2E_EXPECT_CHAIN=preview`
  * `pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/task25-preview-sessions.spec.ts --workers=1`</p>
  */
-const WS_ID = "mock-ws-main";
+/** task-35：直接取夹具常量，别再手抄一份 —— 抄的那份会和夹具静默漂移。 */
+const WS_ID = MOCK_SESSION_WORKSPACE_ID;
 const SESSION_TITLE = "流水线失败日志排查";
 const WORKSPACELESS_TITLE = "独立会话：契约核对";
 

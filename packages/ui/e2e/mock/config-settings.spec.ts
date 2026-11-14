@@ -783,8 +783,8 @@ test.describe("Config Settings (three layers)", () => {
 
         const readsBeforeRetry = configReads;
         await page.getByTestId("settings-domain-load-retry").click();
-        await expect.poll(() => configReads, { timeout: ACTION_TIMEOUT_MS }).toBeGreaterThan(
-            readsBeforeRetry,
-        );
+        await expect
+            .poll(() => configReads, { timeout: ACTION_TIMEOUT_MS })
+            .toBeGreaterThan(readsBeforeRetry);
     });
 });

@@ -24,8 +24,16 @@ test.describe("Session switch between chat and workspace", () => {
                     status: 200,
                     contentType: "application/json",
                     body: JSON.stringify([
-                        { id: "11111111-1111-4111-8111-111111111111", name: "Workspace One", workspaceRole: "WS_OWNER" },
-                        { id: "22222222-2222-4222-8222-222222222222", name: "Workspace Two", workspaceRole: "WS_OWNER" },
+                        {
+                            id: "11111111-1111-4111-8111-111111111111",
+                            name: "Workspace One",
+                            workspaceRole: "WS_OWNER",
+                        },
+                        {
+                            id: "22222222-2222-4222-8222-222222222222",
+                            name: "Workspace Two",
+                            workspaceRole: "WS_OWNER",
+                        },
                     ]),
                 });
             },
@@ -151,19 +159,25 @@ test.describe("Session switch between chat and workspace", () => {
         // 本用例放宽（放宽等于把别处的负例洗掉）。所以这里在 spec 内单独回 22222222-2222-4222-8222-222222222222 的详情。
         // 不补这条的实测后果：`GET /api/v1/workspaces/22222222-2222-4222-8222-222222222222` 404 ⇒ WorkspaceView 判定
         // 上下文冲突并退回「选择工作区」页 ⇒ 第二个会话的正文永远不出现（本用例长期红）。
-        await page.route("**/api/v1/workspaces/22222222-2222-4222-8222-222222222222", async (route) => {
-            if (route.request().method() !== "GET") {
-                await route.fallback();
-                return;
-            }
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                    workspace: workspaceWire({ id: "22222222-2222-4222-8222-222222222222", name: "Workspace Two" }),
-                }),
-            });
-        });
+        await page.route(
+            "**/api/v1/workspaces/22222222-2222-4222-8222-222222222222",
+            async (route) => {
+                if (route.request().method() !== "GET") {
+                    await route.fallback();
+                    return;
+                }
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        workspace: workspaceWire({
+                            id: "22222222-2222-4222-8222-222222222222",
+                            name: "Workspace Two",
+                        }),
+                    }),
+                });
+            },
+        );
 
         const firstHistory = page.waitForResponse((response) =>
             response.url().includes(`/api/v1/sessions/${firstSession}/messages`),

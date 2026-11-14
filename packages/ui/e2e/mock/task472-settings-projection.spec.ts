@@ -45,7 +45,8 @@ async function stubBase(page: Page) {
     await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111", (route) => {
         const url = route.request().url();
         // 该路由是**前缀**匹配：配置域与成员等子路径交给后面的专用桩/兜底。
-        if (!/\/api\/v1\/workspaces\/11111111-1111-4111-8111-111111111111(?:\?.*)?$/.test(url)) return route.fallback();
+        if (!/\/api\/v1\/workspaces\/11111111-1111-4111-8111-111111111111(?:\?.*)?$/.test(url))
+            return route.fallback();
         return route.fulfill({
             status: 200,
             contentType: "application/json",

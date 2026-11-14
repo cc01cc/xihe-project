@@ -59,14 +59,17 @@ test.describe("PLAN-0641 T4.4 nested-repo declare entry (mock)", () => {
             });
         });
         let declareBody: { path?: string } | null = null;
-        await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/roots", async (route) => {
-            declareBody = route.request().postDataJSON() as { path?: string } | null;
-            await route.fulfill({
-                status: 201,
-                contentType: "application/json",
-                body: JSON.stringify({ id: "root-1", alias: null, position: 1 }),
-            });
-        });
+        await page.route(
+            "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/roots",
+            async (route) => {
+                declareBody = route.request().postDataJSON() as { path?: string } | null;
+                await route.fulfill({
+                    status: 201,
+                    contentType: "application/json",
+                    body: JSON.stringify({ id: "root-1", alias: null, position: 1 }),
+                });
+            },
+        );
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
 

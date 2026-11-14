@@ -94,32 +94,35 @@ async function setupAgentsLane(page: Page): Promise<void> {
 
     // Same pattern for the list (`{agents:[…]}`) and the 0629 memory envelope
     // (`{memories:[…]}`) — both hang off `/workspaces/{id}/agents`.
-    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**", async (route) => {
-        const pathname = new URL(route.request().url()).pathname;
-        if (pathname.endsWith("/memories")) {
+    await page.route(
+        "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**",
+        async (route) => {
+            const pathname = new URL(route.request().url()).pathname;
+            if (pathname.endsWith("/memories")) {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        memories: [
+                            {
+                                id: MEMORY_ID,
+                                type: "profile",
+                                pinned: true,
+                                updatedAt: "2026-11-02T10:00:00Z",
+                                content: "偏好中文回答",
+                            },
+                        ],
+                    }),
+                });
+                return;
+            }
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({
-                    memories: [
-                        {
-                            id: MEMORY_ID,
-                            type: "profile",
-                            pinned: true,
-                            updatedAt: "2026-11-02T10:00:00Z",
-                            content: "偏好中文回答",
-                        },
-                    ],
-                }),
+                body: JSON.stringify({ agents: [agentBinding()] }),
             });
-            return;
-        }
-        await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({ agents: [agentBinding()] }),
-        });
-    });
+        },
+    );
 
     // The chat column behind the dock polls four session projections. The shared mock
     // helper answers them with 404 (its `sessions/**` route reads `derived-state` as a

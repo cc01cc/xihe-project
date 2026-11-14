@@ -1,7 +1,6 @@
 // timeout-exempt: 视觉判据要在真浏览器取 computed style（task-534 卡面①）
 import { expect, test } from "./helpers/mock-test";
-import { setupMockAuth, setupMockSessions } from "./helpers/auth";
-import { MOCK_WORKSPACE_ID } from "./helpers/auth";
+import { MOCK_WORKSPACE_ID, setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 /**

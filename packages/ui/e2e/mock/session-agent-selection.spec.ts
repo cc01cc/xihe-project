@@ -12,32 +12,35 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [], createSession: true });
 
-    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents", async (route) => {
-        await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            // PLAN-0622 M1.2 contract: the list is `{agents:[…]}` and each row carries `bound`
-            // (visible but not yet bound to this workspace) / `disabled` (D26/D27). A bare array
-            // with no `bound` made `api.getWorkspaceAgents` throw on `raw.agents.map` and left
-            // `boundWorkspaceAgents` empty, so the picker could never offer this Agent.
-            body: JSON.stringify({
-                agents: [
-                    {
-                        principalId: "agent-1",
-                        name: "ResearchAgent",
-                        templateId: null,
-                        templateName: "Research",
-                        createdAt: new Date().toISOString(),
-                        bound: true,
-                        disabled: false,
-                        permissions: [{ actionClass: "read" }],
-                        hooks: null,
-                        contextPolicy: null,
-                    },
-                ],
-            }),
-        });
-    });
+    await page.route(
+        "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents",
+        async (route) => {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                // PLAN-0622 M1.2 contract: the list is `{agents:[…]}` and each row carries `bound`
+                // (visible but not yet bound to this workspace) / `disabled` (D26/D27). A bare array
+                // with no `bound` made `api.getWorkspaceAgents` throw on `raw.agents.map` and left
+                // `boundWorkspaceAgents` empty, so the picker could never offer this Agent.
+                body: JSON.stringify({
+                    agents: [
+                        {
+                            principalId: "agent-1",
+                            name: "ResearchAgent",
+                            templateId: null,
+                            templateName: "Research",
+                            createdAt: new Date().toISOString(),
+                            bound: true,
+                            disabled: false,
+                            permissions: [{ actionClass: "read" }],
+                            hooks: null,
+                            contextPolicy: null,
+                        },
+                    ],
+                }),
+            });
+        },
+    );
 
     await page.goto("/workspace/11111111-1111-4111-8111-111111111111?newChat=1");
     const selector = page.getByTestId("workspace-agent-principal-select");
@@ -55,7 +58,9 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
     await page.getByTestId("workspace-create-agent-session").click();
 
     const createRequest = await createRequestPromise;
-    await expect(page).toHaveURL(/\/workspace\/11111111-1111-4111-8111-111111111111\/chat\/mock-session-/);
+    await expect(page).toHaveURL(
+        /\/workspace\/11111111-1111-4111-8111-111111111111\/chat\/mock-session-/,
+    );
     await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
     // D-1167 ④（task-365 F）：工具栏 chip 删除。会话身份仍由创建请求钉住；
     // 这里钉「chip 不再出现在 workbench chrome 里」。
@@ -130,7 +135,10 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
                         workspaceRole: "OWNER",
                         workspaceAdmin: true,
                         permissions: [
-                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "11111111-1111-4111-8111-111111111111" },
+                            {
+                                actionClass: "MANAGE_WORKSPACE_AGENTS",
+                                resource: "11111111-1111-4111-8111-111111111111",
+                            },
                         ],
                     },
                 ],
@@ -139,63 +147,66 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     );
 
     const bindings: Array<Record<string, unknown>> = [];
-    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**", async (route) => {
-        const request = route.request();
-        if (request.method() === "GET") {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                // PLAN-0622 M1.2: the list envelope is `{agents:[…]}` — a bare array throws in
-                // `api.getWorkspaceAgents` (`raw.agents.map`), which reads as "no agents".
-                body: JSON.stringify({ agents: bindings }),
-            });
-            return;
-        }
-        if (request.method() === "PUT") {
-            const body = request.postDataJSON() as {
-                permissions: Array<{ actionClass: string; resource?: string }>;
-            };
-            // `GET /agents` answers with the full `WorkspaceAgentView`, whose
-            // `permissionsSnapshot` is **required** (OpenAPI), while CP's PUT answers the
-            // narrower `{principalId, workspaceId, permissions}` echo. Storing the echo in
-            // the list produced a contract-violating row: the panel's cap list reads
-            // `permissionsSnapshot.length`, the render aborted, and the DOM stayed on the
-            // previous frame ("正在加载智能体…") — the freeze this case used to report.
-            const bindingRow = {
-                principalId: "agent-1",
-                name: "ResearchAgent",
-                templateId: null,
-                templateName: null,
-                createdAt: new Date().toISOString(),
-                bound: true,
-                disabled: false,
-                permissionsSnapshot: body.permissions,
-                hooks: null,
-                contextPolicy: null,
-            };
-            const existingIndex = bindings.findIndex(
-                (binding) => binding.principalId === "agent-1",
-            );
-            if (existingIndex < 0) bindings.push(bindingRow);
-            else bindings[existingIndex] = bindingRow;
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({
+    await page.route(
+        "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**",
+        async (route) => {
+            const request = route.request();
+            if (request.method() === "GET") {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    // PLAN-0622 M1.2: the list envelope is `{agents:[…]}` — a bare array throws in
+                    // `api.getWorkspaceAgents` (`raw.agents.map`), which reads as "no agents".
+                    body: JSON.stringify({ agents: bindings }),
+                });
+                return;
+            }
+            if (request.method() === "PUT") {
+                const body = request.postDataJSON() as {
+                    permissions: Array<{ actionClass: string; resource?: string }>;
+                };
+                // `GET /agents` answers with the full `WorkspaceAgentView`, whose
+                // `permissionsSnapshot` is **required** (OpenAPI), while CP's PUT answers the
+                // narrower `{principalId, workspaceId, permissions}` echo. Storing the echo in
+                // the list produced a contract-violating row: the panel's cap list reads
+                // `permissionsSnapshot.length`, the render aborted, and the DOM stayed on the
+                // previous frame ("正在加载智能体…") — the freeze this case used to report.
+                const bindingRow = {
                     principalId: "agent-1",
-                    workspaceId: "11111111-1111-4111-8111-111111111111",
-                    permissions: body.permissions,
-                }),
-            });
-            return;
-        }
-        if (request.method() === "DELETE") {
-            bindings.splice(0, bindings.length);
-            await route.fulfill({ status: 204 });
-            return;
-        }
-        await route.fallback();
-    });
+                    name: "ResearchAgent",
+                    templateId: null,
+                    templateName: null,
+                    createdAt: new Date().toISOString(),
+                    bound: true,
+                    disabled: false,
+                    permissionsSnapshot: body.permissions,
+                    hooks: null,
+                    contextPolicy: null,
+                };
+                const existingIndex = bindings.findIndex(
+                    (binding) => binding.principalId === "agent-1",
+                );
+                if (existingIndex < 0) bindings.push(bindingRow);
+                else bindings[existingIndex] = bindingRow;
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        principalId: "agent-1",
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
+                        permissions: body.permissions,
+                    }),
+                });
+                return;
+            }
+            if (request.method() === "DELETE") {
+                bindings.splice(0, bindings.length);
+                await route.fulfill({ status: 204 });
+                return;
+            }
+            await route.fallback();
+        },
+    );
 
     let createBody: unknown;
     await page.route("**/api/v1/agent-principals", async (route) => {
@@ -296,28 +307,31 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
 
     const bindCalls: Array<Record<string, unknown>> = [];
     let createCalls = 0;
-    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**", async (route) => {
-        if (route.request().method() === "GET") {
+    await page.route(
+        "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents**",
+        async (route) => {
+            if (route.request().method() === "GET") {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ agents: [] }),
+                });
+                return;
+            }
+            bindCalls.push((route.request().postDataJSON() as Record<string, unknown>) ?? {});
             await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ agents: [] }),
-            });
-            return;
-        }
-        bindCalls.push((route.request().postDataJSON() as Record<string, unknown>) ?? {});
-        await route.fulfill({
-            status: 403,
-            contentType: "application/problem+json",
-            body: JSON.stringify({
-                type: "about:blank",
-                title: "Forbidden",
                 status: 403,
-                code: "FORBIDDEN",
-                detail: "MANAGE_WORKSPACE_AGENTS permission is required",
-            }),
-        });
-    });
+                contentType: "application/problem+json",
+                body: JSON.stringify({
+                    type: "about:blank",
+                    title: "Forbidden",
+                    status: 403,
+                    code: "FORBIDDEN",
+                    detail: "MANAGE_WORKSPACE_AGENTS permission is required",
+                }),
+            });
+        },
+    );
     await page.route("**/api/v1/agent-principals", (route) => {
         createCalls += 1;
         return route.fulfill({
@@ -370,7 +384,10 @@ async function stubOwnerPermissions(page: Page): Promise<void> {
                         workspaceRole: "OWNER",
                         workspaceAdmin: true,
                         permissions: [
-                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "11111111-1111-4111-8111-111111111111" },
+                            {
+                                actionClass: "MANAGE_WORKSPACE_AGENTS",
+                                resource: "11111111-1111-4111-8111-111111111111",
+                            },
                         ],
                     },
                 ],
@@ -425,28 +442,31 @@ test("a failed agent list resets the loading state, names the failure, and retry
     await stubAgentTemplates(page);
 
     let failing = true;
-    await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents", async (route) => {
-        if (failing) {
-            await route.fulfill({
-                status: 500,
-                contentType: "application/problem+json",
-                body: JSON.stringify({
-                    type: "about:blank",
-                    title: "Internal Server Error",
+    await page.route(
+        "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/agents",
+        async (route) => {
+            if (failing) {
+                await route.fulfill({
                     status: 500,
-                    code: "INTERNAL_ERROR",
-                    detail: "agents unavailable",
-                    requestId: "req-agents-500",
-                }),
+                    contentType: "application/problem+json",
+                    body: JSON.stringify({
+                        type: "about:blank",
+                        title: "Internal Server Error",
+                        status: 500,
+                        code: "INTERNAL_ERROR",
+                        detail: "agents unavailable",
+                        requestId: "req-agents-500",
+                    }),
+                });
+                return;
+            }
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ agents: [agentViewRow()] }),
             });
-            return;
-        }
-        await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({ agents: [agentViewRow()] }),
-        });
-    });
+        },
+    );
 
     await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
     await page.getByTestId("workspace-toolbar-agents").click();

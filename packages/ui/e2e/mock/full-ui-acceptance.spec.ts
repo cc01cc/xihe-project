@@ -154,7 +154,10 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await mockSettingsApis(page);
 
         const routes = [
-            { path: "/workspace/11111111-1111-4111-8111-111111111111/chat/session-1", marker: page.locator("textarea") },
+            {
+                path: "/workspace/11111111-1111-4111-8111-111111111111/chat/session-1",
+                marker: page.locator("textarea"),
+            },
             {
                 path: "/settings/instance/llm-provider",
                 marker: page.getByTestId("settings-domain-view"),

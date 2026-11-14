@@ -86,110 +86,119 @@ test.describe("PLAN-0565 workspace members tab", () => {
         await setupMockAuth(page);
         // task-470：默认投影 = OWNER + workspaceAdmin:true（后注册的路由优先，个别用例可再覆盖）。
         await serveProjection(page, { role: "OWNER", workspaceAdmin: true });
-        await page.route("**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/members**", async (route) => {
-            const method = route.request().method();
-            const url = new URL(route.request().url());
-            if (method === "GET") {
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify(members),
-                });
-                return;
-            }
-            if (method === "POST") {
-                const body = route.request().postDataJSON() as {
-                    username?: string;
-                    role?: string;
-                };
-                if (!body.username || !body.role) {
+        await page.route(
+            "**/api/v1/workspaces/11111111-1111-4111-8111-111111111111/members**",
+            async (route) => {
+                const method = route.request().method();
+                const url = new URL(route.request().url());
+                if (method === "GET") {
                     await route.fulfill({
-                        status: 400,
-                        contentType: "application/problem+json",
-                        body: JSON.stringify({ code: "INVALID_REQUEST", detail: "bad body" }),
+                        status: 200,
+                        contentType: "application/json",
+                        body: JSON.stringify(members),
                     });
                     return;
                 }
-                if (body.username === "ghost") {
+                if (method === "POST") {
+                    const body = route.request().postDataJSON() as {
+                        username?: string;
+                        role?: string;
+                    };
+                    if (!body.username || !body.role) {
+                        await route.fulfill({
+                            status: 400,
+                            contentType: "application/problem+json",
+                            body: JSON.stringify({ code: "INVALID_REQUEST", detail: "bad body" }),
+                        });
+                        return;
+                    }
+                    if (body.username === "ghost") {
+                        await route.fulfill({
+                            status: 404,
+                            contentType: "application/problem+json",
+                            body: JSON.stringify({
+                                code: "USER_NOT_FOUND",
+                                detail: "No registered account for this username",
+                            }),
+                        });
+                        return;
+                    }
+                    if (members.some((m) => m.username === body.username)) {
+                        await route.fulfill({
+                            status: 409,
+                            contentType: "application/problem+json",
+                            body: JSON.stringify({
+                                code: "MEMBER_ALREADY_EXISTS",
+                                detail: "already a member",
+                            }),
+                        });
+                        return;
+                    }
+                    seq += 1;
+                    const created = makeMember(body.username, body.role, `u-new-${seq}`);
+                    members.push(created);
                     await route.fulfill({
-                        status: 404,
-                        contentType: "application/problem+json",
-                        body: JSON.stringify({
-                            code: "USER_NOT_FOUND",
-                            detail: "No registered account for this username",
-                        }),
+                        status: 201,
+                        contentType: "application/json",
+                        body: JSON.stringify(created),
                     });
                     return;
                 }
-                if (members.some((m) => m.username === body.username)) {
+                if (method === "PATCH") {
+                    const userId = url.pathname.split("/").pop() ?? "";
+                    const target = members.find((m) => m.userId === userId);
+                    if (!target) {
+                        await route.fulfill({
+                            status: 404,
+                            contentType: "application/problem+json",
+                            body: JSON.stringify({
+                                code: "MEMBER_NOT_FOUND",
+                                detail: "not a member",
+                            }),
+                        });
+                        return;
+                    }
+                    const body = route.request().postDataJSON() as { role?: string };
+                    target.role = body.role ?? target.role;
                     await route.fulfill({
-                        status: 409,
-                        contentType: "application/problem+json",
-                        body: JSON.stringify({
-                            code: "MEMBER_ALREADY_EXISTS",
-                            detail: "already a member",
-                        }),
+                        status: 200,
+                        contentType: "application/json",
+                        body: JSON.stringify(target),
                     });
                     return;
                 }
-                seq += 1;
-                const created = makeMember(body.username, body.role, `u-new-${seq}`);
-                members.push(created);
-                await route.fulfill({
-                    status: 201,
-                    contentType: "application/json",
-                    body: JSON.stringify(created),
-                });
-                return;
-            }
-            if (method === "PATCH") {
-                const userId = url.pathname.split("/").pop() ?? "";
-                const target = members.find((m) => m.userId === userId);
-                if (!target) {
-                    await route.fulfill({
-                        status: 404,
-                        contentType: "application/problem+json",
-                        body: JSON.stringify({ code: "MEMBER_NOT_FOUND", detail: "not a member" }),
-                    });
+                if (method === "DELETE") {
+                    const userId = url.pathname.split("/").pop() ?? "";
+                    const target = members.find((m) => m.userId === userId);
+                    if (!target) {
+                        await route.fulfill({
+                            status: 404,
+                            contentType: "application/problem+json",
+                            body: JSON.stringify({
+                                code: "MEMBER_NOT_FOUND",
+                                detail: "not a member",
+                            }),
+                        });
+                        return;
+                    }
+                    if (
+                        target.role === "OWNER" &&
+                        members.filter((m) => m.role === "OWNER").length <= 1
+                    ) {
+                        await route.fulfill({
+                            status: 409,
+                            contentType: "application/problem+json",
+                            body: JSON.stringify({ code: "LAST_OWNER", detail: "last owner" }),
+                        });
+                        return;
+                    }
+                    members = members.filter((m) => m.userId !== userId);
+                    await route.fulfill({ status: 204 });
                     return;
                 }
-                const body = route.request().postDataJSON() as { role?: string };
-                target.role = body.role ?? target.role;
-                await route.fulfill({
-                    status: 200,
-                    contentType: "application/json",
-                    body: JSON.stringify(target),
-                });
-                return;
-            }
-            if (method === "DELETE") {
-                const userId = url.pathname.split("/").pop() ?? "";
-                const target = members.find((m) => m.userId === userId);
-                if (!target) {
-                    await route.fulfill({
-                        status: 404,
-                        contentType: "application/problem+json",
-                        body: JSON.stringify({ code: "MEMBER_NOT_FOUND", detail: "not a member" }),
-                    });
-                    return;
-                }
-                if (
-                    target.role === "OWNER" &&
-                    members.filter((m) => m.role === "OWNER").length <= 1
-                ) {
-                    await route.fulfill({
-                        status: 409,
-                        contentType: "application/problem+json",
-                        body: JSON.stringify({ code: "LAST_OWNER", detail: "last owner" }),
-                    });
-                    return;
-                }
-                members = members.filter((m) => m.userId !== userId);
-                await route.fulfill({ status: 204 });
-                return;
-            }
-            await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
-        });
+                await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+            },
+        );
         await page.route("**/api/v1/config/**", (route) =>
             route.fulfill({
                 status: 200,

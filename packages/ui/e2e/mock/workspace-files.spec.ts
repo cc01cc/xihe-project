@@ -204,7 +204,9 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
         await expect(page.getByTestId("workspace-environment-recovery")).not.toBeEmpty();
         // Storage access, as the current page expresses it: the disclosed host directory.
-        await expect(page.getByTestId("workspace-host-path")).toContainText("/mock/11111111-1111-4111-8111-111111111111");
+        await expect(page.getByTestId("workspace-host-path")).toContainText(
+            "/mock/11111111-1111-4111-8111-111111111111",
+        );
         // Execution configuration is switchable for direct-attach and explains what the switch does.
         await expectTriggerLabel(page, "workspace-execution-mode", "windows-mxc");
         await expect(page.getByTestId("workspace-execution-mode-hint")).not.toBeEmpty();

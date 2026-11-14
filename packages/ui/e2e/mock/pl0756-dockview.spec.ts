@@ -62,7 +62,10 @@ test.beforeEach(async ({ page }) => {
                         workspaceId: "11111111-1111-4111-8111-111111111111",
                         workspaceAdmin: true,
                         permissions: [
-                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "11111111-1111-4111-8111-111111111111" },
+                            {
+                                actionClass: "MANAGE_WORKSPACE_AGENTS",
+                                resource: "11111111-1111-4111-8111-111111111111",
+                            },
                         ],
                     },
                 ],

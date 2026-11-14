@@ -39,7 +39,11 @@ test.describe("Chat", () => {
                     status: 200,
                     contentType: "application/json",
                     body: JSON.stringify([
-                        { id: "11111111-1111-4111-8111-111111111111", name: "Workspace 1", workspaceRole: "WS_OWNER" },
+                        {
+                            id: "11111111-1111-4111-8111-111111111111",
+                            name: "Workspace 1",
+                            workspaceRole: "WS_OWNER",
+                        },
                     ]),
                 });
             },
@@ -373,7 +377,9 @@ test.describe("Chat", () => {
                 }),
             );
 
-            await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/upload-failure-session");
+            await page.goto(
+                "/workspace/11111111-1111-4111-8111-111111111111/chat/upload-failure-session",
+            );
             await page.getByTestId("file-upload-input").setInputFiles({
                 name: "notes.md",
                 mimeType: "text/markdown",

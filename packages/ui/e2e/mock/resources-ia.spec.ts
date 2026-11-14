@@ -186,12 +186,18 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
                         {
                             skillId: "skill-ws01-repo-conventions",
                             name: "repo-conventions",
-                            definitionScope: { type: "workspace", workspaceId: "11111111-1111-4111-8111-111111111111" },
+                            definitionScope: {
+                                type: "workspace",
+                                workspaceId: "11111111-1111-4111-8111-111111111111",
+                            },
                         },
                         {
                             skillId: "skill-ws02-release-checklist",
                             name: "release-checklist",
-                            definitionScope: { type: "workspace", workspaceId: "11111111-1111-4111-8111-111111111111" },
+                            definitionScope: {
+                                type: "workspace",
+                                workspaceId: "11111111-1111-4111-8111-111111111111",
+                            },
                         },
                         // 故意混进一条 instance 行：本层页面上绝不许它显示成「本工作区技能」。
                         {

@@ -142,7 +142,9 @@ test("task-353 判据①③：文件树在中栏容器内，收起与展开的�
 
     // 折叠态与宽度分开存（PLAN-0582）：收起**不得**改写持久化的 treeWidth。
     const stored = await page.evaluate(() =>
-        JSON.parse(localStorage.getItem("xihe-layout-ws:11111111-1111-4111-8111-111111111111") ?? "{}"),
+        JSON.parse(
+            localStorage.getItem("xihe-layout-ws:11111111-1111-4111-8111-111111111111") ?? "{}",
+        ),
     );
     expect(stored.treeCollapsed, "收起必须写进 treeCollapsed").toBe(true);
     expect(

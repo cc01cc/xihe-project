@@ -54,7 +54,7 @@ describe("task-601 approvals 不在 ws-less 上下文里带旧工作区身份", 
 
     it("hydrateWorkspace 在 await 期间进入 ws-less 时不把旧工作区写回", async () => {
         const { useAuthStore } = await import("../../stores/auth");
-        const { clearTabWorkspace, readTabWorkspaceId, writeTabWorkspaceId } =
+        const { readTabWorkspaceId, writeTabWorkspaceId } =
             await import("../../lib/workspaceContext");
         const store = useAuthStore();
 

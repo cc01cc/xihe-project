@@ -71,7 +71,10 @@ async function bootFreshTab(page: Page, wire: WireShape): Promise<Probes> {
     await setupMockAuth(page);
 
     await page.addInitScript(() => {
-        sessionStorage.setItem("xihe-workspace", JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }));
+        sessionStorage.setItem(
+            "xihe-workspace",
+            JSON.stringify({ id: "11111111-1111-4111-8111-111111111111" }),
+        );
         localStorage.removeItem("xihe-workspace");
     });
 
