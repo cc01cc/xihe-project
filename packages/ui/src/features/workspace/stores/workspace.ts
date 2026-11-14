@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { useSessionStore } from "../../../stores/session";
 import { useAuthStore } from "../../../stores/auth";
 import { api, apiPost, ApiError } from "../../../composables/api";
@@ -182,6 +182,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         loadedWorkspaceId = ref<string | null>(null);
 
     /**
+     * task-498：身份代次与「被挡代次」。
+     *
+     * `workspaceId` 每变化一次算一代（null→id、A→B 都算）；`resumeGen` 记录 `loadTree`
+     * 因身份缺失被挡住时所在的代次。重入只在「被挡的那一代正是上一代」时发生，于是：
+     * ① 迟到的旧代次登记不会被用来替一个无关的新身份发请求；
+     * ② 同一 tick 内连跳多次身份时 Vue 会把 watcher 合并到当代，只会发一次请求。
+     * 这里刻意不用共享布尔 —— 布尔只能表达「有人被挡过」，无法表达「是谁的那一代」，
+     * 也无法在旧代次作废时自我失效（同族教训见 task-497 的 timer 句柄串台）。
+     */
+    let identityGen = 0,
+        resumeGen: number | null = null;
+
+    /**
      * PLAN-0639 M2: multi-root grouping state. `expandedRootIds` holds root groups the
      * user selected (selection gates expansion — design §5 候选①); `collapsedRootIds`
      * records an explicit collapse of the auto-expanded primary group. `rootTrees`
@@ -308,9 +321,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function loadTree() {
-        console.log("[LT-ENTER] wsId=" + workspaceId.value + " loading=" + loading.value + " loaded=" + loadedWorkspaceId.value);
         const currentWorkspaceId = workspaceId.value;
-        if (!currentWorkspaceId) return;
+        if (!currentWorkspaceId) {
+            // task-498：深链/刷新时组件先挂载、auth.workspace 尚未 hydrate ⇒ 这一次必然被挡。
+            // 记下被挡的代次，等身份到位（见下方 watch）再重入，否则树会永久为空
+            // （实测：修前 0 次 list_directory，见 task-498 证据包）。
+            resumeGen = identityGen;
+            return;
+        }
         // S3a audit P1-2: a workspace switch can arrive while the previous load is in
         // flight. Queue it instead of dropping it, otherwise the new workspace keeps
         // an empty tree and nothing retries it.
@@ -377,6 +395,29 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             }
         }
     }
+
+    /**
+     * task-498：身份到位后自我重入一次加载。
+     *
+     * `workspaceId` 派生自 `authStore.currentWorkspaceId`，而 `auth.workspace` 要等
+     * `GET /workspaces/{id}` 回来才有值。深链/刷新进工作区时**组件先挂载**：`FileTreePanel`
+     * 的 onMounted 立刻调 loadTree，此刻 workspaceId 仍是 null ⇒ 命中上面的
+     * `if (!currentWorkspaceId) return;`；而 `WorkspaceWorkbench` 的 watch 只盯路由派生的
+     * `props.workspaceId`（深链首帧即为路由值，不随 hydrate 变化）⇒ 身份到位后没有任何
+     * 重入点，树永久为空、0 次 `list_directory`（实测见 task-498 证据包）。
+     *
+     * 这里放**唯一**一处「身份跃迁 ⇒ 加载」监听，同时覆盖 null→id（深链/刷新）与
+     * A→B（切工作区，reset 在 Workbench 侧先跑）两种跃迁。重复调用不会多发请求：
+     * loadTree 的 `loading` 排队与 `loadedWorkspaceId === currentWorkspaceId` 守卫在上方。
+     */
+    watch(workspaceId, (id) => {
+        const previousGen = identityGen;
+        identityGen += 1;
+        if (!id) return;
+        const resumeForThisIdentity = resumeGen === previousGen;
+        resumeGen = null;
+        if (resumeForThisIdentity) void loadTree();
+    });
 
     async function refreshTree() {
         expandedPaths.value = new Set();
