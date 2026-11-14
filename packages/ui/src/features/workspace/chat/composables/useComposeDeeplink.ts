@@ -164,7 +164,13 @@ export function stripComposeQuery(url: string): string {
 export interface ComposeDeeplinkOptions {
     /** 当前会话 id（用于比对载荷里的 `sessionId`）。 */
     sessionId: () => string;
-    /** 预填入口：返回 `true` 表示已应用（可清参）；返回 `false` 表示组件还没就绪。 */
+    /**
+     * 预填入口：返回 `true` 表示**已消费**（可以清参）；`false` 表示还没就绪/可重试（保留参数）。
+     *
+     * <p>注意「已消费」不等于「全部写入」：task-126 F3 起 `blocked_unsat`（有 id 不在本会话名册，
+     * 不可满足）也返回 `true` —— 否则参数永久滞留 URL、每次重试刷一条 warn。此时用户可见提示由
+     * `apply` 的实现方自己渲染（`InputArea` 的 `compose-deeplink-unsat-hint`）。</p>
+     */
     apply: (payload: ComposeDeeplink) => boolean;
     /** 组件是否已可预填（例如 ref 已挂载）。 */
     ready?: () => boolean;

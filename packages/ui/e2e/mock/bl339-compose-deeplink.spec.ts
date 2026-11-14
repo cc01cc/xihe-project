@@ -184,10 +184,17 @@ test.describe("BL-339 深链预填", () => {
      * task-113 A 步判据（第三形态）：**名册已加载但 id 不在册 ⇒ 一个都不写 + 保留参数**。
      *
      * <p>这是「全有或全无」的判别用例：旧行为会把命中的那个填上去、漏掉的静默丢 ⇒ 用户看到 1 个
-     * chip 就以为通知了 2 个人。这里同时断言三件事：①没有 chip ②warn 走「名册已加载」分支
-     * （不是「尚未加载」——两种原因必须可区分）③参数保留（可重试）。</p>
+     * chip 就以为通知了 2 个人。断言：①没有 chip ②warn 走「名册已加载」分支（与「尚未加载」可区分）
+     * ③**参数被消费** ④用户可见提示点名 **id**（不是「部分收件人无效」这种没点名的话）。</p>
+     *
+     * <p>**规格变更（task-126 F3，2026-11-15）**：本条此前断言「参数保留（可重试）」。那个期望把
+     * **不可满足**（这些 id 永远不在本会话名册里）与 **可满足但还没到**（名册未加载）钉成了同一形态 ⇒
+     * 深链参数**永久滞留 URL**、每次重试刷一条 warn、界面零提示。现在按「能不能满足」分流：
+     * 名册未到 ⇒ 保留参数等重试（见上一条用例）；id 不在册 ⇒ 消费参数 + 提示一次。
+     * **这不是放宽断言**：可观测的东西从 1 项（参数在）变成 3 项（参数被消费 + 提示出现 + 提示点名 id），
+     * 且新增了「warn 只刷一次」的计数断言。</p>
      */
-    test("部分 id 不在册 ⇒ 一个都不写、warn 点名、参数保留", async ({ page }) => {
+    test("部分 id 不在册 ⇒ 一个都不写、消费参数、提示点名 id", async ({ page }) => {
         await setupMockAuth(page);
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-339 partial" }] });
 
@@ -213,8 +220,85 @@ test.describe("BL-339 深链预填", () => {
             .toContain("名册已加载");
         // 全有或全无：命中的那个也不许写。
         await expect(toChip(page, KNOWN)).toHaveCount(0);
+
+        // 不可满足 ⇒ **参数必须被消费**（否则永久滞留 URL、每次路由变化都重试刷 warn）。
+        await expect
+            .poll(() => new URL(page.url()).searchParams.has("compose"), { timeout: 3_000 })
+            .toBe(false);
+
+        // 用户可见提示：一句话说清「发生了什么 + 点名 id」，第二句说清「为什么是 id + 该做什么」。
+        const hint = page.getByTestId("compose-deeplink-unsat-hint");
+        await expect(hint).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
+        await expect(hint).toContainText("1 个收件人不在本会话，已忽略");
+        await expect(hint).toContainText(GHOST);
+        await expect(hint).toContainText("按 id 展示是因为名册里查不到这些人，请手动确认收件人");
+        // 提示里**不许**出现命中的那个 id（只点名被丢的）。
+        await expect(hint).not.toContainText(KNOWN);
+
+        // warn 只刷一次（钉的正是 F3 的「永久重试」病）：
+        // 本页会先出现 1 条「名册尚未加载」（第一跳时名册在途，那是可重试态，按设计要留痕），
+        // 名册到达后的**不可满足** warn 只许出现 1 次 —— 因为消费参数后 `applied` 置真，
+        // 后续 ready/retryKey 变化会在 watch 里短路，不可能再刷。
+        const unsatWarns = warnings.filter(
+            (text) => text.includes("[compose-deeplink]") && text.includes("名册已加载"),
+        );
+        expect(
+            unsatWarns.length,
+            `不可满足的 warn 必须只出现一次；实际：${unsatWarns.join(" | ")}`,
+        ).toBe(1);
+        expect(unsatWarns[0]).toContain(GHOST);
+        expect(unsatWarns[0]).not.toContain(KNOWN);
+
+        // 一次性：用户关掉后不再自己回来。
+        await page.getByTestId("compose-deeplink-unsat-dismiss").click();
+        await expect(hint).toHaveCount(0, { timeout: 3_000 });
+    });
+
+    /**
+     * task-126 F4：**「名册到达后重试」这条承重跳此前没有用例钉住**。
+     *
+     * <p>`InputArea.prefillDraft` 里 `input.value === next.text ⇒ applied` 的幂等分支是它成立的前提：
+     * 没有它，重试时正文已被自己写过 ⇒ 判成「用户已输入」⇒ `blocked` ⇒ 参数永远清不掉（缺陷以新机制复活）。
+     * `dsd-1` 标的是「删掉大概没有用例会红」——本条就是为了让删掉它会红。</p>
+     */
+    test("名册到达后重试 ⇒ 参数被清、正文不重复", async ({ page }) => {
+        await setupMockAuth(page);
+        await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-339 retry" }] });
+
+        const TEXT = "来自托盘的预填内容：名册稍后才到";
+        const TO_ID = "participant-agent";
+        let heldRoute: Route | null = null;
+        await page.route("**/api/v1/sessions/*/participants", (route) => {
+            heldRoute = route; // 先挂住 ⇒ 第一跳只能 blocked
+        });
+        const compose = encodeCompose({ text: TEXT, sessionId: SESSION_ID, to: [TO_ID] });
+        await page.goto(
+            `/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}?compose=${compose}`,
+        );
+        const input = page.getByTestId("chat-input");
+        await expect(input).toHaveValue(TEXT, { timeout: LONG_TIMEOUT_MS });
         await expect
             .poll(() => new URL(page.url()).searchParams.has("compose"), { timeout: 3_000 })
             .toBe(true);
+
+        expect(heldRoute, "被挂住的那条路由必须存在").not.toBeNull();
+        await heldRoute!.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                participants: participantRoster(),
+                capabilities: { view: true, manage: true, mention: true, speakAs: true },
+            }),
+        });
+
+        // 重试成功：参数被清 + 收件人落座。
+        await expect
+            .poll(() => new URL(page.url()).searchParams.has("compose"), {
+                timeout: LONG_TIMEOUT_MS,
+            })
+            .toBe(false);
+        await expect(toChip(page, TO_ID)).toHaveCount(1, { timeout: LONG_TIMEOUT_MS });
+        // 正文**不重复**：`toHaveValue` 是等值断言，出现 "TEXTTEXT" 会红。
+        await expect(input).toHaveValue(TEXT, { timeout: LONG_TIMEOUT_MS });
     });
 });

@@ -327,6 +327,21 @@ const activeToTargetIds = computed(() =>
  */
 const toTargetsTouched = ref(false);
 
+/**
+ * task-126 F3：深链「不可满足」的**用户可见面**（`blocked_unsat` 的落点）。
+ *
+ * <p>只点名 **id**，不点名名字 —— 这些人**不在本会话名册**里，所以根本取不到 `displayName`
+ * （`payload` 里也只有 id）。写「部分收件人无效」既没点名、也没告诉用户该核对什么；
+ * 写成「按 id 展示是因为查不到这些人，请手动确认收件人」才把**下一步动作**说清楚。</p>
+ *
+ * <p>一次性：`prefillDraft` 返回 `blocked_unsat` 后调用方会消费掉深链参数 ⇒ 不会重试 ⇒
+ * 不会每次路由变化都刷一遍。用户可手动关掉。</p>
+ *
+ * <p>**声明位置**：必须早于下面 `watch(() => props.sessionId, …)`（`immediate: true` 在 setup 期就会读它）
+ * —— 否则是 TDZ，整棵组件 setup 抛错（2026-11-15 实测：39 条单测全红在 `:561`）。</p>
+ */
+const unsatRecipients = ref<string[]>([]);
+
 function onToTargetsFieldChange(ids: string[]): void {
     toTargetIds.value = [...ids];
     toTargetsTouched.value = true;
@@ -557,6 +572,8 @@ watch(
     (id) => {
         // to/cc 是草稿级纯前端状态：换会话即重置，绝不跨会话残留。
         resetCc();
+        // task-126 F3：深链「不可满足」提示同理 —— 它是给**这次**深链的读者看的，换会话即失效。
+        unsatRecipients.value = [];
         void participantsStore.ensureLoaded(id ?? null);
     },
     { immediate: true },
@@ -1326,54 +1343,60 @@ function warnRosterNotReady(field: "to" | "cc", wanted: string[]): void {
  *
  * <p>为什么不按「命中的先填、漏掉的记 warn」：那样会在界面上留下一个「似乎填好了」的状态，
  * 而漏掉的人**不会**因为再等一会儿就出现（retry 时 `current` 非空 ⇒ 只能判"用户已选"）⇒ 用户
- * 看到 2 个 chip 就以为通知了 3 个人。全有或全无 + 保留深链参数 ⇒ 要么如实填满，要么什么都不填
- * 并让它可重试。</p>
+ * 看到 2 个 chip 就以为通知了 3 个人。全有或全无 ⇒ 要么如实填满，要么什么都不填。</p>
  *
- * @returns `applied` 已写入（含「上一次已经写过同样的内容」的重试幂等）；`blocked` 不能写，须保留参数；
- *          `empty` 载荷里没有可写的 id。
+ * <p>task-126 F3（`dsd-1` 的 task-123）：`blocked` 必须拆两态 —— `blocked`（名册**未到**，可满足 ⇒
+ * 保留参数等 retryKey）与 `blocked_unsat`（有 id **不在本会话名册**，不可满足 ⇒ 由调用方消费参数 +
+ * 给用户可见提示）。共用一个 `blocked` 时，`blocked` 的唯一出口是 `applied` ⇒ 「不可满足」会让深链
+ * 参数**永久滞留 URL**、每次重试刷一条 warn、界面零提示。</p>
+ *
+ * @returns `applied` 已写入（含「上一次已经写过同样的内容」的重试幂等）；`blocked` 名册未到；
+ *          `blocked_unsat` 有 id 不在册（不可满足）；`empty` 载荷里没有可写的 id。
  */
 function prefillRecipientField(
     field: "to" | "cc",
     wanted: string[],
     candidates: SessionParticipantView[],
     current: string[],
-): { state: "applied" | "blocked" | "empty"; ids: string[] } {
+): { state: "applied" | "blocked" | "blocked_unsat" | "empty"; ids: string[]; unsat: string[] } {
     const allowed = new Set(candidates.map((item) => item.participantId));
     const ids = wanted.filter((id) => allowed.has(id));
     const dropped = wanted.filter((id) => !allowed.has(id));
     if (current.length > 0) {
         const same = current.length === ids.length && ids.every((id) => current.includes(id));
-        return { state: same && dropped.length === 0 ? "applied" : "blocked", ids };
+        if (same && dropped.length === 0) return { state: "applied", ids, unsat: [] };
+        return { state: dropped.length > 0 ? "blocked_unsat" : "blocked", ids, unsat: dropped };
     }
     if (participantsStore.participants === null) {
         warnRosterNotReady(field, wanted);
-        return { state: "blocked", ids };
+        return { state: "blocked", ids, unsat: [] };
     }
     if (dropped.length > 0) {
         warnDroppedRecipients(field, dropped, candidates.length);
-        return { state: "blocked", ids };
+        return { state: "blocked_unsat", ids, unsat: dropped };
     }
-    return { state: ids.length > 0 ? "applied" : "empty", ids };
+    return { state: ids.length > 0 ? "applied" : "empty", ids, unsat: [] };
 }
 
 /**
  * BL-339：深链预填（不代发）。只填空位、不覆盖用户已有输入与已选收件人，
  * 收件人按本会话候选过滤（未知 id 直接丢弃，不做"猜一个"）。
  * @param next - 预填载荷：正文 + 可选 to/cc（AGENT 参与者 id）。
- * @returns 三态：`applied` 已写入（可清参）；`blocked` 有内容这次写不进去（**必须保留参数**，名册到达后重试）；
- *          `idle` 没有可写内容 —— **调用方也不得把它当"已消费"**（task-113 B 步：清参会让「名册未到就被滤空」永久不可恢复）。
+ * @returns 四态：`applied` 已写入（可清参）；`blocked` 名册未到（**保留参数**，等 retryKey 重试）；
+ *          `blocked_unsat` 有 id 不在本会话名册（**不可满足** ⇒ 调用方应消费参数并提示一次）；
+ *          `idle` 没有可写内容（**调用方也不得把它当"已消费"**）。
  *
- * <p>task-113 A 步的判据（比 B 更硬）：`participants === null`（名册还没到）与「部分/全部 id 不在册」
- * 一律返回 `blocked`，**不写任何收件人**。只有全部命中才写。这样「静默丢」在两种意义上都被消掉：
- * 不会写一半（否则用户以为通知齐了），也不会清参（否则不可重试）。</p>
+ * <p>task-113 A 步：`participants === null` 与「部分/全部 id 不在册」一律**不写任何收件人**；
+ * task-126 F3：两者**出口不同** —— 前者可重试，后者不可满足（清参 + 提示），否则参数永久滞留。</p>
  */
 function prefillDraft(next: {
     text: string;
     to?: string[];
     cc?: string[];
-}): "applied" | "idle" | "blocked" {
+}): "applied" | "idle" | "blocked" | "blocked_unsat" {
     let applied = false;
     let blocked = false;
+    const unsat: string[] = [];
     if (next.text) {
         if (input.value === next.text) {
             // 重试路径：正文早前已写入，幂等承认，否则 retry 永远卡在「用户已输入」。
@@ -1392,23 +1415,31 @@ function prefillDraft(next: {
             toTargetCandidates.value,
             toTargetIds.value,
         );
+        unsat.push(...outcome.unsat);
         if (outcome.state === "applied") {
             toTargetIds.value = outcome.ids;
             applied = true;
-        } else if (outcome.state === "blocked") {
+        } else if (outcome.state !== "empty") {
             blocked = true;
         }
     }
     if (next.cc?.length) {
         const outcome = prefillRecipientField("cc", next.cc, ccCandidates.value, ccIds.value);
+        unsat.push(...outcome.unsat);
         if (outcome.state === "applied") {
             ccIds.value = outcome.ids;
             for (const id of outcome.ids) ccSuppressed.delete(id);
             applied = true;
-        } else if (outcome.state === "blocked") {
+        } else if (outcome.state !== "empty") {
             blocked = true;
         }
     }
+    if (unsat.length > 0) {
+        // 不可满足：**只提示一次** —— 调用方消费参数后不会再进来重试，所以不会每次路由变化都刷。
+        unsatRecipients.value = [...new Set(unsat)];
+        return "blocked_unsat";
+    }
+    if (applied) unsatRecipients.value = [];
     if (blocked) return "blocked";
     return applied ? "applied" : "idle";
 }
@@ -1542,6 +1573,38 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft, recipientsRead
                     data-testid="chat-to-empty-hint-dismiss"
                     class="shrink-0 rounded-sm px-1 transition-colors hover:text-foreground"
                     @click="showToEmptyHint = false"
+                >
+                    {{ t("chat.input.toEmptyHintDismiss") }}
+                </button>
+            </div>
+            <!--
+                task-126 F3：深链「不可满足」提示（`blocked_unsat`）。形态照抄上面那条一次性提示
+                （同一个区、同一档样式、`role="status"` 不占错误通道）—— 两句话分工：
+                第一句说**发生了什么**并点名 id，第二句说**为什么是 id** 与用户该做什么。
+            -->
+            <div
+                v-if="unsatRecipients.length > 0"
+                data-testid="compose-deeplink-unsat-hint"
+                role="status"
+                class="flex items-start gap-2 px-2 text-xs text-muted-foreground"
+            >
+                <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span class="min-w-0 flex-1 space-y-0.5 leading-relaxed">
+                    <span class="block">
+                        {{
+                            t("chat.input.composeDeeplinkUnsat", {
+                                count: unsatRecipients.length,
+                                ids: unsatRecipients.join("、"),
+                            })
+                        }}
+                    </span>
+                    <span class="block">{{ t("chat.input.composeDeeplinkUnsatWhy") }}</span>
+                </span>
+                <button
+                    type="button"
+                    data-testid="compose-deeplink-unsat-dismiss"
+                    class="shrink-0 rounded-sm px-1 transition-colors hover:text-foreground"
+                    @click="unsatRecipients = []"
                 >
                     {{ t("chat.input.toEmptyHintDismiss") }}
                 </button>
