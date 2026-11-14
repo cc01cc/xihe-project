@@ -231,6 +231,15 @@ const totalPendingApprovalCount = computed(() =>
 const firstPendingOtherSession = computed(() => pendingForOtherSessions.value[0] ?? null);
 
 function refreshPendingApprovals() {
+    // task-601 残留口：路由切到 ws-less 页时，**清上下文发生在新视图的 setup 里**，比
+    // `route.fullPath` 的 watch 更晚 ⇒ 这一拍 `auth.currentWorkspaceId` 仍是旧工作区，
+    // 请求就会带着旧头出去。上下文类型以**路由**为准（它是权威且先于视图 setup 变化），
+    // 所以独立会话路由上一律不轮询。
+    if (route.name === "standalone-chat") {
+        stopPendingPolling();
+        agentStore.clearPendingApprovals();
+        return;
+    }
     if (!auth.isAuthenticated || !auth.currentWorkspaceId) {
         agentStore.clearPendingApprovals();
         return;
