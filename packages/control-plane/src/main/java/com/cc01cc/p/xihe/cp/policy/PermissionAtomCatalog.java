@@ -15,7 +15,7 @@ import java.util.Set;
  * <p>Two kinds of atom exist and they are <b>not</b> interchangeable:</p>
  *
  * <ul>
- *   <li><b>Action atoms (17)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
+ *   <li><b>Action atoms (40)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
  *       action classes}. They are the only atoms that may be materialized into
  *       {@code grants.permissions}; {@code GrantIntersectionEvaluator.PermissionAtom} throws for
  *       anything else, so a non-action atom inside a grant would fail every evaluation closed.</li>
@@ -323,10 +323,9 @@ public final class PermissionAtomCatalog {
     }
 
     /**
-     * The action atoms, in canonical order (37: 33 after PLAN-0750 M1's restore, +1 for V153's
-     * workspace-default atom, +1 for V156's personal-skills atom, +2 for V157's workspace write
-     * faces). The count in this sentence is prose, not a gate — {@code P0ManagementAtomSeedMigrationTest}
-     * and {@code SkillReadFaceTest} pin the number.
+     * The action atoms, in canonical order (40). The count in this sentence is prose, not the gate:
+     * {@link PolicyVocabularyCountProseTest} derives it from this collection at test time, while
+     * {@code P0ManagementAtomSeedMigrationTest} and {@code SkillReadFaceTest} pin the vocabulary itself.
      */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
