@@ -715,26 +715,6 @@ pub fn sandbox_env(extra: &BTreeMap<String, String>) -> BTreeMap<String, String>
     environment
 }
 
-/// Policy keys that make MXC's isolation-tier choice depend on the requested
-/// policy instead of only on host capability.
-///
-/// `base_container_runner.rs:643-664` (`is_usable_for_request`) reads them:
-/// `capture_denials.is_some()` switches to the native-capture path, while
-/// `denied_paths`/`enumerate_paths` require the PSEC contract to support them; when
-/// it cannot, MXC falls back to AppContainer + host DACL mutation (official
-/// `docs/process-container/os-version-support.md:40-43, 51-56`).
-///
-/// task-562 (2026-11-14): the generated policy deliberately stays free of these
-/// keys. That is what makes 「the tier is identical for every job on this host」
-/// true, and therefore what makes the per-job tier readout unnecessary. If a key
-/// is ever added, that premise dies and `mxc_policy_never_tiers_on_policy_content`
-/// goes red — then re-decide whether per-job tier logging becomes necessary.
-pub const TIER_DEPENDENT_POLICY_KEYS: &[(&str, &str)] = &[
-    ("filesystem", "deniedPaths"),
-    ("filesystem", "enumeratePaths"),
-    ("processContainer", "captureDenials"),
-];
-
 pub fn build_mxc_policy(request: &MxcPolicyRequest) -> serde_json::Value {
     let command_line = std::iter::once(request.program.clone())
         .chain(request.args.iter().cloned())
@@ -1390,8 +1370,18 @@ mod tests {
 
     /// task-562 tripwire: reports which tier-dependent keys a policy carries.
     /// Empty for everything `build_mxc_policy` produces today.
+    /// Policy keys that make the MXC isolation tier depend on the requested
+    /// policy (see the `TIER_DEPENDENT` discussion in task-562/task-567). Lives in
+    /// the test module because nothing outside these tests may read it — a
+    /// crate-level `pub` here would put a test-only constant on the API surface.
+    const TIER_DEPENDENT_POLICY_KEYS: &[(&str, &str)] = &[
+        ("filesystem", "deniedPaths"),
+        ("filesystem", "enumeratePaths"),
+        ("processContainer", "captureDenials"),
+    ];
+
     fn tier_dependent_keys(policy: &serde_json::Value) -> Vec<String> {
-        super::TIER_DEPENDENT_POLICY_KEYS
+        TIER_DEPENDENT_POLICY_KEYS
             .iter()
             .filter(|(section, key)| policy.get(*section).and_then(|v| v.get(*key)).is_some())
             .map(|(section, key)| format!("{section}.{key}"))
