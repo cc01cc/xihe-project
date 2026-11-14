@@ -24,6 +24,8 @@
  * 退出码：0 成功；1 参数/环境/工作树脏；2 dev server 起不来；3 截图不确定（连拍 sha 不一致）/被裁/折行。
  *
  * 镜头步骤（app 镜头，按下列顺序执行；声明即校验，写错在开拍前失败而不是拍出一张"看起来没问题"的图）：
+ *   viewport: <w>x<h>                    **导航前**切视口，且同时决定输出画布（900x1400 的图就是 900x1400）
+ *                                       用于拍 `lg:hidden` 的抽屉/Sheet 触发器 —— 1920 宽下它不渲染（task-57）
  *   expand: <selector> | [<selector>…]   连点（展开折叠面板 / 打开二级菜单），click 语义
  *   hover:  <selector>                   指针停在元素上（悬停态底色），hover 语义
  *   focus:  <selector> | [<selector>…]   脚本聚焦（page.locator().focus()），**不带键盘意图**
@@ -32,8 +34,10 @@
  *   waitFor: <selector>                  等这个内容就绪再拍（冷启动首张 app 镜头必备）
  *   element: <selector>                  取景范围=元素；缺省=整屏；fullPage: true 拍整页长图
  *
- * **焦点两条路径不等价**（task-40 实测，见 FOCUS_STEP_KEYS 注释）：脚本 focus 在 Chrome 里
- * 对非文本控件**不点亮 `:focus-visible`**，键盘 Tab 才点亮 ⇒ 交付"焦点环"图请用 `tab`。
+ * **`:focus-visible` 的真正变量是「之前有没有指针点击」**（task-40 实测，见 FOCUS_STEP_KEYS 注释）：
+ * 打开页面后直接 focus ⇒ 有环；**先 `expand`/`hover`（指针点击）再 focus ⇒ 无环**；先点再 Tab ⇒ 有环。
+ * ⇒ 交付"焦点环"图默认用 `tab`；`focus` 只用于目标排在几十个 tab stop 之后，且不得与 expand/hover 同镜头。
+ * 判据是**机器读数**（开拍打印的 `:focus-visible=true`），不是"图上有环" —— 环存在 ≠ 选择器为真（`D-1435`）。
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -416,10 +420,10 @@ function parseExtraShot(spec) {
         const eq = field.indexOf("=");
         const key = eq >= 0 ? field.slice(0, eq).trim() : field.trim();
         const value = eq >= 0 ? field.slice(eq + 1).trim() : "";
-        if (!FOCUS_STEP_KEYS.includes(key)) {
+        if (!EXTRA_SHOT_FIELDS.includes(key)) {
             throw new Error(
                 "--extra-shot 只接受 " +
-                    FOCUS_STEP_KEYS.join(" / ") +
+                    EXTRA_SHOT_FIELDS.join(" / ") +
                     " 三种字段，收到: " +
                     JSON.stringify(field) +
                     "（完整写法见 --help）",
@@ -434,6 +438,17 @@ function parseExtraShot(spec) {
                 throw new Error("--extra-shot 的 tab= 必须是整数，收到: " + value);
             }
             shot.tab = times;
+            continue;
+        }
+        if (key === "viewport") {
+            // 形态在解析阶段就校验（与 tab= 同节奏）：配置错不许留到开拍时才暴露。
+            const size = parseViewportSize(value);
+            shot.viewport = size.width + "x" + size.height;
+            continue;
+        }
+        if (key === "expand") {
+            // 可重复：按声明顺序连点（与 SHOTS 的数组形态同义）。
+            shot.expand = (shot.expand ?? []).concat(value);
             continue;
         }
         shot[key] = (shot[key] ?? []).concat(value);
@@ -505,7 +520,9 @@ function parseArgs(argv) {
                     "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--extra-shot <id>:<name>:<path>[;focus=<sel>][;tab=<n>][;expectFocus=<sel>] …] [--allow-dirty] [--dirty-proof <json>] [--selftest]",
                     "--extra-shot 可重复传：临时加拍一镜（真路由真组件、同样双拍比 sha），不进 SHOTS 批次定义；manifest 里该镜带 adHoc: true。",
                     "  焦点步骤可写在同一个参数里，字段用 ; 分隔：--extra-shot 't40:focus:/workspace/<uuid>/chat/<sid>:focus=[data-testid=chat-input];tab=2'（值里的 : 不会被拆坏）。",
-                    "  三种字段：focus=<CSS 选择器>（脚本聚焦，可重复）／tab=<整数>（键盘路径，与 focus 互斥）／expectFocus=<CSS 选择器>（拍前断言 activeElement 命中）。",
+                    "  三种焦点字段：focus=<CSS 选择器>（脚本聚焦，可重复）／tab=<整数>（键盘路径，与 focus 互斥）／expectFocus=<CSS 选择器>（拍前断言 activeElement 命中）。",
+                    "  视口字段：viewport=<宽>x<高>（如 900x1400）—— 导航前生效，且**同时决定输出画布**（图就是 900x1400）；用于拍 lg:hidden 的抽屉/Sheet 触发器。",
+                    "  点击字段：expand=<CSS 选择器>（可重复，按序连点）—— 抽屉/Sheet 这类「要先点开才有」的画面必须用它。",
                     "  注意：同一次调用里既 --only 又 --extra-shot 时，--only 必须点名额外镜头的 id，否则它会被过滤掉。",
                     "--chromium-arg 可重复传，原样进 chromium.launch 的 args（例：--chromium-arg=--disable-gpu 强制软件合成）；它和 channel/版本一起写进 manifest.browser。",
                     "工作树脏时默认 exit 1；--allow-dirty **必须**配 --dirty-proof <json>（每个脏路径一条可复算命令 + 实际输出，脚本亲自跑并记录），单独传 --allow-dirty 无效。",
@@ -915,6 +932,62 @@ const findScroller = () => {
  *   且**不得与 expand/hover 同镜头**（下面 focusPlan 直接把这种组合判红，因为那条路必然拍出"无环"图）。
  */
 const FOCUS_STEP_KEYS = ["focus", "tab", "expectFocus"];
+/**
+ * `--extra-shot` 允许的步骤字段（与 SHOTS 里的同名声明同义）。
+ *
+ * <p>为什么连 `expand` 也放进来（task-57）：抽屉/Sheet 展开态必须先点触发器才能出现，而
+ * `--extra-shot` 早先只能拍"页面初始态"。缺了它，拍一张展开态就只剩「临时改 SHOTS 再回退」这条路 ——
+ * 那正是 Lead 在 `D-1439` 里判为「比多一个正式参数危险得多」的做法（回退漏一步 = 留下一条假镜头）。</p>
+ */
+const EXTRA_SHOT_FIELDS = FOCUS_STEP_KEYS.concat(["viewport", "expand"]);
+
+/** `viewport=WxH` 的两维边界：320 是移动端最小可用宽，4096 是「再大就不是拍的这幅图」的上界。 */
+const VIEWPORT_MIN = 320;
+const VIEWPORT_MAX = 4096;
+
+/** 解析 `<w>x<h>`；**非法形态必须在开拍前报错**（静默忽略等于把配置错误报成图错误）。 */
+function parseViewportSize(value) {
+    const text = String(value).trim();
+    const matched = /^(\d{2,5})[x×](\d{2,5})$/.exec(text);
+    if (!matched) {
+        throw new Error("viewport= 需要 <宽>x<高>（如 900x1400），收到: " + JSON.stringify(value));
+    }
+    const width = Number(matched[1]);
+    const height = Number(matched[2]);
+    const inRange = (n) => Number.isInteger(n) && n >= VIEWPORT_MIN && n <= VIEWPORT_MAX;
+    if (!inRange(width) || !inRange(height)) {
+        throw new Error(
+            "viewport= 两维都必须是 " +
+                VIEWPORT_MIN +
+                ".." +
+                VIEWPORT_MAX +
+                " 的整数，收到: " +
+                text,
+        );
+    }
+    return { width, height };
+}
+
+/**
+ * 该镜头的**有效视口**与**输出画布**。返回 `null` 表示没声明 `viewport`（走存量默认路径）。
+ *
+ * <p>task-57 语义（Lead 2026-11-15 裁定 A）：`viewport=WxH` 同时决定**输出画布** ——
+ * 抽屉/Sheet 的窄态图本来就该按窄幅交付，硬拉回 1920 只会得到「左边大片空白 + 面板被裁一半」，
+ * 那种图既不能当证据也不能当基线。</p>
+ *
+ * <p>`app: false`（mock 画布镜头）声明 `viewport` **直接报错**：那种镜头的画布由 `SHOT_CSS` 钉死，
+ * 声明了也不会生效 —— 静默忽略正是 task-40 在 `focus` 上修掉的那类缺陷，同一个脚本不许两种失败哲学。</p>
+ */
+function viewportPlan(shot) {
+    if (shot.viewport === undefined) return null;
+    if (!shot.app) {
+        throw new Error(
+            shot.id +
+                " 是 mock 画布镜头（app: false），画布由 SHOT_CSS 钉死，viewport= 不会生效 ⇒ 不许声明（要么改 app 镜头，要么删掉声明）",
+        );
+    }
+    return parseViewportSize(shot.viewport);
+}
 
 /** focus / expectFocus 的标量或数组声明归一成选择器列表（顺序即执行顺序）。 */
 function selectorList(value, key) {
@@ -965,6 +1038,19 @@ function focusPlan(shot) {
     return plan;
 }
 
+/**
+ * 有界等待目标挂载，超时抛**点名选择器**的错。`focus` 与 `expand` 共用同一套失败哲学：
+ * 「来不及」用等待解决，「真的没有」用报错结束 —— 但两种都要**响亮**，绝不静默跳过。
+ * （task-40 实测：`#app` 有子节点 ≠ 目标页已挂载，即时 `count()` 会误报"不存在"。）
+ */
+async function waitForAttached(page, selector, shotId, label) {
+    try {
+        await page.locator(selector).first().waitFor({ state: "attached", timeout: 15000 });
+    } catch {
+        throw new Error(shotId + " " + label + " 目标不存在（等 15s 仍未挂载）: " + selector);
+    }
+}
+
 /** 拍前断言 document.activeElement 命中选择器；没命中就把实际焦点报出来。 */
 async function assertActiveElement(page, selector, shotId) {
     const matched = await page.evaluate((sel) => {
@@ -992,11 +1078,7 @@ async function applyFocusSteps(page, shot) {
         // 会在首帧就报「目标不存在」（实测 /settings 与 /workspace/…/chat/… 两条都是这样，
         // 而探针显示那两个选择器明明在页面上）。所以这里**有界等待**它挂载，超时才判不存在：
         // 判据仍是"不许沉默"，只是把"来不及"和"真的没有"分开 —— 前者等，后者报。
-        try {
-            await page.locator(selector).first().waitFor({ state: "attached", timeout: 15000 });
-        } catch {
-            throw new Error(shot.id + " focus 目标不存在（等 15s 仍未挂载）: " + selector);
-        }
+        await waitForAttached(page, selector, shot.id, "focus");
         await page.locator(selector).first().focus({ timeout: 10000 });
         const focused = await page.evaluate((sel) => {
             const el = document.querySelector(sel);
@@ -1058,10 +1140,24 @@ async function applyFocusSteps(page, shot) {
 }
 
 async function shootOne(page, base, shot, outDir) {
+    // task-57：`viewport=WxH` 的镜头按声明开拍，且**导航前**就切好 —— 页面从首帧起就是窄视口，
+    // 不存在「重排没完成就 click」的竞态（抽屉触发器是 `lg:hidden`，宽视口下它压根不渲染）。
+    // 没声明的镜头走存量路径（视口 = 画布 = 1920×1080），16 张交付图 sha 必须逐字节不变。
+    const declaredViewport = viewportPlan(shot);
+    const canvas = declaredViewport ?? { width: CANVAS.width, height: CANVAS.height };
     if (shot.app) {
-        // 真页面：1920×1080 视口，等真 App 挂载 + 首屏数据落定（不是空壳）。
-        await page.setViewportSize({ width: CANVAS.width, height: CANVAS.height });
+        // 真页面：默认 1920×1080 视口，等真 App 挂载 + 首屏数据落定（不是空壳）。
+        await page.setViewportSize(canvas);
     }
+    // task-189：`expand` 允许**数组**（按顺序连点），用于「先切双态、再开二级菜单」这类
+    // 需要两步才能到达的画面；字符串形态保持原语义（单次点击），旧镜头零改动。
+    // 声明在函数顶部（不是点击循环前）：manifest 也要记这条序列，块内声明会 ReferenceError
+    // （task-57 实测：2026-11-15T03:47 第一次真跑就撞上）。
+    const expandSteps = shot.expand
+        ? Array.isArray(shot.expand)
+            ? shot.expand
+            : [shot.expand]
+        : [];
     const targetUrl = shot.app
         ? base + shot.path
         : base + "/preview-mock.html" + (shot.query ?? "");
@@ -1095,15 +1191,11 @@ async function shootOne(page, base, shot, outDir) {
             await page.waitForSelector(shot.waitFor, { timeout: 20000 });
         }
         await page.evaluate(() => document.fonts.ready);
-        // task-189：`expand` 允许**数组**（按顺序连点），用于「先切双态、再开二级菜单」这类
-        // 需要两步才能到达的画面；字符串形态保持原语义（单次点击），旧镜头零改动。
-        const expandSteps = shot.expand
-            ? Array.isArray(shot.expand)
-                ? shot.expand
-                : [shot.expand]
-            : [];
         for (const selector of expandSteps) {
             // 域面板默认折叠；审计图要看字段级内容 ⇒ 点开再拍（这也是 B 轻量版要证的一种交互）。
+            // task-57：选择器写错必须响亮失败（与 focus 同款），否则会拍出一张"抽屉没开"的图，
+            // 而那种图看起来完全正常（页面还在、只是没展开）—— 比失败更坏。
+            await waitForAttached(page, selector, shot.id, "expand");
             await page.click(selector, { timeout: 10000 });
             await page.waitForTimeout(500);
         }
@@ -1144,7 +1236,11 @@ async function shootOne(page, base, shot, outDir) {
     // **都不能挪鼠标**：挪走等于把悬停态拍成了常态（`task-259` 后已没有"指针离开就关菜单"的
     // 计时器，但这条取景纪律对 hover 镜头本身仍然成立）。
     if (!shot.hover && !shot.keepPointer) {
-        await page.mouse.move(VIEWPORT.width - 200, VIEWPORT.height - 100);
+        // 存量镜头必须保持原坐标（改一个像素就是改 sha）：只有声明了 viewport 的镜头按新视口归位，
+        // 否则窄视口下鼠标会停在视口外面，hover 结果与默认镜头不可比。
+        const parkX = declaredViewport ? Math.max(0, canvas.width - 200) : VIEWPORT.width - 200;
+        const parkY = declaredViewport ? Math.max(0, canvas.height - 100) : VIEWPORT.height - 100;
+        await page.mouse.move(parkX, parkY);
         await page.waitForTimeout(400);
     }
 
@@ -1180,9 +1276,21 @@ async function shootOne(page, base, shot, outDir) {
     const size = { width: stable.buf.readUInt32BE(16), height: stable.buf.readUInt32BE(20) };
     // fullPage 只校验宽下限（高 = 内容真实高度，宽 = 视口盒 2000px）；
     // element（整窗）与整屏镜头维持 1920×1080 契约。
-    const widthOk = shot.fullPage ? size.width >= CANVAS.width : size.width === CANVAS.width;
-    if (!widthOk || (!shot.fullPage && size.height !== CANVAS.height)) {
-        throw new Error(shot.id + " 画布尺寸不对：" + size.width + "x" + size.height);
+    // task-57：画布期望值 = 该镜头的有效画布（声明了 viewport 就是它，否则 CANVAS 1920×1080）。
+    const widthOk = shot.fullPage ? size.width >= canvas.width : size.width === canvas.width;
+    if (!widthOk || (!shot.fullPage && size.height !== canvas.height)) {
+        throw new Error(
+            shot.id +
+                " 画布尺寸不对：" +
+                size.width +
+                "x" +
+                size.height +
+                "（期望 " +
+                canvas.width +
+                "x" +
+                canvas.height +
+                "）",
+        );
     }
 
     const probe = await page.evaluate(() => {
@@ -1243,6 +1351,14 @@ async function shootOne(page, base, shot, outDir) {
         file: mainFile,
         sha256_16: stable.digest,
         size,
+        // task-57（Lead 裁定约束 2）：**逐镜**记「有效视口 → 输出画布」两列。
+        // 窄幅图进证据包后，读图的人第一反应是「这图是不是被裁过」—— 只有 manifest 里写着
+        // `viewport=900x1400 → canvas=900x1400` 才能自证不是裁的。顶层 viewport/canvas 仍是默认值。
+        viewport: shot.app ? canvas : VIEWPORT,
+        canvas,
+        // task-57（Lead 追加要求）：**逐镜记录展开过的选择器序列** —— 图里有抽屉，但没人知道
+        // 它是怎么被打开的，就等于把"怎么复现"留在了命令行里。空数组 = 这镜没展开任何东西。
+        expand: expandSteps,
         bytes: stable.buf.length,
         deterministic: true,
         probe,
@@ -1439,6 +1555,33 @@ async function runSelftest() {
             throws(() => focusPlan(parseExtraShot("t40:f:/x:focus=#a;tab=2"))),
         "",
     );
+    // task-57：viewport= 解析与语义约束（纯函数）
+    const withViewport = parseExtraShot("t40:narrow:/workspace/x;viewport=900x1400");
+    check(
+        "extra-shot: viewport= 解析成 <w>x<h> 并保留 app 镜头",
+        withViewport.viewport === "900x1400" && withViewport.app === true,
+        JSON.stringify(withViewport.viewport),
+    );
+    check(
+        "extra-shot: viewport= 非法形态/越界 ⇒ 必须抛（不许静默忽略）",
+        throws(() => parseExtraShot("t40:n:/x;viewport=900")) &&
+            throws(() => parseExtraShot("t40:n:/x;viewport=abcxdef")) &&
+            throws(() => parseExtraShot("t40:n:/x;viewport=100x1400")) &&
+            throws(() => parseExtraShot("t40:n:/x;viewport=900x99999")),
+        "",
+    );
+    check(
+        "viewportPlan: 未声明 = null（存量镜头零改动），声明则两维同时给出",
+        viewportPlan({ id: "a", app: true }) === null &&
+            JSON.stringify(viewportPlan({ id: "a", app: true, viewport: "900x1400" })) ===
+                JSON.stringify({ width: 900, height: 1400 }),
+        "",
+    );
+    check(
+        "viewportPlan: 对 app:false 的 mock 画布镜头声明 ⇒ 必须抛（画布由 SHOT_CSS 钉死）",
+        throws(() => viewportPlan({ id: "a", app: false, viewport: "900x1400" })),
+        "",
+    );
     check(
         "expand/hover + focus 同镜头 ⇒ 必须抛（实测定位点击后拍出无环图）",
         throws(() => focusPlan({ focus: "#a", expand: "#b" })) &&
@@ -1488,6 +1631,13 @@ async function main() {
             focusPlan(shot);
         } catch (error) {
             fail(1, "镜头 " + shot.id + " 的焦点步骤声明有误：" + error.message);
+            return;
+        }
+        // task-57：视口声明同批预检（形态非法 / 对 mock 画布镜头声明 ⇒ 起 server 之前就红）。
+        try {
+            viewportPlan(shot);
+        } catch (error) {
+            fail(1, "镜头 " + shot.id + " 的视口声明有误：" + error.message);
             return;
         }
     }
