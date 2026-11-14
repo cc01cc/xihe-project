@@ -613,6 +613,7 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
                 treeYielded: false,
                 navYielded: false,
                 forceFloating: false,
+                treeOverflow: false,
             };
         }
         return computeWorkbenchSqueeze({
@@ -743,6 +744,11 @@ export interface WorkbenchSqueezeResult {
     navYielded: boolean;
     /** The dock has to render as floating to protect the hard floor. */
     forceFloating: boolean;
+    /**
+     * 主列在「用户显式展开文件树」后仍然低于硬底线（task-589）。
+     * 与 `treeYielded` 互斥：显式展开时不再抢折叠，而是**允许破底线**并由调用方给一次提示。
+     */
+    treeOverflow: boolean;
 }
 
 /**
@@ -763,6 +769,7 @@ export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): Workbench
     let mainWidth = workbenchWidth - tree - (dockTakesSpace ? input.dockWidth : 0);
     let treeYielded = false;
     let navYielded = false;
+    let treeOverflow = false;
 
     // ── comfort floor (720), spec §1.5-C rule 2: tree first, then the nav panel ──
     // Only a *pinned* dock squeezes the row, so the comfort yield is scoped to it.
@@ -784,8 +791,15 @@ export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): Workbench
         forceFloating = true;
     }
     if (mainWidth < MAIN_MIN_WIDTH && !treeCollapsed && !treeYielded) {
-        mainWidth += tree - TREE_COLLAPSED_WIDTH;
-        treeYielded = true;
+        if (allowTreeYield) {
+            mainWidth += tree - TREE_COLLAPSED_WIDTH;
+            treeYielded = true;
+        } else {
+            // task-589：用户**显式展开**了文件树（`allowTreeYield === false`）。硬底线不再抢折叠：
+            // 否则点击「展开」会被静默否决（现象：rail 仍 41px、界面毫无变化）。
+            // 按产品裁定：允许主列破 640，由调用方给一次可见提示（`treeOverflow`）。
+            treeOverflow = true;
+        }
     }
     // The nav panel is the last lever: at narrow viewports the rail + panel alone can
     // eat the floor, so it yields even without a pinned dock (and even if the user
@@ -795,5 +809,5 @@ export function computeWorkbenchSqueeze(input: WorkbenchSqueezeInput): Workbench
         navYielded = true;
     }
 
-    return { mainWidth, treeYielded, navYielded, forceFloating };
+    return { mainWidth, treeYielded, navYielded, forceFloating, treeOverflow };
 }

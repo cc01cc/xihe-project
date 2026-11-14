@@ -524,7 +524,13 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
                 dockOpen: true,
                 dockMode: "pinned",
             }),
-        ).toEqual({ mainWidth: 844, treeYielded: false, navYielded: false, forceFloating: false });
+        ).toEqual({
+            mainWidth: 844,
+            treeYielded: false,
+            navYielded: false,
+            forceFloating: false,
+            treeOverflow: false,
+        });
 
         // 720 comfort floor: the pinned dock makes the tree yield (240 -> 40).
         expect(
@@ -536,7 +542,13 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
                 dockOpen: true,
                 dockMode: "pinned",
             }),
-        ).toEqual({ mainWidth: 880, treeYielded: true, navYielded: false, forceFloating: false });
+        ).toEqual({
+            mainWidth: 880,
+            treeYielded: true,
+            navYielded: false,
+            forceFloating: false,
+            treeOverflow: false,
+        });
 
         // 640 hard floor: even after the tree yields the main column is too narrow,
         // so the dock renders floating and the user value is left untouched.
@@ -561,7 +573,13 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
                 dockOpen: true,
                 dockMode: "floating",
             }),
-        ).toEqual({ mainWidth: 660, treeYielded: false, navYielded: false, forceFloating: false });
+        ).toEqual({
+            mainWidth: 660,
+            treeYielded: false,
+            navYielded: false,
+            forceFloating: false,
+            treeOverflow: false,
+        });
 
         // A collapsed tree already contributes only the 40px rail.
         expect(
@@ -634,7 +652,8 @@ describe("PLAN-0582 S3b P1-2 (audit): squeeze consumes the rendered tree state",
         expect(manual.mainWidth).toBeGreaterThanOrEqual(MAIN_MIN_WIDTH);
     });
 
-    it("lets the hard floor override a manual expansion when floating is still not enough", () => {
+    // task-589：硬底线**不再**否决用户的显式展开（旧行为会让「展开」按钮静默无效）。
+    it("keeps a manual expansion at the cost of the hard floor (task-589)", () => {
         const result = computeWorkbenchSqueeze({
             workbenchWidth: 900,
             treeWidth: 320,
@@ -644,10 +663,11 @@ describe("PLAN-0582 S3b P1-2 (audit): squeeze consumes the rendered tree state",
             dockMode: "pinned",
             allowTreeYield: false,
         });
-        // Floating alone still leaves 580 < 640, so the tree collapses after all.
+        // Floating alone still leaves 580 < 640 —— 但显式展开优先：不再抢折叠，改为上报溢出。
         expect(result.forceFloating).toBe(true);
-        expect(result.treeYielded).toBe(true);
-        expect(result.mainWidth).toBe(900 - 40);
+        expect(result.treeYielded).toBe(false);
+        expect(result.treeOverflow).toBe(true);
+        expect(result.mainWidth).toBe(900 - 320 - 320 + 320);
     });
 });
 

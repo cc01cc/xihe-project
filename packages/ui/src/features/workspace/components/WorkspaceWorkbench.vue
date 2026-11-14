@@ -403,7 +403,13 @@ const squeeze = computed<WorkbenchSqueezeResult>(() => {
         currentDemand = demand.value;
     if (!currentDemand) {
         // Focus: nothing to squeeze (mirrors the owner's "no demand" result).
-        return { mainWidth: offset, treeYielded: false, navYielded: false, forceFloating: false };
+        return {
+            mainWidth: offset,
+            treeYielded: false,
+            navYielded: false,
+            forceFloating: false,
+            treeOverflow: false,
+        };
     }
     return computeWorkbenchSqueeze({
         workbenchWidth: offset,
@@ -561,6 +567,22 @@ watch(
             return;
         }
         if (!overruled) squeezeToastShown = false;
+    },
+    { immediate: true },
+);
+
+// task-589：用户显式展开文件树后主列可能低于硬底线。产品裁定 = **允许破底线 + 给一次可见提示**
+// （静默无效是最坏的：点击「展开」后界面毫无变化）。同样按「一次进入」计，不做逐帧刷屏。
+let treeOverflowToastShown = false;
+watch(
+    () => squeeze.value.treeOverflow,
+    (overflow) => {
+        if (overflow && !treeOverflowToastShown) {
+            treeOverflowToastShown = true;
+            toast.warning(t("workspace.squeezeTreeOverflowNotice"));
+            return;
+        }
+        if (!overflow) treeOverflowToastShown = false;
     },
     { immediate: true },
 );

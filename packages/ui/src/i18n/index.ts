@@ -443,6 +443,7 @@ const messages = {
             dockModeAuto: "自动",
             treeResize: "调整文件树宽度",
             squeezeFloatingNotice: "空间不足，面板已自动转为浮动，避免挤压主内容。",
+            squeezeTreeOverflowNotice: "已按你的选择展开文件树，主内容区变窄（低于常规最小宽度）。",
             editorSelectFile: "从文件树选择文件",
             editorSave: "保存",
             editorSaved: "已保存",
@@ -4024,6 +4025,8 @@ const messages = {
             treeResize: "Resize the file tree",
             squeezeFloatingNotice:
                 "Not enough room: the panel switched to floating so the main column stays readable.",
+            squeezeTreeOverflowNotice:
+                "The file tree is expanded as you asked, so the main column is narrower than usual.",
             editorSelectFile: "Select a file from the tree",
             editorSave: "Save",
             editorSaved: "Saved",
