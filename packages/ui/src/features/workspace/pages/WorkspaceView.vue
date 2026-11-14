@@ -471,6 +471,25 @@ watch(isMobileViewport, (mobile) => {
                         :workspace-name="auth.workspace?.name"
                         :on-retry="workspaceEvents.retry"
                     />
+                    <!--
+                        task-550（Q-i 第二半，用户裁定）：**会话头常显**「无文件系统授权限制（工作区路径边界仍生效）」。
+                        为什么常显而不是 tooltip：这条限制会持续影响「为什么工具能跑但产物不在工作区」这类判断，
+                        藏进 hover 等于只在用户想起来要看的时候才存在。
+                        为什么两行：主文案 22 个汉字，塞进 36px 单行头部会在窄档被 truncate，
+                        而后半句（边界仍生效）恰恰最容易被截掉 —— 它正是防止「以为完全没有边界」的那半句。
+                    -->
+                    <div
+                        data-testid="session-sandbox-enforcement"
+                        role="note"
+                        class="shrink-0 border-b px-3 py-1 text-xs text-muted-foreground bg-muted/5"
+                    >
+                        <span class="font-medium text-foreground/80">{{
+                            t("workspace.sandboxEnforcement")
+                        }}</span>
+                        <span class="ml-2 text-muted-foreground/80">{{
+                            t("workspace.sandboxEnforcementSnapshot")
+                        }}</span>
+                    </div>
                     <div
                         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"
