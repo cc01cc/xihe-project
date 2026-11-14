@@ -478,6 +478,15 @@ run = "node scripts/mise/run-posix.mjs scripts/mise/format.sh"
 description = "Format code across modules"
 alias = "format"
 
+[tasks."check:plan-anchors"]
+  # task-604（D-1046「门要么在链路上」）：selfcheck-plan 的 evidence 指针自检。
+  # 它校验每一条 evidence 的锚点能否解析（键名 [tasks."x"] / 章节 §5 / 行号兜底 file:NNN !kw），
+  # 挡住「指针指向空行 / 指向同文件另一个无关 task / 行号漂到无关内容」。接线时实测 51 锚点问题 0
+  # （不制造恒红）；行号兜底剩 19 处（md 散文没有可锚键名），它们一旦漂就红在这条门上 —— 这正是接线目的。
+  run = "node scripts/selfcheck-plan.mjs --check-anchors"
+  description = "task-604: selfcheck-plan evidence 指针自检（键名/章节/行号兜底锚点 + !kw 关键词；有问题 exit 1）"
+  alias = "check:plan-anchors"
+
 [tasks.validate]
 # test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
 # （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
@@ -495,7 +504,7 @@ alias = "format"
 # 实现（产物 + 四脚本 + 决策稿）搬去 ONE 侧 `internal/A03-xihe/deferred/font-self-hosted/`。
 # 任务定义仍留在下方 `[tasks."check:font"]`（可手动复跑），但**不再是任何门的依赖** ——
 # 一条指向已搬走脚本的门挂在这里，会让 validate 恒红（这正是 D-1133 说的「留着就是干扰」）。
-depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:plan-anchors", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
 description = "Run all quality gates — check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
 alias = "validate"
 
