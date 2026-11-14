@@ -759,6 +759,9 @@ const messages = {
             agentMemoryOriginManual: "来源：手动",
             agentMemoryOriginRun: "来源：运行",
             agentMemoryEnabledToggle: "启用记忆",
+            // task-58：契约里 `types: []` 等价"记忆实际不写入" ⇒ 开关是开但不生效时照实说一句。
+            // 不把开关画成"关"：那会让用户点了没反应（静默失败），比看不懂更糟。
+            agentMemoryNoTypes: "已开启，但没有选中记忆类型，因此不会写入任何内容。",
             agentMemoryDisabledHint: "已关闭：记忆不再注入上下文；内容保留，重新打开立即恢复。",
             agentMemoryShowArchived: "显示已归档",
             agentMemoryArchivedUnsupported: "后端暂未提供归档查询，暂只能查看生效中的记忆。",
@@ -1202,6 +1205,52 @@ const messages = {
                 completed: "清理完成",
                 failed: "清理失败",
             },
+            // task-59：环境页其余枚举字段的展示文案（可见文本永远是人话；wire 原值只进
+            // title/data-value 属性）。值域出处见 WorkspaceEnvironmentView.vue 的 STATUS_LABEL_KEY 注释。
+            environmentStatus: {
+                ready: "就绪",
+                materializing: "物化中",
+                paused: "已暂停",
+                stopped: "已停止",
+                destroying: "销毁中",
+                degraded: "降级",
+                blocked: "已阻塞",
+                stale: "状态过期",
+                unbound: "尚未物化",
+                pending: "等待中",
+            },
+            environmentStatusUnknown: "未知状态",
+            environmentExecutionMode: {
+                docker: "Docker 容器",
+                windowsMxc: "Windows MXC 沙箱",
+                windowsHost: "Windows 宿主直跑",
+            },
+            environmentExecutionModeUnknown: "未知执行模式",
+            environmentMaturity: {
+                stable: "稳定",
+                preview: "预览",
+                experimental: "实验性",
+            },
+            environmentMaturityUnknown: "未知成熟度",
+            environmentJobSource: {
+                ui: "界面",
+                agent: "智能体",
+                runtime: "运行时",
+                system: "系统",
+                mcp: "MCP",
+                scheduled: "定时任务",
+            },
+            environmentJobSourceUnknown: "未知发起方",
+            environmentJobScope: {
+                run: "单次运行",
+                session: "会话",
+                workspace: "工作区",
+            },
+            environmentJobScopeUnknown: "未知作用域",
+            environmentJobStatusUnknown: "未知状态",
+            environmentJobCancelReasonUnknown: "未知取消原因",
+            environmentJobCleanupStatusUnknown: "未知清理状态",
+            releaseReasonUnknown: "未知释放原因",
         },
         chat: {
             titleChat: "对话",
@@ -4469,6 +4518,10 @@ const messages = {
             agentMemoryOriginManual: "Source: manual",
             agentMemoryOriginRun: "Source: run",
             agentMemoryEnabledToggle: "Memory on",
+            // task-58: the contract treats `types: []` as "memory writes nothing", so say it plainly
+            // when the switch is on but inert. Do NOT render the switch as off — that would make a
+            // click appear to do nothing.
+            agentMemoryNoTypes: "On, but no memory type is selected, so nothing is written.",
             agentMemoryDisabledHint:
                 "Turned off: memory is no longer injected into context. Content is kept and comes back when you turn it on.",
             agentMemoryShowArchived: "Show archived",
@@ -4933,6 +4986,52 @@ const messages = {
                 completed: "Cleanup completed",
                 failed: "Cleanup failed",
             },
+            // task-59: labels for the remaining enum fields on the environment page. Visible text is
+            // always human-readable; the raw wire value only goes into title/data-value attributes.
+            environmentStatus: {
+                ready: "Ready",
+                materializing: "Materializing",
+                paused: "Paused",
+                stopped: "Stopped",
+                destroying: "Destroying",
+                degraded: "Degraded",
+                blocked: "Blocked",
+                stale: "Stale",
+                unbound: "Not materialized",
+                pending: "Pending",
+            },
+            environmentStatusUnknown: "Unknown status",
+            environmentExecutionMode: {
+                docker: "Docker container",
+                windowsMxc: "Windows MXC sandbox",
+                windowsHost: "Windows host process",
+            },
+            environmentExecutionModeUnknown: "Unknown execution mode",
+            environmentMaturity: {
+                stable: "Stable",
+                preview: "Preview",
+                experimental: "Experimental",
+            },
+            environmentMaturityUnknown: "Unknown maturity",
+            environmentJobSource: {
+                ui: "UI",
+                agent: "Agent",
+                runtime: "Runtime",
+                system: "System",
+                mcp: "MCP",
+                scheduled: "Scheduled",
+            },
+            environmentJobSourceUnknown: "Unknown source",
+            environmentJobScope: {
+                run: "Run",
+                session: "Session",
+                workspace: "Workspace",
+            },
+            environmentJobScopeUnknown: "Unknown scope",
+            environmentJobStatusUnknown: "Unknown status",
+            environmentJobCancelReasonUnknown: "Unknown cancel reason",
+            environmentJobCleanupStatusUnknown: "Unknown cleanup status",
+            releaseReasonUnknown: "Unknown release reason",
         },
         chat: {
             titleChat: "Chat",
