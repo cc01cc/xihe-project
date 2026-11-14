@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
@@ -45,6 +45,14 @@ import {
  */
 const props = defineProps<{
     workspaceId: string;
+    /**
+     * task-44（D-1440 / A 方案）：**深链落点要展开目标主体，不是只到面板顶**（卡面判据④）。
+     *
+     * <p>面板自己不读 URL —— 它有三个宿主（workbench dock 页签、mobile 管理弹窗、
+     * `/resources/agents`），其中两个没有路由，让面板去读 `useRoute()` 等于把「谁在导航」
+     * 这条知识塞进最里层。所以由宿主把 id 传进来，面板只负责「展开这一行」。</p>
+     */
+    expandPrincipalId?: string | null;
 }>();
 
 const { t } = useI18n();
@@ -1047,6 +1055,64 @@ watch(editingPrincipalId, (id) => {
     effectiveCapError.value = "";
     effectiveCapLoading.value = false;
 });
+
+/**
+ * task-44（D-1440 / A 方案）：把「深链带进来的主体」展开成用户点一下会得到的样子。
+ *
+ * <p>三件事都要做，因为卡面的三个区块分布在三处：记忆段（`memoryPrincipalId`）、
+ * 角色 / 技能段（`rbacPrincipalId`）、权限编辑区（`editingPrincipalId`，**仅管理者**，
+ * 与 `startEditing` 同一道门 —— 深链不得成为绕过写面门禁的入口）。</p>
+ *
+ * <p>三条纪律：①**只展开一次**（记 `appliedExpandId`）：用户手动收起后，列表刷新不该把
+ * 控制权抢回去；②列表还没到 / 该主体不在本工作区 ⇒ **什么都不做**（不猜、不造，等下一次
+ * 列表刷新再试）；③展开后滚到该行，否则「落地在面板顶」正是判据④要挡的形态。</p>
+ */
+const appliedExpandId = ref<string | null>(null);
+/**
+ * 权限编辑区单独记一个 id：它的门（`MANAGE_WORKSPACE_AGENTS`）和列表是**两条并行加载的
+ * 异步线**，谁先到不确定。合成一个 id 会出现「权限先到 ⇒ 编辑区不展开、之后再也不补」的
+ * 顺序依赖 —— 那种 bug 只在慢机器上现形，所以这里让两段各自幂等。
+ */
+const appliedCapExpandId = ref<string | null>(null);
+
+async function applyExpandRequest() {
+    const target = props.expandPrincipalId ?? null;
+    if (target === null) return;
+    const agent = agents.value.find((entry) => entry.principalId === target);
+    // 主体不在本工作区（或列表还没到）：不猜、不造 —— 等下一次列表刷新再来一次。
+    if (!agent) return;
+    if (appliedExpandId.value !== target) {
+        appliedExpandId.value = target;
+        if (memoryPrincipalId.value !== target) {
+            resetMemoryPanel();
+            memoryPrincipalId.value = target;
+            void loadMemories(target);
+        }
+        if (rbacPrincipalId.value !== target) {
+            rbacPrincipalId.value = target;
+            void loadRbac(target);
+        }
+        await nextTick();
+        const row = document.querySelector(`[data-testid="workspace-agent-${target}"]`);
+        // jsdom 没有 scrollIntoView：判据是「真实浏览器里滚到位」，不是「单测里调到了」。
+        row?.scrollIntoView?.({ block: "center" });
+    }
+    // 深链**不得**绕过写面门禁：只有真持 MANAGE_WORKSPACE_AGENTS 才展开权限编辑区。
+    if (
+        canManageWorkspaceAgents.value === true &&
+        appliedCapExpandId.value !== target &&
+        editingPrincipalId.value !== target
+    ) {
+        appliedCapExpandId.value = target;
+        startEditing(agent);
+    }
+}
+
+watch(
+    [() => props.expandPrincipalId, agents, canManageWorkspaceAgents],
+    () => void applyExpandRequest(),
+    { flush: "post", immediate: true },
+);
 
 async function saveCap(agent: WorkspaceAgentBinding) {
     if (saving.value || canManageWorkspaceAgents.value !== true) return;

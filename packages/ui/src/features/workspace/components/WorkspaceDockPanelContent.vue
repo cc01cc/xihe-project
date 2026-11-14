@@ -18,6 +18,11 @@ defineProps<{
     id: string;
     sessionId: string | null;
     workspaceId: string;
+    /**
+     * task-44：深链 `?agent=<principalId>` 的目标主体。只对 `agents` 分支有意义 ——
+     * 中间层只透传，不解释（解释放在面板与宿主各一处就够，多一层就多一处会漂的规则）。
+     */
+    agentId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -58,5 +63,6 @@ const { t } = useI18n();
         v-else-if="id === 'agents'"
         :key="workspaceId"
         :workspace-id="workspaceId"
+        :expand-principal-id="agentId ?? null"
     />
 </template>

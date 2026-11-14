@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { api, type ApiBindingRow, type ApiOrgUnitMember } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
 import { useAuthStore } from "../../../stores/auth";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../../../components/ui/select";
 import {
     Sheet,
     SheetContent,
@@ -152,6 +160,49 @@ async function loadAccessRoles() {
     }
 }
 
+/**
+ * task-44（`D-1440` / A 方案）：**智能体的三段都不在本页**。
+ *
+ * <p>权限（`effective-cap`）要工作区路径参数、技能绑定的 scope 由工作区决定、记忆开关对
+ * 工作区级主体缺上下文直接 409 ⇒ 它们只能在工作区里读。所以本页对智能体**不渲染第二份
+ * 实现**，只做两件事：说明为什么不在本页，然后把人送到 `/workspace/{id}?agent=<pid>`。</p>
+ *
+ * <p><b>为什么用就地选择而不是二级弹层</b>：弹层要再套一层 focus trap 并与 Sheet 抢 Esc；
+ * 而"去哪"是一维选择、选项通常 1–3 个，原生 `select` 就够。另：切换工作区**不会丢已选主体**
+ * —— 主体来自 `member` prop，选择只改"去哪"，落地后由面板负责展开。</p>
+ */
+const router = useRouter();
+type WorkspaceChoice = { id: string; name: string };
+const workspaceChoices = ref<WorkspaceChoice[]>([]);
+const workspaceChoiceState = ref<"idle" | "loading" | "ready" | "error">("idle");
+/** **不预选**：预选第一个工作区会让一次误点直接落进别人的工作区；按钮保持禁用直到用户选。 */
+const selectedWorkspaceId = ref("");
+
+async function loadWorkspaceChoices() {
+    if (props.member?.memberKind !== "agent_principal") return;
+    workspaceChoiceState.value = "loading";
+    workspaceChoices.value = [];
+    selectedWorkspaceId.value = "";
+    try {
+        const workspaces = await api.listWorkspaces();
+        workspaceChoices.value = workspaces.map((entry) => ({ id: entry.id, name: entry.name }));
+        workspaceChoiceState.value = "ready";
+    } catch (cause) {
+        logger.warn("Failed to list workspaces for the agent deep link: " + String(cause));
+        workspaceChoiceState.value = "error";
+    }
+}
+
+function openAgentInWorkspace() {
+    const target = props.member;
+    if (!target || target.memberKind !== "agent_principal" || !selectedWorkspaceId.value) return;
+    void router.push({
+        path: `/workspace/${selectedWorkspaceId.value}`,
+        query: { agent: target.memberId },
+    });
+    emit("update:open", false);
+}
+
 watch(
     () => [props.open, props.member?.memberKind, props.member?.memberId] as const,
     ([open]) => {
@@ -160,8 +211,12 @@ watch(
         wsState.value = "idle";
         accessRows.value = [];
         accessState.value = "idle";
+        workspaceChoices.value = [];
+        workspaceChoiceState.value = "idle";
+        selectedWorkspaceId.value = "";
         if (!open) return;
         void loadAccessRoles();
+        void loadWorkspaceChoices();
     },
     { immediate: true },
 );
@@ -217,6 +272,87 @@ const wsCapParams = computed(() => ({ checked: wsChecked.value, cap: WORKSPACE_P
                         data-testid="org-member-detail-unit-cost"
                     >
                         {{ t("orgMembers.detailUnitCost") }}
+                    </p>
+                </section>
+
+                <!--
+                    智能体：三段都在工作区里 ⇒ 本页**不重复实现**，只做深链（task-44 / D-1440 A 方案）。
+                    用 vendored `Select`（reka）而不是原生 select：栈内控件优先，且焦点/键盘语义
+                    与全站一致，不必为"一维选择"再手搓一遍。
+                -->
+                <section
+                    v-if="member.memberKind === 'agent_principal'"
+                    class="border-t pt-4"
+                    data-testid="org-member-detail-agent-open"
+                >
+                    <h3 class="text-sm font-semibold">{{ t("orgMembers.agentOpenTitle") }}</h3>
+                    <p
+                        class="mt-1 text-xs text-muted-foreground"
+                        data-testid="org-member-detail-agent-open-desc"
+                    >
+                        {{ t("orgMembers.agentOpenDesc") }}
+                    </p>
+                    <p
+                        v-if="workspaceChoiceState === 'loading'"
+                        class="mt-2 text-sm text-muted-foreground"
+                        data-testid="org-member-detail-agent-open-loading"
+                    >
+                        {{ t("orgMembers.agentOpenLoading") }}
+                    </p>
+                    <p
+                        v-else-if="workspaceChoiceState === 'error'"
+                        class="mt-2 text-sm text-destructive"
+                        data-testid="org-member-detail-agent-open-error"
+                    >
+                        {{ t("orgMembers.agentOpenError") }}
+                    </p>
+                    <p
+                        v-else-if="workspaceChoiceState === 'ready' && !workspaceChoices.length"
+                        class="mt-2 text-sm text-muted-foreground"
+                        data-testid="org-member-detail-agent-open-empty"
+                    >
+                        {{ t("orgMembers.agentOpenEmpty") }}
+                    </p>
+                    <template v-else-if="workspaceChoiceState === 'ready'">
+                        <Select v-model="selectedWorkspaceId">
+                            <SelectTrigger
+                                class="mt-2 w-full"
+                                data-testid="org-member-detail-agent-open-picker"
+                            >
+                                <SelectValue :placeholder="t('orgMembers.agentOpenPickerLabel')" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="choice in workspaceChoices"
+                                    :key="choice.id"
+                                    :value="choice.id"
+                                >
+                                    {{ choice.name }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            class="mt-2"
+                            data-testid="org-member-detail-agent-open-button"
+                            :disabled="!selectedWorkspaceId"
+                            @click="openAgentInWorkspace()"
+                        >
+                            {{ t("orgMembers.agentOpenButton") }}
+                        </Button>
+                        <p
+                            class="mt-2 text-xs text-muted-foreground"
+                            data-testid="org-member-detail-agent-open-hint"
+                        >
+                            {{ t("orgMembers.agentOpenHint") }}
+                        </p>
+                    </template>
+                    <p
+                        class="mt-2 text-xs text-muted-foreground"
+                        data-testid="org-member-detail-agent-open-cost"
+                    >
+                        {{ t("orgMembers.agentOpenCost") }}
                     </p>
                 </section>
 

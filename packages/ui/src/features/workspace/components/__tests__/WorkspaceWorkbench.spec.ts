@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
 import WorkspaceWorkbench from "../WorkspaceWorkbench.vue";
+import { shouldOpenAgentsDockFromDeepLink } from "../workspaceDockTabs";
 import {
     SPLITTER_REFERENCE_WIDTH,
     TREE_COLLAPSED_WIDTH,
@@ -26,6 +27,12 @@ vi.mock("vue-sonner", () => ({
 import { useAuthStore } from "../../../../stores/auth";
 import { useWorkspaceStore } from "../../stores/workspace";
 
+/**
+ * task-44：`useRoute()` 的 query 必须可改 —— 深链 `?agent=<pid>` 是**行为**，写死 `{}`
+ * 就永远只能测到"没有深链"那一支。hook 里用 `vi.hoisted` 保证 mock 工厂拿到同一个对象。
+ */
+const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, string> }));
+
 vi.mock("vue-router", () => ({
     createRouter: () => ({
         push: vi.fn<() => void>(),
@@ -36,7 +43,7 @@ vi.mock("vue-router", () => ({
         currentRoute: { value: {} },
     }),
     createWebHistory: () => ({}),
-    useRoute: () => ({ params: {}, path: "/workspace/workspace-1", query: {} }),
+    useRoute: () => ({ params: {}, path: "/workspace/workspace-1", query: routeQuery.value }),
     useRouter: () => ({
         push: vi.fn<Router["push"]>(),
         replace: vi.fn<Router["replace"]>(),
@@ -93,8 +100,12 @@ const stubs = {
         template: '<div data-testid="session-context-panel-stub" />',
     },
     WorkspaceAgentsPanel: {
-        props: { workspaceId: { type: String, default: "" } },
-        template: '<div data-testid="agents-panel-stub" />',
+        props: {
+            workspaceId: { type: String, default: "" },
+            expandPrincipalId: { type: String, default: null },
+        },
+        template:
+            '<div data-testid="agents-panel-stub" :data-expand-principal="expandPrincipalId" />',
     },
     DelegationDagPanel: {
         props: { sessionId: { type: String, default: "" } },
@@ -148,6 +159,7 @@ async function expectStored(check: () => void): Promise<void> {
 }
 
 beforeEach(() => {
+    routeQuery.value = {};
     setActivePinia(createPinia());
     localStorage.clear();
     // BL-359：清掉 toast 警告的**调用记录**。`not.toHaveBeenCalled()` 断的是"本用例没触发警告"，
@@ -855,5 +867,52 @@ describe("WorkspaceWorkbench 文件树归属中栏容器（task-353 / D-1207 甲
         const main = wrapper.get('[data-testid="workspace-main"]').element;
         expect(centerEl.contains(rail), "中栏容器必须容纳文件树列壳").toBe(true);
         expect(centerEl.contains(main), "中栏容器必须同时容纳主区").toBe(true);
+    });
+});
+
+// ── task-44（D-1440 / A 方案）：深链 `/workspace/{id}?agent=<pid>` 的**入口端** ──────────
+// `/workspace/{id}/agents` 这个路由不存在（卡面已改），智能体面板的真实宿主是 dock 的
+// `agents` 页签；页签状态归 `useWorkspaceLayout`，没有任何 URL 面能表达它 ⇒ 深链要落地，
+// 只能在这里把"URL 说哪个主体"接到"布局开哪个页签"。这两条就是那个接线的正反面。
+describe("WorkspaceWorkbench task-44 deep link (?agent=)", () => {
+    const PRINCIPAL_ID = "12121212-1212-4212-8212-121212121212";
+
+    it("opens the agents dock tab and forwards the principal to the panel", async () => {
+        routeQuery.value = { agent: PRINCIPAL_ID };
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        const panel = wrapper.find('[data-testid="agents-panel-stub"]');
+        expect(panel.exists()).toBe(true);
+        expect(panel.attributes("data-expand-principal")).toBe(PRINCIPAL_ID);
+        await expectStored(() => {
+            expect(storedLayout().dockTabs).toContain("agents");
+            expect(storedLayout().activeDockTab).toBe("agents");
+        });
+    });
+
+    it("without the query nothing is opened (a deep link must not become the default layout)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agents-panel-stub"]').exists()).toBe(false);
+    });
+
+    it("the deep-link decision is a pure predicate: mobile never opens the dock", () => {
+        // 「手机不动布局」原本只是 workbench 里的一句 early return —— 手机没有 dock、布局也从不
+        // 持久化 ⇒ 在集成用例里**看不见也不会红**（D-1046：不会红的判据等于没有判据）。
+        // 抽成纯函数后才有一条能咬住的用例：把返回值改成 true，这条立刻红。
+        expect(shouldOpenAgentsDockFromDeepLink(PRINCIPAL_ID, false)).toBe(true);
+        expect(shouldOpenAgentsDockFromDeepLink(PRINCIPAL_ID, true)).toBe(false);
+        expect(shouldOpenAgentsDockFromDeepLink(null, false)).toBe(false);
+    });
+
+    it("mounting on a mobile viewport with ?agent= does not crash and renders no dock panel", async () => {
+        routeQuery.value = { agent: PRINCIPAL_ID };
+        mountWorkbench({ isMobile: true });
+        await flushPromises();
+
+        // 手机没有 dock（那里由管理弹窗承载）⇒ 不渲染任何 dock 面板内容。
+        expect(document.querySelector('[data-testid="agents-panel-stub"]')).toBeNull();
     });
 });

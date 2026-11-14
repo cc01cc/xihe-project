@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { i18n } from "../../../i18n";
+import { setSelectValue } from "../../../test-utils/select";
+
+/** task-44：智能体分支要 `router.push` 到工作区；这里只钉"推到哪"，真实导航由 E2E 覆盖。 */
+const routerPush = vi.hoisted(() => vi.fn<(location: unknown) => Promise<void>>());
+vi.mock("vue-router", () => ({ useRouter: () => ({ push: routerPush }) }));
 
 /**
  * PLAN-0773 M3-3 / task-43：成员详情面（只读）。
@@ -289,5 +294,81 @@ describe("task-43 身份 / 所属单元 / 动作（三成员对照）", () => {
         expect((q("org-member-detail-remove") as HTMLButtonElement).disabled).toBe(true);
         expect(q("org-member-detail-action-reason-batch")?.textContent).toContain("尚未开放");
         expect(q("org-member-detail-action-reason-admin")?.textContent).toContain("管理员能力位");
+    });
+});
+
+// ── task-44（D-1440 / A 方案）：智能体的三段不在本页，本页只做深链 ─────────────────────
+// 判据：①「先选工作区」不是预选（误点会落进别人的工作区）②落地 URL 带 `agent=` 让面板能展开
+// ③读失败 ≠ 没有工作区（两条文案分开）④人类成员根本不渲染这一段、也不发请求。
+describe("task-44 agent → 工作区深链", () => {
+    const PICKER = '[data-testid="org-member-detail-agent-open-picker"]';
+
+    it("选择工作区后跳到 /workspace/{id}?agent=<pid> 并关闭抽屉", async () => {
+        const wrapper = mountSheet(BOT);
+        await flushPromises();
+
+        // 不预选：打开时按钮必须是禁用的，避免一次误点直接落进默认工作区。
+        expect((q("org-member-detail-agent-open-button") as HTMLButtonElement).disabled).toBe(true);
+        await setSelectValue(wrapper, PICKER, "w-2");
+        expect((q("org-member-detail-agent-open-button") as HTMLButtonElement).disabled).toBe(
+            false,
+        );
+
+        (q("org-member-detail-agent-open-button") as HTMLButtonElement).click();
+        await flushPromises();
+
+        expect(routerPush).toHaveBeenCalledWith({
+            path: "/workspace/w-2",
+            query: { agent: "m-bot" },
+        });
+        expect(wrapper.emitted("update:open")?.at(-1)).toEqual([false]);
+    });
+
+    it("读工作区失败 ⇒ 失败文案（不是「你不在任何工作区」），且没有可点的跳转", async () => {
+        apiState.listWorkspaces.mockRejectedValue(new Error("500 boom"));
+        mountSheet(BOT);
+        await flushPromises();
+
+        expect(q("org-member-detail-agent-open-error")?.textContent).toContain(
+            i18n.global.t("orgMembers.agentOpenError"),
+        );
+        expect(q("org-member-detail-agent-open-empty")).toBeNull();
+        expect(q("org-member-detail-agent-open-button")).toBeNull();
+    });
+
+    it("一个工作区都没有 ⇒ 空态文案，且不发跳转", async () => {
+        apiState.listWorkspaces.mockResolvedValue([]);
+        mountSheet(BOT);
+        await flushPromises();
+
+        expect(q("org-member-detail-agent-open-empty")?.textContent).toContain(
+            i18n.global.t("orgMembers.agentOpenEmpty"),
+        );
+        expect(q("org-member-detail-agent-open-button")).toBeNull();
+    });
+
+    it("人类成员：不渲染这一段，也不为它请求工作区列表", async () => {
+        mountSheet(ALICE);
+        await flushPromises();
+
+        expect(q("org-member-detail-agent-open")).toBeNull();
+        expect(apiState.listWorkspaces).not.toHaveBeenCalled();
+    });
+});
+
+// ── 文案纪律（Lead 2026-11-15 裁定）：用户文案不写实现事实（错误码 / 原子名 / 端点名）──────
+describe("task-44 agent 深链文案：不把实现事实写给用户", () => {
+    it("说明与代价两句里没有错误码、原子名或端点名", async () => {
+        mountSheet(BOT);
+        await flushPromises();
+
+        const copy = [
+            q("org-member-detail-agent-open-desc")?.textContent ?? "",
+            q("org-member-detail-agent-open-cost")?.textContent ?? "",
+        ].join(" ");
+
+        // 用户看到 "409" 会去搜「409 是什么」，而他要知道的只是「这件事在工作区里做」。
+        expect(copy).not.toMatch(/409|403|MANAGE_[A-Z_]+|effective-cap|\/api\//);
+        expect(copy.length).toBeGreaterThan(0);
     });
 });

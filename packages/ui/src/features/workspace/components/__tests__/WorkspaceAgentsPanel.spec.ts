@@ -2105,3 +2105,109 @@ describe("WorkspaceAgentsPanel live effective cap (task-469 / 417 P1-6)", () => 
         expect(apiMock.getWorkspaceAgentEffectiveCap).toHaveBeenCalledTimes(2);
     });
 });
+// ── task-44（D-1440 / A 方案）：深链 `?agent=<pid>` 的**落地端** ─────────────────────────
+// 判据④要的是「落地页能展开目标主体，不是只到面板顶」。面板不读 URL（三个宿主里两个没有
+// 路由），所以这条行为只能由 `expandPrincipalId` prop 驱动 —— 这里钉的就是它展开哪几段、
+// 以及**深链不能绕过写面门禁**。
+describe("WorkspaceAgentsPanel task-44 deep-link expansion", () => {
+    const PRINCIPAL_ID = "12121212-1212-4212-8212-121212121212";
+    const MISSING_ID = "34343434-3434-4434-8434-343434343434";
+    const agent = {
+        principalId: PRINCIPAL_ID,
+        name: "deep link agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-15T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+        roleIds: [],
+    };
+
+    async function mountWithDeepLink(target: string | null) {
+        const wrapper = mountTracked({
+            attachTo: document.body,
+            props: { workspaceId: WORKSPACE_ID, expandPrincipalId: target },
+            global: {
+                plugins: [i18n],
+                stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+            },
+        });
+        await flushPromises();
+        return wrapper;
+    }
+
+    beforeEach(() => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agent]);
+        apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
+        apiMock.getAgentRoles.mockResolvedValue([]);
+        apiMock.getAgentSkills.mockResolvedValue([]);
+        apiMock.listRoles.mockResolvedValue([]);
+        apiMock.getSkills.mockResolvedValue([]);
+        apiMock.getWorkspaceSkills.mockResolvedValue([]);
+    });
+
+    it("expands memory + roles/skills of the deep-linked principal and scrolls its row into view", async () => {
+        const scrollSpy = vi.fn<(options?: ScrollIntoViewOptions) => void>();
+        (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scrollSpy;
+        try {
+            const wrapper = await mountWithDeepLink(PRINCIPAL_ID);
+
+            // 记忆段：展开 + 读这个主体（不是"面板顶"）
+            expect(
+                wrapper
+                    .get(`[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`)
+                    .attributes("aria-expanded"),
+            ).toBe("true");
+            expect(apiMock.getWorkspaceAgentMemories).toHaveBeenCalledWith(
+                WORKSPACE_ID,
+                PRINCIPAL_ID,
+            );
+            // 角色 / 技能段：同一主体，且两条列表都读过
+            expect(
+                wrapper
+                    .get(`[data-testid="agent-roles-toggle-${PRINCIPAL_ID}"]`)
+                    .attributes("aria-expanded"),
+            ).toBe("true");
+            expect(apiMock.getAgentRoles).toHaveBeenCalledWith(WORKSPACE_ID, PRINCIPAL_ID);
+            expect(apiMock.getAgentSkills).toHaveBeenCalledWith(WORKSPACE_ID, PRINCIPAL_ID);
+            // 权限段（管理者）：live 生效权限读一次
+            expect(apiMock.getWorkspaceAgentEffectiveCap).toHaveBeenCalledWith(
+                WORKSPACE_ID,
+                PRINCIPAL_ID,
+            );
+            // 落地不是停在面板顶：行被滚进视口
+            expect(scrollSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+        }
+    });
+
+    it("without MANAGE_WORKSPACE_AGENTS the deep link still opens the read-only sections but never the cap editor", async () => {
+        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
+        const wrapper = await mountWithDeepLink(PRINCIPAL_ID);
+
+        expect(
+            wrapper
+                .get(`[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`)
+                .attributes("aria-expanded"),
+        ).toBe("true");
+        expect(
+            wrapper.find(`[data-testid="workspace-agent-save-cap-${PRINCIPAL_ID}"]`).exists(),
+        ).toBe(false);
+        expect(apiMock.getWorkspaceAgentEffectiveCap).not.toHaveBeenCalled();
+    });
+
+    it("a principal outside this workspace expands nothing (no guessing, no partial state)", async () => {
+        const wrapper = await mountWithDeepLink(MISSING_ID);
+
+        expect(
+            wrapper
+                .get(`[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`)
+                .attributes("aria-expanded"),
+        ).toBe("false");
+        expect(apiMock.getWorkspaceAgentMemories).not.toHaveBeenCalled();
+        expect(apiMock.getAgentRoles).not.toHaveBeenCalled();
+        expect(apiMock.getWorkspaceAgentEffectiveCap).not.toHaveBeenCalled();
+    });
+});

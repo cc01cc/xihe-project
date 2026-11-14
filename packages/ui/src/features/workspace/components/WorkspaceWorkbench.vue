@@ -2,6 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
 import { useMediaQuery, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { FolderTree } from "@lucide/vue";
 import {
@@ -45,7 +46,11 @@ import WorkspaceDockPanelContent from "./WorkspaceDockPanelContent.vue";
 import WorkspaceShellDockview from "./WorkspaceShellDockview.vue";
 import FileTreePanel from "./FileTreePanel.vue";
 import FileEditor from "./FileEditor.vue";
-import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
+import {
+    DOCK_TAB_LABEL_KEYS,
+    shouldOpenAgentsDockFromDeepLink,
+    type DockTab,
+} from "./workspaceDockTabs";
 import WorkspaceStatusBar from "./WorkspaceStatusBar.vue";
 import { useAgentStore } from "../../../stores/agent";
 
@@ -756,6 +761,33 @@ function setActiveDockTab(id: string): void {
 }
 
 /**
+ * task-44（D-1440 / A 方案）：深链 `/workspace/{id}?agent=<principalId>` 的落地端。
+ *
+ * <p>为什么落点不是 `/workspace/{id}/agents`：**那个路由不存在**（`router/index.ts` 的
+ * `/workspace/:workspaceId` 子路由里没有它）。智能体面板的真实宿主是 dock 的 `agents`
+ * 页签，而页签状态归 `useWorkspaceLayout`（每个工作区一份、落 localStorage）—— 没有任何
+ * URL 面能表达"打开哪个页签"。所以深链要落地，只能在这里把两者接起来：**URL 说目标主体，
+ * 布局承担"哪个页签"**。为对齐卡面去新建一个空路由是被明令禁止的。</p>
+ *
+ * <p>手机视口没有 dock（那里由 `WorkspaceAgentManagementDialog` 承载），所以不碰布局 ——
+ * 静默 return 是**有意的**：在手机上强行改桌面布局会把用户的页签集合写坏。</p>
+ */
+const route = useRoute();
+const deepLinkAgentId = computed<string | null>(() => {
+    const value = route.query.agent;
+    return typeof value === "string" && value.length > 0 ? value : null;
+});
+
+watch(
+    deepLinkAgentId,
+    (principalId) => {
+        if (!shouldOpenAgentsDockFromDeepLink(principalId, props.isMobile)) return;
+        openDockTab("agents");
+    },
+    { immediate: true },
+);
+
+/**
  * Closing the last tab collapses the dock (ruling: closing the last one rolls it up).
  *
  * PLAN-0626 D26-13: closing the *active* tab activates its **nearest neighbour** (right
@@ -1166,6 +1198,7 @@ defineExpose({ openDockTab });
                         id="agents"
                         :session-id="sessionId"
                         :workspace-id="workspaceId"
+                        :agent-id="deepLinkAgentId"
                         @close="collapseDock"
                         @mention="emit('mention', $event)"
                     />
