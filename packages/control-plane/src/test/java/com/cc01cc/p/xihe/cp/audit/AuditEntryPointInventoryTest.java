@@ -43,6 +43,23 @@ class AuditEntryPointInventoryTest {
      * instead of silently escaping the inventory.
      */
     /** Main-only scope: a class file under a {@code test-classes} output dir is not part of the surface. */
+    /**
+     * Where the inventory artefacts go.
+     *
+     * <p>Derived from this class's own code source ({@code <build>/test-classes}), so it follows
+     * {@code -Dxihe.target.dir} / {@code -Dxihe.build.suffix} instead of a hard coded {@code target/}.
+     * {@code -Dxihe.audit.inventory.dir=<dir>} overrides it explicitly.</p>
+     */
+    private static Path outputDirectory() throws java.net.URISyntaxException {
+        String override = System.getProperty("xihe.audit.inventory.dir");
+        if (override != null && !override.isBlank()) {
+            return Path.of(override);
+        }
+        var location = AuditEntryPointInventoryTest.class.getProtectionDomain().getCodeSource().getLocation();
+        Path buildDir = Path.of(location.toURI()).getParent();
+        return buildDir != null ? buildDir : Path.of(".");
+    }
+
     private static String sourceUri(JavaClass javaClass) {
         return javaClass.getSource().map(source -> source.getUri().toString()).orElse("<none>");
     }
@@ -57,7 +74,8 @@ class AuditEntryPointInventoryTest {
     };
 
     @Test
-    void auditWriteEntryPointsAreEnumeratedFromTheClassNotFromAGrepList() throws IOException {
+    void auditWriteEntryPointsAreEnumeratedFromTheClassNotFromAGrepList()
+            throws IOException, java.net.URISyntaxException {
         JavaClasses classes = new ClassFileImporter()
                 .withImportOption(new ImportOption.DoNotIncludeTests())
                 .importPackages("com.cc01cc.p.xihe.cp");
@@ -145,16 +163,21 @@ class AuditEntryPointInventoryTest {
         json.append("  \"_foreignEntryPoints\": ").append(foreign).append(",\n");
         json.append("  \"_testClassesExcluded\": ").append(testClassesExcluded).append("\n}\n");
 
-        Path out = Path.of("target", "audit-entry-points.json");
-        Files.createDirectories(out.getParent());
+        // task-607: the artefacts follow the real build output, never a hard coded target/. Two lanes
+        // building into different directories must each read their own file.
+        Path outputDir = outputDirectory();
+        Files.createDirectories(outputDir);
+        Path out = outputDir.resolve("audit-entry-points.json");
         Files.writeString(out, json.toString(), StandardCharsets.UTF_8);
-        // Caller detail for the re-classification batches; gitignored target artefact, not evidence.
-        Path detail = Path.of("target", "audit-entry-points-callers.txt");
+        System.out.println("wrote " + out.toAbsolutePath());
+        // Caller detail for the re-classification batches; gitignored build artefact, not evidence.
+        Path detail = outputDir.resolve("audit-entry-points-callers.txt");
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, String> e : callers.entrySet()) {
             sb.append(e.getKey()).append(" => ").append(e.getValue()).append('\n');
         }
         Files.writeString(detail, sb.toString(), StandardCharsets.UTF_8);
+        System.out.println("wrote " + detail.toAbsolutePath());
 
         assertThat(total).as("total audit call sites resolved by receiver type").isPositive();
         assertThat(foreign).as("calls to AuditLogger methods outside the write entry-point list: %s",
