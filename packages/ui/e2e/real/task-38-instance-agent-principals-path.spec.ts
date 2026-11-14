@@ -132,7 +132,8 @@ test("@host 资源区全平台智能体读到契约路径 /instance/agent-princi
         { timeout: LONG_TIMEOUT_MS },
     );
 
-    await page.goto(`${UI_URL}/resources/agents?layer=INSTANCE`);
+    // task-96/task-97：实例层平台智能体已搬进设置区独立页（旧 /resources/agents?layer=INSTANCE 302 到此）。
+    await page.goto(`${UI_URL}/settings/instance/agent-principals`);
 
     // ① 正向：契约路径必须真被请求且 200
     const response = await responsePromise;

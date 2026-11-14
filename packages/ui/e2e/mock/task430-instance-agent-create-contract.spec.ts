@@ -13,7 +13,9 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * <p>这里钉「真浏览器里」的三件事：说明框真的不在了、发出去的 body 真的没有 description 键、
  * 格式提示与禁用态真的按输入变化（含服务端码的本地化）。单测钉载荷与判据，交互归 Playwright。</p>
  */
-const PANEL_URL = "/resources/agents?layer=INSTANCE";
+// task-96/task-97（用户裁定「智能体是组织成员，不是资源」）：实例层平台智能体不再是
+// `/resources/agents?layer=INSTANCE`（该 URL 现 302 到本页），而是设置区的独立页。
+const PANEL_URL = "/settings/instance/agent-principals";
 
 type Page = import("@playwright/test").Page;
 

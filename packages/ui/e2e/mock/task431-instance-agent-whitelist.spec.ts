@@ -13,7 +13,9 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * `packages/ui/AGENTS.md`：交互归 Playwright）。单测钉载荷与三态判据，这里钉「预填真的勾上了、
  * 原样保存真的点不动、取消勾选真的发出 allowedModels:null」。</p>
  */
-const PANEL_URL = "/resources/agents?layer=INSTANCE";
+// task-96/task-97（用户裁定「智能体是组织成员，不是资源」）：实例层平台智能体不再是
+// `/resources/agents?layer=INSTANCE`（该 URL 现 302 到本页），而是设置区的独立页。
+const PANEL_URL = "/settings/instance/agent-principals";
 
 type Page = import("@playwright/test").Page;
 

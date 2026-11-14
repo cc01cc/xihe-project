@@ -16,7 +16,9 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * <p>faces 在 spec 内桩的理由同 task-401：mock 车道 `XIHE_UI_MOCK_API=0`，预览 mock API 中间件没挂，
  * 通配兜底对未登记路径回 `200 {}` ⇒ 不桩就是「零原子 + 空列表」，入口永久禁用。</p>
  */
-const PANEL_URL = "/resources/agents?layer=INSTANCE";
+// task-96/task-97（用户裁定「智能体是组织成员，不是资源」）：实例层平台智能体不再是
+// `/resources/agents?layer=INSTANCE`（该 URL 现 302 到本页），而是设置区的独立页。
+const PANEL_URL = "/settings/instance/agent-principals";
 const PRINCIPAL_ID = "agent-seed";
 
 type Page = import("@playwright/test").Page;

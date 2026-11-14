@@ -137,7 +137,13 @@ const SHOTS = [
         path: "/resources/credentials?layer=INSTANCE",
         app: true,
     },
-    { id: "09", name: "resources-agents", path: "/resources/agents?layer=INSTANCE", app: true },
+    // task-96/task-97：资源区的智能体页已摘除（旧 URL 302 到设置区独立页）⇒ 09 改拍新家。
+    {
+        id: "09",
+        name: "settings-instance-agents",
+        path: "/settings/instance/agent-principals",
+        app: true,
+    },
     { id: "10", name: "resources-mcp", path: "/resources/mcp?layer=INSTANCE", app: true },
     // task-167：实例层技能页。11 = 列表 + 「导入技能」入口（持有 MANAGE_SKILL_LIBRARY ⇒ 可点）；
     // 12 = 点开导入对话框（expand 点的是真按钮，弹的是真 Dialog，不是静态壳）。

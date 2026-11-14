@@ -63,13 +63,20 @@ const SETTINGS_GROUP_VIEWS: Record<string, () => Promise<unknown>> = {
  */
 function agentResourceLocation(to: { query: Record<string, unknown> }): RouteLocationRaw {
     const raw = typeof to.query.layer === "string" ? to.query.layer.toUpperCase() : "";
-    if (raw === "INSTANCE") return { name: "settings-instance-agent-principals" };
+    // 旧 query **必须显式清空**（task-97 裁定 A，2026-11-15）：vue-router 4 的
+    // `handleRedirectRecord` 是 `assign({ query: to.query, hash: to.hash }, newTargetLocation)`
+    // （`node_modules/vue-router/dist/vue-router.js`，`[源码]`）⇒ 返回值**不带 query 键时旧 query 会被继承**。
+    // 不带的结果是 `/members?layer=USER`、`/workspace/<id>/members?workspaceId=<id>` 这类过期参数：
+    // 既误导读者，落地页也可能自行解读 `?layer`（那就是另一条路径了）。所以三条出口都带 `query: {}`。
+    if (raw === "INSTANCE") return { name: "settings-instance-agent-principals", query: {} };
     if (raw === "WORKSPACE") {
         const fromQuery = typeof to.query.workspaceId === "string" ? to.query.workspaceId : null;
         const workspaceId = fromQuery ?? readTabWorkspaceId();
-        return workspaceId ? "/workspace/" + workspaceId + "/members" : { name: "org-members" };
+        return workspaceId
+            ? { path: "/workspace/" + workspaceId + "/members", query: {} }
+            : { name: "org-members", query: {} };
     }
-    return { name: "org-members" };
+    return { name: "org-members", query: {} };
 }
 
 const router = createRouter({

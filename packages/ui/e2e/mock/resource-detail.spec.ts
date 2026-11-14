@@ -21,8 +21,6 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
  * 没有该 pk"，**不是**故意回 4xx —— 后者会触发 mock 车道的 page-failure 门（那是另一条判据）。</p>
  */
 
-const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
-
 const CREDENTIAL = {
     id: "cred-0001",
     label: "部署令牌",
@@ -52,19 +50,6 @@ const SKILL = {
     attachments: [],
     createdAt: "2026-11-01T09:00:00Z",
     updatedAt: "2026-11-12T07:41:00Z",
-};
-
-const AGENT_BINDING = {
-    principalId: "principal-0001",
-    name: "评审主体",
-    templateId: null,
-    templateName: "评审模板",
-    createdAt: "2026-11-01T09:00:00Z",
-    permissionsSnapshot: [],
-    bound: true,
-    disabled: false,
-    defaultModelProvider: null,
-    defaultModelName: null,
 };
 
 /**
@@ -131,54 +116,6 @@ async function stubSkills(page: Page): Promise<void> {
     );
     await page.route(/\/api\/v1\/skills\/[^/]+(\?.*)?$/, (route) =>
         route.fulfill(json({ ...SKILL, body: "# commit-msg-review\n\n检查提交信息规范。" })),
-    );
-}
-
-async function stubWorkspaceAgent(page: Page): Promise<void> {
-    await page.route(/\/api\/v1\/workspaces\/[^/]+\/agents(\?.*)?$/, (route) =>
-        route.fulfill(json({ agents: [AGENT_BINDING] })),
-    );
-    await page.route(/\/api\/v1\/agent-principals\/[^/]+\/roles(\?.*)?$/, (route) =>
-        route.fulfill(
-            json({
-                items: [
-                    {
-                        bindingId: "role-binding-0001",
-                        roleId: "role-0001",
-                        name: "审查员",
-                        displayName: "审查员",
-                        scopeType: "workspace",
-                        scopeId: WORKSPACE_ID,
-                        scopeName: "工作区",
-                        isSystem: false,
-                        grantedBy: null,
-                        atomSummary: [],
-                        atomCount: 2,
-                        atomsTruncated: false,
-                    },
-                ],
-            }),
-        ),
-    );
-    await page.route(/\/api\/v1\/agent-principals\/[^/]+\/skills(\?.*)?$/, (route) =>
-        route.fulfill(
-            json({
-                items: [
-                    {
-                        bindingId: "skill-binding-0001",
-                        skillId: SKILL.skillId,
-                        name: SKILL.name,
-                        description: null,
-                        sourceType: "instance",
-                        sourceName: null,
-                        scopeType: "workspace",
-                        scopeId: WORKSPACE_ID,
-                        activatedAt: null,
-                        boundAt: null,
-                    },
-                ],
-            }),
-        ),
     );
 }
 
@@ -300,17 +237,10 @@ test.describe("PLAN-0772 task-228: 资源详情单页", () => {
         await expect(page.getByTestId("resource-detail-body")).toHaveCount(0);
     });
 
-    test("agents 的 ?layer=WORKSPACE 能进（三层资源不止个人层）", async ({ page }) => {
-        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
-        await stubWorkspaceAgent(page);
-
-        await page.goto(`/resources/agents/${AGENT_BINDING.principalId}?layer=WORKSPACE`);
-        await expect(page.getByTestId("resource-detail-title")).toHaveText(AGENT_BINDING.name, {
-            timeout: EXPECT_TIMEOUT_MS,
-        });
-        // 徽标文案与层 tab 同源（agents 的工作区层 = 「本工作区智能体」，不是裸层名）。
-        await expect(page.getByTestId("resource-detail-layer")).toHaveText("本工作区智能体");
-        await expect(page.getByTestId("resource-detail-section-roles")).toContainText("审查员");
-        await expect(page.getByTestId("resource-detail-section-skills")).toContainText(SKILL.name);
-    });
+    /*
+     * task-96/task-97：原本这里有一条「agents 的 ?layer=WORKSPACE 能进」的详情页用例。
+     * 资源区的智能体页（含详情深链）已摘除 ⇒ 该页不存在，用例连同断言一起删除。
+     * 旧 URL 的去向（302 到哪个新家）**统一由** `task97-agent-landing-redirect.spec.ts` 钉住，
+     * 避免同一条契约在两个文件里各写一份（两份会各自漂移，正是今晚反复踩的坑）。
+     */
 });

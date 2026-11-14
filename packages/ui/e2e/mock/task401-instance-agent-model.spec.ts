@@ -17,7 +17,9 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 // task-430：夹具名字去掉了空格（原「E2E 模型甲」等）。契约名字格式是字母/汉字/数字、
 // 不含空格与符号 ⇒ 那些名字在真栈本来就必 400 INVALID_NAME_FORMAT，是 mock 照单全收掩盖了它。
 // 创建面现在就地拦（提交禁用 + 提示变红），所以夹具必须用合规名字，否则红在前提上而不是判据上。
-const PANEL_URL = "/resources/agents?layer=INSTANCE";
+// task-96/task-97（用户裁定「智能体是组织成员，不是资源」）：实例层平台智能体不再是
+// `/resources/agents?layer=INSTANCE`（该 URL 现 302 到本页），而是设置区的独立页。
+const PANEL_URL = "/settings/instance/agent-principals";
 
 type Page = import("@playwright/test").Page;
 

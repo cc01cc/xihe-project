@@ -35,9 +35,13 @@ function redirectOf(path: string): RedirectFn {
  * redirect 的返回值有三种形状（字符串路径 / `{name}` / `{path}`）⇒ 统一成 `{ name?, path? }` 再断言。
  * 不统一的话「返回了字符串」会被当成 `{}`，那条断言就成了假绿。
  */
-function targetOf(value: unknown): { name?: string; path?: string } {
+function targetOf(value: unknown): {
+    name?: string;
+    path?: string;
+    query?: Record<string, unknown>;
+} {
     if (typeof value === "string") return { path: value };
-    return value as { name?: string; path?: string };
+    return value as { name?: string; path?: string; query?: Record<string, unknown> };
 }
 
 function assertResolvable(target: { name?: string; path?: string }, label: string): void {
@@ -81,7 +85,7 @@ describe("智能体落点（task-91）", () => {
 describe("资源区智能体页摘除后的 302 分流（task-96 / D-1456）", () => {
     it("?layer=INSTANCE ⇒ 实例层平台智能体页", () => {
         const target = targetOf(redirectOf("/resources/agents")({ query: { layer: "INSTANCE" } }));
-        expect(target).toEqual({ name: "settings-instance-agent-principals" });
+        expect(target).toEqual({ name: "settings-instance-agent-principals", query: {} });
         assertResolvable(target, "?layer=INSTANCE");
     });
 
@@ -89,21 +93,21 @@ describe("资源区智能体页摘除后的 302 分流（task-96 / D-1456）", (
         const target = targetOf(
             redirectOf("/resources/agents")({ query: { layer: "WORKSPACE", workspaceId: "ws-1" } }),
         );
-        expect(target).toEqual({ path: "/workspace/ws-1/members" });
+        expect(target).toEqual({ path: "/workspace/ws-1/members", query: {} });
         assertResolvable(target, "?layer=WORKSPACE&workspaceId=ws-1");
     });
 
     it("?layer=WORKSPACE 但没有 workspaceId ⇒ 不猜工作区，回组织成员页", () => {
         // 页签上下文（sessionStorage `xihe-workspace`）在单测里为空 ⇒ 走回退分支。
         const target = targetOf(redirectOf("/resources/agents")({ query: { layer: "WORKSPACE" } }));
-        expect(target).toEqual({ name: "org-members" });
+        expect(target).toEqual({ name: "org-members", query: {} });
         assertResolvable(target, "?layer=WORKSPACE（无 id）");
     });
 
     it("?layer=USER 与缺省都 ⇒ 组织成员页（资源侧默认层是 USER）", () => {
         for (const query of [{ layer: "USER" }, {}, { layer: "nope" }]) {
             const target = targetOf(redirectOf("/resources/agents")({ query }));
-            expect(target, JSON.stringify(query)).toEqual({ name: "org-members" });
+            expect(target, JSON.stringify(query)).toEqual({ name: "org-members", query: {} });
             assertResolvable(target, "缺省/USER/非法层");
         }
     });
@@ -112,13 +116,32 @@ describe("资源区智能体页摘除后的 302 分流（task-96 / D-1456）", (
         const byInstance = targetOf(
             redirectOf("/resources/agents/:pk")({ query: { layer: "INSTANCE" } }),
         );
-        expect(byInstance).toEqual({ name: "settings-instance-agent-principals" });
+        expect(byInstance).toEqual({ name: "settings-instance-agent-principals", query: {} });
         assertResolvable(byInstance, "详情 + INSTANCE");
         const byUser = targetOf(redirectOf("/resources/agents/:pk")({ query: {} }));
-        expect(byUser).toEqual({ name: "org-members" });
+        expect(byUser).toEqual({ name: "org-members", query: {} });
         assertResolvable(byUser, "详情 + 缺省层");
     });
 
+    it("旧 query 一律不带到新家（三条出口都显式给 query: {}）", () => {
+        // 机制出处（[源码] `node_modules/vue-router/dist/vue-router.js` 的 handleRedirectRecord）：
+        //     assign({ query: to.query, hash: to.hash, params: … }, newTargetLocation)
+        // ⇒ 返回值**不带 query 键**时旧 query 被继承，落地 URL 会变成
+        //     /members?layer=USER 、/workspace/<id>/members?workspaceId=<id>
+        // 那是过期参数（落地页可能自行解读 ?layer）。task-97 裁定 A：显式清空。
+        const cases: { query: Record<string, unknown> }[] = [
+            { query: { layer: "INSTANCE" } },
+            { query: { layer: "WORKSPACE", workspaceId: "ws-1" } },
+            { query: { layer: "WORKSPACE" } },
+            { query: { layer: "USER" } },
+            { query: {} },
+            { query: { layer: "nope" } },
+        ];
+        for (const { query } of cases) {
+            const target = targetOf(redirectOf("/resources/agents")({ query }));
+            expect(target.query, JSON.stringify(query) + " 的旧 query 被继承了").toEqual({});
+        }
+    });
     it("判据 4：/resources/agents 不在 404 清单里（那是相反语义）", () => {
         expect(LEGACY_RESOURCE_PATHS as readonly string[]).not.toContain("/resources/agents");
     });

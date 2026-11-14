@@ -12,7 +12,7 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  *
  * <ol>
  *   <li><b>V12</b>——入口在「用户配置 → 我的资源 → 智能体主体」一级（左栏资源组），
- *       直接进入 `/resources/agents?layer=USER` 就是一个能用的页面，不是缺口占位。
+ *       直接进入 `/members`（task-96 后个人层智能体主体的新家）就是一个能用的页面，不是缺口占位。
  *       旧 `/settings/agent-principals` 已在决策 10 下**直接删除、不留 redirect** ⇒ 直连是 404
  *       （负断言见 `resources-ia.spec.ts:384`）；新入口本文件 `:146` 已在用。</li>
  *   <li><b>V8 / 矩阵 U1</b>——创建请求**不带工作区上下文**。这条必须有对照，否则断言是空的：
@@ -144,14 +144,18 @@ test.describe("PLAN-0750 M3: user-level agent-principals surface", () => {
     }) => {
         const { creates, permissionCalls } = await setupAgentPrincipalsLane(page);
 
-        // PLAN-0772 M2：用户级智能体主体现在在资源模块（`/resources/agents`，层在 ?layer=）。
-        await page.goto("/resources/agents?layer=USER");
+        // task-96/task-97：个人层的智能体主体**属于成员管理**，不再在资源区 ——
+        // 面板本体（AgentPrincipalsPanel）没变，搬到了组织成员页的「我的智能体」段。
+        await page.goto("/members");
 
-        // V12：用户配置区的真入口，不是缺口缺省行。
+        // 分流判据：URL 终态 + 宿主页标识 + 面板本体，三层都要钉（只钉一层会掩盖"跳错了页"）。
+        await expect(page).toHaveURL("/members");
+        await expect(page.getByTestId("org-members-page")).toBeVisible({
+            timeout: ACTION_TIMEOUT_MS,
+        });
         await expect(page.getByTestId("agent-principals-panel")).toBeVisible({
             timeout: ACTION_TIMEOUT_MS,
         });
-        await expect(page.locator('[data-testid="settings-nav-resource-agents"]')).toBeVisible();
         await expect(page.getByTestId("agent-principals-empty")).toBeVisible();
 
         // T3.2：这类账号没有可管理工作区 ⇒ 显式提示，且不渲染绑定按钮。
