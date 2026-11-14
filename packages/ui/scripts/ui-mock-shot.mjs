@@ -19,6 +19,18 @@
  *   node packages/ui/scripts/ui-mock-shot.mjs --allow-dirty                 # 脏树自查，禁止用于交付
  *
  * 退出码：0 成功；1 参数/环境/工作树脏；2 dev server 起不来；3 截图不确定（连拍 sha 不一致）/被裁/折行。
+ *
+ * 镜头步骤（app 镜头，按下列顺序执行；声明即校验，写错在开拍前失败而不是拍出一张"看起来没问题"的图）：
+ *   expand: <selector> | [<selector>…]   连点（展开折叠面板 / 打开二级菜单），click 语义
+ *   hover:  <selector>                   指针停在元素上（悬停态底色），hover 语义
+ *   focus:  <selector> | [<selector>…]   脚本聚焦（page.locator().focus()），**不带键盘意图**
+ *   tab:    <n>                          从 body 起按 n 次 Tab（键盘路径），与 focus 互斥
+ *   expectFocus: <selector> | […]        拍前断言 document.activeElement 命中该选择器，未命中即失败
+ *   waitFor: <selector>                  等这个内容就绪再拍（冷启动首张 app 镜头必备）
+ *   element: <selector>                  取景范围=元素；缺省=整屏；fullPage: true 拍整页长图
+ *
+ * **焦点两条路径不等价**（task-40 实测，见 FOCUS_STEP_KEYS 注释）：脚本 focus 在 Chrome 里
+ * 对非文本控件**不点亮 `:focus-visible`**，键盘 Tab 才点亮 ⇒ 交付"焦点环"图请用 `tab`。
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -839,6 +851,159 @@ const findScroller = () => {
     return info;
 };
 
+/**
+ * task-40：焦点态镜头步骤（focus / tab / expectFocus）。
+ *
+ * 为什么必须有这一步：本执行器原先只有 click(expand)/hover ⇒ 任何「焦点环 / 键盘可达性」验收
+ * **拍不出交付图**，只能靠 getComputedStyle 读数记账（ui-2 在 task-30 就是这样绕过去的：读数可信，
+ * 但视觉证据缺失）。焦点态恰恰是"读数绿而画面错"最容易发生的地方，所以必须以图为准。
+ *
+ * **实测（task-40，Chrome Beta 159 headless，真 mock 车道）—— `:focus-visible` 取决于"之前有没有指针点击"**：
+ *   | 前置 | 脚本 focus | :focus | :focus-visible | 图里有环 |
+ *   | --- | --- | --- | --- | --- |
+ *   | 打开页面后直接 focus | locator().focus() | true | **true** | 有 |
+ *   | 先 page.click 一个按钮再 focus（= expand 步骤的真实时序） | locator().focus() | true | **false** | **没有** |
+ * 同一元素、同一浏览器，只差"之前点没点过" ⇒ **脚本 focus 的环是不确定的**，而 `tab` 只要落点正确就恒为 true。
+ * ⇒ 拍"键盘用户的焦点环"用 `tab`；`focus` 只用于目标排在几十个 tab stop 之后（实测本页某目标需 53 次 Tab），
+ *   且**不得与 expand/hover 同镜头**（下面 focusPlan 直接把这种组合判红，因为那条路必然拍出"无环"图）。
+ */
+const FOCUS_STEP_KEYS = ["focus", "tab", "expectFocus"];
+
+/** focus / expectFocus 的标量或数组声明归一成选择器列表（顺序即执行顺序）。 */
+function selectorList(value, key) {
+    if (value === undefined) return [];
+    const list = Array.isArray(value) ? value : [value];
+    list.forEach((item, index) => {
+        if (typeof item !== "string" || item.trim() === "") {
+            throw new Error(
+                key + "[" + index + "] 必须是非空选择器字符串，收到: " + JSON.stringify(item),
+            );
+        }
+    });
+    return list;
+}
+
+/**
+ * 焦点步骤的**开拍前**校验（纯函数；selftest 不开浏览器就能断言）。
+ *
+ * 为什么要在开拍前拦：选择器写错若只是运行时静默跳过，图会照常生成 ⇒「这张图里没有焦点环」
+ * 与「这页本来就没有焦点环」事后无法区分。这正是 D-1074 的同形：**门要咬住逻辑，不能只咬流程**。
+ */
+function focusPlan(shot) {
+    const plan = {
+        focus: selectorList(shot.focus, "focus"),
+        tab: 0,
+        expectFocus: selectorList(shot.expectFocus, "expectFocus"),
+    };
+    if (shot.tab !== undefined) {
+        if (!Number.isInteger(shot.tab) || shot.tab < 1 || shot.tab > 40) {
+            throw new Error(
+                "tab 必须是 1..40 的整数（按 Tab 次数），收到: " + JSON.stringify(shot.tab),
+            );
+        }
+        plan.tab = shot.tab;
+    }
+    if (plan.focus.length > 0 && plan.tab > 0) {
+        throw new Error(
+            "focus 与 tab 是互斥的两条路径（脚本聚焦 vs 键盘聚焦），同一镜头只能选一条",
+        );
+    }
+    // task-40 实测：指针点击之后的脚本 focus 不点亮 :focus-visible ⇒ 这条组合必然拍出"没有焦点环"的图。
+    // 让它开拍前红，而不是拍完让人对着图猜"是不是该元素本来就没有环"。
+    if (plan.focus.length > 0 && (shot.expand !== undefined || shot.hover !== undefined)) {
+        throw new Error(
+            "该镜头同时声明了 expand/hover（指针点击）与 focus（脚本聚焦）：实测定位点击后 :focus-visible 不点亮 ⇒ 图里没有焦点环。改用 tab。",
+        );
+    }
+    return plan;
+}
+
+/** 拍前断言 document.activeElement 命中选择器；没命中就把实际焦点报出来。 */
+async function assertActiveElement(page, selector, shotId) {
+    const matched = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el !== null && document.activeElement === el;
+    }, selector);
+    if (matched) return;
+    const actual = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return "(body)";
+        const id = el.id ? "#" + el.id : "";
+        const testId = el.getAttribute("data-testid");
+        return el.tagName.toLowerCase() + id + (testId ? " [data-testid=" + testId + "]" : "");
+    });
+    throw new Error(
+        shotId + " expectFocus 未命中: " + selector + "（实际 activeElement = " + actual + "）",
+    );
+}
+
+/** 执行焦点步骤；每一步失败都抛错（**绝不静默跳过**），由 main 的 catch 转成非 0 退出。 */
+async function applyFocusSteps(page, shot) {
+    const plan = focusPlan(shot);
+    for (const selector of plan.focus) {
+        if ((await page.locator(selector).count()) === 0) {
+            throw new Error(shot.id + " focus 目标不存在: " + selector);
+        }
+        await page.locator(selector).first().focus({ timeout: 10000 });
+        const focused = await page.evaluate((sel) => {
+            const el = document.querySelector(sel);
+            return el !== null && document.activeElement === el;
+        }, selector);
+        if (!focused) {
+            throw new Error(
+                shot.id +
+                    " focus 目标不可聚焦（focus() 未被接受，检查 tabindex/disabled）: " +
+                    selector,
+            );
+        }
+    }
+    if (plan.tab > 0) {
+        // 起点必须是页面默认态：否则焦点从上一张镜头的残留位置继续走，n 次 Tab 的落点不可复现。
+        await page.evaluate(() => {
+            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        });
+        for (let index = 0; index < plan.tab; index += 1) await page.keyboard.press("Tab");
+        const landed = await page.evaluate(() => {
+            const el = document.activeElement;
+            if (!el || el === document.body) return "";
+            const testId = el.getAttribute("data-testid");
+            return el.tagName.toLowerCase() + (testId ? " [data-testid=" + testId + "]" : "");
+        });
+        if (landed === "") {
+            throw new Error(
+                shot.id +
+                    " tab: " +
+                    plan.tab +
+                    " 次后焦点仍在 body —— 页面里没有可聚焦项，或次数越界",
+            );
+        }
+        process.stdout.write(
+            "[ui-mock-shot] " + shot.id + " tab x" + plan.tab + " 落点: " + landed + "\n",
+        );
+    }
+    // 焦点环到底有没有被点亮，必须在开拍时就记下来：`:focus` 为 true 而 `:focus-visible` 为 false
+    // 的画面是「有焦点、没有环」，只有读数能区分它是"该页没有环"还是"这条路径拍不出环"。
+    const ring = await page.evaluate(
+        (sel) => {
+            const el = sel ? document.querySelector(sel) : document.activeElement;
+            return el ? el.matches(":focus-visible") : false;
+        },
+        plan.focus.length > 0 ? plan.focus[plan.focus.length - 1] : null,
+    );
+    process.stdout.write(
+        "[ui-mock-shot] " +
+            shot.id +
+            " 焦点路径=" +
+            (plan.tab > 0 ? "tab×" + plan.tab : "脚本 focus") +
+            " :focus-visible=" +
+            (ring ? "true" : "false") +
+            (ring ? "" : "  ⚠ 图里不会有焦点环：改用 tab，或确认该控件本来就不该有环") +
+            "\n",
+    );
+    for (const selector of plan.expectFocus) await assertActiveElement(page, selector, shot.id);
+    return plan;
+}
+
 async function shootOne(page, base, shot, outDir) {
     if (shot.app) {
         // 真页面：1920×1080 视口，等真 App 挂载 + 首屏数据落定（不是空壳）。
@@ -896,6 +1061,10 @@ async function shootOne(page, base, shot, outDir) {
             await page.hover(shot.hover, { timeout: 10000 });
             await page.waitForTimeout(900);
         }
+        // task-40：焦点步骤放在指针工作之后 —— 焦点环必须是最后一手，否则会被后续 click/hover 抢走。
+        if (FOCUS_STEP_KEYS.some((key) => shot[key] !== undefined)) {
+            await applyFocusSteps(page, shot);
+        }
         await page.waitForTimeout(600);
     } else {
         await page.waitForFunction(
@@ -905,11 +1074,17 @@ async function shootOne(page, base, shot, outDir) {
         await page.addStyleTag({ content: shot.fullPage ? SHOT_CSS_FULL : SHOT_CSS });
     }
     await page.evaluate(() => document.fonts.ready);
-    await page.evaluate(() => {
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        window.scrollTo(0, 0);
-        for (const el of document.querySelectorAll("[data-mock-canvas] *")) el.scrollTop = 0;
-    });
+    // task-40：focus/tab 镜头拍的就是 activeElement 的焦点环 ⇒ 这一步不能 blur（旧的收尾律只对"没有焦点声明"的镜头成立）。
+    await page.evaluate(
+        (keepFocus) => {
+            if (!keepFocus && document.activeElement instanceof HTMLElement) {
+                document.activeElement.blur();
+            }
+            window.scrollTo(0, 0);
+            for (const el of document.querySelectorAll("[data-mock-canvas] *")) el.scrollTop = 0;
+        },
+        FOCUS_STEP_KEYS.some((key) => shot[key] !== undefined),
+    );
     // 鼠标停在左栏会留下 hover 底色；挪到内容区空白处，避免"看起来像同时选中两项"。
     // `hover` 镜头（画面就是悬停态）与 `keepPointer` 镜头（画面里有靠指针位置维持的浮层）
     // **都不能挪鼠标**：挪走等于把悬停态拍成了常态（`task-259` 后已没有"指针离开就关菜单"的
@@ -1121,6 +1296,65 @@ async function runSelftest() {
         JSON.stringify(launchOptions(parseArgs([]))),
     );
 
+    // task-40：焦点步骤的声明校验（纯函数，不需要浏览器）—— 每条都同时钉「合法形状」与「非法形状必须抛」，
+    // 因为这里的失败路径决定「选择器写错」是静默跳过还是开拍前红。
+    const throws = (fn) => {
+        try {
+            fn();
+            return false;
+        } catch {
+            return true;
+        }
+    };
+    const single = focusPlan({ focus: "input[data-testid=x]" });
+    check(
+        "focus: 标量声明 → 1 个 focus 选择器",
+        JSON.stringify(single) ===
+            JSON.stringify({
+                focus: ["input[data-testid=x]"],
+                tab: 0,
+                expectFocus: [],
+            }),
+        JSON.stringify(single),
+    );
+    const ordered = focusPlan({ focus: ["#a", "#b"], expectFocus: ["#b"] });
+    check(
+        "focus: 数组按声明顺序展开 + expectFocus 独立",
+        JSON.stringify(ordered) ===
+            JSON.stringify({ focus: ["#a", "#b"], tab: 0, expectFocus: ["#b"] }),
+        JSON.stringify(ordered),
+    );
+    const tabbed = focusPlan({ tab: 3 });
+    check("tab: 3 → tab 次数 3", tabbed.tab === 3, String(tabbed.tab));
+    check(
+        "focus 与 tab 同时声明 ⇒ 必须抛",
+        throws(() => focusPlan({ focus: "#a", tab: 2 })),
+        "",
+    );
+    check(
+        'tab 越界（0 / 41 / 1.5 / "3"）⇒ 必须抛',
+        [0, 41, 1.5, "3"].every((value) => throws(() => focusPlan({ tab: value }))),
+        "",
+    );
+    check(
+        '空/非字符串选择器（focus: "" / [null]）⇒ 必须抛',
+        throws(() => focusPlan({ focus: "" })) && throws(() => focusPlan({ focus: [null] })),
+        "",
+    );
+    check(
+        "expand/hover + focus 同镜头 ⇒ 必须抛（实测定位点击后拍出无环图）",
+        throws(() => focusPlan({ focus: "#a", expand: "#b" })) &&
+            throws(() => focusPlan({ focus: "#a", hover: "#b" })) &&
+            !throws(() => focusPlan({ tab: 2, expand: "#b" })),
+        "",
+    );
+    check(
+        "未声明焦点步骤 → 空计划（存量 16 张镜头零影响）",
+        JSON.stringify(focusPlan({ id: "01", name: "window", path: "/settings" })) ===
+            JSON.stringify({ focus: [], tab: 0, expectFocus: [] }),
+        "",
+    );
+
     for (const item of checks) {
         process.stdout.write(
             (item.ok ? "PASS  " : "FAIL  ") +
@@ -1149,6 +1383,16 @@ async function main() {
         opts.only ? SHOTS.filter((shot) => opts.only.has(shot.id)) : SHOTS.slice()
     ).concat(opts.only ? extraShots.filter((shot) => opts.only.has(shot.id)) : extraShots);
     if (shots.length === 0) throw new Error("--only 没有匹配到任何镜头");
+    // task-40：焦点声明在**起 server 之前**校验完 —— 选择器形状/互斥/次数越界在这里就该红，
+    // 而不是拍完一堆图之后才发现最后一张的 focus 根本落不到位。
+    for (const shot of shots) {
+        try {
+            focusPlan(shot);
+        } catch (error) {
+            fail(1, "镜头 " + shot.id + " 的焦点步骤声明有误：" + error.message);
+            return;
+        }
+    }
 
     const git = gitState();
     if (git.dirtyPaths.length > 0 && !opts.allowDirty) {
