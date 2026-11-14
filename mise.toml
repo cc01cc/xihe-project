@@ -308,8 +308,7 @@ alias = "test:runtime:lib:gate"
 # `cargo test --no-run` 先单独编译，避免冷编译时间被算进被测超时。
 [tasks."check:runtime:ignored"]
   # task-612: 把「ignored 多少条」从注释里的手写数字变成可跑判据。约 1 s，只读源码与 registry，不编译。
-  # 不进 validate 的理由：它是「登记纪律」不是「产品正确性」，且登记更新与代码新增 ignore 常常同批；
-  # 需要它进 validate 时另裁（口径同 D-1046：接门要能自愈单命令）。
+  # task-616 起**已接 validate**（D-1046：1 s 的门没人跑等于没有门）。接前基线：unowned=0 / 29 条全部有归属，耗时 115 ms。
   run = "node scripts/check-ignored-registry.mjs --check"
   description = "task-612: runtime #[ignore] 条数与登记清单必须相等（不等即 exit 1 并点名未登记项）"
   alias = "check:runtime:ignored"
@@ -343,6 +342,27 @@ alias = "test:runtime:lib:ignored:functional"
 # `mxc_executable_for_test()` 抛一条可执行的消息（不静默、也不失败在产品逻辑里）。
 # 前置：`XIHE_MXC_EXECUTABLE` 指向已安装的 wxc-exec.exe（安装见 mxc-windows-sandbox-ops skill）。
 # timeout：4 条合计实测 1.31s（2026-11-11 lane 实测，真 MXC），逐条取 60s 上限。
+[tasks."test:runtime:lib:ignored:heavy"]
+  # task-616: 把「手动 200x/10k 基准与诊断」从 unowned 降成一个**显式列名**的档（不改任何 #[ignore] 状态）。
+  # 这些都很慢（分钟级）⇒ 不进 validate；只在需要量性能/复查缺陷时手动跑。
+  # 超时值 = 首跑估算（按 200x/10k 的量级给的宽松上限），**跑完请回填实测**；本档是否该拆另议。
+  run = [
+    "node ../../scripts/cargo-run.mjs test --locked --lib --no-run",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 300 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint::tests::p2_real_dual_backfill_fixture --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 600 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint::tests::audit_dual_pending_200x --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 600 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint::tests::benchmark_dual_write_overhead_200x --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 300 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::blob::tests::diagnose_write_blob_10k --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 600 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::capture::tests::benchmark_capture_1k_10k --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 600 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::capture::tests::benchmark_dual_phase_breakdown_200x --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 600 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::restore::tests::consistency_200x_capture_restore_verify --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 300 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::restore::tests::kill_mid_capture_leaves_no_visible_slice_and_fsck_heals --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 600 -- node ../../scripts/cargo-run.mjs test --locked --no-fail-fast --test checkpoint_perf_m0_test -- --ignored --exact m0_s6_self_10k --test-threads=1",
+    "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --test session_probe_test -- --ignored --exact session_probe --test-threads=1"
+  ]
+  description = "task-616 ignored tier heavy: 10 explicit 200x/10k benchmarks, diagnostics and real fixtures (minutes; never in validate)"
+  dir = "packages/runtime"
+  alias = "test:runtime:lib:ignored:heavy"
+
 [tasks."test:runtime:lib:ignored:mxc"]
 run = [
   "node ../../scripts/cargo-run.mjs test --locked --lib --no-run",
@@ -515,7 +535,7 @@ alias = "format"
 # 实现（产物 + 四脚本 + 决策稿）搬去 ONE 侧 `internal/A03-xihe/deferred/font-self-hosted/`。
 # 任务定义仍留在下方 `[tasks."check:font"]`（可手动复跑），但**不再是任何门的依赖** ——
 # 一条指向已搬走脚本的门挂在这里，会让 validate 恒红（这正是 D-1133 说的「留着就是干扰」）。
-depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:plan-anchors", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+depends = ["check:mise-env", "check:openapi", "check:openapi:lint", "check:api-docs", "check:plan-anchors", "check:runtime:ignored", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
 description = "Run all quality gates — check:mise-env + check:openapi + check:openapi:lint + check:api-docs + check:commit-msg + lint + typecheck + build + test (ui/agent/cp/runtime lib/cli) + test:e2e:fixtures + lint:links; no Docker step in the chain (CP defaults to H2, runtime uses --lib, agent deselects integration)"
 alias = "validate"
 
