@@ -442,7 +442,14 @@ description = "配置 schema 生成物漂移门（task-101）：configSchemaCata
 alias = "check:config-schema"
 
 [tasks.lint]
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema"]
+# task-112（D-1466 第一条律的落地；源 task-107 gate-reachability.md §8 批 1）：
+# `lint:e2e` 此前**存在于 mise.toml 但不被任何聚合依赖** ⇒ 只能手打（AGENTS.md L30 却写它在 `lint` 里）。
+# 它守的是 task-66 那类事故（块注释提前闭合 ⇒ 整条 mock 车道加载失败、playwright --list 归零），
+# 属"坏了会静默全绿"的一类，因此挂**高频面**（每次 lint）而不是低频面。
+# 实测成本（2026-11-15 本机）：冷启 1,560 ms（944 + 360）；在 lint 聚合内热跑整条 = 300.6 ms（子门 98 + 123 ms）⇒ 每次 lint 多 ~0.3 s。
+# 接线后两个子门默认用法不变（不带 --enforce 的一门仍 report-only ⇒ 不新增阻断语义）；
+# 成员行可见性按 D-1457 验证；若成员行缺失，先分清"没接线"与"被并行 depends 首个失败掐掉"（D-1457-S1）。
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema", "lint:e2e"]
 description = "Run all linters"
 alias = "lint"
 
