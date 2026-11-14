@@ -686,6 +686,20 @@ export function instanceOpsGroups(): SettingsNavGroup[] {
                     path: "/settings/config-locks",
                 },
                 { id: "roles", labelKey: "settings.ia.navRoles", path: "/settings/roles" },
+                /**
+                 * task-91（用户裁定「智能体是组织成员，不是资源」）：平台智能体的落点。
+                 *
+                 * <p>为什么在「安全与权限」而不是资源区：平台智能体是**治理物**（仅实例管理员可建、
+                 * 全平台引用），与 `agent-templates` 同类 —— 后者撤出资源面时也落在实例层
+                 * （`router/index.ts` 的 `workspace-default/agent-templates` 302）。标签复用
+                 * `settings.ia.resourceAgents`（「平台智能体」）而不是新造键：这是**迁移**，
+                 * 不是新概念，旧键随资源区摘除后再决定去留。</p>
+                 */
+                {
+                    id: "agent-principals",
+                    labelKey: "settings.ia.resourceAgents",
+                    path: "/settings/instance/agent-principals",
+                },
                 { id: "audit", labelKey: "settings.ia.navAudit", path: "/settings/audit" },
             ],
         },

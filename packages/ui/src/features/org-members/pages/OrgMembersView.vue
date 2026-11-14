@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import OrgUnitTreePanel from "../components/OrgUnitTreePanel.vue";
 import OrgUnitMemberList from "../components/OrgUnitMemberList.vue";
+import AgentPrincipalsPanel from "../../../components/settings/AgentPrincipalsPanel.vue";
 import type { ApiOrgUnitNode } from "../../../composables/api";
 
 const { t } = useI18n();
@@ -74,6 +75,29 @@ const WRITE_ACTIONS: ReadonlyArray<{ testid: string; labelKey: string }> = [
             </div>
             <div class="min-h-0 rounded-md border max-lg:mt-4">
                 <OrgUnitMemberList :unit="selectedUnit" />
+            </div>
+        </div>
+        <!--
+            task-91（用户裁定「智能体是组织成员，不是资源」；沿用用户 2026-11-14 ④
+            「智能体个人属于成员管理，并不是在设置域里面」）：个人智能体主体的落点。
+
+            面板仍是 `components/settings/AgentPrincipalsPanel.vue` —— 原先挂在资源区
+            `/resources/agents?layer=USER`，权限门（读面已认证、创建走 `CREATE_OWN_AGENT`）
+            在面板里，与它挂在资源区时逐条相同，本页不加第二道判据。
+
+            标题文案复用既有 i18n 键（「智能体主体」）：迁移不是新概念；键名不写在这里——
+            Vue 开发态保留模板注释，注释里出现真实键名会被 `test-utils/i18nKeys.ts` 的
+            裸键护栏当成渲染结果（实测踩到一次）。键的去留见 task-91 收口。
+        -->
+        <div class="mx-auto w-full max-w-6xl px-6 pb-8" data-testid="org-members-agents">
+            <h2
+                data-testid="org-members-agents-title"
+                class="text-lg leading-tight font-semibold tracking-tight"
+            >
+                {{ t("settings.ia.resourceAgentPrincipals") }}
+            </h2>
+            <div class="mt-3 rounded-md border">
+                <AgentPrincipalsPanel />
             </div>
         </div>
     </section>

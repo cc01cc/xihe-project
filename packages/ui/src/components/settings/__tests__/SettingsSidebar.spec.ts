@@ -166,13 +166,15 @@ describe("SettingsSidebar", () => {
         expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(13);
 
         // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
-        // security(config-locks,roles,audit)。
+        // security(config-locks,roles,agent-principals,audit)。
+        // task-91：`agent-principals` = 平台智能体的新家（资源区摘除后它的唯一入口）。
         const ops = wrapper.findAll('[data-testid^="settings-nav-ops-"]');
         expect(ops.map((item) => item.attributes("data-testid"))).toEqual([
             "settings-nav-ops-monitoring",
             "settings-nav-ops-data",
             "settings-nav-ops-config-locks",
             "settings-nav-ops-roles",
+            "settings-nav-ops-agent-principals",
             "settings-nav-ops-audit",
         ]);
         expect(ops.map((item) => item.attributes("to"))).toEqual([
@@ -180,6 +182,7 @@ describe("SettingsSidebar", () => {
             "/settings/data",
             "/settings/config-locks",
             "/settings/roles",
+            "/settings/instance/agent-principals",
             "/settings/audit",
         ]);
     });
@@ -234,9 +237,10 @@ describe("SettingsSidebar", () => {
             true,
         );
         expect(wrapper.find('[data-testid="settings-nav-ops-audit"]').exists()).toBe(true);
-        // 入口计数 = 条目数（不是域数）：实例层 = 10 条目 + 2 运维 + 3 安全 = **15**，
-        // 用户层 = 7 条目（task-227 把三个模型域折成一个组条目）。
-        const instanceCount = navItemsForLayer("instance").length + 5;
+        // 入口计数 = 条目数（不是域数）：实例层 = 8 条目 + 2 运维 + 4 安全 = **14**
+        // （task-91 把「平台智能体」加进安全组，故 3 → 4），
+        // 用户层 = 5 条目（task-227 把三个模型域折成一个组条目）。
+        const instanceCount = navItemsForLayer("instance").length + 6;
         expect(wrapper.find('[data-testid="settings-nav-count-instance"]').text()).toContain(
             String(instanceCount),
         );

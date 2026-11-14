@@ -312,6 +312,20 @@ const router = createRouter({
                         query: { tab: "tool-faces" },
                     },
                 },
+                /**
+                 * task-91（用户裁定「智能体是组织成员，不是资源」）：平台智能体的新家。
+                 *
+                 * <p>与 `monitoring` / `data` 同形：不是配置域，路径不进 `LAYER_DOMAINS`。
+                 * 资源区的 `/resources/agents?layer=INSTANCE` 在下一卡摘除时，按既有先例
+                 * （`user/agent-profile` 等三条）**在这里的父级写 302**，而不是把重定向塞进
+                 * `lib/legacyRoutes.ts` —— 那个文件的自述语义是「一次性删除、不留 redirect」。</p>
+                 */
+                {
+                    path: "instance/agent-principals",
+                    name: "settings-instance-agent-principals",
+                    component: () => import("../views/settings/InstanceAgentsView.vue"),
+                    meta: { settingsLayer: "instance" },
+                },
                 // 实例运维 / 安全与权限（不是配置域，路径不在层段下）
                 {
                     path: "monitoring",

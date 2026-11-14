@@ -198,6 +198,8 @@ describe("instance ops groups", () => {
             "data",
             "config-locks",
             "roles",
+            // task-91：平台智能体的落点（资源区摘除后它的新家）。
+            "agent-principals",
             "audit",
         ]);
         const domains = domainsForLayer("instance") as readonly ConfigDomain[];

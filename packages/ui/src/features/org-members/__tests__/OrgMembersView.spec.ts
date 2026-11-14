@@ -76,7 +76,9 @@ function happyHandler(url: URL) {
 async function mountView() {
     const { default: OrgMembersView } = await import("../pages/OrgMembersView.vue");
     const wrapper = mount(OrgMembersView, {
-        global: { plugins: [i18n] },
+        // task-91：成员页现在承载个人智能体主体的落点。面板自己有取数面与判据，
+        // 本文件只钉「落点挂上了」——它的请求不该混进本文件对 happyHandler 的调用清单。
+        global: { plugins: [i18n], stubs: { AgentPrincipalsPanel: true } },
         attachTo: document.body,
     });
     await flushPromises();
@@ -97,6 +99,18 @@ beforeEach(() => {
     sessionStorage.clear();
     vi.restoreAllMocks();
     localStorage.setItem("xihe-token", "test-token");
+});
+
+describe("OrgMembersView — 个人智能体主体落点（task-91）", () => {
+    it("成员页承载个人智能体主体：段标题 + 面板挂载", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        const section = wrapper.get('[data-testid="org-members-agents"]');
+        expect(section.get('[data-testid="org-members-agents-title"]').text()).toBe("智能体主体");
+        // 面板本体（取数、创建门）的判据在 components/settings/__tests__/AgentPrincipalsPanel.spec.ts。
+        expect(section.findComponent({ name: "AgentPrincipalsPanel" }).exists()).toBe(true);
+        wrapper.unmount();
+    });
 });
 
 describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
