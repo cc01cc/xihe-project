@@ -23,6 +23,8 @@ import {
 } from "./data/sessions";
 // task-449 / D-1287（D-1281 同形）：工作区智能体夹具 —— capSource 四态 + 记忆/角色绑定 + 写面判定。
 import { handleWorkspaceAgentResource } from "./data/workspaceAgents";
+// task-38：工作区成员面夹具 + dispatch（用户实拍「成员页 API error 404」）。
+import { handleWorkspaceMemberResource } from "./data/workspaceMembers";
 import {
     handleProviderConnectionResource,
     mockModelCatalogResponse,
@@ -413,6 +415,56 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         cachedAt: new Date().toISOString(),
                         items: [],
                     });
+                }
+
+                /**
+                 * task-38：**工作区成员面**（openapi:548-629 四条 path）。此前 mock 只实现了
+                 * `/org-units/{id}/members`（组织成员），`/workspaces/{id}/members` 根本不存在
+                 * ⇒ 成员页 `/workspace/:id/members` 一进来就渲染 `出错: API error 404`（用户实拍）。
+                 * 形状（裸数组 MemberView[] / 201 / 204 / 403 / 404 / 409）与判定边界见
+                 * `data/workspaceMembers.ts` 文件头；未知 workspace 仍 404（反例不许放宽）。
+                 */
+                if (/^\/workspaces\/[^/]+\/members(\/|$)/.test(path)) {
+                    const memberMethod = req.method ?? "GET";
+                    const readMemberBody = (): Promise<Record<string, unknown>> =>
+                        new Promise((resolveBody) => {
+                            let raw = "";
+                            req.on("data", (chunk: unknown) => {
+                                raw += String(chunk);
+                            });
+                            req.on("end", () => {
+                                try {
+                                    resolveBody(
+                                        raw ? (JSON.parse(raw) as Record<string, unknown>) : {},
+                                    );
+                                } catch {
+                                    resolveBody({});
+                                }
+                            });
+                        });
+                    void handleWorkspaceMemberResource(memberMethod, path, url, readMemberBody)
+                        .then((result) => {
+                            if (!result) {
+                                return respond(404, {
+                                    code: "MOCK_ENDPOINT_MISSING",
+                                    detail: path,
+                                });
+                            }
+                            options.log?.(`[mock-api] ${memberMethod} ${path} → ${result.status}`);
+                            return result.status === 204
+                                ? respond(204, null)
+                                : respond(result.status, result.body);
+                        })
+                        .catch((cause: unknown) => {
+                            options.log?.(
+                                `[mock-api] ${memberMethod} ${path} 处理失败：${String(cause)}`,
+                            );
+                            respond(500, {
+                                code: "MOCK_HANDLER_FAILED",
+                                requestId: "mock-request",
+                            });
+                        });
+                    return;
                 }
 
                 /**
