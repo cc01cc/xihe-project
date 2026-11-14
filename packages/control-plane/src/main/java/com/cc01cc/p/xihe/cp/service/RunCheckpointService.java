@@ -220,23 +220,35 @@ public class RunCheckpointService {
      *
      * <p>Idempotent per (run, root): an already captured root is skipped. The
      * boolean result keeps its pre-M8 meaning = "this call persisted the primary
-     * root's captured row", which is what the startup sweep counts.</p>
+     * root's captured row". task-578: that is **not** the same fact as "how many
+     * rows this round wrote" — a multi-root Run can persist a secondary root while
+     * its primary root degrades — so the startup sweep no longer derives its
+     * counter from this boolean; it reads {@link CaptureOutcome#rowsCaptured()}.</p>
      */
     public boolean captureCheckpoint(String runId) {
+        return captureRun(runId).primaryPersisted();
+    }
+
+    /** task-578: one Run's capture round told apart by what it persisted. */
+    private record CaptureOutcome(boolean primaryPersisted, int rowsCaptured) {
+        static final CaptureOutcome NONE = new CaptureOutcome(false, 0);
+    }
+
+    private CaptureOutcome captureRun(String runId) {
         if (isBlank(runId)) {
-            return false;
+            return CaptureOutcome.NONE;
         }
         if (!captureInFlight.add(runId)) {
             logger.info("[LIFECYCLE] service=cp event=run_checkpoint_capture_skipped runId={} reason=in_flight",
                     runId);
-            return false;
+            return CaptureOutcome.NONE;
         }
         try {
             ChatRun run = findRun(runId);
             if (run == null) {
                 logger.info("[LIFECYCLE] service=cp event=run_checkpoint_capture_skipped runId={} reason=run_missing",
                         runId);
-                return false;
+                return CaptureOutcome.NONE;
             }
             String workspaceId = run.getWorkspaceId();
             List<String> roots = captureRoots(workspaceId);
@@ -266,11 +278,11 @@ public class RunCheckpointService {
                                 + "workspaceId={} roots={} captured={} failed={} skipped={}",
                         runId, workspaceId, roots.size(), captured, failed, skipped);
             }
-            return primaryPersisted;
+            return new CaptureOutcome(primaryPersisted, captured);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_capture_failed runId={} failureType={}",
                     runId, e.getClass().getName());
-            return false;
+            return CaptureOutcome.NONE;
         } finally {
             captureInFlight.remove(runId);
         }
@@ -404,16 +416,23 @@ public class RunCheckpointService {
                     e.getClass().getName());
             return 0;
         }
-        int captured = 0;
+        // task-578: two facts, two names. "How many Runs did this round capture" and "how many rows did
+        // it write" differ on multi-root Runs (a secondary root can persist while the primary degrades),
+        // so the log no longer prints one number called "captured" for both readers.
+        int runsCaptured = 0;
+        int rowsCaptured = 0;
         for (ChatRun run : runs) {
-            if (captureCheckpoint(run.getId().toString())) {
-                captured++;
+            CaptureOutcome outcome = captureRun(run.getId().toString());
+            rowsCaptured += outcome.rowsCaptured();
+            if (outcome.rowsCaptured() > 0) {
+                runsCaptured++;
             }
         }
-        if (captured > 0) {
-            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_sweep_completed captured={}", captured);
+        if (runsCaptured > 0) {
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_sweep_completed runsCaptured={} rowsCaptured={}",
+                    runsCaptured, rowsCaptured);
         }
-        return captured;
+        return runsCaptured;
     }
 
     // ── PLAN-0328 M3 W2: public checkpoint surface (view / revert / file / git) ──

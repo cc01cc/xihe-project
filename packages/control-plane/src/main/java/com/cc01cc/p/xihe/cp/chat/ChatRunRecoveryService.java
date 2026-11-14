@@ -114,7 +114,7 @@ public class ChatRunRecoveryService {
     public void captureRecoveredRuns() {
         try {
             int captured = runCheckpointService.captureTerminalRuns();
-            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_recovery_capture_completed captured={}",
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_recovery_capture_completed runsCaptured={}",
                     captured);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_recovery_capture_failed", e);

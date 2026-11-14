@@ -173,6 +173,11 @@ class RunCheckpointServiceTest {
                 List.of(new RuntimeCheckpointClient.ChangedFile("M", "src/a.txt")), List.of(), null, null);
     }
 
+    private RuntimeCheckpointClient.CaptureResult captureUnavailable(String reason) {
+        return new RuntimeCheckpointClient.CaptureResult(RuntimeCheckpointClient.Outcome.UNAVAILABLE, RUN_ID,
+                false, null, null, null, RunCheckpoint.STATE_DEGRADED, List.of(), List.of(), reason, null);
+    }
+
     private static String captureCallId(String runId) {
         return "run-terminal-capture:" + runId;
     }
@@ -582,6 +587,35 @@ class RunCheckpointServiceTest {
                 .thenThrow(new IllegalStateException("checkpoint store down"));
 
         assertEquals(0, service.captureTerminalRuns());
+    }
+
+    /**
+     * task-578: the sweep counter is what ops read ("how much did this round capture?") but it counts
+     * Runs whose **primary** root persisted, so a multi-root Run whose primary root fails while a
+     * secondary root is captured leaves a {@code captured} row in the table and still reports 0.
+     */
+    @Test
+    void sweepCountsARunWhereOnlyTheSecondaryRootWasCaptured() {
+        String secondaryRoot = "44444444-4444-4444-4444-444444444444";
+        ChatRun terminal = runWithStatus("succeeded");
+        when(chatRunRepository.findTerminalRunsWithoutCheckpoint(any(), any()))
+                .thenReturn(List.of(terminal));
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID))).thenReturn(Optional.of(terminal));
+        when(workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(WORKSPACE_ID)))
+                .thenReturn(List.of(
+                        rootRow(WORKSPACE_ID, "H:/ws/primary", 0),
+                        rootRow(secondaryRoot, "H:/ws/secondary", 1)));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureUnavailable("root_unavailable"));
+        when(client.capture(WORKSPACE_ID, secondaryRoot, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk("refs/xihe/slices/secondary-root"));
+
+        assertEquals(1, service.captureTerminalRuns(),
+                "a round that persisted a captured row must not report 0");
+        assertTrue(rows.stream().anyMatch(row -> secondaryRoot.equals(row.getRootId())
+                        && RunCheckpoint.STATE_CAPTURED.equals(row.getState())),
+                "the table is the authority: the secondary root really was captured");
     }
 
     @Test
