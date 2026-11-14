@@ -754,7 +754,13 @@ test.describe("Config Settings (three layers)", () => {
                 body: JSON.stringify({ sessions: [] }),
             });
         });
-        await page.route("**/api/v1/config/**", (route: any) => route.abort("connectionrefused"));
+        // task-509（E-03）：读数留着给下面的「重试不是装饰按钮」用（在 route 里数，不在
+        // 请求事件里数 —— 被 route 拦掉的请求，请求事件与劫持的先后顺序不是契约）。
+        let configReads = 0;
+        await page.route("**/api/v1/config/**", (route: any) => {
+            configReads += 1;
+            return route.abort("connectionrefused");
+        });
         await page.route("**/api/v1/events**", (route: any) =>
             route.fulfill({
                 status: 200,
@@ -765,6 +771,20 @@ test.describe("Config Settings (three layers)", () => {
         // 旧：/settings/config 里层的整块加载失败；新：域页拉层配置失败（SettingsDomainView 的 fetchError 分支）。
         await page.goto("/settings/instance/logging", { waitUntil: "load" });
         await expect(page.getByTestId("settings-domain-title")).toBeVisible();
-        await expect(page.locator("text=保存失败")).toBeVisible();
+
+        // task-509（E-03）：修前这里断言的是「保存失败」—— 域页读配置失败却报"保存失败"，
+        // 用户会以为自己的修改丢了（于是重复保存，而实际一个 PUT 都没发）。
+        // 判据现在**反过来钉**：① 失败态存在；② 文案说「加载失败」；③ 明写不许出现「保存失败」；
+        // ④ 重试不是装饰按钮 —— 点一次必须再打一次层配置读面。
+        const failed = page.getByTestId("settings-domain-load-failed");
+        await expect(failed).toBeVisible({ timeout: ACTION_TIMEOUT_MS });
+        await expect(failed).toContainText("加载失败");
+        await expect(failed).not.toContainText("保存失败");
+
+        const readsBeforeRetry = configReads;
+        await page.getByTestId("settings-domain-load-retry").click();
+        await expect.poll(() => configReads, { timeout: ACTION_TIMEOUT_MS }).toBeGreaterThan(
+            readsBeforeRetry,
+        );
     });
 });
