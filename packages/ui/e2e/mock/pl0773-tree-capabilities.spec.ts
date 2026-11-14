@@ -1,4 +1,5 @@
 import { expect, test } from "./helpers/mock-test";
+import { EXPECT_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0773 M0-4（task-144）第 4 条能力：**虚拟化**必须在真浏览器里验。
@@ -33,7 +34,10 @@ test.describe("PLAN-0773 M0-4 reka-ui tree virtualization", () => {
                         return -1;
                     }
                 },
-                { timeout: 15_000 },
+                // 预算走共享常量（expect 档 10 s，env 可覆盖）而不是 15 s 字面量：
+                // 这里等的是 onMounted 之后一帧写入的读数，属 expect 档；>10 s 必须豁免，
+                // 而豁免档只给"启动/首次渲染/外部进程"且要求预热 —— 都套不上（SSOT §2/§3）。
+                { timeout: EXPECT_TIMEOUT_MS },
             )
             .toBeGreaterThan(0);
 
