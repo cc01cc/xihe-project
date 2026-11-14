@@ -602,7 +602,11 @@ export function useWorkspaceLayout(options: WorkspaceLayoutOptions) {
     const squeeze = computed<WorkbenchSqueezeResult>(() => {
         const demand = workbenchDemand.value;
         const offset = options.isMobile.value ? 0 : RAIL_WIDTH + requestedNavPanelWidth.value;
-        const workbenchWidth = Math.max(0, (viewportWidth.value || 0) - offset);
+        // task-504 A：用**实测外壳开销**校正派生行宽（实测优先；没有 DOM 证据时开销记 0 ⇒ 退回旧口径）。
+        const overhead = demand?.chromeOverheadMeasured;
+        const overheadPx =
+            Number.isFinite(overhead) && (overhead ?? 0) > 0 ? Math.round(overhead as number) : 0;
+        const workbenchWidth = Math.max(0, (viewportWidth.value || 0) - offset - overheadPx);
         if (!demand) {
             return {
                 mainWidth: workbenchWidth,
@@ -708,6 +712,22 @@ export interface WorkbenchSqueezeInput {
     allowTreeYield?: boolean;
     /** Rendered width of the navigation panel that could yield (0 when closed). */
     navPanelWidth?: number;
+    /**
+     * task-504（A 步，D-1413 同族）：**实测**工作台行宽。
+     *
+     * 省掉它就是本卡修的那个缺陷：`squeeze` 原来用 `viewportWidth − (rail + navPanel)` 当行宽，
+     * 而真实行宽还要再减 body 而非 viewport 的差值、以及工作台外壳的 gutter（1024 档实测差 ~67px）
+     * ⇒ 模型认为 main 688（≥640，不让位），DOM 里只有 621（<640，本该让位）。
+     * 提供时一律以实测为准；未提供（无 DOM 的测试环境）才回落派生值。
+     */
+    workbenchWidthMeasured?: number;
+    /**
+     * task-504 A 步（**防反馈环**）：实测「外壳开销」= body 内容宽 − 导航渲染宽 − 工作台渲染宽。
+     *
+     * 为什么不直接喂工作台宽：工作台宽 **依赖导航宽**，而导航宽又是本模型的输出 ⇒ 直接喂会振荡
+     * （实测：`waitForFunction` 等稳定 20s 超时）。开销只含滚动条 + 外壳 gutter，与导航宽无关。
+     */
+    chromeOverheadMeasured?: number;
     /**
      * S3b-style runtime override: `false` when the user just re-opened the nav by
      * hand. Suppresses the *comfort* yield only — the 640 hard floor still wins.

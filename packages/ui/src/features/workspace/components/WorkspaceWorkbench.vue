@@ -337,9 +337,52 @@ const layoutOwner = inject(WORKSPACE_LAYOUT_KEY, null);
  * the anti-squeeze rules collapse the tree or force the dock back to floating for a
  * column nobody can see; `null` means "this workbench needs no width arbitration".
  */
+/**
+ * task-504（A 步，D-1413 同族）：把**实测**工作台行宽喂给挤压模型。
+ *
+ * 起因：模型原来自己算 `viewportWidth − (rail + navPanel)`，1024 档算 728（⇒ 认为 main 688 ≥ 640，
+ * 不让位），而 DOM 里 main 只有 621（⇒ 本该让位）。差 ~67px 来自「viewport ≠ body」与工作台外壳 gutter。
+ * 判据：模型输入必须是**实物量**（这个元素的 rect），派生量只能在没有 DOM 时兜底。
+ */
+const workbenchRootRef = ref<HTMLElement | null>(null);
+/**
+ * task-504：喂给模型的不是「工作台宽」，而是**外壳开销**（body 内容 − 导航 − 工作台）。
+ * 工作台宽依赖导航宽、导航宽又是模型输出 ⇒ 直接喂会振荡（实测等稳定 20s 超时）；开销与导航宽无关。
+ */
+const chromeOverheadMeasured = ref(0);
+let workbenchResizeObserver: ResizeObserver | null = null;
+
+function observeWorkbenchWidth(): void {
+    const el = workbenchRootRef.value;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    workbenchResizeObserver?.disconnect();
+    const sync = (): void => {
+        const sidebar = document.querySelector('[data-testid="sidebar"]');
+        const bodyWidth = document.body.clientWidth;
+        const sidebarWidth = sidebar ? sidebar.getBoundingClientRect().width : 0;
+        const workbenchWidth = el.getBoundingClientRect().width;
+        const overhead = bodyWidth - sidebarWidth - workbenchWidth;
+        // 合理性夹取：滚动条 + 外壳 gutter 量级（0–200）。越界说明还没量全，宁可退回旧口径。
+        chromeOverheadMeasured.value = overhead > 0 && overhead < 200 ? Math.round(overhead) : 0;
+    };
+    sync();
+    workbenchResizeObserver = new ResizeObserver(sync);
+    workbenchResizeObserver.observe(el);
+}
+
+watch(workbenchRootRef, (el) => {
+    if (el) observeWorkbenchWidth();
+});
+onMounted(observeWorkbenchWidth);
+onBeforeUnmount(() => {
+    workbenchResizeObserver?.disconnect();
+    workbenchResizeObserver = null;
+});
+
 const demand = computed<WorkbenchSqueezeDemand | null>(() => {
     if (layout.value.dockFocus && dockOpen.value) return null;
     return {
+        chromeOverheadMeasured: chromeOverheadMeasured.value,
         treeWidth: layout.value.treeWidth,
         treeCollapsed: treeCollapsedForSqueeze.value,
         dockWidth: layout.value.dockWidth,
@@ -739,7 +782,12 @@ defineExpose({ openDockTab });
             因此几何（`treeWidth` px）、折叠语义与持久化键一个都不用改。
             PLAN-0753 T3 的 handle 净零宽约定（`-ml-1 w-1` ⇒ 主列起始位不变）照旧。
         -->
-        <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
+        <div
+            v-else
+            ref="workbenchRootRef"
+            class="relative flex min-h-0 min-w-0 flex-1"
+            data-testid="workspace-workbench"
+        >
             <!--
                 task-369 S1（D-1222）：dockview 壳 —— **一个实例横跨中栏+右栏**，树是它的面板，
                 可关（面板与 rail 一起消失）、可从容器组头的「+」重开、投哪个容器由点哪个组头决定。
