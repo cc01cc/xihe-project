@@ -348,6 +348,25 @@ test.describe("Config Settings (three layers)", () => {
         await mockConfigAPIs(page);
         await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
         await expect(page.getByTestId("resources-header")).toBeVisible();
+
+        // task-56：这条用例的**证据主体是下面这组行为断言，不是那张视觉基线**。
+        //
+        // 为什么这里只有行为断言（不是偷懒）：`config-workspace-mcp-tab.png` 的视觉比较在本机
+        // **结构性不可得** —— ①`e2e/helpers/visual.ts:16-35` 只在 linux 比较，非 linux 走
+        // `test.skip(true, …)`，且 **skip 发生在 matcher 之前** ⇒ `--update-snapshots` 是 no-op；
+        // ②这张基线在仓库里**从未生成过**（snapshot 目录只有 config-*-tab-linux/win32 若干，
+        // 没有 mcp-tab 任何一份），且所有 `*-snapshots/*.png` 都被 `.gitignore:76` 忽略 ⇒
+        // 它不是可提交物，「贴 git status 证明没动别的 snapshot」也就不成立。
+        // 缺口的补法是 linux runner（D-1441 已登记），不是在 Windows 上凑一张图。
+        //
+        // 断言内容 = D-1432 / task-41 的落点变化：MCP 的「本工作区」层从资源区**搬到**工作区设置
+        // `?tab=mcp`，资源区就地给指路卡（不 404、不静默跳走）。href 必须指向设置页；
+        // 若它指回资源区，说明搬家被回退了 ⇒ 本条必须红（变异读数见 task-56 交付）。
+        await expect(page.getByTestId("workspace-layer-moved")).toBeVisible();
+        await expect(page.getByTestId("workspace-layer-moved-action")).toHaveAttribute(
+            "href",
+            /^\/workspace\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/settings\?tab=mcp$/,
+        );
         await expectPlatformScreenshot(page, "config-workspace-mcp-tab.png");
     });
 
