@@ -38,9 +38,19 @@ function flatten(node: unknown, prefix = ""): Flat {
 
 const LOCALES = ["zh-CN", "en-US"] as const;
 
-function settingsCopy(locale: (typeof LOCALES)[number]): Flat {
+/**
+ * 扫描面 = **唯一覆盖路径**。task-26（批 1）把 `resources` 纳入，并**同批删掉** task-22 的
+ * `OUTSIDE_SETTINGS_KEYS` 精确名单（**2 条 → 0 条**，机制退役）：同一 key 不允许两套覆盖，
+ * 第二份判据必然漂。后续批次（workspace / orgMembers）直接往这里加命名空间，不回名单。
+ *
+ * <p>Lead 硬要求（判据③）：名单删掉后把 `resources.reasonCapability` 改回旧文案，门**仍红**
+ * ⇒ 守它的是扫描面而不是名单。变异实测见 `internal/A03-xihe/evidence/2026-11-15-226-next-batch-candidates/task-26-impl.md`。</p>
+ */
+const SCANNED_NAMESPACES = ["settings", "resources"] as const;
+
+function scannedCopy(locale: (typeof LOCALES)[number]): Flat {
     const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
-    return flatten(message.settings, "settings");
+    return SCANNED_NAMESPACES.flatMap((ns) => flatten(message[ns], ns));
 }
 
 const RULES: Array<{ name: string; test: (value: string) => boolean; sample: string }> = [
@@ -75,12 +85,32 @@ const RULES: Array<{ name: string; test: (value: string) => boolean; sample: str
         test: (v) => /(?<![\w.:/-])[a-z][a-z0-9-]*(?::[a-z][a-z0-9_-]*)+(?![\w/])/.test(v),
         sample: "cap:instance:admin",
     },
+    // task-26（批 1）：层名 SSOT = 「个人层 / Personal layer」（task-251 / D-1043）。
+    // 「用户层 / user layer」是同一层的第三个名字 —— 同层两名会让用户以为是两层。
+    // 与 terminology.spec 的分工：那边钉**正向等值**（那两个键必须等于「个人层」），
+    // 本条是**全集负向**（扫描面内任何键都不许出现旧称）；两者方向相同，不是两套判据。
+    {
+        name: "层名旧称「用户层 / user layer」",
+        test: (v) => /用户层/.test(v) || /\buser layers?\b/i.test(v),
+        sample: "实例层与用户层都不提供",
+    },
 ];
 
-describe("设置区用户可见文案：不得出现内部编号与实现标识（task-509）", () => {
+describe("设置区 + 资源区用户可见文案：不得出现内部编号与实现标识（task-509 / task-26）", () => {
     for (const locale of LOCALES) {
         describe(locale, () => {
-            const copy = settingsCopy(locale);
+            const copy = scannedCopy(locale);
+            // 扫描面自身不许空转：命名空间被改名/删除时 flatten 会静默返回 []，
+            // 门看起来全绿其实什么都没扫 —— 这条是「改名即红」在命名空间级的等价物。
+            it("扫描面内每个命名空间都真的有文案（防静默空扫）", () => {
+                const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
+                for (const ns of SCANNED_NAMESPACES) {
+                    expect(
+                        flatten(message[ns], ns).length,
+                        `命名空间 ${ns} 在 ${locale} 下为空：改名就要同步改 SCANNED_NAMESPACES`,
+                    ).toBeGreaterThan(0);
+                }
+            });
             for (const rule of RULES) {
                 it(`不含${rule.name}`, () => {
                     const offenders = copy
@@ -95,28 +125,31 @@ describe("设置区用户可见文案：不得出现内部编号与实现标识�
 });
 
 /**
- * task-22（Lead 裁定）：**树外命名空间**的同类判据 —— 按**精确 key 名单**，不一次扩全树。
+ * 过渡名单（task-26，批 1）：**只留还没进扫描面的命名空间里的键**。
  *
- * <p>为什么先名单而不是全树：门原本只扫 `settings.*`，而 `resources.reasonCapability` 这类
- * 树外文案同样会印出 wire 标识。一次扩全树必然带出存量红，红着的门当天就会被绕过
- * （`D-1074`「开不了的门等于没有门」）⇒ 先按名单纳入**已被证实的**那几处，扩面另批。</p>
+ * <p>task-22 的名单原有 2 条（`resources.reasonCapability` / `resources.reasonNoWorkspace`）；
+ * 本批把 `resources` 整个命名空间纳入 `SCANNED_NAMESPACES` ⇒ 那 2 条**已删**（2 → 0），
+ * 因为全集扫描严格强于名单（改名/新增键自动纳入），留着就是同一 key 两套覆盖。
+ * 「删了会不会没人守」由变异回答：把 `resources.reasonCapability` 改回带 `instance:admin` 的旧文案，
+ * 本文件**仍然红**（规则⑥，扫描面命中）。</p>
  *
- * <p>名单的两条纪律：① **改名即红**（下面断言 key 存在且非空）—— 否则组件换了 key、门静默失效；
- * ② 每个 key 都跑**同一份 RULES**，不在本块另写一套判据（第二份判据必然漂）。</p>
+ * <p>下面这 1 条是**新加的过渡项**，不是残留：`workspace.resourcesRefHint` 的层名旧称
+ * 已在产品文案里改掉，但 `workspace` 命名空间要到**批 2** 才进扫描面（它还有 4 条存量：
+ * `host_directory` ×2、PLAN 号 ×2，一次纳入会当场红 ⇒ 违反「批内必须全绿」）。
+ * **批 2 把 workspace 纳入扫描面时，必须同批删掉这一条**，届时名单清空、只剩扫描面一条路径。</p>
+ *
+ * <p>纪律不变：① key 改名即红（断言存在且非空）；② 跑**同一份 RULES**，不另写判据。</p>
  */
-const OUTSIDE_SETTINGS_KEYS = [
-    "resources.reasonCapability",
-    "resources.reasonNoWorkspace",
-] as const;
+const OUTSIDE_SETTINGS_KEYS = ["workspace.resourcesRefHint"] as const;
 
 function copyAt(locale: (typeof LOCALES)[number], path: string): string | undefined {
     const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
     return flatten(message).find((entry) => entry.path === path)?.value;
 }
 
-describe("设置区之外的层/能力位文案（task-22，精确 key 名单）", () => {
+describe("尚未纳入扫描面的命名空间：过渡名单（task-26）", () => {
     for (const locale of LOCALES) {
-        it(`${locale}：名单内 key 存在，且不含内部编号/实现标识`, () => {
+        it(`${locale}：名单内 key 存在，且不含内部编号/实现标识/层名旧称`, () => {
             for (const key of OUTSIDE_SETTINGS_KEYS) {
                 const value = copyAt(locale, key);
                 expect(

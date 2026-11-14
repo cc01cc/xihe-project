@@ -999,7 +999,8 @@ const messages = {
             settingsDomainBackToOverview: "配置总览",
             settingsTabMembers: "成员",
             // PLAN-0773 M4-2（task-210）：工作区资源页里「平台 / 用户层只读引用」那一行的引导语。
-            resourcesRefHint: "平台 / 用户层的同类资源在这里只读引用：",
+            // task-26（批 1）：层名 SSOT = 「个人层」（task-251 / D-1043）。
+            resourcesRefHint: "平台 / 个人层的同类资源在这里只读引用：",
             settingsResourceMovedTitle: "这项设置已迁到资源区",
             settingsResourceMovedBody:
                 "「{name}」现在按层在资源区里管理，本页只保留「常规」与「成员」。",
@@ -1790,7 +1791,8 @@ const messages = {
             },
             knowledgeGap: {
                 title: "知识库：CP 侧没有「库」这个被管理对象",
-                intro: "本页逐条列出已知缺口，每条都给出核法（读面读数）。缺口没修之前这里不会有可用入口；不写排期，也不承诺时间。",
+                // task-26（批 1）：「缺口」是内部概念词，用户语言是「目前还不可用」。
+                intro: "本页逐条列出目前还不可用的能力，每条都给出核对方式（读面读数）。这些能力补齐之前这里不会有可用入口；不写排期，也不承诺时间。",
                 basisLabel: "怎么核",
                 gaps: {
                     noLibrary: {
@@ -1836,8 +1838,10 @@ const messages = {
                     reasons: {
                         noWorkspace:
                             "该层的资源按工作区归属：当前页签没有工作区上下文，读面无法确定取哪一个工作区。",
+                        // task-26（批 1）：不印内部编号（G3），也不印实现细节（无表/无 CRUD）——
+                        // 用户要的是"为什么这里没有详情页"，不是数据库长什么样。
                         knowledgeGap:
-                            "知识库没有实体（G3：CP 无表、无 CRUD），只有按工作区分区的代理端点，因此没有可深链的详情面。",
+                            "知识库没有实体：目前只有按工作区分区的接口，因此没有可单独打开的详情页。",
                         layerMissing:
                             "该资源没有这一层（层解析应已回落到默认层）—— 出现这句说明状态自相矛盾，请报告。",
                     },
@@ -2030,8 +2034,9 @@ const messages = {
                 // 本键文案因此在 develop 上一直红；这里按 SSOT 还原，断言一字未动。
                 gapNoteAgent:
                     "实例级平台智能体还没开放：这个入口现在打不开页面。能用的是工作区层（工作区设置 → 智能体）与个人层（设置 → 智能体主体）；实例级能力上线后，这里会变成可管理的「平台智能体」。",
+                // task-26（批 1）：同 gapNoteAgent —— 层名只能是「个人层」（D-1043）。
                 gapNoteMcp:
-                    "MCP 服务器目前只能在工作区范围内使用：实例层与用户层都不提供，接口也只有工作区范围，请到工作区设置里管理。",
+                    "MCP 服务器目前只能在工作区范围内使用：实例层与个人层都不提供，接口也只有工作区范围，请到工作区设置里管理。",
                 gapNoteKnowledge:
                     "知识库目前只能按工作区访问：控制面没有可管理的知识库实体，只有 4 个按工作区分区的接口，所以这里没有可管理的「库」。",
                 navMonitoring: "监控",
@@ -4625,7 +4630,8 @@ const messages = {
                 "You can retry later; the failure is surfaced explicitly, not swallowed.",
             settingsDomainBackToOverview: "Config overview",
             settingsTabMembers: "Members",
-            resourcesRefHint: "Platform / user layers are referenced read-only:",
+            // task-26 (batch 1): layer-name SSOT is "personal layer" (task-251 / D-1043).
+            resourcesRefHint: "Platform / personal layers are referenced read-only:",
             settingsResourceMovedTitle: "This setting moved to the resources module",
             settingsResourceMovedBody:
                 '"{name}" is now managed per layer in the resources module; this page keeps only General and Members.',
@@ -5454,7 +5460,7 @@ const messages = {
             },
             knowledgeGap: {
                 title: "Knowledge base: CP has no managed library object",
-                intro: "This page lists the known gaps and, for each one, how to verify it against the read faces. There is no usable entry here until a gap is fixed; no schedule is written down and no date is promised.",
+                intro: "This page lists what is not available yet and, for each item, how to verify it against the read faces. There is no usable entry here until it ships; no schedule is written down and no date is promised.",
                 basisLabel: "How to verify",
                 gaps: {
                     noLibrary: {
@@ -5500,8 +5506,9 @@ const messages = {
                     reasons: {
                         noWorkspace:
                             "This layer is scoped to a workspace and the current tab has no workspace context, so the read face cannot pick one.",
+                        // task-26 (batch 1): no internal gap id, no storage/CRUD detail.
                         knowledgeGap:
-                            "Knowledge bases have no entity (G3: no CP table, no CRUD) - only proxy endpoints partitioned by workspace, so there is no detail surface to deep-link to.",
+                            "Knowledge bases have no entity yet - only workspace-scoped endpoints exist today, so there is no detail page to open.",
                         layerMissing:
                             "This resource does not have this layer (layer resolution should have fallen back to the default); seeing this line means the state contradicts itself - please report it.",
                     },
@@ -5690,7 +5697,7 @@ const messages = {
                 gapNoteAgent:
                     "Instance-level platform agents are not available yet, so this entry does not open a page today. What you can use is the workspace layer (Workspace settings → Agents) and the personal layer (Settings → Agent principals). Once it ships, this becomes a manageable “Platform agents” page.",
                 gapNoteMcp:
-                    "MCP servers can only be used within a workspace today: neither the instance layer nor the user layer hosts them, and the API is workspace-scoped too. Manage them in workspace settings.",
+                    "MCP servers can only be used within a workspace today: neither the instance layer nor the personal layer hosts them, and the API is workspace-scoped too. Manage them in workspace settings.",
                 gapNoteKnowledge:
                     "Knowledge bases are workspace-scoped today: the control plane has no manageable knowledge-base entity, only four workspace-partitioned endpoints, so there is no “library” to manage here.",
                 navMonitoring: "Monitoring",

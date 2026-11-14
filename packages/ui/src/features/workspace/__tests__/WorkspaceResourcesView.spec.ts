@@ -17,7 +17,9 @@ import { RESOURCE_DEFS } from "../../../lib/settingsIa";
 const messages = {
     "zh-CN": {
         workspaceNav: { resources: "资源" },
-        workspace: { resourcesRefHint: "平台 / 用户层的同类资源在这里只读引用：" },
+        // task-26（批 1）：夹具跟着 SSOT 走 —— 层名是「个人层」（task-251 / D-1043），
+        // 留着旧称会把过期文案锁死在测试里（产品改了、夹具还在替旧名字背书）。
+        workspace: { resourcesRefHint: "平台 / 个人层的同类资源在这里只读引用：" },
         settings: {
             ia: {
                 resourceCredentials: "凭据",
@@ -178,7 +180,7 @@ describe("工作区资源页（M4-2 / task-210）", () => {
         expect(wrapper.find('[data-testid="resource-view-knowledge"]').exists()).toBe(false);
     });
 
-    it("平台 / 用户层只作只读引用：链接按该资源的 layerRules 派生（mcp 无个人层）", async () => {
+    it("平台 / 个人层只作只读引用：链接按该资源的 layerRules 派生（mcp 无个人层）", async () => {
         routeState.query = { resource: "skills" };
         let wrapper = await mountPage();
         const skillRefs = wrapper.findAll('[data-testid^="ws-resources-ref-layer-"]');
