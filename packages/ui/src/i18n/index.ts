@@ -104,6 +104,45 @@ const messages = {
             writeAddMember: "加成员",
             writeRemoveMember: "移成员",
             writeChangeRole: "改角色",
+            detailTitle: "成员详情",
+            detailDesc: "只读视图：工作区成员角色、访问角色绑定、权限可得性与所属单元。",
+            detailKindLabel: "类型",
+            detailIdLabel: "成员标识",
+            detailUnitLabel: "所属单元",
+            detailUnitCost:
+                "只显示成员直接挂载的单元。往上到根单元要逐级查询（每级 1 次请求），本页不推算链路。",
+            detailWorkspaceRoleTitle: "工作区成员角色",
+            detailWorkspaceRoleDesc: "逐个查你可见的工作区；这不是「他属于哪些工作区」的全集。",
+            detailWorkspaceRoleLoad: "查询工作区角色",
+            detailWorkspaceRoleLoading: "正在查询工作区角色…",
+            detailWorkspaceRoleCap:
+                "已查 {checked} 个工作区（上限 {cap}）。未查的工作区不参与展示，也不代表没有角色。",
+            detailWorkspaceRoleEmpty: "在你可见的工作区里没查到该成员的角色。",
+            detailWorkspaceRoleError: "工作区清单读取失败，未能查询。",
+            detailWorkspaceRoleDenied: "无权查看",
+            detailWorkspaceRoleAgent:
+                "智能体不是工作区成员，它的工作区绑定在「工作区 → 智能体」里管理。",
+            detailWorkspaceRoleEditHint: "改角色在对应工作区的成员页进行；本页只读。",
+            detailAccessRoleTitle: "访问角色绑定（实例级）",
+            detailAccessRoleDesc: "与上面的工作区成员角色是两条不同的轴，不合并显示。",
+            detailAccessRolePending: "正在读取权限投影…",
+            detailAccessRoleUnread: "权限投影读取失败；这不等于没有权限，稍后重试。",
+            detailAccessRoleGated: "需实例管理员：本段要求 MANAGE_ROLES 权限原子，当前身份没有。",
+            detailAccessRoleLoading: "正在读取访问角色绑定…",
+            detailAccessRoleEmpty: "该成员没有实例级访问角色绑定。",
+            detailAccessRoleError: "访问角色绑定读取失败。",
+            detailAccessRoleAgent: "智能体的访问角色绑定在工作区范围内，实例级绑定对它不适用。",
+            detailAtomsTitle: "权限原子",
+            detailAtomsNotShown: "他人权限不在本页展示。",
+            detailAtomsWhy: "后端的权限投影只允许本人读取；本页不根据角色或绑定推断权限。",
+            detailAtomsNotNoPermission: "未展示 ≠ 无权限：这里没列出的权限，可能是有的。",
+            detailAtomsLink: "查看我自己的权限投影",
+            detailActionsTitle: "可执行动作",
+            detailActionChangeRole: "改角色",
+            detailActionRemove: "移除成员",
+            detailActionsBatchReason: "写操作尚未开放，当前为只读预览。",
+            detailActionsAdminReason:
+                "即使写面开放，也需在目标工作区具备管理员能力位；实例管理员覆盖全部工作区。",
         },
         workspaceNav: {
             // PLAN-0773 M4-4（task-190）：工作区内部二级导航与面包屑的文案。
@@ -132,7 +171,7 @@ const messages = {
             title: "新建独立会话",
             body: "独立会话不属于任何工作区。选一个个人智能体作为这条会话的应答者。",
             // task-547 F-A：先把限制说清（CP 对 workspace-less Session 的 TO/CC/代发/附件一律 400）。
-            limits: "独立会话只能纯对话：不支持定向发送、代发与附件（创建后组合器也不会提供这些入口）。",
+            limits: "独立会话只能纯对话：不支持选择发送对象、代发与附件（创建后组合器也不会提供这些入口）。",
             loading: "正在加载个人智能体…",
             emptyTitle: "还没有个人智能体",
             emptyBody: "独立会话需要一个个人智能体来应答。先创建一个，再回来新建会话。",
@@ -802,8 +841,11 @@ const messages = {
             maturityExperimental: "实验性",
             maturityPreview: "预览",
             maturityStable: "稳定",
+            // task-46（措辞跟事实，不跟旧文案）：托管副本固定绑 Docker 执行后端，而该后端按
+            // 2026-10-31 裁定 + PLAN-0618 完全冻结（产品面/测试面/默认值三面一起冻，解冻时一起解冻）
+            // ⇒ 事实是「当前不可用（已冻结）」，不是「尚未接通」（后者暗示以后会通）。
             managedExecutionUnknown:
-                "托管副本的执行后端尚未接通：当前无法创建；接通后会由运行时探测可用性。",
+                "托管副本固定使用 Docker 执行后端：该后端已冻结，当前无法创建。",
             dockerPostponed: "受管工作区固定使用 Docker 执行后端（该后端当前已冻结）",
             mxcUnavailableGuidance:
                 "MXC 当前不可用。你可以显式切换到不受沙盒限制的宿主执行后继续；系统不会自动切换。",
@@ -1087,6 +1129,8 @@ const messages = {
             environmentCapabilityUnavailable: "不可用：{reason}",
             environmentCapabilityReasonUnknown: "未知原因",
             environmentBackendUnknown: "未知后端",
+            // task-46：storageMode 是 enum（direct_attach|managed_import），未知值不得原文透传。
+            environmentStorageModeUnknown: "未知存储方式",
             environmentJobCapabilityUnknown: "Job 启动能力未知（Runtime 未上报）",
             environmentJobCapabilityUnavailable: "Job 启动不可用：{reason}",
             environmentJobCapabilityReasonMissing: "后端未上报原因",
@@ -1217,19 +1261,27 @@ const messages = {
                 mentionsTitle: "会话成员",
                 filesTitle: "文件与目录",
                 // PLAN-0630 M5b (D30-14)：composer to/cc 栏（邮箱隐喻：to = 主要响应者，cc = 旁听名单）。
-                toLabel: "发送",
-                // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
-                toTargetsLabel: "定向发送",
-                toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
+                // task-50（用户裁定 P-6）：两词制「发送 / 抄送」，且「发送」= @ 重要通知。
+                // 本键是**代发身份**（单选，wire 上的 asParticipantId），不是收件人 ——
+                // 旧值叫「发送」会让字典里出现两个「发送」，与新裁定自相矛盾。
+                toLabel: "代发身份",
+                // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO（CP 侧硬 400，见 SessionParticipantService
+                // 的 authorizeToTargets）；人类目标放开依赖 task-48/task-49，届时这条 hint 由 task-49 改口径。
+                toTargetsLabel: "发送",
+                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
+                // task-50：两条语义说明（用户原话：发送相当于 @ 是重要通知，抄送就是普通抄送通知）。
+                // vue-i18n 把 `@` 当 link 语法（同 `:1176` 的 mentioned），字面量必须转义成 {'@'}。
+                toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
+                ccHint: "普通通知（可能被免打扰屏蔽）",
                 // task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。清空定向栏后发送，
                 // wire 上是显式 []（CP 抑制通知）⇒ 消息照常记录、但谁都不通知；界面必须说出来一次。
                 // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
                 // task-547 F-A：独立会话下「发送」「定向」不渲染；这行是**可见原因**（不是 tooltip）。
-                workspaceLessNoTargets: "独立会话不支持定向发送、代发与附件（仅纯对话）",
-                workspaceLessDropped: "独立会话不支持定向发送/代发/附件，本次已按纯对话发送",
-                speakAsOverriddenByTo: "已指定定向发送的响应者，本条不代发",
+                workspaceLessNoTargets: "独立会话不支持选择发送对象、代发与附件（仅纯对话）",
+                workspaceLessDropped: "独立会话不支持选择发送对象/代发/附件，本次已按纯对话发送",
+                speakAsOverriddenByTo: "已指定发送对象（优先），本条不代发",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -3722,6 +3774,56 @@ const messages = {
             writeAddMember: "Add member",
             writeRemoveMember: "Remove member",
             writeChangeRole: "Change role",
+            detailTitle: "Member detail",
+            detailDesc:
+                "Read-only: workspace member role, access-role bindings, permission visibility and org unit.",
+            detailKindLabel: "Kind",
+            detailIdLabel: "Member id",
+            detailUnitLabel: "Org unit",
+            detailUnitCost:
+                "Shows only the unit the member is attached to. Walking up to the root costs one request per level, so this sheet does not derive the chain.",
+            detailWorkspaceRoleTitle: "Workspace member role",
+            detailWorkspaceRoleDesc:
+                "Probes the workspaces you can see; this is not the full set of workspaces the member belongs to.",
+            detailWorkspaceRoleLoad: "Probe workspace roles",
+            detailWorkspaceRoleLoading: "Probing workspace roles…",
+            detailWorkspaceRoleCap:
+                "Probed {checked} workspace(s) (cap {cap}). Probed-out workspaces are not shown and do not mean the member has no role there.",
+            detailWorkspaceRoleEmpty:
+                "No role found for this member in the workspaces you can see.",
+            detailWorkspaceRoleError: "Could not read the workspace list, so nothing was probed.",
+            detailWorkspaceRoleDenied: "Not permitted",
+            detailWorkspaceRoleAgent:
+                "An agent principal is not a workspace member; its workspace binding is managed under Workspace → Agents.",
+            detailWorkspaceRoleEditHint:
+                "Change the role on that workspace's members page; this sheet is read-only.",
+            detailAccessRoleTitle: "Access-role bindings (instance scope)",
+            detailAccessRoleDesc:
+                "A different axis from the workspace member role above; the two are never merged.",
+            detailAccessRolePending: "Reading the permission projection…",
+            detailAccessRoleUnread:
+                "Could not read the permission projection; that is not the same as having no permission. Retry later.",
+            detailAccessRoleGated:
+                "Requires an instance administrator: this section needs the MANAGE_ROLES permission atom, which this identity lacks.",
+            detailAccessRoleLoading: "Reading access-role bindings…",
+            detailAccessRoleEmpty: "This member has no instance-scope access-role binding.",
+            detailAccessRoleError: "Could not read access-role bindings.",
+            detailAccessRoleAgent:
+                "An agent principal's access-role bindings live at workspace scope; instance-scope bindings do not apply to it.",
+            detailAtomsTitle: "Permission atoms",
+            detailAtomsNotShown: "Another person's permissions are not shown on this page.",
+            detailAtomsWhy:
+                "The backend permission projection is readable only by the subject itself; this page never infers permissions from roles or bindings.",
+            detailAtomsNotNoPermission:
+                "Not shown is not the same as no permission: a permission missing here may still be held.",
+            detailAtomsLink: "View my own permission projection",
+            detailActionsTitle: "Available actions",
+            detailActionChangeRole: "Change role",
+            detailActionRemove: "Remove member",
+            detailActionsBatchReason:
+                "Write actions are not open yet; this is a read-only preview.",
+            detailActionsAdminReason:
+                "Even once writes open, this needs an administrator capability on the target workspace; an instance administrator covers every workspace.",
         },
         workspaceNav: {
             ariaLabel: "Workspace page navigation",
@@ -4434,7 +4536,7 @@ const messages = {
             maturityPreview: "Preview",
             maturityStable: "Stable",
             managedExecutionUnknown:
-                "The execution backend for managed copies is not connected yet: creation is unavailable now; once it is, the runtime will probe backend availability.",
+                "Managed copies are pinned to the Docker execution backend: that backend is frozen, so creation is unavailable.",
             dockerPostponed:
                 "Managed workspaces always use the Docker execution backend (currently frozen)",
             mxcUnavailableGuidance:
@@ -4732,6 +4834,7 @@ const messages = {
             environmentCapabilityUnavailable: "Unavailable: {reason}",
             environmentCapabilityReasonUnknown: "reason unknown",
             environmentBackendUnknown: "Unknown backend",
+            environmentStorageModeUnknown: "Unknown storage mode",
             environmentJobCapabilityUnknown:
                 "Job start capability unknown (not reported by Runtime)",
             environmentJobCapabilityUnavailable: "Job start unavailable: {reason}",
@@ -4870,19 +4973,23 @@ const messages = {
                 mentionsTitle: "Session members",
                 filesTitle: "Files and folders",
                 // PLAN-0630 M5b (D30-14): composer to/cc bars (email metaphor: to = primary responder, cc = observers).
-                toLabel: "To",
-                toTargetsLabel: "Send to",
-                toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
+                // task-50: two-word regime — "Send" (@ = important notification) / "Cc" (ordinary notification).
+                // This key is the speak-as identity (single-select asParticipantId), not a recipient list.
+                toLabel: "Send as",
+                toTargetsLabel: "Send",
+                toAgentsOnlyHint: "Send targets are agents only for now; use Cc for humans",
+                toHint: "Equivalent to {'@'} — delivered as an important notification (multi-select)",
+                ccHint: "Ordinary notification (may be muted by do-not-disturb)",
                 // task-17 (source: task-6 candidate C-1): make an explicit empty TO visible.
                 toEmptyHint:
                     "This message notifies no participant (it is still recorded in this session)",
                 toEmptyHintDismiss: "Got it",
                 workspaceLessNoTargets:
-                    "A standalone Session does not support directed sends, delegation or attachments (plain chat only)",
+                    "A standalone Session does not support choosing send targets, delegation or attachments (plain chat only)",
                 workspaceLessDropped:
-                    "Standalone Sessions do not support directed sends/delegation/attachments; sent as plain chat",
+                    "Standalone Sessions do not support choosing send targets/delegation/attachments; sent as plain chat",
                 speakAsOverriddenByTo:
-                    "Directed recipients are set; this message is not sent as anyone",
+                    "Send targets are set (they take precedence); this message is not sent as anyone",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",

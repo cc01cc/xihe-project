@@ -238,7 +238,7 @@ const workspaceLess = computed(() => isWorkspaceLessRoute(route));
 // 真栈实测（drivers/p96-fa-555.mjs，独立会话）：改动前「图片 / 附件 / 截取屏幕」三个按钮
 // visible=true、disabled=false —— 用户能点开、选完文件才在提交时被拦，属「可见且可选但必失败」。
 //
-// 修法选**移除入口**而不是「保留但禁用」：①与 F-A 处理定向发送/代发两栏同一口径（移除 + 可见原因）；
+// 修法选**移除入口**而不是「保留但禁用」：①与 F-A 处理发送/代发两栏同一口径（移除 + 可见原因）；
 // ②先试过给子组件传 `disabled`（fallthrough），实测只有 ScreenshotCapture 的根节点是单根 button
 // 能被禁用，ImageUpload / FileUpload 是多根组件 ⇒ attrs 被丢弃，两个按钮仍然可点（假绿风险）。
 // 一个永远点不动的按钮不会告诉用户"为什么"，而 composer 里的 workspaceLessNoTargets 已经写明原因。
@@ -256,7 +256,7 @@ const activeSpeakAsId = computed(() =>
 );
 
 /**
- * PLAN-0665 M2（Q3，D4）：**定向发送多选**。与上面的「代发」是两件事：
+ * PLAN-0665 M2（Q3，D4）：**发送（多选收件人）**。与上面的「代发」是两件事：
  * - 候选只列会话里的 AGENT 参与者（人类作答受 BL-238 阻塞，M1 不开放）；
  * - 选中 1..N 个 ⇒ 随消息以 `toParticipantIds` 发出，CP 为每个目标各起一个 run；
  * - 默认不选（空集 = 旧单响应者路径），不写回 Session 绑定、不落 localStorage。
@@ -1354,7 +1354,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                 {{ t("chat.input.speakAsOverriddenByTo") }}
             </p>
             <!--
-                PLAN-0665 M2（Q3/D4）：定向发送多选（1..N 个 AGENT）——与上面的「代发」栏分开，
+                PLAN-0665 M2（Q3/D4）：发送多选（1..N 个 AGENT）——与上面的「代发」栏分开，
                 因为一个消息只能有一个发言身份，但可以有多个响应者。默认空集 = 旧单响应者路径。
             -->
             <RecipientField
@@ -1368,6 +1368,22 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                 data-testid="to-targets-bar"
                 @update:model-value="onToTargetsFieldChange"
             />
+            <!--
+                task-50（用户裁定 P-6）：「发送」= @ 重要通知，「抄送」= 普通通知。
+                说明文案必须**贴着各自的栏**，不然用户只看到两个词、不知道差别在哪。
+                形态照抄 to-agents-only-hint（px-2 text-xs text-muted-foreground），不另造样式。
+
+                testid 用 composer- 前缀：`RecipientField` 自己会渲染 `${testid}-hint`
+                （键盘提示），叫 `cc-hint` 会与它**撞名** —— 实测撞名时断言拿到的是
+                「↑↓ 选择 · Enter 确认…」那一段，错的不是产品是选择器。
+            -->
+            <p
+                v-if="showToTargets"
+                class="px-2 text-xs text-muted-foreground"
+                data-testid="composer-send-hint"
+            >
+                {{ t("chat.input.toHint") }}
+            </p>
             <p
                 v-if="showToTargets"
                 class="px-2 text-xs text-muted-foreground"
@@ -1444,6 +1460,13 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                     </button>
                 </template>
             </div>
+            <p
+                v-if="showCcSection && ccBarVisible"
+                class="px-2 text-xs text-muted-foreground"
+                data-testid="composer-cc-hint"
+            >
+                {{ t("chat.input.ccHint") }}
+            </p>
             <p
                 v-if="queueMode"
                 class="px-2 text-xs text-muted-foreground"

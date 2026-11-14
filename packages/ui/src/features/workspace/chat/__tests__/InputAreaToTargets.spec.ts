@@ -7,10 +7,13 @@ import RecipientField from "../components/RecipientField.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
 
 /**
- * PLAN-0665 M2 T2.1：composer「定向发送」多选 chips（1..N 个 AGENT）。
+ * PLAN-0665 M2 T2.1：composer「发送」多选 chips（1..N 个 AGENT）。
  *
- * 与 0659 的「代发」栏分开：代发是**身份**（单选），定向发送是**响应者集合**（多选，
+ * 与 0659 的「代发」栏分开：代发是**身份**（单选），发送是**响应者集合**（多选，
  * 每个目标各起一个 run）。这里只钉渲染与发送契约（第 5 个 emit 参数 `toParticipantIds`）。
+ *
+ * task-50：术语收口为两词制「发送 / 抄送」（用户裁定 P-6）—— 旧的第三词已删除，
+ * 该栏的 label 现在就是「发送」，代发身份栏改叫「代发身份」（判据：全仓 grep 旧词命中 0）。
  */
 const storeState = vi.hoisted(() => ({
     canSpeakAs: false,
@@ -41,9 +44,9 @@ const messages = {
             followUpPausedNotice: "追加到暂停队列末尾",
             followUpFullNotice: "队列已满，草稿保留",
             input: {
-                toLabel: "发送",
-                toTargetsLabel: "定向发送",
-                toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
+                toLabel: "代发身份",
+                toTargetsLabel: "发送",
+                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",
@@ -125,7 +128,7 @@ beforeEach(() => {
     storeState.ensureLoaded.mockResolvedValue(undefined);
 });
 
-describe("InputArea 定向发送多选（PLAN-0665 M2 T2.1）", () => {
+describe("InputArea 发送多选（PLAN-0665 M2 T2.1）", () => {
     it("renders only when the session has AGENT participants, with the agents-only hint", async () => {
         storeState.participants = [
             participant({ participantId: "human-1", principalKind: "HUMAN" }),
@@ -139,7 +142,7 @@ describe("InputArea 定向发送多选（PLAN-0665 M2 T2.1）", () => {
         await flushPromises();
         expect(withAgents.find('[data-testid="to-targets-bar"]').exists()).toBe(true);
         expect(withAgents.find('[data-testid="to-agents-only-hint"]').text()).toContain(
-            "人类成员请用抄送",
+            "发送目前只能选智能体；给真人请用抄送",
         );
     });
 
@@ -245,14 +248,14 @@ describe("InputArea · task-450 省略 vs 显式空集", () => {
 });
 
 /**
- * task-453（F-16 / Lead 裁 P1，D-1300）：定向发送与默认「代发」的联动。
+ * task-453（F-16 / Lead 裁 P1，D-1300）：发送（多选收件人）与默认「代发」的联动。
  * CP 契约（ChatController:569-577，PLAN-0665 M1/Q1）：显式 TO 非空时 asParticipantId 必须
  * **等于首目标**或缺席，否则 400 INVALID_REQUEST。而 InputArea 会自动把代发默认成 PRIMARY
- * （D30-14 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用定向栏就必然冲突。
+ * （D30-14 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用多选栏就必然冲突。
  * 真栈实证：To=MiMo 直接发 ⇒ 400「asParticipantId conflicts with toParticipantIds[0]」；
  * 手动点掉代发 chip 后同一条 ⇒ 202 且 MiMo 真作答（task445-case-b2/b3.json）。
  */
-describe("InputArea · task-453 定向发送让位默认代发", () => {
+describe("InputArea · task-453 发送让位默认代发", () => {
     function mountWithSpeakAs() {
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = roster();

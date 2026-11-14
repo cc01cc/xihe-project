@@ -6,7 +6,7 @@ import { isWorkspaceLessRoute } from "../workspaceLess";
  *
  * <p>判据不是"路由长什么样"，而是**这个判定会不会让工作区会话被误降级** ——
  * 所以两条负向用例（工作区会话、无路由上下文）与一条正向用例同等重要：
- * 判错方向会砍掉工作区里的定向发送（判据②的负向对照就是防这个）。</p>
+ * 判错方向会砍掉工作区里的发送/抄送入口（判据②的负向对照就是防这个）。</p>
  */
 const route = (path: string, params: Record<string, string> = {}) =>
     ({ path, params }) as unknown as Parameters<typeof isWorkspaceLessRoute>[0];

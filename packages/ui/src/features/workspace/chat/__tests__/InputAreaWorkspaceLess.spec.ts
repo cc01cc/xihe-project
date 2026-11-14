@@ -86,7 +86,7 @@ const messages = {
             image: "图片",
             attachFile: "附件",
             voice: "语音输入",
-            input: { workspaceLessNoTargets: "独立会话不支持定向发送、代发与附件（仅纯对话）" },
+            input: { workspaceLessNoTargets: "独立会话不支持选择发送对象、代发与附件（仅纯对话）" },
             delegation: { button: "委派", reasonUnknown: "未知原因" },
         },
         multimodal: { image: "图片", screenshot: "截取屏幕", voice: "语音输入" },
@@ -169,8 +169,8 @@ type CapabilityProbe = {
 };
 
 const CAPABILITY_PROBES: CapabilityProbe[] = [
-    { capability: "定向发送（以某参与者身份代发）", probe: '[data-testid="speak-as-bar"]' },
-    { capability: "定向多选（TO）", probe: '[data-testid="to-targets-bar"]' },
+    { capability: "代发身份（以某参与者身份发送）", probe: '[data-testid="speak-as-bar"]' },
+    { capability: "发送多选（TO）", probe: '[data-testid="to-targets-bar"]' },
     { capability: "抄送（CC）", probe: '[data-testid="cc-expand"]' },
     { capability: "委派", probe: '[data-testid="chat-delegate-button"]' },
     { capability: "图片", probe: '[aria-label="入口-图片"]' },
