@@ -376,25 +376,66 @@ function loadDirtyProofs(proofPath, dirtyPaths, repoRoot) {
 }
 
 /**
- * `--extra-shot <id>:<name>:<path>`：**临时加拍**一镜，不进 SHOTS 常量。
+ * `--extra-shot <id>:<name>:<path>[;<field>=<value>…]`：**临时加拍**一镜，不进 SHOTS 常量。
  *
  * <p>为什么要这个口子：SHOTS 是**交付批次**的定义（改它 = 改批次身份与证据包清单），
  * 而真实需求里常出现「某张卡只要一张页面的初始态」—— 那种图必须仍由本执行器拍（真路由 + 真组件
- * + 双拍比 sha + manifest），不能退化成手拍。所以临时镜头走参数、manifest 里带 `adHoc: true`，
- * 默认批次仍是那 14 张。</p>
+ * + 双拍比 sha + manifest），不能退化成手拍。所以临时镜头走参数、manifest 里带 `adHoc: true`。</p>
+ *
+ * <p>task-40 rev5（Lead 2026-11-15 批准）：临时镜头**也能声明焦点步骤** —— `focus=` / `tab=` /
+ * `expectFocus=`，语义与 SHOTS 里的同名字段完全一致（同一套 focusPlan 校验、同一套失败不沉默）。
+ * 为什么必须有：没有它，拍一张焦点调样例就只剩「临时改 SHOTS 再回退」这条路，而**在产品脚本里
+ * 做临时改再回退，比多一个正式参数危险得多**（回退漏一步就留下一条假镜头）。</p>
+ *
+ * <p>写法：字段用 `;` 分隔、`key=value`；**值里的 `:` 不会被拆坏**（`focus=:focus-visible`、
+ * `expectFocus=a[href^="http:"]` 都行）。示例：<br>
+ * `--extra-shot 't40:focus:/workspace/<uuid>/chat/<sid>:focus=[data-testid=chat-input];tab=2'`</p>
  */
 function parseExtraShot(spec) {
-    const parts = String(spec).split(":");
+    // 先按 `;` 切字段段：第一段是 id:name:path[:key=value]，其余段都是 key=value。
+    const [head, ...tail] = String(spec).split(";");
+    const parts = head.split(":");
     if (parts.length < 3) {
-        throw new Error("--extra-shot 需要 <id>:<name>:<path>，收到: " + spec);
+        throw new Error("--extra-shot 需要 <id>:<name>:<path>[;key=value…]，收到: " + spec);
     }
     const id = parts.shift().trim();
     const name = parts.shift().trim();
-    const route = parts.join(":").trim();
+    const rest = parts.join(":");
+    // 字段段起点 = 第一个 `:<key>=` 标记；之前的都是路径（路径里允许出现 `:`）。
+    const marker = rest.search(/:(focus|tab|expectFocus)=/);
+    const route = (marker >= 0 ? rest.slice(0, marker) : rest).trim();
+    const fields = marker >= 0 ? [rest.slice(marker + 1), ...tail] : tail;
     if (!id || !name || !route.startsWith("/")) {
         throw new Error("--extra-shot 的 id/name 不能空，path 必须以 / 开头，收到: " + spec);
     }
-    return { id, name, path: route, app: true, adHoc: true };
+    const shot = { id, name, path: route, app: true, adHoc: true };
+    for (const field of fields) {
+        const eq = field.indexOf("=");
+        const key = eq >= 0 ? field.slice(0, eq).trim() : field.trim();
+        const value = eq >= 0 ? field.slice(eq + 1).trim() : "";
+        if (!FOCUS_STEP_KEYS.includes(key)) {
+            throw new Error(
+                "--extra-shot 只接受 " +
+                    FOCUS_STEP_KEYS.join(" / ") +
+                    " 三种字段，收到: " +
+                    JSON.stringify(field) +
+                    "（完整写法见 --help）",
+            );
+        }
+        if (value === "") {
+            throw new Error("--extra-shot 的 " + key + "= 不能为空，收到: " + spec);
+        }
+        if (key === "tab") {
+            const times = Number(value);
+            if (!Number.isInteger(times)) {
+                throw new Error("--extra-shot 的 tab= 必须是整数，收到: " + value);
+            }
+            shot.tab = times;
+            continue;
+        }
+        shot[key] = (shot[key] ?? []).concat(value);
+    }
+    return shot;
 }
 
 function parseArgs(argv) {
@@ -458,8 +499,11 @@ function parseArgs(argv) {
         } else if (arg === "--help" || arg === "-h") {
             process.stdout.write(
                 [
-                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--extra-shot <id>:<name>:<path> …] [--allow-dirty] [--selftest]",
+                    "用法: node packages/ui/scripts/ui-mock-shot.mjs [--url <base>] [--out <dir>] [--only 01,04] [--channel <chrome-beta|chrome>] [--chromium-arg=<arg> …] [--extra-shot <id>:<name>:<path>[;focus=<sel>][;tab=<n>][;expectFocus=<sel>] …] [--allow-dirty] [--dirty-proof <json>] [--selftest]",
                     "--extra-shot 可重复传：临时加拍一镜（真路由真组件、同样双拍比 sha），不进 SHOTS 批次定义；manifest 里该镜带 adHoc: true。",
+                    "  焦点步骤可写在同一个参数里，字段用 ; 分隔：--extra-shot 't40:focus:/workspace/<uuid>/chat/<sid>:focus=[data-testid=chat-input];tab=2'（值里的 : 不会被拆坏）。",
+                    "  三种字段：focus=<CSS 选择器>（脚本聚焦，可重复）／tab=<整数>（键盘路径，与 focus 互斥）／expectFocus=<CSS 选择器>（拍前断言 activeElement 命中）。",
+                    "  注意：同一次调用里既 --only 又 --extra-shot 时，--only 必须点名额外镜头的 id，否则它会被过滤掉。",
                     "--chromium-arg 可重复传，原样进 chromium.launch 的 args（例：--chromium-arg=--disable-gpu 强制软件合成）；它和 channel/版本一起写进 manifest.browser。",
                     "工作树脏时默认 exit 1；--allow-dirty --dirty-proof <json> 用于「脏改动不影响像素」的交付批次（每个脏路径一条可复算命令 + 实际输出）。",
                     "--selftest 只跑探活自检（不开浏览器、不起 dev server），用于验证「探不到要快速失败且报全 URL」。",
@@ -1339,6 +1383,50 @@ async function runSelftest() {
     check(
         '空/非字符串选择器（focus: "" / [null]）⇒ 必须抛',
         throws(() => focusPlan({ focus: "" })) && throws(() => focusPlan({ focus: [null] })),
+        "",
+    );
+    // task-40 rev5：--extra-shot 的焦点字段解析（纯函数）
+    const plain = parseExtraShot("t40:focus:/workspace/x");
+    check(
+        "extra-shot: 无焦点字段时保持原形状",
+        JSON.stringify(plain) ===
+            JSON.stringify({
+                id: "t40",
+                name: "focus",
+                path: "/workspace/x",
+                app: true,
+                adHoc: true,
+            }),
+        JSON.stringify(plain),
+    );
+    const withFocus = parseExtraShot(
+        't40:focus:/workspace/x:focus=[data-testid="chat-input"];tab=2',
+    );
+    check(
+        "extra-shot: focus= 与 tab= 都进声明（路径不被拆坏）",
+        withFocus.path === "/workspace/x" &&
+            JSON.stringify(withFocus.focus) === JSON.stringify(['[data-testid="chat-input"]']) &&
+            withFocus.tab === 2,
+        JSON.stringify({ path: withFocus.path, focus: withFocus.focus, tab: withFocus.tab }),
+    );
+    const colonValue = parseExtraShot("t40:focus:/workspace/x;focus=:focus-visible");
+    check(
+        "extra-shot: 字段值里的 : 不被当分隔符",
+        JSON.stringify(colonValue.focus) === JSON.stringify([":focus-visible"]),
+        JSON.stringify(colonValue.focus),
+    );
+    check(
+        "extra-shot: 未知字段 / 空值 / tab 非整数 ⇒ 必须抛",
+        throws(() => parseExtraShot("t40:f:/x;hover=#a")) &&
+            throws(() => parseExtraShot("t40:f:/x;focus=")) &&
+            throws(() => parseExtraShot("t40:f:/x;tab=abc")) &&
+            throws(() => parseExtraShot("t40")),
+        "",
+    );
+    check(
+        "extra-shot: 声明的焦点字段能通过 focusPlan（互斥/越界仍在这里被拦）",
+        focusPlan(parseExtraShot("t40:f:/x:focus=#a")).focus.length === 1 &&
+            throws(() => focusPlan(parseExtraShot("t40:f:/x:focus=#a;tab=2"))),
         "",
     );
     check(
