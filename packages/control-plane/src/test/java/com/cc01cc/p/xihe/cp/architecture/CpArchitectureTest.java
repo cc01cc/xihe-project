@@ -104,10 +104,48 @@ class CpArchitectureTest {
         baseline.put("cycleDiagnosticsAreTypeDependenciesNotProvenStateWriterCycles", true);
         baseline.put("cycleDetectionLimit", com.tngtech.archunit.ArchConfiguration.get()
                 .getPropertyOrDefault("cycles.maxNumberToDetect", "library default"));
-        Path report = Path.of("target", "cp-architecture", "baseline.json");
+        // task-622 (same family as task-607): follow the real build output instead of a hard coded
+        // target/, otherwise two lanes building into different directories overwrite each other's report.
+        Path report = buildReportDirectory().resolve("cp-architecture").resolve("baseline.json");
         Files.createDirectories(report.getParent());
         new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(report.toFile(), baseline);
-        System.out.println("CP architecture baseline: " + production.size() + " production classes; " + report);
+        System.out.println("CP architecture baseline: " + production.size() + " production classes; wrote "
+                + report.toAbsolutePath());
+    }
+
+    /**
+     * task-622: every rule declared in {@link CpArchitectureRules#ALL} is gated by an assertion, not just by
+     * a row in the baseline report.
+     *
+     * <p>Before this test two of the six rules (crypto facilities, repositories-below-services) were only
+     * evaluated into {@code baseline.json}: {@code evaluate(...)} records a violation instead of throwing,
+     * so nothing failed if they broke. The strict path ({@link CpArchitectureRules#forFullImport}) also makes
+     * an empty selection a violation, so a rule that matches no production class fails here by name.</p>
+     */
+    @Test
+    void everyDeclaredRuleHoldsOnProduction() {
+        for (ArchRule rule : CpArchitectureRules.ALL) {
+            var origin = CpArchitectureRules.CLASS_TARGETS.get(rule);
+            long matched = production.stream().filter(origin).count();
+            var result = CpArchitectureRules.forFullImport(rule).evaluate(production);
+            var details = result.getFailureReport().getDetails();
+            assertThat(details).as("rule [%s] (matched=%d production classes, empty selection is itself a"
+                    + " violation): %s", rule.getDescription(), matched, details.stream().limit(10).toList())
+                    .isEmpty();
+            assertThat(matched).as("rule [%s] selects 0 production classes", rule.getDescription())
+                    .isPositive();
+        }
+    }
+
+    /** The build output root: {@code <build>/test-classes} -> {@code <build>}; see task-607. */
+    private static Path buildReportDirectory() {
+        try {
+            var location = CpArchitectureTest.class.getProtectionDomain().getCodeSource().getLocation();
+            Path buildDir = Path.of(location.toURI()).getParent();
+            return buildDir != null ? buildDir : Path.of(".");
+        } catch (java.net.URISyntaxException ex) {
+            throw new IllegalStateException("cannot resolve this class's code source location", ex);
+        }
     }
 
     static List<List<String>> stronglyConnectedOwners(Map<String, Set<String>> graph) {

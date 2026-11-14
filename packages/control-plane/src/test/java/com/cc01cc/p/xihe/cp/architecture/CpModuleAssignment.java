@@ -112,6 +112,21 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.equals("MemberView")) {
             return "workspace";
         }
+        // PLAN-0773 / task-622: the org-unit family (tree, members, per-unit role bindings, jurisdiction)
+        // is the subject-side governance face, so it joins the same slice as the rest of the RBAC surface.
+        // Two things were read rather than guessed:
+        //   1. design.md:12 (D-1089): "工作区与组织架构两者独立 … 组织在主体侧" — so NOT workspace, and the
+        //      rules' subject is people/agent principals, so not a resource slice either;
+        //   2. half of the family already lives in `cp.policy` (OrgUnitGovernancePolicy, OrgUnitGrants,
+        //      OrgUnitGrantExpander, OrgUnitGrantSource, PendingOrgUnitGrantSource), i.e. it already resolves
+        //      to "policy" through the top-level package branch above. Assigning the mixed-package half
+        //      anywhere else would split one capability family across two slices and manufacture an
+        //      artificial policy<->X edge in the cycle diagnostics.
+        // Precedent in this file: PLAN-0610 sent the dynamic RBAC slice (roles / role_permissions /
+        // role_bindings + admin services) to "policy" instead of growing a module for one family.
+        if (name.startsWith("OrgUnit")) {
+            return "policy";
+        }
         // PLAN-0470: the Context EventStore/projection family (entities, repositories and services)
         // is its own slice; without this the classification gate cannot even import the model.
         if (name.startsWith("Context") || name.startsWith("EventStore") || name.equals("CompactionNoticePort")) {
