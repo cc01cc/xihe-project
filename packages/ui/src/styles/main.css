@@ -220,11 +220,22 @@
         scrollbar-width: thin;
         scrollbar-color: var(--scrollbar-thumb) transparent;
     }
-}
 
-*:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 1px;
+    /*
+     * task-39：焦点轮廓**必须待在 base 层里**。
+     *
+     * 这条原来写在 `@layer base` 之外 ⇒ 它是「无层规则」，按 CSS 层叠层规则**压过所有**
+     * Tailwind utility（无层 > 有层，与选择器特异性无关）。后果：`focus:outline-none`
+     * 写了等于没写（哑弹），实测 `sidebar-session-search` 焦点态仍是 `outline-style: solid`。
+     *
+     * 搬进 base 层后层序恢复成 theme → base → components → utilities，utility 按预期胜出。
+     * 代价与判据见同批 spec：`src/styles/__tests__/focusRingLayer.spec.ts`（静态守卫：规则必须在
+     * base 层内）+ 焦点可见性实测（vendor 输入族在同批补了自己的环，否则会失去唯一指示）。
+     */
+    *:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {

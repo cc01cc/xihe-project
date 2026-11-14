@@ -1060,7 +1060,7 @@ defineExpose({ openDockTab });
                         :aria-valuenow="treeWidth"
                         :aria-valuemin="TREE_WIDTH_MIN"
                         :aria-valuemax="TREE_WIDTH_MAX"
-                        class="group/sash relative z-10 -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+                        class="group/sash relative z-10 -ml-1 w-1 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
                         @dragging="treeBridge.onDragging"
                         @dblclick="treeBridge.onDblclick"
                     >

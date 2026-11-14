@@ -1635,13 +1635,18 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                 双框处置：**保留外层容器 border，环画在 textarea 自己身上**。容器 12px 内距 > 3px 环宽
                 ⇒ 环住在内距里、不压容器边框；换成「把环画到容器上」会让点工具栏按钮时整块输入区发光，
                 去掉容器 border 则失焦后没有字段边界 —— 两者都比现状差。
+
+                补充（task-39）：本行 `focus:outline-none` 一度是**哑弹** —— 全局 `*:focus-visible` 当时
+                写在 `@layer` 之外，压过所有 utility，于是焦点态是「2px 纯黑 outline + 自己的环」。
+                task-39 已把那条全局规则搬进 `@layer base`，utility 恢复生效，这里不再需要 `!`。
+                （`!` 版本在 task-30 提交里用过；根因修掉后留在代码里会让下一个读注释的人以为还得加 `!`。）
             -->
             <div class="rounded-lg border bg-muted/30 px-3 py-2">
                 <textarea
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none! focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-offset-0 field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-offset-0 field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"

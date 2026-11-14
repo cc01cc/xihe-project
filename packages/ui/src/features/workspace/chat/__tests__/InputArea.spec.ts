@@ -349,12 +349,10 @@ describe("task-30 ① composer 焦点环形态", () => {
         // 反向：旧的两条必须不在（只断言新值存在，等于允许"两个都留着"）
         expect(classes).not.toContain("focus-visible:ring-1");
         expect(classes).not.toContain("focus-visible:ring-ring/60");
-        // 必须压住全局 outline，否则环外再套 2px 纯色近黑轮廓（实测那才是用户看到的"黑框"主体）
-        expect(classes).toContain("focus:outline-none!");
-        expect(
-            classes,
-            "少了 ! 就等于没压住：main.css 的 *:focus-visible 在 @layer 之外",
-        ).not.toContain("focus:outline-none");
+        // 必须压住全局 outline，否则环外再套 2px 纯色近黑轮廓（实测那才是用户看到的"黑框"主体）。
+        // task-39 之后这条真能生效（全局规则搬进 @layer base）⇒ 不再需要 `!`；
+        // 「utility 能不能压住全局规则」由 src/styles/__tests__/focusRingLayer.spec.ts 静态守卫。
+        expect(classes).toContain("focus:outline-none");
         wrapper.unmount();
     });
 });

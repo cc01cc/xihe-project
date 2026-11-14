@@ -263,7 +263,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
             tabindex="0"
             data-testid="dock-resizer"
             :data-state="resizingWidth !== null ? 'drag' : 'inactive'"
-            class="group/sash absolute left-0 top-0 bottom-0 w-1 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:outline-none"
+            class="group/sash absolute left-0 top-0 bottom-0 w-1 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-primary/20 focus-visible:bg-primary/30 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
             @dblclick="resetWidth"
             @mousedown="handleResizeStart"
             @keydown="handleResizeKeydown"
