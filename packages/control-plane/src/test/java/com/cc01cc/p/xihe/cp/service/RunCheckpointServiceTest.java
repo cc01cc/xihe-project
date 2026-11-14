@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -870,6 +871,42 @@ class RunCheckpointServiceTest {
         RunCheckpoint row = rows.get(0);
         assertEquals(RunCheckpoint.REVERT_PARTIAL, row.getRevertState());
         assertTrue(row.getRevertSummary().contains("\"reason\":\"FAILED\""));
+    }
+
+    /**
+     * task-548 判据①②：回滚路径**真的**写了审计（谁 / 哪个 checkpoint / 结果）。这条用例存在的理由：
+     * 审计组件为 null 时其余用例照样全绿 —— 不钉住接线，「构件存在但不在产品路径上」会再来一次。
+     */
+    @Test
+    void revertWritesAuditRowWithWhoCheckpointAndResult() {
+        seedCapturedRow();
+        com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit audit =
+                mock(com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.class);
+        service.setRevertAudit(audit);
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(revertOk(1, 2, 0));
+
+        RunCheckpointService.RevertOutcome outcome =
+                service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
+
+        assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
+        RunCheckpoint row = rows.get(0);
+        verify(audit, times(1)).reverted(any(), eq(WORKSPACE_ID), anyString(),
+                eq(row.getRevertState()), eq(SLICE_REF), anyInt(), anyInt(), anyInt(), anyInt());
+    }
+
+    /** 记账被跳过（状态被并发改过）的回滚不写审计 —— 不为没生效的回滚造假记录。 */
+    @Test
+    void skippedBookkeepingWritesNoAuditRow() {
+        seedCapturedRow();
+        com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit audit =
+                mock(com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit.class);
+        service.setRevertAudit(audit);
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(revertOk(0, 0, 0));
+        when(repository.markReverted(any(), anyString(), any(), any(), any())).thenReturn(0);
+
+        service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
+
+        verify(audit, times(0)).reverted(any(), any(), any(), any(), any(), anyInt(), anyInt(), anyInt(), anyInt());
     }
 
     @Test

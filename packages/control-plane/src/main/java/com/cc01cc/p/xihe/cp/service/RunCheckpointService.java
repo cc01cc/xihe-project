@@ -116,6 +116,14 @@ public class RunCheckpointService {
     /** PLAN-0641 M3 T4.2: durable audit for forced (dirty-nested-repo) reverts. */
     @org.springframework.beans.factory.annotation.Autowired
     private com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
+
+    /** task-548：回滚进 audit_logs（fail-open，效果已在 Runtime 发生、不可撤销）。 */
+    private com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit revertAudit;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRevertAudit(com.cc01cc.p.xihe.cp.audit.CheckpointRevertAudit revertAudit) {
+        this.revertAudit = revertAudit;
+    }
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
     private final WorkspaceRootRepository workspaceRoots;
@@ -616,6 +624,9 @@ public class RunCheckpointService {
     public RevertOutcome revert(String workspaceId, String sliceRef,
                                 List<String> acknowledgeTypeChanges, boolean force,
                                 List<String> acknowledgeNestedRepos) {
+        // task-548: 审计要回答「谁」。调用面（controller/tests）不带 principal，这里从租户上下文取；
+        // 取不到就记 none —— 不编造主体，也不因此阻断回滚。
+        String actorUserId = com.cc01cc.p.xihe.cp.config.TenantContext.getUserId();
         if (hasActiveRun(workspaceId)) {
             return new RevertOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
         }
@@ -664,7 +675,7 @@ public class RunCheckpointService {
                         acknowledgeNestedRepos);
         return switch (result.outcome()) {
             case OK -> {
-                recordRevert(capturedRow, result);
+                recordRevert(capturedRow, result, actorUserId);
                 // PLAN-0641 M3 T4.2: a forced revert over dirty nested repos is audited
                 // with the repository roots (never file content / arguments).
                 if (force) {
@@ -827,7 +838,8 @@ public class RunCheckpointService {
      * Revert bookkeeping conditionally updates the checkpoint row with the
      * frozen summary JSON; suspects are capped at {@link #MAX_SUMMARY_SUSPECTS}.
      */
-    private void recordRevert(RunCheckpoint row, RuntimeCheckpointClient.RevertResult result) {
+    private void recordRevert(RunCheckpoint row, RuntimeCheckpointClient.RevertResult result,
+                              String actorUserId) {
         RuntimeCheckpointClient.ExecuteCounts counts = result.counts();
         boolean clean = counts.failed() == 0;
         String revertState = clean ? RunCheckpoint.REVERT_ROLLED_BACK : RunCheckpoint.REVERT_PARTIAL;
@@ -853,6 +865,12 @@ public class RunCheckpointService {
         row.setRevertSummary(summary);
         row.setRevertedAt(now);
         row.setRevertAttemptCount(row.getRevertAttemptCount() + 1);
+        // task-548: 记账成功后才记审计 —— 记账被跳过（状态被并发改过）的回滚不造假记录。
+        if (revertAudit != null) {
+            revertAudit.reverted(actorUserId, row.getWorkspaceId(), String.valueOf(row.getId()),
+                    revertState, result.sliceRef(), counts.restored(), counts.deleted(),
+                    counts.failed(), row.getRevertAttemptCount());
+        }
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_reverted runId={} workspaceId={} "
                         + "revertState={} restored={} deleted={} failed={} attempt={}",
                 row.getSourceRunId(), row.getWorkspaceId(), revertState, counts.restored(), counts.deleted(),
