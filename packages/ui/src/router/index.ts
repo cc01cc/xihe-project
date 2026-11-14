@@ -2,10 +2,12 @@ import { createRouter, createWebHistory } from "vue-router";
 import { Boxes, CalendarClock, LayoutGrid, Server, Settings, Users } from "@lucide/vue";
 import { api } from "../composables/api";
 import {
+    clearTabWorkspace,
     migrateLegacyWorkspace,
     readTabWorkspaceId,
     writeTabWorkspaceId,
 } from "../lib/workspaceContext";
+import { isUuid } from "../lib/uuid";
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
 import {
@@ -534,6 +536,15 @@ router.beforeEach(async (to) => {
     if (token) {
         const routeWorkspaceId =
             typeof to.params.workspaceId === "string" ? to.params.workspaceId : "";
+        if (routeWorkspaceId && !isUuid(routeWorkspaceId)) {
+            // task-537：**先验形状再写上下文**。之前把非 UUID 直接写进 tab 上下文，
+            // 孩子们的首个请求就带着它出去，CP 400（`X-Workspace-Id must be a UUID`），
+            // 页面只剩左栏空态 —— 把「错」伪装成「空」。这里清掉上下文并回工作区列表，
+            // 由列表页给出明确文案（
+            // `?invalidWorkspace=1`），所以既不发明知会失败的请求，也不进死路。
+            clearTabWorkspace();
+            return { name: "workspace-home", query: { invalidWorkspace: "1" } };
+        }
         if (routeWorkspaceId) {
             // Set the tab workspace before child components issue their first
             // request; WorkspaceView then validates access with CP.

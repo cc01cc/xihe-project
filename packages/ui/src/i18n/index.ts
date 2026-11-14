@@ -377,6 +377,10 @@ const messages = {
             searchPlaceholder: "搜索工作区（名称或 ID）",
             searchEmpty: "没有匹配的工作区。",
             clearSearch: "清除搜索",
+            invalidLinkTitle: "工作区链接无效",
+            invalidLinkHint:
+                "链接里的工作区标识不是合法的工作区 ID（可能复制不完整或已过期），已回到工作区列表。请从下面重新选择，或检查链接后重试。",
+            invalidLinkDismiss: "知道了",
         },
         workspace: {
             panelCode: "代码",
@@ -3933,6 +3937,10 @@ const messages = {
             searchPlaceholder: "Search workspaces (name or ID)",
             searchEmpty: "No matching workspaces.",
             clearSearch: "Clear search",
+            invalidLinkTitle: "This workspace link is invalid",
+            invalidLinkHint:
+                "The workspace id in the link is not a valid workspace ID (truncated when copied, or expired), so you are back on the workspace list. Pick a workspace below, or check the link and try again.",
+            invalidLinkDismiss: "Got it",
         },
         workspace: {
             panelCode: "Code",

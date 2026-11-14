@@ -36,6 +36,22 @@ watch(
     { immediate: true },
 );
 
+/**
+ * task-537：从守卫回来时带着 `?invalidWorkspace=1` —— 说明用户手里那条链接里的工作区 id
+ * 不是 UUID（旧书签、手改地址、复制粘贴残缺）。这里必须**明说**「链接无效」并给出下一步，
+ * 不能让用户对着一份正常的列表猜自己刚才做错了什么。只消费一次，抹掉参数。
+ */
+const invalidWorkspaceLink = ref(route.query.invalidWorkspace === "1");
+watch(
+    () => route.query.invalidWorkspace,
+    (flag) => {
+        if (flag !== "1") return;
+        invalidWorkspaceLink.value = true;
+        void router.replace({ query: { ...route.query, invalidWorkspace: undefined } });
+    },
+    { immediate: true },
+);
+
 const workspaces = ref<ApiWorkspace[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -126,6 +142,27 @@ onMounted(async () => {
 
 <template>
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6" data-testid="workspace-picker">
+        <!--
+            task-537：链接无效必须说清「这是链接的问题、不是你没有工作区」，并给下一步。
+            放在标题上方而不是 toast：toast 会消失，而用户此刻正需要知道**为什么**回到了列表页。
+        -->
+        <div
+            v-if="invalidWorkspaceLink"
+            data-testid="workspace-invalid-id"
+            role="alert"
+            class="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm"
+        >
+            <p class="font-medium">{{ t("workspacePicker.invalidLinkTitle") }}</p>
+            <p class="mt-1 text-muted-foreground">{{ t("workspacePicker.invalidLinkHint") }}</p>
+            <button
+                type="button"
+                data-testid="workspace-invalid-id-dismiss"
+                class="mt-2 rounded-md border px-2.5 py-1 text-xs transition-colors hover:bg-accent"
+                @click="invalidWorkspaceLink = false"
+            >
+                {{ t("workspacePicker.invalidLinkDismiss") }}
+            </button>
+        </div>
         <header class="flex items-start justify-between gap-3">
             <div class="min-w-0 space-y-1">
                 <h1 class="text-lg font-semibold">{{ t("workspacePicker.title") }}</h1>
