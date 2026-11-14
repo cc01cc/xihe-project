@@ -123,6 +123,8 @@ const DRAG_GRACE_MS = 500;
 /** 判定「移动过」的最小位移（px）：点击（如折叠按钮）不该被当成拖拽。 */
 const DRAG_MIN_MOVE_PX = 4;
 let detachPointer: (() => void) | null = null;
+/** 宿主尺寸观察（task-524）：宿主宽度一变就重新收敛，别等 100ms 的重试节拍。 */
+let hostResizeObserver: ResizeObserver | null = null;
 
 // 卸载时摘干净：MutationObserver 挂着 DOM 引用，不摘会让已销毁的组件随页面存活。
 onBeforeUnmount(() => {
@@ -130,6 +132,8 @@ onBeforeUnmount(() => {
     detachSashA11y = null;
     detachPointer?.();
     detachPointer = null;
+    hostResizeObserver?.disconnect();
+    hostResizeObserver = null;
 });
 
 /**
@@ -248,6 +252,13 @@ function syncTree(api: NonNullable<typeof dockApi.value>): void {
  *
  * 用库公开的 panel.api.setSize({ width })（键盘路径已实测有效）。全程包在 syncing 里，
  * 免得这一写被当成用户拖拽而反手 emit 一次。
+ *
+ * task-524：写之前先把**库的布局模型对齐真实宿主尺寸**。宿主宽度在挂载期会随
+ * `transition-[flex-grow] duration-300` 从 ~6px 长到最终值，而库的模型只按 ResizeObserver 追，
+ * 追不上时 `api.width` 会停在小值（实测 6 / 308 / 616 …），于是 setSize 是在**错的总宽**上
+ * 分配余量 ⇒ 首帧可见「树停在最小宽 200」约 200ms。`api.layout(w, h)` 是库公开的强制重排
+ * 入口（`dockviewComponent.d.ts`）。**只在模型与 DOM 不一致时调用**：无条件调用会把刚
+ * setSize 的结果按模型里的旧 geometry 重算回去（实测：拖拽/键盘改完宽度立刻被抹回 240）。
  */
 function applyProductWidths(): void {
     const api = dockApi.value;
@@ -255,8 +266,18 @@ function applyProductWidths(): void {
     const tree = api.getPanel(TREE_PANEL_ID);
     syncing = true;
     try {
+        const el = hostRef.value;
+        if (el) {
+            const box = el.getBoundingClientRect();
+            const hostW = Math.floor(box.width);
+            const hostH = Math.floor(box.height);
+            const stale = Math.abs(api.width - hostW) > 1 || Math.abs(api.height - hostH) > 1;
+            if (hostW > 0 && hostH > 0 && stale) api.layout(hostW, hostH);
+        }
         if (tree && !props.treeCollapsed) tree.api.setSize({ width: treeWidth.value });
-        // dock 组也要显式给宽：不写的话它按余量吃掉空间，树宽再准也会被挤回最小宽。
+        // dock 的宽度由 `syncDock` 的 minimumWidth/maximumWidth 兑现（task-497），这里不再写它：
+        // 实测「dock 没有显式 setSize 就按余量吃掉空间」这个现象**不存在**（中间帧 dock 停在自己的
+        // 下界 320、稳态 360），所以不在这里补 setSize —— 补了反而会和约束互相打。
     } finally {
         syncing = false;
     }
@@ -440,6 +461,13 @@ function onReady(event: DockviewReadyEvent): void {
         hostRef.value?.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp, true);
     };
+    // task-524：宿主宽度在挂载期是**动画增长的**（`transition-[flex-grow] duration-300`）。
+    // 只靠 100ms 的重试节拍会在「宿主已经够宽」之后再多错 1–2 帧（实测首帧闪窄 ~200ms）。
+    // 尺寸一变就重新收敛，把这段压到一帧以内。
+    if (typeof ResizeObserver === "function" && hostRef.value) {
+        hostResizeObserver = new ResizeObserver(() => startProductWidthSync());
+        hostResizeObserver.observe(hostRef.value);
+    }
     // 用户从 tab 的 × 关闭 ⇒ 回写 XH 状态（单一 writer 仍是 Workbench）。
     event.api.onDidRemovePanel((panel) => {
         if (syncing) return;
