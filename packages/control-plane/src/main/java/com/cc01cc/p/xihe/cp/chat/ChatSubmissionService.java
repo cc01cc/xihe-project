@@ -45,6 +45,15 @@ import java.util.function.Supplier;
  */
 @Service
 public class ChatSubmissionService {
+    /** task-542：冻结快照那一刻记一条会话级审计（fail-open，不进业务事务、失败不阻断会话）。 */
+    private com.cc01cc.p.xihe.cp.audit.SessionSnapshotAudit sessionSnapshotAudit;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSessionSnapshotAudit(
+            com.cc01cc.p.xihe.cp.audit.SessionSnapshotAudit audit) {
+        this.sessionSnapshotAudit = audit;
+    }
+
 
     @org.springframework.beans.factory.annotation.Autowired
     private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
@@ -582,6 +591,9 @@ public class ChatSubmissionService {
         // PRIMARY's binding-time cap from the same single entry the create/fork paths use.
         childSession.setAgentPermissionsSnapshot(agentPrincipalService.resolveCapFor(
                 uuidStr(parentRun.getAgentPrincipalId()), parentRun.getWorkspaceId()));
+        if (sessionSnapshotAudit != null) {
+            sessionSnapshotAudit.frozen(childSession);
+        }
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
@@ -738,6 +750,9 @@ public class ChatSubmissionService {
         // PLAN-0689 A7/D-54 (P0-3): retained snapshot = the child PRIMARY's binding-time cap;
         // resolveCapFor above already carried the D-49 active-binding gate.
         childSession.setAgentPermissionsSnapshot(childPermissions);
+        if (sessionSnapshotAudit != null) {
+            sessionSnapshotAudit.frozen(childSession);
+        }
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());

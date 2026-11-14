@@ -30,6 +30,15 @@ import java.util.UUID;
 
 @Service
 public class SessionService {
+    /** task-542：冻结快照那一刻记一条会话级审计（fail-open，不进业务事务、失败不阻断会话）。 */
+    private com.cc01cc.p.xihe.cp.audit.SessionSnapshotAudit sessionSnapshotAudit;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSessionSnapshotAudit(
+            com.cc01cc.p.xihe.cp.audit.SessionSnapshotAudit audit) {
+        this.sessionSnapshotAudit = audit;
+    }
+
 
     private static final Logger logger = LoggerFactory.getLogger(SessionService.class);
 
@@ -246,6 +255,9 @@ public class SessionService {
         // PLAN-0689 A7/D-54: retained snapshot = the PRIMARY's cap at binding time; resolveCapFor
         // above carries the D-49 active-binding gate (fail-closed).
         session.setAgentPermissionsSnapshot(cap);
+        if (sessionSnapshotAudit != null) {
+            sessionSnapshotAudit.frozen(session);
+        }
         // 2026-11-04 P0（task-24）：显式传值优先；只有三件套全空时才按权威顺序补默认
         // （agent 主体默认 → 生效 llm-provider profile）。补不到 ⇒ 400 PROVIDER_REQUIRED，
         // 裸会话从此是不允许落地的状态。
@@ -332,6 +344,9 @@ public class SessionService {
         // PLAN-0689 A7/D-54: same retained snapshot semantics as create; resolveCapFor above carries
         // the D-49 active-binding gate (fail-closed).
         child.setAgentPermissionsSnapshot(currentCap);
+        if (sessionSnapshotAudit != null) {
+            sessionSnapshotAudit.frozen(child);
+        }
         child.setModelProvider(source.getModelProvider());
         child.setModelName(source.getModelName());
         child.setApprovalMode(source.getApprovalMode());
