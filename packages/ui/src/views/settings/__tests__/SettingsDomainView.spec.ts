@@ -113,9 +113,13 @@ function mountView(
     layer: "instance" | "workspace-default" | "user",
     domain: string,
     stubs: { panels?: unknown } = {},
+    // task-510：键盘/焦点类判据要求节点真的在 document 里（不在就不会被聚焦），
+    // 只有这类用例才 attachTo —— 其余用例保持不挂到 body，避免相互污染。
+    options: { attach?: boolean } = {},
 ) {
     const i18n = createI18n({ legacy: false, locale: "zh-CN", messages });
     return mount(SettingsDomainView, {
+        ...(options.attach ? { attachTo: document.body } : {}),
         props: { layer, domain },
         global: {
             plugins: [i18n],
@@ -165,7 +169,12 @@ describe("SettingsDomainView", () => {
     it("switches to the tool-faces view and mirrors it into ?tab=", async () => {
         const wrapper = mountView("instance", "approval-policy");
         await flushPromises();
-        await wrapper.find('[data-testid="settings-domain-tab-tool-faces"]').trigger("click");
+        // task-510：换 vendor `ui/tabs` 后激活发生在 **mousedown**（reka TabsTrigger 的
+        // `onMousedown`，见 node_modules/reka-ui/dist/Tabs/TabsTrigger.js 的 `changeModelValue`）；
+        // 真实浏览器里 mousedown → click 连着来，这里按真实序列发，不是把判据放宽。
+        const trigger = wrapper.find('[data-testid="settings-domain-tab-tool-faces"]');
+        await trigger.trigger("mousedown");
+        await trigger.trigger("click");
         expect(wrapper.find('[data-testid="tool-faces-stub"]').exists()).toBe(true);
         // task-121：面板常挂（v-show），切到工具分类只是隐藏。
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(false);
@@ -452,5 +461,52 @@ describe("SettingsDomainView 取数失败态（task-509 E-03）", () => {
         expect(state.loadLayerDomains).toHaveBeenCalledWith("instance");
         // 成功后失败态消失（重试不是只有一次机会）。
         expect(wrapper.find('[data-testid="settings-domain-load-retry"]').exists()).toBe(false);
+    });
+});
+
+/**
+ * task-510（H-06/C-05 加载态 + H-03 页签键盘）：这两处都**不许手搓** —— 判据钉的是行为，
+ * 不钉 `import`：将来换成别的原语，只要行为还在，这两条仍应通过。
+ *
+ * <p>修前读数（未改工作树上跑）：① loading 面只有一行 11px 灰字，[`data-slot="skeleton"`]
+ * 一个都没有；② 页签是手搓 `<button role="tab">` 列表，**没有 roving focus** ⇒ ArrowRight
+ * 无反应（焦点与 `aria-selected` 都不动），键盘用户只能在第一个页签上停住。</p>
+ */
+describe("SettingsDomainView 加载态与页签键盘（task-510）", () => {
+    beforeEach(() => {
+        state.capability = true;
+        state.routeQuery = {};
+        state.layerLoading.value = false;
+        state.layerConfig.value = { instance: {}, user: {} };
+        state.loadLayerDomains.mockClear();
+        state.loadLayerDomains.mockImplementation(() => Promise.resolve());
+        state.replace.mockClear();
+    });
+
+    it("pending 时渲染 Skeleton（不是一行 11px 灰字）", async () => {
+        state.layerLoading.value = true;
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+
+        const loading = wrapper.get('[data-testid="settings-domain-loading"]');
+        const skeletons = loading.findAll('[data-slot="skeleton"]');
+        // 单行骨架 = 「还是那行字换了个样子」，所以要有块状骨架（≥2）
+        expect(skeletons.length).toBeGreaterThan(1);
+        // 无障碍：加载态仍要有可读文本（sr-only），不能只剩会动的方块
+        expect(loading.text()).toContain("加载中");
+    });
+
+    it("页签键盘：ArrowRight 把焦点与 aria-selected 移到下一个页签", async () => {
+        const wrapper = mountView("instance", "approval-policy", {}, { attach: true });
+        await flushPromises();
+
+        const policy = wrapper.get('[data-testid="settings-domain-tab-policy"]');
+        (policy.element as HTMLElement).focus();
+        await policy.trigger("keydown", { key: "ArrowRight" });
+        await flushPromises();
+
+        const toolFaces = wrapper.get('[data-testid="settings-domain-tab-tool-faces"]');
+        expect(document.activeElement).toBe(toolFaces.element);
+        expect(toolFaces.attributes("aria-selected")).toBe("true");
     });
 });

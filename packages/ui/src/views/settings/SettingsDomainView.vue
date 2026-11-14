@@ -18,6 +18,9 @@ import {
 } from "../../lib/settingsIa";
 import LayerPrecedenceBadges from "../../components/settings/LayerPrecedenceBadges.vue";
 import { Button } from "../../components/ui/button";
+// task-510：页签与加载态改用 vendor 件（reka TabsRoot / Skeleton）。
+import { Skeleton } from "../../components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { logger } from "../../lib/logger";
 
 /**
@@ -336,43 +339,67 @@ watch(
             </Button>
         </div>
 
-        <div
-            v-if="toolFacesTab"
-            data-testid="settings-domain-tabs"
-            role="tablist"
-            :aria-label="domainLabel"
-            class="mt-3 flex items-center gap-1 border-b"
-        >
-            <button
-                v-for="tab in ['policy', 'tool-faces'] as const"
-                :key="tab"
-                type="button"
-                role="tab"
-                :data-testid="'settings-domain-tab-' + tab"
-                :aria-selected="activeTab === tab"
-                class="-mb-px min-h-8 border-b-2 px-2 text-xs transition-colors"
-                :class="
-                    activeTab === tab
-                        ? 'border-foreground font-medium text-foreground'
-                        : 'border-transparent text-muted-foreground hover:text-foreground'
-                "
-                @click="selectTab(tab)"
-            >
-                {{
-                    tab === "policy"
-                        ? t("settings.ia.approvalTabPolicy")
-                        : t("settings.ia.navToolFaces")
-                }}
-            </button>
-        </div>
+        <!--
+            task-510（H-03）：页签换 vendor `ui/tabs`（reka TabsRoot）—— 手搓的 `<button role="tab">`
+            列表没有 roving focus、方向键无反应，键盘用户只能在第一个页签停住。
 
-        <p
+            钉的是行为不是 import：`SettingsDomainView.spec.ts` 里 ArrowRight ⇒ 焦点与
+            `aria-selected` 一起移到下一个页签（reka 的 roving focus 让它绿的）。
+            `flex-none`: vendor `TabsTrigger` 基础串带 `flex-1`，会让两个页签拉满整行。
+        -->
+        <Tabs
+            v-if="toolFacesTab"
+            :model-value="activeTab"
+            class="mt-3"
+            @update:model-value="
+                (value: string | number) => selectTab(value as 'policy' | 'tool-faces')
+            "
+        >
+            <TabsList
+                data-testid="settings-domain-tabs"
+                :aria-label="domainLabel"
+                variant="line"
+                class="w-full justify-start border-b p-0"
+            >
+                <TabsTrigger
+                    data-testid="settings-domain-tab-policy"
+                    value="policy"
+                    class="min-h-8 flex-none px-2 text-xs"
+                >
+                    {{ t("settings.ia.approvalTabPolicy") }}
+                </TabsTrigger>
+                <TabsTrigger
+                    data-testid="settings-domain-tab-tool-faces"
+                    value="tool-faces"
+                    class="min-h-8 flex-none px-2 text-xs"
+                >
+                    {{ t("settings.ia.navToolFaces") }}
+                </TabsTrigger>
+            </TabsList>
+        </Tabs>
+
+        <!--
+            task-510（H-06 + C-05）：加载态换 vendor `ui/skeleton`。
+
+            修前这里是一行 11px 灰字（`text-xs`），数据到达时说明文字消失、标签与卡片同时出现 ⇒
+            整块内容跳变。骨架没让等待变短，但它把「即将出现的形状」先占好位（同目录
+            `InstanceMcpPanel` / `InstanceCredentialsPanel` 等 3 处已在用同一个件）。
+
+            判据：`[data-slot="skeleton"]` 存在且 ≥2 块（单行骨架 = 还是那行灰字换了个形状）。
+            `role="status"` + `sr-only` 文本：骨架是纯视觉件，读屏仍要读出「加载中」。
+        -->
+        <div
             v-if="pending"
             data-testid="settings-domain-loading"
-            class="mt-4 text-xs text-muted-foreground"
+            role="status"
+            aria-live="polite"
+            class="mt-4 space-y-3"
         >
-            {{ t("common.loading") }}
-        </p>
+            <span class="sr-only">{{ t("common.loading") }}</span>
+            <Skeleton class="h-4 w-40" />
+            <Skeleton class="h-20 w-full rounded-lg" />
+            <Skeleton class="h-20 w-full rounded-lg" />
+        </div>
         <div v-if="activeTab === 'tool-faces' && toolFacesTab" class="mt-4">
             <ToolFacesView embedded />
         </div>
