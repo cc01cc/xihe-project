@@ -958,24 +958,28 @@ public class ChatController {
                 List<Map<String, String>> failedTargets = new ArrayList<>();
                 List<Map<String, String>> deferredTargets = new ArrayList<>();
                 List<Map<String, String>> notifiedTargets = new ArrayList<>();
+                List<Map<String, String>> suppressedTargets = new ArrayList<>();
                 if (toParticipantIds.size() > 1) {
                     WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
                             UUID.fromString(sessionId), workspaceId, userId, runId, content,
                             toParticipantIds.subList(1, toParticipantIds.size()));
                     targeted.runIds().forEach(id -> runIds.add(id.toString()));
-                    targeted.failedTargets().forEach(failure -> failedTargets.add(Map.of(
-                            "participantId", failure.participantId(), "reason", failure.reason())));
-                    targeted.deferredTargets().forEach(deferred -> deferredTargets.add(Map.of(
-                            "participantId", deferred.participantId(), "reason", deferred.reason())));
-                    targeted.notifiedTargets().forEach(notified -> notifiedTargets.add(Map.of(
-                            "participantId", notified.participantId(), "reason", notified.reason())));
+                    targeted.failedTargets().forEach(failure -> failedTargets.add(targetEntry(failure)));
+                    targeted.deferredTargets()
+                            .forEach(deferred -> deferredTargets.add(targetEntry(deferred)));
+                    targeted.notifiedTargets()
+                            .forEach(notified -> notifiedTargets.add(targetEntry(notified)));
+                    targeted.suppressedTargets()
+                            .forEach(suppressed -> suppressedTargets.add(targetEntry(suppressed)));
                 }
                 acceptedBody.put("runIds", runIds);
-                // BL-283 (Lead ruling 2026-11-05) + task-53: four explicit buckets, one invariant —
-                // runIds + failedTargets + deferredTargets + notifiedTargets = requested targets.
+                // BL-283 (Lead ruling 2026-11-05) + task-53 + task-60: FIVE explicit buckets, one
+                // invariant — runIds + failed + deferred + notified + suppressed = requested targets.
                 // Deferred = queued (a follow-up item waits for a slot); notified = a HUMAN target
-                // whose delivery IS the notification (outcome=notify, no run); failed = a real
-                // dispatch error. None of them is ever silent, and only failed logs at ERROR.
+                // whose delivery IS the notification (outcome=notify, no run); suppressed = the
+                // target was deliberately not woken (muted config / judge declined / policy refused)
+                // with nothing gone wrong; failed = a real dispatch error. None is ever silent, and
+                // only failed logs at ERROR.
                 if (!deferredTargets.isEmpty()) {
                     acceptedBody.put("deferredTargets", deferredTargets);
                     logger.info("[LIFECYCLE] service=cp event=to_fanout_deferred sessionId={} runId={} "
@@ -986,23 +990,37 @@ public class ChatController {
                 if (!notifiedTargets.isEmpty()) {
                     acceptedBody.put("notifiedTargets", notifiedTargets);
                     logger.info("[LIFECYCLE] service=cp event=to_fanout_notified sessionId={} runId={} "
-                                    + "targets={} dispatched={} deferred={} failed={} notified={}",
-                            sessionId, runId, toParticipantIds.size(), runIds.size(),
-                            deferredTargets.size(), failedTargets.size(), notifiedTargets.size());
+                                    + "targets={} dispatched={} deferred={} failed={} notified={} "
+                                    + "suppressed={}", sessionId, runId, toParticipantIds.size(),
+                            runIds.size(), deferredTargets.size(), failedTargets.size(),
+                            notifiedTargets.size(), suppressedTargets.size());
+                }
+                if (!suppressedTargets.isEmpty()) {
+                    // task-60: INFO, not ERROR — a muted / judge-declined / policy-refused target is
+                    // not a malfunction. The detail token says which of the three it was.
+                    acceptedBody.put("suppressedTargets", suppressedTargets);
+                    logger.info("[LIFECYCLE] service=cp event=to_fanout_suppressed sessionId={} "
+                                    + "runId={} targets={} dispatched={} deferred={} failed={} "
+                                    + "notified={} suppressed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size(), notifiedTargets.size(), suppressedTargets.size());
                 }
                 if (!failedTargets.isEmpty()) {
                     acceptedBody.put("failedTargets", failedTargets);
                     logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
-                                    + "targets={} dispatched={} deferred={} failed={} notified={}",
-                            sessionId, runId, toParticipantIds.size(), runIds.size(),
-                            deferredTargets.size(), failedTargets.size(), notifiedTargets.size());
+                                    + "targets={} dispatched={} deferred={} failed={} notified={} "
+                                    + "suppressed={}", sessionId, runId, toParticipantIds.size(),
+                            runIds.size(), deferredTargets.size(), failedTargets.size(),
+                            notifiedTargets.size(), suppressedTargets.size());
                 }
                 if (runIds.size() + failedTargets.size() + deferredTargets.size()
-                        + notifiedTargets.size() != toParticipantIds.size()) {
+                        + notifiedTargets.size() + suppressedTargets.size()
+                        != toParticipantIds.size()) {
                     logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
-                                    + "runId={} targets={} dispatched={} deferred={} failed={} notified={}",
-                            sessionId, runId, toParticipantIds.size(), runIds.size(),
-                            deferredTargets.size(), failedTargets.size(), notifiedTargets.size());
+                                    + "runId={} targets={} dispatched={} deferred={} failed={} notified={} "
+                                    + "suppressed={}", sessionId, runId, toParticipantIds.size(),
+                            runIds.size(), deferredTargets.size(), failedTargets.size(),
+                            notifiedTargets.size(), suppressedTargets.size());
                 }
             }
             return ResponseEntity.accepted().body(acceptedBody);
@@ -2410,6 +2428,23 @@ public class ChatController {
         return ChatRequestHash.calculate(objectMapper, content, provider, model,
                 toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId,
                 toParticipantIds, asParticipantId);
+    }
+
+    /**
+     * One TO-target entry of the 202 body: {@code {participantId, reason}} plus {@code detail} when
+     * the outcome has more than one cause (task-60). {@code reason} keeps its existing meaning (the
+     * coarse outcome, unchanged by task-53/60); {@code detail} is an optional machine token, so the
+     * key is omitted rather than sent as null — same "present only when non-empty" discipline the
+     * buckets themselves follow.
+     */
+    private static Map<String, String> targetEntry(WakeFanOutService.TargetedFailure target) {
+        Map<String, String> entry = new LinkedHashMap<>(4);
+        entry.put("participantId", target.participantId());
+        entry.put("reason", target.reason());
+        if (target.detail() != null) {
+            entry.put("detail", target.detail());
+        }
+        return entry;
     }
 
     /**

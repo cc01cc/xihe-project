@@ -2412,7 +2412,8 @@ class ChatControllerTest extends AbstractH2Test {
         String[] pair = seedMentionPair("NotifiedTargetE");
         stubAgentSuccessReply();
         WakeFanOutService.TargetedWake wake = new WakeFanOutService.TargetedWake(List.of(), List.of(),
-                List.of(), List.of(new WakeFanOutService.TargetedFailure(pair[1], "notify")), 1);
+                List.of(), List.of(new WakeFanOutService.TargetedFailure(pair[1], "notify")),
+                List.of(), 1);
         doReturn(wake).when(wakeFanOutService).targetedFanOut(Mockito.any(), anyString(), anyString(),
                 anyString(), anyString(), Mockito.anyList());
 
@@ -2431,6 +2432,96 @@ class ChatControllerTest extends AbstractH2Test {
         assertNull(body.get("failedTargets"),
                 "a delivered notice must never be reported as a failure (task-53)");
         assertNull(body.get("deferredTargets"));
+    }
+
+    // ── task-60: the 202 body carries the suppressed bucket, with its detail token ──────────
+
+    /**
+     * task-60: a suppressed target must appear under {@code suppressedTargets[]} with its
+     * {@code detail} token, and never under {@code failedTargets[]}. The token is what makes the
+     * classes distinguishable on the wire — {@code reason} alone still says only
+     * {@code skipped_muted}/{@code judged_no}/{@code refused}, which is exactly the granularity that
+     * was not enough.
+     *
+     * <p>The controller log is captured as well, because the conservation identity lives in exactly
+     * one place ({@code to_fanout_accounting_mismatch}) and the whole card is about levels: a
+     * suppression must emit INFO and <b>no</b> WARN/ERROR. Dropping {@code suppressedTargets} from
+     * that sum is a mutation this test catches (the mismatch line would appear at ERROR).</p>
+     */
+    @Test
+    void chat_twoTargets_carriesSuppressedBucketWithDetailIn202Body() {
+        String[] pair = seedMentionPair("SuppressedTargetE");
+        stubAgentSuccessReply();
+        WakeFanOutService.TargetedWake wake = new WakeFanOutService.TargetedWake(List.of(), List.of(),
+                List.of(), List.of(), List.of(new WakeFanOutService.TargetedFailure(pair[1],
+                        "skipped_muted", "respond_policy_muted")), 1);
+        doReturn(wake).when(wakeFanOutService).targetedFanOut(Mockito.any(), anyString(), anyString(),
+                anyString(), anyString(), Mockito.anyList());
+
+        ch.qos.logback.classic.Logger controllerLogger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ChatController.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        controllerLogger.addAppender(appender);
+        ResponseEntity<Map> response;
+        try {
+            response = postChatWithTo("两个目标，其中一个处于免打扰", List.of(pair[0], pair[1]));
+        } finally {
+            controllerLogger.detachAppender(appender);
+        }
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> suppressed = (List<Map<String, String>>) body.get("suppressedTargets");
+        assertNotNull(suppressed, "task-60: the 202 body must carry suppressedTargets[]");
+        assertEquals(1, suppressed.size());
+        assertEquals(pair[1], suppressed.get(0).get("participantId"));
+        assertEquals("skipped_muted", suppressed.get(0).get("reason"),
+                "reason keeps its task-53 meaning: the coarse outcome");
+        assertEquals("respond_policy_muted", suppressed.get(0).get("detail"),
+                "task-60: the detail token is the machine-readable cause");
+        assertNull(body.get("failedTargets"),
+                "a suppressed target must never be reported as a failure (task-60)");
+        assertNull(body.get("deferredTargets"));
+        assertNull(body.get("notifiedTargets"));
+
+        List<String> messages = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+        assertTrue(messages.stream().anyMatch(message -> message.contains("event=to_fanout_suppressed")),
+                () -> "task-60: the suppression must be greppable: " + messages);
+        assertTrue(messages.stream().noneMatch(
+                        message -> message.contains("event=to_fanout_accounting_mismatch")),
+                () -> "the conservation identity must include suppressedTargets: " + messages);
+        assertTrue(appender.list.stream()
+                        .noneMatch(event -> event.getLevel()
+                                .isGreaterOrEqual(ch.qos.logback.classic.Level.WARN)),
+                () -> "task-60: a suppression is INFO, not an alarm: " + appender.list);
+    }
+
+    /** task-60: entries without a cause (deferred/notified) omit the key instead of sending null. */
+    @Test
+    void chat_deferredBucketOmitsAbsentDetailKey() {
+        String[] pair = seedMentionPair("DeferredNoDetailE");
+        stubAgentSuccessReply();
+        WakeFanOutService.TargetedWake wake = new WakeFanOutService.TargetedWake(List.of(), List.of(),
+                List.of(new WakeFanOutService.TargetedFailure(pair[1], "deferred")), List.of(),
+                List.of(), 1);
+        doReturn(wake).when(wakeFanOutService).targetedFanOut(Mockito.any(), anyString(), anyString(),
+                anyString(), anyString(), Mockito.anyList());
+
+        ResponseEntity<Map> response = postChatWithTo("两个目标，其中一个排队", List.of(pair[0], pair[1]));
+
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> deferred = (List<Map<String, String>>) body.get("deferredTargets");
+        assertNotNull(deferred);
+        assertEquals(1, deferred.size());
+        assertFalse(deferred.get(0).containsKey("detail"),
+                "an absent detail is omitted, not serialized as null");
     }
 
     @Test

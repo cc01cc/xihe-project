@@ -89,6 +89,8 @@ class WakeDispatchServiceTest {
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("refused", result.outcome());
+        assertEquals("participant_disabled", result.detail(),
+                "task-60: a disabled target is refused but is NOT a user-actionable suppression");
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
         assertAuditOutcome("refused");
@@ -105,6 +107,8 @@ class WakeDispatchServiceTest {
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("refused", result.outcome());
+        assertEquals("authorization:PARTICIPANT_CAP_DENIED", result.detail(),
+                "task-60: the only user-actionable refusal carries the authorization code");
         assertFalse(result.dispatched());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
@@ -171,6 +175,8 @@ class WakeDispatchServiceTest {
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("refused", result.outcome(), "a participant of another session is not a delivery target");
+        assertEquals("cross_session", result.detail(),
+                "task-60: cross-session targets are refused but NOT user-actionable suppressions");
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
         verifyNoInteractions(chatRuns);
@@ -184,9 +190,12 @@ class WakeDispatchServiceTest {
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("skipped_muted", result.outcome());
+        assertEquals("respond_policy_muted", result.detail());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
         assertAuditOutcome("skipped_muted");
+        assertEquals("respond_policy_muted", auditReason(),
+                "task-60: the durable row used to carry reason=null — detail and audit must agree");
     }
 
     @Test
@@ -199,8 +208,65 @@ class WakeDispatchServiceTest {
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("judged_no", result.outcome());
+        assertEquals("judge_declined", result.detail(), "the verdict answered and said no speak");
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
+        assertEquals("judge_declined", auditReason(),
+                "task-60: judged_no used to audit reason=null, so a decision and a failure looked alike");
+    }
+
+    // ── task-60: each producer of refused / judged_no names its own cause (the detail token) ──
+
+    @Test
+    void missingParticipantReportsGoneToken() {
+        when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.empty());
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("refused", result.outcome());
+        assertEquals("participant_gone", result.detail(),
+                "task-60: gone and disabled are distinct causes of the same coarse outcome");
+    }
+
+    @Test
+    void judgeUnansweredReportsUnansweredToken() {
+        agent.setRespondPolicy(SessionParticipant.RESPOND_JUDGE);
+        stubJudgeInput();
+        when(judgeService.decide(any())).thenReturn(
+                new JudgeDecisionService.JudgeOutcome(false, null, "failed", null));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("judged_no", result.outcome());
+        assertEquals("judge_unanswered", result.detail(),
+                "task-60: a judge that never answered is a failure, not a decision");
+    }
+
+    @Test
+    void judgeVerdictMalformedReportsVerdictInvalidToken() {
+        agent.setRespondPolicy(SessionParticipant.RESPOND_JUDGE);
+        stubJudgeInput();
+        when(judgeService.decide(any())).thenReturn(
+                new JudgeDecisionService.JudgeOutcome(true, "{\"speak\":\"yes\"}", "succeeded", null));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("judged_no", result.outcome());
+        assertEquals("verdict_invalid", result.detail());
+    }
+
+    @Test
+    void judgeCallThrewReportsJudgeErrorToken() {
+        agent.setRespondPolicy(SessionParticipant.RESPOND_JUDGE);
+        stubJudgeInput();
+        when(judgeService.decide(any())).thenThrow(new IllegalStateException("judge down"));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("judged_no", result.outcome(),
+                "the coarse outcome is unchanged: this label is exactly why the detail token exists");
+        assertEquals("judge_error:IllegalStateException", result.detail(),
+                "task-60: a judge that threw cannot be laundered into a decision");
     }
 
     @Test
@@ -268,6 +334,16 @@ class WakeDispatchServiceTest {
         assertTrue(result.dispatched());
         verify(participantService).judgeSpeakAs(eq("owner-1"), eq("ws-1"),
                 eq(SESSION_ID.toString()), eq(PARTICIPANT_ID.toString()));
+    }
+
+    /** task-60: the durable row's {@code reason} — it must agree with the response detail token. */
+    private String auditReason() {
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(eventStore).append(eq(SESSION_ID.toString()), eq("ws-1"), eq("owner-1"),
+                eq("wake_dispatch"), payload.capture());
+        com.fasterxml.jackson.databind.node.ObjectNode body =
+                (com.fasterxml.jackson.databind.node.ObjectNode) payload.getValue();
+        return body.path("reason").asText(null);
     }
 
     private void assertAuditOutcome(String outcome) {

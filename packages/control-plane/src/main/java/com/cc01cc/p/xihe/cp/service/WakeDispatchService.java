@@ -153,15 +153,18 @@ public class WakeDispatchService {
                 ? triggerSource : auditTriggerSource;
         SessionParticipant participant = participantRepository.findById(participantId).orElse(null);
         if (participant == null || participant.getDisabledAt() != null) {
+            // task-60: "gone" and "disabled" are both `refused` but neither is user-actionable the
+            // way an authorization refusal is — the detail keeps them out of the suppressed bucket.
+            String detail = participant == null ? "participant_gone" : "participant_disabled";
             audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "participant is gone or disabled", null, parentRunId);
-            return new WakeFireResult(false, null, "refused");
+            return new WakeFireResult(false, null, "refused", detail);
         }
         Session session = sessionRepository.findById(sessionId).orElse(null);
         if (session == null) {
             audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "session is gone", null, parentRunId);
-            return new WakeFireResult(false, null, "refused");
+            return new WakeFireResult(false, null, "refused", "session_gone");
         }
         // PLAN-0660 T1.3 (I4): the delivery target must belong to THIS session. Until now the only
         // place that bound participant↔session was the speak-as gate below (`findByIdAndSessionId`);
@@ -170,7 +173,7 @@ public class WakeDispatchService {
         if (!sessionId.equals(participant.getSessionId())) {
             audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "cross_session: participant does not belong to this session", null, parentRunId);
-            return new WakeFireResult(false, null, "refused");
+            return new WakeFireResult(false, null, "refused", "cross_session");
         }
         // 人=通知 (0618/0630 frozen): a HUMAN recipient only gets a notification. The criterion is
         // "the delivery target exists, is enabled and lives in this session" (above) — NOT "may this
@@ -189,17 +192,21 @@ public class WakeDispatchService {
                 session.getUserId(), session.getWorkspaceId(), sessionId.toString(),
                 participantId.toString());
         if (!speak.allowed()) {
+            // The ONLY user-actionable `refused`: the policy can be lifted (task-60).
             audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "authorization: " + speak.code(), null, parentRunId);
-            return new WakeFireResult(false, null, "refused");
+            return new WakeFireResult(false, null, "refused", "authorization:" + speak.code());
         }
 
         String policy = participant.getRespondPolicy() == null
                 ? SessionParticipant.RESPOND_WHEN_MENTIONED : participant.getRespondPolicy();
         if (SessionParticipant.RESPOND_MUTED.equals(policy)) {
+            // task-60: this is a CONFIG state, not an error, and the earlier `null` audit reason
+            // left the durable row with no detail at all — the token is now written to both places
+            // so the 202 body and the wake_dispatch row can be joined without guessing.
             audit(sessionId, participantId, auditLabel, wakeRoundId, "skipped_muted",
-                    null, null, parentRunId);
-            return new WakeFireResult(false, null, "skipped_muted");
+                    "respond_policy_muted", null, parentRunId);
+            return new WakeFireResult(false, null, "skipped_muted", "respond_policy_muted");
         }
         UUID chainParentRunId = null;
         if (parentRunId != null) {
@@ -220,11 +227,17 @@ public class WakeDispatchService {
                 return chainRefused;
             }
         }
-        if (SessionParticipant.RESPOND_JUDGE.equals(policy)
-                && !judgeSaysSpeak(session, participant, auditLabel, wakeRoundId)) {
-            audit(sessionId, participantId, auditLabel, wakeRoundId, "judged_no",
-                    null, null, parentRunId);
-            return new WakeFireResult(false, null, "judged_no");
+        if (SessionParticipant.RESPOND_JUDGE.equals(policy)) {
+            JudgeSpeak judged = judgeSaysSpeak(session, participant, auditLabel, wakeRoundId);
+            if (!judged.speak()) {
+                // task-60: `judged_no` alone cannot be trusted to mean "the model decided not to
+                // speak" — three of its four producers are failures (unanswered, malformed verdict,
+                // judge call threw). The detail token carries that distinction to the fan-out and
+                // into the durable audit reason (which used to be null for all four).
+                audit(sessionId, participantId, auditLabel, wakeRoundId, "judged_no",
+                        judged.detail(), null, parentRunId);
+                return new WakeFireResult(false, null, "judged_no", judged.detail());
+            }
         }
 
         String prompt = buildWakePrompt(auditLabel, wakeRoundId, sessionId, triggeringContent);
@@ -292,8 +305,29 @@ public class WakeDispatchService {
     private static String nl() {
         return "\n";
     }
+    /**
+     * What the judge branch concluded, plus the token that says <b>which</b> of its four producers
+     * spoke (task-60). {@code speak=true} carries a null detail.
+     */
+    private record JudgeSpeak(boolean speak, String detail) {
+
+        static JudgeSpeak spoke() {
+            return new JudgeSpeak(true, null);
+        }
+
+        /** The one genuine model decision: the verdict answered and said "do not speak". */
+        static JudgeSpeak declined() {
+            return new JudgeSpeak(false, "judge_declined");
+        }
+
+        /** Not a decision at all — the verdict never arrived or could not be used. */
+        static JudgeSpeak unavailable(String token) {
+            return new JudgeSpeak(false, token);
+        }
+    }
+
     /** JUDGE branch (D24-02 dedupe is inside JudgeDecisionService, keyed by participant+round). */
-    private boolean judgeSaysSpeak(Session session, SessionParticipant participant,
+    private JudgeSpeak judgeSaysSpeak(Session session, SessionParticipant participant,
                                    String triggerSource, String wakeRoundId) {
         try {
             // CP-2 (PLAN-0690 T1.2b): window / roster / duty / prompt come from the assembler,
@@ -302,7 +336,7 @@ public class WakeDispatchService {
                     judgeInputAssembler.assemble(session, participant, triggerSource, wakeRoundId);
             JudgeDecisionService.JudgeOutcome outcome = judgeDecisionService.decide(input);
             if (!outcome.answered() || outcome.verdictJson() == null) {
-                return false;
+                return JudgeSpeak.unavailable("judge_unanswered");
             }
             JsonNode verdict = objectMapper.readTree(outcome.verdictJson());
             JsonNode speak = verdict.get("speak");
@@ -313,9 +347,9 @@ public class WakeDispatchService {
                 // 零新事件名 — a second event here would split the failure family for log consumers).
                 logger.warn("[LIFECYCLE] service=cp event=wake_judge_failed participantId={} round={} "
                         + "failureType={}", participant.getId(), wakeRoundId, "verdict_invalid");
-                return false;
+                return JudgeSpeak.unavailable("verdict_invalid");
             }
-            return speak.booleanValue();
+            return speak.booleanValue() ? JudgeSpeak.spoke() : JudgeSpeak.declined();
         } catch (UnexpectedRollbackException judgeTransactionBroken) {
             // T2.1: never turn a broken transaction into a successful judged_no. A judge write
             // that could not commit is a real dispatch failure; let the fan-out count it as dropped.
@@ -327,7 +361,9 @@ public class WakeDispatchService {
             logger.warn("[LIFECYCLE] service=cp event=wake_judge_failed participantId={} round={} "
                     + "failureType={}", participant.getId(), wakeRoundId,
                     judgeFailed.getClass().getSimpleName());
-            return false;
+            // A judge that threw is NOT a decision: the token keeps this out of the suppressed
+            // bucket so task-60 cannot launder a real failure into "the model chose silence".
+            return JudgeSpeak.unavailable("judge_error:" + judgeFailed.getClass().getSimpleName());
         }
     }
 
@@ -469,6 +505,27 @@ public class WakeDispatchService {
                 + "round={}", participantId, outcome, wakeRoundId);
     }
 
-    /** dispatcheResult: did a run start, which run, and the audit outcome. */
-    public record WakeFireResult(boolean dispatched, UUID runId, String outcome) {}
+    /**
+     * dispatcheResult: did a run start, which run, the audit outcome — and, since task-60, the
+     * <b>detail token</b> that says which of several causes produced that outcome.
+     *
+     * <p>{@code outcome} is the coarse label the durable {@code wake_dispatch} row carries
+     * ({@code submitted}/{@code deferred}/{@code notify}/{@code refused}/{@code skipped_muted}/
+     * {@code judged_no}/{@code chain_refused}); {@code detail} is a stable <b>machine token</b>
+     * naming the cause inside it. The pair is what lets the fan-out tell "the policy says this
+     * target may not speak" apart from "the judge call blew up", instead of collapsing four
+     * different situations into one string.</p>
+     *
+     * <p>Tokens are machine-readable on purpose (no English prose): they land in the 202 body and
+     * in the durable audit {@code reason}, and prose on the wire cannot be localized by the UI —
+     * the UI maps tokens to copy through i18n. The 3-argument constructor stays for the outcomes
+     * that need no detail, so the existing construction sites did not have to be rewritten.</p>
+     */
+    public record WakeFireResult(boolean dispatched, UUID runId, String outcome, String detail) {
+
+        /** Outcomes with a single cause keep this short form; {@code detail} stays null. */
+        public WakeFireResult(boolean dispatched, UUID runId, String outcome) {
+            this(dispatched, runId, outcome, null);
+        }
+    }
 }

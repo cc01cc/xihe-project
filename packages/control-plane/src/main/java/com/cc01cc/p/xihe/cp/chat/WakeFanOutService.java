@@ -203,6 +203,31 @@ public class WakeFanOutService {
     }
 
     /**
+     * task-60: is this non-dispatch outcome a <b>suppression</b> (nothing went wrong — the target was
+     * deliberately not woken) rather than a failure?
+     *
+     * <p>The {@code (outcome, detail)} pair is required, not belt-and-braces: both labels are mixed.
+     * {@code refused} is produced by four causes and only an authorization refusal is
+     * user-actionable (a gone/disabled participant, a gone session and a cross-session target are
+     * not "lift the policy and retry"). {@code judged_no} is produced by four things and only one of
+     * them is a decision — an unanswered judge, a malformed verdict and a judge call that threw all
+     * land there too, and those are failures. Bucketing on {@code outcome} alone would launder real
+     * failures into "nothing to see here", the mirror image of the bug task-53 fixed.</p>
+     */
+    private static boolean isSuppression(String outcome, String detail) {
+        if ("skipped_muted".equals(outcome)) {
+            return "respond_policy_muted".equals(detail);
+        }
+        if ("judged_no".equals(outcome)) {
+            return "judge_declined".equals(detail);
+        }
+        if ("refused".equals(outcome)) {
+            return detail != null && detail.startsWith("authorization:");
+        }
+        return false;
+    }
+
+    /**
      * PLAN-0665 M1 (D1 a'): the <b>single</b> entry for explicit TO targets. A one-element and an
      * N-element selection both go through this method — the only difference is the target-set size,
      * so the single-TO and multi-TO paths cannot drift (Lead's hard requirement).
@@ -218,20 +243,22 @@ public class WakeFanOutService {
      * returned in {@link TargetedWake#failedTargets()} and logged at ERROR, so the caller can report
      * it in the 202 body. A DB constraint violation here used to be swallowed into a dropped log line
      * while the response still looked complete — {@code runIds.size() + failedTargets.size() +
-     * deferredTargets.size() + notifiedTargets.size()} must always equal the requested target count
-     * (BL-283 split "queued" out of "failed"; task-53 split "notified" out of "failed").</p>
+     * deferredTargets.size() + notifiedTargets.size() + suppressedTargets.size()} must always equal
+     * the requested target count (BL-283 split "queued" out of "failed"; task-53 split "notified" out
+     * of "failed"; task-60 split "suppressed" out of "failed" by the (outcome, detail) pair).</p>
      */
     public TargetedWake targetedFanOut(UUID sessionId, String workspaceId, String userId,
                                        String rootRunId, String content,
                                        List<UUID> targetParticipantIds) {
         if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
-            return new TargetedWake(List.of(), List.of(), List.of(), List.of(), 0);
+            return new TargetedWake(List.of(), List.of(), List.of(), List.of(), List.of(), 0);
         }
         String wakeRoundId = "wake:to:" + rootRunId;
         List<UUID> runIds = new ArrayList<>();
         List<TargetedFailure> failedTargets = new ArrayList<>();
         List<TargetedFailure> deferredTargets = new ArrayList<>();
         List<TargetedFailure> notifiedTargets = new ArrayList<>();
+        List<TargetedFailure> suppressedTargets = new ArrayList<>();
         for (UUID participantId : targetParticipantIds) {
             WakeDispatchService.WakeFireResult result;
             try {
@@ -262,6 +289,15 @@ public class WakeFanOutService {
                     logger.info("[LIFECYCLE] service=cp event=to_target_deferred sessionId={} "
                                     + "targetParticipantId={} round={} runIds={}", sessionId,
                             participantId, wakeRoundId, runIds);
+                } else if (isSuppression(reason, result.detail())) {
+                    // task-60: nothing went wrong — the target was deliberately not woken. It keeps
+                    // its own bucket and an INFO line (ERROR here was a fake alarm), and the detail
+                    // token says which suppression it was (config state / judge decision / policy).
+                    suppressedTargets.add(new TargetedFailure(participantId.toString(), reason,
+                            result.detail()));
+                    logger.info("[LIFECYCLE] service=cp event=to_target_suppressed sessionId={} "
+                                    + "targetParticipantId={} round={} outcome={} detail={} runIds={}",
+                            sessionId, participantId, wakeRoundId, reason, result.detail(), runIds);
                 } else if ("notify".equals(reason)) {
                     // task-53 (D-1438 precondition): a HUMAN target is delivered as a notification and
                     // WakeDispatchService has already written the durable wake_dispatch row with
@@ -269,12 +305,14 @@ public class WakeFanOutService {
                     // bug — the notice IS the delivery. Classification is by OUTCOME, not by principal
                     // kind: this layer only holds participant ids (no roster), and reading the roster
                     // inside the dispatch loop would create a second source of truth for "who is human".
-                    notifiedTargets.add(new TargetedFailure(participantId.toString(), reason));
+                    notifiedTargets.add(new TargetedFailure(participantId.toString(), reason,
+                            result.detail()));
                     logger.info("[LIFECYCLE] service=cp event=to_target_notified sessionId={} "
                                     + "targetParticipantId={} round={} runIds={}", sessionId,
                             participantId, wakeRoundId, runIds);
                 } else {
-                    failedTargets.add(new TargetedFailure(participantId.toString(), reason));
+                    failedTargets.add(new TargetedFailure(participantId.toString(), reason,
+                            result.detail()));
                     logger.error("[LIFECYCLE] service=cp event=to_target_dispatch_failed sessionId={} "
                                     + "targetParticipantId={} round={} reason={} runIds={}", sessionId,
                             participantId, wakeRoundId, reason, runIds);
@@ -282,38 +320,43 @@ public class WakeFanOutService {
             }
         }
         logger.info("[LIFECYCLE] service=cp event=wake_to_handoff sessionId={} round={} targets={} "
-                        + "dispatched={} deferred={} failed={} notified={}", sessionId, wakeRoundId,
-                targetParticipantIds.size(), runIds.size(), deferredTargets.size(), failedTargets.size(),
-                notifiedTargets.size());
+                        + "dispatched={} deferred={} failed={} notified={} suppressed={}", sessionId,
+                wakeRoundId, targetParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                failedTargets.size(), notifiedTargets.size(), suppressedTargets.size());
         return new TargetedWake(List.copyOf(runIds), List.copyOf(failedTargets),
-                List.copyOf(deferredTargets), List.copyOf(notifiedTargets), targetParticipantIds.size());
+                List.copyOf(deferredTargets), List.copyOf(notifiedTargets),
+                List.copyOf(suppressedTargets), targetParticipantIds.size());
     }
 
     /**
      * What one explicit TO fan-out did: the created run ids, in selection order (Q1 {@code runIds[]}),
      * and the targets that did not get a run — split into the bucket that names what actually happened
-     * (runtime failure / queued / notified — pre-validation failures reject the whole request instead).
+     * (runtime failure / queued / notified / suppressed — pre-validation failures reject the whole
+     * request instead).
      */
     public record TargetedWake(List<UUID> runIds, List<TargetedFailure> failedTargets,
                                List<TargetedFailure> deferredTargets,
-                               List<TargetedFailure> notifiedTargets, int targets) {
+                               List<TargetedFailure> notifiedTargets,
+                               List<TargetedFailure> suppressedTargets, int targets) {
         public TargetedWake {
             runIds = List.copyOf(runIds);
             failedTargets = List.copyOf(failedTargets);
             deferredTargets = List.copyOf(deferredTargets);
             notifiedTargets = List.copyOf(notifiedTargets);
+            suppressedTargets = List.copyOf(suppressedTargets);
         }
 
         /**
          * Total targets accounted for: every requested target is exactly one of "dispatched (run)",
-         * "queued (deferred)", "notified (human target)" or "failed". BL-283 made deferred a
-         * first-class outcome and task-53 did the same for notified (D-1438 precondition), so the
-         * conservation invariant is
-         * {@code runIds + failedTargets + deferredTargets + notifiedTargets == targets}.
+         * "queued (deferred)", "notified (human target)", "suppressed (deliberately not woken)" or
+         * "failed". BL-283 made deferred a first-class outcome, task-53 did the same for notified
+         * (D-1438 precondition) and task-60 for suppressed, so the conservation invariant is
+         * {@code runIds + failedTargets + deferredTargets + notifiedTargets + suppressedTargets
+         * == targets}.
          */
         public int accounted() {
             return runIds.size() + failedTargets.size() + deferredTargets.size()
-                    + notifiedTargets.size();
+                    + notifiedTargets.size() + suppressedTargets.size();
         }
     }
 
@@ -323,7 +366,13 @@ public class WakeFanOutService {
      * notified buckets (task-53), because the wire shape is identical ({@code participantId, reason})
      * and a rename would have bought six diff churns without a single behaviour change.
      */
-    public record TargetedFailure(String participantId, String reason) {}
+    public record TargetedFailure(String participantId, String reason, String detail) {
+
+        /** Entries whose outcome has a single cause carry no detail; the 2-arg form keeps them short. */
+        public TargetedFailure(String participantId, String reason) {
+            this(participantId, reason, null);
+        }
+    }
 
     /**
      * What one fan-out did. Callers on the suppression path assert {@code enqueued} so a message

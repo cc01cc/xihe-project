@@ -32,7 +32,8 @@ import static org.mockito.Mockito.when;
  * audit label stays {@code "to"} (writing {@code "to"} into {@code chat_runs.trigger_source} violates
  * its CHECK — the real-stack defect this class now guards), (c) {@code parentRunId} stays NULL
  * (Q2), (d) one target's failure never aborts the others AND is reported in {@code failedTargets[]},
- * (e) {@code runIds + failedTargets + deferredTargets + notifiedTargets == targets} always.</p>
+ * (e) {@code runIds + failedTargets + deferredTargets + notifiedTargets + suppressedTargets
+ * == targets} always.</p>
  *
  * <p>task-53 (D-1438 precondition): a HUMAN target's outcome is {@code notify} — a delivered
  * notification IS the delivery, not a failure. It gets its own bucket, an INFO line and no ERROR
@@ -134,28 +135,112 @@ class WakeFanOutServiceTargetedTest {
         assertThat(result.runIds()).containsExactly(reviewerRun);
     }
 
-    /**
-     * task-53 deliberately leaves {@code skipped_muted} in {@code failedTargets[]}: a muted
-     * participant is neither a delivered notice (filing it under notified would claim the user was
-     * told) nor a queued target (nothing waits for a slot) — so this is the only bucket that does
-     * not lie. What is wrong is the <b>level</b> (ERROR), not the bucket; the suppressed bucket and
-     * the level downgrade for {@code refused}/{@code skipped_muted}/{@code judged_no} are task-60,
-     * blocked on task-53. Assertions here are unchanged on purpose.
-     */
-    @Test
-    void unclassifiedNonDispatchedOutcome_staysInFailedTargets() {
+    // ── task-60: suppression is a (outcome, detail) decision, not an outcome decision ─────────
+
+    private static WakeDispatchService.WakeFireResult outcome(String outcome, String detail) {
+        return new WakeDispatchService.WakeFireResult(false, null, outcome, detail);
+    }
+
+    /** One fan-out plus the log events it emitted, so bucket and level are asserted together. */
+    private record Captured(WakeFanOutService.TargetedWake wake, List<ILoggingEvent> events) {}
+
+    private Captured fanOutCapturing(WakeDispatchService.WakeFireResult fireResult) {
         when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
                 anyString()))
-                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
+                .thenReturn(fireResult);
+        Logger serviceLogger = (Logger) LoggerFactory.getLogger(WakeFanOutService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        serviceLogger.addAppender(appender);
+        try {
+            WakeFanOutService.TargetedWake wake = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
+                    ROOT_RUN.toString(), "请评审", List.of(PLANNER));
+            return new Captured(wake, List.copyOf(appender.list));
+        } finally {
+            serviceLogger.detachAppender(appender);
+        }
+    }
 
-        WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(PLANNER));
+    private static boolean loggedAtLeast(List<ILoggingEvent> events, Level level) {
+        return events.stream().anyMatch(event -> event.getLevel().isGreaterOrEqual(level));
+    }
 
-        assertThat(result.runIds()).isEmpty();
-        assertThat(result.failedTargets()).hasSize(1);
-        assertThat(result.failedTargets().get(0).reason()).isEqualTo("skipped_muted");
-        assertThat(result.deferredTargets()).isEmpty();
-        assertThat(result.accounted()).isEqualTo(1);
+    private static String messages(List<ILoggingEvent> events) {
+        return events.stream().map(ILoggingEvent::getFormattedMessage)
+                .reduce("", (left, right) -> left + " || " + right);
+    }
+
+    /** task-60 judgement 1 (config state): muted is an outcome, not a malfunction — INFO. */
+    @Test
+    void mutedTarget_landsInSuppressedTargets_atInfoLevel() {
+        Captured captured = fanOutCapturing(outcome("skipped_muted", "respond_policy_muted"));
+
+        assertThat(captured.wake().suppressedTargets()).hasSize(1);
+        assertThat(captured.wake().suppressedTargets().get(0).reason()).isEqualTo("skipped_muted");
+        assertThat(captured.wake().suppressedTargets().get(0).detail())
+                .isEqualTo("respond_policy_muted");
+        assertThat(captured.wake().failedTargets()).as("muted is not a failure").isEmpty();
+        assertThat(captured.wake().accounted()).isEqualTo(1);
+        assertThat(messages(captured.events())).contains("event=to_target_suppressed");
+        assertThat(loggedAtLeast(captured.events(), Level.WARN))
+                .as("task-60: suppression must not log WARN/ERROR").isFalse();
+    }
+
+    /** task-60 judgement 1 (model decision): the judge answered and said "do not speak". */
+    @Test
+    void judgeDeclined_landsInSuppressedTargets_withNoErrorLog() {
+        Captured captured = fanOutCapturing(outcome("judged_no", "judge_declined"));
+
+        assertThat(captured.wake().suppressedTargets()).hasSize(1);
+        assertThat(captured.wake().suppressedTargets().get(0).detail()).isEqualTo("judge_declined");
+        assertThat(captured.wake().failedTargets()).isEmpty();
+        assertThat(loggedAtLeast(captured.events(), Level.WARN)).isFalse();
+    }
+
+    /** task-60 judgement 1 (user-actionable): only an authorization refusal is a suppression. */
+    @Test
+    void authorizationRefusal_landsInSuppressedTargets_atInfoLevel() {
+        Captured captured = fanOutCapturing(outcome("refused", "authorization:PARTICIPANT_CAP_DENIED"));
+
+        assertThat(captured.wake().suppressedTargets()).hasSize(1);
+        assertThat(captured.wake().suppressedTargets().get(0).detail())
+                .isEqualTo("authorization:PARTICIPANT_CAP_DENIED");
+        assertThat(captured.wake().failedTargets()).isEmpty();
+        assertThat(loggedAtLeast(captured.events(), Level.WARN)).isFalse();
+    }
+
+    /**
+     * task-60 judgement 3 (the mirror of task-53): {@code refused} also covers targets that are
+     * disabled / gone / cross-session. Those are NOT user-actionable suppressions, so they must stay
+     * failures at ERROR — otherwise this card would launder real problems into "nothing to see here".
+     */
+    @Test
+    void disabledTarget_staysInFailedTargets_withErrorLog() {
+        Captured captured = fanOutCapturing(outcome("refused", "participant_disabled"));
+
+        assertThat(captured.wake().suppressedTargets()).isEmpty();
+        assertThat(captured.wake().failedTargets()).hasSize(1);
+        assertThat(captured.wake().failedTargets().get(0).detail()).isEqualTo("participant_disabled");
+        assertThat(messages(captured.events())).contains("event=to_target_dispatch_failed");
+        assertThat(loggedAtLeast(captured.events(), Level.ERROR))
+                .as("a disabled target is a real refusal, not a suppression").isTrue();
+    }
+
+    /**
+     * task-60 judgement 3: {@code judged_no} is a MIXED label — an unanswered judge, a malformed
+     * verdict and a judge call that threw all produce it, and only "the verdict said no" is a
+     * decision. A thrown judge must stay a failure.
+     */
+    @Test
+    void judgeFailure_staysInFailedTargets_withErrorLog() {
+        Captured captured = fanOutCapturing(outcome("judged_no", "judge_error:RuntimeException"));
+
+        assertThat(captured.wake().suppressedTargets()).isEmpty();
+        assertThat(captured.wake().failedTargets()).hasSize(1);
+        assertThat(captured.wake().failedTargets().get(0).detail())
+                .isEqualTo("judge_error:RuntimeException");
+        assertThat(loggedAtLeast(captured.events(), Level.ERROR))
+                .as("a judge that threw is a failure, not a decision").isTrue();
     }
 
     /**
@@ -169,39 +254,20 @@ class WakeFanOutServiceTargetedTest {
      */
     @Test
     void notifyOutcome_landsInNotifiedTargets_withNoErrorLog() {
-        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
-                anyString()))
-                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "notify"));
+        Captured captured = fanOutCapturing(new WakeDispatchService.WakeFireResult(false, null, "notify"));
 
-        Logger serviceLogger = (Logger) LoggerFactory.getLogger(WakeFanOutService.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        serviceLogger.addAppender(appender);
-        WakeFanOutService.TargetedWake result;
-        try {
-            result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1", ROOT_RUN.toString(),
-                    "请评审", List.of(PLANNER));
-        } finally {
-            serviceLogger.detachAppender(appender);
-        }
+        assertThat(captured.wake().notifiedTargets()).hasSize(1);
+        assertThat(captured.wake().notifiedTargets().get(0).participantId())
+                .isEqualTo(PLANNER.toString());
+        assertThat(captured.wake().notifiedTargets().get(0).reason()).isEqualTo("notify");
+        assertThat(captured.wake().failedTargets()).as("a delivered notice is not a failure").isEmpty();
+        assertThat(captured.wake().deferredTargets()).isEmpty();
+        assertThat(captured.wake().accounted()).isEqualTo(1);
 
-        assertThat(result.notifiedTargets()).hasSize(1);
-        assertThat(result.notifiedTargets().get(0).participantId()).isEqualTo(PLANNER.toString());
-        assertThat(result.notifiedTargets().get(0).reason()).isEqualTo("notify");
-        assertThat(result.failedTargets()).as("a delivered notice is not a failure").isEmpty();
-        assertThat(result.deferredTargets()).isEmpty();
-        assertThat(result.accounted()).isEqualTo(1);
-
-        assertThat(appender.list).anySatisfy(event -> {
-            assertThat(event.getLevel()).isEqualTo(Level.INFO);
-            assertThat(event.getFormattedMessage()).contains("event=to_target_notified");
-        });
-        assertThat(appender.list.stream()
-                .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
-                .map(ILoggingEvent::getFormattedMessage)
-                .toList())
+        assertThat(messages(captured.events())).contains("event=to_target_notified");
+        assertThat(loggedAtLeast(captured.events(), Level.WARN))
                 .as("task-53: the notify path must not log to_target_dispatch_failed at ERROR")
-                .isEmpty();
+                .isFalse();
     }
 
     /** BL-283: a target deferred by the run cap is QUEUED, not failed (Lead ruling 2026-11-05). */
