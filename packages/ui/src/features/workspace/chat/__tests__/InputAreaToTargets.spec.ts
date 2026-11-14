@@ -555,3 +555,45 @@ describe("task-102：TO/CC 候选排除「调用者自己的真人行」", () =>
         wrapper.unmount();
     });
 });
+/**
+ * task-124（源 `cp-1` 的 `task-121`）：**删光 TO chip 但保留 CC chip 时，emit 出去的是什么**。
+ *
+ * <p>与 `task-450` 的区别：那条只钉 TO 三态（省略 / 显式 `[]` / 非空），**没有 CC 参与**；
+ * 而 `cp-1` 要的前提是「显式空 TO **和** 非空 CC 同一次发送」⇒ 两参必须同时被钉住，
+ * 否则「UI 吞了 CC」与「CP 抑制了 CC」无法区分。</p>
+ *
+ * <p>emit 参数位：`0 text / 1 attachments / 2 asParticipantId / 3 cc / 4 toParticipantIds`。</p>
+ */
+describe("InputArea · task-124 显式空 TO 与非空 CC 同发", () => {
+    it("删光 TO chip、保留 CC chip ⇒ 第 5 参 [] 且第 4 参非空", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        // 抄送栏默认收起，先展开才有 RecipientField（cc-expand）
+        await wrapper.get('[data-testid="cc-expand"]').trigger("click");
+        await flushPromises();
+        await wrapper.get('[data-testid="cc-input"]').setValue("Alpha");
+        await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="cc-chip"]').length, "CC chip 必须先落座").toBe(1);
+
+        // 选一个 TO 再删光它 —— 这一删就是「用户清空了收件人」的意图。
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        await wrapper.get('[data-testid="to-targets-chip-remove"]').trigger("click");
+        await flushPromises();
+
+        await wrapper.get('[data-testid="chat-input"]').setValue("hello");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+
+        const emitted = wrapper.emitted("send")![0]!;
+        // 索引 4 = toParticipantIds：必须是显式空集（省略会被 CP 读成「没提收件人」）。
+        expect(emitted[4], "TO 必须是显式空集").toEqual([]);
+        // 索引 3 = cc：必须照发 —— 这半句才是 `cp-1` 缺的前提。
+        expect(Array.isArray(emitted[3]), "CC 必须存在").toBe(true);
+        expect((emitted[3] as string[]).length).toBe(1);
+    });
+});

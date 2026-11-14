@@ -1224,3 +1224,38 @@ describe("useSSE · task-450 TO 载荷的省略与显式空集", () => {
         expect(Object.prototype.hasOwnProperty.call(body, "toParticipantIds")).toBe(false);
     });
 });
+/**
+ * task-124（源 `cp-1` 的 `task-121`）：`toParticipantIds: []` 与**非空 `cc`** 必须**两键同存**。
+ *
+ * <p>既有的 `task-450` 两条只覆盖 TO 的省略/显式空，**没有 cc 参与** ⇒ 「清空 TO 但保留 CC」
+ * 在 body 上到底长什么样没有断言。这条补的是组合格：CP 的抑制分支会同时看到
+ * `isExplicitEmpty(to)` 与非空 `cc`（这也是 `cp-1` 那张对照表缺的前提）。</p>
+ */
+describe("useSSE · task-124 显式空 TO 与非空 CC 的 body 组合", () => {
+    const CC_PARTICIPANT_ID = "part-agent-beta";
+
+    it("to: [] + cc: [x] ⇒ body 两键同存", async () => {
+        const fetchMock = vi
+            .fn<(input: string, init?: RequestInit) => Promise<Response>>()
+            .mockResolvedValue({ ok: true, json: async () => ({ runId: RUN_ID }) } as Response);
+        vi.stubGlobal("fetch", fetchMock);
+        const sse = useSSE(SESSION_ID);
+        await sse.sendMessage({
+            content: "hello",
+            branchId: BRANCH_ID,
+            cc: [CC_PARTICIPANT_ID],
+            toParticipantIds: [],
+        });
+        await flushPromises();
+        const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<
+            string,
+            unknown
+        >;
+        expect(
+            Object.prototype.hasOwnProperty.call(body, "toParticipantIds"),
+            "显式空集必须发（省略 = 没提收件人）",
+        ).toBe(true);
+        expect(body.toParticipantIds).toEqual([]);
+        expect(body.cc).toEqual([CC_PARTICIPANT_ID]);
+    });
+});
