@@ -88,6 +88,12 @@ node one/.tmp/plan-eff-l2/run-shard-parallel.mjs    # 3. XIHE_SHARD_ROOT=<worktr
 3. `shard-merged-failures.json` 与环境性基线白名单**差集 = 0**；每条失败带 shard 归属。
 4. `pythonInterpreter` 已自动注入 `-Dxihe.context.python`（worktree 无 `.venv` 时 `ContextEventReadContractIntegrationTest` **失败而非 skip**，极易误判为回归）。
 
+5. **分区自检**：`ShardPartitionTest`（`src/test/java/com/cc01cc/p/xihe/cp/`，task-611）用 pom 的两个
+   profile 复算 A/B 并断言 `(A∪B)==全量`、`A∩B==∅`，不等时点名缺席/重叠的类。**它自己落在 shard B**
+   （根包不在 A 的 include 里）⇒ **只跑 shard A 不算"分区已验证"**（D-1046：不在链路上的校验等于没有）。
+   另外它记录的既有不对称：A 的 include 只覆盖 `*Test.java` 一种后缀，`Test*.java` 等结构上只能落 B
+   —— 有人改 A 的 include 会在该测试的读数里红出来。
+
 `shard-{a,b}-report-dir.txt` 指向原始 surefire XML 目录，可绕过汇总直接复核。
 
 PLAN-0584 的 Native Image 组件探针仅在 Windows x64 portable GraalVM 环境中运行：

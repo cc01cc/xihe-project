@@ -54,6 +54,16 @@ class ShardPartitionTest {
             "**/*Tests.java",
             "**/*TestCase.java");
 
+    /**
+     * Which file-name suffixes shard A's {@code <includes>} actually select (recorded fact, asserted).
+     *
+     * <p>Today A lists only {@code *Test.java}. Every other surefire suffix ({@code Test*.java},
+     * {@code *Tests.java}, {@code *TestCase.java}) therefore lands in B by construction — no miss, but
+     * also no choice. <b>If someone widens A's includes, this set changes and the assertion below goes red
+     * on purpose:</b> update it together with the pom so the asymmetry stays visible in the readout.</p>
+     */
+    private static final Set<String> SHARD_A_COVERED_SUFFIXES = Set.of("*Test.java");
+
     private static final String SHARD_A = "l2-shard-a";
     private static final String SHARD_B = "l2-shard-b";
     private static final String SUREFIRE = "maven-surefire-plugin";
@@ -82,9 +92,28 @@ class ShardPartitionTest {
             }
         }
 
+        Set<String> aSuffixes = new TreeSet<>();
+        for (String include : a.getOrDefault("include", List.of())) {
+            aSuffixes.add(include.substring(include.lastIndexOf('/') + 1));
+        }
+        long prefixedSuffixSources = full.stream()
+                .filter(source -> source.substring(source.lastIndexOf('/') + 1).startsWith("Test")).count();
         System.out.println("shard partition: all=" + full.size()
                 + " shard-a=" + shardA.size() + " shard-b=" + shardB.size()
-                + " (a+b=" + (shardA.size() + shardB.size()) + ")");
+                + " (a+b=" + (shardA.size() + shardB.size()) + ")"
+                + " | shard-a include suffixes=" + aSuffixes
+                + " | surefire defaults=" + SUREFIRE_DEFAULT_INCLUDES
+                + " | sources on the other suffixes (Test*.java etc.)=" + prefixedSuffixSources);
+        assertThat(aSuffixes).as("shard A selects %s only; the remaining suffixes can only land in B."
+                + " Widening A's includes must update SHARD_A_COVERED_SUFFIXES so the asymmetry is recorded",
+                SHARD_A_COVERED_SUFFIXES).isEqualTo(SHARD_A_COVERED_SUFFIXES);
+
+        // Who runs this check itself: it lives in the module root package, which is shard B's. A run of
+        // shard A alone therefore does NOT verify the partition (D-1046) — see the module AGENTS.md §L2 2-shard.
+        String self = "com/cc01cc/p/xihe/cp/ShardPartitionTest.java";
+        assertThat(shardB).as("this partition check is shard B's; do not report a shard-A-only run as"
+                + " \"partition verified\"").contains(self);
+        assertThat(shardA).as("this partition check must not be claimed by shard A").doesNotContain(self);
 
         Set<String> ownedByNoShard = new TreeSet<>(full);
         ownedByNoShard.removeAll(shardA);
