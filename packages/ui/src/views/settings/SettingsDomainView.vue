@@ -393,9 +393,16 @@ watch(
             data-testid="settings-domain-loading"
             role="status"
             aria-live="polite"
+            aria-busy="true"
             class="mt-4 space-y-3"
         >
-            <span class="sr-only">{{ t("common.loading") }}</span>
+            <!--
+                task-536：加载期必须有**可见**反馈。修前这里是 `sr-only` 文本 ——
+                读屏能听见、屏幕上只有一个字都没有的灰块（实测该页首屏 1504 ms 全是灰块），
+                用户分不清「在加载」和「坏了」。「加载慢」不是这条判据的对象：网络慢时灰块期照旧存在，
+                反馈是底线不是优化。
+            -->
+            <p class="text-sm text-muted-foreground">{{ t("settings.ia.domainLoading") }}</p>
             <Skeleton class="h-4 w-40" />
             <Skeleton class="h-20 w-full rounded-lg" />
             <Skeleton class="h-20 w-full rounded-lg" />

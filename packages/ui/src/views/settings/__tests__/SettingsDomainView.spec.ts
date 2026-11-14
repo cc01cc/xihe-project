@@ -99,6 +99,8 @@ const messages = {
                 backToUserLayer: "去用户层",
                 // task-509（E-03）：取数失败必须有独立文案 + 重试，不许借用 saveFailed。
                 domainLoadFailed: "配置加载失败",
+                // task-536：加载期要有**可见**文案（骨架不说话）。
+                domainLoading: "正在加载配置…",
                 notFoundTitle: "这个页面不存在",
                 notFoundBody: "该层没有这个配置域",
                 backToDefault: "回到默认页",
@@ -492,8 +494,19 @@ describe("SettingsDomainView 加载态与页签键盘（task-510）", () => {
         const skeletons = loading.findAll('[data-slot="skeleton"]');
         // 单行骨架 = 「还是那行字换了个样子」，所以要有块状骨架（≥2）
         expect(skeletons.length).toBeGreaterThan(1);
-        // 无障碍：加载态仍要有可读文本（sr-only），不能只剩会动的方块
-        expect(loading.text()).toContain("加载中");
+        // 无障碍：加载态仍要有可读文本，不能只剩会动的方块
+        expect(loading.text()).toContain("正在加载配置");
+        // task-536：这段文案必须是**可见**的（修前是 sr-only —— 读屏能听见、屏幕上只有灰块）。
+        // 判据落在「有不带 sr-only 的文本节点」，不是「text() 里有这几个字」：后者 sr-only 也满足。
+        const visibleCopy = loading
+            .findAll("p, span")
+            .filter((node) => !(node.classes() ?? []).includes("sr-only"));
+        expect(
+            visibleCopy.map((node) => node.text()).join(""),
+            "加载态必须有可见文案（带 aria-busy 或一句话），写给屏幕前的人看",
+        ).toContain("正在加载配置");
+        // 机械可读：容器要声明自己在忙（读屏与自动化都认这个）
+        expect(loading.attributes("aria-busy")).toBe("true");
     });
 
     it("页签键盘：ArrowRight 把焦点与 aria-selected 移到下一个页签", async () => {

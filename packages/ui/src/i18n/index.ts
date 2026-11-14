@@ -385,6 +385,11 @@ const messages = {
         workspace: {
             panelCode: "代码",
             panelChanges: "变更",
+            // task-550 / Q-i 第二半（用户裁定）：会话头常显。**两半都要在** ——
+            // 只写「无文件系统授权限制」会让人以为完全没有边界，而 host 模式下 cwd 仍受 grants 约束
+            // （runtime-1 实测 job_engine/mod.rs:1106-1140）。
+            sandboxEnforcement: "无文件系统授权限制（工作区路径边界仍生效）",
+            sandboxEnforcementSnapshot: "决策快照照冻，仅标注 enforcement=none",
             panelMonitor: "监控",
             // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
             sseSubscriberLimitTitle: "实时更新已停止。",
@@ -2023,6 +2028,9 @@ const messages = {
                 // task-509（E-03）：**取数失败 ≠ 保存失败**。两种失败指向不同的用户动作
                 // （重试读取 / 检查我的编辑），文案不许互相借用。
                 domainLoadFailed: "配置加载失败，请重试。",
+                // task-536：加载期必须有**可见**反馈。骨架是纯视觉件、不说话，
+                // 实测该页 1504 ms 里只有灰块、一个字都没有 ⇒ 用户分不清是在加载还是坏了。
+                domainLoading: "正在加载配置…",
                 domainKeysCount: "本域 {count} 个配置键",
                 domainEditableCount: "可编辑 {count} 项",
                 // task-285：计数只数静态可枚举字段；`context-policy` 的按模型覆盖子表行数另计，
@@ -3945,6 +3953,11 @@ const messages = {
         workspace: {
             panelCode: "Code",
             panelChanges: "Changes",
+            // task-550: session-header annotation; both halves are mandatory (see zh comment).
+            sandboxEnforcement:
+                "No filesystem authorization checks (workspace path boundary still applies)",
+            sandboxEnforcementSnapshot:
+                "Decision snapshot is frozen; it only records enforcement=none",
             panelMonitor: "Monitor",
             // BL-335: SSE subscriber limit (429) persistent banner.
             sseSubscriberLimitTitle: "Live updates stopped.",
@@ -5651,6 +5664,7 @@ const messages = {
                 navRoles: "Roles & grants",
                 navAudit: "Audit log",
                 domainLoadFailed: "Failed to load this configuration; retry.",
+                domainLoading: "Loading configuration…",
                 domainKeysCount: "{count} config keys in this domain",
                 domainEditableCount: "{count} editable",
                 domainEditableCountNote: "(plus {rows} per-model override rows)",
