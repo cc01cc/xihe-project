@@ -126,6 +126,26 @@ export function mockWorkspaceJobs(workspaceId: string): WorkspaceJob[] {
     return [...statusJobs, ...reasonJobs, ...cleanupJobRows];
 }
 
+/**
+ * task-54（D-1444）：**环境页的另一态**（托管副本 ⇒ 页面出现「执行后端已冻结」提示）。
+ *
+ * <p>为什么是开关而不是第二条夹具：`storageModeFrozen` 只由 `managed_import` 触发
+ * （`WorkspaceEnvironmentView.vue` 的 `storageModeFrozen`），而默认态必须是产品默认的
+ * `direct_attach`（PLAN-0618 后新建工作区只能 direct_attach）—— 把夹具默认值改成
+ * managed_import 等于让预览图**谎报产品默认态**。所以同一模块、只切一个字段。</p>
+ *
+ * <p>形状照既有先例 `XIHE_UI_MOCK_MEMBER_VIEWER`（`data/workspaceMembers.ts:108`）：
+ * **请求期**读 `process.env`，覆盖测用 `vi.stubEnv`（见 `__tests__/workspaceEnvironment.coverage.spec.ts`）。
+ * 该开关会影响渲染 ⇒ 截图 manifest 的 `env` 字段会记录它（`scripts/ui-mock-shot.mjs` 的
+ * `MOCK_ENV_KEYS`），否则同一 commit 的两组图事后无法区分。</p>
+ */
+export const MOCK_ENV_STORAGE_MODE_FLAG = "XIHE_UI_MOCK_ENV_STORAGE_MODE";
+
+/** 未设置/非 `managed_import` ⇒ null（调用方回落默认 `direct_attach`）。 */
+export function mockEnvStorageModeOverride(): WorkspaceEnvironment["storageMode"] | null {
+    return process.env[MOCK_ENV_STORAGE_MODE_FLAG] === "managed_import" ? "managed_import" : null;
+}
+
 export function mockWorkspaceEnvironment(workspaceId: string): WorkspaceEnvironment {
     // `activeJobCount` 从夹具**现算**，不手写数字 —— 手写的计数迟早与列表不符，
     // 而「计数与可见项矛盾」正是 UI 交付自审五维里的一条。
@@ -140,7 +160,8 @@ export function mockWorkspaceEnvironment(workspaceId: string): WorkspaceEnvironm
         // 否则预览图里显示的是「未知后端」而不是产品真实态。
         storageBackend: "host_directory",
         storageRef: workspaceId,
-        storageMode: "direct_attach",
+        // task-54：默认 direct_attach（产品默认），开关置 managed_import 时切到冻结态。
+        storageMode: mockEnvStorageModeOverride() ?? "direct_attach",
         hostPath: null,
         executionMode: "windows-host",
         capability: {

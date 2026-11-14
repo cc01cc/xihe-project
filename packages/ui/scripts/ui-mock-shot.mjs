@@ -206,6 +206,55 @@ const SHOTS = [
             "[data-testid=org-tree-label-ou-rd]",
         ],
     },
+    // task-54（D-1444）：**详情抽屉**双态 —— 16 号只证「列表里有这一行」，抽屉里的判据
+    // （两段角色 / 「未展示 ≠ 无权限」）此前没有任何一张图能证。
+    // 两条都必须声明 `waitFor`：冷启动第一批 app 镜头会拍到半挂载（task-240 实测），
+    // 而 `--extra-shot` **没有** waitFor 字段 ⇒ 这类镜头只能进 SHOTS。
+    //
+    // ⚠️ 两态覆盖的是**不同段落**（task-43 的设计）：AGENT 态的段①（工作区成员角色）**不加载**
+    // （`OrgMemberDetailSheet.vue:77` 的 `memberKind !== "human"` 直接 return —— agent principal
+    // 不是 workspace member）。拿 HUMAN 图去证 AGENT 的段① 会得出「AGENT 也有角色」的错误结论。
+    {
+        id: "17",
+        name: "org-members-detail-human",
+        path: "/members",
+        app: true,
+        waitFor: "[data-testid=org-tree-label-ou-rd]",
+        // 展开研发部 → 选中研发部（「含下级」默认开 ⇒ 张安那一行在列表里）→ 点行开抽屉。
+        // 行 testid = `org-member-row-<memberId>`（`OrgUnitMemberList.vue:162`），点行即开，无 URL 状态。
+        expand: [
+            "[data-testid=org-tree-toggle-ou-rd]",
+            "[data-testid=org-tree-label-ou-rd]",
+            "[data-testid=org-member-row-mock-user]",
+        ],
+    },
+    {
+        id: "18",
+        name: "org-members-detail-agent",
+        path: "/members",
+        app: true,
+        waitFor: "[data-testid=org-tree-label-ou-rd]",
+        // 多一步展开平台组：代码智能体在平台组下，「所属单元」取的是树节点注册表里的名字，
+        // 不展开就会退化成 id（16 号镜头同款理由，见上一条注释）。
+        expand: [
+            "[data-testid=org-tree-toggle-ou-rd]",
+            "[data-testid=org-tree-toggle-ou-platform]",
+            "[data-testid=org-tree-label-ou-rd]",
+            "[data-testid=org-member-row-ap-codebot]",
+        ],
+    },
+    // task-54：环境页（真路由 + 真组件）。workspaceId 必须用 mock 夹具里那个真 uuid
+    // （`MOCK_WORKSPACE.id`），否则工作区外壳校验不过、图拍成错误态。
+    // 判据 2 只需要默认态（storageBackend=host_directory / storageMode=direct_attach）；
+    // 「托管副本冻结提示」是另一态，靠 `XIHE_UI_MOCK_ENV_STORAGE_MODE=managed_import`
+    // **另起一次调用**拍（env 是进程级，同一批里只能一种状态；manifest 的 `env` 字段记录它）。
+    {
+        id: "19",
+        name: "workspace-environment",
+        path: "/workspace/9f8e7d6c-5b4a-4321-8fed-cba987654321/environment",
+        app: true,
+        waitFor: "[data-testid=workspace-environment-storage-backend]",
+    },
 ];
 
 /**
@@ -830,6 +879,35 @@ function mockApiEnvPatch() {
         );
     }
     return { XIHE_UI_MOCK_API: raw };
+}
+
+/**
+ * mock 侧**会影响渲染**的开关清单（task-54 / D-1444）。
+ *
+ * <p>为什么 manifest 必须记它们：这些开关切换的是同一份夹具的**不同状态**（例如
+ * `XIHE_UI_MOCK_ENV_STORAGE_MODE=managed_import` 让环境页显示「托管副本 + 冻结提示」），
+ * 而 env 是**进程级** ⇒ 同一个 commit 能拍出两组外观完全不同、却都「sha 稳定、exit 0」的图。
+ * 在此之前 manifest 只有 `server` 与 `browser` 两个变量维度，**没有任何字段能区分这两组图** ——
+ * 那不是文档没写，是证据缺口：事后无法证明某张图对应哪个状态。</p>
+ *
+ * <p>只记**被设置过**的键（未设置的键不出现在 `env` 里，避免让人误以为脚本改写了它们）；
+ * 加新开关时**必须**同时加进本清单，否则又回到「靠反推才知道」的老路。</p>
+ */
+const MOCK_ENV_KEYS = [
+    "XIHE_UI_MOCK_API",
+    "XIHE_UI_MOCK_DENIED",
+    "XIHE_UI_MOCK_NONADMIN",
+    "XIHE_UI_MOCK_MEMBER_VIEWER",
+    "XIHE_UI_MOCK_ENV_STORAGE_MODE",
+];
+
+function mockEnvSnapshot(env = process.env) {
+    const snapshot = {};
+    for (const key of MOCK_ENV_KEYS) {
+        const value = env[key];
+        if (value !== undefined && value !== "") snapshot[key] = value;
+    }
+    return snapshot;
 }
 
 /** 起一个临时 vite dev server（只在没给 --url 时用）。 */
@@ -1596,6 +1674,80 @@ async function runSelftest() {
         "",
     );
 
+    // task-54 / D-1444：manifest 的 env 快照。它存在的理由是「同一 commit 能拍出两组不同外观的图」
+    // —— 那条证据缺口如果只写在注释里，下次加开关还是会忘；这里用 check 把它钉住。
+    const envEmpty = mockEnvSnapshot({});
+    const envSet = mockEnvSnapshot({
+        XIHE_UI_MOCK_ENV_STORAGE_MODE: "managed_import",
+        XIHE_UI_NOT_A_MOCK_SWITCH: "x",
+    });
+    check(
+        "manifest env: 未设任何 mock 开关 ⇒ {}（不是 null，表示「查过了，没有」）",
+        Object.keys(envEmpty).length === 0 && JSON.stringify(envEmpty) === "{}",
+        JSON.stringify(envEmpty),
+    );
+    check(
+        "manifest env: 只记白名单键（无关 env 不进快照），值原样保留",
+        JSON.stringify(envSet) ===
+            JSON.stringify({ XIHE_UI_MOCK_ENV_STORAGE_MODE: "managed_import" }),
+        JSON.stringify(envSet),
+    );
+    check(
+        "manifest env: 白名单覆盖环境页那条开关（漏登记就回到「靠反推才知道」）",
+        MOCK_ENV_KEYS.includes("XIHE_UI_MOCK_ENV_STORAGE_MODE"),
+        MOCK_ENV_KEYS.join(","),
+    );
+
+    // task-54：交付批次的结构守卫 —— 「存量 16 条一字不动、新三条追加在尾部」是 Lead 批的约束，
+    // 落成 check 之后，任何人把新条目插到中间都会在这里红，而不是等下一批图 sha 全变才发现。
+    const shotIds = SHOTS.map((shot) => shot.id);
+    const legacyIds = shotIds.slice(0, 16);
+    const expectedLegacy = [
+        "01",
+        "02",
+        "03",
+        "04",
+        "05",
+        "06",
+        "07",
+        "08",
+        "09",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+    ];
+    check(
+        "SHOTS: 存量 16 条仍在最前面且顺序未变（01..16）",
+        JSON.stringify(legacyIds) === JSON.stringify(expectedLegacy),
+        shotIds.join(","),
+    );
+    check(
+        "SHOTS: 17/18/19 追加在尾部，且都是 app 镜头 + 声明了 waitFor",
+        ["17", "18", "19"].every((id) => {
+            const shot = SHOTS.find((item) => item.id === id);
+            return (
+                shot?.app === true && typeof shot.waitFor === "string" && shot.waitFor.length > 0
+            );
+        }),
+        shotIds.slice(16).join(","),
+    );
+    // 光比较「两个 expand 数组不相等」是不够的（长度不同就过）—— 必须钉到**行本身**：
+    // 两张图点的是不是同一行，只有 memberId 说得清。
+    const detailRows = ["17", "18"].map((id) => {
+        const expand = SHOTS.find((shot) => shot.id === id)?.expand ?? [];
+        const hit = expand.find((selector) => selector.includes("org-member-row-"));
+        return hit ? /org-member-row-([^\]"]+)/.exec(hit)?.[1] : undefined;
+    });
+    check(
+        "SHOTS: 成员详情双态点到**不同成员**（HUMAN=mock-user / AGENT=ap-codebot）",
+        JSON.stringify(detailRows) === JSON.stringify(["mock-user", "ap-codebot"]),
+        JSON.stringify(detailRows),
+    );
+
     for (const item of checks) {
         process.stdout.write(
             (item.ok ? "PASS  " : "FAIL  ") +
@@ -1781,6 +1933,9 @@ async function main() {
                     // 服务器怎么来的、探通用的是哪个候选地址：自起模式修好（task-84）之后，
                     // "这图是自起拍的还是复用拍的"必须能从 manifest 里读出来。
                     server: serverInfo,
+                    // task-54 / D-1444：mock 开关快照 —— 同一 commit 的「另一态」图只能靠这个字段区分。
+                    // 未设置任何开关时是空对象（`{}`），不是 null：读的人一眼看出「查过了，没有」。
+                    env: mockEnvSnapshot(),
                     // 浏览器指纹：channel / 版本 / 启动参数。换浏览器整张图就会变（实测
                     // chrome-beta → chrome 让 04 主图从 0525a43b 变成 8901dbee），必须留痕。
                     browser: browserInfo,
