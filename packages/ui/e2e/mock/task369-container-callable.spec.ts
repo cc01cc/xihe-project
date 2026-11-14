@@ -16,6 +16,8 @@
  * 面板定位用产品自己的 `data-dockview-panel="<id>"` 钩子（不依赖 locale 文案）。
  *
  * S1 边界判据（Lead 裁定②）：树宽锁死 ⇒ 拖中缝（`.dv-sash`）宽度不变；折叠/展开是离散 40/240。
+ * **task-486（S2）已翻转锁死这条**（同批接线 `dockSashA11y`）⇒ 本 spec 末条改成「可拖 + 回写」，
+ * 键盘与 separator 契约的判据在 `task486-sash-a11y.spec.ts`。
  *
  * 跑法：`$env:XIHE_UI_PORT='12660'; pnpm exec playwright test --config e2e/playwright.config.ts
  * e2e/mock/task369-container-callable.spec.ts`（mock lane 专用端口，不碰真栈 12630–12643）。
@@ -24,7 +26,11 @@ import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
-import { TREE_COLLAPSED_WIDTH, TREE_WIDTH_DEFAULT } from "../../src/composables/useWorkspaceLayout";
+import {
+    TREE_COLLAPSED_WIDTH,
+    TREE_WIDTH_DEFAULT,
+    TREE_WIDTH_MAX,
+} from "../../src/composables/useWorkspaceLayout";
 
 const WORKSPACE_PATH = "/workspace/workspace-1";
 const TREE_TAB_TITLE = "展开文件树";
@@ -184,17 +190,43 @@ test("折叠 ≠ 关闭：折叠后 40px rail 仍在，展开回 240；关闭则
     await expect(page.locator('[data-testid="workspace-file-rail"]')).toHaveCount(0);
 });
 
-test("S1 树宽锁死：拖中缝宽度不变（裁定②——没有键盘契约可回归的窗口）", async ({ page }) => {
+/**
+ * **判据翻转（task-486 S2，2026-11-14）**：S1 时这条判的是「树宽锁死 ⇒ 拖中缝不变」。
+ * S2 拆了 `min=max` 锁并要求同批接上 `dockSashA11y`（Lead 裁定②），所以锁死不再是特性而是缺口：
+ * 这里改成**可拖 + 回写**，键盘/separator 契约的判据在 `task486-sash-a11y.spec.ts`（同 lane）。
+ * 保留文件位置的余量理由：本条仍在 S1 的容器模型 spec 里，因为它验的是「同一个 dockview 实例的几何」。
+ */
+test("S2 树宽可拖：拖中缝后宽度真的变，并写回持久键（原 S1「锁死」判据已翻转）", async ({
+    page,
+}) => {
     await openWorkbench(page);
     expect(Math.round(await railWidth(page))).toBe(TREE_WIDTH_DEFAULT);
-    const sash = page.locator(".dv-sash").first();
+    // **认缝要用接线标记**：容器里有两条缝（树↔主列、主列↔右栏），`.dv-sash` 的 DOM 顺序
+    // 不能当语义用（按 `.first()` 取到的可能不是树那条 —— 实测拖不动 240 就是这个原因）。
+    const sash = page.locator('.dv-sash[data-dock-sash-a11y="true"]');
     const box = await sash.boundingBox();
-    if (!box) throw new Error("中缝 .dv-sash 不存在");
+    if (!box) throw new Error("树↔主列那道缝（已接线）不存在");
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2, { steps: 6 });
     await page.mouse.up();
+    // 变宽且不超过产品夹取上限 320（与手写分支 `clampTreeWidth` 同界）。
     await expect
         .poll(async () => Math.round(await railWidth(page)), { timeout: EXPECT_TIMEOUT_MS })
-        .toBe(TREE_WIDTH_DEFAULT);
+        .toBeGreaterThan(TREE_WIDTH_DEFAULT);
+    const widened = Math.round(await railWidth(page));
+    expect(widened, "不得超过 200–320 的产品夹取上限").toBeLessThanOrEqual(TREE_WIDTH_MAX);
+    // 回写：单一 writer 仍是 Workbench（本 spec 只读 localStorage 做交叉核对）。
+    await expect
+        .poll(
+            () =>
+                page.evaluate((key) => {
+                    const raw = localStorage.getItem(key);
+                    if (!raw) return null;
+                    const parsed = JSON.parse(raw) as { treeWidth?: unknown };
+                    return typeof parsed.treeWidth === "number" ? parsed.treeWidth : null;
+                }, "xihe-layout-ws:workspace-1"),
+            { timeout: EXPECT_TIMEOUT_MS },
+        )
+        .toBe(widened);
 });

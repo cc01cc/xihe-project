@@ -758,13 +758,16 @@ defineExpose({ openDockTab });
                     :active-dock-tab="activeDockTab"
                     :tree-open="treeOpen"
                     :tree-collapsed="effectiveTreeCollapsed"
+                    :tree-width="treeWidth"
                     :dock-width="layout.dockWidth"
                     :labels="dockPanelLabels"
                     :tree-label="t('workspace.expandFiles')"
+                    :sash-label="t('workspace.treeResize')"
                     @update:active-dock-tab="setActiveDockTab"
                     @close-tab="closeDockTab"
                     @close-tree="closeTreePanel"
                     @reopen-panel="reopenPanel"
+                    @resize-tree="setTreeWidth"
                 >
                     <template #tree>
                         <div
