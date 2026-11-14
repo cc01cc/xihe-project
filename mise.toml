@@ -228,6 +228,19 @@ description = "Local quality-regression gate (PLAN-0512/0540) over one report pe
 dir = "packages/agent"
 alias = "gate:agent-quality"
 
+[tasks."test:cp:live-chain"]
+  # task-618: 真链路测试的**指定档**。ContextSourceLiveChainTest 用 Assumptions.assumeTrue 守环境，
+  # 没有 live stack 时它在普通 test:cp 里是 **skipped**（surefire 视为不失败）⇒「已验证」与「没跑过」不可区分。
+  # 本档要求它真的跑：skip ⇒ 红（第二段命令把 skip 变成 exit 1 并打印 assume 失败原因与行号）。
+  # 前置=起了 dev 栈（Runtime :12645 可 /ready、CP :12631 可 /actuator/health）；不进 validate（需要活栈）。
+  run = [
+    "cmd /c mvn -o -q test -Dtest=ContextSourceLiveChainTest -Dsurefire.failIfNoSpecifiedTests=false",
+    "node ../../scripts/check-surefire-skips.mjs --dir target/surefire-reports --class com.cc01cc.p.xihe.cp.context.ContextSourceLiveChainTest --max-skipped 0"
+  ]
+  description = "task-618 live-chain: run ContextSourceLiveChainTest and FAIL if it was skipped (needs a live dev stack; not in validate)"
+  dir = "packages/control-plane"
+  alias = "test:cp:live-chain"
+
 [tasks."test:cp"]
 depends = ["check:openapi"]
 run = "node ../../scripts/cp-test-run.mjs"
