@@ -786,6 +786,8 @@ const ENVIRONMENT_MESSAGE_KEYS = [
     "environmentCapabilityUnavailable",
     "environmentCapabilityReasonUnknown",
     "environmentBackendUnknown",
+    // task-46：storageMode 未知值兜底词条（两侧都要有，否则未知模式会露出原值或空白）。
+    "environmentStorageModeUnknown",
     "environmentJobCapabilityUnknown",
     "environmentJobCapabilityUnavailable",
     "environmentJobCapabilityReasonMissing",
@@ -873,6 +875,108 @@ describe("WorkspaceEnvironmentView full-page i18n (task-52)", () => {
             expect(en, key).not.toBe("");
             expect(zh, key).toMatch(CJK);
             expect(zh, key).not.toBe(en);
+        }
+    });
+});
+
+/**
+ * task-46：**枚举直显改人话 + 机器判据**（用户实拍：环境页把后端枚举原样显示给用户）。
+ *
+ * <p>为什么单测要钉这一条：真实 e2e（`e2e/real/environment.spec.ts`）过去直接把
+ * 「页面出现 host_directory」写成期望 —— 缺陷被断言养着，改对了反而变红。所以本组用例同时钉三件事：
+ * ① 已知枚举 → 人话标签；② 未知枚举 → 「未知后端」兜底，**不透传原值**；③ 整页正文**不得**出现
+ * `^[a-z]+_[a-z_]+$` 形态的裸标识符（数据字段直显的通用形态）。
+ * 判据 ③ 的变异（把某个枚举值放回页面 ⇒ 必须红）在 `task-46` 的读里记录，见卡面。</p>
+ */
+/**
+ * 判据形态：`^[a-z]+_[a-z_]+$` 的**裸标识符**。实现用 ASCII 边界前瞻/后顾而不是
+ * `split(空白)` —— 实测首版 split 版本会漏：中文标签与枚举值紧贴渲染成
+ * 「存储后端host_directory存储方式」（CJK 与 ASCII 之间没有空白），按空白切出来的是一个
+ * 混排 token，正则匹配不到 ⇒ 门假绿。带 ASCII 边界的 lookaround 能抓这类紧贴渲染
+ * （变异实测：把 `{{ storageBackendText }}` 换回 `{{ environment.storageBackend }}` ⇒ 本断言红）。
+ */
+const BARE_SNAKE_ENUM = /(?<![A-Za-z0-9_])[a-z]+_[a-z_]+(?![A-Za-z0-9_])/g;
+function bareSnakeTokens(text: string): string[] {
+    return [...text.matchAll(BARE_SNAKE_ENUM)].map((match) => match[0]);
+}
+
+describe("WorkspaceEnvironmentView 存储字段人话化（task-46）", () => {
+    // 同文件前面的 i18n 用例会切到 en-US（applyLocale 是全局态），这里必须自钉 zh-CN，
+    // 否则本组断言会跟着前一条用例的执行顺序漂（shuffle 下必红）。
+    beforeEach(() => {
+        applyLocale("zh-CN");
+    });
+
+    it("host_directory + direct_attach ⇒ 「宿主机目录」/「直接挂载」，且不出现冻结提示", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            storageBackend: "host_directory",
+            storageMode: "direct_attach",
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.get('[data-testid="workspace-environment-storage-backend"]').text()).toBe(
+            "宿主机目录",
+        );
+        expect(wrapper.get('[data-testid="workspace-environment-storage-mode"]').text()).toBe(
+            "直接挂载",
+        );
+        expect(
+            wrapper.find('[data-testid="workspace-environment-storage-mode-frozen"]').exists(),
+        ).toBe(false);
+    });
+
+    it("managed_import ⇒ 「托管副本」+ 冻结提示（事实：Docker 后端已冻结，不是「尚未接通」）", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            storageBackend: "host_directory",
+            storageMode: "managed_import",
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.get('[data-testid="workspace-environment-storage-mode"]').text()).toContain(
+            "托管副本",
+        );
+        expect(
+            wrapper.get('[data-testid="workspace-environment-storage-mode-frozen"]').text(),
+        ).toBe("执行后端已冻结，暂不可用");
+    });
+
+    it("未知 storageBackend / storageMode ⇒ 「未知后端」/「未知存储方式」，不透传原值", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("windows-host"),
+            storageBackend: "network_share",
+            storageMode: "gluster_fuse",
+        } as never);
+
+        const wrapper = await mountView();
+
+        expect(wrapper.get('[data-testid="workspace-environment-storage-backend"]').text()).toBe(
+            "未知后端",
+        );
+        expect(wrapper.get('[data-testid="workspace-environment-storage-mode"]').text()).toBe(
+            "未知存储方式",
+        );
+        // 原值一个字都不能出现在页面上（这就是「数据字段直显」的缺陷本体）。
+        expect(wrapper.text()).not.toContain("network_share");
+        expect(wrapper.text()).not.toContain("gluster_fuse");
+    });
+
+    it("机器判据：整页正文没有 snake_case 裸标识符，且三个已知枚举值都不出现", async () => {
+        mockedApi.getWorkspaceEnvironment.mockResolvedValue({
+            ...environment("docker"),
+            storageBackend: "host_directory",
+            storageMode: "managed_import",
+        } as never);
+
+        const wrapper = await mountView();
+        const text = wrapper.text();
+
+        expect(bareSnakeTokens(text)).toEqual([]);
+        for (const raw of ["host_directory", "direct_attach", "managed_import"]) {
+            expect(text, raw).not.toContain(raw);
         }
     });
 });

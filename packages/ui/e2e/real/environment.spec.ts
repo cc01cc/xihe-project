@@ -73,7 +73,20 @@ test.describe("Workspace environment status", () => {
             /materializing|ready/,
         );
         await expect(page.getByText(auth.workspaceId, { exact: true }).first()).toBeVisible();
-        await expect(page.getByText("host_directory", { exact: true })).toBeVisible();
+        // task-46：这两行原是一对自相矛盾的断言 —— 上一行要求页面上**出现** storageBackend 的
+        // 枚举值 host_directory（把缺陷本身当成了期望），下一行又要求不出现 storagePath。
+        // 契约里 storageBackend / storageMode 都是数据字段，页面只该给人话标签（宿主机目录 /
+        // 直接挂载 / 托管副本），未知值回落「未知」类文案。所以改成「枚举值不得出现在正文」。
+        await expect(page.getByTestId("workspace-environment-storage-backend")).toBeVisible();
+        await expect(page.getByTestId("workspace-environment-storage-backend")).not.toHaveText(
+            /[a-z]+_[a-z_]+/,
+        );
+        await expect(page.getByTestId("workspace-environment-storage-mode")).not.toHaveText(
+            /[a-z]+_[a-z_]+/,
+        );
+        await expect(page.locator("body")).not.toContainText("host_directory");
+        await expect(page.locator("body")).not.toContainText("direct_attach");
+        await expect(page.locator("body")).not.toContainText("managed_import");
         await expect(page.locator("body")).not.toContainText("storagePath");
 
         // The workspace page already triggered auto-preparation; this page only

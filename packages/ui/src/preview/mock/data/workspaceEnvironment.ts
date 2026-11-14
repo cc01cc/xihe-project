@@ -135,7 +135,10 @@ export function mockWorkspaceEnvironment(workspaceId: string): WorkspaceEnvironm
     return {
         workspaceId,
         status: "ready",
-        storageBackend: "local",
+        // task-46：真实 CP 只会返回 host_directory（CP V1__init_schema.sql:61 的 CHECK 只允许它）。
+        // 夹具原先写 "local" —— 页面现在把未知值兜底成「未知后端」，这里必须给真实值，
+        // 否则预览图里显示的是「未知后端」而不是产品真实态。
+        storageBackend: "host_directory",
         storageRef: workspaceId,
         storageMode: "direct_attach",
         hostPath: null,

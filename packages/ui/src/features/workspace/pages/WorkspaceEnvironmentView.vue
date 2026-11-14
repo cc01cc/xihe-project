@@ -309,6 +309,48 @@ const managedExecutionModeLabel = computed(() => {
     return t("workspace.executionModeLegacy");
 });
 
+/**
+ * task-46：**枚举直显改人话**。两个字段都是数据字段、不是给人看的词：
+ * - storageBackend 在契约里是自由字符串（openapi WorkspaceEnvironment.storageBackend {type: string}），
+ *   实现只有一个值 host_directory（CP V1__init_schema.sql:61 的 CHECK 只允许它）；
+ * - storageMode 是 enum direct_attach|managed_import（openapi 同处）。
+ * ⇒ 一律走标签映射，未知值回落「未知」类文案，**绝不**把原值透传给用户
+ * （原文透传就是本缺陷本体：真实数据字段会在页面上变成英文标识符）。
+ */
+function storageBackendLabel(value: string): string {
+    switch (value) {
+        case "host_directory":
+            return t("workspace.hostDirectory");
+        default:
+            return value
+                ? t("workspace.environmentBackendUnknown")
+                : t("workspace.environmentValueNone");
+    }
+}
+function storageModeLabel(value: string): string {
+    switch (value) {
+        case "direct_attach":
+            return t("workspace.directAttach");
+        case "managed_import":
+            return t("workspace.managedImport");
+        default:
+            return value
+                ? t("workspace.environmentStorageModeUnknown")
+                : t("workspace.environmentValueNone");
+    }
+}
+const storageBackendText = computed(() =>
+    storageBackendLabel(String(environment.value?.storageBackend ?? "")),
+);
+const storageModeText = computed(() =>
+    storageModeLabel(String(environment.value?.storageMode ?? "")),
+);
+/**
+ * managed_import 固定绑 Docker 执行后端，而该后端已冻结（PLAN-0618 完全冻结）
+ * ⇒ 换词之外还要给一句「为什么不可用」，否则「托管副本」看起来像个正常选项。
+ */
+const storageModeFrozen = computed(() => environment.value?.storageMode === "managed_import");
+
 async function loadEnvironment() {
     const id = workspaceId.value;
     if (!id) {
@@ -634,13 +676,24 @@ onBeforeUnmount(stopPolling);
                                 <dt class="text-muted-foreground">
                                     {{ t("workspace.environmentFieldBackend") }}
                                 </dt>
-                                <dd>{{ environment.storageBackend }}</dd>
+                                <dd data-testid="workspace-environment-storage-backend">
+                                    {{ storageBackendText }}
+                                </dd>
                             </div>
                             <div class="flex justify-between gap-4">
                                 <dt class="text-muted-foreground">
                                     {{ t("workspace.environmentFieldStorageMode") }}
                                 </dt>
-                                <dd>{{ environment.storageMode }}</dd>
+                                <dd data-testid="workspace-environment-storage-mode">
+                                    {{ storageModeText }}
+                                    <p
+                                        v-if="storageModeFrozen"
+                                        data-testid="workspace-environment-storage-mode-frozen"
+                                        class="mt-1 text-xs text-muted-foreground"
+                                    >
+                                        {{ t("workspace.managedImportFrozen") }}
+                                    </p>
+                                </dd>
                             </div>
                             <div class="flex justify-between gap-4">
                                 <dt class="text-muted-foreground">
