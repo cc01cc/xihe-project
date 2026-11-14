@@ -430,8 +430,19 @@ run = "node scripts/mise/run-posix.mjs scripts/mise/integration-test-t3.sh"
 description = "Run T3 cross-module real integration tests (requires Docker)"
 alias = "test:integration:t3"
 
+[tasks."check:config-schema"]
+# task-101：两个 schema 生成器的 --check 漂移门此前**零自动入口**（mise.toml 与 packages/ui/package.json
+# grep 均 0 命中）⇒ 生成物漂移只能等全量 test:unit 才红。实证：31e4509ea（02:48）改了
+# config-schemas/agent-runtime.json 而没重生成，configSchemaCatalog.spec 3 条 + schemaCatalog.spec 1 条
+# 红了整整 3 小时（02:48→05:35）无人发现。实测两次 --check 合计 124 ms ⇒ 并入 lint 聚合无成本压力。
+# 覆盖：生成物 ↔ CP config-schemas 是否一致（两个生成物各自比对文本）；不覆盖：mockValues 取值覆盖
+# （那是 task-127 禁占位门）、也不点名「哪个 schema 字段变了」（只点名漂移的产物 + 重生成命令）。
+run = "node packages/ui/scripts/gen-config-schema.mjs --check && node packages/ui/scripts/gen-mock-schema-catalog.mjs --check"
+description = "配置 schema 生成物漂移门（task-101）：configSchemaCatalog.ts / schema-catalog.ts 与 CP config-schemas 不一致 ⇒ exit 1 点名产物"
+alias = "check:config-schema"
+
 [tasks.lint]
-depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts"]
+depends = ["lint:ui", "lint:agent", "lint:cp", "lint:runtime", "lint:log-secrets", "lint:i18n", "lint:scripts", "check:config-schema"]
 description = "Run all linters"
 alias = "lint"
 
