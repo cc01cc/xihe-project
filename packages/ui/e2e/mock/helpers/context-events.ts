@@ -209,7 +209,6 @@ export async function pushWorkspaceEvent(page: Page, name: string, data: unknown
     );
 }
 
-
 /**
  * 会话聊天流（`GET /api/v1/events?sessionId=…`，见 `useSSE.ts:821`）的**长连接**桩 —— task-62。
  *
