@@ -59,6 +59,16 @@ public class WorkspaceService {
     private static final String DEFAULT_EXECUTION_MODE = "docker";
 
     private final WorkspaceRepository workspaceRepository;
+    /** task-575: workspace creation is audited once per creation, under this action name. */
+    static final String AUDIT_WORKSPACE_CREATED = "workspace_created";
+
+    /** task-575: resource type for the {@code workspace_created} row (matches {@code workspace_deleted}). */
+    static final String RESOURCE_TYPE_WORKSPACE = "workspace";
+
+    /** task-575: fail-open counter — audit writes dropped by {@link #writeCreatedAudit}. */
+    private final java.util.concurrent.atomic.AtomicLong createdAuditFailures =
+            new java.util.concurrent.atomic.AtomicLong();
+
     private final WorkspaceRootRepository workspaceRootRepository;
     private final WorkspaceMembershipService memberships;
     private final WorkspaceExecutionSpecService executionSpecService;
@@ -541,10 +551,40 @@ public class WorkspaceService {
         Workspace registeredWorkspace = workspace;
         List<WorkspaceRoot> registeredRoots = validatedRoots;
         scheduleAfterCommit(() -> pushWorkspaceRegistration(registeredWorkspace, registeredRoots));
+        writeCreatedAudit(ownerId, workspace, storageMode, executionMode, validatedRoots.size());
         logger.info("Workspace created: id={} name={} storageRef={} storageMode={} executionMode={} profile={} image={} roots={}",
                 workspace.getId(), workspace.getName(), workspace.getStorageRef(),
                 storageMode, executionMode, profile, image, validatedRoots.size());
         return workspace;
+    }
+
+    /**
+     * task-575: creating a workspace is a user-facing action that carries an authorization fact (the
+     * creator becomes WS_OWNER through {@code memberships.assign}), so it leaves one durable audit row.
+     *
+     * <p>Fail-open by design: the two audit rules meet here — a record class failure must not become an
+     * availability failure (task-542), and a missing audit path must still be observable (task-548).
+     * So the write never propagates: it increments a counter and logs a greppable event name instead.</p>
+     */
+    private void writeCreatedAudit(String ownerId, Workspace workspace, String storageMode,
+            String executionMode, int rootCount) {
+        try {
+            auditLogger.recordDurableChange(ownerId, workspace.getId().toString(),
+                    AUDIT_WORKSPACE_CREATED, RESOURCE_TYPE_WORKSPACE, workspace.getId().toString(),
+                    "storageMode=" + AuditLogger.escapeField(storageMode)
+                            + "; executionMode=" + AuditLogger.escapeField(executionMode)
+                            + "; rootCount=" + rootCount
+                            + "; name=" + AuditLogger.escapeField(workspace.getName()));
+        } catch (RuntimeException error) {
+            createdAuditFailures.incrementAndGet();
+            logger.warn("[LIFECYCLE] service=cp event=workspace_created_audit_failed workspaceId={} failureType={}",
+                    workspace.getId(), error.getClass().getName());
+        }
+    }
+
+    /** task-575: how many {@code workspace_created} audit writes were dropped (fail-open) since start. */
+    long createdAuditFailureCount() {
+        return createdAuditFailures.get();
     }
 
     private String normalizeStorageMode(String storageMode) {

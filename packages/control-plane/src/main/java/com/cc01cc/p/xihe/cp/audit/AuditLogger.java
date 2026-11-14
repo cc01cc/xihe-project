@@ -247,6 +247,22 @@ public class AuditLogger {
         }
     }
 
+    /**
+     * Durable audit {@code details} is a {@code key=value;} sequence read back with <em>prefix</em>
+     * {@code LIKE} filters, so a user-controlled value must never be able to forge a separator
+     * ({@code ;}), a key boundary ({@code =}), a wildcard ({@code %}) or a line break — anywhere, not
+     * just when an attacker is involved: {@code restored=0} already contains {@code 0}, and a naive
+     * {@code LIKE '%failed%'} filter matched a successful {@code result=rolled_back} row on the real
+     * stack (task-548 / task-575 share this one rule).
+     */
+    public static String escapeField(String value) {
+        if (value == null || value.isBlank()) {
+            return "none";
+        }
+        return value.replace("%", "%25").replace(";", "%3B").replace("=", "%3D")
+                .replace("\r", "%0D").replace("\n", "%0A");
+    }
+
     private static String safeAuditValue(String value) {
         if (value == null) {
             return "unknown";

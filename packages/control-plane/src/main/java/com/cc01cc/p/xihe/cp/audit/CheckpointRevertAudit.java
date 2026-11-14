@@ -100,10 +100,6 @@ public class CheckpointRevertAudit {
      * 字段值统一转义，保证分隔符只在分隔位置出现；筛选只许前缀匹配 {@code LIKE 'result=<v>%'}。
      */
     static String escapeField(String value) {
-        if (value == null || value.isBlank()) {
-            return "none";
-        }
-        return value.replace("%", "%25").replace(";", "%3B").replace("=", "%3D")
-                .replace("\r", "%0D").replace("\n", "%0A");
+        return AuditLogger.escapeField(value);
     }
 }
