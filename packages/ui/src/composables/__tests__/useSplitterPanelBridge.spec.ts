@@ -31,6 +31,12 @@ function mountHost(opts: {
     percentGroup?: Ref<number>;
     /** 关掉 Sidebar 的图标 rail 换算（+56px），让 px/percent 断言保持直观。 */
     identityWidths?: boolean;
+    /**
+     * 是否模拟「layout 已就绪」。默认 true —— 真实的 reka 面板在 layout 初始化后**必发一次
+     * `@resize`**（`utils/callPanelCallbacks.js:14-17`，`lastNotifiedSize == null` 时必调），
+     * 所以挂载完成后桥接层本来就该是就绪态。测「未就绪窗口」时传 false。
+     */
+    ready?: boolean;
 }) {
     const commits: number[] = [];
     const viewport = ref(opts.viewport ?? 1440);
@@ -69,6 +75,7 @@ function mountHost(opts: {
                 handleId: "nav-resize-handle",
             });
             bridge.panelRef.value = panel;
+            if (opts.ready !== false) bridge.onResize(0); // 首帧 @resize：只置就绪，不产生副作用
             return { bridge };
         },
         template: `<div data-testid="group" @keydown.capture="bridge.onKeydownCapture">
@@ -203,5 +210,65 @@ describe("useSplitterPanelBridge — 百分比组（task-94 / B）", () => {
         host.bridge.onDblclick();
         const written = host.panel.resize.mock.calls.at(-1)?.[0] ?? Number.NaN;
         expect(Number.isFinite(written)).toBe(true);
+    });
+});
+
+/**
+ * task-51（D-1442 / 方案 A）：**layout 就绪前的命令式 resize 必须排队**。
+ *
+ * 背景：`SplitterPanel.resize()` 在 layout 未初始化时走 `SplitterGroup.js:315-316` 的
+ * `assert(panelSize != null)` 硬抛；Workbench 在 `:ref` 投递后的 nextTick 里调它 ⇒ 3 条
+ * 未处理的 Promise rejection（spec 全绿但 vitest exit 1）。
+ *
+ * 这两条计数是**不同语义**，不许合并：
+ * - `coalesced` = 排队值被新值取代（**正常**：viewport 连续变化就会发生）；
+ * - `dropped` = 意图消失（异常：卸载时仍有排队 / 面板引用已释放），**正常路径恒 0**。
+ */
+describe("useSplitterPanelBridge — layout 就绪前排队（task-51 / A）", () => {
+    it("未就绪时 resizeToWidth 不碰 reka，也不记任何丢弃", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        host.bridge.resizeToWidth(300);
+        expect(host.panel.resize).not.toHaveBeenCalled();
+        expect(host.bridge.dropped.value).toBe(0);
+        expect(host.bridge.coalesced.value).toBe(0);
+    });
+
+    it("首帧 @resize 到达后补发恰好一次，且用的是排队那笔宽度", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        host.bridge.resizeToWidth(300);
+        host.bridge.onResize(20); // reka 的 layout 初始化信号
+        expect(host.panel.resize).toHaveBeenCalledTimes(1);
+        expect(host.panel.resize).toHaveBeenCalledWith(300);
+        // 就绪之后恢复直通，不再排队
+        host.bridge.resizeToWidth(320);
+        expect(host.panel.resize).toHaveBeenCalledTimes(2);
+        expect(host.panel.resize).toHaveBeenLastCalledWith(320);
+    });
+
+    it("未就绪期间连续两次 ⇒ 合并计 1、丢弃仍 0，补发只发最后一次", () => {
+        const host = mountHost({ width: 240, identityWidths: true, ready: false });
+        host.bridge.resizeToWidth(300);
+        host.bridge.resizeToWidth(320);
+        expect(host.bridge.coalesced.value).toBe(1);
+        expect(host.bridge.dropped.value).toBe(0);
+        expect(host.panel.resize).not.toHaveBeenCalled();
+        host.bridge.onResize(20);
+        expect(host.panel.resize).toHaveBeenCalledTimes(1);
+        expect(host.panel.resize).toHaveBeenCalledWith(320);
+    });
+
+    it("layout 始终没就绪 ⇒ 卸载时记 1 次丢弃并 warn 一次（不静默）", () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const host = mountHost({ width: 240, identityWidths: true, ready: false });
+            host.bridge.resizeToWidth(300);
+            expect(host.panel.resize).not.toHaveBeenCalled();
+            host.wrapper.unmount();
+            expect(host.bridge.dropped.value).toBe(1);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(String(warn.mock.calls[0]?.[0])).toContain("layout 始终未就绪");
+        } finally {
+            warn.mockRestore();
+        }
     });
 });

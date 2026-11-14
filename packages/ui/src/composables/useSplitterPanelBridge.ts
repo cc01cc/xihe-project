@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from "vue";
+import { onBeforeUnmount, ref, watch, type Ref } from "vue";
 
 /**
  * PLAN-0753 T3: integration layer between reka's Splitter primitives and our
@@ -88,7 +88,85 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         return options.sizeUnit ? options.sizeUnit.toPx(size) : size;
     }
 
+    /**
+     * reka 的 layout 何时才算可用：**它自己报过一次尺寸**才为 true。
+     *
+     * <p>依据（vendor 源码，不是我们的假设）：`SplitterGroup.js:202-232` 初始化 layout 后调用
+     * `callPanelCallbacks`，而 `utils/callPanelCallbacks.js:14-17` 在
+     * `lastNotifiedSize == null`（首帧必然如此）时**必调** `onResize` ⇒ 宿主只要绑了
+     * `@resize`（本仓两处消费者都绑了：`WorkspaceWorkbench.vue` 的树面板、
+     * `AppLayout.vue` 的导航面板），首帧就一定有一次就绪信号。</p>
+     *
+     * <p>为什么必须有这道门：`SplitterPanel.resize()` 在 layout 还没初始化时走
+     * `SplitterGroup.js:315-316` 的 `assert(panelSize != null)` **硬抛**（`utils/assert.js:5`），
+     * 在 `:ref` 投递后的 nextTick 里调用它会变成一条未处理的 Promise rejection
+     * （task-51 实测 3 条）。vendor 不提供 `isLayoutReady`，只在文档里写「resize(1-100)」
+     * （`docs/content/meta/SplitterPanel.md`）—— 所以就绪判据只能由我们按上面那条 vendor 事实来定。</p>
+     */
+    let layoutReady = false;
+    /** 排队中的宽度意图：**单槽、后写覆盖**（宽度是绝对值，中间值无意义，绝不 append）。 */
+    let pendingWidth: number | null = null;
+    /**
+     * **合并**计数：排队值被新值取代。这是**正常路径**（viewport 连续变化 / DevTools 开合都会发生），
+     * 所以只计数、不告警，且**不参与**「正常路径恒 0」这条不变量。
+     */
+    const coalesced = ref(0);
+    /**
+     * **真丢弃**计数：意图消失了。只有两条路径 —— ①卸载时仍有排队；②就绪态调用但面板引用已释放。
+     * 正常路径**恒 0**（这是可被测试断言的产品不变量），每条都 `console.warn` 一次（下面门控）。
+     */
+    const dropped = ref(0);
+    /** 一次性告警门控：多次 mount 最坏 N 条 warn，不刷屏。 */
+    let warnedDrop = false;
+
+    function warnDrop(reason: string): void {
+        dropped.value += 1;
+        if (warnedDrop) return;
+        warnedDrop = true;
+        console.warn(
+            "[splitter-bridge] " +
+                options.handleId +
+                ": " +
+                reason +
+                "；本次宽度变更被丢弃（累计 " +
+                dropped.value +
+                " 次）",
+        );
+    }
+
+    /**
+     * 唯一真正调用 reka 的地方。
+     *
+     * <p>收敛之前这条调用散在 4 处（`resizeToWidth` / 键盘 / 双击 / viewport watcher），
+     * 修一个 bug 要同时想到 4 个入口 —— 收敛成一条路之后，「什么时候允许调 reka」只需要在这里判。</p>
+     *
+     * <p>**不判 `isCollapsed`**：三个调用方各自已判（`onDblclick` / `onKeydownCapture` /
+     * viewport watcher 都先 `return`），在这里再判会把「折叠态本来就不该 resize」记成丢弃，
+     * 反而污染 `dropped` 的不变量。</p>
+     */
+    function applyResize(width: number): void {
+        const panel = panelRef.value;
+        if (!panel) {
+            warnDrop("面板引用已释放");
+            return;
+        }
+        const px = widthToPx(width);
+        panel.resize(options.sizeUnit ? options.sizeUnit.fromPx(px) : px);
+    }
+
+    /** 首帧尺寸到达 ⇒ layout 已初始化，把排队的那一笔补上（只有这一笔）。 */
+    function markLayoutReady(): void {
+        if (layoutReady) return;
+        layoutReady = true;
+        const queued = pendingWidth;
+        pendingWidth = null;
+        if (queued !== null) applyResize(queued);
+    }
+
     function onResize(size: number): void {
+        // 就绪信号必须在 draggingActive 早退**之前**接上：非拖拽期的首帧 @resize 正是 layout
+        // 初始化那一次，放在后面就永远等不到就绪（实测：放后面时排队永不 flush）。
+        markLayoutReady();
         if (!draggingActive) return;
         // reka 的 @resize 就是它自己对这一帧的最终值（px 组=像素、% 组=百分比，都已过约束夹取），
         // 因此 release 沿用它即可 —— 不再回读 getSize()。BL-562 的根因就在这里：
@@ -145,8 +223,14 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
     }
 
     function resizeToWidth(width: number): void {
-        const px = widthToPx(width);
-        panelRef.value?.resize(options.sizeUnit ? options.sizeUnit.fromPx(px) : px);
+        if (!layoutReady) {
+            // 覆盖不是「合并」：上一笔意图还没落地就被新值取代 —— 对宽度语义无害（绝对值），
+            // 但它**不是丢弃**（意图被更新仍是意图），所以进 coalesced 而不进 dropped。
+            if (pendingWidth !== null) coalesced.value += 1;
+            pendingWidth = width;
+            return;
+        }
+        applyResize(width);
     }
 
     function onDblclick(): void {
@@ -172,14 +256,26 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
             if (draggingActive || options.isCollapsed?.()) return;
             // Ruling ③: constraint/viewport crossings re-initialize defaultSize;
             // re-issue the user's width clamped for display, never committed.
-            const display = displayResize(options.currentWidth(), vw);
-            panelRef.value?.resize(widthToPx(display));
+            // 收敛到 resizeToWidth：viewer 变化同样要考虑「layout 还没就绪」的窗口，
+            // 且它在 percent 组里必须走 sizeUnit 换算（原先直接传 px，percent 组会写成 px）。
+            resizeToWidth(displayResize(options.currentWidth(), vw));
         });
     }
+
+    // 卸载时还有排队 ⇒ 意图消失（不是合并），必须响亮地记一次再清槽。
+    onBeforeUnmount(() => {
+        if (pendingWidth === null) return;
+        pendingWidth = null;
+        warnDrop("layout 始终未就绪，排队的宽度从未生效");
+    });
 
     return {
         panelRef,
         resizing,
+        /** 合并计数（正常路径可 >0，不参与不变量）。 */
+        coalesced,
+        /** 真丢弃计数（正常路径恒 0；测试可直接断言）。 */
+        dropped,
         onResize,
         onDragging,
         onKeydownCapture,
