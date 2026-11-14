@@ -326,7 +326,10 @@ public class WorkspaceAgentController {
         view.put("provenance", provenance);
         // P1-2 defaultGrants: the read-face authorization default grant set (workspace members; the
         // gate is membership, evaluated at the atom layer — no role-name special-case).
-        view.put("defaultGrants", Map.of("readFace", List.of("OWNER", "EDITOR", "VIEWER")));
+        // task-481: the value is the membership marker token, NOT a role-name list. Emitting
+        // [OWNER,EDITOR,VIEWER] here contradicted both this comment and the OpenAPI description,
+        // and nothing consumed it, so the wrong value stayed invisible until a field-level check.
+        view.put("defaultGrants", Map.of("readFace", List.of("workspace-member")));
         view.put("bound", result.bound());
         return view;
     }

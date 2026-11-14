@@ -111,8 +111,12 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
                 "P1-1: the principal grant-row provenance must be non-empty");
         assertTrue(((List<?>) provenance.get("bindingGrantIds")).isEmpty(),
                 "a binding-snapshot cap has no binding grant rows");
-        assertNotNull(((Map<?, ?>) body.get("defaultGrants")).get("readFace"),
-                "P1-2: the read-face default grant set must be present");
+        // task-481：断言不能只问「存在吗」——错值能活下来正是因为只查存在。
+        // 契约（openapi.yaml EffectiveCapView.defaultGrants.readFace）写的是「workspace members
+        // (gate is membership at the atom layer, no role special-case)」⇒ 取值是成员标记 token，
+        // 不是角色名列表。
+        assertEquals(List.of("workspace-member"), ((Map<?, ?>) body.get("defaultGrants")).get("readFace"),
+                "task-481: readFace 必须是成员标记 token，不是 [OWNER,EDITOR,VIEWER] 角色名");
     }
 
     @Test
