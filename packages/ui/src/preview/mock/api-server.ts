@@ -27,7 +27,12 @@ import {
     handleProviderConnectionResource,
     mockModelCatalogResponse,
 } from "./data/providerConnections";
-import { isDeniedPreviewMode, mockPermissionProjection } from "./data/previewPermissions";
+import {
+    isDeniedPreviewMode,
+    isNonAdminPreviewMode,
+    mockAuthCapabilities,
+    mockPermissionProjection,
+} from "./data/previewPermissions";
 import {
     MOCK_ORG_UNITS,
     MOCK_ORG_UNIT_MEMBERS,
@@ -304,11 +309,22 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
 
                 // 会话与权限：真页面只要有 token 就会走这两条。
                 if (path === "/auth/me") {
+                    /**
+                     * task-227 ⑨ 类 H-11 的截图证据通道：`?nonadmin=1` ⇒ 摘掉 `isInstanceAdmin`，
+                     * 让 `SettingsForbiddenView`（403）在 mock 车道上真的可达（默认能力位恒 true 时
+                     * 该视图没有任何路径）。切换判据与 `?denied=1` 同形：从 Referer 读页面查询串。
+                     */
+                    const nonAdmin =
+                        process.env.XIHE_UI_MOCK_NONADMIN === "1" ||
+                        isNonAdminPreviewMode(req.headers.referer);
+                    options.log?.(
+                        `[mock-api] /auth/me → ${nonAdmin ? "non-admin（无 isInstanceAdmin）" : "admin"}`,
+                    );
                     return respond(200, {
                         id: "mock-user",
                         name: "张安",
                         email: "mock@xihe.dev",
-                        capabilities: CAPABILITIES,
+                        capabilities: mockAuthCapabilities(CAPABILITIES, nonAdmin),
                     });
                 }
                 if (path === "/me/permissions") {
@@ -323,10 +339,11 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                     options.log?.(
                         `[mock-api] /me/permissions → ${denied ? "denied（扣留 credential_manage）" : "granted"}`,
                     );
+                    const nonAdmin = isNonAdminPreviewMode(req.headers.referer);
                     return respond(
                         200,
                         mockPermissionProjection({
-                            capabilities: Object.keys(CAPABILITIES),
+                            capabilities: Object.keys(mockAuthCapabilities(CAPABILITIES, nonAdmin)),
                             denied,
                         }),
                     );

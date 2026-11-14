@@ -348,6 +348,51 @@ describe("SettingsSidebar", () => {
         expect(ids.filter((id) => id === "settings-nav-group-primary")).toHaveLength(2);
         wrapper.unmount();
     });
+
+    // task-227 ⑨ 类 H-02（settings-ui-issue-inventory）：滚动交给 vendor `ScrollArea`。
+    // 判据锚 vendor 契约 `data-slot="scroll-area"` 而不是 import 路径 —— 换件就会红。
+    // 同时钉住 `overflow-y-auto` 不在 nav 上：两层滚动容器（ScrollArea viewport + 原生 overflow）
+    // 会让滚动条口径分叉，这正是 H-02 的原始缺陷。
+    it("H-02: 左栏滚动是 vendor ScrollArea，nav 不再自带 overflow-y-auto", async () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("instance", "rag");
+        await flushPromises();
+
+        const nav = wrapper.get('[data-testid="settings-sidebar"]');
+        // 语义容器不变（e2e/规格锚点仍在 nav 上），只换滚动实现
+        expect(nav.element.tagName).toBe("NAV");
+        expect(nav.element.closest('[data-slot="scroll-area"]')).not.toBeNull();
+        expect(wrapper.find('[data-slot="scroll-area-viewport"]').exists()).toBe(true);
+        expect(nav.classes()).not.toContain("overflow-y-auto");
+        // flex 容器职责仍在 nav（内距与组间距是它的事），否则组间节奏会跟着件一起变
+        expect(nav.classes()).toContain("flex");
+        expect(nav.classes()).toContain("min-h-full");
+        wrapper.unmount();
+    });
+
+    // task-227 ⑨ 类 H-08：`truncate` 只是把长标签切掉，信息本身还在 —— 必须能通过 title 取回。
+    // 判据扫**所有**截断标签（层组标题 3 处 + 条目 4 处），不逐个写死：以后新增条目忘了 title 也会红。
+    it("H-08: 每个 truncate 的标签都带非空 title（截断后信息可恢复）", async () => {
+        state.capability = true;
+        state.canManageRoles = true;
+        const wrapper = mountSidebar("instance", "rag");
+        await flushPromises();
+        // 两层同时展开，覆盖 instance / user 两个块；workspace-default 收起态不渲染标签
+        await wrapper.find("#settings-nav-user").trigger("click");
+        await flushPromises();
+
+        const truncating = wrapper.findAll("span.truncate");
+        expect(truncating.length).toBeGreaterThanOrEqual(6);
+        const missing = truncating
+            .filter((el) => !(el.attributes("title") ?? "").trim())
+            .map((el) => el.text());
+        expect(missing).toEqual([]);
+        // title 就是那段被截断的文字本身（不是重复的层级名/空串）
+        const layerTitle = wrapper.get('span[title="实例配置"]');
+        expect(layerTitle.text()).toBe("实例配置");
+        wrapper.unmount();
+    });
 });
 
 function clearCookies() {

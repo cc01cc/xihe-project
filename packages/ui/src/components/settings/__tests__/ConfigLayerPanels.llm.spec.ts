@@ -119,4 +119,23 @@ describe("ConfigLayerPanels llm-provider 域分派（task-284 / D-1140）", () =
         // task-157：连接管理页没有行内字段 ⇒ 次量纲 M=0（不显示），不与「字段」口径混。
         expect(wrapper.emitted("editable-count")?.at(-1)).toEqual([0]);
     });
+
+    // task-227 ⑨ 类 H-04：分区卡不再是手搓 `border rounded-lg` + 灰头 div + 自造 h3，
+    // 改用 vendor `Card` 族。判据锚 vendor 的 data-slot 契约（换件/退回手搓都会红），
+    // 并钉住「换容器不许把标题语义降级」——`CardTitle` 只渲染 div，里层 h3 必须还在。
+    it("H-04: provider-partition 是 vendor Card 族，标题语义仍是 h3", async () => {
+        const wrapper = await mountLlm("instance");
+        const card = wrapper.get('[data-testid="provider-partition"]');
+        expect(card.attributes("data-slot")).toBe("card");
+        expect(card.find('[data-slot="card-header"]').exists()).toBe(true);
+        expect(card.find('[data-slot="card-title"]').exists()).toBe(true);
+        expect(card.find('[data-slot="card-content"]').exists()).toBe(true);
+        // 手搓痕迹清零：修前这里是 `border rounded-lg` + bg-muted/30 的裸 div
+        expect(card.classes()).not.toContain("border");
+        const title = card.get('[data-testid="provider-hub-section-title"]');
+        expect(title.element.tagName).toBe("H3");
+        expect(title.text().length).toBeGreaterThan(0);
+        // 换壳不改内容：ProviderHub 仍在卡体里
+        expect(card.find('[data-testid="provider-hub-stub"]').exists()).toBe(true);
+    });
 });

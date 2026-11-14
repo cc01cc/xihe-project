@@ -84,6 +84,40 @@ export function isDeniedPreviewMode(referer: string | undefined): boolean {
 }
 
 /**
+ * `?nonadmin=1` 判定：演**实例层非管理员**（403 视图 `SettingsForbiddenView` 的真实产品形态）。
+ *
+ * <p>为什么需要这条通道：该视图只在 `capabilities.isInstanceAdmin === false` 时渲染，而 mock 的
+ * 能力位恒为 true ⇒ 它在 mock 车道上**没有任何可达路径**，只能靠单测证明（task-227 ⑨ 类 H-11 的
+ * 截图证据就断在这里）。切换通道与 `?denied=1` 同一形状：产品代码不发参数，mock 层从 Referer
+ * 读页面 URL 的查询串，零产品改动、用户可手动切换。env `XIHE_UI_MOCK_NONADMIN=1` 供脚本化跑批。</p>
+ */
+export function isNonAdminPreviewMode(referer: string | undefined): boolean {
+    if (!referer) return false;
+    let page: URL;
+    try {
+        page = new URL(referer);
+    } catch {
+        return false;
+    }
+    const raw = page.searchParams.get("nonadmin");
+    return raw === "1" || raw === "true";
+}
+
+/**
+ * `/auth/me` 的 capability 投影：非管理员预览下**摘掉 `isInstanceAdmin`**，其余能力位原样保留
+ * （演的是"少一个能力位"，不是"把这个账号降成空集"——后者在 CP 里不存在）。
+ */
+export function mockAuthCapabilities(
+    capabilities: Record<string, boolean>,
+    nonAdmin: boolean,
+): Record<string, boolean> {
+    if (!nonAdmin) return capabilities;
+    const copy = { ...capabilities };
+    delete copy.isInstanceAdmin;
+    return copy;
+}
+
+/**
  * `/me/permissions` 的响应体（`instanceCapabilities` 由调用方传入 —— capability 位在
  * `api-server.ts` 的 `CAPABILITIES`，避免两处各写一份）。
  */

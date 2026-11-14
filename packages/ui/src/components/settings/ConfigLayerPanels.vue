@@ -26,6 +26,7 @@ import { parseLlmProfileValue } from "../../services/llmProviderProfile";
 import { usesOwnCredential } from "./llmProfileNotices";
 import { DOMAIN_LABEL_KEY } from "../../lib/settingsIa";
 import ContextModelOverrides from "./ContextModelOverrides.vue";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import {
     CONTEXT_POLICY_DOMAIN,
     DEFAULTS_KEY,
@@ -832,14 +833,24 @@ async function handleReset(domain: string, key: string) {
              （spec/ui-surfaces.md S1/S3）；旧 ProfilePanel / 层全局参数表单
              退役（组件删除在 T3.6）。 -->
         <template v-if="domain === 'llm-provider'">
-            <div class="border rounded-lg mb-2 overflow-hidden" data-testid="provider-partition">
-                <div class="px-4 py-3 bg-muted/30 space-y-1">
+            <Card class="mb-2 gap-0 py-0" data-testid="provider-partition">
+                <!-- task-227 ⑨ 类 H-04：本卡不再手搓 \`border rounded-lg\` + 灰头 div + 自造 h3，
+                     改用 vendor \`Card\` 族（data-slot=card / card-header / card-title / card-content）。
+                     换的是容器不是版式：\`gap-0 py-0\` 抵掉 Card 自带间距，头/身内距与修前一致 ⇒
+                     页面其余部分（ProviderHub 内容）不动。
+                     \`CardTitle\` 只渲染 div（无 \`as\`）⇒ 标题语义仍由里层 h3 承担，别在换件时降级成纯文本。 -->
+                <CardHeader class="gap-1 bg-muted/30 px-4 py-3">
                     <div class="text-xs font-medium tracking-wide text-muted-foreground">
                         {{ t("settings.providerPartitionKicker") }}
                     </div>
-                    <h3 class="text-base font-semibold" data-testid="provider-hub-section-title">
-                        {{ t("settings.providerPartitionTitle") }}
-                    </h3>
+                    <CardTitle>
+                        <h3
+                            class="text-base font-semibold"
+                            data-testid="provider-hub-section-title"
+                        >
+                            {{ t("settings.providerPartitionTitle") }}
+                        </h3>
+                    </CardTitle>
                     <p class="text-xs text-muted-foreground">
                         {{
                             layer === "instance"
@@ -847,8 +858,8 @@ async function handleReset(domain: string, key: string) {
                                 : t("settings.providerPartitionDesc")
                         }}
                     </p>
-                </div>
-                <div class="px-4 py-3 space-y-3">
+                </CardHeader>
+                <CardContent class="space-y-3 px-4 py-3">
                     <!-- task-284（D-1140）：实例层与用户层挂【同一个】ProviderHub，只由 layer / scope 两个
                          prop 区分 —— D-1140 的判据是「挂的是同一个组件 / 同一套数据流」，不是「长得像」。
                          实例层配置出来的模型属于实例：连接 scope=INSTANCE、配置写 layer=instance；
@@ -867,8 +878,8 @@ async function handleReset(domain: string, key: string) {
                         :meta="configStore.layerMeta[layer]['llm-provider'] || {}"
                         :own-credential-note="llmOwnCredentialNote"
                     />
-                </div>
-            </div>
+                </CardContent>
+            </Card>
         </template>
         <template v-else-if="domain === 'agent-templates'">
             <AgentTemplatesPanel
