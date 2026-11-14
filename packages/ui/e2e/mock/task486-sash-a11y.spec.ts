@@ -54,6 +54,34 @@ async function openWorkbench(
     await expect
         .poll(() => treeWidth(page), { timeout: EXPECT_TIMEOUT_MS })
         .toBe(expectedTreeWidth);
+    // 还要等**主列**稳定：`aria-valuenow` 是「树 / (树+主列)」的占比，主列在挂载后会随
+    // 宿主宽度动画（`transition-[flex-grow] duration-300`）继续变 ⇒ 主列没稳时读到的占比是
+    // 中间帧（实测 67% vs 稳态 31%），方向键后的「占比应变大」会因此判反。
+    await waitForStableGroups(page);
+}
+
+/** 三组几何两次采样一致 ⇒ 稳态（readiness probe，不是 sleep）。 */
+async function waitForStableGroups(page: Page): Promise<void> {
+    await page.waitForFunction(
+        () => {
+            const w = (sel: string): number => {
+                const el = document.querySelector(sel)?.closest(".dv-groupview");
+                return el ? Math.round(el.getBoundingClientRect().width) : -1;
+            };
+            const key = [w('[data-dockview-panel="tree"]'), w('[data-dockview-panel="main"]')].join(
+                "/",
+            );
+            const box = globalThis as { __xh486Stable?: { at: number; key: string } };
+            const now = performance.now();
+            if (!box.__xh486Stable || box.__xh486Stable.key !== key) {
+                box.__xh486Stable = { at: now, key };
+                return false;
+            }
+            return now - box.__xh486Stable.at >= 300;
+        },
+        undefined,
+        { timeout: EXPECT_TIMEOUT_MS, polling: 50 },
+    );
 }
 
 /** 树组宽度（树在 dockview 里的真实几何，不是 store 值）。 */
@@ -62,6 +90,26 @@ async function treeWidth(page: Page): Promise<number> {
         const el = document.querySelector('[data-dockview-panel="tree"]')?.closest(".dv-groupview");
         return el ? Math.round(el.getBoundingClientRect().width) : -1;
     });
+}
+
+/** 主列组宽度（`aria-valuenow` 的占比分母含它 ⇒ 判据要能重算）。 */
+async function mainWidth(page: Page): Promise<number> {
+    return page.evaluate(() => {
+        const el = document.querySelector('[data-dockview-panel="main"]')?.closest(".dv-groupview");
+        return el ? Math.round(el.getBoundingClientRect().width) : -1;
+    });
+}
+
+/** 缝上播报的占比是否等于「树 / (树 + 主列)」—— 播报不撒谎的机器判据。 */
+async function expectValueTracksGeometry(page: Page): Promise<void> {
+    const tree = await treeWidth(page);
+    const main = await mainWidth(page);
+    const expected = Math.round((100 * tree) / (tree + main));
+    const actual = Number(await treeSash(page).getAttribute("aria-valuenow"));
+    expect(
+        Math.abs(actual - expected),
+        `播报值 ${actual}% 与几何 ${expected}% 不一致`,
+    ).toBeLessThanOrEqual(1);
 }
 
 /** 树↔主列那道缝（几何判定：中线落在树组与主列组的交界上）。 */
@@ -169,21 +217,26 @@ test("②b 折叠态仍锁 40px：键盘在那道缝上不改变宽度（rail �
     );
 });
 
-test("③ 方向键让树宽变化，且播报值跟着走", async ({ page }) => {
+test("③ 方向键让树宽变化，且播报值与真实几何一致", async ({ page }) => {
     await openWorkbench(page);
     const sash = treeSash(page);
     const before = await treeWidth(page);
-    const beforeNow = Number(await sash.getAttribute("aria-valuenow"));
-
     await sash.focus();
-    await page.keyboard.press("ArrowRight");
-    const wider = await treeWidth(page);
-    expect(wider, "ArrowRight 应让树变宽").toBeGreaterThan(before);
-    expect(Number(await sash.getAttribute("aria-valuenow"))).toBeGreaterThan(beforeNow);
 
+    await page.keyboard.press("ArrowRight");
+    await expect
+        .poll(() => treeWidth(page), { timeout: EXPECT_TIMEOUT_MS })
+        .toBeGreaterThan(before);
+    // 判据从「播报值应该变大」改成「播报值 == 几何占比」：
+    // 占比的分母是「树 + 主列」，而主列宽度会随布局策略变化（task-497 之后主列不再被压到 100），
+    // 于是「播报值变大」在主列同时变大时可能是**假红**；而「播报值必须等于真实占比」是更强的
+    // 契约（不撒谎），且与主列怎么变无关 —— 这正是 a11y 要保证的东西。
+    await expectValueTracksGeometry(page);
+
+    const wider = await treeWidth(page);
     await page.keyboard.press("ArrowLeft");
-    const back = await treeWidth(page);
-    expect(back, "ArrowLeft 应让树变窄").toBeLessThan(wider);
+    await expect.poll(() => treeWidth(page), { timeout: EXPECT_TIMEOUT_MS }).toBeLessThan(wider);
+    await expectValueTracksGeometry(page);
 });
 
 test("④ Home/End 到 200/320 边界，双击复位回默认宽", async ({ page }) => {

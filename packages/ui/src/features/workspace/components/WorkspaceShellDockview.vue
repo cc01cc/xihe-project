@@ -12,6 +12,8 @@ import DockviewPanelHost from "./DockviewPanelHost.vue";
 import {
     DOCK_TAB_IDS,
     DOCK_WIDTH_DEFAULT,
+    DOCK_WIDTH_MAX,
+    DOCK_WIDTH_MIN,
     TREE_COLLAPSED_WIDTH,
     TREE_WIDTH_DEFAULT,
     TREE_WIDTH_MAX,
@@ -144,6 +146,11 @@ const treeWidth = computed(() =>
 );
 const dockWidth = computed(() => props.dockWidth ?? DOCK_WIDTH_DEFAULT);
 
+/** 产品夹取（PLAN-0582 §1.5-A）：dock 320–480。 */
+function clampDockWidth(width: number): number {
+    return Math.min(DOCK_WIDTH_MAX, Math.max(DOCK_WIDTH_MIN, Math.round(width)));
+}
+
 function ensureMain(api: NonNullable<typeof dockApi.value>): void {
     if (api.getPanel(MAIN_PANEL_ID)) return;
     api.addPanel({ id: MAIN_PANEL_ID, component: MAIN_PANEL_ID, title: "" });
@@ -166,7 +173,13 @@ function syncDock(api: NonNullable<typeof dockApi.value>): void {
             id,
             component: id,
             title: props.labels[id] ?? id,
-            initialWidth: !toCenter && id === anchor ? dockWidth.value : undefined,
+            initialWidth: !toCenter && id === anchor ? clampDockWidth(dockWidth.value) : undefined,
+            // task-497：dock 组此前**没有任何约束**，库会把剩下的空间全给它（实测 818px / 宿主 1158，
+            // 主列只剩 100）。下限取产品夹取下界 320，上限取「持久值且不超 480」：
+            // 实测只给 320–480 全区间时库会取上限 480（主列 438），把上限收到目标值后
+            // 库把余量还给主列（360 ⇒ 主列 558）。640 底线与让位顺序属 task-504，不在这里做。
+            minimumWidth: toCenter ? undefined : DOCK_WIDTH_MIN,
+            maximumWidth: toCenter ? undefined : clampDockWidth(dockWidth.value),
             position: toCenter
                 ? { direction: "left", referencePanel: MAIN_PANEL_ID }
                 : id === anchor
