@@ -97,8 +97,7 @@ const messages = {
             membersEmpty: "该单元没有成员。",
             membersLoading: "正在加载成员…",
             membersError: "成员列表加载失败",
-            writeHint:
-                "写操作（新建/改名/移动单元、增删成员、改角色）随 PLAN-0773 M3-3 批次开放，当前为只读预览。",
+            writeHint: "写操作（新建/改名/移动单元、增删成员、改角色）尚未开放，当前为只读预览。",
             writeNewUnit: "新建子单元",
             writeRename: "改名",
             writeMove: "搬移",
@@ -993,6 +992,9 @@ const messages = {
             membersPageDesc: "管理本工作区的成员：按用户名添加、调整角色或移除。",
             // PLAN-0773 M4-1（task-190）：工作区「配置」tab —— 按**本工作区**的层读写（直连既有端点）。
             settingsTabConfig: "配置",
+            // D-1432 / task-41：搬回来的两个资源页签（只承载「本工作区」层）。
+            settingsTabMcp: "本工作区 MCP",
+            settingsTabSkills: "本工作区技能",
             settingsConfigLoading: "正在加载本工作区的配置…",
             settingsConfigLoadFailed: "本工作区配置加载失败",
             settingsConfigLoadFailedHint: "稍后可重试；这次失败已显式呈现，没有被忽略。",
@@ -1684,6 +1686,14 @@ const messages = {
             navGroup: "资源",
             // 资源模块的中性名（左栏与页面标题共用）；层内名（如「平台智能体」）留给 tab。
             nameAgents: "智能体",
+            // D-1432 / task-41：MCP 与技能的「本工作区」层搬回工作区设置后，资源区的指路文案。
+            // 语义与 D-1023 的反向一致：不 404、不静默跳走 —— 说明搬到哪了 + 一条直链。
+            workspaceLayerMovedTitle: "这项资源的「本工作区」层已迁到工作区设置",
+            workspaceLayerMovedBody:
+                "「{name}」的本工作区层现在在工作区设置里管理；资源区只保留平台与个人层。",
+            workspaceLayerMovedAction: "打开工作区设置",
+            workspaceLayerMovedNoWorkspace: "先在左侧选择一个工作区，再从该工作区的设置页进入。",
+            workspaceLayerMovedInlineHint: "以下资源的「本工作区」层已迁到工作区设置：",
             // 技能「本工作区」层只读面板（Lead 裁定一：读面补上，写面如实写明未接线）。
             workspaceSkillsTitle: "本工作区技能",
             workspaceSkillsCount: "{count} 个",
@@ -3705,7 +3715,7 @@ const messages = {
             membersLoading: "Loading members…",
             membersError: "Failed to load members",
             writeHint:
-                "Write actions (create/rename/move units, add/remove members, change roles) open in PLAN-0773 M3-3 — read-only preview.",
+                "Write actions (create/rename/move units, add/remove members, change roles) are not available yet — read-only preview.",
             writeNewUnit: "New sub-unit",
             writeRename: "Rename",
             writeMove: "Move",
@@ -4624,6 +4634,8 @@ const messages = {
             membersPageDesc:
                 "Manage this workspace's members: add by username, change roles, or remove.",
             settingsTabConfig: "Configuration",
+            settingsTabMcp: "Workspace MCP",
+            settingsTabSkills: "Workspace skills",
             settingsConfigLoading: "Loading this workspace configuration…",
             settingsConfigLoadFailed: "Failed to load this workspace configuration",
             settingsConfigLoadFailedHint:
@@ -5348,6 +5360,15 @@ const messages = {
         resources: {
             navGroup: "Resources",
             nameAgents: "Agents",
+            workspaceLayerMovedTitle:
+                "The workspace layer of this resource moved to workspace settings",
+            workspaceLayerMovedBody:
+                "The workspace layer of {name} is now managed in workspace settings; the resources module keeps only the platform and personal layers.",
+            workspaceLayerMovedAction: "Open workspace settings",
+            workspaceLayerMovedNoWorkspace:
+                "Pick a workspace on the left, then open that workspace's settings.",
+            workspaceLayerMovedInlineHint:
+                "The workspace layer of these resources moved to workspace settings:",
             workspaceSkillsTitle: "Workspace skills",
             workspaceSkillsCount: "{count} total",
             workspaceSkillsSubtitle:
