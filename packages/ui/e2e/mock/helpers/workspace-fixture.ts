@@ -1,4 +1,5 @@
 import type { Route } from "@playwright/test";
+import { recordFixtureHint } from "./fixture-hints";
 
 /**
  * task-59：`GET /api/v1/workspaces/{id}` 的**唯一来源**。
@@ -16,6 +17,29 @@ import type { Route } from "@playwright/test";
  * ## 这个来源能证明什么、不能证明什么（D-1185）
  * 能：UI 能从一份**形状完整**的信封里正确读出 `roots` 并归一化。
  * 不能：真实 CP 返回的信封就是这 14 个字段 —— 后者归真栈窗口与 PLAN-0763 A+ 生成腿。
+ *
+ * ## 自造 id 的 spec 必须自补桩（task-118 / 2026-11-15）
+ *
+ * `KNOWN_WORKSPACE_IDS` 是**封闭表**（`D-1178`：泛化匹配会让 mock 车道永远验不了「访问不存在的工作区 ⇒ 404」）。
+ * 所以 spec 若用一个**自己编的** workspace id，`GET /api/v1/workspaces/<id>` 会**静默 404**，
+ * 而 404 的后果离报错点很远：`stores/auth.ts#hydrateWorkspace` 的 catch 会清掉页签上下文 ⇒ 工作区为 null
+ * ⇒ 页面不渲染 ⇒ 一片连锁红（实测形状：`task-75` 的 `approval.spec.ts` 23 条红全红在 `chat-input` 找不到，
+ * 每条另带 2 条 console 404）。**自补桩的最小形态**（形状仍由本文件的 `workspaceWire()` 单点供给）：
+ *
+ * ```ts
+ * const pattern = "**" + "/api/v1/workspaces/" + CUSTOM_ID;   // glob 故意拆写，理由见下方 ⚠️
+ * await page.route(pattern, (route) =>
+ *     route.fulfill({
+ *         status: 200,
+ *         contentType: "application/json",
+ *         body: JSON.stringify({ workspace: workspaceWire({ id: CUSTOM_ID }) }),
+ *     }),
+ * );
+ * ```
+ *
+ * ⚠️ 本文件是**块注释**：把 glob 的 `**` 与路径的 `/` 直接连写会**提前闭合注释**
+ * （`task-66` 事故族：整条 mock 车道加载失败、`playwright --list` 归零）。上面的 `"**" + "/api/…"`
+ * 是故意拆开的，别"顺手整理"成一行。
  */
 
 /** wire 字段清单与 `src/composables/api.ts` 的 `WORKSPACE_WIRE_FIELDS` 同序同集合。 */
@@ -97,12 +121,20 @@ export async function fulfillWorkspaceDetail(
     options: WorkspaceDetailOptions = {},
 ): Promise<void> {
     if (!(KNOWN_WORKSPACE_IDS as readonly string[]).includes(requestedId)) {
+        // task-118 ②：404 **必须自解释**。否则红点只会出现在「页面为什么没渲染」那一层
+        // （`task-75`：23 条红全红在 `chat-input` 找不到），而真因是夹具没有这个工作区。
+        // 语义不变：状态码仍 `404`（可被 `unknownIdStatus` 覆盖）、`code` 仍 `WORKSPACE_NOT_FOUND`，
+        // 只是在 `detail` 末尾追加一句可读原因，并把同一句登记给 `page-failures.ts` 的 `>=400` 通道。
+        const hint =
+            "mock 夹具：该 id 不在 KNOWN_WORKSPACE_IDS（D-1178 只让登记过的 id 存在），本 spec 也未自补桩；" +
+            "自造 id 必须自补桩 —— 见 helpers/workspace-fixture.ts 头注释「自造 id 的 spec 必须自补桩」";
+        recordFixtureHint(route.request().url(), `WORKSPACE_NOT_FOUND: ${hint}`);
         await route.fulfill({
             status: options.unknownIdStatus ?? 404,
             contentType: "application/problem+json",
             body: JSON.stringify({
                 code: "WORKSPACE_NOT_FOUND",
-                detail: `No workspace ${requestedId}`,
+                detail: `No workspace ${requestedId}（${hint}）`,
             }),
         });
         return;
