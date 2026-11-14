@@ -578,3 +578,15 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - 契约：`spec/session/user-channel.md` §4/§6a（含 §6a.5 读面惰性 settle）、`spec/protocol/event-stream.md` §4；wire 以 `docs/api/openapi.yaml` 为准。**已知漂移（T5.25 对账，未改代码）**：`first_delivered_at` 无写点（恒 NULL）。
 
 （en 侧暂无本文档：`docs/i18n/en/` 下无 `DEV-014` 对应文件。）
+
+## 配置域权威与新增域流程（2026-11-15 从 `AGENTS.md` 下沉）
+
+合法配置域集合的**权威是 `ConfigService.DOMAINS`（14 域）**，`ConfigController.getConfig` 按它判 `INVALID_DOMAIN`；**schema 文件集合不是权威**（`ConfigDomainSchema.getSupportedDomains()` 无消费者）。
+
+- 13 个域挂 `classpath:config-schemas/*.json`（`ConfigDomainSchema` 启动加载：json 承载每域字段结构，并供 `ConfigService.candidateKeys` 推导可锁键）。
+- **`api-request-templates` 没有 schema 文件**，由 `ApiRequestTemplateService` 整域承载 —— `ConfigService.putLayerInternal` 对该域**整域转发**给它（KEYS 白名单 + 自有校验），`validateBySchema` 接不到这个域；schema 是**可选**的，无 schema 的域在 `validateBySchema` 显式放行。
+- OpenAPI 侧 `{domain}` 参数是 `{ type: string }`，**没有域名 enum**。
+
+**新增域 = 在 `DOMAINS` 登记 +（若走通用校验）加一份 schema + 同批更新机器门**。机器门 `ConfigDomainSchemaCoverageTest`（task-384）：断言「`DOMAINS` \ schema 文件名 == `{api-request-templates}`」且该例外域**不能经通用路径写入任意键**（转发一旦丢失即红）。
+
+**更正留痕（task-381/384）**：旧表述「集合由 schema 决定」「yaml 用 enum 声明同一集合」「另设一道 enum==schema 的门」三处均与事实不符 —— 那道门当时并不存在。

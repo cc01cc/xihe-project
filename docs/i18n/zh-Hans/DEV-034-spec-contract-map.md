@@ -100,3 +100,22 @@ tags:
 - [DEV-030](DEV-030-documentation-layout-and-frontmatter.md)：文档归属与 frontmatter 规范（本页遵守它）。
 - `spec/README.md`：项目级 SPEC 入口（本页不替代 SPEC，只标注哪类契约的 SPEC/正文在哪）。
 - [DEV-018](DEV-018-known-issues.md)：Known Issues 入口；② 的 payload 正文档缺口**不**登记在那里（那是缺陷台账，这是文档缺口），本页 §3.2 就是它的登记处。
+
+## 8. `RouteContractParityTest` 豁免规则（task-9；2026-11-15 从 `AGENTS.md` 下沉）
+
+守的是 **contract ↔ code** 这一轴：它用 live `RequestMappingHandlerMapping` 与 `docs/api/openapi.yaml` 对比，产出五类读数 `implemented / documented / missing / extra / unexpected`。**两侧 `unexpected` 必须为 0** —— 新增路由未登记契约即红，不是警告。
+
+四张豁免表（missing 侧两张、extra 侧两张）**只认字面量条目，禁止正则扫描**（正则会让「暂时没文档」被批量洗白）：
+
+| 豁免表 | 收纳（哪一侧） | 每条注释必须写清 |
+| --- | --- | --- |
+| `EXEMPT_IMPLEMENTED` | missing 侧：框架/容器/springdoc 自行注册、永不面向客户端的路由（如 `/v3/api-docs`、`/error`） | 「谁注册的」+ 其消费者不存在（**不是**「暂时没文档」） |
+| `EXEMPT_DOCUMENTED` | extra 侧：**另一服务**实现的路径（契约横跨全平台：runtime 的 `/internal/v1/runtime/**`、agent 的 `/internal/v1/agent/**`），以及少数被设计保留的写法 | 「哪个服务 / 哪种设计」，跨服务须点名该服务包 |
+| `KNOWN_GAPS` | missing 侧的**存量缺口**，逐条冻结；自清洁（补进契约后须同步删除条目，测试断言集合相等） | 缺口归属与批次；**不得把新缺口塞进来** |
+| `PLANNED_APIS` | extra 侧：**契约已登记但实现待建**的计划内路径（D-932） | 实现批次与预期窗口；**不得收纳「忘了实现」** |
+
+`KNOWN_GAPS` 与 `PLANNED_APIS` 方向相反（前者=已建未登记，后者=登记未建）、生命周期也相反（`PLANNED_APIS` 随契约变更同批加入、代码落地即删）。
+
+**实测读数（2026-11-13，`develop 542217e1d`，`mvn test -Dtest=RouteContractParityTest`，窗口 `VW-20261113-02`）**：`implemented=289 documented=347`；missing `total=5 framework=5 frozen-gap=0 unexpected=0`；extra `total=63 cross-service/kept-by-design=59 frozen-gap=0 planned=4 unexpected=0`；`param-name-exempt=0`。两侧 `unexpected` 均为 0。
+
+**旧读数留痕（已过期，勿引用）**：2026-11-11 `develop 5da8cc2dd` 时为 `implemented=219 documented=270`、extra `total=56`；两天内契约面涨到 **347** operations（`docs/api/inventory.generated.md` 自述行）⇒ 引用旧数会得出「缺口 77 条」的假结论。同形读数的入库证据（本窗输出与其逐字符相同）：`internal/A03-xihe/evidence/2026-11-12-parity-rerun/README.md`。

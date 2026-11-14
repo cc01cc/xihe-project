@@ -100,3 +100,22 @@ A document that **freezes, field by field**, the six session events `token` / `t
 - [DEV-030](DEV-030-documentation-layout-and-frontmatter.md): document ownership and frontmatter rules (this page follows it).
 - `spec/README.md`: project-level SPEC entry (this page does not replace SPEC; it states which SPEC/body owns which contract class).
 - [DEV-018 (zh)](../zh-Hans/DEV-018-known-issues.md): Known Issues entry; the missing payload body in ② is **not** registered there (that is a defect ledger — this is a documentation gap), and §3.2 here is its registration point.
+
+## 8. `RouteContractParityTest` exemption rules (task-9; moved here from `AGENTS.md` on 2026-11-15)
+
+This guards the **contract ↔ code** axis: it diffs the live `RequestMappingHandlerMapping` against `docs/api/openapi.yaml` and reports five classes `implemented / documented / missing / extra / unexpected`. **`unexpected` must be 0 on both sides** — a new route without a contract entry is red, not a warning.
+
+Exemptions are **literal entries only; regex scanning is forbidden** (regex would whitewash “no docs yet” in bulk):
+
+| Exemption table | Scope (which side) | What each entry's comment must state |
+| --- | --- | --- |
+| `EXEMPT_IMPLEMENTED` | missing side: routes registered by the framework/container/springdoc that never face clients (e.g. `/v3/api-docs`, `/error`) | who registers it + that no consumer exists (**not** “no docs yet”) |
+| `EXEMPT_DOCUMENTED` | extra side: paths implemented by **another service** (the contract spans the platform: runtime `/internal/v1/runtime/**`, agent `/internal/v1/agent/**`) plus a few kept-by-design forms | which service / which design; cross-service entries must name that service package |
+| `KNOWN_GAPS` | missing side: **existing** gaps, frozen one by one; self-cleaning (remove the entry once documented — the test asserts set equality) | gap owner and batch; **never add new gaps here** |
+| `PLANNED_APIS` | extra side: contract-registered paths whose implementation is pending (D-932) | implementation batch and expected window; **never park “forgot to implement” here** |
+
+`KNOWN_GAPS` and `PLANNED_APIS` point in opposite directions (implemented-but-undocumented vs documented-but-unimplemented) and have opposite lifecycles (`PLANNED_APIS` entries arrive with the contract change and are deleted when the code lands).
+
+**Measured reading (2026-11-13, `develop 542217e1d`, `mvn test -Dtest=RouteContractParityTest`, window `VW-20261113-02`)**: `implemented=289 documented=347`; missing `total=5 framework=5 frozen-gap=0 unexpected=0`; extra `total=63 cross-service/kept-by-design=59 frozen-gap=0 planned=4 unexpected=0`; `param-name-exempt=0`. Both sides `unexpected=0`.
+
+**Superseded reading (do not cite)**: on 2026-11-11 `develop 5da8cc2dd` it was `implemented=219 documented=270`, extra `total=56`; the contract surface grew to **347** operations within two days (`docs/api/inventory.generated.md` self-report line) ⇒ citing the old numbers yields the false conclusion “77 gaps”. The committed evidence byte-identical to this window's output: `internal/A03-xihe/evidence/2026-11-12-parity-rerun/README.md`.

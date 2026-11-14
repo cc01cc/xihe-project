@@ -163,6 +163,10 @@ updated: 2026-10-25
 
 「完全冻结」= **产品面 + 测试面 + 默认值三面一起冻，解冻时一起解冻**（与此前 2026-10-31 的"产品面冻结、测试面豁免"不同，后者已 supersede）。
 
+**历史口径留痕（2026-11-15 从 `AGENTS.md` 下沉；均已 supersede，勿作现状引用）**：2026-10-25 曾记为「Docker 执行后端代码内部同样冻结——可继续使用但不做功能修复」；另有两条曾被当真：~~「工作区 Docker 执行后端不受冻结影响，`managed_import` 仍以 docker 为唯一执行后端，默认新建工作区继续使用它」~~ 与 ~~「`test:e2e:host` 是本条唯一豁免」~~ —— 两者均被 **2026-10-31 裁定**收紧、并被 **2026-11-01 PLAN-0618** 完全冻结取代（**不存在「唯一豁免车道」**）。
+
+**若确需改 Docker 分支代码**（`backend.rs` / `container_runtime.rs` / `executor.rs` 的 Docker 分支 / `environment.rs` / `sandbox/`）：descope 该子任务并另立计划，不在冻结期内顺手改。`xihe/workspace:latest` 的镜像供给**不再是产品首用前置**。
+
 | 面 | 冻结后的行为 | 依据 |
 |---|---|---|
 | **默认值** | `storageMode` **无默认值**：`POST /api/v1/workspaces` 缺该字段 → `400 INVALID_REQUEST`（指向 `direct_attach`）；DTO/实体/环境视图的兜底值统一为 `direct_attach`；枚举值 `managed_import` **保留**（解冻要用），只改默认 | PLAN-0618 M2 决策 #7/#8 |
