@@ -562,6 +562,10 @@ function leaseSummary(state) {
     unverifiable: state.checks.unverifiable,
     skipped: state.checks.skipped,
     allOk: state.checks.allOk,
+    // task-586：记录过期（不是故障）时给可执行的下一步，机器与人都读同一行。
+    selfHeal: state.checks.checks.some((check) => check.code === 'lease-incarnation-stale')
+      ? `node scripts/dev-stack.mjs acquire --stack ${derived.stackId.replace(/^stack-/, '')}`
+      : null,
   };
 }
 
@@ -572,9 +576,15 @@ function leaseSummary(state) {
  * 要消灭的那类字段。所以刷新只发生在 `status` 真的核过事实之后，且结果显式出现在输出
  * （`leaseRenewed`）里，不静默改状态。`gc` 是只读口子，绝不写。
  */
-function refreshHeartbeat(state, d = derived) {
-  if (!state.lease || state.checks.mismatches.length > 0 || state.checks.unverifiable.length > 0) return false;
-  if (state.verdict.verdict !== 'healthy') return false;
+function refreshHeartbeat(state, { factsOk = false, d = derived } = {}) {
+  if (!state.lease) return false;
+  // task-586（Lead 2026-11-14 裁 A）：准入从「**字段相符**」改成「**事实核过**」。
+  // 旧口径要求 mismatches 为空 ⇒ 任何一次合法的单服务重启（旧 pids/cpVersion 必然不符）都会让心跳
+  // 永不刷新 ⇒ `lease-cold` 永久 + 每次 status 都 exit 1 = 自锁。租约字段是否过期是**另一个维度**，
+  // 由 verdict/reasons 表达；心跳只回答「这栈最近一次真的活着、而且有人核过吗」。
+  if (!factsOk) return false;
+  // 核不了（没有探活手段）不算核过：那时连事实都没有，续租等于把 unknown 记成 known。
+  if (state.checks.unverifiable.length > 0) return false;
   return renewLease({ projectRoot, stackId: d.stackId }).renewed;
 }
 
@@ -583,7 +593,11 @@ function coldLeaseHint({ leaseState, ageMs }) {
   if (leaseState !== 'cold' || !Number.isFinite(ageMs)) return null;
   const ageMin = Math.round(ageMs / 60000);
   const ttlMin = Math.round(DEFAULT_STALE_AFTER_MS / 60000);
-  return `P3 lease-cold  ${ageMin}min > ${ttlMin}min：这段时间没人跑过一次交叉核对（不是故障，不影响 verdict/退出码；跑一次 status 全绿即自动续租）`;
+  return (
+    `P3 lease-cold  ${ageMin}min > ${ttlMin}min：这段时间没有一次「事实核过」的核对（不是故障，不影响 verdict/退出码）。` +
+    `自动续租的准入是**独立事实全绿**（端口在听 + HTTP 就绪 + PG 在，不看记录里的 pid）；事实不绿时不会续 —— 那时先修事实，` +
+    `租约字段过期另算（那是 P2 lease-incarnation-stale，跑 acquire 自愈）`
+  );
 }
 
 /** 把租约核对结果打成人类可读的几行（非 --json 输出）。 */
@@ -602,6 +616,15 @@ function printLease(state, { indent = '  ' } = {}) {
   for (const check of state.checks.checks) {
     if (check.code === 'ok' || check.code === 'skipped' || check.code === 'lease-cold') continue;
     console.log(`${indent}  ${check.code.padEnd(22)} ${check.field} expected=${JSON.stringify(check.expected)} actual=${JSON.stringify(check.actual)}`);
+  }
+  // task-586：`lease-incarnation-stale` 的同族三条已合并成一条（launcher 死 / listener 死 / 端口换人
+  // 在同一次重启下必然同时命中）。读到它别当故障 —— 它是「记录早于现实」，给命令而不是给告警。
+  if (state.checks.checks.some((check) => check.code === 'lease-incarnation-stale')) {
+    const stackNo = derived.stackId.replace(/^stack-/, '');
+    console.log(
+      `${indent}  P2 lease-incarnation-stale  租约记的是**上一代进程**（不是服务故障）` +
+        ` ⇒ 自愈：node scripts/dev-stack.mjs acquire --stack ${stackNo}`,
+    );
   }
   if (state.checks.checks.length > 0 && state.checks.mismatches.length === 0 && state.checks.unverifiable.length === 0) {
     console.log(`${indent}  all ${state.checks.checks.length} lease fields verified`);
@@ -1254,8 +1277,14 @@ async function status() {
   // 否则「租约在但进程死了」只能读成笼统的 "stack is not fully up"（无法归因）。
   const deadServices = deadRecordedServices({ record, services: SERVICES, isAlive: processAlive });
   // PLAN-0694 P0: 租约不许「回显即通过」—— 每个字段都拿独立事实核一遍，核不上就写进 mismatch。
-  const lease = leaseState();
-  const leaseRenewed = refreshHeartbeat(lease);
+  let lease = leaseState();
+  // task-586：续租准入用**独立事实**（端口在听 + HTTP 就绪 + PG 在），**不看记录里的 pid** ——
+  // 记录里的 pid 正是 incarnation-stale 要报的东西；把两者混在一起，「记录过期」就会把心跳一起冻住，
+  // 那是自锁的另一半（旧代码在这里用 factsOk，而 factsOk 由 pid 记录推出 ⇒ 重启后永远续不上）。
+  const liveFactsOk = rows.every((row) => row.listening && row.ready) && pgListening;
+  const leaseRenewed = refreshHeartbeat(lease, { factsOk: liveFactsOk });
+  // 续租后重读一次：否则同一屏里「已刷新」与「心跳=旧值 / state=cold」自相矛盾。
+  if (leaseRenewed) lease = leaseState();
   // `healthy` 的必要条件：事实（进程活 + 端口听 + PG 在）+ 全部租约字段核对通过。
   const ok = factsOk && lease.checks.allOk;
   const cpBuild = cpBuildFor(projectRoot);

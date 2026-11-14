@@ -92,6 +92,16 @@ const STACK_ID_RE = /^stack-(\d+)$/;
 const NON_BLOCKING_CODES = new Set(['ok', 'skipped', 'unverifiable', 'lease-cold']);
 
 /**
+ * **信息项**（task-586 / Lead 2026-11-14 裁 A）：不拦 healthy、不进 `mismatches`，但仍逐字段核对并打印。
+ *
+ * 目前只有 `cp-version-mismatch`：dev 期 CP 每次重建都换 build 戳，所以「租约声明的 commit ==
+ * 现在跑的 commit」在活跃开发下**永远为假** ⇒ 一个恒真的阻塞项必然被绕过（`D-1410`）。
+ * 它原本想防的「以为在测新代码，其实跑的是旧构建」改由 `cpBuild`（运行戳 vs HEAD）承担 ——
+ * 那才是能区分真假且不会恒真的判据。
+ */
+export const INFORMATIONAL_CODES = new Set(['cp-version-mismatch']);
+
+/**
  * 「租约已冷」的核对码：**信息项**，既不算 mismatch 也不拦 healthy。
  * 心跳过期只说明「这段时间没人做过交叉核对」，不是事实故障（见文件头「冷暖是另一个维度」）。
  */
@@ -391,9 +401,9 @@ function normalizeListeners(listeners) {
  *   - `heartbeatAt` / `startedAt` —— 心跳新鲜度与时间顺序（自洽 + 不未来）；
  *   - `ports.<svc>` —— 声明端口是否等于当前 `deriveStack()` 的端口；
  *   - `ports.<svc>.bind` —— 该端口是否真的在听（bind 事实）；
- *   - `pids.<svc>.launcher|listener` —— 记录的进程是否还活着；
- *   - `pids.<svc>.owns-port` —— 监听该端口的进程是否就是租约记录的那个（**案例②：launcher 会
- *     fork，pid 变了就是漂移**）；
+ *   - `pids.<svc>` —— 记录的那一代进程是否还在（launcher/listener 死活 + 监听该端口的 pid 是不是
+ *     记录的那个；**案例②：launcher 会 fork，pid 变了就是漂移**）。三项**合成一条**
+ *     `lease-incarnation-stale`（task-586）：同一次重启下它们必然同时命中，按三条报会被读成三个故障；
  *   - `cpVersion` —— 记录的 CP 版本是否等于当前构建戳（声明了核不了 ⇒ `unverifiable`，拦 healthy）；
  *   - `releaseFailed` —— 上一次 stop 是否留了尾巴。
  *
@@ -424,7 +434,7 @@ export function crossCheckLease({ lease = null, facts = {} } = {}) {
   const checks = [];
 
   const record = (field, code, expected, actual) => {
-    checks.push({ field, code, blocking: !NON_BLOCKING_CODES.has(code), expected, actual });
+    checks.push({ field, code, blocking: !NON_BLOCKING_CODES.has(code) && !INFORMATIONAL_CODES.has(code), expected, actual });
   };
   const expectEqual = (field, code, expected, actual) => record(field, expected === actual ? 'ok' : code, expected, actual);
 
@@ -458,15 +468,32 @@ export function crossCheckLease({ lease = null, facts = {} } = {}) {
       record(`pids.${service}`, 'skipped', 'no-claim', null);
       continue;
     }
-    for (const kind of ['launcher', 'listener']) {
-      const pid = declared[kind] ?? null;
-      if (pid === null) record(`pids.${service}.${kind}`, 'skipped', 'no-claim', null);
-      else if (isAlive === null) record(`pids.${service}.${kind}`, 'unverifiable', `alive:${pid}`, 'no-liveness-probe');
-      else record(`pids.${service}.${kind}`, isAlive(pid) ? 'ok' : `${kind}-dead`, `alive:${pid}`, isAlive(pid) ? 'alive' : 'dead');
-    }
+    // task-586（Lead 裁 A）：launcher 死 / listener 死 / 端口被别的 pid 占，这三件事在**同一次重启**下
+    // 必然同时发生 ⇒ 过去报成 3 条 mismatch，读者按条数读成「3 个故障」。现在按**服务**合成一条
+    // `lease-incarnation-stale`，把 old→new 写进 expected/actual：事实一个没少核，少的是同一件事数三遍。
+    const launcherPid = declared.launcher ?? null;
     const listenerPid = declared.listener ?? null;
-    if (listenerPid === null || !holder) record(`pids.${service}.owns-port`, 'skipped', 'no-claim', null);
-    else expectEqual(`pids.${service}.owns-port`, 'pid-drift', listenerPid, holder.pid);
+    if (launcherPid === null && listenerPid === null) {
+      record(`pids.${service}`, 'skipped', 'no-claim', null);
+      continue;
+    }
+    if (isAlive === null) {
+      record(`pids.${service}`, 'unverifiable', 'alive:launcher|listener', 'no-liveness-probe');
+      continue;
+    }
+    const describe = (pid) => (pid === null ? '-' : isAlive(pid) ? String(pid) : 'dead');
+    const deadKinds = ['launcher', 'listener'].filter((kind) => {
+      const pid = kind === 'launcher' ? launcherPid : listenerPid;
+      return pid !== null && !isAlive(pid);
+    });
+    const drifted = listenerPid !== null && holder !== undefined && holder !== null && listenerPid !== holder.pid;
+    const expectedText = `launcher:${launcherPid ?? '-'}/listener:${listenerPid ?? '-'}`;
+    if (deadKinds.length === 0 && !drifted) {
+      record(`pids.${service}`, 'ok', expectedText, expectedText);
+      continue;
+    }
+    const actualListener = holder !== undefined && holder !== null ? String(holder.pid) : describe(listenerPid);
+    record(`pids.${service}`, 'lease-incarnation-stale', expectedText, `launcher:${describe(launcherPid)}/listener:${actualListener}`);
   }
 
   if (lease.cpVersion === null) record('cpVersion', 'skipped', 'no-claim', null);
@@ -489,7 +516,9 @@ export function crossCheckLease({ lease = null, facts = {} } = {}) {
       skipped: checks.filter((check) => check.code === 'skipped').map((check) => check.field),
       // 全绿才算通过：`unverifiable`（声明了核不了）拦 healthy，`skipped`（压根没声明）与
       // `lease-cold`（冷暖是另一个维度）不拦。
-      allOk: checks.every((check) => check.code === 'ok' || check.code === 'skipped' || check.code === COLD_CODE),
+      allOk: checks.every(
+        (check) => check.code === 'ok' || check.code === 'skipped' || check.code === COLD_CODE || INFORMATIONAL_CODES.has(check.code),
+      ),
     };
   }
 }
@@ -531,7 +560,10 @@ export function computeVerdict({
   const leaseState = leaseValid ? (leaseFresh ? 'live' : 'cold') : null;
   const fieldMismatches = Array.isArray(checks)
     ? checks
-        .filter((check) => check && check.code !== 'ok' && check.code !== 'skipped' && check.code !== COLD_CODE)
+        .filter(
+          (check) =>
+            check && check.code !== 'ok' && check.code !== 'skipped' && check.code !== COLD_CODE && !INFORMATIONAL_CODES.has(check.code),
+        )
         .map((check) => check.code ?? 'mismatch')
     : [];
   const fieldsOk = fieldMismatches.length === 0;

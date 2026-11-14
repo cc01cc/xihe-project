@@ -510,18 +510,26 @@ test('cross-check 正例：全部声明字段核对通过 → allOk（含反斜�
   assert.deepEqual(result.mismatches, []);
   assert.ok(result.checks.some((check) => check.field === 'instanceId' && check.code === 'ok'));
   assert.ok(result.checks.some((check) => check.field === 'ports.cp.bind' && check.code === 'ok'));
-  assert.ok(result.checks.some((check) => check.field === 'pids.cp.owns-port' && check.code === 'ok'));
+  assert.ok(result.checks.some((check) => check.field === 'pids.cp' && check.code === 'ok'));
   assert.ok(result.checks.some((check) => check.field === 'cpVersion' && check.code === 'ok'));
 });
 
-test('cross-check 负例①：pid 死（launcher/listener 记录都已不存在）→ launcher-dead + listener-dead', () => {
+test('cross-check 负例①：pid 死 → 按服务合成一条 lease-incarnation-stale（task-586 裁 A）', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
   const facts = factsFor(now, { isAlive: (pid) => pid === 222 || pid === 444 });
   const result = crossCheckLease({ lease: freshLease(now), facts });
   assert.equal(result.allOk, false);
-  assert.ok(mismatchFields(result).includes('pids.cp.launcher:launcher-dead'));
-  assert.ok(mismatchFields(result).includes('pids.agent.launcher:launcher-dead'));
-  assert.ok(!mismatchFields(result).some((entry) => entry.startsWith('pids.cp.listener')));
+  // launcher 死 / listener 死 / 端口换人 在**同一次重启**下必然同时命中；过去报 3 条，读者按条数读成 3 个故障。
+  const cp = result.mismatches.find((entry) => entry.field === 'pids.cp');
+  assert.equal(cp.code, 'lease-incarnation-stale');
+  assert.equal(cp.expected, 'launcher:2220/listener:222');
+  assert.equal(cp.actual, 'launcher:dead/listener:222', 'launcher 死而 listener 活着持有端口 ⇒ 只把 launcher 标 dead');
+  assert.equal(
+    result.checks.filter((check) => /^(launcher|listener)-dead$|^pid-drift$/.test(check.code)).length,
+    0,
+    '同族三条子判据不得再各自出现（否则又会被按条数读成多个故障）',
+  );
+  assert.equal(result.checks.some((check) => check.field.endsWith('.owns-port')), false, '每服务只有一条 pids.<svc>');
 });
 
 test('cross-check 负例②：端口没听 → port-not-listening（declare 的端口无 own 监听）', () => {
@@ -556,21 +564,31 @@ test('cross-check 负例④：owner（instanceId）不符 → instance-mismatch�
   assert.deepEqual(mismatchFields(result), ['instanceId:instance-mismatch']);
 });
 
-test('cross-check 负例⑤：cpVersion 不符 → cp-version-mismatch（跑的不是租约声明的版本）', () => {
+test('cross-check 负例⑤：cpVersion 不符 → 记在 checks，但**不拦** healthy（task-586 裁 A：信息项）', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
   const facts = factsFor(now, { cpVersion: 'deadbee' });
   const result = crossCheckLease({ lease: freshLease(now), facts });
-  assert.equal(result.allOk, false);
-  assert.deepEqual(mismatchFields(result), ['cpVersion:cp-version-mismatch']);
+  // dev 期 CP 每次重建都换 build 戳 ⇒「租约 commit == 现在跑的 commit」在活跃开发下**永远为假**；
+  // 恒真的阻塞项必被绕过（D-1410）。它想防的「以为在测新代码其实跑旧构建」由 cpBuild（运行戳 vs HEAD）承担。
+  assert.deepEqual(mismatchFields(result), [], '信息项不进 mismatches');
+  assert.equal(result.allOk, true, '信息项不拦 allOk');
+  const cpVersion = result.checks.find((check) => check.field === 'cpVersion');
+  assert.equal(cpVersion.code, 'cp-version-mismatch', '仍逐字段核对，只是不升级成故障');
+  assert.equal(cpVersion.blocking, false);
+  assert.equal(cpVersion.expected, 'abc1234');
+  assert.equal(cpVersion.actual, 'deadbee');
 });
 
-test('cross-check 负例⑥：pid 漂移（端口换了持有者）→ pid-drift（案例②：launcher fork 换了 pid）', () => {
+test('cross-check 负例⑥：pid 漂移（端口换了持有者）→ 同一条 incarnation-stale 里读出新 pid', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
   const drifted = OWN_ALL.map((entry) => (entry.port === 12651 ? { ...entry, pid: 9999 } : entry));
   const facts = factsFor(now, { listeners: { own: drifted } });
   const result = crossCheckLease({ lease: freshLease(now), facts });
   assert.equal(result.allOk, false);
-  assert.deepEqual(mismatchFields(result), ['pids.cp.owns-port:pid-drift']);
+  assert.deepEqual(mismatchFields(result), ['pids.cp:lease-incarnation-stale']);
+  const cp = result.mismatches[0];
+  assert.equal(cp.expected, 'launcher:2220/listener:222');
+  assert.equal(cp.actual, 'launcher:2220/listener:9999', 'old→new 必须能直接读出换成了哪个 pid');
 });
 
 test('cross-check：声明了 cpVersion 但当前核不了 → unverifiable（拦 healthy，不是 skipped）', () => {
@@ -621,11 +639,20 @@ test('checks 全绿 + 端口齐 + 进程活 + 心跳新 → healthy（并打 fie
 
 test('checks 有 blocking mismatch + 其余全绿 → 不是 healthy（降 stale，reasons 指名）', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
-  const checks = crossCheckLease({ lease: freshLease(now), facts: factsFor(now, { cpVersion: 'deadbee' }) }).checks;
+  const checks = crossCheckLease({ lease: freshLease(now), facts: factsFor(now, { instanceId: 'another-host@h:/other' }) }).checks;
   const result = computeVerdict({ lease: freshLease(now), listeners: { own: OWN_ALL }, pidAlive: true, now, checks });
   assert.equal(result.verdict, 'stale');
-  assert.ok(result.reasons.includes('fields-mismatch:cp-version-mismatch'));
-  assert.deepEqual(result.fieldMismatches, ['cp-version-mismatch']);
+  assert.ok(result.reasons.includes('fields-mismatch:instance-mismatch'));
+  assert.deepEqual(result.fieldMismatches, ['instance-mismatch']);
+});
+
+test('cp-version-mismatch 是信息项：不进 reasons、不降 healthy（task-586 裁 A 的回归守卫）', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  const checks = crossCheckLease({ lease: freshLease(now), facts: factsFor(now, { cpVersion: 'deadbee' }) }).checks;
+  const result = computeVerdict({ lease: freshLease(now), listeners: { own: OWN_ALL }, pidAlive: true, now, checks });
+  assert.equal(result.verdict, 'healthy', 'CP 每次重建都换戳 ⇒ 相等判据若拦 healthy 就是恒假红');
+  assert.equal(result.fieldMismatches.includes('cp-version-mismatch'), false);
+  assert.ok(result.reasons.includes('fields-verified'));
 });
 
 // ── phase（task-75：租约覆盖整个启动过程） ─────────────────────────────────
