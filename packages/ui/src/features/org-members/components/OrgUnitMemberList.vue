@@ -14,6 +14,7 @@ import {
     orgUnitNames,
     type OrgTreeErrorKind,
 } from "../composables/useOrgUnitTree";
+import OrgMemberDetailSheet from "./OrgMemberDetailSheet.vue";
 
 const props = defineProps<{ unit: ApiOrgUnitNode | null }>();
 const { t } = useI18n();
@@ -56,6 +57,20 @@ watch(
  */
 function unitDisplayName(id: string): string {
     return orgUnitNames.value.get(id) ?? id;
+}
+
+/**
+ * task-43：成员**详情面**（抽屉）。点开 = 只读视图：工作区成员角色 / 访问角色绑定 /
+ * 权限可得性（B 形态）/ 所属单元 —— 四段各自的数据来源不同，见 `OrgMemberDetailSheet` 的头注释。
+ */
+const detailMember = ref<ApiOrgUnitMember | null>(null);
+const detailUnitName = ref("");
+const detailOpen = ref(false);
+
+function openDetail(member: ApiOrgUnitMember) {
+    detailMember.value = member;
+    detailUnitName.value = unitDisplayName(member.orgUnitId);
+    detailOpen.value = true;
 }
 
 const errorTitle = computed(() =>
@@ -137,7 +152,16 @@ const errorDesc = computed(() =>
                         class="border-b last:border-0"
                         :data-testid="'org-member-row-' + member.memberId"
                     >
-                        <td class="px-4 py-2">{{ member.displayName ?? "—" }}</td>
+                        <td class="px-4 py-2">
+                            <button
+                                type="button"
+                                class="text-left underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 rounded-sm"
+                                :data-testid="'org-member-open-' + member.memberId"
+                                @click="openDetail(member)"
+                            >
+                                {{ member.displayName ?? "—" }}
+                            </button>
+                        </td>
                         <td class="px-4 py-2">
                             <Badge
                                 variant="secondary"
@@ -157,5 +181,11 @@ const errorDesc = computed(() =>
                 </tbody>
             </table>
         </div>
+        <OrgMemberDetailSheet
+            :member="detailMember"
+            :open="detailOpen"
+            :unit-name="detailUnitName"
+            @update:open="detailOpen = $event"
+        />
     </div>
 </template>
