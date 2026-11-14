@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
+import com.cc01cc.p.xihe.cp.policy.PathKey;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 
 import com.cc01cc.p.xihe.cp.repository.WorkspaceExecutionSpecRepository;
@@ -149,11 +150,14 @@ public class WorkspaceExecutionSpecService {
         }
         java.nio.file.Path candidate = java.nio.file.Path.of(rootPath);
         if (candidate.isAbsolute()) {
-            return candidate.normalize().toString();
+            // task-517: hand Runtime the same lexical form the row stores (\ -> /, lowercase),
+            // otherwise root[0] (primary, stored) and root[N] (resolved here) disagree on separator.
+            return PathKey.lexical(candidate.normalize().toString());
         }
         if (primaryPath == null || primaryPath.isBlank()) {
             return null;
         }
-        return java.nio.file.Path.of(primaryPath).resolve(candidate).normalize().toString();
+        return PathKey.lexical(
+                java.nio.file.Path.of(primaryPath).resolve(candidate).normalize().toString());
     }
 }

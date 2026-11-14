@@ -584,7 +584,16 @@ public class WorkspaceService {
     private String normalizeHostPath(String hostPath, String storageMode) {
         if ("direct_attach".equals(storageMode)) {
             requireNonBlank(hostPath, "hostPath");
-            return hostPath.trim();
+            // task-517: store the LEXICAL canonical form on the way in (\ -> /, no trailing slash,
+            // lowercase); . / .. / UNC / \\?\ are rejected fail-closed, not normalised.
+            String lexical = PathKey.lexical(hostPath);
+            if (lexical == null || lexical.isEmpty()) {
+                throw new CpApiException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "INVALID_HOST_PATH",
+                        "hostPath is ambiguous or not a plain absolute path: " + hostPath);
+            }
+            return lexical;
         }
         if (hostPath != null && !hostPath.isBlank()) {
             throw new CpApiException(
@@ -628,7 +637,14 @@ public class WorkspaceService {
             Map<String, String> entry = roots.get(i);
             String path = entry.get("path");
             requireNonBlank(path, "roots[" + i + "].path");
-            String canonical = path.trim().toLowerCase(java.util.Locale.ROOT);
+            // task-517: store the LEXICAL canonical form; \ -> /, trailing slash, lowercase.
+            String canonical = PathKey.lexical(path);
+            if (canonical == null || canonical.isEmpty()) {
+                throw new CpApiException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "INVALID_REQUEST",
+                        "roots[" + i + "].path is ambiguous or not a plain path: " + path);
+            }
             if (!seenPaths.add(canonical)) {
                 throw new CpApiException(
                         org.springframework.http.HttpStatus.BAD_REQUEST,
@@ -720,10 +736,10 @@ public class WorkspaceService {
         WorkspaceRoot root = validated.get(0);
 
         // PLAN-0639 M1: pre-check against active roots to map DB unique-key violations to 409.
-        String canonical = root.getHostPath().toLowerCase(java.util.Locale.ROOT);
+        String canonical = root.getHostPath();
         boolean duplicatePath = existing.stream()
                 .anyMatch(r -> r.getHostPath() != null
-                        && r.getHostPath().toLowerCase(java.util.Locale.ROOT).equals(canonical));
+                        && PathKey.sameLexical(r.getHostPath(), canonical));
         if (duplicatePath) {
             throw new CpApiException(
                     org.springframework.http.HttpStatus.CONFLICT,

@@ -94,6 +94,25 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
                 entityWithAuth(body, token), String.class);
     }
 
+    private ResponseEntity<String> createWorkspaceWithKey(List<String> rootPaths, String idempotencyKey,
+            String name) {
+        List<Map<String, String>> roots = new java.util.ArrayList<>();
+        for (String path : rootPaths) {
+            roots.add(Map.of("path", path));
+        }
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("name", name);
+        body.put("storageMode", "direct_attach");
+        body.put("executionMode", "windows-host");
+        body.put("roots", roots);
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        headers.set("Idempotency-Key", idempotencyKey);
+        return restTemplate.exchange(url("/api/v1/workspaces"), HttpMethod.POST,
+                new org.springframework.http.HttpEntity<>(body, headers), String.class);
+    }
+
     private String createWorkspaceOrFail(String rootPath) {
         ResponseEntity<String> created = createWorkspace(List.of(rootPath));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
@@ -170,7 +189,7 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
         // The projection deliberately exposes only id/alias/position; the canonical host path
         // lives on the row (design §2: lowercase canonical, one row per declared root).
         WorkspaceRoot row = workspaceRootRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
-        assertEquals(path.toLowerCase(java.util.Locale.ROOT), row.getHostPath());
+        assertEquals(lexical(path), row.getHostPath());
         assertEquals(0, row.getPosition());
     }
 
@@ -232,6 +251,48 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
 
         assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode(), String.valueOf(duplicate.getBody()));
         assertEquals("ROOT_PATH_CONFLICT", problemCode(duplicate.getBody()));
+    }
+
+    // ── task-517: separator spelling must not buy a second root / a second workspace ───────
+
+    private static String otherSeparator(String path) {
+        return path.indexOf('\\') >= 0 ? path.replace('\\', '/') : path.replace('/', '\\');
+    }
+
+    /** task-517: storage now holds the lexical canonical form (\ -> /, lowercase). */
+    private static String lexical(String path) {
+        return path.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+    }
+
+    @Test
+    void createRejectsDuplicateRootsAcrossSeparators() {
+        String primary = tempPath("create-dup-sep");
+        ResponseEntity<String> created = createWorkspace(List.of(primary, otherSeparator(primary)));
+        assertEquals(HttpStatus.BAD_REQUEST, created.getStatusCode(), String.valueOf(created.getBody()));
+    }
+
+    @Test
+    void addRootRejectsDuplicateAcrossSeparators() {
+        String primary = tempPath("primary-dup-sep");
+        String workspaceId = createWorkspaceOrFail(primary);
+        ResponseEntity<String> duplicate = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots"), HttpMethod.POST,
+                entityWithAuth(Map.of("path", otherSeparator(primary)), token), String.class);
+        assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode(), String.valueOf(duplicate.getBody()));
+        assertEquals("ROOT_PATH_CONFLICT", problemCode(duplicate.getBody()));
+    }
+
+    @Test
+    void idempotencyKeyReuseAcrossSeparatorsReturnsExistingWorkspace() {
+        String primary = tempPath("idem-sep");
+        String key = UUID.randomUUID().toString();
+        String name = "root-crud-" + UUID.randomUUID();
+        ResponseEntity<String> first = createWorkspaceWithKey(List.of(primary), key, name);
+        assertEquals(HttpStatus.CREATED, first.getStatusCode(), String.valueOf(first.getBody()));
+        ResponseEntity<String> second = createWorkspaceWithKey(List.of(otherSeparator(primary)), key, name);
+        assertEquals(first.getStatusCode().is2xxSuccessful(), second.getStatusCode().is2xxSuccessful(),
+                String.valueOf(second.getBody()));
+        assertEquals(idOf(first.getBody()), idOf(second.getBody()), String.valueOf(second.getBody()));
     }
 
     @Test
@@ -437,8 +498,8 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
                 executionSpecService.findCurrentExecutionSpec(workspaceId).getRoots());
         assertEquals(2, roots.size());
         assertEquals(workspaceId, roots.get(0).path("rootId").asText());
-        assertEquals(base.toLowerCase(java.util.Locale.ROOT), roots.get(0).path("hostPath").asText());
+        assertEquals(lexical(base), roots.get(0).path("hostPath").asText());
         assertNotEquals(workspaceId, roots.get(1).path("rootId").asText());
-        assertEquals(nested.toLowerCase(java.util.Locale.ROOT), roots.get(1).path("hostPath").asText());
+        assertEquals(lexical(nested), roots.get(1).path("hostPath").asText());
     }
 }
