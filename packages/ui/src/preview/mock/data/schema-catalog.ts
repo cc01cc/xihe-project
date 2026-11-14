@@ -153,6 +153,10 @@ const CATALOG_JSON = `{
         {
             "key": "loopExemptTools",
             "type": "json"
+        },
+        {
+            "key": "defaultParticipants",
+            "type": "json"
         }
     ],
     "agent-templates": [

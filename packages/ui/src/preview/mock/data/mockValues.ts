@@ -45,6 +45,18 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
         delegationMaxCountCeiling: 12,
         delegationMaxDepthCeiling: 4,
         loopExemptTools: ["workspace.read_file", "workspace.list_dir", "workspace.stat"],
+        // D-1438 / task-94：独立会话默认参与者（数组键，schema 为 json）——
+        // 新增 schema 字段必须同批补 mock 取值，否则 task-127 覆盖门会红。
+        defaultParticipants: [
+            {
+                principalKind: "AGENT",
+                principalId: "2f1c6d3e-4a5b-4c7d-8e9f-0a1b2c3d4e5f",
+                role: "MEMBER",
+                wakePolicy: "MENTION",
+                respondPolicy: "WHEN_MENTIONED",
+                deliveryDefaults: ["to"],
+            },
+        ],
     },
     "agent-templates": {
         roles: [
