@@ -46,7 +46,8 @@ const LOCALES = ["zh-CN", "en-US"] as const;
  * <p>Lead 硬要求（判据③）：名单删掉后把 `resources.reasonCapability` 改回旧文案，门**仍红**
  * ⇒ 守它的是扫描面而不是名单。变异实测见 `internal/A03-xihe/evidence/2026-11-15-226-next-batch-candidates/task-26-impl.md`。</p>
  */
-const SCANNED_NAMESPACES = ["settings", "resources"] as const;
+// 批 1 纳入 resources（task-26），批 2 纳入 workspace（task-36）。
+const SCANNED_NAMESPACES = ["settings", "resources", "workspace"] as const;
 
 function scannedCopy(locale: (typeof LOCALES)[number]): Flat {
     const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
@@ -125,41 +126,25 @@ describe("设置区 + 资源区用户可见文案：不得出现内部编号与�
 });
 
 /**
- * 过渡名单（task-26，批 1）：**只留还没进扫描面的命名空间里的键**。
+ * 退役留痕（task-26 批 1 → task-36 批 2）：`OUTSIDE_SETTINGS_KEYS` 精确 key 名单**已整块删除**。
  *
- * <p>task-22 的名单原有 2 条（`resources.reasonCapability` / `resources.reasonNoWorkspace`）；
- * 本批把 `resources` 整个命名空间纳入 `SCANNED_NAMESPACES` ⇒ 那 2 条**已删**（2 → 0），
- * 因为全集扫描严格强于名单（改名/新增键自动纳入），留着就是同一 key 两套覆盖。
- * 「删了会不会没人守」由变异回答：把 `resources.reasonCapability` 改回带 `instance:admin` 的旧文案，
- * 本文件**仍然红**（规则⑥，扫描面命中）。</p>
+ * <p>演进：task-22 有 2 条（`resources.reasonCapability` / `resources.reasonNoWorkspace`）
+ * → 批 1 纳入 `resources` 命名空间后删到 1 条（只剩 `workspace.resourcesRefHint`，那是
+ * **过渡项不是残留**：层名已改，但 workspace 还有 4 条存量，一次纳入会当场红）
+ * → 批 2 纳入 `workspace` 并清掉那 4 条存量后，**这最后 1 条同批删掉**（1 → 0）。</p>
  *
- * <p>下面这 1 条是**新加的过渡项**，不是残留：`workspace.resourcesRefHint` 的层名旧称
- * 已在产品文案里改掉，但 `workspace` 命名空间要到**批 2** 才进扫描面（它还有 4 条存量：
- * `host_directory` ×2、PLAN 号 ×2，一次纳入会当场红 ⇒ 违反「批内必须全绿」）。
- * **批 2 把 workspace 纳入扫描面时，必须同批删掉这一条**，届时名单清空、只剩扫描面一条路径。</p>
+ * <p>**为什么整块删而不是留着**：全集扫描严格强于精确名单（改名/新增键自动纳入），
+ * 留着就是同一 key 两套覆盖 —— 而两套覆盖里更弱的那套会先说话。</p>
  *
- * <p>纪律不变：① key 改名即红（断言存在且非空）；② 跑**同一份 RULES**，不另写判据。</p>
+ * <p>**「删了谁在守」由变异回答，不靠注释声明**（两批各证一次）：</p>
+ * <ul>
+ *   <li>批 1：名单已无 resources 项，把 `resources.reasonCapability` 改回带 `instance:admin`
+ *       的旧文案 ⇒ 本文件**仍然红**（规则⑥）。</li>
+ *   <li>批 2：名单**已完全清空**，把 `workspace.resourcesRefHint` 改回「用户层」⇒ 本文件
+ *       **仍然红**（规则⑦）⇒ 它现在靠**扫描面**守，不是靠名单守。这条是批 2 的核心判据：
+ *       否则「名单清空」可能只是把门从扫描面偷偷换回名单，门变弱而读数变好看。</li>
+ * </ul>
+ *
+ * <p>纪律不变：任何命名空间进入 `SCANNED_NAMESPACES` 前，必须先把它名下命中清到 0（批内全绿）；
+ * 进去后不许再为同一 key 另立精确名单。</p>
  */
-const OUTSIDE_SETTINGS_KEYS = ["workspace.resourcesRefHint"] as const;
-
-function copyAt(locale: (typeof LOCALES)[number], path: string): string | undefined {
-    const message = i18n.global.getLocaleMessage(locale) as Record<string, unknown>;
-    return flatten(message).find((entry) => entry.path === path)?.value;
-}
-
-describe("尚未纳入扫描面的命名空间：过渡名单（task-26）", () => {
-    for (const locale of LOCALES) {
-        it(`${locale}：名单内 key 存在，且不含内部编号/实现标识/层名旧称`, () => {
-            for (const key of OUTSIDE_SETTINGS_KEYS) {
-                const value = copyAt(locale, key);
-                expect(
-                    value,
-                    `${key} 必须存在且非空：改名或删除要同步改 OUTSIDE_SETTINGS_KEYS，否则这条门会静默失效`,
-                ).toBeTruthy();
-                for (const rule of RULES) {
-                    expect(rule.test(value!), `${key} 命中「${rule.name}」：${value}`).toBe(false);
-                }
-            }
-        });
-    }
-});

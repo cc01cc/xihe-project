@@ -775,7 +775,7 @@ const messages = {
             addWorkspaceTitle: "添加 Workspace",
             addWorkspaceDesc: "选择目录处理方式，确认执行后端后创建一个新的工作区。",
             addWorkspaceStorageHint:
-                "托管副本会复制到 XH 管理目录；直接使用会保留原目录并建立 host_directory 绑定。",
+                "托管副本会复制到 XH 管理目录；直接使用会保留原目录，并建立原目录绑定。",
             stepStorageMode: "① 存储方式",
             stepSource: "② 选择目录",
             stepExecutionMode: "③ 执行模式",
@@ -804,7 +804,7 @@ const messages = {
             maturityPreview: "预览",
             maturityStable: "稳定",
             managedExecutionUnknown:
-                "托管副本的执行后端已冻结（PLAN-0618，完全冻结）：当前无法创建，解冻后由 Runtime 探测后端可用性",
+                "托管副本的执行后端尚未接通：当前无法创建；接通后会由运行时探测可用性。",
             dockerPostponed: "受管工作区固定使用 Docker 执行后端（该后端当前已冻结）",
             mxcUnavailableGuidance:
                 "MXC 当前不可用。你可以显式切换到不受沙盒限制的宿主执行后继续；系统不会自动切换。",
@@ -4393,7 +4393,7 @@ const messages = {
             addWorkspaceDesc:
                 "Pick how the directory is handled, confirm the execution backend, then create a new workspace.",
             addWorkspaceStorageHint:
-                "A managed copy is copied into the XH managed directory; direct attach keeps the original directory and creates a host_directory binding.",
+                "A managed copy is copied into the XH managed directory; direct attach keeps the original directory and binds the workspace to it in place.",
             stepStorageMode: "1. Storage mode",
             stepSource: "2. Choose directory",
             stepExecutionMode: "3. Execution mode",
@@ -4424,7 +4424,7 @@ const messages = {
             maturityPreview: "Preview",
             maturityStable: "Stable",
             managedExecutionUnknown:
-                "The managed-copy execution backend is frozen (PLAN-0618 full freeze): creation is unavailable now; after unfreezing, Runtime probes backend availability",
+                "The execution backend for managed copies is not connected yet: creation is unavailable now; once it is, the runtime will probe backend availability.",
             dockerPostponed:
                 "Managed workspaces always use the Docker execution backend (currently frozen)",
             mxcUnavailableGuidance:
