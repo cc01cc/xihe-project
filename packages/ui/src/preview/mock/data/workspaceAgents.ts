@@ -20,7 +20,7 @@
  */
 
 /** 与 data/sessions.ts 同一个 mock 工作区，避免两套 id 让跨面夹具对不上。 */
-export const MOCK_AGENT_WORKSPACE_ID = "mock-ws-main";
+export const MOCK_AGENT_WORKSPACE_ID = "9f8e7d6c-5b4a-4321-8fed-cba987654321";
 
 export interface MockAgentAtom {
     actionClass: string;

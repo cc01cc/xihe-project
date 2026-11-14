@@ -65,7 +65,7 @@ const CREDENTIAL_REFERENCES: Record<string, CredentialReference[]> = {
         {
             source: "workspace_cap",
             subjectType: "workspace",
-            subjectId: "mock-ws-main",
+            subjectId: "9f8e7d6c-5b4a-4321-8fed-cba987654321",
             actionClass: "credential_use",
             resource: "*",
         },
@@ -130,7 +130,11 @@ export function mockStdioServers(): {
         servers: {
             "mock-fs-server": {
                 command: "npx",
-                args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspaces/mock-ws-main"],
+                args: [
+                    "-y",
+                    "@modelcontextprotocol/server-filesystem",
+                    "/workspaces/9f8e7d6c-5b4a-4321-8fed-cba987654321",
+                ],
                 env: {},
             },
         },

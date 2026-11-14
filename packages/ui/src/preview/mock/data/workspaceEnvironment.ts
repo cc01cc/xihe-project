@@ -23,7 +23,7 @@ function makeJob(
 ): WorkspaceJob {
     return {
         runtimeJobId: null,
-        workspaceId: "mock-ws-main",
+        workspaceId: "9f8e7d6c-5b4a-4321-8fed-cba987654321",
         sessionId: null,
         runId: null,
         source: "ui",

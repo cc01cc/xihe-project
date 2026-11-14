@@ -81,7 +81,7 @@ const CAPABILITIES = {
 
 /** task-149：mock lane 的「当前工作区」（字段对齐 ApiWorkspace，storageMode 用产品默认 direct_attach）。 */
 const MOCK_WORKSPACE = {
-    id: "mock-ws-main",
+    id: "9f8e7d6c-5b4a-4321-8fed-cba987654321",
     name: "Xihe 主工作区",
     description: "mock lane 工作区（真实 API 形状）",
     ownerId: "mock-user",

@@ -21,7 +21,7 @@
  */
 
 /** 与 api-server 的 `MOCK_WORKSPACE.id` 同一个工作区（不是第二套 id）。 */
-export const MOCK_SESSION_WORKSPACE_ID = "mock-ws-main";
+export const MOCK_SESSION_WORKSPACE_ID = "9f8e7d6c-5b4a-4321-8fed-cba987654321";
 /** 与 `data/agentSkillBindings.ts` 的种子主体同一个 principal（夹具之间不各造一个身份）。 */
 export const MOCK_SESSION_PRINCIPAL_ID = "b1f0c4d2-7b3e-4c55-8f10-5d2c9b000001";
 const SELF_USER_ID = "mock-user";
@@ -98,7 +98,7 @@ const LONG_CODE = [
 
 /** 超长不可断 token（path/URL 桶）：没有空格，必须靠容器折行。 */
 const UNBREAKABLE =
-    "https://xihe.internal.example.com/workspaces/mock-ws-main/sessions/c1f0c4d2-7b3e-4c55-8f10-5d2c9b000101/runs/e1f0c4d2-7b3e-4c55-8f10-5d2c9b000301/events?branchId=d1f0c4d2-7b3e-4c55-8f10-5d2c9b000201&sinceSequence=4182&includeToolCalls=true&format=jsonl";
+    "https://xihe.internal.example.com/workspaces/9f8e7d6c-5b4a-4321-8fed-cba987654321/sessions/c1f0c4d2-7b3e-4c55-8f10-5d2c9b000101/runs/e1f0c4d2-7b3e-4c55-8f10-5d2c9b000301/events?branchId=d1f0c4d2-7b3e-4c55-8f10-5d2c9b000201&sinceSequence=4182&includeToolCalls=true&format=jsonl";
 
 const LONG_CJK =
     "这一批改动把持久化路径从事务外挪进了事务内，因此序号缺口不会再被当成成功写入；但回滚之后运行态仍然停在部分完成，前端需要把这条消息渲染成中断态而不是失败态，否则用户会以为整轮对话都丢了，实际上前面已经落库的消息仍然可见，只是最后一段没有写完。";
