@@ -20,6 +20,13 @@ import { watch, type Ref } from "vue";
  * - `isDragging` 为真 ⇒ 一律不应用。**结构上**拖拽期 store 根本不写（commit 只在 release/键盘/双击），
  *   这条是兜底：将来若有人在拖拽中写 store，也不能回灌成「自我强写」循环（那正是本 bug 的形态）；
  * - `isCollapsed()` 为真 ⇒ 不应用：折叠由 reka 的 `collapse()` 管，写回展开宽会把 rail 顶掉。
+ *
+ * **误差契约（B 方案登记，task-28 / Lead 台账 2026-11-15）**：`store px → 渲染 px 的误差 ≤1%+1px；折叠档 ≤2.5%；禁止对渲染宽断言整数。`
+ * 原因：reka 侧收/发的是**百分比**（内联 `flex: <p> 1 0px`），px→% 必然量化；resize handle 的 `-ml-1`
+ * 参与 grow 分配 ⇒ 渲染宽与存储 px 不是恒等关系。**折叠档与展开档不同源，不许合成一个数**：
+ * `data-state=collapsed` 时 layout 只有 4.44%，同一份绝对误差在 40px 上被放大到 ~2.4%（展开档 0.1–0.5%）。
+ * 五档读数（1024/1280/1440/1600/1920）与被证伪的三条假设见 task-28；判据出处**唯一**在
+ * `DEV-011 §6.2`（zh/en 两语同条），spec 侧只许写指针，不许抄第二版。
  */
 export interface SplitterPanelWidthSyncOptions {
     /** 存储侧宽度（px），唯一事实源。 */

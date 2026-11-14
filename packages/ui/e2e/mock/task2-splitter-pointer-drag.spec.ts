@@ -262,10 +262,9 @@ test("② reload 后宽度保持（与落盘值同值，±0.6px 渲染容差）"
         `reload 后 rail(${afterReload.rail}) 应与 reload 前(${afterDrag.rail}) 一致`,
     ).toBeLessThanOrEqual(0.25);
     // 「保持」的判据 = **reload 前后的渲染宽一致**（真栈同形读数：拖后 239 → reload 239）。
-    // 不拿 rail 去对 store 的 px 值：reka 侧 layout 是百分比（task-94 B），px→% 的基数由
-    // `treePercentOf` 用 RO 量到的内容框宽给出，与 flex 实际内容框有 ~0.5% 的既存偏差
-    // （[实测] 本轮 ⑧：隐含基数 1155.3 vs 几何基数 1161.5），那是修指针拖拽之前就存在的
-    // 换算精度问题，不在本卡范围（卡面边界：不动持久化契约）。rail-vs-rail 才是产品判据。
+    // 此处曾有「RO 内容框 vs flex 内容框差 ~0.5%、隐含基数 1155.3/1161.5」的归因，**已由 task-28
+    // 证伪**（组元素上 contentRect / contentBoxSize / borderBoxSize / getBoundingClientRect 四量
+    // 逐值相等，差值 0.0000）⇒ 判据式与五档读数见 `DEV-011 §6.2`，本文件不写第二版。
 });
 
 test("③ 键盘路径不回退：ArrowLeft×3 ⇒ 240 → 201（方向不反）", async ({ page }) => {
@@ -317,7 +316,7 @@ test("⑤ 首帧 bootstrap 仍工作：落盘宽 280（≠默认 240）⇒ 挂�
     expect(settled.stored, "store 应是种进去的 280").toBe(280);
     expect(
         Math.abs(settled.rail - 280),
-        `挂载即存储宽 280（不是默认 240）；实际 ${settled.rail}（%↔px 基数既有 ~0.5% 偏差见 ②）`,
+        `挂载即存储宽 280（不是默认 240）；实际 ${settled.rail}（容差口径见 DEV-011 §6.2）`,
     ).toBeLessThanOrEqual(2.5);
     expect(settled.rail, "不得退回默认 240").toBeGreaterThan(260);
 });
@@ -348,7 +347,8 @@ test("⑥ task-551 语义保留：窄视口首帧即折叠成 40px rail", async 
         };
     });
     console.log("[task2] narrow-first-frame", JSON.stringify({ rail, handleCount, facts }));
-    // rail 容差 ±2：%↔px 基数既有偏差（见 ② 注释）在窄档更明显（实测 40.98 vs 40）。
+    // rail 容差 ±2：折叠档是**另一个口径**（同一绝对误差在 40px 上放大，实测 40.98 vs 40），
+    // 上界 2.5% 见 `DEV-011 §6.2`。
     // 这条判据的判别力在「reka 自己也认为折叠了」（data-state=collapsed）+ 手柄消失，
     // 不是小数第几位 —— 挂载首帧没折叠时实测是 expanded / 220px（task-2 回归读数）。
     expect(
@@ -412,7 +412,7 @@ test("⑧ release 取整：落盘为整数，且面板同步到该整数（取�
     });
     console.log("[task2] clamp-rounding", JSON.stringify({ after, stored, geom }));
     expect(stored, "落盘必须是整数（clampTreeWidth 取整）").toBe(Math.round(stored));
-    // px 容差取 1% + 1px：%↔px 的基数既有偏差（见 ② 注释）+ reka 把 % 写进 flex-grow 的量化。
+    // px 容差取 1% + 1px：判据式与出处见 `DEV-011 §6.2`（不在本文件复述原因）。
     // 「通道不是装饰」的**判别力**在 ⑦（组宽变化：240 保持 vs 按 % 缩到 ~194），不在这条。
     expect(
         Math.abs(after.rail - stored),
