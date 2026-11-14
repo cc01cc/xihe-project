@@ -1218,6 +1218,11 @@ const messages = {
                 // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
                 toTargetsLabel: "定向发送",
                 toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
+                // task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。清空定向栏后发送，
+                // wire 上是显式 []（CP 抑制通知）⇒ 消息照常记录、但谁都不通知；界面必须说出来一次。
+                // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
+                toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
+                toEmptyHintDismiss: "知道了",
                 // task-547 F-A：独立会话下「发送」「定向」不渲染；这行是**可见原因**（不是 tooltip）。
                 workspaceLessNoTargets: "独立会话不支持定向发送、代发与附件（仅纯对话）",
                 workspaceLessDropped: "独立会话不支持定向发送/代发/附件，本次已按纯对话发送",
@@ -2039,7 +2044,9 @@ const messages = {
                 // task-536：加载期必须有**可见**反馈。骨架是纯视觉件、不说话，
                 // 实测该页 1504 ms 里只有灰块、一个字都没有 ⇒ 用户分不清是在加载还是坏了。
                 domainLoading: "正在加载配置…",
-                domainKeysCount: "本域 {count} 个配置键",
+                // task-18（源 = task-6 候选 C-2）：**不用数据模型词**。`keyCount` 数的是本层已存在的
+                // config key 数，但用户读到的是"这页有多少项已设置"——「配置键」是内部量纲，读不懂也不需要懂。
+                domainKeysCount: "本域已设置 {count} 项",
                 domainEditableCount: "可编辑 {count} 项",
                 // task-285：计数只数静态可枚举字段；`context-policy` 的按模型覆盖子表行数另计，
                 // 不写这句读者会以为「13 项」就是全部（Lead 2026-11-13 裁定：计数不完整须自述口径）。
@@ -2051,8 +2058,11 @@ const messages = {
                     "{domain} 不在个人层的可写域清单里（CP 矩阵事实），所以这里不跳转，也不会给出 404。",
                 dismiss: "知道了",
                 forbiddenTitle: "这一层需要实例管理员能力",
+                // task-18（源 = task-6 候选 C-4）：**不把内部能力位标识印给用户**（`cap:instance:admin`），
+                // 并补出"下一步去哪授予"——只说"请管理员授予"、不说在哪授予，用户仍然拿不到动作。
+                // 术语「个人层」按 T-03 待裁**原样保留**，本卡只摘技术标识。
                 forbiddenBody:
-                    "实例层按 CP 的 cap:instance:admin 能力位放行；当前账号没有这个能力位，因此不加载配置。可以改用个人层，或请管理员授予。",
+                    "你的账号没有「实例管理员」能力，因此不加载配置。可以改用个人层，或请管理员在「设置 → 角色与绑定」为你的账号授予该能力。",
                 backToUserLayer: "去个人层",
                 notFoundTitle: "这个页面不存在",
                 notFoundBody: "该层没有这个配置域（或该域在这一层不可写）。请从左侧目录进入。",
@@ -3096,8 +3106,10 @@ const messages = {
                         "实例级 MCP 服务：所有工作区默认继承；工作区可用同名覆盖。只可引用实例凭据。",
                     // task-447（D-1286）：非管理员是**只读**视图（读面契约对已认证调用者开放），
                     // 写面门槛在此非阻断点名**能力位**（本面 CP 没有动作原子门，不编造原子名）。
+                    // task-18（C-4 同族）：点名能力位用**用户语言**（「实例管理员」），不写 wire 标识
+                    // `instance:admin` —— 后者是把内部命名空间印给用户，与 403 正文同一条判据。
                     writeRequiresCapability:
-                        "只读视图：注册或删除实例 MCP 服务需要实例管理员能力位（instance:admin）。",
+                        "只读视图：注册或删除实例 MCP 服务需要实例管理员能力。",
                     count: "{count} 个服务",
                     emptyTitle: "还没有实例级 MCP 服务",
                     emptyBody: "注册后所有工作区默认继承；需要专属配置时在工作区侧用同名覆盖。",
@@ -4840,6 +4852,10 @@ const messages = {
                 toLabel: "To",
                 toTargetsLabel: "Send to",
                 toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
+                // task-17 (source: task-6 candidate C-1): make an explicit empty TO visible.
+                toEmptyHint:
+                    "This message notifies no participant (it is still recorded in this session)",
+                toEmptyHintDismiss: "Got it",
                 workspaceLessNoTargets:
                     "A standalone Session does not support directed sends, delegation or attachments (plain chat only)",
                 workspaceLessDropped:
@@ -5681,7 +5697,8 @@ const messages = {
                 navAudit: "Audit log",
                 domainLoadFailed: "Failed to load this configuration; retry.",
                 domainLoading: "Loading configuration…",
-                domainKeysCount: "{count} config keys in this domain",
+                // task-18 (source: task-6 candidate C-2): no data-model vocabulary.
+                domainKeysCount: "{count} items set in this domain",
                 domainEditableCount: "{count} editable",
                 domainEditableCountNote: "(plus {rows} per-model override rows)",
                 domainEditableCountNoteEmpty: "(plus the per-model override table)",
@@ -5691,8 +5708,9 @@ const messages = {
                     "{domain} is not in the personal layer's writable set (a CP-matrix fact), so the jump is blocked instead of landing on a 404.",
                 dismiss: "Got it",
                 forbiddenTitle: "This layer needs the instance-admin capability",
+                // task-18 (source: task-6 candidate C-4): no internal capability token; say where to grant it.
                 forbiddenBody:
-                    "The instance layer is gated by CP's cap:instance:admin capability. This account does not hold it, so no configuration is loaded. Use the personal layer, or ask an administrator to grant it.",
+                    "Your account does not hold the instance-administrator capability, so no configuration is loaded. Use the personal layer, or ask an administrator to grant it to your account under Settings → Roles & bindings.",
                 backToUserLayer: "Go to the personal layer",
                 notFoundTitle: "This page does not exist",
                 notFoundBody:
@@ -6795,8 +6813,9 @@ const messages = {
                         "Instance-scope MCP servers: inherited by every workspace by default, and a workspace can override one by the same name. Only instance credentials may be referenced.",
                     // task-447 (D-1286): non-admins get a read-only view; the write gate names the
                     // capability (this face has no action-atom gate in CP, so no atom name is invented).
+                    // task-18 (C-4 same family): name the capability in user language, never the wire token.
                     writeRequiresCapability:
-                        "Read-only view: registering or removing instance MCP servers requires the instance-admin capability (instance:admin).",
+                        "Read-only view: registering or removing instance MCP servers requires the instance-admin capability.",
                     count: "{count} servers",
                     emptyTitle: "No instance-scope MCP servers yet",
                     emptyBody:

@@ -17,7 +17,12 @@ import { i18n } from "../index";
  * ① 不出现 `G1…G9` 这类缺口编号；<br>
  * ② 不出现 snake_case 标识符（表名/列名/枚举值，如 `mcp_remote_servers`、`owner_type`）；<br>
  * ③ 不出现 D-/PLAN-/BL- 编号（内部决策号不属于用户界面）；<br>
- * ④ 不出现「缺口」这个内部概念词（用户语言是「暂不可用 / 尚未提供」）。</p>
+ * ④ 不出现「缺口」这个内部概念词（用户语言是「暂不可用 / 尚未提供」）；<br>
+ * ⑤（task-18 / 源 task-6 C-2）不出现数据模型词「配置键 / config key」——用户读到的是"这页有多少项已设置"，
+ *    不需要知道它数的是 config key；<br>
+ * ⑥（task-18 / 源 task-6 C-4）不出现 `namespace:atom` 形态的**能力位/原子标识**（`cap:instance:admin`）。
+ *    注意口径：**点名动作原子**（`MANAGE_WORKSPACE_AGENTS` 这类 UPPER_SNAKE）是 AGENTS.md 允许的
+ *    产品写法，不在本规则内；本规则只禁"小写命名空间:冒号段"这种 wire 内部标识。</p>
  */
 type Flat = Array<{ path: string; value: string }>;
 
@@ -54,6 +59,21 @@ const RULES: Array<{ name: string; test: (value: string) => boolean; sample: str
         name: "内部概念词「缺口」",
         test: (v) => /缺口/.test(v) || /\bbackend gap\b/i.test(v),
         sample: "后端缺口",
+    },
+    // task-18（C-2）：数据模型词。负数保护：`config key` 允许出现在**代码注释**里（本文件不扫源码），
+    // 只禁用户可见文案；`配置键` 三个字在设置文案树里一律算违规。
+    {
+        name: "数据模型词「配置键 / config key」",
+        test: (v) => /配置键/.test(v) || /\bconfig keys?\b/i.test(v),
+        sample: "本域 3 个配置键",
+    },
+    // task-18（C-4）：`namespace:atom` 形态的内部标识（`cap:instance:admin`）。
+    // 刻意不匹配 URL 与时间：冒号后必须紧跟小写字母才起判，`https://…` 的冒号后是 `//` ⇒ 不命中；
+    // `10:30` 的冒号前不是字母 ⇒ 不命中。UPPER_SNAKE 的动作原子（AGENTS.md 允许点名）也不命中。
+    {
+        name: "能力位/原子标识（namespace:atom）",
+        test: (v) => /(?<![\w.:/-])[a-z][a-z0-9-]*(?::[a-z][a-z0-9_-]*)+(?![\w/])/.test(v),
+        sample: "cap:instance:admin",
     },
 ];
 

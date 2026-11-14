@@ -74,7 +74,7 @@ const messages = {
             domainApprovalPolicy: "审批策略",
             saveFailed: "保存失败",
             ia: {
-                domainKeysCount: "本域 {count} 个配置键",
+                domainKeysCount: "本域已设置 {count} 项",
                 domainEditableCount: "可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
                 layerOnlyInstance: "该域仅在实例层可配置",
@@ -268,7 +268,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         // task-121：面板**不卸载**（v-show 隐藏），只在视觉上让位给加载面 —— 卸载会诱发 mount 循环。
         expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(false);
-        expect(wrapper.text()).not.toContain("本域 0 个配置键");
+        expect(wrapper.text()).not.toContain("本域已设置 0 项");
     });
 
     it("renders the summary and the panel once the layer resolves", async () => {
@@ -280,9 +280,10 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         await flushPromises();
 
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域 1 个配置键",
-        );
+        const summary = wrapper.find('[data-testid="settings-domain-summary"]').text();
+        expect(summary).toContain("本域已设置 1 项");
+        // task-18（源 = task-6 候选 C-2）：主文案不得回退成数据模型词「配置键」。
+        expect(summary).not.toContain("配置键");
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
     });
 
@@ -297,7 +298,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
 
         // 默认桩不上报 ⇒ 只显示主文案（键数 2），徽标不出现。
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域 2 个配置键",
+            "本域已设置 2 项",
         );
         expect(wrapper.find('[data-testid="settings-domain-editable-count"]').exists()).toBe(false);
 
@@ -328,7 +329,7 @@ describe("SettingsDomainView pending state (task-112/121)", () => {
         expect(wrapper.find('[data-testid="settings-domain-loading"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="panels-stub"]').isVisible()).toBe(true);
         expect(wrapper.find('[data-testid="settings-domain-summary"]').text()).toContain(
-            "本域 1 个配置键",
+            "本域已设置 1 项",
         );
     });
     // 循环回归（dev-3 trace）：子组件在挂载/重载时回写全局 `layerLoading`。判据是**面板子树不被重建** ——

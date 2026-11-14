@@ -44,6 +44,8 @@ const messages = {
                 toLabel: "发送",
                 toTargetsLabel: "定向发送",
                 toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
+                toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
+                toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -328,5 +330,83 @@ describe("InputArea · task-453 让位后的抄送候选", () => {
         const idsAfter = candidateIds();
         expect(idsAfter).toContain(PRIMARY_ID);
         expect(idsAfter).not.toContain(HELPER_ID);
+    });
+});
+
+/**
+ * task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。
+ *
+ * <p>背景（task-450 真栈取证）：清空定向栏后发送，wire 上是显式 `[]`、CP 抑制通知
+ * ⇒ 消息真的发出去了、真的一个人都没通知，而界面与正常发送一模一样。
+ * 这里钉的是**界面说了一句**，且必须是**一次性**的：`chat-to-empty-hint`。</p>
+ *
+ * <p>三条判据的顺序 = 卡面顺序；反例与正例必须同时存在（只有正例时，"逢发必提示" 也会全绿）。</p>
+ */
+describe("InputArea · task-17 显式空 TO 的一次性提示", () => {
+    const HINT = '[data-testid="chat-to-empty-hint"]';
+
+    async function pickThenClear(wrapper: ReturnType<typeof mountInputArea>, name: string) {
+        await wrapper.get('[data-testid="to-targets-input"]').setValue(name);
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        await wrapper.get('[data-testid="to-targets-chip-remove"]').trigger("click");
+        await flushPromises();
+    }
+
+    async function sendText(wrapper: ReturnType<typeof mountInputArea>, text: string) {
+        await wrapper.get('[data-testid="chat-input"]').setValue(text);
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+    }
+
+    it("① 动过定向栏且最终为空 ⇒ 发送后提示恰好 1 次，且 wire 仍是显式空数组", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+        // 基线：发送前没有提示（这句话只在"真的发出去之后"才有意义，不能提前劝退）。
+        expect(wrapper.findAll(HINT)).toHaveLength(0);
+
+        await pickThenClear(wrapper, "Helper");
+        await sendText(wrapper, "hello");
+
+        expect(wrapper.findAll(HINT)).toHaveLength(1);
+        expect(wrapper.get(HINT).text()).toContain("本条不会通知任何参与者");
+        // 提示不得改 wire：显式空集仍是显式空集（CP 只认它来抑制通知）。
+        expect(wrapper.emitted("send")![0][4]).toEqual([]);
+    });
+
+    it("② 从未动过定向栏 ⇒ 发送后 0 次提示（防「逢发必提示」）", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        await sendText(wrapper, "no recipients touched");
+
+        expect(wrapper.findAll(HINT)).toHaveLength(0);
+        // 与 task-450 同一条不变式：未触碰仍是 undefined（旧单响应者路径）。
+        expect(wrapper.emitted("send")![0][4]).toBeUndefined();
+    });
+
+    it("③ 一次性：连发 2 次只出现 1 次；关掉后再清空重发也不再出现", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        await pickThenClear(wrapper, "Helper");
+        await sendText(wrapper, "first");
+        expect(wrapper.findAll(HINT)).toHaveLength(1);
+
+        // 连发第 2 次：提示不重复出现（同一个节点，不是两条）。
+        await sendText(wrapper, "second");
+        expect(wrapper.findAll(HINT)).toHaveLength(1);
+        expect(wrapper.emitted("send")).toHaveLength(2);
+
+        // 用户关掉它之后，即使再次清空 TO 发送，也不再打扰（语义已教过一次）。
+        await wrapper.get('[data-testid="chat-to-empty-hint-dismiss"]').trigger("click");
+        expect(wrapper.findAll(HINT)).toHaveLength(0);
+        await pickThenClear(wrapper, "Alpha");
+        await sendText(wrapper, "third");
+        expect(wrapper.findAll(HINT)).toHaveLength(0);
+        expect(wrapper.emitted("send")![2][4]).toEqual([]);
     });
 });

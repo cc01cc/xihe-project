@@ -12,7 +12,7 @@ import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
 import { problemDetailText } from "../../../../lib/errorMessages";
-import { Send, Square, LoaderCircle, CornerUpRight, Plus } from "@lucide/vue";
+import { Send, Square, LoaderCircle, CornerUpRight, Plus, Info } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
 import FileUpload from "../../../../components/multimodal/FileUpload.vue";
 import ScreenshotCapture from "../../../../components/multimodal/ScreenshotCapture.vue";
@@ -289,6 +289,9 @@ const toTargetsTouched = ref(false);
 function onToTargetsFieldChange(ids: string[]): void {
     toTargetIds.value = [...ids];
     toTargetsTouched.value = true;
+    // task-17：一旦重新选了收件人，上一条留下的「谁都不通知」提示就不再成立，必须立刻消失
+    // （留着就是在说谎）；一次性额度已用掉，不再重放。
+    if (ids.length > 0) showToEmptyHint.value = false;
 }
 
 /**
@@ -314,6 +317,38 @@ const toTargetsPayload = computed(() => {
     if (activeToTargetIds.value.length > 0) return [...activeToTargetIds.value];
     return toTargetsTouched.value ? [] : undefined;
 });
+
+/**
+ * task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。
+ *
+ * <p>问题（`[实测]` task-450 真栈取证）：清空定向栏后发送，wire 上是**显式 `[]`**、CP 抑制通知
+ * ⇒ 消息真发出去了、真一个人都没通知，而界面与正常发送**一模一样**。用户要么以为已通知某人，
+ * 要么以为没发出去而重发。三态（省略 / 显式 [] / 非空）已由 `InputAreaToTargets.spec.ts` 钉住，
+ * 这里只补「界面说一句」，**不改 wire**。</p>
+ *
+ * <p>为什么是「一次性」而不是常驻：这句话教的是**语义**（清空 TO 等于谁都不通知），学会一次就够；
+ * 常驻会同时违反两条判据 —— ①每屏多一行常驻警示（注意力预算），②常驻高度会进 composer 高度链
+ * （`--xh-composer-h` 被浮动态 dock 依赖）。也不走 sonner toast：那条通道是**错误**通道
+ * （`发送失败`），把「本条不通知任何人」混进去会让用户以为发送失败。</p>
+ *
+ * <p>三条判据（缺一不算完成）：①动过定向栏且最终为空 ⇒ 提示 1 次、`send` 第 5 参仍 `[]`；
+ * ②**从未动过定向栏 ⇒ 0 次**（防「逢发必提示」）；③连发 2 次只出现 1 次。</p>
+ */
+const showToEmptyHint = ref(false);
+/** 一次性：整个组件生命周期只提示一次（跨会话也不重复打扰；换会话只清可见性，不复位它）。 */
+const toEmptyHintUsed = ref(false);
+
+/**
+ * 发送时判一次「显式空 TO」。判据故意与 `toTargetsPayload` 同源（`[]` 才提示），
+ * 而不是另算一遍 `touched && empty` —— 两种算法迟早会漂（wire 改了三态、提示还按旧判据）。
+ */
+function markEmptyToHint(): void {
+    if (toEmptyHintUsed.value) return;
+    const payload = toTargetsPayload.value;
+    if (!Array.isArray(payload) || payload.length > 0) return;
+    toEmptyHintUsed.value = true;
+    showToEmptyHint.value = true;
+}
 
 /**
  * PLAN-0630 M5b (D30-14)：`抄送`栏 = 旁听名单（多选 chips，2026-11-04 起为「输入 + 候选浮层」）。
@@ -364,6 +399,8 @@ watch(
     () => props.sessionId,
     (sessionId) => {
         ccExpanded.value = sessionId ? composerPreferences.isCcExpanded(sessionId) : false;
+        // task-17：换了会话就不该继续看到上一条的提示（它会指向另一条消息）；一次性额度不复位。
+        showToEmptyHint.value = false;
     },
     { immediate: true },
 );
@@ -858,6 +895,8 @@ async function handleSend() {
 
     if (props.queueMode && uploadFailed) return;
     if (attachments.value.length > 0 && uploadedForSubmit.length === 0) return;
+    // task-17：本条真的要被发出去了 —— 此刻才判「显式空 TO」，提前判会把因校验失败而没发出去的那次也算上。
+    markEmptyToHint();
     if (props.queueMode)
         emit(
             "queue",
@@ -1331,6 +1370,31 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
             >
                 {{ t("chat.input.toAgentsOnlyHint") }}
             </p>
+            <!--
+                task-17（源 = task-6 候选 C-1）：显式空 TO 的**一次性**提示。形态照抄同区
+                `to-agents-only-hint`（`px-2 text-xs text-muted-foreground`）+ 一个可关闭按钮；
+                `role="status"` 让读屏播报（`aria-live=polite` 语义），但**不是**错误通道
+                （红/警示色一概不上，注意力预算 §10：提示不是危险）。
+            -->
+            <div
+                v-if="showToEmptyHint"
+                data-testid="chat-to-empty-hint"
+                role="status"
+                class="flex items-start gap-2 px-2 text-xs text-muted-foreground"
+            >
+                <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span class="min-w-0 flex-1 leading-relaxed">{{
+                    t("chat.input.toEmptyHint")
+                }}</span>
+                <button
+                    type="button"
+                    data-testid="chat-to-empty-hint-dismiss"
+                    class="shrink-0 rounded-sm px-1 transition-colors hover:text-foreground"
+                    @click="showToEmptyHint = false"
+                >
+                    {{ t("chat.input.toEmptyHintDismiss") }}
+                </button>
+            </div>
             <!--
                 PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。被 @ 的参与者会自动
                 出现在这里；点 × 移除（同一个 @ 不再自动加回，直到它从文本里消失）；+ 下拉手动添加。
