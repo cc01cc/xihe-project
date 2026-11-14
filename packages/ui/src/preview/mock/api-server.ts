@@ -30,6 +30,7 @@ import {
     mockModelCatalogResponse,
 } from "./data/providerConnections";
 import {
+    MOCK_INSTANCE_BINDINGS,
     isDeniedPreviewMode,
     isNonAdminPreviewMode,
     mockAuthCapabilities,
@@ -329,6 +330,25 @@ export function mockApiPlugin(options: MockApiOptions = {}): Plugin {
                         capabilities: mockAuthCapabilities(CAPABILITIES, nonAdmin),
                     });
                 }
+                /**
+                 * task-54（D-1444）：组织成员**详情抽屉段②**读的实例绑定面。
+                 *
+                 * <p>补之前这条面完全没 mock ⇒ 抽屉拿到 404 ⇒ 段②渲染成 error 态（`accessState` "error"）。
+                 * 只实现 `scopeType=instance`（抽屉唯一用到的那个）；`workspace` 照旧**响亮 404**，
+                 * 不返回空集合 —— 空集合会让「没实现」看起来像「本来就没有绑定」（task-64 同款教训）。</p>
+                 */
+                if (path === "/bindings" && (req.method ?? "GET") === "GET") {
+                    const scope = url.searchParams.get("scopeType") ?? "instance";
+                    if (scope !== "instance") {
+                        return respond(404, {
+                            code: "MOCK_ENDPOINT_MISSING",
+                            endpoint: path + "?scopeType=" + scope,
+                        });
+                    }
+                    options.log?.("[mock-api] GET /bindings?scopeType=instance → fixtures");
+                    return respond(200, MOCK_INSTANCE_BINDINGS);
+                }
+
                 if (path === "/me/permissions") {
                     /**
                      * task-249：权限投影搬进 `data/previewPermissions.ts`（原子清单 + 受限模式判定），

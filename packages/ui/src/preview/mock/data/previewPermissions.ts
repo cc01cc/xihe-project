@@ -15,6 +15,7 @@
  * 是唯一"零产品改动 + 用户可手动切换"的通道。另支持 env `XIHE_UI_MOCK_DENIED=1` 给脚本化跑批用。</p>
  */
 
+import type { ApiBindingSet } from "../../../composables/api";
 import { MOCK_AGENT_WORKSPACE_ID } from "./workspaceAgents";
 
 export interface PreviewPermissionAtom {
@@ -158,3 +159,46 @@ export function mockPermissionProjection(input: { capabilities: string[]; denied
         ],
     };
 }
+
+/**
+ * task-54（D-1444）：`GET /bindings?scopeType=instance` 的夹具 —— 组织成员**详情抽屉段②**
+ * （访问角色绑定）读的就是这条面。
+ *
+ * <p><b>为什么必须有</b>：在补它之前这条面**完全没有 mock** ⇒ 抽屉的 `loadAccessRoles()`
+ * 拿到 `404 MOCK_ENDPOINT_MISSING` ⇒ `accessState = "error"`（`OrgMemberDetailSheet.vue:155-160`），
+ * 于是卡面判据「两段角色」的段②在图上只是一段错误文案。</p>
+ *
+ * <p><b>为什么是两行、而且必须属于不同 subject</b>：抽屉按
+ * `row.subjectId === member.memberId` 过滤（`:153`）。只有一行时「过滤生效」与「过滤失效」
+ * 拍出来是同一张图 —— 夹具必须让**失效看得出来**（这也是 task-64 那条 catch-all 200 {} 的反面：
+ * 那种兜底会让缺失渲染成合法空态，图被当成证据交出去）。</p>
+ *
+ * <p>角色名与 id **照 CP 真实种子**（`V87__dynamic_access_roles.sql:122-134`）：
+ * `USER` = 实例层注册最小集（`…0003`）、`ADMIN` = 实例管理员（`…0002`），不自造别名。
+ * 主体：`mock-user`（张安，当前登录账号）与 `u-lina`（有账号但**不是**本工作区成员 ⇒
+ * 她的实例绑定不该出现在张安的详情里）。</p>
+ */
+export const MOCK_INSTANCE_BINDINGS: ApiBindingSet = {
+    scopeType: "instance",
+    scopeId: null,
+    bindings: [
+        {
+            id: "rb-mock-user-user",
+            subjectType: "user",
+            subjectId: "mock-user",
+            roleId: "00000000-0000-4000-8000-000000000003",
+            roleName: "USER",
+            grantedBy: null,
+            grantedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+            id: "rb-u-lina-admin",
+            subjectType: "user",
+            subjectId: "u-lina",
+            roleId: "00000000-0000-4000-8000-000000000002",
+            roleName: "ADMIN",
+            grantedBy: null,
+            grantedAt: "2026-01-02T00:00:00Z",
+        },
+    ],
+};
