@@ -34,12 +34,25 @@ public class LayeredPolicyResolver {
         if ("*".equals(pattern)) {
             return true;
         }
-        String normalizedPattern = pattern.replace('\\', '/');
-        String normalizedValue = value.replace('\\', '/');
+        boolean pathSemantics = shape == ToolShape.STRUCTURED;
+        String normalizedPattern;
+        String normalizedValue;
+        if (pathSemantics) {
+            // task-505: the single LEXICAL normalisation, shared with the containment check. It
+            // returns null for dot segments / UNC / invalid values (fail-closed); auth must never
+            // match a literal `ws/src/../secrets` the runtime would canonicalise outside.
+            normalizedPattern = PathKey.lexicalPattern(pattern);
+            normalizedValue = PathKey.lexical(value);
+            if (normalizedPattern == null || normalizedValue == null) {
+                return false;
+            }
+        } else {
+            normalizedPattern = pattern.replace('\\', '/');
+            normalizedValue = value.replace('\\', '/');
+        }
         if (!normalizedPattern.contains("*")) {
             return normalizedPattern.equals(normalizedValue);
         }
-        boolean pathSemantics = shape == ToolShape.STRUCTURED;
         return normalizedValue.matches(toRegex(normalizedPattern, pathSemantics));
     }
 

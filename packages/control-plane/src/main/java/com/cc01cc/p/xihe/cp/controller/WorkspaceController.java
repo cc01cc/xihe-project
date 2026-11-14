@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.PathKey;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -258,17 +259,14 @@ public class WorkspaceController {
         if (base == null || candidate == null) {
             return null;
         }
-        String normalizedBase = base.replace('\\', '/').replaceAll("/+$", "");
-        String normalizedCandidate = candidate.replace('\\', '/').replaceAll("/+$", "");
-        if (normalizedBase.isEmpty()) {
+        // task-505: both sides call PathKey's LEXICAL level, so this containment check and the
+        // policy matcher cannot disagree on case / trailing slashes; dot segments fail closed.
+        String normalizedBase = PathKey.lexical(base);
+        String normalizedCandidate = PathKey.lexical(candidate);
+        if (normalizedBase == null || normalizedBase.isEmpty() || normalizedCandidate == null) {
             return null;
         }
-        String baseLower = normalizedBase.toLowerCase(java.util.Locale.ROOT);
-        String candidateLower = normalizedCandidate.toLowerCase(java.util.Locale.ROOT);
-        if (candidateLower.equals(baseLower)) {
-            return null;
-        }
-        if (!candidateLower.startsWith(baseLower + "/")) {
+        if (PathKey.sameLexical(candidate, base) || !PathKey.withinLexical(candidate, base)) {
             return null;
         }
         String relative = normalizedCandidate.substring(normalizedBase.length() + 1);

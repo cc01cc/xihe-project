@@ -11,6 +11,7 @@ import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.PathKey;
 import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -682,14 +683,9 @@ public class WorkspaceService {
     }
 
     private static String comparablePath(String value) {
-        if (value == null) {
-            return "";
-        }
-        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('\\', '/');
-        while (normalized.length() > 1 && normalized.endsWith("/")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        return normalized;
+        // task-505: the single lexical normalisation (was a fourth hand-written variant).
+        String normalized = PathKey.lexical(value);
+        return normalized == null ? "" : normalized;
     }
 
     /**
@@ -1001,17 +997,15 @@ public class WorkspaceService {
         if (base == null || candidate == null) {
             return "<unknown>";
         }
-        String normalizedBase = base.replace('\\', '/').replaceAll("/+$", "");
-        String normalizedCandidate = candidate.replace('\\', '/').replaceAll("/+$", "");
-        String baseLower = normalizedBase.toLowerCase(java.util.Locale.ROOT);
-        String candidateLower = normalizedCandidate.toLowerCase(java.util.Locale.ROOT);
-        if (normalizedBase.isEmpty()) {
+        String normalizedBase = PathKey.lexical(base);
+        String normalizedCandidate = PathKey.lexical(candidate);
+        if (normalizedBase == null || normalizedBase.isEmpty() || normalizedCandidate == null) {
             return "<unknown>";
         }
-        if (candidateLower.equals(baseLower)) {
+        if (PathKey.sameLexical(candidate, base)) {
             return ".";
         }
-        if (!candidateLower.startsWith(baseLower + "/")) {
+        if (!PathKey.withinLexical(candidate, base)) {
             return "<outside-workspace>";
         }
         return normalizedCandidate.substring(normalizedBase.length() + 1);
