@@ -71,6 +71,63 @@ test.describe("standalone sessions in the sidebar (task-373)", () => {
         await expect(page.locator("textarea")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     });
 
+    /**
+     * task-585：审计里「ws-less 会话创建后 GET /api/v1/sessions/<id> 404」的**口径判据**。
+     *
+     * 404 的成因二选一：① 租户上下文残留（请求仍带 X-Workspace-Id，CP 的
+     * `SessionReadAccess#resolve` 按 workspace 相等过滤 ⇒ workspace_id IS NULL 的会话必然 404，
+     * 见 stores/auth.ts:600-614 与 lib/workspaceContext.ts）；② 会话确实不存在。
+     * 这条把①变成机器判据：打开独立会话时那次读取**不得**带 X-Workspace-Id；
+     * 反向控制 = 工作区会话的读取**应当**带（否则「不带头」这条判据本身没被咬住）。
+     */
+    test("ws-less 会话读取不带 X-Workspace-Id（带则 CP 必 404）；工作区会话必须带", async ({
+        page,
+    }) => {
+        await setupMockSessions(page, {
+            sessions: [{ id: WS_SESSION, title: "工作区会话" }],
+            workspacelessSessions: [{ id: STANDALONE_A, title: "独立会话甲" }],
+        });
+        const reads: Array<{ url: string; workspaceHeader: string | undefined }> = [];
+        page.on("request", (request) => {
+            if (request.method() !== "GET") return;
+            const path = new URL(request.url()).pathname;
+            if (!/^\/api\/v1\/sessions\/[^/]+$/.test(path)) return;
+            const headers = request.headers();
+            reads.push({
+                url: path,
+                workspaceHeader: headers["x-workspace-id"] ?? headers["X-Workspace-Id"],
+            });
+        });
+
+        // 先从工作区会话页进入（此时 tab 上下文里有工作区），再点开独立会话 —— 正是审计的路径。
+        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await expect(page.getByTestId("sidebar-standalone-group")).toBeVisible({
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+        reads.length = 0;
+        await page.getByTestId("sidebar-standalone-group").getByText("独立会话甲").click({
+            timeout: ACTION_TIMEOUT_MS,
+        });
+        await expect(page.getByTestId("standalone-chat-title")).toHaveText("独立会话甲", {
+            timeout: EXPECT_TIMEOUT_MS,
+        });
+
+        const standaloneRead = reads.find((row) => row.url.endsWith("/" + STANDALONE_A));
+        expect(standaloneRead, "独立会话读取确实发生（否则判据没被咬住）").toBeTruthy();
+        // 空串与「不存在」都等于「无工作区上下文」；有值即 CP 按 workspace 相等过滤 ⇒ 404。
+        expect(standaloneRead?.workspaceHeader ?? "", "ws-less 会话读取不得携带 tab 工作区头").toBe(
+            "",
+        );
+
+        // 反向控制：工作区会话的读取必须带工作区头，证明上面那条不是因为「从不发头」而空过。
+        await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
+        await expect
+            .poll(() => reads.find((row) => row.url.endsWith("/" + WS_SESSION))?.workspaceHeader, {
+                timeout: LONG_TIMEOUT_MS,
+            })
+            .toBe(WS_ID);
+    });
+
     test("hides the group when the account has no workspace-less session", async ({ page }) => {
         await setupMockSessions(page, {
             sessions: [{ id: WS_SESSION, title: "工作区会话" }],
