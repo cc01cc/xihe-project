@@ -1162,6 +1162,89 @@ class ChatControllerTest extends AbstractH2Test {
         }
     }
 
+    /**
+     * task-131 (source runtime-1 task-127 shape ①): a run parked for transport recovery must be
+     * <b>delivered</b> when the agent comes back, not buried as CHAT_IN_PROGRESS.
+     *
+     * <p>Three things this pins that no other test does:</p>
+     * <ol>
+     *   <li>it goes through the real registration chain — the down→up transition on
+     *       {@code HealthMonitor} fires {@code setOnServiceRecovered("agent")}, which is where
+     *       {@code ChatController:246} wires the drain. Calling {@code requestQueue.drain(...)}
+     *       directly would test a path that does not exist in production;</li>
+     *   <li>it asserts <b>delivery</b>, not the absence of a red status: the queued run must reach
+     *       the agent (ASSISTANT reply persisted) and finish {@code succeeded};</li>
+     *   <li>it leaves the queue alone in {@code finally}: the older queued-run test clears it, which
+     *       is exactly why "排进去" was verified for years while "排出来" never was.</li>
+     * </ol>
+     */
+    @Test
+    void chat_queuedRunIsRedeliveredAfterTheAgentRecovers() {
+        requestQueue.clear();
+        AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+        AGENT_AVAILABLE.set(true);
+        healthMonitor.pollHealth();
+        AGENT_AVAILABLE.set(false);
+        healthMonitor.pollHealth();
+        stubAgentSuccessReply();
+        String idempotencyKey = "queue-redeliver-" + UUID.randomUUID();
+        try {
+            Map<String, Object> request = Map.of(
+                    "sessionId", sessionId,
+                    "content", "Deliver this after the agent recovers",
+                    "workspaceId", workspaceId,
+                    "userId", userId,
+                    "branchId", branchId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(authToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Idempotency-Key", idempotencyKey);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+            assertEquals("queued", response.getBody().get("status"),
+                    "agent down + llmReady ⇒ the run is parked for transport recovery");
+            String queuedRunId = chatRunRepository
+                    .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
+                    .orElseThrow().getId().toString();
+            assertEquals(1, requestQueue.size(), "the request must be parked exactly once");
+
+            // Recovery through the product's own hook: HealthMonitor sees down→up and calls the
+            // consumer registered in ChatController:246, which drains the queue.
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+
+            // (2) delivery: the agent stub is reached, so an ASSISTANT message exists for this run.
+            await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> assertEquals(1,
+                    jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
+                            Integer.class, queuedRunId),
+                    "the queued run must be redelivered to the agent after recovery"));
+
+            // (3) no phantom CHAT_IN_PROGRESS: run succeeded and carries no error code, and no
+            // failed frame was written into the durable history.
+            assertEquals("succeeded", jdbcTemplate.queryForObject(
+                            "SELECT status FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", String.class, queuedRunId),
+                    "a redelivered run must finish succeeded");
+            assertEquals(0, jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM chat_runs WHERE CAST(id AS VARCHAR) = ? AND error_code IS NOT NULL",
+                            Integer.class, queuedRunId),
+                    "no error code may be attached to a run that was actually delivered");
+            assertEquals(0, jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM chat_run_history WHERE CAST(run_id AS VARCHAR) = ? AND status = 'failed'",
+                            Integer.class, queuedRunId),
+                    "the CHAT_IN_PROGRESS terminal must never be written for this run");
+
+            // (4) the queue emptied itself — asserted here, never cleared in finally.
+            assertEquals(0, requestQueue.size(), "the drain must consume the queue, not be cleared by the test");
+        } finally {
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
     @Test
     void chat_repeatedIdempotencyKeyDoesNotStartSecondRun() throws IOException, InterruptedException {
         AtomicReference<Integer> agentCalls = new AtomicReference<>(0);
