@@ -161,6 +161,41 @@ describe("OrgMembersView 主链路（PLAN-0773 M3-1/M3-2）", () => {
         wrapper.unmount();
     });
 
+    /**
+     * task-33 第二段：标签措辞与"这是否会被记住"两件事的机器判据。
+     *
+     * <p>① 「含下级」改「含子单元成员」后，光看视觉会以为「层级」含混 —— 标签要带 `title` 把
+     * 语义讲全（嵌套任意层级都算进来，不只是直接子级）。② 开关**刻意不持久化**（见
+     * `OrgUnitMemberList.vue` 的注释）：它一旦被记住，"上次关过"就会变成用户想不起来的隐性状态，
+     * 从而**重新制造**本卡要修的体验。这两条都不是靠读代码能守住的 —— 有人加一行
+     * `useLocalStorage` 或删掉 title，任何用例都不会红。</p>
+     */
+    it("标签带 title 讲全语义，且开关翻转不写 localStorage（刻意不持久化）", async () => {
+        mockFetch(happyHandler);
+        const wrapper = await mountView();
+        await selectRoot(wrapper);
+
+        const label = wrapper.findAll("label").find((node) => node.text().includes("含子单元成员"));
+        expect(label, "标签文案不是「含子单元成员」").toBeDefined();
+        // 非空即"不是裸 key"：vue-i18n 缺键时渲染的是 `orgMembers.includeDescendantsTitle` 字面量。
+        const title = label?.attributes("title") ?? "";
+        expect(title, "标签缺 title 或 key 未落地").toBe("包含该单元下所有层级单元的成员");
+
+        const switchComp = wrapper.findComponent(
+            (await import("../../../components/ui/switch")).Switch,
+        );
+        switchComp.vm.$emit("update:checked", false);
+        await flushPromises();
+
+        const persisted = Object.keys(localStorage).filter(
+            (key) =>
+                /descendant|下级|子单元/i.test(key) ||
+                /descendant/i.test(localStorage.getItem(key) ?? ""),
+        );
+        expect(persisted, "开关被持久化了 —— 这会重新制造「上次关过」的隐性状态").toEqual([]);
+        wrapper.unmount();
+    });
+
     it("写面按钮全部 disabled，点击不发出任何请求（卡面 ③：不造可点入口）", async () => {
         mockFetch(happyHandler);
         const wrapper = await mountView();
@@ -310,16 +345,9 @@ describe("OrgMembersView 层级缩进与 aria-level（task-33）", () => {
         const levelOf = (key: string) =>
             wrapper.get(`[data-testid="org-tree-node-${key}"]`).attributes("aria-level");
 
-        // 同一处顺带钉住一条旧账（Lead 裁定：复活一个死属性要被证明）：
-        // `org-tree-node-*` 这个 testid 在模板里写了很久，而 vendor `TreeItem` 的
-        // `inheritAttrs: false` 把它丢掉了 ⇒ 从来没进过 DOM。上面这两行能取到元素，
-        // 本身就已经证明它复活了；这里再显式断言「三行都在」，防止将来又退回静默丢弃。
-        for (const key of ["d-root", "d-child", "d-grand"]) {
-            expect(
-                wrapper.find(`[data-testid="org-tree-node-${key}"]`).exists(),
-                `org-tree-node-${key} 未进 DOM：vendor TreeItem 又把 $attrs 丢了`,
-            ).toBe(true);
-        }
+        // 注：`org-tree-node-*` 这条 testid 的**权威断言在浏览器侧**
+        // （`e2e/mock/task33-org-tree-indent.spec.ts`）。这里只在 `levelOf` 里顺带用到它 ——
+        // 同一事实不在 jsdom 再断言一次，否则"谁是权威"会变模糊（Lead 裁定）。
         expect(levelOf("d-root")).toBe("1");
         expect(levelOf("d-child")).toBe("2");
         expect(levelOf("d-grand")).toBe("3");

@@ -23,7 +23,13 @@ const members = ref<ApiOrgUnitMember[]>([]),
     loading = ref(false),
     error = ref<OrgTreeErrorKind | "">(""),
     errorDetail = ref(""),
-    /** 设计裁定（design §5.1）：「含下级」默认开 —— 避免"点了父节点以为看全了"。 */
+    /**
+     * 设计裁定（design §5.1）：「含子单元成员」默认开 —— 避免"点了父节点以为看全了"。
+     *
+     * **刻意不持久化**：开关只作用于当前这次列表查询（每次进页面都回到「含」）。
+     * 理由：持久化会把「上次关过」变成一个用户想不起来的隐性状态，从而**重新制造**
+     * "点了父节点发现人少了"这个要修的体验；默认开 + 可见的勾选框，语义比记忆用户偏好更稳。
+     */
     includeDescendants = ref(true);
 
 async function load() {
@@ -97,7 +103,10 @@ const errorDesc = computed(() =>
                     {{ unit ? unit.name : t("orgMembers.membersTitle") }}
                 </p>
             </div>
-            <label class="ms-auto flex items-center gap-2 text-sm text-muted-foreground">
+            <label
+                class="ms-auto flex items-center gap-2 text-sm text-muted-foreground"
+                :title="t('orgMembers.includeDescendantsTitle')"
+            >
                 {{ t("orgMembers.includeDescendants") }}
                 <Switch
                     :checked="includeDescendants"

@@ -85,7 +85,9 @@ const messages = {
             atomDeniedDesc:
                 "当前身份缺少 READ_ORG_UNIT_MEMBERS 权限原子；这是授权问题，不是功能没提供。",
             membersTitle: "单元成员",
-            includeDescendants: "含下级",
+            includeDescendants: "含子单元成员",
+            /** 标签的 `title`：把「含子单元成员」扩到人话（嵌套任意层级都会算进来，不只是直接子级）。 */
+            includeDescendantsTitle: "包含该单元下所有层级单元的成员",
             colName: "名称",
             colKind: "类型",
             colUnit: "所在单元",
@@ -3824,7 +3826,8 @@ const messages = {
             atomDeniedDesc:
                 "This identity lacks the READ_ORG_UNIT_MEMBERS permission atom — a permission issue, not a missing feature.",
             membersTitle: "Unit members",
-            includeDescendants: "Include sub-units",
+            includeDescendants: "Include sub-unit members",
+            includeDescendantsTitle: "Includes members of every unit nested under this one",
             colName: "Name",
             colKind: "Type",
             colUnit: "Unit",
