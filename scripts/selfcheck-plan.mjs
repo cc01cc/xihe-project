@@ -11,6 +11,8 @@
  *
  * 用法：
  *   node scripts/selfcheck-plan.mjs --list             # 所有 scope（人读）
+ *   node scripts/selfcheck-plan.mjs --check-anchors    # 校验全部 evidence 指针（锚点自检，task-593）
+ *   node scripts/selfcheck-plan.mjs --selftest         # 锚点自检自身的自测（含「插一行后行号锚点必错」负例）
  *   node scripts/selfcheck-plan.mjs --scope=ui,cp      # 只看这些 scope（逗号或空格分隔，按给出顺序打印）
  *   node scripts/selfcheck-plan.mjs --scope=ui --json  # 机读：单行 JSON（供 pipeline/门禁消费）
  *   node scripts/selfcheck-plan.mjs --help
@@ -27,6 +29,11 @@
  * - verdict：**通过判据**（可判定句，写明看退出码还是看哪一行输出）；
  * - evidence：存在性证据（文件:行号 / 脚本路径 / mise task 行号）。
  */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const SCOPES = {
   ui: {
     label: "UI（Vue 3 + Vite）",
@@ -40,7 +47,7 @@ const SCOPES = {
         cmd: "pnpm run test:unit -- <spec 路径>",
         verdict: '输出含 "Test Files  1 passed (1)" 且 exit 0（有红即 exit 1）',
         evidence:
-          "packages/ui/package.json scripts.test:unit=vitest run；packages/ui/AGENTS.md:25；mise.toml:145",
+          "packages/ui/package.json scripts.test:unit=vitest run；packages/ui/AGENTS.md:25；mise.toml [tasks.\"test:ui\"]",
       },
       {
         level: "S0",
@@ -49,7 +56,7 @@ const SCOPES = {
         cmd: "pnpm run typecheck",
         verdict: "vue-tsc --noEmit 静默无输出 + exit 0（报 TS#### 即失败）",
         evidence:
-          "packages/ui/package.json scripts.typecheck=vue-tsc --noEmit；mise.toml:338；packages/ui/AGENTS.md:26",
+          "packages/ui/package.json scripts.typecheck=vue-tsc --noEmit；mise.toml [tasks.\"typecheck:ui\"]；packages/ui/AGENTS.md:26",
       },
       {
         level: "S0",
@@ -57,7 +64,7 @@ const SCOPES = {
         dir: "packages/ui",
         cmd: "pnpm run lint",
         verdict: "oxfmt 全绿 + oxlint 报 0 error（warnings 允许）；exit 0",
-        evidence: "packages/ui/package.json scripts.lint；mise.toml:299；判据 packages/ui/AGENTS.md:34",
+        evidence: "packages/ui/package.json scripts.lint；mise.toml [tasks.\"lint:ui\"] !oxlint；判据 packages/ui/AGENTS.md:34",
       },
       {
         level: "S0",
@@ -73,7 +80,7 @@ const SCOPES = {
         dir: "packages/ui",
         cmd: "pnpm exec vitest run",
         verdict: '末段 "Test Files  <N> passed (<N>)" + "Tests  <N> passed"；有红即 exit 1',
-        evidence: "A03-xihe/AGENTS.md:133（全量 ~150s）；mise run test:ui = mise.toml:145",
+        evidence: "AGENTS.md:133（全量 ~150s）；mise run test:ui = mise.toml [tasks.\"test:ui\"]",
       },
       {
         level: "S1",
@@ -81,7 +88,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run test:e2e:fixtures",
         verdict: 'node --test 汇总 "# fail 0" + exit 0',
-        evidence: "mise.toml:151；并入 validate 见 mise.toml:350-353",
+        evidence: "mise.toml [tasks.\"test:e2e:fixtures\"]；并入 validate 见 mise.toml [tasks.validate]",
       },
       {
         level: "S1",
@@ -89,7 +96,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run test:mock",
         verdict: 'playwright 汇总行 "N passed"（flaky 由 retries 吸收）+ exit 0',
-        evidence: "mise.toml:138-143（两个 load-bearing env pin 在 :140-143）",
+        evidence: "mise.toml [tasks.\"test:mock\"] !XIHE_E2E_PROFILE （两个 load-bearing env pin 在该 block 内）",
       },
     ],
   },
@@ -114,7 +121,7 @@ const SCOPES = {
         dir: "packages/control-plane",
         cmd: "mvn -o test -Dtest=<TestClass>[#method]",
         verdict: '末行 "Tests run: X, Failures: 0, Errors: 0, Skipped: Y" + exit 0',
-        evidence: "packages/control-plane/AGENTS.md:35、:41",
+        evidence: "packages/control-plane/AGENTS.md:35 !ApprovalServiceTest；packages/control-plane/AGENTS.md:41 !mvn",
       },
       {
         level: "S0",
@@ -122,7 +129,7 @@ const SCOPES = {
         dir: "packages/control-plane",
         cmd: "mvn -o -q checkstyle:check",
         verdict: "exit 0（-q 下静默；任何新增违规即非 0，不做 warning 降级）；task-583 起同一门也钉在 Maven 的 validate 相位（pom.xml execution=checkstyle-check-early）⇒ mvn -o -q test-compile / mvn -o test -Dtest=X 同样先红，不再依赖「记得单独跑」",
-        evidence: "packages/control-plane/AGENTS.md:36（命令清单）、:43（task-583 绑相位）、:101（规则与阻断口径）；mise.toml:423-427（lint:cp）",
+        evidence: "packages/control-plane/AGENTS.md:36（命令清单）、:43（task-583 绑相位）、:101（规则与阻断口径）；mise.toml [tasks.\"lint:cp\"] !checkstyle",
       },
       {
         level: "S0",
@@ -130,7 +137,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run check:openapi",
         verdict: "打印结构 + 冻结切片校验摘要 + exit 0（漂移即非 0）",
-        evidence: "mise.toml:543-546（BL-162）；test:cp 依赖见 mise.toml:173",
+        evidence: "mise.toml [tasks.\"check:openapi\"]（BL-162）；test:cp 依赖见 mise.toml [tasks.\"test:cp\"]",
       },
       {
         level: "S0",
@@ -139,7 +146,7 @@ const SCOPES = {
         cmd: "mvn -o -q test -Dtest=DomainSchemaMigrationTest",
         verdict: '末行 "Tests run: X, Failures: 0, Errors: 0" + exit 0（+ 人工核「最高号 +1」）',
         evidence:
-          "测试类 src/test/java/com/cc01cc/p/xihe/cp/migration/DomainSchemaMigrationTest.java；定号规则 packages/control-plane/AGENTS.md:112",
+          "测试类 src/test/java/com/cc01cc/p/xihe/cp/migration/DomainSchemaMigrationTest.java；定号规则 packages/control-plane/AGENTS.md:114 !迁移号",
       },
       {
         level: "S1",
@@ -149,7 +156,7 @@ const SCOPES = {
         verdict:
           "test:cp 允许红 = BL-368 已登记条；紧随的 test:cp:baseline exit 0 才表示「失败 ⊆ 基线」",
         evidence:
-          "mise.toml:172、:182（BL-368：基线只许缩小、reviewBy 过期即失败、报告早于 HEAD ⇒ exit 2）",
+          "mise.toml [tasks.\"test:cp:baseline\"]、:182（BL-368：基线只许缩小、reviewBy 过期即失败、报告早于 HEAD ⇒ exit 2）",
       },
     ],
   },
@@ -165,7 +172,7 @@ const SCOPES = {
         dir: "packages/agent",
         cmd: 'uv run pytest tests/unit/<file>.py -k "<test_name>" -v',
         verdict: '末行含 "1 passed"（或 N passed）且无 failed/error；exit 0',
-        evidence: "packages/agent/AGENTS.md:25；定向必跑清单 :68",
+        evidence: "packages/agent/AGENTS.md:25 !pytest；packages/agent/AGENTS.md:68 !必须",
       },
       {
         level: "S0",
@@ -173,7 +180,7 @@ const SCOPES = {
         dir: "packages/agent",
         cmd: "uv run ruff check src/",
         verdict: '输出 "All checks passed!" + exit 0',
-        evidence: "packages/agent/AGENTS.md:30；mise.toml:305",
+        evidence: "packages/agent/AGENTS.md:30；mise.toml [tasks.\"lint:agent\"] !ruff",
       },
       {
         level: "S0",
@@ -189,7 +196,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run test:agent",
         verdict: 'pytest 汇总 "… passed, … deselected" 且无 failed；exit 0',
-        evidence: "mise.toml:160；默认 deselect 见 packages/agent/AGENTS.md:29",
+        evidence: "mise.toml [tasks.\"test:agent\"]；默认 deselect 见 packages/agent/AGENTS.md:29",
       },
       {
         level: "S1",
@@ -197,7 +204,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run gate:agent-quality -- --report <invariant.json> --report <behavior.json> --baseline <baseline.json>",
         verdict: "退出码语义：0=PASS / 1=FAIL / 2=NOT_EVALUATED / 3=GATE_ERROR，**只有 0 算过**",
-        evidence: "mise.toml:166",
+        evidence: "mise.toml [tasks.\"gate:agent-quality\"]",
       },
     ],
   },
@@ -213,7 +220,7 @@ const SCOPES = {
         dir: "packages/runtime",
         cmd: "cargo test --locked --lib <test_name>",
         verdict: '末行 "test result: ok." + exit 0',
-        evidence: "packages/runtime/AGENTS.md:19；mise.toml:192",
+        evidence: "packages/runtime/AGENTS.md:19；mise.toml [tasks.\"test:runtime:lib\"]",
       },
       {
         level: "S0",
@@ -221,7 +228,7 @@ const SCOPES = {
         dir: "packages/runtime",
         cmd: "cargo fmt --check",
         verdict: "无输出 + exit 0（列出 diff 即失败）",
-        evidence: "packages/runtime/AGENTS.md:26；mise.toml:317",
+        evidence: "packages/runtime/AGENTS.md:26；mise.toml [tasks.\"lint:runtime\"] !fmt",
       },
       {
         level: "S0",
@@ -229,7 +236,7 @@ const SCOPES = {
         dir: "packages/runtime",
         cmd: "cargo clippy --locked --all-targets -- -D warnings",
         verdict: "无 warning/error + exit 0（瞬态抖动时单独重跑本条复判）",
-        evidence: "packages/runtime/AGENTS.md:25；mise.toml:317",
+        evidence: "packages/runtime/AGENTS.md:25；mise.toml [tasks.\"lint:runtime\"] !clippy",
       },
       {
         level: "S1",
@@ -237,7 +244,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run test:runtime:lib:gate",
         verdict: '4 次运行全部 "test result: ok." + exit 0',
-        evidence: "mise.toml:202-211（BL-262；故意不进 validate）",
+        evidence: "mise.toml [tasks.\"test:runtime:lib:gate\"]（BL-262；故意不进 validate）",
       },
     ],
   },
@@ -253,7 +260,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "node --test scripts/<改的>.test.mjs",
         verdict: '汇总 "# fail 0" + exit 0',
-        evidence: "mise.toml:133-137（test:cli 用显式文件清单）",
+        evidence: "mise.toml [tasks.\"test:cli\"] !node --test",
       },
       {
         level: "S0",
@@ -269,7 +276,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run test:cli",
         verdict: '显式清单跑完 "# fail 0"，且尾部 check-test-global-state 不报违规 + exit 0',
-        evidence: "mise.toml:133",
+        evidence: "mise.toml [tasks.\"test:cli\"]",
       },
     ],
   },
@@ -289,7 +296,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run check:openapi",
         verdict: "打印校验摘要 + exit 0（结构/冻结切片漂移即非 0）",
-        evidence: "mise.toml:543；依赖关系 mise.toml:173",
+        evidence: "mise.toml [tasks.\"check:openapi\"]；依赖关系 mise.toml [tasks.\"test:cp\"]",
       },
       {
         level: "S0",
@@ -297,7 +304,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run check:ports",
         verdict: "打印逐项比对结果 + exit 0（无 ONE 时显式 standalone OK，不 skip）",
-        evidence: "mise.toml:519（脚本 header 说明 skip 语义）",
+        evidence: "mise.toml [tasks.\"check:ports\"]",
       },
       {
         level: "S0",
@@ -305,7 +312,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run check:standalone",
         verdict: "打印导出 + 无 ONE 启动验证结果 + exit 0",
-        evidence: "mise.toml:513（PLAN-0612，--worktree 形态）",
+        evidence: "mise.toml [tasks.\"check:standalone\"] !PLAN-0612",
       },
     ],
   },
@@ -321,7 +328,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run lint:links",
         verdict: "exit 0（死链即非 0；skip 也 exit 0，注意看输出里的 skip 理由）",
-        evidence: "mise.toml:323",
+        evidence: "mise.toml [tasks.\"lint:links\"]",
       },
       {
         level: "S0",
@@ -329,7 +336,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run check:commit-msg",
         verdict: "exit 0（超宽/缺 PLAN-#### 引用/首行类型不符即非 0）",
-        evidence: "mise.toml:570-572",
+        evidence: "mise.toml [tasks.\"check:commit-msg\"]",
       },
       {
         level: "S0",
@@ -337,7 +344,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run lint:log-secrets",
         verdict: "exit 0（命中疑似凭证即非 0）",
-        evidence: "mise.toml:295-297",
+        evidence: "mise.toml [tasks.\"lint:log-secrets\"]",
       },
     ],
   },
@@ -361,7 +368,7 @@ const SCOPES = {
         dir: "A03-xihe 根",
         cmd: "mise run test:e2e:fixtures",
         verdict: '汇总 "# fail 0" + exit 0',
-        evidence: "mise.toml:151",
+        evidence: "mise.toml [tasks.\"test:e2e:fixtures\"]",
       },
       {
         level: "S0",
@@ -387,7 +394,7 @@ const SCOPES = {
         dir: "packages/ui",
         cmd: "pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/<spec> --reporter=list --workers=4",
         verdict: '汇总 "1 passed"（或 N passed）+ exit 0',
-        evidence: "mise.toml:138-143（XIHE_E2E_BROWSER_CHANNEL=chrome-beta、--workers=4）",
+        evidence: "mise.toml [tasks.\"test:mock\"] !chrome-beta",
       },
     ],
   },
@@ -409,6 +416,129 @@ function pad(s, n) {
   // 中文按 2 列估算，仅用于对齐输出
   const width = [...s].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2e80 ? 2 : 1), 0);
   return s + " ".repeat(Math.max(0, n - width));
+}
+
+/* ────────────────────────── 指针锚点自检（task-593） ──────────────────────────
+ * 为什么要有这个：evidence 原先全是 `file:LINE` 行号锚点。2026-11-14 task-583 往
+ * packages/control-plane/AGENTS.md 插了 2 行，同文件 3 处指针当场错位；抽样 34 条里 10 条
+ * 指向了无关内容（其中 1 条指向空行）。**行号锚点必然漂** ⇒ 首选键名/符号锚点，行号只作兜底，
+ * 两种形态都由本自检覆盖。
+ *
+ * 支持的指针形态（`!kw` 可选 = 该处必须出现关键词，专挡「行号对、内容换了」）：
+ *   mise.toml [tasks."lint:cp"] !checkstyle   键名锚点：该任务 block 内必须含关键词
+ *   AGENTS.md:133 !150                        兜底行锚点：该行必须非空且含关键词
+ *   module-selfcheck-matrix.md §5             章节锚点：文件内必须有该节标题
+ */
+const ANCHOR_RE =
+  /((?:[\w.-]+\/)*[\w.-]+\.(?:toml|mjs|json|md|ya?ml))(?::(\d+)(?:-\d+)?|\s*\[([^\]]+)\]|\s*§([^\s（(]+))(?:\s*!([^\s；、，。)）]+))?/g;
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function parseAnchors(text) {
+  const out = [];
+  ANCHOR_RE.lastIndex = 0;
+  let m;
+  while ((m = ANCHOR_RE.exec(text)) !== null) {
+    out.push({
+      file: m[1],
+      line: m[2] ? Number(m[2]) : null,
+      symbol: m[3] ?? null,
+      section: m[4] ?? null,
+      keyword: m[5] ?? null,
+    });
+  }
+  return out;
+}
+
+function readRepoFile(rel, root = REPO_ROOT) {
+  const candidates = [rel, ...["control-plane", "agent", "runtime", "ui"].map((p) => `packages/${p}/${rel}`)];
+  // A03-xihe 仓内指针以本仓根为基准；跨仓指针（one 工作区根下的 internal/ …）与 one/ 前缀单独兜
+  const up = path.resolve(root, "..");
+  if (rel.startsWith("one/")) candidates.push(path.join(up, rel.slice(4)));
+  if (/^(internal|spec|docs|plans|scripts)\//.test(rel)) candidates.push(path.join(up, rel));
+  for (const c of candidates) {
+    try {
+      return { rel: c, lines: fs.readFileSync(path.resolve(root, c), "utf8").split(/\r?\n/) };
+    } catch {
+      // 试下一个候选路径；全部失败由调用方报 E_FILE_NOT_FOUND
+    }
+  }
+  return null;
+}
+
+function checkAnchor(anchor, root = REPO_ROOT) {
+  const target = readRepoFile(anchor.file, root);
+  if (!target) return { ok: false, why: `E_FILE_NOT_FOUND ${anchor.file}` };
+  const body = target.lines;
+  if (anchor.symbol) {
+    const at = body.findIndex((l) => l.includes(anchor.symbol));
+    if (at < 0) return { ok: false, why: `E_SYMBOL_MISSING ${anchor.file} 里没有 ${anchor.symbol}` };
+    if (anchor.keyword) {
+      let end = body.length;
+      for (let i = at + 1; i < body.length; i++) {
+        if (/^\[tasks\./.test(body[i])) { end = i; break; }
+      }
+      if (!body.slice(at, end).join("\n").includes(anchor.keyword)) {
+        return { ok: false, why: `E_KEYWORD_MISSING ${anchor.file} ${anchor.symbol} 内无「${anchor.keyword}」` };
+      }
+    }
+    return { ok: true, where: `${target.rel}:${at + 1}（${anchor.symbol}）` };
+  }
+  if (anchor.section) {
+    const esc = anchor.section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const at = body.findIndex((l) => new RegExp(`^#+\\s*${esc}(\\D|$)`).test(l) || l.includes(`§${anchor.section}`));
+    if (at < 0) return { ok: false, why: `E_SECTION_MISSING ${anchor.file} 无「${anchor.section}」节` };
+    return { ok: true, where: `${target.rel}:${at + 1}（§${anchor.section}）` };
+  }
+  const idx = (anchor.line ?? 0) - 1;
+  const text = (body[idx] ?? "").trim();
+  if (!text) return { ok: false, why: `E_EMPTY_LINE ${anchor.file}:${anchor.line} 是空行——指针指向空行等于没指` };
+  if (anchor.keyword && !text.includes(anchor.keyword)) {
+    return { ok: false, why: `E_KEYWORD_MISSING ${anchor.file}:${anchor.line} 无「${anchor.keyword}」（实际：${text.slice(0, 60)}）` };
+  }
+  return { ok: true, where: `${target.rel}:${anchor.line}（${text.slice(0, 46)}）` };
+}
+
+function runAnchorChecks() {
+  const rows = [];
+  const problems = [];
+  for (const [scopeName, scope] of Object.entries(SCOPES)) {
+    for (const step of scope.steps) {
+      for (const anchor of parseAnchors(step.evidence ?? "")) {
+        const r = checkAnchor(anchor);
+        rows.push({ scopeName, title: step.title, anchor, result: r });
+        if (!r.ok) problems.push(`${scopeName} ｜ ${step.title}：${r.why}`);
+      }
+    }
+  }
+  return { rows, problems };
+}
+
+function runSelftest() {
+  // 卡面判据③的负例：往被指文件顶部插一行 ⇒ 键名锚点仍解析，行号锚点必错位。
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "selfcheck-plan-anchors-"));
+  const tomlPath = path.join(dir, "mise.toml");
+  const toml = ['[tasks."lint:cp"]', 'run = "mvn checkstyle:check"', "", "[tasks.validate]", 'depends = ["lint"]', ""].join("\n");
+  fs.writeFileSync(tomlPath, toml, "utf8");
+  const cases = [];
+  const run = (name, anchorText, expectOk) => {
+    const anchor = parseAnchors(anchorText)[0];
+    const r = anchor ? checkAnchor(anchor, dir) : { ok: false, why: "E_ANCHOR_UNPARSED" };
+    cases.push({ name, expectOk, got: r.ok, detail: r.ok ? r.where : r.why });
+  };
+  run("键名锚点命中", 'mise.toml [tasks."lint:cp"] !checkstyle', true);
+  run("行号锚点命中", "mise.toml:2 !checkstyle", true);
+  run("空行锚点必须报错", "mise.toml:3", false);
+  run("符号不存在必须报错", 'mise.toml [tasks."no-such-task"]', false);
+  run("关键词不符必须报错", 'mise.toml [tasks."lint:cp"] !ruff', false);
+  fs.writeFileSync(tomlPath, "# 人为插入的一行\n" + toml, "utf8");
+  run("插入一行后：键名锚点仍解析（这条是判据③的负例）", 'mise.toml [tasks."lint:cp"] !checkstyle', true);
+  run("插入一行后：行号锚点错位（证明为什么不用行号做主锚点）", "mise.toml:2 !checkstyle", false);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const bad = cases.filter((c) => c.got !== c.expectOk);
+  for (const c of cases) console.log(`  ${c.got === c.expectOk ? "PASS" : "FAIL"}  ${c.name} —— ${c.detail}`);
+  console.log(`\n自测 ${cases.length - bad.length}/${cases.length} 通过`);
+  return bad.length === 0;
 }
 
 function parseScopes(argv) {
@@ -471,10 +601,35 @@ const argv = process.argv.slice(2);
 const wantList = argv.includes("--list");
 const wantJson = argv.includes("--json");
 const wantHelp = argv.includes("--help") || argv.includes("-h");
+const wantCheckAnchors = argv.includes("--check-anchors");
+const wantSelftest = argv.includes("--selftest");
 const requested = parseScopes(argv);
 
 if (wantHelp) {
   console.log(USAGE);
+  process.exit(0);
+}
+
+if (wantSelftest) {
+  const ok = runSelftest();
+  process.exit(ok ? 0 : 1);
+}
+
+if (wantCheckAnchors) {
+  const { rows, problems } = runAnchorChecks();
+  const keyed = rows.filter((r) => r.anchor.symbol).length;
+  const lined = rows.filter((r) => r.anchor.line).length;
+  const sectioned = rows.filter((r) => r.anchor.section).length;
+  for (const row of rows) {
+    console.log(`  ${row.result.ok ? "OK  " : "FAIL"} ${row.scopeName} ｜ ${row.title.slice(0, 34)} ｜ ${row.result.where ?? row.result.why}`);
+  }
+  console.log("");
+  console.log(`指针 ${rows.length} 条：键名锚点 ${keyed} / 章节锚点 ${sectioned} / 行号兜底 ${lined}；问题 ${problems.length} 条`);
+  if (problems.length > 0) {
+    console.error("");
+    for (const p of problems) console.error(`E_ANCHOR ${p}`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
