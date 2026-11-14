@@ -27,6 +27,13 @@ export const GATES = [
         script: "scripts/check-e2e-block-comments.mjs",
         summary: "块注释提前闭合（task-66）",
     },
+    {
+        // task-118 ②：夹具失败诊断必须「红点指向真因」——未知 id 分支登记原因、收集器取回并拼进
+        // `>=400` 条目、三通道合并成一次断言（D-1475）。全部 fail-closed：判据被搬走 ⇒ 红（D-1470）。
+        name: "fixture-diagnostics",
+        script: "scripts/check-e2e-fixture-diagnostics.mjs",
+        summary: "夹具失败诊断可读性（task-118）",
+    },
 ];
 
 /** 聚合规则：环境/用法错误压过判定失败，判定失败压过全绿。 */
@@ -63,7 +70,7 @@ function main(argv) {
             const gate = GATES[index];
             const verdict = row.exit === 0 ? "OK" : row.exit === 1 ? "FAIL" : "ENV";
             console.log(
-                `  ${index + 1}. ${row.name.padEnd(16)} exit=${row.exit} (${verdict}) ${row.elapsedMs}ms  — ${gate.summary}`,
+                `  ${index + 1}. ${row.name.padEnd(20)} exit=${row.exit} (${verdict}) ${row.elapsedMs}ms  — ${gate.summary}`,
             );
             if (row.error) console.log(`     spawn error: ${row.error}`);
         }
