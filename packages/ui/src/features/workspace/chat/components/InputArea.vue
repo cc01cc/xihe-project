@@ -233,6 +233,17 @@ const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
  */
 const workspaceLess = computed(() => isWorkspaceLessRoute(route));
 
+// task-555（判据⑤成员④）：附件类控件必须在**控件层**就不可用，不能只靠 ChatPanel 发送层兜底。
+//
+// 真栈实测（drivers/p96-fa-555.mjs，独立会话）：改动前「图片 / 附件 / 截取屏幕」三个按钮
+// visible=true、disabled=false —— 用户能点开、选完文件才在提交时被拦，属「可见且可选但必失败」。
+//
+// 修法选**移除入口**而不是「保留但禁用」：①与 F-A 处理定向发送/代发两栏同一口径（移除 + 可见原因）；
+// ②先试过给子组件传 `disabled`（fallthrough），实测只有 ScreenshotCapture 的根节点是单根 button
+// 能被禁用，ImageUpload / FileUpload 是多根组件 ⇒ attrs 被丢弃，两个按钮仍然可点（假绿风险）。
+// 一个永远点不动的按钮不会告诉用户"为什么"，而 composer 里的 workspaceLessNoTargets 已经写明原因。
+const attachmentLocked = computed(() => workspaceLess.value);
+
 const showSpeakAs = computed(
     () => !workspaceLess.value && participantsStore.canSpeakAs && speakAsOptions.value.length > 0,
 );
@@ -716,18 +727,27 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
     {
         key: "image",
         position: "left",
+        // task-555：独立会话没有附件通道 ⇒ 入口整个不渲染（与 F-A 移除定向/代发两栏同一口径：
+        // 「移除 + 可见原因」比「保留但禁用」更少歧义——用户看不到一个永远点不动的按钮）。
+        visible: () => !attachmentLocked.value,
         component: markRaw(ImageUpload),
         props: { onUpload: addAttachment },
     },
     {
         key: "file",
         position: "left",
+        // task-555：独立会话没有附件通道 ⇒ 入口整个不渲染（与 F-A 移除定向/代发两栏同一口径：
+        // 「移除 + 可见原因」比「保留但禁用」更少歧义——用户看不到一个永远点不动的按钮）。
+        visible: () => !attachmentLocked.value,
         component: markRaw(FileUpload),
         props: { onUpload: addAttachment },
     },
     {
         key: "screenshot",
         position: "left",
+        // task-555：独立会话没有附件通道 ⇒ 入口整个不渲染（与 F-A 移除定向/代发两栏同一口径：
+        // 「移除 + 可见原因」比「保留但禁用」更少歧义——用户看不到一个永远点不动的按钮）。
+        visible: () => !attachmentLocked.value,
         component: markRaw(ScreenshotCapture),
         props: { onCapture: addAttachmentBlob },
     },
