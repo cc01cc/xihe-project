@@ -102,6 +102,37 @@ export interface DockSashA11yOptions {
     reset?: (sash: HTMLElement) => void;
 }
 
+/**
+ * 固定宽（如折叠成 40px rail）时的区间：min == max == 该固定宽占比。
+ *
+ * task-538 F2：rail 态曾经沿用展开态的 200–320px 约束 ⇒ `aria-valuenow=5` 小于 `aria-valuemin=25`，
+ * 读屏会念「5%，范围 25–40%」—— 一个自相矛盾的播报。区间**必须随折叠态更新**，而不是只在展开态成立。
+ */
+export function fixedRatioBounds(
+    totalPx: number,
+    widthPx: number,
+): { minRatio: number; maxRatio: number } | null {
+    if (!(totalPx > 0) || !(widthPx >= 0)) return null;
+    const ratio = Math.min(1, widthPx / totalPx);
+    return { minRatio: ratio, maxRatio: ratio };
+}
+
+/**
+ * 容器 → 一次「重新量并重写 aria」的回调（task-538）。
+ *
+ * 为什么需要它：首帧装饰发生在 dockview **首轮布局未完成**时（实测树 200 / 主列 98 ⇒ 分母 298，
+ * 于是 now=67/min=67/max=100）；布局稳定到 240/558 之后没有任何事件再触发 sync ⇒ 读数错 37 个百分点
+ * 且不自愈，直到用户聚焦/按键才纠正。收敛点由调用方给（复用 task-524 的宿主 ResizeObserver），
+ * 本模块只负责「再算一次」—— 不新开第二个观察者。
+ */
+const RESYNC = new WeakMap<HTMLElement, () => void>();
+
+/** 让某容器的 sash a11y 立刻按当前几何重算一次。未 attach 过的容器是 no-op。 */
+export function resyncDockSashA11y(container: HTMLElement | null | undefined): void {
+    if (!container) return;
+    RESYNC.get(container)?.();
+}
+
 /** 标记已经装饰过的 sash，避免 MutationObserver 重复挂监听。 */
 const DECORATED = "data-dock-sash-a11y";
 
@@ -182,10 +213,20 @@ export function attachDockSashA11y(
     };
 
     scan();
+    const resync = () => {
+        // 先补装饰（新 sash 可能刚被库塞进来），再把**所有已装饰**的 sash 重算一遍：
+        // 「已装饰」不等于「读数还对」—— 首帧那次装饰就是对着未完成的布局算的。
+        scan();
+        cleanups.forEach((_off, sash) => {
+            if (sash.isConnected) sync(sash);
+        });
+    };
+    RESYNC.set(container, resync);
     const observer = new MutationObserver(scan);
     observer.observe(container, { childList: true, subtree: true });
 
     return () => {
+        RESYNC.delete(container);
         observer.disconnect();
         cleanups.forEach((off) => off());
         cleanups.clear();

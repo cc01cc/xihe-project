@@ -21,6 +21,8 @@ import {
 } from "../../../composables/useWorkspaceLayout";
 import {
     attachDockSashA11y,
+    fixedRatioBounds,
+    resyncDockSashA11y,
     clampRatio,
     stepRatioForWidth,
     type SashRatioState,
@@ -282,6 +284,10 @@ function applyProductWidths(): void {
         syncing = false;
     }
     emittedTreeWidth = Math.round(api.getPanel(TREE_PANEL_ID)?.api.width ?? 0);
+    // task-538：首帧装饰对着**未完成的布局模型**算过 aria（实测 now=67 vs 实测占比 30，差 37 个百分点，
+    // 且布局稳定后没有任何事件再触发 sync ⇒ 不自愈）。这里复用 task-524 已有的收敛点（宿主 ResizeObserver
+    // → startProductWidthSync → 本函数），把 sash a11y 顺带重算一次 —— 不新开第二个观察者。
+    resyncDockSashA11y(hostRef.value);
 }
 
 /**
@@ -372,11 +378,16 @@ function measureSash(sash: HTMLElement): SashRatioState | null {
     const right = main.getBoundingClientRect().width;
     const total = left + right;
     if (!(total > 0)) return null;
+    const bounds = props.treeCollapsed
+        ? fixedRatioBounds(total, TREE_COLLAPSED_WIDTH)
+        : { minRatio: TREE_WIDTH_MIN / total, maxRatio: TREE_WIDTH_MAX / total };
+    if (!bounds) return null;
     return {
         ratio: left / total,
         resetRatio: TREE_WIDTH_DEFAULT / total,
-        minRatio: TREE_WIDTH_MIN / total,
-        maxRatio: TREE_WIDTH_MAX / total,
+        // task-538 F2：折叠成 rail 时区间就是「这一个固定宽」，否则 now(5%) < min(25%) 越界播报。
+        minRatio: bounds.minRatio,
+        maxRatio: bounds.maxRatio,
         stepRatio: stepRatioForWidth(total),
     };
 }

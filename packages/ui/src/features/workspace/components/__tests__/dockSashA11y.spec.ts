@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     attachDockSashA11y,
+    fixedRatioBounds,
+    resyncDockSashA11y,
     clampRatio,
     nextSashRatio,
     ratioToPercent,
@@ -211,5 +213,73 @@ describe("attachDockSashA11y（DOM）", () => {
         expect(sash.getAttribute("tabindex")).toBeNull();
         sash.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
         expect(apply).not.toHaveBeenCalled();
+    });
+});
+
+describe("fixedRatioBounds（task-538 F2：折叠成 rail 时区间必须跟着变）", () => {
+    it("固定宽 ⇒ min == max == 该宽占比（不再播「5%，范围 25–40%」）", () => {
+        const bounds = fixedRatioBounds(800, 40);
+        expect(bounds).toEqual({ minRatio: 0.05, maxRatio: 0.05 });
+    });
+
+    it("分母为 0/负/NaN ⇒ null（调用方据此不写 aria，而不是写 NaN）", () => {
+        expect(fixedRatioBounds(0, 40)).toBeNull();
+        expect(fixedRatioBounds(-10, 40)).toBeNull();
+        expect(fixedRatioBounds(Number.NaN, 40)).toBeNull();
+    });
+
+    it("固定宽大于总宽 ⇒ 夹到 1（不产出 >100% 的区间）", () => {
+        expect(fixedRatioBounds(320, 400)).toEqual({ minRatio: 1, maxRatio: 1 });
+    });
+});
+
+describe("resyncDockSashA11y（task-538：首帧装饰对着未完成的布局算过，必须能被收敛点纠正）", () => {
+    function mountSash() {
+        const container = document.createElement("div");
+        const sash = document.createElement("div");
+        sash.className = "dv-sash dv-sash-horizontal";
+        container.appendChild(sash);
+        document.body.appendChild(container);
+        return { container, sash };
+    }
+
+    it("resync 后 aria-valuenow 按**当前**读数重写（首帧错值可自愈）", () => {
+        const { container, sash } = mountSash();
+        // 首帧：布局未完成，分母只有 298（树 200 / 主列 98）
+        let state = baseState({ ratio: 200 / 298, minRatio: 200 / 298, maxRatio: 1 });
+        const detach = attachDockSashA11y(container, {
+            label: "树宽",
+            measure: () => state,
+            apply: () => {},
+        });
+        expect(sash.getAttribute("aria-valuenow")).toBe(String(ratioToPercent(200 / 298)));
+
+        // 布局稳定到 240 / 558；没有焦点、没有按键、也没有 DOM 结构变化 ⇒ 旧实现会一直停在 67
+        state = baseState({ ratio: 240 / 798, minRatio: 200 / 798, maxRatio: 320 / 798 });
+        resyncDockSashA11y(container);
+        expect(sash.getAttribute("aria-valuenow")).toBe(String(ratioToPercent(240 / 798)));
+        expect(sash.getAttribute("aria-valuemin")).toBe(String(ratioToPercent(200 / 798)));
+        expect(sash.getAttribute("aria-valuemax")).toBe(String(ratioToPercent(320 / 798)));
+        detach();
+    });
+
+    it("未 attach 过的容器是 no-op（不抛错）", () => {
+        const orphan = document.createElement("div");
+        expect(() => resyncDockSashA11y(orphan)).not.toThrow();
+        expect(() => resyncDockSashA11y(null)).not.toThrow();
+    });
+
+    it("detach 之后 resync 不再写（卸载后不许留下悬挂回调）", () => {
+        const { container, sash } = mountSash();
+        let state = baseState({ ratio: 0.5 });
+        const detach = attachDockSashA11y(container, {
+            label: "树宽",
+            measure: () => state,
+            apply: () => {},
+        });
+        detach();
+        state = baseState({ ratio: 0.9 });
+        resyncDockSashA11y(container);
+        expect(sash.getAttribute("aria-valuenow")).toBeNull();
     });
 });
