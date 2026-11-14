@@ -228,10 +228,11 @@ const SHOTS = [
             "[data-testid=org-tree-toggle-ou-rd]",
             "[data-testid=org-tree-label-ou-rd]",
             "[data-testid=org-member-open-mock-user]",
-            // 末两步不是「再点开什么」，而是**把等待显式写出来**：`expand` 每步先 waitForAttached
-            // （最多 15 s）再点，而对非交互容器来说点击是空操作。抽屉开抽屉后才发起的两个读面
-            // （段① 逐个工作区拉成员、段② 实例绑定）是串行 fetch，实测 600 ms 的收尾等待不够：
-            // 第一版图里段① 写着「已查 0 个工作区」（还在加载），会被读成「他没有任何角色」。
+            // 段① **不是自动加载**：它按代价上限设计成「用户点了才查」（`WORKSPACE_PROBE_CAP=5`，
+            // 逐个工作区拉成员表 = N 次请求）。所以这里必须真的点一下「查询工作区角色」，否则图里
+            // 段① 恒是空态「已查 0 个工作区」——第一版就是这么拍的，会被读成「他没有角色」。
+            "[data-testid=org-member-detail-workspace-role-load]",
+            // 然后等行真的落地（每步 waitForAttached 最多 15 s，对容器点击是空操作）。
             "[data-testid=org-member-detail-workspace-role-rows]",
             "[data-testid=org-member-detail-access-role-rows]",
         ],
