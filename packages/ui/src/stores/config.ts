@@ -127,40 +127,61 @@ export function isDomainReadableWithoutAdmin(domain: ConfigDomain): boolean {
  * <p><b>2026-11-13 D-1122 49A / PLAN-0766 T2.4</b>：模型 4 域（llm-provider / context-policy /
  * embedding / rag）**退出工作区层** —— 它们在实例层与用户层仍可写、工作区层仍可读合并值，但
  * 不再是工作区层（含 workspace-default）的可写面。CP 侧 `ConfigService.java:102-103` 的
- * `WORKSPACE_WRITABLE_DOMAINS` 已是 5 域（4 个行为域 + service-only 的 `context-templates`），
- * 通用 config API 只能服务 12 个 UI 域 ⇒ `WORKSPACE_DEFAULT_WRITABLE` = 交集 = **4 域**
- * （`ConfigService.java:115-118`）。这里列的就是那 4 域，**逐域与 CP 派生集对齐**
- * （判据：`stores/__tests__/configStore.spec.ts` 的矩阵事实断言 + 本文件无 5 域残留）。</p>
+ * `WORKSPACE_WRITABLE_DOMAINS` 是 5 域（4 个行为域 + service-only 的 `context-templates`），
+ * 通用 config API 只能服务 12 个 UI 域 ⇒ T2.4 后交集 = 4 域（`ConfigService.java:115-118`）。</p>
+ *
+ * <p><b>2026-11-14 task-485 / task-226（用户裁定）</b>：`agent-templates` 也**撤下工作区层**
+ * ⇒ 交集 = **3 域**。用户原话「工作区没有智能体模板与角色，工作区（能）有的是能用的智能体」：
+ * 模板与角色归**智能体配置**（实例/用户层），工作区只做**绑定**（绑定面 = task-226 P1，未实施）。
+ * CP 侧 `WORKSPACE_WRITABLE_DOMAINS` **本轮未改**（仍含 `agent-templates`，那是 P1 的事）——
+ * 本数组是「UI 有哪些域」的事实镜像，UI 不再出现的域不必等 CP 收缩。判据：
+ * `stores/__tests__/configStore.spec.ts` 的矩阵事实断言 + 矩阵 v2 正文
+ * `internal/A03-xihe/docs/settings-layer-domain-matrix-v2.md` §3。</p>
  */
-const GENERIC_WORKSPACE_DOMAINS = [
+const GENERIC_WORKSPACE_DOMAINS = ["agent-runtime", "approval-policy", "job-policy"] as const;
+
+/**
+ * **实例层在设置区出现的域集**（task-485 / task-226 D4，2026-11-14）。
+ *
+ * <p>为什么与 `INSTANCE_DOMAINS` 分成两个常量：后者是**域宇宙**（12 域 = CP `UI_DOMAINS` 的
+ * 镜像，也是 `ConfigDomain` 的类型来源），前者是**矩阵事实**（哪些域在实例层的设置页出现）。
+ * `agent-profile`（智能体个人）按用户 2026-11-14 裁定「属于成员管理，不在设置域里」迁出设置区
+ * —— 它**仍是 CP 的合法域**（`ConfigService.DOMAINS` 里有，成员页仍要写这个域的 `userName`），
+ * 只是不再有 `/settings/<层>/agent-profile` 路由。所以：**域类不减、矩阵格减**。
+ * 矩阵口径的唯一正文见 `internal/A03-xihe/docs/settings-layer-domain-matrix-v2.md`。</p>
+ */
+const SETTINGS_INSTANCE_DOMAINS: readonly ConfigDomain[] = INSTANCE_DOMAINS.filter(
+    (domain) => domain !== "agent-profile",
+);
+
+/** **用户层在设置区出现的域集**：同上，实例独有的 3 域（logging / approval-policy / job-policy）不在其中。 */
+const SETTINGS_USER_DOMAINS: readonly ConfigDomain[] = [
+    "llm-provider",
+    "context-policy",
+    "embedding",
+    "rag",
     "agent-runtime",
-    "approval-policy",
+    "user-preference",
     "agent-templates",
-    "job-policy",
-] as const;
+    "api-request-templates",
+];
 
 export const LAYER_DOMAINS: Record<ConfigLayer, readonly ConfigDomain[]> = {
-    instance: INSTANCE_DOMAINS,
-    // T2.4 后 CP `WORKSPACE_WRITABLE_DOMAINS` 是 5 域，其中 `context-templates` 是 service-only
-    // （契约明写 config API 只收 12 个 UI 域，其余返回 INVALID_DOMAIN）⇒ 交集 4 域。
+    // task-485：`agent-profile` 已迁出设置区 ⇒ 实例层 12 → 11 域（见 `SETTINGS_INSTANCE_DOMAINS`）。
+    instance: SETTINGS_INSTANCE_DOMAINS,
+    // task-485 / D-1122 49A + PLAN-0766 T2.4：工作区层（workspace-default 与 per-workspace 共用）
+    // 在 T2.4 后是 4 域，task-485 再把 `agent-templates` 撤下 ⇒ **3 域**（用户裁定「工作区没有
+    // 智能体模板与角色，只有能用的智能体」）。CP 侧 `WORKSPACE_WRITABLE_DOMAINS` 仍是 5 域
+    // （含 service-only 的 `context-templates`），本数组是「UI 可服务 ∩ 矩阵允许」的交集。
     // 刻意不列 context-templates：列了就是左栏出现一个点进去必然失败的入口。
     "workspace-default": GENERIC_WORKSPACE_DOMAINS,
-    // PLAN-0773 M4-1：**per-workspace 层**与 `workspace-default` 用的是**同一张 4 域矩阵**，
+    // PLAN-0773 M4-1：**per-workspace 层**与 `workspace-default` 用的是**同一张矩阵**（task-485 起 3 域），
     // 且共用同一个数组常量 —— 不是巧合，是同一个 CP 常量 `WORKSPACE_WRITABLE_DOMAINS` 的两个落库面：
     // 一个写"某一工作区自己的行"，一个写"没显式覆盖时的部署级默认行"。分成两份数组等于
     // 允许两层的可写域集漂移（今天相同、明天有人只改一处），而契约里它们是**同一个集合**。
     workspace: GENERIC_WORKSPACE_DOMAINS,
-    user: [
-        "llm-provider",
-        "context-policy",
-        "embedding",
-        "rag",
-        "agent-runtime",
-        "agent-profile",
-        "user-preference",
-        "agent-templates",
-        "api-request-templates",
-    ],
+    // task-485：`agent-profile` 迁出 ⇒ 用户层 9 → 8 域（见 `SETTINGS_USER_DOMAINS`）。
+    user: SETTINGS_USER_DOMAINS,
 };
 
 export interface ConfigImportReport {

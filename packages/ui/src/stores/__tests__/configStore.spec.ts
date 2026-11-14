@@ -452,8 +452,9 @@ describe("useConfigStore", () => {
             // Each domain issues a config read plus a PLAN-0554 meta read.
             const domainCalls = calls.filter((call) => !call.url.includes("/meta"));
             const metaCalls = calls.filter((call) => call.url.includes("/meta"));
-            expect(domainCalls).toHaveLength(9);
-            expect(metaCalls).toHaveLength(9);
+            // task-485：`agent-profile` 迁出设置区 ⇒ 用户层 9 → **8** 域（每域一次读 + 一次 meta）。
+            expect(domainCalls).toHaveLength(8);
+            expect(metaCalls).toHaveLength(8);
             for (const call of domainCalls) {
                 expect(call.url).toContain("layer=user");
                 expect(call.url).toContain("includeMeta=true");
@@ -465,7 +466,9 @@ describe("useConfigStore", () => {
                 expect(call.url).not.toContain("includeMeta=true");
                 expect(call.url).not.toContain("workspaceId=");
             }
-            expect(Object.keys(store.layerConfig.user)).toHaveLength(9);
+            expect(Object.keys(store.layerConfig.user)).toHaveLength(8);
+            // task-485：撤出设置区的域**不再发起读**（否则等于白打一次 CP，还带 403 风险）。
+            expect(calls.some((call) => call.url.includes("/config/agent-profile"))).toBe(false);
             expect(store.layerConfig.user["embedding"]).toEqual({ "user-embedding-key": "value" });
             expect(store.envOverridden["embedding"]).toEqual({ model: "env-model" });
             expect(store.envOverridden["rag"]).toEqual({});
@@ -482,13 +485,19 @@ describe("useConfigStore", () => {
             expect(calls.some((c) => c.url.includes("/config/job-policy?layer=instance"))).toBe(
                 true,
             );
-            expect(Object.keys(store.layerConfig.instance)).toHaveLength(INSTANCE_DOMAINS.length);
+            // task-485：实例层矩阵 = 域宇宙 12 − `agent-profile` = 11 ⇒ 断言改成对 `LAYER_DOMAINS.instance`
+            // 取值（不再等于 `INSTANCE_DOMAINS.length`：那是**域宇宙**，域类不减、矩阵格减）。
+            expect(Object.keys(store.layerConfig.instance)).toHaveLength(
+                LAYER_DOMAINS.instance.length,
+            );
+            expect(LAYER_DOMAINS.instance).not.toContain("agent-profile");
+            expect(INSTANCE_DOMAINS).toContain("agent-profile");
 
             await store.loadLayerDomains("user");
             expect(store.layerConfig.user["job-policy"]).toBeUndefined();
         });
 
-        it("loadLayerDomains loads all nine user domains without workspace query", async () => {
+        it("loadLayerDomains loads all eight user domains without workspace query", async () => {
             const calls = mockLayerFetch(),
                 store = useConfigStore();
 
@@ -496,8 +505,9 @@ describe("useConfigStore", () => {
 
             const domainCalls = calls.filter((call) => !call.url.includes("/meta"));
             const metaCalls = calls.filter((call) => call.url.includes("/meta"));
-            expect(domainCalls).toHaveLength(9);
-            expect(metaCalls).toHaveLength(9);
+            // task-485：8 域（原 9，`agent-profile` 已迁出设置区）。
+            expect(domainCalls).toHaveLength(8);
+            expect(metaCalls).toHaveLength(8);
             for (const call of calls) {
                 expect(call.url).toContain("layer=user");
                 expect(call.url).not.toContain("workspaceId=");

@@ -11,8 +11,9 @@ import { Button } from "../components/ui/button";
 import { useAuthStore } from "../stores/auth";
 import {
     DOMAIN_LABEL_KEY,
+    groupDefFor,
     isConfigDomain,
-    isModelConfigGroup,
+    isSettingsGroup,
     isSettingsLayer,
     settingsLayerForPath,
 } from "../lib/settingsIa";
@@ -36,16 +37,21 @@ const layer = computed(() =>
 );
 
 /**
- * 面包屑末段：域页取域名；task-227 的**组页**取组名（`meta.settingsGroup`）。
+ * 面包屑末段：域页取域名；**组页**取组名（`meta.settingsGroup`）。
  *
  * <p>为什么不给组页也塞一个假 `settingsDomain`：那个字段的语义是"这一页是某个**配置域**"，
- * 而 `model-config` 不是域（不在 `INSTANCE_DOMAINS` 里、CP 也没有它的 `/config/meta`）；
- * 塞进去会让所有读 `meta.settingsDomain` 的地方（面包屑、左栏高亮、e2e 断言）都开始说谎。</p>
+ * 而组 id（`model-config` / `agent-config`）不是域（不在 `INSTANCE_DOMAINS` 里、CP 也没有
+ * 它们的 `/config/meta`）；塞进去会让所有读 `meta.settingsDomain` 的地方（面包屑、左栏高亮、
+ * e2e 断言）都开始说谎。</p>
+ *
+ * <p>task-485：组名不再写死 `model-config` 一个，改为查组注册表（`groupDefFor`）——
+ * 新增组只加注册表一行，面包屑自动跟上。</p>
  */
 const domainLabel = computed(() => {
-    if (isModelConfigGroup(route.meta.settingsGroup)) {
-        return t("settings.groupModelConfig");
-    }
+    const group = isSettingsGroup(route.meta.settingsGroup)
+        ? groupDefFor(route.meta.settingsGroup)
+        : undefined;
+    if (group) return t(group.labelKey);
     const domain = route.meta.settingsDomain;
     if (!isConfigDomain(domain)) return undefined;
     return t(DOMAIN_LABEL_KEY[domain]);

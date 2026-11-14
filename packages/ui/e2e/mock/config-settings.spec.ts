@@ -358,8 +358,10 @@ test.describe("Config Settings (three layers)", () => {
         expect(expectedDomains).toContain("approval-policy");
         // **取样范围收进本层配置面板容器**（runtime-1 加固建议二，task-468 后续）：原先在全 document
         // 取 testid ⇒ 页面别处（如导航）出现含域名的 testid 就能满足正向断言，而反向仍 0，理论上可同绿。
-        // 收进容器后两侧同口径。**不收敛到 `config-domain-` 前缀**：工作区 4 域里 agent-templates 走
-        // 专用面板 + `config-source-summary-<domain>`（见「三 tab」那条注释），只认通用前缀会**假红**。
+        // 收进容器后两侧同口径。**不收敛到 `config-domain-` 前缀**：工作区 3 域里
+        // `approval-policy` / `job-policy` 走专用分区 + `config-source-summary-<domain>`
+        // （见「三 tab」那条注释），只认通用前缀会**假红**。task-485 把 `agent-templates` 撤下工作区层
+        // 后，本条注释点名的特例跟着换人（域集仍从 SSOT 取，断言本身不写域名）。
         const configPanel = page.getByTestId("ws-settings-config");
         await expect(configPanel).toBeVisible();
         const renderedTestIds = await configPanel.evaluate((panel) =>
@@ -412,8 +414,12 @@ test.describe("Config Settings (three layers)", () => {
         await mockConfigAPIs(page);
 
         // 用户层的域各占一页；旧用例在同一个「用户层签」里一次看全，现在按域逐个验同一批事实。
+        //
+        // task-485 / task-226 D4（用户 2026-11-14 ④「智能体个人属于成员管理，并不是在设置域里面」）：
+        // `agent-profile` 已撤出设置区 ⇒ 旧 URL **302 到成员管理**，不渲染域页、也不进 404。
         await page.goto("/settings/user/agent-profile", { waitUntil: "load" });
-        await expect(page.getByTestId("config-domain-agent-profile")).toBeVisible();
+        await expect(page).toHaveURL(/\/members$/);
+        await expect(page.getByTestId("config-domain-agent-profile")).toHaveCount(0);
         await page.goto("/settings/user/user-preference", { waitUntil: "load" });
         await expect(page.getByTestId("config-domain-user-preference")).toBeVisible();
 

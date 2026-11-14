@@ -119,32 +119,32 @@ function mountSidebar(layer: string, domain = "") {
 }
 
 describe("SettingsSidebar", () => {
-    it("shows both layers for an instance admin with 12 + 9 domain entries", async () => {
+    it("shows both layers for an instance admin with 11 + 8 domain entries", async () => {
         state.capability = true;
         state.canManageRoles = true;
         const wrapper = mountSidebar("instance", "rag");
-        // task-227「合页不合域」：**矩阵没变**（实例 12 域 / 用户 9 域，下面两条断言钉住），
-        // 变的是左栏条目 —— 三个模型域（llm-provider / context-policy / api-request-templates）
-        // 折成**一个**组条目 ⇒ 条目数 12 − 3 + 1 = 10、9 − 3 + 1 = 7。
+        // task-227「合页不合域」+ task-485（两组）：矩阵事实 = 实例 11 域 / 用户 8 域
+        // （task-485 把 `agent-profile` 迁出设置区，故各减 1），左栏条目 = 两组各自折叠：
+        // 实例 11 − (模型组 3→1) − (智能体组 2→1) = 8 条；用户 8 − 3 = 5 条。
         // 判据写成「矩阵数 + 派生数」两句：谁把域合并了，矩阵断言立刻红；
         // 谁把组折叠去掉了，条目数断言立刻红。
-        expect(LAYER_DOMAINS.instance).toHaveLength(12);
-        expect(LAYER_DOMAINS.user).toHaveLength(9);
-        expect(navItemsForLayer("instance")).toHaveLength(10);
-        expect(navItemsForLayer("user")).toHaveLength(7);
+        expect(LAYER_DOMAINS.instance).toHaveLength(11);
+        expect(LAYER_DOMAINS.user).toHaveLength(8);
+        expect(navItemsForLayer("instance")).toHaveLength(8);
+        expect(navItemsForLayer("user")).toHaveLength(5);
         // task-253：左栏改成两个可折叠层分组 —— 当前层默认展开、另一层默认收起。
-        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(10);
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(8);
         await wrapper.find("#settings-nav-user").trigger("click");
         await flushPromises();
         const links = wrapper.findAll('[data-testid^="settings-nav-domain-"]');
-        expect(links).toHaveLength(17);
+        expect(links).toHaveLength(13);
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(2);
         // 未挂 router 插件时 router-link 是未解析元素，to 以原生属性渲染（组件产出的值仍可断言）
         // 首条是组条目（组占 llm-provider 原来的位置）——"反序"不是随意的：组把它所代表的
         // 三个域收在自己名下，位置必须保持在三段原来所在处，否则用户会以为模型配置被挪走了。
         expect(links[0]!.attributes("to")).toBe("/settings/instance/model-config");
-        // 实例层 10 条之后是用户层：**第一条是组条目**（组在左栏占 llm-provider 原来的位置）。
-        expect(links[10]!.attributes("to")).toBe("/settings/user/model-config");
+        // 实例层 8 条之后是用户层：**第一条是组条目**（组在左栏占 llm-provider 原来的位置）。
+        expect(links[8]!.attributes("to")).toBe("/settings/user/model-config");
         // task-50 A 案：选中底色走 `--sidebar-accent` 组，且不再有 2px 左竖条（「半截括号」）。
         expect(links[0]!.classes().join(" ")).toContain("bg-sidebar-accent");
         expect(links[0]!.classes().join(" ")).toContain("text-sidebar-accent-foreground");
@@ -162,8 +162,8 @@ describe("SettingsSidebar", () => {
         );
         // 组条目复用同一个 testid 前缀（"domain" 在此表示"配置区条目"）；组 id 不是域 id，
         // 这也正是它能在 strict-mode 下与域条目共存、又不与任何 `/config/model-config` 请求混淆的原因。
-        expect(links[10]!.attributes("data-testid")).toBe("settings-nav-domain-user-model-config");
-        expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(17);
+        expect(links[8]!.attributes("data-testid")).toBe("settings-nav-domain-user-model-config");
+        expect(new Set(links.map((link) => link.attributes("data-testid"))).size).toBe(13);
 
         // task-171：运维/安全项有 per-item testid（语义定位），顺序 = ops(monitoring,data) +
         // security(config-locks,roles,audit)。
@@ -189,9 +189,10 @@ describe("SettingsSidebar", () => {
         state.canManageRoles = false;
         const wrapper = mountSidebar("user", "rag");
         expect(wrapper.findAll('[data-testid="settings-nav-group-primary"]')).toHaveLength(1);
-        // task-227：用户层 9 域里同样有 3 个模型域折成 1 个组条目 ⇒ 9 − 3 + 1 = 7。
-        expect(LAYER_DOMAINS.user).toHaveLength(9);
-        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(7);
+        // task-227 + task-485：用户层 8 域（`agent-profile` 已迁出）里有 3 个模型域折成 1 个组
+        // 条目、2 个智能体域折成 1 个 ⇒ 8 − 2 − 1 = 5。
+        expect(LAYER_DOMAINS.user).toHaveLength(8);
+        expect(wrapper.findAll('[data-testid^="settings-nav-domain-"]')).toHaveLength(5);
         expect(wrapper.text()).not.toContain("配置锁定");
         // 域 + 实例资源整段不渲染 ⇒ ops/安全项也一个都不在（不是靠文案判断）。
         expect(wrapper.findAll('[data-testid^="settings-nav-ops-"]')).toHaveLength(0);

@@ -30,24 +30,25 @@ import {
  * 有条目被搬走）。</p>
  */
 describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
-    it("设置区两个层：实例层 17 = 12 域 + 2 运维 + 3 安全；用户层 9 = 9 域；资源 5", () => {
-        expect(NAV_COUNTS).toEqual({ instance: 17, user: 9, resources: 5 });
-        expect(domains).toHaveLength(12);
+    // task-485（2026-11-14）：`agent-profile` 迁出设置区 ⇒ 实例层 12 → **11 域**（17 → 16）、
+    // 用户层 9 → **8 域**。资源段仍是 5（搬家只动资源面，与域矩阵无关）。
+    it("设置区两个层：实例层 16 = 11 域 + 2 运维 + 3 安全；用户层 8 = 8 域；资源 5", () => {
+        expect(NAV_COUNTS).toEqual({ instance: 16, user: 8, resources: 5 });
+        expect(domains).toHaveLength(11);
         expect(opsItems).toHaveLength(2);
         expect(securityItems).toHaveLength(3);
         // 硬编码 5：资源搬走后设置区一条都不该剩；资源模块恰好 5 条。
         expect(resourceItems).toHaveLength(5);
     });
 
-    it("用户层只剩 9 个配置域（资源 3 条已搬走，不是稿上原来的 12）", () => {
-        expect(userItems).toHaveLength(9);
+    it("用户层只剩 8 个配置域（资源 3 条已搬走；task-485 再撤 agent-profile）", () => {
+        expect(userItems).toHaveLength(8);
         expect(userItems.map((item) => item.id)).toEqual([
             "llm-provider",
             "context-policy",
             "embedding",
             "rag",
             "agent-runtime",
-            "agent-profile",
             "user-preference",
             "agent-templates",
             "api-request-templates",
@@ -60,14 +61,14 @@ describe("preview mock 设置导航 · 防漂移（硬编码期望）", () => {
         expect(missingNavMeta).toEqual([]);
     });
 
-    it("对账表逐段可加：实例段之和 17 / 用户段之和 9 / 资源段 5", () => {
+    it("对账表逐段可加：实例段之和 16 / 用户段之和 8 / 资源段 5", () => {
         const sum = (needle: string) =>
             NAV_RECONCILIATION.filter((row) => row.segment.includes(needle)).reduce(
                 (total, row) => total + row.count,
                 0,
             );
-        expect(sum("实例层")).toBe(17);
-        expect(sum("用户层")).toBe(9);
+        expect(sum("实例层")).toBe(16);
+        expect(sum("用户层")).toBe(8);
         expect(sum("资源模块")).toBe(5);
     });
 });

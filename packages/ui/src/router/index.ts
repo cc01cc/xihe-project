@@ -9,12 +9,12 @@ import {
 import { resolveUnauthenticatedEntry } from "../lib/authEntry";
 import { isEntryRouteName, shouldBounceEntryToWorkspace } from "./loginEntry";
 import {
-    isModelConfigGroupLayer,
-    MODEL_CONFIG_GROUP_ID,
+    SETTINGS_GROUPS,
     SETTINGS_LAYERS,
     defaultLayerPath,
     defaultResourcePath,
-    modelConfigDomainsForLayer,
+    groupDomainsForLayer,
+    isSettingsGroupLayer,
     RESOURCE_DEFS,
 } from "../lib/settingsIa";
 import {
@@ -26,6 +26,15 @@ import { LAYER_DOMAINS } from "../stores/config";
 // 资源页宿主映射（PLAN-0772 M2 引入；PLAN-0773 M4-2 / task-210 搬到 `lib/resourceViews.ts`
 // —— 工作区资源页要复用同一批视图组件，映射只能有一份，否则新增资源时两处必然漂）。
 import { RESOURCE_VIEWS } from "../lib/resourceViews";
+
+/**
+ * 组 id → 组页视图（task-485：组变成注册表后，路由侧只需要这一张映射；
+ * 没有映射的组**不注册路由**，而不是注册到某个兜底页 —— 后者会让「有组名、点进去空」重现）。
+ */
+const SETTINGS_GROUP_VIEWS: Record<string, () => Promise<unknown>> = {
+    "model-config": () => import("../views/settings/ModelConfigView.vue"),
+    "agent-config": () => import("../views/settings/AgentConfigView.vue"),
+};
 
 const router = createRouter({
     history: createWebHistory(),
@@ -200,24 +209,26 @@ const router = createRouter({
                  * 求交集，≥2 段才成组）—— D-1122 把工作区层的模型域整层下线后，那条路由会
                  * 自动消失，不需要再改这里。</p>
                  */
-                ...SETTINGS_LAYERS.flatMap((layer) => {
-                    // D-1122 政策层：组路由只认 instance / user（矩阵里的存量不影响这条）。
-                    if (!isModelConfigGroupLayer(layer)) return [];
-                    const members = modelConfigDomainsForLayer(layer);
-                    if (members.length < 2) return [];
-                    return [
-                        {
-                            path: `${layer}/${MODEL_CONFIG_GROUP_ID}`,
-                            name: `settings-${layer}-model-config`,
-                            component: () => import("../views/settings/ModelConfigView.vue"),
-                            props: { layer },
-                            meta: {
-                                settingsLayer: layer,
-                                settingsGroup: MODEL_CONFIG_GROUP_ID,
+                ...SETTINGS_GROUPS.flatMap((group) =>
+                    SETTINGS_LAYERS.flatMap((layer) => {
+                        // 政策层：组在这层是否允许成组（D-1122 把模型组关在工作区层之外；
+                        // task-485 把智能体组同样关在工作区层之外）—— 与矩阵链事实分开判。
+                        if (!isSettingsGroupLayer(group.id, layer)) return [];
+                        // 事实层：成员 < 2 不成组（点进去只有一段），与左栏 navItemsForLayer 同一条规则。
+                        if (groupDomainsForLayer(group.id, layer).length < 2) return [];
+                        const view = SETTINGS_GROUP_VIEWS[group.id];
+                        if (!view) return [];
+                        return [
+                            {
+                                path: `${layer}/${group.id}`,
+                                name: `settings-${layer}-${group.id}`,
+                                component: view,
+                                props: { layer },
+                                meta: { settingsLayer: layer, settingsGroup: group.id },
                             },
-                        },
-                    ];
-                }),
+                        ];
+                    }),
+                ),
                 ...LAYER_DOMAINS.instance.map((domain) => ({
                     path: `instance/${domain}`,
                     name: `settings-instance-domain-${domain}`,
@@ -250,6 +261,22 @@ const router = createRouter({
                 {
                     path: "workspace-default",
                     redirect: () => defaultLayerPath("workspace-default"),
+                },
+                /**
+                 * task-485 / task-226 D4（用户 2026-11-14 ④「智能体个人属于成员管理，并不是在设置域
+                 * 里面」）：`agent-profile` 撤出设置区 ⇒ 旧深层链接 **302 到成员管理**，不做 404。
+                 *
+                 * <p>为什么必须 302：旧 URL 在文档、e2e 与用户书签里都在（`settingsIa.spec.ts` 曾断言
+                 * 这条路径存在）；404 会变成「点了没反应/白屏」的支持成本。与既有先例同形
+                 * （`?tab=members` → 成员页、`tool-faces` → approval-policy 页签）。</p>
+                 */
+                {
+                    path: "instance/agent-profile",
+                    redirect: { name: "org-members" },
+                },
+                {
+                    path: "user/agent-profile",
+                    redirect: { name: "org-members" },
                 },
                 {
                     path: "config",

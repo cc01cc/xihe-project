@@ -20,6 +20,8 @@ import {
     settingsLayerForPath,
     type ConfigDomain,
 } from "../settingsIa";
+// task-485：需要区分「域宇宙」与「设置矩阵」——前者不减，后者减了两格。
+import { INSTANCE_DOMAINS } from "../../stores/config";
 
 /**
  * PLAN-0752 M1 / V3：层×域矩阵是路由注册、左栏与 404 判定的**同一份**来源。
@@ -33,17 +35,19 @@ import {
 // 所以旧的 `knowledgeRedirectTarget` 用例整段退场 —— 缺口落点改由 `/resources/knowledge` 承担。
 
 describe("settings IA matrix", () => {
-    it("keeps the CP layer counts 12 / 9 plus the 4-domain shared workspace-default layer", () => {
-        expect(domainsForLayer("instance")).toHaveLength(12);
-        expect(domainsForLayer("user")).toHaveLength(9);
+    it("keeps the layer counts 11 / 8 plus the 3-domain shared workspace-default layer", () => {
+        // task-485 / task-226（用户 2026-11-14）：`agent-profile`（智能体个人）迁出设置区
+        // ⇒ 实例层 12 → 11、用户层 9 → 8（**域宇宙仍是 12**，减的是矩阵格，不是域类）。
+        expect(domainsForLayer("instance")).toHaveLength(11);
+        expect(domainsForLayer("user")).toHaveLength(8);
         // D-1122 49A / PLAN-0766 T2.4（2026-11-13）：模型 4 域退出工作区层 ⇒ CP 的
         // WORKSPACE_WRITABLE_DOMAINS 变 5 域（4 个行为域 + service-only 的 context-templates），
         // 与 UI_DOMAINS（12）求交 = 4 域（ConfigService.java:115-118）。
-        // 逐域钉死（不是只钉个数）：谁把模型域加回来，下面的 toEqual 立刻红。
+        // task-485（2026-11-14，用户②「工作区没有智能体模板与角色」）：`agent-templates` 也撤下
+        // ⇒ **3 域**。逐域钉死（不是只钉个数）：谁把模型域或模板域加回来，下面的 toEqual 立刻红。
         expect(domainsForLayer("workspace-default")).toEqual([
             "agent-runtime",
             "approval-policy",
-            "agent-templates",
             "job-policy",
         ]);
         // task-77：断言**语义顺序**，不再断言字面量（旧写法 `["instance","workspace-default","user"]`
@@ -68,7 +72,11 @@ describe("settings IA matrix", () => {
         expect(layersForDomain("logging")).toEqual(["instance"]);
         expect(layersForDomain("approval-policy")).toEqual(["instance", "workspace-default"]);
         expect(layersForDomain("job-policy")).toEqual(["instance", "workspace-default"]);
-        expect(layersForDomain("agent-profile")).toEqual(["instance", "user"]);
+        // task-485：`agent-profile` 已迁出设置区 ⇒ 它在**设置矩阵里一格都没有**（空数组）。
+        // 注意它仍是 CP 的合法域与 `ConfigDomain` 成员，成员页仍写它的 `userName` —— 这条断言
+        // 锁的是「设置区不再有它的页」，不是「这个域不存在」（后者由紧随其后的域宇宙断言守）。
+        expect(layersForDomain("agent-profile")).toEqual([]);
+        expect(INSTANCE_DOMAINS).toContain("agent-profile");
         // D-1122 / T2.4：模型 4 域退出工作区层 ⇒ 它们**不再**出现在 workspace-default。
         // 这四条是与 CP WORKSPACE_WRITABLE_DOMAINS 逐域对齐的机器判据（矩阵被改回即红）。
         expect(layersForDomain("rag")).toEqual(["instance", "user"]);
@@ -132,10 +140,12 @@ describe("resolveLayerRoute", () => {
             layer: "instance",
             domain: "rag",
         });
-        expect(resolveLayerRoute("user", "agent-profile")).toEqual({
+        // task-485：`agent-profile` 在两层都不再解析成域路由（旧 URL 由 router 的 302 兜住，
+        // 不走矩阵）；改用仍在两层矩阵里的 `agent-templates` 作为"合法组合"的正例。
+        expect(resolveLayerRoute("user", "agent-templates")).toEqual({
             ok: true,
             layer: "user",
-            domain: "agent-profile",
+            domain: "agent-templates",
         });
     });
 

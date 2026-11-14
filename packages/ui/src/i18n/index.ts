@@ -2390,6 +2390,12 @@ const messages = {
             groupModelConfigDesc:
                 "提供商、上下文策略、请求模板三段在同一页，改完一段可直接看下一段；每段仍按各自的域单独保存。",
             groupModelConfigJump: "跳到",
+            // task-485 / task-226 ③「智能体模板与角色应该放到智能体配置里」：智能体配置组页
+            // （两段：模板与角色 / 运行阈值；**域不合并**，各自按域保存与锁定）。
+            groupAgentConfig: "智能体配置",
+            groupAgentConfigDesc:
+                "智能体模板与角色、运行阈值两段在同一页；模板与角色按域保存，运行阈值仍是工作区可写的治理项。",
+            groupAgentConfigJump: "跳到",
             fieldDefaultTimeoutSecs: "默认时限（秒）",
             fieldMaxTimeoutSecs: "上限（秒，0 = 未设上限）",
             domainLlmProvider: "LLM 提供商",
@@ -6025,6 +6031,10 @@ const messages = {
             groupModelConfigDesc:
                 "Provider, context policy and request templates on one page: edit one section and read the next without leaving the page. Each section still saves through its own config domain.",
             groupModelConfigJump: "Jump to",
+            groupAgentConfig: "Agent configuration",
+            groupAgentConfigDesc:
+                "Agent templates and roles, plus runtime thresholds, on one page. Templates and roles save through their own config domain; runtime thresholds stay workspace-writable governance.",
+            groupAgentConfigJump: "Jump to",
             fieldDefaultTimeoutSecs: "Default timeout (seconds)",
             fieldMaxTimeoutSecs: "Max timeout (seconds, 0 = no cap)",
             domainLlmProvider: "LLM Provider",

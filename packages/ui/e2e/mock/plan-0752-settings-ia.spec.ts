@@ -192,11 +192,14 @@ test.describe("PLAN-0752 T2.5 工作区设置页 tab 形态（域段已随 task-
 });
 
 test.describe("PLAN-0752 T5.2 V10 无工作区 Sidebar 泄漏（mock 自动化断言）", () => {
+    // task-485：原第 4 条用的是 `/settings/user/agent-profile` —— 该路径已 302 到 /members
+    // （`agent-profile` 迁出设置区，D4），在 /settings 下断言"层头可见"会变成断言一个不存在的页。
+    // 换成仍在用户层矩阵里的 `agent-templates`；302 本身另立一条用例（下面那条 302 用例）。
     for (const url of [
         "/settings/instance/llm-provider",
         "/settings/instance/logging",
         "/settings/user/rag",
-        "/settings/user/agent-profile",
+        "/settings/user/agent-templates",
     ]) {
         test("no workspace Sidebar on " + url, async ({ page }) => {
             await mockSettingsAPIs(page);
@@ -209,6 +212,59 @@ test.describe("PLAN-0752 T5.2 V10 无工作区 Sidebar 泄漏（mock 自动化�
             await expect(page.getByTestId("settings-drawer-toggle")).not.toBeVisible();
         });
     }
+});
+
+/**
+ * task-485 / task-226 D4（用户 2026-11-14 ④）：`agent-profile` 撤出设置区，旧 URL **302 → 成员管理**。
+ *
+ * <p>为什么单独立一条而不是把旧断言删掉：删掉只能证明"这一刻没人访问这个 URL"，
+ * 将来有人把重定向去掉、让它掉进 404 兜底时不会有任何东西变红（同 `config-settings.spec.ts`
+ * 里"翻面而不是删除"的理由）。判据是**终态 URL**，不是"页面没报错"。</p>
+ */
+test.describe("task-485 智能体个人迁出设置区（302 不 404）", () => {
+    for (const url of ["/settings/instance/agent-profile", "/settings/user/agent-profile"]) {
+        test("redirects " + url + " to the members module", async ({ page }) => {
+            await mockSettingsAPIs(page);
+            await page.goto(url, { waitUntil: "load" });
+            await expect(page).toHaveURL(/\/members$/);
+            // 反向：不得落 404 视图（那是把"迁走"做成"死链"）。
+            await expect(page.getByTestId("settings-not-found")).toHaveCount(0);
+        });
+    }
+});
+
+/**
+ * task-485「智能体配置」组页（用户 2026-11-14 ③「智能体模板与角色应该放到智能体配置里」）。
+ *
+ * <p>判据：两段**同时挂载**（不是 tab）、各自 testid 落在同一页、页内锚点导航给出两个段的链接；
+ * 且锚点是 `#settings-domain-<域>`（只改 hash 不触发路由），不是两条路由。</p>
+ */
+test.describe("task-485 智能体配置组页（两段一页，域不合并）", () => {
+    for (const layer of ["instance", "user"] as const) {
+        test("renders both agent sections on " + layer, async ({ page }) => {
+            await mockSettingsAPIs(page);
+            await page.goto(`/settings/${layer}/agent-config`, { waitUntil: "load" });
+            await expect(page.getByTestId("settings-agent-config-view")).toBeVisible();
+            await expect(page.getByTestId("settings-agent-config-title")).toBeVisible();
+            // 两段都在 DOM 里（不是"点导航才出现"）。
+            await expect(page.locator('[data-testid^="settings-agent-config-nav-"]')).toHaveCount(
+                2,
+            );
+            await expect(
+                page.getByTestId("settings-agent-config-nav-agent-templates"),
+            ).toHaveAttribute("href", "#settings-domain-agent-templates");
+            await expect(
+                page.getByTestId("settings-agent-config-nav-agent-runtime"),
+            ).toHaveAttribute("href", "#settings-domain-agent-runtime");
+        });
+    }
+
+    test("workspace layers do not register the agent-config group route", async ({ page }) => {
+        await mockSettingsAPIs(page);
+        // 工作区层撤掉 `agent-templates` 后该组只剩 1 段 ⇒ 不成组、不注册组路由 ⇒ 走 404 视图。
+        await page.goto("/settings/workspace-default/agent-config", { waitUntil: "load" });
+        await expect(page.getByTestId("settings-not-found")).toBeVisible();
+    });
 });
 
 test.describe("PLAN-0752 V12 移动端 375×812（三态记录）", () => {

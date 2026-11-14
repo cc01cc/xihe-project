@@ -145,68 +145,141 @@ export function settingsLayerForPath(path: string): SettingsLayer {
 }
 
 /**
- * task-227（用户 2026-11-13 裁定「**合页，不合域**」）：把三个「模型配置」域放**一页三段**。
+ * 设置区的**组页**（一页多段、**域不合并**）。task-227 立的口径（用户 2026-11-13「合页，不合域」），
+ * task-485 / task-226（用户 2026-11-14）把它从「一个组的特例」泛化成**组注册表**：现有两组
+ * `model-config`（三个模型域）与 `agent-config`（智能体模板与角色 + 运行阈值）。
  *
- * <p><b>为什么不合并域</b>：`{domain}` 合法集合由 CP 的 `config-schemas/*.json` + yaml `enum` 决定，
- * 且**锁定 / 继承 / env 覆盖都是按域求值** —— 合并域会让「只想让管理员锁 LLM 连接、不锁上下文策略」
- * 做不到（那样"锁一半"没有表达方式）。所以这里只做**页面组装**：域 id 一个都不合并，
- * 三个域各自的 `meta` / 保存 / 层矩阵语义原样不变。</p>
+ * <p><b>为什么不合并域</b>：`{domain}` 合法集合由 CP `ConfigService.DOMAINS`（14 域）决定，
+ * schema 文件只是可选的字段结构；且**锁定 / 继承 / env 覆盖都是按域求值** —— 合并域会让
+ * 「只想让管理员锁模板、不锁 loop 阈值」做不到（"锁一半"没有表达方式）。所以这里只做**页面组装**：
+ * 域 id 一个都不合并，各域自己的 `meta` / 保存 / 层矩阵语义原样不变。</p>
  *
- * <p><b>组 id 不是域 id</b>：`model-config` 不在 `INSTANCE_DOMAINS` 里，也**不进** `LAYER_DOMAINS`
- * —— 它只出现在**路由段**与左栏条目标识上。因此 `resolveLayerRoute("instance", "model-config")`
- * 仍然返回 `unknown-domain`（路由侧另走 `isModelConfigGroup()`），这条边界是刻意的：
+ * <p><b>组 id 不是域 id</b>：组 id **不在** `INSTANCE_DOMAINS` 里，也**不进** `LAYER_DOMAINS`
+ * —— 只出现在**路由段**与左栏条目标识上。因此 `resolveLayerRoute("instance", "model-config")`
+ * 仍然返回 `unknown-domain`（路由侧另走 `isSettingsGroup()`），这条边界是刻意的：
  * 一旦它被当成域，`/config/model-config/meta` 这类请求就会打到 CP 上必然 400。</p>
  */
-export const MODEL_CONFIG_GROUP_ID = "model-config";
+export interface SettingsGroupDef {
+    /** 组 id = 路由段 = 左栏条目 id = 路由 `meta.settingsGroup`（四处同一个值）。 */
+    id: string;
+    /** 组名 / 组页副标题 / 页内锚点导航前缀的 i18n key。 */
+    labelKey: string;
+    descKey: string;
+    jumpKey: string;
+    /** 组内域的**唯一一份**清单（顺序 = 页内段顺序 = 左栏组入口顺序）。 */
+    domains: readonly ConfigDomain[];
+    /**
+     * 组**只在哪几层成组**（政策）。
+     *
+     * <p>「层能不能成组」与「矩阵里有没有这些域」是**两个问题**，两者今天一致但**仍旧分开写**：
+     * 矩阵一改就会**静默**让组页消失或出现；政策写死一次，各说各话且漂移可见（task-227 原裁定）。</p>
+     */
+    layers: readonly SettingsLayer[];
+}
+
+const MODEL_CONFIG_GROUP: SettingsGroupDef = {
+    id: "model-config",
+    labelKey: "settings.groupModelConfig",
+    descKey: "settings.groupModelConfigDesc",
+    jumpKey: "settings.groupModelConfigJump",
+    domains: ["llm-provider", "context-policy", "api-request-templates"],
+    layers: ["instance", "user"],
+};
 
 /**
- * 组内域的**唯一一份**清单（顺序 = 页内段顺序 = 左栏组入口顺序）。
- * 每层实际出现几段由 `modelConfigDomainsForLayer()` 用 `LAYER_DOMAINS` 求**交集**得出，
- * **不**在组件里再写第二份字面量 —— 否则「某层矩阵改了、页面还画三段」这种漂移会静默发生。
+ * task-485 / task-226（用户 2026-11-14 ③「智能体模板与角色应该放到智能体配置里」）。
+ *
+ * <p>为什么是**两段一页**而不是一个域：`agent-templates`（模板+角色）与 `agent-runtime`
+ * （loop 阈值 / 超时 / 并发）是两个域、两种锁粒度，合并即破坏「合页不合域」；分两页又要用户
+ * 在两处之间跳。工作区层不再出现 `agent-templates`（用户②：工作区只有能用的智能体），
+ * 所以本组只在 instance / user 两层成组；工作区层即使矩阵里还有 `agent-runtime` 也**不折叠**
+ * （只剩一个成员，规则同 `members.length >= 2`）。</p>
  */
-export const MODEL_CONFIG_DOMAINS: readonly ConfigDomain[] = [
-    "llm-provider",
-    "context-policy",
-    "api-request-templates",
+const AGENT_CONFIG_GROUP: SettingsGroupDef = {
+    id: "agent-config",
+    labelKey: "settings.groupAgentConfig",
+    descKey: "settings.groupAgentConfigDesc",
+    jumpKey: "settings.groupAgentConfigJump",
+    domains: ["agent-templates", "agent-runtime"],
+    layers: ["instance", "user"],
+};
+
+/** 全部组（顺序 = 左栏出现顺序的政策序；实际位置仍由矩阵里第一个成员决定）。 */
+export const SETTINGS_GROUPS: readonly SettingsGroupDef[] = [
+    MODEL_CONFIG_GROUP,
+    AGENT_CONFIG_GROUP,
 ];
 
 /**
- * 组**只在哪几层成组**（D-1122 口径，2026-11-13）：instance / user 两层。
- *
- * <p>「层能不能成组」与「矩阵里有没有这些域」是**两个问题**，2026-11-13 起两者已经一致但**仍旧分开
- * 写**：矩阵（`LAYER_DOMAINS`）在 T2.4 之后已把模型域从工作区层移除（workspace-default /
- * workspace 都是 4 域，`modelConfigDomainsForLayer('workspace-default')` = 空），所以今天
- * `MODEL_CONFIG_LAYERS` 只是把「政策」写死一次，让它在矩阵再次变化时**不需要跟着改**。
- * 反过来若把两者合并（组只在矩阵非空时出现），矩阵一改就会**静默**让组页消失或出现 ——
- * 「政策」与「事实」分开写，才能各说各话且漂移可见。</p>
+ * 兼容导出（task-227 起的既有调用方与测试按名引用）。
+ * 值一律**派生自** `SETTINGS_GROUPS`，不许在这里另写第二份字面量。
  */
-export const MODEL_CONFIG_LAYERS: readonly SettingsLayer[] = ["instance", "user"];
+export const MODEL_CONFIG_GROUP_ID = MODEL_CONFIG_GROUP.id;
+export const MODEL_CONFIG_DOMAINS = MODEL_CONFIG_GROUP.domains;
+export const MODEL_CONFIG_LAYERS = MODEL_CONFIG_GROUP.layers;
+export const AGENT_CONFIG_GROUP_ID = AGENT_CONFIG_GROUP.id;
+export const AGENT_CONFIG_DOMAINS = AGENT_CONFIG_GROUP.domains;
+export const AGENT_CONFIG_LAYERS = AGENT_CONFIG_GROUP.layers;
 
-/** 该层是否允许出现模型配置组（政策判据，先于此层矩阵里有没有这些域）。 */
+export function groupDefFor(id: string): SettingsGroupDef | undefined {
+    return SETTINGS_GROUPS.find((group) => group.id === id);
+}
+
+/** 该值是否是合法组 id（路由 `meta.settingsGroup` 与 URL 段共用这一个判据）。 */
+export function isSettingsGroup(value: unknown): value is string {
+    return typeof value === "string" && groupDefFor(value) !== undefined;
+}
+
+export function isModelConfigGroup(value: unknown): boolean {
+    return value === MODEL_CONFIG_GROUP.id;
+}
+
+export function isAgentConfigGroup(value: unknown): boolean {
+    return value === AGENT_CONFIG_GROUP.id;
+}
+
+/** 该层是否允许出现某个组（政策判据，先于此层矩阵里有没有这些域）。 */
+export function isSettingsGroupLayer(groupId: string, layer: SettingsLayer): boolean {
+    return groupDefFor(groupId)?.layers.includes(layer) ?? false;
+}
+
+/** 兼容名：模型配置组在该层是否成组（政策判据）。 */
 export function isModelConfigGroupLayer(layer: SettingsLayer): boolean {
-    return MODEL_CONFIG_LAYERS.includes(layer);
+    return isSettingsGroupLayer(MODEL_CONFIG_GROUP.id, layer);
 }
 
-/** 组在该层实际承载的域（交集）：instance 3 段 / user 3 段 / workspace-default **0 段**（T2.4 后工作区层无模型域）。 */
+/** 组在该层实际承载的域（交集）：只看矩阵事实，不看政策。 */
+export function groupDomainsForLayer(groupId: string, layer: SettingsLayer): ConfigDomain[] {
+    const group = groupDefFor(groupId);
+    if (!group) return [];
+    return group.domains.filter((domain) => LAYER_DOMAINS[layer].includes(domain));
+}
+
+/** 模型配置组在该层实际承载的域：instance 3 段 / user 3 段 / 工作区层 **0 段**（T2.4 后无模型域）。 */
 export function modelConfigDomainsForLayer(layer: SettingsLayer): ConfigDomain[] {
-    return MODEL_CONFIG_DOMAINS.filter((domain) => LAYER_DOMAINS[layer].includes(domain));
+    return groupDomainsForLayer(MODEL_CONFIG_GROUP.id, layer);
 }
 
-export function isModelConfigGroup(value: unknown): value is typeof MODEL_CONFIG_GROUP_ID {
-    return value === MODEL_CONFIG_GROUP_ID;
+/** 智能体配置组在该层实际承载的域：instance 2 段 / user 2 段 / 工作区层 **1 段**（只剩 agent-runtime，故不折叠）。 */
+export function agentConfigDomainsForLayer(layer: SettingsLayer): ConfigDomain[] {
+    return groupDomainsForLayer(AGENT_CONFIG_GROUP.id, layer);
 }
 
-/** 组页路径（与域页同构：`/settings/<layer>/model-config`）。 */
-export function settingsGroupPath(layer: SettingsLayer): string {
-    return `/settings/${layer}/${MODEL_CONFIG_GROUP_ID}`;
+/** 组页路径（与域页同构：`/settings/<layer>/<groupId>`）。 */
+export function settingsGroupPath(
+    layer: SettingsLayer,
+    groupId: string = MODEL_CONFIG_GROUP_ID,
+): string {
+    return `/settings/${layer}/${groupId}`;
 }
 
 /**
- * 左栏条目（**组折叠的唯一实现处**）：把 `MODEL_CONFIG_DOMAINS` 在**该层存在**的那些域折成**一个**组条目，
- * 其余域照旧一条一域。三个层都调这一个函数，所以「左栏有组入口但路由没有」这类不一致不可能单独发生。
+ * 左栏条目（**组折叠的唯一实现处**）：把每个组在**该层存在**的域折成**一个**组条目，其余域照旧一条一域。
+ * 三层共用这一个函数，所以「左栏有组入口但路由没有」这类不一致不可能单独发生。
  *
- * <p>只有一个成员时不折叠（`members.length >= 2` 才成组）——那种组点进去只有一段，
- * 等于多一次点击还没有收益。</p>
+ * <p>三条规则：①组的插入位置 = 它在矩阵里**第一个成员**的位置（不另造顺序）；②成员数 < 2 不折叠
+ * （点进去只有一段，多一次点击没有收益）；③组在这层是否**允许**成组由政策 `group.layers` 先判 ——
+ * 所以 `workspace-default` 即使矩阵里有 `agent-runtime` 也不会冒出「智能体配置」组。</p>
  */
 export interface SettingsNavItem {
     id: string;
@@ -215,23 +288,32 @@ export interface SettingsNavItem {
 }
 
 export function navItemsForLayer(layer: SettingsLayer): SettingsNavItem[] {
-    // D-1122：workspace-default 即使矩阵里还有这些域，也不生成组条目（政策在 MODEL_CONFIG_LAYERS）。
-    const members = isModelConfigGroupLayer(layer) ? modelConfigDomainsForLayer(layer) : [],
-        items: SettingsNavItem[] = [];
-    for (const domain of domainsForLayer(layer)) {
-        if (members.includes(domain)) continue;
+    const domains = domainsForLayer(layer),
+        // 政策先过滤，再与矩阵求交集：两层判据各自成立才成组（拆开写是刻意的，见 group.layers 注释）。
+        groups = SETTINGS_GROUPS.map((group) => ({
+            group,
+            members: isSettingsGroupLayer(group.id, layer)
+                ? groupDomainsForLayer(group.id, layer)
+                : [],
+        })).filter((entry) => entry.members.length >= 2),
+        items: SettingsNavItem[] = [],
+        folded = new Set<ConfigDomain>();
+    for (const domain of domains) {
+        if (folded.has(domain)) continue;
+        const host = groups.find((entry) => entry.members.includes(domain));
+        if (host) {
+            for (const member of host.members) folded.add(member);
+            items.push({
+                id: host.group.id,
+                labelKey: host.group.labelKey,
+                path: settingsGroupPath(layer, host.group.id),
+            });
+            continue;
+        }
         items.push({
             id: domain,
             labelKey: DOMAIN_LABEL_KEY[domain],
             path: settingsDomainPath(layer, domain),
-        });
-    }
-    if (members.length >= 2) {
-        const firstMember = domainsForLayer(layer).indexOf(members[0]);
-        items.splice(firstMember < 0 ? 0 : firstMember, 0, {
-            id: MODEL_CONFIG_GROUP_ID,
-            labelKey: "settings.groupModelConfig",
-            path: settingsGroupPath(layer),
         });
     }
     return items;
