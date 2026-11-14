@@ -46,8 +46,10 @@ const messages = {
             input: {
                 toLabel: "代发身份",
                 toTargetsLabel: "发送",
-                toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
-                ccHint: "普通通知（可能被免打扰屏蔽）",
+                // task-102：夹具跟产品走 —— 两条都回答「会不会被免打扰屏蔽」（旧夹具只有 cc 回答，
+                // 且写的是「可能被」而代码两侧都不吃 muted，等于夹具在替过期文案背书）。
+                toHint: "相当于 {'@'}，会作为重要通知送达，不会被免打扰屏蔽（可多选）",
+                ccHint: "普通抄送通知（不会被免打扰屏蔽）",
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",
@@ -178,10 +180,17 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
         expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("相当于 @");
         expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("重要通知");
         expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("可多选");
+        // task-102：**同一条问题两条都要回答** —— 只让抄送说「不会被免打扰屏蔽」，读者会以为
+        // 重要通知会被屏蔽（事实：HUMAN TO 在 muted 闸之前就 return 了）。
+        expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("免打扰");
 
         await wrapper.get('[data-testid="cc-expand"]').trigger("click");
         await flushPromises();
-        expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("普通通知");
+        // 产品文案是「普通**抄送**通知（…）」—— 用户裁定 P-6 的原话里「抄送」是必须保留的词，
+        // 所以这里断两个片段而不是「普通通知」（后者在「普通抄送通知」里不连续，会假红）。
+        expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("普通");
+        expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("抄送通知");
+        expect(wrapper.get('[data-testid="composer-cc-hint"]').text()).toContain("免打扰");
         wrapper.unmount();
     });
 

@@ -91,8 +91,9 @@ const messages = {
                 workspaceLessDropped: "独立会话不支持附件，本条已去掉附件后发送",
                 toLabel: "代发身份",
                 toTargetsLabel: "发送",
-                toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
-                ccHint: "普通通知（可能被免打扰屏蔽）",
+                // task-102：与产品同文（两条都回答免打扰问题）。
+                toHint: "相当于 {'@'}，会作为重要通知送达，不会被免打扰屏蔽（可多选）",
+                ccHint: "普通抄送通知（不会被免打扰屏蔽）",
                 toEmptyHint: "本条不会通知任何参与者",
                 toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",

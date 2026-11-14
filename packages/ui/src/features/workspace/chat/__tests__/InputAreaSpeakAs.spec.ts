@@ -4,6 +4,7 @@ import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import InputArea from "../components/InputArea.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
+import { useAuthStore } from "../../../../stores/auth";
 
 /**
  * D23-27「代发」下拉的单元契约。
@@ -89,6 +90,9 @@ function mountInputArea() {
     });
 }
 
+/** task-102：本 spec 里「我自己的真人行」用的 user id（`HUMAN.principalId === user id`）。 */
+const SELF_USER_ID = "77777777-7777-4777-8777-777777777777";
+
 beforeEach(() => {
     setActivePinia(createPinia());
     storeState.canSpeakAs = false;
@@ -140,10 +144,20 @@ describe("InputArea speak-as entry (PLAN-0623 D23-27)", () => {
     });
 
     it("defaults to my own HUMAN row, never to somebody else", async () => {
+        // task-102：把「自己的真人行」钉成 HUMAN + `principalId === 登录用户 id`。
+        // 理由：本卡在 TO/CC 上剔了 self，最容易的误改是**顺手也剔 `as`**（两套候选形状一样）。
+        // 不设 auth user 时那条误改在这里**不会红**（`isOwnHumanRow` 恒 false）—— 变异实测见
+        // `InputAreaToTargets.spec.ts` 的「as 候选不受本卡影响」用例与本卡报告 §变异。
+        useAuthStore().user = { id: SELF_USER_ID, email: "me@example.com" };
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = [
             participant({ participantId: "agent", principalKind: "AGENT", displayName: "Helper" }),
-            participant({ participantId: "self", displayName: "Ada Lovelace" }),
+            participant({
+                participantId: "self",
+                principalKind: "HUMAN",
+                principalId: SELF_USER_ID,
+                displayName: "Ada Lovelace",
+            }),
         ];
         const wrapper = mountInputArea();
         await flushPromises();

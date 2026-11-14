@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from "pinia";
 import InputArea from "../components/InputArea.vue";
 import RecipientField from "../components/RecipientField.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
+import { useAuthStore } from "../../../../stores/auth";
 
 /**
  * PLAN-0665 M2 T2.1 + task-88：composer「发送」多选 chips（1..N 个参与者，真人也算）。
@@ -81,6 +82,8 @@ const stubs = {
 const PRIMARY_ID = "11111111-1111-4111-8111-111111111111";
 const HELPER_ID = "33333333-3333-4333-8333-333333333333";
 const HUMAN_ID = "44444444-4444-4444-8444-444444444444";
+// task-102：调用者本人（登录用户）的 user id —— 名册里那一行的 principalId 就是它。
+const SELF_USER_ID = "77777777-7777-4777-8777-777777777777";
 
 function participant(overrides: Partial<SessionParticipantView>): SessionParticipantView {
     return {
@@ -111,6 +114,28 @@ function roster(): SessionParticipantView[] {
     ];
 }
 
+/** 名册里「我自己的真人行」：HUMAN + principalId === 当前用户 id（types/participant.ts:28）。 */
+function selfHumanRow(): SessionParticipantView {
+    return participant({
+        participantId: "part-self-human",
+        principalKind: "HUMAN",
+        principalId: SELF_USER_ID,
+        displayName: "Me",
+        selfOwned: true,
+    });
+}
+
+/** 读某个 RecipientField 实际收到的候选（props 是唯一真源，不猜 DOM 条数）。 */
+function candidatesOf(
+    fieldTestid: string,
+    wrapper: ReturnType<typeof mountInputArea>,
+): SessionParticipantView[] | null {
+    const field = wrapper
+        .findAllComponents(RecipientField)
+        .find((item) => item.props("testid") === fieldTestid);
+    return field ? (field.props("candidates") as SessionParticipantView[]) : null;
+}
+
 function mountInputArea() {
     return mount(InputArea, {
         props: { sessionId: "session-1" },
@@ -125,6 +150,9 @@ function mountInputArea() {
 
 beforeEach(() => {
     setActivePinia(createPinia());
+    // task-102：把「当前登录用户」显式钉成 SELF_USER_ID（真 store，不 mock）——
+    // 否则 currentUserId 恒空、剔除逻辑永远不触发，新用例就等于没测。
+    useAuthStore().user = { id: SELF_USER_ID, email: "me@example.com" };
     storeState.canSpeakAs = false;
     storeState.speakAsCandidates = [];
     storeState.participants = [];
@@ -438,5 +466,92 @@ describe("InputArea · task-17 显式空 TO 的一次性提示", () => {
         await sendText(wrapper, "third");
         expect(wrapper.findAll(HINT)).toHaveLength(0);
         expect(wrapper.emitted("send")![2][4]).toEqual([]);
+    });
+});
+
+describe("task-102：TO/CC 候选排除「调用者自己的真人行」", () => {
+    it("TO 候选不含自己，但别人的真人行与 AGENT 行都还在", async () => {
+        storeState.participants = [
+            ...roster(),
+            selfHumanRow(),
+            participant({ participantId: HUMAN_ID, principalKind: "HUMAN", displayName: "Ada" }),
+        ];
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        const candidates = candidatesOf("to-targets", wrapper);
+        expect(candidates, "发送栏必须渲染").not.toBeNull();
+        const ids = candidates!.map((item) => item.participantId);
+        // ① 自己的真人行不在候选里（CP 对它会返回 400 PARTICIPANT_SELF_TARGET）。
+        expect(ids).not.toContain("part-self-human");
+        // ② 别人的真人行没被一起剔掉 —— 防「整栏过滤过宽」（task-88 的人类 TO 能力还在）。
+        expect(ids).toContain(HUMAN_ID);
+        // ③ AGENT 行也还在（202 的正常形态：as ∈ TO 合法，不得剔除）。
+        expect(ids).toContain(PRIMARY_ID);
+        expect(ids).toContain(HELPER_ID);
+        wrapper.unmount();
+    });
+
+    it("抄送候选同样不含自己（与发送同一口径）", async () => {
+        storeState.participants = [
+            ...roster(),
+            selfHumanRow(),
+            participant({ participantId: HUMAN_ID, principalKind: "HUMAN", displayName: "Ada" }),
+        ];
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await wrapper.get('[data-testid="cc-expand"]').trigger("click");
+        await flushPromises();
+
+        const candidates = candidatesOf("cc", wrapper);
+        expect(candidates, "抄送栏必须展开并带候选").not.toBeNull();
+        const ids = candidates!.map((item) => item.participantId);
+        expect(ids).not.toContain("part-self-human");
+        expect(ids).toContain(HUMAN_ID);
+        wrapper.unmount();
+    });
+
+    it("as 与某个 AGENT 目标同行时：候选仍含它，且 as 照发（CP 202 的正常形态）", async () => {
+        // Lead 2026-11-15：「以 A 代发 + TO=[A]」CP 判 202 且有用例钉住 ⇒ UI 不得剔除。
+        storeState.canSpeakAs = true;
+        storeState.speakAsCandidates = [roster()[0]];
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        expect(candidatesOf("to-targets", wrapper)!.map((item) => item.participantId)).toContain(
+            PRIMARY_ID,
+        );
+
+        // 选中 Alpha 作为 TO：as === to[0] ⇒ 相等分支保留 as（InputArea.vue 的 effectiveSpeakAsId）。
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Alpha");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
+            PRIMARY_ID,
+        );
+
+        await wrapper.get('[data-testid="chat-input"]').setValue("代 A 发言并通知 A");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+        const args = wrapper.emitted("send")![0];
+        expect(args[2], "as 必须照发（不是静默丢弃）").toBe(PRIMARY_ID);
+        expect(args[4]).toEqual([PRIMARY_ID]);
+        wrapper.unmount();
+    });
+
+    it("as 候选不受本卡影响：自己的真人行仍是可代发身份", async () => {
+        // CP SessionParticipantService:725-731「a HUMAN may speak as themselves」⇒ speakAsCandidates
+        // 列出自己是同一判据的投影。**两套候选是两个对象**，本卡只动 TO/CC。
+        storeState.canSpeakAs = true;
+        storeState.speakAsCandidates = [selfHumanRow()];
+        storeState.participants = [...roster(), selfHumanRow()];
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        expect(candidatesOf("speak-as", wrapper)!.map((item) => item.participantId)).toContain(
+            "part-self-human",
+        );
+        wrapper.unmount();
     });
 });

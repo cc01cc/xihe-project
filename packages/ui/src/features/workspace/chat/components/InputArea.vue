@@ -10,6 +10,7 @@ import { routeLocationKey } from "vue-router";
 import { isWorkspaceLessRoute } from "../workspaceLess";
 import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
+import type { SessionParticipantView } from "../../../../types/participant";
 import { toast } from "vue-sonner";
 import { problemDetailText } from "../../../../lib/errorMessages";
 import { Send, Square, LoaderCircle, CornerUpRight, Plus, Info } from "@lucide/vue";
@@ -264,9 +265,41 @@ const activeSpeakAsId = computed(() =>
  */
 const toTargetIds = ref<string[]>([]);
 
+/**
+ * task-102（Lead 2026-11-15，源 = `runtime-1` 的 `task-104` CP 判据）：**调用者自己的真人行不进收件人/抄送候选**。
+ *
+ * <p>CP 侧今天有两个不同的 400 码（**别混成一个**）：</p>
+ * <ul>
+ *   <li>`PARTICIPANT_SELF_TARGET`（`ChatController:743`，task-104）= **TO 指向调用者自己的行**
+ *       ⇒ 本卡负责：把自己的真人行从 TO/CC 候选里剔掉，用户构造不出这个请求；</li>
+ *   <li>`AS_SELF_WITHOUT_TARGET`（`ChatController:689-705`，task-110 / Lead 裁定 B）= **`as` = 自己的真人行
+ *       且 TO 缺席**。这一格是死信（responder = HUMAN ⇒ `agent_principal_id` = NULL ⇒ run 建不起来），
+ *       CP 显式拒绝；`as` 候选**本卡不动**（下面 `speakAsOptions` 仍是 `speakAsCandidates` 原样），
+ *       只给这个码专门的 toast 文案。</li>
+ * </ul>
+ * <p>而 **A 是 AGENT** ⇒ 202 正常形态（`as ∈ TO` 时 run 归属某个目标，`task-87` 从首个 AGENT 目标派生
+ * `as`）⇒ **UI 不得剔除**，所以这里只剔 `HUMAN` 行。</p>
+ *
+ * <p>为什么先做 UI 而不是只靠 CP 400：400 是「发出去才失败」——用户已经写完消息、点完发送；
+ * 候选里根本没有自己这一行才不会走到那一步。**名册可以含本人**（CP 自己有 self-only HUMAN 行的概念，
+ * `SessionParticipantService:220/247`；来源 = 有人显式把本人加为参与者，或 workspace-less 且
+ * `agent-runtime.defaultParticipants` 列了本人）⇒ 不能以「默认新建会话不会有」为由不做。</p>
+ */
+const currentUserId = computed(() => authStore.user?.id ?? "");
+
+function isOwnHumanRow(item: SessionParticipantView): boolean {
+    // 只剔 HUMAN：AGENT 行的 `principalId` 是 agent principal id，本就不可能等于 user id，
+    // 这里显式按 kind 判而不是「反正不可能相等」—— 后者在有人改投影口径时会静默变成错过滤。
+    return (
+        item.principalKind === "HUMAN" &&
+        Boolean(currentUserId.value) &&
+        item.principalId === currentUserId.value
+    );
+}
+
 const toTargetCandidates = computed(() =>
     (participantsStore.participants ?? []).filter(
-        (item) => !item.disabledAt && Boolean(item.displayName),
+        (item) => !item.disabledAt && Boolean(item.displayName) && !isOwnHumanRow(item),
     ),
 );
 
@@ -376,6 +409,8 @@ const ccCandidates = computed(() =>
         (item) =>
             !item.disabledAt &&
             Boolean(item.displayName) &&
+            // task-102：与「发送」同一口径 —— 自己的真人行不进抄送候选（CP 同样 400）。
+            !isOwnHumanRow(item) &&
             // task-453 follow-up（Lead 准）：按**有效**代发排除 —— 让位时没有代发身份，
             // 不该把默认代发那个人从抄送候选里剔掉。
             item.participantId !== effectiveSpeakAsId.value &&

@@ -198,6 +198,17 @@ export function errorCopyKey(code: string | undefined | null): string | null {
             return "chat.principalMissingToast";
         case "AGENT_PRINCIPAL_DISABLED":
             return "chat.principalDisabledToast";
+        // task-102: CP rejects notifying your own HUMAN row with 400 `PARTICIPANT_SELF_TARGET`
+        // (`ChatController:743`). The composer already removes that row from the candidates, so this
+        // is the fallback channel for callers that skip the UI (direct API, stale roster).
+        case "PARTICIPANT_SELF_TARGET":
+            return "chat.participantSelfTargetToast";
+        // task-102: the neighbouring cell, and the reason it is REACHABLE from the UI: `as` = your own
+        // HUMAN row with TO absent is refused by CP (`ChatController:689-705`, task-110 / Lead ruling B)
+        // while `as` candidates deliberately still list yourself ⇒ a generic toast would strand the user
+        // on a code name instead of telling them which field to change.
+        case "AS_SELF_WITHOUT_TARGET":
+            return "chat.asSelfWithoutTargetToast";
         default:
             return null;
     }

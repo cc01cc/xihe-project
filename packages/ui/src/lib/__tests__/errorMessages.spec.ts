@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "../../i18n";
 import {
     chatErrorToastText,
     errorCopyKey,
@@ -11,13 +12,19 @@ import {
 } from "../errorMessages";
 
 /**
- * PLAN-0750 V10 (A1-lite)：toast 通道只给这两个码开 i18n key，其余一律 null 走旧路径。
+ * PLAN-0750 V10 (A1-lite)：toast 通道只给少数码开 i18n key，其余一律 null 走旧路径。
  * 这条 describe 同时是 BL-563 的边界说明 —— 白名单之外的全量硬编码中文问题不在本卡范围内。
+ *
+ * task-102 追加 `PARTICIPANT_SELF_TARGET`：它是 CP 侧的稳定 400 码（`ChatController:701`），
+ * 必须给专门文案 —— 泛化的「操作失败，请稍后重试（CODE）」不告诉用户**该改哪一格**。
  */
 describe("errorCopyKey (PLAN-0750 V10 / A1-lite)", () => {
-    it("只覆盖 AGENT_PRINCIPAL_MISSING 与 AGENT_PRINCIPAL_DISABLED", () => {
+    it("覆盖 AGENT_PRINCIPAL_* 与 task-102 的 PARTICIPANT_SELF_TARGET", () => {
         expect(errorCopyKey("AGENT_PRINCIPAL_MISSING")).toBe("chat.principalMissingToast");
         expect(errorCopyKey("AGENT_PRINCIPAL_DISABLED")).toBe("chat.principalDisabledToast");
+        expect(errorCopyKey("PARTICIPANT_SELF_TARGET")).toBe("chat.participantSelfTargetToast");
+        // 邻格：as=自己 + TO 缺席（task-110）。`as` 候选仍含自己 ⇒ 这条从 UI 真能触发。
+        expect(errorCopyKey("AS_SELF_WITHOUT_TARGET")).toBe("chat.asSelfWithoutTargetToast");
     });
 
     it("白名单之外的码一律 null（旧路径逐字节不变，BL-563）", () => {
@@ -37,6 +44,28 @@ describe("errorCopyKey (PLAN-0750 V10 / A1-lite)", () => {
     });
 });
 
+/**
+ * task-102：`errorCopyKey` 返回的是**裸 key**，用户看到什么取决于 locale 里有没有它。
+ * 少一侧的解法是「补文案」，但不是「映射回去」—— 所以这里把「映射指向的键两侧都存在」钉成判据：
+ * 只加 `case` 忘了加文案时，用户看到的是 `chat.participantSelfTargetToast` 这串 key 名（静默降级）。
+ * （`i18n-scan` 只查 `t("…")` 静态引用与两侧键差集，看不见 `errorCopyKey` 里拼出来的 key。）
+ */
+describe("errorCopyKey 指向的键在 zh/en 两侧都可解析（task-102）", () => {
+    const KEYED_CODES = [
+        "AGENT_PRINCIPAL_MISSING",
+        "AGENT_PRINCIPAL_DISABLED",
+        "PARTICIPANT_SELF_TARGET",
+        "AS_SELF_WITHOUT_TARGET",
+    ];
+
+    it.each(KEYED_CODES)("%s 的键两侧都存在", (code) => {
+        const key = errorCopyKey(code);
+        expect(key, `${code} 没有 i18n 通道`).toBeTruthy();
+        for (const locale of ["zh-CN", "en-US"]) {
+            expect(i18n.global.te(key!, locale), `${locale} 缺 ${key}`).toBe(true);
+        }
+    });
+});
 describe("mappedErrorCopy", () => {
     it("returns dedicated copy only for codes it actually maps", () => {
         expect(mappedErrorCopy("AGENT_TIMEOUT")).toContain("超时");

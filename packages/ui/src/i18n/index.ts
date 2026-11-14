@@ -1341,9 +1341,12 @@ const messages = {
                 toTargetsLabel: "发送",
                 // task-50：两条语义说明（用户原话：发送相当于 @ 是重要通知，抄送就是普通抄送通知）。
                 // vue-i18n 把 `@` 当 link 语法（同 `:1176` 的 mentioned），字面量必须转义成 {'@'}。
-                toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
+                // task-102：**两条都要回答「会不会被免打扰屏蔽」**——只让 ccHint 说，读者会以为只有抄送免打扰。
+                // 事实两侧都不吃 muted：HUMAN TO 在 `WakeDispatchService:181-185` 直接 return notify，
+                // **早于** `:205` 的 `RESPOND_MUTED` 闸；CC 走 `WakeFanOutService:485 notifyObserver`（该文件 MUTED 零命中）。
+                toHint: "相当于 {'@'}，会作为重要通知送达，不会被免打扰屏蔽（可多选）",
                 // 用户裁定 P-6 原话：抄送就是普通抄送通知，**不会被免打扰屏蔽**（task-65 起代码已实现）。
-                ccHint: "普通通知（不会被免打扰屏蔽）",
+                ccHint: "普通抄送通知（不会被免打扰屏蔽）",
                 // task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。清空定向栏后发送，
                 // wire 上是显式 []（CP 抑制通知）⇒ 消息照常记录、但谁都不通知；界面必须说出来一次。
                 // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
@@ -1705,6 +1708,14 @@ const messages = {
                 "此会话尚未绑定可用的智能体：请在工作区设置 → 智能体管理绑定一个智能体后再发送",
             principalDisabledToast:
                 "此会话绑定的智能体已停用：请在工作区设置 → 智能体管理解绑后重新绑定一个可用的智能体",
+            // task-102：CP 对「TO 指向自己的行」返回 400 `PARTICIPANT_SELF_TARGET`（`ChatController:743`）。
+            // 候选里已经剔掉自己的真人行，这句是**兜底**（直接调 API 的客户端、或名册口径变化后的旧页面）。
+            participantSelfTargetToast:
+                "不能把通知发给自己：你自己的真人身份已从收件人候选里移除，请改选其他参与者",
+            // task-102 邻格：`as` = 自己的真人行且 TO 缺席 ⇒ CP 400 `AS_SELF_WITHOUT_TARGET`
+            // （`ChatController:689-705`，task-110）。`as` 候选按 Lead 裁定不动 ⇒ 这条**可达**，必须给文案。
+            asSelfWithoutTargetToast:
+                "「发送」和「抄送」都空着时，代发身份不能选自己：这条消息没有任何人能作答。请选一个发送对象，或换成别的代发身份",
             resourceExhausted: "{kind}并发已满，约 {seconds} 秒后重试",
             resourceExhaustedNoWait: "{kind}并发已满，请稍后重试",
             resourceExhaustedHint: "也可以在上方模型/连接选择器里换一个连接后再试。",
@@ -5118,8 +5129,10 @@ const messages = {
                 // This key is the speak-as identity (single-select asParticipantId), not a recipient list.
                 toLabel: "Send as",
                 toTargetsLabel: "Send",
-                toHint: "Equivalent to {'@'} — delivered as an important notification (multi-select)",
-                ccHint: "Ordinary notification (not muted by do-not-disturb)",
+                // task-102: BOTH hints answer the same question (do-not-disturb). Only ccHint used to,
+                // which read as "only CC bypasses DND" — both bypass it (see zh block for CP line refs).
+                toHint: "Equivalent to {'@'} — delivered as an important notification, not muted by do-not-disturb (multi-select)",
+                ccHint: "Ordinary CC notification (not muted by do-not-disturb)",
                 // task-17 (source: task-6 candidate C-1): make an explicit empty TO visible.
                 toEmptyHint:
                     "This message notifies no participant (it is still recorded in this session)",
@@ -5498,6 +5511,15 @@ const messages = {
                 "This session has no active Agent principal bound: bind one in Workspace settings → Agent management, then send again",
             principalDisabledToast:
                 "The Agent principal bound to this session is disabled: unbind it in Workspace settings → Agent management, then bind an available one",
+            // task-102: CP answers 400 `PARTICIPANT_SELF_TARGET` when TO names your own row (`ChatController:743`).
+            // The candidate list already drops your own HUMAN row; this copy is the fallback (direct API callers).
+            participantSelfTargetToast:
+                "You cannot notify yourself: your own HUMAN identity is no longer offered as a recipient — pick another participant",
+            // task-102 neighbour: `as` = your own HUMAN row with no TO target ⇒ CP 400
+            // `AS_SELF_WITHOUT_TARGET` (`ChatController:689-705`, task-110). The `as` candidates stay
+            // untouched, so this is REACHABLE and needs real copy.
+            asSelfWithoutTargetToast:
+                "With no send or CC target, the speak-as identity cannot be yourself: nothing could answer. Pick a send target, or choose a different speak-as identity",
             resourceExhausted: "{kind} capacity is full; retry in about {seconds}s",
             resourceExhaustedNoWait: "{kind} capacity is full; try again shortly",
             resourceExhaustedHint:
