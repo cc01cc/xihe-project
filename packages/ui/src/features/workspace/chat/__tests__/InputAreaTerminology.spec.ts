@@ -48,7 +48,6 @@ const messages = {
                 toTargetsLabel: "发送",
                 toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
                 ccHint: "普通通知（可能被免打扰屏蔽）",
-                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",
@@ -179,9 +178,6 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
         expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("相当于 @");
         expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("重要通知");
         expect(wrapper.get('[data-testid="composer-send-hint"]').text()).toContain("可多选");
-        // 人类目标尚未开放这件事要说出来（不是静默少一个选项）
-        expect(wrapper.get('[data-testid="to-agents-only-hint"]').text()).toContain("只能选智能体");
-        expect(wrapper.get('[data-testid="to-agents-only-hint"]').text()).toContain("抄送");
 
         await wrapper.get('[data-testid="cc-expand"]').trigger("click");
         await flushPromises();
@@ -209,14 +205,20 @@ describe("task-50 composer 两词制（发送 / 抄送）", () => {
         wrapper.unmount();
     });
 
-    it("④ 发送候选仍只列智能体（CP 对人类目标硬 400；放开归 task-48/task-49）", async () => {
+    it("④ 发送候选含真人（task-88 放开；改前读数 humans=0 / agents=2）", async () => {
+        // task-88：task-65 起 CP 接受人类 TO（真人只收通知、不作答），UI 的 kind 过滤是能力缺失。
+        // 读数：花名册 2 AGENT + 2 HUMAN，两者都进候选 ⇒ total 4。
         const wrapper = mountInputArea();
         await flushPromises();
 
         const kinds = candidateKinds("to-targets", wrapper);
-        expect(kinds, "发送栏必须在有 AGENT 时渲染").not.toBeNull();
-        expect(kinds?.humans).toBe(0);
-        expect(kinds?.agents).toBe(2);
+        expect(kinds, "发送栏必须在有候选时渲染").not.toBeNull();
+        expect(kinds).toEqual({
+            total: 4,
+            humans: 2,
+            agents: 2,
+            names: ["Alpha", "Ada Lovelace", "Helper", "Grace Hopper"],
+        });
         wrapper.unmount();
     });
 });

@@ -93,7 +93,6 @@ const messages = {
                 toTargetsLabel: "发送",
                 toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
                 ccHint: "普通通知（可能被免打扰屏蔽）",
-                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
                 toEmptyHint: "本条不会通知任何参与者",
                 toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",

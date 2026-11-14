@@ -48,9 +48,18 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 
 1. **目标集合 = AGENT 参与者**：`toParticipantIds` MUST 只接受本 Session 的 **AGENT** 参与者；
    人类目标 MUST 以 `400 INVALID_REQUEST` 显式拒绝（人类作答受 BL-238 wake 授权缺陷阻塞，另立计划）。
+   > **task-65 supersede（2026-11-15，D-1438 ②）**：上面「只接受 AGENT / 人类 `400`」是 M1 的历史口径，
+   > 已作废。现行规则：本 Session 的**任意未停用参与者**都是合法投递目标（判据见上文「投递语义」第 1–3 条：
+   > 参与者 + 未 disabled + 属于本 Session，**不是** speak-as）；HUMAN 目标 MUST 以
+   > `202 + notifiedTargets[]`（`reason="notify"`）收口、MUST NOT 产生 run。
+   > 原文按 `D-1442` 保留、不再作为现行判据。
 2. **第一个目标承载提交**：集合首个目标 MUST 拥有本次 `user_submission` run（`runId` = `runIds[0]`）；
    其余目标 MUST 作为派生 run 派发，其 wake 审计 `triggerSource="to"`；MUST NOT 为未选中主体
    虚构 PRIMARY run。
+   > **task-87 supersede（2026-11-15）**：「集合首个目标」MUST 读作**请求序中第一个 AGENT 目标**
+   > （HUMAN 目标只通知、不承载提交 run）；集合内只有 HUMAN 目标时无人作答，run MUST 以
+   > `terminalOutcome=suppressed_no_responder` 终结并在 202 回报 `notifiedTargets[]`，
+   > MUST NOT 回落 PRIMARY 代答。
 3. **origin 不得当分组依据**：派生 run 的 `origin` MUST 取**该 run 载体的既有分类**（2026-11-05 真栈实测：
    wake 载体为 `scheduled`；用户提交为 `user_submission`），`parent_run_id` MUST 保持 NULL（委派链语义不得复用）。
    MUST NOT 新增 origin 枚举或列；读侧 MUST 按 `runId` / 消息的 durable `delivery` / `trigger_source` 归组，
@@ -62,6 +71,10 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
    在 202 响应回报 `failedTargets:[{participantId,reason}]`，且 `runIds.length + failedTargets.length + deferredTargets.length`
    MUST 等于请求目标数；失败 MUST 以 ERROR 级 `event=to_target_dispatch_failed` 留痕（可 grep 计数）。**前置校验失败**
    （目标不存在/无权限/已停用/非 AGENT）则 MUST 整条拒绝（400/403），两类情形不得混用同一处理。
+   > **task-53/task-60 supersede（2026-11-15）**：现行不变量是**五个桶** ——
+   > `runIds + failedTargets + deferredTargets + notifiedTargets + suppressedTargets == 请求目标数`
+   > （`notifiedTargets` = 已通知的 HUMAN 目标、无 run；`suppressedTargets` = 按策略刻意不唤醒，
+   > `detail` 是机器 token）。且「前置校验失败」不再包含「非 AGENT」：`task-65` 起人类目标是合法目标。
 5c. **deferred 是排队，不是失败**（BL-283，Lead 2026-11-05 裁定）：目标因 Session 并发满
    （`maxConcurrentRunsPerSession`）被顺延入 follow-up 队列时 MUST 在 202 响应回报
    `deferredTargets:[{participantId,reason:"deferred"}]`（**MUST NOT** 计入 `failedTargets`），

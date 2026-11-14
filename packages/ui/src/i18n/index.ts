@@ -1336,14 +1336,14 @@ const messages = {
                 // 本键是**代发身份**（单选，wire 上的 asParticipantId），不是收件人 ——
                 // 旧值叫「发送」会让字典里出现两个「发送」，与新裁定自相矛盾。
                 toLabel: "代发身份",
-                // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO（CP 侧硬 400，见 SessionParticipantService
-                // 的 authorizeToTargets）；人类目标放开依赖 task-48/task-49，届时这条 hint 由 task-49 改口径。
+                // task-88：M1 的「只能选智能体」口径已废弃（task-65 起 CP 接受人类 TO ⇒ 真人只收通知、
+                // 不作答）；那条 hint 连同 i18n 键一起删掉，不留一条会骗人的文案。
                 toTargetsLabel: "发送",
-                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
                 // task-50：两条语义说明（用户原话：发送相当于 @ 是重要通知，抄送就是普通抄送通知）。
                 // vue-i18n 把 `@` 当 link 语法（同 `:1176` 的 mentioned），字面量必须转义成 {'@'}。
                 toHint: "相当于 {'@'}，会作为重要通知送达（可多选）",
-                ccHint: "普通通知（可能被免打扰屏蔽）",
+                // 用户裁定 P-6 原话：抄送就是普通抄送通知，**不会被免打扰屏蔽**（task-65 起代码已实现）。
+                ccHint: "普通通知（不会被免打扰屏蔽）",
                 // task-17（源 = task-6 候选 C-1）：**显式空 TO 的语义可见性**。清空定向栏后发送，
                 // wire 上是显式 []（CP 抑制通知）⇒ 消息照常记录、但谁都不通知；界面必须说出来一次。
                 // 两条文案刻意分开：提示语义（本条不通知）≠ 失败语义（发送失败），不得共用错误通道。
@@ -5121,9 +5121,8 @@ const messages = {
                 // This key is the speak-as identity (single-select asParticipantId), not a recipient list.
                 toLabel: "Send as",
                 toTargetsLabel: "Send",
-                toAgentsOnlyHint: "Send targets are agents only for now; use Cc for humans",
                 toHint: "Equivalent to {'@'} — delivered as an important notification (multi-select)",
-                ccHint: "Ordinary notification (may be muted by do-not-disturb)",
+                ccHint: "Ordinary notification (not muted by do-not-disturb)",
                 // task-17 (source: task-6 candidate C-1): make an explicit empty TO visible.
                 toEmptyHint:
                     "This message notifies no participant (it is still recorded in this session)",

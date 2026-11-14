@@ -254,24 +254,27 @@ const activeSpeakAsId = computed(() =>
 );
 
 /**
- * PLAN-0665 M2（Q3，D4）：**发送（多选收件人）**。与上面的「代发」是两件事：
- * - 候选只列会话里的 AGENT 参与者（人类作答受 BL-238 阻塞，M1 不开放）；
- * - 选中 1..N 个 ⇒ 随消息以 `toParticipantIds` 发出，CP 为每个目标各起一个 run；
+ * PLAN-0665 M2（Q3，D4）+ task-88：**发送（多选收件人）**。与上面的「代发」是两件事：
+ * - 候选 = 会话里未停用、有显示名的参与者，**不分 AGENT / HUMAN**。task-65 起 CP 接受人类目标：
+ *   真人收到的就是「重要通知」本身、不会作答 ⇒ 结果落 202 的 `notifiedTargets[]`，
+ *   run 归属仍是请求序里第一个能作答的智能体（task-87）；
+ * - 选中 1..N 个 ⇒ 随消息以 `toParticipantIds` 发出；
  * - 默认不选（空集 = 旧单响应者路径），不写回 Session 绑定、不落 localStorage。
+ * 纯真人会话里这一栏也必须出现（task-88 判据 1）——「只能发给智能体」是旧口径，已废弃。
  */
 const toTargetIds = ref<string[]>([]);
 
-const agentParticipants = computed(() =>
+const toTargetCandidates = computed(() =>
     (participantsStore.participants ?? []).filter(
-        (item) => item.principalKind === "AGENT" && !item.disabledAt && Boolean(item.displayName),
+        (item) => !item.disabledAt && Boolean(item.displayName),
     ),
 );
 
-const showToTargets = computed(() => agentParticipants.value.length > 0);
+const showToTargets = computed(() => toTargetCandidates.value.length > 0);
 
 const activeToTargetIds = computed(() =>
     toTargetIds.value.filter((id) =>
-        agentParticipants.value.some((item) => item.participantId === id),
+        toTargetCandidates.value.some((item) => item.participantId === id),
     ),
 );
 
@@ -299,6 +302,8 @@ function onToTargetsFieldChange(ids: string[]): void {
  * 历史语义：那时「发送」栏就是单 TO）⇒ 用户一用定向栏就必然冲突，且只看到一句英文 detail。
  * 这里让**默认**让位：相等则保留，不等则省略；`speakAsId` 本身不清空 ⇒ 撤掉定向后自动恢复。
  * 可见 chip 也绑这个有效值（不能显示「以 A 身份发」而 wire 里其实没有 A）。
+ * task-87 补充：省略 `as` 现在正是「首目标是真人」时的正确形态 —— CP 把 run 归属交给请求序里
+ * 第一个 AGENT 目标，不再把它当`as`去跑 speak-as 闸；UI 这里不需要为真人目标做别的。
  */
 const effectiveSpeakAsId = computed(() => {
     const targets = activeToTargetIds.value;
@@ -1257,7 +1262,7 @@ function prefillDraft(next: {
         if (toTargetIds.value.length > 0) {
             blocked = true;
         } else {
-            const allowed = new Set(agentParticipants.value.map((item) => item.participantId));
+            const allowed = new Set(toTargetCandidates.value.map((item) => item.participantId));
             const ids = next.to.filter((id) => allowed.has(id));
             if (ids.length) {
                 toTargetIds.value = ids;
@@ -1350,14 +1355,15 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                 {{ t("chat.input.speakAsOverriddenByTo") }}
             </p>
             <!--
-                PLAN-0665 M2（Q3/D4）：发送多选（1..N 个 AGENT）——与上面的「代发」栏分开，
-                因为一个消息只能有一个发言身份，但可以有多个响应者。默认空集 = 旧单响应者路径。
+                PLAN-0665 M2（Q3/D4）+ task-88：发送多选（1..N 个参与者，真人也在内）——与上面的
+                「代发」栏分开，因为一个消息只能有一个发言身份，但可以有多个响应者。真人目标只收
+                「重要通知」、不作答。默认空集 = 旧单响应者路径。
             -->
             <RecipientField
                 v-if="showToTargets"
                 :label="t('chat.input.toTargetsLabel')"
                 :model-value="toTargetIds"
-                :candidates="agentParticipants"
+                :candidates="toTargetCandidates"
                 :multiple="true"
                 :placeholder="t('chat.input.recipientPlaceholder')"
                 testid="to-targets"
@@ -1367,7 +1373,7 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
             <!--
                 task-50（用户裁定 P-6）：「发送」= @ 重要通知，「抄送」= 普通通知。
                 说明文案必须**贴着各自的栏**，不然用户只看到两个词、不知道差别在哪。
-                形态照抄 to-agents-only-hint（px-2 text-xs text-muted-foreground），不另造样式。
+                形态照抄同区 composer-send-hint（px-2 text-xs text-muted-foreground），不另造样式。
 
                 testid 用 composer- 前缀：`RecipientField` 自己会渲染 `${testid}-hint`
                 （键盘提示），叫 `cc-hint` 会与它**撞名** —— 实测撞名时断言拿到的是
@@ -1380,16 +1386,9 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
             >
                 {{ t("chat.input.toHint") }}
             </p>
-            <p
-                v-if="showToTargets"
-                class="px-2 text-xs text-muted-foreground"
-                data-testid="to-agents-only-hint"
-            >
-                {{ t("chat.input.toAgentsOnlyHint") }}
-            </p>
             <!--
                 task-17（源 = task-6 候选 C-1）：显式空 TO 的**一次性**提示。形态照抄同区
-                `to-agents-only-hint`（`px-2 text-xs text-muted-foreground`）+ 一个可关闭按钮；
+                `composer-send-hint`（`px-2 text-xs text-muted-foreground`）+ 一个可关闭按钮；
                 `role="status"` 让读屏播报（`aria-live=polite` 语义），但**不是**错误通道
                 （红/警示色一概不上，注意力预算 §10：提示不是危险）。
             -->

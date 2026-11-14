@@ -7,7 +7,11 @@ import RecipientField from "../components/RecipientField.vue";
 import type { SessionParticipantView } from "../../../../types/participant";
 
 /**
- * PLAN-0665 M2 T2.1：composer「发送」多选 chips（1..N 个 AGENT）。
+ * PLAN-0665 M2 T2.1 + task-88：composer「发送」多选 chips（1..N 个参与者，真人也算）。
+ *
+ * task-88：候选不再按 principalKind 过滤 —— task-65 起 CP 接受人类 TO（真人只收「重要通知」、
+ * 不作答），所以「纯真人会话」里这一栏必须出现且能选中真人；旧断言（只列 AGENT + 「只能选智能体」
+ * 提示）正好把这条能力缺失钉成了"正确"，本卡一并改。
  *
  * 与 0659 的「代发」栏分开：代发是**身份**（单选），发送是**响应者集合**（多选，
  * 每个目标各起一个 run）。这里只钉渲染与发送契约（第 5 个 emit 参数 `toParticipantIds`）。
@@ -46,7 +50,6 @@ const messages = {
             input: {
                 toLabel: "代发身份",
                 toTargetsLabel: "发送",
-                toAgentsOnlyHint: "发送目前只能选智能体；给真人请用抄送",
                 toEmptyHint: "本条不会通知任何参与者（消息仍会记录在当前会话）",
                 toEmptyHintDismiss: "知道了",
                 ccLabel: "抄送",
@@ -77,6 +80,7 @@ const stubs = {
 
 const PRIMARY_ID = "11111111-1111-4111-8111-111111111111";
 const HELPER_ID = "33333333-3333-4333-8333-333333333333";
+const HUMAN_ID = "44444444-4444-4444-8444-444444444444";
 
 function participant(overrides: Partial<SessionParticipantView>): SessionParticipantView {
     return {
@@ -129,21 +133,44 @@ beforeEach(() => {
 });
 
 describe("InputArea 发送多选（PLAN-0665 M2 T2.1）", () => {
-    it("renders only when the session has AGENT participants, with the agents-only hint", async () => {
+    it("renders for ANY selectable participant — a humans-only session included (task-88)", async () => {
+        // 改前：纯真人会话里「发送」栏整栏消失（候选被 principalKind === "AGENT" 过滤掉，
+        // showToTargets 又要求「≥1 个 AGENT」）⇒ 用户 P-6 要的「发送也能给实人」在 UI 上不可达。
         storeState.participants = [
-            participant({ participantId: "human-1", principalKind: "HUMAN" }),
+            participant({ participantId: HUMAN_ID, principalKind: "HUMAN" }),
         ];
-        const withoutAgents = mountInputArea();
+        const humansOnly = mountInputArea();
         await flushPromises();
-        expect(withoutAgents.find('[data-testid="to-targets-bar"]').exists()).toBe(false);
+        expect(humansOnly.find('[data-testid="to-targets-bar"]').exists()).toBe(true);
+        // 「只能选智能体」那条会骗人的提示已删（i18n 键同批删除）——留着它就与产品行为相反。
+        expect(humansOnly.find('[data-testid="to-agents-only-hint"]').exists()).toBe(false);
 
         storeState.participants = roster();
         const withAgents = mountInputArea();
         await flushPromises();
         expect(withAgents.find('[data-testid="to-targets-bar"]').exists()).toBe(true);
-        expect(withAgents.find('[data-testid="to-agents-only-hint"]').text()).toContain(
-            "发送目前只能选智能体；给真人请用抄送",
-        );
+    });
+
+    it("selects a HUMAN target and puts it on the wire (task-88 / task-65 delivery contract)", async () => {
+        storeState.participants = [
+            participant({ participantId: HUMAN_ID, principalKind: "HUMAN", displayName: "Ada" }),
+        ];
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="to-targets-input"]').setValue("Ada");
+        await wrapper.get('[data-testid="to-targets-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(
+            wrapper
+                .findAll('[data-testid="to-targets-chip"]')
+                .map((chip) => chip.attributes("data-participant-id")),
+        ).toEqual([HUMAN_ID]);
+
+        await wrapper.get('[data-testid="chat-input"]').setValue("给同事的重要通知");
+        await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("send")![0][4]).toEqual([HUMAN_ID]);
     });
 
     it("does not preselect any target (empty set keeps the legacy single-responder path)", async () => {

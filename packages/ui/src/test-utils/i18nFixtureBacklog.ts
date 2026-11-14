@@ -105,10 +105,11 @@ export const i18nFixtureBacklog: Record<string, { keys: string[]; note: string }
             "chat.input.recipientHint",
             "chat.input.recipientPlaceholder",
             "chat.input.recipientRemove",
-            "chat.input.toAgentsOnlyHint",
             "chat.input.toTargetsLabel",
         ],
-        note: "渲染出 7 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。",
+        note:
+            "渲染出 6 个裸键：夹具 messages 缺键（组件 t() 拿不到值原样回显）。补齐这些键即可从台账移除。" +
+            "（2026-11-15 task-88：toAgentsOnlyHint 随「只能选智能体」口径一并删除 ⇒ 7 → 6。）",
     },
     "features/workspace/chat/__tests__/InputAreaToTargets.spec.ts": {
         keys: [
