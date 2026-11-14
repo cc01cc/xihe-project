@@ -121,8 +121,8 @@ const SCOPES = {
         title: "Checkstyle（severity=error 全规则阻断，基线 0 违规）",
         dir: "packages/control-plane",
         cmd: "mvn -o -q checkstyle:check",
-        verdict: "exit 0（-q 下静默；任何新增违规即非 0，不做 warning 降级）",
-        evidence: "packages/control-plane/AGENTS.md:36、:99；mise.toml:311",
+        verdict: "exit 0（-q 下静默；任何新增违规即非 0，不做 warning 降级）；task-583 起同一门也钉在 Maven 的 validate 相位（pom.xml execution=checkstyle-check-early）⇒ mvn -o -q test-compile / mvn -o test -Dtest=X 同样先红，不再依赖「记得单独跑」",
+        evidence: "packages/control-plane/AGENTS.md:36（命令清单）、:43（task-583 绑相位）、:101（规则与阻断口径）；mise.toml:423-427（lint:cp）",
       },
       {
         level: "S0",
