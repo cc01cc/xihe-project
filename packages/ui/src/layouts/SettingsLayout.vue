@@ -8,6 +8,13 @@ import SettingsCommandPalette from "../components/settings/SettingsCommandPalett
 import SettingsLayerHeader from "../components/settings/SettingsLayerHeader.vue";
 import SettingsSidebar from "../components/settings/SettingsSidebar.vue";
 import { Button } from "../components/ui/button";
+// task-510：移动抽屉换成 vendor Sheet（reka Dialog 自带焦点陷阱 + Esc）。
+import Sheet from "../components/ui/sheet/Sheet.vue";
+import SheetClose from "../components/ui/sheet/SheetClose.vue";
+import SheetContent from "../components/ui/sheet/SheetContent.vue";
+import SheetDescription from "../components/ui/sheet/SheetDescription.vue";
+import SheetHeader from "../components/ui/sheet/SheetHeader.vue";
+import SheetTitle from "../components/ui/sheet/SheetTitle.vue";
 import { useAuthStore } from "../stores/auth";
 import {
     DOMAIN_LABEL_KEY,
@@ -120,40 +127,54 @@ watch(
             </div>
         </aside>
 
-        <div v-if="drawerOpen" class="fixed inset-0 z-40 lg:hidden">
-            <div
-                class="absolute inset-0 bg-background/70 backdrop-blur-sm"
-                @click="drawerOpen = false"
-            />
-            <div
-                role="dialog"
-                aria-modal="true"
+        <!--
+            task-510（G-08 + H-01）：移动抽屉必须是**真的 Sheet**（reka Dialog 原语），不是手搓 div。
+
+            修前这里自己写了 `role="dialog" aria-modal="true" data-variant="sheet"` 加一个遮罩
+            `@click` —— 看起来像 vendor 件，**却没有它的行为**：Esc 关不掉、按 Tab 焦点跑到背后
+            正文（读屏/键盘用户在抽屉里没有出口，只有点遮罩一条路）。判据是行为不是外形：
+            `SettingsLayout.backToChat.spec.ts` 里两条 —— Esc ⇒ 抽屉消失、打开后焦点在抽屉内。
+
+            宽度走内联 style 而不是 class：SheetContent 被 teleport 到 body，容器上的
+            `--settings-sidebar-width` 不随 DOM 继承 ⇒ 必须自带一份（与修前同一处理）。
+        -->
+        <Sheet :open="drawerOpen" @update:open="(open: boolean) => (drawerOpen = open)">
+            <SheetContent
+                side="left"
+                :show-close-button="false"
                 data-testid="settings-drawer"
                 data-variant="sheet"
                 data-collapsible="offcanvas"
-                data-state="open"
-                class="absolute inset-y-0 left-0 flex flex-col border-r bg-background shadow-lg"
+                class="gap-0 p-0 lg:hidden"
                 :style="{
                     width: 'var(--settings-sidebar-width)',
                     '--settings-sidebar-width': '300px',
                 }"
             >
-                <div class="flex items-center justify-between border-b px-3 py-2">
-                    <span class="text-sm font-medium">{{ t("settings.ia.menuButton") }}</span>
-                    <button
-                        type="button"
-                        class="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        :aria-label="t('settings.ia.closeMenu')"
-                        @click="drawerOpen = false"
-                    >
-                        <X class="size-4" />
-                    </button>
-                </div>
+                <SheetHeader
+                    class="flex flex-row items-center justify-between space-y-0 border-b px-3 py-2"
+                >
+                    <SheetTitle class="text-sm font-medium">
+                        {{ t("settings.ia.menuButton") }}
+                    </SheetTitle>
+                    <SheetDescription class="sr-only">
+                        {{ t("settings.ia.menuButton") }}
+                    </SheetDescription>
+                    <SheetClose as-child>
+                        <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            :aria-label="t('settings.ia.closeMenu')"
+                        >
+                            <X class="size-4" />
+                        </Button>
+                    </SheetClose>
+                </SheetHeader>
                 <div class="min-h-0 flex-1 overflow-y-auto">
                     <SettingsSidebar />
                 </div>
-            </div>
-        </div>
+            </SheetContent>
+        </Sheet>
 
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
             <div class="flex items-center gap-2 px-4 pt-3 lg:hidden">
