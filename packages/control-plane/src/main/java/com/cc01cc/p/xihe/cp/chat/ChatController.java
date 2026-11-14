@@ -251,7 +251,7 @@ public class ChatController {
                     // task-131: this run was parked by this process, so the local claim it still
                     // holds is a handoff, not a duplicate dispatch. resumeHandedOff() takes back only
                     // parked runs; a run that is genuinely ACTIVE still answers false here.
-                    if (!acquireRun(req.sessionId(), runId)
+                    if (!activeRunRegistry.resumeHandedOff(req.sessionId(), runId)
                             || !acquireLeaseForExistingRun(runId)) {
                         logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                                 requestId, req.sessionId(), runId);
@@ -962,6 +962,7 @@ public class ChatController {
                     // like "someone is running it" to the recovery drain — otherwise the drain's own
                     // claim guard rejects the run that this very request just parked (measured: run
                     // goes failed/CHAT_IN_PROGRESS and the message is never delivered).
+                    activeRunRegistry.markHandedOff(sessionId, runId);
                     logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
                             requestId, sessionId, runId);
                     handedOff = true;
