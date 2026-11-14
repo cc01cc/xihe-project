@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 
@@ -43,6 +43,39 @@ vi.mock("../../../../services/attachmentService", () => ({
 vi.mock("vue-sonner", () => ({
     toast: { error: vi.fn<(m: string) => void>(), success: vi.fn<(m: string) => void>() },
 }));
+
+/**
+ * task-30 ②：表驱动守卫**必须**让候选集合非空，否则「独立会话下没有抄送」可以因为
+ * 「根本没有参与者」而假绿 —— 那正是这次漏掉两个入口的同一类错误（空集把缺口藏起来，
+ * 见 D-1281）。这里按真实响应形状喂两个 agent 参与者 + speakAs=true：
+ * 工作区会话下四类控件都会渲染（负向对照证明表没有空转），独立会话下一个都不许有。
+ */
+vi.mock("../../../../composables/api", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const agent = (participantId: string, displayName: string) => ({
+        participantId,
+        principalKind: "AGENT" as const,
+        principalId: participantId,
+        displayName,
+        role: "MEMBER" as const,
+        orderIndex: 10,
+        wakePolicy: "ALL_MESSAGES" as const,
+        respondPolicy: "ALWAYS" as const,
+        disabledAt: null,
+        readCursor: null,
+        selfOwned: true,
+    });
+    return {
+        ...actual,
+        api: {
+            ...actual.api,
+            getSessionParticipants: vi.fn<typeof actual.api.getSessionParticipants>(async () => ({
+                participants: [agent("p-self", "agent-self"), agent("p-other", "agent-other")],
+                capabilities: { view: true, manage: true, mention: true, speakAs: true },
+            })),
+        },
+    };
+});
 
 const messages = {
     "zh-CN": {
@@ -116,5 +149,55 @@ describe("task-555 独立会话的附件入口", () => {
             ATTACHMENT_ENTRIES,
         );
         expect(wrapper.find('[data-testid="composer-workspace-less-hint"]').exists()).toBe(false);
+    });
+});
+
+/**
+ * task-30 ②（用户报障：提示条写着「独立会话不支持…（仅纯对话）」，旁边还摆着「抄送」「委派」）。
+ *
+ * <p>根因不是"忘了两处 if"，而是**文案与控件集合之间没有机器判据**：`showSpeakAs` /
+ * `showToTargets` 各自带着 `!workspaceLess`，`showCcSection` 与 delegate 的 `visible` 却没有，
+ * 却没有任何用例会因为"漏了门"而红。这张表就是把两者钉在一起 —— 以后新增 composer 入口时，
+ * 只要它属于 CP 对独立会话封禁的能力（as / to / cc / 附件），就必须先在这里登记，
+ * 否则「独立会话不该有它」这件事永远不会被测到。</p>
+ */
+type CapabilityProbe = {
+    /** 能力名（用户语言，与 hint 文案的措辞对齐）。 */
+    capability: string;
+    /** 该能力在 composer 里的唯一 DOM 锚点。 */
+    probe: string;
+};
+
+const CAPABILITY_PROBES: CapabilityProbe[] = [
+    { capability: "定向发送（以某参与者身份代发）", probe: '[data-testid="speak-as-bar"]' },
+    { capability: "定向多选（TO）", probe: '[data-testid="to-targets-bar"]' },
+    { capability: "抄送（CC）", probe: '[data-testid="cc-expand"]' },
+    { capability: "委派", probe: '[data-testid="chat-delegate-button"]' },
+    { capability: "图片", probe: '[aria-label="入口-图片"]' },
+    { capability: "附件", probe: '[aria-label="入口-附件"]' },
+    { capability: "截屏", probe: '[aria-label="入口-截屏"]' },
+];
+
+describe("task-30 表驱动守卫：hint 声称不支持的能力 → 一个控件都不许在", () => {
+    it("独立会话：表里每一项都不渲染", async () => {
+        const wrapper = mountComposer(standaloneRoute());
+        await flushPromises();
+
+        const leaked = CAPABILITY_PROBES.filter((row) => wrapper.find(row.probe).exists()).map(
+            (row) => row.capability,
+        );
+        expect(leaked, "独立会话（仅纯对话）下这些能力的控件仍在渲染").toEqual([]);
+        wrapper.unmount();
+    });
+
+    it("工作区会话（负向对照）：表里每一项都必须渲染 —— 否则这张表在空转", async () => {
+        const wrapper = mountComposer(workspaceRoute());
+        await flushPromises();
+
+        const missing = CAPABILITY_PROBES.filter((row) => !wrapper.find(row.probe).exists()).map(
+            (row) => row.capability,
+        );
+        expect(missing, "工作区会话缺这些入口 = 功能回归，或夹具喂空导致上一条假绿").toEqual([]);
+        wrapper.unmount();
     });
 });

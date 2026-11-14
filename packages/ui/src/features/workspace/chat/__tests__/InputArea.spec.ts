@@ -326,3 +326,35 @@ describe("BL-288 Problem detail for /export", () => {
         vi.restoreAllMocks();
     });
 });
+
+/**
+ * task-30 ①（用户报障「输入框有一圈黑框」）：判据必须是**类契约**，不是「有焦点环」——
+ * 后者恒真（旧值 `ring-1` 也有环），正是它让这处孤例活了这么久。
+ *
+ * <p>本仓控件族的焦点环标准 = `focus-visible:ring-3` + `focus-visible:ring-ring/50`
+ * （Button / Tabs / Switch / Checkbox / Select / Slider / Accordion / RadioGroup / Badge /
+ * Toggle / ScrollArea 共 13 个文件）。`--ring` 在本主题下是 `--primary`（近黑）⇒ 旧值
+ * `ring-1 + ring-ring/60` 就是 1px 60% 的近黑硬框，叠上容器 border 看着像渲染 bug。</p>
+ *
+ * <p>变异（已实测）：把 `ring-3` 改回 `ring-1`、或把 `ring-ring/50` 改回 `ring-ring/60`，
+ * 这条都会红。另钉 `focus:outline-none`：全局 `*:focus-visible { outline: 2px solid var(--ring) }`
+ * （`styles/main.css:225-226`）若不被压住，就会在环外面再套一圈 2px 纯色近黑 —— 比修前更糟。</p>
+ */
+describe("task-30 ① composer 焦点环形态", () => {
+    it("输入框焦点环 = ring-3 + ring-ring/50（不是 1px/60% 硬框）", () => {
+        const wrapper = mountInputArea();
+        const classes = wrapper.get('[data-testid="chat-input"]').classes();
+        expect(classes).toContain("focus-visible:ring-3");
+        expect(classes).toContain("focus-visible:ring-ring/50");
+        // 反向：旧的两条必须不在（只断言新值存在，等于允许"两个都留着"）
+        expect(classes).not.toContain("focus-visible:ring-1");
+        expect(classes).not.toContain("focus-visible:ring-ring/60");
+        // 必须压住全局 outline，否则环外再套 2px 纯色近黑轮廓（实测那才是用户看到的"黑框"主体）
+        expect(classes).toContain("focus:outline-none!");
+        expect(
+            classes,
+            "少了 ! 就等于没压住：main.css 的 *:focus-visible 在 @layer 之外",
+        ).not.toContain("focus:outline-none");
+        wrapper.unmount();
+    });
+});

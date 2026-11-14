@@ -381,7 +381,9 @@ const ccCandidates = computed(() =>
 );
 
 /** 有抄送可选项（或已有 chips）时才出现抄送入口（与旧的 showCcBar 门一致）。 */
-const showCcSection = computed(() => ccCandidates.value.length > 0 || ccIds.value.length > 0);
+const showCcSection = computed(
+    () => !workspaceLess.value && (ccCandidates.value.length > 0 || ccIds.value.length > 0),
+);
 
 /**
  * 2026-11-04 用户裁定（composer 打磨）：抄送栏**默认收起**为「抄送 +」小按钮 —— ≥2 agent 的
@@ -807,7 +809,10 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
             onClick: () => void openDelegation(),
         },
         icon: markRaw(CornerUpRight),
-        visible: !props.queueMode,
+        // task-30 ②：独立会话（workspace-less）连委派也没有通道 —— CP 对 as/to/cc/附件一律
+        // `WORKSPACE_LESS_FEATURE_FORBIDDEN`，而这里原先只判了队列模式 ⇒ 提示条写着「仅纯对话」、
+        // 旁边还摆着一个点了必失败的委派按钮。口径与 F-A / task-555 一致：**移除 + 可见原因**。
+        visible: !workspaceLess.value && !props.queueMode,
     },
     {
         key: props.isStreaming ? "stop" : "send",
@@ -1611,12 +1616,32 @@ defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
                 </div>
             </div>
 
+            <!--
+                task-30 ①（用户报障「输入框有一圈黑框」）：焦点环形态修的是**宽度与透明度**，不是删掉可见性
+                （DEV-011 §10：focus 必须环形轮廓且与 hover 可区分）。
+
+                为什么黑：`--ring: var(--primary)`（`themes/color-shadcn-*.css:40`，近黑），旧值
+                `ring-1 + ring-ring/60` ⇒ 1px、60% 的近黑硬框；本仓**控件族**的标准是
+                `ring-3 + ring-ring/50`（Button / Tabs / Switch / Checkbox / Select / Slider / Accordion /
+                RadioGroup / Badge / Toggle / ScrollArea 共 13 个文件，实测 `git grep "focus-visible:ring-3"`），
+                这里原来是孤例。3px / 50% 在同一 token 下是柔和光圈，不再是硬边。
+
+                为什么不直接换 vendor `Textarea`（本仓规矩：能由库满足的交互不得自研）：实测
+                `components/ui/textarea/Textarea.vue:28` 的基类自带 `border`、`rounded-lg`、`px-2.5 py-2`、
+                `min-h-16`、`text-base`，且**没有 focus 环**（只有 `aria-invalid:ring-3`）⇒ 换过去要覆盖
+                6 条基类才能贴合 composer 的「容器即字段」形态（容器已有 border + rounded-lg），
+                并且会**丢掉焦点可见性**。所以这里保留原生 textarea，只把环的形态对齐控件族标准。
+
+                双框处置：**保留外层容器 border，环画在 textarea 自己身上**。容器 12px 内距 > 3px 环宽
+                ⇒ 环住在内距里、不压容器边框；换成「把环画到容器上」会让点工具栏按钮时整块输入区发光，
+                去掉容器 border 则失焦后没有字段边界 —— 两者都比现状差。
+            -->
             <div class="rounded-lg border bg-muted/30 px-3 py-2">
                 <textarea
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-xs placeholder:text-muted-foreground/70 focus:outline-none! focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-offset-0 field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"
