@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.springframework.data.domain.Pageable;
@@ -24,10 +25,13 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -46,6 +50,7 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
     @Autowired private ChatSubmissionService chatSubmissionService;
     @Autowired private ChatController chatController;
     @Autowired private ProviderConnectionRepository providerConnections;
+    @Autowired private ConfigService configService;
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5)).build();
@@ -155,13 +160,112 @@ class WorkspaceLessSessionCreationIntegrationTest extends AbstractIntegrationTes
         assertEquals("WORKSPACE_LESS_FEATURE_FORBIDDEN", attachments.body().path("code").asText());
         assertTrue(chatRuns.findBySessionIdOrderByCreatedAtDescIdDesc(sessionId, Pageable.ofSize(10)).isEmpty());
 
+        // D-1438 (task-48): the fan-out half of this method was flipped, not deleted — TO/CC are
+        // participants and no longer refused, but TO stays AGENT-only, so a HUMAN target must still
+        // be refused (by the participant gate, not by the workspace-less gate).
+        Reply joined = send(null, "POST", "/api/v1/sessions/" + sessionId + "/participants",
+                """
+                {"principalKind":"HUMAN","principalId":"%s"}""".formatted(userId));
+        assertEquals(201, joined.status(), joined.body().toString());
+        String humanParticipantId = joined.body().path("participantId").asText();
         Reply fanout = send(null, "POST", "/api/v1/chat",
                 """
                 {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none",
                 "toParticipantIds":["%s"]}"""
-                        .formatted(sessionId, branchId, UUID.randomUUID()));
+                        .formatted(sessionId, branchId, humanParticipantId));
         assertEquals(400, fanout.status(), fanout.body().toString());
-        assertEquals("WORKSPACE_LESS_FEATURE_FORBIDDEN", fanout.body().path("code").asText());
+        assertEquals("INVALID_REQUEST", fanout.body().path("code").asText(),
+                "D-1438: TO answers with its own run, so a HUMAN target stays AGENT-only");
+    }
+
+    @Test
+    void workspaceLessChatDoorAcceptsCcObservers() throws Exception {
+        String sessionId = createWorkspaceless();
+        String branchId = rootBranch(sessionId);
+        String primaryId = primaryParticipantId(sessionId);
+        // Chat admission requires an active SSE subscription (409 otherwise) — unrelated to the
+        // workspace-less gate, so the stream is opened first and closed with the block.
+        try (java.io.InputStream stream = subscribe(sessionId, "").body()) {
+            Reply cc = send(null, "POST", "/api/v1/chat",
+                    """
+                    {"sessionId":"%s","branchId":"%s","content":"hi","toolMode":"none","cc":["%s"]}"""
+                            .formatted(sessionId, branchId, primaryId));
+            // The harness has no agent, so admission may stop at the LLM-readiness gate (503
+            // AGENT_UNAVAILABLE) — that gate runs AFTER this one, which is exactly the proof the
+            // cc request is no longer refused for being workspace-less. Before D-1438 it never
+            // got that far: it answered 400 WORKSPACE_LESS_FEATURE_FORBIDDEN here.
+            assertTrue(cc.status() == 202 || cc.status() == 503,
+                    "D-1438: cc is admitted past the workspace-less gate: " + cc.body());
+            assertNotEquals("WORKSPACE_LESS_FEATURE_FORBIDDEN", cc.body().path("code").asText(),
+                    "D-1438: cc must not be refused as a workspace-less-only feature: " + cc.body());
+        }
+    }
+
+    /** Opens the session event stream; {@code extraQuery} carries extra params, e.g. asParticipantId. */
+    private HttpResponse<java.io.InputStream> subscribe(String sessionId, String extraQuery)
+            throws Exception {
+        URI uri = URI.create(url("/api/v1/events?sessionId=" + sessionId + extraQuery));
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .header("Authorization", "Bearer " + token)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build();
+        return http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+    }
+
+    /**
+     * D-1438 (task-48): the SSE declared participant view used to answer
+     * {@code WORKSPACE_LESS_FEATURE_FORBIDDEN} and had <b>no test at all</b> pinning either
+     * behaviour. The gate is gone, so this is the positive pin that keeps it from coming back.
+     */
+    @Test
+    void workspaceLessSessionAllowsADeclaredParticipantViewOnTheEventStream() throws Exception {
+        String sessionId = createWorkspaceless();
+        String primaryId = primaryParticipantId(sessionId);
+        HttpResponse<java.io.InputStream> response =
+                subscribe(sessionId, "&asParticipantId=" + primaryId);
+        assertEquals(200, response.statusCode(),
+                "D-1438: a declared participant view needs the participant gate, not a workspace");
+        try (java.io.InputStream stream = response.body()) {
+            String head = new String(stream.readNBytes(64),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(head.contains("connected"),
+                    "the stream must open with the connected event, got: " + head);
+        }
+    }
+
+    /**
+     * D-1438 ruling 2: the default roster is seeded from {@code agent-runtime.defaultParticipants}
+     * and a stale principal is <b>skipped with a WARN</b> — never a failed session create.
+     */
+    @Test
+    void workspaceLessSessionSeedsTheConfiguredRosterAndSkipsAStalePrincipal() {
+        String stalePrincipal = UUID.randomUUID().toString();
+        String configured = """
+                [{"principalKind":"HUMAN","principalId":"%s","role":"MEMBER",
+                  "wakePolicy":"MENTION","respondPolicy":"WHEN_MENTIONED","deliveryDefaults":["cc"]},
+                 {"principalKind":"HUMAN","principalId":"%s"}]"""
+                .formatted(userId, stalePrincipal);
+        configService.putLayer("user", "agent-runtime",
+                Map.of("defaultParticipants", configured), "test", UUID.fromString(userId), null);
+
+        String sessionId = createWorkspaceless();
+        List<String> humanIds = new ArrayList<>();
+        for (JsonNode participant : send(null, "GET",
+                "/api/v1/sessions/" + sessionId + "/participants", null).body().path("participants")) {
+            if ("HUMAN".equals(participant.path("principalKind").asText())) {
+                humanIds.add(participant.path("principalId").asText());
+            }
+        }
+        assertEquals(List.of(userId), humanIds,
+                "the stale principal is skipped, the configured human is seeded");
+    }
+
+    private String primaryParticipantId(String sessionId) {
+        JsonNode participants = send(null, "GET",
+                "/api/v1/sessions/" + sessionId + "/participants", null).body().path("participants");
+        assertEquals(1, participants.size(), participants.toString());
+        return participants.get(0).path("participantId").asText();
     }
     private String body(String workspaceIdValue) {
         String workspaceField = workspaceIdValue == null ? "" : ",\"workspaceId\":\"" + workspaceIdValue + "\"";

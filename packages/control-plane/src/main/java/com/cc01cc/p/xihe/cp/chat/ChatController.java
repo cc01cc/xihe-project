@@ -465,10 +465,9 @@ public class ChatController {
         // authorised to act for — same gate as chat --as; undeclared = observer (full stream).
         String declaredView = asParticipantId == null || asParticipantId.isBlank() ? null : asParticipantId;
         if (declaredView != null) {
-            if (workspaceId == null) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_LESS_FEATURE_FORBIDDEN",
-                        "Participant views require a workspace context");
-            }
+            // D-1438 (task-48): a workspace-less session supports a declared participant view too.
+            // The gate is the participant gate (D23-08), not a workspace context — it answers 403
+            // PARTICIPANT_CAP_DENIED on its own when the caller may not speak as that row.
             sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, declaredView);
         }
         SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView, connectionId);
@@ -619,13 +618,15 @@ public class ChatController {
                         "WORKSPACE_LESS_TOOL_MODE_FORBIDDEN",
                         "A workspace-less Session only supports toolMode=none");
             }
-            if (!toParticipantIds.isEmpty()
-                    || (ccParticipantIds != null && !ccParticipantIds.isEmpty())
-                    || (asParticipantId != null && !asParticipantId.isBlank())
-                    || !extractAttachmentIds(request).isEmpty()) {
+            // D-1438 (task-48): participants are not tools. An independent session is isomorphic to
+            // a normal one — several members, humans included, targetable (TO) and cc-able — so those
+            // three no longer belong to this gate; "no tool-calling ability" remains the only
+            // difference (toolMode above is unchanged). Attachments keep their refusal: files are
+            // still workspace-scoped on the service path (ChatAttachmentService), a separate card.
+            if (!extractAttachmentIds(request).isEmpty()) {
                 return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                         "WORKSPACE_LESS_FEATURE_FORBIDDEN",
-                        "A workspace-less Session does not support attachments, TO/CC fan-out or participant views");
+                        "A workspace-less Session does not support attachments");
             }
         }
         String idempotencyKey = idempotencyHeader == null || idempotencyHeader.isBlank()
@@ -889,9 +890,9 @@ public class ChatController {
             // user Message stays in the conversation, but the PRIMARY must not answer: the Run is
             // terminalized with an explicit outcome instead of being dispatched, so "who replied"
             // stays observable (a silent non-dispatch would look like a stuck Run).
-            List<MentionParser.RosterEntry> roster = workspaceId == null
-                    ? List.of()
-                    : mentionRoster(userId, workspaceId, sessionId);
+            // D-1438 (task-48): the roster is session-scoped (session_participants has no
+            // workspace_id, V92:50-72), so an independent session has @-mentions like any other.
+            List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
             // PLAN-0665 M1: an explicit TO selection outranks the mention suppression — the caller
             // named exactly who should answer, so the first target always owns this run.
@@ -941,11 +942,10 @@ public class ChatController {
             // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
             // message can never create two runs for the same participant.
             Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
-            if (workspaceId != null) {
-                // Pure-chat Sessions have no roster/cc/TO surface; fan-out requires a workspace tenant.
-                wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                        content, roster, ccParticipantIds, toTargetIds);
-            }
+            // D-1438 (task-48): fan-out is session+principal scoped, not workspace scoped — an
+            // independent session's TO/CC round runs exactly like a workspace session's.
+            wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
+                    content, roster, ccParticipantIds, toTargetIds);
             handedOff = true;
             Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
                     userMessage.getId(), runId, null);

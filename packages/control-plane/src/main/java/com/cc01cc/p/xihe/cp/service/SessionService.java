@@ -76,6 +76,8 @@ public class SessionService {
     private final ContextService contextService;
     private final McpInvocationService mcpInvocationService;
     private final GrantDefaultService grantDefaultService;
+    /** D-1438 (task-48): seeds the configured default roster into a workspace-less session. */
+    private final WorkspacelessDefaultRoster workspacelessDefaultRoster;
 
     public SessionService(SessionRepository sessionRepository,
                           SessionForkRequestRepository forkRequestRepository,
@@ -93,7 +95,8 @@ public class SessionService {
                           GrantDefaultService grantDefaultService,
                           WorkspaceBackendPolicy backendPolicy,
             SessionParticipantService sessionParticipantService,
-            SessionReadAccess sessionReadAccess) {
+            SessionReadAccess sessionReadAccess,
+            WorkspacelessDefaultRoster workspacelessDefaultRoster) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
@@ -111,6 +114,7 @@ public class SessionService {
         this.grantDefaultService = grantDefaultService;
         this.sessionParticipantService = sessionParticipantService;
         this.sessionReadAccess = sessionReadAccess;
+        this.workspacelessDefaultRoster = workspacelessDefaultRoster;
     }
 
     @Transactional(readOnly = true)
@@ -278,6 +282,13 @@ public class SessionService {
         Session saved = sessionRepository.save(session);
         // D23-13: the PRIMARY is part of creating a Session, not of the first message — same transaction.
         sessionParticipantService.ensurePrimaryParticipant(saved.getId(), agentPrincipalId);
+        // D-1438 (task-48): an independent session has no workspace membership to derive people
+        // from, so its default roster comes from the config chain (workspace-default > user >
+        // instance). Rows are snapshotted here and are the single source of truth afterwards; a
+        // stale principal is skipped with a WARN and never blocks the create.
+        if (workspaceId == null) {
+            workspacelessDefaultRoster.seed(saved, userId);
+        }
         return saved;
     }
 

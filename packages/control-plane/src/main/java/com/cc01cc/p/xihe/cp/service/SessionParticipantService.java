@@ -226,11 +226,21 @@ public class SessionParticipantService {
                                     String participantId, Long requestedSeq) {
         UUID sessionUuid = parseUuid(sessionId, "SESSION_NOT_FOUND");
         UUID participantUuid = parseUuid(participantId, "PARTICIPANT_NOT_FOUND");
+        // D-1438 (task-48): the read cursor is session-scoped. A workspace-less (independent)
+        // session has no workspace id to compare, so the old equality made its cursor unreachable
+        // entirely. The workspace equality stays for workspace sessions (byte-identical); an
+        // independent session is authorized through the single visibility primitive instead
+        // (owner, or an enabled HUMAN participant) — the self-only check below still decides who
+        // may advance the pointer.
         Session session = sessionRepository.findById(sessionUuid)
-                .filter(found -> found.getWorkspaceId() != null
-                        && found.getWorkspaceId().equals(workspaceId))
+                .filter(found -> found.getWorkspaceId() == null
+                        ? true
+                        : found.getWorkspaceId().equals(workspaceId))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
                         "Session not found"));
+        if (session.getWorkspaceId() == null) {
+            requireVisibleSession(actorId, null, sessionId);
+        }
         SessionParticipant row = participantRepository.findByIdAndSessionId(participantUuid, session.getId())
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "PARTICIPANT_NOT_FOUND",
                         "Participant not found"));
