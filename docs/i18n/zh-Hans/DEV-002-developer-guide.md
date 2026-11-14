@@ -604,3 +604,25 @@ Native 运行期的探针口径（运维注意）：native CP 的 `/actuator/hea
 
 - CP 在 IDE 内直接运行且未委托 Maven 资源过滤时，`pom.properties` 可能是原始 `@project.version@` 占位符；`BuildVersion` 校验失败会返回 `null` 并 WARN，`/version` 的 `cp.version` 为 `null`。用 `mvn spring-boot:run` 或 Maven 构建即可得到真实版本。
 - 不伪造 commit；没有构建期注入就显示「未注入」。
+
+## 8. 提交信息、worktree 池与开发期数据（task-93 从 AGENTS.md 下沉）
+
+规则层的判据留在 `AGENTS.md`；本节收编可查的实测读数与边界，供需要细节时查阅。
+
+### 8.1 提交信息门禁
+
+- 门禁口径与翻闸实测见 §3「模式 D」末条与 `scripts/check-commit-msg.mjs`；本节补**首行禁则**：不带 emoji、不以句号结尾、不以「更新/修改/调整/优化/处理/完善/整理」开头（写清改了什么），空行后写 body。
+- body 建议 `Why:` / `What:` / `Verify:` / `Risk:` 四段，只写为什么与怎么验，不重复 diff 内容。
+- **合并分支前先校验分支自身**：`node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`。门禁只看 develop 上的历史，分支里的超宽/缺引用提交要到合并后才被发现（2026-11-06 实际发生过一次，已按 `scripts/commit-msg-allowlist.json` 显式豁免并留痕）。白名单只接受「已进 develop、不可改写」的既成事实，每条必须带 reason，禁止批量塞历史提交。
+- 历史提交豁免默认 `--since 1dd57056`。
+
+### 8.2 worktree 池：本机实测与事故
+
+- **本机实测（2026-11-05）**：H: 卷 `git worktree add` 建树 **470 秒**，且会在 checkout 未完成时留下 **0 MB 半成品目录**；当天新建 **34 个**、其中 **14 个**是空残留。
+- ⇒ A03 的 PLAN 隔离实施一律复用固定池槽位（开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序以 `worktree-lifecycle` skill 为准）；**只有池内全忙 + 用户明确授权**才可新建，且**必须同批登记池表**（`.local/xh-d28/worktree-pool.md`）。
+- **禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（两者是不同机制，2026-10-14 用户再次纠正）。
+
+### 8.3 开发期数据处置（D-215）
+
+- **判据**：XH 尚未上线，本地/隔离栈的开发数据属可丢弃物 ⇒ schema 变更可**直接清库重建**（`mise run dev:reset` 或删库重跑 Flyway），**不写回填脚本、不做双读/双写/灰度开关、不保留「新旧快照并存」的兼容分支**，也不把「存量行数对照」当验收判据。
+- **三条边界**：①仅限**开发期数据**（lane / 隔离栈 / dev 栈）；②任何用户可见的发布产物、备份、`.local/evidence/` 证据、仓库历史不在此列；③清库前必须声明**目标栈与库身份**（避免误清他人 lane），不可逆动作执行前留一句「将清哪些库」。

@@ -116,6 +116,7 @@ capabilities() -> { available, reason, diagnostics? }
    - 同步（sync）：向沙盒推送副本并把改动同步回工作区存储，存在延迟与冲突处理问题；
     - 复制（copy）：进出各一次，最简单、最慢。
 沙盒内文件与工作区存储不一致时，一律以工作区存储为准。`windows-host/unrestricted` 是显式宿主执行模式，不得伪装成受限 sandbox；它仍使用同一 WorkspaceStorage 根目录，但不提供 workspace 外写范围保护。
+6. **实现字段不外泄**：Runtime 实现字段（`pid`、`wrapperPid`、`policyPath`、`mxcTier` 等）只在 runtime 内部与本地日志可见，**不得透传到 API**；CP/API view 必须显式过滤内部与敏感字段（走白名单，不靠「记得删」）。
 
 ## 6. 长驻 stdio MCP 三档映射
 

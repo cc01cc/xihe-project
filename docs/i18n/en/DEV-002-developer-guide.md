@@ -908,3 +908,25 @@ business code must not contain a version literal.
 
 - [DEV-001 System Architecture](DEV-001-system-architecture.md)
 - [USER-001 User Guide](USER-001-user-guide.md)
+
+## 9. Commit Messages, the Worktree Pool, and Development Data (moved down from AGENTS.md, task-93)
+
+Policy criteria stay in `AGENTS.md`; this section keeps the measurable readings and the boundaries for when detail is needed.
+
+### 9.1 Commit-message gate
+
+- The gate rules and the flip measurement live in §3 "Mode D" (last bullet) and `scripts/check-commit-msg.mjs`; this section adds the **first-line bans**: no emoji, no trailing period, and do not start with "update/modify/adjust/optimize/handle/improve/tidy" — say what changed. Put the body after a blank line.
+- Suggested body sections `Why:` / `What:` / `Verify:` / `Risk:`; describe why and how it was verified, do not repeat the diff.
+- **Validate the branch itself before merging**: `node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`. The gate only reads history on develop, so over-wide or unreferenced commits inside a branch surface after the merge (this happened once in 2026-11-06 and was explicitly exempted through `scripts/commit-msg-allowlist.json`). The allowlist only accepts committed facts already on develop that cannot be rewritten; every entry needs a reason and bulk back-filling is forbidden.
+- Historical commits are exempt by default via `--since 1dd57056`.
+
+### 9.2 Worktree pool: local measurement and incident
+
+- **Measured on this machine (2026-11-05)**: `git worktree add` on the H: volume takes **470 seconds** and can leave **0 MB half-finished directories** when the checkout never completes; **34** worktrees were created that day and **14** of them were empty leftovers.
+- ⇒ Isolated PLAN execution in A03 always reuses an existing pool slot (the order between "resident module-branch slot" and "task slot" is owned by the `worktree-lifecycle` skill); a new worktree is allowed **only when the whole pool is busy and the user explicitly authorises it**, and it **must be registered in the pool table** (`.local/xh-d28/worktree-pool.md`) in the same batch.
+- **Do not** substitute the Kilo / Agent Manager worktree mode (a different mechanism; corrected again by the user on 2026-10-14).
+
+### 9.3 Development-data policy (D-215)
+
+- **Criterion**: XH is not released, so development data in local/isolated stacks is disposable ⇒ a schema change may **drop and rebuild the database** (`mise run dev:reset` or delete the DB and re-run Flyway) with **no backfill script, no dual read/write, no grey-release switch, and no "old and new snapshots side by side" compatibility branch**, and "row-count comparison" is not an acceptance criterion.
+- **Three boundaries**: ① development data only (lane / isolated stack / dev stack); ② user-visible release artifacts, backups, `.local/evidence/` evidence, and repository history are excluded; ③ before dropping a database you must state the **target stack and database identity** (so another lane is never wiped by mistake), and an irreversible action must be preceded by a line saying which databases will be dropped.

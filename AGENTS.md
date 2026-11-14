@@ -34,12 +34,10 @@
 
 ## Architecture
 
-四模块 Hub-Module。全局架构见 [`DEV-001`](docs/i18n/zh-Hans/DEV-001-system-architecture.md)；当前实现与项目目标契约分别按模块查阅 DEV、OpenAPI/inventory 和根级 `spec/README.md`。
+四模块 Hub-Module。全局架构见 [`DEV-001`](docs/i18n/zh-Hans/DEV-001-system-architecture.md)；模块实现见 [`DEV-013`](docs/i18n/zh-Hans/DEV-013-agent-architecture.md) / [`DEV-014`](docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md) / [`DEV-015`](docs/i18n/zh-Hans/DEV-015-runtime-architecture.md) / [`DEV-016`](docs/i18n/zh-Hans/DEV-016-mcp-architecture.md)；API wire 以 `docs/api/openapi.yaml` / `inventory.md` 为准。SPEC 是目标契约入口，`proposed` 不代表已经实现。
 
-- 配置边界见 [`DEV-003`](docs/i18n/zh-Hans/DEV-003-config-management.md)：bootstrap/deployment env 与 ConfigService 业务配置不是同一层；凭证只走受控加密通道，env/DB 冲突必须显式呈现，secret 不得写入仓库或日志。
-- Agent、CP、Runtime、MCP 当前实现分别见 [`DEV-013`](docs/i18n/zh-Hans/DEV-013-agent-architecture.md)、[`DEV-014`](docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)、[`DEV-015`](docs/i18n/zh-Hans/DEV-015-runtime-architecture.md)、[`DEV-016`](docs/i18n/zh-Hans/DEV-016-mcp-architecture.md)；API wire 以 `docs/api/openapi.yaml` / `inventory.md` 为准。SPEC 是目标契约入口，`proposed` 不代表已经实现。
-- Runtime/Sandbox 后端与生命周期契约见 [`DEV-031`](docs/i18n/zh-Hans/DEV-031-sandbox-backend-contract.md)。未知 Workspace、后端不可用或超时必须显式失败；MXC/Docker 故障不得自动回退到宿主执行。`windows-host/unrestricted` 只能由用户显式选择；进程沙盒只约束受其管理的进程，不得据此宣称宿主 Workspace 外写入安全。host execution 仍受原有授权/审批约束；删除执行实体不得删除 WorkspaceStorage。
-- Runtime 的实现字段（如 pid、wrapperPid、policyPath、mxcTier）不得透传到 API；CP/API view 必须显式过滤内部与敏感字段。
+- 配置边界见 [`DEV-003`](docs/i18n/zh-Hans/DEV-003-config-management.md)：bootstrap/deployment env 与 ConfigService 业务配置不是同一层；凭证只走受控加密通道，secret 不得写入仓库或日志；env/DB 冲突必须显式呈现。
+- 沙盒后端与生命周期契约见 [`DEV-031`](docs/i18n/zh-Hans/DEV-031-sandbox-backend-contract.md)：未知 Workspace、后端不可用或超时必须显式失败，MXC/Docker 故障不得自动回退到宿主执行；`windows-host/unrestricted` 只能由用户显式选择；Runtime 实现字段（pid/wrapperPid/policyPath/mxcTier）不得透传到 API，CP/API view 必须显式过滤（DEV-031 §5）。
 - Workspace/Session、ChatRun、Workspace Job 与 MCP invocation 不变量见 [`DEV-017`](docs/i18n/zh-Hans/DEV-017-session-architecture.md)、DEV-014 和对应 SPEC；模块间变更必须按下方跨协议门禁同步。
 
 ## SPEC Contract Layer
@@ -111,10 +109,10 @@
 
 ## Plan and Release Rules
 
-- 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/` 分册）；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
-- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT；池表见项目私有层 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位；开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序**以该 skill 为准，本行不复述**。**禁止 `git worktree add` 新建**——H: 卷建树实测 470s 且会在 checkout 未完成时留下 0 MB 半成品目录（2026-11-05 实测一天新建 34 个 + 14 个空残留）；只有池内槽位全忙、且用户明确授权时才可新建，**新建必须同批登记进池表**。**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（两者是不同机制，2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
+- 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/`）；PLAN 工作包统一放在 workspace 根 `plans/`，本仓不另设；XH Spec Impact 与 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
+- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT，池表 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位，开工/休息态与「常驻模块分支槽 vs 任务槽」的判定顺序**以该 skill 为准，本行不复述**。**禁止 `git worktree add` 新建**（仅池内全忙 + 用户明确授权时可建，且**必须同批登记池表**；本机实测 470 s 与空残留事故见 `DEV-002` §8.2）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
-- **开发期数据无迁移包袱（D-215，2026-11-06 用户裁定）**：**XH 尚未上线**，本地/隔离栈的开发数据属可丢弃物 —— **旧数据不得成为开发与设计的阻碍**。schema 变更可以**直接清库重建**（`mise run dev:reset` 或删库重跑 Flyway），**不写回填脚本、不做双读/双写/灰度开关、不保留"新旧快照并存"的兼容分支**，也不把"存量行数对照"当验收判据。边界：①仅限**开发期数据**（lane/隔离栈/dev 栈）；②任何用户可见的发布产物、备份、`.local/evidence/` 证据、仓库历史不在此列；③清库前必须声明**目标栈与库身份**（避免误清他人 lane），不可逆动作执行前留一句"将清哪些库"的说明。
+- **开发期数据无迁移包袱（D-215）**：XH 尚未上线，本地/隔离栈的开发数据属可丢弃物 ⇒ schema 变更可**直接清库重建**，**不写回填脚本、不做双读/双写/灰度开关、不保留「新旧快照并存」兼容分支**，也不把「存量行数对照」当验收判据；三条边界与清库前声明要求见 `DEV-002` §8.3。
 
 ## Skills
 
@@ -130,16 +128,14 @@
 - **Allowed**：在已批准 PLAN 范围内修改本项目文档、源码和配置；本规则不豁免 workspace 授权与验证流程。
 - **Require Approval**：架构级变更（新增模块/通信协议）、破坏式 API 变更、生产部署。
 
-### 提交信息（2026-11-06 起，机读门禁）
+### 提交信息（机读门禁；细则见 `DEV-002` §8.1 与 `scripts/check-commit-msg.mjs`）
 
-- 首行 `<type>(<scope>): <摘要>`；`type` ∈ feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert；`scope` 如 `cp`/`agent`/`ui`/`runtime`/`l2`/`docs`/`spec`。
-- **摘要显示宽度 ≤72 列（CJK 记 2 列，约 ≤36 汉字）；merge 提交 ≤100 列**。超过就说明细节该进 body——实测历史中位 85 列、p90 114 列，正是"越写越长"的量化证据。
-- 首行不带 emoji、不以句号结尾、不以「更新/修改/调整/优化/处理/完善/整理」开头（写清"改了什么"）。
-- 空行后写 body；非 merge 提交必须在首行或 body 引用 `PLAN-####` / `BL-###` / `D-###`。body 建议 `Why:` / `What:` / `Verify:` / `Risk:` 四段，只写**为什么与怎么验**，不重复 diff 内容。
-- **校验**：`mise run check:commit-msg`（**已阻断，且是 `mise run validate` 的依赖**；D-216）或 `node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook）/`--range a..b --enforce`（阻断）；`--stats` 出观察窗统计、`--json` 给 agent。历史提交豁免（默认 `--since 1dd57056`）。**观察窗已结**（自 `a632de77` 起 32 条、违规率 0% ⇒ 已翻 `--enforce` 并接入 validate，D-216）；历史提交豁免。
-- 可选本地 hook（不改仓库）：`git config core.hooksPath scripts/hooks`（仓库内 `scripts/hooks/commit-msg` 已提供）。
-**合并前必跑 UI 单测**：`cd packages/ui && pnpm exec vitest run`（全量 ~150s）。`mise run validate` 的 `test` 依赖 `test:ui`，但 `validate` 极少真跑 ⇒ 单测红点会被当"存量基线"长期放过（2026-11-06 实测 develop 上 14 红/5 文件，见 `BL-357`）。合并前至少跑一次全量，红点逐条归类（规格落后产品 / 测试基建 / 产品回归）后再合。
-**合并分支前先校验分支自身**：`node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`。门禁只校验 develop 上的历史，**分支里的超宽/缺引用的提交要到合并后才被发现**（2026-11-06 实际发生过一次，已按 `scripts/commit-msg-allowlist.json` 显式豁免并留痕）。白名单只接受"已进 develop、不可改写"的既成事实，每条必须带 reason，禁止批量塞历史提交。
+- 首行 `<type>(<scope>): <摘要>`；`type` ∈ feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert，`scope` 如 `cp`/`agent`/`ui`/`runtime`/`l2`/`docs`/`spec`；非 merge 必须在首行或 body 引用 `PLAN-####` / `BL-###` / `D-###`。
+- **摘要显示宽度 ≤72 列（CJK 记 2 列，约 ≤36 汉字），merge ≤100 列**；首行不带 emoji、不以句号结尾、不以「更新/修改/调整/优化/处理/完善/整理」开头。超过就说明细节该进 body。
+- 校验：`mise run check:commit-msg`（**已阻断**，`mise run validate` 的依赖，D-216）或 `node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook）/ `--range a..b --enforce`（阻断）；可选 hook：`git config core.hooksPath scripts/hooks`。
+- **合并前必跑 UI 单测**：`cd packages/ui && pnpm exec vitest run`（全量 ~150 s）。`validate` 的 `test` 依赖 `test:ui`，但 `validate` 极少真跑 ⇒ 红点会被当存量基线长期放过（2026-11-06 实测 develop 上 14 红/5 文件，`BL-357`）。
+- **合并分支前先校验分支自身**：`node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`（门禁只看 develop 历史，分支内的超宽/缺引用要到合并后才暴露；白名单规则见 `DEV-002` §8.1）。
+
 ## 测试与验证基座（2026-11-08 固化指针；正文以 SSOT 为准）
 
 - **验证分级**：L0 受影响子集（默认）/ L1 波次（里程碑打点）/ L2 全量（仅三触发点：PLAN verify 判定、跨层契约合并前、归档/发布前）；host E2E 与浏览器全套恒归 L2。

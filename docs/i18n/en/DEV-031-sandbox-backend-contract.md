@@ -104,6 +104,7 @@ The identity portion of a capability snapshot includes at least:
    - sync: a copy is pushed in and synced back to workspace storage, with delay and conflict handling;
     - copy: one transfer in and out; simplest, slowest.
 When the sandbox files and workspace storage diverge, workspace storage wins. `windows-host/unrestricted` is an explicit host execution mode, not a constrained sandbox; it uses the same WorkspaceStorage root but does not provide workspace-outside write protection.
+6. **No implementation fields on the wire**: Runtime implementation fields (`pid`, `wrapperPid`, `policyPath`, `mxcTier`, ...) stay inside the runtime and local logs and **must not be passed through to the API**; CP/API views must filter internal and sensitive fields explicitly (through an allowlist, not by "remembering to delete").
 
 ## 6. Long-Running stdio MCP: Three Tiers
 
