@@ -244,15 +244,43 @@ const AB_OUT = process.env.XIHE_AB_OUT ?? "H:/zeotmp/ui1-pw/workspace-a-to-b.jso
 const AB_DELAY_MS = 5000;
 const AB_PROBE_PATH = "/api/v1/__ab_instrument_probe";
 
+/** JSON-RPC 请求体的**白名单摘要**（task-196 ①：绝不整包落盘）。 */
+type AbBodySummary = {
+    /** JSON-RPC 方法（`initialize` / `tools/call` / `notifications/initialized` …）。 */
+    rpcMethod?: string;
+    /** `params.name`：`tools/call` 的工具名 —— 归因的关键字段。 */
+    toolName?: string;
+    /** `params.arguments.workspaceId` 或 `workspace_id`：判「谁的工作区」。 */
+    argWorkspaceId?: string;
+};
+
 type AbRow = {
     method: string;
     path: string;
     workspaceHeader: string;
     workspaceParam: string | null;
+    /** 相对 `recordAb` 起点的毫秒偏移（历史字段，保留）。 */
     atMs: number;
+    /** 绝对时间戳（epoch ms）—— 用来算 `msSinceBoundary`。 */
+    atAbs: number;
+    /** 请求体白名单摘要；无 JSON 体（GET/上传）时缺省。 */
+    body?: AbBodySummary;
 };
 
-/** 记录**所有** `/api/*` 请求的「头 + 显式 workspaceId 参数」。与第一族同口径，但多记参数值。 */
+type AbRowAnnotated = AbRow & {
+    /** 距导航边界的有符号毫秒数：**负数 = 边界前（在途候选）**，正数 = 边界后（新发）。 */
+    msSinceBoundary: number;
+    phase: "pre-nav" | "post-nav";
+};
+
+/**
+ * 记录**所有** `/api/*` 请求的「头 + 显式 workspaceId 参数 + 请求体白名单摘要 + 绝对时间」。
+ *
+ * <p>task-196 ①：`body` 只留 `rpcMethod` / `toolName` / `argWorkspaceId` 三样白名单字段。
+ * **为什么不能整包落盘**：`tools/call` 的 `params.arguments` 里可能有路径、文件内容甚至凭据，
+ * artifact 会进证据包并被贴进报告 ⇒ 整包等于把工具参数一起泄出去。归因只需要「哪个工具、哪个
+ * 工作区」，不需要参数值。</p>
+ */
 function recordAb(page: Page): AbRow[] {
     const rows: AbRow[] = [];
     const startedAt = Date.now();
@@ -265,9 +293,59 @@ function recordAb(page: Page): AbRow[] {
             workspaceHeader: request.headers()["x-workspace-id"] ?? "",
             workspaceParam: url.searchParams.get("workspaceId"),
             atMs: Date.now() - startedAt,
+            atAbs: Date.now(),
+            body: summarizeBody(request),
         });
     });
     return rows;
+}
+
+/**
+ * 只取 JSON-RPC 请求体里的**白名单字段**（task-196 ①）。
+ *
+ * <p>三样：`method`（JSON-RPC 方法）、`params.name`（`tools/call` 的工具名）、
+ * `params.arguments.workspaceId` / `workspace_id`。**其余一律不读、不落**。
+ * 非 JSON 体（上传/表单）与解析失败体一律返回 `undefined`，不落原文。</p>
+ */
+function summarizeBody(request: { postData(): string | null }): AbBodySummary | undefined {
+    const raw = request.postData();
+    if (!raw) return undefined;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return undefined;
+    }
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const envelope = parsed as Record<string, unknown>;
+    const summary: AbBodySummary = {};
+    if (typeof envelope.method === "string") summary.rpcMethod = envelope.method;
+    const params = envelope.params;
+    if (typeof params === "object" && params !== null) {
+        const fields = params as Record<string, unknown>;
+        if (typeof fields.name === "string") summary.toolName = fields.name;
+        const args = fields.arguments;
+        if (typeof args === "object" && args !== null) {
+            const argFields = args as Record<string, unknown>;
+            const workspaceId = argFields.workspaceId ?? argFields["workspace_id"];
+            if (typeof workspaceId === "string") summary.argWorkspaceId = workspaceId;
+        }
+    }
+    return Object.keys(summary).length > 0 ? summary : undefined;
+}
+
+/**
+ * 给每行补 `msSinceBoundary` 与 `phase`（task-196 ②）。
+ *
+ * <p>判读口径：**负数 = 边界前**（可能是「在途」请求，边界后被复用上下文发出），**正数 = 边界后新发**。
+ * 只有后者才配叫「边界后带 A 头的请求」；把两者混在一起看，会把在途误判成新发（或反之）。</p>
+ */
+function annotateBoundary(rows: AbRow[], boundaryAt: number): AbRowAnnotated[] {
+    return rows.map((row) => ({
+        ...row,
+        msSinceBoundary: row.atAbs - boundaryAt,
+        phase: row.atAbs >= boundaryAt ? "post-nav" : "pre-nav",
+    }));
 }
 
 /** A / B 两个工作区的详情桩（`GET /api/v1/workspaces/@{id}`）——深链进入 B 时子组件要读它。 */
@@ -468,12 +546,12 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
             boundaryIndex: boundary,
             boundaryTotalRows: rows.length,
             delayMs: AB_DELAY_MS,
-            selfProof,
+            selfProof: annotateBoundary(selfProof, boundaryAt),
             postBoundaryRows: product.length,
-            withAHead,
-            paramBHeadA,
-            headBParamA,
-            sample: product.slice(0, 20),
+            withAHead: annotateBoundary(withAHead, boundaryAt),
+            paramBHeadA: annotateBoundary(paramBHeadA, boundaryAt),
+            headBParamA: annotateBoundary(headBParamA, boundaryAt),
+            sample: annotateBoundary(product.slice(0, 20), boundaryAt),
             sampledAt: new Date().toISOString(),
         };
         fs.writeFileSync(AB_OUT, JSON.stringify(out, null, 2), "utf8");
@@ -560,8 +638,8 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
                 note: "本态不需要延迟注入：B 的首页请求本身就是正面控制",
             },
             postBoundaryRows: product.length,
-            withA,
-            sample: product.slice(0, 20),
+            withA: annotateBoundary(withA, boundaryAt),
+            sample: annotateBoundary(product.slice(0, 20), boundaryAt),
             sampledAt: new Date().toISOString(),
         };
         fs.writeFileSync(
@@ -579,8 +657,15 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
 /* ── 变异证明（不是本文件的一部分，按顺序人工执行；每点单独一轮、各自恢复并核 sha256）──────────
  * 目标：证明上面对「边界后带 A 头/参数」的断言**真的咬得住**（Lead 裁定②：变异点必须落在被测路径上）。
  * 变异点（都在 A→B 的实际门槛上，**不在** ws-less 的那两道门上）：
- *   M1  `stores/workspace.ts:386`  首载落盘前的陈旧丢弃 ⇒ 注释掉该行
- *   M2  `stores/workspace.ts:417`  排队重载落盘前的陈旧丢弃 ⇒ 注释掉该行
+ *   M1  `stores/workspace.ts` **首载**落盘前的陈旧丢弃 —— 锚点 = `loadTree` 里
+ *       `const nodes = await fetchDirectoryTree("");` 之后紧跟的
+ *       `if (workspaceId.value !== currentWorkspaceId) return;` ⇒ 注释掉该行
+ *   M2  `stores/workspace.ts` **排队重载**落盘前的陈旧丢弃 —— 锚点 = `while (loadTreePending > 0)`
+ *       排空循环里紧跟 `await fetchDirectoryTree("")` 的
+ *       `if (workspaceId.value !== targetId) continue;` ⇒ 注释掉该行
+ *       **行号会漂，故用锚点**：2026-11-15 `task-188` 只在上方 `workspaceId` 来源处 +6 行，
+ *       就把原先记的 `:386` / `:417` 顶到了 `:392` / `:423`（旧 `:417` 甚至已指向注释、不再是守卫）
+ *       —— 照数字做变异会改错地方，按上面两段代码文本定位才不会错。
  *   M3  `router/index.ts:619-622`  守卫里的 `writeTabWorkspaceId(routeWorkspaceId)` ⇒ 注释掉（头会停在 A）
  * 判据（按 `D-1516` 定矩阵，别混跑）：
  *   M1 / M2 ⇒ 在 **④ P1 点击态**上跑（SPA 内切换，A 的树请求才可能真的在途）—— 必须红。
@@ -713,6 +798,36 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         );
         const withBHead = product.filter((row) => row.workspaceHeader === WS_B);
 
+        /* task-196 ①/④：把两条「新族」直接归因，报告里不必再翻 JSON。
+         * ① `mcpCalls`：每条 `POST /mcp` 都带 `body.toolName`（若有）——`list_directory`/`read_file` 类
+         *    ⇒ 树路径（task-188 已改面，出现即回归）；其它 name ⇒ 另一条腿（当场开卡）。
+         * ② `eventsStream`：`GET /workspaces/{id}/events` 是上下文事件流（SSE）——记「几次、带哪个头、
+         *    路径里是哪个 id」，用来判它由 A 还是 B 的上下文开启。 */
+        const mcpCalls = product.filter((row) => row.path.startsWith("/api/v1/mcp"));
+        const eventsStreamRows = product.filter((row) =>
+            /\/workspaces\/[^/]+\/events/.test(row.path),
+        );
+        const eventsStreamWithA = eventsStreamRows.filter((row) => row.workspaceHeader === WS_A);
+        const eventsStreamPathIds = [
+            ...new Set(
+                eventsStreamWithA.map(
+                    (row) => row.path.split("/workspaces/")[1]?.split("/")[0] ?? "?",
+                ),
+            ),
+        ];
+        const eventsStreamConclusion =
+            eventsStreamRows.length === 0
+                ? "本轮未出现 GET /workspaces/{id}/events（该族不成立，别沿用上轮读数）"
+                : eventsStreamWithA.length === 0
+                  ? "本轮 " + eventsStreamRows.length + " 次、带 A 头 0 次 ⇒ 该流不是 A 头泄漏源"
+                  : "本轮 " +
+                    eventsStreamRows.length +
+                    " 次中 " +
+                    eventsStreamWithA.length +
+                    " 次带 A 头，路径 id=" +
+                    eventsStreamPathIds.join(",") +
+                    " ⇒ 开流方用的是 A 的上下文（与 mcp 归同一批归因）";
+
         const out = {
             card: "task-621 / task-3",
             case: "p1-foreign-session-click",
@@ -725,12 +840,21 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
                 aPathDistinctPaths: preAPathDistinct,
                 note: "aPathDistinctPaths === 1 ⇒ 对照组只覆盖一个端点形态，端点改路径时会静默失效",
             },
-            selfProof,
+            selfProof: annotateBoundary(selfProof, boundaryAt),
             postBoundaryRows: product.length,
-            withAHead,
-            headBParamA,
+            withAHead: annotateBoundary(withAHead, boundaryAt),
+            headBParamA: annotateBoundary(headBParamA, boundaryAt),
             withBHeadCount: withBHead.length,
-            sample: product.slice(0, 20),
+            // task-196 ①：`POST /mcp` 每条都带 `body` 白名单摘要（`toolName` 是归因关键字段）。
+            mcpCalls: annotateBoundary(mcpCalls, boundaryAt),
+            // task-196 ④：新族单独给归因结论，不只列 URL。
+            eventsStream: {
+                rows: annotateBoundary(eventsStreamRows, boundaryAt),
+                withAHead: annotateBoundary(eventsStreamWithA, boundaryAt),
+                pathIds: eventsStreamPathIds,
+                conclusion: eventsStreamConclusion,
+            },
+            sample: annotateBoundary(product.slice(0, 20), boundaryAt),
             sampledAt: new Date().toISOString(),
         };
         fs.writeFileSync(
@@ -764,6 +888,22 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
                     },
                     post: product.length,
                     withAHead: withAHead.length,
+                    // task-196 ③：三次连跑要能只靠 stdout 汇总分布 ⇒ 正面控制计数必须出现在这一行。
+                    withBHeadCount: withBHead.length,
+                    // task-196 ①：A 头里每条 mcp 调用带工具名；无工具名显式写 `<no-tool-name>`。
+                    mcpCalls: mcpCalls.map((row) => ({
+                        path: row.path,
+                        header: row.workspaceHeader,
+                        toolName: row.body?.toolName ?? "<no-tool-name>",
+                        rpcMethod: row.body?.rpcMethod ?? null,
+                        argWorkspaceId: row.body?.argWorkspaceId ?? null,
+                        msSinceBoundary: row.atAbs - boundaryAt,
+                        phase: row.atAbs >= boundaryAt ? "post-nav" : "pre-nav",
+                    })),
+                    eventsStream: {
+                        count: eventsStreamRows.length,
+                        withAHead: eventsStreamWithA.length,
+                    },
                     headBParamA: headBParamA.length,
                     out: AB_OUT.replace(/\.json$/, "-p1-click.json"),
                 }),
