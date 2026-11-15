@@ -401,9 +401,23 @@ export const PERMISSION_ATOMS = [
      * 词表口径「产品真的会判的那几条」：这条就是。**它是实例作用域**，所以不进 owner/editor/viewer 预设。
      */
     { actionClass: "READ_INSTANCE_CONTENT", resource: "*" },
+    /**
+     * task-216（2026-11-15）：实例层**写面**原子。与上一条 READ 是同一类缺口 —— D-1521 M-2=B 起
+     * 实例层的写面判据是动作原子 `WRITE_INSTANCE_CONTENT`（不是能力位 `isInstanceAdmin`）：
+     * `src/views/settings/SettingsDomainView.vue:66/354-357`（缺它 ⇒ 页面只读 + 点名该原子）、
+     * `src/views/settings/DataControlsView.vue:46`（`canImport` 同原子）、`ConfigDomainPanel.vue:760`
+     * （`!readonly && field.type==='select'` 才渲染 `config-select-*`）。
+     *
+     * 缺它的后果就是任务卡上的三条红：实例层域页字段退化成只读、`config-select-*` 整块不存在、
+     * 数据页 403 连「导入」按钮都没有。task-213/task-215 先在单个 spec 局部补过前提；这里收口到词表，
+     * 让「用共享夹具 ⇒ 实例管理员真的能写」这条前提**显式且唯一**。
+     *
+     * **它是实例作用域**（同 READ）⇒ 进 `INSTANCE_SCOPE_ATOMS`，不进 owner/editor/viewer 预设。
+     */
+    { actionClass: "WRITE_INSTANCE_CONTENT", resource: "*" },
 ] as const;
 /** 实例作用域原子：**不能**出现在「非实例管理员」预设里（否则预设名与内容不符）。 */
-export const INSTANCE_SCOPE_ATOMS = ["READ_INSTANCE_CONTENT"] as const;
+export const INSTANCE_SCOPE_ATOMS = ["READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT"] as const;
 
 /**
  * task-163：按用例裁剪原子面。默认（不调用它）保持 PERMISSION_ATOMS 全量 ⇒ 既有 spec 行为不变。

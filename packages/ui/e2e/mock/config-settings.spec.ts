@@ -48,18 +48,10 @@ async function mockSelfPermissions(page: Page): Promise<void> {
             body: JSON.stringify({
                 userId: "u1",
                 instanceCapabilities: ["isInstanceAdmin", "isInstanceSuper", "canCreateWorkspace"],
-                // task-215（2026-11-15）：**写面**判据自 D-1521 M-2=B 起是动作原子 `WRITE_INSTANCE_CONTENT`
-                // （`SettingsDomainView.vue:66/354-357`、`DataControlsView.vue:46` `canImport`），不再看能力位
-                // `isInstanceAdmin`（本文件 beforeEach 种的是能力位）。夹具导出 `PERMISSION_ATOMS` 自 task-76 起只补了
-                // **读**原子 `READ_INSTANCE_CONTENT`，**写原子仍缺** ⇒ 实例层判只读（`ConfigDomainPanel.vue:760`
-                // `v-else-if="!readonly && field.type === 'select'"` ⇒ `config-select-*` 根本不存在）、数据页判 403
-                // （`DataControlsView.vue:203-216` ⇒ 连「导入」按钮都没有）。三条红是同一个缺口的三个投影。
-                // 夹具侧收口（把写原子并进 `e2e/mock/helpers/auth.ts` 的 `PERMISSION_ATOMS`）不属本卡写面 ⇒ 此处局部补齐，
-                // 记进卡面待办交夹具 owner；**不放宽断言**：补的是权限前提，断言一个字未改。
-                instancePermissions: [
-                    ...PERMISSION_ATOMS,
-                    { actionClass: "WRITE_INSTANCE_CONTENT", resource: "*" },
-                ],
+                // task-216（2026-11-15）：写面原子已收口进夹具词表（`helpers/auth.ts` 的 `PERMISSION_ATOMS`，
+                // 判据 D-1521 M-2=B：实例层写面 = `WRITE_INSTANCE_CONTENT`，不再看能力位 `isInstanceAdmin`）。
+                // task-215 曾在这里局部补过一次，现回归单一词表 —— **本文件不再自己拼原子**。
+                instancePermissions: PERMISSION_ATOMS,
                 workspaces: [
                     {
                         workspaceId: "11111111-1111-4111-8111-111111111111",
