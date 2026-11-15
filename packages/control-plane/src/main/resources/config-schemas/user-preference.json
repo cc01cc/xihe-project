@@ -2,7 +2,13 @@
   "type": "object",
   "properties": {
     "theme": { "type": "string", "enum": ["dark", "light", "system"] },
-    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z][a-z]+)?$" }
+    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z][a-z]+)?$" },
+    "layout.global": { "type": "object" }
+  },
+  "patternProperties": {
+    "^layout\\.ws\\.[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$": {
+      "type": "object"
+    }
   },
   "additionalProperties": false
 }

@@ -173,6 +173,16 @@ export const MOCK_VALUES: Record<string, Record<string, unknown>> = {
     "user-preference": {
         theme: "dark",
         language: "zh-CN",
+        // task-159（D-1529）：schema 新增的布局键族是 type:json ⇒ task-127 禁占位门要求这里给一个
+        // **非空、可序列化**的真实布局示例（不是 {} 占位）。形状跟随 UI 侧布局持久化的字段名。
+        "layout.global": {
+            navOpen: true,
+            navWidth: 280,
+            treeWidth: 240,
+            dockWidth: 360,
+            dockMode: "pinned",
+            dockTabs: ["files", "memory"],
+        },
     },
     // task-459：此前本域**没有任何夹具**（既无 config-schema 又不在本表）⇒ `entriesFor` 回 {} ⇒
     // `entries.templates` undefined ⇒ `parseTemplates` 回 [] ⇒ `ProviderHub` 的模板选项恒空

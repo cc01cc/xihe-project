@@ -451,6 +451,10 @@ const CATALOG_JSON = `{
         {
             "key": "language",
             "type": "string"
+        },
+        {
+            "key": "layout.global",
+            "type": "json"
         }
     ]
 }` as const;

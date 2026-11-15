@@ -79,6 +79,46 @@ class ConfigDomainSchemaCoverageTest {
         }
     }
 
+    /**
+     * task-159（D-1529）：布局键的判据必须在**真实写路径**上成立，不只是 schema 文件自洽。
+     *
+     * <p>这是卡面第 5 点要求的反向保证：`validateBySchema`（`ConfigService:1949-1973`）会把
+     * `{`/`[` 开头的值文本预解析成 `JsonNode` 再校验 ⇒
+     * ① 合法布局（JSON 文本）能写进去；② 畸形 JSON 文本被拒（`… is not valid JSON`）；
+     * ③ 非对象（数组）被拒（`object expected`）。
+     * 若哪天为了别的域改了预解析规则，这三条会红 —— 那时 `user-preference` 的 wire 契约就变了。</p>
+     */
+    @Test
+    void layoutKeysFollowTheParsedShapeOnTheRealWritePath() {
+        UUID user = UUID.randomUUID();
+        TenantContext.setUserId(user.toString());
+        try {
+            String workspace = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+            configService.putLayer("user", "user-preference",
+                    Map.of("theme", "dark",
+                            "layout.global", "{\"navOpen\":true,\"navWidth\":280}",
+                            "layout.ws." + workspace,
+                            "{\"dockWidth\":360,\"dockTabs\":[\"files\"]}"),
+                    "probe", user, null);
+
+            IllegalArgumentException malformed = assertThrows(IllegalArgumentException.class,
+                    () -> configService.putLayer("user", "user-preference",
+                            Map.of("layout.global", "{not json"), "probe", user, null));
+            assertTrue(malformed.getMessage().contains("is not valid JSON"),
+                    "malformed JSON text must be rejected before schema validation, got: "
+                            + malformed.getMessage());
+
+            IllegalArgumentException notAnObject = assertThrows(IllegalArgumentException.class,
+                    () -> configService.putLayer("user", "user-preference",
+                            Map.of("layout.ws." + workspace, "[1,2,3]"), "probe", user, null));
+            assertTrue(notAnObject.getMessage().contains("object"),
+                    "an array payload must be rejected as a non-object shape, got: "
+                            + notAnObject.getMessage());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
     private static Set<String> difference(Set<String> left, Set<String> right) {
         Set<String> result = new TreeSet<>(left);
         result.removeAll(right);
