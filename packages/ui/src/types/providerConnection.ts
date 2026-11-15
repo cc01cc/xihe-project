@@ -1,3 +1,4 @@
+import type { TemplateRef } from "../services/apiRequestTemplates";
 /**
  * 连接归属层（`ProviderConnection.owner_type` 的 UI 侧词表）。
  *
@@ -155,7 +156,7 @@ export interface ProviderConnectionInput {
     apiTypeId?: string;
     apiTypeVersion?: number;
     expectedRevision?: number;
-    connectionDefaultTemplateRef?: import("../services/apiRequestTemplates").TemplateRef;
+    connectionDefaultTemplateRef?: TemplateRef;
     confirmedTypeChange?: boolean;
     /** PLAN-0622：连接级资源限额（PATCH 时可只带这几项）。 */
     maxInflight?: number | null;

@@ -14,6 +14,7 @@
  *  2. 用户通道 429 `USER_CHANNEL_FULL` ⇒ 同样出现该提示（两个上限共用一条用户可见指引）；
  *  3. 提示是 `role="status"`（可被读屏播报），且**不是** toast（不做成 4 秒后消失的临时提示）。
  */
+import type { Page } from "@playwright/test";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { LONG_TIMEOUT_MS } from "../timeouts";
@@ -25,7 +26,7 @@ test.use({
 
 const SESSION_ID = "bl335-session";
 
-async function openWorkspace(page: import("@playwright/test").Page) {
+async function openWorkspace(page: Page) {
     // task-100：本 spec 要在**网络层**给这条 URL 回 429（订阅上限），而默认的 in-page 长连接桩
     // 会抢在网络层之前把它盖掉 ⇒ 显式退回网络层桩形态。
     await setupMockAuth(page, { workspaceEvents: "off" });

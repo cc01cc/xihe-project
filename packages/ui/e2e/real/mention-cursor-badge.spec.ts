@@ -6,7 +6,7 @@
  * PLAN-0684/D-183 后参与者 echo displayName = 账号 username，@ 提及按 username 寻址）
  * 制造未读，产生 1 个 run —— 报告里如实计数；retries=0，避免重试多发。
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
 import { LONG_TIMEOUT_MS } from "../timeouts";
@@ -28,7 +28,7 @@ interface DemoState {
 test.describe.configure({ retries: 0 });
 
 /** dock 可能因持久化状态已展开/已折叠：保证 members 页签可见（幂等点击）。 */
-async function openMembers(page: import("@playwright/test").Page): Promise<void> {
+async function openMembers(page: Page): Promise<void> {
     const tab = page.getByTestId("dock-tab-members");
     if ((await tab.count()) === 0) {
         await page.getByTestId("workspace-toolbar-members").click();

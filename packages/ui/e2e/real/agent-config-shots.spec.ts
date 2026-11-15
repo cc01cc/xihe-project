@@ -5,7 +5,7 @@
  * 门控：`XIHE_E2E_AGENT_CONFIG=1`（默认 skip）；需要 stack-1 四端口 + demo 账号 state 文件。
  * 零 run：只读列表，不发消息、不绑定（绑定/409 由 API 联调脚本单独取证）。
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
 import { LONG_TIMEOUT_MS } from "../timeouts";
@@ -38,7 +38,7 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
         state.token = ((await login.json()) as { accessToken: string }).accessToken;
     });
 
-    async function openPanel(page: import("@playwright/test").Page, language: "zh" | "en") {
+    async function openPanel(page: Page, language: "zh" | "en") {
         await page.addInitScript((token) => localStorage.setItem("xihe-token", token), state.token);
         await page.addInitScript(
             (workspaceId) => localStorage.setItem("xihe-user", JSON.stringify({ workspaceId })),

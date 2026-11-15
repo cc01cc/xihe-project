@@ -14,7 +14,7 @@
  * 限制：BL-239（TO/CC 本地态，发送后不刷新立即截）、BL-197（actor 只在实时会话，不滚旧消息）。
  * runbook（门控变量 / 三步顺序 / 状态文件契约）：`e2e/DEMO-CHANNEL.md`。
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -57,10 +57,7 @@ const sentRuns = 0;
 test.describe.configure({ mode: "serial", retries: 0 });
 test.use({ locale: "zh-CN", viewport: { width: 1440, height: 900 } });
 
-async function waitTerminalCount(
-    page: import("@playwright/test").Page,
-    expected: number,
-): Promise<void> {
+async function waitTerminalCount(page: Page, expected: number): Promise<void> {
     const deadline = Date.now() + REAL_PROVIDER_POLL_MS.terminalRun;
     let last = "";
     while (Date.now() < deadline) {
@@ -87,7 +84,7 @@ async function waitTerminalCount(
     throw new Error(`run 未在超时内终态: ${last}`);
 }
 
-async function settle(page: import("@playwright/test").Page): Promise<void> {
+async function settle(page: Page): Promise<void> {
     // idle 判据 = composer 回到「发送」按钮（流式态是 `chat-stop-button`）。
     await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
     // 真实链路首次发送可能触发 bind-defaults toast；等它自动消失（≤5s）再截。
@@ -95,7 +92,7 @@ async function settle(page: import("@playwright/test").Page): Promise<void> {
     await page.waitForTimeout(500);
 }
 
-async function shot(page: import("@playwright/test").Page, name: string): Promise<void> {
+async function shot(page: Page, name: string): Promise<void> {
     const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - window.innerWidth,
     );
@@ -103,7 +100,7 @@ async function shot(page: import("@playwright/test").Page, name: string): Promis
     await page.screenshot({ path: join(SHOT_DIR, name), scale: "css" });
 }
 
-async function pickCc(page: import("@playwright/test").Page, name: string): Promise<void> {
+async function pickCc(page: Page, name: string): Promise<void> {
     if ((await page.getByTestId("cc-bar").count()) === 0)
         await page.getByTestId("cc-expand").click();
     await page.getByTestId("cc-input").fill(name);
@@ -113,7 +110,7 @@ async function pickCc(page: import("@playwright/test").Page, name: string): Prom
     await expect(menu).toBeHidden({ timeout: LONG_TIMEOUT_MS });
 }
 
-async function openMembersDock(page: import("@playwright/test").Page): Promise<void> {
+async function openMembersDock(page: Page): Promise<void> {
     const toggle = page.getByTestId("workspace-toolbar-members");
     if ((await page.getByTestId("dock-tab-members").count()) === 0) await toggle.click();
     await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: LONG_TIMEOUT_MS });

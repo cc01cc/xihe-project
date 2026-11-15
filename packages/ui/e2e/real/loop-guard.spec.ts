@@ -201,7 +201,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
     // PLAN-0493 T3.1: a zero-content tier-2 stop surfaces through the recovery
     // banner (no assistant message exists to carry the error box), so the
     // reason + takeover hint are asserted there.
-    function recoveryBanner(page: import("@playwright/test").Page) {
+    function recoveryBanner(page: Page) {
         return page.locator('[data-testid="run-recovery-banner"]');
     }
 

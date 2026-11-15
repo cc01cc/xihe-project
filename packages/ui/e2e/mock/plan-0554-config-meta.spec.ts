@@ -1,5 +1,5 @@
 import { expect, test } from "./helpers/mock-test";
-import type { Route } from "@playwright/test";
+import type { Route, Page } from "@playwright/test";
 import { PERMISSION_ATOMS } from "./helpers/auth";
 
 const META: Record<string, Record<string, unknown>> = {
@@ -45,7 +45,7 @@ const META: Record<string, Record<string, unknown>> = {
     },
 };
 
-async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" | "USER") {
+async function mockConfig(page: Page, role: "ADMIN" | "USER") {
     await page.addInitScript((role) => {
         localStorage.setItem("xihe-token", "mock-token");
         localStorage.setItem(
@@ -244,7 +244,7 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
  * 所以：只在 `aria-expanded === "false"` 时点，并**正向前置**断言字段真的可见 —— 万一以后默认态再翻回折叠，
  * 这里仍会展开成功，而不会静默地什么都不做。</p>
  */
-async function openRag(page: import("@playwright/test").Page) {
+async function openRag(page: Page) {
     const domain = page.getByTestId("config-domain-rag");
     await expect(domain).toBeVisible();
     const toggle = page.getByTestId("config-domain-toggle-rag");

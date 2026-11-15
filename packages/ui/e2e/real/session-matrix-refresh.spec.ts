@@ -75,7 +75,7 @@ async function registerAccount(request: APIRequestContext, label: string): Promi
     };
 }
 
-function seedOwnerPage(page: import("@playwright/test").Page): void {
+function seedOwnerPage(page: Page): void {
     page.addInitScript(
         ({ accessToken, ws }) => {
             localStorage.setItem("xihe-token", accessToken);

@@ -55,7 +55,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { workspaceChatPath } from "../../src/lib/routes";
 import {
@@ -355,7 +355,7 @@ function psqlRow(questionId: string): string {
 
 /** 把 chat 绑到会走 `chain` 模式激活的 fake LLM（与 plan0665 的真实链路夹具同构）。 */
 async function ensureFakeProvider(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     auth: { accessToken: string; workspaceId: string },
 ): Promise<void> {
     const headers = {

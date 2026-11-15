@@ -46,10 +46,7 @@ const UNKNOWN_TOOL: ProblemFixture = {
     detail: "Requested tool is not available in this workspace",
 };
 
-async function setupPage(
-    page: import("@playwright/test").Page,
-    problem: ProblemFixture,
-): Promise<void> {
+async function setupPage(page: Page, problem: ProblemFixture): Promise<void> {
     await setupMockAuth(page);
     await setupMockSessions(page, {
         sessions: [{ id: "session-1", title: "Session 1" }],

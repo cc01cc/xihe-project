@@ -17,8 +17,6 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 // `/resources/agents?layer=INSTANCE`（该 URL 现 302 到本页），而是设置区的独立页。
 const PANEL_URL = "/settings/instance/agent-principals";
 
-type Page = import("@playwright/test").Page;
-
 function json(body: unknown, status = 200) {
     return { status, contentType: "application/json", body: JSON.stringify(body) };
 }

@@ -12,7 +12,7 @@
  * ⚠️ 路由注册顺序（实测踩坑）：setupMockAuth 与 setupMockSessions 内部都会注册 sessions 通配路由，
  * 窄路由必须最后注册（Playwright 后注册者优先），否则静默回落通用夹具。
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { ChatPage } from "../page-objects/ChatPage";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
@@ -39,7 +39,7 @@ interface ScrollSample {
 }
 
 /** 视口几何 + 窗口化读数（渲染行数 / 上下占位）。 */
-async function readSample(page: import("@playwright/test").Page): Promise<ScrollSample> {
+async function readSample(page: Page): Promise<ScrollSample> {
     return page.evaluate(() => {
         const viewport = document.querySelector<HTMLElement>(
             '[data-testid="message-scroller-viewport"]',
@@ -61,7 +61,7 @@ async function readSample(page: import("@playwright/test").Page): Promise<Scroll
 }
 
 /** 视口内"最靠上"的可见行 id（prepend 保位判据的锚点）。 */
-async function readFirstVisibleRow(page: import("@playwright/test").Page): Promise<string | null> {
+async function readFirstVisibleRow(page: Page): Promise<string | null> {
     return page.evaluate(() => {
         const viewport = document.querySelector<HTMLElement>(
             '[data-testid="message-scroller-viewport"]',
@@ -84,10 +84,7 @@ async function readFirstVisibleRow(page: import("@playwright/test").Page): Promi
 }
 
 /** 锚点行的"顶部相对视口顶"偏移（px）；null = 行不在 DOM。 */
-async function readRowOffset(
-    page: import("@playwright/test").Page,
-    id: string,
-): Promise<number | null> {
+async function readRowOffset(page: Page, id: string): Promise<number | null> {
     return page.evaluate((target) => {
         const viewport = document.querySelector<HTMLElement>(
             '[data-testid="message-scroller-viewport"]',
@@ -100,7 +97,7 @@ async function readRowOffset(
     }, id);
 }
 
-async function settle(page: import("@playwright/test").Page): Promise<void> {
+async function settle(page: Page): Promise<void> {
     await page.evaluate(
         () =>
             new Promise<void>((resolve) =>
@@ -110,9 +107,7 @@ async function settle(page: import("@playwright/test").Page): Promise<void> {
 }
 
 /** 等表几何稳定（连续两次采样 scrollHeight 一致）。 */
-async function waitScrollHeightStable(
-    page: import("@playwright/test").Page,
-): Promise<ScrollSample> {
+async function waitScrollHeightStable(page: Page): Promise<ScrollSample> {
     let previous = await readSample(page);
     for (let round = 0; round < 20; round += 1) {
         await settle(page);
@@ -123,10 +118,7 @@ async function waitScrollHeightStable(
     return previous;
 }
 
-async function scrollToOffset(
-    page: import("@playwright/test").Page,
-    offset: number,
-): Promise<void> {
+async function scrollToOffset(page: Page, offset: number): Promise<void> {
     await page.evaluate((target) => {
         const viewport = document.querySelector<HTMLElement>(
             '[data-testid="message-scroller-viewport"]',
@@ -161,11 +153,7 @@ function makePage(sessionId: string, count: number, offset: number) {
 }
 
 /** 注册会话 + 参与者桩（内容不生效：分页路由最后覆盖）。 */
-async function setupSessionFixture(
-    page: import("@playwright/test").Page,
-    sessionId: string,
-    title: string,
-): Promise<void> {
+async function setupSessionFixture(page: Page, sessionId: string, title: string): Promise<void> {
     await setupMockSessions(page, {
         sessions: [{ id: sessionId, title }],
         messages: {
@@ -195,7 +183,7 @@ async function setupSessionFixture(
 
 /** 窄路由：首屏（全量）与 before 页（更早段）。必须最后注册。 */
 async function installPaginationRoutes(
-    page: import("@playwright/test").Page,
+    page: Page,
     sessionId: string,
     firstScreen: unknown[],
     olderPage: unknown[],
@@ -247,7 +235,7 @@ async function installPaginationRoutes(
 }
 
 /** 等窗口化生效（spacer 出现）。 */
-async function waitForVirtualization(page: import("@playwright/test").Page): Promise<void> {
+async function waitForVirtualization(page: Page): Promise<void> {
     await expect(page.locator('[data-testid="virtual-top-spacer"]')).toHaveCount(1, {
         timeout: LONG_TIMEOUT_MS,
     });

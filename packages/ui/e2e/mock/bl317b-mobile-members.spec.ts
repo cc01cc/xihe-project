@@ -12,6 +12,7 @@
  *
  * 自包含：只用 `helpers/auth` 的公共入口 + 本文件自己的路由桩，不碰 `helpers/**` 契约。
  */
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
@@ -68,7 +69,7 @@ const PARTICIPANTS = [
     },
 ];
 
-async function installRoster(page: import("@playwright/test").Page) {
+async function installRoster(page: Page) {
     // 必须在 setupMockAuth/Sessions 之后注册（Playwright 后注册优先）。
     await page.route("**/api/v1/sessions/*/participants*", async (route) => {
         await route.fulfill({
@@ -82,7 +83,7 @@ async function installRoster(page: import("@playwright/test").Page) {
     });
 }
 
-async function openChat(page: import("@playwright/test").Page, mobile = true) {
+async function openChat(page: Page, mobile = true) {
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "BL-317b" }] });
     // 聊天列挂载会拉 derived-state / follow-ups / commands：走公共桩，不手写第二份。

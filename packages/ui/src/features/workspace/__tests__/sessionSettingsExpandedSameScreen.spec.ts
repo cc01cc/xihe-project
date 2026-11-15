@@ -4,7 +4,7 @@ import { createPinia } from "pinia";
 import { defineComponent } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import type * as apiModule from "../../../composables/api";
-import { api } from "../../../composables/api";
+import type { api } from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import MobileChatSheet from "../components/MobileChatSheet.vue";
 import SessionContextPanel from "../components/SessionContextPanel.vue";

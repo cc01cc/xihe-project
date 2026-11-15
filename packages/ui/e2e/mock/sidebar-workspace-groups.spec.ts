@@ -10,6 +10,7 @@
  * （Playwright 后注册者优先），所以本 spec 不改编共享夹具的行为 ——
  * 别的 spec 看到的仍是单工作区那份老数据。</p>
  */
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
@@ -40,7 +41,7 @@ function sessionWire(id: string, title: string, workspaceId: string) {
  * 探针，与「当前组 / 别组」无关。并进同一账本会让「首屏绝不碰别的工作区」假红（`""` ≠ WS_A，
  * 2026-11-15 实测）。所以分两本账：`scoped` = 按组读，`workspaceless` = 独立会话探针计数。
  */
-function recordSessionGets(page: import("@playwright/test").Page): {
+function recordSessionGets(page: Page): {
     scoped: string[];
     workspaceless: number;
 } {
@@ -64,14 +65,14 @@ function recordSessionGets(page: import("@playwright/test").Page): {
  * `XIHE_RAIL_SHOT_DIR=<dir> pnpm exec playwright test e2e/mock/sidebar-workspace-groups.spec.ts`
  * （不设该变量时**一条断言都不多做**，测试行为逐字不变）。
  */
-async function capture(page: import("@playwright/test").Page, name: string) {
+async function capture(page: Page, name: string) {
     const dir = process.env.XIHE_RAIL_SHOT_DIR;
     if (!dir) return;
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.screenshot({ path: `${dir}/${name}.png` });
 }
 
-async function stubTwoWorkspaces(page: import("@playwright/test").Page) {
+async function stubTwoWorkspaces(page: Page) {
     await page.route(
         (url) => url.pathname === "/api/v1/workspaces",
         async (route) => {

@@ -17,7 +17,7 @@
  *  2. R5-2 UI 候选：候选面里**没有**停用主体，也没有可点 chip（enabled 的 PRIMARY 在候选里）；
  *  3. R5-3 UI 成员行：成员面板仍有该行，但带停用徽标；PRIMARY 行无徽标。
  */
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
 import {
@@ -74,7 +74,7 @@ async function roster(request: APIRequestContext): Promise<{
     };
 }
 
-function seedOwnerPage(page: import("@playwright/test").Page): void {
+function seedOwnerPage(page: Page): void {
     page.addInitScript(
         ({ accessToken, ws }) => {
             localStorage.setItem("xihe-token", accessToken);

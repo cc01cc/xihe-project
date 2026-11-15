@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-373 (LONG_TIMEOUT_MS, default 30 s)
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
@@ -15,7 +16,7 @@ const WS_SESSION = "11111111-1111-4111-8111-111111111111";
 const STANDALONE_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const STANDALONE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-async function stubWorkspaces(page: import("@playwright/test").Page, rows: unknown[]) {
+async function stubWorkspaces(page: Page, rows: unknown[]) {
     await page.route(
         (url) => url.pathname === "/api/v1/workspaces",
         async (route) => {

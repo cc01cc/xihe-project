@@ -11,7 +11,7 @@
  *
  * 截图留证：`XH_0753_EVIDENCE_DIR` 存在时写到该目录（PLAN evidence 目录），否则落 Playwright 输出目录。
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { ChatPage } from "../page-objects/ChatPage";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
@@ -42,7 +42,7 @@ interface ScrollSample {
 }
 
 /** 读一次视口几何 + 当前窗口状态（全部来自产品真实 DOM）。 */
-async function readSample(page: import("@playwright/test").Page): Promise<ScrollSample> {
+async function readSample(page: Page): Promise<ScrollSample> {
     return page.evaluate(() => {
         const viewport = document.querySelector<HTMLElement>(
             '[data-testid="message-scroller-viewport"]',
@@ -64,7 +64,7 @@ async function readSample(page: import("@playwright/test").Page): Promise<Scroll
 }
 
 /** 等两帧（布局与窗口计算落定），不用固定 sleep。 */
-async function settle(page: import("@playwright/test").Page): Promise<void> {
+async function settle(page: Page): Promise<void> {
     await page.evaluate(
         () =>
             new Promise<void>((resolve) =>
@@ -74,10 +74,7 @@ async function settle(page: import("@playwright/test").Page): Promise<void> {
 }
 
 /** 以"用户发起"语义滚动（wheel 标记 + 置 scrollTop + scroll 事件），与 ChatPage.scrollToTop 同源。 */
-async function scrollToOffset(
-    page: import("@playwright/test").Page,
-    offset: number,
-): Promise<void> {
+async function scrollToOffset(page: Page, offset: number): Promise<void> {
     await page.evaluate((target) => {
         const viewport = document.querySelector<HTMLElement>(
             '[data-testid="message-scroller-viewport"]',

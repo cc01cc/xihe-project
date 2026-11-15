@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-189 (mock lane boot + module menus)
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 // task-231（D-1137）：期望集取 SSOT、落点取 DOM。两处条数此前写死（资源 5 / 实例设置 12）
 // 而产品已分别变成 4 / 11（`fd545d1f6` 摘除资源区智能体页、`task-485` 把 `agent-profile` 迁出设置区）
@@ -55,7 +56,7 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         // 按 task-461 / BL-318 先例在兜底**之后**补两形态正则桩（非 GET fallback），别改断言或放宽 console 门。
     });
 
-    async function gotoRail(page: import("@playwright/test").Page) {
+    async function gotoRail(page: Page) {
         await page.goto("/settings/instance/llm-provider");
         await expect(page.getByTestId("global-rail")).toBeVisible();
     }

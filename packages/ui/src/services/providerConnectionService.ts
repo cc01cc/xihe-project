@@ -1,3 +1,4 @@
+import type { TemplateOption } from "./apiRequestTemplates";
 import { request } from "../composables/api";
 import type { ProviderCatalog } from "../types/provider";
 import type {
@@ -51,7 +52,7 @@ export interface ConnectionTypeImpact {
     connectionRevision: number;
     currentType: { apiTypeId: string; version: number };
     targetType: { apiTypeId: string; version: number };
-    compatibleTemplates: import("./apiRequestTemplates").TemplateOption[];
+    compatibleTemplates: TemplateOption[];
     incompatibleOverrides: Array<{ scope: string; count: number }>;
     sessionRebindCount: number;
 }

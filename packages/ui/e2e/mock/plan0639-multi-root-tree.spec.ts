@@ -1,4 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { LONG_TIMEOUT_MS } from "../timeouts";
@@ -19,7 +20,7 @@ const ALPHA_FILE = "alpha-root-a.md",
     SECONDARY_ROOT_ID = "00000000-0000-4000-8000-0000000000b2",
     SECONDARY_ROOT_ALIAS = "beta";
 
-function seedRootTrees(page: import("@playwright/test").Page) {
+function seedRootTrees(page: Page) {
     return page.addInitScript(
         ({ alpha, beta, secondaryRootId }) => {
             localStorage.setItem(
@@ -48,7 +49,7 @@ function seedRootTrees(page: import("@playwright/test").Page) {
  * 注册顺序是关键：`setupMockAuth` **之后**注册 ⇒ Playwright 后注册优先，盖过夹具的兜底。
  */
 function stubWorkspaceFromWire(
-    page: import("@playwright/test").Page,
+    page: Page,
     workspace: { hostPath: string | null; roots: unknown[] },
 ) {
     // 注意：`page.route` 的正则是**对完整 URL** 匹配的，不能加 `^` 锚点。

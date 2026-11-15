@@ -21,8 +21,6 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 const PANEL_URL = "/settings/instance/agent-principals";
 const PRINCIPAL_ID = "agent-seed";
 
-type Page = import("@playwright/test").Page;
-
 function json(body: unknown, status = 200) {
     return { status, contentType: "application/json", body: JSON.stringify(body) };
 }

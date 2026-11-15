@@ -1,3 +1,4 @@
+import type { ProviderConnectionStatus } from "./providerConnection";
 import type { InjectionKey, Ref } from "vue";
 
 export interface SessionContext {
@@ -152,7 +153,7 @@ export interface SessionMonitorHistory {
 }
 
 export interface SessionMonitorConnectionFact {
-    status: import("./providerConnection").ProviderConnectionStatus;
+    status: ProviderConnectionStatus;
     lastErrorCode: string | null;
     lastVerifiedAt: string | null;
 }

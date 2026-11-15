@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { nextTick } from "vue";
-import { toast } from "vue-sonner";
+import type { toast } from "vue-sonner";
 import { api, ApiError } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import type { WorkspaceDirectAttachExecutionMode } from "../../../types";

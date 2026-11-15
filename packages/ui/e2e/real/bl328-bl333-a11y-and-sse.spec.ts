@@ -17,7 +17,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Browser } from "@playwright/test";
 
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { generateE2EPassword } from "./helpers/password";
@@ -238,10 +238,7 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
 
 // ── BL-333（①②） + BL-360（③，回归用例）────────────────────────────────────────────────────
 
-async function openApprovalOnBothPages(
-    browser: import("@playwright/test").Browser,
-    request: import("@playwright/test").APIRequestContext,
-) {
+async function openApprovalOnBothPages(browser: Browser, request: APIRequestContext) {
     const context = await browser.newContext();
     const pageA = await context.newPage();
     const session = await bootstrapSession(request, pageA);

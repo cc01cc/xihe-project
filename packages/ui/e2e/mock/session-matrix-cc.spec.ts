@@ -10,6 +10,7 @@
  *  - @ 自动入抄送 + 手动移除抑制（同一 @ 还挂在草稿里时不自动加回）；
  *  - 无客户端上限：连续 3 枚 chip 不报错（上限在 CP 侧，real-lane R2 覆盖）。
  */
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
@@ -17,7 +18,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeou
 
 const SESSION_ID = "test-session";
 
-async function openComposer(page: import("@playwright/test").Page): Promise<void> {
+async function openComposer(page: Page): Promise<void> {
     await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
         timeout: LONG_TIMEOUT_MS,
@@ -25,7 +26,7 @@ async function openComposer(page: import("@playwright/test").Page): Promise<void
 }
 
 /** 展开抄送栏（默认收起为「抄送 +」按钮）。 */
-async function expandCc(page: import("@playwright/test").Page): Promise<void> {
+async function expandCc(page: Page): Promise<void> {
     const expand = page.getByTestId("cc-expand");
     if (await expand.isVisible().catch(() => false)) {
         await expand.click();
@@ -36,7 +37,7 @@ async function expandCc(page: import("@playwright/test").Page): Promise<void> {
 }
 
 /** 在抄送输入框里选一个候选（点菜单项，避开键盘焦点竞争）。 */
-async function pickCc(page: import("@playwright/test").Page, query: string): Promise<void> {
+async function pickCc(page: Page, query: string): Promise<void> {
     const field = page.getByTestId("cc-input");
     await field.fill(query);
     const menu = page.getByTestId("cc-menu");

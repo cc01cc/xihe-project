@@ -11,6 +11,7 @@
  *
  * 断言口径：UI testid 状态（listbox/option/aria-selected/chip），不碰 wire。
  */
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
@@ -18,7 +19,7 @@ import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeou
 
 const SESSION_ID = "test-session";
 
-async function openComposer(page: import("@playwright/test").Page): Promise<void> {
+async function openComposer(page: Page): Promise<void> {
     await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
         timeout: LONG_TIMEOUT_MS,

@@ -42,6 +42,7 @@
  * 靠环境变量（`XH_FIXTURE_SSE_SCENARIO`）会让「忘设 env」跑成 `hold` 却照样"有数"，
  * 那种数据不携带信息。这里每个 test 显式传 `workspaceEventsScenario`。
  */
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import type { WorkspaceStreamScenario } from "./helpers/context-events";
@@ -61,7 +62,7 @@ test.skip(
  * 计数口径与历史批次一致：控制台 `chat_sse_connect_started` 且 `sessionId: workspace:*`。
  */
 async function measureWindow(
-    page: import("@playwright/test").Page,
+    page: Page,
     scenario: WorkspaceStreamScenario,
     label: string,
 ): Promise<{ connects: number; cleanCloses: number }> {

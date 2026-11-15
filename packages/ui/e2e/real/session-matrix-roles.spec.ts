@@ -15,7 +15,13 @@
  *  3. VIEWER：同 2，另加**写面** fail-closed（发送被拒，不产生 run）；
  *  4. UI：三种角色各自登录后，只有 OWNER 能看到该消息文本；其他角色看不到且页面不崩。
  */
-import { expect, test, type APIRequestContext, type APIResponse } from "@playwright/test";
+import {
+    expect,
+    test,
+    type APIRequestContext,
+    type APIResponse,
+    type Page,
+} from "@playwright/test";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
 import {
@@ -116,7 +122,7 @@ async function sessionListed(request: APIRequestContext, account: Account): Prom
     return rows.some((row) => row.id === sessionId);
 }
 
-function seedPage(page: import("@playwright/test").Page, account: Account, role: string): void {
+function seedPage(page: Page, account: Account, role: string): void {
     page.addInitScript(
         ({ accessToken, ws, workspaceRole }) => {
             localStorage.setItem("xihe-token", accessToken);

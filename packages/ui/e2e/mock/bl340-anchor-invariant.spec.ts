@@ -14,7 +14,7 @@
  *
  * 反证：把换页分支的 `scrollToEnd()` 加回去 ⇒ 本 spec 必须变红（否则说明用例没覆盖换页路径）。
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { ChatPage } from "../page-objects/ChatPage";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
@@ -63,7 +63,7 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
     });
 
     async function scrollUpSequence(
-        page: import("@playwright/test").Page,
+        page: Page,
         steps: number,
         stepPx: number,
     ): Promise<{ sequence: number[]; heights: number[]; firstRows: string[] }> {

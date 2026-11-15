@@ -9,6 +9,7 @@
  *
  * 断言口径：UI（banner/错误码/重试入口）；durable 终态由 real-lane R7 覆盖。
  */
+import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockProviderBinding } from "./helpers/session-matrix";
@@ -16,7 +17,7 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const SESSION_ID = "test-session";
 
-async function openAndSend(page: import("@playwright/test").Page): Promise<void> {
+async function openAndSend(page: Page): Promise<void> {
     await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/chat/${SESSION_ID}`);
     const input = page.getByTestId("chat-input");
     await expect(input, "composer mounts").toBeVisible({ timeout: LONG_TIMEOUT_MS });

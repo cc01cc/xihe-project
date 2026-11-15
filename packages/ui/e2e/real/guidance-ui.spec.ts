@@ -1,5 +1,5 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { CP_URL, registerAndCreateGuidanceSession } from "./helpers/guidance-session";
@@ -14,7 +14,7 @@ const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
 const evidenceDir = path.resolve(process.cwd(), "../../.local/evidence");
 
-async function captureEvidence(page: import("@playwright/test").Page, name: string) {
+async function captureEvidence(page: Page, name: string) {
     await mkdir(evidenceDir, { recursive: true });
     const path = `${evidenceDir}/${name}`;
     await page.screenshot({ scale: "css", path, fullPage: true });
@@ -24,10 +24,7 @@ async function captureEvidence(page: import("@playwright/test").Page, name: stri
 test.describe.configure({ mode: "serial", retries: 0 });
 
 /** PLAN-0530 fixture, shared with the PLAN-0536 race journey via `helpers/guidance-session.ts`. */
-async function registerAndCreateSession(
-    page: import("@playwright/test").Page,
-    request: APIRequestContext,
-) {
+async function registerAndCreateSession(page: Page, request: APIRequestContext) {
     const fixture = await registerAndCreateGuidanceSession(page, request);
     return { authHeaders: fixture.authHeaders, sessionId: fixture.sessionId, runId: fixture.runId };
 }

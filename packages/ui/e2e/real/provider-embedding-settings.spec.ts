@@ -1,6 +1,6 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { randomUUID } from "node:crypto";
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
 import { chooseRekaOption } from "./helpers/reka-select";
 import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
@@ -24,7 +24,7 @@ test.beforeAll(async ({ request }) => {
 });
 
 async function createConnection(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     connectionKey: string,
     baseUrl?: string,
 ): Promise<{ status: number; body: string; id?: string }> {
@@ -56,10 +56,7 @@ async function createConnection(
     return { status: created.status(), body, id: connection.id };
 }
 
-async function saveProfile(
-    request: import("@playwright/test").APIRequestContext,
-    connectionKey: string,
-): Promise<void> {
+async function saveProfile(request: APIRequestContext, connectionKey: string): Promise<void> {
     const saved = await request.put(`${CP_URL}/api/v1/config/user/embedding`, {
         headers: { Authorization: `Bearer ${auth.accessToken}` },
         data: {

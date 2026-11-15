@@ -3,7 +3,7 @@ import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -18,7 +18,7 @@ interface RegisteredUser {
 }
 
 async function registerUser(
-    request: import("@playwright/test").APIRequestContext,
+    request: APIRequestContext,
     label: string,
     username?: string,
 ): Promise<RegisteredUser> {
