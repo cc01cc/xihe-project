@@ -31,7 +31,9 @@ import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 const CP_ORIGIN = resolveCpOrigin(),
     PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword(),
     // PLAN-0752：设置面按「层×域」拆页，i18n 文案锚点从旧页标题换成用户层 llm-provider 域标题。
-    ZH_HEADING = "LLM 提供商",
+    // task-18 / D-1664：主名词标准化为 Provider 后域标题跨 locale 同名 ⇒ 标题只证渲染，
+    // locale 证明由 <html lang> + localStorage 两汇承担（本 spec 各用例已独立断言）。
+    ZH_HEADING = "LLM Provider",
     EN_HEADING = "LLM Provider",
     DOMAIN_PAGE = "/settings/user/llm-provider",
     LANGUAGE_KEY = "xihe-language",

@@ -106,7 +106,7 @@ const userDomains = LAYER_DOMAINS.user;
         <main class="flex min-w-0 flex-1 flex-col">
             <header class="flex h-12 shrink-0 items-center gap-3 border-b px-6">
                 <span class="mk-body font-medium">设置 · 全局默认</span>
-                <span class="mk-caption text-muted-foreground">/ LLM 提供商</span>
+                <span class="mk-caption text-muted-foreground">/ LLM Provider</span>
                 <span
                     class="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1 mk-caption text-muted-foreground"
                 >

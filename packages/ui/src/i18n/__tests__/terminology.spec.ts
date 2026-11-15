@@ -150,3 +150,26 @@ describe("设置区 eyebrow 走 i18n（task-22 P2-3）", () => {
         }
     });
 });
+
+/**
+ * task-18 / D-1664：实体主名词标准化为 "Provider"（技术专名未译，如 API/MCP；跨 locale 一致）。
+ * 两层钉死，参照既有规则形态：① Run 形态禁词扫描——zh 树任何角落不许再出现「提供商」；
+ * ② 层名形态关键键精确等值——钉主名词键，防漂成第三个名字。只钉主名词，不做全文件快照。
+ */
+describe("Provider 主名词（task-18 / D-1664）：统一 Provider，不译「提供商」", () => {
+    it("zh 文案不出现「提供商」（技术专名未译，如 API/MCP）", () => {
+        const offenders = leaves(i18n.global.getLocaleMessage("zh-CN"))
+            .filter((leaf) => leaf.value.includes("提供商"))
+            .map((leaf) => `${leaf.path}: ${leaf.value}`);
+        expect(offenders).toEqual([]);
+    });
+
+    it("关键键钉死：domainLlmProvider / provider / providerSelect / addProvider", () => {
+        expect(copyOf("zh-CN", "settings.domainLlmProvider"), "zh 域标签").toBe("LLM Provider");
+        expect(copyOf("en-US", "settings.domainLlmProvider"), "en 域标签").toBe("LLM Provider");
+        expect(copyOf("zh-CN", "settings.provider"), "zh 字段标签").toBe("Provider");
+        expect(copyOf("en-US", "settings.provider"), "en 字段标签").toBe("Provider");
+        expect(copyOf("zh-CN", "settings.providerSelect"), "zh 选择占位").toBe("选择 Provider");
+        expect(copyOf("zh-CN", "settings.addProvider"), "zh 添加按钮").toBe("添加 Provider");
+    });
+});
