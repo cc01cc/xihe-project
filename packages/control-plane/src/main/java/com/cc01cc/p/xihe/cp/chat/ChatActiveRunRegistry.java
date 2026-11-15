@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import java.util.Map;
 import java.util.Set;
+import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
@@ -33,8 +34,12 @@ public class ChatActiveRunRegistry {
      * the recovery drain is allowed to take them back. Keeping the distinction here, instead of
      * releasing the claim, is what stops the drain from treating "I registered it" as "someone is
      * running it".
+     *
+     * <p>task-134 A2: the <b>instant</b> of the handoff is kept too, because "parked" is only
+     * legitimate while the queue can still deliver it: once a run has been parked longer than the
+     * queue's own TTL, reconciliation must take it over instead of skipping it forever.</p>
      */
-    private final Map<String, Set<String>> handedOffRuns = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Instant>> handedOffRuns = new ConcurrentHashMap<>();
     private final Map<String, String> reservations = new ConcurrentHashMap<>();
 
     /**
@@ -74,7 +79,16 @@ public class ChatActiveRunRegistry {
         if (!isRunActiveLocally(runId)) {
             return false;
         }
-        handedOffIds(sessionId).add(runId);
+        handedOffIds(sessionId).put(runId, Instant.now());
+        return true;
+    }
+
+    /** task-134 A2 (tests): park a run at an explicit instant. */
+    boolean markHandedOff(String sessionId, String runId, Instant at) {
+        if (!isRunActiveLocally(runId)) {
+            return false;
+        }
+        handedOffIds(sessionId).put(runId, at);
         return true;
     }
 
@@ -87,8 +101,8 @@ public class ChatActiveRunRegistry {
      *         is genuinely being driven right now, so a second dispatch must be refused.
      */
     boolean resumeHandedOff(String sessionId, String runId) {
-        Set<String> parked = handedOffRuns.get(sessionId);
-        if (parked != null && parked.remove(runId)) {
+        Map<String, Instant> parked = handedOffRuns.get(sessionId);
+        if (parked != null && parked.remove(runId) != null) {
             forgetHandedOff(sessionId, runId);
             runIds(sessionId).add(runId);
             return true;
@@ -101,8 +115,26 @@ public class ChatActiveRunRegistry {
         if (runId == null) {
             return false;
         }
-        for (Set<String> runIds : handedOffRuns.values()) {
-            if (runIds.contains(runId)) {
+        for (Map<String, Instant> runIds : handedOffRuns.values()) {
+            if (runIds.containsKey(runId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * task-134 A2: was this run parked <b>before</b> {@code cutoff}? Reconciliation uses it to tell
+     * "still waiting for the agent, the queue may yet deliver it" from "the queue's TTL has passed,
+     * nobody is going to deliver it".
+     */
+    boolean isHandedOffBefore(String runId, Instant cutoff) {
+        if (runId == null || cutoff == null) {
+            return false;
+        }
+        for (Map<String, Instant> runIds : handedOffRuns.values()) {
+            Instant at = runIds.get(runId);
+            if (at != null && at.isBefore(cutoff)) {
                 return true;
             }
         }
@@ -110,7 +142,7 @@ public class ChatActiveRunRegistry {
     }
 
     private void forgetHandedOff(String sessionId, String runId) {
-        Set<String> runIds = handedOffRuns.get(sessionId);
+        Map<String, Instant> runIds = handedOffRuns.get(sessionId);
         if (runIds == null) {
             return;
         }
@@ -120,8 +152,8 @@ public class ChatActiveRunRegistry {
         }
     }
 
-    private Set<String> handedOffIds(String sessionId) {
-        return handedOffRuns.computeIfAbsent(sessionId, ignored -> ConcurrentHashMap.newKeySet());
+    private Map<String, Instant> handedOffIds(String sessionId) {
+        return handedOffRuns.computeIfAbsent(sessionId, ignored -> new ConcurrentHashMap<>());
     }
 
     /** PLAN-0645: "this Session has at least one run in flight in this process". */
