@@ -3,7 +3,7 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { PERMISSION_ATOMS, setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import {
     ACTION_TIMEOUT_MS,
@@ -441,18 +441,55 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
     test("MCP JSON validation and Data import preview are recoverable", async ({ page }) => {
         // PLAN-0752 M4：`/settings/data` 是「有 atom」页 —— 零能力夹具只会看到 403 卡片，
         // 导入预览无从进入；本用例验的是导入预览可恢复，所以显式授予实例管理员能力。
-        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // task-141（2026-11-15）：**工作区写面**判据自 task-414 / D-1521 同源口径起是**动作原子**
+        // `WRITE_WORKSPACE_CONTENT`（`src/stores/auth.ts:256-258`：投影 ready 且含本工作区时只认原子，
+        // 见 `:205` 常量与 `:212-221` 的「通配资源才算」注释）。夹具词表 `PERMISSION_ATOMS` 目前只含
+        // 实例面原子（task-216 补的是**实例**写原子）⇒ 本用例不给它的话，工作区 MCP 面板判只读：
+        // `WorkspaceMcpPanel.vue:240` 的 textarea `disabled`、`:245` 的保存按钮整块不渲染，
+        // 于是 `fill` 等「元素可编辑」等满 30 s（本卡修前的超时就是这个 —— 显影的红点，不是回退）。
+        // 夹具侧是否要并进词表交 Lead 裁（本卡写面只有三个 spec，不动 helpers/auth.ts）。
+        await setupMockAuth(page, {
+            capabilities: { isInstanceAdmin: true },
+            permissionAtoms: [
+                ...PERMISSION_ATOMS,
+                { actionClass: "WRITE_WORKSPACE_CONTENT", resource: "*" },
+            ],
+        });
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 
-        // PLAN-0560 → task-209：MCP 配置从「工作区设置的 MCP tab」搬到了资源区的工作区层
-        // （`/resources/mcp?layer=WORKSPACE`），JSON 校验行为与文案不变。
-        await page.goto("/resources/mcp?layer=WORKSPACE");
-        await expect(page.getByTestId("resources-header")).toBeVisible();
-        const mcp = page.getByTestId("mcp-config-textarea");
-        await mcp.fill("{invalid");
-        await page.getByRole("button", { name: "保存" }).last().click();
-        await expect(page.getByText("JSON 格式无效")).toBeVisible();
+        // task-141（2026-11-15）：`WorkspaceMcpPanel` 挂载即读两条**工作区 MCP 面**端点
+        // （`composables/api.ts:4534` `/workspaces/{id}/stdio-servers`、`:4548` `/workspaces/{id}/mcp/servers`），
+        // 而 `mockSettingsApis` 只覆盖设置区 ⇒ 旧路径下这两条 404 从不发生（面板没挂），改向到设置页后它们成为
+        // 本用例的**新前置**。给合法信封（形状照 `src/preview/mock/data/resourceReadFaces.ts:118-160`：
+        // stdio = `{generation, hash, servers}`、status = `{servers, count}`），空集即可 ——
+        // 本例断言的是 JSON 校验文案，不是服务器清单；**不放宽 console/404 门**（那是本 spec 的既有判据）。
+        await page.route("**/api/v1/workspaces/*/stdio-servers", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ generation: 1, hash: "e2e-empty", servers: {} }),
+            }),
+        );
+        await page.route("**/api/v1/workspaces/*/mcp/servers", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ servers: [], count: 0 }),
+            }),
+        );
+
+        // PLAN-0560 → task-209 → **D-1432 / task-41**：MCP 的工作区层又搬回工作区设置页的 `mcp` tab
+        // （`WorkspaceSettingsView.vue:434` 的 `ws-settings-mcp` 承载 `WorkspaceMcpPanel`）；资源区
+        // `/resources/mcp?layer=WORKSPACE` 自 D-1432 起只渲染**指路卡**（`WorkspaceLayerMovedNotice`）——
+        // 旧路径上没有 `mcp-config-textarea`，`fill` 会一直等不到元素（task-141 修前那 30 s 超时即此）。
+        // 断言意图不变：非法 JSON ⇒ 就地报「JSON 格式无效」、不提交。
+        await page.goto("/workspace/11111111-1111-4111-8111-111111111111/settings?tab=mcp");
+        const mcpPanel = page.getByTestId("ws-settings-mcp");
+        await expect(mcpPanel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+        await mcpPanel.getByTestId("mcp-config-textarea").fill("{invalid");
+        await mcpPanel.getByTestId("mcp-config-save").click();
+        await expect(mcpPanel.getByText("JSON 格式无效")).toBeVisible();
 
         await page.goto("/settings/data");
         const input = page.locator('input[type="file"]');

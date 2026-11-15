@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
+import { GLOBAL_MODULES } from "../../src/lib/globalModules";
 
 /**
  * P-class fix coverage: the desktop navigation panel used to be a one-way door.
@@ -174,12 +175,18 @@ async function expectNoAdminEntryOnGlobalRail(page: Page): Promise<void> {
     // 旧 NavRail 的两个 testid 整体不得再出现在页面上（组件本体仍在树里，但产品零挂载）。
     await expect(page.getByTestId("nav-rail")).toHaveCount(0);
     await expect(page.getByTestId("nav-rail-admin")).toHaveCount(0);
-    // 全局条恰好四个入口（工作台 / 资源 / 设置 / 登出）；模块入口三个，登出单列。
-    await expect(page.getByTestId("global-rail-module-workbench")).toHaveCount(1);
-    await expect(page.getByTestId("global-rail-module-resources")).toHaveCount(1);
-    await expect(page.getByTestId("global-rail-module-settings")).toHaveCount(1);
+    // 模块入口**按 SSOT 派生的条数**校验，不写死数字（task-141，2026-11-15）。
+    // 旧写法写死「三个模块」：`dc3603db6`（PLAN-0773 M3 / task-240，组织成员页；Lead 裁 (a)：
+    // 实例级面进全局模块）把 `GLOBAL_MODULES` 加成了四个（workbench / org-members / resources / settings，
+    // 见 `src/lib/globalModules.ts:27` 的 id 联合与 `:84` 起的模块表）⇒ 那条期望自那时起就过期；
+    // `resources-ia.spec.ts:50` 早已按 4 断言，两条互相矛盾本身就说明写死数字会被产品演进甩下。
+    // 本条意图是「全局条只有表里的模块 + 旧 NavRail admin 入口不再出现」，不是「恰好 N 个」——
+    // 所以两侧对撞：落点从 DOM 取、期望集从 SSOT 取（`D-1137` 锚独立基准）。
+    for (const module of GLOBAL_MODULES) {
+        await expect(page.getByTestId("global-rail-module-" + module.id)).toHaveCount(1);
+    }
     await expect(page.getByTestId("global-rail-logout")).toHaveCount(1);
-    await expect(rail.getByTestId(/^global-rail-module-/)).toHaveCount(3);
+    await expect(rail.getByTestId(/^global-rail-module-/)).toHaveCount(GLOBAL_MODULES.length);
 }
 
 test.describe("Session Management", () => {
