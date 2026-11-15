@@ -5,6 +5,7 @@ import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import MessageList from "../components/MessageList.vue";
 import { DEFAULT_VIRTUAL_OVERSCAN } from "../composables/virtualWindow";
+import { clearRowHeights, rememberRowHeight } from "../composables/messageRowHeightCache";
 import {
     MessageScroller,
     MessageScrollerContent,
@@ -933,5 +934,51 @@ describe("MessageList prepend anchoring is bounded by table length (BL-382 A/B)"
         } finally {
             restoreLayout();
         }
+    });
+});
+
+/**
+ * task-179：占位高的来源必须是**行身份缓存**（`row.key` === `messageId`），
+ * 不是元素 —— 虚拟化卸载行后浏览器逐元素记忆丢失，只有这份缓存能把实测高补回来。
+ */
+describe("task-179 行占位高走行身份缓存", () => {
+    it("缓存命中 ⇒ MessageScrollerItem 收到 intrinsic-height；未命中 ⇒ 不传（退回 160 px 类兜底）", () => {
+        clearRowHeights();
+        rememberRowHeight("msg-0", 662);
+        const seen: Array<{ messageId?: string; intrinsicHeight?: number }> = [];
+        mount(MessageList, {
+            props: { messages: [message(0), message(1)] },
+            global: {
+                plugins: [i18n, createPinia()],
+                stubs: {
+                    MessageScrollerProvider: { template: "<div><slot /></div>" },
+                    MessageScroller: { template: "<div><slot /></div>" },
+                    MessageScrollerViewport: { template: "<div><slot /></div>" },
+                    MessageScrollerContent: { template: "<div><slot /></div>" },
+                    MessageScrollerItem: {
+                        props: ["messageId", "intrinsicHeight", "scrollAnchor"],
+                        template: '<div data-testid="row" />',
+                        created(this: { messageId?: string; intrinsicHeight?: number }) {
+                            seen.push({
+                                messageId: this.messageId,
+                                intrinsicHeight: this.intrinsicHeight,
+                            });
+                        },
+                    },
+                    MessageScrollerButton: true,
+                    MessageSearch: true,
+                    Marker: { template: "<div><slot /></div>" },
+                    MessageItem: {
+                        props: ["message"],
+                        template: '<div data-testid="stub-message">{{ message.id }}</div>',
+                    },
+                },
+            },
+        });
+        const row0 = seen.find((item) => item.messageId === "msg-0");
+        const row1 = seen.find((item) => item.messageId === "msg-1");
+        expect(row0?.intrinsicHeight).toBe(662);
+        expect(row1?.intrinsicHeight).toBeUndefined();
+        clearRowHeights();
     });
 });

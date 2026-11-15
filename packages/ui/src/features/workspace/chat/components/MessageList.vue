@@ -25,6 +25,12 @@ import { hasMultipleActors } from "../actorView";
 import { resolveDelivery, type ResolvedDelivery } from "../deliveryView";
 import { DEFAULT_VIRTUAL_MIN_ROWS } from "../composables/virtualWindow";
 import { useVirtualMessageWindow } from "../composables/useVirtualMessageWindow";
+/**
+ * task-179：行占位高按**行身份**（`row.key`）取缓存里的上次实测值，传给 `MessageScrollerItem`
+ * 覆盖类里的 `contain-intrinsic-size: auto 10rem`（160 px，与 662 px 的真实行差 502）。
+ * 没测过的行返回 undefined ⇒ 退回类里的 160 px，行为与改动前一致。
+ */
+import { rowHeightOf } from "../composables/messageRowHeightCache";
 import { Search } from "@lucide/vue";
 import { Marker } from "@/components/ui/marker";
 import {
@@ -665,6 +671,7 @@ watch(
                                 v-else
                                 :ref="(el) => rowElementRef(row.key, el)"
                                 :message-id="row.msg.id"
+                                :intrinsic-height="rowHeightOf(row.key)"
                                 :scroll-anchor="row.msg.role === 'user'"
                             >
                                 <div

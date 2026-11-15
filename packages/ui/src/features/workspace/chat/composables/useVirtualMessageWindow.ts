@@ -19,6 +19,7 @@
  */
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from "vue";
 import { useVirtualizer } from "@tanstack/vue-virtual";
+import { rememberRowHeight, rowHeightOf } from "./messageRowHeightCache";
 import {
     DEFAULT_VIRTUAL_OVERSCAN,
     buildRowHeights,
@@ -92,7 +93,10 @@ export function useVirtualMessageWindow({
         computed(() => ({
             count: rowKeys.value.length,
             getScrollElement: () => viewport.value,
-            estimateSize: () => Math.max(1, fallbackHeight),
+            // task-179：已知实测高度的行直接用实测值（缓存挂在行 key 上，跨重挂载有效），
+            // 其余退回 fallback —— 未测量行的估算越准，首帧 spacer 变化越小。
+            estimateSize: (index: number) =>
+                rowHeightOf(rowKeys.value[index] ?? "") ?? Math.max(1, fallbackHeight),
             overscan,
             getItemKey: (index: number) => rowKeys.value[index] ?? index,
             indexAttribute: VIRTUAL_INDEX_ATTRIBUTE,
@@ -194,6 +198,10 @@ export function useVirtualMessageWindow({
         // 0 高度行不登记：库的 measureElement 在无 ResizeObserverEntry 时退化为 offsetHeight，
         // jsdom/隐藏行会读到 0 并把 0 写进 measurementsCache（把整窗口算坏）。旧实现同样跳过 h<=0。
         if (element.offsetHeight <= 0) return;
+        // task-179：把实测值挂到**行身份**上（不是元素）—— 行被虚拟化卸载后重挂载时，
+        // `contain-intrinsic-size: auto` 的逐元素记忆已丢，这里补回「上次真实高」，
+        // 让占位 ≈ 真实，行重测量不再产生尺寸差（浏览器滚动锚定因此无位移可补）。
+        rememberRowHeight(key, element.offsetHeight);
         element.dataset.virtualRowKey = key;
         element.setAttribute(VIRTUAL_INDEX_ATTRIBUTE, String(index));
         virtualizer.value.measureElement(element);
