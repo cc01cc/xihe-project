@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { nextTick, ref, type Ref } from "vue";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import { useSplitterPanelBridge, type SplitterPanelExposed } from "../useSplitterPanelBridge";
+import { logger } from "../../lib/logger";
 
 // PLAN-0753 T3：桥接层把不变量（release 恰一次写 / 键盘纪律 / 夹取不写回 /
 // collapse 桥接 / imperative bubble）压成可单测的机制。宿主按 AppLayout 的
@@ -258,7 +259,7 @@ describe("useSplitterPanelBridge — layout 就绪前排队（task-51 / A）", (
     });
 
     it("layout 始终没就绪 ⇒ 卸载时记 1 次丢弃并 warn 一次（不静默）", () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         try {
             const host = mountHost({ width: 240, identityWidths: true, ready: false });
             host.bridge.resizeToWidth(300);

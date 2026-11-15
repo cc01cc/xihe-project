@@ -1,7 +1,7 @@
 /**
  * BL-339：深链预填的解析层单测（纯函数）。
  *
- * 口径（产品裁定）：**合法载荷照用；任何非法/超限一律「静默忽略 + 一条 console.warn」**，
+ * 口径（产品裁定）：**合法载荷照用；任何非法/超限一律「静默忽略 + 一条 `logger.warn`」**，
  * 不抛错、不弹窗 —— 深链来自外部入口，不能因为别人拼错参数就打断用户。
  */
 import { describe, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ import {
     parseComposeDeeplink,
     stripComposeQuery,
 } from "../composables/useComposeDeeplink";
+import { logger } from "../../../../lib/logger";
 
 /** UTF-8 JSON → base64url（`-`/`_` 替换、无 padding），模拟外部入口的拼法。 */
 function encode(payload: unknown): string {
@@ -23,7 +24,7 @@ function encode(payload: unknown): string {
 }
 
 function spyWarn() {
-    return vi.spyOn(console, "warn").mockImplementation(() => {});
+    return vi.spyOn(logger, "warn").mockImplementation(() => {});
 }
 
 describe("BL-339 深链解析", () => {

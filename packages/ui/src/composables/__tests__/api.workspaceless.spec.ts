@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import { writeTabWorkspace } from "../../lib/workspaceContext";
+import { logger } from "../../lib/logger";
 
 /**
  * task-373 / `D-1236` 甲案的**线上形状**判据（不是实现细节）：
@@ -69,7 +70,7 @@ describe("api.getWorkspacelessSessions (task-373)", () => {
     });
 
     it("drops a malformed row with a WARN instead of failing the whole standalone list (D4)", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         fetchSpy.mockResolvedValueOnce(
             okJson({ sessions: [{ id: "bad-row" }, sessionRow(SESSION_ID, null)] }),
         );

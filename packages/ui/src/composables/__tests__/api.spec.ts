@@ -12,6 +12,7 @@ import {
     workspaceJobErrorReason,
 } from "../api";
 import { handleUnauthorized } from "../../services/chatTransport";
+import { logger } from "../../lib/logger";
 
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`,
@@ -2521,7 +2522,7 @@ describe("normalizeApprovalRequest hooks section (PLAN-0625 G, strict version ga
     });
 
     it("drops and warns on an unknown hooks version (fail-closed, D23-25 same source)", () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         try {
             const approval = normalizeApprovalRequest(
                 payloadWith({ version: 99, advisors: [advisor] }),
@@ -2536,7 +2537,7 @@ describe("normalizeApprovalRequest hooks section (PLAN-0625 G, strict version ga
     });
 
     it("drops a version-1 section whose advisors are malformed", () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         try {
             const approval = normalizeApprovalRequest(
                 payloadWith({ version: 1, advisors: [{ kind: "guard", verdict: "maybe" }] }),
@@ -2591,7 +2592,7 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
     });
 
     it("treats the legacy `[]` projection as no subscriptions without warning", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         try {
             fetchSpy.mockResolvedValueOnce(envelope([]));
 
@@ -2605,7 +2606,7 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
     });
 
     it("drops malformed hooks with a warning instead of guessing a shape", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         try {
             fetchSpy.mockResolvedValueOnce(envelope({ advisors: "nope" }));
 
@@ -2619,7 +2620,7 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
     });
 
     it("drops an advisor whose `on` is not a string array (fail-closed)", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         try {
             fetchSpy.mockResolvedValueOnce(
                 envelope({ advisors: [{ kind: "guard", on: "approval.ask" }] }),
@@ -2827,7 +2828,7 @@ describe("OpenAPI Session contract guard (PLAN-0668 M2)", () => {
     });
 
     it("drops a malformed list row and names the missing required field in the WARN (D4)", async () => {
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
         fetchSpy.mockResolvedValueOnce({
             ok: true,
             json: () =>
