@@ -1,6 +1,6 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
-import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { permissionAtomsWithout, setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { pushMockApproval } from "./helpers/approval-registry";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { selectByLocator } from "../helpers/select";
@@ -349,6 +349,34 @@ test.describe("Policy management (desktop)", () => {
         page,
     }) => {
         const state = installPolicyApi(page);
+        // task-76（2026-11-15 实测）：本用例自称「普通账号在实例层域页看到 403」，但它的夹具身份是
+        // **实例管理员**（`setupMockAuth` 默认 `/auth/me` = `isInstanceAdmin:true` + `workspaceAdminOf:[本区]`）。
+        // 它此前一直是绿的，原因是夹具原子词表里**没有** `READ_INSTANCE_CONTENT`；该原子补进词表后
+        // `SettingsDomainView`（`src/views/settings/SettingsDomainView.vue:86-92`）按 CP 语义放行 ⇒ 本用例显形为红。
+        // ⇒ 把「普通账号」显式表达出来：整份原子面里只缺实例读面这一条（不靠夹具默认缺）。
+        await page.route("**/api/v1/me/permissions", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    userId: "user-1",
+                    instanceCapabilities: [
+                        "isInstanceAdmin",
+                        "isInstanceSuper",
+                        "canCreateWorkspace",
+                    ],
+                    instancePermissions: permissionAtomsWithout("READ_INSTANCE_CONTENT"),
+                    workspaces: [
+                        {
+                            workspaceId: "11111111-1111-4111-8111-111111111111",
+                            workspaceRole: "WS_OWNER",
+                            workspaceAdmin: true,
+                            permissions: permissionAtomsWithout("READ_INSTANCE_CONTENT"),
+                        },
+                    ],
+                }),
+            }),
+        );
         await page.goto("/settings/policy");
 
         await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);

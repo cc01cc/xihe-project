@@ -378,7 +378,19 @@ export const PERMISSION_ATOMS = [
     { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
     { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
     { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
+    /**
+     * task-76（2026-11-15）：实例层**读面**原子。此前词表缺它 ⇒ 夹具层任何用户都没有
+     * `READ_INSTANCE_CONTENT` ⇒ `SettingsDomainView` 的实例层域页在 mock 车道**恒 403**
+     * （判据见 `src/views/settings/SettingsDomainView.vue:86-92`：`selfPermissionsStatus==="ready" &&
+     * !canReadInstanceContent` ⇒ `SettingsForbiddenView`）。后果不只是红：`plan-0560-settings.spec.ts:102`
+     * 的「非管理员看到 403」一直是**因为缺原子而绿**，与该用例自称的语义不一致（假绿）。
+     *
+     * 词表口径「产品真的会判的那几条」：这条就是。**它是实例作用域**，所以不进 owner/editor/viewer 预设。
+     */
+    { actionClass: "READ_INSTANCE_CONTENT", resource: "*" },
 ] as const;
+/** 实例作用域原子：**不能**出现在「非实例管理员」预设里（否则预设名与内容不符）。 */
+export const INSTANCE_SCOPE_ATOMS = ["READ_INSTANCE_CONTENT"] as const;
 
 /**
  * task-163：按用例裁剪原子面。默认（不调用它）保持 PERMISSION_ATOMS 全量 ⇒ 既有 spec 行为不变。
@@ -421,7 +433,11 @@ export const CAPABILITY_PRESETS = {
         capabilities: { isInstanceAdmin: false, isInstanceSuper: false, canCreateWorkspace: true },
         workspaceRole: "WS_OWNER" as const,
         workspaceAdmin: true,
-        permissionAtoms: PERMISSION_ATOMS.filter((atom) => atom.actionClass !== "MANAGE_ROLES"),
+        permissionAtoms: PERMISSION_ATOMS.filter(
+            (atom) =>
+                atom.actionClass !== "MANAGE_ROLES" &&
+                !(INSTANCE_SCOPE_ATOMS as readonly string[]).includes(atom.actionClass),
+        ),
     },
     /** 编辑者：可写（原子 `WRITE_WORKSPACE_CONTENT`），不能管理成员。 */
     editor: {

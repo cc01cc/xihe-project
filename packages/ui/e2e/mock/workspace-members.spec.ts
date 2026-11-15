@@ -65,6 +65,42 @@ async function serveProjection(
     );
 }
 
+/**
+ * task-76：只覆盖 **身份投影** `GET /auth/me`，用于「非实例管理员」用例。
+ *
+ * <p>为什么不能靠 `sessionStorage.xihe-workspace.workspaceRole`：管理面判据自 task-414 起读
+ * `canManageWorkspace = canWorkspaceAdmin(id) || workspaceProjection?.workspaceAdmin`
+ * （`src/stores/auth.ts:261-265`），而第一个析取项 `canWorkspaceAdmin` 先看**实例管理员能力位**
+ * 与 `workspaceAdminOf` —— 夹具默认身份就是实例管理员 ⇒ 那个布尔不是决定性变量。</p>
+ *
+ * <p>为什么不能用 `setupMockAuth(page, { capabilitiesPreset })` 二次调用：每次调用都会**再注册一遍**
+ * 兜底 API 通配桩与它自己的 `/auth/me`、`/me/permissions` 桩；Playwright 路由 LIFO ⇒ 后注册优先，
+ * 于是兜底 404 赢过本文件**先**注册的成员列表桩，实测 EDITOR 用例的 `ws-members-row` 从 2 行掉到 1 行。
+ * 所以这里只补 `/auth/me` 一条。</p>
+ */
+async function serveIdentity(
+    page: import("@playwright/test").Page,
+    capabilities: { isInstanceAdmin: boolean; canCreateWorkspace: boolean },
+): Promise<void> {
+    await page.route("**/api/v1/auth/me", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                id: "user-1",
+                name: "Test User",
+                email: "test@xihe.local",
+                capabilities: {
+                    ...capabilities,
+                    isInstanceSuper: false,
+                    // 必须给：`auth.ts:237` 会在非实例管理员路径上 `.includes(id)`。
+                    workspaceAdminOf: [],
+                },
+            }),
+        }),
+    );
+}
+
 function makeMember(username: string, role: string, userId: string): MockMember {
     return {
         userId,
@@ -257,6 +293,13 @@ test.describe("PLAN-0565 workspace members tab", () => {
     });
 
     test("EDITOR sees a read-only member list", async ({ page }) => {
+        // task-76（2026-11-15 实测）：本用例原来只种 `sessionStorage.xihe-workspace.workspaceRole=EDITOR`
+        // + `serveProjection({workspaceAdmin:false})`，**漏了能力位**。而启动时 `GET /auth/me` 回的是
+        // `resolvedCapabilities`（夹具默认 = `isInstanceAdmin:true` + `workspaceAdminOf:[本区]`）⇒
+        // `canManageWorkspace = canWorkspaceAdmin(id) || projection.workspaceAdmin` 的**第一个析取项先命中**
+        // （`src/stores/auth.ts:261-265`）⇒ 面板被当成可写：实测渲染「移除 / 添加成员 / 可编辑」。
+        // ⇒ 用预设把身份说成「非实例管理员、且不在 workspaceAdminOf 里」，只读态才由 `workspaceAdmin` 承担。
+        await serveIdentity(page, { isInstanceAdmin: false, canCreateWorkspace: true });
         await page.addInitScript(() => {
             sessionStorage.setItem(
                 "xihe-workspace",
@@ -284,6 +327,9 @@ test.describe("PLAN-0565 workspace members tab", () => {
     });
 
     test("VIEWER：成员页不渲染列表；旧 ?tab=members 深链重定向到成员页", async ({ page }) => {
+        // task-76：同上 —— VIEWER 的「列表不渲染」也必须先摘掉实例管理员能力位，否则
+        // `canManageWorkspace` 的第一个析取项恒真 ⇒ `canViewMembers` 恒 true（实测 count 1 vs 0）。
+        await serveIdentity(page, { isInstanceAdmin: false, canCreateWorkspace: false });
         await page.addInitScript(() => {
             sessionStorage.setItem(
                 "xihe-workspace",
