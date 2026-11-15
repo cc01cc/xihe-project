@@ -87,9 +87,15 @@ export function classifyFailures(failures: PageFailures, allow: RegExp[] = []): 
     const skipped = [
         ...failures.consoleErrors.filter(allowed),
         ...failures.failedResponses.filter(allowed),
+        // task-139：`pageErrors` 也必须能被同一份 allow 清单逐条放行。
+        // 证据：有意触发未捕获异常（`Promise.reject` / 异步 `throw`）的用例，在旧实现里**无论如何都红** ——
+        // allow 只过滤 console 与 >=400，pageErrors 原样进 unexpected ⇒ 这类用例根本进不了 mock 车道，
+        // 而它要验的恰恰是「异常发生时产品做了什么」。放行仍是**逐条 regex**、且 skipped 计数照常打印，
+        // 不放宽判定口径（没有 allow 时行为完全不变）。
+        ...failures.pageErrors.filter(allowed),
     ];
     const unexpected: PageFailures = {
-        pageErrors: failures.pageErrors,
+        pageErrors: failures.pageErrors.filter((value) => !allowed(value)),
         consoleErrors: failures.consoleErrors.filter((value) => !allowed(value)),
         failedResponses: failures.failedResponses.filter((value) => !allowed(value)),
     };
