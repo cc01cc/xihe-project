@@ -514,6 +514,10 @@ const messages = {
             tabBarLabel: "工作台页签",
             tabChatFallback: "对话",
             tabClose: "关闭页签",
+            // task-174（S2b）：容器内页签行的容器名（每个容器一行页签）。
+            containerTree: "文件树",
+            containerMain: "内容",
+            containerEmpty: "此容器暂无页签",
             createFile: "新建文件",
             createFilePlaceholder: "输入文件名后回车",
             uploadFile: "上传文件",
@@ -4284,6 +4288,10 @@ const messages = {
             tabBarLabel: "Workbench tabs",
             tabChatFallback: "Chat",
             tabClose: "Close tab",
+            // task-174 (S2b): container names for the per-container tab rows.
+            containerTree: "Files",
+            containerMain: "Content",
+            containerEmpty: "No tabs in this container",
             createFile: "New file",
             createFilePlaceholder: "Type a file name and press Enter",
             uploadFile: "Upload file",

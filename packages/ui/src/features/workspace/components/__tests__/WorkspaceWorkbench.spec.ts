@@ -173,6 +173,12 @@ beforeEach(() => {
     });
 });
 
+/**
+ * task-174（S2b）：页签行的计数**只针对 dock** —— 容器页签行（树/内容）是独立的一层，
+ * 用全页 `[role="tab"]` 数会把两层混在一起（本轮实测：四条用例各 +1，全部来自树容器行）。
+ */
+const DOCK_TAB = '[aria-label="Workbench panels"] [role="tab"]';
+
 describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
     it("renders the toolbar, the file tree column and the conversation slot with the dock closed", async () => {
         const wrapper = mountWorkbench();
@@ -206,7 +212,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-changes"]').trigger("click");
 
         // Two tabs stay open; the inactive one keeps its tab but not its content.
-        expect(wrapper.findAll('[role="tab"]')).toHaveLength(2);
+        expect(wrapper.findAll(DOCK_TAB)).toHaveLength(2);
         expect(wrapper.find('[data-testid="dock-tab-code"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="file-editor-stub"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="changes-panel-stub"]').exists()).toBe(true);
@@ -248,7 +254,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         // Re-opening does not duplicate the tab.
-        expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+        expect(wrapper.findAll(DOCK_TAB)).toHaveLength(1);
     });
 
     it("closes dock tabs and rolls the dock up when the last one closes", async () => {
@@ -257,10 +263,10 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
 
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         await wrapper.get('[data-testid="workspace-toolbar-monitor"]').trigger("click");
-        expect(wrapper.findAll('[role="tab"]')).toHaveLength(2);
+        expect(wrapper.findAll(DOCK_TAB)).toHaveLength(2);
 
         await wrapper.get('[data-testid="dock-tab-close-monitor"]').trigger("click");
-        expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+        expect(wrapper.findAll(DOCK_TAB)).toHaveLength(1);
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
 
         // Middle click closes the remaining tab and the empty dock rolls up.
@@ -281,7 +287,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
         await wrapper.get('[data-testid="workspace-toolbar-changes"]').trigger("click");
         await wrapper.get('[data-testid="workspace-toolbar-monitor"]').trigger("click");
-        expect(wrapper.findAll('[role="tab"]')).toHaveLength(3);
+        expect(wrapper.findAll(DOCK_TAB)).toHaveLength(3);
 
         // Close the middle tab while it is active: its right neighbour takes over.
         await wrapper.get('[data-testid="dock-tab-changes"]').trigger("click");
@@ -301,7 +307,7 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         expect(wrapper.get('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
             "true",
         );
-        expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+        expect(wrapper.findAll(DOCK_TAB)).toHaveLength(1);
     });
 
     it("expands the dock across the main column without unmounting it (D26-04)", async () => {

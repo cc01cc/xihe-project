@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
@@ -8,6 +8,11 @@ import { X } from "@lucide/vue";
 // vendored reka `Tabs` primitives (see src/components/ui/VENDOR.md); reka owns
 // role/aria-selected/roving-focus, the bar keeps owning navigation + persistence.
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
+import {
+    registerWorkspaceTabBar,
+    workspaceTabBarState,
+    type WorkspacePageTab,
+} from "./workspaceTabBarContext";
 import {
     defaultOpenTabs,
     hasWorkspaceLayoutKey,
@@ -155,6 +160,31 @@ watch(
     },
 );
 
+/**
+ * task-174（S2b）：容器内页签行 inject 这份上下文来渲染。**行为仍在这里**——
+ * 选中/关闭都由本组件既有实现执行，容器只负责画。`claims > 0` 时顶部全局行不渲染。
+ */
+const tabRowClaims = workspaceTabBarState().claims;
+
+/*
+ * task-174（S2b）：把页签快照注册进总线，容器页签行据此渲染；选中/关闭**仍走本组件**
+ * 既有实现（路由是唯一 writer）。注销放在卸载时，避免热更新后残留旧闭包。
+ */
+onBeforeUnmount(
+    registerWorkspaceTabBar({
+        tabs: computed(() => tabs.value as unknown as WorkspacePageTab[]),
+        activeId: computed(() => activeId.value),
+        select: (tabId: string) => {
+            const tab = tabs.value.find((item) => item.id === tabId);
+            if (tab) selectTab(tab);
+        },
+        close: (tabId: string) => {
+            const tab = tabs.value.find((item) => item.id === tabId);
+            if (tab) closeTab(tab);
+        },
+    }),
+);
+
 function selectTab(tab: RouteTab): void {
     if (tab.id === activeId.value && route.fullPath === tab.path) return;
     if (requestedPath.value === tab.path) return;
@@ -229,8 +259,13 @@ function onTabKeydown(event: KeyboardEvent, tab: RouteTab): void {
         会话一旦打开（`watch` 钉住）它就回来；不改变 WorkspaceWorkbench 的布局链（它是
         flex 列里的 `shrink-0`，有内容才占高）。
     -->
+    <!--
+        task-174（S2b）：顶部全局行**只在没有容器认领时**渲染。工作台的树容器/内容容器各自
+        挂一条容器内页签行（`WorkspaceContainerTabs`），它们 mount 时 claim ⇒ 这里整条让位。
+        不在工作台里的路由（成员页/设置页等）没有消费方 ⇒ 行为与重构前逐字节一致。
+    -->
     <nav
-        v-if="tabs.length > 0"
+        v-if="tabs.length > 0 && tabRowClaims === 0"
         data-testid="workspace-tab-bar"
         :aria-label="t('workspace.tabBarLabel')"
         class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-2"

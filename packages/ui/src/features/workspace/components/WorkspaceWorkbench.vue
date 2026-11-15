@@ -42,6 +42,13 @@ import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import SashGrip from "../../../components/shared/SashGrip.vue";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
+import WorkspaceContainerTabs from "./WorkspaceContainerTabs.vue";
+import {
+    closeWorkspaceTab,
+    selectWorkspaceTab,
+    workspaceTabBarState,
+} from "./workspaceTabBarContext";
+import { containerOf } from "../lib/containers";
 import WorkspaceDockPanelContent from "./WorkspaceDockPanelContent.vue";
 import WorkspaceShellDockview from "./WorkspaceShellDockview.vue";
 import FileTreePanel from "./FileTreePanel.vue";
@@ -288,6 +295,33 @@ const monitorOpen = computed(() => dockOpen.value && activeDockTab.value === "mo
 const membersOpen = computed(() => dockOpen.value && activeDockTab.value === "members");
 /** PLAN-0659 T1.4：委派 DAG 面板（同样按会话挂载，tab 默认不打开）。 */
 const delegationOpen = computed(() => dockOpen.value && activeDockTab.value === "delegation");
+
+/**
+ * task-174（S2b）：容器内页签行。**数据来自 `WorkspaceTabBar` 的上下文**（路由仍是唯一
+ * writer），容器归属只经 `containerOf` 这一处派生；本组件不读 localStorage、不改布局。
+ * 挂载时 claim 顶部全局行，卸载时释放 —— 离开工作台的路由不会因此失去页签入口。
+ */
+const tabBarContext = workspaceTabBarState();
+let releaseTabRowClaim: (() => void) | null = null;
+onMounted(() => {
+    releaseTabRowClaim = tabBarContext.claim();
+});
+onBeforeUnmount(() => {
+    releaseTabRowClaim?.();
+    releaseTabRowClaim = null;
+});
+
+/** 文件树容器只承载文件树本身（A2 预设两组：左树 / 中内容）。 */
+const treeContainerTabs = computed(() => [
+    { id: "tree", label: t("workspace.containerTree"), closable: false },
+]);
+
+const mainContainerTabs = computed(() =>
+    tabBarContext.tabs.value
+        .filter((tab) => containerOf(tab.id) === "main")
+        .map((tab) => ({ id: tab.id, label: tab.label, closable: tab.closable })),
+);
+const mainContainerActiveId = computed(() => tabBarContext.activeId.value);
 
 const dockTabs = computed<DockTab[]>(() =>
     layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
@@ -936,6 +970,12 @@ defineExpose({ openDockTab });
                             data-testid="workspace-file-rail"
                             class="relative flex h-full flex-col border-r border-border bg-surface-canvas"
                         >
+                            <!-- task-174（S2b）：树容器自己的页签行（容器子件，不再全局）。 -->
+                            <WorkspaceContainerTabs
+                                container-id="tree"
+                                :tabs="treeContainerTabs"
+                                :active-id="'tree'"
+                            />
                             <div
                                 v-if="effectiveTreeCollapsed"
                                 class="flex flex-col items-center gap-1 py-2"
@@ -1009,6 +1049,12 @@ defineExpose({ openDockTab });
                                 'is-resizing': treeResizing,
                             }"
                         >
+                            <!-- task-174（S2b）：树容器自己的页签行（容器子件，不再全局）。 -->
+                            <WorkspaceContainerTabs
+                                container-id="tree"
+                                :tabs="treeContainerTabs"
+                                :active-id="'tree'"
+                            />
                             <div
                                 v-if="effectiveTreeCollapsed"
                                 class="flex flex-col items-center gap-1 py-2"
@@ -1084,6 +1130,14 @@ defineExpose({ openDockTab });
                             :data-main-hidden="dockFocus ? 'true' : 'false'"
                             @mousedown="handleMainColumnPointerDown"
                         >
+                            <!-- task-174（S2b）：内容容器页签行（页面/会话页签归这里）。 -->
+                            <WorkspaceContainerTabs
+                                container-id="main"
+                                :tabs="mainContainerTabs"
+                                :active-id="mainContainerActiveId"
+                                @select="selectWorkspaceTab($event)"
+                                @close="closeWorkspaceTab($event)"
+                            />
                             <slot name="center" />
                         </div>
                     </SplitterPanel>
