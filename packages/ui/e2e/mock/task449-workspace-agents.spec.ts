@@ -8,6 +8,25 @@ import {
 } from "../../src/preview/mock/data/workspaceAgents";
 
 /**
+ * task-249（2026-11-15，D-1625）：**默认 mock 车道不跑本 spec**，因为它是 preview 链路 spec。
+ * 实测三态（同一 spec、同一棵树、唯一变量是条件）：
+ *   ① 默认车道 ⇒ 11 failed（失败页快照 = 登录页 / 按钮 disabled）
+ *   ② preview 链路 + vite deps 冷缓存 ⇒ 1 passed / 10 failed（net::ERR_CONNECTION_REFUSED，门自报 env(stale-deps)×7）
+ *   ③ preview 链路 + deps 已预热 ⇒ 11 passed（19.8 s）
+ * ⇒ 结论：红来自**跑法条件**，不是夹具缺失（一条桩都不用补）。
+ *
+ * skip 的原因串必须能复现（D-1625②）：写明 env 名与取值，不写「需要预览环境」这种话。
+ * 车道命令（复制即可跑；首跑若撞 stale-deps 再跑一次即可，第二次是预热后的稳态）：
+ *   $env:XIHE_E2E_PROFILE="mock"; $env:XIHE_E2E_BROWSER_CHANNEL="chrome-beta";
+ *   $env:XIHE_UI_PORT="28640"; $env:XIHE_E2E_EXPECT_CHAIN="preview"
+ *   pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/<本文件> --workers=1 --retries=0
+ */
+test.skip(
+    process.env.XIHE_E2E_EXPECT_CHAIN !== "preview",
+    "需要 XIHE_E2E_EXPECT_CHAIN=preview（preview 链路 spec；未设时页面停在登录页，红不指向产品）",
+);
+
+/**
  * task-449 / D-1287 的**浏览器判据**，同时补齐 **task-417** 缺的那份证据，跑在 **preview 链路**上：
  * `XIHE_E2E_EXPECT_CHAIN=preview` ⇒ config 注入 `XIHE_UI_MOCK_API=1` ⇒ vite 挂 mock 中间件，
  * 并把 `/workspace/**` 的 HTML 入口改写成 `preview-real.html`（注入 mock 登录态、强制 zh-CN）。

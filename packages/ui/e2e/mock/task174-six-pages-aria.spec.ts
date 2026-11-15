@@ -23,12 +23,39 @@ const SESSION_ID = "task174-six";
  * ⚠️ 这里曾经写成 `../..` ⇒ 产物落进 `A03-xihe/internal/...`（项目仓里的假 internal 目录，
  * 会被 `git status` 当未跟踪目录，并干扰 `--write-baseline` 的扫描面）。下面的断言就是防它复发。
  */
-const OUT_DIR = resolve(
+const REPO_EVIDENCE_DIR = resolve(
     process.cwd(),
     "../../../internal/A03-xihe/evidence/2026-11-15-task174-six-pages",
 );
-if (OUT_DIR.includes(`A03-xihe${sep}internal`)) {
-    throw new Error(`证据目录落错仓：${OUT_DIR}（internal/ 属于 one 仓，不在 A03-xihe 仓内）`);
+if (REPO_EVIDENCE_DIR.includes(`A03-xihe${sep}internal`)) {
+    throw new Error(
+        `证据目录落错仓：${REPO_EVIDENCE_DIR}（internal/ 属于 one 仓，不在 A03-xihe 仓内）`,
+    );
+}
+
+/**
+ * task-244（2026-11-15）：**常规测试跑不得写仓库**。
+ * 此前本 spec 无条件把 6 张 PNG + readings.json 写进 `one` 仓的 `internal/A03-xihe/evidence/**`，
+ * 后果是「跑一次测试 ⇒ 工作树变脏」：19:50 的窗口段甲 s1 步（以及 20:31 的 task-149 C 步全量跑）
+ * 都把 6 个已跟踪文件重写了一遍，git status 里出现 6 个 M 却没有 owner（D-1608 家族：谁写的不清楚）。
+ *
+ * 现行口径：
+ * · 默认 ⇒ 写 Playwright 的 `testInfo.outputDir`（lane 产物目录，已被 .gitignore 覆盖）；
+ * · 显式证据生成 ⇒ `XH_EVIDENCE_WRITE=1`（可配 `XH_EVIDENCE_DIR` 指定落点）才写仓库证据目录。
+ * 判据（卡面 ③）：默认跑前后 `git status --short internal/A03-xihe/evidence` 必须为空；
+ * 显式跑仍产出 6 张；把落点改回仓库而不带开关时，默认跑就会污染 git status（反向可红）。
+ */
+function resolveWriteDir(outputDir: string): string {
+    if (process.env.XH_EVIDENCE_WRITE === "1") {
+        const dir = process.env.XH_EVIDENCE_DIR
+            ? resolve(process.env.XH_EVIDENCE_DIR)
+            : REPO_EVIDENCE_DIR;
+        if (dir.includes(`A03-xihe${sep}internal`)) {
+            throw new Error(`证据目录落错仓：${dir}（internal/ 属于 one 仓，不在 A03-xihe 仓内）`);
+        }
+        return dir;
+    }
+    return outputDir;
 }
 
 interface PageCase {
@@ -53,13 +80,14 @@ test.describe("task-174 判据②：六页面容器行与 aria-current", () => {
      */
     test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, "workspaces/[^/]+/environment"] });
 
-    test("六页面：每页 1 行/容器 + 分层 aria-current + 截图", async ({ page }) => {
+    test("六页面：每页 1 行/容器 + 分层 aria-current + 截图", async ({ page }, testInfo) => {
         // 整测预算 = 每页预算 × 页数（task-236）。原先是一个写死的 180 秒字面量：一是硬编码，
         // 二是 `mise run lint:e2e` 的 timeout-budget 门只认 `e2e/timeouts.ts` 的共享常量（豁免硬上限 60 s，
         // 加 `timeout-exempt` 标记也过不去）⇒ 改成「6 页 × LONG_TIMEOUT_MS」，数值来源自解释，
         // 同时保持原有的 180 s 总量（6 × 30 s），单跑行为不变。
         test.setTimeout(LONG_TIMEOUT_MS * PAGES.length);
-        mkdirSync(OUT_DIR, { recursive: true });
+        const outDir = resolveWriteDir(testInfo.outputDir);
+        mkdirSync(outDir, { recursive: true });
         await page.setViewportSize({ width: 1920, height: 1080 });
         const rows: Record<string, unknown>[] = [];
 
@@ -109,12 +137,13 @@ test.describe("task-174 判据②：六页面容器行与 aria-current", () => {
             rows.push(row);
             console.log("[task174] " + JSON.stringify(row));
 
-            const shot = resolve(OUT_DIR, pageCase.slug + ".png");
+            const shot = resolve(outDir, pageCase.slug + ".png");
             mkdirSync(dirname(shot), { recursive: true });
             await page.screenshot({ path: shot, fullPage: false });
         }
 
-        writeFileSync(resolve(OUT_DIR, "readings.json"), JSON.stringify(rows, null, 2), "utf8");
+        writeFileSync(resolve(outDir, "readings.json"), JSON.stringify(rows, null, 2), "utf8");
+        console.log("[task174] 写盘目录 " + outDir);
 
         // 硬判据：每页都有容器页签行，且**每个容器行内** aria-current ≤ 1（导航行不抢当前项）。
         expect(rows, "六页都要有读数").toHaveLength(6);
