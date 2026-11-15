@@ -40,6 +40,27 @@ public class ReusableTestDatabaseRouting implements DataSource {
     /** task-11 R-D：启动期写入快照库（容器内、JVM 结束随容器消失、不回收）。 */
     public static final String SEED_DATABASE = "xihe_t_reuse_seed";
 
+    /**
+     * task-200（{@code D-1575}）：<b>快照闸必须是 JVM 级</b>，不能是实例字段。
+     *
+     * <p>失败形态（实测 3/3）：路由 bean 由 {@code ReusableTestContextConfiguration} <b>每个 Spring
+     * 上下文 new 一个</b>，而库名 {@link #SEED_DATABASE} 与 PG 容器都是 <b>JVM 级静态</b>。闸挂在实例上 ⇒
+     * 上下文一变闸就归零、库名却没变 ⇒ 第二个 reusable 上下文再发一次
+     * {@code CREATE DATABASE xihe_t_reuse_seed …} ⇒ {@code 42P04 database already exists} ⇒
+     * 白烧 5 s 重试后 {@code IllegalStateException}，整类 2E（{@code task-194} 第 1 遍 +1E、
+     * {@code AgentPrincipalOrgUnitGateTest} 的 nested {@code @TestConfiguration} 制造第二个上下文）。</p>
+     *
+     * <p>所以闸的状态放在静态槽里；实例上只留「本上下文已经校验过」这个纯缓存标志，
+     * 它<b>不</b>参与建库决策。</p>
+     */
+    private static final Object SEED_LOCK = new Object();
+
+    /** 已建成的快照库名（{@code null} = 本 JVM 还没建过）；由 {@link #SEED_LOCK} 保护。 */
+    private static volatile String seedSnapshotDatabase;
+
+    /** 快照是从哪个默认库克隆的（仅日志：让第二个上下文能读出「谁建的」）。 */
+    private static volatile String seedSnapshotSource;
+
     private final Map<String, HikariDataSource> targets = new ConcurrentHashMap<>();
 
     private volatile HikariDataSource defaultTarget;
@@ -47,8 +68,11 @@ public class ReusableTestDatabaseRouting implements DataSource {
     /** 默认库名（启动期由 provider 分配；快照库的克隆源）。 */
     private volatile String defaultDatabaseName;
 
-    /** 快照是否已就绪（只建一次）。 */
-    private volatile boolean seedSnapshotReady;
+    /**
+     * 「本上下文已经确认过快照可用」——纯缓存，避免每个 {@code @BeforeEach} 都跑一次校验 SQL。
+     * <b>不要</b>拿它当建库闸（那正是 task-200 修掉的缺陷形状）。
+     */
+    private volatile boolean seedVerifiedForThisContext;
 
     /** 当前键对应的 target；键为空时落默认库。 */
     DataSource currentTarget() {
@@ -79,20 +103,35 @@ public class ReusableTestDatabaseRouting implements DataSource {
      * <p>时序约束（Lead 硬条件①）：不得在 context refresh 中途取——routing 只在测试线程的
      * 非默认键路径调用它，而默认键的建库发生在上下文 refresh（Flyway）期间，两条路径不交叉。
      */
-    public synchronized void prepareSeedSnapshot() {
-        if (seedSnapshotReady) {
+    public void prepareSeedSnapshot() {
+        if (seedVerifiedForThisContext) {
             return;
         }
-        String source = defaultDatabaseName;
-        if (source == null) {
-            throw new IllegalStateException(
-                    "default test database not initialised: context startup has not completed yet");
+        synchronized (SEED_LOCK) {
+            String existing = seedSnapshotDatabase;
+            if (existing == null) {
+                String source = defaultDatabaseName;
+                if (source == null) {
+                    throw new IllegalStateException(
+                            "default test database not initialised: context startup has not completed yet");
+                }
+                TestDatabaseProvider.snapshotOf(source, SEED_DATABASE);
+                TestDatabaseProvider.verifySeedSnapshotContent(SEED_DATABASE);
+                TestDatabaseProvider.useSnapshotSource(SEED_DATABASE);
+                seedSnapshotDatabase = SEED_DATABASE;
+                seedSnapshotSource = source;
+                System.out.println("[test-db] reuse seed snapshot=" + SEED_DATABASE + " from=" + source
+                        + " (startup seeds included, created once per JVM)");
+            } else {
+                // 复用路径（第二个上下文走这里）：不建库，只**校验**第一个上下文建好的那个库。
+                // fail-closed：内容不对就抛，绝不让类库从空库/半成品克隆。
+                TestDatabaseProvider.verifySeedSnapshotContent(existing);
+                TestDatabaseProvider.useSnapshotSource(existing);
+                System.out.println("[test-db] reuse seed snapshot=" + existing + " from="
+                        + seedSnapshotSource + " (reused, not re-created — JVM-level gate)");
+            }
+            seedVerifiedForThisContext = true;
         }
-        TestDatabaseProvider.snapshotOf(source, SEED_DATABASE);
-        TestDatabaseProvider.useSnapshotSource(SEED_DATABASE);
-        seedSnapshotReady = true;
-        System.out.println("[test-db] reuse seed snapshot=" + SEED_DATABASE
-                + " from=" + source + " (startup seeds included)");
     }
 
     private HikariDataSource create(String key) {

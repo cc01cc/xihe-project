@@ -8,6 +8,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
@@ -241,6 +242,14 @@ public final class TestDatabaseProvider {
                         : "CREATE DATABASE " + targetName + " TEMPLATE " + templateName);
                 return;
             } catch (SQLException failure) {
+                if (isDuplicateDatabase(failure)) {
+                    // task-200（D-1575）：重复建库是**永久错误**——重试只会白烧 5 s 预算（实测 47 次）。
+                    // 那个 5 s 重试是为「TEMPLATE 克隆时源库还有会话」准备的，与名字冲突无关。
+                    throw new IllegalStateException("test database " + targetName
+                            + " already exists (SQLState 42P04, label=" + label
+                            + "); refusing to retry — a duplicate name is a permanent condition,"
+                            + " not a TEMPLATE-session race", failure);
+                }
                 lastFailure = failure;
             }
             if (System.nanoTime() >= deadlineNanos) {
@@ -253,6 +262,76 @@ public final class TestDatabaseProvider {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("interrupted while creating test database " + targetName, lastFailure);
             }
+        }
+    }
+
+    /** PG {@code duplicate_database} = SQLState {@code 42P04}；只认 SQLState，不认文案。 */
+    private static boolean isDuplicateDatabase(SQLException failure) {
+        return "42P04".equals(failure.getSQLState());
+    }
+
+    /**
+     * task-200（{@code D-1575}）：快照库的**内容校验**，供「已存在即复用」路径调用。
+     *
+     * <p>复用一个已存在的库，只有在**内容确定正确**时才算修好；否则就是把「确定性失败」
+     * 换成「静默复用脏库」（比原缺陷更糟）。所以这里给两条可复算判据，任一不成立即抛：</p>
+     * <ol>
+     *   <li><b>schema 已迁到模板 head</b>：{@code flyway_schema_history} 中成功记录的最大 version
+     *       等于模板库 {@link #TEMPLATE_DATABASE} 的同名读数（空库 / 半迁移库在这里被拒；
+     *       表不存在按 0 处理，于是同样落到「不是模板 head」这条消息上）；</li>
+     *   <li><b>启动期写入在</b>：{@code users} 有且仅有 1 行 {@code admin@xihe.local}，
+     *       且 {@code instance_owner} 至少 1 行 —— 这正是快照存在的理由（{@code DataSeeder} 的
+     *       admin / InstanceOwnership 指针）。</li>
+     * </ol>
+     *
+     * <p>抛 {@link IllegalStateException}（fail-closed）而不是 WARN：复用到一个空库会让类库静默
+     * 从「没有种子」克隆，症状会散落到几十个不相干用例里（「空集绿」家族）。</p>
+     */
+    public static void verifySeedSnapshotContent(String databaseName) {
+        ensureStarted();
+        ensureTemplate();
+        long expected = maxAppliedMigration(TEMPLATE_DATABASE);
+        long actual = maxAppliedMigration(databaseName);
+        if (actual != expected) {
+            throw new IllegalStateException("seed snapshot " + databaseName
+                    + " is not at the template head: max applied migration " + actual
+                    + " != template " + expected + " (empty or half-migrated database)");
+        }
+        int admins = scalar(databaseName, "select count(*) from users where email = 'admin@xihe.local'");
+        int owners = scalar(databaseName, "select count(*) from instance_owner");
+        if (admins != 1 || owners < 1) {
+            throw new IllegalStateException("seed snapshot " + databaseName
+                    + " lacks the startup seeds: admin@xihe.local rows=" + admins
+                    + ", instance_owner rows=" + owners
+                    + " (DataSeeder output missing — refusing to clone class databases from it)");
+        }
+    }
+
+    /** 成功迁移记录里的最大 version（{@code version} 是字符串列，按数值比较）。 */
+    private static long maxAppliedMigration(String databaseName) {
+        String sql = "select coalesce(max(version::numeric), 0) from flyway_schema_history where success";
+        try (Connection connection = connect(databaseName);
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(sql)) {
+            rows.next();
+            return rows.getLong(1);
+        } catch (SQLException failure) {
+            if ("42P01".equals(failure.getSQLState())) {
+                // undefined_table：这个库连 Flyway 都没跑过 ⇒ 交给调用方按「不是 head」处理。
+                return 0L;
+            }
+            throw new IllegalStateException("could not read flyway history of " + databaseName, failure);
+        }
+    }
+
+    private static int scalar(String databaseName, String sql) {
+        try (Connection connection = connect(databaseName);
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(sql)) {
+            rows.next();
+            return rows.getInt(1);
+        } catch (SQLException failure) {
+            throw new IllegalStateException("could not run [" + sql + "] on " + databaseName, failure);
         }
     }
 
