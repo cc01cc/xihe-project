@@ -74,6 +74,28 @@ const REPORTERS: ReporterDescription[] | undefined =
         ? [["list"], ["json", { outputFile: REPORT_FILE }]]
         : undefined;
 
+// task-227：**报告落点与「报告器被覆盖」都必须打印，不许静默**。
+//
+// 事故形态（不是「不知道」，是「不知道自己在覆盖」）：命令行上的 `--reporter=line` 会**覆盖**
+// config 里的 reporter ⇒ JSON reporter 根本不执行，而调用者只看到「跑完了」，以为报告已更新。
+// `task-226` 段 1 就这么读到了**另一条 lane 的 smoke 报告**（文件 mtime 没变，谁也没说）。
+// 不写 wrapper 脚本：会多一个入口、要过滤用户参数（比覆盖更糟）、还会吃掉退出码；
+// 文档 + 这里一行诊断，就能把「静默无产出」变成「打印了原因」。
+const ARGV_REPORTER = process.argv.slice(2).filter((arg) => arg.startsWith("--reporter"));
+// 只在**主进程**打印：worker 里 `process.argv` 不含 spec 参数 ⇒ `EXPLICIT_SPEC_FILES` 会算成 false，
+// 于是会多打一行「报告落点 .mock-report.json」（2026-11-15 实测：一次跑打两行、名字还不一样）。
+if (process.env.XIHE_MOCK_REPORT === "1" && process.env.TEST_WORKER_INDEX === undefined) {
+    if (ARGV_REPORTER.length > 0) {
+        console.log(
+            `[e2e] 命令行 ${ARGV_REPORTER.join(" ")} 覆盖 config reporter ⇒ 本跑不产出 JSON 报告（${REPORT_FILE} 不会更新）；要报告就别传 --reporter`,
+        );
+    } else {
+        console.log(
+            `[e2e] 报告落点 ${REPORT_FILE}（要按 lane 隔离就同时设 XIHE_MOCK_REPORT_FILE）`,
+        );
+    }
+}
+
 export default defineConfig({
     testDir: "..",
     testMatch: ["e2e/mock/*.spec.ts", "e2e/real/*.spec.ts", "e2e/headed/*.spec.ts"],

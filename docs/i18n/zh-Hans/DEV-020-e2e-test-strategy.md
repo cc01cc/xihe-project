@@ -340,6 +340,15 @@ E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`
 
     缺省不设该变量时 `e2e/playwright.config.ts` **不加 `outputDir` 键** ⇒ 默认仍是 `packages/ui/test-results`，既有 gate/报告读取路径逐字节不变；临时排查也可用 `--output <dir>`。**禁止用 `retries` 掩盖**：同目录并发实测 3 条 ENOENT 被既有 `retries: 1` 吸收成 `1 flaky`（exit 0），换独立目录后同一跑为 6 passed / 0 flaky / 0 ENOENT（见 `D-1588` 家族）。
 
+- **报告落点也要按 lane 独立；命令行 `--reporter` 会覆盖 config reporter**（task-227，2026-11-15 实测）：`XIHE_MOCK_REPORT=1` 时报告默认写 `e2e/.mock-report.json`（全量）或 `e2e/.mock-report.subset.json`（**显式列了 `*.spec.ts` 的子集跑**）—— 子集报告是**共享路径**，两条 lane 并发跑会互相覆盖，读到的可能是别人的数字。要隔离就与 `XIHE_MOCK_OUTPUT_DIR` 同批设 `XIHE_MOCK_REPORT_FILE`（绝对路径）。另外 `--reporter=line` 这类命令行参数**会覆盖 config 里的 reporter** ⇒ JSON reporter 根本不执行、报告文件不更新，而跑的人只看到「跑完了」；config 现在会打印一行 `[e2e] 命令行 --reporter=… 覆盖 config reporter ⇒ 本跑不产出 JSON 报告`。**不为这件事加包装脚本**：wrapper 要过滤用户参数（比覆盖更糟）还会吃掉退出码，文档 + 一行诊断足够。判据：`XIHE_MOCK_REPORT=1` 且不传 `--reporter` 时日志出现 `[e2e] 报告落点 <路径>`，跑完该文件 mtime 前进。
+
+    ```powershell
+    # 并发跑：artifact 目录与报告落点各给一个（cwd=packages/ui）
+    $env:XIHE_MOCK_OUTPUT_DIR = "H:\zeotmp\<lane>\test-results"
+    $env:XIHE_MOCK_REPORT_FILE = "H:\zeotmp\<lane>\mock-report.json"
+    $env:XIHE_MOCK_REPORT = "1"
+    ```
+
 ### 3.6.1 CP jar 指纹（BL-477 / task-90）
 
 共享 CP jar 的身份不再靠 mtime，也不再靠 jar 内的 `META-INF/build-info.properties`：后者是 Spring Boot 打包期生成、`scripts/stack-run.mjs` 事后覆盖的产物，实测**落后 jar 打包 77 分钟**（jar 内含的 commit 与实际构建树差 11 个 CP 文件），拿它当判据会制造新的假红。判据改为 jar **旁边**的清单 `<jar>.buildinfo.json`（例：`control-plane-<version>.jar.buildinfo.json`），由产出 jar 的同一段代码在打包完成后**原子写入**（临时文件 + rename），字段：

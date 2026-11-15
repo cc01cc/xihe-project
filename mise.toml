@@ -194,7 +194,11 @@ alias = "test:mock:smoke"
 #   (3) the baseline's `counts.flaky` MUST stay 0 — the gate rejects a non-zero baseline
 #       (E_MOCK_BASELINE_FLAKY_NONZERO) so nobody can silence flaky by editing the baseline;
 #   (4) the same case in >=3 consecutive runs ⇒ E_MOCK_FLAKY_PERSISTENT and file a BL.
-# Self-test: `node scripts/check-mock-baseline.mjs --selftest` (6 fixtures incl. the
+# task-225: when `flaky > 0` the gate ALSO prints a "可能原因（提示，不作判定）" hint line — a
+# shared artifact directory across concurrent Playwright processes makes `retries` absorb the
+# noise into `flaky`; the hint names `XIHE_MOCK_OUTPUT_DIR` (task-224) as the isolation knob.
+# It is a hint only: it never changes the verdict or the exit code.
+# Self-test: `node scripts/check-mock-baseline.mjs --selftest` (10 fixtures incl. the
 # negative-control pair: inside the change surface ⇒ exit 1, same report moved out ⇒ exit 0).
 [tasks."check:mock-baseline"]
 run = "node scripts/check-mock-baseline.mjs"

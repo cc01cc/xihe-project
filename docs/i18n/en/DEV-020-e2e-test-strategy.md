@@ -220,6 +220,15 @@ The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-
 
     When the variable is unset, `e2e/playwright.config.ts` **does not add an `outputDir` key**, so the default stays `packages/ui/test-results` and every existing gate/report read path is byte-for-byte unchanged; `--output <dir>` works as an ad-hoc alternative. **Do not hide this with `retries`**: under a shared directory the measured run turned 3 ENOENT errors into `1 flaky` (exit 0) via the existing `retries: 1`, whereas the same run with isolated directories reported 6 passed / 0 flaky / 0 ENOENT (the `D-1588` family).
 
+- **Report locations need per-lane isolation too, and an argv `--reporter` overrides the config reporter** (task-227, measured 2026-11-15): with `XIHE_MOCK_REPORT=1` the report goes to `e2e/.mock-report.json` (full run) or `e2e/.mock-report.subset.json` (**any run that lists explicit `*.spec.ts` files**) — the subset file is a **shared path**, so two concurrent lanes overwrite each other and you may read someone else's numbers. Isolate it by setting `XIHE_MOCK_REPORT_FILE` (absolute path) together with `XIHE_MOCK_OUTPUT_DIR`. Separately, command-line flags such as `--reporter=line` **override the reporter declared in the config** ⇒ the JSON reporter never runs and the report file is not updated, while the operator only sees that the run finished; the config now prints `[e2e] 命令行 --reporter=… 覆盖 config reporter ⇒ 本跑不产出 JSON 报告`. **No wrapper script for this**: a wrapper would have to filter user arguments (worse than overriding) and would also swallow exit codes — documentation plus one diagnostic line is enough. Check: with `XIHE_MOCK_REPORT=1` and no `--reporter`, the log shows `[e2e] 报告落点 <path>` and that file's mtime advances.
+
+    ```powershell
+    # concurrent runs: give each lane its own artifact directory and report file (cwd=packages/ui)
+    $env:XIHE_MOCK_OUTPUT_DIR = "H:\zeotmp\<lane>\test-results"
+    $env:XIHE_MOCK_REPORT_FILE = "H:\zeotmp\<lane>\mock-report.json"
+    $env:XIHE_MOCK_REPORT = "1"
+    ```
+
 ### 3.3.1 CP jar fingerprint (BL-477 / task-90)
 
 The identity of the shared CP jar is no longer taken from mtime, and no longer from the jar's own `META-INF/build-info.properties`: that stamp is generated during the Spring Boot package phase and *rewritten afterwards* by `scripts/stack-run.mjs`, so the copy inside the jar lags the artifact by a measured **77 minutes** (its `commit` was 11 CP files behind the tree the jar was actually built from) — using it as the criterion manufactures a new false red. The criterion is now a manifest **next to** the jar, `<jar>.buildinfo.json` (e.g. `control-plane-<version>.jar.buildinfo.json`), written **atomically** (temp file + rename) by the same code path that produces the jar, immediately after packaging:
