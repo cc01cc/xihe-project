@@ -32,15 +32,30 @@ function sessionWire(id: string, title: string, workspaceId: string) {
     };
 }
 
-/** 收集「拉某 workspace 会话」的请求：值是该请求带的 `X-Workspace-Id`。 */
-function recordSessionGets(page: import("@playwright/test").Page): string[] {
-    const seen: string[] = [];
+/**
+ * 收集「拉某 workspace 会话」的请求：值是该请求带的 `X-Workspace-Id`。
+ *
+ * **独立会话读不算「按组扇出」**：`GET /sessions?scope=workspaceless`（`api.ts:3271`）与按组读
+ * 同路径，且故意带**空** `X-Workspace-Id`（压住 tab 注入）——它是左栏「独立会话」组的一次性
+ * 探针，与「当前组 / 别组」无关。并进同一账本会让「首屏绝不碰别的工作区」假红（`""` ≠ WS_A，
+ * 2026-11-15 实测）。所以分两本账：`scoped` = 按组读，`workspaceless` = 独立会话探针计数。
+ */
+function recordSessionGets(page: import("@playwright/test").Page): {
+    scoped: string[];
+    workspaceless: number;
+} {
+    const ledger = { scoped: [] as string[], workspaceless: 0 };
     page.on("request", (request) => {
         if (request.method() !== "GET") return;
-        if (new URL(request.url()).pathname !== "/api/v1/sessions") return;
-        seen.push(request.headers()["x-workspace-id"] ?? "<tab-context>");
+        const url = new URL(request.url());
+        if (url.pathname !== "/api/v1/sessions") return;
+        if (url.searchParams.get("scope") === "workspaceless") {
+            ledger.workspaceless += 1;
+            return;
+        }
+        ledger.scoped.push(request.headers()["x-workspace-id"] ?? "<tab-context>");
     });
-    return seen;
+    return ledger;
 }
 
 /**
@@ -74,6 +89,20 @@ async function stubTwoWorkspaces(page: import("@playwright/test").Page) {
     await page.route(
         (url) => url.pathname === "/api/v1/sessions",
         async (route) => {
+            const url = new URL(route.request().url());
+            // 独立会话读的是 `GET /sessions?scope=workspaceless`（`src/composables/api.ts:3271`），
+            // 与按组读**同一条路径**、只差查询参数。原桩只按 pathname 匹配 ⇒ 同一条会话会同时
+            // 出现在「Alpha 工作区组内」与「独立会话组」两处，`filter({hasText})` 于是命中 2 个
+            // `session-item` ⇒ **strict 冲突**（看起来像「不可见」，报错文本却写着 resolved to 2
+            // elements，2026-11-15 实测）。本 spec 只钉按组扇出 ⇒ 独立会话必须是空。
+            if (url.searchParams.get("scope") === "workspaceless") {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ sessions: [] }),
+                });
+                return;
+            }
             const workspaceId = route.request().headers()["x-workspace-id"];
             const sessions =
                 workspaceId === WS_B
@@ -90,7 +119,8 @@ async function stubTwoWorkspaces(page: import("@playwright/test").Page) {
 
 test.describe("左栏工作区分组（task-352 / D-1206）", () => {
     test("首屏只拉当前组；展开第二组 +1；折叠再展开不重拉", async ({ page }) => {
-        const sessionGets = recordSessionGets(page);
+        const ledger = recordSessionGets(page);
+        const sessionGets = ledger.scoped;
         await setupMockAuth(page);
         await setupMockSessions(page, {
             sessions: [{ id: "s-a1", title: "Alpha 会话", workspaceId: WS_A }],
@@ -126,6 +156,9 @@ test.describe("左栏工作区分组（task-352 / D-1206）", () => {
         expect(sessionGets.every((header) => header === WS_A)).toBe(true);
         expect(sessionGets.length).toBeLessThanOrEqual(2);
         const afterFirstPaint = sessionGets.length;
+        // 独立会话探针单独记账：首屏至多 1 次（`workspacelessLoaded` 缓存后不再拉），
+        // 它的存在不改变上面「按组扇出」的判据，也不能被当成「碰了别的工作区」。
+        expect(ledger.workspaceless).toBeLessThanOrEqual(1);
 
         // 展开第二组 ⇒ 恰好 +1，且它的会话出现
         await page.getByTestId(`sidebar-workspace-group-toggle-${WS_B}`).click();

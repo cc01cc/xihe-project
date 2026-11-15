@@ -5,6 +5,14 @@ import { LONG_TIMEOUT_MS } from "../timeouts";
 
 let createPayload: Record<string, unknown> | null = null;
 
+/**
+ * 创建桩返回的工作区 id **必须是 UUID**：`router/index.ts:610` 的守卫先验形状（task-537：
+ * 非 UUID 的 `/workspace/<id>` 会被清上下文并重定向到 `/workspace?invalidWorkspace=1`）。
+ * 历史上这里用人类可读的 `ws-new` ⇒「创建成功后跳转」这条断言永远过不了（2026-11-15 实测
+ * 导航序列：`/workspace` → `/workspace?invalidWorkspace=1` → `/workspace`）。
+ */
+const WS_NEW_ID = "33333333-3333-4333-8333-333333333333";
+
 test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
     test.beforeEach(async ({ page }) => {
         createPayload = null;
@@ -22,12 +30,12 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
                     status: 201,
                     contentType: "application/json",
                     body: JSON.stringify({
-                        id: "ws-new",
+                        id: WS_NEW_ID,
                         name: body.name ?? "Untitled",
                         description: body.description ?? null,
                         ownerId: "user-1",
                         storageBackend: "host_directory",
-                        storageRef: "ws-new",
+                        storageRef: WS_NEW_ID,
                         generation: 1,
                     }),
                 });
@@ -76,6 +84,67 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
             localStorage.removeItem("xihe-workspace");
             sessionStorage.removeItem("xihe-workspace");
         });
+
+        // 「空 picker」的前提：`setupMockAuth` 的默认桩对 `GET /api/v1/workspaces`（列表）回
+        // **单工作区**（`e2e/mock/helpers/auth.ts:111`，task-140「与 seed 同源」）⇒ WorkspacePicker
+        // 走列表分支，空态 `workspace-picker-empty`（`src/components/WorkspacePicker.vue:204`）
+        // 永不渲染。这里显式回 `[]`（后注册优先，只影响本用例）。
+        // 列表桩必须**有状态**：① 创建前空列表是「空 picker」的前提；② 创建后刷新时若仍回
+        // `[]`，选择面拿不到新工作区 ⇒ 不跳转，断言停在「URL 没变」（2026-11-15 实测：只做
+        // ① 会把红点从「找不到空态」搬到「URL 没变」，两处都修才算通）。
+        // 另外同路径的 POST（创建）必须 fallback 到 beforeEach 的 201 桩，全路径拦截会把它吃掉。
+        let workspaceCreated = false;
+        page.on("request", (request) => {
+            if (
+                request.method() === "POST" &&
+                new URL(request.url()).pathname === "/api/v1/workspaces"
+            ) {
+                workspaceCreated = true;
+            }
+        });
+        await page.route(
+            (url) => url.pathname === "/api/v1/workspaces",
+            (route) => {
+                if (route.request().method() !== "GET") return route.fallback();
+                const body = workspaceCreated
+                    ? JSON.stringify([
+                          {
+                              id: WS_NEW_ID,
+                              name: "E2E Workspace",
+                              ownerId: "user-1",
+                              storageMode: "direct_attach",
+                              workspaceRole: "OWNER",
+                          },
+                      ])
+                    : "[]";
+                return route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body,
+                });
+            },
+        );
+
+        // 创建成功后会跳 `/workspace/ws-new`，该页要读 `GET /api/v1/workspaces/ws-new`。
+        // 详情没桩时落到默认夹具的「静默 404」（`e2e/mock/helpers/workspace-fixture.ts:24`）⇒
+        // WorkspaceView 判 404 后回到选择面，URL 停在 /workspace（2026-11-15 实测：修掉空态后
+        // 红点才漂到这里 —— 这条用例原本有**两处**断点，前一处遮住了后一处）。
+        await page.route(`**/api/v1/workspaces/${WS_NEW_ID}`, (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    id: WS_NEW_ID,
+                    name: WS_NEW_ID,
+                    description: null,
+                    ownerId: "user-1",
+                    storageMode: "direct_attach",
+                    storageBackend: "host_directory",
+                    storageRef: "ws-new",
+                    generation: 1,
+                }),
+            }),
+        );
 
         // Current creation flow is direct-attach only: Runtime-visible source browser, then a real
         // capability preflight for both Windows execution modes (PLAN-0384 T1.1/T1.3).
@@ -133,7 +202,7 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         await dialog.getByTestId("workspace-create-name").fill("E2E Workspace");
         await dialog.getByTestId("workspace-create-submit").click();
 
-        await expect(page).toHaveURL(/\/workspace\/ws-new/);
+        await expect(page).toHaveURL(new RegExp(`/workspace/${WS_NEW_ID}`));
         // The direct-attach request must carry the root binding and the execution mode; the
         // retired `profile` field and the frozen `managed_import` mode must not appear.
         // PLAN-0639 M1: root binding is roots=[{path}] (root[0] = primary).

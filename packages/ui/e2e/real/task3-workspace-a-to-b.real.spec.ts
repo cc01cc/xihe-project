@@ -18,7 +18,7 @@ import fs from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 import { LONG_TIMEOUT_MS } from "../timeouts";
-import { registerJourneyUser, seedPage } from "./helpers/journey";
+import { registerJourneyUser } from "./helpers/journey";
 import { createDirectAttachWorkspace } from "./helpers/workspace";
 
 const OUT = process.env.XIHE_AB_REAL_OUT ?? "H:/zeotmp/infra-1/task3/workspace-a-to-b-real.json";
