@@ -2644,7 +2644,11 @@ paths:
       summary: Subscribe to session-scoped persistent SSE
       description: |
         Session-scoped **persistent** Server-Sent Events connection.
-        * One active emitter per `sessionId` (v1). A new `GET /api/v1/events?sessionId=` replaces any prior emitter for the same session; the old emitter's completion/timeout/error callbacks are identity-checked and must not delete the new emitter (`stale_cleanup_ignored`).
+        * **BL-306 (A′): multiple connections per session.** The registry key is `(sessionId, viewerKey, connectionInstance)`. `viewerKey` is derived server-side from the authenticated caller (`owner:<userId>`, or `participant:<callerUserId>:<asParticipantId>` for a declared view) — never from a client-supplied participant id alone. `connectionInstance` is the optional `X-XH-SSE-Connection-Id` header (see below). Connections with different keys coexist; every session event is fanned out to all live connections, and one broken connection only removes its own entry — it never aborts the broadcast to the others.
+        * Reconnecting with the **same** connection key replaces only that entry; the old emitter's completion/timeout/error callbacks are identity-checked and must not delete the new entry (`stale_cleanup_ignored`). A missing or out-of-shape header gets a server-generated UUID instance per connection, so legacy clients still coexist across tabs; the cost is that a same-tab reconnect briefly leaves the old entry alive until heartbeat/disconnect cleanup.
+        * Per-session live-connection cap: default **8** (`sse.multiConnection.maxPerSession`). A NEW connection beyond the cap is refused with `409 SSE_CONNECTION_LIMIT` — existing connections are never silently kicked; same-key replacement is exempt from the cap.
+        * Server-side rollback: `sse.multiConnection.enabled=false` (default `true`) restores the legacy single-entry behaviour (one emitter per session, a new connection replaces the previous one). Stopping the client from sending the header does NOT roll back — the switch is server-side only.
+        * `connectionGeneration` is a per-session registration counter: each connection captures its own value when it registers, and its `heartbeat` frames carry that value (heartbeats are per-connection, not fanned out). Producer-less system events such as `connected` ARE fanned out to every live connection of the session, so an already-open tab also sees the `connected` frame of a newly subscribing tab.
         * `done` terminates a **run**, not the session SSE. The connection stays open across multiple `POST /api/v1/chat` turns and only closes on client disconnect, session deletion, or explicit server termination.
         * The server sends a `heartbeat` comment/event every 15s to keep the connection observable. Heartbeat never enters the message bubble nor resets the run's token count.
         * Connection authorization is bounded by the access-token lifetime; v1 closes the SSE before token expiry and the UI enters a recoverable authenticated state (no silent credential leak).
@@ -2676,6 +2680,19 @@ paths:
             participant view too: the gate is the participant gate above, not a workspace context
             (D-1438), so the former `WORKSPACE_LESS_FEATURE_FORBIDDEN` refusal on this parameter
             is gone.
+        - in: header
+          name: X-XH-SSE-Connection-Id
+          required: false
+          schema: { type: string }
+          description: |
+            BL-306: the client's per-tab connection instance id. Generate one per browser tab
+            in memory (e.g. `crypto.randomUUID()`); do NOT persist it in sessionStorage — a
+            duplicated tab would copy the value and the two tabs would replace each other.
+            Reconnecting with the same id replaces only that connection; different ids coexist
+            up to the per-session limit. Accepted shape: 1–64 chars of `[A-Za-z0-9._-]`.
+            Missing or out-of-shape values are NOT rejected — the server generates a random
+            UUID instance instead, so legacy clients keep working (two tabs still coexist; a
+            same-tab reconnect then briefly leaves the old entry to heartbeat/disconnect cleanup).
       responses:
         '200':
           description: 'SSE stream — one event per line `event: <name>` + `data: <json>`'
@@ -2725,6 +2742,16 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+        '409':
+          description: |
+            BL-306: `SSE_CONNECTION_LIMIT` — the session already holds the maximum number of
+            live SSE connections (default 8, `sse.multiConnection.maxPerSession`) and this is a
+            NEW connection instance. Existing connections are never kicked; close an unused tab
+            or reconnect with the same `X-XH-SSE-Connection-Id` (same-key replacement is exempt).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/ProblemDetails' }
+              example: { type: "https://xihe.dev/problems/sse-connection-limit", title: "SSE connection limit", status: 409, code: "SSE_CONNECTION_LIMIT", detail: "session has reached the SSE connection limit of 8; close an unused tab or reconnect with the same connection id", requestId: "req-..." }
   /api/v1/workspaces/{workspaceId}/events:
     get:
       tags: [event]
