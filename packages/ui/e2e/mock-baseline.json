@@ -10,7 +10,7 @@
         "failed": 0,
         "flaky": 0
     },
-    "$countsDerivation": "[推导] 2026-11-13 task-189：expected 288 → 291 = 本批新增 3 条 mock 用例（`e2e/mock/global-rail-dual-state.spec.ts` 单 spec 3 passed 为 [实测]，全量未跑干净）。**不是 [实测]**：唯一一次全量（XIHE_UI_PORT=28608，5.0m）被并发 lane 污染成 282 passed / 67 skipped / 9 failed / 1 flaky ⇒ 拿它改计数就是洗红，故计数按「288 + 本批新增 3 条全绿」推导。出处与替换条件见 `internal/A03-xihe/docs/mock-baseline-provenance.md` 的 [推导] 注记（one 仓）。",
+    "$countsDerivation": "[推导] 2026-11-13 task-189：expected 288 → 291 = 本批新增 3 条 mock 用例（`e2e/mock/global-rail-dual-state.spec.ts` 单 spec 3 passed 为 [实测]，全量未跑干净）。**不是 [实测]**：唯一一次全量（XIHE_UI_PORT=28608，5.0m）被并发 lane 污染成 282 passed / 67 skipped / 9 failed / 1 flaky ⇒ 拿它改计数就是洗红，故计数按「288 + 本批新增 3 条全绿」推导。出处与替换条件见 `internal/A03-xihe/docs/mock-baseline-provenance.md` 的 [推导] 注记（one 仓）。 **丙模型（task-250，2026-11-15）起 `expected` 由实际收集数派生、不再推导**；本字段仅作 291 那次（2026-11-13）的历史出处保留，不表示当前仍在推导。",
     "skipNames": [
         "renders approval modal from canonical approval_request event",
         "shows the durable origin badge for model-initiated approvals",

@@ -260,6 +260,14 @@ Read priority (`scripts/lib/cp-jar-sidecar.mjs`, step 0 of the preflight artifac
 - **Triage order** (when stuck at "create session"): ① READY provider → ② request path/headers (`X-Workspace-Id`) → **only then** suspect lane capability. Both the mock and approval lanes were measured to **support** UI session creation (control probes returned 201 in both).
 
 
+### 3.3.2 Mock count-baseline maintenance semantics (task-250, model "C")
+
+`counts.expected` / `counts.skipped` in `packages/ui/e2e/mock-baseline.json` **follow the actual collected counts automatically** via `scripts/check-mock-baseline.mjs`; both numbers and that run's `sourceRun` come from the **same** `summarizeReport` result, so judging and writing can never cross runs.
+
+- **Written by default**: with `failed=0`, one `mise run check:mock-baseline` (or a direct script run) rewrites the two counts to the report's actual values and records provenance in `sourceRun` (command + collection time + HEAD + `specs sha256` + the four counts). The collection time comes from the report's own `stats.startTime`, **not** from the moment the gate runs ⇒ running twice on the same run is byte-identical (idempotent).
+- **Guard: with `failed≠0` nothing is written.** The default mode prints "count auto-follow **skipped**" and still fails on drift; `--write-baseline` exits **2** and lists every failed case (`file :: title`).
+- **Two flags**: `--no-write-baseline` = fall back to read-only comparison (a ruler that contradicts itself becomes a hard failure again, `E_MOCK_BASELINE_SELF_INCONSISTENT`); `--write-baseline` = write only, no comparison, exit 2 when `failed≠0`.
+- When the baseline disagrees with the current lane (the lane is still red) the gate **does not** touch it — the next clean full run follows automatically.
 ### 3.7 E2E fixture self-test gate (`mise run test:e2e:fixtures`; added by task-98 when it moved down from `AGENTS.md`)
 
 The fixture state machines under `packages/ui/e2e/fixtures/` have their own gate: `mise run test:e2e:fixtures` (= `node --test "e2e/fixtures/__tests__/*.test.mjs"` in `packages/ui`), **already wired into `mise run validate`**, running after the UI unit tests and before E2E. It only exercises the fake-LLM `mode=chain` state machines (session cursor / retry replay / exhaustion fallback) and **starts no stack, opens no browser, and takes seconds**.

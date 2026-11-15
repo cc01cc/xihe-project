@@ -380,6 +380,14 @@ E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`
 - **排查顺序**（卡在"建会话"段时）：①READY provider → ②请求路径形态/头（`X-Workspace-Id`）→ **最后**才怀疑车道能力。实测 mock 与 approval 两车道**均支持** UI 建会话（对照探针均 201）。
 
 
+### 3.6.2 mock 计数基线的维护语义（task-250「丙」）
+
+`packages/ui/e2e/mock-baseline.json` 的 `counts.expected` / `counts.skipped` 由 `scripts/check-mock-baseline.mjs` **按实际收集数自动跟随**；两个数与该轮 `sourceRun` 都取自**同一次** `summarizeReport` 结果，判与写不跨跑次。
+
+- **默认就写**：`failed=0` 时跑一次 `mise run check:mock-baseline`（或直接跑脚本）就把两个计数改成报告里的实际值，并把来源写进 `sourceRun`（命令 + 采集时刻 + HEAD + `specs sha256` + 四个计数）。采集时刻取报告自身的 `stats.startTime`、**不是**跑脚本的时刻 ⇒ 同一跑次连跑两次字节相同（幂等）。
+- **守卫：`failed≠0` 一个字都不写**。默认模式打印「计数自动跟随**跳过**」，仍按 drift 判红；`--write-baseline` 则 **exit 2** + 逐条 failed 清单（`文件 :: 用例名`）。
+- **两个 flag**：`--no-write-baseline` = 退回只读比对（自洽轴不一致重新变成硬红 `E_MOCK_BASELINE_SELF_INCONSISTENT`）；`--write-baseline` = 只写不比对，`failed≠0` 时 exit 2。
+- 基线若与当前车道不一致（车道还在红），门**不会**改它 —— 等下一次干净全量跑自动跟随。
 ### 3.7 e2e 夹具自测门（`mise run test:e2e:fixtures`；task-98 从 `AGENTS.md` 下沉补充）
 
 夹具（`packages/ui/e2e/fixtures/`）自身的模式机有独立门：`mise run test:e2e:fixtures`（= `packages/ui` 的 `node --test "e2e/fixtures/__tests__/*.test.mjs"`），**已并入 `mise run validate`**，排在 UI 单测之后、E2E 之前。它只跑 fake LLM `mode=chain` 的状态机（会话游标 / 重试重放 / 耗尽回落），**不起栈、不开浏览器、秒级**。
