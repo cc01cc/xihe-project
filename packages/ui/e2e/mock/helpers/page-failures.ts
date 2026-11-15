@@ -19,6 +19,7 @@
 import { expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { fixtureHintFor } from "./fixture-hints";
+import { pickStaleDepsFailures } from "./vite-deps";
 
 export interface PageFailures {
     consoleErrors: string[];
@@ -61,6 +62,14 @@ export interface FailureReport {
     unexpected: PageFailures;
     /** 按 `host + 归一路径` 归类，含状态码集合与计数。 */
     groups: Array<{ key: string; count: number; statuses: string[]; sample: string }>;
+    /**
+     * `task-220` ①：命中「Vite 依赖预打包陈旧」的条目。
+     *
+     * <p>这些条目**仍然是失败**（不从 unexpected 里剔除）：`504 (Outdated Optimize Dep)` 会让动态
+     * import 直接失败、页面半初始化，此时业务断言的红与产品无关。单独列出来的用途是**归因**，
+     * 让报告能一眼区分「环境陈旧」与「产品/夹具缺陷」两类红 —— 此前这个面没有任何门在看（族 A）。</p>
+     */
+    staleDeps: string[];
     /** 一行总结 + 每类一行。断言失败时整段进 diff，成功时也打印（读数可复核）。 */
     summary: string;
 }
@@ -114,14 +123,31 @@ export function classifyFailures(failures: PageFailures, allow: RegExp[] = []): 
         unexpected.pageErrors.length +
         unexpected.consoleErrors.length +
         unexpected.failedResponses.length;
+    // task-220 ①：环境类红单独归因（不移出 unexpected，只让读数分得清）。
+    const staleDeps = pickStaleDepsFailures([
+        ...unexpected.failedResponses,
+        ...unexpected.consoleErrors,
+    ]);
     const lines = [
-        `unexpected=${total}（console=${unexpected.consoleErrors.length} pageerror=${unexpected.pageErrors.length} >=400=${unexpected.failedResponses.length}）| skipped(allow)=${skipped.length}`,
+        `unexpected=${total}（console=${unexpected.consoleErrors.length} pageerror=${unexpected.pageErrors.length} >=400=${unexpected.failedResponses.length}）| skipped(allow)=${skipped.length} | env(stale-deps)=${staleDeps.length}`,
         ...groups.map(
             (group) =>
                 `  [${group.statuses.join("/")}] ${group.key} × ${group.count}  例: ${group.sample.slice(0, 160)}`,
         ),
+        ...(staleDeps.length > 0
+            ? [
+                  `  [env] 依赖预打包陈旧 × ${staleDeps.length} —— 这属于环境失败，先预热/重建 deps 再判产品：${staleDeps[0]!.slice(0, 160)}`,
+              ]
+            : []),
     ];
-    return { skippedCount: skipped.length, skipped, unexpected, groups, summary: lines.join("\n") };
+    return {
+        skippedCount: skipped.length,
+        skipped,
+        unexpected,
+        groups,
+        staleDeps,
+        summary: lines.join("\n"),
+    };
 }
 /** 断言这一条用例期间没有任何"非预期"的失败信号。`allow` 里命中的条目逐条放行。 */
 export function expectNoPageFailures(failures: PageFailures, allow: RegExp[] = []): void {
