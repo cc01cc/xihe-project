@@ -63,6 +63,48 @@ mise run setup
 | CP | `cd packages/control-plane && mvn dependency:resolve` |
 | Runtime | `cd packages/runtime && cargo fetch` |
 
+### 首跑建号：`admin@xihe.local` 从哪来（task-172 / `D-1532 ④`）
+
+**默认不建号**：`cp.bootstrap.seed-admin=${XIHE_SEED_ADMIN:false}`（`application.properties` 里的字面默认值）。全新安装的 `users` 表是空的 ⇒
+`GET /api/v1/auth/bootstrap-status` 返回 `{"initialized": false}` ⇒ UI 入口判定进 `/onboarding`，第一个注册的账号承担管理员职责。
+这条是用户裁定 `39D-2` 的要求（「必须保留首跑建号能力」）；在此之前 `DataSeeder` 无条件 seed，`initialized` 恒真，`/onboarding` **永远不可达**。
+
+| 场景 | 开关 | 结果 |
+| --- | --- | --- |
+| 全新安装（默认） | 不设 / `XIHE_SEED_ADMIN=false` | `initialized:false`，库内 0 个账号 ⇒ 走 `/onboarding` |
+| 开发 / 测试 / 演示想要现成账号 | `XIHE_SEED_ADMIN=true` | `initialized:true`，`admin@xihe.local` 可登录 |
+
+打开方式（起栈前导出，一次性）：
+
+```powershell
+$env:XIHE_SEED_ADMIN = 'true'
+$env:XIHE_DEV_ADMIN_PASSWORD = '<够强的密码>'   # 不设则随机生成且不打印 —— 不设就登不进去
+mise run dev:host          # 或 dev:stack / 直接 mvn spring-boot:run
+```
+
+**补救：忘了开开关、库已经空着启动过一轮（没有账号 ⇒ 谁也登不进）**。一条可执行路径，不需要 SQL：
+
+```powershell
+$env:XIHE_SEED_ADMIN = 'true'
+$env:XIHE_DEV_ADMIN_PASSWORD = '<够强的密码>'
+# 带这两个环境变量重启一次 CP（dev:host / dev:stack / pkg:launcher 均可）⇒ DataSeeder 建号
+# 种子里有两处幂等：findByEmail 命中就复用、不覆盖密码；重启不会造第二个账号
+
+# 登录验证：200 + accessToken 即成功
+curl.exe -s -X POST http://127.0.0.1:12631/api/v1/auth/login -H "Content-Type: application/json" `
+  -d '{"identifier":"admin@xihe.local","password":"<够强的密码>"}'
+
+# 成功后再撤掉 XIHE_SEED_ADMIN 重启一次（种子幂等，但没有必要每次启动都走那段分支）
+```
+
+`mise run reset-admin` **不是**这条补救的替代：它只做 UPDATE（账号行不存在时 exit 3），前提是账号已经存在。
+
+> **dev 车道注意**：`dev:host` / `dev:stack` 的既有假设是「空库启动即有 admin」（§4「dev 管理员密码自动注入」靠 `XIHE_DEV_ADMIN_PASSWORD` 落库）。
+> 开关默认关之后，空库起栈**不会**有 admin ⇒ **车道已代你打开**：`scripts/dev-stack.mjs` 的 `childEnv` 与 `scripts/stack-run.mjs` 的派生 env 都在「运算符没设」时补 `XIHE_SEED_ADMIN=true`（`test:cli` 的 `stack-run.test.mjs` 钉着这两处接线与「显式值优先」）；起栈日志会打一行 `[dev-stack] XIHE_SEED_ADMIN=…`，开关关的 CP 会打 `Skipped the seeded admin: …`。你自己导出的值优先——想复现「全新安装」形态就显式 `XIHE_SEED_ADMIN=false`。
+
+> 📌 **supersede（task-172，2026-11-15）**：本文档中所有以「启动即 seed」为前提的说法（例：§3 模式 A 的「`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印」）
+> 现在只对「`XIHE_SEED_ADMIN=true`」成立；默认形态是**没有**这个账号。
+
 ## 3. 运行模式
 
 ### 模式 A：`dev:host` 日常开发（推荐）
@@ -234,7 +276,7 @@ docker compose up -d --build   # 或 mise run dev:full（CP ready 后按导入�
 
 启动 postgres + control-plane + agent + runtime（UI 宿主）。端口映射（stack-1；多栈见「模式 D」）：CP 8080→12631、Agent 8000→12632、Runtime 8001→12633、PG 5432→12634。资源约束 pg 512m / cp 768m / agent 640m / runtime 128m，沙盒 512MB + 2 CPU。
 
-配置导入（`scripts/dev-host-import-config.mjs`，`mise run dev:host:import-config` 显式触发）：默认**不自动导入**——`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import?layer=instance`（非密钥八域配置；凭证走 `provider_connections`）；或提供 `XIHE_DEV_ADMIN_PASSWORD` 启用自动导入——注入通道（PLAN-0547）：OS 环境变量 > `.env` 文件链（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义；本机受控值写 `.env.local`，禁止写入 git/脚本/日志）。
+配置导入（`scripts/dev-host-import-config.mjs`，`mise run dev:host:import-config` 显式触发）：默认**不自动导入**。**task-172 起默认没有 `admin@xihe.local`**（`cp.bootstrap.seed-admin` 默认 false，见 §2「首跑建号」）⇒ 先按该节导出 `XIHE_SEED_ADMIN=true` + `XIHE_DEV_ADMIN_PASSWORD` 起栈，脚本才有账号可用。以下关于「`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印」的描述只在开关打开时成立——`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import?layer=instance`（非密钥八域配置；凭证走 `provider_connections`）；或提供 `XIHE_DEV_ADMIN_PASSWORD` 启用自动导入——注入通道（PLAN-0547）：OS 环境变量 > `.env` 文件链（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义；本机受控值写 `.env.local`，禁止写入 git/脚本/日志）。`DataSeeder` 为 `admin@xihe.local` 生成随机密码且不打印，脚本无法登录。启动后执行 `mise run reset-admin` 获取密码并手动 `POST /api/v1/config/import?layer=instance`（非密钥八域配置；凭证走 `provider_connections`）；或提供 `XIHE_DEV_ADMIN_PASSWORD` 启用自动导入——注入通道（PLAN-0547）：OS 环境变量 > `.env` 文件链（`.env` → `.env.$XIHE_ENV` → `.env.local`，与 CP `DotenvLoader` 同语义；本机受控值写 `.env.local`，禁止写入 git/脚本/日志）。
 
 > 📌 **supersede（D-766，2026-11-09）**：上一段「`DataSeeder` 生成随机密码且不打印 ⇒ 脚本无法登录」**只对 `mise run dev:host`（模式 A）成立**。`node scripts/dev-stack.mjs start`（模式 A2 / `mise run dev:stack`）已自动注入确定性密码并在四服务 ready 后 upsert（来源优先级/落盘位置/跳过条件见 §4「dev 管理员密码自动注入」），该路径无需先手工 `reset-admin` 即可登录。
 

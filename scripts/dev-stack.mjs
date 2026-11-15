@@ -1059,7 +1059,14 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
   const devAdminPassword = devAdminPasswordFrom(devAdmin);
   if (devAdmin.ok) {
     // 冻结对象不能原地赋值：改走「复制 → 断言 → 替换」，仍然是单一出口。
-    childEnv = Object.freeze({ ...childEnv, XIHE_DEV_ADMIN_PASSWORD: devAdmin.password });
+    // task-172 (D-1532 ④): 车道显式 opt-in —— 空库起栈时由 DataSeeder 建出 admin@xihe.local。
+    // 产品默认仍是「不 seed」（application.properties 的 ${XIHE_SEED_ADMIN:false}，全新安装走 /onboarding），
+    // 所以开关由车道给，不由产品给。运维自己导出的 XIHE_SEED_ADMIN 优先。
+    childEnv = Object.freeze({
+      ...childEnv,
+      XIHE_DEV_ADMIN_PASSWORD: devAdmin.password,
+      ...(childEnv.XIHE_SEED_ADMIN === undefined ? { XIHE_SEED_ADMIN: 'true' } : {}),
+    });
     assertEnvValues(childEnv, 'childEnv+devAdminPassword');
     console.log(formatDevAdminPassword(devAdmin));
   } else {
@@ -1068,6 +1075,13 @@ if (cpNoRebuild.active) console.log(`[dev-stack] WARN ${describeCpNoRebuild(cpNo
         + 'run `mise run reset-admin` if you need to log in to this stack.',
     );
   }
+  // task-172 约束 3：日志要能看出「这套栈的管理员从哪来」。开关关时 CP 会打
+  // `Skipped the seeded admin: cp.bootstrap.seed-admin=false …`；这里再打一行，免得
+  // 「谁也没权限登录」变成一次静默失败（ResetAdmin 是 UPDATE-only，没有兜底）。
+  console.log(
+    `[dev-stack] ${'XIHE_SEED_ADMIN'}=${childEnv.XIHE_SEED_ADMIN === undefined ? '(未设置 ⇒ CP 不建号)' : childEnv.XIHE_SEED_ADMIN}`
+      + ' — 空库启动时 DataSeeder 按此建 admin@xihe.local（产品默认 false，车道默认 true）',
+  );
   const cargoTarget = cargoTargetForStack({ stackId: derived.stackId, projectRoot, env: process.env });
   console.log(
     `[dev-stack] cargo target: ${cargoTarget ? `${cargoTarget} (per-stack)` : 'default .cargo/config.toml target (shared warm cache)'}`,

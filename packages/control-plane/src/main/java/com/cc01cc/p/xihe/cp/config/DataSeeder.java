@@ -58,13 +58,23 @@ public class DataSeeder implements CommandLineRunner {
      * turning every H2 test into a context-startup failure.
      */
     private final boolean postgres;
+    /**
+     * task-172 (D-1532 ④ / user ruling 39D-2): whether this start should seed the convenience
+     * admin. Default **false** — a fresh installation must stay with zero accounts so
+     * {@code GET /api/v1/auth/bootstrap-status} reports {@code initialized: false} and the UI
+     * enters {@code /onboarding} to create the first account. Until task-172 this class seeded
+     * unconditionally, which made {@code initialized} true forever and left the first-run path
+     * unreachable.
+     */
+    private final boolean seedAdmin;
 
     public DataSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder,
                       GrantDefaultService grantDefaultService,
                       com.cc01cc.p.xihe.cp.service.InstanceOwnershipService instanceOwnershipService,
                       com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog systemAccessRoleCatalog,
                       OrgUnitReadRepository orgUnits, OrgUnitMemberRepository orgUnitMembers,
-                      @Value("${spring.datasource.url:}") String datasourceUrl) {
+                      @Value("${spring.datasource.url:}") String datasourceUrl,
+                      @Value("${cp.bootstrap.seed-admin:false}") boolean seedAdmin) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.grantDefaultService = grantDefaultService;
@@ -75,6 +85,7 @@ public class DataSeeder implements CommandLineRunner {
         this.postgres = datasourceUrl != null
                 && (datasourceUrl.startsWith("jdbc:postgresql:")
                 || datasourceUrl.startsWith("jdbc:tc:postgresql:"));
+        this.seedAdmin = seedAdmin;
     }
 
     static String seededAdminPassword() {
@@ -88,8 +99,20 @@ public class DataSeeder implements CommandLineRunner {
         // makes the same catalog present on a schema built from the entities (H2 profile, Flyway
         // disabled) and is a no-op on an already migrated database.
         systemAccessRoleCatalog.ensureSeeded();
-        // PLAN-0758: the retired local-mode early return is gone — a fresh instance
-        // always gets the seeded dev admin, so the onboarding path starts from it.
+        // task-172 (D-1532 ④): the seeded admin is an **opt-in convenience**, never the
+        // first-run path. Seeding it unconditionally made hasAnyUser() true on an empty
+        // database, so /onboarding could never be reached. With the switch off the instance
+        // stays "uninitialized" on purpose: the first account is created by the onboarding
+        // flow, which is also the only way an operator without the env var gets in.
+        if (!seedAdmin) {
+            log.info("Skipped the seeded admin: cp.bootstrap.seed-admin=false (set"
+                    + " XIHE_SEED_ADMIN=true, plus XIHE_DEV_ADMIN_PASSWORD, to create"
+                    + " admin@xihe.local on the next start; see DEV-002 §首跑建号)."
+                    + " The instance stays uninitialized so /onboarding can create the first account.");
+            return;
+        }
+        // PLAN-0758: with the switch on, a fresh instance gets the seeded dev admin so the
+        // onboarding path can start from it (dev/test/demo convenience).
         User admin = userRepository.findByEmail("admin@xihe.local").orElse(null);
         if (admin == null) {
             admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD), "Admin");

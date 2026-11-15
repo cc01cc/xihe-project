@@ -274,6 +274,16 @@ try {
 // unsupported key/value/target combination exits without starting a process,
 // and error messages never echo the provided value.
 const baseEnv = { ...process.env, ...stackEnvDefaults(derived, process.env) };
+// task-172 (D-1532 ④): the dev lanes keep the "an empty database already has an admin"
+// convention. scripts/dev-stack.mjs (§dev 管理员密码自动注入) injects only
+// XIHE_DEV_ADMIN_PASSWORD and expects DataSeeder to create the row, and reset-admin is
+// UPDATE-only (missing row => exit 3) => without this the first stack start on an empty
+// database leaves nobody able to log in.
+// This is a **lane** decision, not the product default: application.properties still ships
+// cp.bootstrap.seed-admin=${XIHE_SEED_ADMIN:false} (a fresh install must reach /onboarding).
+// An explicit XIHE_SEED_ADMIN from the operator always wins (that is why this only fills
+// the gap when the key is absent).
+baseEnv.XIHE_SEED_ADMIN = baseEnv.XIHE_SEED_ADMIN ?? "true";
 // PLAN-0656 R1: every non-default stack gets its own cargo target so its
 // `cargo run --bin xihe-runtime` never overwrites the binary another stack is
 // executing (BL-221: `os error 5` on the shared target-dir). CARGO_TARGET_DIR
@@ -305,6 +315,9 @@ if (target === "env-json") {
     ...stackEnvDefaults(derived, process.env),
     XIHE_WORKSPACE_HOST_ROOT: hostRootResolved,
     ...(cargoTargetDir ? { CARGO_TARGET_DIR: cargoTargetDir } : {}),
+    // task-172: same dev-lane seed default as baseEnv below, so the consumers of env-json
+    // (reset-admin.ps1, ops scripts) read the same picture the spawned CP will get.
+    XIHE_SEED_ADMIN: process.env.XIHE_SEED_ADMIN === undefined ? "true" : process.env.XIHE_SEED_ADMIN,
   };
   // PLAN-0770：附上 dev 管理员凭据的来源元数据（**非密**：身份 / 层级 / 相对路径 / 布尔），
   // 让 `env-json` 的消费者（reset-admin.ps1、运维脚本）能一并回答「这套栈的钥匙从哪来」。
