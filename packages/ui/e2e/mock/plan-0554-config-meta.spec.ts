@@ -1,4 +1,6 @@
 import { expect, test } from "./helpers/mock-test";
+import type { Route } from "@playwright/test";
+import { PERMISSION_ATOMS } from "./helpers/auth";
 
 const META: Record<string, Record<string, unknown>> = {
     chunkSize: {
@@ -76,6 +78,42 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
     }, role);
     await page.route("**/api/v1/**", async (route) => {
         await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    });
+    /**
+     * task-248（2026-11-15）：兜底 `{}` 会把 `GET /me/permissions` 吃成**空投影**，而自 D-1521
+     * （`f66d091d3`，11:37）起实例层域页的读面判据是**动作原子** `READ_INSTANCE_CONTENT`，
+     * 不是能力位 `isInstanceAdmin`（`src/views/settings/SettingsDomainView.vue:86-92`：
+     * `selfPermissionsStatus === "ready" && !auth.canReadInstanceContent` ⇒ 渲染 403 视图、**不挂域面板**）。
+     * 本 spec 的 localStorage 只种了能力位 ⇒ 实测页面渲「这一层需要实例管理员能力」、`config-domain-rag` 不存在。
+     * 修法与同族先例一致（`config-settings.spec.ts:42-66`、`plan-0752-settings-ia.spec.ts:105`）：
+     * **只补这一条投影**，原子表复用夹具导出的 `PERMISSION_ATOMS`，不在这里拼第二份词表；
+     * **必须注册在兜底之后**（Playwright LIFO ⇒ 后注册者胜）。
+     */
+    await page.route("**/api/v1/me/permissions", (route: Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                // 必须是**双态**桩：本 spec 有三条用例故意用 USER（`ordinary user has no instance layer
+                // in the settings sidebar`）验证「没有原子 ⇒ 侧栏不出实例层、域页 403」。
+                // 无条件给满原子会把这个负例变成假绿（第一次改完就是这样红的：11 passed / 1 failed）。
+                instanceCapabilities:
+                    role === "ADMIN"
+                        ? ["isInstanceAdmin", "isInstanceSuper", "canCreateWorkspace"]
+                        : [],
+                instancePermissions: role === "ADMIN" ? PERMISSION_ATOMS : [],
+                workspaces: [
+                    {
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
+                        workspaceRole: role === "ADMIN" ? "WS_OWNER" : "WS_VIEWER",
+                        workspaceAdmin: role === "ADMIN",
+                        permissions: role === "ADMIN" ? PERMISSION_ATOMS : [],
+                    },
+                ],
+            }),
+        });
     });
     // task-466（D-1322 统一口径，照 task-461 / BL-318 先例）：兜底 `200 {}` 会吞掉页面合法调用的
     // 会话集合面（`/sessions?scope=workspaceless` 与 `/workspaces/{id}/sessions`），`api.ts` 的

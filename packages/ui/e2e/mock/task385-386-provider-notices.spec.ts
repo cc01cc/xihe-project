@@ -1,6 +1,7 @@
 import { expect, test } from "./helpers/mock-test";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { ACTION_TIMEOUT_MS } from "../timeouts";
+import { PERMISSION_ATOMS } from "./helpers/auth";
 
 /**
  * task-385（D-1233）+ task-386（D-1232）的浏览器判据。两条都是**纯 UI**（D-1203：不加 HTTP
@@ -91,6 +92,33 @@ async function mockApis(page: Page, fixture: Fixture) {
         body: JSON.stringify(body),
     });
     await page.route("**/api/v1/**", (route) => route.fulfill(json({})));
+    /**
+     * task-248（2026-11-15）：兜底 `{}` 会把 `GET /me/permissions` 吃成空投影，而自 D-1521
+     * （`f66d091d3`，11:37）起实例层配置面的读面判据是动作原子 `READ_INSTANCE_CONTENT`
+     * （`src/views/settings/SettingsDomainView.vue:86-92`）⇒ 页面渲 403 视图、
+     * `provider-profile-warning` / `config-source-own-credential-llm-provider` 都不挂载。
+     * 本 spec 的 `login()` 只种能力位 `isInstanceAdmin` ⇒ 4 条里 2 条红在 `toBeVisible`。
+     * 依同族先例（`config-settings.spec.ts:42-66`）只补这一条投影、复用 `PERMISSION_ATOMS`；
+     * **必须注册在兜底之后**（LIFO ⇒ 后注册者胜）。
+     */
+    await page.route("**/api/v1/me/permissions", (route: Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill(
+            json({
+                userId: "u1",
+                instanceCapabilities: ["isInstanceAdmin", "isInstanceSuper", "canCreateWorkspace"],
+                instancePermissions: PERMISSION_ATOMS,
+                workspaces: [
+                    {
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
+                        workspaceRole: "WS_OWNER",
+                        workspaceAdmin: true,
+                        permissions: PERMISSION_ATOMS,
+                    },
+                ],
+            }),
+        );
+    });
     // task-466（D-1322 可达性实测）：本 spec **不加**会话集合桩 —— 6 条执行用例全 passed、探针 0 命中（/settings/{instance,user}/llm-provider）。
     // 兜底 `200 {}` 因此不会吞掉合法会话调用（没发就没得吞）。若将来路由/布局改动让它开始发，
     // 按 task-461 / BL-318 先例在兜底**之后**补两形态正则桩（非 GET fallback），别改断言或放宽 console 门。
