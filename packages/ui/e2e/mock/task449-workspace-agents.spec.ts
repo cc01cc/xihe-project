@@ -1,4 +1,5 @@
 import { expect, test } from "./helpers/mock-test";
+import type { Page } from "@playwright/test";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { i18n } from "../../src/i18n";
 import {
@@ -15,15 +16,41 @@ import {
  * 测的是 spec 自己的桩（假绿）。这里只借 `mock-test` 的失败门禁（0 pageerror / 0 console error /
  * 0 非预期 ≥400）—— 面板消费 21 条面，任何一条缺失都会以 404 让本 spec 红，这正是 D-1281 要的仪器。</p>
  *
- * <p>入口用 `/workspace/{id}/resources?resource=agents`：该页把 `layer=WORKSPACE` 与 workspaceId
- * 作为 prop 钉死（task-210），**不依赖页签上下文的隐性顺序** ⇒ 深链可复算。</p>
+ * <p>入口（task-137 改向）：`/workspace/{id}/members` + 智能体页签 `members-tab-agents` —— 见下方
+ * `openAgentsPanel` 的判据。旧入口 `/workspace/{id}/resources?resource=agents` 的 `resource=agents`
+ * **不是合法资源 id**（`lib/settingsIa.ts` 的 `RESOURCE_DEFS` 只有 credentials / mcp / skills / knowledge），
+ * 那条 URL 从未渲染过 `WorkspaceAgentsPanel` ⇒ 本文件 6 条自始至终没有成立过（不是坏了，是从没绿过）。</p>
  *
  * <p>跑法（单 spec = L0）：`XIHE_E2E_PROFILE=mock XIHE_UI_PORT=12736 XIHE_E2E_BROWSER_CHANNEL=chrome-beta
  * XIHE_E2E_EXPECT_CHAIN=preview pnpm exec playwright test --config e2e/playwright.config.ts
  * e2e/mock/task449-workspace-agents.spec.ts --workers=1`</p>
  */
 const PIDS = MOCK_AGENT_PRINCIPAL_IDS;
-const URL = `/workspace/${MOCK_AGENT_WORKSPACE_ID}/resources?resource=agents`;
+
+/**
+ * task-137（2026-11-15）：入口**改向** —— 旧入口 `/workspace/{id}/resources?resource=agents` 是过期指向。
+ *
+ * <p>判据：`?resource=agents` **不是合法资源 id** —— `lib/settingsIa.ts` 的 `RESOURCE_DEFS` 只有
+ * credentials / mcp / skills / knowledge（页签由 `layerRules` 派生），所以那条 URL 从来没渲染过
+ * `WorkspaceAgentsPanel` ⇒ 本文件 6 条断言「自始至终没有成立过」（不是坏了，是从没绿过）。
+ * 旁证：`resources-ia.spec.ts` 按「旧资源路径必须 404」断言，两条互相矛盾，本身即过期信号。</p>
+ *
+ * <p>承接面（Lead 2026-11-15 定向）：成员页 `/workspace/{id}/members` 的**智能体页签**
+ * `members-tab-agents` —— `WorkspaceMembersView.vue:87-90` 明写「同一组件、同一逻辑：不复制智能体状态」，
+ * 挂的正是 `WorkspaceAgentsPanel` ⇒ **6 条的断言原意整体保留**，一个判据都不用改写
+ * （task-206 已在这条入口上跑过迁移，`openAgentsPanel` 同形）。</p>
+ */
+async function openAgentsPanel(page: Page): Promise<void> {
+    await page.goto(`/workspace/${MOCK_AGENT_WORKSPACE_ID}/members`);
+    await expect(page.getByTestId("workspace-members-page")).toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
+    await page.getByTestId("members-tab-agents").click({ timeout: ACTION_TIMEOUT_MS });
+    // 面板挂载是后续所有断言的前提；在这里等一次，避免每条用例各自吃满默认超时（只放宽等待，不改判据）。
+    await expect(page.getByTestId(`workspace-agent-${PIDS.explicit}`)).toBeVisible({
+        timeout: EXPECT_TIMEOUT_MS,
+    });
+}
 const zh = i18n.global.getLocaleMessage("zh-CN") as Record<string, unknown>;
 function copy(path: string): string {
     const value = path.split(".").reduce<unknown>((node, key) => {
@@ -44,7 +71,7 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
     test("六行夹具渲染，capSource 四态各自的标注正确（baseline 空快照不说零权限）", async ({
         page,
     }) => {
-        await page.goto(URL);
+        await openAgentsPanel(page);
         for (const pid of Object.values(PIDS)) {
             await expect(page.getByTestId(`workspace-agent-${pid}`)).toBeVisible({
                 timeout: EXPECT_TIMEOUT_MS,
@@ -82,7 +109,7 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
     });
 
     test("改上限为继承 ⇒ PUT 空体 ⇒ 来源徽标翻成「跟随角色基线」（真写回环）", async ({ page }) => {
-        await page.goto(URL);
+        await openAgentsPanel(page);
         const pid = PIDS.explicit;
         await expect(page.getByTestId(`workspace-agent-cap-source-${pid}`)).toHaveText(EXPLICIT, {
             timeout: EXPECT_TIMEOUT_MS,
@@ -105,7 +132,7 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
     });
 
     test("记忆子资源在浏览器里真的取到（空集曾把这条面藏起来）", async ({ page }) => {
-        await page.goto(URL);
+        await openAgentsPanel(page);
         const pid = PIDS.explicit;
         await page.getByTestId(`agent-memory-toggle-${pid}`).click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page.getByText("这个仓库的构建命令是", { exact: false }).first()).toBeVisible({
@@ -117,7 +144,7 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
 
     test("移动端 390×844：深链同样渲染夹具与快照标注", async ({ page }) => {
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.goto(URL);
+        await openAgentsPanel(page);
         await expect(page.getByTestId(`workspace-agent-${PIDS.explicit}`)).toBeVisible({
             timeout: EXPECT_TIMEOUT_MS,
         });
@@ -137,7 +164,7 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
         page.on("request", (req) => {
             if (req.url().includes("/effective-cap")) liveRequests.push(req.url());
         });
-        await page.goto(URL);
+        await openAgentsPanel(page);
         // **用 disabled 行而不是 explicit 行**：本文件上一条用例会把 explicit 的上限 PUT 成继承，
         // 而 preview 链路的 mock 夹具是**整个 vite 进程共享**的（没有 HTTP reset 面）⇒ 拿 explicit
         // 当样本会让本条依赖用例顺序（与 ui-1 task-467 修掉的 shuffle 顺序依赖同族）。
@@ -187,7 +214,7 @@ test.describe("preview mock workspace agents (task-449 / 417 证据)", () => {
     test("task-469：继承态 live 比快照多（role-binding + 无绑定行），空快照不等于空权限", async ({
         page,
     }) => {
-        await page.goto(URL);
+        await openAgentsPanel(page);
         const pid = PIDS.inherit;
         const row = page.getByTestId(`workspace-agent-${pid}`);
         await expect(row).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
