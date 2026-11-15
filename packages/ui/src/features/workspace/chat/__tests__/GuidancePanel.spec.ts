@@ -3,7 +3,9 @@ import { flushPromises, mount } from "@vue/test-utils";
 import GuidancePanel from "../components/GuidancePanel.vue";
 import { i18n } from "../../../../i18n";
 import { ApiError, type ChatRunGuidanceSnapshot } from "../../../../composables/api";
-import * as apiModule from "../../../../composables/api";
+// task-261 A1 / task-10：apiModule 只作 `typeof apiModule` 的类型形状用（importOriginal 的泛型），
+// 运行时不取值 ⇒ type-only 命名空间（check-value-namespace.mjs 放行；值命名空间才拦）。
+import type * as apiModule from "../../../../composables/api";
 
 /**
  * PLAN-0530 spec §3.2/§3.3 (PLAN-0536 A-class fix): a successful submit and the
