@@ -1,6 +1,7 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import { selectByTestId } from "../helpers/select";
+import type { Page } from "@playwright/test";
 
 // BL-318：本文件有两条**故意**制造成员写失败（409 已存在 / 404 未知用户名）以验裁定 #6 文案，
 // 逐条放行成员端点的失败信号。
@@ -34,7 +35,7 @@ let seq = 0;
  * 判别力来自**同一投影面下的差异** —— 四条都 present，只差 `workspaceAdmin`。</p>
  */
 async function serveProjection(
-    page: import("@playwright/test").Page,
+    page: Page,
     options: { role: string; workspaceAdmin: boolean },
 ): Promise<void> {
     await page.route("**/api/v1/me/permissions", (route) =>
@@ -79,7 +80,7 @@ async function serveProjection(
  * 所以这里只补 `/auth/me` 一条。</p>
  */
 async function serveIdentity(
-    page: import("@playwright/test").Page,
+    page: Page,
     capabilities: { isInstanceAdmin: boolean; canCreateWorkspace: boolean },
 ): Promise<void> {
     await page.route("**/api/v1/auth/me", (route) =>

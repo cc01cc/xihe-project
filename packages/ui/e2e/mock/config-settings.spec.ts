@@ -1,7 +1,7 @@
 // timeout-exempt: long E2E step(s) reviewed in task-252 (LONG_TIMEOUT_MS, default 30 s)
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 // task-204：域集合唯一来源是 SSOT（`stores/config.ts#LAYER_DOMAINS`），spec 里不另抄一份清单。
@@ -40,7 +40,7 @@ async function ensureDomainExpanded(page: Page, domain: string): Promise<void> {
  * 否则被 `{}` 兜底吃掉。</p>
  */
 async function mockSelfPermissions(page: Page): Promise<void> {
-    await page.route("**/api/v1/me/permissions", (route: import("@playwright/test").Route) => {
+    await page.route("**/api/v1/me/permissions", (route: Route) => {
         if (route.request().method() !== "GET") return route.fallback();
         return route.fulfill({
             status: 200,

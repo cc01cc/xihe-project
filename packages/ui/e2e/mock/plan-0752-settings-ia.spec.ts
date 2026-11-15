@@ -4,6 +4,7 @@ import path from "node:path";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { PERMISSION_ATOMS } from "./helpers/auth";
 import { isWorkspaceLayerConfigRequest } from "../../src/lib/settingsIaRequests";
+import type { Route } from "@playwright/test";
 
 /**
  * PLAN-0752 收尾（task-184）：
@@ -101,7 +102,7 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
     // ⇒ 只补这一条投影；原子表**复用夹具导出** `PERMISSION_ATOMS`（task-76 / `48f92ac91` 起已含
     //   `READ_INSTANCE_CONTENT`），不在这里手写第二份词表（两份词表迟早分叉）。
     // `workspaces` 照夹具形状给一行（本 spec 还有工作区层/层头用例，空数组会让 `workspaceProjection` 变 null）。
-    await page.route("**/api/v1/me/permissions", (route: import("@playwright/test").Route) => {
+    await page.route("**/api/v1/me/permissions", (route: Route) => {
         if (route.request().method() !== "GET") return route.fallback();
         return route.fulfill({
             status: 200,
@@ -129,17 +130,14 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
     // 要验会话内容的 spec 必须给真行，空集会让断言变成空断言（D-1281 同族）⇒ 不许照抄到需要内容的场景。
     // 本 spec 的 page 形参是 any（沿用文件既有写法）⇒ 这里显式给 Route 类型，
     // 否则 TS7006 隐式 any（typecheck:e2e 门只拦新增，实测本条曾红）。
-    await page.route(
-        /\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/,
-        (route: import("@playwright/test").Route) => {
-            if (route.request().method() !== "GET") return route.fallback();
-            return route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ sessions: [] }),
-            });
-        },
-    );
+    await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route: Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ sessions: [] }),
+        });
+    });
     // knowledge 面板走非 /api/v1 前缀（stores/knowledge.ts:33 apiGet("/rag/stats")）。
     await page.route("**/rag/**", (route: any) =>
         route.fulfill({
