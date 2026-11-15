@@ -78,6 +78,10 @@ public class ChatRunReconciliationService {
             String runId = run.getId().toString();
             if (activeRunRegistry.isRunActiveLocally(runId)) {
                 skippedActive++;
+                // task-134 A3: the batch total cannot say *which* run was skipped, and a skipped
+                // run is exactly what "wedged forever" looks like from the outside.
+                logger.info("[LIFECYCLE] service=cp event=chat_run_reconcile_skipped runId={} sessionId={} status={} reason=locally_registered",
+                        runId, run.getSessionId(), run.getStatus());
                 continue;
             }
             try {
