@@ -493,10 +493,21 @@ watch(isMobileViewport, (mobile) => {
                         「文件被限制在工作区内」；实测只约束 cwd（job_engine/mod.rs:1108-1141），故只写「只限启动目录」。
                         B 版（补「以你的系统账户身份运行」）被否：+19 列会触发 1024 档折行；详见 i18n 侧注释。
                     -->
+                    <!--
+                        task-255 / D-1631 —— **这条提示必须限高两行**。
+                        实测（probe-note，4/4 迭代同形）：会话列在 splitter 面板宽度落定前
+                        `clientWidth = 0`，本条 `shrink-0` 提示的内容盒只有 21px 宽，
+                        51 个字符按 12px/19.2px 折成 ~31 行 ⇒ **高 602px**（稳态约 47px）。
+                        它不可压缩，于是把 flex-1 的聊天区挤到 330px、消息视口挤到 **46px**；
+                        产品的「首次贴底」恰好在这个状态下执行，宽度落定后视口变 766px、
+                        滚动位置丢失，且此时 `scrollable.end=true` ⇒ 模式被判 free-scrolling
+                        ⇒ `handleResize` 的贴底守卫不成立 ⇒ 永不恢复（长会话首次进入停在顶部）。
+                        限两行 = 保留 task-7 裁定的两行形态，同时让瞬时窄宽不再吃掉高度。
+                    -->
                     <div
                         data-testid="session-sandbox-enforcement"
                         role="note"
-                        class="shrink-0 border-b px-3 py-1 text-xs text-muted-foreground bg-muted/5"
+                        class="line-clamp-2 shrink-0 border-b px-3 py-1 text-xs text-muted-foreground bg-muted/5"
                     >
                         <span class="font-medium text-foreground/80">{{
                             t("workspace.sandboxEnforcement")

@@ -112,7 +112,28 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
      * 2. 序列末值 ≈ 0（**能到顶**），且到顶后窗口换成最早的行、末尾行退出窗口；
      * 3. 全程零 pageError / console error（`afterEach` 的 `expectNoPageFailures`）。
      */
-    test("keeps user scroll position while the window swaps pages", async ({ page }) => {
+    /**
+     * BL-340 上滚补偿族 · task-259 在修（2026-11-15，task-255 收口时临时 fixme）。
+     *
+     * **为什么现在关**：本用例从「初始位置」开始上滚，而 task-255 之前长会话首次进入**停在顶部**
+     * （初始 st=0）⇒ 第一步 `max(0, 0-2000)=0` ⇒ 序列全 0 ⇒「单调不增 + 能到顶」**平凡成立**（假绿，D-1634）。
+     * task-255 修好落点后本条转真红，暴露的是**既有**缺陷，不是该修法的回归。
+     *
+     * **pristine 对照读数**（`xh255-upscroll.spec.ts`：先显式贴底，再跑同一套 40×2000，2026-11-15 22:33）：
+     *   pin 22ffba81d 原样（零改动）: 贴底 44958 → 40 步后 finalTop=4424  ✗（判据 ≤8）
+     *   pin + initialOffset          : 贴底 44118 → 40 步后 finalTop=3597  ✗
+     *   ⇒ 每步 2000px 只净退 ~1160px，被补偿拽回 ~840px；同族 bl340:192/211/237 亦为 fixme。
+     *
+     * **复现命令**（独占端口，mock）：
+     *   pwsh .tmp/xh/task186/prepare-trees.ps1 -PinSha 22ffba81d -Dest <tree>
+     *   pwsh .tmp/ui-2/task238-run.ps1 -TreePath <tree> -OutRoot <out> `
+     *        -SpecSrc .tmp/xh/task255/xh255-upscroll.spec.ts -SpecName xh255-upscroll.spec.ts -Port 12650
+     *   grep -o "XH255_UP .*" <out>/run.log
+     *
+     * **解除条件（task-259 判据）**：`xh255-upscroll` 在修后树 finalTop ≤ 8，本条恢复 `test(` 且真绿；
+     * 判据本身（≤8px、单调不增）**不许放宽**。
+     */
+    test.fixme("keeps user scroll position while the window swaps pages", async ({ page }) => {
         const chat = new ChatPage(page);
         await chat.goto(SESSION_ID);
         await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });
