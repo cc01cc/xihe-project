@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 import {
     compareWithBaseline,
     evaluateFlakyPolicy,
+    inspectBaselineCounts,
+    parseCountsFromSourceRun,
     summarizeReport,
 } from "./check-mock-baseline.mjs";
 
@@ -590,4 +592,67 @@ test("task-244: 已跟踪但改过的 spec（dirty）比报告新 ⇒ exit 2", (
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
+});
+
+// ---- task-211：标尺自洽（counts.expected ↔ sourceRun 文本） --------------------------------
+// 为什么在单测里钉：这条判据是「文件里的两个数互相对账」，出错时在真栈上表现为
+// 「基线和报告都对，但没人敢信基线」——比红更难排查，所以四态都要有正例/反例。
+
+test("parseCountsFromSourceRun 抽出四个计数；缺字段返回 null", () => {
+    assert.deepEqual(
+        parseCountsFromSourceRun("task-174：expected 288 / skipped 68 / failed 0 / flaky 0"),
+        { expected: 288, skipped: 68, failed: 0, flaky: 0 },
+    );
+    assert.deepEqual(parseCountsFromSourceRun("没有任何计数"), {
+        expected: null,
+        skipped: null,
+        failed: null,
+        flaky: null,
+    });
+    assert.equal(parseCountsFromSourceRun(undefined).expected, null);
+});
+
+test("inspectBaselineCounts：两处一致 ⇒ ok（静默）", () => {
+    const verdict = inspectBaselineCounts({
+        counts: { expected: 291, skipped: 68, failed: 0, flaky: 0 },
+        sourceRun: "task-174：expected 291 / skipped 68 / failed 0 / flaky 0",
+    });
+    assert.equal(verdict.status, "ok");
+    assert.deepEqual(verdict.lines, []);
+});
+
+test("inspectBaselineCounts：不一致且有 $countsDerivation ⇒ warn 并引用推导", () => {
+    const verdict = inspectBaselineCounts({
+        counts: { expected: 291 },
+        sourceRun: "task-174：expected 288",
+        $countsDerivation: "[推导] 288 → 291 = 新增 3 条单 spec 全绿",
+    });
+    assert.equal(verdict.status, "warn");
+    assert.match(verdict.lines.join("\n"), /MOCK_BASELINE_COUNTS_DERIVED/);
+    assert.match(verdict.lines.join("\n"), /288 → 291/);
+});
+
+test("inspectBaselineCounts：不一致且无 derivation ⇒ error（点名两处数字）", () => {
+    const verdict = inspectBaselineCounts(
+        { counts: { expected: 291 }, sourceRun: "task-174：expected 288" },
+        "packages/ui/e2e/mock-baseline.json",
+    );
+    assert.equal(verdict.status, "error");
+    const text = verdict.lines.join("\n");
+    assert.match(text, /E_MOCK_BASELINE_SELF_INCONSISTENT/);
+    assert.match(text, /counts\.expected=291/);
+    assert.match(text, /expected=288/);
+    assert.match(text, /mock-baseline\.json/);
+});
+
+test("inspectBaselineCounts：没有 sourceRun ⇒ 只 warn（历史夹具不得因此变红）", () => {
+    const verdict = inspectBaselineCounts({ counts: { expected: 283 } });
+    assert.equal(verdict.status, "warn");
+    assert.match(verdict.lines.join("\n"), /MOCK_BASELINE_NO_SOURCE_RUN/);
+});
+
+test("inspectBaselineCounts：缺 counts.expected ⇒ error（比对会退化成什么都不比）", () => {
+    const verdict = inspectBaselineCounts({ sourceRun: "expected 291" });
+    assert.equal(verdict.status, "error");
+    assert.match(verdict.lines.join("\n"), /E_MOCK_BASELINE_COUNTS_MISSING/);
 });

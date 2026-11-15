@@ -106,6 +106,90 @@ function normalizePath(value) {
         .replace(/^\.\//, "");
 }
 
+/**
+ * task-211：从 `sourceRun` 文本里抽 `expected/skipped/failed/flaky` 四个数（没有就是 `null`）。
+ *
+ * 为什么要有这个：标尺文件里 `counts` 是**机器比对**用的现值，`sourceRun` 是**给人看**的出处。
+ * 两处各写一个数、又没有任何东西保证它们一致 ⇒ 只读 `sourceRun` 的人必然读成「标尺自相矛盾」
+ * （2026-11-13 的 291 vs 288 就是这样被误读成笔误的，实际 291 是 `$countsDerivation` 里的有据推导）。
+ */
+export function parseCountsFromSourceRun(sourceRun) {
+    const text = String(sourceRun ?? "");
+    const pick = (label) => {
+        const match = new RegExp("\\b" + label + "\\s*(?:=|:)?\\s*(\\d+)", "i").exec(text);
+        return match ? Math.trunc(Number(match[1])) : null;
+    };
+    return {
+        expected: pick("expected"),
+        skipped: pick("skipped"),
+        failed: pick("failed"),
+        flaky: pick("flaky"),
+    };
+}
+
+/**
+ * task-211：标尺**自洽**检查（`counts.expected` ↔ `sourceRun` 文本）。
+ *
+ * 三态：
+ * - `ok`：两处一致，或 `sourceRun` 里根本没有可解析的 expected（历史夹具没有该字段）；
+ * - `warn`：两处不一致，但文件里有 `$countsDerivation` ⇒ **有据推导**，打印它并放行（不放松比对语义）；
+ * - `error`：两处不一致且**没有** derivation ⇒ 标尺内部矛盾，必须红（否则谁手改 `counts` 都没人拦）。
+ */
+export function inspectBaselineCounts(baseline, baselinePath = "(baseline)") {
+    const declared = Math.trunc(Number(baseline?.counts?.expected ?? NaN));
+    const derivation =
+        typeof baseline?.$countsDerivation === "string" ? baseline.$countsDerivation.trim() : "";
+    const fromSource = parseCountsFromSourceRun(baseline?.sourceRun).expected;
+    if (!Number.isFinite(declared)) {
+        return {
+            status: "error",
+            lines: [
+                "E_MOCK_BASELINE_COUNTS_MISSING: " + baselinePath + " has no counts.expected",
+                "  标尺必须有机器比对的现值；缺了它，比对会退化成「什么都不比」。",
+            ],
+        };
+    }
+    if (fromSource === null) {
+        return {
+            status: "warn",
+            lines: [
+                "[check-mock-baseline] MOCK_BASELINE_NO_SOURCE_RUN: " +
+                    baselinePath +
+                    " 的 sourceRun 里没有可解析的 expected ⇒ 无法交叉核对（counts.expected=" +
+                    declared +
+                    "）",
+            ],
+        };
+    }
+    if (fromSource === declared) return { status: "ok", lines: [] };
+    if (derivation) {
+        return {
+            status: "warn",
+            lines: [
+                "[check-mock-baseline] MOCK_BASELINE_COUNTS_DERIVED: counts.expected=" +
+                    declared +
+                    " 与 sourceRun 里的 expected=" +
+                    fromSource +
+                    " 不同，但文件带 $countsDerivation（有据推导，放行；比对语义不变）",
+                "  derivation: " + derivation.slice(0, 400) + (derivation.length > 400 ? "…" : ""),
+            ],
+        };
+    }
+    return {
+        status: "error",
+        lines: [
+            "E_MOCK_BASELINE_SELF_INCONSISTENT: " +
+                baselinePath +
+                " 的 counts.expected=" +
+                declared +
+                "，但同一文件的 sourceRun 写 expected=" +
+                fromSource,
+            "  标尺自身的两个数必须能对上：要么把 sourceRun 写成「现值见 $countsDerivation」式的交叉引用，",
+            "  要么补一条 `$countsDerivation`（写清 [实测]/[推导]、哪次运行、报告路径），要么重跑全量后同批更新两处。",
+            "  禁止只改其中一个数 —— 那会让每一次比对都不可信。",
+        ],
+    };
+}
 export function summarizeReport(report) {
     const stats = report?.stats ?? {};
     const expected = Math.trunc(Number(stats.expected ?? 0));
@@ -738,6 +822,77 @@ function runSelftest() {
             output: subsetOutput,
         });
         assertCase(subset.status === 2 && /E_MOCK_REPORT_SCOPE/.test(subsetOutput), "⑥");
+        // ⑦ task-211：counts 与 sourceRun 不一致且**没有** $countsDerivation ⇒ 必须红（exit 1，点名两处数字）
+        const inconsistent = run("⑦ 标尺内部矛盾 ⇒ exit 1", {
+            report: baseReport([], "e2e/mock/chat.spec.ts", {
+                expected: 283,
+                skipped: 1,
+                unexpected: 0,
+                flaky: 0,
+            }),
+            baseline: {
+                ...cleanBaseline,
+                sourceRun: "task-174：expected 281 / skipped 1 / failed 0 / flaky 0",
+            },
+        });
+        assertCase(
+            inconsistent.exit === 1 &&
+                /E_MOCK_BASELINE_SELF_INCONSISTENT/.test(inconsistent.output) &&
+                /counts\.expected=283/.test(inconsistent.output) &&
+                /sourceRun 写 expected=281/.test(inconsistent.output),
+            "⑦",
+        );
+        // ⑧ 同一份数字，但带 $countsDerivation ⇒ WARN 并引用它，放行（exit 0）
+        const derived = run("⑧ 有 $countsDerivation ⇒ WARN + exit 0", {
+            report: baseReport([], "e2e/mock/chat.spec.ts", {
+                expected: 283,
+                skipped: 1,
+                unexpected: 0,
+                flaky: 0,
+            }),
+            baseline: {
+                ...cleanBaseline,
+                sourceRun: "task-174：expected 281 / skipped 1 / failed 0 / flaky 0",
+                $countsDerivation:
+                    "[推导] 示例：281 → 283 = 本批新增 2 条（单 spec 全绿，全量未跑）",
+            },
+        });
+        assertCase(
+            derived.exit === 0 &&
+                /MOCK_BASELINE_COUNTS_DERIVED/.test(derived.output) &&
+                /281 → 283/.test(derived.output),
+            "⑧",
+        );
+        // ⑨ 阴性对照：两处一致 ⇒ 不得出现任何一致性告警
+        const consistent = run("⑨ 两处一致 ⇒ 静默 exit 0", {
+            report: baseReport([], "e2e/mock/chat.spec.ts", {
+                expected: 283,
+                skipped: 1,
+                unexpected: 0,
+                flaky: 0,
+            }),
+            baseline: {
+                ...cleanBaseline,
+                sourceRun: "task-174：expected 283 / skipped 1 / failed 0 / flaky 0",
+            },
+        });
+        assertCase(
+            consistent.exit === 0 &&
+                !/SELF_INCONSISTENT/.test(consistent.output) &&
+                !/MOCK_BASELINE_COUNTS_DERIVED/.test(consistent.output),
+            "⑨",
+        );
+        // ⑩ 历史夹具没有 sourceRun ⇒ 只 WARN「无法交叉核对」，不得红
+        const noSource = run("⑩ 无 sourceRun ⇒ WARN + exit 0", {
+            report: baseReport([], "e2e/mock/chat.spec.ts", {
+                expected: 283,
+                skipped: 1,
+                unexpected: 0,
+                flaky: 0,
+            }),
+            baseline: cleanBaseline,
+        });
+        assertCase(noSource.exit === 0 && /MOCK_BASELINE_NO_SOURCE_RUN/.test(noSource.output), "⑩");
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -794,6 +949,16 @@ function main() {
                 "而不是把数字抄进基线。",
         );
         return 2;
+    }
+    // task-211：标尺自洽（counts.expected ↔ sourceRun 文本）。
+    // 红/黄/绿三态见 `inspectBaselineCounts`：无 derivation 的不一致必须红，有 derivation 才 WARN 放行。
+    const baselineConsistency = inspectBaselineCounts(baseline, options.baseline);
+    if (baselineConsistency.status === "error") {
+        for (const line of baselineConsistency.lines) console.error(line);
+        return 1;
+    }
+    if (baselineConsistency.status === "warn") {
+        for (const line of baselineConsistency.lines) console.log(line);
     }
     const subsetProblem = rejectSubsetReport(options.report, summary, baseline);
     if (subsetProblem) {

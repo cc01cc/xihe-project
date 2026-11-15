@@ -2,7 +2,7 @@
     "$comment": "PLAN-0735 / BL-164: mock-lane baseline counts and registered skips.",
     "generatedAt": "2026-11-13",
     "sourceWindow": "task-174（2026-11-13 全量重跑；非验证窗口编号）",
-    "sourceRun": "task-174：XIHE_UI_PORT=28597 `pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock --workers=4`（expected 288 / skipped 68 / failed 0 / flaky 0，耗时 206957 ms，startTime 2026-11-13T00:54:07.217Z）。**源报告 `packages/ui/e2e/.mock-report.json` 被 A03 `.gitignore:4` 排除、未入库**。",
+    "sourceRun": "task-174：XIHE_UI_PORT=28597 `pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock --workers=4`（expected 288 / skipped 68 / failed 0 / flaky 0，耗时 206957 ms，startTime 2026-11-13T00:54:07.217Z）。**源报告 `packages/ui/e2e/.mock-report.json` 被 A03 `.gitignore:4` 排除、未入库**。 **现值 `counts.expected=291` 不来自这次运行，见 `$countsDerivation`（有据推导：288 + 本批新增 3 条单 spec 全绿）—— 本字段保留 288 作 [实测] 出处，两处数字不同是**有意为之**，由 `check-mock-baseline` 的 `MOCK_BASELINE_COUNTS_DERIVED` 告警交叉核对（task-211）。**",
     "skipSourceLog": "同上一次跑（源日志未入库，仅用于 skip 名单交叉核对）：12 条新登记 skip 都是基线源窗口（W-23 / 2026-09-09）之后**新增的 skip**，分两类 —— ① **7 条来自新增 spec 自带的 skip**：`measure-sse-connects.spec.ts` ×3（`aea2e7300` 2026-11-11 入库即带 `test.skip(`）、`pl0756-dockview.spec.ts` ×4（`908c37c58` 2026-11-10 加 `test.describe.skip`）；② **5 条来自旧 spec 当天新加 `test.fixme`**（均由 `f743b1b1a` 2026-11-12 12:43 这一处改动引入）：`knowledge-base.spec.ts` ×4（整组 `test.describe.fixme` 覆盖，文件自 `dba74a2d6` 2026-07-01）+ `full-ui-acceptance.spec.ts:447` ×1（用例体自 `bcc46e956` 2026-09-07）。",
     "counts": {
         "expected": 291,
