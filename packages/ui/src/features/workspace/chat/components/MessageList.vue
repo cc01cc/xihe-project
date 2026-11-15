@@ -372,6 +372,7 @@ const {
     captureAnchor,
     restoreAnchor,
     scrollTop: virtualScrollTop,
+    rowGap: virtualRowGap,
 } = useVirtualMessageWindow({
     rowKeys,
     enabled: virtualEnabled,
@@ -394,6 +395,15 @@ const topSpacerHeight = computed(() =>
 );
 const bottomSpacerHeight = computed(() =>
     virtualizationActive.value ? `${virtualWindow.value.bottomPadding}px` : "0px",
+);
+/**
+ * task-195 / D-1564 —— spacer 自己也是 flex 子节点，内容容器的 `row-gap` 会额外产生
+ * 两个 gap（顶部 spacer 之后、底部 spacer 之前）。这两个 gap 在「全量渲染」里并不存在，
+ * 不抵消掉的话 `scrollHeight` 恒多 2×gap；用负 margin 精确抵消，
+ * **不写死像素**（gap 读自 computed style，主题/密度变了自动跟随）。
+ */
+const spacerGapCompensation = computed(() =>
+    virtualizationActive.value && virtualRowGap.value > 0 ? `-${virtualRowGap.value}px` : "0px",
 );
 
 function rowElementRef(key: string, element: unknown): void {
@@ -629,7 +639,10 @@ watch(
                             v-if="virtualizationActive"
                             aria-hidden="true"
                             data-testid="virtual-top-spacer"
-                            :style="{ height: topSpacerHeight }"
+                            :style="{
+                                height: topSpacerHeight,
+                                marginBottom: spacerGapCompensation,
+                            }"
                         />
                         <template v-for="row in visibleRows" :key="row.key">
                             <div v-if="row.type === 'header'" :data-run-block="row.header.runId">
@@ -703,7 +716,10 @@ watch(
                             v-if="virtualizationActive"
                             aria-hidden="true"
                             data-testid="virtual-bottom-spacer"
-                            :style="{ height: bottomSpacerHeight }"
+                            :style="{
+                                height: bottomSpacerHeight,
+                                marginTop: spacerGapCompensation,
+                            }"
                         />
                     </MessageScrollerContent>
                 </MessageScrollerViewport>

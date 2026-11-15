@@ -43,6 +43,15 @@ export interface ComputeVirtualWindowOptions {
     viewportHeight: number;
     /** 上下各多渲染几行，避免快速滚动出现空白。 */
     overscan?: number;
+    /**
+     * 行间间距（px）—— 与内容容器的 `row-gap` 同源。
+     *
+     * task-195 / D-1564：内容容器是 `flex flex-col gap-8`，gap 只存在于**相邻子节点**之间，
+     * 而占位 spacer 自己也是一个子节点 ⇒ 只补行高的 spacer 会随「渲染行数」变化而少算 gap，
+     * 使 `scrollHeight` 在窗口边界反复变化（实测 Δ=28px = 一个 gap）⇒ 底部边界每帧一次写。
+     * 因此 spacer 的口径必须与渲染结构一致：每个被折叠行贡献 `行高 + gap`。
+     */
+    gap?: number;
 }
 
 export const DEFAULT_VIRTUAL_OVERSCAN = 6;
@@ -78,14 +87,17 @@ export function computeVirtualWindow({
     scrollTop,
     viewportHeight,
     overscan = DEFAULT_VIRTUAL_OVERSCAN,
+    gap = 0,
 }: ComputeVirtualWindowOptions): VirtualWindow {
     const count = heights.length;
     if (count === 0) {
         return { start: 0, end: 0, topPadding: 0, bottomPadding: 0, totalHeight: 0 };
     }
 
+    const safeGap = Math.max(0, gap);
     const prefix = buildPrefixHeights(heights);
-    const totalHeight = prefix[count];
+    // 每行实际占位 = 行高 + gap；最后一行后面没有 gap（与 flex 的 gap 语义一致）。
+    const totalHeight = prefix[count] + safeGap * Math.max(0, count - 1);
     const safeTop = Math.max(0, Math.min(scrollTop, Math.max(0, totalHeight - 1)));
     const safeHeight = Math.max(0, viewportHeight);
     const firstVisible = indexAtOffset(prefix, safeTop);
@@ -96,8 +108,11 @@ export function computeVirtualWindow({
     return {
         start,
         end,
-        topPadding: prefix[start],
-        bottomPadding: Math.max(0, totalHeight - prefix[end]),
+        // 被折叠行各贡献「行高 + gap」；渲染行之间的 gap 由 DOM 自己产生，故不再重复计入。
+        // bottomPadding 用「总高 − 渲染区底边」保持与 windowFromMeasurements 同一口径：
+        // 渲染区底边 = 末行底边 + 该行之前的 gap 数（end−1 个）。
+        topPadding: prefix[start] + safeGap * start,
+        bottomPadding: Math.max(0, totalHeight - (prefix[end] + safeGap * Math.max(0, end - 1))),
         totalHeight,
     };
 }

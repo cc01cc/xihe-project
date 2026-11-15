@@ -59,10 +59,21 @@ export interface UseVirtualMessageWindowReturn {
     restoreAnchor: (anchor: ScrollAnchor | null) => Promise<void>;
     /** 测试/调试用：当前是否真正启用窗口化。 */
     active: ComputedRef<boolean>;
+    /**
+     * 内容容器的行间间距（px，读自 `row-gap`）。
+     *
+     * task-195 / D-1564：占位 spacer 自己也是 flex 子节点，因此渲染层要在 spacer 上
+     * 抵消「多出来的两个 gap」（顶部 spacer 之后、底部 spacer 之前各一个），否则
+     * `scrollHeight` 会恒定多 2×gap。这里把实测 gap 暴露给渲染层，渲染层不写死像素。
+     */
+    rowGap: Ref<number>;
 }
 
 /** measureElement 读取的下标属性（与 useVirtualizer 的 indexAttribute 一致）。 */
 const VIRTUAL_INDEX_ATTRIBUTE = "data-virtual-index";
+
+/** 内容容器（`MessageScrollerContent` 的根节点）—— 行间距取自它的 computed `row-gap`。 */
+const CONTENT_SELECTOR = '[data-slot="message-scroller-content"]';
 
 /** 纯计算降级路径没有实测高度，统一按 fallback（渲染语义与迁移前一致）。 */
 const EMPTY_HEIGHTS: ReadonlyMap<string, number> = new Map();
@@ -76,6 +87,7 @@ export function useVirtualMessageWindow({
     const viewport = ref<HTMLElement | null>(null),
         viewportHeight = ref(0),
         scrollTop = ref(0),
+        rowGap = ref(0),
         rowElements = new Map<string, HTMLElement>(),
         keyToIndex = computed(() => {
             const map = new Map<string, number>();
@@ -83,6 +95,19 @@ export function useVirtualMessageWindow({
             for (let index = 0; index < keys.length; index += 1) map.set(keys[index], index);
             return map;
         });
+
+    /**
+     * 读内容容器的行间间距。只在 attach、内容尺寸变化（主题/密度切换）时读，
+     * 不进逐帧路径 —— 逐帧读 computed style 会强制样式解析，反过来改变被测时序。
+     */
+    function readRowGap(): void {
+        const content = viewport.value?.querySelector<HTMLElement>(CONTENT_SELECTOR) ?? null;
+        if (!content) return;
+        const style = getComputedStyle(content);
+        const parsed = Number.parseFloat(style.rowGap || style.gap || "0");
+        const next = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+        if (next !== rowGap.value) rowGap.value = next;
+    }
 
     /**
      * 库实例：getScrollElement 读响应式 viewport（attach 变化时 vue-virtual 重新订阅）。
@@ -100,6 +125,9 @@ export function useVirtualMessageWindow({
             overscan,
             getItemKey: (index: number) => rowKeys.value[index] ?? index,
             indexAttribute: VIRTUAL_INDEX_ATTRIBUTE,
+            // task-195 / D-1564：把行间距交给库 —— 库的 start 会按 `size + gap` 累加，
+            // spacer 因此天然按「行高 + gap」补齐被折叠行（不再随渲染行数抖动）。
+            gap: rowGap.value,
         })),
     );
 
@@ -133,6 +161,7 @@ export function useVirtualMessageWindow({
             scrollTop: scrollTop.value,
             viewportHeight: viewportHeight.value,
             overscan,
+            gap: rowGap.value,
         });
     }
 
@@ -147,7 +176,8 @@ export function useVirtualMessageWindow({
                 end: count,
                 topPadding: 0,
                 bottomPadding: 0,
-                totalHeight: count * Math.max(1, fallbackHeight),
+                totalHeight:
+                    count * Math.max(1, fallbackHeight) + rowGap.value * Math.max(0, count - 1),
             };
         }
         return measurementsWindow() ?? fallbackWindow();
@@ -172,6 +202,19 @@ export function useVirtualMessageWindow({
         syncViewportMetrics();
     }
 
+    /**
+     * 观察内容容器的尺寸：主题/密度切换会改 `row-gap` 与字号，resize 时重读一次。
+     * 用 ResizeObserver 而不是逐帧读，避免把样式解析塞进滚动帧。
+     */
+    let contentObserver: ResizeObserver | null = null;
+    function observeContent(): void {
+        contentObserver?.disconnect();
+        const content = viewport.value?.querySelector<HTMLElement>(CONTENT_SELECTOR) ?? null;
+        if (!content || typeof ResizeObserver === "undefined") return;
+        contentObserver = new ResizeObserver(() => readRowGap());
+        contentObserver.observe(content);
+    }
+
     function attach(element: HTMLElement | null): void {
         if (viewport.value === element) {
             syncViewportMetrics();
@@ -183,6 +226,8 @@ export function useVirtualMessageWindow({
             element.addEventListener("scroll", handleScroll, { passive: true });
         }
         syncViewportMetrics();
+        readRowGap();
+        observeContent();
         // attach 前挂载的行是在窗口化未生效时渲染的（measure 被跳过），这里补测一次。
         measureMountedRows();
     }
@@ -302,6 +347,8 @@ export function useVirtualMessageWindow({
 
     onBeforeUnmount(() => {
         attach(null);
+        contentObserver?.disconnect();
+        contentObserver = null;
         rowElements.clear();
     });
 
@@ -315,5 +362,6 @@ export function useVirtualMessageWindow({
         captureAnchor,
         restoreAnchor,
         active,
+        rowGap,
     };
 }
