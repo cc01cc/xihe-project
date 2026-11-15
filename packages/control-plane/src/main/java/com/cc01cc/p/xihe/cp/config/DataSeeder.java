@@ -44,6 +44,23 @@ public class DataSeeder implements CommandLineRunner {
                     () -> System.getProperty("XIHE_DEV_ADMIN_PASSWORD"),
                     DataSeeder::generatePassword);
 
+    /**
+     * task-172 follow-up (Lead ruling 2026-11-15): did {@link #ADMIN_PASSWORD} come from
+     * configuration, or was it minted for this boot? Only a <b>generated</b> value may ever be
+     * printed — an operator-supplied one is that operator's secret and stays out of the log.
+     *
+     * <p><b>Why print the generated one at all.</b> With {@code cp.bootstrap.seed-admin=true} and no
+     * {@code XIHE_DEV_ADMIN_PASSWORD}, the resolver falls through to {@link #generatePassword} and
+     * nobody can learn the password: the account exists, the operator cannot log in, and
+     * {@code reset-admin} only UPDATEs (missing row ⇒ exit 3, but here the row exists with an
+     * unknown hash). "A seeded account nobody can use" is a worse failure than "no account",
+     * because {@code bootstrap-status} reports {@code initialized: true} and the /onboarding path is
+     * already closed. So the generated value is disclosed exactly once, at creation, at WARN.
+     */
+    private static final boolean ADMIN_PASSWORD_GENERATED = !isPasswordConfigured(
+            () -> System.getenv("XIHE_DEV_ADMIN_PASSWORD"),
+            () -> System.getProperty("XIHE_DEV_ADMIN_PASSWORD"));
+
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final GrantDefaultService grantDefaultService;
@@ -118,6 +135,9 @@ public class DataSeeder implements CommandLineRunner {
             admin = new User("admin@xihe.local", passwordEncoder.encode(ADMIN_PASSWORD), "Admin");
             admin = userRepository.save(admin);
             log.info("Seeded default admin user: admin@xihe.local");
+            logSeededPasswordDisclosure(true);
+        } else {
+            logSeededPasswordDisclosure(false);
         }
         // PLAN-0580: V85's backfill runs before any account exists on a fresh
         // database, so the seeded admin must claim ownership afterwards. The call
@@ -176,6 +196,46 @@ public class DataSeeder implements CommandLineRunner {
             return;
         }
         orgUnitMembers.place(HUMAN, admin.getId(), ROOT_ORG_UNIT_ID);
+    }
+
+    /**
+     * Disclose the seeded admin's password <b>only</b> when this boot generated it — never when it
+     * came from {@code XIHE_DEV_ADMIN_PASSWORD} (that is the operator's own secret).
+     *
+     * @param created {@code true} when this boot inserted the row, i.e. the value below is the one
+     *                that is actually in the database; {@code false} when an existing row was
+     *                reused, where this boot's generated value was never applied.
+     */
+    private void logSeededPasswordDisclosure(boolean created) {
+        if (!ADMIN_PASSWORD_GENERATED) {
+            log.info("Seeded admin password: from XIHE_DEV_ADMIN_PASSWORD (env or .env chain);"
+                    + " the value is not logged.");
+            return;
+        }
+        if (created) {
+            log.warn("Seeded admin password was GENERATED for this boot (XIHE_DEV_ADMIN_PASSWORD was"
+                    + " not set) and is printed exactly once: admin@xihe.local / {}. Set"
+                    + " XIHE_DEV_ADMIN_PASSWORD to pin it across restarts; this line will not repeat.",
+                    ADMIN_PASSWORD);
+            return;
+        }
+        log.warn("admin@xihe.local already existed, so this boot's GENERATED password was not applied"
+                + " and that row's password is unknown to this process. Set a known one with"
+                + " `mise run reset-admin` (XIHE_RESET_ADMIN_PASSWORD) or log in with the password"
+                + " printed when the row was created.");
+    }
+
+    /**
+     * PLAN-0547 priority contract, split out so the "was it generated?" question and the value
+     * itself cannot drift apart: both consult the same two suppliers in the same order.
+     */
+    static boolean isPasswordConfigured(java.util.function.Supplier<String> env,
+                                       java.util.function.Supplier<String> property) {
+        String configured = env.get();
+        if (configured == null || configured.isBlank()) {
+            configured = property.get();
+        }
+        return configured != null && !configured.isBlank();
     }
 
     private static String generatePassword() {

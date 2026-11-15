@@ -99,6 +99,8 @@ curl.exe -s -X POST http://127.0.0.1:12631/api/v1/auth/login -H "Content-Type: a
 
 `mise run reset-admin` **不是**这条补救的替代：它只做 UPDATE（账号行不存在时 exit 3），前提是账号已经存在。
 
+> **只开开关、不给密码会怎样**（task-172 补）：`XIHE_DEV_ADMIN_PASSWORD` 未设时 `DataSeeder` 走三级解析的**随机生成**分支，密码在**创建那一刻以 WARN 打印一次**（`Seeded admin password was GENERATED for this boot … admin@xihe.local / <密码>`），之后重启不再重复。所以「有账号但没人知道密码」不会发生 —— 但那条 WARN 是**唯一一次**，请当场落进本地密码文件；已有的账号被复用时打的是另一条 WARN（提示用 `reset-admin` 设已知密码），因为随机值没有写进那一行。
+
 > **dev 车道注意**：`dev:host` / `dev:stack` 的既有假设是「空库启动即有 admin」（§4「dev 管理员密码自动注入」靠 `XIHE_DEV_ADMIN_PASSWORD` 落库）。
 > 开关默认关之后，空库起栈**不会**有 admin ⇒ **车道已代你打开**：`scripts/dev-stack.mjs` 的 `childEnv` 与 `scripts/stack-run.mjs` 的派生 env 都在「运算符没设」时补 `XIHE_SEED_ADMIN=true`（`test:cli` 的 `stack-run.test.mjs` 钉着这两处接线与「显式值优先」）；起栈日志会打一行 `[dev-stack] XIHE_SEED_ADMIN=…`，开关关的 CP 会打 `Skipped the seeded admin: …`。你自己导出的值优先——想复现「全新安装」形态就显式 `XIHE_SEED_ADMIN=false`。
 
