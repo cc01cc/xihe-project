@@ -63,7 +63,10 @@ function parseOxlintJson(text, label) {
         console.error("FAIL " + label + " 不是 JSON（前 400 字符）：" + String(text).slice(0, 400));
         process.exit(2);
     }
-    return { diagnostics: parsed.diagnostics ?? [], number_of_files: parsed.number_of_files ?? null };
+    return {
+        diagnostics: parsed.diagnostics ?? [],
+        number_of_files: parsed.number_of_files ?? null,
+    };
 }
 
 /**
@@ -91,7 +94,19 @@ export function summarize(diagnostics) {
     return { total, errors, byRule, locations };
 }
 
-/** 按族比较当前读数与基线：返回增长族（含新增 file:line 差集）。 */
+/** `file:line` → `file`（只切最后一处冒号：oxlint 的 filename 是相对路径，无盘符风险，也不依赖平台）。 */
+function fileOf(at) {
+    const cut = at.lastIndexOf(":");
+    return cut > 0 ? at.slice(0, cut) : at;
+}
+
+/**
+ * 按族比较当前读数与基线：返回增长族（含**新文件**清单）。
+ *
+ * 判据量只有 `diff`（计数）；`added` 仅供打印，**从不参与 exit code**。
+ * 新增判定按 **file 前缀**：该 file 在基线的同族坐标里已出现 ⇒ 视为行号漂移/同文件新增，
+ * 不列为「新文件」（否则一次只加注释的重构会把整族坐标都报成新增，噪音淹没真信号）。
+ */
 export function grownFamilies(now, baseline) {
     const baseByRule = baseline?.byRule ?? {};
     const baseLocations = baseline?.locations ?? {};
@@ -100,15 +115,20 @@ export function grownFamilies(now, baseline) {
     return Object.entries(now.byRule)
         .map(([rule, count]) => {
             const before = baseByRule[rule] ?? 0;
-            const baseList = baseLocations[rule];
-            const baseSet = baseList ? new Set(baseList) : new Set();
+            const baseFiles = new Set((baseLocations[rule] ?? []).map(fileOf));
             return {
                 rule,
                 count,
                 before,
                 diff: count - before,
                 added: hasLocations
-                    ? (now.locations[rule] ?? []).filter((at) => !baseSet.has(at))
+                    ? [
+                          ...new Map(
+                              (now.locations[rule] ?? [])
+                                  .filter((at) => !baseFiles.has(fileOf(at)))
+                                  .map((at) => [fileOf(at), at]),
+                          ).values(),
+                      ]
                     : [],
             };
         })
@@ -147,8 +167,18 @@ function renderReport(now, baseline, grown) {
                     entry.count +
                     "）",
             );
-            for (const at of entry.added.slice(0, 20)) lines.push("      新增  " + at);
-            if (entry.added.length > 20) lines.push("      …另有 " + (entry.added.length - 20) + " 处");
+            if (entry.added.length) {
+                lines.push(
+                    "      新增文件（" +
+                        entry.added.length +
+                        "）：" +
+                        entry.added.slice(0, 10).join("、") +
+                        (entry.added.length > 10
+                            ? " …另 " + (entry.added.length - 10) + " 个"
+                            : ""),
+                );
+                lines.push("      行号见 --list <族>：行号漂移不算新增（按 file 前缀判定）");
+            }
         }
     } else {
         lines.push("无增长的族。");
@@ -284,6 +314,21 @@ function selftest() {
             wantText: ["errors 1", "FAIL errors="],
         },
         {
+            name: "⑧ 文件已在基线、行号整体 +100 且同文件多一处 ⇒ 计数红，但**不出现噪音条目**",
+            fixture: writeFixture("line-shift.json", [
+                warn("import(first)", "a.ts", 101),
+                warn("import(first)", "a.ts", 102),
+                warn("import(first)", "b.ts", 101),
+                warn("typescript(consistent-type-imports)", "c.ts", 103),
+                warn("typescript(consistent-type-imports)", "d.ts", 109),
+            ]),
+            baseline: base,
+            enforce: true,
+            wantExit: 1,
+            wantText: ["import(first)", "2 → 3"],
+            wantAbsent: ["新增文件", "a.ts:101"],
+        },
+        {
             name: "⑥ 基线无 byRule（旧格式）⇒ 不按族红，只告警",
             fixture: writeFixture("legacy.json", [warn("import(first)", "z.ts", 1)]),
             baseline: { total: 0 },
@@ -296,8 +341,7 @@ function selftest() {
     let failed = 0;
     for (const testCase of cases) {
         const now = summarize(
-            parseOxlintJson(readFileSync(testCase.fixture, "utf8"), testCase.fixture)
-                .diagnostics,
+            parseOxlintJson(readFileSync(testCase.fixture, "utf8"), testCase.fixture).diagnostics,
         );
         const grown = grownFamilies(now, testCase.baseline);
         const legacyBaseline = !testCase.baseline.byRule;
@@ -307,13 +351,18 @@ function selftest() {
         else if (testCase.enforce && grown.length && !legacyBaseline) exit = 1;
         else if (testCase.enforce && grown.length) lines.push("WARN 基线无族数据 ⇒ 本次不按族阻断");
         if (now.errors > 0) lines.push("FAIL errors=" + now.errors);
-        if (exit === 0 && !testCase.enforce && grown.length) lines.push("REPORT-ONLY 有增长但未 --enforce");
+        if (exit === 0 && !testCase.enforce && grown.length)
+            lines.push("REPORT-ONLY 有增长但未 --enforce");
         const text = lines.join("\n");
         const exitOk = exit === testCase.wantExit;
-        const textOk = testCase.wantText.every((needle) => text.includes(needle));
+        const textOk =
+            testCase.wantText.every((needle) => text.includes(needle)) &&
+            (testCase.wantAbsent ?? []).every((needle) => !text.includes(needle));
         if (!exitOk || !textOk) {
             failed += 1;
-            console.error("FAIL " + testCase.name + " ⇒ exit=" + exit + "（期望 " + testCase.wantExit + "）");
+            console.error(
+                "FAIL " + testCase.name + " ⇒ exit=" + exit + "（期望 " + testCase.wantExit + "）",
+            );
             console.error(text);
         } else {
             console.log("PASS " + testCase.name);
@@ -355,9 +404,7 @@ function main() {
             generatedAt: new Date().toISOString(),
         };
         writeFileSync(BASELINE, JSON.stringify(payload, null, 2) + "\n", "utf8");
-        console.log(
-            "WROTE 基线 total=" + now.total + "（errors=" + now.errors + "）⇒ " + BASELINE,
-        );
+        console.log("WROTE 基线 total=" + now.total + "（errors=" + now.errors + "）⇒ " + BASELINE);
         process.exit(now.errors === 0 ? 0 : 1);
     }
 
@@ -384,7 +431,9 @@ function main() {
     for (const line of lines) console.log(line);
 
     if (now.errors > 0) {
-        console.error("FAIL errors=" + now.errors + "（ratchet 只放宽 warnings，errors 恒为硬失败）");
+        console.error(
+            "FAIL errors=" + now.errors + "（ratchet 只放宽 warnings，errors 恒为硬失败）",
+        );
         process.exit(1);
     }
     if (!baseline.byRule) {
