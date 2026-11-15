@@ -186,6 +186,34 @@ describe("WorkspaceStatusBar 面包屑（task-160 从导航行搬来）", () => 
         wrapper.unmount();
     });
 
+    /**
+     * task-185（S2a 遗留）：**chat 页没有「当前项」是设计，不是缺陷**。
+     *
+     * 证据链：`router/index.ts:135` 明写 chat 路由**不带** `meta.workspacePage`（入口是会话列表）；
+     * `useWorkspaceNav.ts:80` 明写「无独立页名的路由（如聊天页）只有两段」；模板里末段是
+     * `v-if="trail.page"` ⇒ chat 页只有「工作区 › 工作区名」两段，`aria-current="page"` 自然为 0
+     * （它由 vendor `BreadcrumbPage.vue:15` 硬写，而该组件根本没被渲染）。
+     *
+     * ⇒ 判据③ 收紧为「**有独立页名的页面**，面包屑存在时状态栏恰 1 处」。
+     * 本用例把这条设计钉住：一旦有人给 chat 路由补 `meta.workspacePage`（改变导航清单），它会红。
+     */
+    it("chat 页（无独立页名）只有两段且没有 aria-current —— 设计如此，判据只对多级页面成立", async () => {
+        await setAuthWorkspace(WORKSPACE_ID, WORKSPACE_NAME);
+        routeState.routeName = "workspace-chat";
+        const wrapper = await mountBar();
+
+        // 数 `breadcrumb-item`（vendor 的 `li` 会同时承载条目与分隔符 ⇒ 直接数 `li` 会多一个）。
+        const items = wrapper.findAll('[data-slot="breadcrumb-item"]');
+        const whole = wrapper.find('[data-testid="workspace-breadcrumb"]').text();
+        expect(items.length, "两段：工作区 › 工作区名").toBe(2);
+        expect(whole).toContain("工作区");
+        expect(whole).toContain(WORKSPACE_NAME);
+        expect(wrapper.findAll('[aria-current="page"]').length, "无末段 ⇒ 无当前项").toBe(0);
+        // 末段不是「用了 span 的链接」，而是**整段不存在**：连 BreadcrumbPage 都没有。
+        expect(wrapper.find('[data-slot="breadcrumb-page"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
     it("面包屑与读数同排：面包屑在状态栏容器内部（不是被搬到别处）", async () => {
         await setAuthWorkspace(WORKSPACE_ID, WORKSPACE_NAME);
         const wrapper = await mountBar();
