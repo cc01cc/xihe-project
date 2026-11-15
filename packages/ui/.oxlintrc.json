@@ -27,6 +27,7 @@
         "no-await-in-loop": "off",
         "no-continue": "off",
         "no-implicit-coercion": "off",
+        "one-var": "off",
         "prefer-const": "error",
         "prefer-destructuring": "off",
         "prefer-exponentiation-operator": "off",
