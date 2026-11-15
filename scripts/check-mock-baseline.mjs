@@ -24,6 +24,11 @@
  * checkout-mtime artifacts, measured 2026-11-12): the naive layer only marks "suspicious";
  * only a spec that is untracked/dirty, or whose last commit is NEWER than the report, is red.
  * `git log -1 --format=%ct` is the evidence — never the file mtime (checkout rewrites it).
+ *
+ * task-272 / D-1648（2026-11-16）: 所有子进程调用显式 timeout（值按 internal/A03-xihe/docs/
+ * test-timeout-budget.md 分档，实测见常量注释）；子进程「超时 / 启动错误 / 信号杀死」必须
+ * 显式失败（E_SELFTEST_CHILD_*），git 失败不得吞成「git = ok」。只加 timeout 会把响亮挂起
+ * 变成静默假绿（D-1644②），故 catch 错误传播同批收口；判据强度不变。
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -35,6 +40,31 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
+ * task-272 / D-1648：子进程超时一律显式、动态可配（test-timeout-budget.md §1.4），
+ * 非法值 fail-fast（§2.1 模式：不静默回落默认值——「我设了却没生效」比「没设」更难查）。
+ * 分档与实测（2026-11-16，本机，5/3 轮）：
+ *   - git 一次性查询：§1.2 默认 ≤10s（实测 rev-parse 11–23ms / status -uall 46–79ms）；
+ *   - selftest 子门运行：§1.2 默认 ≤10s（实测单child 448–479ms，约 20 倍余量）；
+ *   - pwsh 进程数探针：§2 监控/巡检档 ≤5s、上限 10s（实测 358–779ms）——原 20s 超该档上限，下调。
+ * env 覆盖上限：git/selftest 30s（§2 test 档上限；>10s 属外部进程启动豁免，§1.3），探针 10s（该档上限）。
+ */
+function timeoutFromEnv(name, defaultMs, capMs) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return defaultMs;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0 || value > capMs) {
+        throw new Error(
+            `E_MOCK_TIMEOUT_CONFIG: ${name} must be a positive integer <= ${capMs} (ms), got ${JSON.stringify(raw)}`,
+        );
+    }
+    return value;
+}
+// timeout-exempt: external-process（git/子 node 启动在慢机器上可超 10s；仅 env 覆盖可达，上限 30s）
+const GIT_TIMEOUT_MS = timeoutFromEnv("XIHE_MOCK_GIT_TIMEOUT_MS", 10_000, 30_000);
+const SELFTEST_CHILD_TIMEOUT_MS = timeoutFromEnv("XIHE_MOCK_SELFTEST_TIMEOUT_MS", 10_000, 30_000);
+const PROBE_TIMEOUT_MS = timeoutFromEnv("XIHE_MOCK_PROBE_TIMEOUT_MS", 5_000, 10_000);
+
+/**
  * PLAN-0739: resolve the A03 checkout the caller is actually in (primary checkout or
  * linked worktree) instead of guessing it from this file's location. `mise` runs tasks at
  * the repo root, and every other entry point passes `--report`/`--baseline` explicitly.
@@ -44,6 +74,7 @@ function resolveRepoRoot() {
         return execFileSync("git", ["rev-parse", "--show-toplevel"], {
             cwd: process.cwd(),
             encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
         }).trim();
     } catch {
         return path.resolve(HERE, "..");
@@ -369,6 +400,7 @@ export function detectStaleReport({ repoRoot, reportPath }) {
         const raw = execFileSync("git", ["status", "--porcelain", "-z", "--untracked-files=all"], {
             cwd: repoRoot,
             encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
         });
         for (const entry of raw.split("\0").filter(Boolean)) {
             dirtyPaths.add(entry.slice(3).split(path.sep).join("/"));
@@ -381,6 +413,7 @@ export function detectStaleReport({ repoRoot, reportPath }) {
             const raw = execFileSync("git", ["log", "-1", "--format=%ct", "--", relPath], {
                 cwd: repoRoot,
                 encoding: "utf8",
+                timeout: GIT_TIMEOUT_MS,
             }).trim();
             const value = Number(raw);
             return Number.isFinite(value) && value > 0 ? value : null;
@@ -448,11 +481,13 @@ export function resolveChangedSpecs({ repoRoot, baselinePath }) {
             cwd: repoRoot,
             encoding: "utf8",
             maxBuffer: 32 * 1024 * 1024,
+            timeout: GIT_TIMEOUT_MS,
         }).trim();
     try {
         const raw = execFileSync("git", ["status", "--porcelain", "-z", "--untracked-files=all"], {
             cwd: repoRoot,
             encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
         });
         for (const entry of raw.split("\0").filter(Boolean)) {
             const rel = normalizePath(entry.slice(3));
@@ -500,8 +535,13 @@ export function resolveChangedSpecs({ repoRoot, baselinePath }) {
                     specs.add(rel);
                 }
             }
-        } catch {
-            // 基线未入库 / 无历史 ⇒ 只剩工作树来源，`baselineCommit` 留 null，WARN 里点名。
+        } catch (error) {
+            // task-272 / D-1648：git **失败**（非零退出 / 启动错误 / 超时）≠「基线未入库 / 无历史」——
+            // 后者是 git 成功但输出为空（不抛异常），走上面的 if (commit) 分支，gitAvailable 保持 true。
+            // 失败必须显式降级为「只认工作树」并记录原因（basis 里点名），不得吞成「git = ok」：
+            // 那会让判据 ① 悄悄丢掉提交面改动集，flaky 落在已提交 spec 里时被当「改动面外」放行（假绿）。
+            result.gitAvailable = false;
+            result.gitError = String(error?.message ?? error);
         }
     }
     // 只认 e2e 车道内的 spec：mock 报告只可能包含 e2e 用例，把 `src/**/*.spec.ts`
@@ -524,7 +564,8 @@ function probeProcessCounts() {
                     "-Command",
                     "@(Get-Process -Name ".concat(name, " -ErrorAction SilentlyContinue).Count"),
                 ],
-                { encoding: "utf8", timeout: 20000 },
+                // task-272：监控/巡检档 ≤5s、上限 10s（test-timeout-budget.md §2）；原 20s 超上限。
+                { encoding: "utf8", timeout: PROBE_TIMEOUT_MS },
             ).trim();
             const value = Number(out);
             return Number.isFinite(value) ? value : null;
@@ -544,10 +585,12 @@ function treeFingerprint(repoRoot) {
         const head = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
             cwd: repoRoot,
             encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
         }).trim();
         const porcelain = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
             cwd: repoRoot,
             encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
         });
         const lines = porcelain.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
         return { head, dirty: lines };
@@ -589,7 +632,10 @@ export function evaluateFlakyPolicy({ flakyCases, changedSpecs, history, env }) 
             "changed = ".concat(changed.size, " spec file(s) [dirty + since-baseline]"),
             "baseline commit = ".concat(changedSpecs?.baselineCommit ?? "unknown"),
             "git = ".concat(
-                changedSpecs?.gitAvailable === false ? "unavailable(① 退化为只认工作树)" : "ok",
+                changedSpecs?.gitAvailable === false
+                    ? "unavailable(① 退化为只认工作树)" +
+                          (changedSpecs?.gitError ? ": " + changedSpecs.gitError : "")
+                    : "ok",
             ),
         ].join("; ");
         if (inChanged.length > 0) {
@@ -756,7 +802,11 @@ export function reportCollectedAt(report, reportPath) {
 
 function headCommit(repoRoot) {
     try {
-        return execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+        return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            timeout: GIT_TIMEOUT_MS,
+        }).trim();
     } catch {
         return "(unavailable)";
     }
@@ -785,7 +835,9 @@ export function applyBaselineCounts({ baseline, summary, sourceRun, collectedAt 
         failed: summary.failed,
         flaky: 0,
     };
-    if (typeof baseline?.sourceRun !== "undefined" || true) next.sourceRun = sourceRun;
+    // task-272 同批 lint 收口：原条件含恒真析取项（e2b489152 引入，no-constant-condition 红）；
+    // 语义不变——本来就无条件写 sourceRun。
+    next.sourceRun = sourceRun;
     if (typeof baseline?.generatedAt === "string") next.generatedAt = collectedAt.slice(0, 10);
     return next;
 }
@@ -904,6 +956,29 @@ export function runWriteBaseline({ options, report, summary, baseline }) {
     return 0;
 }
 
+/**
+ * task-272 / D-1648②：子进程的**基础设施失败**（超时 / 启动错误 / 信号杀死）必须显式分类。
+ * 只加 timeout 而不看 result.error/signal，会把「响亮挂起」变成「exit=null 恰好撞断言」的
+ * 静默假绿族（D-1644②）——这里把失败原因写成明确错误码，selftest 逐例强制红。
+ * 返回 null = 子进程正常跑完（退出码可能非 0，那由用例断言判，不属于基础设施失败）。
+ * 与 scripts/run-with-timeout.mjs 的分类口径一致（ETIMEDOUT / error / status===null）。
+ */
+export function classifyChildFailure(result, timeoutMs) {
+    if (result?.error) {
+        if (result.error.code === "ETIMEDOUT") {
+            return (
+                "E_SELFTEST_CHILD_TIMEOUT: child exceeded " + timeoutMs +
+                "ms and was killed（超时是失败上界，不是等待；test-timeout-budget.md §1.1）"
+            );
+        }
+        return "E_SELFTEST_CHILD_SPAWN: failed to start child: " + result.error.message;
+    }
+    if (result?.status === null || result?.status === undefined) {
+        return "E_SELFTEST_CHILD_KILLED: child terminated by signal " + (result?.signal ?? "unknown") + " without an exit code";
+    }
+    return null;
+}
+
 function runSelftest() {
     selftestCases = [];
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-selftest-"));
@@ -951,6 +1026,9 @@ function runSelftest() {
         fs.writeFileSync(reportFile, JSON.stringify(report));
         fs.writeFileSync(baselineFile, JSON.stringify(baseline));
         if (history) fs.writeFileSync(historyFile, JSON.stringify(history));
+        // task-272：显式 timeout（§1.2 默认 10s，实测单 child ~450ms）。Windows 注意：
+        // spawnSync 的 timeout 杀的是子进程本身而非整棵子树（run-with-timeout.mjs 同款限制）——
+        // 子门自己的 git/pwsh 调用也都有 timeout，故孤儿进程有界；挂住夹具本身不起孙进程。
         const result = spawnSync(
             process.execPath,
             [
@@ -964,10 +1042,12 @@ function runSelftest() {
                 "--no-probe-procs",
                 ...extra,
             ],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: SELFTEST_CHILD_TIMEOUT_MS },
         );
-        const output = (result.stdout ?? "") + (result.stderr ?? "");
-        selftestCases.push({ name, exit: result.status, output });
+        const childFailure = classifyChildFailure(result, SELFTEST_CHILD_TIMEOUT_MS);
+        let output = (result.stdout ?? "") + (result.stderr ?? "");
+        if (childFailure) output += "\n[selftest] " + childFailure + "\n";
+        selftestCases.push({ name, exit: result.status, output, childFailure });
         return { exit: result.status, output, baselineFile, reportFile };
     };
     const cleanBaseline = {
@@ -1089,13 +1169,16 @@ function runSelftest() {
         const subset = spawnSync(
             process.execPath,
             [self, "--report", subsetReport, "--baseline", subsetBaseline, "--no-probe-procs"],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: SELFTEST_CHILD_TIMEOUT_MS },
         );
-        const subsetOutput = (subset.stdout ?? "") + (subset.stderr ?? "");
+        const subsetFailure = classifyChildFailure(subset, SELFTEST_CHILD_TIMEOUT_MS);
+        let subsetOutput = (subset.stdout ?? "") + (subset.stderr ?? "");
+        if (subsetFailure) subsetOutput += "\n[selftest] " + subsetFailure + "\n";
         selftestCases.push({
             name: "⑥ 子集报告 ⇒ exit 2",
             exit: subset.status,
             output: subsetOutput,
+            childFailure: subsetFailure,
         });
         assertCase(subset.status === 2 && /E_MOCK_REPORT_SCOPE/.test(subsetOutput), "⑥");
         // ⑦ task-211：counts 与 sourceRun 不一致且**没有** $countsDerivation ⇒ 必须红（exit 1，点名两处数字）
@@ -1193,11 +1276,12 @@ function runSelftest() {
         const writeReport = path.join(writeDir, "report.json");
         const writeBaseline = path.join(writeDir, "baseline.json");
         const writeHistory = path.join(writeDir, "history.json");
-        const writeCase = (name, exit, output, ok) => {
-            selftestCases.push({ name, exit, output, ok: Boolean(ok) });
+        const writeCase = (name, exit, output, ok, childFailure = null) => {
+            // task-272 / D-1648：与 assertCase 同口径——基础设施失败恒红。
+            selftestCases.push({ name, exit, output, ok: Boolean(ok) && !childFailure, childFailure });
         };
-        const runWrite = (flags = ["--write-baseline"]) =>
-            spawnSync(
+        const runWrite = (flags = ["--write-baseline"]) => {
+            const result = spawnSync(
                 process.execPath,
                 [
                     self,
@@ -1211,8 +1295,13 @@ function runSelftest() {
                     "--allow-stale-report",
                     ...flags,
                 ],
-                { encoding: "utf8" },
+                { encoding: "utf8", timeout: SELFTEST_CHILD_TIMEOUT_MS },
             );
+            const childFailure = classifyChildFailure(result, SELFTEST_CHILD_TIMEOUT_MS);
+            let output = (result.stdout ?? "") + (result.stderr ?? "");
+            if (childFailure) output += "\n[selftest] " + childFailure + "\n";
+            return { status: result.status, output, childFailure };
+        };
         const writeReportJson = (stats, specs) => {
             fs.writeFileSync(
                 writeReport,
@@ -1254,7 +1343,7 @@ function runSelftest() {
             ],
         );
         const refused = runWrite();
-        const refusedOut = (refused.stdout ?? "") + (refused.stderr ?? "");
+        const refusedOut = refused.output;
         writeCase(
             "⑪ failed≠0 ⇒ 拒写 + 列 failed 清单 + 文件不变",
             refused.status,
@@ -1264,6 +1353,7 @@ function runSelftest() {
                 /red case A/.test(refusedOut) &&
                 /red case B/.test(refusedOut) &&
                 readBaselineFile() === refusedBefore,
+            refused.childFailure,
         );
 
         // ⑫ 正例：failed=0 ⇒ 计数跟随实际收集数，sourceRun 可回溯
@@ -1278,7 +1368,7 @@ function runSelftest() {
             ],
         );
         const written = runWrite();
-        const writtenOut = (written.stdout ?? "") + (written.stderr ?? "");
+        const writtenOut = written.output;
         const afterFirst = JSON.parse(readBaselineFile());
         writeCase(
             "⑫ failed=0 ⇒ 写计数 + sourceRun 带命令/时刻/HEAD/sha256/收集数",
@@ -1294,17 +1384,19 @@ function runSelftest() {
                 /specs sha256 [0-9a-f]{16}/.test(afterFirst.sourceRun) &&
                 /expected=300/.test(afterFirst.sourceRun) &&
                 /skipped=2/.test(afterFirst.sourceRun),
+            written.childFailure,
         );
 
         // ⑬ 幂等：同一跑次连写两次 ⇒ 字节相同（第二次必须说「字节相同」）
         const firstBytes = readBaselineFile();
         const again = runWrite();
-        const againOut = (again.stdout ?? "") + (again.stderr ?? "");
+        const againOut = again.output;
         writeCase(
             "⑬ 同跑次连写两次 ⇒ 字节相同",
             again.status,
             againOut,
             again.status === 0 && /字节相同/.test(againOut) && readBaselineFile() === firstBytes,
+            again.childFailure,
         );
 
         // ⑭ 纠错：手改 expected=9999（failed 仍为 0）⇒ 下次运行纠正回实际值，且字节复原
@@ -1312,7 +1404,7 @@ function runSelftest() {
         tampered.counts.expected = 9999;
         fs.writeFileSync(writeBaseline, JSON.stringify(tampered, null, 4) + "\n");
         const corrected = runWrite([]);
-        const correctedOut = (corrected.stdout ?? "") + (corrected.stderr ?? "");
+        const correctedOut = corrected.output;
         const afterCorrect = JSON.parse(readBaselineFile());
         writeCase(
             "⑭ 手改 expected=9999 ⇒ 下次运行纠正回实际值",
@@ -1322,6 +1414,7 @@ function runSelftest() {
                 afterCorrect.counts.expected === 300 &&
                 /9999 → 300/.test(correctedOut) &&
                 readBaselineFile() === firstBytes,
+            corrected.childFailure,
         );
         // ⑮ 默认模式（不加任何旗标）下 failed≠0 ⇒ 文件一个字节都不动，且明说「跳过」
         const beforeFifteen = readBaselineFile();
@@ -1335,7 +1428,7 @@ function runSelftest() {
             ],
         );
         const plainRed = runWrite([]);
-        const plainRedOut = (plainRed.stdout ?? "") + (plainRed.stderr ?? "");
+        const plainRedOut = plainRed.output;
         writeCase(
             "⑮ 默认模式 failed≠0 ⇒ 不写 + 明说跳过 + 文件不变",
             plainRed.status,
@@ -1343,6 +1436,7 @@ function runSelftest() {
             plainRed.status === 1 &&
                 /计数自动跟随\*\*跳过\*\*/.test(plainRedOut) &&
                 readBaselineFile() === beforeFifteen,
+            plainRed.childFailure,
         );
 
     } finally {
@@ -1365,7 +1459,9 @@ function runSelftest() {
 
 function assertCase(condition, label) {
     const item = selftestCases.pop();
-    item.ok = Boolean(condition);
+    // task-272 / D-1648：子进程基础设施失败（超时/启动错误/被杀）⇒ 恒红，
+    // 不允许被「断言恰好成立」盖过去（只强化，不放松）。
+    item.ok = Boolean(condition) && !item.childFailure;
     selftestCases.push(item);
     if (!item.ok) console.error(`[selftest] FAIL ${label}: ${item.name}`);
 }

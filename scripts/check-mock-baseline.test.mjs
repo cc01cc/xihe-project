@@ -10,15 +10,21 @@ import { fileURLToPath } from "node:url";
 import {
     applyBaselineCounts,
     buildSourceRunText,
+    classifyChildFailure,
     compareWithBaseline,
     evaluateFlakyPolicy,
     inspectBaselineCounts,
     parseCountsFromSourceRun,
+    resolveChangedSpecs,
     summarizeReport,
     writeBaselineIfChanged,
 } from "./check-mock-baseline.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-mock-baseline.mjs", import.meta.url));
+
+// task-272：工作区口径「所有子进程调用显式传 timeout」（test-timeout-budget.md §1.2 默认 10s；
+// 实测单 child 门运行 ~450ms，2026-11-16）。夹具 git 操作同档。
+const CHILD_TIMEOUT_MS = 10_000;
 
 const REPORT = {
     suites: [
@@ -67,7 +73,7 @@ function runCli(dir, extra = []) {
     return spawnSync(
         process.execPath,
         [SCRIPT, "--report", reportFile, "--baseline", baselineFile, ...extra],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
     );
 }
 
@@ -131,7 +137,7 @@ test("PLAN-0735 zero-flaky design: flaky=0 ⇒ exit 0", () => {
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /OK/);
@@ -203,7 +209,7 @@ function runFlaky(dir, extra = [], history = null) {
             "--no-probe-procs",
             ...extra,
         ],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
     );
 }
 
@@ -253,7 +259,7 @@ test("task-179 判据③: 基线 counts.flaky 非 0 ⇒ E_MOCK_BASELINE_FLAKY_NO
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--no-probe-procs"],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 2, result.stdout + result.stderr);
         assert.match(result.stderr, /E_MOCK_BASELINE_FLAKY_NONZERO/);
@@ -346,7 +352,7 @@ test("skip count drift ⇒ exit 1 with E_MOCK_BASELINE_DRIFT", () => {
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 1);
         assert.match(result.stderr, /E_MOCK_BASELINE_DRIFT/);
@@ -364,7 +370,7 @@ test("failed count != 0 ⇒ exit 1", () => {
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 1);
         assert.match(result.stderr, /failed: baseline=0 actual=1/);
@@ -381,7 +387,7 @@ test("--allow-drift accepts deliberately", () => {
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile, "--allow-drift"],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /drift accepted/);
@@ -416,7 +422,7 @@ test("task-48: subset report filename ⇒ exit 2 E_MOCK_REPORT_SCOPE", () => {
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 2, result.stdout + result.stderr);
         assert.match(result.stderr, /E_MOCK_REPORT_SCOPE/);
@@ -438,7 +444,7 @@ test("task-48: report covering <50% of baseline ⇒ exit 2 E_MOCK_REPORT_SCOPE",
         const result = spawnSync(
             process.execPath,
             [SCRIPT, "--report", reportFile, "--baseline", baselineFile],
-            { encoding: "utf8" },
+            { encoding: "utf8", timeout: CHILD_TIMEOUT_MS },
         );
         assert.equal(result.status, 2, result.stdout + result.stderr);
         assert.match(result.stderr, /E_MOCK_REPORT_SCOPE/);
@@ -468,19 +474,20 @@ const OLD_COMMIT = "2026-01-01T00:00:00Z";
 function makeRepo() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "mock-stale-"));
     fs.mkdirSync(path.join(root, "packages/ui/e2e/mock"), { recursive: true });
-    execFileSync("git", ["init", "-q"], { cwd: root });
-    execFileSync("git", ["config", "user.email", "selftest@example.test"], { cwd: root });
-    execFileSync("git", ["config", "user.name", "selftest"], { cwd: root });
+    execFileSync("git", ["init", "-q"], { cwd: root, timeout: CHILD_TIMEOUT_MS });
+    execFileSync("git", ["config", "user.email", "selftest@example.test"], { cwd: root, timeout: CHILD_TIMEOUT_MS });
+    execFileSync("git", ["config", "user.name", "selftest"], { cwd: root, timeout: CHILD_TIMEOUT_MS });
     return root;
 }
 
 function commitSpec(root, relativePath, content) {
     const abs = path.join(root, relativePath);
     fs.writeFileSync(abs, content);
-    execFileSync("git", ["add", relativePath], { cwd: root });
+    execFileSync("git", ["add", relativePath], { cwd: root, timeout: CHILD_TIMEOUT_MS });
     execFileSync("git", ["commit", "-q", "-m", "spec"], {
         cwd: root,
         env: { ...process.env, GIT_AUTHOR_DATE: OLD_COMMIT, GIT_COMMITTER_DATE: OLD_COMMIT },
+        timeout: CHILD_TIMEOUT_MS,
     });
     return abs;
 }
@@ -515,7 +522,7 @@ function runInRepo(root, files, extra = []) {
     return spawnSync(
         process.execPath,
         [SCRIPT, "--report", files.reportFile, "--baseline", files.baselineFile, ...extra],
-        { encoding: "utf8", cwd: root },
+        { encoding: "utf8", cwd: root, timeout: CHILD_TIMEOUT_MS },
     );
 }
 
@@ -728,3 +735,170 @@ test("writeBaselineIfChanged：同内容第二次不写（幂等），内容变�
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// task-272 / D-1648（2026-11-16）：子进程显式 timeout + 吞失败 catch 修复。
+// 验收 ①⑤：挂住夹具 / 启动错误 / 意外非零 / 超时 ⇒ 门 exit 非 0 且报明确错误码；
+// 非法 timeout env ⇒ fail-fast。判据强度不变：既有 30 例与 selftest 16 例照旧全绿。
+// ---------------------------------------------------------------------------
+
+test("task-272: classifyChildFailure 区分超时/启动错误/信号杀死；正常退出（含非零）不属基础设施失败", () => {
+    const timedOut = { error: Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" }) };
+    assert.match(classifyChildFailure(timedOut, 1000), /E_SELFTEST_CHILD_TIMEOUT/);
+    const spawnErr = { error: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }) };
+    assert.match(classifyChildFailure(spawnErr, 1000), /E_SELFTEST_CHILD_SPAWN/);
+    assert.match(classifyChildFailure({ status: null, signal: "SIGKILL" }, 1000), /E_SELFTEST_CHILD_KILLED/);
+    // 非零退出由用例断言判（有的用例就期望 exit 1/2），不属基础设施失败
+    assert.equal(classifyChildFailure({ status: 0 }, 1000), null);
+    assert.equal(classifyChildFailure({ status: 1 }, 1000), null);
+    assert.equal(classifyChildFailure({ status: 2 }, 1000), null);
+});
+
+test("task-272 验收①: 故意挂住的子进程 ⇒ timeout 内被杀且报 E_SELFTEST_CHILD_TIMEOUT", () => {
+    const started = Date.now();
+    const result = spawnSync(
+        process.execPath,
+        ["-e", "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000)"],
+        { encoding: "utf8", timeout: 800 },
+    );
+    const elapsed = Date.now() - started;
+    assert.match(classifyChildFailure(result, 800) ?? "", /E_SELFTEST_CHILD_TIMEOUT/);
+    assert.ok(elapsed < 5000, "应在 timeout 内退出，实际 " + elapsed + "ms");
+});
+
+test("task-272 验收⑤: 子进程启动错误 ⇒ E_SELFTEST_CHILD_SPAWN，门非零", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-spawn-"));
+    try {
+        const result = spawnSync(path.join(dir, "no-such-executable.exe"), [], {
+            encoding: "utf8",
+            timeout: CHILD_TIMEOUT_MS,
+        });
+        assert.match(classifyChildFailure(result, CHILD_TIMEOUT_MS) ?? "", /E_SELFTEST_CHILD_SPAWN/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+/** --require 夹具：只作用于子门运行（argv 含 --report）；selftest 父进程（--selftest）不受影响。 */
+function writeRequireFixture(dir, name, body) {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, body);
+    // NODE_OPTIONS 里用正斜杠，避免反斜杠转义问题
+    return file.split(path.sep).join("/");
+}
+
+test("task-272 验收①（端到端）: selftest 子进程全部挂住 ⇒ 门在 timeout 内退出非零并报 16 条明确超时", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-hang-"));
+    try {
+        const hang = writeRequireFixture(
+            dir,
+            "hang.cjs",
+            'if (process.argv.includes("--report")) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000); }\n',
+        );
+        const started = Date.now();
+        const result = spawnSync(process.execPath, [SCRIPT, "--selftest"], {
+            encoding: "utf8",
+            timeout: 60_000,
+            env: { ...process.env, NODE_OPTIONS: "--require " + hang, XIHE_MOCK_SELFTEST_TIMEOUT_MS: "500" },
+        });
+        const elapsed = Date.now() - started;
+        const output = (result.stdout ?? "") + (result.stderr ?? "");
+        assert.equal(result.status, 1, output);
+        // 每一例都在 FAIL dump 里显式报一次；不得静默，更不得绿
+        assert.equal((output.match(/E_SELFTEST_CHILD_TIMEOUT/g) ?? []).length, 16, output);
+        assert.doesNotMatch(output, /OK: 16 case\(s\)/);
+        // 16 × 500ms + 启动开销 ⇒ 有界（预期 ~10–13s）；不得无限等
+        assert.ok(elapsed < 35_000, "16x500ms 应有界，实际 " + elapsed + "ms");
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-272 验收⑤（端到端）: 子进程意外非零退出（exit 3）⇒ selftest 门 exit 1，不被吞", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-exit3-"));
+    try {
+        const exit3 = writeRequireFixture(
+            dir,
+            "exit3.cjs",
+            'if (process.argv.includes("--report")) { process.exit(3); }\n',
+        );
+        const result = spawnSync(process.execPath, [SCRIPT, "--selftest"], {
+            encoding: "utf8",
+            timeout: 60_000,
+            env: { ...process.env, NODE_OPTIONS: "--require " + exit3 },
+        });
+        const output = (result.stdout ?? "") + (result.stderr ?? "");
+        assert.equal(result.status, 1, output);
+        assert.match(output, /16 case\(s\) failed/);
+        assert.match(output, /\(exit=3\)/);
+        // 子进程是正常退出（非被杀）⇒ 不得误报成超时
+        assert.doesNotMatch(output, /E_SELFTEST_CHILD_TIMEOUT/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("task-272: 非法 timeout env ⇒ fail-fast 非零，不静默回落默认（预算 §2.1）", () => {
+    const invalid = [
+        ["XIHE_MOCK_GIT_TIMEOUT_MS", "abc"],
+        ["XIHE_MOCK_GIT_TIMEOUT_MS", "0"],
+        ["XIHE_MOCK_GIT_TIMEOUT_MS", "31000"], // > 上限 30000
+        ["XIHE_MOCK_PROBE_TIMEOUT_MS", "11000"], // > 监控档上限 10000
+        ["XIHE_MOCK_SELFTEST_TIMEOUT_MS", "-5"],
+    ];
+    for (const [name, value] of invalid) {
+        const result = spawnSync(process.execPath, [SCRIPT, "--selftest"], {
+            encoding: "utf8",
+            timeout: CHILD_TIMEOUT_MS,
+            env: { ...process.env, [name]: value },
+        });
+        assert.notEqual(result.status, 0, name + "=" + value + " 应 fail-fast");
+        assert.match(result.stderr ?? "", /E_MOCK_TIMEOUT_CONFIG/);
+    }
+});
+
+test("task-272 / D-1648: git 失败（无提交 ⇒ log 非零）⇒ 显式降级并点名原因，不吞成 git = ok", () => {
+    const root = makeRepo(); // 只 git init、无提交 ⇒ git log 必非零退出
+    try {
+        fs.writeFileSync(path.join(root, "packages/ui/e2e/mock/dirty.spec.ts"), "test('x', () => {});\n");
+        const changed = resolveChangedSpecs({
+            repoRoot: root,
+            baselinePath: path.join(root, "packages/ui/e2e/mock-baseline.json"),
+        });
+        assert.equal(changed.gitAvailable, false);
+        assert.ok(changed.gitError, "失败原因必须被记录");
+        // 工作树来源保留（降级语义与文档化的 git 不可用一致）
+        assert.deepEqual(changed.specs, ["packages/ui/e2e/mock/dirty.spec.ts"]);
+        // flaky 判据面必须点名降级 + 原因，不得印「git = ok」
+        const policy = evaluateFlakyPolicy({
+            flakyCases: [{ title: "t", file: "packages/ui/e2e/mock/dirty.spec.ts" }],
+            changedSpecs: changed,
+            history: [],
+            env: {},
+        });
+        const text = [...policy.errors, ...policy.warnings]
+            .map((e) => (typeof e === "string" ? e : e.lines.join("\n")))
+            .join("\n");
+        assert.match(text, /unavailable/);
+        assert.ok(text.includes(changed.gitError), "basis 应回显失败原因");
+        assert.doesNotMatch(text, /git = ok/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("task-272: git 成功但基线无历史（空输出）⇒ gitAvailable 保持 true（与失败区分，不过度收紧）", () => {
+    const root = makeRepo();
+    try {
+        commitSpec(root, "packages/ui/e2e/mock/old.spec.ts", "test('a', () => {});\n");
+        const baselinePath = path.join(root, "packages/ui/e2e/mock-baseline.json");
+        fs.writeFileSync(baselinePath, JSON.stringify({ counts: { expected: 1 } }));
+        const changed = resolveChangedSpecs({ repoRoot: root, baselinePath });
+        assert.equal(changed.gitAvailable, true);
+        assert.equal(changed.baselineCommit, null);
+        assert.equal(changed.gitError, undefined);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
