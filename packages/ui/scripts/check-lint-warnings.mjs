@@ -15,14 +15,15 @@
  *   node scripts/check-lint-warnings.mjs                     # 只报（report-only）
  *   node scripts/check-lint-warnings.mjs --enforce           # 任一族超基线即 exit 1（新语义）
  *   node scripts/check-lint-warnings.mjs --enforce-total     # 旧语义（总数超基线即 exit 1），仅供对照
- *   node scripts/check-lint-warnings.mjs --write-baseline    # 生成/收缩基线（脚本写，勿手改）
+ *   node scripts/check-lint-warnings.mjs --write-baseline    # 生成/收缩基线（脚本写，勿手改；errors>0 时拒绝写盘）
  *   node scripts/check-lint-warnings.mjs --list <rule>       # 打印该族当前所有 file:line
  *   node scripts/check-lint-warnings.mjs --from-json <path>  # 用已存盘的 oxlint JSON 代替现跑
- *   node scripts/check-lint-warnings.mjs --selftest          # 六例自检（退出码 0 = 全部与预期一致）
+ *   node scripts/check-lint-warnings.mjs --selftest          # 九例自检（退出码 0 = 全部与预期一致）
  *
  * 基线只许变小；变大必须在卡面写原因。**自愈单命令**见每次失败时的提示行。
  */
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -58,8 +59,8 @@ function deepEqual(a, b) {
  * 格式化放在生成期，并在写盘后**立刻自查** `oxfmt --check`：自查不过说明生成器坏了，直接 exit 2，
  * 而不是留下一份坏账本让下一个人替它跑格式。</p>
  */
-function formatBaseline() {
-    const fmt = spawnSync("pnpm", ["exec", "oxfmt", BASELINE], {
+function formatBaseline(target = BASELINE) {
+    const fmt = spawnSync("pnpm", ["exec", "oxfmt", target], {
         cwd: ROOT,
         encoding: "utf8",
         shell: true,
@@ -70,7 +71,7 @@ function formatBaseline() {
         );
         process.exit(2);
     }
-    const check = spawnSync("pnpm", ["exec", "oxfmt", "--check", BASELINE], {
+    const check = spawnSync("pnpm", ["exec", "oxfmt", "--check", target], {
         cwd: ROOT,
         encoding: "utf8",
         shell: true,
@@ -81,6 +82,30 @@ function formatBaseline() {
         );
         process.exit(2);
     }
+}
+
+/**
+ * task-230：`errors > 0` 时**拒绝写盘**（exit 2），保持文件原样。
+ *
+ * <p>为什么必须拒绝、而不是「照写再 exit 1」：`task-228` 首轮重生时，别人一个**未跟踪的语法坏文件**
+ * 就让生成物写进了 `errors: 1` —— 污染发生在 exit 1 之前，账本已被改坏。ratchet 台账里出现
+ * `errors > 0` 等于把一次红**永久固化成基线**。判据用 **sha256 前后比对**证明「文件没被动过」，
+ * 不用 mtime（同一秒内写回也能骗过 mtime）。</p>
+ */
+function writeBaseline({ baselinePath, payload, errors, format = formatBaseline }) {
+    if (errors > 0) {
+        console.error(
+            "FAIL 拒绝写基线：errors=" +
+                errors +
+                "（先修 errors 再写基线；" +
+                baselinePath +
+                " 保持原样）",
+        );
+        return 2;
+    }
+    writeFileSync(baselinePath, JSON.stringify(payload, null, 4) + "\n", "utf8");
+    format(baselinePath);
+    return 0;
 }
 
 function runOxlint() {
@@ -240,7 +265,7 @@ function selfHealHint() {
 // ── 自检 ─────────────────────────────────────────────────────────────────────
 
 /**
- * 自检六例。夹具全部写进系统临时目录（不落仓库），跑完即删。
+ * 自检九例。夹具全部写进系统临时目录（不落仓库），跑完即删。
  * 退出码：0 = 六例全部与预期一致；1 = 有例与预期不符；2 = 环境问题。
  */
 function selftest() {
@@ -382,7 +407,9 @@ function selftest() {
     ];
 
     let failed = 0;
+    let checked = 0;
     for (const testCase of cases) {
+        checked += 1;
         const now = summarize(
             parseOxlintJson(readFileSync(testCase.fixture, "utf8"), testCase.fixture).diagnostics,
         );
@@ -411,10 +438,37 @@ function selftest() {
             console.log("PASS " + testCase.name);
         }
     }
+
+    // ⑨ task-230：errors > 0 时 writeBaseline **拒绝写盘** ⇒ 退出码 2 且文件 sha256 不变（收紧自「照写再 exit 1」）。
+    {
+        const target = join(dir, "baseline-guarded.json");
+        const original = '{\n    "total": 709,\n    "errors": 0\n}\n';
+        writeFileSync(target, original, "utf8");
+        const shaOf = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+        const before = shaOf(target);
+        const refused = writeBaseline({
+            baselinePath: target,
+            payload: { total: 1 },
+            errors: 2,
+            format: () => {},
+        });
+        const unchanged = shaOf(target) === before;
+        checked += 1;
+        if (refused !== 2 || !unchanged) {
+            failed += 1;
+            console.error(
+                "FAIL ⑨ errors>0 必须拒绝写盘 ⇒ 退出码 " +
+                    refused +
+                    "（期望 2），文件不变=" +
+                    unchanged,
+            );
+        } else {
+            console.log("PASS ⑨ errors>0 ⇒ 拒绝写盘（exit 2）且 sha256 不变");
+        }
+    }
+
     rmSync(dir, { recursive: true, force: true });
-    console.log(
-        "SELFTEST " + (cases.length - failed) + "/" + cases.length + (failed ? " ⇒ FAIL" : " ⇒ OK"),
-    );
+    console.log("SELFTEST " + (checked - failed) + "/" + checked + (failed ? " ⇒ FAIL" : " ⇒ OK"));
     process.exit(failed ? 1 : 0);
 }
 
@@ -477,10 +531,10 @@ function main() {
             ...core,
             generatedAt: keepTimestamp ? previous.generatedAt : new Date().toISOString(),
         };
-        writeFileSync(BASELINE, JSON.stringify(payload, null, 4) + "\n", "utf8");
-        formatBaseline();
+        const writeExit = writeBaseline({ baselinePath: BASELINE, payload, errors: now.errors });
+        if (writeExit !== 0) process.exit(writeExit);
         console.log("WROTE 基线 total=" + now.total + "（errors=" + now.errors + "）⇒ " + BASELINE);
-        process.exit(now.errors === 0 ? 0 : 1);
+        process.exit(0);
     }
 
     const listRule = optionValue("--list");
