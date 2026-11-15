@@ -246,9 +246,10 @@ class ContextTemplateSourceServiceTest {
      */
     @Test
     void aFrozenSnapshotIsTheOnlyReadSourceAndLiveBindingsAreNeverConsulted() throws Exception {
+        String frozenSkillId = UUID.randomUUID().toString();
         JsonNode frozen = mapper.readTree("{\"status\":\"ready\",\"source\":\"skill_bindings\","
                 + "\"maxSkills\":40,\"snapshotSource\":\"frozen\",\"truncated\":false,"
-                + "\"diagnostics\":[],\"items\":[{\"skillId\":" + "\"" + UUID.randomUUID() + "\","
+                + "\"diagnostics\":[],\"items\":[{\"skillId\":" + "\"" + frozenSkillId + "\","
                 + "\"qualifiedName\":\"user:instance:instance:alpha\",\"name\":\"alpha\","
                 + "\"description\":\"from the snapshot\",\"version\":3,\"contentHash\":\"h\","
                 + "\"oversize\":false,\"tier\":{\"subjectType\":\"user\",\"scopeType\":\"instance\","
@@ -257,7 +258,10 @@ class ContextTemplateSourceServiceTest {
         Map<String, Object> source = resolve("skill_catalog",
                 "{\"maxSkills\":40,\"includeDescriptions\":true,\"sort\":\"binding\"}", frozen);
 
-        assertEquals(List.of("alpha — from the snapshot"), source.get("items"));
+        // D-1277 (F-11): the rendered row ends with the [skillId=...] token (skill_read is
+        // uuid-only); the SUFFIX keeps the agent ledger's dedupe key (text before " — ") intact.
+        assertEquals(List.of("alpha — from the snapshot [skillId=" + frozenSkillId + "]"),
+                source.get("items"));
         assertEquals("ready", source.get("status"));
         assertEquals(SkillCatalogSourceService.SOURCE, source.get("source"));
         verifyNoInteractions(skillCatalog);

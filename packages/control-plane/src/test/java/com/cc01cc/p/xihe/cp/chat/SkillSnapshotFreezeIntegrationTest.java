@@ -187,7 +187,8 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
     @Test
     void admissionFreezesTheListingAndAResolveIsNeverConsultedAtRenderTime() {
         Fixture fixture = fixture("freeze");
-        bind(fixture, insertSkill(fixture, "alpha", "desc of alpha"));
+        UUID alpha = insertSkill(fixture, "alpha", "desc of alpha");
+        bind(fixture, alpha);
         String runId = submit(fixture, "freeze message");
 
         JsonNode snapshot = chatRuns.findById(UUID.fromString(runId)).orElseThrow().getSkillsSnapshot();
@@ -208,7 +209,13 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         assertTrue(item.hasNonNull("skillId"));
 
         clearInvocations(skillCatalog);
-        assertEquals(List.of("alpha — desc of alpha"), listingOf(runId, fixture));
+        // D-1277 (F-11): the rendered row carries the [skillId=...] suffix because skill_read is
+        // uuid-only; a SUFFIX (not a prefix) keeps the agent ledger's dedupe key (the text before
+        // " — ") unchanged — a prefix was measured and rejected. The suffix is therefore part of
+        // the frozen row, not decoration.
+        assertEquals(alpha.toString(), item.path("skillId").asText(),
+                "the frozen row and the rendered row must name the same skill id");
+        assertEquals(List.of("alpha — desc of alpha [skillId=" + alpha + "]"), listingOf(runId, fixture));
 
         // D28-39: rendering a frozen Run must not touch the live resolver at all.
         verify(skillCatalog, never()).resolve(any());
@@ -226,7 +233,8 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         bind(fixture, alpha);
         String runId = submit(fixture, "frozen message");
         List<String> frozen = listingOf(runId, fixture);
-        assertEquals(List.of("alpha — desc of alpha"), frozen);
+        // D-1277: the [skillId=...] suffix is part of the frozen row, so it must survive bindings too.
+        assertEquals(List.of("alpha — desc of alpha [skillId=" + alpha + "]"), frozen);
 
         bind(fixture, insertSkill(fixture, "beta", "desc of beta"));
 
@@ -250,18 +258,25 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
     @Test
     void aBindingAddedAfterRunAIsAbsentFromAAndPresentInB() {
         Fixture fixture = fixture("two-runs");
-        bind(fixture, insertSkill(fixture, "alpha", "desc of alpha"));
+        UUID alpha = insertSkill(fixture, "alpha", "desc of alpha");
+        bind(fixture, alpha);
         String runA = submit(fixture, "run A");
-        bind(fixture, insertSkill(fixture, "beta", "desc of beta"));
+        UUID beta = insertSkill(fixture, "beta", "desc of beta");
+        bind(fixture, beta);
 
-        assertEquals(List.of("alpha — desc of alpha"), listingOf(runA, fixture));
+        // D-1277: the [skillId=...] suffix is part of the rendered row (see test #1).
+        assertEquals(List.of("alpha — desc of alpha [skillId=" + alpha + "]"), listingOf(runA, fixture));
 
         terminalize(runA);
         String runB = submit(fixture, "run B");
 
         List<String> listingB = listingOf(runB, fixture);
-        assertTrue(listingB.contains("beta — desc of beta"), listingB.toString());
-        assertTrue(listingB.contains("alpha — desc of alpha"), listingB.toString());
+        // Exact rows (id included): a bare "contains("beta — desc of beta")" would also pass when the
+        // row carries a different/absent [skillId=...] suffix.
+        assertTrue(listingB.contains("beta — desc of beta [skillId=" + beta + "]"),
+                listingB.toString());
+        assertTrue(listingB.contains("alpha — desc of alpha [skillId=" + alpha + "]"),
+                listingB.toString());
     }
 
     /**
@@ -292,7 +307,13 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
                 child.getSkillsSnapshot().path("snapshotSource").asText());
         assertEquals(parentListing, listingOf(child.getId().toString(), fixture),
                 "the child must see exactly what its parent saw");
-        assertFalse(listingOf(child.getId().toString(), fixture).contains("beta — desc of beta"));
+        // Prefix match on purpose: D-1277 renders "beta — desc of beta [skillId=<id>]", so a plain
+        // contains("beta — desc of beta") would pass even if the row were absent for a different
+        // reason — the assertion has to say "no row starts with this name".
+        assertTrue(listingOf(child.getId().toString(), fixture).stream()
+                        .noneMatch(line -> line.startsWith("beta — desc of beta")),
+                "a binding added while the parent ran must not reach the child: "
+                        + listingOf(child.getId().toString(), fixture));
     }
 
     /** Acceptance #5/#6: an oversized record is reported, and the Run is still created (D27-22). */
