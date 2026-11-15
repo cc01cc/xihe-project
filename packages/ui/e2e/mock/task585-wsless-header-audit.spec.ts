@@ -688,6 +688,10 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
         // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
         await stubInstrumentProbe(page);
+        /* task-204：本用例原来**没装** ctx 写入探针，`annotateBoundary` 第三参缺省 null ⇒
+         * 那一行 `msSinceCtxWrite` 恒为 null / `ctxPhase="unknown"`。unknown 是**测量缺口**，
+         * 不是「时间轴证明它合法」，所以先把探针装上，让 `D-1567` 的不等式可判。 */
+        await installCtxWriteProbe(page);
         await page.goto("/workspace");
         await expect(
             page.getByTestId("workspace-picker"),
@@ -706,6 +710,9 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
             (row) => row.workspaceHeader === WS_A || row.workspaceParam === WS_A,
         );
         const withB = product.filter((row) => row.workspaceHeader === WS_B);
+        // task-204：B 的 tab 上下文落盘时刻（+ = 写入后仍带旧头 ⇒ 泄漏；- = 写入前发出 ⇒ 在途）。
+        const ctxWrites = await readCtxWrites(page);
+        const ctxWrittenAtAbs = ctxWrites.find((entry) => entry.id === WS_B)?.at ?? null;
 
         const out = {
             card: "task-621 / task-3",
@@ -716,7 +723,9 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
                 note: "本态不需要延迟注入：B 的首页请求本身就是正面控制",
             },
             postBoundaryRows: product.length,
-            withA: annotateBoundary(withA, boundaryAt),
+            ctxWrites,
+            ctxWrittenAtAbs,
+            withA: annotateBoundary(withA, boundaryAt, ctxWrittenAtAbs),
             sample: annotateBoundary(product.slice(0, 20), boundaryAt),
             sampledAt: new Date().toISOString(),
         };
