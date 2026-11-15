@@ -1365,6 +1365,22 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
+    // task-174 定向读数：`GET /workspaces/{id}/scheduled-tasks?size=200` 之前没有桩 ⇒ 落到真
+    // 服务端 404，而 mock 测试的严格控制台断言（`page-failures.ts`）把 404 记为失败 ⇒ 读数用例
+    // 明明拿到了数却永远红。这里补**只读列表**桩：正则限定路径以 `/scheduled-tasks` **结尾**
+    // （故不会吞掉 `/scheduled-tasks/{id}` 的详情/重跑/删除路由）。
+    // **这是读数所需的路由，不是产品面新增**；返回空列表 = 与「本工作区暂无定时任务」一致。
+    await page.route(/\/api\/v1\/workspaces\/[^/]+\/scheduled-tasks(\?.*)?$/, async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        const workspaceId = url.pathname.split("/")[4] ?? MOCK_WORKSPACE_ID;
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ workspaceId, page: 0, size: 200, tasks: [] }),
+        });
+    });
+
     // `GET /workspaces/{id}/members` 是**裸数组**（`api.ts:5040-5046`：非数组按空集处理）。
     // 行只给与登录身份自洽的那一条（OWNER = `user-1`，与 `me/permissions` 的 WS_OWNER 同源），
     // 不虚构别的成员 —— 成员页的「改角色/移除」断言要用自己的夹具（spec 内 page.route 后注册优先）。
