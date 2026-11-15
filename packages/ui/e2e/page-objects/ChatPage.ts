@@ -21,7 +21,21 @@ export class ChatPage {
         this.uploadIndicator = page.locator('[data-testid="attachment-uploading-indicator"]');
     }
 
-    async goto(sessionId?: string, workspaceId = "workspace-1"): Promise<void> {
+    /** mock 车道种入的工作区 id（`e2e/mock/helpers/auth.ts:246 MOCK_WORKSPACE_ID`）。
+     *
+     * <p>task-142：默认值曾是 `"workspace-1"` —— 不是 UUID。task-537 在 `src/router/index.ts:610`
+     * 用 `isUuid` 守卫路由里的工作区 id，非 UUID 就判「工作区链接无效」并回列表页，
+     * 聊天页因此永不挂载（症状是整个测试打满 30 s 超时）。`src/lib/__tests__/uuid.spec.ts:21`
+     * 已经`expect(isUuid("workspace-1")).toBe(false)` 把这条钉住 —— 错的是夹具默认值，不是产品守卫。</p>
+     *
+     * <p>**写字面量而不 import 夹具常量**：本 page object 同时被 `e2e/real/**` 使用，
+     * 反向依赖 `e2e/mock/helpers` 会把真实链路绑到 mock 车的种子上（方向反了）。
+     * 显式传 workspaceId 的调用方（`e2e/real/attachment-preview-budget.spec.ts:741/:850`）不受影响。</p>
+     */
+    async goto(
+        sessionId?: string,
+        workspaceId = "11111111-1111-4111-8111-111111111111",
+    ): Promise<void> {
         const path = sessionId ? `/workspace/${workspaceId}/chat/${sessionId}` : "/workspace";
         await this.page.goto(path);
         await this.input.waitFor({ state: "visible" });
