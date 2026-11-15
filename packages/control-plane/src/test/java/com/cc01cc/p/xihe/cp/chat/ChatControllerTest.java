@@ -123,6 +123,10 @@ class ChatControllerTest extends AbstractH2Test {
     @MockitoSpyBean
     private com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
 
+    /** task-134 A1: 用来把「读健康快照」与「入队」之间的窗口撑开（见交错③的用例）。 */
+    @MockitoSpyBean
+    private ChatSubmissionService chatSubmissionService;
+
     private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection;
 
     private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection() {
@@ -1160,6 +1164,89 @@ class ChatControllerTest extends AbstractH2Test {
             // matching "排出来" evidence lives in chat_queuedRunIsRedeliveredAfterTheAgentRecovers,
             // which asserts the queue empties itself and never clears it (task-131).
             requestQueue.clear();
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
+    /**
+     * task-134 交错③（A 路径）: a request that reads the cached health snapshot <b>before</b> the
+     * agent recovers, and only reaches {@code enqueue} <b>after</b> the recovery drain already ran,
+     * must still be delivered.
+     *
+     * <p>Sequence pinned here (all through product code, no direct {@code drain} call):</p>
+     * <ol>
+     *   <li>agent is down ⇒ the submit samples {@code transportOnlyFailure=true} (ChatController:816);</li>
+     *   <li>the submit blocks inside {@code persistRunStatus("queued")} (spy latch) ⇒ window open;</li>
+     *   <li>agent recovers ⇒ {@code HealthMonitor} fires {@code onServiceRecovered} ⇒ drain runs on an
+     *       <b>empty</b> queue, returns immediately, logs nothing;</li>
+     *   <li>the submit resumes, persists {@code queued}, and enqueues <b>after</b> the drain exited;</li>
+     *   <li>agent stays up ⇒ no further down→up ⇒ without a source-side trigger nobody drains it.</li>
+     * </ol>
+     */
+    @Test
+    void aRequestQueuedAfterTheRecoveryDrainAlreadyRanIsStillDelivered() throws Exception {
+        requestQueue.clear();
+        AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+        AGENT_AVAILABLE.set(true);
+        healthMonitor.pollHealth();
+        AGENT_AVAILABLE.set(false);
+        healthMonitor.pollHealth();
+        stubAgentSuccessReply();
+
+        java.util.concurrent.CountDownLatch reachedTheQueueBranch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch recoveryHasAlreadyRun = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            reachedTheQueueBranch.countDown();
+            assertTrue(recoveryHasAlreadyRun.await(15, java.util.concurrent.TimeUnit.SECONDS),
+                    "the recovery must happen while this submit is still persisting");
+            return invocation.callRealMethod();
+        }).when(chatSubmissionService).persistRunStatus(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq("queued"));
+
+        String idempotencyKey = "queue-after-recovery-" + UUID.randomUUID();
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Queued while the recovery already ran",
+                "workspaceId", workspaceId,
+                "userId", userId,
+                "branchId", branchId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+        java.util.concurrent.CompletableFuture<ResponseEntity<Map>> pending =
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> restTemplate.exchange(
+                        baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class));
+        try {
+            assertTrue(reachedTheQueueBranch.await(20, java.util.concurrent.TimeUnit.SECONDS),
+                    "the submit must reach the queued branch");
+
+            // The agent recovers exactly now: the recovery drain sees an empty queue.
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+            recoveryHasAlreadyRun.countDown();
+
+            ResponseEntity<Map> response = pending.get(20, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+            assertEquals("queued", response.getBody().get("status"));
+            String queuedRunId = chatRunRepository
+                    .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey)
+                    .orElseThrow().getId().toString();
+
+            await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> {
+                assertEquals(1, jdbcTemplate.queryForObject(
+                                "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
+                                Integer.class, queuedRunId),
+                        "a request parked after the recovery drain must still be delivered");
+                assertEquals("succeeded", jdbcTemplate.queryForObject(
+                                "SELECT status FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", String.class, queuedRunId),
+                        "the wedged run must not stay queued forever");
+            });
+        } finally {
+            recoveryHasAlreadyRun.countDown();
+            org.mockito.Mockito.doCallRealMethod().when(chatSubmissionService)
+                    .persistRunStatus(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
             AGENT_AVAILABLE.set(true);
             healthMonitor.pollHealth();
         }

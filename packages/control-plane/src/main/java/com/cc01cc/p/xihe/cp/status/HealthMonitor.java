@@ -162,6 +162,11 @@ public class HealthMonitor {
         return "ready".equals(getAgentLlmReady());
     }
 
+    /** task-134: is the agent reachable right now (the same snapshot the submit path reads)? */
+    public boolean isAgentUp() {
+        return "up".equals(getAgentHealth().status());
+    }
+
     public CircuitBreaker getAgentBreaker() {
         return agentBreaker;
     }

@@ -245,7 +245,22 @@ public class ChatController {
         // Wire drain callback: when agent recovers, drain queued requests
         healthMonitor.setOnServiceRecovered(serviceName -> {
             if ("agent".equals(serviceName)) {
-                requestQueue.drain(req -> {
+                drainQueuedRequests();
+            }
+        });
+    }
+
+    /**
+     * task-134 A1: the single place that hands parked requests to the transport.
+     *
+     * <p>Two callers, and both are needed: the agent's down→up transition ({@code task-131} path),
+     * and the end of a submit that parked a request while the agent was already back up (the health
+     * snapshot is read early, so a recovery can complete inside one submit). Concurrent calls are
+     * safe by construction: {@link java.util.concurrent.ConcurrentLinkedQueue#poll()} gives each
+     * request to exactly one caller, so a request is dispatched at most once.</p>
+     */
+    private void drainQueuedRequests() {
+        requestQueue.drain(req -> {
                     String requestId = nonBlankOrGenerated(req.requestId());
                     String runId = nonBlankOrGenerated(req.runId());
                     // task-131: this run was parked by this process, so the local claim it still
@@ -256,8 +271,8 @@ public class ChatController {
                         logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                                 requestId, req.sessionId(), runId);
                         markQueuedRequestFailed(req, requestId, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
-                        // task-132: this request was NOT delivered; saying so keeps
-                        // "requestDrained count=N" honest.
+                        // task-132: this request was NOT delivered; saying so keeps the drain
+                        // line's "delivered" counter honest.
                         return false;
                     }
                     logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
@@ -271,8 +286,6 @@ public class ChatController {
                         nonBlankOrGenerated(req.requestId()),
                         "AGENT_UNAVAILABLE",
                         "Queued chat request could not be delivered"));
-            }
-        });
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -969,6 +982,13 @@ public class ChatController {
                     logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
                             requestId, sessionId, runId);
                     handedOff = true;
+                    // task-134 A1: the health snapshot at the top of this method was read *before*
+                    // the agent came back, so this request can be parked strictly after the recovery
+                    // drain already scanned an empty queue. Nothing would scan it again (the drain
+                    // only fires on down→up), so drain it here while the agent is up.
+                    if (healthMonitor.isAgentUp()) {
+                        drainQueuedRequests();
+                    }
                     return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "queued", sessionId,
                         userMessage.getId(), runId, "agent_down"));
                 }
