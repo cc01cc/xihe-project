@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -226,7 +227,7 @@ class AgentPrincipalWorkspaceAuthorityMatrixTest extends AbstractReusableIntegra
 
     /** A principal created by ①, unowned (`owner_user_id` null, D-174 semantics), bound to the ws. */
     private UUID seedWorkspaceBoundPrincipal() {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("matrixAgent" + UUID.randomUUID().toString().substring(0, 8));
         principal.setCreatedByUserId(creatorUserId.toString());
         principal.setTemplateId("template-1");

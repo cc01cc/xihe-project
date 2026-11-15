@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -920,7 +921,7 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     }
 
     private UUID createBoundPrincipal() throws Exception {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Session fork principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

@@ -78,7 +78,11 @@ class SessionParticipantsMigrationTest {
         execute("INSERT INTO context_events (id, session_id, workspace_id, user_id, event_type, sequence)"
                 + " VALUES ('" + UUID.randomUUID() + "', '" + BOUND_SESSION_ID + "', '" + WORKSPACE_ID
                 + "', '" + USER_ID + "', 'message', 3)");
-        migrate(url, null);
+        // task-173 (V170 / D-1533): this upgrade-path fixture is bounded at V169. V170 refuses rows
+        // written before it (their ownership is undeterminable and the ruling forbids guessing), so
+        // "migrate a pre-V170 database to head" is no longer a supported path; the refusal itself is
+        // pinned by AgentPrincipalOwnershipMigrationTest. Only V170 is excluded here.
+        migrate(url, "169");
     }
 
     // ---------------------------------------------------------------- R1

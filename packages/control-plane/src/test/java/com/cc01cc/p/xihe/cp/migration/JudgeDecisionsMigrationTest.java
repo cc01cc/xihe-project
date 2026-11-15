@@ -85,7 +85,11 @@ class JudgeDecisionsMigrationTest {
                 + " request_hash, status, origin, branch_id) VALUES ('" + RUN_ID + "', '" + SESSION_ID
                 + "', '" + USER_ID + "', '" + WORKSPACE_ID + "', 'legacy-run-key', 'deadbeef',"
                 + " 'succeeded', 'user_submission', '" + BRANCH_ID + "')");
-        migrate(url, null);
+        // task-173 (V170 / D-1533): this upgrade-path fixture is bounded at V169. V170 refuses rows
+        // written before it (their ownership is undeterminable and the ruling forbids guessing), so
+        // "migrate a pre-V170 database to head" is no longer a supported path; the refusal itself is
+        // pinned by AgentPrincipalOwnershipMigrationTest. Only V170 is excluded here.
+        migrate(url, "169");
         // Red-first: pre-V93 the table does not exist yet — the seeded decision lands only once
         // the migration is in place; without it every assertion below fails on the missing contract.
         if (!query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public'"

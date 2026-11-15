@@ -262,7 +262,10 @@ class SessionBindingProblemShapeTest {
     }
 
     private UUID savePrincipal(AuthResponse user) {
-        com.cc01cc.p.xihe.cp.entity.AgentPrincipal principal = new com.cc01cc.p.xihe.cp.entity.AgentPrincipal();
+        // task-173 (V170): ownership is NOT NULL with no database default, so a fixture must name
+        // the side; this row is a user-door principal.
+        com.cc01cc.p.xihe.cp.entity.AgentPrincipal principal =
+                com.cc01cc.p.xihe.cp.support.TestAgentPrincipals.newUserAgentPrincipal();
         // @GeneratedValue(UUID): assigning the id would make Spring Data merge a non-existent row.
         principal.setName("shape-probe-" + UUID.randomUUID().toString().substring(0, 6));
         principal.setCreatedByUserId(user.getUser().getId());

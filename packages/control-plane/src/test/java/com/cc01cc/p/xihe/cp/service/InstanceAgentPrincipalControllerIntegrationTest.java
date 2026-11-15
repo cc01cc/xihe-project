@@ -424,6 +424,9 @@ class InstanceAgentPrincipalControllerIntegrationTest extends AbstractReusableIn
         AgentPrincipal row = principalRepository.findById(principalId).orElseThrow();
         row.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
         row.setPresetId("fixture-guard-preset");
+        // V170's cross-axis CHECK: a preset principal is INSTANCE-owned, so the fixture cannot set the
+        // origin alone either — the two axes are one fact stated twice.
+        row.setOwnership(AgentPrincipal.OWNERSHIP_INSTANCE);
         principalRepository.saveAndFlush(row);
 
         HttpProbe refused = probe(adminToken, "PATCH", INSTANCE_PRINCIPALS + "/" + principalId,
@@ -441,12 +444,38 @@ class InstanceAgentPrincipalControllerIntegrationTest extends AbstractReusableIn
         UUID principalId = createPrincipal(adminToken, "widthagent");
 
         // Width pin (task-413): the wire-body gate is SHARED, so the user surface accepts the keys too.
-        // This row is workspace-scoped under the D-196 predicate (owner null + origin USER), so that
-        // surface answers 409 for the missing context — the point is that it is NOT a 400 shape refusal.
+        // task-173 (V170) keeps the ANSWER at 409: the row is INSTANCE-owned, and the Lead ruling is
+        // "one row, one writer" — the instance prefix (/api/v1/instance/agent-principals) is its only
+        // write surface, so the user prefix stops at the D-196 workspace-context gate before any
+        // ownership answer. What this test still pins is the SHAPE: the wrapper never answers 400 for
+        // these keys on either surface.
         HttpProbe shared = probe(adminToken, "PATCH", "/api/v1/agent-principals/" + principalId,
                 Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o"));
         assertEquals(409, shared.status(), shared.body());
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", problemCode(shared));
+        assertNull(principalRepository.findById(principalId).orElseThrow().getDefaultModelProvider(),
+                "the user prefix must not have written the row");
+
+        // The same shape is accepted on the far side of the contract: the instance prefix proves the
+        // wrapper parses these keys instead of refusing them.
+        HttpProbe instanceSide = probe(adminToken, "PATCH",
+                "/api/v1/instance/agent-principals/" + principalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o"));
+        assertEquals(200, instanceSide.status(), instanceSide.body());
+        assertEquals("openai", parse(instanceSide.body()).path("defaultModelProvider").asText(),
+                "the write really landed: a 200 without the stored value would prove nothing");
+
+        // D-196 is unchanged for a USER-owned row: without a workspace context it still answers 409.
+        String plainToken = tokenOf(registerUserViaHttp());
+        HttpProbe own = probe(plainToken, "POST", "/api/v1/agent-principals",
+                Map.of("name", "widthown" + UUID.randomUUID().toString().replace("-", "").substring(0, 6)));
+        assertEquals(201, own.status(), own.body());
+        UUID ownPrincipalId = UUID.fromString(parse(own.body()).path("principalId").asText());
+        principalIds.add(ownPrincipalId);
+        HttpProbe gated = probe(plainToken, "PATCH", "/api/v1/agent-principals/" + ownPrincipalId,
+                Map.of("defaultModelProvider", "openai", "defaultModelName", "gpt-4o"));
+        assertEquals(409, gated.status(), gated.body());
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", problemCode(gated));
     }
 
     // --- fixtures ---------------------------------------------------------------------------

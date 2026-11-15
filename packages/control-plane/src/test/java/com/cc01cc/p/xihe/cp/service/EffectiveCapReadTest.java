@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
@@ -196,7 +197,7 @@ class EffectiveCapReadTest extends AbstractReusableIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Effective cap test", userId.toString());
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("CapAgent");
         principal.setCreatedByUserId(userId.toString());
         principal.setTemplateId("template-1");

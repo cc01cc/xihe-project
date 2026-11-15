@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -861,7 +862,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     private AgentPrincipal savePrincipal(User user) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Chat admission principal");
         principal.setCreatedByUserId(user.getId().toString());
         var snapshot = objectMapper.createObjectNode();

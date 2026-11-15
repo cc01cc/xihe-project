@@ -67,8 +67,10 @@ class AgentMemoryMigrationTest {
         execute("INSERT INTO users (id, email, password_hash, username) VALUES ('" + USER_ID
                 + "', 'plan0629-memory@test.local', 'x', 'plan0629memory')");
         execute("INSERT INTO workspaces (id, name) VALUES ('" + WORKSPACE_ID + "', 'v99-memory-ws')");
-        execute("INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('" + PRINCIPAL_ID
-                + "', 'v99 memory principal', '" + USER_ID + "')");
+        // task-173 (V170): head has a NOT NULL ownership column with no default; these fixtures write
+        // head-shaped rows directly, so they name the side explicitly (USER = the user door).
+        execute("INSERT INTO agent_principals (id, name, created_by_user_id, ownership) VALUES ('" + PRINCIPAL_ID
+                + "', 'v99 memory principal', '" + USER_ID + "', 'USER')");
     }
 
     @Test

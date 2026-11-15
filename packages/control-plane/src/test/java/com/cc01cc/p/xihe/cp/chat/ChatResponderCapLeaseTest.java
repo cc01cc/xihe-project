@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -56,7 +57,7 @@ class ChatResponderCapLeaseTest extends AbstractReusableIntegrationTest {
         ownerId = owner.getUser().getId();
         workspaceId = workspaceFixture.createOwnedWorkspace("P623 cap ws", ownerId).getId().toString();
 
-        AgentPrincipal primary = new AgentPrincipal();
+        AgentPrincipal primary = TestAgentPrincipals.newUserAgentPrincipal();
         primary.setName("P623 primary");
         primary.setCreatedByUserId(ownerId);
         primary.setDefaultModelProvider("alpha");
@@ -65,7 +66,7 @@ class ChatResponderCapLeaseTest extends AbstractReusableIntegrationTest {
         primary = principals.saveAndFlush(primary);
         primaryAgentId = primary.getId();
 
-        AgentPrincipal guard = new AgentPrincipal();
+        AgentPrincipal guard = TestAgentPrincipals.newUserAgentPrincipal();
         guard.setName("P623 guard agent");
         guard.setCreatedByUserId(ownerId);
         guard.setDefaultModelProvider("beta");

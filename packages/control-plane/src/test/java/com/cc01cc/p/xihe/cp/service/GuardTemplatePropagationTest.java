@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
@@ -137,17 +138,44 @@ class GuardTemplatePropagationTest {
     }
 
     @Test
-    void givenAResolvedSnapshotTheCreatePathKeepsTheSubscriptionsAndMarksProvenance() {
+    void theUserDoorRefusesTheBuiltinPresetInsteadOfCreatingAnUneditableRow() {
+        // task-173 (V170 / user ruling 40C, Lead ruling on the contradictory case): V170 pins
+        // "origin=SYSTEM_PRESET => ownership=INSTANCE" one-way, so a user-door row built from the
+        // builtin preset is an instance asset the creator can never edit again. The door therefore
+        // refuses BEFORE the write, with its own code — not "201 now, 403 later".
         when(templates.resolveForCreation(any(), any(), any()))
                 .thenReturn(new AgentTemplateService.ResolvedTemplate("instance", guardSnapshot(true)));
         String actor = UUID.randomUUID().toString();
 
-        AgentPrincipal principal = service.createPrincipalFromTemplate(actor, "Guard", GUARD_TEMPLATE_ID,
-                null, null, null, null, null, null, null);
+        com.cc01cc.p.xihe.cp.config.CpApiException refused = org.junit.jupiter.api.Assertions.assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> service.createPrincipalFromTemplate(actor, "Guard", GUARD_TEMPLATE_ID,
+                        null, null, null, null, null, null, null));
+
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatus());
+        assertEquals("AGENT_PRESET_INSTANCE_ONLY", refused.getCode());
+        org.mockito.Mockito.verify(principals, org.mockito.Mockito.never()).saveAndFlush(any());
+    }
+
+    @Test
+    void theCreateKernelStoresPresetProvenanceWithInstanceOwnership() {
+        // The preset guard itself is built by the INSTANCE door (createInstancePrincipal), which needs
+        // N1 at instance scope; that gate is covered by InstanceAgentPrincipalControllerIntegrationTest.
+        // Here the subject is the create kernel: a preset guard row pairs its provenance
+        // (SYSTEM_PRESET + preset_id) with INSTANCE ownership — V170's cross-axis CHECK in the database
+        // states the same rule, and the kernel fails closed on the pair before the insert.
+        String actor = UUID.randomUUID().toString();
+
+        AgentPrincipal principal = service.createPrincipal(actor, "Guard", GUARD_TEMPLATE_ID,
+                guardSnapshot(true), null, null, null, guardSnapshot(true).path("hooks"),
+                AgentPrincipal.ORIGIN_SYSTEM_PRESET, GUARD_TEMPLATE_ID, null,
+                com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+                AgentPrincipal.OWNERSHIP_INSTANCE);
 
         assertEquals(AgentPrincipal.ORIGIN_SYSTEM_PRESET, principal.getOrigin(),
                 "the builtin preset template marks the row as a preset guard");
         assertEquals(GUARD_TEMPLATE_ID, principal.getPresetId());
+        assertEquals(AgentPrincipal.OWNERSHIP_INSTANCE, principal.getOwnership());
         assertEquals("guard", principal.getHooks().path("advisors").get(0).path("kind").asText(),
                 "D25-09: the template is the declaration source of the subscription");
         assertEquals(HookAdvisorRegistry.ACTION_APPROVAL_ASK,
@@ -156,18 +184,37 @@ class GuardTemplatePropagationTest {
 
     @Test
     void givenAResolvedSnapshotTheCallersHooksOverrideTheTemplateSubscription() throws Exception {
+        // The builtin preset is instance-only since task-173, so the default/override branch is
+        // exercised on a USER-layer template (same create path, same precedence rule).
         when(templates.resolveForCreation(any(), any(), any()))
-                .thenReturn(new AgentTemplateService.ResolvedTemplate("instance", guardSnapshot(true)));
+                .thenReturn(new AgentTemplateService.ResolvedTemplate("user", guardSnapshot(true)));
         String actor = UUID.randomUUID().toString();
         com.fasterxml.jackson.databind.JsonNode override = new ObjectMapper().readTree(
                 "{\"advisors\":[{\"kind\":\"lint\",\"on\":[\"approval.ask\"]}]}");
 
         AgentPrincipal principal = service.createPrincipalFromTemplate(actor, "Guard", GUARD_TEMPLATE_ID,
-                null, null, null, override, AgentPrincipal.ORIGIN_USER, null, null);
+                null, null, null, override, null, null, null);
 
-        assertEquals(AgentPrincipal.ORIGIN_SYSTEM_PRESET, principal.getOrigin());
+        assertEquals(AgentPrincipal.ORIGIN_USER, principal.getOrigin(),
+                "a user-layer template never produces a preset guard");
         assertEquals("lint", principal.getHooks().path("advisors").get(0).path("kind").asText(),
                 "an explicit request subscription overrides the template default (template remains the fallback)");
+    }
+
+    @Test
+    void whenTheCallerPassesNoSubscriptionsTheTemplateDefaultIsStored() {
+        // The other half of the same precedence rule: the template's own hooks document IS the default.
+        when(templates.resolveForCreation(any(), any(), any()))
+                .thenReturn(new AgentTemplateService.ResolvedTemplate("user", guardSnapshot(true)));
+        String actor = UUID.randomUUID().toString();
+
+        AgentPrincipal principal = service.createPrincipalFromTemplate(actor, "Guard", GUARD_TEMPLATE_ID,
+                null, null, null, null, null, null, null);
+
+        assertEquals("guard", principal.getHooks().path("advisors").get(0).path("kind").asText(),
+                "D25-09: the template is the declaration source of the subscription");
+        assertEquals(HookAdvisorRegistry.ACTION_APPROVAL_ASK,
+                principal.getHooks().path("advisors").get(0).path("on").get(0).asText());
     }
 
     @Test
@@ -175,11 +222,9 @@ class GuardTemplatePropagationTest {
         // Read surface (task-92 item 3): the UI subscription row lights up only if the list projection
         // carries the subscription, so the projection is asserted on a real principal row.
         UUID workspaceId = UUID.randomUUID();
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newPresetGuardPrincipal(GUARD_TEMPLATE_ID);
         principal.setId(UUID.randomUUID());
         principal.setName("守卫 Guard");
-        principal.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
-        principal.setPresetId(GUARD_TEMPLATE_ID);
         principal.setCreatedAt(java.time.Instant.now());
         principal.setHooks(new ObjectMapper().readTree(
                 "{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}"));

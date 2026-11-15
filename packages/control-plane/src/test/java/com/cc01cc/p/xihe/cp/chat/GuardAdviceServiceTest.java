@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
@@ -77,7 +78,7 @@ class GuardAdviceServiceTest {
         when(participants.findBySessionIdOrderByOrderIndexAsc(UUID.fromString(SESSION_ID)))
                 .thenReturn(List.of(guard));
         when(agents.findById(guard.getPrincipalId())).thenAnswer(invocation -> {
-            AgentPrincipal principal = new AgentPrincipal();
+            AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
             principal.setId(guard.getPrincipalId());
             principal.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
             return Optional.of(principal);

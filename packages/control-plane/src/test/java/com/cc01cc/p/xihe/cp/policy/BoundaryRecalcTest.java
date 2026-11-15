@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
@@ -106,7 +107,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Boundary recalc agent");
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
@@ -142,7 +143,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Boundary recalc cap agent");
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
@@ -251,7 +252,7 @@ class BoundaryRecalcTest extends AbstractReusableIntegrationTest {
         WorkspaceRepository workspaceRepository = mock(WorkspaceRepository.class);
         WorkspaceMembershipService memberships = mock(WorkspaceMembershipService.class);
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(principalId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         when(principalRepository.findById(principalId)).thenReturn(Optional.of(principal));

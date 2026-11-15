@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
@@ -687,7 +688,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
 
     private ParentFixture restrictedFixture(String toolName, String argumentsPreview) {
         ensureWorkspace();
-        AgentPrincipal restricted = new AgentPrincipal();
+        AgentPrincipal restricted = TestAgentPrincipals.newUserAgentPrincipal();
         restricted.setName("Restricted principal " + UUID.randomUUID().toString().substring(0, 8));
         restricted.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();
@@ -949,7 +950,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Spawn route test", userId);
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Spawn route principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

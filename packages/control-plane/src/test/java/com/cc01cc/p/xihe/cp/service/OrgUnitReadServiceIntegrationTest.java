@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -265,7 +266,7 @@ class OrgUnitReadServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     private UUID insertPrincipal(String name) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name);
         principal.setCreatedByUserId(caller.toString());
         principal.setTemplateSnapshot(objectMapper.createObjectNode());

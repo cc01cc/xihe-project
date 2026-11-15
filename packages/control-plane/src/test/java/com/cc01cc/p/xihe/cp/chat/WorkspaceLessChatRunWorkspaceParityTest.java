@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -55,7 +56,7 @@ class WorkspaceLessChatRunWorkspaceParityTest extends AbstractIntegrationTest {
         assertNotNull(owner);
         userId = owner.getUser().getId();
         workspaceId = workspaceFixture.createOwnedWorkspace("parity ws", userId).getId().toString();
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("ParityAgent");
         principal.setCreatedByUserId(userId);
         principal.setOwnerUserId(UUID.fromString(userId));

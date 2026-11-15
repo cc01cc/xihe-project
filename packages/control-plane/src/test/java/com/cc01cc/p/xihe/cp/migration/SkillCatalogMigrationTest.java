@@ -67,8 +67,10 @@ class SkillCatalogMigrationTest {
                 + "', 'plan0628-owner@test.local', 'x', 'plan0628owner')");
         execute("INSERT INTO workspaces (id, name) VALUES ('" + WORKSPACE_1 + "', 'v101-skill-ws1')");
         execute("INSERT INTO workspaces (id, name) VALUES ('" + WORKSPACE_2 + "', 'v101-skill-ws2')");
-        execute("INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('" + PRINCIPAL_ID
-                + "', 'v101 skill principal', '" + USER_ID + "')");
+        // task-173 (V170): head has a NOT NULL ownership column with no default; these fixtures write
+        // head-shaped rows directly, so they name the side explicitly (USER = the user door).
+        execute("INSERT INTO agent_principals (id, name, created_by_user_id, ownership) VALUES ('" + PRINCIPAL_ID
+                + "', 'v101 skill principal', '" + USER_ID + "', 'USER')");
     }
 
     @BeforeEach

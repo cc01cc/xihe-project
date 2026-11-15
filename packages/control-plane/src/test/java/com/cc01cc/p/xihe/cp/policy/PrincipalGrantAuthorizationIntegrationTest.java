@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -242,7 +243,7 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractReusableIntegra
         // while every creation test stays green. The subject row is seeded directly (the D-174 shape,
         // same as AgentPrincipalVisibilityContractTest.createInstancePrincipal) so the case depends on
         // the principal scope only, not on which tier may run the workspace create door.
-        AgentPrincipal workspaceOwned = new AgentPrincipal();
+        AgentPrincipal workspaceOwned = TestAgentPrincipals.newUserAgentPrincipal();
         workspaceOwned.setName("workspaceScopedProbe");
         workspaceOwned.setCreatedByUserId(adminUserId.toString());
         String principalId = agentPrincipalRepository.saveAndFlush(workspaceOwned).getId().toString();

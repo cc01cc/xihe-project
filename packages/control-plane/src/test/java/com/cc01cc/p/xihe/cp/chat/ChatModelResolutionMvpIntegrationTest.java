@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -76,7 +77,7 @@ class ChatModelResolutionMvpIntegrationTest extends AbstractIntegrationTest {
         ProviderConnection connection = ChatBindingTestSupport.ensureChatConnection(
                 providerConnectionRepository, "USER", user.getId().toString(),
                 "mvp-" + UUID.randomUUID());
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(prefix + " principal");
         principal.setCreatedByUserId(user.getId().toString());
         var snapshot = objectMapper.createObjectNode();

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
@@ -408,7 +409,7 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Spawn lifecycle test", userId);
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Spawn lifecycle principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.skill;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -148,7 +149,7 @@ class SkillCatalogIsolationTest extends AbstractReusableIntegrationTest {
     }
 
     private UUID insertPrincipal(String name, UUID creator) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name + "-" + runSuffix);
         principal.setCreatedByUserId(creator.toString());
         return principals.save(principal).getId();

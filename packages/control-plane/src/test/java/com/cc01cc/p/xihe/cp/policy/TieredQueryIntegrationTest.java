@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -310,7 +311,7 @@ class TieredQueryIntegrationTest extends AbstractReusableIntegrationTest {
         workspaceId = workspaceRepository.save(
                 TestDataFactory.directAttachWorkspace("Tier query test")).getId().toString();
         if (withPrincipal) {
-            AgentPrincipal principal = new AgentPrincipal();
+            AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
             principal.setName("Tier query principal");
             principal.setCreatedByUserId(userId);
             var snapshot = objectMapper.createObjectNode();

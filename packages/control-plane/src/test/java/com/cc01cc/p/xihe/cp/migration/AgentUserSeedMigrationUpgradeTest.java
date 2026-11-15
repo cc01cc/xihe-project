@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -130,7 +131,7 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractReusableIntegrationTest 
         UUID userRoleId = SystemAccessRoleCatalog.USER_ID;
         List<UUID> agentIds = new ArrayList<>();
         for (int i = 0; i < LEGACY_AGENT_SEEDS; i++) {
-            AgentPrincipal agent = new AgentPrincipal();
+            AgentPrincipal agent = TestAgentPrincipals.newUserAgentPrincipal();
             agent.setName("v127-agent-" + i + "-" + UUID.randomUUID().toString().substring(0, 8));
             agent.setTemplateSnapshot(new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode());
             agent.setCreatedByUserId(granter.getId().toString());

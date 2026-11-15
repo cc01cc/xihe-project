@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.mcp;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -362,7 +363,7 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
     // ── fixture helpers ──────────────────────────────────────────────────
 
     private UUID seedPrincipalWithCredentialUse(Credential... credentials) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Acquire contract principal");
         principal.setCreatedByUserId(UUID.fromString(userId).toString());
         ObjectNode snapshot = objectMapper.createObjectNode();

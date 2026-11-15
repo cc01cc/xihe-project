@@ -259,8 +259,11 @@ class SessionBranchMigrationIntegrationTest {
                     "messages.branch_id must not exist before V43");
         }
 
-        migrateToCurrent(jdbcUrl);
-        migrateToCurrent(jdbcUrl);
+        // task-173 (V170 / D-1533): bounded at V169 — this fixture carries pre-V170 rows, and V170
+        // refuses to guess the ownership of such rows (pinned by AgentPrincipalOwnershipMigrationTest).
+        // Every migration this test is about (V43 and earlier) still runs; only V170 is excluded.
+        migrateToVersion(jdbcUrl, "169");
+        migrateToVersion(jdbcUrl, "169");
 
         try (Connection connection = connect(jdbcUrl)) {
             assertEquals(1, scalarInt(connection,

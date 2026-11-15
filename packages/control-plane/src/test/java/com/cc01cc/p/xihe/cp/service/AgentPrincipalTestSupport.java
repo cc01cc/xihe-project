@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
@@ -111,7 +112,7 @@ public final class AgentPrincipalTestSupport {
 
     /** A user-created principal — every write path stays open. */
     public static AgentPrincipal activeUserPrincipal() {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(UUID.randomUUID());
         principal.setOrigin(AgentPrincipal.ORIGIN_USER);
         return principal;
@@ -119,7 +120,7 @@ public final class AgentPrincipalTestSupport {
 
     /** The builtin guard preset — the target of the cap-immutability refusal. */
     public static AgentPrincipal presetGuard() {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(UUID.randomUUID());
         principal.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
         principal.setPresetId("00000000-0000-4000-8000-0000000000a2");

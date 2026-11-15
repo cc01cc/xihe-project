@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
@@ -206,7 +207,7 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
     }
 
     private UUID principalBoundTo(UUID userId, UUID workspaceId) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("gate-principal");
         principal.setCreatedByUserId(userId.toString());
         principal.setTemplateSnapshot(objectMapper.createObjectNode());

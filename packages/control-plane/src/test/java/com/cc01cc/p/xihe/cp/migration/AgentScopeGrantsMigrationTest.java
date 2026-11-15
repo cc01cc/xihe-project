@@ -92,7 +92,12 @@ class AgentScopeGrantsMigrationTest {
                 + "'[{\"actionClass\":\"read\",\"resource\":\"*\"},"
                 + "{\"actionClass\":\"SPAWN_AGENT\",\"resource\":\"*\"}]'::jsonb)");
         // The upgrade itself.
-        Flyway.configure().dataSource(url, postgres.getUsername(), postgres.getPassword()).load().migrate();
+        // task-173 (V170 / D-1533): this upgrade-path fixture is bounded at V169. V170 refuses rows
+        // written before it (their ownership is undeterminable and the ruling forbids guessing), so
+        // "migrate a pre-V170 database to head" is no longer a supported path; the refusal itself is
+        // pinned by AgentPrincipalOwnershipMigrationTest. Only V170 is excluded here.
+        Flyway.configure().dataSource(url, postgres.getUsername(), postgres.getPassword())
+                .target(MigrationVersion.fromVersion("169")).load().migrate();
         // PLAN-0651 M2 T2.1 widened the seeded role sets AFTER V108 ran during the upgrade. The
         // backfill is deliberately re-runnable, so settle it once here; both tests then measure the
         // same state regardless of JUnit's method order (a test that re-runs the migration mutates

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
@@ -90,7 +91,7 @@ class HookAdviceDispatchTest {
     }
 
     private AgentPrincipal principalWithHooks(String hooksJson) throws Exception {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(companion.getPrincipalId());
         principal.setOrigin(AgentPrincipal.ORIGIN_USER);
         if (hooksJson != null) {
@@ -138,7 +139,7 @@ class HookAdviceDispatchTest {
 
     @Test
     void verdictCachePreventsASecondModelCallForTheSameFingerprint() throws Exception {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(companion.getPrincipalId());
         principal.setOrigin(AgentPrincipal.ORIGIN_USER);
         principal.setHooks(mapper.readTree("{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}"));

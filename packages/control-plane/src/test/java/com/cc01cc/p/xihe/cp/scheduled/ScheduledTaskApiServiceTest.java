@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.scheduled;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantExpander;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrantSource;
 import com.cc01cc.p.xihe.cp.policy.OrgUnitGrants;
@@ -607,7 +608,7 @@ class ScheduledTaskApiServiceTest {
     }
 
     private void stubPrincipal(boolean bound) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(UUID.fromString(PRINCIPAL_ID));
         principal.setName("agent-principal");
         when(agentPrincipalRepository.findById(UUID.fromString(PRINCIPAL_ID)))

@@ -25,18 +25,18 @@ import java.util.UUID;
  *   <li><b>{@code DELETE} = retire, never a hard delete</b> — {@code disabledAt} is set, the row is
  *       kept (FK {@code ON DELETE RESTRICT} keeps historical session/delegation references intact),
  *       and repeating it answers 204 again;</li>
- *   <li><b>no new ownership state</b> — pending decision #40 means "path 即归属" (option 40A), so
- *       a row created here is created exactly like every other principal (owner column null by
- *       design, G2=(b)); the path is what makes it an instance platform agent, and a user/workspace
- *       principal can never be promoted into one (D-1009 2/3).</li>
+ *   <li><b>ownership is a stored fact now</b> (task-173 / V170, user ruling 40C; D-1540): a row
+ *       created here is stamped {@code ownership = INSTANCE} by the service, so this prefix is no
+ *       longer "the path that makes it an instance platform agent" — the column says it, and both
+ *       read faces filter on it. A user/workspace principal still can never be promoted into one
+ *       (D-1009 2/3): the column is server-derived, never a request field.</li>
  * </ol>
  *
- * <p>Known, reported gap (not silently papered over): under 40A the table has no discriminator, so
- * the contract clause "a row that is NOT INSTANCE-owned answers the identical 404" degenerates to
- * "an unknown id answers 404" — a user-created row is addressable through this prefix, by an
- * instance administrator who could already manage it through the ordinary surface. The ruling that
- * would make the clause strict is #40 40B/40C; when it lands, the filter goes in
- * {@code listInstancePrincipals} plus one row check here.</p>
+ * <p>The gap this javadoc used to record is closed by the same ruling. Under 40A the table had no
+ * discriminator, so "a row that is NOT INSTANCE-owned answers the identical 404" degenerated to
+ * "an unknown id answers 404". Now {@code AgentPrincipalService} rejects a non-INSTANCE row on this
+ * prefix with that same 404 ({@code AGENT_PRINCIPAL_NOT_FOUND}), and the failed-retire path answers
+ * 403 {@code AGENT_PRINCIPAL_INSTANCE_OWNED} on the user side.</p>
  */
 @Service
 public class InstanceAgentPrincipalService {

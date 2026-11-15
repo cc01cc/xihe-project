@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
@@ -371,7 +372,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
 
     /** A workspace-bound agent principal with a single-token name so {@code @Name} parses. */
     private UUID extraPrincipal(String name) {
-        AgentPrincipal extra = new AgentPrincipal();
+        AgentPrincipal extra = TestAgentPrincipals.newUserAgentPrincipal();
         extra.setName(name);
         extra.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();
@@ -445,7 +446,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId,
                 com.cc01cc.p.xihe.cp.entity.WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Delegation chain principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();
@@ -455,7 +456,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         principalId = principal.getId();
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId,
                 objectMapper.createArrayNode()));
-        AgentPrincipal woken = new AgentPrincipal();
+        AgentPrincipal woken = TestAgentPrincipals.newUserAgentPrincipal();
         woken.setName("Delegation chain woken principal");
         woken.setCreatedByUserId(userId);
         var wokenSnapshot = objectMapper.createObjectNode();

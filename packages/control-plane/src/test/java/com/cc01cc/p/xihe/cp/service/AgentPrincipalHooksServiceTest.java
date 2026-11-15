@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -48,7 +49,7 @@ class AgentPrincipalHooksServiceTest {
      * (D-174: no owning user) needs an explicit context; a personal row must stay writable without one.
      */
     private static AgentPrincipal workspaceScopedPrincipal() {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(UUID.randomUUID());
         principal.setOwnerUserId(null);
         principal.setOrigin(AgentPrincipal.ORIGIN_USER);
@@ -64,7 +65,7 @@ class AgentPrincipalHooksServiceTest {
     }
 
     private static AgentPrincipal personalPrincipal(UUID ownerId) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(UUID.randomUUID());
         principal.setOwnerUserId(ownerId);
         principal.setOrigin(AgentPrincipal.ORIGIN_USER);
@@ -125,7 +126,7 @@ class AgentPrincipalHooksServiceTest {
         // anyway to prove the GUARD_HOOKS_IMMUTABLE branch is reached with a legal context in place.
         legalWorkspaceContext();
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
-        AgentPrincipal preset = new AgentPrincipal();
+        AgentPrincipal preset = TestAgentPrincipals.newUserAgentPrincipal();
         preset.setId(UUID.randomUUID());
         preset.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
         preset.setPresetId("guard-v1");

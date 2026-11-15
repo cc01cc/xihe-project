@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
@@ -295,7 +296,7 @@ class BareExecutionApprovalTest extends AbstractReusableIntegrationTest {
                 .filter(row -> "authorization_default_grant_created".equals(row.getAction()))
                 .forEach(row -> auditIds.add(row.getId()));
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Bare execution agent");
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());

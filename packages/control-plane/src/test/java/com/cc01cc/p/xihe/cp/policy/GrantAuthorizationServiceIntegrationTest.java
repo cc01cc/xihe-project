@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
@@ -166,7 +167,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Grant path test agent");
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
@@ -334,7 +335,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractReusableIntegrati
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Grant chain agent");
         principal.setCreatedByUserId(userId);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());

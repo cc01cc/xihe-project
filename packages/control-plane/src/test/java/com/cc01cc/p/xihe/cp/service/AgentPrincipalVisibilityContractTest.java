@@ -1,4 +1,5 @@
 package com.cc01cc.p.xihe.cp.service;
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -504,7 +505,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
 
     /** D-174: the create wire never carries a tier or an owner; owned rows are legacy fixtures. */
     private UUID createOwnedRow(User owner, String name) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principal.setCreatedByUserId(owner.getId().toString());
@@ -525,7 +526,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     }
 
     private UUID createInstancePrincipal(User creator) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("InstanceSharedAgent");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principal.setCreatedByUserId(creator.getId().toString());
@@ -536,7 +537,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
 
     /** M2 (G13=(a)) fixture shape: no owner column at all, as the user-level door leaves it. */
     private UUID createUserLevelPrincipal(User creator, String name) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principal.setCreatedByUserId(creator.getId().toString());

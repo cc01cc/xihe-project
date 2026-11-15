@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.plugin;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
 import com.cc01cc.p.xihe.cp.chat.ChatSubmissionService;
@@ -231,7 +232,7 @@ class PluginRunSnapshotAdmissionTest extends AbstractIntegrationTest {
                 user.getId().toString());
         workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(),
                 WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Plugin snapshot principal");
         principal.setCreatedByUserId(user.getId().toString());
         ObjectNode templateSnapshot = MAPPER.createObjectNode();

@@ -23,8 +23,16 @@ import java.util.UUID;
  *
  * <p>Sequence (must stay in this order):
  * empty DB → Flyway V89 → seed V89 shape → Flyway V125 → seed three legacy tier principals and their
- * surviving rows → assert the V125 contract is really in force → Flyway head. The Spring context then
- * starts against this pre-seeded database.</p>
+ * surviving rows → assert the V125 contract is really in force → <b>clean those pre-V170 rows</b> →
+ * Flyway head → re-create the same subjects at head. The Spring context then starts against this
+ * database.</p>
+ *
+ * <p>task-173 (V170, user ruling 40C / D-1533): the clean-then-re-create step is new. V170 refuses to
+ * classify rows written before it (both creation doors wrote origin='USER' with owner NULL, so their
+ * ownership cannot be determined and the ruling forbids guessing), which means a V125-shaped database
+ * is no longer migratable to head. The fixture follows the documented upgrade route (DEV-002 §8.3) and
+ * re-establishes the same rows with the ownership the ruling assigns, so the behaviour tests keep
+ * exercising owner-less, tier-less subjects with their legacy bindings.</p>
  */
 public final class AgentPrincipalScopeUpgradeFixture {
 
@@ -70,10 +78,23 @@ public final class AgentPrincipalScopeUpgradeFixture {
             migrate(target, "125");
             seedLegacyTierFixture(connection);
             assertV125Contract(connection);
+            // task-173 (V170, user ruling 40C / D-1533): a V125-shaped database is no longer migratable
+            // to head. The ownership of rows written before V170 cannot be determined (both doors wrote
+            // origin='USER' with owner NULL), and the ruling forbids guessing, so V170 refuses. The
+            // fixture therefore takes the documented upgrade route itself — clean first, then migrate
+            // (DEV-002 §8.3) — and re-creates the same subjects at head with the ownership the ruling
+            // assigns (USER: these are user/workspace rows, never platform agents). What the behaviour
+            // tests exercise is unchanged: owner-less, tier-less rows with their legacy bindings.
+            cleanLegacyPrincipals(connection);
         } catch (SQLException failure) {
             throw new IllegalStateException("V19 upgrade fixture failed to seed the V125 shape", failure);
         }
         migrate(target, null);
+        try (Connection connection = open(target)) {
+            seedLegacyTierFixtureAtHead(connection);
+        } catch (SQLException failure) {
+            throw new IllegalStateException("V19 upgrade fixture failed to re-seed the head shape", failure);
+        }
         return target;
     }
 
@@ -99,7 +120,30 @@ public final class AgentPrincipalScopeUpgradeFixture {
                 LEGACY_USER_ID);
         insertTierPrincipal(connection, WORKSPACE_PRINCIPAL_ID, "v19 workspace-tier-agent", "WORKSPACE", null);
         insertTierPrincipal(connection, INSTANCE_PRINCIPAL_ID, "v19 instance-tier-agent", "INSTANCE", null);
+        // The legacy role is schema-independent (V170 does not touch roles), so it is seeded once here
+        // and reused by the head-side re-seed; creating it twice would be a primary-key collision.
+        seedLegacyWorkspaceRole(connection);
+        insertTierBindingsAndGrants(connection);
+    }
 
+    /**
+     * task-173 (V170): the same subjects re-created at head, after the documented clean-then-migrate
+     * route. Only the ownership column is new; every behaviour those tests exercise (owner-less rows,
+     * legacy bindings, the frozen cap snapshot) is identical — the app cannot tell the rows were
+     * re-created, which is exactly why the fixture may do it (D-1533 only forbids *guessing* the
+     * ownership of old rows, not re-establishing a test fixture).
+     */
+    private static void seedLegacyTierFixtureAtHead(Connection connection) throws SQLException {
+        execute(connection, "INSERT INTO agent_principals (id, name, created_by_user_id, ownership)"
+                + " VALUES ('" + LEGACY_PRINCIPAL_ID + "', 'v19 legacy principal', '"
+                + LEGACY_USER_ID + "', 'USER')");
+        insertTierPrincipalAtHead(connection, PERSONAL_PRINCIPAL_ID, "v19 personal-tier-agent", LEGACY_USER_ID);
+        insertTierPrincipalAtHead(connection, WORKSPACE_PRINCIPAL_ID, "v19 workspace-tier-agent", null);
+        insertTierPrincipalAtHead(connection, INSTANCE_PRINCIPAL_ID, "v19 instance-tier-agent", null);
+        insertTierBindingsAndGrants(connection);
+    }
+
+    private static void insertTierBindingsAndGrants(Connection connection) throws SQLException {
         insertWorkspaceBinding(connection, PERSONAL_PRINCIPAL_ID, "[]");
         // PLAN-0691 T1.3 (V137) added PLUGIN_INVOKE to the base set of every non-viewer role and
         // deliberately did NOT backfill existing grants ("existing bindings keep the atoms they were
@@ -124,7 +168,6 @@ public final class AgentPrincipalScopeUpgradeFixture {
 
         insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
                 "instance", null);
-        seedLegacyWorkspaceRole(connection);
         insertRoleBinding(connection, WORKSPACE_PRINCIPAL_ID, LEGACY_WORKSPACE_ROLE_ID,
                 "workspace", WORKSPACE_ID);
         insertRoleBinding(connection, INSTANCE_PRINCIPAL_ID, SystemAccessRoleCatalog.USER_ID,
@@ -195,6 +238,33 @@ public final class AgentPrincipalScopeUpgradeFixture {
         execute(connection, "INSERT INTO agent_principals (id, name, created_by_user_id, scope,"
                 + " owner_user_id) VALUES ('" + id + "', '" + name + "', '" + LEGACY_USER_ID + "', '"
                 + scope + "', " + literal(owner) + ")");
+    }
+
+    /**
+     * The head-shaped row: no {@code scope} (V126 dropped it) but the V170 ownership column, which has
+     * no default precisely so a forgotten write fails instead of silently picking a side.
+     */
+    private static void insertTierPrincipalAtHead(Connection connection, UUID id, String name, UUID owner)
+            throws SQLException {
+        execute(connection, "INSERT INTO agent_principals (id, name, created_by_user_id, owner_user_id,"
+                + " ownership) VALUES ('" + id + "', '" + name + "', '" + LEGACY_USER_ID + "', "
+                + literal(owner) + ", 'USER')");
+    }
+
+    /**
+     * The cleanup V170's refusal message prescribes (FK order: binding rows first, then the subjects).
+     * Keeping it in the fixture — rather than special-casing the migration — is what makes the fixture
+     * follow the documented upgrade route instead of pretending old rows were classifiable.
+     */
+    private static void cleanLegacyPrincipals(Connection connection) throws SQLException {
+        String ids = "'" + LEGACY_PRINCIPAL_ID + "', '" + PERSONAL_PRINCIPAL_ID + "', '"
+                + WORKSPACE_PRINCIPAL_ID + "', '" + INSTANCE_PRINCIPAL_ID + "'";
+        execute(connection, "DELETE FROM workspace_agents WHERE principal_id IN (" + ids + ")");
+        execute(connection, "DELETE FROM role_bindings WHERE subject_type = 'agent_principal'"
+                + " AND subject_id IN (" + ids + ")");
+        execute(connection, "DELETE FROM grants WHERE subject_type = 'agent_principal'"
+                + " AND subject_id IN (" + ids + ")");
+        execute(connection, "DELETE FROM agent_principals WHERE id IN (" + ids + ")");
     }
 
     private static void insertWorkspaceBinding(Connection connection, UUID principalId, String permissions)

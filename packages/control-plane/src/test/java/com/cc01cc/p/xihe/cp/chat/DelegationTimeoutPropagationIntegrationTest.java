@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -251,7 +252,7 @@ class DelegationTimeoutPropagationIntegrationTest extends AbstractIntegrationTes
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId,
                 com.cc01cc.p.xihe.cp.entity.WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Delegation timeout principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

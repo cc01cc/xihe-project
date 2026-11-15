@@ -212,8 +212,9 @@ class AgentPrincipalControllerContractTest extends AbstractReusableIntegrationTe
         fixture();
         String contextlessToken = contextlessToken();
         // D-174 shape: no owning user ⇒ workspace-scoped ⇒ the 409 gate applies.
+        // task-173 (V170): ownership is NOT NULL with no database default; this is a user-door row.
         com.cc01cc.p.xihe.cp.entity.AgentPrincipal principal =
-                new com.cc01cc.p.xihe.cp.entity.AgentPrincipal();
+                com.cc01cc.p.xihe.cp.support.TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("ws-scoped-" + UUID.randomUUID());
         principal.setCreatedByUserId(userId.toString());
         principal.setTemplateId("template-1");

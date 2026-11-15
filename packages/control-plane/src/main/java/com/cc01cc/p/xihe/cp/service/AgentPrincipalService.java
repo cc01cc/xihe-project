@@ -150,19 +150,29 @@ public class AgentPrincipalService {
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
-        // PLAN-0625 task-92 (D25-09): creating from the builtin preset template is what makes a row a
-        // preset guard (origin + preset_id), and the template's own hooks document is the DEFAULT
-        // subscription — the caller may override it per request.
+        // PLAN-0625 task-92 (D25-09): the builtin preset template is what makes a row a preset guard
+        // (origin + preset_id), and the template's own hooks document is the DEFAULT subscription.
         boolean builtinPreset = "instance".equals(resolved.sourceLayer())
                 && AgentPrincipal.BUILTIN_GUARD_PRESET_TEMPLATE_ID.equals(resolvedTemplateId);
+        // task-173 (V170, user ruling 40C; Lead ruling on the contradictory case): the USER door
+        // refuses the builtin preset outright. V170 pins "origin = SYSTEM_PRESET => ownership =
+        // INSTANCE" as a one-way CHECK, so a user-door row built from that template is necessarily an
+        // INSTANCE asset — i.e. a row its own creator could never edit again. Writing it and then
+        // answering 409/403 on the next edit would be the "200 now, forbidden later" shape the ruling
+        // forbids, so the refusal happens BEFORE any write, with its own code and no row created. The
+        // instance door (createInstancePrincipal) builds preset guards, as it always has.
+        if (builtinPreset) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRESET_INSTANCE_ONLY",
+                    "The builtin guard preset can only be instantiated through"
+                            + " /api/v1/instance/agent-principals (its rows are instance-owned)");
+        }
         JsonNode templateHooks = resolved.snapshot().path("hooks");
         JsonNode effectiveHooks = hooks != null ? hooks
                 : (templateHooks.isMissingNode() || templateHooks.isNull()) ? null : templateHooks.deepCopy();
         return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(),
                 defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
-                builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET
-                        : (origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin),
-                builtinPreset ? resolvedTemplateId : presetId, roleIds, authorizationAction);
+                origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin,
+                presetId, roleIds, authorizationAction, AgentPrincipal.OWNERSHIP_USER);
     }
 
     /**
@@ -206,7 +216,10 @@ public class AgentPrincipalService {
                 defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
                 builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET : AgentPrincipal.ORIGIN_USER,
                 builtinPreset ? resolvedTemplateId : null, roleIds,
-                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS);
+                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+                // task-173 (V170): THIS door is what makes a platform agent. Without this argument the
+                // row would be indistinguishable from a user's own agent again (D-1540 ②).
+                AgentPrincipal.OWNERSHIP_INSTANCE);
     }
 
     /**
@@ -352,6 +365,28 @@ public class AgentPrincipalService {
                                           JsonNode allowedModels, JsonNode hooks,
                                           String origin, String presetId, List<UUID> roleIds,
                                           String authorizationAction) {
+        // task-173 (V170): every pre-existing caller is the user door (or a server-internal create), so
+        // the legacy signature keeps meaning "USER-owned". The instance door has to name INSTANCE
+        // explicitly — that is the point of D-1540 ②: a forgotten assignment must be a compile-time
+        // decision, never a silent default (V170's column has no DEFAULT for the same reason).
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, defaultModelProvider,
+                defaultModelName, allowedModels, hooks, origin, presetId, roleIds, authorizationAction,
+                AgentPrincipal.OWNERSHIP_USER);
+    }
+
+    /**
+     * task-173 (V170): the create that names its ownership. Only {@link #createInstancePrincipal}
+     * passes {@code INSTANCE}; every other path is {@code USER}.
+     *
+     * @param ownership {@link AgentPrincipal#OWNERSHIP_USER} or {@link AgentPrincipal#OWNERSHIP_INSTANCE}
+     */
+    @Transactional
+    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
+                                          JsonNode templateSnapshot,
+                                          String defaultModelProvider, String defaultModelName,
+                                          JsonNode allowedModels, JsonNode hooks,
+                                          String origin, String presetId, List<UUID> roleIds,
+                                          String authorizationAction, String ownership) {
         // D-180 锁序：instance mutex 是第一把锁（RoleAdmin/BindingAdmin 同协议），之后才
         // ①锁角色行（validateGrantableRoles，稳定序）②写主体/绑定/用户。
         lockInstanceMutex();
@@ -413,6 +448,25 @@ public class AgentPrincipalService {
         // preset guard (SYSTEM_PRESET + preset_id); everything else stays a USER principal.
         principal.setOrigin(origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin);
         principal.setPresetId(presetId);
+        // task-173 (V170 / D-1540 ②): the ownership is passed in, never defaulted. A preset principal is
+        // always an instance asset (V170's ck_agent_principals_ownership_preset CHECK enforces the same
+        // rule in the database); everything else follows the door that created it.
+        if (!AgentPrincipal.OWNERSHIP_USER.equals(ownership)
+                && !AgentPrincipal.OWNERSHIP_INSTANCE.equals(ownership)) {
+            throw new IllegalStateException(
+                    "ownership must be USER or INSTANCE, got: " + ownership);
+        }
+        // Fail closed on the cross axis before the database has to: V170's
+        // ck_agent_principals_ownership_preset refuses SYSTEM_PRESET on a USER-owned row, and a raw
+        // constraint violation would surface as a 500. No caller can legitimately reach this (the user
+        // door refuses the builtin preset outright; the instance door passes INSTANCE), so it is a
+        // programming error, not a wire error.
+        if (AgentPrincipal.OWNERSHIP_USER.equals(ownership)
+                && AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new IllegalStateException(
+                    "a preset guard (origin=SYSTEM_PRESET) must be INSTANCE-owned");
+        }
+        principal.setOwnership(ownership);
         AgentPrincipal savedPrincipal = agentPrincipalRepository.saveAndFlush(principal);
 
         // PLAN-0629 (user ruling 2026-11-04, option A): the frozen ceiling is retired. Permissions of
@@ -710,12 +764,19 @@ public class AgentPrincipalService {
             List<AgentPrincipal> visible = holdsAgentPrincipalManagementAtom(actorId)
                     ? agentPrincipalRepository.findAll()
                     : agentPrincipalRepository.findByCreatedByUserId(actorId.toString());
-            return visible.stream().map(this::toPrincipalView).toList();
+            // task-173 / D-1540 ①: the user prefix never lists an INSTANCE-owned row. "You can see it
+            // but the buttons do nothing" is worse than not seeing it — the instance prefix is the
+            // surface for those rows.
+            return visible.stream()
+                    .filter(principal -> !principal.isInstanceOwned())
+                    .map(this::toPrincipalView).toList();
         }
         UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE_CONTEXT");
         return listWorkspaceAgents(actorUserId, workspaceId).stream()
                 .map(view -> agentPrincipalRepository.findById(view.principalId()))
                 .flatMap(java.util.Optional::stream)
+                // task-173 / D-1540 ①: same exclusion on the workspace branch.
+                .filter(principal -> !principal.isInstanceOwned())
                 .map(this::toPrincipalView)
                 .toList();
     }
@@ -729,20 +790,25 @@ public class AgentPrincipalService {
      * does not go through {@link #listPrincipals} (which filters by {@code created_by} for callers
      * without the management atom); every authenticated caller sees the same set.</p>
      *
-     * <p>Honest limit (pending decision #40, option 40A "path 即归属"): {@code agent_principals}
-     * carries no ownership column, so "the deployment installed" cannot be filtered from the row —
-     * this returns the whole principal set, and the path is what makes the face an instance face.
-     * When #40 lands as 40B/40C the filter arrives here, in one place.</p>
+     * <p>task-173 (V170, user ruling 40C / D-1540): the former limit — "the table has no ownership
+     * column, so the path is the discriminator (40A)" — is gone. This method filters on the stored
+     * {@code ownership = INSTANCE}, so "what the deployment installed" is a row fact, not a request
+     * path; the instance-door create is the only writer of that value.</p>
      */
     @Transactional(readOnly = true)
     public List<AgentPrincipalView> listInstancePrincipals() {
-        return agentPrincipalRepository.findAll().stream().map(this::toPrincipalView).toList();
+        // task-173 (V170): the filter #40 was waiting for. Only platform agents answer here; a
+        // user-created principal is not part of "what this deployment installed".
+        return agentPrincipalRepository.findAll().stream()
+                .filter(AgentPrincipal::isInstanceOwned)
+                .map(this::toPrincipalView).toList();
     }
 
     private AgentPrincipalView toPrincipalView(AgentPrincipal principal) {
         return new AgentPrincipalView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(),
-                principal.getOwnerUserId(), principal.getDefaultModelProvider(),
+                principal.getOwnerUserId(), principal.getOwnership(),
+                principal.getDefaultModelProvider(),
                 principal.getDefaultModelName(),
                 principal.getAllowedModels() == null ? null : principal.getAllowedModels().deepCopy(),
                 principal.getDisabledAt(),
@@ -1237,8 +1303,16 @@ public class AgentPrincipalService {
         // D-196/BL-336 order (revises D22): existence (404) → scope-aware context (409) → authority
         // (403). The lookup is here only to learn the subject's scope; nothing from it is echoed in
         // the 409 branch, and the residual 404-vs-409 oracle is documented on the method below.
+        // task-173 (V170 / D-1540 ①): the instance prefix addresses platform agents only. A user-created
+        // row answers the same 404 an unknown id does, so the two prefixes cannot be used to probe each
+        // other's rows. (Before V170 this clause degenerated to "unknown id => 404".)
+        if (!requireWorkspaceContext && !principal.isInstanceOwned()) {
+            throw new CpApiException(HttpStatus.NOT_FOUND,
+                    "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found");
+        }
         if (requireWorkspaceContext) {
             requireWorkspaceContextFor(principal);
+            requireUserPrefixRefusesInstanceOwned(principal);
         }
         requireDisableAuthority(actorId, principal);
         if (principal.getDisabledAt() != null) {
@@ -1296,6 +1370,28 @@ public class AgentPrincipalService {
      * so the trade goes the other way. See {@code docs/api/inventory.md} for the same statement on the
      * wire contract.</p>
      */
+    /**
+     * task-173 (V170, user ruling 40C; Lead ruling on the implementation): an INSTANCE-owned row has
+     * exactly <b>one</b> writer — the instance prefix. Coercion into the user prefix is refused here,
+     * <b>unconditionally</b> (not even a holder of {@code MANAGE_AGENT_PRINCIPALS} may write it through
+     * this path): the two prefixes carry different capability gates and different audit paths, so
+     * letting both write the same row is the "one state, two writers" family of defect the team keeps
+     * closing. The code is its own ({@code AGENT_PRINCIPAL_INSTANCE_OWNED}) so a caller learns where to
+     * go instead of guessing from a generic 403.
+     *
+     * <p>Before V170 this could not be checked at all: the row carried no ownership, so a workspace
+     * administrator of a workspace that merely <i>bound</i> a platform agent could edit or retire it
+     * through the workspace channel.</p>
+     */
+    private static void requireUserPrefixRefusesInstanceOwned(AgentPrincipal principal) {
+        if (!principal.isInstanceOwned()) {
+            return;
+        }
+        throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_INSTANCE_OWNED",
+                "An instance-owned agent principal is managed only through"
+                        + " /api/v1/instance/agent-principals");
+    }
+
     private static void requireWorkspaceContextFor(AgentPrincipal principal) {
         if (!isWorkspaceScoped(principal)) {
             return;
@@ -1313,6 +1409,10 @@ public class AgentPrincipalService {
      * preset guard (a system asset that lives at the instance level even though it has no owner either).
      */
     private static boolean isWorkspaceScoped(AgentPrincipal principal) {
+        // task-173 (V170) does NOT change this predicate: an INSTANCE-owned row stays workspace-scoped
+        // for the context gate (Lead ruling on the implementation: one row has exactly ONE writer, so
+        // the user prefix must keep answering 409 before its ownership guard runs — see
+        // requireUserPrefixRefusesInstanceOwned).
         return principal.getOwnerUserId() == null
                 && !AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin());
     }
@@ -1534,10 +1634,25 @@ public class AgentPrincipalService {
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+        // task-173 (V170 / D-1540 ①): same rule as disable — the instance prefix only addresses
+        // INSTANCE-owned rows, everything else is the identical 404 an unknown id answers.
+        if (!requireWorkspaceContext && !principal.isInstanceOwned()) {
+            throw new CpApiException(HttpStatus.NOT_FOUND,
+                    "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found");
+        }
         // D-196/BL-336: same scope-aware gate as disable — a personal (instance-scope) principal stays
         // writable without a workspace context; a workspace-scoped one needs the explicit context.
         if (requireWorkspaceContext) {
             requireWorkspaceContextFor(principal);
+            // task-173 (V170): the user prefix stops here for a platform agent, whatever atoms the
+            // caller holds; the instance prefix is the single writer (Lead ruling). Preset guards are
+            // excluded on purpose: their documents are immutable for EVERYONE, and that refusal
+            // (GUARD_HOOKS_IMMUTABLE / GUARD_CONTEXT_POLICY_IMMUTABLE / GUARD_MODEL_INTENT_IMMUTABLE)
+            // says more than "wrong door", so it must keep answering from the document side. The door
+            // rule below would answer first and mask those codes.
+            if (!AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+                requireUserPrefixRefusesInstanceOwned(principal);
+            }
         }
         if (patch.hooksPresent()) {
             requireMutableHooks(principal);
@@ -1855,6 +1970,9 @@ public class AgentPrincipalService {
     /** PLAN-0622 M1.2 wire projection of a principal (list route, not the workspace binding). */
     public record AgentPrincipalView(UUID principalId, String name, String templateId, String templateName,
                                      Instant createdAt, UUID ownerUserId,
+                                     // task-173 (V170): USER or INSTANCE — the read face finally answers
+                                     // "who owns this row" instead of leaving it to the request path.
+                                     String ownership,
                                      String defaultModelProvider, String defaultModelName,
                                      JsonNode allowedModels, Instant disabledAt, JsonNode hooks,
                                      JsonNode contextPolicy) {}

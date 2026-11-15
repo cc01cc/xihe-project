@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -52,7 +53,7 @@ class SseParticipantDispatchTest extends AbstractIntegrationTest {
         ownerId = owner.getUser().getId();
         workspaceId = workspaceFixture.createOwnedWorkspace("P623 sse ws", ownerId).getId().toString();
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("P623 sse agent");
         principal.setCreatedByUserId(ownerId);
         principal = principals.saveAndFlush(principal);

@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -205,7 +206,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractReusableIntegrationTest {
      * fixture without grants would always resolve to an empty cap (and hide a real regression).
      */
     private AgentPrincipal principal(User creator, String name) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name);
         principal.setCreatedByUserId(creator.getId().toString());
         var snapshot = objectMapper.createObjectNode();

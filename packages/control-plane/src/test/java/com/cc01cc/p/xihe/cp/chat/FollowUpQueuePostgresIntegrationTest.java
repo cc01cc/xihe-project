@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -1006,7 +1007,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Follow-up " + UUID.randomUUID(), userId);
         String workspaceId = workspace.getId().toString();
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Follow-up admission principal");
         principal.setCreatedByUserId(userId);
         var principalSnapshot = objectMapper.createObjectNode();

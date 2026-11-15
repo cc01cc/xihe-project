@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
@@ -378,7 +379,7 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Delegation budget test", userId);
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Delegation budget principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

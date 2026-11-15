@@ -23,9 +23,13 @@ import java.util.UUID;
  *
  * <p>{@code ownerUserId} is projected as {@code null} rather than omitted: the schemas declare it
  * present-and-nullable, and a caller cannot distinguish "no owner" from "field missing" if the key
- * disappears. Note the honest limit (pending decision #40): today <b>every</b> new row has a null
- * owner column, so a view alone cannot tell an instance row from a user row — the path is the
- * discriminator (40A).</p>
+ * disappears.</p>
+ *
+ * <p><b>task-173 (V170) closes the limit this paragraph used to record.</b> Under ruling 40A the view
+ * could not tell an instance row from a user row — the path was the discriminator. User ruling 40C
+ * added the stored {@code ownership} column, so both projections now carry it and the two prefixes
+ * filter on it (the user prefix excludes {@code INSTANCE}, the instance prefix answers 404 for
+ * {@code USER}).</p>
  */
 public final class AgentPrincipalWireView {
 
@@ -42,6 +46,10 @@ public final class AgentPrincipalWireView {
         result.put("createdAt", principal.getCreatedAt().toString());
         result.put("ownerUserId",
                 principal.getOwnerUserId() == null ? null : principal.getOwnerUserId().toString());
+        // task-173 (V170): the create echo names the ownership the server derived from the door — the
+        // caller cannot send it, and it is the only way to see, right after a create, which side wrote
+        // the row. Keys stay aligned with AgentPrincipalView (same projection family, D-932).
+        result.put("ownership", principal.getOwnership());
         result.put("defaultModelProvider", principal.getDefaultModelProvider());
         result.put("defaultModelName", principal.getDefaultModelName());
         result.put("allowedModels", JacksonNodeExit.toDocument(objectMapper, principal.getAllowedModels()));
@@ -64,6 +72,8 @@ public final class AgentPrincipalWireView {
         result.put("templateName", view.templateName());
         result.put("createdAt", view.createdAt() == null ? null : view.createdAt().toString());
         result.put("ownerUserId", view.ownerUserId() == null ? null : view.ownerUserId().toString());
+        // task-173 (V170): who owns this row, now a stored fact instead of the request path (40A).
+        result.put("ownership", view.ownership());
         result.put("defaultModelProvider", view.defaultModelProvider());
         result.put("defaultModelName", view.defaultModelName());
         result.put("allowedModels", JacksonNodeExit.toDocument(objectMapper, view.allowedModels()));

@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
@@ -414,7 +415,7 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         return createPrincipal(name, hooksJson, null);
     }
 
-    /** Seeds the exact provenance a builtin-template create writes (V95 CHECK: both halves). */
+    /** Seeds the exact provenance a builtin-template create writes (V95 CHECK + V170 cross-axis CHECK). */
     private UUID seedPresetGuard(String name) {
         ObjectNode snapshot = objectMapper.createObjectNode();
         snapshot.putNull("templateId");
@@ -423,7 +424,11 @@ class AgentPrincipalHooksHttpTest extends AbstractReusableIntegrationTest {
         AgentPrincipal guard = agentPrincipalService.createPrincipal(
                 adminUserId.toString(), name, null, snapshot,
                 null, null, null, null,
-                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2", null);
+                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2", null,
+                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+                // task-173 (V170): a builtin preset principal is INSTANCE-owned by definition, and the
+                // cross-axis CHECK refuses the contradictory shape instead of letting the fixture drift.
+                AgentPrincipal.OWNERSHIP_INSTANCE);
         // D-174: tiers are gone; the seed keeps its legacy owner column (data preserved).
         guard.setOwnerUserId(adminUserId);
         guard = principalRepository.saveAndFlush(guard);

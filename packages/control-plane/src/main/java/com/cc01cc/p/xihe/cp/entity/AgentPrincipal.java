@@ -47,6 +47,28 @@ public class AgentPrincipal {
     /** PLAN-0625 (V95): USER = human-created; SYSTEM_PRESET = builtin guard preset. */
     public static final String ORIGIN_USER = "USER";
     public static final String ORIGIN_SYSTEM_PRESET = "SYSTEM_PRESET";
+
+    /**
+     * task-173 (V170, user ruling 40C / D-1532 ⑤; Lead ruling D-1540): <b>who owns this principal</b> —
+     * an axis of its own, deliberately not merged with {@link #origin} (which axis says how the row came
+     * to exist: user-created vs builtin preset).
+     *
+     * <ul>
+     *   <li>{@code USER} — created through {@code /api/v1/agent-principals}; its creator and, later, a
+     *       workspace that binds it manage it.</li>
+     *   <li>{@code INSTANCE} — created through {@code /api/v1/instance/agent-principals}: a platform
+     *       agent of this deployment. Only the {@code MANAGE_AGENT_PRINCIPALS} atom manages it
+     *       (evaluated at the atom layer — never a role name), and the user prefix must not even list
+     *       it.</li>
+     * </ul>
+     *
+     * <p>There is no {@code UNKNOWN} value: "cannot be determined" is a migration-time refusal
+     * (V170 raises), never a state a row may live in — that would be the fail-open D-1533 removed. The
+     * column has no DEFAULT either: a forgotten write has to fail loudly, because a default would
+     * silently mislabel one of the two doors (see V170's header).</p>
+     */
+    public static final String OWNERSHIP_USER = "USER";
+    public static final String OWNERSHIP_INSTANCE = "INSTANCE";
     /** PLAN-0625 task-92: the guard template seeded in the instance agent-templates config (V95/V98). */
     public static final String BUILTIN_GUARD_PRESET_TEMPLATE_ID = "00000000-0000-4000-8000-0000000000a2";
 
@@ -91,6 +113,22 @@ public class AgentPrincipal {
     /** Only ever set for {@code PERSONAL}; the DB CHECK constraint keeps the two in sync. */
     @Column(name = "owner_user_id", columnDefinition = "uuid")
     private UUID ownerUserId;
+
+    /**
+     * task-173 (V170): {@link #OWNERSHIP_USER} or {@link #OWNERSHIP_INSTANCE}. NOT NULL in the schema
+     * and written explicitly by both creation doors.
+     *
+     * <p><b>No default lives here — on purpose</b> (Lead ruling on task-173). V170 adds no database
+     * {@code DEFAULT}, so a forgotten write fails loudly; a Java field initializer would turn that
+     * loud failure back into a silent {@code USER} label, which is exactly the fail-open that
+     * {@code D-1533} forbids. The single production writer
+     * ({@code AgentPrincipalService.createPrincipal(...)}) takes the ownership as a <b>required</b>
+     * argument, and test fixtures name their intent through
+     * {@code support.TestAgentPrincipals.newUserAgentPrincipal()} /
+     * {@code newInstanceAgentPrincipal()} instead of relying on a default.</p>
+     */
+    @Column(name = "ownership", nullable = false, length = 16)
+    private String ownership;
 
     /** Model intent only — the principal never holds a provider connection (resolved at run time). */
     @Column(name = "default_model_provider", columnDefinition = "TEXT")
@@ -150,6 +188,12 @@ public class AgentPrincipal {
 
     public UUID getOwnerUserId() { return ownerUserId; }
     public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public String getOwnership() { return ownership; }
+    public void setOwnership(String ownership) { this.ownership = ownership; }
+
+    /** True for a platform agent of this deployment (V170). */
+    public boolean isInstanceOwned() { return OWNERSHIP_INSTANCE.equals(ownership); }
 
     public String getDefaultModelProvider() { return defaultModelProvider; }
     public void setDefaultModelProvider(String defaultModelProvider) {

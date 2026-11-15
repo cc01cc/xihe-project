@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
@@ -67,7 +68,7 @@ class SessionParticipantUnreadAggregationIntegrationTest extends AbstractReusabl
         ownerId = owner.getUser().getId();
         workspaceId = workspaceFixture.createOwnedWorkspace("P670 unread ws", ownerId).getId().toString();
 
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("P670 agent");
         principal.setCreatedByUserId(ownerId);
         principal = principals.saveAndFlush(principal);

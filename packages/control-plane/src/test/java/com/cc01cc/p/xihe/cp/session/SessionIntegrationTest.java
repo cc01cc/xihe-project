@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.session;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -268,7 +269,7 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void createSessionRequiresExplicitWorkspaceBoundPrincipalAndStoresEffectiveCap() throws Exception {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Session API principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

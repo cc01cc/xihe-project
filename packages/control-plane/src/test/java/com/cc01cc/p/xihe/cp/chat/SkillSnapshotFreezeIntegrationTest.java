@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -488,7 +489,7 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
     }
 
     private AgentPrincipal savePrincipal(User user) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("skill snapshot principal " + UUID.randomUUID());
         principal.setCreatedByUserId(user.getId().toString());
         ObjectNode snapshot = objectMapper.createObjectNode();

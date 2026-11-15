@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -336,7 +337,7 @@ class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
         workspaceId = workspace.getId().toString();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId,
                 com.cc01cc.p.xihe.cp.entity.WorkspaceRole.OWNER);
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("Wake chain durable principal");
         principal.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();
@@ -392,7 +393,7 @@ class WakeChainDurableWalkTest extends AbstractReusableIntegrationTest {
 
     /** A workspace-bound agent principal with a single-token name so {@code @Name} parses. */
     private UUID extraPrincipal(String name) {
-        AgentPrincipal extra = new AgentPrincipal();
+        AgentPrincipal extra = TestAgentPrincipals.newUserAgentPrincipal();
         extra.setName(name);
         extra.setCreatedByUserId(userId);
         var snapshot = objectMapper.createObjectNode();

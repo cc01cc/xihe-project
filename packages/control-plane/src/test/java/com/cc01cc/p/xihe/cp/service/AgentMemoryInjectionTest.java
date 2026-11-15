@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -199,7 +200,7 @@ class AgentMemoryInjectionTest extends AbstractReusableIntegrationTest {
     }
 
     private UUID savePrincipal(String name, UUID owner) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name);
         principal.setCreatedByUserId(owner.toString());
         principal.setOwnerUserId(owner);

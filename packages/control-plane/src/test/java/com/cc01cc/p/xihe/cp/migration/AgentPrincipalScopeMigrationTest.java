@@ -98,7 +98,12 @@ class AgentPrincipalScopeMigrationTest {
         seedLegacyTierFixture();
         assertLegacyTierContractIsInForceAtV125();
         capturePreRemovalState();
-        migrate(postgres, null);
+        // task-173 (V170, user ruling 40C / D-1533): the upgrade side stops at V169 on purpose. V170
+        // adds the ownership column and REFUSES rows written before it (their ownership is
+        // undeterminable and the ruling forbids guessing), so "migrate a pre-V170 database to head" is
+        // no longer a supported path — see AgentPrincipalOwnershipMigrationTest for that refusal.
+        // Everything this class asserts about V126 happens at or below V169 and is unchanged.
+        migrate(postgres, "169");
         // ---- fresh side ----
         migrate(freshPostgres, null);
         freshConnection = open(freshPostgres);
@@ -234,6 +239,20 @@ class AgentPrincipalScopeMigrationTest {
                 "an unknown owner is still refused");
         assertTrue(unknownOwner.getMessage().contains("fk_agent_principals_owner_user"),
                 "the owner FK is what refuses it: " + unknownOwner.getMessage());
+    }
+
+    @Test
+    void v170IsTheBoundaryThisUpgradePathStopsAt() throws SQLException {
+        assertEquals(0, scalarInt(connection, "SELECT count(*) FROM flyway_schema_history"
+                + " WHERE version = '170'"),
+                "a database carrying pre-V170 principals cannot reach V170 (D-1533 fail-closed)");
+        assertEquals(1, scalarInt(freshConnection, "SELECT count(*) FROM flyway_schema_history"
+                + " WHERE version = '170' AND success"),
+                "an empty database migrates straight through V170");
+        assertTrue(columnExists(freshConnection, "agent_principals", "ownership"),
+                "a fresh head really has the ownership column");
+        assertFalse(columnExists(connection, "agent_principals", "ownership"),
+                "the pre-V170 fixture database never got it");
     }
 
     // ------------------------------------------------------------------ fresh side

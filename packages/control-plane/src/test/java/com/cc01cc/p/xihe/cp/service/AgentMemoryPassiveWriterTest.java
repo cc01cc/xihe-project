@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -327,7 +328,7 @@ class AgentMemoryPassiveWriterTest {
     }
 
     private static AgentPrincipal principalWith(String contextPolicy) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setId(PRINCIPAL_ID);
         principal.setContextPolicy(json(contextPolicy));
         return principal;

@@ -214,8 +214,10 @@ class ScheduledTaskMigrationIntegrationTest {
     @Test
     void v60_deleting_agent_principal_sets_creator_column_null_and_keeps_task() throws SQLException {
         UUID principalId = UUID.randomUUID();
-        execute("INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('" + principalId
-                + "'::uuid, 'v60-agent', '" + userId + "'::uuid)");
+        // task-173 (V170): head has a NOT NULL ownership column with no default; these fixtures write
+        // head-shaped rows directly, so they name the side explicitly (USER = the user door).
+        execute("INSERT INTO agent_principals (id, name, created_by_user_id, ownership) VALUES ('" + principalId
+                + "'::uuid, 'v60-agent', '" + userId + "'::uuid, 'USER')");
         UUID taskId = UUID.randomUUID();
         execute("INSERT INTO scheduled_tasks (id, workspace_id, user_id, agent_principal_id, "
                 + "trigger_kind, cron_expr, timezone, target_kind, target_session_id, prompt, status, "

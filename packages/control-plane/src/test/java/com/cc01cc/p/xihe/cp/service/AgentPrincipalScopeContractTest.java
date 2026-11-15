@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.support.TestAgentPrincipals;
 import com.cc01cc.p.xihe.cp.AbstractReusableIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
@@ -357,7 +358,7 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
 
     /** A direct row with a legacy owner column value (creation no longer writes owners). */
     private UUID createOwnedPrincipal(User owner, String name) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName(name);
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principal.setCreatedByUserId(owner.getId().toString());
@@ -471,7 +472,7 @@ class AgentPrincipalScopeContractTest extends AbstractReusableIntegrationTest {
     }
 
     private UUID createInstancePrincipal(User creator) {
-        AgentPrincipal principal = new AgentPrincipal();
+        AgentPrincipal principal = TestAgentPrincipals.newUserAgentPrincipal();
         principal.setName("InstanceSharedAgent");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         // Fixture hygiene: created_by_user_id has a FK to users; a random UUID violates it.
