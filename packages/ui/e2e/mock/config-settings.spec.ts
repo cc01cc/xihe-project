@@ -6,6 +6,7 @@ import { ACTION_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel, selectByTestId } from "../helpers/select";
 // task-204：域集合唯一来源是 SSOT（`stores/config.ts#LAYER_DOMAINS`），spec 里不另抄一份清单。
 import { LAYER_DOMAINS } from "../../src/stores/config";
+import { PERMISSION_ATOMS } from "./helpers/auth";
 
 /**
  * 断言前置：确保域卡处于**展开**态 —— 只在「字段还不在 DOM 里」时点标题按钮。
@@ -22,6 +23,43 @@ import { LAYER_DOMAINS } from "../../src/stores/config";
 async function ensureDomainExpanded(page: Page, domain: string): Promise<void> {
     if ((await page.locator(`[data-testid^="config-field-${domain}-"]`).count()) > 0) return;
     await page.getByTestId(`config-domain-toggle-${domain}`).click();
+}
+
+/**
+ * task-213（2026-11-15）：本 spec 的桩是「catch-all（`**` 前缀 + `/api/v1/**`）→ `{}`」起手，于是
+ * `GET /me/permissions` 拿到**空投影**。而自 D-1521（`f66d091d3`，11:37）起实例层域页的读面判据是
+ * **动作原子** `READ_INSTANCE_CONTENT`（不是能力位 `isInstanceAdmin`）——
+ * 判据见 `src/views/settings/SettingsDomainView.vue:86-92`：
+ * `selfPermissionsStatus==="ready" && !auth.canReadInstanceContent` ⇒ 渲染 403 视图、**不挂域面板**。
+ * 本 spec 的 beforeEach 已种能力位（:51-78 的 `localStorage["xihe-user"].capabilities`），缺的正是这份原子投影
+ * ⇒ 八条用例红在 `settings-domain-title` / `config-domain-*` 上（element not found）。
+ *
+ * <p>修法与同族先例一致（`plan-0752-settings-ia.spec.ts:94-118`、`screenshots.spec.ts:147-170`）：
+ * **只补这一条投影**，原子表复用夹具导出 `PERMISSION_ATOMS`（task-76 / `48f92ac91` 起已含
+ * `READ_INSTANCE_CONTENT`），不在这里手写第二份词表。**必须注册在兜底之后**（Playwright LIFO ⇒ 后注册优先），
+ * 否则被 `{}` 兜底吃掉。</p>
+ */
+async function mockSelfPermissions(page: Page): Promise<void> {
+    await page.route("**/api/v1/me/permissions", (route: import("@playwright/test").Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "u1",
+                instanceCapabilities: ["isInstanceAdmin", "isInstanceSuper", "canCreateWorkspace"],
+                instancePermissions: PERMISSION_ATOMS,
+                workspaces: [
+                    {
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
+                        workspaceRole: "WS_OWNER",
+                        workspaceAdmin: true,
+                        permissions: PERMISSION_ATOMS,
+                    },
+                ],
+            }),
+        });
+    });
 }
 
 // BL-318：`shows an error banner when layer config cannot be loaded` 用
@@ -189,6 +227,8 @@ test.describe("Config Settings (three layers)", () => {
                 body: "retry: 5000\n\n",
             }),
         );
+        // task-213：必须在本函数的兜底**之后**注册（LIFO），否则空投影 ⇒ 实例层域页 403。
+        await mockSelfPermissions(page);
     }
 
     // PLAN-0752 M1 换掉了「层 = 页内页签」的交互：层现在是左栏的两个分组，域是二级链接
@@ -773,6 +813,9 @@ test.describe("Config Settings (three layers)", () => {
                 body: JSON.stringify({}),
             }),
         );
+        // task-213：本用例自带兜底（不调 mockConfigAPIs），同样要在它之后补权限投影，否则域页先 403、
+        // 断言到的是 SettingsForbiddenView 而不是「层配置读取失败」的错误横幅。
+        await mockSelfPermissions(page);
         // task-461（D-1311）：上面的兜底把页面**合法调用**的会话列表也答成 `{}`，而
         // `api.ts:3107-3114 normalizeSessionListPayload` 要求 `sessions` 数组 ⇒ throw ⇒ logger[ERROR]
         // ⇒ `helpers/page-failures.ts:44` 的共享 console 门「no unexpected console errors」红。
