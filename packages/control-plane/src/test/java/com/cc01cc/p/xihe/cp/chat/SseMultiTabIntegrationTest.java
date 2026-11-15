@@ -87,7 +87,8 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
                 // stream closed by the test / replaced by reconnect
             }
         });
-        waitUntil(stream.lines, payload -> payload.contains("\"type\":\"connected\""), 10_000);
+        waitUntil(stream.lines, payload -> payload.contains("\"type\":\"connected\""), 10_000,
+                "the connected frame of connection " + connectionId);
         return stream;
     }
 
@@ -100,8 +101,11 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
 
         sseManager.send(sessionId.toString(), "usage",
                 Map.of("runId", "r1", "type", "usage"));
-        waitUntil(secondTab.lines, payload -> payload.contains("\"runId\":\"r1\""), 10_000);
-        assertTrue(firstTab.lines.stream().anyMatch(payload -> payload.contains("\"runId\":\"r1\"")));
+        // Both legs are hard assertions now: "two tabs coexist" means both really received r1.
+        waitUntil(secondTab.lines, payload -> payload.contains("\"runId\":\"r1\""), 10_000,
+                "tab B receiving r1");
+        waitUntil(firstTab.lines, payload -> payload.contains("\"runId\":\"r1\""), 10_000,
+                "tab A receiving r1");
 
         firstTab.close();
         // The closed tab is cleaned up when the next broadcast hits the dead connection; the
@@ -110,7 +114,10 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
         // not an immediate count drop.
         sseManager.send(sessionId.toString(), "usage",
                 Map.of("runId", "r2", "type", "usage"));
-        waitUntil(secondTab.lines, payload -> payload.contains("\"runId\":\"r2\""), 10_000);
+        waitUntil(secondTab.lines, payload -> payload.contains("\"runId\":\"r2\""), 10_000,
+                "the surviving tab B receiving r2 after tab A closed");
+        assertTrue(secondTab.lines.stream().anyMatch(payload -> payload.contains("\"runId\":\"r2\"")),
+                "closing one tab must leave the other receiving events");
     }
 
     @Test
@@ -119,8 +126,9 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
         waitForConnectionCount(1);
         first.close();
 
+        SseStream latest = null;
         for (int attempt = 0; attempt < 3; attempt += 1) {
-            open("tab-fixed");
+            latest = open("tab-fixed");
             waitForConnectionCount(1);
         }
 
@@ -128,6 +136,9 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
                 Map.of("runId", "after-reconnect", "type", "usage"));
         assertEquals(1, sseManager.activeConnectionCount(sessionId.toString()),
                 "reconnects with the same connection instance must not leak entries");
+        // task-269: a surviving entry that receives nothing would still satisfy the count check.
+        waitUntil(latest.lines, payload -> payload.contains("\"runId\":\"after-reconnect\""), 10_000,
+                "the reconnected tab receiving a post-reconnect event");
     }
 
     private void waitForConnectionCount(int expected) throws InterruptedException {
@@ -141,8 +152,14 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
         assertEquals(expected, sseManager.activeConnectionCount(sessionId.toString()));
     }
 
+    /**
+     * task-269: the timeout path MUST fail. The previous version fell out of the loop and returned
+     * normally, so "wait until tab B received the event" silently passed when tab B received
+     * nothing at all — the broadcast claim was never actually asserted (and the slower the machine,
+     * the greener it looked). Any wait/poll/retry helper has to fail on its timeout path.
+     */
     private static void waitUntil(List<String> lines, java.util.function.Predicate<String> condition,
-                                  long timeoutMs) throws InterruptedException {
+                                  long timeoutMs, String what) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
             if (lines.stream().anyMatch(condition)) {
@@ -150,6 +167,8 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
             }
             Thread.sleep(50);
         }
+        org.junit.jupiter.api.Assertions.fail("timed out after " + timeoutMs + "ms waiting for " + what
+                + "; frames received so far = " + lines);
     }
 
     private AuthResponse register(String label) {
