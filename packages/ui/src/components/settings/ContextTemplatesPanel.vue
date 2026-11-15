@@ -11,6 +11,7 @@ import {
     type ApiRequestTemplate,
     type TemplateDiagnostic,
 } from "../../services/apiRequestTemplates";
+import JsonFieldEditor from "./JsonFieldEditor.vue";
 import type { ApiInputType } from "../../types/providerConnection";
 import { logger } from "../../lib/logger";
 import { formatApiType } from "../../lib/apiTypeLabels";
@@ -40,6 +41,8 @@ const templates = ref<ApiRequestTemplate[]>([]);
 const types = ref<ApiInputType[]>([]);
 const builtins = ref<ApiRequestTemplate[]>([]);
 const selected = ref<ApiRequestTemplate | null>(null);
+/** task-34：JSON 编辑区（CodeMirror 6）句柄 —— 变量插入要落在光标处。 */
+const editorRef = ref<InstanceType<typeof JsonFieldEditor> | null>(null);
 const selectedType = ref("");
 const diagnostics = ref<TemplateDiagnostic[]>([]);
 const validating = ref(false);
@@ -50,7 +53,6 @@ let generation = 0;
 onBeforeUnmount(() => {
     generation++;
 });
-const sourceInput = ref<HTMLTextAreaElement | null>(null);
 const palette = [
     "user_input",
     "agent_instructions",
@@ -147,13 +149,11 @@ function create() {
 }
 function insertVariable(name: string) {
     if (!selected.value) return;
-    const input = sourceInput.value;
-    const start = input?.selectionStart ?? selected.value.bodySource.length;
-    const end = input?.selectionEnd ?? start;
     const token = "${xh." + name + "}";
-    selected.value.bodySource =
-        selected.value.bodySource.slice(0, start) + token + selected.value.bodySource.slice(end);
-    input?.focus();
+    // task-34：插入点由编辑器决定（CM6 光标）；旧实现的 textarea selectionStart 已不存在。
+    const editor = editorRef.value;
+    if (editor) editor.insertText(token);
+    else selected.value.bodySource += token;
 }
 /**
  * P2-2 ③：模板状态是 CP 枚举（`draft`/`published`），中文界面里不许直出裸英文。
@@ -174,22 +174,6 @@ function statusLabel(status: string | null | undefined): string {
  * 语义不变：`${xh.*}` 等字符串值原样保留，不增删字段，不自动补默认值。
  * 非法 JSON 就地报错且**不改写原文**（不静默、不「尽力修复」）。
  */
-function formatSource() {
-    const current = selected.value;
-    if (!current || busy.value) return;
-    try {
-        const parsed: unknown = JSON.parse(current.bodySource);
-        current.bodySource = JSON.stringify(parsed, null, 2);
-        error.value = "";
-        diagnostics.value = [];
-    } catch (cause) {
-        const detail = cause instanceof Error && cause.message ? `: ${cause.message}` : "";
-        const message = `${t("common.error")}${detail}`;
-        logger.warn("API request template format failed", cause);
-        error.value = message;
-        toast.error(message);
-    }
-}
 function nextRevision(status: ApiRequestTemplate["status"]): ApiRequestTemplate | null {
     if (!selected.value) return null;
     const persisted = templates.value.find(
@@ -441,12 +425,12 @@ async function save(publish: boolean) {
                 </div>
                 <label class="block text-xs"
                     >{{ t("settings.apiRequest.source")
-                    }}<textarea
-                        ref="sourceInput"
+                    }}<JsonFieldEditor
+                        ref="editorRef"
                         v-model="selected.bodySource"
-                        data-testid="api-request-body-source"
-                        spellcheck="false"
-                        class="mt-1 min-h-80 w-full rounded-md border bg-background p-3 font-mono text-xs leading-6 disabled:opacity-60"
+                        control-id="api-request-body-source"
+                        test-id="api-request-body-source"
+                        host-class="min-h-80 max-h-[28rem]"
                         :disabled="readonly"
                     />
                 </label>
@@ -461,16 +445,6 @@ async function save(publish: boolean) {
                 </ul>
                 <p class="text-xs text-muted-foreground">{{ t("settings.apiRequest.rawHelp") }}</p>
                 <div v-if="!readonly" class="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        data-testid="api-request-format"
-                        class="rounded-md border px-3 py-2 text-xs disabled:opacity-60"
-                        :disabled="busy"
-                        :aria-label="t('settings.apiRequest.format')"
-                        @click="formatSource"
-                    >
-                        {{ t("settings.apiRequest.format") }}
-                    </button>
                     <button
                         type="button"
                         data-testid="api-request-save-draft"

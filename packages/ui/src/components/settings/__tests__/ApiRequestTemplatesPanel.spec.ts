@@ -9,6 +9,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import Panel from "../ContextTemplatesPanel.vue";
 import { listApiInputTypes } from "../../../services/providerConnectionService";
 import { readTemplateConfig, validateTemplate } from "../../../services/apiRequestTemplates";
+import { jsonDocText, jsonEditorView, setJsonDoc } from "./jsonEditorAsserts";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listApiInputTypes: vi.fn<typeof listApiInputTypes>(),
@@ -139,7 +140,8 @@ describe("API request template lifecycle", () => {
         await flushPromises();
         await wrapper.get('[data-testid="api-request-new"]').trigger("click");
         const raw = "{ broken ${xh.user_input}";
-        await wrapper.get('[data-testid="api-request-body-source"]').setValue(raw);
+        setJsonDoc(wrapper, "api-request-body-source", raw);
+        await flushPromises();
         await wrapper.get('[data-testid="api-request-save-draft"]').trigger("click");
         expect(validateTemplate).not.toHaveBeenCalled();
         const payload = wrapper.emitted("save")![0]![0] as Record<string, string>;
@@ -175,7 +177,8 @@ describe("API request template lifecycle", () => {
         });
         await flushPromises();
         const edited = builtin.bodySource.replace("user_input", "agent_instructions");
-        await wrapper.get('[data-testid="api-request-body-source"]').setValue(edited + " ");
+        setJsonDoc(wrapper, "api-request-body-source", edited + " ");
+        await flushPromises();
         await wrapper.get('[data-testid="api-request-publish"]').trigger("click");
         await flushPromises();
         const payload = wrapper.emitted("save")![0]![0] as Record<string, string>;
@@ -272,11 +275,10 @@ describe("API request template lifecycle", () => {
         await flushPromises();
         const compact =
             '{"model":"${xh.model}","messages":[{"role":"user","content":"${xh.user_input}"}],"stream":true}';
-        await wrapper.get('[data-testid="api-request-body-source"]').setValue(compact);
-        await wrapper.get('[data-testid="api-request-format"]').trigger("click");
-        const formatted = (
-            wrapper.get('[data-testid="api-request-body-source"]').element as HTMLTextAreaElement
-        ).value;
+        setJsonDoc(wrapper, "api-request-body-source", compact);
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-body-source-format"]').trigger("click");
+        const formatted = jsonDocText(wrapper, "api-request-body-source");
         expect(formatted).toBe(JSON.stringify(JSON.parse(compact), null, 2));
         expect(formatted).toContain('\n  "model"');
         expect(formatted).toContain("${xh.user_input}");
@@ -294,14 +296,12 @@ describe("API request template lifecycle", () => {
         });
         await flushPromises();
         const invalid = '{"model": "x",';
-        await wrapper.get('[data-testid="api-request-body-source"]').setValue(invalid);
-        await wrapper.get('[data-testid="api-request-format"]').trigger("click");
-        expect(
-            (wrapper.get('[data-testid="api-request-body-source"]').element as HTMLTextAreaElement)
-                .value,
-        ).toBe(invalid);
-        const alert = wrapper.find('[role="alert"]');
-        expect(alert.exists()).toBe(true);
+        setJsonDoc(wrapper, "api-request-body-source", invalid);
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-body-source-format"]').trigger("click");
+        expect(jsonDocText(wrapper, "api-request-body-source")).toBe(invalid);
+        // task-34：JSON 解析错误现在由 JsonFieldEditor 自己渲染（编辑器内错误行），不再走面板的 role=alert。
+        const alert = wrapper.find('[data-testid="api-request-body-source-error"]');
         expect(alert.text().length).toBeGreaterThan(0);
         wrapper.unmount();
     });
@@ -335,6 +335,39 @@ describe("API request template empty state · task-409 P2-2", () => {
         await flushPromises();
         expect(wrapper.find('[data-testid="api-request-body-source"]').exists()).toBe(true);
         wrapper.unmount();
+    });
+
+    /**
+     * task-34（用户报障 ②）：**进页即格式化 + 高亮**。
+     *
+     * <p>用户原话「JSON 仍然没有默认格式化以及 JSON 代码高亮」。旧实现只有一枚手点「格式化」
+     * 按钮（无高亮）；换成 `JsonFieldEditor` 后，第一次拿到非空正文就按 2 空格格式化，
+     * 并由 CodeMirror 提供语法高亮。</p>
+     */
+    /**
+     * task-34（用户报障 ②）：**格式化与高亮都由编辑器负责**。
+     *
+     * <p>面板自身不再有「格式化」按钮（旧实现 `JSON.stringify(parsed, null, 2)`），改由
+     * `JsonFieldEditor` 提供：它在第一次拿到非空正文时按 2 空格格式化一次，并渲染 CM6 高亮。
+     * 这里钉两件事：① 点编辑器自带格式化后文档是 2 空格缩进；② 编辑器产生 highlight span。</p>
+     */
+    it("task-34: 编辑器自带格式化 + 高亮（面板不再自带格式化按钮）", async () => {
+        const wrapper = mount(Panel, { props: { entries: {}, saving: false, layer: "user" } });
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-new"]').trigger("click");
+        await flushPromises();
+        const compact = '{"model":"${xh.model}","stream":true}';
+        setJsonDoc(wrapper, "api-request-body-source", compact);
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-body-source-format"]').trigger("click");
+        await flushPromises();
+
+        const text = jsonDocText(wrapper, "api-request-body-source");
+        expect(text).toBe(JSON.stringify(JSON.parse(compact), null, 2));
+        expect(text.split("\n")[1]).toMatch(/^ {2}"/);
+        expect(
+            jsonEditorView(wrapper, "api-request-body-source").dom.querySelectorAll("span").length,
+        ).toBeGreaterThan(0);
     });
 
     it("没有可用类型时 CTA 禁用（与工具栏同一判据）", async () => {

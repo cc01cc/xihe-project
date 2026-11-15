@@ -37,6 +37,14 @@ const props = defineProps<{
     testId: string;
     /** 禁用态（只读 / 无权限 / 层只读）。 */
     disabled?: boolean;
+    /**
+     * task-34：宿主高度/外观的**调用方**覆盖（Tailwind class）。
+     *
+     * <p>默认宿主是 `max-h-64`；API 请求模板需要更高的编辑区（原 `<textarea min-h-80>`）。
+     * 用「调用方传 class」而不是在组件里加 height 枚举：差异留在调用方，其它使用者（配置域）
+     * 的观感一个像素都不动。</p>
+     */
+    hostClass?: string;
 }>();
 
 const emit = defineEmits<{
@@ -50,6 +58,20 @@ const host = ref<HTMLElement | null>(null);
 const error = ref<string | null>(null);
 /** 已经做过「加载即格式化」的那一次（只做一次，见文件头）。 */
 let seeded = false;
+
+/**
+ * task-34：**产品级**插入入口 —— 模板面板的「可用变量」要往光标处插 `${xh.xxx}`。
+ * 这不是测试后门（测试仍走 `jsonEditorAsserts`），是给调用方的正常 API。
+ */
+function insertText(text: string): void {
+    const v = view.value;
+    if (!v || props.disabled) return;
+    const { from, to } = v.state.selection.main;
+    v.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length } });
+    v.focus();
+    emit("update:modelValue", v.state.doc.toString());
+}
+defineExpose({ insertText });
 
 /** 把 CM6 的当前文档整体替换成 `text`（不动外部 modelValue 的话由调用方决定）。 */
 function replaceDoc(text: string): void {
@@ -129,7 +151,10 @@ function formatNow(): void {
             :id="controlId"
             ref="host"
             :data-testid="testId"
-            class="min-w-0 rounded-lg border border-input bg-background overflow-auto max-h-64 text-sm"
+            :class="[
+                'min-w-0 rounded-lg border border-input bg-background overflow-auto max-h-64 text-sm',
+                hostClass ?? '',
+            ]"
             :aria-invalid="error ? 'true' : undefined"
         ></div>
         <div class="flex items-center gap-2">
