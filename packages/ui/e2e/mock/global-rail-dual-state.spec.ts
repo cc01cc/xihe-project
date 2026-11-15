@@ -1,5 +1,10 @@
 // timeout-exempt: long E2E step(s) reviewed in task-189 (mock lane boot + module menus)
 import { expect, test } from "./helpers/mock-test";
+// task-231（D-1137）：期望集取 SSOT、落点取 DOM。两处条数此前写死（资源 5 / 实例设置 12）
+// 而产品已分别变成 4 / 11（`fd545d1f6` 摘除资源区智能体页、`task-485` 把 `agent-profile` 迁出设置区）
+// ⇒ 断言与注释同时过期，红了两周没人看（单测同一条断言也红，见 task-231 ③）。
+import { RESOURCE_DEFS } from "../../src/lib/settingsIa";
+import { LAYER_DOMAINS } from "../../src/stores/config";
 
 /**
  * task-189 / BL-584 / BL-578 / D-896（**④b 已由 D-899 推翻**，`task-259` 回退）：
@@ -109,9 +114,9 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         await page.waitForTimeout(900);
         await expect(menu).toBeVisible();
 
-        // 菜单项 = RESOURCE_DEFS 的投影（5 项，`lib/globalModules.ts`）。
+        // 菜单项 = `RESOURCE_DEFS` 的投影（条数取 SSOT，`lib/globalModules.ts` 的 `resourceItems()`）。
         const items = menu.locator("[data-testid^='global-rail-menu-item-resources-']");
-        await expect(items).toHaveCount(5);
+        await expect(items).toHaveCount(RESOURCE_DEFS.length);
         await expect(page.getByTestId("global-rail-menu-item-resources-credentials")).toContainText(
             "凭据",
         );
@@ -156,9 +161,9 @@ test.describe("GlobalRail 双态 + 二级菜单", () => {
         await settingsMenuTrigger.focus();
         await page.keyboard.press("Enter");
         await expect(page.getByTestId("global-rail-menu-content-settings")).toBeVisible();
-        // 设置模块的菜单项 = 实例层域清单（12 项，`settingsIa.ts` 的 LAYER_DOMAINS.instance）。
+        // 设置模块的菜单项 = 实例层域清单（条数取 SSOT：`LAYER_DOMAINS.instance`，现 11 项 = 12 域宇宙 − `agent-profile`）。
         await expect(page.locator("[data-testid^='global-rail-menu-item-settings-']")).toHaveCount(
-            12,
+            LAYER_DOMAINS.instance.length,
         );
     });
 

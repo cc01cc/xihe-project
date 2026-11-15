@@ -5,6 +5,9 @@ import { createPinia, setActivePinia } from "pinia";
 import { provideSidebarContext } from "../ui/sidebar/utils";
 import GlobalRailModule from "../sidebar/GlobalRailModule.vue";
 import { globalModule } from "../../lib/globalModules";
+// task-231（D-1137）：期望集取 SSOT、落点取 DOM —— 条数不再写死字面量，
+// 否则产品每次增删资源项都要回来改这条断言，而漏改就是「红了一周没人看见」（本次的成因）。
+import { RESOURCE_DEFS } from "../../lib/settingsIa";
 // 菜单项的 labelKey 来自 SSOT（`settingsIa` 的资源矩阵）⇒ 必须用**真 locale**，
 // 局部 messages 夹具会漏掉一半键、让渲染结果里出现裸键（task-93/task-105 的探针就是这么抓的）。
 import { i18n } from "../../i18n";
@@ -94,12 +97,21 @@ describe("GlobalRailModule（task-259 回退 D-899）", () => {
         wrapper.unmount();
     });
 
-    it("正例：open=true 时菜单内容挂载，菜单项来自 SSOT 投影（资源 5 项）", async () => {
+    it("正例：open=true 时菜单内容挂载，菜单项来自 SSOT 投影（条数取 RESOURCE_DEFS）", async () => {
         const wrapper = mountModule(true);
         await flushPromises();
         const menu = wrapper.get('[data-testid="global-rail-menu-content-resources"]');
         expect(menu.text()).toContain("凭据");
-        expect(menu.findAll("[data-testid^='global-rail-menu-item-resources-']")).toHaveLength(5);
+        // 期望集 = SSOT 长度；落点 = 每个 id 在 DOM 里真的有对应的菜单项（两侧对撞）。
+        // 只对长度会让「多出来的项冒充别的项」也绿；只对落点会让「整组丢了但长度没测」也绿。
+        expect(menu.findAll("[data-testid^='global-rail-menu-item-resources-']")).toHaveLength(
+            RESOURCE_DEFS.length,
+        );
+        for (const def of RESOURCE_DEFS) {
+            expect(
+                wrapper.find(`[data-testid="global-rail-menu-item-resources-${def.id}"]`).exists(),
+            ).toBe(true);
+        }
         wrapper.unmount();
     });
 
