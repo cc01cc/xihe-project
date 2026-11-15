@@ -227,6 +227,88 @@ function sessionMonitorResponse(): Record<string, unknown> {
 
 /** task-546：mock 工作区的固定 id（形状合法 UUID，不是随机值）。 */
 export const MOCK_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+/**
+ * task-144：实例配置域夹具（`GET /api/v1/config/{domain}` 的 string map）。
+ *
+ * <p>**为什么需要**：这 10 个域在 mock 车道此前一个都没有 ⇒ 页面壳一挂载就吃 404 ⇒ 整条用例红在
+ * `mock-test.ts:70` 的「无意外浏览器侧失败」上（实测 22 条新红里 21 条的**正文断言全过**）。</p>
+ *
+ * <p>**形状来源**：键规则照 `src/preview/mock/api-server.ts` 的 `entriesFor()`（非字符串值序列化成
+ * JSON 字符串）；值取自 `src/preview/mock/data/mockValues.ts` 的同名域（该表对过真实 CP）。
+ * 这里只搬**面板首屏会读**的键，未搬的键语义等价于「该键未配置」。</p>
+ *
+ * <p>`api-request-templates` 特别说明：真实响应里 `templates` 是 **JSON 字符串**
+ * （`src/preview/mock/data/apiRequestTemplates.ts` 的 `apiRequestTemplateEntries()`）；
+ * 这里给 `"[]"` = 未发布任何模板（合法空集），**不虚构模板对象**。</p>
+ */
+const INSTANCE_CONFIG_FIXTURES: Record<string, Record<string, unknown>> = {
+    "agent-profile": { userName: "xihe-operator" },
+    "agent-runtime": {
+        useRegistry: "true",
+        useSupervisor: "true",
+        workersDir: ".xihe/workers",
+        runMaxTurns: 40,
+        runMaxElapsedSeconds: 900,
+        runMaxTokens: 200000,
+        maxConcurrentRunsPerSession: 2,
+    },
+    "approval-policy": {
+        mode: "manual",
+        askActionClasses: ["file.write", "shell.exec", "network.egress"],
+    },
+    "context-policy": {
+        defaults: {
+            fingerprintEnabled: true,
+            softThresholdPct: 0.72,
+            hardThresholdPct: 0.9,
+            keepRecentMessages: 6,
+            maxInputTokens: 128000,
+            summaryProvider: "llm",
+            summaryModel: "gpt-4o-mini",
+        },
+    },
+    embedding: {
+        model: "text-embedding-3-small",
+        dimensions: 768,
+        "profile.providerId": "openai",
+        "profile.connectionKey": "conn-embed-primary",
+        "profile.model": "text-embedding-3-small",
+    },
+    "job-policy": { defaultTimeoutSecs: 3600, maxTimeoutSecs: 86400 },
+    "llm-provider": {
+        "profile.providerId": "anthropic",
+        "profile.connectionKey": "conn-claude-primary",
+        "profile.model": "claude-sonnet-4-5",
+        imageProvider: "openai",
+    },
+    rag: { chunkSize: 512, chunkOverlap: 64, topK: 6, minScore: 0.35 },
+    "user-preference": { theme: "dark", language: "zh-CN" },
+    "api-request-templates": { templates: "[]" },
+};
+
+/**
+ * task-144：`GET /api/v1/me/permissions` 的权限原子投影。
+ *
+ * <p>形状照 `src/preview/mock/data/previewPermissions.ts` 的 `mockPermissionProjection()`：
+ * `userId` / `instanceCapabilities` / `instancePermissions` / `workspaces` 四字段。原子取
+ * `PREVIEW_PERMISSION_ATOMS` 里**产品真的会判**的那几条；角色名用 CP 的 canonical `WS_OWNER`
+ * （`SystemAccessRoleCatalog.WS_OWNER`），不自造别名。</p>
+ */
+const PERMISSION_ATOMS = [
+    { actionClass: "MANAGE_ROLES", resource: "*" },
+    { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
+    { actionClass: "MANAGE_INSTANCE_CONFIG", resource: "*" },
+    { actionClass: "MANAGE_WORKSPACE_DEFAULT_CONFIG", resource: "*" },
+    { actionClass: "VIEW_INSTANCE_AUDIT", resource: "*" },
+    { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
+] as const;
+
+/** task-144：与 preview mock 的 `CAPABILITIES` 同值（`isInstanceAdmin` 等三位）。 */
+const DEFAULT_CAPABILITIES = {
+    isInstanceAdmin: true,
+    isInstanceSuper: true,
+    canCreateWorkspace: true,
+};
 
 export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // task-100：工作区事件流必须是**长连接**。旧桩用 `route.fulfill` 给有限体，响应立刻结束 ⇒
@@ -770,6 +852,249 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // task-144：页面壳一挂载就会发起、此前**完全没有夹具**的 23 个 (method, path)。
+    //
+    // 它们是**固定开销**不是被测行为（身份投影 / 配置域 / 后台流 / 工作区面板 / MCP 工具网关）。
+    // 缺它们的症状在 task-64（兜底改 404）之后是「整条用例红在 mock-test.ts:70 的『无意外浏览器侧
+    // 失败』上」—— 实测 22 条新红里 21 条的**正文断言全过**：红来自严格门，不是产品故障。
+    //
+    // 纪律：只处理对应 method（其余 route.fallback()）；每族写形状来源；**禁止 `{}`**、
+    // 禁止「数组或包装对象都收」。注册位置在兜底之后 ⇒ LIFO 优先。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // ① 身份与权限投影。来源：preview mock 的 `/auth/me`（api-server.ts:314）与
+    //    `/me/permissions`（:352）；id/name/email 与本文件 localStorage 种子一致。
+    await page.route("**/api/v1/auth/me", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                id: "user-1",
+                name: "Test User",
+                email: "test@xihe.local",
+                capabilities: options.capabilities ?? DEFAULT_CAPABILITIES,
+            }),
+        });
+    });
+
+    await page.route("**/api/v1/me/permissions", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                instanceCapabilities: Object.keys(options.capabilities ?? DEFAULT_CAPABILITIES),
+                instancePermissions: PERMISSION_ATOMS,
+                workspaces: [
+                    {
+                        workspaceId: MOCK_WORKSPACE_ID,
+                        workspaceRole: "WS_OWNER",
+                        workspaceAdmin: true,
+                        permissions: PERMISSION_ATOMS,
+                    },
+                ],
+            }),
+        });
+    });
+
+    // ② 配置域：`GET /api/v1/config/{domain}` → CP 的 config string map。
+    //    带 `?layer=` 时 CP 回 `{ domain, layer, entries, envOverridden }`，不带则**直接回 map**
+    //    （preview api-server.ts 的两个分支）。未知域不接 —— 继续走兜底 404 保持「没桩」可见。
+    await page.route("**/api/v1/config/*", async (route) => {
+        const request = route.request();
+        if (request.method() !== "GET") return route.fallback();
+        const url = new URL(request.url());
+        const domain = url.pathname.split("/").pop() ?? "";
+        const fixture = INSTANCE_CONFIG_FIXTURES[domain];
+        if (!fixture) return route.fallback();
+        // wire 是 string map：非字符串值序列化成 JSON 字符串（同 preview entriesFor）。
+        const entries: Record<string, string> = {};
+        for (const [key, value] of Object.entries(fixture)) {
+            entries[key] = typeof value === "string" ? value : JSON.stringify(value);
+        }
+        const layer = url.searchParams.get("layer");
+        const body = layer
+            ? {
+                  domain,
+                  layer,
+                  entries,
+                  envOverridden: {},
+                  ...(url.searchParams.get("includeMeta") === "true" ? { keys: [] } : {}),
+              }
+            : entries;
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(body),
+        });
+    });
+
+    // ③ 后台流与小面：
+    //    - `user-events` 是 **SSE**（`src/features/workspace/chat/useUserChannelSSE.ts` 订阅它），
+    //      不能回 JSON：镜像 preview api-server.ts:1085 的最小流（首帧 `connected` + `retry`，
+    //      否则客户端会立刻重连、把日志刷满）。
+    //    - `telemetry/logs` 是 POST（api-server.ts:1109 回 `{status:"ok"}`；产品不读返回）。
+    //    - `approvals/pending` 是**裸数组**（api-server.ts:523）。
+    //    - `provider-connections` 是 `{ connections: [] }`（既有 spec 同形：provider-protocol-groups）。
+    await page.route("**/api/v1/user-events", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+            body: "retry: 5000\n\nevent: connected\ndata: {}\n\n",
+        });
+    });
+
+    await page.route("**/api/v1/telemetry/logs", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ status: "ok" }),
+        });
+    });
+
+    await page.route("**/api/v1/approvals/pending", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([]),
+        });
+    });
+
+    // ⑥ `user-questions`：待处理提问的轮询面（`?state=pending`）。
+    //    URL 带 `?state=pending` ⇒ glob **必须带尾部 `*`**（Playwright 的 `*` 不吃 `/`，但吃 query）。
+    //    形状来自 preview api-server.ts:527：`{ items: [], pendingCount: 0 }`（**包装对象**，不是裸数组）。
+    //    这条是补完 ②③ 之后才浮出来的（配置域一有值，页面壳才会启动这个轮询）—— 记在 task-144 卡面。
+    await page.route("**/api/v1/user-questions*", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ items: [], pendingCount: 0 }),
+        });
+    });
+    await page.route("**/api/v1/provider-connections", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ connections: [] }),
+        });
+    });
+
+    // ④ 按 run / 按工作区读面：
+    //    - `chat/runs/{id}/guidance` → `{ items, latestSequence }`（api.ts normalizeGuidanceSnapshot）。
+    //    - `workspaces/{id}/checkpoints` → **裸数组**（preview api-server.ts:768 注释：api 要求裸数组）。
+    //    - `workspaces/{id}/imports` → **裸数组**（api.ts listWorkspaceImports 只认数组）。
+    //    - `workspaces/{id}/nested-repos` → `{ items }`（api.ts listWorkspaceNestedRepos 读 view.items）。
+    await page.route("**/api/v1/chat/runs/*/guidance", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ items: [], latestSequence: 0 }),
+        });
+    });
+
+    await page.route("**/api/v1/workspaces/*/checkpoints", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([]),
+        });
+    });
+
+    await page.route("**/api/v1/workspaces/*/imports", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([]),
+        });
+    });
+
+    await page.route("**/api/v1/workspaces/*/nested-repos", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ items: [] }),
+        });
+    });
+
+    // ⑤ MCP 工具网关 `POST /api/v1/mcp`（JSON-RPC，api.ts callRuntimeTool）。外壳照 preview
+    //    api-server.ts:542：非 2.0/非 tools-call 回 JSON-RPC error，tools/call 回 `result.isError`
+    //    （= preview 的 UNKNOWN_TOOL 语义）。**不假装工具可用**：静默成功会让「工具其实没实现」
+    //    在 UI 上表现成一切正常。
+    await page.route("**/api/v1/mcp", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        let envelope: { id?: unknown; jsonrpc?: unknown; method?: unknown } = {};
+        try {
+            envelope = JSON.parse(route.request().postData() ?? "{}") as typeof envelope;
+        } catch {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: null,
+                    error: { code: -32700, message: "Parse error" },
+                }),
+            });
+            return;
+        }
+        const id = envelope.id ?? null;
+        if (envelope.jsonrpc !== "2.0" || typeof envelope.method !== "string") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id,
+                    error: { code: -32600, message: "Invalid Request" },
+                }),
+            });
+            return;
+        }
+        if (envelope.method !== "tools/call") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id,
+                    error: {
+                        code: -32601,
+                        message: "Method not supported by mock: " + envelope.method,
+                    },
+                }),
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    isError: true,
+                    content: [
+                        {
+                            type: "text",
+                            text: "mock 车道没有 MCP 工具夹具（task-144）：不要把它当契约证据",
+                        },
+                    ],
+                },
+            }),
+        });
+    });
     // BL-318：`setupMockAuth` 是**每条 mock 用例都会调**的入口，所以会话侧投影与工作区智能体清单
     // 必须在这里也有默认值 —— 只在 `setupMockSessions` 挂的话，只调 `setupMockAuth` 的 spec
     // （如 `chat.spec.ts` 的 beforeeach）仍会拿到兜底的 `200 {}`，UI 解析 `activeChildren.map` /
