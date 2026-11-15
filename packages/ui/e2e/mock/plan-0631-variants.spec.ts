@@ -755,7 +755,11 @@ test.describe("PLAN-0631 M2 visual variants", () => {
                 await page.goto(`/settings/instance/${domain}?variant=${variant.param}`, {
                     waitUntil: "load",
                 });
-                await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
+                // 域卡**默认展开**（`src/components/settings/ConfigDomainPanel.vue:91` 的 `const expanded = ref(true)`；
+                // `:600` 的 `:aria-expanded`、`:605` 的 ▾/▸、`:634` 的 `v-if="expanded"` 都在说这件事）⇒
+                // 原来这里「点卡里第一个 button 展开」，实际是把已展开的卡**折叠**，字段随 `v-if` 消失，
+                // 于是下一条断言在 30 s（`LONG_TIMEOUT_MS`）后报 `config-field-…` not found（task-133 F 簇定性）。
+                // 现在不点：字段本来就在。要展开/折叠的用例应显式判 `aria-expanded`，别再用「点一下」当保险。
                 await expect(page.getByTestId(fields[domain])).toBeVisible({
                     timeout: LONG_TIMEOUT_MS,
                 });
@@ -763,7 +767,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             await page.goto(`/settings/instance/logging?variant=${variant.param}`, {
                 waitUntil: "load",
             });
-            await page.getByTestId("config-domain-logging").locator("button").first().click();
+            // 同上：logging 域卡同样默认展开（`ConfigDomainPanel.vue:91`），点一下是折叠。
             await expect(page.getByTestId(fields.logging)).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });
@@ -929,13 +933,17 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         };
         for (const domain of ["rag", "logging"]) {
             await page.goto(`/settings/instance/${domain}`, { waitUntil: "load" });
-            await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
+            // 域卡**默认展开**（`src/components/settings/ConfigDomainPanel.vue:91` 的 `const expanded = ref(true)`；
+            // `:600` 的 `:aria-expanded`、`:605` 的 ▾/▸、`:634` 的 `v-if="expanded"` 都在说这件事）⇒
+            // 原来这里「点卡里第一个 button 展开」，实际是把已展开的卡**折叠**，字段随 `v-if` 消失，
+            // 于是下一条断言在 30 s（`LONG_TIMEOUT_MS`）后报 `config-field-…` not found（task-133 F 簇定性）。
+            // 现在不点：字段本来就在。要展开/折叠的用例应显式判 `aria-expanded`，别再用「点一下」当保险。
             await expect(page.getByTestId(fields[domain])).toBeVisible({
                 timeout: LONG_TIMEOUT_MS,
             });
         }
         await page.goto("/settings/instance/logging", { waitUntil: "load" });
-        await page.getByTestId("config-domain-logging").locator("button").first().click();
+        // 同上：logging 域卡同样默认展开（`ConfigDomainPanel.vue:91`），点一下是折叠。
         await expect(page.getByTestId(fields.logging)).toBeVisible({
             timeout: LONG_TIMEOUT_MS,
         });
