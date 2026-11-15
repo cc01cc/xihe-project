@@ -596,6 +596,15 @@ export function evaluateFlakyPolicy({ flakyCases, changedSpecs, history, env }) 
         if (outside.length > 0) {
             warnings.push("       basis: ".concat(basis));
         }
+        // task-225：**环境性 flaky 的最常见来源要给出来**（原来只报用例名与环境证据，
+        // 读的人得自己想到「是不是并发把产物目录清了」）。这是一条**线索**，不是判定：
+        // 命中它不等于这条 flaky 一定是环境性的 —— 改动面内那条判据照旧会红（此处不放松）。
+        warnings.push(
+            "       可能原因（提示，不作判定）：多个 Playwright 进程共用同一 artifact 目录 ⇒ " +
+                "后启动者在开跑时清空 test-results/，先启动者写 trace 时 ENOENT，" +
+                "第二次重试跑绿 ⇒ 被 retries 静默吸收成 flaky（task-224 / D-1599）。" +
+                "并发跑时给每个 lane 设 XIHE_MOCK_OUTPUT_DIR（DEV-020 §3.6 / §3.3）。",
+        );
     }
     const runs = Array.isArray(history) ? history.slice() : [];
     const titles = [...new Set(cases.map((item) => item.title))];
@@ -763,7 +772,10 @@ function runSelftest() {
                 /MOCK_FLAKY_OUTSIDE_CHANGED_SPEC/.test(outside.output) &&
                 /flaky case A/.test(outside.output) &&
                 /head=/.test(outside.output) &&
-                /procs=/.test(outside.output),
+                /procs=/.test(outside.output) &&
+                // task-225：环境性 flaky 要给线索（并发共用产物目录），否则读到 WARN 的人不知道去查哪里。
+                /可能原因/.test(outside.output) &&
+                /XIHE_MOCK_OUTPUT_DIR/.test(outside.output),
             "②",
         );
         // ③ 基线 flaky 非 0 ⇒ 必须被门主动拒收（exit 2）
@@ -893,7 +905,9 @@ function runSelftest() {
                 /自洽轴通过/.test(consistent.output) &&
                 !/自洽轴未评估/.test(consistent.output) &&
                 !/SELF_INCONSISTENT/.test(consistent.output) &&
-                !/MOCK_BASELINE_COUNTS_DERIVED/.test(consistent.output),
+                !/MOCK_BASELINE_COUNTS_DERIVED/.test(consistent.output) &&
+                // task-225 阴性对照：没有 flaky 就**不许**出现「可能原因」那行（提示只在有 flaky 时打印）。
+                !/可能原因/.test(consistent.output),
             "⑨",
         );
         // ⑩ 历史夹具没有 sourceRun ⇒ 只 WARN「无法交叉核对」，不得红
