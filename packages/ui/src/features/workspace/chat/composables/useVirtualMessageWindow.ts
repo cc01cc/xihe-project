@@ -130,6 +130,19 @@ export function useVirtualMessageWindow({
         computed(() => ({
             count: rowKeys.value.length,
             getScrollElement: () => viewport.value,
+            /**
+             * task-255 / D-1631 —— **首次 attach 的写回偏移必须等于当前 DOM 偏移**。
+             *
+             * 库在首次 attach 时会执行 `_scrollToOffset(getScrollOffset())`
+             * （`@tanstack/virtual-core` `_willUpdate` 的首个分支），把库内偏移写回 DOM。
+             * 而 `getScrollOffset()` 在 observer 还没回调过时取的是 `initialOffset`（默认 0），
+             * 于是它把 `scrollTop` 写成 0 —— 若产品侧刚刚贴底（`applyDefaultScrollPosition`
+             * 已置位 latch，不会重试），贴底写入就被这次写回**覆盖**，窗口永久停在顶部
+             * （实测：产品 `scrollTo({top:44743.69})` 后 30ms 被库写回 `{top:0}`）。
+             *
+             * 给它一个读当前 DOM 偏移的函数 ⇒ 首次写回幂等；observer 之后接管，语义不变。
+             */
+            initialOffset: () => viewport.value?.scrollTop ?? 0,
             // task-179：已知实测高度的行直接用实测值（缓存挂在行 key 上，跨重挂载有效），
             // 其余退回 fallback —— 未测量行的估算越准，首帧 spacer 变化越小。
             estimateSize: (index: number) =>
