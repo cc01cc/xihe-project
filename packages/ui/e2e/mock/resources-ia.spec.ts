@@ -1,5 +1,5 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
-import { setupMockAuth } from "./helpers/auth";
+import { permissionAtomsWithout, setupMockAuth } from "./helpers/auth";
 
 // 旧资源路径清单的**唯一单源**（`task-315`）：本文件与 `src/router/__tests__/legacy-paths.spec.ts`
 // 共用同一份数据，不再各自手抄。`e2e → src/lib` 是既有惯例（同目录 `plan-0752-settings-ia.spec.ts`
@@ -34,7 +34,12 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
     test.use({ viewport: { width: 1440, height: 900 } });
 
     test("全局条第三入口 + 设置区左栏不再有资源条目（计数变 17 / 9）", async ({ page }) => {
-        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
+        // task-163：显式点名「不给 MANAGE_ROLES」——此前夹具无条件给全量原子，本用例算术里那步
+        // 「−1 按权限过滤（roles 要 MANAGE_ROLES）」在夹具层根本不成立（实测 14 vs 期望 13）。
+        await setupMockAuth(page, {
+            capabilities: { isInstanceAdmin: true },
+            permissionAtoms: permissionAtomsWithout("MANAGE_ROLES"),
+        });
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111/chat/session-1");
         const rail = page.getByTestId("global-rail-module-resources");

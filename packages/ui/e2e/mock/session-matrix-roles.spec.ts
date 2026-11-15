@@ -43,7 +43,20 @@ test.describe("会话矩阵 M4 — 三角色渲染", () => {
     });
 
     test("VIEWER：成员页不渲染成员列表，管理动作区不出现", async ({ page }) => {
-        await setupMockAuth(page, { workspace: { workspaceRole: "VIEWER" } });
+        // task-163：`workspace` 是 seed 字段，管不到 /me/permissions（那里此前恒 WS_OWNER）
+        // ⇒ 必须同时给 workspaceRole/workspaceAdmin，否则 VIEWER 用例拿到的仍是 OWNER。
+        // task-163：VIEWER 用例必须**同时**压三处，否则管理动作区照样渲染 ——
+        // 门的判据是 `canManageWorkspace = canWorkspaceAdmin(id) || projection.workspaceAdmin`，
+        // 而 `canWorkspaceAdmin` 第一条就是 `isAdmin`（= `capabilities.isInstanceAdmin`，**夹具默认 true**）；
+        // `canViewMembers` 又走 `canWriteWorkspace || canManageWorkspace`，前者按原子
+        // `WRITE_WORKSPACE_CONTENT` 判（夹具默认原子全量）。所以 `workspaceAdmin:false` 一个不够。
+        await setupMockAuth(page, {
+            workspace: { workspaceRole: "VIEWER" },
+            capabilities: {},
+            permissionAtoms: [],
+            workspaceRole: "WS_VIEWER",
+            workspaceAdmin: false,
+        });
         await setupMockSessions(page, { sessions: [] });
         // task-236（M4-3）：设置页无成员 tab、无管理动作区；直进成员页也不渲染列表（不发明 403 页）。
         await openSettings(page);
@@ -63,7 +76,20 @@ test.describe("会话矩阵 M4 — 三角色渲染", () => {
     });
 
     test("VIEWER 仍能进入 chat 面（角色门不误伤只读用户）", async ({ page }) => {
-        await setupMockAuth(page, { workspace: { workspaceRole: "VIEWER" } });
+        // task-163：`workspace` 是 seed 字段，管不到 /me/permissions（那里此前恒 WS_OWNER）
+        // ⇒ 必须同时给 workspaceRole/workspaceAdmin，否则 VIEWER 用例拿到的仍是 OWNER。
+        // task-163：VIEWER 用例必须**同时**压三处，否则管理动作区照样渲染 ——
+        // 门的判据是 `canManageWorkspace = canWorkspaceAdmin(id) || projection.workspaceAdmin`，
+        // 而 `canWorkspaceAdmin` 第一条就是 `isAdmin`（= `capabilities.isInstanceAdmin`，**夹具默认 true**）；
+        // `canViewMembers` 又走 `canWriteWorkspace || canManageWorkspace`，前者按原子
+        // `WRITE_WORKSPACE_CONTENT` 判（夹具默认原子全量）。所以 `workspaceAdmin:false` 一个不够。
+        await setupMockAuth(page, {
+            workspace: { workspaceRole: "VIEWER" },
+            capabilities: {},
+            permissionAtoms: [],
+            workspaceRole: "WS_VIEWER",
+            workspaceAdmin: false,
+        });
         await setupMockSessions(page, {
             sessions: [{ id: "viewer-session", title: "Viewer Chat" }],
         });

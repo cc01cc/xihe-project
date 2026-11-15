@@ -31,14 +31,17 @@ import {
     CHAT_RUN_NOT_FOUND,
     chatRunCancelProjection,
     chatRunProjection,
+    installRunRegistryObservers,
     mockRunsFor,
     parseChatRunPath,
 } from "./run-registry";
+import { installApprovalRegistry, mockApprovalsFor } from "./approval-registry";
 import {
     API_INPUT_TYPES_FIXTURE,
     CHECKPOINT_RETENTION_FIXTURE,
     ORG_UNIT_NODES_FIXTURE,
     PROVIDER_CATALOG_FIXTURE,
+    ROLE_CATALOG_FIXTURE,
     agentTemplatesResponse,
     buildConfigMetaKeys,
     contextSourcesResponse,
@@ -131,6 +134,19 @@ export interface MockAuthOptions {
      * ——那是另一条用例（权限门）该断言的东西，不该让功能用例替它红。
      */
     capabilities?: Record<string, boolean>;
+    /**
+     * task-163：`GET /api/v1/me/permissions` 的**原子面覆盖**（默认 = 本文件的 `PERMISSION_ATOMS` 全量）。
+     *
+     * 不传 ⇒ 行为与改动前逐字节相同（既有 100+ spec 不受影响）。要验「缺某个原子 ⇒ 入口应隐藏/置灰」的
+     * 用例必须显式传 `permissionAtomsWithout("MANAGE_ROLES")` 这样的清单，否则那句话在夹具层是假的。
+     */
+    permissionAtoms?: ReadonlyArray<{ actionClass: string; resource: string }>;
+    /**
+     * task-163：工作区角色与 `workspaceAdmin`（默认 `WS_OWNER` / `true`，即既有的所有权限主体）。
+     * 角色名用 CP 的 canonical 值（`SystemAccessRoleCatalog.WS_OWNER|WS_EDITOR|WS_VIEWER`），不自造别名。
+     */
+    workspaceRole?: "WS_OWNER" | "WS_EDITOR" | "WS_VIEWER";
+    workspaceAdmin?: boolean;
     /**
      * task-100：工作区事件流（`GET /api/v1/workspaces/{id}/events`）的桩形态。
      * - `"stream"`（默认）：in-page `window.fetch` 覆盖返回**永不关闭**的流
@@ -349,7 +365,7 @@ export const INSTANCE_CONFIG_FIXTURES: Record<string, Record<string, unknown>> =
  * `PREVIEW_PERMISSION_ATOMS` 里**产品真的会判**的那几条；角色名用 CP 的 canonical `WS_OWNER`
  * （`SystemAccessRoleCatalog.WS_OWNER`），不自造别名。</p>
  */
-const PERMISSION_ATOMS = [
+export const PERMISSION_ATOMS = [
     { actionClass: "MANAGE_ROLES", resource: "*" },
     { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
     { actionClass: "MANAGE_INSTANCE_CONFIG", resource: "*" },
@@ -358,7 +374,23 @@ const PERMISSION_ATOMS = [
     { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
 ] as const;
 
-/** task-144：与 preview mock 的 `CAPABILITIES` 同值（`isInstanceAdmin` 等三位）。 */
+/**
+ * task-163：按用例裁剪原子面。默认（不调用它）保持 PERMISSION_ATOMS 全量 ⇒ 既有 spec 行为不变。
+ *
+ * 为什么要有：PERMISSION_ATOMS 是常量，/me/permissions 此前无条件整份塞进 instancePermissions ——
+ * 于是「只给 isInstanceAdmin 能力位、不给 MANAGE_ROLES」这种用例在夹具层根本不成立：页面照样拿到
+ * MANAGE_ROLES ⇒「缺能力应置灰/应隐藏」永远测不到（实测 resources-ia.spec.ts:36 计数 14 vs 期望 13、
+ * policy-management.spec.ts:357 组数 2 vs 1）。
+ *
+ * 用法是显式点名**缺哪个原子**，而不是另给一份全量清单 —— 夹具里仍然只有一份原子词表（D-1485）。
+ */
+export function permissionAtomsWithout(
+    ...deny: ReadonlyArray<string>
+): Array<{ actionClass: string; resource: string }> {
+    return PERMISSION_ATOMS.filter((atom) => !deny.includes(atom.actionClass));
+}
+
+/** task-144：与 preview mock 的 CAPABILITIES 同值（isInstanceAdmin 等三位）。 */
 const DEFAULT_CAPABILITIES = {
     isInstanceAdmin: true,
     isInstanceSuper: true,
@@ -623,6 +655,12 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // 那一条路径），所以登记表**不是第二份清单**，它记的 sessionId 就是本次请求体里的那个。
     // 未登记的 runId 一律 404（真实 CP 对未知 run 的行为），不做「任何 id 都回同一个 run」的兜底。
     const runs = mockRunsFor(page);
+    // task-162：登记表的第二个生产者 —— 观察**任何** `POST /api/v1/chat` 的 202（含 spec 自建的
+    // 202 桩，如 `follow-up-queue.spec`），否则那些 runId 在 `GET /chat/runs/{id}` 上会 404。
+    installRunRegistryObservers(page, runs);
+    // task-161：审批待决摘要的派生表（每页一张；决定成功后才从摘要里消失）。
+    const approvals = mockApprovalsFor(page);
+    await installApprovalRegistry(page);
     await page.route("**/api/v1/chat", async (route) => {
         const body = route.request().postDataJSON() as {
             branchId?: string;
@@ -979,6 +1017,10 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
+    // task-163：能力/角色面按用例覆盖；三者默认值与 task-144 完全一致（既有 100+ spec 行为不变）。
+    const permissionAtoms = options.permissionAtoms ?? PERMISSION_ATOMS;
+    const workspaceRole = options.workspaceRole ?? "WS_OWNER";
+    const workspaceAdmin = options.workspaceAdmin ?? true;
     await page.route("**/api/v1/me/permissions", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         await route.fulfill({
@@ -987,13 +1029,13 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             body: JSON.stringify({
                 userId: "user-1",
                 instanceCapabilities: Object.keys(options.capabilities ?? DEFAULT_CAPABILITIES),
-                instancePermissions: PERMISSION_ATOMS,
+                instancePermissions: permissionAtoms,
                 workspaces: [
                     {
                         workspaceId: MOCK_WORKSPACE_ID,
-                        workspaceRole: "WS_OWNER",
-                        workspaceAdmin: true,
-                        permissions: PERMISSION_ATOMS,
+                        workspaceRole,
+                        workspaceAdmin,
+                        permissions: permissionAtoms,
                     },
                 ],
             }),
@@ -1110,14 +1152,19 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
-    // **刻意不桩**：`GET /api/v1/roles/catalog`（task-149，Lead 2026-11-15 裁定）。
-    // 它的 `atoms` 是**产品明令 UI 不得自建**的原子词表（`src/composables/api.ts:4126-4136`：
-    // 词表唯一来源就是这个端点，CP `PermissionAtomCatalog` 是 SSOT）。mock 车道导一份副本 =
-    // 造第二份清单，而这正是 task-149 A 步花力气消除的东西（同族问题见 D-1485）。
-    // 需要的 spec 用 `page.route` 自带夹具，并在夹具里写来源与时刻
-    // （形如「[引用] CP PermissionAtomCatalog @<sha>，2026-11-15」）。
-    // 真要统一词表 ⇒ 那是**产品面**的卡（把 CP 词表做成可下载资产），不是在 mock 里私抄。
-
+    // task-163：`GET /api/v1/roles/catalog?locale=` **补桩**（Lead 2026-11-15 裁定翻转 task-149 的「刻意不桩」）。
+    // 依据：该路由真实存在（`docs/api/openapi.yaml:5438-5454`，operationId `getRoleCatalog`），页面请求它是对的，
+    // 之前的 404 是**夹具缺桩**；把 404 放进 spec 的 `mockAllow` 等于把错误行为固化成契约。
+    // 词表「不私抄」的原判据仍然成立 ⇒ 夹具只列本 helper 身份投影里真的会判的原子（子集不是全集），
+    // 来源与边界写在 `helpers/stub-families.ts` 的 `ROLE_CATALOG_FIXTURE` 头注释里。
+    await page.route("**/api/v1/roles/catalog*", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(ROLE_CATALOG_FIXTURE),
+        });
+    });
     // 个人主体 / 实例主体：都是 `{ principals: [] }`（同 preview api-server.ts:800-803）。
     // 空集是真实的「mock 车道没有主体行」，不是不知道；写面不在本夹具范围内 ⇒ 非 GET 走 fallback。
     for (const principalsPath of ["agent-principals", "instance/agent-principals"]) {
@@ -1274,7 +1321,8 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     //      不能回 JSON：镜像 preview api-server.ts:1085 的最小流（首帧 `connected` + `retry`，
     //      否则客户端会立刻重连、把日志刷满）。
     //    - `telemetry/logs` 是 POST（api-server.ts:1109 回 `{status:"ok"}`；产品不读返回）。
-    //    - `approvals/pending` 是**裸数组**（api-server.ts:523）。
+    //    - `approvals/pending` 是**裸数组**（api-server.ts:523），**内容不能恒空** ——
+    //      task-161：它由 helpers/approval-registry.ts 的派生表给出（见下方 handler 注释）。
     //    - `provider-connections` 是 `{ connections: [] }`（既有 spec 同形：provider-protocol-groups）。
     await page.route("**/api/v1/user-events", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
@@ -1294,12 +1342,18 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
+    // task-161：approvals/pending **不得恒空**。裸 `[]` 不是"空数据"，是一句断言：
+    // "CP 认为没有任何待决审批"。客户端拿它对账（src/stores/agent.ts:306-323
+    // reconcilePendingApprovals）⇒ SSE 刚推进来的卡会被撤掉，后续点击撞
+    // `element is not detached from the DOM`（task-151 的 trace 证据）。
+    // 派生表在 helpers/approval-registry.ts：生产者在 pushMockApproval()（推 SSE 的那一刻登记），
+    // 消费者就是这条 handler —— 不另起第二份清单。
     await page.route("**/api/v1/approvals/pending", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         await route.fulfill({
             status: 200,
             contentType: "application/json",
-            body: JSON.stringify([]),
+            body: JSON.stringify(approvals.summaries()),
         });
     });
 

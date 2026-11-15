@@ -1,6 +1,7 @@
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { pushMockApproval } from "./helpers/approval-registry";
 import { workspaceWire } from "./helpers/workspace-fixture";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
@@ -193,10 +194,16 @@ async function openApprovalChat(page: Page) {
     });
 }
 
+/**
+ * 推一条审批事件。task-161 起**不直接调页内 pusher**：必须走 `pushMockApproval`，
+ * 它把"推进 SSE"与"登记到待决派生表"合成一个动作，否则 `GET /approvals/pending` 会回空
+ * 并让客户端把刚推来的卡撤掉（`src/stores/agent.ts:306-323`）。
+ */
 async function pushApproval(page: Page, payload: Record<string, unknown>) {
-    await page.evaluate((data) => {
-        (window as unknown as Record<string, unknown>).__pushApprovalEvent!(data);
-    }, payload);
+    await pushMockApproval(
+        page,
+        payload as { requestId: string; sessionId: string; workspaceId: string },
+    );
 }
 
 function viewportTag(page: Page): string {

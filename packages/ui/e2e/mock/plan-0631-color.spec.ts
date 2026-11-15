@@ -37,6 +37,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { pushMockApproval } from "./helpers/approval-registry";
 import {
     contrastBetween,
     contrastRatio,
@@ -600,12 +601,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
                 },
             );
             await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-            await page.evaluate((payload) => {
-                const push = (window as unknown as Record<string, unknown>).__pushApprovalEvent as (
-                    event: unknown,
-                ) => void;
-                push(payload);
-            }, approvalEvent(REQUEST_ID));
+            await pushMockApproval(page, approvalEvent(REQUEST_ID));
 
             const dialog = page.locator('[data-testid="modal-content"]');
             await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
@@ -897,12 +893,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             waitUntil: "load",
         });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        await page.evaluate((payload) => {
-            const push = (window as unknown as Record<string, unknown>).__pushApprovalEvent as (
-                event: unknown,
-            ) => void;
-            push(payload);
-        }, approvalEvent(REQUEST_ID));
+        await pushMockApproval(page, approvalEvent(REQUEST_ID));
 
         const dialog = page.locator('[data-testid="modal-content"]');
         await expect(dialog).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });

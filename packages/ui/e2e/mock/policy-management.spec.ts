@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { pushMockApproval } from "./helpers/approval-registry";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 import { selectByLocator } from "../helpers/select";
 
@@ -301,10 +302,15 @@ function unclassifiedApprovalEvent() {
     };
 }
 
+/**
+ * task-161：走 `pushMockApproval` 而不是裸 page.evaluate —— 它同时登记待决摘要，
+ * 否则 `GET /approvals/pending` 回空、客户端撤卡（`src/stores/agent.ts:306-323`）。
+ */
 async function pushApproval(page: Page, payload: Record<string, unknown>) {
-    await page.evaluate((data) => {
-        (window as unknown as Record<string, unknown>).__pushApprovalEvent!(data);
-    }, payload);
+    await pushMockApproval(
+        page,
+        payload as { requestId: string; sessionId: string; workspaceId: string },
+    );
 }
 
 function installDecisionRoute(page: Page) {
@@ -358,6 +364,9 @@ test.describe("Policy management (desktop)", () => {
         page,
     }) => {
         installPolicyApi(page);
+        // task-163：本用例的语义是「没有管理员能力」，而夹具默认 capabilities 是 { isInstanceAdmin: true }、
+        // 原子面又是全量 ⇒ 不显式清空的话它测的其实是管理员（实测组数 2 vs 期望 1）。
+        await setupMockAuth(page, { capabilities: {}, permissionAtoms: [] });
         await page.goto("/settings/policy");
 
         await expect(page).toHaveURL(/\/settings\/instance\/llm-provider$/);

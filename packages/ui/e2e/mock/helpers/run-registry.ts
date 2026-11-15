@@ -132,3 +132,53 @@ export function mockRunsFor(page: object): MockRunRegistry {
 }
 
 const registryByPage = new WeakMap<object, MockRunRegistry>();
+
+/**
+ * task-162：登记表的**第二个生产者** —— 网络层观察 `POST /api/v1/chat` 的 202 响应。
+ *
+ * <p>**为什么需要**：有些 spec 自己注册 api/v1/chat 的 202 桩（glob 后注册优先，盖住本 helper 的那条），
+ * runId 在那条桩里产生 ⇒ 登记表看不到 ⇒ 后续 GET api/v1/chat/runs/{id} 回 404。实测
+ * follow-up-queue.spec.ts:214（失败块里 failedResponses: 404 …/chat/runs/33333333-…）。</p>
+ *
+ * <p>**为什么这不算第二份清单**：观察点仍是"产品真拿到 runId 的那条路径"（202 响应体），只是从
+ * "在我们的桩里登记"换成"在网络上看到同一次成功"。202 体里没有 `runId` 的（非本平台的 202）不登记，
+ * 让 404 继续暴露「没桩」。</p>
+ */
+export function installRunRegistryObservers(
+    page: { on: Function },
+    registry: MockRunRegistry,
+): void {
+    page.on("response", (response: any) => {
+        const request = response.request();
+        if (request.method() !== "POST") return;
+        if (new URL(response.url()).pathname !== "/api/v1/chat") return;
+        if (response.status() !== 202) return;
+        void (async () => {
+            try {
+                const body = (await response.json()) as { runId?: unknown; sessionId?: unknown };
+                if (typeof body?.runId !== "string") return;
+                if (registry.get(body.runId)) return;
+                registry.record({
+                    runId: body.runId,
+                    sessionId: typeof body.sessionId === "string" ? body.sessionId : "",
+                });
+            } catch {
+                // 202 不是 JSON（或正文已被消费）：不登记。真实 CP 的 202 一定是 JSON ⇒ 这里是防御。
+            }
+        })();
+    });
+}
+
+/**
+ * task-162：显式登记一条 run（**SSE 里出现过的 runId** 走这条）。
+ *
+ * <p>审批/运行事件是 spec 在**页面内**推的，网络层看不到 ⇒ 这类 run 只能由"谁推谁登记"声明，
+ * 与 `approval-registry.ts` 的 `pushMockApproval` 同一取舍：登记点必须紧贴产生点。</p>
+ */
+export function registerMockRun(
+    page: object,
+    input: { runId: string; sessionId: string; origin?: "user_submission" | "spawn" },
+): MockRunRecord {
+    const registry = mockRunsFor(page);
+    return registry.get(input.runId) ?? registry.record(input);
+}

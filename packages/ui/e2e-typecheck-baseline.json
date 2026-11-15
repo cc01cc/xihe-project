@@ -5,8 +5,7 @@
             "TS7016": 2
         },
         "e2e/mock/approval.spec.ts": {
-            "TS2339": 1,
-            "TS2349": 1
+            "TS2339": 1
         },
         "e2e/mock/audit.spec.ts": {
             "TS2345": 11,
@@ -28,8 +27,7 @@
             "TS2322": 1
         },
         "e2e/mock/policy-management.spec.ts": {
-            "TS2339": 1,
-            "TS2349": 1
+            "TS2339": 1
         },
         "e2e/mock/screenshots.spec.ts": {
             "TS2322": 1

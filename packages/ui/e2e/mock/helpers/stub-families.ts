@@ -109,6 +109,111 @@ export function buildConfigMetaKeys(entries: Record<string, string>): ConfigKeyM
  * 这里只有 **3 + 3**。下一批加 provider 时别把「已镜像 CP」读成「夹具已完整」—— 缺的 20 个 provider
  * 仍会让对应组合在新建连接弹窗里**选不到**。</p>
  */
+/**
+ * task-163：`GET /api/v1/roles/catalog?locale=` 的桩（PLAN-0610 W3-2a）。
+ *
+ * <p>**为什么它不再是「刻意不桩」**：Lead 2026-11-15 裁定翻转 —— 该路由**真实存在**
+ * （`docs/api/openapi.yaml:5438-5454`，operationId `getRoleCatalog`，`MANAGE_ROLES` 门），
+ * 页面请求它是对的，此前的 404 是**夹具缺桩**（C 全量里 3× warn + `plan-0631-color` 的
+ * settings 用例整条挂掉）。把 404 写进 `mockAllow` 等于把错误行为固化成契约 ⇒ 补桩。</p>
+ *
+ * <p>**形状来源**：`openapi.yaml:6921-6936`（`RoleCatalogView` / `RoleAtomView` /
+ * `RoleDefaultGrantView`）。**这是子集不是全集**：真实目录 43 个原子（40 action + 3 capability，
+ * 见 `:5443` 的 description），这里只列本 helper 身份投影里**真的会判**的 6 个 action 原子
+ * （与 `auth.ts` 的 `PERMISSION_ATOMS` 同源，不另造一份）加 3 个 capability 原子
+ * （`instance:super` / `instance:admin` / `workspace:admin`，见 `:5443` 与 `:5444-5449`）。
+ * 其余原子**不编** —— 编了就是 `D-1485` 那类「第二份清单」。</p>
+ *
+ * <p>`displayName` 由服务端按 `?locale` 解析（`:5443` 末段：zh-CN 默认、en-US 支持）；本夹具只给
+ * zh-CN 一套，`en-US` 请求也回 zh-CN —— 这与 mock 车道「只验形状与门禁、不验本地化词表」的
+ * 边界一致（真要验 en-US 得有一天真 CP 的 en 词表，别在这里猜）。</p>
+ */
+export const ROLE_CATALOG_FIXTURE = {
+    atoms: [
+        {
+            name: "MANAGE_ROLES",
+            scopeClass: "both",
+            capability: false,
+            resource: "*",
+            displayName: "管理角色",
+            agentPrincipalForbidden: false,
+        },
+        {
+            name: "MANAGE_AGENT_PRINCIPALS",
+            scopeClass: "both",
+            capability: false,
+            resource: "*",
+            displayName: "管理主体",
+            agentPrincipalForbidden: false,
+        },
+        {
+            name: "MANAGE_INSTANCE_CONFIG",
+            scopeClass: "instance",
+            capability: false,
+            resource: "*",
+            displayName: "管理实例配置",
+            agentPrincipalForbidden: false,
+        },
+        {
+            name: "MANAGE_WORKSPACE_DEFAULT_CONFIG",
+            scopeClass: "instance",
+            capability: false,
+            resource: "*",
+            displayName: "管理工作区默认配置",
+            agentPrincipalForbidden: false,
+        },
+        {
+            name: "VIEW_INSTANCE_AUDIT",
+            scopeClass: "instance",
+            capability: false,
+            resource: "*",
+            displayName: "查看实例审计",
+            agentPrincipalForbidden: false,
+        },
+        {
+            name: "MANAGE_SKILL_LIBRARY",
+            scopeClass: "both",
+            capability: false,
+            resource: "*",
+            displayName: "管理技能库",
+            agentPrincipalForbidden: false,
+        },
+        {
+            name: "instance:super",
+            scopeClass: "instance",
+            capability: true,
+            resource: "*",
+            displayName: "实例超级管理员",
+            agentPrincipalForbidden: true,
+        },
+        {
+            name: "instance:admin",
+            scopeClass: "instance",
+            capability: true,
+            resource: "*",
+            displayName: "实例管理员",
+            agentPrincipalForbidden: true,
+        },
+        {
+            name: "workspace:admin",
+            scopeClass: "both",
+            capability: true,
+            resource: "*",
+            displayName: "工作区管理员",
+            agentPrincipalForbidden: true,
+        },
+    ],
+    scopes: ["instance", "workspace"],
+    defaultGrants: [
+        {
+            roleName: "WS_OWNER",
+            displayName: "工作区所有者",
+            description: null,
+            atoms: ["workspace:admin", "MANAGE_ROLES", "MANAGE_WORKSPACE_DEFAULT_CONFIG"],
+        },
+    ],
+} as const;
+
 export const PROVIDER_CATALOG_FIXTURE = {
     catalogRevision: "v3",
     providers: [
