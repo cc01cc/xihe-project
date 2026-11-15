@@ -3,6 +3,7 @@ import { type Page } from "@playwright/test";
 import { sendableSession, setupMockAuth, setupMockSessions } from "./auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./session-matrix";
 import { installContextEventStream } from "./context-events";
+import { mockRunsFor } from "./run-registry";
 
 /**
  * task-590：mock 车道的「能走完发送路径」夹具。
@@ -32,6 +33,9 @@ export async function setupMockSendable(
     // 注册在 setupMockAuth 之后：Playwright 后注册的路由优先。
     await page.route("**/api/v1/chat", async (route) => {
         const body = route.request().postDataJSON() as { sessionId?: string } | null;
+        // task-149 B：与 `setupMockAuth` 的默认桩**共用同一张登记表**（`mockRunsFor` 按 page 身份隔离），
+        // 否则这里造出来的 run 在 `GET /chat/runs/{id}` 上是 404 —— 那是「两份清单漂移」，不是产品问题。
+        mockRunsFor(page).record({ runId, sessionId: body?.sessionId ?? sessionId });
         await route.fulfill({
             status: 202,
             contentType: "application/json",

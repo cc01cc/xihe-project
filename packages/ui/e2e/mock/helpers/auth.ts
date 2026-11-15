@@ -26,6 +26,24 @@ import {
     type WorkspaceStreamScenario,
 } from "./context-events";
 import { fulfillWorkspaceDetail } from "./workspace-fixture";
+import { mockWorkspaceJobs } from "../../../src/preview/mock/data/workspaceEnvironment";
+import {
+    CHAT_RUN_NOT_FOUND,
+    chatRunCancelProjection,
+    chatRunProjection,
+    mockRunsFor,
+    parseChatRunPath,
+} from "./run-registry";
+import {
+    API_INPUT_TYPES_FIXTURE,
+    CHECKPOINT_RETENTION_FIXTURE,
+    ORG_UNIT_NODES_FIXTURE,
+    PROVIDER_CATALOG_FIXTURE,
+    agentTemplatesResponse,
+    buildConfigMetaKeys,
+    contextSourcesResponse,
+    parseConfigMetaPath,
+} from "./stub-families";
 
 export interface MockSSEStream {
     tokens: string[];
@@ -257,7 +275,7 @@ export const MOCK_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
  * （`src/preview/mock/data/apiRequestTemplates.ts` 的 `apiRequestTemplateEntries()`）；
  * 这里给 `"[]"` = 未发布任何模板（合法空集），**不虚构模板对象**。</p>
  */
-const INSTANCE_CONFIG_FIXTURES: Record<string, Record<string, unknown>> = {
+export const INSTANCE_CONFIG_FIXTURES: Record<string, Record<string, unknown>> = {
     "agent-profile": { userName: "xihe-operator" },
     "agent-runtime": {
         useRegistry: "true",
@@ -300,6 +318,27 @@ const INSTANCE_CONFIG_FIXTURES: Record<string, Record<string, unknown>> = {
     rag: { chunkSize: 512, chunkOverlap: 64, topK: 6, minScore: 0.35 },
     "user-preference": { theme: "dark", language: "zh-CN" },
     "api-request-templates": { templates: "[]" },
+    // task-149 A：INSTANCE_DOMAINS 的 12 域里原本缺这两个 ⇒ `/config/{domain}` 与 `/config/{domain}/meta`
+    // 两条路都在它们身上 404。值取自 `src/preview/mock/data/mockValues.ts:61-70`（agent-templates 的
+    // roles/templates）与 `data/domains-b.ts` 的 logging 键清单；logging 值用 CP `logging.json` 的默认
+    // 等级 INFO（`data/domains-b.ts:29-33` 列出每个键的源码出处）。
+    logging: {
+        logLevel: "INFO",
+        levelCp: "INFO",
+        levelAgent: "INFO",
+        levelRuntime: "INFO",
+        levelUi: "INFO",
+    },
+    "agent-templates": {
+        roles: [
+            { id: "coder", name: "编码助手", instructions: "先读后写，改动最小化。" },
+            { id: "reviewer", name: "评审员", instructions: "只指出问题，不改代码。" },
+        ],
+        templates: [
+            { id: "tpl-default", roleId: "coder", content: "默认任务模板（PLAN-0414）。" },
+            { id: "tpl-review", roleId: "reviewer", content: "变更评审模板。" },
+        ],
+    },
 };
 
 /**
@@ -580,6 +619,10 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         await installChatSessionEventStream(page);
     }
 
+    // task-149 B：run 登记表 —— 唯一生产者就是下面这条 `POST /api/v1/chat`（产品真实拿到 runId 的
+    // 那一条路径），所以登记表**不是第二份清单**，它记的 sessionId 就是本次请求体里的那个。
+    // 未登记的 runId 一律 404（真实 CP 对未知 run 的行为），不做「任何 id 都回同一个 run」的兜底。
+    const runs = mockRunsFor(page);
     await page.route("**/api/v1/chat", async (route) => {
         const body = route.request().postDataJSON() as {
             branchId?: string;
@@ -598,16 +641,62 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         // `{status:"accepted"}` body carried no `runId`, so the composer never recorded the run:
         // the assistant bubble could not be correlated with the SSE stream, and an `error` event
         // had nothing to attach to — the `message-error` banner never appeared.
+        const runId = randomUUID();
+        const sessionId = body.sessionId ?? "mock-session";
+        runs.record({ runId, sessionId });
         await route.fulfill({
             status: 202,
             contentType: "application/json",
             body: JSON.stringify({
                 origin: "user_submission",
                 status: "accepted",
-                sessionId: body.sessionId ?? "mock-session",
-                runId: randomUUID(),
+                sessionId,
+                runId,
                 messageId: randomUUID(),
             }),
+        });
+    });
+
+    // run 读面（task-149 B）：只服务**登记过**的 run。
+    await page.route("**/api/v1/chat/runs/*", async (route) => {
+        const request = route.request();
+        if (request.method() !== "GET") return route.fallback();
+        const parsed = parseChatRunPath(new URL(request.url()).pathname);
+        if (!parsed || parsed.action !== "get") return route.fallback();
+        const record = runs.get(parsed.runId);
+        if (!record) {
+            await route.fulfill({
+                status: 404,
+                contentType: "application/problem+json",
+                body: JSON.stringify(CHAT_RUN_NOT_FOUND),
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(chatRunProjection(record)),
+        });
+    });
+
+    // 取消：未登记 ⇒ 404；已登记 ⇒ 状态推到 cancelled（响应 `{status, runId}`）。
+    await page.route("**/api/v1/chat/runs/*/cancel", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const parsed = parseChatRunPath(new URL(route.request().url()).pathname);
+        if (!parsed || parsed.action !== "cancel") return route.fallback();
+        const record = runs.cancel(parsed.runId);
+        if (!record) {
+            await route.fulfill({
+                status: 404,
+                contentType: "application/problem+json",
+                body: JSON.stringify(CHAT_RUN_NOT_FOUND),
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(chatRunCancelProjection(record)),
         });
     });
 
@@ -983,6 +1072,197 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             status: 200,
             contentType: "application/json",
             body: JSON.stringify(body),
+        });
+    });
+
+    // ②b 配置域 provenance：`GET /api/v1/config/{domain}/meta?layer=` → `{ keys: ConfigKeyMeta[] }`。
+    //     这条**必须单独注册**：上面那条 `**/api/v1/config/*` 的 `*` 不跨 `/` ⇒ 只匹配
+    //     `config/{domain}`，带 `/meta` 的请求此前一律 404（实测 12 域 × 13 次 warn，最高频族）。
+    //     域 → 键集合来自同一份实例夹具，**不另起一份清单**（两份清单必然漂移）。
+    //     形状与 preview api-server.ts:1484-1539 一致；生成逻辑见 helpers/stub-families.ts。
+    await page.route("**/api/v1/config/*/meta", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        const domain = parseConfigMetaPath(url.pathname);
+        if (!domain) return route.fallback();
+        const fixture = INSTANCE_CONFIG_FIXTURES[domain];
+        if (!fixture) return route.fallback();
+        const entries: Record<string, string> = {};
+        for (const [key, value] of Object.entries(fixture)) {
+            entries[key] = typeof value === "string" ? value : JSON.stringify(value);
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ keys: buildConfigMetaKeys(entries) }),
+        });
+    });
+
+    // ②c 其余读面族（task-149 B）：形状全部照产品侧消费点/预览 mock 的真实实现，
+    //     不是「最小桩」—— 每个端点的语义约束写在 helpers/stub-families.ts 的夹具注释里。
+    await page.route("**/api/v1/provider-catalog", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(PROVIDER_CATALOG_FIXTURE),
+        });
+    });
+
+    await page.route("**/api/v1/api-input-types", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(API_INPUT_TYPES_FIXTURE),
+        });
+    });
+
+    // 组织单元树：信封 `{ nodes }`（裸数组会被 api.ts 的信封校验抛）。
+    // `q` 名字搜、`parentId` 懒加载子级 —— 两者都按夹具过滤，不忽略参数
+    // （忽略 `parentId` 会让展开任意节点都返回根节点，树看起来「有内容」但是错的）。
+    await page.route("**/api/v1/org-units", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        const parentId = url.searchParams.get("parentId");
+        const q = url.searchParams.get("q");
+        const nodes = q
+            ? ORG_UNIT_NODES_FIXTURE.filter((node) => node.name.includes(q))
+            : parentId
+              ? ORG_UNIT_NODES_FIXTURE.filter((node) => node.parentId === parentId)
+              : ORG_UNIT_NODES_FIXTURE.filter((node) => node.parentId === null);
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ nodes }),
+        });
+    });
+
+    await page.route("**/api/v1/agent-templates", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(
+                agentTemplatesResponse(
+                    url.searchParams.get("layer"),
+                    url.searchParams.get("workspaceId"),
+                ),
+            ),
+        });
+    });
+
+    // **刻意不桩**：`GET /api/v1/roles/catalog`（task-149，Lead 2026-11-15 裁定）。
+    // 它的 `atoms` 是**产品明令 UI 不得自建**的原子词表（`src/composables/api.ts:4126-4136`：
+    // 词表唯一来源就是这个端点，CP `PermissionAtomCatalog` 是 SSOT）。mock 车道导一份副本 =
+    // 造第二份清单，而这正是 task-149 A 步花力气消除的东西（同族问题见 D-1485）。
+    // 需要的 spec 用 `page.route` 自带夹具，并在夹具里写来源与时刻
+    // （形如「[引用] CP PermissionAtomCatalog @<sha>，2026-11-15」）。
+    // 真要统一词表 ⇒ 那是**产品面**的卡（把 CP 词表做成可下载资产），不是在 mock 里私抄。
+
+    // 个人主体 / 实例主体：都是 `{ principals: [] }`（同 preview api-server.ts:800-803）。
+    // 空集是真实的「mock 车道没有主体行」，不是不知道；写面不在本夹具范围内 ⇒ 非 GET 走 fallback。
+    for (const principalsPath of ["agent-principals", "instance/agent-principals"]) {
+        await page.route(`**/api/v1/${principalsPath}`, async (route) => {
+            if (route.request().method() !== "GET") return route.fallback();
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ principals: [] }),
+            });
+        });
+    }
+
+    // 上下文来源：单对象、只元数据（api.ts:3391-3399）。11 个不同 sessionId 共用这一条。
+    await page.route("**/api/v1/context/*/sources", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        const sessionId = url.pathname.split("/")[4] ?? "";
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(contextSourcesResponse(sessionId)),
+        });
+    });
+
+    await page.route("**/api/v1/workspaces/*/checkpoints/retention", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(CHECKPOINT_RETENTION_FIXTURE),
+        });
+    });
+
+    // 技能定义列表：`{ items: [] }`（api.ts:3991 读 `items`）。实例层「没有技能定义」是合法空集。
+    await page.route("**/api/v1/skills", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ items: [] }),
+        });
+    });
+
+    // ②d 工作区读面（task-149 B）：`/jobs` 直接复用预览夹具的**纯工厂**
+    //     （`src/preview/mock/data/workspaceEnvironment.ts:88` `mockWorkspaceJobs`，每次调用造新对象 ⇒
+    //     没有跨用例的可变状态）。为什么不手抄一份：那份夹具覆盖「状态矩阵 + 7 个取消原因 + 清理进度」
+    //     三列，手抄必然漂移，而环境页的三列断言正是按它写的。
+    await page.route("**/api/v1/workspaces/*/jobs", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const url = new URL(route.request().url());
+        const workspaceId = url.pathname.split("/")[4] ?? MOCK_WORKSPACE_ID;
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(mockWorkspaceJobs(workspaceId)),
+        });
+    });
+
+    // `GET /workspaces/{id}/members` 是**裸数组**（`api.ts:5040-5046`：非数组按空集处理）。
+    // 行只给与登录身份自洽的那一条（OWNER = `user-1`，与 `me/permissions` 的 WS_OWNER 同源），
+    // 不虚构别的成员 —— 成员页的「改角色/移除」断言要用自己的夹具（spec 内 page.route 后注册优先）。
+    await page.route("**/api/v1/workspaces/*/members", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([
+                {
+                    userId: "user-1",
+                    username: "xihe-operator",
+                    email: "operator@xihe.local",
+                    name: "操作员",
+                    role: "OWNER",
+                    createdAt: "2026-01-01T00:00:00Z",
+                },
+            ]),
+        });
+    });
+
+    // `GET /instance/credentials` → `{ credentials, count }`（`data/instanceResources.ts:198-200`）。
+    // 行形状照 `MockInstanceCredential`（同文件 :21-27 + :206-215 的创建路径）：**永不含明文/suffix**，
+    // 只有 `fingerprint`。空集会让实例资源页显示「暂无」；这里给一条 active，页面才有「有数据」形态。
+    await page.route("**/api/v1/instance/credentials", async (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        const credentials = [
+            {
+                id: "cred-mock-1",
+                label: "部署令牌",
+                kind: "token",
+                deliveryTier: "lease",
+                status: "active",
+                fingerprint: "sha256:0f0f0f0f…mock",
+                revision: 1,
+                createdAt: "2026-01-01T00:00:00Z",
+                replacedAt: null,
+            },
+        ];
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ credentials, count: credentials.length }),
         });
     });
 
