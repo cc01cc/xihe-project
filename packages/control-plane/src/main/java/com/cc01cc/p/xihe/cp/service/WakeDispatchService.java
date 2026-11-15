@@ -448,7 +448,13 @@ public class WakeDispatchService {
             // The durable notify row is still written (the accounting stays true: a notify happened,
             // the unread counter derives from it), but the push could not be handed over — that is an
             // ERROR and a wire-visible detail, never a quiet nothing.
-            logger.error("[LIFECYCLE] service=cp event=notify_undeliverable sessionId={} participantId={} "
+            //
+            // D-1571 (task-190): task-65's intent was VISIBILITY (warn -> error), not a rename. The
+            // level and the name are separable, and spec/session/chat-session.md:43 requires new
+            // semantics to reuse the existing envelope's outcome/reason fields rather than mint a new
+            // event name — so this stays the frozen 'user_channel_push_failed' token at ERROR level,
+            // with the cause carried in 'reason' (user_channel_absent | principal_missing).
+            logger.error("[LIFECYCLE] service=cp event=user_channel_push_failed sessionId={} participantId={} "
                             + "round={} reason={}", sessionId, participant.getId(), wakeRoundId,
                     userChannel == null ? "user_channel_absent" : "principal_missing");
             return "notify_hint_unavailable";

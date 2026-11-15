@@ -82,10 +82,27 @@ class FrozenWakeEventNameScanTest {
             "wake_mention_unresolved",
             "wake_observe_failed",
             "wake_roster_unreadable",
-            "wake_to_handoff");
+            "wake_to_handoff",
+            // D-1571 (task-190) registrations: these two split "not a failure" out of failedTargets[]
+            // (task-60 suppression / task-53 HUMAN notify). Collapsing them back into
+            // to_target_dispatch_failed would reintroduce the exact defect those cards fixed — an
+            // ERROR-level "failed" line for a target that deliberately was not woken / was reached by
+            // a notification — so the names are registered here with this justification instead.
+            "to_target_notified",
+            "to_target_suppressed");
 
-    /** The eight names the implementation invented; V12 collapsed every one of them. */
+    /**
+     * Names that must never come back.
+     *
+     * <p>The first eight are the ones the implementation invented; V12 collapsed every one of them.
+     * {@code notify_undeliverable} is the D-1571 (task-190) fold-back: task-65's intent was visibility
+     * (warn -&gt; error), not a rename, and spec/session/chat-session.md:43 requires new semantics to
+     * reuse the existing envelope's outcome/reason fields — so that line is the frozen
+     * {@code user_channel_push_failed} token at ERROR level with {@code reason=user_channel_absent |
+     * principal_missing}, and the invented name must not return.</p>
+     */
     private static final Set<String> RETIRED_EVENT_NAMES = Set.of(
+            "notify_undeliverable",
             "wake_chain_ancestor_missing",
             "wake_chain_root_principal_missing",
             "wake_chain_policy_unreadable",

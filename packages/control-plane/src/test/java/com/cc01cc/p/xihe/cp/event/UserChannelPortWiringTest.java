@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  *
  * <p>{@code WakeDispatchService} injects {@code UserChannelPort} with
  * {@code @Autowired(required = false)} and degrades to {@code detail=notify_hint_unavailable} plus an
- * ERROR {@code notify_undeliverable} when the bean is absent. That degradation is the safety net,
+ * ERROR {@code user_channel_push_failed} (reason=user_channel_absent) when the bean is absent. That degradation is the safety net,
  * not the design: opening a user-facing TO onto a silent no-op would be worse than the 400 it
  * replaced. This test pins the design half.</p>
  *

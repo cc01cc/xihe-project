@@ -173,10 +173,13 @@ class WakeDispatchServiceTest {
         assertEquals("notify", result.outcome(), "the durable notify row is still written");
         assertEquals("notify_hint_unavailable", result.detail(),
                 "task-65: a notify nobody can be pushed to is NOT a silent success");
+        // D-1571 (task-190): the loudness is the ERROR level plus the reason token; the NAME stays the
+        // frozen 'user_channel_push_failed' (a new event name would be a contract change).
         assertTrue(appender.list.stream().anyMatch(event ->
                         event.getLevel() == ch.qos.logback.classic.Level.ERROR
-                                && event.getFormattedMessage().contains("event=notify_undeliverable")),
-                () -> "the absent user channel must be loud: " + appender.list);
+                                && event.getFormattedMessage().contains("event=user_channel_push_failed")
+                                && event.getFormattedMessage().contains("reason=user_channel_absent")),
+                () -> "the absent user channel must be loud and carry the cause: " + appender.list);
     }
 
     @Test
