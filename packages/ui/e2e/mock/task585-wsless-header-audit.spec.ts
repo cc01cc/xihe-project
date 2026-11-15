@@ -754,7 +754,10 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
             ctxWrites,
             ctxWrittenAtAbs,
             withA: withAVerdicts,
-            sample: annotateBoundary(product.slice(0, 20), boundaryAt),
+            // task-3：`sample` 原本没传第三参 ⇒ 产物里每行都 `msSinceCtxWrite=null` /
+            // `ctxPhase="unknown"`。unknown 是**测量缺口**（探针装了却没喂给它），不是「时间轴证明它合法」，
+            // 所以这里补上 `ctxWrittenAtAbs`，让 sample 与判据用同一份时间轴（D-1567）。
+            sample: annotateBoundary(product.slice(0, 20), boundaryAt, ctxWrittenAtAbs),
             sampledAt: new Date().toISOString(),
         };
         fs.writeFileSync(
