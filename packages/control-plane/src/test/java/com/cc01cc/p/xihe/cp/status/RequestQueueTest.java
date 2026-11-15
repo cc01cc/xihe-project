@@ -93,8 +93,58 @@ class RequestQueueTest {
         // Manually create an expired request by using a past timestamp
         // Since TTL is 60s, we can't easily test expiry in unit test
         // Instead test that drain returns 0 for empty queue
-        int count = queue.drain(r -> {});
+        int count = queue.drain(r -> true);
         assertEquals(0, count);
+    }
+
+    // ── task-132: `count` must state deliveries, not "loops that did not throw" ──
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureQueueLog() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(RequestQueue.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static String drainedLine(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        return appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("event=requestDrained"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("a drop must still be reported on the drain line"));
+    }
+
+    @Test
+    void aRejectedDeliveryIsCountedAsDroppedAndNeverAsSent() {
+        RequestQueue queue = new RequestQueue();
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = captureQueueLog();
+        assertTrue(queue.enqueue("s1", "hello", "run-model", "user1", "ws1", "request-1", "run-1"));
+
+        int sent = queue.drain(ignored -> false);
+
+        assertEquals(0, sent, "the consumer refused this request, so nothing was delivered");
+        String line = drainedLine(appender);
+        assertTrue(line.contains("count=0"), "the drain line must not claim a delivery: " + line);
+        assertTrue(line.contains("dropped=1"), "the drain line must report the refusal: " + line);
+        assertEquals(0, queue.size());
+    }
+
+    @Test
+    void aDeliveredRequestIsCountedAsSentAndNotAsDropped() {
+        RequestQueue queue = new RequestQueue();
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = captureQueueLog();
+        assertTrue(queue.enqueue("s1", "hello", "run-model", "user1", "ws1", "request-1", "run-1"));
+
+        int sent = queue.drain(ignored -> true);
+
+        assertEquals(1, sent);
+        String line = drainedLine(appender);
+        assertTrue(line.contains("count=1"), line);
+        assertTrue(line.contains("dropped=0"), line);
     }
 
     @Test

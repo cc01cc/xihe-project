@@ -53,12 +53,31 @@ public class RequestQueue {
         return true;
     }
 
-    public int drain(Consumer<QueuedRequest> sender) {
+    /**
+     * task-132: the consumer reports whether it actually handed the request to the transport.
+     *
+     * <p>Without this, "no exception" was indistinguishable from "delivered": a consumer that
+     * refused a request (e.g. the drain guard deciding the run is already active) still counted as
+     * a delivery, so {@code requestDrained count=N} said N things were sent while N were dropped.</p>
+     */
+    @FunctionalInterface
+    public interface Deliverer {
+
+        /**
+         * @return {@code true} only when the request really went out; {@code false} means the
+         *         consumer refused it (it owns the resulting terminal state, so {@code onDropped}
+         *         is not called again).
+         */
+        boolean deliver(QueuedRequest request);
+    }
+
+    public int drain(Deliverer sender) {
         return drain(sender, ignored -> {});
     }
 
-    public int drain(Consumer<QueuedRequest> sender, Consumer<QueuedRequest> onDropped) {
+    public int drain(Deliverer sender, Consumer<QueuedRequest> onDropped) {
         int sent = 0;
+        int dropped = 0;
         int expired = 0;
         while (!queue.isEmpty()) {
             QueuedRequest req = queue.poll();
@@ -68,21 +87,27 @@ public class RequestQueue {
 
             if (Instant.now().getEpochSecond() - req.createdAt().getEpochSecond() > TTL_SECONDS) {
                 expired++;
+                dropped++;
                 logger.info("[LIFECYCLE] service=cp event=requestQueueExpired sessionId={} ttlSeconds={}", req.sessionId(), TTL_SECONDS);
                 notifyDropped(onDropped, req);
                 continue;
             }
 
             try {
-                sender.accept(req);
-                sent++;
+                if (sender.deliver(req)) {
+                    sent++;
+                } else {
+                    dropped++;
+                }
             } catch (Exception e) {
+                dropped++;
                 logger.warn("[LIFECYCLE] service=cp event=requestDrainFailed sessionId={} error={}", req.sessionId(), e.getMessage());
                 notifyDropped(onDropped, req);
             }
         }
-        if (sent > 0 || expired > 0) {
-            logger.info("[LIFECYCLE] service=cp event=requestDrained count={} expiredCount={}", sent, expired);
+        if (sent > 0 || dropped > 0) {
+            logger.info("[LIFECYCLE] service=cp event=requestDrained count={} dropped={} expiredCount={}",
+                    sent, dropped, expired);
         }
         return sent;
     }

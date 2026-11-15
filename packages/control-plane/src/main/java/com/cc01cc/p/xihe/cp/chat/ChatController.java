@@ -256,13 +256,16 @@ public class ChatController {
                         logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                                 requestId, req.sessionId(), runId);
                         markQueuedRequestFailed(req, requestId, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
-                        return;
+                        // task-132: this request was NOT delivered; saying so keeps
+                        // "requestDrained count=N" honest.
+                        return false;
                     }
                     logger.info("[LIFECYCLE] service=cp event=requestRedelivered requestId={} sessionId={} runId={} outcome=accepted",
                             requestId, req.sessionId(), runId);
                     execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(),
                             req.toolTimeouts(), req.attachments(),
                             req.userId(), req.workspaceId(), requestId, runId, null);
+                    return true;
                 }, req -> markQueuedRequestFailed(
                         req,
                         nonBlankOrGenerated(req.requestId()),
