@@ -66,7 +66,8 @@
         "typescript/consistent-generic-constructors": "off",
         "typescript/consistent-type-definitions": "off",
         "typescript/method-signature-style": "off",
-        "typescript/no-misused-new": "off"
+        "typescript/no-misused-new": "off",
+        "import/no-namespace": "off"
     },
     "overrides": [
         {

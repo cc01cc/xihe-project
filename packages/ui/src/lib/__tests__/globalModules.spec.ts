@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../i18n";
-import * as globalModuleExports from "../globalModules";
 import {
     GLOBAL_MODULES,
     globalModule,
@@ -108,7 +107,11 @@ describe("globalModules：模块路径判定", () => {
      * `global-rail-dual-state.spec.ts` 各自钉住；本条只保证没有人把这条通道的**脚手架**留在
      * lib 层（留常量 = 下一个人重新接线只差两行）。
      */
-    it("lib 里不再有「悬停打开延迟」常量（BL-578 缓做，D-899）", () => {
+    it("lib 里不再有「悬停打开延迟」常量（BL-578 缓做，D-899）", async () => {
+        // task-261（A1）：原为 import * as globalModuleExports（值命名空间，被 check-value-namespace 拦）。
+        // 断言对象不变 —— 动态 import 取到的是同一个模块命名空间对象，键集完全相同；
+        // 改成具名导入会**摧毁**这条反向存在性断言（无法枚举导出面），故用动态导入而非削弱断言。
+        const globalModuleExports = await import("../globalModules");
         expect(Object.keys(globalModuleExports)).not.toContain("RAIL_HOVER_OPEN_DELAY_MS");
     });
 });

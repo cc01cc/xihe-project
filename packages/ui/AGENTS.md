@@ -48,9 +48,9 @@ pnpm run build
 
 <!-- lint-rule-registry:begin -->
 
-**当前登记 131 条`off`** = 主块 55 + 文件级/工具面 5 + 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
+**当前登记 132 条`off`** = 主块 56 + 文件级/工具面 5 + 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
 
-#### 主块 55 条
+#### 主块 56 条
 
 | 规则 | 实测命中 | 为什么 off（依据） | 类 |
 | --- | ---: | --- | --- |
@@ -85,6 +85,7 @@ pnpm run build
 | `import/group-exports` | 1425 | 同上（1425 处） | S |
 | `no-duplicate-imports` | 159 | 同一意图已由 import/no-duplicates: error 把守（159 处为合并同源 import 的误报） | S |
 | `import/no-nodejs-modules` | 406 | e2e/** 与 scripts/** 必须用 Node 内置模块（406 处） | S |
+| `import/no-namespace` | 59 | **判据过宽 ⇒ 由更窄的检查器接管它真正该管的那一半**（不是弃用 oxlint）：该规则对 `import type * as` 照样报，而 type-only 命名空间在运行时被完全擦除、不产生任何命名空间对象 ⇒ 其立法目的（运行时对象 / 阻碍 tree-shaking）对它不适用；实测 59 条命中里 **57 条是 type-only**、值形态仅 2 条。规则唯一选项 `ignore` 是模块 glob，`allowTypeOnly` 被配置解析拒绝（oxlint 1.83.0 实测，上游 `NoNamespaceConfig` 亦只有 `ignore`）⇒ 无法按形态豁免。改由 `scripts/check-value-namespace.mjs` **只报值命名空间**（做的事比原规则少），已并列接进 `pnpm run lint`。恢复条件 = 上游能按形态豁免时，删本行与该检查器并把规则打开 | S |
 | `unicorn/filename-case` | 895 | 文件名按 Vue/TS 惯例混用（组件 PascalCase、composable camel，895 处） | S |
 | `unicorn/no-null` | 3315 | wire 契约用 null；强制 undefined 会与 API 语义冲突（3315 处） | S |
 | `unicorn/prefer-global-this` | 216 | 浏览器/Node/测试三环境差异（216 处） | S |
@@ -111,7 +112,7 @@ pnpm run build
 | `typescript/no-misused-new` | 1 | 1 处为声明合并必需 | Z |
 
 - **类 F · 与格式化器轴冲突**：oxfmt 已接管该面（或规则会让代码变差）。恢复条件 = 先做一次性机械重排并单独提交（diff 全审），且用 2 例样本证明 oxfmt 不会反向改写；在此之前恢复只会把千百处风格翻转塞进每条 diff。
-- **类 S · 风格取向（仓库与规则方向相反，或规则对互斥）**：恢复条件 = 先定仓库口径并写进本指南（含互斥对处理），再一次性重排。互斥对：no-ternary ↔ unicorn/prefer-ternary、import/no-named-export ↔ import/prefer-default-export —— 任一侧单独打开都会让存量大面积红，须同时定口径。
+- **类 S · 风格取向（仓库与规则方向相反，或规则对互斥）**：恢复条件 = 先定仓库口径并写进本指南（含互斥对处理），再一次性重排。互斥对：no-ternary ↔ unicorn/prefer-ternary、import/no-named-export ↔ import/prefer-default-export、**import/no-namespace ↔ typescript/consistent-type-imports**（type-only 命名空间：前者禁、后者要求；已把前者收窄到值形态，见其登记行）—— 任一侧单独打开都会让存量大面积红，须同时定口径。
 - **类 Z · 当前 0 命中**：恢复条件 = 直接打开（零存量成本），同批删掉本行即可；打开后若命中非 0，按类 S 处理。
 
 #### 文件级/工具面 5 条（第一波 `no-console` 收敛的产物，`task-171 ③`，2026-11-15）
