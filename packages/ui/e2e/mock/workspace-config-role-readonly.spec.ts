@@ -68,7 +68,23 @@ interface ConfigCall {
 async function bootConfigTab(page: Page, role: Role): Promise<{ calls: ConfigCall[] }> {
     const calls: ConfigCall[] = [];
 
-    await setupMockAuth(page, { workspace: { workspaceRole: role } });
+    // task-133 / task-414：面板的只读判据是 `!auth.canManageWorkspace`（`WorkspaceConfigPanel.vue:36`），
+    // 而管理面是**能力位** `workspaceAdminOf`（`stores/auth.ts:234-238`），不再按角色名判 ⇒
+    // 只 seed `workspaceRole: "OWNER"` 等于造了个现实中不存在的属主，写面会整块消失，
+    // 「扫描器自证」那条阳性对照因此恒红（同型先例：`views/settings/__tests__/ToolFacesView.spec.ts:93`）。
+    await setupMockAuth(
+        page,
+        role === "OWNER"
+            ? {
+                  workspace: { workspaceRole: role },
+                  capabilities: {
+                      isInstanceAdmin: false,
+                      isInstanceSuper: false,
+                      workspaceAdminOf: [WORKSPACE_ID],
+                  } as unknown as Record<string, boolean>,
+              }
+            : { workspace: { workspaceRole: role } },
+    );
 
     // 兜底：未桩的端点一律 200 `{}`（与 r17 同形；mock 车道没有真后端）。
     await page.route("**/api/v1/**", (route) =>

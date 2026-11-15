@@ -212,7 +212,9 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
             }),
         );
 
-        await page.goto("/resources/skills?layer=WORKSPACE");
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/settings?tab=skills`);
+        // D-1432/task-41：WORKSPACE 层技能面板的宿主是**工作区设置的 skills tab**（资源区只剩指路卡）。
+        await expect(page.getByTestId("ws-settings-skills")).toBeVisible();
         await expect(page.getByTestId("workspace-skills-panel")).toBeVisible();
         // 写面未接线必须**写在页面上**：入口不隐藏、也不假装可用。
         await expect(page.getByTestId("workspace-skills-write-unavailable")).toBeVisible();
@@ -363,7 +365,7 @@ test.describe("本工作区技能 · 读失败必须显式", () => {
             }),
         );
 
-        await page.goto("/resources/skills?layer=WORKSPACE");
+        await page.goto(`/workspace/11111111-1111-4111-8111-111111111111/settings?tab=skills`);
         await expect(page.getByTestId("workspace-skills-error")).toBeVisible();
         await expect(page.getByTestId("workspace-skills-retry")).toBeVisible();
         await expect(page.getByTestId("workspace-skills-empty")).toHaveCount(0);

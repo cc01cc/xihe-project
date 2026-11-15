@@ -132,9 +132,11 @@ test.describe("PLAN-0560 workspace settings", () => {
         // (a) 删 —— 配置区块只读段：工作区域配置 tab 已随 task-253 退役，没有可点的入口了。
         // 工作区配置面的只读判定不再有产品对象（实例/用户两层的锁定语义由 config-settings 覆盖）。
 
-        // MCP 区块（资源区 · 工作区层）：JSON textarea 禁用、保存按钮不渲染。
-        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
-        await expect(page.getByTestId("resources-header")).toBeVisible();
+        // MCP 区块（**工作区设置 · mcp tab**）：JSON textarea 禁用、保存按钮不渲染。
+        // D-1432/task-41 把 WORKSPACE 层 MCP 从资源区搬回设置页；资源区现在只有指路卡
+        // （`WorkspaceLayerMovedNotice`）⇒ 断言对象换成 `ws-settings-mcp` 容器。
+        await page.goto(`/workspace/${WORKSPACE_ID}/settings?tab=mcp`, { waitUntil: "load" });
+        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
         await expect(page.getByTestId("mcp-config-textarea")).toBeDisabled();
         await expect(page.getByTestId("mcp-config-save")).toHaveCount(0);
     });

@@ -67,8 +67,26 @@ interface Probes {
  * 这个形状不是凭空造的：`workspaceContext.migrateLegacyWorkspace()`（`lib/workspaceContext.ts:59-75`）
  * 把旧 localStorage 迁进页签时**只写 `{ id, name }`**，角色与 `canWrite` 都丢掉 —— 那是真实可达的态。
  */
-async function bootFreshTab(page: Page, wire: WireShape): Promise<Probes> {
-    await setupMockAuth(page);
+async function bootFreshTab(
+    page: Page,
+    wire: WireShape,
+    options: { manage?: boolean } = {},
+): Promise<Probes> {
+    // task-414 / task-133：管理面（`canManageWorkspace`）是**能力位** `workspaceAdminOf`，不再按角色名判
+    // （`stores/auth.ts:261-265`）。夹具只写 `workspaceRole: "OWNER"` 等于造了一个现实中不存在的属主
+    // ⇒ 常规 tab 的编辑表单不渲染（同型先例：`views/settings/__tests__/ToolFacesView.spec.ts:93`）。
+    await setupMockAuth(
+        page,
+        options.manage
+            ? {
+                  capabilities: {
+                      isInstanceAdmin: false,
+                      isInstanceSuper: false,
+                      workspaceAdminOf: [WORKSPACE_ID],
+                  } as unknown as Record<string, boolean>,
+              }
+            : undefined,
+    );
 
     await page.addInitScript(() => {
         sessionStorage.setItem(
@@ -146,8 +164,7 @@ async function bootFreshTab(page: Page, wire: WireShape): Promise<Probes> {
     return probes;
 }
 
-const SETTINGS_URL = `/workspace/${WORKSPACE_ID}/settings`,
-    MCP_DIRECT_URL = "/resources/mcp?layer=WORKSPACE";
+const SETTINGS_URL = `/workspace/${WORKSPACE_ID}/settings`;
 
 /** 页签上下文里现在是什么（`hydrateWorkspace` 的 `writeTabWorkspace(current)` 写的就是**规范化后**的对象）。 */
 async function tabWorkspace(page: Page): Promise<Record<string, unknown>> {
@@ -156,18 +173,16 @@ async function tabWorkspace(page: Page): Promise<Record<string, unknown>> {
 }
 
 /**
- * 先在一个会 hydrate 的落点把工作区投影取回来，再**页内导航**到 MCP 资源页。
+ * 打开**本工作区 MCP 面板**并把工作区投影取回来。
  *
- * 走的是产品自己的迁移链接（`WorkspaceSettingsView.vue:383-390` 的 `ws-settings-resource-moved-action`，
- * D-1023）：旧 `?tab=mcp` 深链 → 提示条 → 资源区。不用 `page.goto` 是因为那会整页重载、store 复位，
- * 而资源区**不会**再 hydrate（见文件头「入口缺口」）。
+ * D-1432 / task-41 把 WORKSPACE 层 MCP 从资源区**搬回工作区设置** ⇒ `?tab=mcp` 现在直接就是面板
+ * （`WorkspaceSettingsView.vue:434` 的 `ws-settings-mcp` 容器），D-1023 那条「设置页 → 提示条 → 资源区」
+ * 的迁移链已不存在；资源区那一层只剩指路卡（`WorkspaceLayerMovedNotice`）。
  */
 async function hydrateThenOpenMcp(page: Page): Promise<void> {
     await page.goto(`${SETTINGS_URL}?tab=mcp`, { waitUntil: "load" });
     await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
-    await page.getByTestId("ws-settings-resource-moved-action").click();
-    await expect(page).toHaveURL(/\/resources\/mcp\?layer=WORKSPACE/);
-    await expect(page.getByTestId("resources-header")).toBeVisible();
+    await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
 }
 
 test.describe("task-63 · wire 字段 → 行为（description / canWrite）", () => {
@@ -189,10 +204,11 @@ test.describe("task-63 · wire 字段 → 行为（description / canWrite）", (
         // task-341 ① 的回执。修前的读数（`task-63` 实测）：`ws-settings-description-input` 的值是 **""**，
         // 而页签上下文里 `description` 有值 ⇒ 点保存发 `description: ""` ⇒ 既有描述被清空。
         // 修的是挂载顺序（`onMounted` 里先 `await loadWorkspace()` 再 `startEdit()`）。
-        const probes = await bootFreshTab(page, {
-                description: DESCRIPTION,
-                workspaceRole: "OWNER",
-            }),
+        const probes = await bootFreshTab(
+                page,
+                { description: DESCRIPTION, workspaceRole: "OWNER" },
+                { manage: true },
+            ),
             descriptionInput = page.getByTestId("ws-settings-description-input");
         await page.goto(SETTINGS_URL, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-settings-page")).toBeVisible();
@@ -213,7 +229,7 @@ test.describe("task-63 · wire 字段 → 行为（description / canWrite）", (
     test("description（判别力对照：wire 不带该字段）：同一路径确实会写成空串", async ({ page }) => {
         // 这一条**不是验收**，是判别力证明：`handleSave` 无条件发送 description，
         // 所以「字段没到 UI」的后果就是清空既有描述 —— 上一条回执红在同一处。
-        const probes = await bootFreshTab(page, { workspaceRole: "OWNER" }),
+        const probes = await bootFreshTab(page, { workspaceRole: "OWNER" }, { manage: true }),
             descriptionInput = page.getByTestId("ws-settings-description-input");
         await page.goto(SETTINGS_URL, { waitUntil: "load" });
 
@@ -267,17 +283,20 @@ test.describe("task-63 · wire 字段 → 行为（description / canWrite）", (
         await expect(page.getByTestId("mcp-config-save")).toBeVisible();
     });
 
-    test("【入口缺口回执】直接从资源区落地：投影被取回，wire 的 VIEWER + canWrite=false 生效", async ({
+    test("【深链落地回执】直接落设置页 mcp tab：投影被取回，wire 的 VIEWER + canWrite=false 生效", async ({
         page,
     }) => {
         // task-341 ② 的回执。修前这条的读数是「`detailHits` = 0 且写面可写」（`task-63` 实测）。
         // 判据③（卡面）：本条**不 seed `workspaceRole`** —— 角色只能从 wire 来。
         // 靠 seed 补答案正是 `task-40` 当初漏掉这个缺口的形态（D-1199）。
+        //
+        // task-133（D-1432/task-41）：WORKSPACE 层 MCP 的落地页从资源区搬到了设置页 mcp tab ⇒
+        // 「直接落地」现在打的是设置页深链，而不是 `/resources/mcp?layer=WORKSPACE`（后者只剩指路卡）。
         const probes = await bootFreshTab(page, { workspaceRole: "VIEWER", canWrite: false });
-        await page.goto(MCP_DIRECT_URL, { waitUntil: "load" });
-        await expect(page.getByTestId("resources-header")).toBeVisible();
+        await page.goto(`${SETTINGS_URL}?tab=mcp`, { waitUntil: "load" });
+        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
 
-        // ① 资源区布局现在会自己取投影（`ResourcesLayout` 的 onMounted）。
+        // ① 设置页会自己取投影（`WorkspaceSettingsView` 的 loadWorkspace）。
         await expect.poll(() => probes.detailHits.count).toBeGreaterThan(0);
         // ② CP 的投影生效：写面禁用、保存按钮不渲染。
         const textarea = page.getByTestId("mcp-config-textarea");

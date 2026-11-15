@@ -182,10 +182,11 @@ async function enabledWriteControls(page: Page): Promise<string[]> {
 test.describe("R17 VIEWER 只读 · 资源页写面", () => {
     test("MCP（VIEWER）：配置框在 DOM 且 disabled，保存按钮不出现", async ({ page }) => {
         await bootResourcePage(page, { role: "VIEWER" });
-        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await page.goto(`/workspace/${WORKSPACE_ID}/settings?tab=mcp`, { waitUntil: "load" });
 
-        // 阳性锚点：资源页外壳在。
-        await expect(page.getByTestId("resources-header")).toBeVisible();
+        // 阳性锚点：工作区设置页的 MCP 面板容器在（D-1432/task-41：WORKSPACE 层 MCP 搬回设置页，
+        // 资源区只剩指路卡 ⇒ 必须落在 `ws-settings-mcp`，而不是 `resources-header`）。
+        await expect(page.getByTestId("ws-settings-mcp")).toBeVisible();
 
         const textarea = page.getByTestId("mcp-config-textarea");
         // ① 写面**在 DOM**（不是"整块没渲染"）——这是「没权限」与「没渲染」的分水岭。
@@ -208,7 +209,7 @@ test.describe("R17 VIEWER 只读 · 资源页写面", () => {
         page,
     }) => {
         await bootResourcePage(page, { role: "EDITOR", canWrite: true });
-        await page.goto("/resources/mcp?layer=WORKSPACE", { waitUntil: "load" });
+        await page.goto(`/workspace/${WORKSPACE_ID}/settings?tab=mcp`, { waitUntil: "load" });
 
         const textarea = page.getByTestId("mcp-config-textarea");
         await expect(textarea).toBeVisible();
@@ -247,8 +248,10 @@ test.describe("R17 VIEWER 只读 · 资源页写面", () => {
 
     test("技能（VIEWER，本工作区层）：写面未接线写在页面上，读面照常可用", async ({ page }) => {
         await bootResourcePage(page, { role: "VIEWER" });
-        await page.goto("/resources/skills?layer=WORKSPACE", { waitUntil: "load" });
+        await page.goto(`/workspace/${WORKSPACE_ID}/settings?tab=skills`, { waitUntil: "load" });
 
+        // 新宿主（D-1432/task-41）：设置页 skills tab 挂的就是同一个面板组件。
+        await expect(page.getByTestId("ws-settings-skills")).toBeVisible();
         await expect(page.getByTestId("workspace-skills-panel")).toBeVisible();
         // **本层写面不存在是设计态，不是权限态** —— 断言它必须写在页面上（否则读者会以为是自己没权限）。
         await expect(page.getByTestId("workspace-skills-write-unavailable")).toBeVisible();
