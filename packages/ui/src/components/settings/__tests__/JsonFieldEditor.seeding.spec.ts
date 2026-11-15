@@ -84,7 +84,10 @@ describe("JsonFieldEditor 格式化时机", () => {
     it("首次格式化之后，用户手动排版的内容经父级回灌仍不被重写", async () => {
         const wrapper = mountWithEcho('{"b":1,"a":[1,2]}');
         await flushPromises();
-        // 首屏已被格式化，说明 seeding 确实发生过（否则下面「没被重写」是因为压根没格式化过）。
+        // 前置守卫：首屏未格式化时本条会恒真（什么都不测），故先钉住前提；
+        // MUT1（关掉首次格式化）会因此红两条，属**有意设计**，不是判据混叠
+        // （判别性由 MUT2 证明：它只红本条、不红第一条）。删掉这段会让本条在
+        // 「seeding 从未发生」时自动绿 —— 那正是 D-1494 那类假绿换了个方向。
         expect(jsonDocText(wrapper, "json-field")).toBe(
             JSON.stringify({ b: 1, a: [1, 2] }, null, 2),
         );
