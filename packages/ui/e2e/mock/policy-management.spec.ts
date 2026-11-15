@@ -1,4 +1,5 @@
 import { type Page } from "@playwright/test";
+import fs from "node:fs";
 import { expect, test } from "./helpers/mock-test";
 import { permissionAtomsWithout, setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { pushMockApproval } from "./helpers/approval-registry";
@@ -415,17 +416,11 @@ test.describe("Policy management (desktop)", () => {
     test("an instance admin landing on the retired URL keeps the admin-only config surfaces", async ({
         page,
     }) => {
-        await page.addInitScript(() => {
-            // `authStore.isAdmin` reads the capability projection (PLAN-0610 W3-2b #22).
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({
-                    id: "user-1",
-                    email: "test@xihe.local",
-                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
-                }),
-            );
-        });
+        // task-220 ④：能力必须来自**权威源**（`/me/permissions` 投影，走 `capabilitiesPreset`）。
+        // 旧写法种 `localStorage["xihe-user"].capabilities` 已非权威来源（PLAN-0610 W3-2b #22）——
+        // 它在「夹具默认能力恰好是 admin」时**看起来有效**，一旦默认变窄就会红，而那条红会被误记成
+        // 产品回归（`D-1599` 的同类形态：按错误归因写的断言/门）。
+        await setupMockAuth(page, { capabilitiesPreset: "instanceAdmin" });
         installPolicyApi(page);
         await page.goto("/settings/policy");
 
@@ -446,16 +441,11 @@ test.describe("Policy management (desktop)", () => {
     test("lists tool faces, highlights unclassified tools, and classifies workspace-scope tools", async ({
         page,
     }) => {
-        await page.addInitScript(() => {
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({
-                    id: "user-1",
-                    email: "test@xihe.local",
-                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
-                }),
-            );
-        });
+        // task-220 ④：能力必须来自**权威源**（`/me/permissions` 投影，走 `capabilitiesPreset`）。
+        // 旧写法种 `localStorage["xihe-user"].capabilities` 已非权威来源（PLAN-0610 W3-2b #22）——
+        // 它在「夹具默认能力恰好是 admin」时**看起来有效**，一旦默认变窄就会红，而那条红会被误记成
+        // 产品回归（`D-1599` 的同类形态：按错误归因写的断言/门）。
+        await setupMockAuth(page, { capabilitiesPreset: "instanceAdmin" });
         const state = installPolicyApi(page);
         await page.goto("/settings/tool-faces");
 
@@ -528,16 +518,11 @@ test.describe("Policy management (desktop)", () => {
         // `page.route("**/api/v1/me/permissions")` ⇒ 分类入口 `approval-classify-entry` 根本不渲染。
         // 这是**夹具缺口**不是产品缺陷（modal 里 `允许一次`/`拒绝` 在，状态条也写着「仅 OWNER/ADMIN 可分类」）。
         // 同文件其它用例（工具分类页、移动端）都用同一手法给实例管理员能力 ⇒ 这里保持一致。
-        await page.addInitScript(() => {
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({
-                    id: "user-1",
-                    email: "test@xihe.local",
-                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
-                }),
-            );
-        });
+        // task-220 ④：能力必须来自**权威源**（`/me/permissions` 投影，走 `capabilitiesPreset`）。
+        // 旧写法种 `localStorage["xihe-user"].capabilities` 已非权威来源（PLAN-0610 W3-2b #22）——
+        // 它在「夹具默认能力恰好是 admin」时**看起来有效**，一旦默认变窄就会红，而那条红会被误记成
+        // 产品回归（`D-1599` 的同类形态：按错误归因写的断言/门）。
+        await setupMockAuth(page, { capabilitiesPreset: "instanceAdmin" });
         const state = installPolicyApi(page);
         await installApprovalSSE(page);
         const calls = installDecisionRoute(page);
@@ -592,16 +577,11 @@ test.describe("Policy management (mobile)", () => {
         page,
     }) => {
         // 工具分类页签在实例层（需 cap:instance:admin）——与桌面用例同一条夹具口径。
-        await page.addInitScript(() => {
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({
-                    id: "user-1",
-                    email: "test@xihe.local",
-                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
-                }),
-            );
-        });
+        // task-220 ④：能力必须来自**权威源**（`/me/permissions` 投影，走 `capabilitiesPreset`）。
+        // 旧写法种 `localStorage["xihe-user"].capabilities` 已非权威来源（PLAN-0610 W3-2b #22）——
+        // 它在「夹具默认能力恰好是 admin」时**看起来有效**，一旦默认变窄就会红，而那条红会被误记成
+        // 产品回归（`D-1599` 的同类形态：按错误归因写的断言/门）。
+        await setupMockAuth(page, { capabilitiesPreset: "instanceAdmin" });
         installPolicyApi(page);
         await page.goto("/settings/policy");
 
@@ -627,16 +607,11 @@ test.describe("Policy management (mobile)", () => {
 
     test("classify-and-allow works in the mobile approval sheet", async ({ page }) => {
         // 夹具缺能力（同桌面用例）：默认零能力 ⇒ `canClassifyTools` 为 false ⇒ 分类入口不渲染。
-        await page.addInitScript(() => {
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({
-                    id: "user-1",
-                    email: "test@xihe.local",
-                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
-                }),
-            );
-        });
+        // task-220 ④：能力必须来自**权威源**（`/me/permissions` 投影，走 `capabilitiesPreset`）。
+        // 旧写法种 `localStorage["xihe-user"].capabilities` 已非权威来源（PLAN-0610 W3-2b #22）——
+        // 它在「夹具默认能力恰好是 admin」时**看起来有效**，一旦默认变窄就会红，而那条红会被误记成
+        // 产品回归（`D-1599` 的同类形态：按错误归因写的断言/门）。
+        await setupMockAuth(page, { capabilitiesPreset: "instanceAdmin" });
         const state = installPolicyApi(page);
         await installApprovalSSE(page);
         const calls = installDecisionRoute(page);
@@ -670,4 +645,21 @@ test.describe("Policy management (mobile)", () => {
         await expect.poll(() => calls.length).toBe(1);
         expect(calls[0]).toEqual({ decision: "once" });
     });
+});
+
+/**
+ * task-220 ④ 自检：本 spec **不许**再用非权威种子种能力位。
+ *
+ * <p>为什么用「读自己的源码」这种写法：这条规则的作用域就是这个文件（别的 spec 的同类种子归各自卡），
+ * 而全局 lint 规则做不到「只许走 capabilitiesPreset」。源码断言可在**没有浏览器**的情况下跑，
+ * 且能被变异红控制验证（把种子加回去 ⇒ 立刻红）。</p>
+ */
+test('本 spec 不写 localStorage["xihe-user"].capabilities（能力只走 capabilitiesPreset）', () => {
+    const source = fs.readFileSync(new URL(import.meta.url), "utf8");
+    // 正则而非固定缩进子串：oxfmt 会重排缩进，钉缩进的断言自己会先烂掉。
+    const seedPattern = /localStorage\.setItem\(\s*"xihe-user"/;
+    expect(
+        seedPattern.test(source),
+        "本 spec 不得用 localStorage 种能力位；请改用 setupMockAuth({ capabilitiesPreset })",
+    ).toBe(false);
 });
