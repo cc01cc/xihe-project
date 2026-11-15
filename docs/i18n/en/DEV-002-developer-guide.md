@@ -172,9 +172,9 @@ mise run test:runtime:lib:ignored:mxc
 # e2e fixture self-tests (fake LLM chain state machine; no stack, seconds) — part of `validate`
 mise run test:e2e:fixtures
 
-# mock-lane S1 smoke (30 spec files; measured 2026-11-13, three consecutive runs, port 12701:
-# 87-88 passed + 4-6 flaky + 27 skipped + 1 failed (pre-existing plan-0752-settings-ia.spec.ts:118,
-# already red before the 30th spec was added), 90-96 s wall, --workers=4, headless). No backend needed.
+# mock-lane S1 smoke (31 spec files; measured 2026-11-15, single run, port 28640:
+# 107 passed + 0 flaky + 27 skipped + 0 failed, 77 s wall, --workers=4, headless).
+# No backend needed.
 # XIHE_UI_PORT is REQUIRED: playwright.config.ts defaults to 12630, which sits inside the
 # verification-window forbidden range 12630-12633, so unset or in-range exits 2.
 mise run test:mock:smoke
