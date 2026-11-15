@@ -29,6 +29,12 @@ initVisualVariant();
 initColorScheme();
 app.use(router);
 app.use(i18n);
+
+// task-139：遥测监听必须在挂载**之前**装好 —— 首屏挂载期（组件 setup、依赖初始化）正是最容易抛
+// 未捕获错误的时段，装在 mount 之后会让这一段成为盲区（`D-1604` 同族：配方在，但覆盖不到启动期）。
+// 判据 ① = 顺序（形态判据，`src/lib/__tests__/main-telemetry-wiring.spec.ts`）；
+// 判据 ② = 运行期未处理异常真的进批次（`e2e/mock/task139-unhandled-telemetry.spec.ts`）。
+installGlobalErrorTelemetry();
 app.mount("#app");
 
 setCustomComponents("xihe", { code_block: MarkstreamCodeBlockAdapter });
@@ -45,7 +51,5 @@ async function initKaTeXWorker() {
     }
 }
 initKaTeXWorker();
-
-installGlobalErrorTelemetry();
 
 window.addEventListener("beforeunload", () => logger.flush());
