@@ -36,6 +36,15 @@ export interface MockRunRegistry {
     get(runId: string): MockRunRecord | undefined;
     /** 取消：把状态推到 `cancelled`；未登记返回 `undefined`（调用方回 404）。 */
     cancel(runId: string): MockRunRecord | undefined;
+    /**
+     * task-180：**终结**一条 run（SSE 已发出终态事件时调用）。
+     * 不终结的话 `GET /chat/runs/{id}` 会一直答 `running` ⇒ 客户端 `refreshRunRecovery`
+     * 把会话推回 `thinking`（`SSEStream.vue` 的 recovery 分支），composer 卡在排队态。
+     */
+    settle(
+        runId: string,
+        patch: { status: string; terminalOutcome?: string | null; errorCode?: string | null },
+    ): MockRunRecord | undefined;
     readonly size: number;
 }
 
@@ -69,6 +78,18 @@ export function createMockRunRegistry(): MockRunRegistry {
             };
             runs.set(runId, cancelled);
             return cancelled;
+        },
+        settle(runId, patch) {
+            const record = runs.get(runId);
+            if (!record) return undefined;
+            const settled: MockRunRecord = {
+                ...record,
+                status: patch.status,
+                terminalOutcome: patch.terminalOutcome ?? record.terminalOutcome,
+                errorCode: patch.errorCode ?? record.errorCode,
+            };
+            runs.set(runId, settled);
+            return settled;
         },
         get size() {
             return runs.size;

@@ -453,6 +453,9 @@ const DEFAULT_CAPABILITIES = {
     canCreateWorkspace: true,
 };
 
+/** task-180：`exposeFunction` 每页只能注册一次，用 WeakSet 记住已暴露的 page。 */
+const settleBridgeExposed = new WeakSet<object>();
+
 export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     // task-163/176：能力与角色面按用例覆盖，`capabilitiesPreset` 是**成组**的起点。
     // 优先级：显式字段 > 预设 > 既有默认（⇒ 不传 preset 时与 task-144 逐字节相同）。
@@ -530,6 +533,26 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
               ownerId: "user-1",
               ...workspaceOverrides,
           };
+    // task-180：SSE 发出终态事件时，页面侧要把「这条 run 已终结」告诉 Node 侧的 run 注册表
+    // （`GET /chat/runs/{id}` 的桩读的就是它）。不这么做，桩会一直答 `running` ⇒ 客户端
+    // `refreshRunRecovery` 把会话推回 `thinking`（`SSEStream.vue` 的 recovery 分支）⇒
+    // composer 永远停在「排队发送」。暴露一次即可（重复 exposeFunction 会抛）。
+    if (!settleBridgeExposed.has(page)) {
+        settleBridgeExposed.add(page);
+        await page.exposeFunction("__xhMockSettleRun", (runId: string, patch: unknown) => {
+            const registry = mockRunsFor(page);
+            const record = registry.get(runId);
+            if (!record || !patch || typeof patch !== "object") return;
+            registry.settle(
+                runId,
+                patch as {
+                    status: string;
+                    terminalOutcome?: string | null;
+                    errorCode?: string | null;
+                },
+            );
+        });
+    }
     await page.addInitScript(
         ({ seededWorkspace, seededTabWorkspace, capabilities }) => {
             localStorage.setItem("xihe-token", "mock-token");
@@ -634,6 +657,45 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                                     }),
                                 ),
                             );
+                            // task-178：**CP 在 `error` 之后还会发终结事件**，夹具原来不发 ⇒ 客户端
+                            // `useSSE` 的 `done` 分支（`:714`）永不触发，composer 停在「排队发送 / 停止生成」
+                            // 态（实测快照里 textarea 仍留草稿 + `chat-queue-button` 在）。于是「接续发送」
+                            // 走的是 follow-up 队列而不是直接开新 run —— 这条 spec 声称要验的行为
+                            // 在旧夹具下**根本不可能发生**。补 `done`（带 runId 收尾本 run），流仍保持打开。
+                            streamController.enqueue(
+                                encode(
+                                    event("done", {
+                                        outcome: "error",
+                                        ...(currentRunId ? { runId: currentRunId } : {}),
+                                    }),
+                                ),
+                            );
+                            // 真实 CP 的终态还带一条 `status: idle`：`useSSE` 的 `status` 分支（`:614`）才会把
+                            // `sessionRunStates` 推回 idle；只发 `done` 时 `chatStore.isStreaming()` 仍为真
+                            // （`isStreaming` 把 `executing` 也算作 streaming，`chat.ts:256-264`）⇒ composer 停在
+                            // 「排队发送」。实测：只补 `done` 后 `chat-queue-button` 仍在（`w10` 日志）。
+                            streamController.enqueue(
+                                encode(
+                                    event("status", {
+                                        status: "idle",
+                                        ...(currentRunId ? { runId: currentRunId } : {}),
+                                    }),
+                                ),
+                            );
+                            // task-180：告诉 Node 侧注册表「这条 run 已终结」，否则 `/chat/runs/{id}`
+                            // 仍答 running ⇒ 客户端恢复分支把会话推回 thinking ⇒ composer 卡在排队态。
+                            void (
+                                globalThis as unknown as {
+                                    __xhMockSettleRun?: (
+                                        runId: string,
+                                        patch: Record<string, unknown>,
+                                    ) => unknown;
+                                }
+                            ).__xhMockSettleRun?.(currentRunId ?? "", {
+                                status: "failed",
+                                terminalOutcome: "error",
+                                errorCode: "AGENT_STREAM_FAILED",
+                            });
                             shouldFail = false;
                             streamEmitted = false;
                             return;
