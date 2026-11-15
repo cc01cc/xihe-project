@@ -2,6 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
+import { PERMISSION_ATOMS } from "./helpers/auth";
 import { isWorkspaceLayerConfigRequest } from "../../src/lib/settingsIaRequests";
 
 /**
@@ -88,6 +89,36 @@ async function mockSettingsAPIs(page: any, configRequests: string[] = []): Promi
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({}),
+        });
+    });
+    // task-202 B 半（2026-11-15 读码定位）：上面那条兜底回 `{}`，于是 `GET /me/permissions` 拿到**空投影**。
+    // 而实例层域页/组页的读面判据自 D-1521 起是**动作原子** `READ_INSTANCE_CONTENT`（不是能力位
+    // `isInstanceAdmin`）—— 判据见 `src/views/settings/SettingsDomainView.vue:86-92`：
+    // `selfPermissionsStatus==="ready" && !auth.canReadInstanceContent` ⇒ 渲染 `SettingsForbiddenView`。
+    // 本 spec 的文件头 `:56-74` **已经种了能力位**（`localStorage["xihe-user"].capabilities.isInstanceAdmin`），
+    // 缺的正是这份原子投影 ⇒ 实测 `renders both agent sections on instance` 在
+    // `settings-agent-config-view` 上 30 s 等不到（不是负载：快照是确定性的 403 文案）。
+    // ⇒ 只补这一条投影；原子表**复用夹具导出** `PERMISSION_ATOMS`（task-76 / `48f92ac91` 起已含
+    //   `READ_INSTANCE_CONTENT`），不在这里手写第二份词表（两份词表迟早分叉）。
+    // `workspaces` 照夹具形状给一行（本 spec 还有工作区层/层头用例，空数组会让 `workspaceProjection` 变 null）。
+    await page.route("**/api/v1/me/permissions", (route: import("@playwright/test").Route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "u1",
+                instanceCapabilities: ["isInstanceAdmin", "isInstanceSuper", "canCreateWorkspace"],
+                instancePermissions: PERMISSION_ATOMS,
+                workspaces: [
+                    {
+                        workspaceId: "11111111-1111-4111-8111-111111111111",
+                        workspaceRole: "WS_OWNER",
+                        workspaceAdmin: true,
+                        permissions: PERMISSION_ATOMS,
+                    },
+                ],
+            }),
         });
     });
     // task-466（D-1322 统一口径，照 task-461 / BL-318 先例）：兜底 `200 {}` 会吞掉页面合法调用的

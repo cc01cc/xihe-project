@@ -143,6 +143,34 @@ for (const route of allRoutes) {
 
         await page.route("**/api/v1/**", async (route2) => {
             const requestUrl = new URL(route2.request().url());
+            // task-202 B 半（2026-11-15 读码定位）：实例层域页的**读面**判据自 D-1521 起是动作原子
+            // `READ_INSTANCE_CONTENT`（`src/views/settings/SettingsDomainView.vue:86-92`：
+            // `selfPermissionsStatus==="ready" && !auth.canReadInstanceContent` ⇒ `SettingsForbiddenView`），
+            // **不是**能力位 `isInstanceAdmin`。本 spec 只在上面的 `:97-114` 种了能力位，而
+            // `/me/permissions` 落到本条的 `{}` 兜底 ⇒ 空投影 ⇒ `settings-config` 渲染「这一层需要实例管理员能力」，
+            // `settings-domain-title` 永不出现（实测快照是**确定性的** forbidden 视图，不是 30 s 超时的偶然）。
+            // ⇒ 只给 `needsInstanceAdmin` 的两条路由补这份投影：与上面种能力位**同一个路由级开关**，
+            //   **不广播**（理由同 task-171：多给一次权限就可能让别的路由截图基线变脸）。
+            //   也只给**读**原子 —— 补 `MANAGE_INSTANCE_CONFIG` 之类会额外露出写控件，同样会改基线。
+            if (route.needsInstanceAdmin && requestUrl.pathname.endsWith("/me/permissions")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        userId: "u1",
+                        instanceCapabilities: [
+                            "isInstanceAdmin",
+                            "isInstanceSuper",
+                            "canCreateWorkspace",
+                        ],
+                        instancePermissions: [
+                            { actionClass: "READ_INSTANCE_CONTENT", resource: "*" },
+                        ],
+                        workspaces: [],
+                    }),
+                });
+                return;
+            }
             const workspaceMatch = requestUrl.pathname.match(/\/api\/v1\/workspaces\/([^/]+)$/);
             if (workspaceMatch) {
                 await route2.fulfill({
