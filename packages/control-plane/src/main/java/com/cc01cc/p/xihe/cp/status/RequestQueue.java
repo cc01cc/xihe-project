@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +20,16 @@ public class RequestQueue {
     private static final long TTL_SECONDS = 60;
 
     private final ConcurrentLinkedQueue<QueuedRequest> queue = new ConcurrentLinkedQueue<>();
+    /** task-136: the TTL is 60 s of wall clock, so expiry can only be tested with an injected clock. */
+    private final Clock clock;
+
+    public RequestQueue() {
+        this(Clock.systemUTC());
+    }
+
+    RequestQueue(Clock clock) {
+        this.clock = clock;
+    }
 
     public boolean enqueue(String sessionId, String content, String model, String userId, String workspaceId) {
         return enqueue(sessionId, content, null, model, "none", List.of(), userId, workspaceId, null, null);
@@ -47,7 +58,7 @@ public class RequestQueue {
         }
         queue.offer(new QueuedRequest(sessionId, content, provider, model, toolMode,
                 attachments == null ? List.of() : List.copyOf(attachments), userId, workspaceId,
-                Instant.now(), requestId, runId,
+                Instant.now(clock), requestId, runId,
                 toolTimeouts == null ? Map.of() : Map.copyOf(toolTimeouts)));
         logger.info("[LIFECYCLE] service=cp event=requestQueued sessionId={} reason=agent_down queueSize={}", sessionId, queue.size());
         return true;
@@ -58,15 +69,21 @@ public class RequestQueue {
      *
      * <p>Without this, "no exception" was indistinguishable from "delivered": a consumer that
      * refused a request (e.g. the drain guard deciding the run is already active) still counted as
-     * a delivery, so {@code requestDrained count=N} said N things were sent while N were dropped.</p>
+     * a delivery, so the drain line said N things were sent while N were dropped (the field is
+     * {@code delivered} since task-136 split the counters).</p>
      */
     @FunctionalInterface
     public interface Deliverer {
 
         /**
-         * @return {@code true} only when the request really went out; {@code false} means the
-         *         consumer refused it (it owns the resulting terminal state, so {@code onDropped}
-         *         is not called again).
+         * task-136: {@code true} means the request was <b>handed to</b> {@code execAsync}
+         * (fire-and-forget) — it does <b>not</b> mean end-to-end delivery. The transport, the agent
+         * and the run's terminal state are all downstream of this call: a real failure is expressed
+         * by {@code chat_runs.status}/{@code error_code} plus {@code chat_run_history}, never by this
+         * return value. Do not read {@code delivered} in the drain line as "answered".
+         *
+         * @return {@code false} when the consumer refused the request (it owns the resulting
+         *         terminal state, so {@code onDropped} is not called again)
          */
         boolean deliver(QueuedRequest request);
     }
@@ -76,7 +93,10 @@ public class RequestQueue {
     }
 
     public int drain(Deliverer sender, Consumer<QueuedRequest> onDropped) {
-        int sent = 0;
+        // task-136: three mutually exclusive outcomes, so the three log fields can be read side by
+        // side (they sum to the number of entries the scan touched). Before this, "dropped"
+        // included expiries while "expiredCount" was printed next to it as if they were siblings.
+        int delivered = 0;
         int dropped = 0;
         int expired = 0;
         while (!queue.isEmpty()) {
@@ -85,9 +105,8 @@ public class RequestQueue {
                 break;
             }
 
-            if (Instant.now().getEpochSecond() - req.createdAt().getEpochSecond() > TTL_SECONDS) {
+            if (Instant.now(clock).getEpochSecond() - req.createdAt().getEpochSecond() > TTL_SECONDS) {
                 expired++;
-                dropped++;
                 logger.info("[LIFECYCLE] service=cp event=requestQueueExpired sessionId={} ttlSeconds={}", req.sessionId(), TTL_SECONDS);
                 notifyDropped(onDropped, req);
                 continue;
@@ -95,7 +114,7 @@ public class RequestQueue {
 
             try {
                 if (sender.deliver(req)) {
-                    sent++;
+                    delivered++;
                 } else {
                     dropped++;
                 }
@@ -105,11 +124,11 @@ public class RequestQueue {
                 notifyDropped(onDropped, req);
             }
         }
-        if (sent > 0 || dropped > 0) {
-            logger.info("[LIFECYCLE] service=cp event=requestDrained count={} dropped={} expiredCount={}",
-                    sent, dropped, expired);
+        if (delivered > 0 || dropped > 0 || expired > 0) {
+            logger.info("[LIFECYCLE] service=cp event=requestDrained delivered={} dropped={} expired={}",
+                    delivered, dropped, expired);
         }
-        return sent;
+        return delivered;
     }
 
     private void notifyDropped(Consumer<QueuedRequest> onDropped, QueuedRequest request) {

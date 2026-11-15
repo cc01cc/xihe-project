@@ -3,6 +3,9 @@ package com.cc01cc.p.xihe.cp.status;
 import org.junit.jupiter.api.Test;
 import com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -128,8 +131,9 @@ class RequestQueueTest {
 
         assertEquals(0, sent, "the consumer refused this request, so nothing was delivered");
         String line = drainedLine(appender);
-        assertTrue(line.contains("count=0"), "the drain line must not claim a delivery: " + line);
+        assertTrue(line.contains("delivered=0"), "the drain line must not claim a delivery: " + line);
         assertTrue(line.contains("dropped=1"), "the drain line must report the refusal: " + line);
+        assertTrue(line.contains("expired=0"), line);
         assertEquals(0, queue.size());
     }
 
@@ -143,8 +147,47 @@ class RequestQueueTest {
 
         assertEquals(1, sent);
         String line = drainedLine(appender);
-        assertTrue(line.contains("count=1"), line);
+        assertTrue(line.contains("delivered=1"), line);
         assertTrue(line.contains("dropped=0"), line);
+        assertTrue(line.contains("expired=0"), line);
+    }
+
+    /** task-136: the three counters are mutually exclusive, so they can be read side by side. */
+    @Test
+    void anExpiredRequestIsCountedOnlyAsExpired() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        RequestQueue queue = new RequestQueue(clock);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = captureQueueLog();
+        assertTrue(queue.enqueue("s1", "hello", "run-model", "user1", "ws1", "request-1", "run-1"));
+
+        clock.advanceSeconds(61);
+
+        List<RequestQueue.QueuedRequest> delivered = new ArrayList<>();
+        assertEquals(0, queue.drain(delivered::add), "an expired request is not delivered");
+        assertEquals(0, delivered.size());
+        String line = drainedLine(appender);
+        assertTrue(line.contains("delivered=0"), line);
+        assertTrue(line.contains("dropped=0"), "an expiry is not also a refusal: " + line);
+        assertTrue(line.contains("expired=1"), line);
+        assertEquals(0, queue.size());
+    }
+
+    /** task-136: with three exclusive counters the line is self-checking: their sum is the scan size. */
+    @Test
+    void theThreeCountersAddUpToWhatTheDrainScanned() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"));
+        RequestQueue queue = new RequestQueue(clock);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = captureQueueLog();
+        assertTrue(queue.enqueue("s1", "old", "run-model", "user1", "ws1", "request-old", "run-old"));
+        clock.advanceSeconds(61);
+        assertTrue(queue.enqueue("s2", "new", "run-model", "user1", "ws1", "request-new", "run-new"));
+
+        queue.drain(ignored -> false);
+
+        String line = drainedLine(appender);
+        assertTrue(line.contains("delivered=0"), line);
+        assertTrue(line.contains("dropped=1"), line);
+        assertTrue(line.contains("expired=1"), line);
     }
 
     @Test
@@ -155,6 +198,35 @@ class RequestQueueTest {
         }
         assertFalse(queue.enqueue("s101", "msg", null, "user", "ws"));
         assertEquals(100, queue.size());
+    }
+
+    /** task-136: the queue's TTL is wall-clock, so a test needs a clock it can move. */
+    static final class MutableClock extends Clock {
+
+        private Instant now;
+
+        MutableClock(Instant start) {
+            this.now = start;
+        }
+
+        void advanceSeconds(long seconds) {
+            this.now = now.plusSeconds(seconds);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("UTC");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
     }
 
     @Test
