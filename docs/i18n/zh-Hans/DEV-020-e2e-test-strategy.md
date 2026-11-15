@@ -331,6 +331,14 @@ E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`
 - **并行只在三条同时成立时允许**：① 两个 run 构建根不同；② 都不是测量类 spec；③ 钉住同一个 SHA（跨 commit 的数字不可比）。开窗前另跑 `node scripts/e2e-preflight.mjs`（只读）：任何 `FAIL` 即阻塞，只有 exit 0（无 blocking finding，`scripts/e2e-preflight.mjs:26`）才开窗。
 - **测量类恒独占**：会话规模/内存采样这类 spec 并发跑时，旁边多一个 spec 就改写 GC 压力与内存水位 —— 量出来不是它要的量。
 - **窗口本身不在这里**：开窗/冻结/钉靶 SHA 的规则见 SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md`（ONE 私有层，不在本仓）§3–§5。
+- **同一个 `packages/ui/test-results/` 不能并行**（task-224，2026-11-15 实测）：两个 Playwright 进程共用该目录时，后启动的那个开跑即清空目录 ⇒ 先启动的进程在 `browserContext.close` 写 trace 时拿到 `ENOENT … playwright-artifacts-N\traces\…`；**该条失败的 error 里没有任何断言失败**，于是它伪装成「测试失败」。
+
+    ```powershell
+    # 并发跑时给每个 lane 一个自己的 artifact 目录（cwd=packages/ui）
+    $env:XIHE_MOCK_OUTPUT_DIR = "H:\zeotmp\<lane>\test-results"
+    ```
+
+    缺省不设该变量时 `e2e/playwright.config.ts` **不加 `outputDir` 键** ⇒ 默认仍是 `packages/ui/test-results`，既有 gate/报告读取路径逐字节不变；临时排查也可用 `--output <dir>`。**禁止用 `retries` 掩盖**：同目录并发实测 3 条 ENOENT 被既有 `retries: 1` 吸收成 `1 flaky`（exit 0），换独立目录后同一跑为 6 passed / 0 flaky / 0 ENOENT（见 `D-1588` 家族）。
 
 ### 3.6.1 CP jar 指纹（BL-477 / task-90）
 

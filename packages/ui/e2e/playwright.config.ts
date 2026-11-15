@@ -54,6 +54,21 @@ const EXPLICIT_SPEC_FILES = process.argv
 const REPORT_FILE =
     process.env.XIHE_MOCK_REPORT_FILE ??
     (EXPLICIT_SPEC_FILES ? ".mock-report.subset.json" : ".mock-report.json");
+// task-224：**按 lane 独立的 artifact 目录**（并发跑同一车道会互清 `test-results/`）。
+//
+// 现象（两个 lane 各自独立撞到，不是抖动）：两个 Playwright 进程共用 `packages/ui/test-results/`
+// 时，后启动的那个开跑即清空目录 ⇒ 先启动的那个在 `browserContext.close` 写 trace 时拿到
+// `ENOENT … playwright-artifacts-N\traces\…`；**那条失败的 error 里没有任何断言失败**，
+// 于是它伪装成「测试失败」（2026-11-15 实测：一次跑出 2 failed，改 `--output` 独立目录后 6 passed）。
+//
+// 口径：**缺省不设该变量 ⇒ 不加 `outputDir` 键**，Playwright 默认仍是 `packages/ui/test-results`
+// （既有 gate/报告读取路径逐字节不变）；设了才生效。**禁止用 `retries` 掩盖**（`D-1588` 家族：
+// 抖动要么修掉，要么每次都打印发生次数，不许静默）。
+const MOCK_OUTPUT_DIR = process.env.XIHE_MOCK_OUTPUT_DIR;
+if (MOCK_OUTPUT_DIR) {
+    console.log(`[e2e] XIHE_MOCK_OUTPUT_DIR=${MOCK_OUTPUT_DIR} ⇒ artifact 目录已按 lane 隔离`);
+}
+
 const REPORTERS: ReporterDescription[] | undefined =
     process.env.XIHE_MOCK_REPORT === "1"
         ? [["list"], ["json", { outputFile: REPORT_FILE }]]
@@ -63,6 +78,7 @@ export default defineConfig({
     testDir: "..",
     testMatch: ["e2e/mock/*.spec.ts", "e2e/real/*.spec.ts", "e2e/headed/*.spec.ts"],
     ...(REPORTERS ? { reporter: REPORTERS } : {}),
+    ...(MOCK_OUTPUT_DIR ? { outputDir: MOCK_OUTPUT_DIR } : {}),
     timeout: TEST_TIMEOUT_MS,
     retries: 1,
     use: {

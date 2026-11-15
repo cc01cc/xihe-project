@@ -211,6 +211,14 @@ The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-
 - **Parallel is allowed only when all three hold**: ① the two runs use different build roots; ② neither is a measurement spec; ③ both are pinned to the same SHA (numbers from different commits are not comparable). Before opening a window, also run `node scripts/e2e-preflight.mjs` (read-only): any `FAIL` blocks, and only exit 0 (no blocking finding, `scripts/e2e-preflight.mjs:26`) opens the window.
 - **Measurement specs always run alone**: with another spec alongside, session-scale/memory-sampling numbers move because GC pressure and memory watermarks change — the run no longer measures what it is meant to measure.
 - **The window itself is not here**: opening, freezing and pinned-SHA rules live in the SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md` (ONE private layer, not in this repo) §3–§5.
+- **Two runs must not share one `packages/ui/test-results/`** (task-224, measured 2026-11-15): when two Playwright processes share that directory, the one that starts later wipes it, so the earlier process gets `ENOENT … playwright-artifacts-N\traces\…` in `browserContext.close` while writing traces; **that failure's error carries no assertion failure at all**, so it disguises itself as a test failure.
+
+    ```powershell
+    # give each lane its own artifact directory when running concurrently (cwd=packages/ui)
+    $env:XIHE_MOCK_OUTPUT_DIR = "H:\zeotmp\<lane>\test-results"
+    ```
+
+    When the variable is unset, `e2e/playwright.config.ts` **does not add an `outputDir` key**, so the default stays `packages/ui/test-results` and every existing gate/report read path is byte-for-byte unchanged; `--output <dir>` works as an ad-hoc alternative. **Do not hide this with `retries`**: under a shared directory the measured run turned 3 ENOENT errors into `1 flaky` (exit 0) via the existing `retries: 1`, whereas the same run with isolated directories reported 6 passed / 0 flaky / 0 ENOENT (the `D-1588` family).
 
 ### 3.3.1 CP jar fingerprint (BL-477 / task-90)
 
