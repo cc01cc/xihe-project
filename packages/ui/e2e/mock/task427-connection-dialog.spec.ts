@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
+import { resolveExpectedChain } from "../helpers/chain";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
 
 /**
@@ -29,6 +30,24 @@ async function openDialog(page: Page) {
     await expect(modal).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
     return modal;
 }
+
+// ---------------------------------------------------------------------------
+// task-135 · 链路档位守卫（2026-11-15）
+//
+// 本文件是 **preview 链路专属**：页面要 vite 挂 mock 中间件（`XIHE_UI_MOCK_API=1`）才有数据，
+// 而且文件头注释明写「不调 setupMockAuth」（它的 `**/api/v1/**` 兜底会盖掉真写面 ⇒ 假绿）。
+// 在 index 链路的 mock 车道里这些用例只会落到登录页 ⇒ 必须**显式跳过并写明原因**，
+// 不许静默跳过（静默 = 把「没测」伪装成「没有这条」）。
+//
+// 链路推导：`resolveExpectedChain()`（`e2e/helpers/chain.ts:61-75`）—— 显式 `XIHE_E2E_EXPECT_CHAIN`
+// 优先，否则按 `XIHE_UI_MOCK_API` 推导（未设 ⇒ "index"）。所以默认 `test:mock` 跳过；
+// 想真跑本文件：`XIHE_E2E_EXPECT_CHAIN=preview` + 文件头那条跑法。
+// ---------------------------------------------------------------------------
+const EXPECTED_CHAIN = resolveExpectedChain().chain;
+test.skip(
+    EXPECTED_CHAIN !== "preview",
+    `preview 链路专属：本文件依赖 vite mock 中间件（XIHE_UI_MOCK_API=1），见文件头「跑法」。当前链路=${EXPECTED_CHAIN}；用 XIHE_E2E_EXPECT_CHAIN=preview 单跑本文件。`,
+);
 
 test.describe("connection dialog footer testids (task-427 P2)", () => {
     test("两个 testid 存在且语义正确：取消是 button、提交是 submit", async ({ page }) => {
