@@ -74,4 +74,33 @@ describe("WorkspaceContainerTabs（task-174 S2b：容器内页签行）", () => 
             false,
         );
     });
+
+    it("task-17 W-1：单 tab 与容器同名 ⇒ 去掉容器标签只留 tab（aria-label 保住可访问名）", () => {
+        const wrapper = mountRow({
+            containerId: "tree",
+            tabs: [{ id: "tree", label: "文件树", closable: false }],
+            activeId: "tree",
+        });
+        expect(wrapper.find('[data-testid="workspace-container-label"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="workspace-container-tab-tree-tree"]').text()).toBe(
+            "文件树",
+        );
+        expect(
+            wrapper.get('[data-testid="workspace-container-tabs"]').attributes("aria-label"),
+        ).toBe("文件树");
+    });
+
+    it("task-17 W-1 反向：单 tab 但与容器不同名 ⇒ 容器标签保留（主容器标识不丢）", () => {
+        const wrapper = mountRow({
+            containerId: "main",
+            tabs: [{ id: "session:s1", label: "S1", closable: true }],
+            activeId: "session:s1",
+        });
+        expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("内容");
+    });
+
+    it("task-17 W-1 反向：多 tab ⇒ 容器标签保留", () => {
+        const wrapper = mountRow({ containerId: "main", tabs: TABS, activeId: "session:s1" });
+        expect(wrapper.get('[data-testid="workspace-container-label"]').text()).toBe("内容");
+    });
 });

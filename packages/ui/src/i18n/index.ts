@@ -451,9 +451,6 @@ const messages = {
             // B 版（再补「命令以你的系统账户身份运行」）**被否**：+19 列会触发 1024 档折行（卡面停止
             // 条件），且括号里那半句已足以表达「没有沙箱保护」；若后续实测 1024 不折行可另立小卡。
             sandboxEnforcement: "无文件系统授权限制（只限启动目录，不限读写范围）",
-            // task-550 / Q-i 第二半（用户裁定）：会话头常显的第二句。
-
-            sandboxEnforcementSnapshot: "决策快照照冻，仅标注 enforcement=none",
             panelMonitor: "监控",
             // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
             sseSubscriberLimitTitle: "实时更新已停止。",
@@ -2266,7 +2263,7 @@ const messages = {
             providerPartitionDesc:
                 "自上而下：先在连接管理新建连接并就地设定默认（默认连接置顶、每连接默认模型置顶、每模型参数就地配置）。",
             providerPartitionDescInstance:
-                "实例层与个人层是同一套结构：可以在实例层建多条实例连接（scope=INSTANCE）与多个模型，配出来的模型属于实例，本实例下的主体按权限取用；「设为默认」写出的 profile 只是该层的默认身份（派生值），不是第二套真源。",
+                "实例层与个人层是同一套结构：可以在实例层建多条实例连接与多个模型，配出来的模型属于实例，本实例下的主体按权限取用；「设为默认」写出的 profile 只是该层的默认身份（派生值），不是第二套真源。",
             providerInstanceNote:
                 "模型配置按 工作区 > 工作区默认 > 个人 > 实例 的顺序取第一组存在的配置；连接归属提供该配置的那一层，仅当该层连接不可用时才回退到实例共享连接，不会改用其他层的个人或工作区连接。",
             providerInstanceGoUser: "前往个人层管理连接",
@@ -3609,7 +3606,10 @@ const messages = {
         agentPrincipals: {
             title: "智能体主体",
             heading: "智能体主体",
-            desc: "你在本平台的智能体账号，创建后可绑定到工作区。本页只列出你自己创建的（CP 按创建者过滤，不是按属主）；创建不需要选择工作区。",
+            // task-17 M-1（自审批01）：列表卡标题与 section/eyebrow 同名 ×3 ⇒ 异化降冗余。
+            listHeading: "已创建的智能体",
+            // task-17 M-2（自审批01）：去掉「CP 按创建者过滤」内部实现细节，只留用户面事实。
+            desc: "你在本平台的智能体账号，创建后可绑定到工作区。本页只列出你自己创建的智能体；创建不需要选择工作区。",
             create: "创建智能体",
             refresh: "刷新",
             empty: "你还没有创建过智能体",
@@ -4226,9 +4226,6 @@ const messages = {
             // only constrains the start directory — see the zh comment for the three source anchors.
             sandboxEnforcement:
                 "No filesystem authorization checks (start directory only; read/write scope is not limited)",
-            sandboxEnforcementSnapshot:
-                "Decision snapshot is frozen; it only records enforcement=none",
-
             panelMonitor: "Monitor",
             // BL-335: SSE subscriber limit (429) persistent banner.
             sseSubscriberLimitTitle: "Live updates stopped.",
@@ -6095,7 +6092,7 @@ const messages = {
             providerPartitionDesc:
                 "Top-down: create connections in Connections and set defaults in place (default connection pinned, each connection's default model pinned, per-model parameters inline).",
             providerPartitionDescInstance:
-                'The instance layer mirrors the personal layer: create several instance connections (scope=INSTANCE) and several models there. Models configured at this layer belong to the instance and are consumed by its subjects according to their permissions; the profile written by "Set as default" is only this layer\'s default identity (a derived value), not a second source of truth.',
+                'The instance layer mirrors the personal layer: create several instance connections and several models there. Models configured at this layer belong to the instance and are consumed by its subjects according to their permissions; the profile written by "Set as default" is only this layer\'s default identity (a derived value), not a second source of truth.',
             providerInstanceNote:
                 "Profiles resolve as a whole unit in the order workspace > workspace-default > personal > instance; the connection belongs to the layer that supplied the profile, falling back to the shared instance connection only when that layer's connection is unavailable - connections from other layers are never used.",
             providerInstanceGoUser: "Go to the personal layer to manage connections",
@@ -7508,7 +7505,10 @@ const messages = {
         agentPrincipals: {
             title: "Agent principals",
             heading: "Agent principals",
-            desc: "Your agent accounts on this platform; create one, then bind it to a workspace. Only the principals you created yourself are listed (the control plane filters by creator, not by owner). Creating one needs no workspace.",
+            // task-17 M-1 (self-review 01): list-card title duplicated the section/eyebrow label x3.
+            listHeading: "Created agents",
+            // task-17 M-2 (self-review 01): drop the internal control-plane filtering detail.
+            desc: "Your agent accounts on this platform; create one, then bind it to a workspace. Only the agents you created yourself are listed. Creating one needs no workspace.",
             create: "Create agent",
             refresh: "Refresh",
             empty: "You have not created any agents yet",

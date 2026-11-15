@@ -83,6 +83,16 @@ const containerLabel = computed(() =>
     props.containerId === "tree" ? t("workspace.containerTree") : t("workspace.containerMain"),
 );
 
+/**
+ * task-17 W-1（自审批01）：单 tab 且与容器标签同名 ⇒ 视觉上去掉容器标签，只留 tab。
+ * 典型形态是树容器（恒单 tab「文件树」）——原先 nav 标签 + tab 画出「文件树 文件树」双标。
+ * 可访问名不丢：nav 的 aria-label 仍是容器名；tab 文本照常可读。
+ * 主容器单 tab（如仅一个会话）标签不同名 ⇒ 不受影响，容器标识保留。
+ */
+const singleTabRedundant = computed(
+    () => props.tabs.length === 1 && props.tabs[0].label === containerLabel.value,
+);
+
 /** reka 的 v-model 是「当前活页签」；没有活页签时给空串，避免它自行选第一个。 */
 const activeTab = computed<string>({
     get: () => props.activeId ?? "",
@@ -98,9 +108,14 @@ const activeTab = computed<string>({
         class="flex h-9 shrink-0 items-center gap-1 border-b bg-card px-2"
         data-testid="workspace-container-tabs"
         :data-container="containerId"
+        :aria-label="containerLabel"
         @keydown="onRowKeydown"
     >
-        <span class="text-xs font-medium text-muted-foreground">
+        <span
+            v-if="!singleTabRedundant"
+            data-testid="workspace-container-label"
+            class="text-xs font-medium text-muted-foreground"
+        >
             {{ containerLabel }}
         </span>
         <Tabs :id="domId" :model-value="activeTab" class="min-w-0 flex-1">

@@ -389,7 +389,7 @@ onMounted(refresh);
         <section class="min-w-0 rounded-lg border border-border bg-card">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
                 <h2 class="text-sm font-medium" data-testid="agent-principals-list-heading">
-                    {{ t("agentPrincipals.heading") }}
+                    {{ t("agentPrincipals.listHeading") }}
                 </h2>
                 <span class="text-xs text-muted-foreground">{{ agents.length }}</span>
             </div>
