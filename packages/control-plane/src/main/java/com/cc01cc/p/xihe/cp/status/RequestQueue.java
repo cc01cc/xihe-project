@@ -20,6 +20,10 @@ public class RequestQueue {
     /**
      * task-134 A2: parked requests live this long. Reconciliation reads the same constant, because
      * TTL expiry has exactly one owner — the periodic reconciler — so the two sides cannot drift.
+     *
+     * <p>Shared contract: {@code ChatRunReconciliationService} derives its takeover window from this
+     * constant. Changing one side without the other makes the two disagree about when a parked run
+     * is still deliverable.</p>
      */
     public static final long TTL_SECONDS = 60;
 

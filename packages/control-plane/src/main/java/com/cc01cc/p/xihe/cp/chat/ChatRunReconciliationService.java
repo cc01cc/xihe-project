@@ -78,6 +78,8 @@ public class ChatRunReconciliationService {
         // task-134 A2: a parked (handed-off) run is only "still ours to deliver" while the queue can
         // still deliver it. Past the queue's own TTL the parked entry is dead, and skipping the run
         // because it is "locally registered" would skip it forever (D-1485: registered ≠ owned).
+        // Shared contract: this window IS the queue's TTL (RequestQueue.TTL_SECONDS). Changing one
+        // side without the other makes the two disagree about when a parked run is still deliverable.
         Instant queueCutoff = now.minus(Duration.ofSeconds(RequestQueue.TTL_SECONDS));
         for (ChatRun run : stale) {
             String runId = run.getId().toString();

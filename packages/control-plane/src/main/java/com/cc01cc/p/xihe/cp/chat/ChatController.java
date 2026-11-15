@@ -990,7 +990,9 @@ public class ChatController {
                     // like "someone is running it" to the recovery drain — otherwise the drain's own
                     // claim guard rejects the run that this very request just parked (measured: run
                     // goes failed/CHAT_IN_PROGRESS and the message is never delivered).
-                    activeRunRegistry.markHandedOff(sessionId, runId);
+                    // The one place the handoff clock is sampled: reconciliation compares it against
+                // RequestQueue.TTL_SECONDS, so the two sides must stay in sync.
+                activeRunRegistry.markHandedOff(sessionId, runId, java.time.Instant.now());
                     logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
                             requestId, sessionId, runId);
                     handedOff = true;

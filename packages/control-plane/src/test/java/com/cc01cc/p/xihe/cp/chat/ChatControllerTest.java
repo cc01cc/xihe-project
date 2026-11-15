@@ -178,6 +178,9 @@ class ChatControllerTest extends AbstractH2Test {
     private SseEmitterManager sseEmitterManager;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.chat.ChatRunTerminalService chatRunTerminalService;
+
+    @Autowired
     private ChatController chatController;
 
     @MockitoSpyBean
@@ -1163,6 +1166,97 @@ class ChatControllerTest extends AbstractH2Test {
             // This test only proves "排进去"; clearing here is teardown, not the assertion. The
             // matching "排出来" evidence lives in chat_queuedRunIsRedeliveredAfterTheAgentRecovers,
             // which asserts the queue empties itself and never clears it (task-131).
+            requestQueue.clear();
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+        }
+    }
+
+
+    private static java.util.List<String> suppressionLines(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        return appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("event=chat_run_terminal_emit_suppressed"))
+                .toList();
+    }
+
+    /**
+     * task-134 T1（守卫对撞）: reconciliation may terminalize a parked run first; the recovery drain
+     * then meets the same entry and must lose cleanly — one terminal history row, no second frame,
+     * and the loser's suppression code is the guard's own ({@code CHAT_IN_PROGRESS}), never
+     * {@code AGENT_UNAVAILABLE} (that would mean the drain still owns TTL expiry).
+     */
+    @Test
+    void aQueuedRunAlreadyTerminalizedByReconciliationIsNotTerminalizedByTheDrain() {
+        requestQueue.clear();
+        AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
+        AGENT_AVAILABLE.set(true);
+        healthMonitor.pollHealth();
+        AGENT_AVAILABLE.set(false);
+        healthMonitor.pollHealth();
+        stubAgentSuccessReply();
+        String idempotencyKey = "collision-" + UUID.randomUUID();
+        Map<String, Object> request = Map.of(
+                "sessionId", sessionId,
+                "content", "Parked, then expired, then drained",
+                "workspaceId", workspaceId,
+                "userId", userId,
+                "branchId", branchId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+        ch.qos.logback.classic.Logger controllerLogger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ChatController.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        controllerLogger.addAppender(appender);
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    baseUrl + "/api/v1/chat", HttpMethod.POST, chatEntity(request, headers), Map.class);
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+            assertEquals("queued", response.getBody().get("status"));
+            String runId = String.valueOf(response.getBody().get("runId"));
+            assertEquals(1, requestQueue.size());
+
+            // The reconciler's own entry point, with the request shape it builds (T2 covers its
+            // decision; here we only need its effect on the row).
+            chatRunTerminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
+                    runId, java.util.List.of("queued"), "ambiguous", "ambiguous", "QUEUE_EXPIRED",
+                    "The queued chat request expired before the agent recovered", 0, 0,
+                    ChatRunTerminalService.TerminalSource.RECONCILIATION, null, null));
+            assertEquals("ambiguous", jdbcTemplate.queryForObject(
+                    "SELECT status FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", String.class, runId));
+
+            // The loser: the recovery edge drains the entry that belongs to the now-terminal run.
+            AGENT_AVAILABLE.set(true);
+            healthMonitor.pollHealth();
+
+            await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> assertEquals(0, requestQueue.size(),
+                    "the drain must consume the stale entry"));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)",
+                    Integer.class, runId), "the run must keep exactly one terminal history row");
+            assertEquals("ambiguous", jdbcTemplate.queryForObject(
+                    "SELECT status FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", String.class, runId),
+                    "the loser must not rewrite the terminal status");
+            assertEquals("QUEUE_EXPIRED", jdbcTemplate.queryForObject(
+                    "SELECT error_code FROM chat_runs WHERE CAST(id AS VARCHAR) = ?", String.class, runId),
+                    "the first writer's code must survive");
+            // The loser's second terminal write is refused inside transitionRun, i.e. BEFORE
+            // sseManager.send: the suppression line is the frame-level evidence that no second
+            // frame left the process, and its code must be the guard's own.
+            await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() ->
+                    assertTrue(suppressionLines(appender).stream().anyMatch(line ->
+                                    line.contains("runId=" + runId) && line.contains("errorCode=CHAT_IN_PROGRESS")),
+                            "the guard's refusal must be logged as suppressed: " + suppressionLines(appender)));
+            assertEquals(List.of(), suppressionLines(appender).stream()
+                            .filter(line -> line.contains("errorCode=AGENT_UNAVAILABLE")).toList(),
+                    "constraint 1: the drain must never terminalize TTL expiry");
+        } finally {
+            controllerLogger.detachAppender(appender);
             requestQueue.clear();
             AGENT_AVAILABLE.set(true);
             healthMonitor.pollHealth();

@@ -71,19 +71,15 @@ public class ChatActiveRunRegistry {
     }
 
     /**
-     * task-131: parks a run this process already claimed ("handed off" for transport recovery).
+     * task-131/task-134 A2: parks a run this process already claimed ("handed off" for transport
+     * recovery) at an explicit instant.
+     *
+     * <p>There is deliberately no "now" overload: the caller passes the instant, so production and
+     * tests exercise the <b>same</b> method — a test that could only reach a separate convenience
+     * overload would leave the production wiring (the one place the clock is sampled) uncovered.</p>
      *
      * @return {@code false} when the run is not claimed by this process at all (nothing to park).
      */
-    boolean markHandedOff(String sessionId, String runId) {
-        if (!isRunActiveLocally(runId)) {
-            return false;
-        }
-        handedOffIds(sessionId).put(runId, Instant.now());
-        return true;
-    }
-
-    /** task-134 A2 (tests): park a run at an explicit instant. */
     boolean markHandedOff(String sessionId, String runId, Instant at) {
         if (!isRunActiveLocally(runId)) {
             return false;

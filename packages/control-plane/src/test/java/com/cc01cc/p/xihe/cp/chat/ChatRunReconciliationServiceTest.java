@@ -57,7 +57,7 @@ class ChatRunReconciliationServiceTest {
     @Test
     void aRunParkedWithinTheQueueTtlIsStillLeftToTheDrain() {
         registry.claim(SESSION_ID, RUN_ID);
-        registry.markHandedOff(SESSION_ID, RUN_ID);
+        registry.markHandedOff(SESSION_ID, RUN_ID, Instant.now());
 
         service.reconcileStaleRuns();
 

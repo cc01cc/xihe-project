@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -96,7 +97,7 @@ class ChatActiveRunRegistryTest {
     @Test
     void aHandedOffRunStaysInFlightForItsOtherReaders() {
         assertTrue(registry.claim(SESSION, "run-parked"));
-        assertTrue(registry.markHandedOff(SESSION, "run-parked"));
+        assertTrue(registry.markHandedOff(SESSION, "run-parked", Instant.now()));
 
         // The two guard-shaped readers must not change: a parked run still blocks compaction and
         // must still be protected from reconciliation (releasing the claim would break both).
@@ -109,7 +110,7 @@ class ChatActiveRunRegistryTest {
     @Test
     void theRecoveryDrainTakesBackAParkedRunButNotAnActivelyDrivenOne() {
         registry.claim(SESSION, "run-parked");
-        registry.markHandedOff(SESSION, "run-parked");
+        registry.markHandedOff(SESSION, "run-parked", Instant.now());
 
         assertTrue(registry.resumeHandedOff(SESSION, "run-parked"),
                 "the drain may take back the run this process parked");
@@ -125,7 +126,7 @@ class ChatActiveRunRegistryTest {
     @Test
     void releasingAParkedRunForgetsTheParkedMarkToo() {
         registry.claim(SESSION, "run-parked");
-        registry.markHandedOff(SESSION, "run-parked");
+        registry.markHandedOff(SESSION, "run-parked", Instant.now());
 
         assertTrue(registry.release(SESSION, "run-parked"));
 
@@ -137,7 +138,7 @@ class ChatActiveRunRegistryTest {
 
     @Test
     void handingOffARunThisProcessDoesNotHoldIsARefusal() {
-        assertFalse(registry.markHandedOff(SESSION, "run-unknown"),
+        assertFalse(registry.markHandedOff(SESSION, "run-unknown", Instant.now()),
                 "only a run this process claimed can be parked for recovery");
         assertFalse(registry.isHandedOff("run-unknown"));
     }
