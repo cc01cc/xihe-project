@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import type { UserQuestionListResponse, UserQuestionView } from "../../../../types/userQuestion";
+import { ApiError, api } from "../../../../composables/api";
+import { useUserQuestionsStore } from "../userQuestions";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../../composables/api")>();
@@ -13,9 +15,6 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         },
     };
 });
-
-import { ApiError, api } from "../../../../composables/api";
-import { useUserQuestionsStore } from "../userQuestions";
 
 const listQuestions = vi.mocked(api.listUserQuestions);
 const answerQuestion = vi.mocked(api.answerUserQuestion);

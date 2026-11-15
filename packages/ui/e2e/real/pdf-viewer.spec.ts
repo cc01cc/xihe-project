@@ -1,12 +1,12 @@
 import { generateE2EPassword } from "./helpers/password";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
-
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { expectPlatformScreenshot } from "../helpers/visual";
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
 const __filename = fileURLToPath(import.meta.url),
     __dirname = path.dirname(__filename);

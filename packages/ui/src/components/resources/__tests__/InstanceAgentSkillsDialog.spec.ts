@@ -1,5 +1,9 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../../../composables/api";
+import { i18n } from "../../../i18n";
+import { Select } from "../../ui/select";
+import InstanceAgentSkillsDialog from "../InstanceAgentSkillsDialog.vue";
 
 /**
  * task-402 / `D-1243 G2`：实例档技能绑定面。
@@ -50,11 +54,6 @@ vi.mock("../../../composables/api", async (importOriginal) => {
 vi.mock("vue-sonner", () => ({
     toast: { success: toastSuccess, error: vi.fn<(message: string) => void>() },
 }));
-
-import { ApiError } from "../../../composables/api";
-import { i18n } from "../../../i18n";
-import { Select } from "../../ui/select";
-import InstanceAgentSkillsDialog from "../InstanceAgentSkillsDialog.vue";
 
 const PRINCIPAL = { id: "principal-1", name: "评审助手" };
 

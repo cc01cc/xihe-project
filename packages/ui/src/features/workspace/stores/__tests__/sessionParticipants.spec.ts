@@ -5,6 +5,8 @@ import type {
     SessionParticipantListResponse,
     SessionParticipantView,
 } from "../../../../types/participant";
+import { api } from "../../../../composables/api";
+import { useSessionParticipantsStore } from "../sessionParticipants";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../../composables/api")>();
@@ -16,9 +18,6 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         },
     };
 });
-
-import { api } from "../../../../composables/api";
-import { useSessionParticipantsStore } from "../sessionParticipants";
 
 const getParticipants = vi.mocked(api.getSessionParticipants);
 

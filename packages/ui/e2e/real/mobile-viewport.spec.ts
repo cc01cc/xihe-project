@@ -1,12 +1,12 @@
 import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS } from "../timeouts";
-
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { ensureWorkspace } from "./helpers/workspace";
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 

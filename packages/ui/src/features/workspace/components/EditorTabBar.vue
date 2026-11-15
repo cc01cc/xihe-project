@@ -1,8 +1,9 @@
 <script setup lang="ts">
-const { t } = useI18n();
 import type { OpenFile } from "../../../types";
 import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
+
+const { t } = useI18n();
 
 defineProps<{
     openFiles: OpenFile[];

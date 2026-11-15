@@ -3,12 +3,12 @@ import { generateE2EPassword } from "./helpers/password";
 import { gotoWorkspaceWithChat } from "./helpers/chat";
 import { getRootBranchId } from "./helpers/journey";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
-
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { ensureWorkspace } from "./helpers/workspace";
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`,
     SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN;

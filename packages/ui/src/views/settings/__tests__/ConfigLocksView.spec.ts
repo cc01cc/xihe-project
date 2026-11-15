@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { i18n } from "../../../i18n";
+import ConfigLocksView from "../ConfigLocksView.vue";
 
 const request = vi.fn<(path: string, options?: RequestInit) => Promise<unknown>>();
 const admin = { value: true };
@@ -20,8 +21,6 @@ vi.mock("../../../composables/api", () => ({
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({ isAdmin: admin.value }),
 }));
-
-import ConfigLocksView from "../ConfigLocksView.vue";
 
 const catalog = {
     domain: "rag",

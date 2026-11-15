@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResourceDetailView from "../ResourceDetailView.vue";
+import { i18n } from "../../../i18n";
 
 /**
  * task-228：详情页**四态 + 数据接线**（组件级）。
@@ -64,7 +65,6 @@ vi.mock("vue-router", () => ({
 }));
 // 用**真 locale** 而不是键回显：仓库的挂载兜底断言会抓"渲染出裸 i18n 键"
 // （`src/test-utils/i18nKeys.ts`），键回显会让新 spec 进欠账台账 —— 那是把债当交付。
-import { i18n } from "../../../i18n";
 
 routerMock.push = pushMock;
 routerMock.back = backMock;

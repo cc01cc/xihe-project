@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { useWorkspaceStore } from "../stores/workspace";
 
 /**
  * task-532：首载双载（同一份树被拉两轮）。
@@ -73,8 +74,6 @@ vi.mock("../../../composables/api", () => ({
 vi.mock("../composables/fileService", () => ({
     readFilePreview: vi.fn<() => Promise<string>>(async () => ""),
 }));
-
-import { useWorkspaceStore } from "../stores/workspace";
 
 function entry(name: string, type: "file" | "directory"): Entry {
     return { name, type, size: 1, modified: "2026-11-14T00:00:00Z" };

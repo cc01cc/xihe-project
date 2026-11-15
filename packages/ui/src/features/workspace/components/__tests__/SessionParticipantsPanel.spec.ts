@@ -12,6 +12,7 @@ import type {
     SessionParticipantListResponse,
     SessionParticipantView,
 } from "../../../../types/participant";
+import { ApiError, api, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST } from "../../../../composables/api";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../../composables/api")>();
@@ -35,8 +36,6 @@ vi.mock("../../../../lib/workspaceContext", async (importOriginal) => {
     // 只覆盖读当前工作区，其余导出保持真实（整模块替换会打断 migrateLegacyWorkspace 等消费方）
     return { ...actual, readTabWorkspaceId: () => "ws-1" };
 });
-
-import { ApiError, api, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST } from "../../../../composables/api";
 
 const getParticipants = vi.mocked(api.getSessionParticipants);
 const removeParticipant = vi.mocked(api.removeSessionParticipant);

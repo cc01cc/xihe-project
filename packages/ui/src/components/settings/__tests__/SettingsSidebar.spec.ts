@@ -4,6 +4,7 @@ import { createI18n } from "vue-i18n";
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 import { LAYER_DOMAINS } from "../../../stores/config";
 import { navItemsForLayer } from "../../../lib/settingsIa";
+import SettingsSidebar from "../SettingsSidebar.vue";
 
 /**
  * PLAN-0752 T1.6 / V15：左栏 = 层内二级。
@@ -61,8 +62,6 @@ vi.mock("../../../stores/auth", () => ({
         ensureSelfPermissions: () => Promise.resolve(true),
     }),
 }));
-
-import SettingsSidebar from "../SettingsSidebar.vue";
 
 const messages = {
     "zh-CN": {

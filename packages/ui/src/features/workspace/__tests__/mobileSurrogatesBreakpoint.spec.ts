@@ -7,6 +7,9 @@ import type * as apiModule from "../../../composables/api";
 import { api } from "../../../composables/api";
 import { i18n } from "../../../i18n";
 import { useSessionStore } from "../../../stores/session";
+import WorkspaceView from "../pages/WorkspaceView.vue";
+import WorkspaceWorkbench from "../components/WorkspaceWorkbench.vue";
+import MobileChatSheet from "../components/MobileChatSheet.vue";
 
 /**
  * task-122 · 形态③（D-978）推广：`md:hidden` 移动替身在**跨断点**后是否被收回。
@@ -132,10 +135,6 @@ vi.mock("@lucide/vue", async (importOriginal) => {
     const actual = await importOriginal<Record<string, unknown>>();
     return actual;
 });
-
-import WorkspaceView from "../pages/WorkspaceView.vue";
-import WorkspaceWorkbench from "../components/WorkspaceWorkbench.vue";
-import MobileChatSheet from "../components/MobileChatSheet.vue";
 
 const mockedApi = vi.mocked(api, true);
 const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

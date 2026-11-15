@@ -1,9 +1,10 @@
 <script setup lang="ts">
-const { t } = useI18n();
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { USER_SCROLL_KEYS, type MessageScrollerViewportProps } from "@/lib/messageScrollerTypes";
 import { useI18n } from "vue-i18n";
 import { useMessageScrollerContext } from "@/composables/messageScroller";
+
+const { t } = useI18n();
 
 const props = withDefaults(defineProps<MessageScrollerViewportProps>(), {
     preserveScrollOnPrepend: true,

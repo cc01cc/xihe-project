@@ -10,6 +10,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import WorkspacePicker from "../WorkspacePicker.vue";
 
 const mocks = vi.hoisted(() => ({
     replace: vi.fn<(to: unknown) => Promise<void>>(),
@@ -62,8 +63,6 @@ vi.mock<typeof import("../../lib/workspaceContext")>("../../lib/workspaceContext
 vi.mock<typeof import("vue-i18n")>("vue-i18n", () => ({
     useI18n: () => ({ t: (key: string) => key }),
 }));
-
-import WorkspacePicker from "../WorkspacePicker.vue";
 
 /** 用桩替换真实创建对话框：只暴露 open / close / created 三个契约点。 */
 const CreateDialogStub = {

@@ -1,6 +1,20 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    createInstanceAgent,
+    listInstanceAgents,
+    updateInstanceAgent,
+    type InstanceAgent,
+} from "../../../services/instanceResources";
+import { ApiError } from "../../../composables/api";
+import { listProviderCatalog } from "../../../services/providerConnectionService";
+import { Select } from "../../ui/select";
+import { Checkbox } from "../../ui/checkbox";
+import { i18n } from "../../../i18n";
+import SettingsLayerHeader from "../SettingsLayerHeader.vue";
+import InstanceAgentsPanel from "../InstanceAgentsPanel.vue";
+import InstanceAgentSkillsDialog from "../../resources/InstanceAgentSkillsDialog.vue";
 
 /**
  * task-165：实例层「平台智能体」面板。判据同凭据面板 —— 真列表 / 403 卡片 / 空态出口。
@@ -75,12 +89,6 @@ vi.mock("../../../services/instanceResources", async (importOriginal) => {
     };
 });
 
-import {
-    createInstanceAgent,
-    listInstanceAgents,
-    updateInstanceAgent,
-    type InstanceAgent,
-} from "../../../services/instanceResources";
 /**
  * task-402：技能面是面板的子组件，它自己取数。这里只把两条读面接成空集 ——
  * 面板这组用例钉的是**入口 wiring**（按钮 / 写门三态 / 传参），技能面自己的判据在
@@ -95,15 +103,6 @@ vi.mock("../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../composables/api")>();
     return { ...actual, api: { ...actual.api, ...skillReads } };
 });
-
-import { ApiError } from "../../../composables/api";
-import { listProviderCatalog } from "../../../services/providerConnectionService";
-import { Select } from "../../ui/select";
-import { Checkbox } from "../../ui/checkbox";
-import { i18n } from "../../../i18n";
-import SettingsLayerHeader from "../SettingsLayerHeader.vue";
-import InstanceAgentsPanel from "../InstanceAgentsPanel.vue";
-import InstanceAgentSkillsDialog from "../../resources/InstanceAgentSkillsDialog.vue";
 
 const mockedList = vi.mocked(listInstanceAgents);
 

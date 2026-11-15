@@ -13,6 +13,8 @@ import {
     TREE_WIDTH_MAX,
     TREE_WIDTH_MIN,
 } from "../../../../composables/useWorkspaceLayout";
+import { useAuthStore } from "../../../../stores/auth";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 const { toastWarning } = vi.hoisted(() => ({ toastWarning: vi.fn<(message: string) => void>() }));
 
@@ -24,8 +26,6 @@ vi.mock("vue-sonner", () => ({
         info: vi.fn<(message?: string) => void>(),
     },
 }));
-import { useAuthStore } from "../../../../stores/auth";
-import { useWorkspaceStore } from "../../stores/workspace";
 
 /**
  * task-44：`useRoute()` 的 query 必须可改 —— 深链 `?agent=<pid>` 是**行为**，写死 `{}`

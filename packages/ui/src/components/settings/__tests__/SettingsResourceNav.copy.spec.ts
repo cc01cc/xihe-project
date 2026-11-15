@@ -1,6 +1,9 @@
 import { mount } from "@vue/test-utils";
 import { computed, defineComponent, h, ref } from "vue";
 import { provideSidebarContext } from "@/components/ui/sidebar/utils";
+import { i18n } from "../../../i18n";
+import type { ResourceNavItem } from "../../../lib/settingsIa";
+import SettingsResourceNav from "../SettingsResourceNav.vue";
 
 /**
  * task-509（T-02 / T-07）：缺口条目的**渲染结果**里不得出现内部编号与实现标识。
@@ -18,11 +21,7 @@ import { provideSidebarContext } from "@/components/ui/sidebar/utils";
  * 它永远绿）。附带好处：仓库的「渲染结果不许出现裸 i18n 键」兜底守卫（`test-utils/i18nKeys.ts`）
  * 在这里也顺带生效 —— 以前局部夹具缺键会被它判红，那种红指向夹具而不是产品。
  */
-import { i18n } from "../../../i18n";
 i18n.global.locale.value = "zh-CN";
-
-import type { ResourceNavItem } from "../../../lib/settingsIa";
-import SettingsResourceNav from "../SettingsResourceNav.vue";
 
 const GAP_ITEM: ResourceNavItem = {
     id: "knowledge",

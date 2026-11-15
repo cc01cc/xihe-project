@@ -3,6 +3,7 @@ import { nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia } from "pinia";
+import SettingsLayout from "../SettingsLayout.vue";
 
 /**
  * task-156：设置页「← 返回聊天」只在移动端保留。
@@ -59,8 +60,6 @@ vi.mock("vue-router", () => ({
     createWebHistory: () => ({}),
     RouterLink: { template: "<a><slot /></a>" },
 }));
-
-import SettingsLayout from "../SettingsLayout.vue";
 
 function mountLayout() {
     return mount(SettingsLayout, {

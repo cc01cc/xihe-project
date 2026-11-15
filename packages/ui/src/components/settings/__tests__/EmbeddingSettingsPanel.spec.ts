@@ -16,6 +16,7 @@ import {
     selectValueAt,
     setOnlySelectValue,
 } from "../../../test-utils/select";
+import { toast } from "vue-sonner";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderConnections:
@@ -44,8 +45,6 @@ vi.mock("vue-sonner", () => ({
 vi.mock("vue-i18n", () => ({
     useI18n: () => ({ t: (key: string) => key }),
 }));
-
-import { toast } from "vue-sonner";
 
 function connection(overrides: Partial<ProviderConnection>): ProviderConnection {
     return {

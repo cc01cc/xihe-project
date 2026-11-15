@@ -1,6 +1,14 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    deleteInstanceCredential,
+    listInstanceCredentials,
+    type InstanceCredential,
+} from "../../../services/instanceResources";
+import { i18n } from "../../../i18n";
+import SettingsLayerHeader from "../SettingsLayerHeader.vue";
+import InstanceCredentialsPanel from "../InstanceCredentialsPanel.vue";
 
 /**
  * task-165：实例层「凭据」面板。
@@ -42,15 +50,6 @@ vi.mock("../../../services/instanceResources", async (importOriginal) => {
         revealInstanceCredential: vi.fn<typeof actual.revealInstanceCredential>(),
     };
 });
-
-import {
-    deleteInstanceCredential,
-    listInstanceCredentials,
-    type InstanceCredential,
-} from "../../../services/instanceResources";
-import { i18n } from "../../../i18n";
-import SettingsLayerHeader from "../SettingsLayerHeader.vue";
-import InstanceCredentialsPanel from "../InstanceCredentialsPanel.vue";
 
 const mockedList = vi.mocked(listInstanceCredentials);
 const mockedDelete = vi.mocked(deleteInstanceCredential);

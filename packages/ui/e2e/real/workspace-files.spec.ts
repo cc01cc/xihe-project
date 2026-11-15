@@ -2,10 +2,10 @@
 import { generateE2EPassword } from "./helpers/password";
 import { createDirectAttachWorkspace, ensureWorkspace } from "./helpers/workspace";
 import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
-
-const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 import { test, expect, type APIRequestContext } from "@playwright/test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+
+const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 

@@ -1,6 +1,14 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    listInstanceCredentials,
+    listInstanceMcpServers,
+    type InstanceMcpServer,
+} from "../../../services/instanceResources";
+import { i18n } from "../../../i18n";
+import SettingsLayerHeader from "../SettingsLayerHeader.vue";
+import InstanceMcpPanel from "../InstanceMcpPanel.vue";
 
 /**
  * task-165：实例层「MCP 注册表」面板。判据同凭据面板 —— 真列表 / 403 卡片 / 空态出口。
@@ -40,15 +48,6 @@ vi.mock("../../../services/instanceResources", async (importOriginal) => {
         listInstanceCredentials: vi.fn<typeof actual.listInstanceCredentials>(),
     };
 });
-
-import {
-    listInstanceCredentials,
-    listInstanceMcpServers,
-    type InstanceMcpServer,
-} from "../../../services/instanceResources";
-import { i18n } from "../../../i18n";
-import SettingsLayerHeader from "../SettingsLayerHeader.vue";
-import InstanceMcpPanel from "../InstanceMcpPanel.vue";
 
 const mockedList = vi.mocked(listInstanceMcpServers);
 const mockedCredentials = vi.mocked(listInstanceCredentials);

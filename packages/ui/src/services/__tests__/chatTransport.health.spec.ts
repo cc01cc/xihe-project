@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { chatTransport, SSE_HEALTHY_CONNECTION_MS } from "../chatTransport";
 
 /**
  * task-101 ② R1：`reconnectAttempt` 的归零条件从「连接成功」改成「连接健康」（寿命 ≥ 阈值）。
@@ -12,8 +13,6 @@ const fetchEventSourceMock = vi.hoisted(() =>
 );
 
 vi.mock("@microsoft/fetch-event-source", () => ({ fetchEventSource: fetchEventSourceMock }));
-
-import { chatTransport, SSE_HEALTHY_CONNECTION_MS } from "../chatTransport";
 
 let seq = 0;
 

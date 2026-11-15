@@ -2,6 +2,8 @@ import { mount } from "@vue/test-utils";
 import { computed, defineComponent, h, ref } from "vue";
 import { createI18n } from "vue-i18n";
 import { provideSidebarContext } from "@/components/ui/sidebar/utils";
+import { resourceGroups } from "../../../lib/settingsIa";
+import SettingsResourceNav from "../SettingsResourceNav.vue";
 
 /**
  * PLAN-0772 M2：资源模块左栏（`/resources/*`，5 资源条目）。
@@ -42,9 +44,6 @@ vi.mock("vue-router", () => ({
         template: "<a :data-to='String(to)'><slot /></a>",
     },
 }));
-
-import { resourceGroups } from "../../../lib/settingsIa";
-import SettingsResourceNav from "../SettingsResourceNav.vue";
 
 function mountNav() {
     // PLAN-0762 T3.1：资源组现在用 `SidebarMenuButton`（setup 里就 `useSidebar()`，

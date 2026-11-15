@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { ref } from "vue";
+import SettingsDomainView from "../SettingsDomainView.vue";
 
 /**
  * PLAN-0752 M1 的域页三分支（verify.md「入口分层」）与 V26 拦截：
@@ -74,8 +75,6 @@ vi.mock("../../../stores/config", async () => {
         }),
     };
 });
-
-import SettingsDomainView from "../SettingsDomainView.vue";
 
 const messages = {
     "zh-CN": {

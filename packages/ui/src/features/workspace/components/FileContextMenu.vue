@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import { ClipboardCopy, FilePlus, Trash2 } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
 import { toast } from "vue-sonner";
 import ConfirmModal from "../../../components/shared/ConfirmModal.vue";
+import BaseModal from "../../../components/shared/BaseModal.vue";
 
 const { t } = useI18n();
-import BaseModal from "../../../components/shared/BaseModal.vue";
 
 const props = defineProps<{
     path: string;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { useWorkspaceStore } from "../stores/workspace";
 
 /**
  * task-498：深链进工作区后文件树永久为空。
@@ -73,8 +74,6 @@ vi.mock("../../../composables/api", () => ({
 vi.mock("../composables/fileService", () => ({
     readFilePreview: vi.fn<() => Promise<string>>(async () => ""),
 }));
-
-import { useWorkspaceStore } from "../stores/workspace";
 
 type MultiRoot = { id: string; alias: string | null; position: number };
 

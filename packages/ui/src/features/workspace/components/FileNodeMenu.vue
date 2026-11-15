@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-
 import { ref, computed } from "vue";
 import { useWorkspaceStore } from "../stores/workspace";
 import { toast } from "vue-sonner";
@@ -21,9 +20,9 @@ import {
     Pencil,
     Trash2,
 } from "@lucide/vue";
+import BaseModal from "../../../components/shared/BaseModal.vue";
 
 const { t } = useI18n();
-import BaseModal from "../../../components/shared/BaseModal.vue";
 
 const props = defineProps<{
     node: FileNode;

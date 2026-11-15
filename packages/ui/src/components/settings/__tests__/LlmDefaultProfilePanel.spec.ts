@@ -10,6 +10,7 @@ import {
 } from "../../../services/providerConnectionService";
 import { useConfigStore } from "../../../stores/config";
 import { setOnlySelectValue } from "../../../test-utils/select";
+import { toast } from "vue-sonner";
 
 vi.mock("../../../services/providerConnectionService", () => ({
     listProviderCatalog:
@@ -38,8 +39,6 @@ vi.mock("vue-i18n", () => ({
             params ? `${key}:${JSON.stringify(params)}` : key,
     }),
 }));
-
-import { toast } from "vue-sonner";
 
 const mockedCatalog = vi.mocked(listProviderCatalog);
 const mockedInputTypes = vi.mocked(listApiInputTypes);

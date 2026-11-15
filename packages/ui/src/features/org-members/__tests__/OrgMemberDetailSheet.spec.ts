@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { i18n } from "../../../i18n";
 import { expectNoInternalFacts } from "../../../test-utils/copyAsserts";
 import { setSelectValue } from "../../../test-utils/select";
+import OrgMemberDetailSheet from "../components/OrgMemberDetailSheet.vue";
 
 /** task-44：智能体分支要 `router.push` 到工作区；这里只钉"推到哪"，真实导航由 E2E 覆盖。 */
 const routerPush = vi.hoisted(() => vi.fn<(location: unknown) => Promise<void>>());
@@ -61,8 +62,6 @@ vi.mock("../../../stores/auth", () => ({
         },
     }),
 }));
-
-import OrgMemberDetailSheet from "../components/OrgMemberDetailSheet.vue";
 
 /** 三个成员三种形态：human 有绑定 / human 无绑定 / agent_principal（卡面判据②「至少 3 个成员对照」）。 */
 const ALICE = {

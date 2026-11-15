@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { request } from "../../composables/api";
+import type { EmbeddingProfileInput } from "../embeddingProfile";
+import { saveEmbeddingProfile } from "../embeddingProfile";
 
 vi.mock("../../composables/api", () => ({
     request: vi.fn<typeof import("../../composables/api").request>(),
 }));
-
-import { request } from "../../composables/api";
-import type { EmbeddingProfileInput } from "../embeddingProfile";
-import { saveEmbeddingProfile } from "../embeddingProfile";
 
 /**
  * PLAN-0764 T1.5：实例层保存的 payload 形状必须 = CP 收的形状。

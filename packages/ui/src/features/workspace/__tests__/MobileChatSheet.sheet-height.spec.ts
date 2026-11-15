@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import { reactive } from "vue";
 import { createPinia } from "pinia";
+import MobileChatSheet from "../components/MobileChatSheet.vue";
 
 const agentState = reactive({
     status: "idle",
@@ -29,8 +30,6 @@ vi.mock("@lucide/vue", () => ({
     // SheetContent 的关闭按钮要用它；这里保留真实 Sheet 依赖链，所以必须补齐。
     XIcon: { template: "<i />" },
 }));
-
-import MobileChatSheet from "../components/MobileChatSheet.vue";
 
 /**
  * BL-405（PLAN-0631 W9 · 390px 移动视口）：底部 sheet 高度必须锁在视口内。

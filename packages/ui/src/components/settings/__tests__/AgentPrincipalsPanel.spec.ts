@@ -1,6 +1,9 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as apiModule from "../../../composables/api";
+import { api } from "../../../composables/api";
+import { i18n } from "../../../i18n";
+import AgentPrincipalsPanel from "../AgentPrincipalsPanel.vue";
 
 /**
  * PLAN-0750 M3（T3.1 / T3.2 / T3.3）：用户层「智能体」面板。
@@ -39,10 +42,6 @@ vi.mock("vue-sonner", () => ({
         warn: vi.fn<(message: string) => void>(),
     },
 }));
-
-import { api } from "../../../composables/api";
-import { i18n } from "../../../i18n";
-import AgentPrincipalsPanel from "../AgentPrincipalsPanel.vue";
 
 const mockedApi = vi.mocked(api, true);
 

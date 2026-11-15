@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
+import SettingsDomainView from "../SettingsDomainView.vue";
+import { LAYER_DOMAINS, useConfigStore } from "../../../stores/config";
 
 /**
  * task-122：把 task-121 的**推理**变成测试。
@@ -31,9 +33,6 @@ vi.mock("vue-router", () => ({
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({ hasInstanceAdminCapability: true }),
 }));
-
-import SettingsDomainView from "../SettingsDomainView.vue";
-import { LAYER_DOMAINS, useConfigStore } from "../../../stores/config";
 
 const messages = {
     "zh-CN": {

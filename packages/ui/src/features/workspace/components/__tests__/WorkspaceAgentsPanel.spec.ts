@@ -5,6 +5,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { i18n } from "../../../../i18n";
 import { openSelect, selectItemValuesFor, setSelectValue } from "../../../../test-utils/select";
+import { ApiError } from "../../../../composables/api";
+import WorkspaceAgentsPanel from "../WorkspaceAgentsPanel.vue";
+import WorkspaceAgentManagementDialog from "../WorkspaceAgentManagementDialog.vue";
+import { expectNoInternalFacts } from "../../../../test-utils/copyAsserts";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
 
@@ -77,11 +81,6 @@ vi.mock("../../../../stores/auth", () => ({
         user: { id: "99999999-9999-4999-8999-999999999999" },
     }),
 }));
-
-import { ApiError } from "../../../../composables/api";
-import WorkspaceAgentsPanel from "../WorkspaceAgentsPanel.vue";
-import WorkspaceAgentManagementDialog from "../WorkspaceAgentManagementDialog.vue";
-import { expectNoInternalFacts } from "../../../../test-utils/copyAsserts";
 
 /**
  * PLAN-0626 M3：面板没有 `open` 开关 —— 挂载即打开（dock 标签激活 / 移动端弹窗），

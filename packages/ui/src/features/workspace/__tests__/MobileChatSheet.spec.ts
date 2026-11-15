@@ -2,6 +2,7 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reactive } from "vue";
 import { createPinia } from "pinia";
+import MobileChatSheet from "../components/MobileChatSheet.vue";
 
 const agentState = reactive({
     status: "idle",
@@ -50,8 +51,6 @@ vi.mock("../components/MobileMembersSheet.vue", () => ({
 vi.mock("@lucide/vue", () => ({
     MessageCircle: { template: "<i />" },
 }));
-
-import MobileChatSheet from "../components/MobileChatSheet.vue";
 
 /**
  * PLAN-0342 review fix: the outside-dismissal guard must stay scoped to this

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { i18n } from "../../../i18n";
+import BackToChatButton from "../BackToChatButton.vue";
 
 /**
  * task-36 ②：「返回聊天」的两条路径。
@@ -42,8 +43,6 @@ vi.mock("../../../stores/session", () => ({
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({ currentWorkspaceId: sessionState.workspaceId }),
 }));
-
-import BackToChatButton from "../BackToChatButton.vue";
 
 const CHAT_PATH = "/workspace/ws-1/chat/s-1";
 
