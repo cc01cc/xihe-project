@@ -89,6 +89,18 @@ export function useVirtualMessageWindow({
         scrollTop = ref(0),
         rowGap = ref(0),
         rowElements = new Map<string, HTMLElement>(),
+        /**
+         * 行测量去重（task-146）：Vue 每次 patch 都会重跑行 ref（模板里是**内联箭头**，每次渲染都是新
+         * 函数身份 ⇒ 每个 patch 都重新 setRef）。若每次 ref 都无条件写库，就构成自触发环：
+         *
+         *   Content 渲染 slot → 行 ref → applyRowMeasurement → 库 notify（写 measurementsCache）
+         *   → MessageList 渲染读 measurementsCache（virtualWindow）→ 重渲染 → 新 ref → 再写……
+         *
+         * dev 构建在 100 次后抛 `Maximum recursive updates exceeded in <MessageScrollerContent>`
+         * （2026-11-15 实测 8 条滚动族 E2E 共 642 条同款 pageError）。修法 = **只在测量结果真的变化时
+         * 才写库**：元素、高度、index 三者都没变 ⇒ 库的状态也不会变，写它只是自我触发。
+         */
+        measuredRows = new Map<string, { element: HTMLElement; height: number; index: number }>(),
         keyToIndex = computed(() => {
             const map = new Map<string, number>();
             const keys = rowKeys.value;
@@ -229,6 +241,8 @@ export function useVirtualMessageWindow({
         readRowGap();
         observeContent();
         // attach 前挂载的行是在窗口化未生效时渲染的（measure 被跳过），这里补测一次。
+        // 去重缓存要一起清：库在新 attach 后可能已清空 elementsCache，重登记是必须的（不是重复写）。
+        measuredRows.clear();
         measureMountedRows();
     }
 
@@ -246,7 +260,18 @@ export function useVirtualMessageWindow({
         // task-179：把实测值挂到**行身份**上（不是元素）—— 行被虚拟化卸载后重挂载时，
         // `contain-intrinsic-size: auto` 的逐元素记忆已丢，这里补回「上次真实高」，
         // 让占位 ≈ 真实，行重测量不再产生尺寸差（浏览器滚动锚定因此无位移可补）。
-        rememberRowHeight(key, element.offsetHeight);
+        const height = element.offsetHeight;
+        const previous = measuredRows.get(key);
+        if (
+            previous &&
+            previous.element === element &&
+            previous.height === height &&
+            previous.index === index
+        ) {
+            return;
+        }
+        measuredRows.set(key, { element, height, index });
+        rememberRowHeight(key, height);
         element.dataset.virtualRowKey = key;
         element.setAttribute(VIRTUAL_INDEX_ATTRIBUTE, String(index));
         virtualizer.value.measureElement(element);
@@ -269,6 +294,7 @@ export function useVirtualMessageWindow({
     function measure(key: string, element: HTMLElement | null): void {
         if (!element) {
             rowElements.delete(key);
+            measuredRows.delete(key);
             // 库对已卸载元素做一次清扫（unobserve + 清 elementsCache），避免拿 0 高度回写。
             virtualizer.value.measureElement(null);
             return;
