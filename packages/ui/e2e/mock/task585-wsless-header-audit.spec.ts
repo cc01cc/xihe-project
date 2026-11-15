@@ -271,6 +271,16 @@ type AbRowAnnotated = AbRow & {
     /** 距导航边界的有符号毫秒数：**负数 = 边界前（在途候选）**，正数 = 边界后（新发）。 */
     msSinceBoundary: number;
     phase: "pre-nav" | "post-nav";
+    /**
+     * 距 `writeTabWorkspace(目标工作区)` **落盘时刻**的有符号毫秒数（task-197）。
+     *
+     * <p>判读口径（与 `phase` **是两个问题**）：**负数 = 请求发出时 tab 上下文还没写成目标**
+     * ⇒ 合法前置窗口（点击链里先发请求、后写 ctx 的顺序本来就可能）；**正数 = 已写成目标之后
+     * 仍带旧头** ⇒ 真泄漏。`phase` 只看「相对导航边界」，`msSinceCtxWrite` 看「相对上下文生效」，
+     * 两者不一致是**允许且必须如实记**的（push 已发出、ctx 尚未写）。</p>
+     */
+    msSinceCtxWrite: number | null;
+    ctxPhase: "pre-ctx-write" | "post-ctx-write" | "unknown";
 };
 
 /**
@@ -340,12 +350,71 @@ function summarizeBody(request: { postData(): string | null }): AbBodySummary | 
  * <p>判读口径：**负数 = 边界前**（可能是「在途」请求，边界后被复用上下文发出），**正数 = 边界后新发**。
  * 只有后者才配叫「边界后带 A 头的请求」；把两者混在一起看，会把在途误判成新发（或反之）。</p>
  */
-function annotateBoundary(rows: AbRow[], boundaryAt: number): AbRowAnnotated[] {
-    return rows.map((row) => ({
-        ...row,
-        msSinceBoundary: row.atAbs - boundaryAt,
-        phase: row.atAbs >= boundaryAt ? "post-nav" : "pre-nav",
-    }));
+/**
+ * 在页面里挂钩 `sessionStorage.setItem/removeItem`，记录 `xihe-workspace` **真正落盘的时刻**
+ * （task-197）。
+ *
+ * <p>为什么不埋点产品代码：`writeTabWorkspace()` 的落盘点就是 `sessionStorage`（`src/lib/workspaceContext.ts:62-69`
+ * 是唯一 writer），在浏览器侧挂钩即可观测，**不必改产品**，也不会引入「埋点改变了时序」的嫌疑。
+ * 挂钩是**幂等**的（`__xhCtxWrites` 已存在就跳过），多次 `addInitScript` 不会重复包裹。</p>
+ */
+async function installCtxWriteProbe(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        const holder = window as unknown as {
+            __xhCtxWrites?: Array<{ at: number; id: string | null }>;
+        };
+        if (holder.__xhCtxWrites) return;
+        holder.__xhCtxWrites = [];
+        const proto = Storage.prototype;
+        const originalSet = proto.setItem;
+        const originalRemove = proto.removeItem;
+        proto.setItem = function setItem(key: string, value: string) {
+            if (key === "xihe-workspace") {
+                let id: string | null = null;
+                try {
+                    id = (JSON.parse(value) as { id?: string } | null)?.id ?? null;
+                } catch {
+                    id = null;
+                }
+                holder.__xhCtxWrites?.push({ at: Date.now(), id });
+            }
+            return originalSet.call(this, key, value);
+        };
+        proto.removeItem = function removeItem(key: string) {
+            if (key === "xihe-workspace") holder.__xhCtxWrites?.push({ at: Date.now(), id: null });
+            return originalRemove.call(this, key);
+        };
+    });
+}
+
+/** 探针记录全量（供 artifact 复核「到底写了哪些 id、各几次」）。 */
+async function readCtxWrites(page: Page): Promise<Array<{ at: number; id: string | null }>> {
+    return (await page.evaluate(
+        () =>
+            (window as unknown as { __xhCtxWrites?: Array<{ at: number; id: string | null }> })
+                .__xhCtxWrites ?? [],
+    )) as Array<{ at: number; id: string | null }>;
+}
+function annotateBoundary(
+    rows: AbRow[],
+    boundaryAt: number,
+    ctxWrittenAtAbs: number | null = null,
+): AbRowAnnotated[] {
+    return rows.map((row) => {
+        const msSinceCtxWrite = ctxWrittenAtAbs === null ? null : row.atAbs - ctxWrittenAtAbs;
+        return {
+            ...row,
+            msSinceBoundary: row.atAbs - boundaryAt,
+            phase: row.atAbs >= boundaryAt ? "post-nav" : "pre-nav",
+            msSinceCtxWrite,
+            ctxPhase:
+                msSinceCtxWrite === null
+                    ? "unknown"
+                    : msSinceCtxWrite < 0
+                      ? "pre-ctx-write"
+                      : "post-ctx-write",
+        };
+    });
 }
 
 /** A / B 两个工作区的详情桩（`GET /api/v1/workspaces/@{id}`）——深链进入 B 时子组件要读它。 */
@@ -710,6 +779,8 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
 test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（task-621 / task-3）", () => {
     test("P1 点击切换：边界后带 A 头 = 0，且不得出现「头=B ∧ 路由/参数=A」", async ({ page }) => {
         const rows = recordAb(page);
+        // task-197：先装「tab 上下文落盘时刻」探针，再让页面发第一个请求。
+        await installCtxWriteProbe(page);
         // task-192 ①：探针自身端点必须先桩，否则 404 会进失败守卫、盖住 A 头结论。
         await stubInstrumentProbe(page);
         await setupMockAuth(page, {
@@ -789,6 +860,13 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         expect(selfProof[0]?.workspaceHeader, "仪器自证：相机必须看得见边界后的 A 头").toBe(WS_A);
 
         const product = rows.slice(boundary).filter((row) => !row.path.startsWith(AB_PROBE_PATH));
+        /*
+         * task-197：**必须在任何用到 `msSinceCtxWrite` 的计算之前**读探针（本文件踩过 TDZ：声明写在
+         * `monitorVerdicts` 之后 ⇒ 只有 monitor 族非空的那一轮才抛 `Cannot access before initialization`，
+         * 空族的两轮静默通过 —— 「空集合让 bug 不触发」正是最该警惕的那种假绿）。
+         */
+        const ctxWrites = await readCtxWrites(page);
+        const ctxWrittenAtAbs = ctxWrites.find((entry) => entry.id === WS_B)?.at ?? null;
         const withAHead = product.filter((row) => row.workspaceHeader === WS_A);
         // 「头=B ∧ 路由/参数=A」：路径里带 A，或显式 workspaceId=A 参数，而头已经换成 B。
         const headBParamA = product.filter(
@@ -808,6 +886,50 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
             /\/workspaces\/[^/]+\/events/.test(row.path),
         );
         const eventsStreamWithA = eventsStreamRows.filter((row) => row.workspaceHeader === WS_A);
+
+        /* task-197 ②：`monitor` 族单列归因。
+         *
+         * <p>静态已知（`ui-2`）：唯一调用者是 `features/workspace/monitor/SessionMonitorPanel.vue:103`，
+         * header 走 `apiAuthHeaders()` **逐次读 tab 上下文、无缓存** ⇒ 带 A 头只可能是「那一刻 ctx 还是 A」。
+         * 所以定性完全取决于时间轴：**`msSinceCtxWrite < 0` ⇒ 合法前置窗口**（判据边界，不判红）；
+         * **`> 0` ⇒ ctx 已写 B 仍发 A ⇒ 真泄漏**。`null`（没观测到写盘）⇒ unknown，不许猜。</p> */
+        const monitorFamily = product.filter((row) =>
+            /\/chat\/sessions\/[^/]+\/monitor/.test(row.path),
+        );
+        const monitorVerdicts = monitorFamily.map((row) => {
+            const msSinceCtxWrite = ctxWrittenAtAbs === null ? null : row.atAbs - ctxWrittenAtAbs;
+            return {
+                path: row.path.split("?")[0],
+                header: row.workspaceHeader,
+                msSinceBoundary: row.atAbs - boundaryAt,
+                msSinceCtxWrite,
+                verdict:
+                    msSinceCtxWrite === null
+                        ? "unknown（未观测到 ctx 写盘）"
+                        : msSinceCtxWrite < 0
+                          ? "legit-pre-ctx-write（合法前置窗口）"
+                          : "leak-post-ctx-write（真泄漏）",
+            };
+        });
+        const monitorConclusion =
+            monitorVerdicts.length === 0
+                ? "本轮边界后未出现 monitor 族（勿沿用上轮结论）"
+                : monitorVerdicts.some((entry) => entry.verdict.startsWith("leak"))
+                  ? "真泄漏：" +
+                    monitorVerdicts
+                        .filter((entry) => entry.verdict.startsWith("leak"))
+                        .map(
+                            (entry) =>
+                                entry.path + "(msSinceCtxWrite=" + entry.msSinceCtxWrite + ")",
+                        )
+                        .join(", ")
+                  : monitorVerdicts.some((entry) => entry.verdict.startsWith("unknown"))
+                    ? "unknown：本轮没观测到 ctx 写盘时刻"
+                    : "合法前置窗口：" +
+                      monitorVerdicts.length +
+                      " 条全部早于 ctx 写盘（最迟 " +
+                      Math.max(...monitorVerdicts.map((entry) => entry.msSinceCtxWrite ?? 0)) +
+                      " ms）";
         const eventsStreamPathIds = [
             ...new Set(
                 eventsStreamWithA.map(
@@ -828,11 +950,24 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
                     eventsStreamPathIds.join(",") +
                     " ⇒ 开流方用的是 A 的上下文（与 mcp 归同一批归因）";
 
+        /* task-197：读 `writeTabWorkspace(B)` 的真实落盘时刻（`msSinceCtxWrite` 的正负分界就是它）。 */
         const out = {
             card: "task-621 / task-3",
             case: "p1-foreign-session-click",
             boundaryIndex: boundary,
             boundaryTotalRows: rows.length,
+            // task-197：`ctxWrittenAtMs` 的绝对值在这里，`msSinceCtxWrite` 的正负由它判。
+            ctxWrite: {
+                targetId: WS_B,
+                writtenAtAbs: ctxWrittenAtAbs,
+                writtenAtMsAfterFirstRequest:
+                    ctxWrittenAtAbs === null || rows.length === 0
+                        ? null
+                        : ctxWrittenAtAbs - rows[0]!.atAbs,
+                msAfterBoundary: ctxWrittenAtAbs === null ? null : ctxWrittenAtAbs - boundaryAt,
+                writes: ctxWrites.map((entry) => ({ at: entry.at, id: entry.id })),
+                note: "writtenAtAbs === null ⇒ 没观测到 B 的写盘，`msSinceCtxWrite` 一律 null（不许猜）",
+            },
             preBoundary: {
                 aHead: preAHeadCount,
                 aPath: preAPathCount,
@@ -840,21 +975,44 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
                 aPathDistinctPaths: preAPathDistinct,
                 note: "aPathDistinctPaths === 1 ⇒ 对照组只覆盖一个端点形态，端点改路径时会静默失效",
             },
-            selfProof: annotateBoundary(selfProof, boundaryAt),
+            selfProof: annotateBoundary(selfProof, boundaryAt, ctxWrittenAtAbs),
             postBoundaryRows: product.length,
-            withAHead: annotateBoundary(withAHead, boundaryAt),
-            headBParamA: annotateBoundary(headBParamA, boundaryAt),
+            withAHead: annotateBoundary(withAHead, boundaryAt, ctxWrittenAtAbs),
+            headBParamA: annotateBoundary(headBParamA, boundaryAt, ctxWrittenAtAbs),
             withBHeadCount: withBHead.length,
             // task-196 ①：`POST /mcp` 每条都带 `body` 白名单摘要（`toolName` 是归因关键字段）。
-            mcpCalls: annotateBoundary(mcpCalls, boundaryAt),
+            mcpCalls: annotateBoundary(mcpCalls, boundaryAt, ctxWrittenAtAbs),
             // task-196 ④：新族单独给归因结论，不只列 URL。
             eventsStream: {
-                rows: annotateBoundary(eventsStreamRows, boundaryAt),
-                withAHead: annotateBoundary(eventsStreamWithA, boundaryAt),
+                rows: annotateBoundary(eventsStreamRows, boundaryAt, ctxWrittenAtAbs),
+                withAHead: annotateBoundary(eventsStreamWithA, boundaryAt, ctxWrittenAtAbs),
                 pathIds: eventsStreamPathIds,
                 conclusion: eventsStreamConclusion,
             },
-            sample: annotateBoundary(product.slice(0, 20), boundaryAt),
+            // task-197 ②：`monitor` 族单列归因结论（合法前置窗口 / 真泄漏 / unknown）。
+            monitor: {
+                rows: annotateBoundary(monitorFamily, boundaryAt, ctxWrittenAtAbs),
+                verdicts: monitorVerdicts,
+                conclusion: monitorConclusion,
+            },
+            // task-197：把 `events/<A>` 那一条按**同一时间轴**重判（负数 ⇒ 合法前置窗口；正数 ⇒ 真泄漏）。
+            eventsStreamRejudge: eventsStreamWithA.map((row) => {
+                const msSinceCtxWrite =
+                    ctxWrittenAtAbs === null ? null : row.atAbs - ctxWrittenAtAbs;
+                return {
+                    path: row.path,
+                    header: row.workspaceHeader,
+                    msSinceBoundary: row.atAbs - boundaryAt,
+                    msSinceCtxWrite,
+                    verdict:
+                        msSinceCtxWrite === null
+                            ? "unknown（未观测到 ctx 写盘，不许猜）"
+                            : msSinceCtxWrite < 0
+                              ? "legit-pre-ctx-write（请求早于 ctx 生效）"
+                              : "leak-post-ctx-write（ctx 已生效仍带旧头）",
+                };
+            }),
+            sample: annotateBoundary(product.slice(0, 20), boundaryAt, ctxWrittenAtAbs),
             sampledAt: new Date().toISOString(),
         };
         fs.writeFileSync(
@@ -905,6 +1063,23 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
                         withAHead: eventsStreamWithA.length,
                     },
                     headBParamA: headBParamA.length,
+                    // task-197：`ctxWrittenAtMs` 与「A 头距 ctx 生效」的符号 —— 负数 = 合法前置窗口，正数 = 真泄漏。
+                    ctxWrite: {
+                        writtenAtAbs: ctxWrittenAtAbs,
+                        msAfterBoundary:
+                            ctxWrittenAtAbs === null ? null : ctxWrittenAtAbs - boundaryAt,
+                    },
+                    aHeadCtxVerdicts: withAHead.map((row) => ({
+                        path: row.path.split("?")[0],
+                        tool: row.body?.toolName ?? null,
+                        msSinceBoundary: row.atAbs - boundaryAt,
+                        msSinceCtxWrite:
+                            ctxWrittenAtAbs === null ? null : row.atAbs - ctxWrittenAtAbs,
+                        mismatch:
+                            ctxWrittenAtAbs !== null &&
+                            row.atAbs >= boundaryAt &&
+                            row.atAbs < ctxWrittenAtAbs,
+                    })),
                     out: AB_OUT.replace(/\.json$/, "-p1-click.json"),
                 }),
         );
