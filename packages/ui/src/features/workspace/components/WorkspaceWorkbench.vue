@@ -48,7 +48,13 @@ import {
     selectWorkspaceTab,
     workspaceTabBarState,
 } from "./workspaceTabBarContext";
-import { containerOf } from "../lib/containers";
+import { containerOf, type ContainerId } from "../lib/containers";
+import {
+    resolveMoveKey,
+    resolveNavKey,
+    type ContainerRow,
+    type ContainerRowKeyPayload,
+} from "../lib/containerTabNav";
 import WorkspaceDockPanelContent from "./WorkspaceDockPanelContent.vue";
 import WorkspaceShellDockview from "./WorkspaceShellDockview.vue";
 import FileTreePanel from "./FileTreePanel.vue";
@@ -322,6 +328,59 @@ const mainContainerTabs = computed(() =>
         .map((tab) => ({ id: tab.id, label: tab.label, closable: tab.closable })),
 );
 const mainContainerActiveId = computed(() => tabBarContext.activeId.value);
+
+/**
+ * task-184（`D-1600` ①②）：**渲染出来的**容器行，顺序 = 渲染顺序。
+ *
+ * <p>空行在这里自然被 `resolveNavKey`/`focusableRows` 过滤掉（`mainContainerTabs` 为空时中栏不画行），
+ * 所以「DOM 顺序 vs 容器常量表」的分叉不会传到键盘判定里。</p>
+ */
+const containerRows = computed<ContainerRow[]>(() => [
+    { container: "tree", tabs: treeContainerTabs.value, activeId: "tree" },
+    { container: "main", tabs: mainContainerTabs.value, activeId: mainContainerActiveId.value },
+]);
+
+/**
+ * task-184（`D-1600` ③）：键盘命令的**无障碍播报**出口。
+ *
+ * <p>为什么要有它：本卡的现象就是「按了没反应 ⇒ 分不清『没实现』与『合理 no-op』」。
+ * 静默 no-op 会让这条判据永久失效，所以即使动作做不了，也要有一句话说出来。</p>
+ */
+const containerNavStatus = ref("");
+
+function focusContainerTab(container: ContainerId, tabId: string): void {
+    document
+        .querySelector<HTMLElement>(
+            '[data-testid="workspace-container-tab-' + container + "-" + tabId + '"]',
+        )
+        ?.focus();
+}
+
+function onContainerRowKey(payload: ContainerRowKeyPayload): void {
+    if (payload.direction === null) {
+        const outcome = resolveNavKey(payload.key, {
+            rows: containerRows.value,
+            current: payload.container,
+            shift: payload.shift,
+        });
+        // 单行/没有行 ⇒ 什么都不做、也**不 preventDefault**（不夺走浏览器级 F6，`D-1600` ②）。
+        if (outcome.kind !== "focus") return;
+        payload.event.preventDefault();
+        focusContainerTab(outcome.container, outcome.tabId);
+        return;
+    }
+    const outcome = resolveMoveKey(payload.direction, {
+        rows: containerRows.value,
+        current: payload.container,
+    });
+    // 先清空再写：重复按同一个键时也要重新播报（aria-live 只在文本变化时说话）。
+    containerNavStatus.value = "";
+    containerNavStatus.value = t(
+        outcome.reason === "no-neighbor"
+            ? "workspace.containerMoveNoNeighbor"
+            : "workspace.containerMoveModelPending",
+    );
+}
 
 const dockTabs = computed<DockTab[]>(() =>
     layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
@@ -897,6 +956,18 @@ defineExpose({ openDockTab });
 
 <template>
     <div class="flex h-full min-w-0 flex-1 flex-col">
+        <!--
+            task-184（D-1600 ③）：键盘命令的无障碍播报出口。
+            「按了没反应」与「合理 no-op」在屏幕阅读器里必须可区分 ⇒ 动作做不了时也要有一句话。
+        -->
+        <p
+            role="status"
+            aria-live="polite"
+            data-testid="workspace-container-nav-status"
+            class="sr-only"
+        >
+            {{ containerNavStatus }}
+        </p>
         <WorkspaceToolbar
             :workspace-id="workspaceId"
             :code-open="isMobile ? false : codeOpen"
@@ -975,6 +1046,7 @@ defineExpose({ openDockTab });
                                 container-id="tree"
                                 :tabs="treeContainerTabs"
                                 :active-id="'tree'"
+                                @row-key="onContainerRowKey"
                             />
                             <div
                                 v-if="effectiveTreeCollapsed"
@@ -1054,6 +1126,7 @@ defineExpose({ openDockTab });
                                 container-id="tree"
                                 :tabs="treeContainerTabs"
                                 :active-id="'tree'"
+                                @row-key="onContainerRowKey"
                             />
                             <div
                                 v-if="effectiveTreeCollapsed"
@@ -1137,6 +1210,7 @@ defineExpose({ openDockTab });
                                 :active-id="mainContainerActiveId"
                                 @select="selectWorkspaceTab($event)"
                                 @close="closeWorkspaceTab($event)"
+                                @row-key="onContainerRowKey"
                             />
                             <slot name="center" />
                         </div>

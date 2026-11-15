@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { X } from "@lucide/vue";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import type { ContainerId } from "../lib/containers";
+import type { ContainerRowKeyPayload, MoveDirection } from "../lib/containerTabNav";
 
 /**
  * task-174（S2b）容器内页签行 —— **同一组件两实例**（左树容器 / 中内容容器）。
@@ -34,7 +35,46 @@ const props = defineProps<{
 // 两个事件签名完全同形 ⇒ 用联合类型一次声明（unified-signatures）。
 const emit = defineEmits<{
     (event: "select" | "close", tabId: string): void;
+    /** 判定不在这里做：只有调用方知道「一共有哪些行」，本组件只上报按键事实。 */
+    (event: "row-key", payload: ContainerRowKeyPayload): void;
 }>();
+
+const MOVE_KEY_DIRECTIONS: Readonly<Record<string, MoveDirection>> = {
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    ArrowDown: "split",
+};
+
+/**
+ * task-184：只在**页签行内**接管键盘（`D-1600` ①）。
+ *
+ * <p>为什么限定作用域而不是全局监听：`Ctrl+Alt+ArrowUp/Down` 是 CodeMirror `defaultKeymap`
+ * 的 `addCursorAbove/Below`（`@codemirror/commands`），编辑器拿焦点时这些键必须归编辑器；
+ * 页签行里没有编辑器 ⇒ 在行内接管既拿到了键、又不会与编辑器抢（`D-1600` ①的裁定理由）。
+ * `F6` 不要求修饰键，但同样只在行内上报 —— 行外按 F6 是浏览器/OS 的事。</p>
+ */
+function onRowKeydown(event: KeyboardEvent): void {
+    if (event.key === "F6") {
+        emit("row-key", {
+            container: props.containerId,
+            key: event.key,
+            shift: event.shiftKey,
+            direction: null,
+            event,
+        });
+        return;
+    }
+    if (!event.ctrlKey || !event.altKey) return;
+    const direction = MOVE_KEY_DIRECTIONS[event.key];
+    if (direction === undefined) return;
+    emit("row-key", {
+        container: props.containerId,
+        key: event.key,
+        shift: event.shiftKey,
+        direction,
+        event,
+    });
+}
 
 const { t } = useI18n();
 const domId = useId();
@@ -58,6 +98,7 @@ const activeTab = computed<string>({
         class="flex h-9 shrink-0 items-center gap-1 border-b bg-card px-2"
         data-testid="workspace-container-tabs"
         :data-container="containerId"
+        @keydown="onRowKeydown"
     >
         <span class="text-xs font-medium text-muted-foreground">
             {{ containerLabel }}
