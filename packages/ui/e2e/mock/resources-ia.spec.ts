@@ -164,6 +164,25 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
         // 视线上仍留着（D7 留位不隐藏）。
         await expect(page.locator('[data-testid^="resource-layer-tab-"]')).toHaveCount(3);
     });
+    /**
+     * task-220 ①：**默认夹具 = 实例管理员**这条默认本身也要有门在看。
+     *
+     * <p>为什么补这一侧：上面那条用 `capabilitiesPreset: "owner"` 证明「没有能力 ⇒ 置灰」，但
+     * **默认值**（不传 options ⇒ `isInstanceAdmin: true`）此前没有任何用例钉着 —— 大量用例隐式依赖它，
+     * 一旦默认变窄，红的会是那些用例的业务断言，且会被误记成产品回归（`D-1599` 同类形态）。
+     * 本用例只钉**极性**，不重复上面的判据：同一 URL、同一 tab，默认夹具下必须可用。</p>
+     */
+    test("默认夹具（不传 capabilitiesPreset）= 实例管理员：同一条门槛转为可用", async ({
+        page,
+    }) => {
+        await setupMockAuth(page);
+        await page.goto("/resources/credentials");
+        const instanceTab = page.getByTestId("resource-layer-tab-INSTANCE");
+        await expect(instanceTab).toBeVisible();
+        await expect(instanceTab).toBeEnabled();
+        await instanceTab.click();
+        await expect(page).toHaveURL(/layer=INSTANCE$/);
+    });
 
     test("技能：三层 tab 都在，个人层**不因原子置灰**（读面不挂原子）", async ({ page }) => {
         await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
