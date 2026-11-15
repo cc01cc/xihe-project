@@ -806,7 +806,9 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
  * 本条（头=B ∧ A 路径）是**防回归保险**，不单独承担主证据。两个都写，不二选一。
  * ========================================================================================== */
 test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（task-621 / task-3）", () => {
-    test("P1 点击切换：边界后带 A 头 = 0，且不得出现「头=B ∧ 路由/参数=A」", async ({ page }) => {
+    test("P1 点击切换：边界后带 A 头 = 0，且不得出现「头=B ∧ 路由/参数=A」", async ({
+        page,
+    }, testInfo) => {
         const rows = recordAb(page);
         // task-197：先装「tab 上下文落盘时刻」探针，再让页面发第一个请求。
         await installCtxWriteProbe(page);
@@ -1061,7 +1063,9 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
             sampledAt: new Date().toISOString(),
         };
         fs.writeFileSync(
-            AB_OUT.replace(/\.json$/, "-p1-click.json"),
+            // task-209：`--repeat-each=N` 会重复跑本条用例，同名文件会互相覆盖（只剩最后一份，
+            // 看起来却像「N 轮读数一致」）⇒ 文件名带 repeatEachIndex。只改写文件路径，断言不变。
+            AB_OUT.replace(/\.json$/, "-p1-click-r" + testInfo.repeatEachIndex + ".json"),
             JSON.stringify(out, null, 2),
             "utf8",
         );
