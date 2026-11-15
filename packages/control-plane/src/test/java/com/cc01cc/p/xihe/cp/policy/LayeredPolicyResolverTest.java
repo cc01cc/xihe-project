@@ -133,4 +133,44 @@ class LayeredPolicyResolverTest {
                         "Credential:ABC", "credential:abc", ToolShape.STRUCTURED),
                 "scheme values fold case like every other lexical comparison");
     }
+
+    @Test
+    void schemeNormalisationAgreesWithTheOsNormaliserOnItsSharedDomain() {
+        // D-1556 follow-up (Lead, 2026-11-15): the equivalence the fix leans on is
+        // "collapseLexically agrees with Path.of().normalize() wherever Path.of accepts the input".
+        // That is what makes the scheme branch a NO-OP on Linux (Path.of accepts `credential:<id>`
+        // there and returns it unchanged), and it is checkable on any platform because the *value
+        // part* of a scheme key is colon-free.
+        //
+        // (a) the path branch is byte-identical to the pre-D-1556 inline expression, and both
+        // branches agree on the domain they share.
+        for (String declared : new String[] {"ws/a", "WS/A/", "ws\\a\\", "H:/ws/a",
+                "C:\\ws\\A\\", "notes/today.md"}) {
+            assertEquals(preFixLexical(declared), PathKey.lexical(declared),
+                    "the path branch must keep the pre-D-1556 result for `" + declared + "`");
+            assertEquals(PathKey.lexical(declared), PathKey.lexicalPattern(declared),
+                    "both branches must agree on the colon-free value `" + declared + "`");
+        }
+        // (b) the scheme branch = "<kind>:" + the path branch's collapse of the value part.
+        String uuid = java.util.UUID.randomUUID().toString();
+        assertEquals("credential:" + PathKey.lexical(uuid), PathKey.lexical("credential:" + uuid + "/"),
+                "trailing slash inside a scheme key is stripped by the same rule the path branch uses");
+        assertEquals("skill:" + PathKey.lexical(uuid), PathKey.lexical("SKILL:" + uuid),
+                "case folding inside a scheme key is the path branch's folding, not a second rule set");
+        // (c) the one deliberate divergence, pinned on purpose: Path.normalize() folds redundant
+        // separators, the OS-free collapse does not. A scheme key never carries `//`; if one ever
+        // does, the scheme side is the STRICTER one (no match => deny, never a wider allow).
+        assertEquals("ws/a", PathKey.lexical("ws//a"));
+        assertEquals("ws//a", PathKey.lexicalPattern("ws//a"));
+    }
+
+    /** The pre-D-1556 lexical expression, kept here as the reference the path branch must match. */
+    private static String preFixLexical(String raw) {
+        String normalized = Path.of(raw).normalize().toString().replace('\\', '/');
+        int end = normalized.length();
+        while (end > 1 && normalized.charAt(end - 1) == '/') {
+            end--;
+        }
+        return normalized.substring(0, end).toLowerCase(java.util.Locale.ROOT);
+    }
 }
