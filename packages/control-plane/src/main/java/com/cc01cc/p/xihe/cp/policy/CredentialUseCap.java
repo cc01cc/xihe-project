@@ -15,6 +15,20 @@ import com.fasterxml.jackson.databind.JsonNode;
  * {@code credential:*} covers any id, an exact {@code credential:<uuid>} covers only itself. A cap
  * that is {@code null}, not an array, or that has no {@code credential_use} atom answers
  * {@code false} (fail closed).</p>
+ *
+ * <p><b>Defence in depth, not a reachable production gate (D-1585).</b> The only caller that can
+ * turn a {@code true} answer into an allow is
+ * {@code ProviderCredentialAccess#requireUsableForAgentPrincipal} (the
+ * {@code agentPrincipalGrantedUse && !borrowingRefused(...)} arm). That arm cannot fire today:
+ * {@link PermissionAtomCatalog#agentPrincipalForbiddenAtoms()} lists {@code credential_use},
+ * {@code credential_reveal} and {@code credential_manage}, so an agent principal may never hold a
+ * credential atom, and the role/template routes that could inject one refuse an instance-owned
+ * credential outright. On top of that the cap consumed by the lease is
+ * {@code AgentPrincipalService#evaluateCap}'s intersection of the binding snapshot with the
+ * principal's own grants, so a credential atom written straight into a snapshot is dropped before
+ * any caller sees it. Keep this class total and fail-closed anyway: the day the forbidden set or
+ * the intersection changes, this is the layer that must already be correct. The invariant is
+ * pinned by {@code policy/AgentCredentialAtomForbiddenTest}.</p>
  */
 public final class CredentialUseCap {
 
