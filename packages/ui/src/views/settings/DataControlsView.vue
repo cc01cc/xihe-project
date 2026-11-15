@@ -28,22 +28,36 @@ const importWarnings = ref<string[]>([]);
 // PLAN-0339: informational retention view + explicit workspace shadow cleanup.
 // Constants are server-reported (N=50 / TTL 30d); the UI never invents them.
 /**
- * PLAN-0752 T4.4：数据面是**有 atom**的页 —— 导出/导入走实例作用域原子（`WRITE_INSTANCE_CONTENT`，
- * 导出另需 `cap:instance:admin`；`ConfigController:488-495,453`），保留期清理是工作区成员面。
- * 非管理员三个动作全 403（audit §C2），所以**整页**给 403 视图并跳过取数，而不是渲染一个点不动的页。
- * 与「无 atom」页的区别：这里不是「概念不存在」，是「你没被授予」。
+ * task-5（D-1521 #3=A）：**按动作分判** —— 每个按钮用**它真正调用的端点**的判据，整页一个 OR/AND
+ * 都算错层（要么窄化一半、要么放宽另一半）：
+ *
+ * <ul>
+ *   <li><b>import</b> → `POST /api/v1/config/import`，CP 门 = 动作原子 `WRITE_INSTANCE_CONTENT`
+ *       （`ConfigController.java:572`）；</li>
+ *   <li><b>export</b>（两个按钮都打 `GET /api/v1/config/export`）→ CP 门 = **能力位**
+ *       `hasAuthority('cap:instance:admin')`（`ConfigController.java:607-610`，注释写明那是
+ *       「读内容 ∧ 看密文」的复合门，没有单一动作原子可表达 ⇒ 不能改成原子）；</li>
+ *   <li><b>保留期清理</b> → 工作区成员面（那半条判据归 `task-153`，本次不动）。</li>
+ * </ul>
+ *
+ * 密文可见性不是 UI 门：不持 `VIEW_SECRET_CONTENT` 时服务端**脱敏**而不是 403
+ * （`ConfigController.java:93-99`）⇒ UI 不为它加第三个门。
  */
-const canUseInstanceData = computed(
-    () =>
-        authStore.hasInstanceAtom("WRITE_INSTANCE_CONTENT") || authStore.hasInstanceAdminCapability,
-);
+const canImport = computed(() => authStore.hasInstanceAtom("WRITE_INSTANCE_CONTENT"));
+/** 能力位来自 `/auth/me` 投影（登录时即落地），不在本页的异步链上。 */
+const canExport = computed(() => authStore.hasInstanceAdminCapability);
 
 /**
  * 三态而不是两态：原子投影是异步的。若一上来就按「没权限」渲染 403，已授权用户会先看到一屏
  * 「权限不足」再跳成正常页（假 403）。`permissionsChecked` 落定前只渲染标题，两边的谎都不说。
  */
 const permissionsChecked = ref(false);
-const dataDenied = computed(() => permissionsChecked.value && !canUseInstanceData.value);
+/**
+ * 整页 403 只在**两个动作都不可用**时出现（否则会连坐另一半：比如把「只有能力位」的账号
+ * 挡在导出之外）。403 卡片仍点名 import 那一半的原子，因为它是唯一"可被授予"的机器码。
+ */
+const dataDenied = computed(() => permissionsChecked.value && !canImport.value && !canExport.value);
+const canUseInstanceData = computed(() => canImport.value || canExport.value);
 
 const workspaceId = computed(() => authStore.currentWorkspaceId),
     retention = ref<CheckpointRetention | null>(null),
@@ -207,7 +221,7 @@ function downloadBlob(blob: Blob, filename: string) {
                 <button
                     data-testid="settings-data-export-settings"
                     class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
-                    :disabled="exporting"
+                    :disabled="exporting || !canExport"
                     @click="exportSettings"
                 >
                     {{ t("settings.exportSettings") }}
@@ -215,21 +229,44 @@ function downloadBlob(blob: Blob, filename: string) {
                 <button
                     data-testid="settings-data-export-chats"
                     class="w-full px-3 py-2 rounded text-xs border bg-background hover:bg-muted text-left transition-colors"
-                    :disabled="exporting"
+                    :disabled="exporting || !canExport"
                     @click="exportChats"
                 >
                     {{ t("settings.exportChats") }}
                 </button>
+                <!-- #3=A：导出那一半的判据是能力位（CP 的复合门），缺它时禁用 + 就地说明。 -->
+                <p
+                    v-if="!canExport"
+                    data-testid="settings-data-export-denied"
+                    class="text-xs leading-relaxed text-muted-foreground"
+                >
+                    {{
+                        t("settings.ia.instanceExportCapabilityNeeded", {
+                            capability: "cap:instance:admin",
+                        })
+                    }}
+                </p>
             </div>
 
             <div class="border-t pt-3 space-y-2">
                 <button
                     data-testid="settings-data-import"
-                    class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors"
+                    class="px-3 py-2 rounded text-xs border bg-background hover:bg-muted transition-colors disabled:pointer-events-none disabled:opacity-50"
+                    :disabled="!canImport"
                     @click="($refs.fileInput as HTMLInputElement)?.click()"
                 >
                     {{ t("settings.import") }}
                 </button>
+                <!-- #3=A：导入那一半的判据是动作原子（CP `ConfigController:572`），缺它时禁用 + 点名原子。 -->
+                <p
+                    v-if="!canImport"
+                    data-testid="settings-data-import-denied"
+                    class="text-xs leading-relaxed text-muted-foreground"
+                >
+                    {{
+                        t("settings.ia.instanceWriteAtomNeeded", { atom: "WRITE_INSTANCE_CONTENT" })
+                    }}
+                </p>
                 <input
                     ref="fileInput"
                     data-testid="settings-data-import-file"

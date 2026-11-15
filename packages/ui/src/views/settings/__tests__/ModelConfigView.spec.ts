@@ -17,7 +17,14 @@ import { createI18n } from "vue-i18n";
  * 证明"组页把**这份清单**交给面板、且清单是派生的"。真面板的锚点 id 由
  * `ConfigLayerPanels.anchor.spec.ts` 钉（那里挂真组件）。</p>
  */
-const state = { capability: true, atom: true },
+const state = {
+        capability: true,
+        atom: true,
+        /** task-5（D-1521 M-1）= 读面原子；M-2 写面原子。 */
+        readAtom: true,
+        writeAtom: true,
+        permissionsStatus: "ready" as "idle" | "loading" | "ready" | "error",
+    },
     PanelsStub = defineComponent({
         name: "ConfigLayerPanels",
         props: {
@@ -45,6 +52,7 @@ const state = { capability: true, atom: true },
                     domainLlmProvider: "LLM 提供商",
                     domainContextPolicy: "上下文策略",
                     domainContextTemplates: "请求模板",
+                    permissionAtom: { writeInstanceContent: "写入实例内容" },
                     // LayerPrecedenceBadges 用的四层徽标文案（夹具必须给全，否则裸 key 守卫会红）。
                     ia: {
                         fourLayerOrderLabel: "覆盖顺序",
@@ -57,6 +65,9 @@ const state = { capability: true, atom: true },
                         forbiddenTitle: "没有访问权限",
                         forbiddenBody: "当前账号不能查看这一层",
                         backToUserLayer: "回到用户层",
+                        // task-5（D-1521 M-2）：实例层只读信息条。
+                        instanceReadonlyTitle: "只读：缺少 {atom} 权限",
+                        instanceReadonlyDetail: "写入需要 {atom}（{label}）。",
                     },
                 },
             },
@@ -72,7 +83,14 @@ vi.mock("../../../stores/auth", () => ({
         get hasInstanceAdminCapability() {
             return state.capability;
         },
-        hasInstanceAtom: () => state.atom,
+        get canReadInstanceContent() {
+            return state.readAtom;
+        },
+        get selfPermissionsStatus() {
+            return state.permissionsStatus;
+        },
+        hasInstanceAtom: (actionClass: string) =>
+            actionClass === "WRITE_INSTANCE_CONTENT" ? state.writeAtom : state.atom,
     }),
 }));
 
@@ -87,6 +105,9 @@ async function mountView(layer: "instance" | "user" | "workspace-default") {
 beforeEach(() => {
     state.capability = true;
     state.atom = true;
+    state.readAtom = true;
+    state.writeAtom = true;
+    state.permissionsStatus = "ready";
 });
 
 describe("ModelConfigView（task-227 合页不合域）", () => {
@@ -129,11 +150,51 @@ describe("ModelConfigView（task-227 合页不合域）", () => {
         expect(wsDefault.findAll('[data-testid^="stub-domain-"]')).toHaveLength(0);
     });
 
-    it("无 cap:instance:admin ⇒ 403 视图，且不挂载面板（不请求数据）", async () => {
+    // task-5（D-1521 M-1=B）：实例层读面判据 = 动作原子 READ_INSTANCE_CONTENT（不是能力位）。
+    it("无 READ_INSTANCE_CONTENT ⇒ 403 视图，且不挂载面板（不请求数据）", async () => {
+        state.readAtom = false;
         state.capability = false;
         const wrapper = await mountView("instance");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-model-config-view"]').exists()).toBe(false);
         expect(wrapper.findAll('[data-testid^="stub-domain-"]')).toHaveLength(0);
+    });
+
+    it("有原子无能力位（定制角色）⇒ 组页照常渲染（CP 会服务它）", async () => {
+        state.readAtom = true;
+        state.capability = false;
+        const wrapper = await mountView("instance");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-model-config-view"]').exists()).toBe(true);
+        expect(wrapper.findAll('[data-testid^="stub-domain-"]')).toHaveLength(3);
+    });
+
+    it("原子投影未 ready ⇒ 既不 403 也不放行（三态）", async () => {
+        state.readAtom = false;
+        state.capability = false;
+        state.permissionsStatus = "loading";
+        const wrapper = await mountView("instance");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-model-config-view"]').exists()).toBe(false);
+    });
+
+    it("缺 WRITE_INSTANCE_CONTENT ⇒ 组页只读 + 点名缺的原子（M-2=B）", async () => {
+        state.writeAtom = false;
+        const wrapper = await mountView("instance");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-instance-readonly-notice"]').text()).toContain(
+            "WRITE_INSTANCE_CONTENT",
+        );
+        expect(wrapper.findComponent(PanelsStub).props("readonly")).toBe(true);
+    });
+
+    it("有写原子 ⇒ 组页可编辑、无只读信息条", async () => {
+        const wrapper = await mountView("instance");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-instance-readonly-notice"]').exists()).toBe(
+            false,
+        );
+        expect(wrapper.findComponent(PanelsStub).props("readonly")).toBe(false);
     });
 });

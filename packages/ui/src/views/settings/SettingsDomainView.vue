@@ -8,6 +8,7 @@ import { useConfigStore, type ConfigLayer } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
 import ColorSchemePanel from "../../components/settings/ColorSchemePanel.vue";
 import SettingsForbiddenView from "./SettingsForbiddenView.vue";
+import InstanceReadonlyNotice from "./InstanceReadonlyNotice.vue";
 import SettingsNotFoundView from "./SettingsNotFoundView.vue";
 import ToolFacesView from "./ToolFacesView.vue";
 import {
@@ -61,13 +62,36 @@ const domainHintKey = computed(() =>
     resolved.value.ok ? DOMAIN_HINT_KEY[resolved.value.domain] : undefined,
 );
 
-/** 实例层需要 CP 的 cap:instance:admin（auth.hasInstanceAdminCapability），不是角色名判断。 */
-const forbidden = computed(
+/** 实例层**写面**原子（`ConfigController.java:384/:392` 的 PUT/DELETE、`:572` 的 import 同原子）。 */
+const INSTANCE_WRITE_ATOM = "WRITE_INSTANCE_CONTENT";
+
+/**
+ * 三态（`stores/auth.ts:102-110`，task-420 / D-1254）：原子投影是**异步**的，
+ * "idle/loading" 既不是"有权限"也不是"没权限"。未落定就判 403，会让真管理员先看到一屏
+ * 确定性拒绝（假 403）—— 所以这段时间既不 403，也不发取数请求。
+ */
+const projectionPending = computed(
+    () => auth.selfPermissionsStatus === "idle" || auth.selfPermissionsStatus === "loading",
+);
+/**
+ * task-5（D-1521 M-1=B）：实例层**读面**判据是 CP 的动作原子 `READ_INSTANCE_CONTENT`
+ * （`ConfigController.java:89-90` 的 `canReadInstanceContent()`，整域读 `:207-220`、meta 读
+ * `:319-322` 同源），**不是**能力位 `cap:instance:admin`。两者互不蕴含：
+ * ① 持原子、无能力位的定制角色 ⇒ CP 会服务，旧判据却给 403（UI 比 CP 窄）；
+ * ② 持能力位、无原子 ⇒ 旧判据放行、CP 返 403（UI 比 CP 宽）。
+ *
+ * <p>只有"已读到且确实缺原子"才判 403。`error`（读取失败）**不**冒充拒绝：CP 仍是权威，
+ * 让它用 403 回答比 UI 自己猜更诚实（同族取舍见 `composables/useInstanceWriteGate.ts:38-46`）。
+ */
+const instanceReadDenied = computed(
     () =>
         resolved.value.ok &&
         resolved.value.layer === "instance" &&
-        !auth.hasInstanceAdminCapability,
+        auth.selfPermissionsStatus === "ready" &&
+        !auth.canReadInstanceContent,
 );
+
+const forbidden = computed(() => resolved.value.ok && instanceReadDenied.value);
 
 const instanceOnly = computed(
     () =>
@@ -91,9 +115,27 @@ const workspaceDefaultReadonly = computed(
         resolved.value.layer === "workspace-default" &&
         !auth.hasInstanceAtom?.(WORKSPACE_DEFAULT_CONFIG_ATOM),
 );
+/**
+ * task-5（D-1521 M-2=B）：实例层缺写原子 ⇒ **只读**而不是 403 —— 读面由另一个原子守
+ * （`READ_INSTANCE_CONTENT`），把它连坐成 403 会让"只能读"的账号丢掉可读信息。
+ * 投影未落定同样按只读处理（fail-closed 但不谎报原因：信息条只在落定后出现）。
+ */
+const instanceWriteReadonly = computed(
+    () =>
+        resolved.value.ok &&
+        resolved.value.layer === "instance" &&
+        (projectionPending.value || !auth.hasInstanceAtom?.(INSTANCE_WRITE_ATOM)),
+);
+/** 未落定前不点名原子（那时"缺原子"可能只是还没读到，见 task-420 的假拒绝事故）。 */
+const showInstanceReadonlyNotice = computed(
+    () => instanceWriteReadonly.value && !projectionPending.value,
+);
 const panelReadonly = computed(
     () =>
-        resolved.value.ok && resolved.value.layer !== "instance" && workspaceDefaultReadonly.value,
+        resolved.value.ok &&
+        (resolved.value.layer === "instance"
+            ? instanceWriteReadonly.value
+            : workspaceDefaultReadonly.value),
 );
 
 /**
@@ -181,7 +223,8 @@ const keyCount = computed(() => {
 });
 
 async function load() {
-    if (!resolved.value.ok || forbidden.value) return;
+    // 投影未落定 ⇒ 先不取数（三态：既不 403 也不放行）；落定后由下面的 watcher 补一次。
+    if (!resolved.value.ok || forbidden.value || projectionPending.value) return;
     fetchError.value = false;
     try {
         await configStore.loadLayerDomains(layer.value);
@@ -203,6 +246,10 @@ watch(
         void load();
     },
 );
+// 三态：投影一落定就补取数（挂载时它可能还是 idle/loading）。
+watch(projectionPending, (pending) => {
+    if (!pending) void load();
+});
 </script>
 
 <template>
@@ -304,6 +351,13 @@ watch(
             但**互斥只是路由的偶然结果，不是可依赖的不变式**；要守的是「一个 testid 只表达一种语义」——
             否则 e2e 里 `getByTestId("settings-no-atom-notice")` 命中的可能是相反的含义。
         -->
+        <!-- task-5（D-1521 M-2=B）：实例层缺写原子 ⇒ 只读 + 点名 WRITE_INSTANCE_CONTENT（不是 403）。 -->
+        <InstanceReadonlyNotice
+            v-if="showInstanceReadonlyNotice"
+            atom="WRITE_INSTANCE_CONTENT"
+            :label="t('settings.permissionAtom.writeInstanceContent')"
+        />
+
         <div
             v-if="workspaceDefaultReadonly"
             data-testid="settings-ws-default-readonly-notice"

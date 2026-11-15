@@ -69,6 +69,9 @@ const mockedApi = vi.mocked(api, true),
                     atomDeniedTitle: "权限不足",
                     atomDeniedBody: "缺少「{atom}」权限（{code}）。这是授权问题，不是功能缺失。",
                     atomDeniedNotGap: "本页不是后端缺口。",
+                    // task-5（D-1521 #3=A）：按动作分判的两条就地说明。
+                    instanceWriteAtomNeeded: "导入需要 {atom} 原子。",
+                    instanceExportCapabilityNeeded: "导出需要能力位 {capability}。",
                 },
                 permissionAtom: {
                     credentialManage: "凭据管理",
@@ -110,6 +113,23 @@ const mockedApi = vi.mocked(api, true),
 
 function createI18nInstance() {
     return createI18n({ legacy: false, locale: "zh-CN", fallbackLocale: "zh-CN", messages });
+}
+
+/**
+ * task-5（D-1521 #3=A）：能力位来自 `/auth/me` 缓存的 `user.capabilities`（`stores/auth.ts:68-70`）。
+ * 本文件的 auth 是真 store（只 mock api），所以能力位要用 localStorage 种子控制 —— 且必须在
+ * store 实例化（组件 mount）之前种下。
+ */
+function seedCapability(isInstanceAdmin: boolean) {
+    localStorage.setItem(
+        "xihe-user",
+        JSON.stringify({
+            id: "user-1",
+            email: "user@example.com",
+            name: "User",
+            capabilities: { isInstanceAdmin, isInstanceSuper: false, workspaceAdminOf: [] },
+        }),
+    );
 }
 
 /** PLAN-0752 T4.4：数据面按实例原子门控；默认「已授予」，denied 用例显式收回。 */
@@ -194,6 +214,44 @@ describe("DataControlsView", () => {
         // 主体不挂载：导出/导入按钮与保留区块都不在 DOM
         expect(wrapper.text()).not.toContain("导出设置");
         expect(wrapper.find('[data-testid="settings-checkpoint-retention"]').exists()).toBe(false);
+    });
+
+    // task-5（D-1521 #3=A）：**按动作分判** —— import 门 = 写原子；export 门 = 能力位。
+    it("disables only the import button when WRITE_INSTANCE_CONTENT is missing but the capability is held", async () => {
+        seedCapability(true);
+        vi.mocked(api, true).getSelfPermissions.mockResolvedValue(selfPermissions([]) as never);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+
+        // 页面不再整页 403：导出那一半 CP 仍然放行（cap:instance:admin）。
+        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(false);
+        const importButton = wrapper.get('[data-testid="settings-data-import"]');
+        expect(importButton.attributes("disabled")).toBeDefined();
+        // 就地说明（不是 `title` 提示）：键盘与读屏都能读到，且点名机器码。
+        expect(wrapper.get('[data-testid="settings-data-import-denied"]').text()).toContain(
+            "WRITE_INSTANCE_CONTENT",
+        );
+        expect(
+            wrapper.get('[data-testid="settings-data-export-settings"]').attributes("disabled"),
+        ).toBeUndefined();
+    });
+
+    it("disables only the export buttons when the capability is missing but the write atom is held", async () => {
+        seedCapability(false);
+        const { default: DataControlsView } = await import("../DataControlsView.vue"),
+            wrapper = mount(DataControlsView, { global: { plugins: [createI18nInstance()] } });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="settings-atom-denied"]').exists()).toBe(false);
+        const exportButton = wrapper.get('[data-testid="settings-data-export-settings"]');
+        expect(exportButton.attributes("disabled")).toBeDefined();
+        expect(wrapper.get('[data-testid="settings-data-export-denied"]').text()).toContain(
+            "cap:instance:admin",
+        );
+        expect(
+            wrapper.get('[data-testid="settings-data-import"]').attributes("disabled"),
+        ).toBeUndefined();
     });
 
     it("renders the data controls (and loads retention) when the atom is granted", async () => {

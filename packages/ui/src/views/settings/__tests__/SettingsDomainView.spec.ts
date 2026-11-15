@@ -14,6 +14,12 @@ const state = {
     capability: true,
     /** PLAN-0766 T3.3：workspace-default 的写权限门（能力原子，不是角色名）。 */
     atom: true,
+    /** task-5（D-1521 M-1）：实例层读面判据 = 动作原子 READ_INSTANCE_CONTENT。 */
+    readAtom: true,
+    /** task-5（D-1521 M-2）：实例层写面判据 = 动作原子 WRITE_INSTANCE_CONTENT（缺则只读）。 */
+    writeAtom: true,
+    /** task-5：原子投影的四态（idle/loading/ready/error）；未 ready 时不得判 403。 */
+    permissionsStatus: "ready" as "idle" | "loading" | "ready" | "error",
     /** task-112/121：pending 的经济判据是「该层是否已有载荷」，故 layerConfig 必须可变。 */
     layerConfig: ref<Record<string, Record<string, Record<string, string>>>>({
         instance: { logging: { level: "INFO" } },
@@ -39,7 +45,15 @@ vi.mock("../../../stores/auth", () => ({
         get hasInstanceAdminCapability() {
             return state.capability;
         },
-        hasInstanceAtom: () => state.atom,
+        /** M-1：镜像 CP 的 `ConfigController.canReadInstanceContent()`（动作原子）。 */
+        get canReadInstanceContent() {
+            return state.readAtom;
+        },
+        get selfPermissionsStatus() {
+            return state.permissionsStatus;
+        },
+        hasInstanceAtom: (actionClass: string) =>
+            actionClass === "WRITE_INSTANCE_CONTENT" ? state.writeAtom : state.atom,
         ensureSelfPermissions: () => Promise.resolve(true),
     }),
 }));
@@ -73,7 +87,11 @@ const messages = {
             domainAgentRuntimeHint: "控制智能体运行时的轮次/预算",
             domainApprovalPolicy: "审批策略",
             saveFailed: "保存失败",
+            // task-5（D-1521 M-2=B）：实例层只读信息条用到的两条（标题点名原子，详情给中文名）。
+            permissionAtom: { writeInstanceContent: "写入实例内容" },
             ia: {
+                instanceReadonlyTitle: "只读：缺少 {atom} 权限",
+                instanceReadonlyDetail: "写入需要 {atom}（{label}）。",
                 domainKeysCount: "本域已设置 {count} 项",
                 domainEditableCount: "可编辑 {count} 项",
                 switchToUserLayer: "切到用户层",
@@ -141,6 +159,10 @@ function mountView(
 describe("SettingsDomainView", () => {
     beforeEach(() => {
         state.capability = true;
+        state.atom = true;
+        state.readAtom = true;
+        state.writeAtom = true;
+        state.permissionsStatus = "ready";
         state.routeQuery = {};
         state.layerLoading.value = false;
         state.layerConfig.value = {
@@ -209,13 +231,59 @@ describe("SettingsDomainView", () => {
         expect(state.loadLayerDomains).not.toHaveBeenCalled();
     });
 
-    it("renders 403 and loads nothing without the instance-admin capability (V4)", async () => {
+    // task-5（D-1521 M-1=B）：实例层读面判据换成 CP 的动作原子 READ_INSTANCE_CONTENT。
+    it("renders 403 and loads nothing without READ_INSTANCE_CONTENT (V4 / M-1)", async () => {
+        state.readAtom = false;
         state.capability = false;
         const wrapper = mountView("instance", "logging");
         await flushPromises();
         expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="panels-stub"]').exists()).toBe(false);
         expect(state.loadLayerDomains).not.toHaveBeenCalled();
+    });
+
+    it("lets an atom-only account read the instance layer (CP serves it, UI must not block)", async () => {
+        // 反向：有原子、无 cap:instance:admin（定制角色）。旧判据在这里会误挡（比 CP 窄）。
+        state.readAtom = true;
+        state.capability = false;
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="settings-domain-view"]').exists()).toBe(true);
+        expect(state.loadLayerDomains).toHaveBeenCalledWith("instance");
+    });
+
+    it("does not decide 403 while the atom projection is still loading (三态)", async () => {
+        // 投影未 ready ⇒ 既不 403 也不放行（不发请求）；等 ready 后才判。
+        state.readAtom = false;
+        state.capability = false;
+        state.permissionsStatus = "loading";
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(false);
+        expect(state.loadLayerDomains).not.toHaveBeenCalled();
+    });
+
+    it("renders the instance layer read-only (not 403) when WRITE_INSTANCE_CONTENT is missing", async () => {
+        // M-2=B：能读就让他读，写面降级成只读 + 点名缺的原子。
+        state.readAtom = true;
+        state.writeAtom = false;
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-forbidden"]').exists()).toBe(false);
+        const notice = wrapper.get('[data-testid="settings-instance-readonly-notice"]');
+        expect(notice.text()).toContain("WRITE_INSTANCE_CONTENT");
+        expect(wrapper.find('[data-testid="panels-stub"]').attributes("readonly")).toBeDefined();
+        expect(state.loadLayerDomains).toHaveBeenCalledWith("instance");
+    });
+
+    it("keeps the instance layer editable when the write atom is present", async () => {
+        const wrapper = mountView("instance", "logging");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="settings-instance-readonly-notice"]').exists()).toBe(
+            false,
+        );
+        expect(wrapper.find('[data-testid="panels-stub"]').attributes("readonly")).toBeUndefined();
     });
 
     it("blocks the cross-layer switch instead of navigating (V26)", async () => {
@@ -269,6 +337,10 @@ describe("SettingsDomainView", () => {
 describe("SettingsDomainView pending state (task-112/121)", () => {
     beforeEach(() => {
         state.capability = true;
+        state.atom = true;
+        state.readAtom = true;
+        state.writeAtom = true;
+        state.permissionsStatus = "ready";
         state.routeQuery = {};
         state.layerLoading.value = false;
         state.layerConfig.value = { instance: {}, user: {} };
@@ -448,6 +520,10 @@ describe("SettingsDomainView workspace-default layer", () => {
 describe("SettingsDomainView 取数失败态（task-509 E-03）", () => {
     beforeEach(() => {
         state.capability = true;
+        state.atom = true;
+        state.readAtom = true;
+        state.writeAtom = true;
+        state.permissionsStatus = "ready";
         state.routeQuery = {};
         state.layerConfig.value = {};
         state.layerLoading.value = false;
@@ -496,6 +572,10 @@ describe("SettingsDomainView 取数失败态（task-509 E-03）", () => {
 describe("SettingsDomainView 加载态与页签键盘（task-510）", () => {
     beforeEach(() => {
         state.capability = true;
+        state.atom = true;
+        state.readAtom = true;
+        state.writeAtom = true;
+        state.permissionsStatus = "ready";
         state.routeQuery = {};
         state.layerLoading.value = false;
         state.layerConfig.value = { instance: {}, user: {} };

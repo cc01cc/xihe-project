@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../stores/auth";
 import type { ConfigLayer } from "../../stores/config";
 import ConfigLayerPanels from "../../components/settings/ConfigLayerPanels.vue";
 import LayerPrecedenceBadges from "../../components/settings/LayerPrecedenceBadges.vue";
 import SettingsForbiddenView from "./SettingsForbiddenView.vue";
+import InstanceReadonlyNotice from "./InstanceReadonlyNotice.vue";
 import {
     DOMAIN_LABEL_KEY,
     WORKSPACE_DEFAULT_CONFIG_ATOM,
@@ -37,6 +38,9 @@ import {
  */
 const props = defineProps<{ layer: ConfigLayer; groupId: string }>();
 
+/** 实例层写面原子（`ConfigController.java:384/392/572`），与域页同一对之一。 */
+const INSTANCE_WRITE_ATOM = "WRITE_INSTANCE_CONTENT";
+
 // 一个声明链（one-var）：后面的 computed 引用前面的，顺序即依赖顺序。
 const { t } = useI18n(),
     auth = useAuthStore(),
@@ -46,14 +50,47 @@ const { t } = useI18n(),
     domains = computed(() => groupDomainsForLayer(props.groupId, settingsLayer.value)),
     /** testid 前缀（随组 id，而不是写死 model-config）。 */
     testIdPrefix = computed(() => "settings-" + props.groupId),
-    /** 实例层需要 CP 的 cap:instance:admin（能力原子，不是角色名判断）。 */
-    forbidden = computed(() => props.layer === "instance" && !auth.hasInstanceAdminCapability),
-    /** `workspace-default` 层：可读人人、可写仅原子持有者（与域页同一判据，不在此另立一套）。 */
-    panelReadonly = computed(
+    /**
+     * 三态（task-420 / D-1254）：原子投影异步 ⇒ idle/loading 既不 403 也不放行。
+     * 与 `SettingsDomainView` 同一判据（`stores/auth.ts:102-110`），不在此另立一套。
+     */
+    projectionPending = computed(
+        () => auth.selfPermissionsStatus === "idle" || auth.selfPermissionsStatus === "loading",
+    ),
+    /**
+     * task-5（D-1521 M-1=B）：实例层读面 = CP 的动作原子 `READ_INSTANCE_CONTENT`
+     * （`ConfigController.java:89-90`），**不是** `cap:instance:admin`。
+     */
+    forbidden = computed(
         () =>
-            props.layer === "workspace-default" &&
-            !auth.hasInstanceAtom?.(WORKSPACE_DEFAULT_CONFIG_ATOM),
+            props.layer === "instance" &&
+            auth.selfPermissionsStatus === "ready" &&
+            !auth.canReadInstanceContent,
+    ),
+    /** task-5（D-1521 M-2=B）：缺写原子 ⇒ 只读 + 信息条（不是 403）。 */
+    instanceWriteReadonly = computed(
+        () =>
+            props.layer === "instance" &&
+            (projectionPending.value || !auth.hasInstanceAtom?.(INSTANCE_WRITE_ATOM)),
+    ),
+    showInstanceReadonlyNotice = computed(
+        () => instanceWriteReadonly.value && !projectionPending.value,
+    ),
+    /** `workspace-default` 层：可读人人、可写仅原子持有者（与域页同一判据，不在此另立一套）。 */
+    panelReadonly = computed(() =>
+        props.layer === "instance"
+            ? instanceWriteReadonly.value
+            : props.layer === "workspace-default" &&
+              !auth.hasInstanceAtom?.(WORKSPACE_DEFAULT_CONFIG_ATOM),
     );
+
+/**
+ * 组页可能被直链挂载（不经过左栏）⇒ 自己取一次原子投影；缺投影时上面按"未落定"处理。
+ * 与 `SettingsDomainView.onMounted` 同源，单飞由 store 负责。
+ */
+onMounted(() => {
+    void auth.ensureSelfPermissions?.();
+});
 
 function anchorHref(domain: string): string {
     return "#settings-domain-" + domain;
@@ -62,6 +99,12 @@ function anchorHref(domain: string): string {
 
 <template>
     <SettingsForbiddenView v-if="forbidden" />
+    <!-- 三态：投影未落定 ⇒ 骨架，既不 403 也不渲染可编辑面。 -->
+    <div
+        v-else-if="projectionPending"
+        data-testid="settings-group-permission-pending"
+        class="h-16 animate-pulse rounded-md bg-muted/40"
+    />
     <section v-else-if="group" :data-testid="testIdPrefix + '-view'">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
             <h2 :data-testid="testIdPrefix + '-title'" class="text-lg font-medium">
@@ -73,6 +116,13 @@ function anchorHref(domain: string): string {
         </p>
 
         <LayerPrecedenceBadges class="mt-3" :layer="layer" />
+
+        <!-- task-5（D-1521 M-2=B）：实例层缺写原子 ⇒ 只读 + 点名原子（不是 403，读面另有一个原子）。 -->
+        <InstanceReadonlyNotice
+            v-if="showInstanceReadonlyNotice"
+            atom="WRITE_INSTANCE_CONTENT"
+            :label="t('settings.permissionAtom.writeInstanceContent')"
+        />
 
         <!--
             页内锚点导航：只用于"跳位置"，**不切换内容**。各段始终同时在 DOM 里 ⇒ 不存在

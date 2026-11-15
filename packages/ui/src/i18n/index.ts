@@ -2136,6 +2136,15 @@ const messages = {
                 layerWorkspaceShort: "工作区层",
                 groupDomains: "域",
                 groupWorkspaceDefaultDomains: "配置域（对没有单独覆盖的工作区生效）",
+                // task-5（D-1521 M-1=B / M-2=B）：实例层的两个动作原子各自成条 —— 读缺 ⇒ 403，
+                // 写缺 ⇒ 只读；文案点名原子机器码，便于用户按原文找管理员授予。
+                instanceReadonlyTitle: "只读：缺少 {atom} 权限",
+                instanceReadonlyDetail:
+                    "CP 允许你查看这一层，但写入需要实例作用域的 {atom} 原子（{label}）。控件已禁用；需要修改时请联系实例管理员为你的角色授予该原子。",
+                instanceWriteAtomNeeded:
+                    "导入需要实例作用域的 {atom} 原子（与 CP 的 PUT/DELETE 门同源）。",
+                instanceExportCapabilityNeeded:
+                    "导出需要能力位 {capability}：CP 侧导出是「读内容 ∧ 看密文」的复合门，没有单一动作原子可表达。",
                 wsDefaultReadonlyTitle: "只读：缺少 MANAGE_WORKSPACE_DEFAULT_CONFIG 权限",
                 wsDefaultReadonlyDetail:
                     "该层只有持有 MANAGE_WORKSPACE_DEFAULT_CONFIG 能力的账号可写；你仍可查看当前默认值。需要修改时，请联系实例管理员或为你的角色显式授予该能力。",
@@ -5956,6 +5965,15 @@ const messages = {
                 groupDomains: "Domains",
                 groupWorkspaceDefaultDomains:
                     "Domains (applies to workspaces without an explicit override)",
+                // task-5（D-1521 M-1=B / M-2=B）：mirror the two instance atoms — read miss ⇒ 403,
+                // write miss ⇒ read-only. The machine code is printed so users can ask for it verbatim.
+                instanceReadonlyTitle: "Read-only: missing {atom}",
+                instanceReadonlyDetail:
+                    "CP lets you read this layer, but writing needs the instance-scope {atom} atom ({label}). Controls are disabled; ask an instance admin to grant it to your role.",
+                instanceWriteAtomNeeded:
+                    "Importing needs the instance-scope {atom} atom (the same gate CP puts on PUT/DELETE).",
+                instanceExportCapabilityNeeded:
+                    "Exporting needs the {capability} capability: CP gates export on the compound read-content ∧ view-secret pair, which no single action atom expresses.",
                 wsDefaultReadonlyTitle: "Read-only: missing MANAGE_WORKSPACE_DEFAULT_CONFIG",
                 wsDefaultReadonlyDetail:
                     "Only accounts holding the MANAGE_WORKSPACE_DEFAULT_CONFIG capability can write this layer; you can still read the current defaults. Ask an instance administrator to grant it.",
