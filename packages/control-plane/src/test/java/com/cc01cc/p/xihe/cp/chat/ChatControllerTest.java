@@ -1186,6 +1186,10 @@ class ChatControllerTest extends AbstractH2Test {
      * then meets the same entry and must lose cleanly — one terminal history row, no second frame,
      * and the loser's suppression code is the guard's own ({@code CHAT_IN_PROGRESS}), never
      * {@code AGENT_UNAVAILABLE} (that would mean the drain still owns TTL expiry).
+     *
+     * <p>本条钉的是**压制日志信号**（{@code event=chat_run_terminal_emit_suppressed} +
+     * {@code errorCode=CHAT_IN_PROGRESS}，值班实际读的运维面）——删了它，日志字段一改就没有用例会红；
+     * 帧级不变式（败者不发 error/done 帧）见 {@code ChatRunTerminalCollisionTest}。</p>
      */
     @Test
     void aQueuedRunAlreadyTerminalizedByReconciliationIsNotTerminalizedByTheDrain() {
