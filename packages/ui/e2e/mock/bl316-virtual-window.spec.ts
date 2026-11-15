@@ -113,27 +113,26 @@ test.describe("BL-316：长会话只渲染窗口内的行", () => {
      * 3. 全程零 pageError / console error（`afterEach` 的 `expectNoPageFailures`）。
      */
     /**
-     * BL-340 上滚补偿族 · task-259 在修（2026-11-15，task-255 收口时临时 fixme）。
+     * BL-340 上滚补偿族 · **task-259 已修，fixme 已解除**（2026-11-15 23:35）。
      *
-     * **为什么现在关**：本用例从「初始位置」开始上滚，而 task-255 之前长会话首次进入**停在顶部**
-     * （初始 st=0）⇒ 第一步 `max(0, 0-2000)=0` ⇒ 序列全 0 ⇒「单调不增 + 能到顶」**平凡成立**（假绿，D-1634）。
-     * task-255 修好落点后本条转真红，暴露的是**既有**缺陷，不是该修法的回归。
+     * 历史（保留以免重蹈）：task-255 之前长会话首次进入**停在顶部**（初始 st=0）⇒ 第一步
+     * `max(0, 0-2000)=0` ⇒ 序列全 0 ⇒「单调不增 + 能到顶」**平凡成立**（假绿，D-1634）；
+     * task-255 修好落点后本条转真红，暴露的是既有缺陷。task-255 收口时临时 fixme，由本卡解除。
      *
-     * **pristine 对照读数**（`xh255-upscroll.spec.ts`：先显式贴底，再跑同一套 40×2000，2026-11-15 22:33）：
-     *   pin 22ffba81d 原样（零改动）: 贴底 44958 → 40 步后 finalTop=4424  ✗（判据 ≤8）
-     *   pin + initialOffset          : 贴底 44118 → 40 步后 finalTop=3597  ✗
-     *   ⇒ 每步 2000px 只净退 ~1160px，被补偿拽回 ~840px；同族 bl340:192/211/237 亦为 fixme。
+     * **修法（两处，缺一不可；机制与逐腿读数见
+     * internal/A03-xihe/evidence/2026-11-15-task259-upscroll-compensation/README.md）**：
+     *   ① `MessageList.vue` 给视口加 `[overflow-anchor:none]` —— 关掉**浏览器原生滚动锚定**。
+     *      实测：把库的 428 次补偿判定全部否掉后 scrollTop 仍自己涨回去（无 JS 写入）⇒ 主写者是浏览器。
+     *   ② `useVirtualMessageWindow` 用库公开钩子 `shouldAdjustScrollPositionOnItemSizeChange`
+     *      把「上滚不补偿」从再次测量扩展到**首次测量**（估算 160 → 实测 675/314 的 +515/+154）。
+     *   只 ① 冷启动 40×2000 停在 4352；只 ② 停在 9357；① + ② 逐步 -2000、末值 0。
      *
-     * **复现命令**（独占端口，mock）：
-     *   pwsh .tmp/xh/task186/prepare-trees.ps1 -PinSha 22ffba81d -Dest <tree>
-     *   pwsh .tmp/ui-2/task238-run.ps1 -TreePath <tree> -OutRoot <out> `
-     *        -SpecSrc .tmp/xh/task255/xh255-upscroll.spec.ts -SpecName xh255-upscroll.spec.ts -Port 12650
-     *   grep -o "XH255_UP .*" <out>/run.log
-     *
-     * **解除条件（task-259 判据）**：`xh255-upscroll` 在修后树 finalTop ≤ 8，本条恢复 `test(` 且真绿；
-     * 判据本身（≤8px、单调不增）**不许放宽**。
+     * **解除后实测**（pin 61e916def + 本卡两处修法，chrome-beta / mock / 独占 12650）：
+     *   `xh255-upscroll`（先显式贴底再 40×2000）: finalTop=**0**、回跳步数=**0**（判据 ≤8）
+     *   本文件 `--repeat-each=8`: **16 passed / 0 failed / 0 skipped**（两条都真绿，非 fixme）
+     * 判据本身（≤8px、单调不增）**未放宽**，逐字保留。
      */
-    test.fixme("keeps user scroll position while the window swaps pages", async ({ page }) => {
+    test("keeps user scroll position while the window swaps pages", async ({ page }) => {
         const chat = new ChatPage(page);
         await chat.goto(SESSION_ID);
         await expect(chat.scrollerViewport).toBeVisible({ timeout: LONG_TIMEOUT_MS });

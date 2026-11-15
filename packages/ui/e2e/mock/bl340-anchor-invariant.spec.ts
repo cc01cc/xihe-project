@@ -129,6 +129,8 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
             const STABLE_POLL_MS = 50;
             const STABLE_TIMEOUT_MS = 1_000;
             let previous = Number.NaN;
+            let stabilized = false;
+            const polls: number[] = [];
             const stableStartedAt = Date.now();
             while (Date.now() - stableStartedAt < STABLE_TIMEOUT_MS) {
                 await page.waitForTimeout(STABLE_POLL_MS);
@@ -141,8 +143,20 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
                         ).scrollTop,
                     ),
                 );
-                if (current === previous) break;
+                polls.push(current);
+                if (current === previous) {
+                    stabilized = true;
+                    break;
+                }
                 previous = current;
+            }
+            // D-1643（task-259 同批扫出）：等待器**超时即红**。原写法循环走完直接继续采样，
+            // 于是"没稳定"被静默当成"稳定点"——机器越慢越容易拿到运动中的读数，且红不起来。
+            if (!stabilized) {
+                throw new Error(
+                    `第 ${sequence.length} 步在 ${STABLE_TIMEOUT_MS}ms 内未稳定（D-1643）：` +
+                        `已轮询 ${polls.join(",")}（间隔 ${STABLE_POLL_MS}ms）`,
+                );
             }
         }
         return { sequence, heights, firstRows };
@@ -186,10 +200,15 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
         );
     });
 
-    // 判 1（单调不增）：BL-340 **未闭环**（registry 原文「【P1｜已定位未修】」）—— 需要"写入后被
-    // 静默钳制"的处理。task-116 审计实测 3 次：violations = 1/0/0（其中一次 31125→31240，+115px
-    // 回跳）⇒ 现在恢复必红/必 flaky，理由成立（原措辞「修复中」已改为「未闭环」）。
-    test.fixme("判 1：8×500px 上滚序列单调不增", async ({ page }) => {
+    /**
+     * 判 1（单调不增）：**task-259 已修，fixme 解除**（2026-11-15 23:38）。
+     * 历史：task-116 审计 3 次 violations=1/0/0（一次 31125→31240，+115px 回跳）⇒ 当时恢复必红。
+     * 修法 = 视口 `[overflow-anchor:none]` + 库钩子把「上滚不补偿」扩展到首次测量（见 bl316 同批注释）。
+     * 解除后实测：`--repeat-each=6` 6/6 绿；四条全解除后 `--repeat-each=3` 12 passed / 0 skipped。
+     * 小步长（500px）下库的 `scrollDirection` 会退回 null，故钩子另加 250ms 上滚意图窗
+     * （只读 scroll 事件的方向，不新增滚动写路径）——去掉该窗时本条第 5 步 +422 回跳转红。
+     */
+    test("判 1：8×500px 上滚序列单调不增", async ({ page }) => {
         const { sequence } = await scrollUpSequence(page, 8, 500);
         expectMonotonicUp(sequence);
     });
@@ -207,6 +226,11 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
      *    同一份代码在另一会话曾测得 2055（§17 与 §18 存在系统差异）。
      *  ⇒ **BL-340 修好也不会自动让这条变绿**：恢复前必须先重定义判据（同栈同构建 +
      *    固定采样口径），而不是等 bug 修完。
+     *
+     * **task-259 补记（2026-11-15 23:38，仍保留 fixme，待裁定）**：本卡修法落地后，在
+     * pin 61e916def + 两处修法、§18 固定口径、同栈同构建下 `--repeat-each=3` 本条**3/3 绿**
+     * （首跳三次均为 0 ⇒ 中位 0）。但「跨会话不可比」是**判据层面**的结论，不是修好 bug 就能撤销的，
+     * 故本条**不由本卡解除**：是否重定义/解除请 Lead 裁定（读数已留证）。
      */
     test.fixme("主判据：8×500px 上滚 3 次首跳中位 ≤ 600px", async ({ page }) => {
         const chat = new ChatPage(page);
@@ -230,11 +254,15 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
         expect(median, `首跳中位应 ≤600px：${firstJumps.join(",")}`).toBeLessThanOrEqual(600);
     });
 
-    // BL-316 原判据（**已判不可用；不是「等修复就能绿」**）：40×2000px 上滚后单调不增且能到顶。
-    // registry 明写「验收判据已重定义（判 3 不可用）」，台账记「判 3 与首跳两项判据实测不可用」
-    // （task-116 审计改写，原措辞「BL-340 修复中」已过期）⇒ 保留 fixme 只为不丢断言原文与意图；
-    // 真要恢复须先按同栈同构建重定义判据，或按同文件 :168 的做法改写成观测项（不 assert）。
-    test.fixme("BL-316 原判据 40×2000px：单调不增且能到顶", async ({ page }) => {
+    /**
+     * BL-316 原判据：40×2000px 上滚后单调不增且能到顶 —— **task-259 已修，fixme 解除**。
+     * 说明：task-116 审计判为「不可用」的是**判 3（scrollHeight 抖动比）与首跳中位**两项
+     * （前者对抖动不敏感、后者跨会话不可比），本条不属于那两项；采样口径已按 §18 钉死
+     * （50ms 间隔 / 1s 上限 / 连续两次相同），且本批为同栈同构建（pin 61e916def + 本卡修法）。
+     * 解除后实测：`--repeat-each=3` 全绿（四条 12 passed / 0 failed / 0 skipped）；
+     * 同口径探针 `xh255-upscroll` finalTop=0、回跳 0 步。断言原文（≤8px、单调不增）未放宽。
+     */
+    test("BL-316 原判据 40×2000px：单调不增且能到顶", async ({ page }) => {
         const { sequence } = await scrollUpSequence(page, 40, 2000);
         expectMonotonicUp(sequence);
         expect(

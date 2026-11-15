@@ -594,7 +594,19 @@ watch(
             </button>
 
             <MessageScroller class="flex-1">
-                <MessageScrollerViewport ref="viewportComponent" preserve-scroll-on-prepend>
+                <!--
+                    task-259 / BL-340 —— **关掉浏览器原生滚动锚定**：本视口由虚拟器自己做锚定，
+                    两者叠加会互相打架。实测（冷启动连打 40×2000 上滚）：开着 overflow-anchor 时
+                    每步 2000px 只净退 ~740px，且**没有任何 JS 写入** scrollTop 却自己涨回去
+                    （浏览器锚定在上方行首次测量变高时自动补偿）⇒ 40 步后停在 9357 而到不了顶。
+                    置 none 后同一序列逐步 -2000、末值 0。虚拟器侧的补偿另由
+                    useVirtualMessageWindow 的 shouldAdjustScrollPositionOnItemSizeChange 收敛。
+                -->
+                <MessageScrollerViewport
+                    ref="viewportComponent"
+                    preserve-scroll-on-prepend
+                    class="[overflow-anchor:none]"
+                >
                     <MessageScrollerContent :class="showSearch ? 'pt-12' : undefined">
                         <!--
                             PLAN-0670 M2d.1：只有 CP 明确给出 `nextCursor/truncated` 才显示

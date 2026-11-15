@@ -122,6 +122,14 @@ export function useVirtualMessageWindow({
     }
 
     /**
+     * 用户上滚意图的存活窗口。库的 `scrollDirection` 只在 `isScrolling` 为真时更新，
+     * 小步长（bl340 的 8×500px）之间它会退回 null ⇒ 首次测量的补偿又放行（实测第 5 步 +422 回跳）。
+     * 这里用「最近一次 scroll 事件是下行」补一个短窗，只读不写，不构成新的滚动写路径。
+     * 250ms 是经验值：覆盖一次滚轮序列的帧间隔（实测 30ms/步与连打两种形态都够）。
+     */
+    const UP_INTENT_MS = 250;
+    let lastBackwardScrollAt = 0;
+    /**
      * 库实例：getScrollElement 读响应式 viewport（attach 变化时 vue-virtual 重新订阅）。
      * getItemKey 用行 key（与 rowKeys 一一对应）—— 窗口换页/丢最旧时同一消息保持同一 key，
      * 库的测量缓存才能跨窗口复用（POC 实测：按 index 做 key 会在 prepend 后整表测量漂移）。
@@ -155,6 +163,38 @@ export function useVirtualMessageWindow({
             gap: rowGap.value,
         })),
     );
+
+    /**
+     * task-259 / BL-340 —— **用户上滚时，不许「首次测量」的补偿把 scrollTop 拽回去。**
+     *
+     * 库的默认判据（`@tanstack/virtual-core` `dist/esm/index.js:1017-1032`）分两支：
+     *   首次测量: `itemStart < scrollOffset` —— **不看滚动方向**；
+     *   再次测量: `itemStart + itemSize <= scrollOffset && scrollDirection !== "backward"`。
+     * 上滚时新挂载的行首次测量（估算 160 → 实测 675/314）产生 +515/+154 的 delta，
+     * 默认判据会把它补进 scrollTop，抵消用户的上滚。
+     *
+     * **注意分工（实测钉过，别把两件事混成一件）**：
+     *   ① 把 scrollTop 拽回去的**主要**写者是**浏览器原生滚动锚定**（`overflow-anchor: auto`）——
+     *      实测在钩子把 428 次判定全部返回 false（库一次没写）之后，scrollTop 仍然自己涨回去；
+     *      那一层由 `MessageList.vue` 给视口加 `[overflow-anchor:none]` 关掉。
+     *   ② 本钩子收的是**剩下那一层**：只关 ① 时冷启动 40×2000 仍停在 4352；
+     *      ① + ② 一起才逐步 -2000、末值 0。
+     *
+     * 手法用**库自己的公开钩子**（`shouldAdjustScrollPositionOnItemSizeChange`，`index.d.ts:135`），
+     * 把「上滚不补偿」这条库已经适用于再次测量的规则**同样适用于首次测量**；
+     * 其余分支逐字保持库默认（流式增长 #1218 那类补偿不受影响）。
+     * 不新增写路径、不改断言（`D-1631⑤` A 类）。
+     */
+    virtualizer.value.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+        // 上滚（含首次测量）一律不补偿：用户意图优先于估算误差修正。
+        const scrollingUp =
+            instance.scrollDirection === "backward" ||
+            performance.now() - lastBackwardScrollAt < UP_INTENT_MS;
+        if (scrollingUp) return false;
+        const offset = instance.scrollOffset ?? 0;
+        const isFirstMeasure = !instance.itemSizeCache.has(item.key);
+        return isFirstMeasure ? item.start < offset : item.start + item.size <= offset;
+    };
 
     /**
      * 读库的测量结果算窗口；库尚未接管（无滚动元素 / 未测量任何行）→ null，调用方走纯计算。
@@ -224,6 +264,9 @@ export function useVirtualMessageWindow({
     }
 
     function handleScroll(): void {
+        const next = viewport.value?.scrollTop ?? 0;
+        // 只在**偏移下降**时记意图：库/浏览器的补偿写入是上调，不会污染这个信号。
+        if (next < scrollTop.value) lastBackwardScrollAt = performance.now();
         syncViewportMetrics();
     }
 
