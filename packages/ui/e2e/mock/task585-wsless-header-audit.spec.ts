@@ -17,6 +17,7 @@ import fs from "node:fs";
 import { type Page } from "@playwright/test";
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { isLeakRow } from "./helpers/headerAuditVerdict";
 import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const WS_ID = "11111111-1111-4111-8111-111111111111";
@@ -713,6 +714,8 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         // task-204：B 的 tab 上下文落盘时刻（+ = 写入后仍带旧头 ⇒ 泄漏；- = 写入前发出 ⇒ 在途）。
         const ctxWrites = await readCtxWrites(page);
         const ctxWrittenAtAbs = ctxWrites.find((entry) => entry.id === WS_B)?.at ?? null;
+        // task-208：`withA` 是**原始**行（无时间轴），判据要的是 `msSinceCtxWrite` ⇒ 先注解再用。
+        const withAVerdicts = annotateBoundary(withA, boundaryAt, ctxWrittenAtAbs);
 
         const out = {
             card: "task-621 / task-3",
@@ -725,7 +728,7 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
             postBoundaryRows: product.length,
             ctxWrites,
             ctxWrittenAtAbs,
-            withA: annotateBoundary(withA, boundaryAt, ctxWrittenAtAbs),
+            withA: withAVerdicts,
             sample: annotateBoundary(product.slice(0, 20), boundaryAt),
             sampledAt: new Date().toISOString(),
         };
@@ -737,7 +740,15 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
 
         expect(product.length, "边界后至少要有一条请求（否则「0 条」是假绿）").toBeGreaterThan(0);
         expect(withB.length, "边界后必须出现带 B 头的请求（正面控制）").toBeGreaterThan(0);
-        expect(withA, "picker 进 B 之后不得再出现 A 的头/参数").toEqual([]);
+        /* task-208（`D-1567`）：判据从「带 A 头的行一条都没有」升级成**不等式** ——
+         * `isLeakRow` = `msSinceCtxWrite === null || > 0`。理由：`task-204` 实测那条在途请求是
+         * `-384 ms`（ctx 写入前发出），旧口径会把它判成缺陷、让断言长期红；而 `null`（测量缺口）
+         * 仍然算泄漏（fail-closed），所以放宽的是**假阳性**，不是真阳性。三态由
+         * `e2e/fixtures/__tests__/header-audit-verdict.test.mjs` 钉住（含变异控制）。 */
+        expect(
+            withAVerdicts.filter(isLeakRow),
+            "picker 进 B 之后不得再出现「判为泄漏」的 A 头/参数",
+        ).toEqual([]);
     });
 });
 
@@ -1065,7 +1076,12 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         expect(product.length, "边界后至少一条请求").toBeGreaterThan(0);
         expect(withBHead.length, "边界后必须出现带 B 头的请求（正面控制）").toBeGreaterThan(0);
         // 主证据两条（下面第一条 + 上面的正面控制）
-        expect(withAHead, "边界后带 A 头的请求").toEqual([]);
+        /* task-208：这条**也必须**过 `D-1567` 不等式 —— 本卡前提写「P1 已在用不等式口径」，实测是
+         * **归因输出**在用（`monitor` / `eventsStreamRejudge` 都带时间轴），而**断言仍是「一条都不许有」**。
+         * 实测两轮各 1 条 `GET …/monitor`、`msSinceCtxWrite=-74`（`pre-ctx-write`，合法在途）⇒ 旧口径会红。
+         * 判据仍取严：`null`（测量缺口）照样算泄漏。 */
+        const withAHeadVerdicts = annotateBoundary(withAHead, boundaryAt, ctxWrittenAtAbs);
+        expect(withAHeadVerdicts.filter(isLeakRow), "边界后「判为泄漏」的 A 头请求").toEqual([]);
         // 防回归保险（不单独承担主证据）：写上下文早于导航的确定性窗口
         expect(headBParamA, "头=B ∧ 路由/参数=A（写上下文早于导航的确定性窗口）").toEqual([]);
         console.log(
