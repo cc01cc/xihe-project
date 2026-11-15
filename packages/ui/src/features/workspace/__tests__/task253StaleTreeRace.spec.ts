@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { useWorkspaceStore } from "../stores/workspace";
 
 /**
  * task-253（由 `task-252` 转入，`D-1629`）：**换仪器** —— 用 store 级单测直接构造
@@ -61,6 +62,7 @@ vi.mock("../../../composables/api", () => ({
         problem: { code: string } | null = null;
         constructor(input: { code?: string } = {}) {
             super(input.code ?? "ERR");
+            this.name = "ApiError";
             this.problem = input.code ? { code: input.code } : null;
         }
     },
@@ -69,8 +71,6 @@ vi.mock("../../../composables/api", () => ({
 vi.mock("../composables/fileService", () => ({
     readFilePreview: vi.fn<() => Promise<string>>(async () => ""),
 }));
-
-import { useWorkspaceStore } from "../stores/workspace";
 
 function entry(name: string): Entry {
     return { name, type: "file", size: 1, modified: "2026-11-15T00:00:00Z" };

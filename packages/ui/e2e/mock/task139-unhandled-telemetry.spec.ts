@@ -19,6 +19,7 @@
  * ③ 只记录错误**名**，不记录 message/stack（`logger.ts:519-522` 的隐私口径）⇒ 「首因」只能断到名字这一级，
  *    不要试图断言异常文案（那既不该被上报，也拿不到）。</p>
  */
+import type { Page } from "@playwright/test";
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 import { EXPECT_TIMEOUT_MS } from "../timeouts";
@@ -53,7 +54,7 @@ test.use({
  * <p>为什么不 stub 成 204/空：500/空响应都不会让产品崩，但**批次形状**才是本卡判据 ⇒
  * 必须保存 `postDataJSON()` 原文再断言，不能只看「请求发生过」。</p>
  */
-async function captureTelemetry(page: import("@playwright/test").Page): Promise<TelemetryBatch[]> {
+async function captureTelemetry(page: Page): Promise<TelemetryBatch[]> {
     const batches: TelemetryBatch[] = [];
     await page.route("**/api/v1/telemetry/logs", async (route) => {
         const body = route.request().postDataJSON() as TelemetryBatch;
