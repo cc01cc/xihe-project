@@ -3,6 +3,41 @@ import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { LONG_TIMEOUT_MS } from "../timeouts";
 import { expectTriggerLabel } from "../helpers/select";
+import type { Page } from "@playwright/test";
+import { i18n } from "../../src/i18n";
+
+const zh = i18n.global.getLocaleMessage("zh-CN") as Record<string, unknown>;
+function copy(path: string): string {
+    const value = path.split(".").reduce<unknown>((node, key) => {
+        return node && typeof node === "object"
+            ? (node as Record<string, unknown>)[key]
+            : undefined;
+    }, zh);
+    if (typeof value !== "string") throw new Error("zh-CN 文案缺失：" + path);
+    return value;
+}
+
+/**
+ * task-202 裁定 A（Lead 2026-11-15）：环境状态 pill 的**三重**判据。
+ *
+ * <p>原来只钉英文文本（`toContainText("ready")` / `"blocked"` / `"materializing"`）。产品默认渲染中文
+ * （`就绪` / `已阻塞`），于是这三处**恒红**；而且就算把期望改成中文，**翻译写错也不会红**
+ * —— 那是把「文案」当「状态」。现在三条一起钉，状态与文案各归各的判据：</p>
+ *
+ * <p>① `data-value` = 状态 SSOT（`WorkspaceEnvironmentView.vue:637` `:data-value="environment.status"`）；
+ * ② `title` = 语言无关机器键（同一元素 `:636`）；
+ * ③ 可见文本 = **i18n 资源里该键的值**（从语言包取，不硬编码中文/英文）⇒ 翻译错了仍会红。</p>
+ */
+async function expectEnvironmentStatus(
+    page: Page,
+    status: string,
+    options: { timeout?: number } = {},
+): Promise<void> {
+    const pill = page.getByTestId("workspace-environment-status");
+    await expect(pill).toHaveAttribute("data-value", status, options);
+    await expect(pill).toHaveAttribute("title", status, options);
+    await expect(pill).toHaveText(copy("workspace.environmentStatus." + status), options);
+}
 
 const TREE_ENTRIES = [
     { name: "src", type: "directory" },
@@ -201,7 +236,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111/environment");
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible();
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
+        await expectEnvironmentStatus(page, "ready");
         await expect(page.getByTestId("workspace-environment-recovery")).not.toBeEmpty();
         // Storage access, as the current page expresses it: the disclosed host directory.
         await expect(page.getByTestId("workspace-host-path")).toContainText(
@@ -215,7 +250,8 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         const before = environmentCalls;
         await page.getByRole("button", { name: "刷新" }).click();
         await expect.poll(() => environmentCalls).toBeGreaterThan(before);
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
+        // 刷新后仍是同一状态：三重判据再来一遍（不是「等它变绿」）。
+        await expectEnvironmentStatus(page, "ready");
     });
 
     test("blocked environment shows recovery guidance and prepare card states", async ({
@@ -258,11 +294,12 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         });
 
         await page.goto("/workspace/11111111-1111-4111-8111-111111111111/environment");
-        await expect(page.getByTestId("workspace-environment-status")).toContainText("blocked");
+        await expectEnvironmentStatus(page, "blocked");
         await expect(page.getByTestId("workspace-prepare-card")).toBeVisible();
         const prepareButton = page.getByTestId("workspace-prepare-button");
         await prepareButton.click();
-        await expect(prepareButton).toContainText("准备中…");
+        // 同族（task-202 裁定 A ③ 的延伸）：文案从语言包取，不硬编码中文 —— 否则改文案时这里静默过期。
+        await expect(prepareButton).toContainText(copy("workspace.environmentPreparePreparing"));
         await expect(prepareButton).toBeDisabled();
 
         await expect.poll(() => typeof materializeGate.release).toBe("function");
@@ -270,10 +307,7 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
 
         // Readiness by poll, not by clock: the 3 s poll re-reads the projection and the pill leaves
         // `blocked` on its own (the prepare card disappears with it).
-        await expect(page.getByTestId("workspace-environment-status")).toContainText(
-            "materializing",
-            { timeout: LONG_TIMEOUT_MS },
-        );
+        await expectEnvironmentStatus(page, "materializing", { timeout: LONG_TIMEOUT_MS });
         expect(environmentCalls).toBeGreaterThan(1);
     });
 });

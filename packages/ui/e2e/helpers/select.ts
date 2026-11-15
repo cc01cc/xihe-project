@@ -19,8 +19,15 @@ export const SELECT_LABELS: Record<string, Record<string, string>> = {
     "settings-audit-status": { failed: "失败" },
     "settings-audit-type": { chat_run: "对话运行" },
     "ws-members-add-role": { EDITOR: "可编辑", VIEWER: "只读" },
+    /**
+     * task-202（Lead 裁定 A，2026-11-15）：标签抄自 i18n 键 `workspace.environmentExecutionMode.windowsMxc`
+     * （`src/i18n/index.ts:1235` = "Windows MXC 沙箱"；映射出处 `WorkspaceEnvironmentView.vue:399`）。
+     * 原值写的是 wire 值本身（`"windows-mxc": "windows-mxc"`），那是 trigger 还直出 wire 值时的遗留；
+     * 产品早已改成人话标签 ⇒ 这个副本漂了，用例读作「期望 windows-mxc、实收 Windows MXC 沙箱」。
+     * **抄来的副本要写出处**：文案再变时照这里回溯，不要当成新事实。
+     */
     "workspace-execution-mode": {
-        "windows-mxc": "windows-mxc",
+        "windows-mxc": "Windows MXC 沙箱",
         "windows-host": "宿主执行（不受限制）",
     },
     "config-select-approval-policy-mode": { manual: "手动审批", auto: "自动放行" },
