@@ -96,4 +96,41 @@ class LayeredPolicyResolverTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new PolicyRule("exec", "*", PolicyEffect.ALLOW, 0, true, 1));
     }
+
+    @Test
+    void schemeKeyedResourcesAreResourceIdentitiesNotOsPaths() {
+        // D-1556 (task-177): `<kind>:<value>` atoms are resource identities, not filesystem paths.
+        // `Path.of("credential:<uuid>")` throws InvalidPathException ON WINDOWS, which made every
+        // narrow grant silently deny on the only platform the project runs on (Linux CI stayed green).
+        String credentialId = "credential:" + java.util.UUID.randomUUID();
+        assertTrue(LayeredPolicyResolver.matches(credentialId, credentialId, ToolShape.STRUCTURED),
+                "an exact scheme atom must match itself (before D-1556 this was FALSE on Windows)");
+        assertTrue(LayeredPolicyResolver.matches("credential:*", credentialId, ToolShape.STRUCTURED),
+                "the ADMIN wildcard must cover a concrete credential id (a `*` that stops at `:` is not a wildcard)");
+        assertFalse(LayeredPolicyResolver.matches(
+                        "credential:" + java.util.UUID.randomUUID(), credentialId, ToolShape.STRUCTURED),
+                "a different scheme value still does not match — the fix must not become a blanket allow");
+        String skillId = "skill:" + java.util.UUID.randomUUID();
+        assertTrue(LayeredPolicyResolver.matches(skillId, skillId, ToolShape.STRUCTURED),
+                "skill:<id> is the same family (SkillReadResourceWiringTest's positive control)");
+    }
+
+    @Test
+    void schemeNormalisationKeepsFailClosedRulesAndLeavesRealPathsAlone() {
+        // Lead requirement on D-1556: only `scheme:value` gets the OS-free normalisation. Dot
+        // segments / UNC / extended prefixes stay rejected, and real Windows paths keep Path.of.
+        assertFalse(LayeredPolicyResolver.matches(
+                        "credential:a/../b", "credential:a/../b", ToolShape.STRUCTURED),
+                "dot segments stay fail-closed inside a scheme value too");
+        assertFalse(LayeredPolicyResolver.matches(
+                        "\\\\?\\C:\\ws", "\\\\?\\C:\\ws", ToolShape.STRUCTURED),
+                "extended-length prefixes stay fail-closed");
+        assertTrue(LayeredPolicyResolver.matches(
+                        "C:/Work/Notes.md", "c:/work/notes.md", ToolShape.STRUCTURED),
+                "a real Windows path still normalises through Path.of — control that the scheme branch"
+                        + " did not swallow drive-letter paths");
+        assertTrue(LayeredPolicyResolver.matches(
+                        "Credential:ABC", "credential:abc", ToolShape.STRUCTURED),
+                "scheme values fold case like every other lexical comparison");
+    }
 }

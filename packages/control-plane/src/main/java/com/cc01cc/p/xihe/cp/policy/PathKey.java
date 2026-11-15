@@ -34,13 +34,31 @@ public final class PathKey {
     private PathKey() {}
 
     /** LEXICAL normalisation (config-time): dotted separators to {@code /}, no trailing slash,
-     *  lowercase; {@code null} when the value is null, dot-segmented, UNC/extended or invalid. */
+     *  lowercase; {@code null} when the value is null, dot-segmented, UNC/extended or invalid.
+     *
+     *  <p><b>D-1556 seam — {@code scheme:value} is not a path.</b> Authorization resources are not all
+     *  filesystem paths: {@code credential:<id>}, {@code skill:<id>}, {@code workspace:<id>},
+     *  {@code session:<id>} are resource identities. Routing them through {@link Path#of} failed them
+     *  <b>ON WINDOWS ONLY</b> ({@code InvalidPathException: Illegal char <:>}) ⇒ {@code null} ⇒ the
+     *  matcher denied, so every narrow grant silently stopped covering anything on the only platform
+     *  this project runs on, while Linux CI stayed green. Those values now take the OS-free
+     *  normalisation (same rules as {@link #lexicalPattern}: separators collapsed to {@code /}, no
+     *  trailing slash, case folded) and the fail-closed rules above still apply unchanged — dot
+     *  segments, UNC and extended-length prefixes stay rejected, and a real path (incl. a Windows
+     *  drive-letter path) still goes through {@link Path#normalize()}.
+     *
+     *  <p>Lesson carried by D-1556: <b>a change to the normaliser must run a cross-atom-family shape
+     *  matrix</b> (path / {@code scheme:} / glob / wildcard). The change that broke this
+     *  ({@code 32d704526}) ran only the path cases and looked green.</p> */
     public static String lexical(String raw) {
         if (raw == null) {
             return null;
         }
         if (hasDotSegments(raw) || isUncOrExtended(raw)) {
             return null;
+        }
+        if (isSchemeValue(raw)) {
+            return collapseLexically(raw);
         }
         try {
             String normalized = Path.of(raw).normalize().toString().replace('\\', '/');
@@ -63,12 +81,48 @@ public final class PathKey {
         if (hasDotSegments(raw) || isUncOrExtended(raw)) {
             return null;
         }
+        return collapseLexically(raw);
+    }
+
+    /**
+     * The OS-free lexical collapse shared by {@link #lexicalPattern} and the {@code scheme:value}
+     * branch of {@link #lexical}: backslashes to {@code /}, no trailing slash, case folded. It
+     * deliberately does <b>not</b> consult {@link Path} (no {@code InvalidPathException} on
+     * {@code scheme:value}, and {@code *} is legal).
+     */
+    private static String collapseLexically(String raw) {
         String normalized = raw.replace('\\', '/');
         int end = normalized.length();
         while (end > 1 && normalized.charAt(end - 1) == '/') {
             end--;
         }
         return normalized.substring(0, end).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * D-1556: is this value a {@code scheme:value} resource identity rather than an OS path?
+     *
+     * <p>A drive-letter path ({@code C:\ws}, {@code C:/ws}) has the colon at index 1 after a letter
+     * and stays a path; anything whose first colon comes before any separator is a scheme
+     * ({@code credential:<uuid>}, {@code skill:<uuid>}, {@code fs:<rootScopeId>/<rel>}).</p>
+     */
+    private static boolean isSchemeValue(String raw) {
+        int colon = raw.indexOf(':');
+        if (colon < 0) {
+            return false;
+        }
+        if (colon == 1 && Character.isLetter(raw.charAt(0))) {
+            return false;
+        }
+        int separator = -1;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '/' || c == '\\') {
+                separator = i;
+                break;
+            }
+        }
+        return separator < 0 || colon < separator;
     }
 
     /** REAL normalisation (execution-time): OS canonicalise; {@code null} when it does not exist. */
