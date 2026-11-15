@@ -657,49 +657,6 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
-    // run 读面（task-149 B）：只服务**登记过**的 run。
-    await page.route("**/api/v1/chat/runs/*", async (route) => {
-        const request = route.request();
-        if (request.method() !== "GET") return route.fallback();
-        const parsed = parseChatRunPath(new URL(request.url()).pathname);
-        if (!parsed || parsed.action !== "get") return route.fallback();
-        const record = runs.get(parsed.runId);
-        if (!record) {
-            await route.fulfill({
-                status: 404,
-                contentType: "application/problem+json",
-                body: JSON.stringify(CHAT_RUN_NOT_FOUND),
-            });
-            return;
-        }
-        await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify(chatRunProjection(record)),
-        });
-    });
-
-    // 取消：未登记 ⇒ 404；已登记 ⇒ 状态推到 cancelled（响应 `{status, runId}`）。
-    await page.route("**/api/v1/chat/runs/*/cancel", async (route) => {
-        if (route.request().method() !== "POST") return route.fallback();
-        const parsed = parseChatRunPath(new URL(route.request().url()).pathname);
-        if (!parsed || parsed.action !== "cancel") return route.fallback();
-        const record = runs.cancel(parsed.runId);
-        if (!record) {
-            await route.fulfill({
-                status: 404,
-                contentType: "application/problem+json",
-                body: JSON.stringify(CHAT_RUN_NOT_FOUND),
-            });
-            return;
-        }
-        await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify(chatRunCancelProjection(record)),
-        });
-    });
-
     await page.route("**/api/v1/models", async (route) => {
         await route.fulfill({
             status: 200,
@@ -1080,7 +1037,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     //     `config/{domain}`，带 `/meta` 的请求此前一律 404（实测 12 域 × 13 次 warn，最高频族）。
     //     域 → 键集合来自同一份实例夹具，**不另起一份清单**（两份清单必然漂移）。
     //     形状与 preview api-server.ts:1484-1539 一致；生成逻辑见 helpers/stub-families.ts。
-    await page.route("**/api/v1/config/*/meta", async (route) => {
+    await page.route("**/api/v1/config/*/meta*", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         const url = new URL(route.request().url());
         const domain = parseConfigMetaPath(url.pathname);
@@ -1138,7 +1095,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
-    await page.route("**/api/v1/agent-templates", async (route) => {
+    await page.route("**/api/v1/agent-templates*", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         const url = new URL(route.request().url());
         await route.fulfill({
@@ -1263,6 +1220,52 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             status: 200,
             contentType: "application/json",
             body: JSON.stringify({ credentials, count: credentials.length }),
+        });
+    });
+
+    // task-149 B（C 复跑修正）：run 读面**必须注册在兜底 `**/api/v1/**` 之后**。
+    // 原来写在上方 chat 202 桩的旁边（兜底之前）⇒ LIFO 下被兜底盖住，run 表在真跑里一次都没生效
+    // （实测：C 全量 6× `GET /chat/runs/{id}` + 1× `POST …/cancel` 全部落到「未桩端点」warn）。
+    // run 读面（task-149 B）：只服务**登记过**的 run。
+    await page.route("**/api/v1/chat/runs/*", async (route) => {
+        const request = route.request();
+        if (request.method() !== "GET") return route.fallback();
+        const parsed = parseChatRunPath(new URL(request.url()).pathname);
+        if (!parsed || parsed.action !== "get") return route.fallback();
+        const record = runs.get(parsed.runId);
+        if (!record) {
+            await route.fulfill({
+                status: 404,
+                contentType: "application/problem+json",
+                body: JSON.stringify(CHAT_RUN_NOT_FOUND),
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(chatRunProjection(record)),
+        });
+    });
+
+    // 取消：未登记 ⇒ 404；已登记 ⇒ 状态推到 cancelled（响应 `{status, runId}`）。
+    await page.route("**/api/v1/chat/runs/*/cancel", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const parsed = parseChatRunPath(new URL(route.request().url()).pathname);
+        if (!parsed || parsed.action !== "cancel") return route.fallback();
+        const record = runs.cancel(parsed.runId);
+        if (!record) {
+            await route.fulfill({
+                status: 404,
+                contentType: "application/problem+json",
+                body: JSON.stringify(CHAT_RUN_NOT_FOUND),
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(chatRunCancelProjection(record)),
         });
     });
 
