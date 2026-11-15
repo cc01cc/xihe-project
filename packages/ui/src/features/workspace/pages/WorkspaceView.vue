@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useSessionStore } from "../../../stores/session";
+import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection";
 import { useAuthStore } from "../../../stores/auth";
 import { useChatStore } from "../chat/stores/chat";
 import { ApiError, api, type WorkspaceAgentBinding } from "../../../composables/api";
@@ -52,6 +53,19 @@ const lastUsage = computed(() =>
 const usageInput = computed(() => lastUsage.value?.inputTokens);
 const usageOutput = computed(() => lastUsage.value?.outputTokens);
 const usageSource = computed(() => lastUsage.value?.source);
+
+/**
+ * task-160 / `D-1527` ①：底部状态栏搬到壳层后，**用量**也和连接态一样是页面级读数，
+ * 由本页发布、壳层只读。`0` 是有效读数（有 run 但 0 token），所以只在「无 run」时传 `null`。
+ */
+const connectionReadout = useWorkspaceConnectionStore();
+watch(
+    [usageInput, usageOutput],
+    ([input, output]) => {
+        connectionReadout.publishUsage(input ?? null, output ?? null);
+    },
+    { immediate: true },
+);
 const usageCost = computed(() => {
     const usage = lastUsage.value;
     if (!usage) return null;
@@ -432,10 +446,7 @@ watch(isMobileViewport, (mobile) => {
             :workspace-id="workspaceId"
             :session-id="sessionId"
             :is-mobile="isMobileViewport"
-            :sse-connected="workspaceEvents.isConnected.value"
             :sse-connecting="workspaceEvents.isConnecting.value"
-            :usage-input="usageInput ?? null"
-            :usage-output="usageOutput ?? null"
             :mobile-changes-open="showMobileChanges"
             :mobile-aux-tab="mobileAuxTab"
             @agents="handleOpenAgentsPanel"

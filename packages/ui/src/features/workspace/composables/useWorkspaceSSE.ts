@@ -13,6 +13,8 @@ import {
     normalizeWorkspaceEvent,
     workspaceHeaders,
 } from "../../../composables/api";
+import { getActivePinia } from "pinia";
+import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection";
 import { logger } from "@/lib/logger";
 import { chatTransport } from "@/services/chatTransport";
 import type { WorkspaceEvent } from "@/types";
@@ -232,6 +234,28 @@ export function useWorkspaceSSE(
             (leader.role.value === "leader" && !leader.isConnected.value),
     );
 
+    /**
+     * task-160 / `D-1527` ①：把**连接读数**发布给壳层（底部状态栏在 `WorkspaceShell`，
+     * 拿不到页面实例）。这里发布的是只读读数，连接生命周期仍在本 composable 里。
+     *
+     * <p>`getActivePinia()` 守卫：本 composable 在 `useWorkspaceSSE.spec.ts` 里是**脱离组件**
+     * 调用的（无 pinia），此时跳过发布而不是抛 "no active Pinia"。</p>
+     */
+    const connectionStore = getActivePinia() ? useWorkspaceConnectionStore() : null;
+    if (connectionStore) {
+        watch(
+            [leader.isConnected, isConnecting, connectionError],
+            () => {
+                connectionStore.publishConnection({
+                    connected: leader.isConnected.value,
+                    connecting: isConnecting.value,
+                    error: connectionError.value,
+                });
+            },
+            { immediate: true },
+        );
+    }
+
     const noticeState = computed<WorkspaceSseNoticeState>(() => {
         if (limitActive.value) {
             return "limit";
@@ -261,7 +285,11 @@ export function useWorkspaceSSE(
     );
 
     if (getCurrentInstance()) {
-        onBeforeUnmount(() => leader.stop());
+        onBeforeUnmount(() => {
+            leader.stop();
+            // task-160：页面卸载后壳层状态栏必须读成「未连接」，不能留着上一页的旧读数。
+            connectionStore?.reset();
+        });
     }
 
     return {

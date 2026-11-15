@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * task-312：工作区底部状态栏。
+ * task-312：工作区底部状态栏；**task-160（S2a）起由壳层 `WorkspaceShell` 挂载**。
  *
  * <p>用户原话（2026-11-13）：「会话页（工作区的主体交互区）底部是不是应该有一个状态栏」。
  * 判据只有一条 —— **不点也能读到、且随时在变**。据此只放三条（全部指向**既有**数据源，
@@ -21,32 +21,45 @@
  *       `WorkspaceEnvironmentView` 内（且只用于禁用「释放」按钮），
  *       进全局状态栏需先提升到 workspace 级 store = 新产品面。</li>
  *   <li>当前 agent principal —— 「不变的信息属于 header 或 settings」，且工具栏已有徽标。</li>
- *   <li>会话标题 —— 与二级导航面包屑重复。</li>
+ *   <li><b>会话标题 —— 已作废的否决理由（task-160）</b>：原话是「与二级导航面包屑重复」，
+ *       但面包屑<b>已经搬进本状态栏</b>（同一行左侧），所以「重复」不再成立 ——
+ *       面包屑自己就带当前上下文。**不要用这条旧理由把面包屑或标题再驳回**；
+ *       若将来要加会话标题，判据是「是否与左侧面包屑末段同词」：同词即重复，不同词才可加。</li>
  * </ul>
  *
- * <p><b>挂载位置为什么是页面级（本组件由 `WorkspaceView` 挂载）</b>：
- * 三条数据源里 SSE 连接态是<b>页面级</b>的（`useWorkspaceSSE` 在
- * `WorkspaceView:203` 实例化，不是 store）；另外两条是全局 store。
- * 挂到 shell / layout 层就必须先把 SSE 连接态提升成 store —— 那属于「新增 store 字段」，
- * 本卡边界明确禁止。所以挂在页面级：三条全都拿得到，且<b>零 store 改动</b>。</p>
+ * <p><b>挂载位置与读数来源（task-160 / `D-1527` ①）</b>：本组件由 `WorkspaceShell` 挂载
+ * ⇒ 六个工作区页都看得到。但连接态与用量是**页面级**读数（`useWorkspaceSSE` /
+ * `lastUsage` 都在页面实例里），所以它们经 `useWorkspaceConnectionStore` 发布后在此读取；
+ * 待审批总数本来就是全局 store（`agentStore.pendingApprovalTotal`）。</p>
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-
-const props = defineProps<{
-    /** SSE 是否已连上（页面级 `workspaceEvents.isConnected`）。 */
-    connected: boolean;
-    /** SSE 是否正在连接中（页面级 `workspaceEvents.isConnecting`）。 */
-    connecting: boolean;
-    /** 待审批总数（全局 `agentStore.pendingApprovalTotal`）。 */
-    pendingApprovalTotal: number;
-    /** 本次 run 的输入 tokens（无 run 时为 null）。 */
-    usageInput?: number | null;
-    /** 本次 run 的输出 tokens。 */
-    usageOutput?: number | null;
-}>();
+import {
+    Breadcrumb,
+    BreadcrumbItem,
+    BreadcrumbLink,
+    BreadcrumbList,
+    BreadcrumbPage,
+    BreadcrumbSeparator,
+} from "../../../components/ui/breadcrumb";
+import { useAgentStore } from "../../../stores/agent";
+import { useWorkspaceConnectionStore } from "../../../stores/workspaceConnection";
+import { useWorkspaceNav } from "../composables/useWorkspaceNav";
 
 const { t } = useI18n();
+const agentStore = useAgentStore();
+const connection = useWorkspaceConnectionStore();
+/**
+ * 面包屑（task-160 从 `WorkspaceSecondaryNav` **整段搬来**，不是重写）：
+ * 三段 `工作区（可点）→ 工作区名（不可点）→ 当前页（aria-current="page"）`。
+ * 末段的 `aria-current` 由 vendor 的 `BreadcrumbPage` 自带（`BreadcrumbPage.vue:16`），
+ * 所以导航行那边**必须**去掉 `aria-current`，否则一页里有两个「当前页」。
+ */
+const { trail } = useWorkspaceNav();
+const containerLabel = computed(() => t("workspaceNav.workspaceContainer"));
+
+/** 待审批总数：全局 store，**本组件直接读**（壳层也拿得到，不需要 props 透传）。 */
+const pendingApprovalTotal = computed(() => agentStore.pendingApprovalTotal);
 
 /**
  * 三态派生。**顺序有语义**：`connecting` 优先于 `connected` ——
@@ -54,8 +67,8 @@ const { t } = useI18n();
  * 「正在重连」读成「已连接」。
  */
 const connectionState = computed<"connecting" | "connected" | "disconnected">(() => {
-    if (props.connecting) return "connecting";
-    if (props.connected) return "connected";
+    if (connection.connecting) return "connecting";
+    if (connection.connected) return "connected";
     return "disconnected";
 });
 
@@ -73,7 +86,7 @@ const connectionLabel = computed(() => {
 /**
  * 状态点颜色。**不用品牌色**（注意力预算：状态点不是 CTA）：
  * 已连接 = 绿（成功语义）、连接中 = 琥珀（进行中）、未连接 = 灰（中性，不是错误红 ——
- * 断线会自动重连，不是用户需要立刻处置的错误）。
+ * 断线会由页面横幅点名，状态点只负责「一眼看出在不在」）。
  */
 const dotClass = computed(() => {
     switch (connectionState.value) {
@@ -87,7 +100,7 @@ const dotClass = computed(() => {
 });
 
 /** 有 run 才显示用量；`0` 也是有效读数（不能因为 0 就隐藏）。 */
-const showUsage = computed(() => typeof props.usageInput === "number");
+const showUsage = computed(() => typeof connection.usageInput === "number");
 </script>
 
 <template>
@@ -95,6 +108,49 @@ const showUsage = computed(() => typeof props.usageInput === "number");
         data-testid="workspace-status-bar"
         class="flex h-6 shrink-0 items-center gap-3 border-t bg-muted/20 px-3 text-xs text-muted-foreground max-md:hidden"
     >
+        <!-- 面包屑（task-160：从二级导航整段搬来；三段顺序与可点/不可点划分原样保留）。 -->
+        <Breadcrumb
+            data-testid="workspace-breadcrumb"
+            :aria-label="t('workspaceNav.breadcrumbLabel')"
+            class="min-w-0 text-muted-foreground"
+        >
+            <BreadcrumbList class="gap-1 text-xs">
+                <BreadcrumbItem>
+                    <BreadcrumbLink as-child class="hover:text-foreground">
+                        <!--
+                            根段在「会话」页时**恰好就是当前页**（`/workspace/:id`），vue-router 的
+                            `RouterLink` 会自动加 `aria-current="page"` ⇒ 状态栏里出现两个「当前页」
+                            （根链接 + 末段 `BreadcrumbPage`）。一页只能有一个：这里显式降级成
+                            `aria-current="false"`（ARIA 规范里「明确不是当前项」），末段保留唯一的 page。
+                        -->
+                        <RouterLink :to="trail.rootPath" aria-current-value="false">{{
+                            containerLabel
+                        }}</RouterLink>
+                    </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <!--
+                    task-297：中间段 = **哪个工作区**（不可点：与第一段同址，两段相邻去同一处等于重复链接）。
+                    不用 `BreadcrumbPage`：它硬写 `aria-current="page"`，一页只能有一个且属于末段。
+                -->
+                <BreadcrumbItem>
+                    <span
+                        data-testid="workspace-breadcrumb-container"
+                        class="max-w-[16rem] truncate"
+                    >
+                        {{ trail.container.label }}
+                    </span>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator v-if="trail.page" />
+                <BreadcrumbItem v-if="trail.page">
+                    <BreadcrumbPage>{{ t(trail.page.labelKey) }}</BreadcrumbPage>
+                </BreadcrumbItem>
+            </BreadcrumbList>
+        </Breadcrumb>
+
+        <!-- 面包屑与读数之间的竖线：间距只分组、不分类，所以两种信息之间要有可见分隔。 -->
+        <span aria-hidden="true" class="h-3 w-px shrink-0 bg-border" />
+
         <!-- ① SSE 连接态：三态各有独立 data 属性值，判据可断言「实际是哪一态」而不是「元素存在」。 -->
         <span
             data-testid="workspace-status-connection"
@@ -126,7 +182,10 @@ const showUsage = computed(() => typeof props.usageInput === "number");
             class="ml-auto inline-flex items-center gap-2 tabular-nums"
         >
             <span>{{
-                t("workspace.statusBarUsage", { input: usageInput, output: usageOutput ?? 0 })
+                t("workspace.statusBarUsage", {
+                    input: connection.usageInput,
+                    output: connection.usageOutput ?? 0,
+                })
             }}</span>
         </span>
     </div>
