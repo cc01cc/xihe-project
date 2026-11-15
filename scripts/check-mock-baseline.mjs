@@ -9,7 +9,13 @@
  * change (or `--allow-drift` to accept it deliberately).
  *
  * Usage: node scripts/check-mock-baseline.mjs [--report <json>] [--baseline <json>]
- *        [--allow-drift] [--allow-stale-report]
+ *        [--allow-drift] [--allow-stale-report] [--no-write-baseline] [--write-baseline]
+ *
+ * task-250（用户裁定「丙」，2026-11-15）：**计数默认自动跟随实际收集数**。
+ *   - failed=0 ⇒ 就地改写 `counts.expected/skipped`（+ `sourceRun` 记录命令/采集时刻/HEAD/spec sha256/收集数）；
+ *   - failed≠0 ⇒ 一个字都不写（红不入基线），仍按 drift 判红；
+ *   - `--no-write-baseline` = 退回「只读比对」的老语义（自洽轴不一致重新变成硬红）；
+ *   - `--write-baseline` = 只写不比对（failed≠0 时 exit 2 + 点名 failed 清单）。
  * Exit 0 = match; 1 = drift; 2 = missing/unparsable inputs, or a stale report (`E_STALE_REPORT`).
  *
  * D-1039 ②（2026-11-12）: a report *file* turns this gate blind — comparing against a report
@@ -23,6 +29,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +65,9 @@ function parseArgs(argv) {
         noProbeProcs: false,
         workers: process.env.XIHE_E2E_WORKERS ?? null,
         selftest: false,
+        // task-250（用户裁定「丙」）：只自动更新 expected/skipped 计数；失败必须为 0 才允许写。
+        writeBaseline: false,
+        noWriteBaseline: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
@@ -72,6 +82,8 @@ function parseArgs(argv) {
         else if (arg === "--no-probe-procs") out.noProbeProcs = true;
         else if (arg === "--workers") out.workers = argv[++i];
         else if (arg === "--selftest") out.selftest = true;
+        else if (arg === "--write-baseline") out.writeBaseline = true;
+        else if (arg === "--no-write-baseline") out.noWriteBaseline = true;
         else throw new Error("unknown argument: " + arg);
     }
     if (!out.flakyHistory) {
@@ -209,6 +221,8 @@ export function summarizeReport(report) {
     const skipped = Math.trunc(Number(stats.skipped ?? 0));
     const skipNames = [];
     const flakyCases = [];
+    /** task-250：写基线被拒绝时要把 failed 清单摆出来 —— 只说「failed=3」不给人可核对的对象。 */
+    const failedCases = [];
     const walk = (suite) => {
         const file = typeof suite?.file === "string" ? normalizePath(suite.file) : null;
         for (const spec of suite?.specs ?? []) {
@@ -217,6 +231,15 @@ export function summarizeReport(report) {
             const tests = spec?.tests ?? [];
             if (tests.some((test) => test?.status === "flaky")) {
                 flakyCases.push({ title: normalizeTitle(spec?.title), file });
+            }
+            if (
+                tests.some(
+                    (test) =>
+                        test?.status === "unexpected" ||
+                        (test?.status === "expected" && test?.expectedStatus === "failed"),
+                )
+            ) {
+                failedCases.push({ title: normalizeTitle(spec?.title), file });
             }
         }
         for (const spec of suite?.specs ?? []) {
@@ -234,7 +257,7 @@ export function summarizeReport(report) {
         for (const child of suite?.suites ?? []) walk(child);
     };
     for (const file of report?.suites ?? []) walk(file);
-    return { expected, failed, flaky, skipped, skipNames, flakyCases };
+    return { expected, failed, flaky, skipped, skipNames, flakyCases, failedCases };
 }
 
 /**
@@ -682,6 +705,205 @@ export function appendFlakyHistory(file, entry, maxRuns = 20) {
 /** selftest 逐例结果（`assertCase` 需要回看刚跑的那一例）。 */
 let selftestCases = [];
 
+
+// ---------------- task-250：基线模型「丙」的写路径 ----------------
+//
+// 用户裁定（2026-11-15）：**只自动更新 expected / skipped 计数（跟随实际收集数）；failed 必须为 0 才允许写**。
+// 两条语义都在：计数永不漂（不等人工抄），红永不被吸收（failed≠0 直接拒写）。
+//
+// 为什么写在这里而不是另起一个生成器：比对与写入必须用**同一份** summarizeReport 结果，
+// 否则「拿 A 跑次的计数去判、用 B 跑次的计数去写」就是 D-1611 的混跑次错误 —— 一个文件里没有这个缝。
+
+const BASELINE_WRITE_MODEL =
+    "task-250 模型丙：只自动更新 expected/skipped；failed!==0 拒写";
+
+/** 本轮报告覆盖到的 spec 文件（相对 packages/ui），排序后稳定。 */
+export function collectedSpecFiles(report) {
+    const files = new Set();
+    for (const suite of report?.suites ?? []) {
+        const file = typeof suite?.file === "string" ? normalizePath(suite.file) : null;
+        if (file) files.add(file);
+    }
+    return [...files].sort();
+}
+
+/** spec 指纹 = 每个 spec 的内容 sha256 按路径排序拼起来再 sha256 ⇒ 同一批 spec 恒同值。 */
+export function specFingerprint({ repoRoot, report }) {
+    const uiRoot = path.join(repoRoot, "packages/ui");
+    const files = collectedSpecFiles(report);
+    const rows = [];
+    for (const rel of files) {
+        let digest = "(missing)";
+        try {
+            digest = createHash("sha256").update(fs.readFileSync(path.join(uiRoot, rel))).digest("hex");
+        } catch {
+            // 报告里的 spec 已被删/改名：保留可追溯的 "(missing)"，不要静默当成没这个文件
+        }
+        rows.push(rel + ":" + digest);
+    }
+    return { files: files.length, sha256: createHash("sha256").update(rows.join("\n")).digest("hex") };
+}
+
+/** 采集时刻取自**报告本身**（stats.startTime）；退路用报告文件 mtime —— 都不用 now()，否则幂等必坏。 */
+export function reportCollectedAt(report, reportPath) {
+    const start = report?.stats?.startTime;
+    if (typeof start === "string" && start.trim()) {
+        const at = new Date(start);
+        if (!Number.isNaN(at.getTime())) return at.toISOString();
+    }
+    return new Date(fs.statSync(reportPath).mtimeMs).toISOString();
+}
+
+function headCommit(repoRoot) {
+    try {
+        return execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    } catch {
+        return "(unavailable)";
+    }
+}
+
+/** sourceRun：人可回溯到具体跑次（命令 + 采集时刻 + HEAD + spec sha256 + 收集数）。 */
+export function buildSourceRunText({ summary, fingerprint, collectedAt, head, reportPath, repoRoot }) {
+    const rel = normalizePath(path.relative(repoRoot, reportPath));
+    return (
+        BASELINE_WRITE_MODEL +
+        " ｜ 命令 mise run test:mock ｜ 采集 " + collectedAt +
+        " ｜ HEAD " + head +
+        " ｜ specs sha256 " + fingerprint.sha256.slice(0, 16) + "（" + fingerprint.files + " 文件）" +
+        " ｜ expected=" + summary.expected + " skipped=" + summary.skipped +
+        " failed=" + summary.failed + " flaky=" + summary.flaky +
+        " ｜ report " + rel
+    );
+}
+
+/** 只改 counts 四数 + sourceRun + generatedAt；其余键（$comment / skipNames / 推导说明）原样保留。 */
+export function applyBaselineCounts({ baseline, summary, sourceRun, collectedAt }) {
+    const next = { ...baseline };
+    next.counts = {
+        expected: summary.expected,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        flaky: 0,
+    };
+    if (typeof baseline?.sourceRun !== "undefined" || true) next.sourceRun = sourceRun;
+    if (typeof baseline?.generatedAt === "string") next.generatedAt = collectedAt.slice(0, 10);
+    return next;
+}
+
+/** 内容不变就不写（连跑两次字节相同）；返回是否真的落盘。 */
+export function writeBaselineIfChanged(file, next) {
+    const text = JSON.stringify(next, null, 4) + "\n";
+    const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+    if (current === text) return { changed: false, text };
+    fs.writeFileSync(file, text, "utf8");
+    return { changed: true, text };
+}
+
+/**
+ * 模型「丙」的**默认行为**：一次 gate 运行里，只要 failed=0，就地把 expected/skipped 跟到实际收集数。
+ *
+ * 为什么默认就写、而不是等人加 flag：丙的判据原话是「只**自动**更新 expected/skipped 计数」——
+ * 若还要人手加 flag，291 vs 544 那种落后 253 条的状态会原样重现（没人会为一个数字专门跑一次命令）。
+ * 反过来，failed≠0 时这里一个字都不动 ⇒ 红永远进不了基线。
+ *
+ * 返回更新后的基线对象（未变则原样返回），后续比对必须用它 —— 否则「写进文件了，但这一次比对
+ * 还是拿旧数判红」，两个读数互相打脸。
+ */
+export function maybeAutoUpdateCounts({ options, report, summary, baseline }) {
+    if (summary.failed !== 0) {
+        console.log(
+            "[check-mock-baseline] 计数自动跟随**跳过**：failed=" + summary.failed +
+                " ≠ 0（丙：红不入基线；基线文件未改动）",
+        );
+        return { baseline, changed: false };
+    }
+    const fingerprint = specFingerprint({ repoRoot: options.repoRoot, report });
+    const collectedAt = reportCollectedAt(report, options.report);
+    const sourceRun = buildSourceRunText({
+        summary,
+        fingerprint,
+        collectedAt,
+        head: headCommit(options.repoRoot),
+        reportPath: options.report,
+        repoRoot: options.repoRoot,
+    });
+    const next = applyBaselineCounts({ baseline, summary, sourceRun, collectedAt });
+    const before = baseline?.counts ?? {};
+    const countsSame =
+        Number(before.expected) === next.counts.expected &&
+        Number(before.skipped) === next.counts.skipped &&
+        Number(before.failed) === next.counts.failed &&
+        Number(before.flaky) === next.counts.flaky;
+    if (countsSame && baseline?.sourceRun === sourceRun) {
+        console.log(
+            "[check-mock-baseline] 计数已是实际值：expected=" + summary.expected +
+                " / skipped=" + summary.skipped + "（未写）",
+        );
+        return { baseline, changed: false };
+    }
+    const result = writeBaselineIfChanged(options.baseline, next);
+    console.log(
+        "[check-mock-baseline] MOCK_BASELINE_COUNTS_UPDATED（丙：只动计数，failed=0）" +
+            (result.changed ? "" : "（字节相同，未写）"),
+    );
+    for (const field of ["expected", "skipped", "failed", "flaky"]) {
+        const from = Number.isFinite(Number(before[field])) ? Number(before[field]) : "-";
+        if (String(from) !== String(next.counts[field])) {
+            console.log("  " + field + ": " + from + " → " + next.counts[field]);
+        }
+    }
+    console.log("  sourceRun: " + sourceRun);
+    return { baseline: next, changed: result.changed };
+}
+
+export function runWriteBaseline({ options, report, summary, baseline }) {
+    // ② 守卫：failed !== 0 ⇒ 拒写 + 把失败清单摆出来（只说「failed=3」不给人可核对的对象）
+    if (summary.failed !== 0) {
+        console.error(
+            "E_MOCK_BASELINE_WRITE_REFUSED: failed=" + summary.failed + " ≠ 0 ⇒ 拒绝写基线（模型丙：红永不被吸收）",
+        );
+        for (const item of summary.failedCases ?? []) {
+            console.error("  failed: " + (item.file ?? "?") + " :: " + item.title);
+        }
+        console.error("  基线文件未改动：" + options.baseline);
+        return 2;
+    }
+    const fingerprint = specFingerprint({ repoRoot: options.repoRoot, report });
+    const collectedAt = reportCollectedAt(report, options.report);
+    const sourceRun = buildSourceRunText({
+        summary,
+        fingerprint,
+        collectedAt,
+        head: headCommit(options.repoRoot),
+        reportPath: options.report,
+        repoRoot: options.repoRoot,
+    });
+    const before = baseline?.counts ?? {};
+    const next = applyBaselineCounts({ baseline, summary, sourceRun, collectedAt });
+    const result = writeBaselineIfChanged(options.baseline, next);
+    console.log("[check-mock-baseline] --write-baseline（" + BASELINE_WRITE_MODEL + "）");
+    for (const field of ["expected", "skipped", "failed", "flaky"]) {
+        const from = Number.isFinite(Number(before[field])) ? Number(before[field]) : "-";
+        console.log("  " + field + ": " + from + " → " + next.counts[field]);
+    }
+    console.log("  sourceRun: " + sourceRun);
+    // skipNames 名单仍由人登记（丙只动计数）：差集只 WARN，不写、不判红
+    const registered = new Set((baseline?.skipNames ?? []).map(normalizeTitle));
+    const actual = new Set(summary.skipNames);
+    const unregistered = [...actual].filter((name) => !registered.has(name));
+    const retired = [...registered].filter((name) => !actual.has(name));
+    if (unregistered.length > 0) {
+        console.log("  WARN skip 名单未收录 " + unregistered.length + " 条（丙只动计数，名单仍手工登记）：");
+        for (const name of unregistered.slice(0, 10)) console.log("    + " + name);
+    }
+    if (retired.length > 0) {
+        console.log("  WARN skip 名单已不存在的 " + retired.length + " 条（同上，不自动删）：");
+        for (const name of retired.slice(0, 10)) console.log("    - " + name);
+    }
+    console.log(result.changed ? "  已写入 " + options.baseline : "  字节相同 ⇒ 未写（幂等）");
+    return 0;
+}
+
 function runSelftest() {
     selftestCases = [];
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-selftest-"));
@@ -746,7 +968,7 @@ function runSelftest() {
         );
         const output = (result.stdout ?? "") + (result.stderr ?? "");
         selftestCases.push({ name, exit: result.status, output });
-        return { exit: result.status, output };
+        return { exit: result.status, output, baselineFile, reportFile };
     };
     const cleanBaseline = {
         counts: { expected: 283, skipped: 1, failed: 0, flaky: 0 },
@@ -806,8 +1028,8 @@ function runSelftest() {
             ],
         });
         assertCase(persistent.exit === 1 && /E_MOCK_FLAKY_PERSISTENT/.test(persistent.output), "④");
-        // ⑤ 回归保护：expected/skipped 精确比对没被削弱
-        const drift = run("⑤ expected 漂移 ⇒ exit 1", {
+        // ⑤ 模型丙（task-250）：计数漂移不再判红，而是**就地跟随实际收集数**
+        const drift = run("⑤ 计数漂移 ⇒ 自动跟随 + exit 0（丙）", {
             report: baseReport([], "e2e/mock/chat.spec.ts", {
                 expected: 280,
                 skipped: 1,
@@ -816,7 +1038,38 @@ function runSelftest() {
             }),
             baseline: cleanBaseline,
         });
-        assertCase(drift.exit === 1 && /E_MOCK_BASELINE_DRIFT/.test(drift.output), "⑤");
+        const driftBaseline = JSON.parse(fs.readFileSync(drift.baselineFile, "utf8"));
+        assertCase(
+            drift.exit === 0 &&
+                /MOCK_BASELINE_COUNTS_UPDATED/.test(drift.output) &&
+                driftBaseline.counts.expected === 280 &&
+                /expected: 283 → 280/.test(drift.output),
+            "⑤",
+        );
+        // ⑤' 阴性对照：同一份漂移但 failed≠0 ⇒ 自动跟随被拒（文件不动）+ 仍按 drift 红
+        // 这条是丙的边界：**计数可以跟，红不可以**。
+        const redReport = baseReport([], "e2e/mock/chat.spec.ts", {
+            expected: 280,
+            skipped: 1,
+            unexpected: 1,
+            flaky: 0,
+        });
+        redReport.suites[0].specs.unshift({
+            title: "red case",
+            tests: [{ status: "unexpected", expectedStatus: "passed", results: [{ status: "failed" }] }],
+        });
+        const driftRed = run("⑤' 漂移 + failed≠0 ⇒ 拒跟随且红", {
+            report: redReport,
+            baseline: cleanBaseline,
+        });
+        const driftRedBaseline = JSON.parse(fs.readFileSync(driftRed.baselineFile, "utf8"));
+        assertCase(
+            driftRed.exit === 1 &&
+                /E_MOCK_BASELINE_DRIFT/.test(driftRed.output) &&
+                /计数自动跟随\*\*跳过\*\*/.test(driftRed.output) &&
+                driftRedBaseline.counts.expected === 283,
+            "⑤'",
+        );
         // ⑥ 回归保护：子集报告仍被拒收
         const subsetDir = fs.mkdtempSync(path.join(tmpRoot, "case-"));
         const subsetReport = path.join(subsetDir, "report.subset.json");
@@ -846,13 +1099,15 @@ function runSelftest() {
         });
         assertCase(subset.status === 2 && /E_MOCK_REPORT_SCOPE/.test(subsetOutput), "⑥");
         // ⑦ task-211：counts 与 sourceRun 不一致且**没有** $countsDerivation ⇒ 必须红（exit 1，点名两处数字）
-        const inconsistent = run("⑦ 标尺内部矛盾 ⇒ exit 1", {
+        const inconsistent = run("⑦ 标尺内部矛盾（--no-write-baseline）⇒ exit 1", {
             report: baseReport([], "e2e/mock/chat.spec.ts", {
                 expected: 283,
                 skipped: 1,
                 unexpected: 0,
                 flaky: 0,
             }),
+            // task-250：这三条钉的是「关掉计数自动跟随」时的硬红语义（丙默认会把它重写掉）。
+            extra: ["--no-write-baseline"],
             baseline: {
                 ...cleanBaseline,
                 sourceRun: "task-174：expected 281 / skipped 1 / failed 0 / flaky 0",
@@ -866,13 +1121,14 @@ function runSelftest() {
             "⑦",
         );
         // ⑧ 同一份数字，但带 $countsDerivation ⇒ WARN 并引用它，放行（exit 0）
-        const derived = run("⑧ 有 $countsDerivation ⇒ WARN + exit 0", {
+        const derived = run("⑧ 有 $countsDerivation（--no-write-baseline）⇒ WARN + exit 0", {
             report: baseReport([], "e2e/mock/chat.spec.ts", {
                 expected: 283,
                 skipped: 1,
                 unexpected: 0,
                 flaky: 0,
             }),
+            extra: ["--no-write-baseline"],
             baseline: {
                 ...cleanBaseline,
                 sourceRun: "task-174：expected 281 / skipped 1 / failed 0 / flaky 0",
@@ -911,13 +1167,14 @@ function runSelftest() {
             "⑨",
         );
         // ⑩ 历史夹具没有 sourceRun ⇒ 只 WARN「无法交叉核对」，不得红
-        const noSource = run("⑩ 无 sourceRun ⇒ WARN + exit 0", {
+        const noSource = run("⑩ 无 sourceRun（--no-write-baseline）⇒ WARN + exit 0", {
             report: baseReport([], "e2e/mock/chat.spec.ts", {
                 expected: 283,
                 skipped: 1,
                 unexpected: 0,
                 flaky: 0,
             }),
+            extra: ["--no-write-baseline"],
             baseline: cleanBaseline,
         });
         // Lead 2026-11-15：日志里「没判」与「判了且一致」必须是两句不同的话 ——
@@ -929,6 +1186,165 @@ function runSelftest() {
                 !/自洽轴通过/.test(noSource.output),
             "⑩",
         );
+        // ---------------- task-250（模型丙）：写基线的四个判据（负例 / 正例 / 幂等 / 纠错） ----------------
+        // 用**同一个目录**连续跑，才能断言「文件字节变没变」；--allow-stale-report 只隔离队友在途的 spec 噪声，
+        // 写路径真正要守的是「failed=0 才写」与「字节相同才不写」。
+        const writeDir = fs.mkdtempSync(path.join(tmpRoot, "write-"));
+        const writeReport = path.join(writeDir, "report.json");
+        const writeBaseline = path.join(writeDir, "baseline.json");
+        const writeHistory = path.join(writeDir, "history.json");
+        const writeCase = (name, exit, output, ok) => {
+            selftestCases.push({ name, exit, output, ok: Boolean(ok) });
+        };
+        const runWrite = (flags = ["--write-baseline"]) =>
+            spawnSync(
+                process.execPath,
+                [
+                    self,
+                    "--report",
+                    writeReport,
+                    "--baseline",
+                    writeBaseline,
+                    "--flaky-history",
+                    writeHistory,
+                    "--no-probe-procs",
+                    "--allow-stale-report",
+                    ...flags,
+                ],
+                { encoding: "utf8" },
+            );
+        const writeReportJson = (stats, specs) => {
+            fs.writeFileSync(
+                writeReport,
+                JSON.stringify({
+                    suites: [{ file: "e2e/mock/chat.spec.ts", specs, suites: [] }],
+                    stats,
+                }),
+            );
+        };
+        const readBaselineFile = () => fs.readFileSync(writeBaseline, "utf8");
+        const seedBaseline = () => {
+            fs.writeFileSync(
+                writeBaseline,
+                JSON.stringify({
+                    counts: { expected: 283, skipped: 1, failed: 0, flaky: 0 },
+                    skipNames: ["registered skip A"],
+                }),
+            );
+        };
+
+        // ⑪ 负例：failed≠0 ⇒ 拒写 + 点名 failed 清单 + **文件字节不变**
+        seedBaseline();
+        const refusedBefore = readBaselineFile();
+        writeReportJson(
+            { expected: 300, skipped: 2, unexpected: 2, flaky: 0 },
+            [
+                {
+                    title: "red case A",
+                    tests: [{ status: "unexpected", expectedStatus: "passed", results: [{ status: "failed" }] }],
+                },
+                {
+                    title: "red case B",
+                    tests: [{ status: "unexpected", expectedStatus: "passed", results: [{ status: "failed" }] }],
+                },
+                {
+                    title: "registered skip A",
+                    tests: [{ status: "skipped", expectedStatus: "skipped", results: [{ status: "skipped" }] }],
+                },
+            ],
+        );
+        const refused = runWrite();
+        const refusedOut = (refused.stdout ?? "") + (refused.stderr ?? "");
+        writeCase(
+            "⑪ failed≠0 ⇒ 拒写 + 列 failed 清单 + 文件不变",
+            refused.status,
+            refusedOut,
+            refused.status === 2 &&
+                /E_MOCK_BASELINE_WRITE_REFUSED/.test(refusedOut) &&
+                /red case A/.test(refusedOut) &&
+                /red case B/.test(refusedOut) &&
+                readBaselineFile() === refusedBefore,
+        );
+
+        // ⑫ 正例：failed=0 ⇒ 计数跟随实际收集数，sourceRun 可回溯
+        seedBaseline();
+        writeReportJson(
+            { expected: 300, skipped: 2, unexpected: 0, flaky: 0 },
+            [
+                {
+                    title: "registered skip A",
+                    tests: [{ status: "skipped", expectedStatus: "skipped", results: [{ status: "skipped" }] }],
+                },
+            ],
+        );
+        const written = runWrite();
+        const writtenOut = (written.stdout ?? "") + (written.stderr ?? "");
+        const afterFirst = JSON.parse(readBaselineFile());
+        writeCase(
+            "⑫ failed=0 ⇒ 写计数 + sourceRun 带命令/时刻/HEAD/sha256/收集数",
+            written.status,
+            writtenOut,
+            written.status === 0 &&
+                afterFirst.counts.expected === 300 &&
+                afterFirst.counts.skipped === 2 &&
+                afterFirst.counts.failed === 0 &&
+                afterFirst.counts.flaky === 0 &&
+                /命令 mise run test:mock/.test(afterFirst.sourceRun) &&
+                /HEAD [0-9a-f]{7,}/.test(afterFirst.sourceRun) &&
+                /specs sha256 [0-9a-f]{16}/.test(afterFirst.sourceRun) &&
+                /expected=300/.test(afterFirst.sourceRun) &&
+                /skipped=2/.test(afterFirst.sourceRun),
+        );
+
+        // ⑬ 幂等：同一跑次连写两次 ⇒ 字节相同（第二次必须说「字节相同」）
+        const firstBytes = readBaselineFile();
+        const again = runWrite();
+        const againOut = (again.stdout ?? "") + (again.stderr ?? "");
+        writeCase(
+            "⑬ 同跑次连写两次 ⇒ 字节相同",
+            again.status,
+            againOut,
+            again.status === 0 && /字节相同/.test(againOut) && readBaselineFile() === firstBytes,
+        );
+
+        // ⑭ 纠错：手改 expected=9999（failed 仍为 0）⇒ 下次运行纠正回实际值，且字节复原
+        const tampered = JSON.parse(firstBytes);
+        tampered.counts.expected = 9999;
+        fs.writeFileSync(writeBaseline, JSON.stringify(tampered, null, 4) + "\n");
+        const corrected = runWrite([]);
+        const correctedOut = (corrected.stdout ?? "") + (corrected.stderr ?? "");
+        const afterCorrect = JSON.parse(readBaselineFile());
+        writeCase(
+            "⑭ 手改 expected=9999 ⇒ 下次运行纠正回实际值",
+            corrected.status,
+            correctedOut,
+            corrected.status === 0 &&
+                afterCorrect.counts.expected === 300 &&
+                /9999 → 300/.test(correctedOut) &&
+                readBaselineFile() === firstBytes,
+        );
+        // ⑮ 默认模式（不加任何旗标）下 failed≠0 ⇒ 文件一个字节都不动，且明说「跳过」
+        const beforeFifteen = readBaselineFile();
+        writeReportJson(
+            { expected: 300, skipped: 2, unexpected: 1, flaky: 0 },
+            [
+                {
+                    title: "red case C",
+                    tests: [{ status: "unexpected", expectedStatus: "passed", results: [{ status: "failed" }] }],
+                },
+            ],
+        );
+        const plainRed = runWrite([]);
+        const plainRedOut = (plainRed.stdout ?? "") + (plainRed.stderr ?? "");
+        writeCase(
+            "⑮ 默认模式 failed≠0 ⇒ 不写 + 明说跳过 + 文件不变",
+            plainRed.status,
+            plainRedOut,
+            plainRed.status === 1 &&
+                /计数自动跟随\*\*跳过\*\*/.test(plainRedOut) &&
+                readBaselineFile() === beforeFifteen,
+        );
+
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -986,16 +1402,14 @@ function main() {
         );
         return 2;
     }
-    // task-211：标尺自洽（counts.expected ↔ sourceRun 文本）。
-    // 红/黄/绿三态见 `inspectBaselineCounts`：无 derivation 的不一致必须红，有 derivation 才 WARN 放行。
-    const baselineConsistency = inspectBaselineCounts(baseline, options.baseline);
-    if (baselineConsistency.status === "error") {
-        for (const line of baselineConsistency.lines) console.error(line);
-        return 1;
-    }
-    // ok 态也要打印（`MOCK_BASELINE_COUNTS_CONSISTENT: 自洽轴通过`）——静默会被读成「没判」。
-    for (const line of baselineConsistency.lines) console.log(line);
-    const subsetProblem = rejectSubsetReport(options.report, summary, baseline);
+    // 50% 启发式的分母来自基线计数 —— 标尺自身矛盾（counts 与 sourceRun 对不上）时那个数
+    // 根本不可信（实测：把 expected 手改成 9999 后，一份 302 条的合法报告被当成子集拒掉，exit 2）。
+    // 所以：文件名那道门恒生效；分母只在标尺自洽时才用。
+    const countsTrustworthy = inspectBaselineCounts(baseline, options.baseline).status !== "error";
+    const baselineForScope = options.writeBaseline || !countsTrustworthy ? { counts: { expected: 0, skipped: 0 } } : baseline;
+    const subsetProblem = options.report.endsWith(".subset.json")
+        ? `子集报告不能用来算基线：${options.report}`
+        : rejectSubsetReport(options.report, summary, baselineForScope);
     if (subsetProblem) {
         console.error(`E_MOCK_REPORT_SCOPE: ${subsetProblem}`);
         console.error(
@@ -1035,7 +1449,33 @@ function main() {
             `[check-mock-baseline] ${staleness.suspicious.length} spec(s) newer by mtime but clean and committed before the report ⇒ checkout mtime artifacts (not red)`,
         );
     }
-    const { problems } = compareWithBaseline(summary, baseline);
+    // task-250（模型丙）：写基线走独立出口 —— 输入合格性（子集/陈旧/flaky 基线）已经在上面判完了，
+    // 这里只负责「跟随计数」与「failed=0 才写」，不再走 drift 比对。
+    if (options.writeBaseline) return runWriteBaseline({ options, report, summary, baseline });
+
+    // 丙的默认行为：failed=0 ⇒ 计数就地跟随实际收集数（--no-write-baseline 可退出该行为）。
+    let effectiveBaseline = baseline;
+    if (!options.noWriteBaseline) {
+        effectiveBaseline = maybeAutoUpdateCounts({ options, report, summary, baseline }).baseline;
+    }
+
+    // task-250：自洽轴（task-211）挪到「计数自动跟随」之后 —— 丙的判据是「计数永远跟实际值」，
+    // 所以「counts 与 sourceRun 不一致」在 failed=0 时会被这次运行当场重写掉，不该再当硬红；
+    // 只有 --no-write-baseline（或 failed≠0 不写）时，它才回到原来的硬红语义。
+    // task-211：标尺自洽（counts.expected ↔ sourceRun 文本）。
+    // 红/黄/绿三态见 `inspectBaselineCounts`：无 derivation 的不一致必须红，有 derivation 才 WARN 放行。
+    const baselineConsistency = inspectBaselineCounts(effectiveBaseline, options.baseline);
+    if (baselineConsistency.status === "error" && !options.writeBaseline) {
+        for (const line of baselineConsistency.lines) console.error(line);
+        return 1;
+    }
+    // ok 态也要打印（`MOCK_BASELINE_COUNTS_CONSISTENT: 自洽轴通过`）——静默会被读成「没判」。
+    for (const line of baselineConsistency.lines) console.log(line);
+    // task-250：写基线的模式下，**不能用基线的计数**去判「这是不是子集跑」——
+    // 模型丙的前提正是「基线数字可能落后几百条」，拿它当分母会把一份全量报告判成子集
+    // （实测：把 expected 手改成 9999 后，一份 302 条的合法报告被 50% 启发式拒掉）。
+    // 写模式只保留与计数无关的那道：文件名是 .subset.json 就不是全量跑。
+    const { problems } = compareWithBaseline(summary, effectiveBaseline);
     const line =
         `[check-mock-baseline] expected=${summary.expected} skipped=${summary.skipped} ` +
         `failed=${summary.failed} flaky=${summary.flaky} skips=${summary.skipNames.length}`;

@@ -8,11 +8,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+    applyBaselineCounts,
+    buildSourceRunText,
     compareWithBaseline,
     evaluateFlakyPolicy,
     inspectBaselineCounts,
     parseCountsFromSourceRun,
     summarizeReport,
+    writeBaselineIfChanged,
 } from "./check-mock-baseline.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./check-mock-baseline.mjs", import.meta.url));
@@ -663,4 +666,65 @@ test("inspectBaselineCounts：缺 counts.expected ⇒ error（比对会退化成
     const verdict = inspectBaselineCounts({ sourceRun: "expected 291" });
     assert.equal(verdict.status, "error");
     assert.match(verdict.lines.join("\n"), /E_MOCK_BASELINE_COUNTS_MISSING/);
+});
+
+
+// ---------------- task-250（模型丙）：写基线路径的纯函数判据 ----------------
+
+test("buildSourceRunText：人可回溯到具体跑次，且四个数能被自洽轴解析回来", () => {
+    const text = buildSourceRunText({
+        summary: { expected: 544, skipped: 70, failed: 0, flaky: 0 },
+        fingerprint: { files: 140, sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" },
+        collectedAt: "2026-11-15T12:00:00.000Z",
+        head: "1e95b75",
+        reportPath: "packages/ui/e2e/.mock-report.json",
+        repoRoot: "/repo",
+    });
+    // ③ 记录来源：命令 + 采集时刻 + HEAD + spec sha256 + 收集数，缺一条就回溯不到跑次
+    assert.match(text, /mise run test:mock/);
+    assert.match(text, /采集 2026-11-15T12:00:00\.000Z/);
+    assert.match(text, /HEAD 1e95b75/);
+    assert.match(text, /specs sha256 0123456789abcdef（140 文件）/);
+    // 自洽轴（task-211）从 sourceRun 里解析四个数：写进去的数必须能被它读回来
+    const parsed = parseCountsFromSourceRun(text);
+    assert.deepEqual(parsed, { expected: 544, skipped: 70, failed: 0, flaky: 0 });
+});
+
+test("applyBaselineCounts：只动 counts/sourceRun/generatedAt，其余键原样保留", () => {
+    const baseline = {
+        $comment: "keep me",
+        generatedAt: "2026-11-13",
+        skipNames: ["a"],
+        counts: { expected: 291, skipped: 68, failed: 0, flaky: 0 },
+    };
+    const next = applyBaselineCounts({
+        baseline,
+        summary: { expected: 544, skipped: 70, failed: 0, flaky: 0 },
+        sourceRun: "src",
+        collectedAt: "2026-11-15T12:00:00.000Z",
+    });
+    assert.deepEqual(next.counts, { expected: 544, skipped: 70, failed: 0, flaky: 0 });
+    assert.equal(next.$comment, "keep me");
+    assert.deepEqual(next.skipNames, ["a"]);
+    assert.equal(next.generatedAt, "2026-11-15");
+    assert.equal(next.sourceRun, "src");
+});
+
+test("writeBaselineIfChanged：同内容第二次不写（幂等），内容变了才落盘", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mock-baseline-write-"));
+    try {
+        const file = path.join(dir, "baseline.json");
+        const first = writeBaselineIfChanged(file, { counts: { expected: 1 } });
+        assert.equal(first.changed, true);
+        const bytes = fs.readFileSync(file, "utf8");
+        const second = writeBaselineIfChanged(file, { counts: { expected: 1 } });
+        assert.equal(second.changed, false);
+        assert.equal(second.text, bytes);
+        assert.equal(fs.readFileSync(file, "utf8"), bytes);
+        const third = writeBaselineIfChanged(file, { counts: { expected: 2 } });
+        assert.equal(third.changed, true);
+        assert.match(fs.readFileSync(file, "utf8"), /"expected": 2/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });
