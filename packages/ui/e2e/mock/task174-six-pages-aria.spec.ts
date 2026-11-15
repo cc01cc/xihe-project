@@ -12,7 +12,7 @@ import { dirname, resolve, sep } from "node:path";
 
 import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
-import { EXPECT_TIMEOUT_MS } from "../timeouts";
+import { EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "task174-six";
@@ -54,7 +54,11 @@ test.describe("task-174 判据②：六页面容器行与 aria-current", () => {
     test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, "workspaces/[^/]+/environment"] });
 
     test("六页面：每页 1 行/容器 + 分层 aria-current + 截图", async ({ page }) => {
-        test.setTimeout(180_000);
+        // 整测预算 = 每页预算 × 页数（task-236）。原先是一个写死的 180 秒字面量：一是硬编码，
+        // 二是 `mise run lint:e2e` 的 timeout-budget 门只认 `e2e/timeouts.ts` 的共享常量（豁免硬上限 60 s，
+        // 加 `timeout-exempt` 标记也过不去）⇒ 改成「6 页 × LONG_TIMEOUT_MS」，数值来源自解释，
+        // 同时保持原有的 180 s 总量（6 × 30 s），单跑行为不变。
+        test.setTimeout(LONG_TIMEOUT_MS * PAGES.length);
         mkdirSync(OUT_DIR, { recursive: true });
         await page.setViewportSize({ width: 1920, height: 1080 });
         const rows: Record<string, unknown>[] = [];
