@@ -13,6 +13,8 @@
  */
 
 import { watch } from "vue";
+
+import { logger } from "../../../../lib/logger";
 import { useRouter } from "vue-router";
 
 export interface ComposeDeeplink {
@@ -37,7 +39,7 @@ const WARN_PREFIX = "[compose-deeplink]";
 
 function warn(reason: string, detail?: unknown): void {
     // BL-339：失败一律「静默忽略 + 一条 warn」，不抛错、不弹窗打断用户。
-    console.warn(`${WARN_PREFIX} ${reason}`, detail ?? "");
+    logger.warn(`${WARN_PREFIX} ${reason}`, detail ?? "");
 }
 
 /** base64url → UTF-8 文本；非法输入返回 `null`（不抛）。 */

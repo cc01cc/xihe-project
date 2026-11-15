@@ -1343,7 +1343,7 @@ function warnDroppedRecipients(
         roster === null
             ? "名册尚未加载 participants === null（不是「名册里没这些人」）"
             : `名册已加载：${roster.length} 行 / 可用候选 ${candidateCount} 个`;
-    console.warn(
+    logger.warn(
         `[compose-deeplink] ${field} 丢弃 ${dropped.length} 个 id（${state}）：${dropped.join(", ")}`,
     );
 }
@@ -1352,7 +1352,7 @@ function warnDroppedRecipients(
  * task-113 A 步：名册**还没到**不是「丢弃」，是「还没轮到」—— 单独一条 warn，别和「名册里没这人」混。
  */
 function warnRosterNotReady(field: "to" | "cc", wanted: string[]): void {
-    console.warn(
+    logger.warn(
         `[compose-deeplink] ${field} 暂不写入：名册尚未加载（participants === null）⇒ 保留深链参数，名册到达后重试。目标 ${wanted.length} 个 id：${wanted.join(", ")}`,
     );
 }

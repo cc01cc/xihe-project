@@ -98,6 +98,7 @@ import type {
     UserQuestionView,
 } from "../types/userQuestion";
 import { clearTabWorkspace, readTabWorkspaceId } from "../lib/workspaceContext";
+import { logger } from "../lib/logger";
 
 const API_BASE = "/api/v1";
 
@@ -1022,14 +1023,14 @@ function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
     if (Array.isArray(value) && value.length === 0) return null;
     const record = asRecord(value);
     if (!record || Array.isArray(record) || !Array.isArray(record.advisors)) {
-        console.warn("[agents] principal hooks malformed; treated as no subscriptions");
+        logger.warn("[agents] principal hooks malformed; treated as no subscriptions");
         return null;
     }
     const advisors: AgentPrincipalHookAdvisor[] = [];
     for (const entry of record.advisors) {
         const advisor = asRecord(entry);
         if (!advisor || typeof advisor.kind !== "string" || advisor.kind === "") {
-            console.warn("[agents] principal hooks advisor malformed; treated as no subscriptions");
+            logger.warn("[agents] principal hooks advisor malformed; treated as no subscriptions");
             return null;
         }
         const on = advisor.on;
@@ -1037,7 +1038,7 @@ function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
             on !== undefined &&
             (!Array.isArray(on) || on.some((item) => typeof item !== "string"))
         ) {
-            console.warn(
+            logger.warn(
                 "[agents] principal hooks advisor 'on' malformed; treated as no subscriptions",
             );
             return null;
@@ -1062,7 +1063,7 @@ function normalizeWorkspaceAgentMemory(value: unknown): WorkspaceAgentMemory | n
         record.updatedAt === "" ||
         typeof record.content !== "string"
     ) {
-        console.warn("[agents] memory row malformed; skipped");
+        logger.warn("[agents] memory row malformed; skipped");
         return null;
     }
     const origin =
@@ -1085,11 +1086,11 @@ function normalizeApprovalHooks(value: unknown): ApprovalHooksSection | undefine
     if (!record) return undefined;
     if (record.version !== 1) {
         // 未知版本 = 契约前进了而 UI 没跟上：显式告警，不渲染猜测的形状。
-        console.warn(`[approval] unknown policySummary hooks version: ${String(record.version)}`);
+        logger.warn(`[approval] unknown policySummary hooks version: ${String(record.version)}`);
         return undefined;
     }
     if (!Array.isArray(record.advisors)) {
-        console.warn("[approval] policySummary hooks section malformed: advisors missing");
+        logger.warn("[approval] policySummary hooks section malformed: advisors missing");
         return undefined;
     }
     const advisors: ApprovalGuardAdvisor[] = [];
@@ -1104,7 +1105,7 @@ function normalizeApprovalHooks(value: unknown): ApprovalHooksSection | undefine
             typeof advisor.at !== "string" ||
             advisor.at === ""
         ) {
-            console.warn("[approval] policySummary hooks advisor malformed; dropping the section");
+            logger.warn("[approval] policySummary hooks advisor malformed; dropping the section");
             return undefined;
         }
         advisors.push({
@@ -3181,7 +3182,7 @@ function normalizeSessionListPayload(payload: unknown): SessionListResponse {
         } catch (error) {
             const field = error instanceof InvalidSessionProjectionError ? error.field : "unknown";
             const rowId = asRecord(asRecord(raw)?.session)?.id ?? asRecord(raw)?.id ?? "<unknown>";
-            console.warn("[sessions] dropping malformed row", {
+            logger.warn("[sessions] dropping malformed row", {
                 field,
                 rowId,
                 message: error instanceof Error ? error.message : String(error),
@@ -3688,7 +3689,7 @@ export const api = {
             "/agent-principals",
         );
         if (!Array.isArray(raw.principals)) {
-            console.warn("[bindings] agent principal envelope malformed; treated as empty");
+            logger.warn("[bindings] agent principal envelope malformed; treated as empty");
             return [];
         }
         return raw.principals.flatMap((row) => {
@@ -3713,7 +3714,7 @@ export const api = {
             "/agent-principals",
         );
         if (!Array.isArray(raw.principals)) {
-            console.warn("[agent-principals] agent principal envelope malformed; treated as empty");
+            logger.warn("[agent-principals] agent principal envelope malformed; treated as empty");
             return [];
         }
         return raw.principals.flatMap((row) => {
@@ -3751,7 +3752,7 @@ export const api = {
         return raw.agents.map((agent) => {
             const snapshot = agent.permissionsSnapshot;
             if (!Array.isArray(snapshot)) {
-                console.warn("[agents] permissionsSnapshot missing; treated as empty");
+                logger.warn("[agents] permissionsSnapshot missing; treated as empty");
             }
             return {
                 ...(agent as unknown as WorkspaceAgentBinding),
@@ -3785,7 +3786,7 @@ export const api = {
             `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories${query}`,
         );
         if (!Array.isArray(raw?.memories)) {
-            console.warn("[agents] memory envelope malformed; treated as empty");
+            logger.warn("[agents] memory envelope malformed; treated as empty");
             return [];
         }
         return raw.memories
@@ -3826,7 +3827,7 @@ export const api = {
         // 两种信封都接受，字段同时兼容 roleName/roleDisplayName 与 name/displayName。
         const rows = raw?.items ?? raw?.bindings;
         if (!Array.isArray(rows)) {
-            console.warn("[agents] role envelope malformed; treated as empty");
+            logger.warn("[agents] role envelope malformed; treated as empty");
             return [];
         }
         return rows.flatMap((row) => {
@@ -3921,7 +3922,7 @@ export const api = {
         );
         const rows = raw?.items ?? raw?.bindings;
         if (!Array.isArray(rows)) {
-            console.warn("[agents] skill envelope malformed; treated as empty");
+            logger.warn("[agents] skill envelope malformed; treated as empty");
             return [];
         }
         return rows.flatMap((row) => {

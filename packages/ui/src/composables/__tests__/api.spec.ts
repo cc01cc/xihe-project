@@ -212,7 +212,6 @@ describe("silent refresh on 401 (PLAN-0546)", () => {
                 mockJson(200, { accessToken: "new-access", refreshToken: "new-refresh" }),
             )
             .mockResolvedValueOnce(mockJson(200, []));
-        console.log("[specdbg] after set:", localStorage.getItem("xihe-refresh-token"));
 
         const sessions = await api.getSessions();
 

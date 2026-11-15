@@ -472,6 +472,17 @@ description = "Run UI lint (oxlint)"
 dir = "packages/ui"
 alias = "lint:ui"
 
+# task-171 ②（D-1532 ③「逐步规范化减少 warning」）：warnings ratchet 门。
+# 判据 = oxlint warnings 总数不得超过 packages/ui/oxlint-warning-baseline.json 的 total；
+# 超出时打印「新增了哪些族、各几条」，errors 恒为硬失败。
+# **默认 report-only（exit 0）**，只有显式 `-- --enforce` 才在超出基线时 exit 1 ——
+# 接进 lint/validate 属 Lead 裁定（本卡只提供可跑的门与读数，不自行接线）。
+# 基线只许变小：`node packages/ui/scripts/check-lint-warnings.mjs --write-baseline` 收账。
+# 配套登记门：`node packages/ui/scripts/check-lint-rule-registry.mjs`（off 规则必须有登记行，exit 1 = 缺行）。
+[tasks."check:lint-warnings"]
+run = "node packages/ui/scripts/check-lint-warnings.mjs"
+description = "UI oxlint warnings ratchet (report-only; --enforce to fail past baseline). Pair gate: node packages/ui/scripts/check-lint-rule-registry.mjs"
+
 [tasks."lint:agent"]
 run = "uv run ruff check && uv run mypy src/"
 description = "Run Agent lint (ruff + mypy)"

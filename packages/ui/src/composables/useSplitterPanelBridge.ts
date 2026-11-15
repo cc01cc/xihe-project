@@ -1,5 +1,7 @@
 import { onBeforeUnmount, ref, watch, type Ref } from "vue";
 
+import { logger } from "../lib/logger";
+
 /**
  * PLAN-0753 T3: integration layer between reka's Splitter primitives and our
  * hand-rolled resize contracts (PLAN-0626 one-frame-behind fix, PLAN-0582
@@ -123,7 +125,7 @@ export function useSplitterPanelBridge(options: SplitterPanelBridgeOptions) {
         dropped.value += 1;
         if (warnedDrop) return;
         warnedDrop = true;
-        console.warn(
+        logger.warn(
             "[splitter-bridge] " +
                 options.handleId +
                 ": " +

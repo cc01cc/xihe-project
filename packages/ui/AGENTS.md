@@ -37,6 +37,178 @@ pnpm run build
 
 `test:unit -- ...` 后接实际测试文件或 Vitest 参数。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。
 
+### lint 规则豁免登记 + warnings ratchet（`task-171`，2026-11-15；裁定 `D-1532 ③`）
+
+**为什么有这一节**：用户裁定「直接 `off` 是掩耳盗铃，前面的十余条 style `off` 也不合适 ⇒ 要逐步规范化减少 warning」。`one-var` 的 `off` 本身是对的（规则要求合并声明，`oxfmt` 是一行一声明，修代码等于让代码变差），**错的是一句 `off` 没有登记**。本节 = 全部 `off` 的登记册 + 反「掩耳盗铃」的机器门。
+
+**判据（两条，都能跑）**：
+
+1. **登记条数 == `off` 条数**：在 `packages/ui` 跑 `node scripts/check-lint-rule-registry.mjs` exit 0（不一致会逐条点名「未登记」与「登记已过期」）。**新增 `off` 必须先加登记行**，否则这条门红。
+2. **warnings 只许降不许升**：`node scripts/check-lint-warnings.mjs` 打印「warnings N / 基线 B / Δ」；`--enforce` 时超出基线 exit 1 并点名新增了哪些族。**默认 report-only**（接线由 Lead 裁）。基线 `oxlint-warning-baseline.json` 只由 `--write-baseline` 生成/收缩、勿手改；**基线只许变小**，变大必须在卡面写原因。
+
+<!-- lint-rule-registry:begin -->
+
+**当前登记 131 条`off`** = 主块 55 + 文件级/工具面 5 + 测试块 72（71 vitest + `no-console`）。「实测命中」= 把该规则**临时置 warn** 后一次全包 lint 的条数（oxlint 1.83.x / 1353 文件 / 2026-11-15；跑法：生成临时配置 + `pnpm exec oxlint . -c <tmp> -f json`）—— 它是「恢复这条规则要付多少成本」的读数，**不是**「该不该恢复」的裁定。
+
+#### 主块 55 条
+
+| 规则 | 实测命中 | 为什么 off（依据） | 类 |
+| --- | ---: | --- | --- |
+| `no-underscore-dangle` | 114 | 允许 __esModule、_internal* 这类约定前缀 | S |
+| `no-useless-constructor` | 1 | 1 处是有意保留的空构造（子类占位） | Z |
+| `sort-keys` | 8996 | 键序按语义分组（id → 必填 → 可选）；oxfmt 不排序键 ⇒ 规则只带来 8996 处重排 | F |
+| `sort-imports` | 2998 | 导入按语义分组（vue → 第三方 → 内部 → 相对），字母序会打散分组 | F |
+| `func-style` | 4227 | function 与箭头混用是常态（4217 处），无统一取向 | S |
+| `no-ternary` | 2283 | 三元用于内联表达式与模板；与 unicorn/prefer-ternary 互为反向 ⇒ 两者都不强制 | S |
+| `no-magic-numbers` | 9995 | 数值字面量在颜色/尺寸/超时里就是语义（9995 处），命名常量表尚未建立 | S |
+| `no-nested-ternary` | 101 | 同上（101 处），且与 unicorn/no-nested-ternary 重复 | S |
+| `arrow-body-style` | 11 | 与 oxfmt 输出一致（单表达式直接返回） | F |
+| `capitalized-comments` | 3450 | 中文注释没有大小写概念（3450 处） | S |
+| `curly` | 3135 | 单行 if (x) return; 是主流写法（3135 处），强制花括号要整仓重排 | F |
+| `id-length` | 1365 | i/j/el/x 等短名在循环与数学表达里是惯用法（1365 处） | S |
+| `init-declarations` | 195 | 允许 let x; 先声明后赋值（195 处） | S |
+| `max-statements` | 1657 | 函数长度由 review 把关，不做机械化条数上限（1657 处） | S |
+| `no-await-in-loop` | 585 | 串行 await 常是语义要求（顺序依赖、限流），并行化会改行为（585 处） | S |
+| `no-continue` | 131 | guard-clause 循环里 continue 比嵌套更清楚（131 处） | S |
+| `no-implicit-coercion` | 33 | !!x / +x 惯用（33 处） | S |
+| `one-var` | 12448 | 与 oxfmt 方向相反：本仓一行一声明（printWidth 100 产物），规则要求合并声明（12448 处）；裁定 D-1532 ③ | F |
+| `prefer-destructuring` | 281 | 解构与否按可读性取舍（281 处） | S |
+| `prefer-exponentiation-operator` | 0 | 当前 0 命中 ⇒ 保留 off 无成本 | Z |
+| `prefer-named-capture-group` | 238 | 手写解析正则用具名捕获组会加噪音（238 处） | S |
+| `prefer-template` | 524 | + 拼接多用于空值兜底（524 处），模板字符串不总是更清楚 | S |
+| `import/no-unassigned-import` | 10 | 需要副作用导入（样式、polyfill；10 处） | S |
+| `import/no-named-export` | 1791 | 仓库约定具名导出；本规则要求默认导出，方向相反（1791 处） | S |
+| `import/prefer-default-export` | 52 | 同上相反（52 处）⇒ 两者都不强制 | S |
+| `import/no-named-as-default-member` | 0 | 当前 0 命中 | Z |
+| `import/consistent-type-specifier-style` | 547 | type 说明符 inline/exports 两种风格混用（547 处） | S |
+| `import/exports-last` | 638 | 导出靠近定义，不强制堆到文件末尾（638 处） | S |
+| `import/group-exports` | 1425 | 同上（1425 处） | S |
+| `no-duplicate-imports` | 159 | 同一意图已由 import/no-duplicates: error 把守（159 处为合并同源 import 的误报） | S |
+| `import/no-nodejs-modules` | 406 | e2e/** 与 scripts/** 必须用 Node 内置模块（406 处） | S |
+| `unicorn/filename-case` | 895 | 文件名按 Vue/TS 惯例混用（组件 PascalCase、composable camel，895 处） | S |
+| `unicorn/no-null` | 3315 | wire 契约用 null；强制 undefined 会与 API 语义冲突（3315 处） | S |
+| `unicorn/prefer-global-this` | 216 | 浏览器/Node/测试三环境差异（216 处） | S |
+| `unicorn/no-nested-ternary` | 94 | 与 eslint/no-nested-ternary 同义重复 | S |
+| `unicorn/catch-error-name` | 302 | err/e 是惯用名（302 处） | S |
+| `unicorn/consistent-existence-index-check` | 45 | indexOf(...) !== -1 与 includes 混用（45 处） | S |
+| `unicorn/no-await-expression-member` | 180 | (await x).y 可读（180 处） | S |
+| `unicorn/no-zero-fractions` | 15 | 1.0 等写法在数值常量里有意义（15 处） | S |
+| `unicorn/numeric-separators-style` | 311 | 长数字分组风格未统一（311 处） | S |
+| `unicorn/prefer-array-find` | 12 | filter(...)[0] 与 find 混用（12 处） | S |
+| `unicorn/prefer-optional-catch-binding` | 0 | 当前 0 命中 | Z |
+| `unicorn/prefer-response-static-json` | 50 | Response.json 与手写 new Response(JSON.stringify(...)) 混用（50 处） | S |
+| `unicorn/prefer-spread` | 68 | concat/apply 与展开混用（68 处） | S |
+| `unicorn/prefer-ternary` | 12 | 与 eslint/no-ternary 相反 ⇒ 两者都不强制 | S |
+| `unicorn/switch-case-braces` | 201 | case 里是否加块按需要（201 处） | S |
+| `unicorn/consistent-function-scoping` | 231 | 内部函数就地定义便于读（231 处） | S |
+| `unicorn/no-array-sort` | 84 | 就地 sort() 在局部副本上安全且更直接（84 处） | S |
+| `unicorn/no-useless-fallback-in-spread` | 8 | ...(x ?? []) 防御写法（8 处） | S |
+| `unicorn/prefer-add-event-listener` | 6 | Vue 模板 @event 之外的赋值写法（6 处） | S |
+| `typescript/array-type` | 405 | T[] 与 Array<T> 混用（405 处） | S |
+| `typescript/consistent-generic-constructors` | 0 | 当前 0 命中 | Z |
+| `typescript/consistent-type-definitions` | 92 | interface 与 type 按语义选择（92 处） | S |
+| `typescript/method-signature-style` | 22 | 方法签名简写与属性函数混用（22 处） | S |
+| `typescript/no-misused-new` | 1 | 1 处为声明合并必需 | Z |
+
+- **类 F · 与格式化器轴冲突**：oxfmt 已接管该面（或规则会让代码变差）。恢复条件 = 先做一次性机械重排并单独提交（diff 全审），且用 2 例样本证明 oxfmt 不会反向改写；在此之前恢复只会把千百处风格翻转塞进每条 diff。
+- **类 S · 风格取向（仓库与规则方向相反，或规则对互斥）**：恢复条件 = 先定仓库口径并写进本指南（含互斥对处理），再一次性重排。互斥对：no-ternary ↔ unicorn/prefer-ternary、import/no-named-export ↔ import/prefer-default-export —— 任一侧单独打开都会让存量大面积红，须同时定口径。
+- **类 Z · 当前 0 命中**：恢复条件 = 直接打开（零存量成本），同批删掉本行即可；打开后若命中非 0，按类 S 处理。
+
+#### 文件级/工具面 5 条（第一波 `no-console` 收敛的产物，`task-171 ③`，2026-11-15）
+
+`no-console` 不是"风格偏好"，而是**规则作用域与代码性质不匹配**：CLI/测试/E2E 的 `stdout` 就是它们的输出接口，`no-console` 在那里恒误报。**产品面（`src/**` 非测试非工具）不豁免** —— 那 19 处已按 ③ 逐个改成 `logger.warn`。
+
+| 规则 | 作用域（`files`） | 实测命中 | 为什么 off | 类 |
+| --- | --- | ---: | --- | --- |
+| `no-console` | `e2e/**`、`scripts/**`、`src/**/__poc__/**`、`vite.config.ts` | 217 | 这四类都是脚本/构建配置，控制台输出就是它们的**接口**（E2E 诊断、生成器报告、poc 运行器、vite 配置打印） | S |
+| `no-console` | `src/lib/logger.ts` | 3 | **logger 的实现**本身要落到 `console.*`（`emit` 里的三元选函数）；禁它等于禁掉日志落点 | S |
+| `no-console` | `src/**/__tests__/**`、`*.spec.ts`、`*.test.ts` | 5 | 测试里的 `console.log` 是失败现场诊断（如 `[specdbg]`），不进产品包 | V |
+| `no-console` | `src/test-utils/**` | 1 | 测试夹具的告警（`i18nKeys` 缺键提示），同为诊断面 | V |
+| `unicorn/prefer-dom-node-text-content` | `e2e/real/**`、`e2e/mock/**` | 21 | E2E 断言常比对 `textContent`；该规则要求 `innerText`，与既有断言口径冲突 | S |
+
+#### 测试块 72 条（`files: ["src/**/__tests__/**", "src/**/*.spec.ts", "src/**/*.test.ts"]`）
+
+- **类 V · 测试专用块**：只作用于 src/**/__tests__/**、src/**/*.spec.ts、src/**/*.test.ts；该块只阻断 vitest/require-mock-type-parameters 与 vitest/require-to-throw-message 两条（见配置），其余全部不强制。恢复条件 = 开始收敛测试风格时逐条打开（当前全部 0 命中 ⇒ 恢复零成本，同 Z）。
+
+逐条登记（全部 0 命中）：
+
+```text
+no-console
+vitest/consistent-each-for
+vitest/consistent-test-filename
+vitest/consistent-test-it
+vitest/consistent-vitest-vi
+vitest/expect-expect
+vitest/hoisted-apis-on-top
+vitest/max-expects
+vitest/max-nested-describe
+vitest/no-alias-methods
+vitest/no-commented-out-tests
+vitest/no-conditional-expect
+vitest/no-conditional-in-test
+vitest/no-conditional-tests
+vitest/no-disabled-tests
+vitest/no-duplicate-hooks
+vitest/no-focused-tests
+vitest/no-hooks
+vitest/no-identical-title
+vitest/no-import-node-test
+vitest/no-importing-vitest-globals
+vitest/no-interpolation-in-snapshots
+vitest/no-large-snapshots
+vitest/no-mocks-import
+vitest/no-restricted-matchers
+vitest/no-restricted-vi-methods
+vitest/no-standalone-expect
+vitest/no-test-prefixes
+vitest/no-test-return-statement
+vitest/no-unneeded-async-expect-function
+vitest/padding-around-after-all-blocks
+vitest/padding-around-test-blocks
+vitest/prefer-called-exactly-once-with
+vitest/prefer-called-once
+vitest/prefer-called-times
+vitest/prefer-called-with
+vitest/prefer-comparison-matcher
+vitest/prefer-describe-function-title
+vitest/prefer-each
+vitest/prefer-equality-matcher
+vitest/prefer-expect-assertions
+vitest/prefer-expect-resolves
+vitest/prefer-expect-type-of
+vitest/prefer-hooks-in-order
+vitest/prefer-hooks-on-top
+vitest/prefer-import-in-mock
+vitest/prefer-importing-vitest-globals
+vitest/prefer-lowercase-title
+vitest/prefer-mock-promise-shorthand
+vitest/prefer-mock-return-shorthand
+vitest/prefer-snapshot-hint
+vitest/prefer-spy-on
+vitest/prefer-strict-boolean-matchers
+vitest/prefer-strict-equal
+vitest/prefer-to-be-falsy
+vitest/prefer-to-be-object
+vitest/prefer-to-be-truthy
+vitest/prefer-to-be
+vitest/prefer-to-contain
+vitest/prefer-to-have-been-called-times
+vitest/prefer-to-have-length
+vitest/prefer-todo
+vitest/require-awaited-expect-poll
+vitest/require-hook
+vitest/require-local-test-context-for-concurrent-snapshots
+vitest/require-test-timeout
+vitest/require-top-level-describe
+vitest/valid-describe-callback
+vitest/valid-expect-in-promise
+vitest/valid-expect
+vitest/valid-title
+vitest/warn-todo
+```
+
+<!-- lint-rule-registry:end -->
+
 ### UI 单测稳定性判据（2026-11-11 实测基线）
 
 - **判据**：同 commit、同机、`CI=1`、串行连跑 **3 轮** —— ①`Test Files`/`Tests` 计数一致 ②`failed` 三轮恒 0 ③`skipped` 恒等 ④`Duration` 极差 ≤5%。四条同时满足才叫"本机稳定"，**一次全绿不算**。

@@ -76,6 +76,24 @@
             }
         },
         {
+            "files": ["e2e/**", "scripts/**", "src/**/__poc__/**", "vite.config.ts"],
+            "rules": {
+                "no-console": "off"
+            }
+        },
+        {
+            "files": ["src/test-utils/**"],
+            "rules": {
+                "no-console": "off"
+            }
+        },
+        {
+            "files": ["src/lib/logger.ts"],
+            "rules": {
+                "no-console": "off"
+            }
+        },
+        {
             "files": ["src/**/__tests__/**", "src/**/*.spec.ts", "src/**/*.test.ts"],
             "plugins": ["typescript", "import", "unicorn", "vitest"],
             "env": {
@@ -154,7 +172,8 @@
                 "vitest/valid-expect-in-promise": "off",
                 "vitest/valid-expect": "off",
                 "vitest/valid-title": "off",
-                "vitest/warn-todo": "off"
+                "vitest/warn-todo": "off",
+                "no-console": "off"
             }
         }
     ]

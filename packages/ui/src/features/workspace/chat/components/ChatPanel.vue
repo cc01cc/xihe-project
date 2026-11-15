@@ -1155,7 +1155,7 @@ async function submitMessage(input: {
     if (isWorkspaceLessRoute(route)) {
         const dropped = { attachments: (attachments ?? []).length };
         if (dropped.attachments > 0) {
-            console.warn("[task-49] workspace-less Session 不支持附件，已丢弃", dropped);
+            logger.warn("[task-49] workspace-less Session 不支持附件，已丢弃", dropped);
             toast.warning(t("chat.input.workspaceLessDropped"));
             attachments = undefined;
         }
