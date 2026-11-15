@@ -1,4 +1,19 @@
-import type { Page } from "@playwright/test";
+// Mock 车道的**唯一入口**（每条用例都会调 `setupMockAuth`）。两处顺序/口径陷阱先看这里：
+//
+// 1. **Playwright route 是 LIFO —— 后注册优先。** 所以本文件把兜底 `**/api/v1/**` 放在前部、
+//    显式桩放在后面；spec 里自己 `page.route(...)` 的桩一定赢过 `setupMockAuth` 的桩。反过来写
+//    （先显式、后兜底）会让兜底吞掉显式桩，症状是「我明明桩了却拿到兜底数据」。
+// 2. **没桩不再等于 `200 {}`**（task-64）：兜底对未被认领的 `/api/v1/*` 回 `404` +
+//    `application/problem+json { code: "NO_MOCK_FOR_ROUTE", method, path }`，并打一条带 spec 文件名的
+//    `[mock-fixture]` warn。
+// 3. **本夹具不提供「容忍未桩端点」的逃生阀**：`task-64` 曾设计过一个页面级 `permissive` 开关
+//    （开了就退回 `200 {}`），落地时**否决**了 —— task-144 补完 24 个端点后它零消费者，
+//    按「0 引用 = 不在链上」不引入；留着一个没人用的逃生阀，下一个人只会顺手打开它。
+//    若将来某条 spec 确需容忍未桩端点，**必须同批给出一条使用它的用例**，否则不许加。
+//
+// 注：本注释**刻意用行注释**而不是块注释 —— `**/api/v1/**` 里的 `*` 紧跟 `/` 会提前闭合块注释
+// （`lint:e2e` 的 block-comment 门就是查这类事故，task-66）。
+import { test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import {
     participantRoster,
@@ -227,6 +242,7 @@ function sessionMonitorResponse(): Record<string, unknown> {
 
 /** task-546：mock 工作区的固定 id（形状合法 UUID，不是随机值）。 */
 export const MOCK_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+
 /**
  * task-144：实例配置域夹具（`GET /api/v1/config/{domain}` 的 string map）。
  *
@@ -603,6 +619,9 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         });
     });
 
+    // task-64：未桩端点的 warn **按 (method, path) 去重** —— 同一端点会被轮询几百次，
+    // 逐次打会把真正的红点淹掉；但「哪个 spec 发起」必须每处都点名（见下面 warn 里的 spec 字段）。
+    const warnedUnstubbed = new Set<string>();
     await page.route("**/api/v1/**", async (route) => {
         const url = route.request().url();
         if (url.includes("/api/v1/workspaces/") && url.includes("/events")) {
@@ -845,10 +864,45 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             });
             return;
         }
+        // task-64：**没桩 = 一次显式失败**（不再 `200 {}`）。
+        //
+        // 旧行为：凡未被上面任何分支认领的 `/api/v1/*`（**任意 method**，含 POST/PUT/DELETE）
+        // 都得到 `200 + {}`。它把「没有夹具」伪装成「数据恰好为空」，而「空」在列表页里是
+        // **合法状态** ⇒ 红点落在离根因很远的 DOM 断言上（task-33 实测：`GET /api/v1/org-units`
+        // 拿到 `{}` ⇒ 组织树空 ⇒ `waitForSelector` 等 30 s 超时），把人引去改产品代码。
+        // 本文件里已有三处「为它打补丁」的既成证据（`workspaces/*/agents`、`/version`、run 列表
+        // 与委派预算投影的默认桩）—— 一个逼人反复写补丁桩的兜底，本身就说明它选错了失败层。
+        //
+        const path_ = new URL(url).pathname;
+        const method_ = route.request().method();
+        const unstubbedKey = `${method_} ${path_}`;
+        if (!warnedUnstubbed.has(unstubbedKey)) {
+            warnedUnstubbed.add(unstubbedKey);
+            // spec 文件名：39 条红的时候必须能直接指到「哪条用例发起的这条请求」，
+            // 否则这条 warn 只是又一条噪声（Lead 2026-11-15 口径）。`test.info()` 在用例上下文
+            // 内可用，在 worker 级钩子里会抛 ⇒ 兜住。
+            let specFile = "<unknown-spec>";
+            try {
+                specFile = test.info().file.replace(/\\/g, "/");
+            } catch {
+                // 非用例上下文（page 级夹具）：保留占位，不吞掉这条 warn。
+            }
+            console.warn(
+                `[mock-fixture] 未桩端点（不是"空数据"，是**没有夹具**）：${unstubbedKey} · spec=${specFile} · ` +
+                    "补显式桩（page.route 后注册优先；壳的固定请求见 task-144 那一批）—— 本夹具没有逃生阀（task-144）",
+            );
+        }
         await route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({}),
+            status: 404,
+            contentType: "application/problem+json",
+            body: JSON.stringify({
+                code: "NO_MOCK_FOR_ROUTE",
+                method: method_,
+                path: path_,
+                detail:
+                    "no mock route claimed this /api/v1 URL (task-64). Add an explicit page.route stub " +
+                    "(page-level stubs registered after setupMockAuth win by LIFO). There is no permissive escape hatch (task-144).",
+            }),
         });
     });
 
@@ -1104,8 +1158,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     //   GET /api/v1/workspaces/{id}/agents → { agents: [{ principalId, name, templateId,
     //        templateName, createdAt, permissionsSnapshot[], bound, hooks, contextPolicy, disabled }] }
     // task-140：`GET /api/v1/workspaces`（列表）。注册位置在兜底 `**/api/v1/**` **之后** ——
-    // Playwright route 是 LIFO，后注册优先（本文件无此说明时按官方文档：后注册的 handler 先匹配），
-    // 所以这条赢兜底。
+    // Playwright route 是 LIFO，后注册优先（本文件头注释第 1 条），所以这条赢兜底。
     // 默认体与 seed 同源（同一 id/name/角色），保证「列表里点进工作区」与「tab 上下文」是同一个工作区；
     // 多工作区由 `options.workspaceList` 覆盖。
     const workspaceListFixture = options.workspaceList ?? [
