@@ -8,6 +8,28 @@ import { selectByIndex } from "../helpers/select";
 // 逐条放行 `/workspaces/*/agents` 的失败信号。
 test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/workspaces/[^/]+/agents`] });
 
+/**
+ * task-206（Lead 裁定 A，2026-11-15）：智能体面板的**唯一入口**。
+ *
+ * <p>入口已随 **ab564bad0 / D-1538** 从「工作台 dock 浮层」迁到「成员页 → 智能体页签」：
+ * `WorkspaceToolbar.vue` 现条目里**没有** agents（`workspace-toolbar-agents` 与 `-mobile` 变体均已退役），
+ * 成员页 `WorkspaceMembersView.vue:87-90` 渲染**同一个** `WorkspaceAgentsPanel`（「不复制智能体状态」），
+ * 面板内 testid（`workspace-agent-management-dialog` / `agent-principal-*` / `workspace-agent-*`）不变。</p>
+ *
+ * <p>**为什么是点击而不是深链**：成员页 `:34` 明写「深链参数不新增」，`activeTab` 默认 `members`
+ * ⇒ 只能点 `members-tab-agents`。旧的 viewport 二选一（桌面 / `-mobile`）随之去掉 —— 成员页是路由页，
+ * 移动端同样直达。</p>
+ *
+ * <p>就绪门沿用原文的 `heading「已绑定智能体」`：点页签后才挂载面板 ⇒ 这个门仍然必要。</p>
+ */
+async function openAgentsPanel(page: Page): Promise<void> {
+    await page.goto("/workspace/11111111-1111-4111-8111-111111111111/members");
+    await page.getByTestId("members-tab-agents").click();
+    await expect(page.getByRole("heading", { name: "已绑定智能体" })).toBeVisible({
+        timeout: ACTION_TIMEOUT_MS,
+    });
+}
+
 test("new Workspace Session is created only after selecting a bound Agent", async ({ page }) => {
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [], createSession: true });
@@ -223,12 +245,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
         });
     });
 
-    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
-    const agentManagementButton =
-        (page.viewportSize()?.width ?? 1920) < 768
-            ? page.getByTestId("workspace-toolbar-agents-mobile")
-            : page.getByTestId("workspace-toolbar-agents");
-    await agentManagementButton.click();
+    await openAgentsPanel(page);
     const dialog = page.getByTestId("workspace-agent-management-dialog");
     await expect(dialog).toBeVisible();
 
@@ -347,12 +364,7 @@ test("a caller without MANAGE_WORKSPACE_AGENTS cannot create or bind before the 
         });
     });
 
-    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
-    const managementButton =
-        (page.viewportSize()?.width ?? 1920) < 768
-            ? page.getByTestId("workspace-toolbar-agents-mobile")
-            : page.getByTestId("workspace-toolbar-agents");
-    await managementButton.click();
+    await openAgentsPanel(page);
 
     await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
     await page.getByTestId("agent-principal-name").fill("CreatedWithoutManageGrant");
@@ -425,14 +437,6 @@ function agentViewRow(overrides: Record<string, unknown> = {}): Record<string, u
     };
 }
 
-async function openAgentsPanel(page: Page): Promise<void> {
-    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
-    await page.getByTestId("workspace-toolbar-agents").click();
-    await expect(page.getByRole("heading", { name: "已绑定智能体" })).toBeVisible({
-        timeout: ACTION_TIMEOUT_MS,
-    });
-}
-
 test("a failed agent list resets the loading state, names the failure, and retry recovers", async ({
     page,
 }) => {
@@ -468,8 +472,7 @@ test("a failed agent list resets the loading state, names the failure, and retry
         },
     );
 
-    await page.goto("/workspace/11111111-1111-4111-8111-111111111111");
-    await page.getByTestId("workspace-toolbar-agents").click();
+    await openAgentsPanel(page);
 
     // Failure is a terminal state: the spinner must not survive it, and the reason must be visible
     // (a stuck "正在加载智能体…" is exactly what hid this outcome before).

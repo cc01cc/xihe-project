@@ -48,7 +48,13 @@ const LABEL_KEYS: Record<string, Record<string, string>> = {
         EDITOR: "workspace.membersRoleEditor",
         VIEWER: "workspace.membersRoleViewer",
     },
-    "workspace-execution-mode": { "windows-host": "workspace.executionModeHost" },
+    "workspace-execution-mode": {
+        "windows-host": "workspace.executionModeHost",
+        // task-202（Lead 裁定，2026-11-15）：产品已把 MXC 标签本地化
+        // （`WorkspaceEnvironmentView.vue:399` → `workspace.environmentExecutionMode.windowsMxc`），
+        // 实测渲染「Windows MXC 沙箱」⇒ 它不再是 passthrough，而是有 i18n 键的正常映射。
+        "windows-mxc": "workspace.environmentExecutionMode.windowsMxc",
+    },
     "config-select-approval-policy-mode": {
         manual: "chat.approvalModeManual",
         auto: "chat.approvalModeAuto",
@@ -69,10 +75,16 @@ const LABEL_KEYS: Record<string, Record<string, string>> = {
  */
 const KNOWN_MAPPING_DRIFT: Record<string, Record<string, string>> = {};
 
-/** 原样显示的技术标识（下拉里没有 i18n 文案）：label 必须 === value（大写技术 id 不能被人话化）。 */
-const PASSTHROUGH_VALUES: Record<string, string[]> = {
-    "workspace-execution-mode": ["windows-mxc"],
-};
+/**
+ * 原样显示的技术标识：label 必须 === value（大写技术 id 不能被人话化）。
+ *
+ * <p>**当前为空**：原先登记的 `workspace-execution-mode/windows-mxc` 已移入 `LABEL_KEYS` ——
+ * 那条登记的前提是「下拉里没有 i18n 文案」，而产品后来把它本地化了（`task-202` 实测：真实渲染
+ * 「Windows MXC 沙箱」，来源键 `workspace.environmentExecutionMode.windowsMxc`）。
+ * ⇒ 登记跟着事实走；这里的语义收窄为「**真技术 id**（产品就该原样显示，例如大写枚举）」，
+ * 不再用来登记「还没本地化」的临时状态。</p>
+ */
+const PASSTHROUGH_VALUES: Record<string, string[]> = {};
 
 describe("e2e select helper", () => {
     it("① 映射与 i18n 文案同源（按 testid 分组）", () => {

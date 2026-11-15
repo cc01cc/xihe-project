@@ -3,7 +3,6 @@ import { expect, test } from "./helpers/mock-test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
-import { ACTION_TIMEOUT_MS } from "../timeouts";
 
 /**
  * PLAN-0626 M3 (D26-05): Agent management moved from a modal into the dock's `agents`
@@ -21,6 +20,11 @@ import { ACTION_TIMEOUT_MS } from "../timeouts";
  *
  * Runs in the mock lane: `--config e2e/playwright.config.ts e2e/mock/agents-tab.spec.ts`
  * (`scripts/e2e-host.mjs` greps `@host`, which this lane does not carry).
+ *
+ * **task-206（2026-11-15）**：A1（`ab564bad0` / `D-1538`）把入口再迁一次 —— 工具栏 Bot 按钮与 dock
+ * `agents` 标签都退役，改由「成员页 → 智能体页签」承载**同一个** `WorkspaceAgentsPanel`。本 spec 的
+ * 三条初衷不变（单实例 / 深链不被替换 / 只读记忆段在），改的只是「怎么把面板打开」；其中
+ * 「浮层不遮挡、URL 不变」语义随 dock 一起消失，处理见第二个用例末尾注释（不静默删）。
  */
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111",
@@ -183,13 +187,16 @@ test.describe("PLAN-0626 M3: workspace Agent management in the dock `agents` tab
         // auto fixture，带逐条 allow 清单）。这里不再自建第二份收集器 —— 之前每个 spec 抄一遍，
         // 一旦夹具补桩就要逐份改，且 allow 清单会各自漂移。
         await setupAgentsLane(page);
-        await page.goto(`/workspace/${WORKSPACE_ID}`);
-
-        await page.getByTestId("workspace-toolbar-agents").click();
-
-        // The toolbar entry opens the dock tab — it must not mount a modal any more.
-        await expect(page.getByTestId("dock-tab-agents")).toHaveAttribute("aria-selected", "true");
-        await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
+        // task-206（Lead 裁定 A，2026-11-15）：入口已随 **ab564bad0 / D-1538** 从「工具栏 Bot 按钮 + dock 浮层」
+        // 迁到「成员页 → 智能体页签」——`WorkspaceMembersView.vue:87-90` 渲染**同一个** WorkspaceAgentsPanel
+        //（「同一组件、同一逻辑：不复制智能体状态」）。所以这里是**入口替换**，面板内断言原样保留。
+        //
+        // 两条断言**删掉并写明理由**（不换壳留着）：
+        //   ① `dock-tab-agents` aria-selected —— 断言目标已不存在（WorkspaceDock.vue 的 tab 集合里没有 agents）；
+        //   ② `modal-backdrop` count=0 —— 成员页是**路由页**、不是浮层，该断言在此**恒真**（D-1281 要消灭的
+        //      正是「看着还在、其实什么都没验」的绿）。页签选中态由 `task174-a1-judges.spec.ts:52-57` 承担。
+        await page.goto(`/workspace/${WORKSPACE_ID}/members`);
+        await page.getByTestId("members-tab-agents").click();
 
         const panel = page.getByTestId("workspace-agent-management-dialog");
         await expect(panel).toBeVisible();
@@ -207,30 +214,15 @@ test.describe("PLAN-0626 M3: workspace Agent management in the dock `agents` tab
             "偏好中文回答",
         );
 
-        // ── D26-01: the tab id lives in the existing `dockTabs` array, not a second store ─
-        // Persistence is throttled (250ms writer), so poll the projection instead of sleeping.
-        await expect
-            .poll(
-                async () =>
-                    page.evaluate((workspaceId) => {
-                        const raw = localStorage.getItem(`xihe-layout-ws:${workspaceId}`);
-                        if (!raw) return "";
-                        const parsed = JSON.parse(raw) as {
-                            dockTabs?: string[];
-                            activeDockTab?: string | null;
-                        };
-                        // The wide-screen first run opens `monitor` by default, so the tab set
-                        // is a superset: assert membership plus the active projection.
-                        return parsed.dockTabs?.includes("agents")
-                            ? String(parsed.activeDockTab)
-                            : `not-persisted:${(parsed.dockTabs ?? []).join(",")}`;
-                    }, WORKSPACE_ID),
-                {
-                    timeout: ACTION_TIMEOUT_MS,
-                    message: "the `agents` tab must land in the existing dockTabs/activeDockTab",
-                },
-            )
-            .toBe("agents");
+        // ── **意图消失（task-206，不静默删）**：原 D26-01 断言「`agents` 必须落进既有的
+        //    `xihe-layout-ws:<id>.dockTabs` / `activeDockTab`，不许另起第二份 store」。
+        //    该意图的前提是「agents 是 dock 的一个 tab」，而 A1（ab564bad0 / D-1538）把入口退役、
+        //    面板搬到成员页 ⇒ **dock 里不再有 agents tab，也没有任何东西需要持久化**（成员页的
+        //    `activeTab` 是页内 ref，刻意不入 localStorage）。在新面上复刻这条断言只能造出
+        //    一个恒假的 poll，或去断言一个不存在的键 —— 两者都是假证据，故删除。
+        //    承接面：dock 布局「单一 SSOT 持久化」这一通用性质仍由
+        //    `mock/task174-container-tabs.spec.ts:112`（activeDockTab: "monitor"）与
+        //    `mock/pl0756-dockview.spec.ts:88` 钉住；agents 专属持久化**随入口一起失效**。
 
         // 失败信号断言由 `helpers/mock-test.ts` 的 auto fixture 在用例结束时统一执行。
 
@@ -259,7 +251,9 @@ test.describe("PLAN-0626 M3: deep links keep reaching the whole-page routes", ()
      */
     const DEEP_SESSION_ID = "deep-session-77";
 
-    test("a direct /workspace/:id/chat/:sessionId load still renders that session, and the agents tab opens there", async ({
+    // task-206：标题里原来的「…and the agents tab opens there」已随 A1 失效（打开面板必然离开会话页，
+    // 详见用例末尾注释）⇒ 标题同步收窄到**仍然成立**的那半句，避免标题承诺一个不存在的断言。
+    test("a direct /workspace/:id/chat/:sessionId load still renders that session", async ({
         page,
     }) => {
         const pageErrors: string[] = [];
@@ -295,16 +289,16 @@ test.describe("PLAN-0626 M3: deep links keep reaching the whole-page routes", ()
             new RegExp(`/workspace/${WORKSPACE_ID}/chat/${DEEP_SESSION_ID}$`),
         );
 
-        await page.getByTestId("workspace-toolbar-agents").click();
-        await expect(page.getByTestId("dock-tab-agents")).toHaveAttribute("aria-selected", "true");
-        await expect(page.getByTestId("workspace-agent-management-dialog")).toHaveCount(1);
-        // The floating dock is not a modal: no backdrop, and the routed page stays mounted.
-        await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
-        await expect(page.getByTestId("workspace-conversation")).toBeAttached();
-        // No late redirect: the URL still names the deep-linked chat page.
-        await expect(page).toHaveURL(
-            new RegExp(`/workspace/${WORKSPACE_ID}/chat/${DEEP_SESSION_ID}$`),
-        );
+        // task-206（Lead 裁定 A，2026-11-15）：**意图二在这里消失，且不是删掉了事**。
+        //
+        // 原意图：「**不离开会话页**的前提下，浮层打开 agents 面板」——dock tab 选中、无 backdrop、
+        // conversation 仍在挂载、URL 不变。该语义由 A1（ab564bad0 / D-1538）在产品层**取消**：
+        // 入口迁到「成员页路由页」后，打开面板必然离开会话页 ⇒ 这四条断言在新面上**没有对应物**。
+        // 不复刻到新面（那会造出「断言着不存在东西」的测试），改为：
+        //   ① 本 spec 末尾只保留**可迁移的深链意图**（上面 :288-296 段：会话页渲染、标题、输入框、URL）；
+        //   ② 「面板能在新入口打开、且仍是同一个单实例面板」由上一个用例（⑤）承担；
+        //   ③ 「工具栏 agents 入口零残留 + 成员页页签可切换」由 task174-a1-judges.spec.ts 反向钉住。
+        // 证据：WorkspaceToolbar.vue 现条目无 agents；DOCKVIEW tab 集合无 agents（grep 'dock-tab' 仅测试文件）。
 
         expect(pageErrors, `pageErrors=${JSON.stringify(pageErrors)}`).toEqual([]);
 
