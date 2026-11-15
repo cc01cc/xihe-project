@@ -187,6 +187,12 @@ export interface MockSessionRecord {
     providerConnectionId?: string | null;
     createdAt?: string;
     updatedAt?: string;
+    /**
+     * 会话的**归属工作区**。多工作区夹具（左栏按工作区分组、A→B 切换）必须逐会话写死：
+     * 不写就会被 `MOCK_DEFAULT_WORKSPACE_ID` 静默归到 A（`D-1582` 的 `headBParamA` 就是这么造出来的
+     * —— 「B 组的会话」其实是 A 的会话，点开就是真实 CP 不会有的 `/workspace/B/chat/<A 的会话>`，
+     * 生产里那是 404，见 `D-1583`）。
+     */
     workspaceId?: string;
 }
 
@@ -198,7 +204,14 @@ export interface MockSessionOptions {
      * 不是一份里挑 null —— 后者会让「不带 scope 逐字节不变」这条契约在夹具里就破掉。
      */
     workspacelessSessions?: MockSessionRecord[];
+    /** 未逐会话声明时给所有 `sessions` 用的工作区（等价于整体声明）。 */
     workspaceId?: string;
+    /**
+     * `D-1582`：**混合形态**（既有声明了 `workspaceId` 的会话、又有没声明的）在默认口径下会
+     * 被静默归到 A。默认只 `console.warn` 点名（存量 83 个 spec 靠隐式默认，不能一刀切）；
+     * 传 `true` 则**直接抛** —— 新写的多工作区夹具应当用它，让「忘了写 workspaceId」当场红。
+     */
+    strictSessionWorkspaces?: boolean;
     messages?: Record<string, Array<Record<string, unknown>>>;
     createSession?: boolean;
     /**
@@ -1780,6 +1793,43 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     });
 }
 
+/**
+ * 种子会话**未声明** `workspaceId`（且调用方也没给 `options.workspaceId`）时的隐式归属。
+ *
+ * <p>为什么保留隐式默认：存量 **83 个 spec / 130 处调用**都没逐会话声明，改成 `null` 会让它们的
+ * 会话从工作区列表里消失（[实测] 扫 `e2e` 下全部 `.ts` 的 `setupMockSessions(` 调用：87 文件 / 154 处）。
+ * 所以默认值不动，但**把代价显式化**：① 起个名字；② 混合形态点名；③ 新夹具可用
+ * `strictSessionWorkspaces: true` 换成抛错（`D-1582`）。</p>
+ */
+export const MOCK_DEFAULT_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+
+/**
+ * `D-1582`：混合形态（部分会话声明了 `workspaceId`、部分没有）是**夹具缺陷的形状** ——
+ * 没声明的那些会被静默归到 `MOCK_DEFAULT_WORKSPACE_ID`，于是「B 组的会话」其实是 A 的会话；
+ * 点开后路由是 `/workspace/B/chat/<A 的会话>`，真实 CP 在这里回 404（`D-1583` 的三层防线），
+ * 而 mock 会一路放行 ⇒ 用例读到的是「夹具造出来的混态」，不是产品行为。
+ *
+ * <p>存量靠隐式默认的 83 个 spec **不会**命中这条（它们一处 declaration 都没有）；只有真在写
+ * 多工作区夹具的人才会被点名 —— 这正是该被拦下的那类人。</p>
+ */
+function diagnoseUndeclaredSessionWorkspaces(options: MockSessionOptions): void {
+    // 整体声明（`options.workspaceId`）时没有歧义，跳过。
+    if (options.workspaceId) return;
+    const declared = (options.sessions ?? []).filter((session) => Boolean(session.workspaceId));
+    if (declared.length === 0) return;
+    const stranded = (options.sessions ?? []).filter((session) => !session.workspaceId);
+    if (stranded.length === 0) return;
+    const detail =
+        "setupMockSessions: 夹具里既有声明了 workspaceId 的会话，又有未声明的（" +
+        stranded.map((session) => session.id).join(", ") +
+        "）；未声明的会被静默归到 " +
+        MOCK_DEFAULT_WORKSPACE_ID +
+        " —— D-1582：那样「别组的会话」其实是 A 的会话，点开就是真实 CP 不会有的 " +
+        "/workspace/B/chat/<A 的会话>（生产 404，D-1583）。请给每个会话显式写 workspaceId。";
+    if (options.strictSessionWorkspaces) throw new Error(detail);
+    console.warn(detail);
+}
+
 export async function setupMockSessions(page: Page, options: MockSessionOptions = {}) {
     const now = new Date().toISOString();
     const mapSession = (session: MockSessionRecord, workspaceId: string | null) => ({
@@ -1816,11 +1866,12 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
     });
     // task-373：两种作用域共用同一条映射（含 agentPrincipalId 的默认值口径），差别只有
     // workspaceId —— 独立会话是显式 null，不是缺字段。
+    //
+    // D-1582：隐式归属是**有代价的** —— 见 diagnoseUndeclaredSessionWorkspaces 的注释。
+    const defaultWorkspaceId = options.workspaceId ?? MOCK_DEFAULT_WORKSPACE_ID;
+    diagnoseUndeclaredSessionWorkspaces(options);
     const sessions = (options.sessions ?? []).map((session) =>
-        mapSession(
-            session,
-            session.workspaceId ?? options.workspaceId ?? "11111111-1111-4111-8111-111111111111",
-        ),
+        mapSession(session, session.workspaceId ?? defaultWorkspaceId),
     );
     const workspaceless = (options.workspacelessSessions ?? []).map((session) =>
         mapSession(session, null),

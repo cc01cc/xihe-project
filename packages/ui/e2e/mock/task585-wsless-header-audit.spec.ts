@@ -65,7 +65,7 @@ test("ws-less 上下文请求头审计（task-585 余项）", async ({ page }) =
     await setupMockAuth(page);
     await stubWorkspaces(page);
     await setupMockSessions(page, {
-        sessions: [{ id: WS_SESSION, title: "工作区会话" }],
+        sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_ID }],
         workspacelessSessions: [{ id: STANDALONE, title: "独立会话甲" }],
     });
 
@@ -148,7 +148,9 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
         const rows = watchPolling(page);
         await setupMockAuth(page);
         await stubWorkspaces(page);
-        await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        await setupMockSessions(page, {
+            sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_ID }],
+        });
         // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
         // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
         await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
@@ -178,7 +180,7 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
         await setupMockAuth(page);
         await stubWorkspaces(page);
         await setupMockSessions(page, {
-            sessions: [{ id: WS_SESSION, title: "工作区会话" }],
+            sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_ID }],
             workspacelessSessions: [{ id: STANDALONE, title: "独立会话甲" }],
         });
         await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
@@ -238,6 +240,9 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
  * ========================================================================================== */
 const WS_A = WS_ID; // 1111…（与文件顶部同一份）
 const WS_B = "22222222-2222-4222-8222-222222222222";
+/** `D-1582`：B 组自己的会话（id 与 A 无任何公共子串，`headBParamA` 的 path 判据不会误命中）。 */
+const P1_SESSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const P1_SESSION_B_TITLE = "B 组会话";
 const SESSION_B = "22222222-2222-4222-8222-222222222222";
 const AB_OUT = process.env.XIHE_AB_OUT ?? "H:/zeotmp/ui1-pw/workspace-a-to-b.json";
 /** 卡面仪器：给 `/api/v1/mcp` 加 5 s 延迟，把窗口放大到能被 request 钩子稳定抓到。 */
@@ -499,7 +504,9 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         await setupMockAuth(page);
         await stubWorkspaceDetail(page, WS_A, "Workspace A");
         await stubWorkspaceDetail(page, WS_B, "Workspace B");
-        await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        await setupMockSessions(page, {
+            sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_A }],
+        });
         // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
         // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
         await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
@@ -555,7 +562,9 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
                 body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [] } }),
             });
         });
-        await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        await setupMockSessions(page, {
+            sessions: [{ id: WS_SESSION, title: "工作区会话", workspaceId: WS_A }],
+        });
         // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
         // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
         await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
@@ -794,8 +803,16 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         await stubWorkspaceDetail(page, WS_B, "Workspace B");
         // 别组的会话列表来自 getSessions(B) ⇒ `GET /api/v1/sessions` + **显式 X-Workspace-Id: B**
         // （`composables/api.ts:3254-3260`）；`setupMockSessions` 已桩该路径，两组拿到同一份列表即够用。
+        /* D-1582：逐会话声明归属 —— A 的会话归 A、另加一条**属于 B** 的会话给 B 组。
+         * 以前这里只有 `{ id: WS_SESSION }`，`mapSession` 把它静默归到 WS_A，于是「B 组的会话」
+         * 其实是 A 的会话，点开就造出 `/workspace/B/chat/<A 的会话>`（生产 404，D-1583），
+         * `headBParamA` 读到的就是这个夹具混态而不是产品行为。 */
         await setupMockSessions(page, {
-            sessions: [{ id: WS_SESSION, title: "工作区会话" }],
+            strictSessionWorkspaces: true,
+            sessions: [
+                { id: WS_SESSION, title: "工作区会话", workspaceId: WS_A },
+                { id: P1_SESSION_B, title: P1_SESSION_B_TITLE, workspaceId: WS_B },
+            ],
         });
 
         // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
@@ -828,8 +845,16 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
         await toggleB.click();
         const bodyB = page.getByTestId("sidebar-workspace-group-body-" + WS_B);
         await expect(bodyB, "B 组展开").toBeVisible({ timeout: LONG_TIMEOUT_MS });
-        const foreignItem = bodyB.getByTestId("session-item").first();
-        await expect(foreignItem, "B 组里有可点会话").toBeVisible({ timeout: LONG_TIMEOUT_MS });
+        /* D-1582：不能点 `.first()`。列表桩对所有工作区返回同一份数组（本文件 795-796 的老注释已说明），
+         * 所以「B 组的第一个」取决于种子顺序 —— 以前种子里只有 A 的会话，点下去就是
+         * `/workspace/B/chat/<A 的会话>`，那个混态是**夹具造的**，真实 CP 在这里回 404（D-1583）。
+         * 现在按标题显式取 B 的会话，点击路径与生产一致：B 的会话在 B 的路由下。 */
+        const foreignItem = bodyB
+            .getByTestId("session-item")
+            .filter({ hasText: P1_SESSION_B_TITLE });
+        await expect(foreignItem, "B 组里有属于 B 的会话").toBeVisible({
+            timeout: LONG_TIMEOUT_MS,
+        });
         await foreignItem.click();
 
         await expect.poll(() => page.url(), { timeout: LONG_TIMEOUT_MS }).toContain(WS_B);
