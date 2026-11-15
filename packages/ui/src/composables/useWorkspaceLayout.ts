@@ -160,6 +160,15 @@ export interface WorkspaceLayoutState {
     dockFocus: boolean;
     /** Work tabs (open sessions) the user chose to keep; the chat tab is implicit and not stored. */
     openTabs: WorkTabId[];
+    /**
+     * task-174 / `D-1545`（用户裁定：窄屏「两栏仍然是两栏，只是同时间只能显示单栏 可以进行切换」）：
+     * 窄屏当前显示哪一栏。**只是可见性**，不改变任何页签的归属（归属是不变式，见
+     * `features/workspace/lib/containers.ts` 的 `containerOf`）。
+     *
+     * 与布局**同源落盘**（同一个 `xihe-layout-ws:<id>`、同一个唯一 writer），不另开第二份状态；
+     * 桌面形态读它但不用它（三栏全渲染）。
+     */
+    activeColumn: ActiveColumn;
 }
 
 function storage(): Storage | null {
@@ -187,6 +196,12 @@ export function clampTreeWidth(width: number): number {
 
 export function isDockMode(value: unknown): value is DockMode {
     return value === "pinned" || value === "floating";
+}
+
+export type ActiveColumn = "main" | "right";
+
+export function isActiveColumn(value: unknown): value is ActiveColumn {
+    return value === "main" || value === "right";
 }
 
 export function isDockTabId(value: unknown): value is DockTabId {
@@ -333,6 +348,7 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         dockMode: "floating",
         dockModeManual: false,
         dockFocus: false,
+        activeColumn: "main",
         openTabs: defaultOpenTabs(),
     };
 }
@@ -446,6 +462,10 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
             // instead of storing a state the UI cannot honour.
             dockFocus: parsed.dockFocus === true && !dockCollapsed && tabs.length > 0,
             openTabs: readOpenTabs(parsed),
+            // D-1545：缺字段（旧载荷）⇒ 默认中栏，行为与改动前一致。
+            activeColumn: isActiveColumn(parsed.activeColumn)
+                ? parsed.activeColumn
+                : defaults.activeColumn,
         };
     } catch (cause) {
         logger.warn("Failed to read the workspace layout, falling back to defaults", cause);
@@ -481,6 +501,7 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 // that cannot render (collapsed or tabless).
                 dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,
                 openTabs: state.openTabs.filter(isWorkTabId),
+                activeColumn: isActiveColumn(state.activeColumn) ? state.activeColumn : "main",
             }),
         );
     } catch (cause) {

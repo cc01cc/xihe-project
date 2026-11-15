@@ -137,6 +137,8 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockFocus: false,
             // C3: pages never enter the tab bar; the default open set is empty.
             openTabs: [],
+            // D-1545：窄屏当前显示的栏（旧载荷缺字段 ⇒ 读成 main，行为同改动前）。
+            activeColumn: "main",
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
     });
@@ -160,6 +162,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockModeManual: true,
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
+            activeColumn: "right",
         });
 
         expect(readStoredWorkspace("ws-1")).toEqual({
@@ -173,6 +176,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockModeManual: true,
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
+            activeColumn: "right",
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
             treeCollapsed: true,
@@ -185,6 +189,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             dockModeManual: true,
             dockFocus: true,
             openTabs: ["session:s1", "session:s2"],
+            activeColumn: "right",
         });
         // Workspace-scoped: another workspace is untouched.
         expect(readWorkspaceLayout("ws-2")).toEqual(defaultWorkspaceLayout());
