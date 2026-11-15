@@ -110,7 +110,7 @@ test.describe("task-174 S2b 容器页签行", () => {
                     ...parsed,
                     dockTabs: ["code", "monitor"],
                     activeDockTab: "monitor",
-                    openTabs: ["session:" + "task174-session"],
+                    openTabs: ["session:task174-session"],
                 }),
             );
         }, LAYOUT_KEY);

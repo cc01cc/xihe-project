@@ -31,9 +31,9 @@ const props = defineProps<{
     allowEmpty?: boolean;
 }>();
 
+// 两个事件签名完全同形 ⇒ 用联合类型一次声明（unified-signatures）。
 const emit = defineEmits<{
-    (event: "select", tabId: string): void;
-    (event: "close", tabId: string): void;
+    (event: "select" | "close", tabId: string): void;
 }>();
 
 const { t } = useI18n();
