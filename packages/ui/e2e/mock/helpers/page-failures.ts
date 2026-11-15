@@ -46,14 +46,89 @@ export function collectPageFailures(page: Page): PageFailures {
     return failures;
 }
 
-/** 断言这一条用例期间没有任何"非预期"的失败信号。`allow` 里命中的条目逐条放行。 */
-export function expectNoPageFailures(failures: PageFailures, allow: RegExp[] = []): void {
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** 把路径里的具体 id 归一成 `:id`，让「同一条路由的多次失败」聚成一类（task-192 ③）。 */
+function normalizePath(pathname: string): string {
+    return pathname.replace(UUID_RE, ":id").replace(/\/\d{2,}(?=\/|$)/g, "/:n");
+}
+
+export interface FailureReport {
+    /** allow 命中的条数（跳过的失败）。 */
+    skippedCount: number;
+    /** allow 命中的原文（便于复核「跳过的是不是真那一类」）。 */
+    skipped: string[];
+    unexpected: PageFailures;
+    /** 按 `host + 归一路径` 归类，含状态码集合与计数。 */
+    groups: Array<{ key: string; count: number; statuses: string[]; sample: string }>;
+    /** 一行总结 + 每类一行。断言失败时整段进 diff，成功时也打印（读数可复核）。 */
+    summary: string;
+}
+
+/**
+ * 失败信号分诊（task-192 ③）。
+ *
+ * <p>为什么需要：门禁只有「有失败」没有「哪一类」时，红点读不出结论 —— 三条 A→B 红点全被重复的
+ * `404 /api/v1/__ab_instrument_probe` 与 `502 /api/v1/mcp` 盖住，看不出「A 头断言到底怎样」。
+ * 这里按 host + 归一路径（UUID / 长数字 → `:id`）归类，并把 allow 跳过的条数**显式**打出来 ——
+ * 跳过必须可见，不许静默吞。</p>
+ */
+export function classifyFailures(failures: PageFailures, allow: RegExp[] = []): FailureReport {
     const allowed = (value: string) => allow.some((pattern) => pattern.test(value));
+    const skipped = [
+        ...failures.consoleErrors.filter(allowed),
+        ...failures.failedResponses.filter(allowed),
+    ];
     const unexpected: PageFailures = {
         pageErrors: failures.pageErrors,
         consoleErrors: failures.consoleErrors.filter((value) => !allowed(value)),
         failedResponses: failures.failedResponses.filter((value) => !allowed(value)),
     };
+    const byKey = new Map<string, { count: number; statuses: Set<string>; sample: string }>();
+    for (const entry of unexpected.failedResponses) {
+        // 形如 `404 http://host/path — 夹具原因`
+        const match = /^(\d{3}) (\S+)/.exec(entry);
+        if (!match) continue;
+        const status = match[1]!;
+        let key = match[2]!;
+        try {
+            const url = new URL(key);
+            key = url.host + normalizePath(url.pathname);
+        } catch {
+            // 非 URL（不该出现）：原样归类。
+        }
+        const bucket = byKey.get(key) ?? { count: 0, statuses: new Set<string>(), sample: entry };
+        bucket.count += 1;
+        bucket.statuses.add(status);
+        byKey.set(key, bucket);
+    }
+    const groups = [...byKey.entries()]
+        .map(([key, bucket]) => ({
+            key,
+            count: bucket.count,
+            statuses: [...bucket.statuses].sort(),
+            sample: bucket.sample,
+        }))
+        .sort((a, b) => b.count - a.count);
+    const total =
+        unexpected.pageErrors.length +
+        unexpected.consoleErrors.length +
+        unexpected.failedResponses.length;
+    const lines = [
+        `unexpected=${total}（console=${unexpected.consoleErrors.length} pageerror=${unexpected.pageErrors.length} >=400=${unexpected.failedResponses.length}）| skipped(allow)=${skipped.length}`,
+        ...groups.map(
+            (group) =>
+                `  [${group.statuses.join("/")}] ${group.key} × ${group.count}  例: ${group.sample.slice(0, 160)}`,
+        ),
+    ];
+    return { skippedCount: skipped.length, skipped, unexpected, groups, summary: lines.join("\n") };
+}
+/** 断言这一条用例期间没有任何"非预期"的失败信号。`allow` 里命中的条目逐条放行。 */
+export function expectNoPageFailures(failures: PageFailures, allow: RegExp[] = []): void {
+    const report = classifyFailures(failures, allow);
+    const unexpected = report.unexpected;
+    // 读数可复核：成功时也打印「跳过条数 + 归类清单」，失败时同一段进断言 diff。
+    console.log("[page-failures] " + report.summary);
     const count =
         unexpected.pageErrors.length +
         unexpected.consoleErrors.length +
@@ -64,8 +139,10 @@ export function expectNoPageFailures(failures: PageFailures, allow: RegExp[] = [
     // responses` 从未被打印过，而那些失败的真正原因是 404 响应）。合并的验收标准是
     // 「**合并不减少输出**」：这条断言失败时，console 原文、pageerror 原文、
     // `status/url/夹具原因` 三者会一起出现在 diff 里。allow 的逐条过滤语义不变。
+    // task-192 ③：消息里直接带**归类清单**（host+归一路径 × 计数 + 跳过的条数），
+    // 否则读报告的人只能看到「有 N 条失败」，看不出哪一类是基础设施噪声、哪一类是断言要看的。
     expect(
         unexpected,
-        `unexpected browser-side failures（${count} 条：console / pageerror / >=400 三通道全列）`,
+        `unexpected browser-side failures（${count} 条：console / pageerror / >=400 三通道全列）\n分类：\n${report.summary}`,
     ).toEqual({ pageErrors: [], consoleErrors: [], failedResponses: [] });
 }

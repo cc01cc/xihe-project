@@ -149,6 +149,9 @@ test.describe("ws-less 上下文 · 页面级轮询的头", () => {
         await setupMockAuth(page);
         await stubWorkspaces(page);
         await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
+        // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
+        await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
         await page.goto("/workspace/" + WS_ID + "/chat/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -286,6 +289,55 @@ async function stubWorkspaceDetail(page: Page, id: string, name: string): Promis
     );
 }
 
+/**
+ * 探针**自身的注入端点**（不是产品路由）：页面内 `fetch` 用它自证「相机看得见边界后的 A 头」。
+ *
+ * <p>mock server 没有这条路由 ⇒ 走 Vite proxy 得到 `404`，浏览器侧失败守卫会判红，**把 A 头断言
+ * 的结论盖住**（task-192 ①：三条红点全被这条 404 的重复条目淹没）。它属于仪器资产，补它不违反
+ * 「不补产品桩把真缺陷盖绿」—— 它既不模拟产品行为，也不影响产品请求集合。</p>
+ */
+async function stubInstrumentProbe(page: Page): Promise<void> {
+    await page.route("**/api/v1/__ab_instrument_probe", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ ok: true }),
+        }),
+    );
+}
+
+/**
+ * 会话**详情**桩（`GET /api/v1/sessions/{id}`）。
+ *
+ * <p>`setupMockSessions` 只桩列表；深链 `/workspace/B/chat/<SESSION_B>` 时子组件要读详情，
+ * 未桩 ⇒ 默认夹具 404（`helpers/workspace-fixture.ts` 的「静默 404」同族）。同一条 URL 重复 404
+ * 会污染失败守卫的输出（task-192 ② 的**夹具缺口**，补桩）。</p>
+ */
+async function stubSessionDetail(
+    page: Page,
+    input: { id: string; workspaceId: string; title: string },
+): Promise<void> {
+    const { id: sessionId, workspaceId, title } = input;
+    await page.route(
+        (url) => url.pathname === "/api/v1/sessions/" + sessionId,
+        (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    id: sessionId,
+                    title,
+                    workspaceId,
+                    createdAt: "2026-11-15T00:00:00.000Z",
+                    updatedAt: "2026-11-15T00:00:00.000Z",
+                    modelProvider: null,
+                    modelName: null,
+                    archived: false,
+                    agentPrincipalId: null,
+                }),
+            }),
+    );
+}
 test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
     /**
      * ① **真实态**（卡面判据 1 的前半）：mock 车道不可达 ⇒ 显式 skip 并写明原因。
@@ -301,6 +353,12 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         await stubWorkspaceDetail(page, WS_A, "Workspace A");
         await stubWorkspaceDetail(page, WS_B, "Workspace B");
         await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
+        // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
+        await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
+        // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
+        // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
+        await stubInstrumentProbe(page);
         await page.goto("/workspace/" + WS_A + "/chat/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "A 的 composer 挂载").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -334,16 +392,30 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         page,
     }) => {
         const rows = recordAb(page);
+        await stubInstrumentProbe(page);
         await setupMockAuth(page, { workspaceEvents: "off" });
         await stubWorkspaceDetail(page, WS_A, "Workspace A");
         await stubWorkspaceDetail(page, WS_B, "Workspace B");
         // 仪器：/api/v1/mcp 延迟 5 s（卡面指定）。后注册的 route 赢过 helpers 的桩。
+        // ⚠️ task-192 ②：原来这里 `route.continue()` ⇒ 请求穿到 Vite proxy，而 mock 车道**没有**
+        // `/api/v1/mcp` 后端 ⇒ 每次都是 `502`。它不是产品行为，是「夹具缺口」：延迟本身才是仪器的
+        // 目的（把在途窗口放大），响应体给一个合法的 JSON-RPC 200 即可，不必让 proxy 插手。
         await page.route("**/api/v1/mcp", async (route) => {
             await new Promise((resolve) => setTimeout(resolve, AB_DELAY_MS));
-            await route.continue();
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [] } }),
+            });
         });
         await setupMockSessions(page, { sessions: [{ id: WS_SESSION, title: "工作区会话" }] });
+        // task-192 ②：会话**详情**桩必须排在 `setupMockSessions`（列表桩）**之后** ——
+        // Playwright 后注册优先，先注册会被列表桩的宽匹配吃掉 ⇒ 详情 404 重复出现。
+        await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
 
+        // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
+        // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
+        await stubInstrumentProbe(page);
         await page.goto("/workspace/" + WS_A + "/chat/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "A 的 composer 挂载").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
@@ -437,6 +509,8 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         // picker 永不渲染（2026-11-15 实测：30s 内 `workspace-picker` 找不到）。
         // 所以这里显式清掉两种存储 —— 与 `workspace-management.spec.ts` 的空 picker 用例同一手法。
         const rows = recordAb(page);
+        // task-192 ①：探针自身端点必须先桩，否则 404 会进失败守卫、盖住 A 头结论。
+        await stubInstrumentProbe(page);
         await setupMockAuth(page, {
             workspaceEvents: "off",
             workspaceList: [
@@ -447,6 +521,7 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
         await stubWorkspaceDetail(page, WS_A, "Workspace 1");
         await stubWorkspaceDetail(page, WS_B, "Workspace B");
         await setupMockSessions(page, { sessions: [] });
+        await stubSessionDetail(page, { id: SESSION_B, workspaceId: WS_B, title: "B 会话" });
         // 清存储必须**排在 helpers 的 addInitScript 之后**：Playwright 按注册顺序执行 init script，
         // 先清后播种等于没清（2026-11-15 实测：先清时 picker 依然 30s 找不到）。
         await page.addInitScript(() => {
@@ -454,6 +529,9 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
             sessionStorage.removeItem("xihe-workspace");
         });
 
+        // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
+        // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
+        await stubInstrumentProbe(page);
         await page.goto("/workspace");
         await expect(
             page.getByTestId("workspace-picker"),
@@ -547,6 +625,8 @@ test.describe("工作区 A → B 跨上下文（task-621 / task-3）", () => {
 test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（task-621 / task-3）", () => {
     test("P1 点击切换：边界后带 A 头 = 0，且不得出现「头=B ∧ 路由/参数=A」", async ({ page }) => {
         const rows = recordAb(page);
+        // task-192 ①：探针自身端点必须先桩，否则 404 会进失败守卫、盖住 A 头结论。
+        await stubInstrumentProbe(page);
         await setupMockAuth(page, {
             workspaceEvents: "off",
             workspaceList: [
@@ -562,6 +642,9 @@ test.describe("工作区 A → B 同 tab 点击切换（P1：别组会话）（t
             sessions: [{ id: WS_SESSION, title: "工作区会话" }],
         });
 
+        // task-192 ①：探针端点桩**放在最后一次注册**（Playwright 后注册优先）—— helpers 里存在
+        // 兜底/兜底 404 的宽匹配路由，早注册会被它吃掉 ⇒ 页面内自证 fetch 拿 404、失败守卫变红。
+        await stubInstrumentProbe(page);
         await page.goto("/workspace/" + WS_A + "/chat/" + WS_SESSION);
         await expect(page.getByTestId("chat-input"), "A 的 composer 挂载").toBeVisible({
             timeout: LONG_TIMEOUT_MS,
