@@ -36,3 +36,22 @@ export const LONG_TIMEOUT_CAP_MS = 60_000;
 
 /** Playwright `webServer` start budget (the UI dev server, not a test wait): default 120 s. */
 export const SERVER_START_TIMEOUT_MS = envMs("E2E_SERVER_START_TIMEOUT_MS", 120_000);
+
+/**
+ * Real-provider 轮询预算（`e2e/real/**` 里 `while (Date.now() < deadline)` 的等待上限）。
+ *
+ * <p>为什么单列：这些等待等的不是 UI 渲染，而是真 provider 的一轮往返（30–180 s），
+ * 塞进 `TEST_TIMEOUT_MS`/`LONG_TIMEOUT_MS` 会让「整测超时」与「这一轮没回来」两件事混成一个数；
+ * 按用途分四档，值就是既有实测口径（task-237 扩门时逐个定性后保留，没有放大）。
+ * 每个键可单独用 `E2E_REAL_PROVIDER_*_MS` 覆盖。</p>
+ */
+export const REAL_PROVIDER_POLL_MS = {
+    /** 模型目录/连接目录就绪（PLAN-0503）。 */
+    catalog: envMs("E2E_REAL_PROVIDER_CATALOG_MS", 30_000),
+    /** 会话投影快照落地（PLAN-0680 两向）。 */
+    snapshot: envMs("E2E_REAL_PROVIDER_SNAPSHOT_MS", 60_000),
+    /** 页内 SSE 窗口（PLAN-0590 普通聊天）。 */
+    sseWindow: envMs("E2E_REAL_PROVIDER_SSE_MS", 120_000),
+    /** 终态 run 计数（x-demo 投递卡）。 */
+    terminalRun: envMs("E2E_REAL_PROVIDER_TERMINAL_RUN_MS", 180_000),
+};

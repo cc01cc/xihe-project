@@ -49,7 +49,7 @@ import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
-import { LONG_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS, REAL_PROVIDER_POLL_MS } from "../timeouts";
 test.describe.configure({ retries: 0 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const TERMINAL = /^(succeeded|failed|cancelled|ambiguous)$/u;
@@ -143,7 +143,7 @@ async function waitForSnapshot(sessionId: string): Promise<{
     status: string;
     items: SnapshotItem[];
 }> {
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + REAL_PROVIDER_POLL_MS.snapshot;
     let last = latestSnapshot(sessionId);
     while (Date.now() < deadline) {
         last = latestSnapshot(sessionId);

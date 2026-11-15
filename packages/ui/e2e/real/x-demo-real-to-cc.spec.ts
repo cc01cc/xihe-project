@@ -17,7 +17,12 @@
 import { test, expect } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACTION_TIMEOUT_MS, EXPECT_TIMEOUT_MS, LONG_TIMEOUT_MS } from "../timeouts";
+import {
+    ACTION_TIMEOUT_MS,
+    EXPECT_TIMEOUT_MS,
+    LONG_TIMEOUT_MS,
+    REAL_PROVIDER_POLL_MS,
+} from "../timeouts";
 
 const REAL = process.env.XIHE_E2E_DEMO_REAL === "1";
 const SHOT_DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";
@@ -56,7 +61,7 @@ async function waitTerminalCount(
     page: import("@playwright/test").Page,
     expected: number,
 ): Promise<void> {
-    const deadline = Date.now() + 180_000;
+    const deadline = Date.now() + REAL_PROVIDER_POLL_MS.terminalRun;
     let last = "";
     while (Date.now() < deadline) {
         const payload = await page.evaluate(

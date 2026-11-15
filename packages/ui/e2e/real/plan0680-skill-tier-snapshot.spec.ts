@@ -61,7 +61,7 @@ import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId, waitForControlPlaneAgentReady } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
-import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS, REAL_PROVIDER_POLL_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 test.describe.configure({ retries: 0 });
 
@@ -296,7 +296,7 @@ async function sendChat(
 
 /** 轮询 `chat_runs.status` 到终态并返回该行。 */
 async function waitForRun(sessionId: string): Promise<ChatRunRow> {
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + REAL_PROVIDER_POLL_MS.snapshot;
     let row: ChatRunRow | null = null;
     while (Date.now() < deadline) {
         row = latestRun(sessionId);

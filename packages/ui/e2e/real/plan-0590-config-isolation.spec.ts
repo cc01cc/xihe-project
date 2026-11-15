@@ -33,7 +33,7 @@ import {
     type JourneyContext,
 } from "./helpers/journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./helpers/user-grants";
-import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS, REAL_PROVIDER_POLL_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 /** A-only workspace-layer values; B's workspace layer stays empty. */
 const A_MAX_INPUT_TOKENS = 98765;
@@ -231,7 +231,7 @@ async function runPlainChat(
     // 1) read-only SSE subscription (page-side; only reads the event stream).
     const probeKey = "__plan0590PlainChatProbe";
     const subscribed = await page.evaluate(
-        async ({ sid, ws, key }) => {
+        async ({ sid, ws, key, deadlineMs }) => {
             // read-only: 只读订阅 session 事件流（SSE GET），不写任何服务端状态。
             const token = localStorage.getItem("xihe-token") ?? "";
             const headers: Record<string, string> = {
@@ -252,7 +252,7 @@ async function runPlainChat(
             const state = { buffer: "", done: false, failure: "" };
             (window as unknown as Record<string, unknown>)[key] = { state };
             void (async () => {
-                const deadline = Date.now() + 120000;
+                const deadline = Date.now() + deadlineMs;
                 while (!state.done && Date.now() < deadline) {
                     const chunk = await reader
                         .read()
@@ -271,7 +271,12 @@ async function runPlainChat(
             });
             return { ok: true, status: sse.status };
         },
-        { sid: sessionId, ws: ctx.workspaceId, key: probeKey },
+        {
+            sid: sessionId,
+            ws: ctx.workspaceId,
+            key: probeKey,
+            deadlineMs: REAL_PROVIDER_POLL_MS.sseWindow,
+        },
     );
     expect(subscribed.ok, "session SSE subscription (read-only probe)").toBe(true);
 
@@ -281,14 +286,14 @@ async function runPlainChat(
 
     // 3) read the probe buffer back (read-only) and derive the reported window.
     const result = await page.evaluate(
-        async ({ key }) => {
+        async ({ key, deadlineMs }) => {
             const probe = (window as unknown as Record<string, unknown>)[key] as
                 | { state: { buffer: string; done: boolean; failure: string } }
                 | undefined;
             if (!probe) {
                 return { windowTokens: null, done: false, bufferChars: -1 };
             }
-            const deadline = Date.now() + 120000;
+            const deadline = Date.now() + deadlineMs;
             while (!probe.state.done && !probe.state.failure && Date.now() < deadline) {
                 await new Promise((resolve) => setTimeout(resolve, 200));
             }
@@ -299,7 +304,7 @@ async function runPlainChat(
                 bufferChars: probe.state.buffer.length,
             };
         },
-        { key: probeKey },
+        { key: probeKey, deadlineMs: REAL_PROVIDER_POLL_MS.sseWindow },
     );
     await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
     return result;

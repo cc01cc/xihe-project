@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
-import { LONG_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../timeouts";
+import { LONG_TIMEOUT_MS, REAL_PROVIDER_POLL_MS, TEST_TIMEOUT_MS } from "../timeouts";
 
 // PLAN-0504 supersedes the PLAN-0503 defaultProvider/defaultModel UI: the
 // llm-provider default identity is the whole `profile` unit edited by the
@@ -76,7 +76,7 @@ async function waitForDirectoryCatalog(
     connectionId: string,
     model: string,
 ) {
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + REAL_PROVIDER_POLL_MS.catalog;
     let last = "";
     while (Date.now() < deadline) {
         const response = await request.get(`${CP_URL}/api/v1/models`, {
