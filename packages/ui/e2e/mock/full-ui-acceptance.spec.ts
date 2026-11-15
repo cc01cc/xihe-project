@@ -3,7 +3,7 @@ import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { PERMISSION_ATOMS, setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import {
     ACTION_TIMEOUT_MS,
@@ -441,20 +441,10 @@ test.describe("PLAN-269 full UI acceptance: settings and provider", () => {
     test("MCP JSON validation and Data import preview are recoverable", async ({ page }) => {
         // PLAN-0752 M4：`/settings/data` 是「有 atom」页 —— 零能力夹具只会看到 403 卡片，
         // 导入预览无从进入；本用例验的是导入预览可恢复，所以显式授予实例管理员能力。
-        // task-141（2026-11-15）：**工作区写面**判据自 task-414 / D-1521 同源口径起是**动作原子**
-        // `WRITE_WORKSPACE_CONTENT`（`src/stores/auth.ts:256-258`：投影 ready 且含本工作区时只认原子，
-        // 见 `:205` 常量与 `:212-221` 的「通配资源才算」注释）。夹具词表 `PERMISSION_ATOMS` 目前只含
-        // 实例面原子（task-216 补的是**实例**写原子）⇒ 本用例不给它的话，工作区 MCP 面板判只读：
-        // `WorkspaceMcpPanel.vue:240` 的 textarea `disabled`、`:245` 的保存按钮整块不渲染，
-        // 于是 `fill` 等「元素可编辑」等满 30 s（本卡修前的超时就是这个 —— 显影的红点，不是回退）。
-        // 夹具侧是否要并进词表交 Lead 裁（本卡写面只有三个 spec，不动 helpers/auth.ts）。
-        await setupMockAuth(page, {
-            capabilities: { isInstanceAdmin: true },
-            permissionAtoms: [
-                ...PERMISSION_ATOMS,
-                { actionClass: "WRITE_WORKSPACE_CONTENT", resource: "*" },
-            ],
-        });
+        // task-223（2026-11-15）：工作区写原子已并进夹具原子词表 ⇒ 本用例回到
+        // **单一词表**，不再局部补 `permissionAtoms`（task-141 时期的那段局部补丁已删）。
+        // 判据：删掉局部补丁后本用例仍绿 = 夹具确实在给这条原子（可红构造见卡面判据 4）。
+        await setupMockAuth(page, { capabilities: { isInstanceAdmin: true } });
         await setupMockSessions(page, { sessions: [{ id: "session-1", title: "Session 1" }] });
         await mockSettingsApis(page);
 

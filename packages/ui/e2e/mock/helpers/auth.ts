@@ -415,6 +415,24 @@ export const PERMISSION_ATOMS = [
      * **它是实例作用域**（同 READ）⇒ 进 `INSTANCE_SCOPE_ATOMS`，不进 owner/editor/viewer 预设。
      */
     { actionClass: "WRITE_INSTANCE_CONTENT", resource: "*" },
+    /**
+     * task-223（2026-11-15）：**工作区**写面原子。task-216 补的是实例写原子，工作区那份一直缺 ——
+     * 后果同族但对象不同：投影可用时 `canWriteWorkspace` **只看这一条通配原子**
+     * （`src/stores/auth.ts:256-258`；`:205` 常量、`:212-221` 的「只认通配资源」注释），
+     * 于是「用共享夹具 ⇒ 工作区写面可写」这条前提在夹具层**从来不成立**：
+     * `WorkspaceMcpPanel.vue:240` 的 textarea 恒 `disabled`、`:245` 的保存按钮整块不渲染；
+     * 同源判据还牵动 `WorkspaceView.vue:519/524`（`data-can-write`）、`ScheduledTasksView.vue:304/394`、
+     * `FileTreePanel.vue:244`、`SessionPolicyControls.vue:33`、`SessionParticipantsPanel.vue:76`。
+     *
+     * 与 task-216 的**分层差异**（别抄错）：这条是**工作区作用域**，所以
+     * ① 不进 `INSTANCE_SCOPE_ATOMS`（那组的语义是「不属于工作区的实例原子」，owner 预设要排它）；
+     * ② owner 预设（`CAPABILITY_PRESETS.owner`）**应当**带上它 —— 工作区属主本来就能写本工作区内容；
+     * ③ editor 预设早就显式给了它，两处必须同形（否则预设名与内容不符）。
+     *
+     * 找不到「写能力」时**不要**靠「夹具默认不给」来表达：那正是 `D-1590` 的显影源 ——
+     * 要只读态请显式 `permissionAtomsWithout("WRITE_WORKSPACE_CONTENT")`。
+     */
+    { actionClass: "WRITE_WORKSPACE_CONTENT", resource: "*" },
 ] as const;
 /** 实例作用域原子：**不能**出现在「非实例管理员」预设里（否则预设名与内容不符）。 */
 export const INSTANCE_SCOPE_ATOMS = ["READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT"] as const;
