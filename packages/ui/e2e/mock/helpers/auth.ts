@@ -146,6 +146,12 @@ export interface MockAuthOptions {
      * 角色名用 CP 的 canonical 值（`SystemAccessRoleCatalog.WS_OWNER|WS_EDITOR|WS_VIEWER`），不自造别名。
      */
     workspaceRole?: "WS_OWNER" | "WS_EDITOR" | "WS_VIEWER";
+    /**
+     * task-176：成组的能力/角色预设 —— 让「缺能力」用例有一个自洽的起点（见 `CAPABILITY_PRESETS`）。
+     * 传了它之后，显式的 `capabilities` / `permissionAtoms` / `workspaceRole` / `workspaceAdmin`
+     * 仍按字段覆盖预设值；不传则一切照旧。
+     */
+    capabilitiesPreset?: "instanceAdmin" | "owner" | "editor" | "viewer" | "none";
     workspaceAdmin?: boolean;
     /**
      * task-100：工作区事件流（`GET /api/v1/workspaces/{id}/events`）的桩形态。
@@ -390,6 +396,56 @@ export function permissionAtomsWithout(
     return PERMISSION_ATOMS.filter((atom) => !deny.includes(atom.actionClass));
 }
 
+/**
+ * task-176：**能力预设**（viewer / editor / owner）—— 让「缺能力」能被真实表达。
+ *
+ * 为什么需要：夹具默认 `isInstanceAdmin: true` + 原子全量 ⇒ 「无权限」类用例一直在测管理员
+ * （同族第 2 例，D-1536）。单点覆盖（`permissionAtoms` / `workspaceRole` / `workspaceAdmin`）能改一项，
+ * 但门的判据是**组合**：`canManageWorkspace = isAdmin || projection.workspaceAdmin`、
+ * `canViewMembers = canWrite(原子) || canManage`（`src/stores/auth.ts:234-295`）⇒ 必须成组自洽。
+ *
+ * 角色名用 CP canonical 值（`WS_OWNER|WS_EDITOR|WS_VIEWER`）；能力位照 `CapabilitiesView`
+ * （`isInstanceAdmin` / `isInstanceSuper` / `canCreateWorkspace` / `workspaceAdminOf`）。
+ * 未指定的项**回落既有默认**（`DEFAULT_CAPABILITIES` / 全量原子 / `WS_OWNER` / `true`）⇒ 不传 preset 行为逐字节不变。
+ */
+export const CAPABILITY_PRESETS = {
+    /** 默认语义（= 今天不传任何选项时的夹具）：实例管理员。 */
+    instanceAdmin: {
+        capabilities: { isInstanceAdmin: true, isInstanceSuper: true, canCreateWorkspace: true },
+        workspaceRole: "WS_OWNER" as const,
+        workspaceAdmin: true,
+        permissionAtoms: PERMISSION_ATOMS,
+    },
+    /** 工作区属主：非实例管理员，但本工作区 `workspace:admin`（`workspaceAdminOf` 只含本区）。 */
+    owner: {
+        capabilities: { isInstanceAdmin: false, isInstanceSuper: false, canCreateWorkspace: true },
+        workspaceRole: "WS_OWNER" as const,
+        workspaceAdmin: true,
+        permissionAtoms: PERMISSION_ATOMS.filter((atom) => atom.actionClass !== "MANAGE_ROLES"),
+    },
+    /** 编辑者：可写（原子 `WRITE_WORKSPACE_CONTENT`），不能管理成员。 */
+    editor: {
+        capabilities: { isInstanceAdmin: false, isInstanceSuper: false, canCreateWorkspace: true },
+        workspaceRole: "WS_EDITOR" as const,
+        workspaceAdmin: false,
+        permissionAtoms: [{ actionClass: "WRITE_WORKSPACE_CONTENT", resource: "*" }],
+    },
+    /** 只读者：无写、无管理；`canViewMembers` / 管理区都应不成立。 */
+    viewer: {
+        capabilities: { isInstanceAdmin: false, isInstanceSuper: false, canCreateWorkspace: false },
+        workspaceRole: "WS_VIEWER" as const,
+        workspaceAdmin: false,
+        permissionAtoms: [] as Array<{ actionClass: string; resource: string }>,
+    },
+    /** 全空：连工作区只读都没有（用来测「什么都没给」的降级路径）。 */
+    none: {
+        capabilities: { isInstanceAdmin: false, isInstanceSuper: false, canCreateWorkspace: false },
+        workspaceRole: "WS_VIEWER" as const,
+        workspaceAdmin: false,
+        permissionAtoms: [] as Array<{ actionClass: string; resource: string }>,
+    },
+} as const;
+
 /** task-144：与 preview mock 的 CAPABILITIES 同值（isInstanceAdmin 等三位）。 */
 const DEFAULT_CAPABILITIES = {
     isInstanceAdmin: true,
@@ -398,6 +454,24 @@ const DEFAULT_CAPABILITIES = {
 };
 
 export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
+    // task-163/176：能力与角色面按用例覆盖，`capabilitiesPreset` 是**成组**的起点。
+    // 优先级：显式字段 > 预设 > 既有默认（⇒ 不传 preset 时与 task-144 逐字节相同）。
+    const preset = options.capabilitiesPreset
+        ? CAPABILITY_PRESETS[options.capabilitiesPreset]
+        : undefined;
+    const permissionAtoms = options.permissionAtoms ?? preset?.permissionAtoms ?? PERMISSION_ATOMS;
+    const workspaceRole = options.workspaceRole ?? preset?.workspaceRole ?? "WS_OWNER";
+    const workspaceAdmin = options.workspaceAdmin ?? preset?.workspaceAdmin ?? true;
+    // 能力位**必须成套**给：`workspaceAdminOf` 缺失会让 `src/stores/auth.ts:237` 抛
+    // `Cannot read properties of undefined (reading 'includes')`（产品对投影缺字段不健壮，`D-1536` 缺陷候选）。
+    // **替换语义，不是合并**：`options.capabilities` 显式给出时**整份替换**默认三件套
+    // （task-144 以来的既有语义 —— `{ capabilities: {} }` 就是「什么能力都没有」）。
+    // 早期写成 `{...defaults, ...options.capabilities}` 合并，`{}` 就无法清空 `isInstanceAdmin`，
+    // 实测让 `policy-management:363`（「无管理员能力」用例）从绿回落成红。
+    const resolvedCapabilities = {
+        workspaceAdminOf: workspaceAdmin ? [MOCK_WORKSPACE_ID] : [],
+        ...(options.capabilities ?? preset?.capabilities ?? DEFAULT_CAPABILITIES),
+    };
     // task-100：工作区事件流必须是**长连接**。旧桩用 `route.fulfill` 给有限体，响应立刻结束 ⇒
     // 客户端 clean_close + 恒速重连（task-98 实测 101 次 / 30 s）。Playwright 没有流式 fulfill，
     // 所以这条流由 in-page `window.fetch` 覆盖提供（见 `installWorkspaceEventStream`）。
@@ -477,7 +551,9 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         {
             seededWorkspace: seedWorkspace,
             seededTabWorkspace: seedTabWorkspace,
-            capabilities: options.capabilities,
+            capabilities:
+                options.capabilities ??
+                (options.capabilitiesPreset ? resolvedCapabilities : undefined),
         },
     );
 
@@ -1012,15 +1088,16 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 id: "user-1",
                 name: "Test User",
                 email: "test@xihe.local",
-                capabilities: options.capabilities ?? DEFAULT_CAPABILITIES,
+                // task-163：**`workspaceAdminOf` 必须存在**。真实 CP 的 `CapabilitiesView` 恒带这一位
+                // （工件佐证：`src/views/settings/__tests__/ToolFacesView.spec.ts:92-94` 记着「旧夹具只写
+                // `ownerId`、`workspaceAdminOf: []`，那是现实中不存在的属主」）。缺了它，`auth.ts:237`
+                // 的 `capabilities.value.workspaceAdminOf.includes(id)` 会在**非实例管理员**路径上抛
+                // `Cannot read properties of undefined (reading 'includes')` —— 实测于本轮覆盖口首版。
+                capabilities: resolvedCapabilities,
             }),
         });
     });
 
-    // task-163：能力/角色面按用例覆盖；三者默认值与 task-144 完全一致（既有 100+ spec 行为不变）。
-    const permissionAtoms = options.permissionAtoms ?? PERMISSION_ATOMS;
-    const workspaceRole = options.workspaceRole ?? "WS_OWNER";
-    const workspaceAdmin = options.workspaceAdmin ?? true;
     await page.route("**/api/v1/me/permissions", async (route) => {
         if (route.request().method() !== "GET") return route.fallback();
         await route.fulfill({
@@ -1028,7 +1105,9 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             contentType: "application/json",
             body: JSON.stringify({
                 userId: "user-1",
-                instanceCapabilities: Object.keys(options.capabilities ?? DEFAULT_CAPABILITIES),
+                instanceCapabilities: Object.entries(resolvedCapabilities)
+                    .filter(([, granted]) => granted === true)
+                    .map(([name]) => name),
                 instancePermissions: permissionAtoms,
                 workspaces: [
                     {

@@ -150,7 +150,9 @@ test.describe("PLAN-0772 M2: 资源模块（/resources）信息架构", () => {
     });
 
     test("实例层门槛是能力位：没有 instance:admin 时置灰 + 理由，不是隐藏", async ({ page }) => {
-        await setupMockAuth(page);
+        // task-176：用例语义是「没有 instance:admin」，而夹具默认 caps = isInstanceAdmin:true
+        // ⇒ 必须用预设表达「非实例管理员」（owner：本工作区属主，但无实例级能力）。
+        await setupMockAuth(page, { capabilitiesPreset: "owner" });
         await page.goto("/resources/credentials");
 
         const instanceTab = page.getByTestId("resource-layer-tab-INSTANCE");
