@@ -40,6 +40,49 @@ function optionValue(flag) {
 
 // ── 读数 ─────────────────────────────────────────────────────────────────────
 
+/** 结构深比较（只用于「内容没变就别刷 generatedAt」，不参与任何判据）。 */
+function deepEqual(a, b) {
+    if (a === b) return true;
+    if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    return ak.every((k) => deepEqual(a[k], b[k]));
+}
+
+/**
+ * task-228：**基线文件的格式由生成器负责**，不靠人记得再跑一次 oxfmt。
+ *
+ * <p>为什么必须机器做：`a6bc295dd` 那笔就是「脚本生成的账本没进 oxfmt」⇒ 整包
+ * `pnpm run lint` 断在 `oxfmt --check` 步、`oxlint` 压根没跑到（只查脚本本身查不出来）。
+ * 格式化放在生成期，并在写盘后**立刻自查** `oxfmt --check`：自查不过说明生成器坏了，直接 exit 2，
+ * 而不是留下一份坏账本让下一个人替它跑格式。</p>
+ */
+function formatBaseline() {
+    const fmt = spawnSync("pnpm", ["exec", "oxfmt", BASELINE], {
+        cwd: ROOT,
+        encoding: "utf8",
+        shell: true,
+    });
+    if (fmt.error || fmt.status !== 0) {
+        console.error(
+            "FAIL 基线写盘后 oxfmt 格式化失败：" + (fmt.error ? fmt.error.message : fmt.stderr),
+        );
+        process.exit(2);
+    }
+    const check = spawnSync("pnpm", ["exec", "oxfmt", "--check", BASELINE], {
+        cwd: ROOT,
+        encoding: "utf8",
+        shell: true,
+    });
+    if (check.status !== 0) {
+        console.error(
+            "FAIL 基线仍未通过 oxfmt --check（生成器与 oxfmt 口径不一致）：" + check.stdout,
+        );
+        process.exit(2);
+    }
+}
+
 function runOxlint() {
     const run = spawnSync("pnpm", ["exec", "oxlint", ".", "-f", "json"], {
         cwd: ROOT,
@@ -391,19 +434,51 @@ function main() {
     now.files = parsed.number_of_files;
 
     if (has("--write-baseline")) {
-        const payload = {
+        let payload = {
             $comment:
                 "oxlint warnings 基线（task-171 ② ratchet 门；task-219 起按族拦）。只能由 node scripts/check-lint-warnings.mjs --write-baseline 生成/收缩，勿手改；基线只许变小，变大须在卡面说明原因。",
             total: now.total,
             errors: now.errors,
             files: now.files,
-            byRule: Object.fromEntries(Object.entries(now.byRule).sort((a, b) => b[1] - a[1])),
+            // 计数降序；同计数按族名升序 —— 否则并列族的先后取决于 oxlint 扫描顺序，
+            // 跨机器/跨版本就可能翻序，把「重复生成两次 git diff 为空」这条幂等判据变成偶然成立（task-228）。
+            byRule: Object.fromEntries(
+                Object.entries(now.byRule).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+            ),
             locations: Object.fromEntries(
                 Object.entries(now.locations).sort((a, b) => a[0].localeCompare(b[0])),
             ),
             generatedAt: new Date().toISOString(),
         };
-        writeFileSync(BASELINE, JSON.stringify(payload, null, 2) + "\n", "utf8");
+        // task-228 ①：缩进 4（.oxfmtrc.jsonc 的 tabWidth: 4），随后由 formatBaseline() 交给 oxfmt 收口；
+        // ② generatedAt 只在**内容真变**时刷新 —— 同一棵树连跑两次必须逐字节相同，否则
+        // 「重复生成两次 git diff 为空」这条幂等判据永远不成立（时间戳每次都变）。
+        const previous = (() => {
+            try {
+                return JSON.parse(readFileSync(BASELINE, "utf8"));
+            } catch {
+                return null;
+            }
+        })();
+        const core = Object.fromEntries(
+            Object.entries(payload).filter(([key]) => key !== "generatedAt"),
+        );
+        const previousCore =
+            previous && typeof previous === "object"
+                ? Object.fromEntries(
+                      Object.entries(previous).filter(([key]) => key !== "generatedAt"),
+                  )
+                : null;
+        const keepTimestamp =
+            previousCore !== null &&
+            deepEqual(previousCore, core) &&
+            typeof previous.generatedAt === "string";
+        payload = {
+            ...core,
+            generatedAt: keepTimestamp ? previous.generatedAt : new Date().toISOString(),
+        };
+        writeFileSync(BASELINE, JSON.stringify(payload, null, 4) + "\n", "utf8");
+        formatBaseline();
         console.log("WROTE 基线 total=" + now.total + "（errors=" + now.errors + "）⇒ " + BASELINE);
         process.exit(now.errors === 0 ? 0 : 1);
     }
